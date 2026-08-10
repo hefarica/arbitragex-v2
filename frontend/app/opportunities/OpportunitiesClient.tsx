@@ -209,7 +209,7 @@ export default function OpportunitiesClient({
       const data = await res.json();
       const items = Array.isArray(data?.items) ? data.items : Array.isArray(data) ? data : [];
       // PERF: batch store update instead of clear + 50 addOpportunity calls.
-      setOpportunities(items.map((raw) => mapToOmniOpportunity(raw)));
+      setOpportunities(items.map((raw: Record<string, unknown>) => mapToOmniOpportunity(raw)));
       setLastRefresh(new Date());
       setErrorMsg(null);
     } catch (e) {

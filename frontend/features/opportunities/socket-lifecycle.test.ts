@@ -10,6 +10,10 @@ function makeFakeSocket() {
       handlers.set(event, handler);
       return socket;
     }),
+    off: vi.fn((event: string) => {
+      handlers.delete(event);
+      return socket;
+    }),
     emit: vi.fn(),
     disconnect: vi.fn(),
     trigger: (event, ...args) => handlers.get(event)?.(...args),
