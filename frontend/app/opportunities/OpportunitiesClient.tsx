@@ -5,7 +5,6 @@ import { sanitizeForDisplay } from "@/lib/omega-lexicon";
 import { toast } from "sonner";
 import { OpportunityDetailDialog, type OpportunityDetail } from "@/components/OpportunityDetailDialog";
 import { OpportunityTradeCard } from "@/components/OpportunityTradeCard";
-import { AnimatePresence } from "framer-motion";
 
 // ─── Omni-Store Integration ───────────────────────────────────────────────────
 import { useOmniOpportunities } from "@/lib/store/useOmniOpportunities";
@@ -80,8 +79,7 @@ export default function OpportunitiesClient({
   // Selectors from Omni-Store (SSOT)
   const opportunities = useOmniStore((state) => state.opportunities);
   const wsStatus = useOmniStore((state) => state.wsStatus);
-  const clearOpportunities = useOmniStore((state) => state.clearOpportunities);
-  const addOpportunity = useOmniStore((state) => state.addOpportunity);
+  const setOpportunities = useOmniStore((state) => state.setOpportunities);
 
   // ─── UI State (local, not in store) ───────────────────────────────────────
   const [isMounted, setIsMounted] = useState(false);
@@ -185,7 +183,16 @@ export default function OpportunitiesClient({
     }
   }, [EDGE_URL]);
 
-  // FE-1: fetchOpportunities is now ONLY used by the manual "Force refresh" button.
+  // Memoize callbacks so React.memo on OpportunityTradeCard isn't defeated
+  // every time the parent re-renders (e.g. from the age ticker).
+  const onInspect = useCallback((opp: OmniOpportunity) => {
+    setSelectedOpp(opp as unknown as OpportunityDetail);
+  }, []);
+
+  const onExecute = useCallback(
+    (opportunityId: string) => handleSimulate(opportunityId),
+    [handleSimulate],
+  );
   // It clears the store and repopulates via HTTP, then the WS stream continues.
   const fetchOpportunities = useCallback(async () => {
     try {
@@ -201,17 +208,14 @@ export default function OpportunitiesClient({
       }
       const data = await res.json();
       const items = Array.isArray(data?.items) ? data.items : Array.isArray(data) ? data : [];
-      // Clear and repopulate store via mapper
-      clearOpportunities();
-      items.forEach((raw: Record<string, unknown>) => {
-        addOpportunity(mapToOmniOpportunity(raw));
-      });
+      // PERF: batch store update instead of clear + 50 addOpportunity calls.
+      setOpportunities(items.map((raw) => mapToOmniOpportunity(raw)));
       setLastRefresh(new Date());
       setErrorMsg(null);
     } catch (e) {
       setErrorMsg((e as Error).message);
     }
-  }, [EDGE_URL, viableOnly, clearOpportunities, addOpportunity]);
+  }, [EDGE_URL, viableOnly, setOpportunities]);
 
   // R1: localStorage read happens here — never during render (SSR has no localStorage).
   // 2026-05-10: bumped the storage key from "arbx-opps-viable-only" to "-v2" so
@@ -410,21 +414,23 @@ export default function OpportunitiesClient({
             place (no remount / no enter-animation flash each poll) and the card
             disappears when the route drops out of the snapshot. R8 fail-honest:
             unknown figures render "—", never fabricated. ── */}
+      {/* AnimatePresence removed from the high-churn live grid (2026-08-10).
+          Exit animations retained DOM nodes for 250ms every poll; with 200 live
+          cards that accumulated nodes/memory. Items still animate on enter via
+          motion.div initial/animate. */}
       <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
-        <AnimatePresence>
-          {opportunities.map((opp) => (
-            <OpportunityTradeCard
-              key={routeKeyOf(opp)}
-              opp={opp}
-              now={now}
-              isMounted={isMounted}
-              simLoading={simLoading === opp.id}
+        {opportunities.map((opp) => (
+          <OpportunityTradeCard
+            key={routeKeyOf(opp)}
+            opp={opp}
+            now={now}
+            isMounted={isMounted}
+            simLoading={simLoading === opp.id}
               strategyConfig={strategyConfigs[opp.strategy_kind] ?? null}
-              onExecute={handleSimulate}
-              onInspect={(o) => setSelectedOpp(o as unknown as OpportunityDetail)}
+              onExecute={onExecute}
+              onInspect={onInspect}
             />
           ))}
-        </AnimatePresence>
       </div>
 
       {/* FE-10: Opportunity detail sheet — click any row to open */}

@@ -201,10 +201,8 @@ function OpportunityTradeCardImpl({
 
   return (
     <motion.div
-      layout
       initial={{ opacity: 0, y: 8, scale: 0.98 }}
       animate={{ opacity: 1, y: 0, scale: 1 }}
-      exit={{ opacity: 0, scale: 0.98 }}
       transition={{ duration: 0.25 }}
       className="relative bg-card text-card-foreground border border-border rounded-2xl p-4 shadow-lg hover:shadow-xl hover:border-primary/40 transition-all overflow-hidden"
     >
@@ -453,22 +451,35 @@ function OpportunityTradeCardImpl({
 // every card. The parent used to push a fresh `now` every second → all ~200
 // motion.div cards re-rendered each second. The comparator re-renders a card
 // only when its own data changed OR its displayed age (seconds) ticked over.
-// The store emits a stable `opp` reference per id, so an unchanged opp is skipped.
+// Business-equality fields are checked because the store emits a fresh array
+// after each batch replacement, so reference equality on `opp` would fail.
 export const OpportunityTradeCard = React.memo(
   OpportunityTradeCardImpl,
   (
     prev: OpportunityTradeCardProps,
     next: OpportunityTradeCardProps,
-  ): boolean =>
-    prev.opp.id === next.opp.id &&
-    prev.opp === next.opp &&
-    prev.isMounted === next.isMounted &&
-    prev.simLoading === next.simLoading &&
-    prev.strategyConfig === next.strategyConfig &&
-    prev.onExecute === next.onExecute &&
-    prev.onInspect === next.onInspect &&
-    Math.floor((prev.now - new Date(prev.opp.detected_at).getTime()) / 1000) ===
-      Math.floor((next.now - new Date(next.opp.detected_at).getTime()) / 1000),
+  ): boolean => {
+    const p = prev.opp;
+    const n = next.opp;
+    const agePrev = Math.floor((prev.now - new Date(p.detected_at).getTime()) / 1000);
+    const ageNext = Math.floor((next.now - new Date(n.detected_at).getTime()) / 1000);
+    return (
+      p.id === n.id &&
+      p.status === n.status &&
+      p.expected_profit_usd === n.expected_profit_usd &&
+      p.net_expected_profit_usd === n.net_expected_profit_usd &&
+      p.roi_pct === n.roi_pct &&
+      p.detected_at === n.detected_at &&
+      p.token_in_info?.logo_url === n.token_in_info?.logo_url &&
+      p.token_out_info?.logo_url === n.token_out_info?.logo_url &&
+      prev.isMounted === next.isMounted &&
+      prev.simLoading === next.simLoading &&
+      prev.strategyConfig === next.strategyConfig &&
+      prev.onExecute === next.onExecute &&
+      prev.onInspect === next.onInspect &&
+      agePrev === ageNext
+    );
+  },
 );
 
 // ─── Ledger row (capital path) ───────────────────────────────────────────────

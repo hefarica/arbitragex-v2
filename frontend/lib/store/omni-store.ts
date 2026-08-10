@@ -79,6 +79,8 @@ interface OpportunitySlice {
   disconnectStream: () => void;
   /** Add a new opportunity (called by WebSocket handler) */
   addOpportunity: (opp: OmniOpportunity) => void;
+  /** Replace the entire opportunity list in a single update (batch) */
+  setOpportunities: (opps: OmniOpportunity[]) => void;
   /** Clear all opportunities */
   clearOpportunities: () => void;
   /** Update WS status (called by socket lifecycle) */
@@ -228,11 +230,28 @@ export const useOmniStore = create<OmniStoreState>()(
         set({ wsStatus: "DISCONNECTED" });
       },
 
-      addOpportunity: (opp: OmniOpportunity) =>
-        set((state) => ({
-          opportunities: [opp, ...state.opportunities].slice(0, MAX_OPPORTUNITIES),
+      addOpportunity: (opp: OmniOpportunity) =
+        set((state) => {
+          // PERF (2026-08-10): dedupe before update. The same id can arrive via
+          // WebSocket reconnects or overlapping poll ticks; without this guard
+          // duplicates accumulate and churn the list.
+          if (state.opportunities.some((o) => o.id === opp.id)) return state;
+          return {
+            opportunities: [opp, ...state.opportunities].slice(0, MAX_OPPORTUNITIES),
+            lastUpdate: new Date().toISOString(),
+          };
+        }),
+
+      // PERF (2026-08-10): batch replacement of the whole list in ONE store
+      // update. Polling and initial hydration used to call clearOpportunities()
+      // then addOpportunity() 50 times — 51 Zustand updates + 51 devtools
+      // serializations every 4-5 seconds, which was the dominant source of
+      // memory churn and retained snapshots. setOpportunities does it in one.
+      setOpportunities: (opps: OmniOpportunity[]) =>
+        set({
+          opportunities: opps.slice(0, MAX_OPPORTUNITIES),
           lastUpdate: new Date().toISOString(),
-        })),
+        }),
 
       clearOpportunities: () => set({ opportunities: [], lastUpdate: null }),
 

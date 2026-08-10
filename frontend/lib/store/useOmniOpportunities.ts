@@ -66,8 +66,8 @@ export function useOmniOpportunities({
 }: UseOmniOpportunitiesOptions) {
   // Store actions (stable references)
   const addOpportunity = useOmniStore((state) => state.addOpportunity);
+  const setOpportunities = useOmniStore((state) => state.setOpportunities);
   const setWsStatus = useOmniStore((state) => state.setWsStatus);
-  const clearOpportunities = useOmniStore((state) => state.clearOpportunities);
 
   // Refs for stable closure access
   const errorCountRef = useRef(0);
@@ -87,13 +87,10 @@ export function useOmniOpportunities({
     initializedRef.current = true;
 
     if (initialOpportunities.length > 0) {
-      // Clear and populate store with initial data
-      clearOpportunities();
-      initialOpportunities.forEach((opp) => {
-        addOpportunity(opp);
-      });
+      // PERF: one batch update, not clear + N addOpportunity calls.
+      setOpportunities(initialOpportunities);
     }
-  }, [initialOpportunities, addOpportunity, clearOpportunities]);
+  }, [initialOpportunities, setOpportunities]);
 
   // HTTP polling fallback
   const startPolling = useCallback(() => {
@@ -120,11 +117,10 @@ export function useOmniOpportunities({
           ? (data as unknown[])
           : [];
 
-        // Clear and repopulate store (with mapper transformation)
-        clearOpportunities();
-        rawItems.forEach((raw) => {
-          addOpportunity(mapToOmniOpportunity(raw as Record<string, unknown>));
-        });
+        // PERF: one batch replacement instead of clear + N addOpportunity calls.
+        // Each addOpportunity triggered a separate Zustand update + devtools
+        // serialization; with 50 items every 4-5s that caused severe memory churn.
+        setOpportunities(rawItems.map((raw) => mapToOmniOpportunity(raw as Record<string, unknown>)));
       } catch {
         // Swallow — status badge already shows "POLLING" (degraded)
       }
@@ -132,13 +128,13 @@ export function useOmniOpportunities({
 
     poll();
     pollingTimerRef.current = setInterval(poll, POLL_INTERVAL_MS);
-  }, [edgeUrl, setWsStatus, addOpportunity, clearOpportunities]);
+  }, [edgeUrl, setWsStatus, setOpportunities]);
 
   // WebSocket lifecycle
   useEffect(() => {
     if (typeof window === "undefined") return;
 
-    // R8 Fail-Honest: No hardcoded fallback to localhost. 
+    // R8 Fail-Honest: No hardcoded fallback to localhost.
     // Must be provided via NEXT_PUBLIC_WS_URL.
     const wsUrl = process.env.NEXT_PUBLIC_WS_URL;
     if (!wsUrl) {

@@ -13,6 +13,7 @@ export interface Opportunity {
 
 export interface SocketLike {
   on: (event: string, handler: (...args: unknown[]) => void) => unknown;
+  off: (event: string, handler?: (...args: unknown[]) => void) => unknown;
   emit: (event: string, ...args: unknown[]) => unknown;
   disconnect: () => void;
 }
@@ -64,24 +65,30 @@ export function createOpportunitySocket(
 
   const socket = ioFactory(url, connectOpts);
 
-  socket.on("connect", () => {
+  // Stable listeners so we can remove them on dispose (not removeAllListeners,
+  // which would nuke Socket.IO internal handlers).
+  const onConnect = () => {
     onStatus("LIVE");
     socket.emit("subscribe:opportunities");
-  });
+  };
+  const onDisconnect = () => onStatus("STALE");
+  const onConnectError = () => onStatus("STALE");
+  const onNewOpportunity = (opp: unknown) => onOpportunity(opp as Opportunity);
 
-  socket.on("disconnect", () => {
-    onStatus("STALE");
-  });
-
-  socket.on("connect_error", () => {
-    onStatus("STALE");
-  });
-
-  socket.on("new_opportunity", (opp: unknown) => {
-    onOpportunity(opp as Opportunity);
-  });
+  socket.on("connect", onConnect);
+  socket.on("disconnect", onDisconnect);
+  socket.on("connect_error", onConnectError);
+  socket.on("new_opportunity", onNewOpportunity);
 
   return {
-    dispose: () => socket.disconnect(),
+    dispose: () => {
+      // PERF (2026-08-10): disconnect() alone does NOT remove user listeners;
+      // across reconnects/cleanup they accumulate and retain closures. Off first.
+      socket.off("connect", onConnect);
+      socket.off("disconnect", onDisconnect);
+      socket.off("connect_error", onConnectError);
+      socket.off("new_opportunity", onNewOpportunity);
+      socket.disconnect();
+    },
   };
 }
