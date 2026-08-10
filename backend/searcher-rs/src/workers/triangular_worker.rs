@@ -1501,7 +1501,10 @@ impl TriangularWorker {
         );
 
         // §IV Gap 1 fix: build RouteMetadata so sim-ctl can resolve the route.
-        // Triangular: 3 hops (A→B→C→A). Uses hop token_in/token_out addresses.
+        // Triangular: 3 hops (A→B→C→A). Uses the resolved cycle token addresses
+        // — NOT each pool's token0_addr, which is pool-ordering-dependent and
+        // not the actual traversal sequence (the old code produced 4× token0,
+        // which is meaningless as a route path).
         let route_metadata = RouteMetadata {
             pool_addresses: vec![
                 hop1.pool_addr.to_string(),
@@ -1509,10 +1512,10 @@ impl TriangularWorker {
                 hop3.pool_addr.to_string(),
             ],
             token_addresses: vec![
-                hop1.entry.token0_addr.clone().unwrap_or_default(),
-                hop2.entry.token0_addr.clone().unwrap_or_default(),
-                hop3.entry.token0_addr.clone().unwrap_or_default(),
-                hop1.entry.token0_addr.clone().unwrap_or_default(),
+                addr_a.clone(),
+                addr_b.clone(),
+                addr_c.clone(),
+                addr_a.clone(),
             ],
             dex_adapters: vec![
                 "uniswap_v2_router".to_string(),
@@ -1930,8 +1933,35 @@ impl TriangularWorker {
                 hop3 = %plan.hops[2].pool_addr(),
             );
 
+            // §IV Gap 1 fix (V3, 2026-08-10): build RouteMetadata so sim-ctl and
+            // the exchange dashboard can resolve the 3-hop cycle (A→B→C→A).
+            // V3-bearing cycles may mix V2/V3 pools; dex_adapters reflect each
+            // hop's actual protocol. Decimals resolved separately downstream.
+            let route_metadata = RouteMetadata {
+                pool_addresses: plan.hops.iter().map(|h| h.pool_addr().to_string()).collect(),
+                token_addresses: vec![
+                    plan.addr_a.clone(),
+                    plan.addr_b.clone(),
+                    plan.addr_c.clone(),
+                    plan.addr_a.clone(),
+                ],
+                dex_adapters: plan
+                    .hops
+                    .iter()
+                    .map(|h| match h {
+                        HopKind::V2(_) => "uniswap_v2_router",
+                        HopKind::V3 { .. } => "uniswap_v3_router",
+                    })
+                    .map(String::from)
+                    .collect(),
+                decimals: Default::default(),
+            };
+
             if let Some(pool) = db {
-                if let Err(e) = persistence::insert_opportunity(pool, &opp).await {
+                if let Err(e) =
+                    persistence::insert_opportunity_with_route(pool, &opp, Some(&route_metadata))
+                        .await
+                {
                     counters().db_errors.fetch_add(1, Ordering::Relaxed);
                     warn!(event = "triangular_worker.v3_db_error", error = %e);
                 } else {
@@ -2064,6 +2094,8 @@ impl TriangularWorker {
             sym_b,
             sym_c,
             addr_a,
+            addr_b,
+            addr_c,
             decimals_a,
             cap_usd,
             price_a,
@@ -2093,6 +2125,11 @@ struct V3CyclePlan {
     sym_b: &'static str,
     sym_c: &'static str,
     addr_a: String,
+    // Resolved cycle token addresses (B, C). Added 2026-08-10 so the V3 persist
+    // path can build a correct RouteMetadata (token path A→B→C→A) — previously
+    // only addr_a was carried, so V3 detections persisted with no route topology.
+    addr_b: String,
+    addr_c: String,
     decimals_a: u8,
     cap_usd: f64,
     price_a: f64,
@@ -3496,6 +3533,8 @@ mod tests {
             sym_b: "WETH",
             sym_c: "USDC",
             addr_a: "0x6982508145454ce325ddbe47a25d4ec3d2311933".to_string(),
+            addr_b: "0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2".to_string(), // WETH
+            addr_c: "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48".to_string(), // USDC
             decimals_a: 18,
             cap_usd: 1_000.0,
             price_a: 0.00001,

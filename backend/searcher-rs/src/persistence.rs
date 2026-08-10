@@ -38,16 +38,35 @@ pub async fn insert_opportunity_with_route(
     let amount_in_wei =
         BigDecimal::from_str(&o.amount_in_wei).context("amount_in_wei to BigDecimal")?;
 
-    // Serialize route_metadata to JSON. Validate first; on failure, log warn
-    // and persist '{}' so the row still lands.
+    // Serialize route_metadata to JSON. Structural check only; on failure,
+    // log warn and persist '{}' so the row still lands.
+    //
+    // ROOT-CAUSE FIX (2026-08-10): the old gate called `rm.validate()`, which
+    // REQUIRES every token_address to have a decimals entry. But every builder
+    // (build_route_metadata_from_plan AND the per-engine constructors) emits
+    // `decimals` EMPTY BY DESIGN — decimals are resolved separately downstream
+    // (scanner TokenDecimalsProvider / sim-ctl A1 enrichment), and the
+    // documented intent is "persist topology without decimals rather than
+    // fabricate them". So `validate()` ALWAYS failed → every route_metadata was
+    // silently downgraded to '{}' → the exchange dashboard never saw any
+    // multi-leg topology. We now gate on STRUCTURE only (parallel-array lengths
+    // consistent), matching the documented design and letting topology persist.
     let route_json: serde_json::Value = match route {
         Some(rm) if rm.is_populated() => {
-            if let Err(reason) = rm.validate() {
+            let hops = rm.dex_adapters.len();
+            let structurally_ok =
+                rm.token_addresses.len() == hops + 1 && rm.pool_addresses.len() == hops;
+            if !structurally_ok {
                 tracing::warn!(
                     event = "persist.route_metadata_invalid",
                     opportunity_id = %o.id,
-                    reason = %reason,
-                    "route_metadata validation failed; persisting '{{}}' instead"
+                    reason = %format!(
+                        "structural mismatch: token_addresses={} pool_addresses={} dex_adapters={}",
+                        rm.token_addresses.len(),
+                        rm.pool_addresses.len(),
+                        hops
+                    ),
+                    "route_metadata structural check failed; persisting '{{}}' instead"
                 );
                 serde_json::json!({})
             } else {
