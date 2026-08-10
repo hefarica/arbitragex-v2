@@ -230,7 +230,7 @@ export const useOmniStore = create<OmniStoreState>()(
         set({ wsStatus: "DISCONNECTED" });
       },
 
-      addOpportunity: (opp: OmniOpportunity) =
+      addOpportunity: (opp: OmniOpportunity) =>
         set((state) => {
           // PERF (2026-08-10): dedupe before update. The same id can arrive via
           // WebSocket reconnects or overlapping poll ticks; without this guard
