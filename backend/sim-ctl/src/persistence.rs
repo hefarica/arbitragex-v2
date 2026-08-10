@@ -63,7 +63,9 @@ pub async fn insert_simulation(pool: &PgPool, r: &SimulationResult) -> Result<()
     if !r.passed && sim_capability_gap {
         // Commit the simulation row (already inserted) but do NOT flip the
         // opportunity to 'rejected'. The opp stays 'detected'/'validated'.
-        tx.commit().await.context("commit tx (sim capability gap)")?;
+        tx.commit()
+            .await
+            .context("commit tx (sim capability gap)")?;
         return Ok(());
     }
 
