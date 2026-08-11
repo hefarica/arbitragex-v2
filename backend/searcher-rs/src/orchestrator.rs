@@ -956,16 +956,14 @@ impl Orchestrator {
                 dex_adapters: c.dex_adapters.clone(),
                 decimals: Default::default(),
             };
-            let from_plan =
-                crate::persistence::build_route_metadata_from_plan(&sc.route_plan);
+            let from_plan = crate::persistence::build_route_metadata_from_plan(&sc.route_plan);
             // Prefer the source with the longer (more complete) token path.
-            let mut chosen = if from_plan.token_addresses.len()
-                > from_candidate.token_addresses.len()
-            {
-                from_plan
-            } else {
-                from_candidate
-            };
+            let mut chosen =
+                if from_plan.token_addresses.len() > from_candidate.token_addresses.len() {
+                    from_plan
+                } else {
+                    from_candidate
+                };
             // Backfill pools/dexes from candidate if the chosen plan source
             // left them shorter than the token path would imply.
             if chosen.pool_addresses.len() < chosen.dex_adapters.len()
@@ -974,7 +972,11 @@ impl Orchestrator {
                 chosen.pool_addresses = c.pool_addresses.clone();
                 chosen.dex_adapters = c.dex_adapters.clone();
             }
-            if chosen.is_populated() { Some(chosen) } else { None }
+            if chosen.is_populated() {
+                Some(chosen)
+            } else {
+                None
+            }
         };
         let route_ref = route_metadata.as_ref();
         let label = sc.label;
@@ -1114,7 +1116,10 @@ impl Orchestrator {
                     expected_profit_usd = ?opp.expected_profit_usd,
                     net_expected_profit_usd = ?opp.net_expected_profit_usd,
                 );
-                self.ctx.emitter.emit_rejected(&opp, label, &reason, route_ref).await?;
+                self.ctx
+                    .emitter
+                    .emit_rejected(&opp, label, &reason, route_ref)
+                    .await?;
             }
 
             ConfigGateOutcome::StrategyDisabled { strategy_kind: sk } => {
@@ -1138,7 +1143,10 @@ impl Orchestrator {
                     expected_profit_usd = ?opp.expected_profit_usd,
                     net_expected_profit_usd = ?opp.net_expected_profit_usd,
                 );
-                self.ctx.emitter.emit_rejected(&opp, label, &reason, route_ref).await?;
+                self.ctx
+                    .emitter
+                    .emit_rejected(&opp, label, &reason, route_ref)
+                    .await?;
             }
 
             ConfigGateOutcome::StrategyConfigGateBlocked { reason } => {

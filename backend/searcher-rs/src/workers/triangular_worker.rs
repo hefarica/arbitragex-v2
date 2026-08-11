@@ -1938,7 +1938,11 @@ impl TriangularWorker {
             // V3-bearing cycles may mix V2/V3 pools; dex_adapters reflect each
             // hop's actual protocol. Decimals resolved separately downstream.
             let route_metadata = RouteMetadata {
-                pool_addresses: plan.hops.iter().map(|h| h.pool_addr().to_string()).collect(),
+                pool_addresses: plan
+                    .hops
+                    .iter()
+                    .map(|h| h.pool_addr().to_string())
+                    .collect(),
                 token_addresses: vec![
                     plan.addr_a.clone(),
                     plan.addr_b.clone(),

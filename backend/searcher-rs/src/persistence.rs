@@ -59,8 +59,8 @@ pub async fn insert_opportunity_with_route(
             // scan time (build_route_metadata_from_plan skips those), and the
             // merge in orchestrator may leave pools shorter than hops. The token
             // path is the load-bearing invariant; pools/dexes are advisory.
-            let structurally_ok = rm.token_addresses.len() == hops + 1
-                && rm.pool_addresses.len() <= hops;
+            let structurally_ok =
+                rm.token_addresses.len() == hops + 1 && rm.pool_addresses.len() <= hops;
             if !structurally_ok {
                 tracing::warn!(
                     event = "persist.route_metadata_invalid",
@@ -275,4 +275,3 @@ mod fidelity_tests {
         assert!(!rm.pool_addresses[1].is_empty());
     }
 }
-
