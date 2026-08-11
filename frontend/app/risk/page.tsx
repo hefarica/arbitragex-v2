@@ -7,7 +7,6 @@ import { KillswitchBanner } from "@/features/risk/KillswitchBanner";
 import { RiskAlertsTable } from "@/features/risk/RiskAlertsTable";
 import { RiskCircuitPanel } from "@/features/risk/RiskCircuitPanel";
 import { getRiskAlerts } from "@/lib/api-client";
-import { fmtTime } from "@/lib/formatters";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
@@ -41,7 +40,7 @@ export default async function RiskPage() {
       <PageHeader
         title="Risk & alerts"
         lede={`Active kill-switch state and every risk event recorded by services in the last ${window_hours}h.`}
-        meta={[`window: last ${window_hours}h`, `snapshot ${fmtTime(ts)}`]}
+        meta={[`window: last ${window_hours}h`, `snapshot ${ts ?? "—"}`]}
         showRefresh
       />
 

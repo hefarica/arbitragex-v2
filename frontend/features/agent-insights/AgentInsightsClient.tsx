@@ -14,6 +14,7 @@ import { AlertCircleIcon, BotIcon, CheckCircle2Icon, XCircleIcon, AlertTriangleI
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { LocalTime } from "@/components/LocalTime";
 
 const POLL_INTERVAL_MS = 30_000;
 
@@ -195,7 +196,7 @@ export function AgentInsightsClient({ initialData }: Props) {
         </div>
         <div className="flex items-center gap-2 text-sm text-muted-foreground">
           <ClockIcon className="h-4 w-4" />
-          {new Date(data.generated_at).toLocaleTimeString()}
+          <LocalTime iso={data.generated_at} />
         </div>
         <Badge variant="outline" className="text-xs">source: {data.source}</Badge>
         <Badge variant="outline" className="text-xs">
