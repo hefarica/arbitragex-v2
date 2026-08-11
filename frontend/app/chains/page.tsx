@@ -9,7 +9,7 @@ import { getDefiChains } from "@/lib/api-client";
 import type { DefiChainsResponse } from "@/lib/schemas";
 import { EdgeState } from "@/components/EdgeState";
 
-const CHAIN_COLUMNS = ["Chain ID", "Name", "RPC URL", "Status"];
+const CHAIN_COLUMNS = ["Chain ID", "Name", "Status"];
 
 export default function ChainsPage() {
   const [result, setResult] = useState<{ ok: true; data: DefiChainsResponse } | { ok: false; error: string } | null>(null);
@@ -78,7 +78,6 @@ export default function ChainsPage() {
             <tr className="bg-muted text-muted-foreground text-sm uppercase tracking-wider">
               <th className="p-4 border-b border-border">Chain ID</th>
               <th className="p-4 border-b border-border">Name</th>
-              <th className="p-4 border-b border-border">RPC URL</th>
               <th className="p-4 border-b border-border">Status</th>
             </tr>
           </thead>
@@ -93,7 +92,6 @@ export default function ChainsPage() {
               >
                 <td className="p-4 border-b border-border font-mono text-info">{chain.chain_id}</td>
                 <td className="p-4 border-b border-border font-medium">{chain.name}</td>
-                <td className="p-4 border-b border-border font-mono text-sm text-muted-foreground truncate max-w-[300px]">{chain.rpc_url ?? "—"}</td>
                 <td className="p-4 border-b border-border">
                   <span className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-medium border ${chain.is_active ? 'bg-success/10 text-success border-success/40' : 'bg-destructive/10 text-destructive border-destructive/40'}`}>
                     {chain.is_active ? "ACTIVE" : "DISABLED"}

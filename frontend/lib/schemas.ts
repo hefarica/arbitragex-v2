@@ -649,14 +649,20 @@ export type AuditLogRow = z.infer<typeof AuditLogRowSchema>;
 export type AuditLogsResponse = z.infer<typeof AuditLogsResponseSchema>;
 
 // ─────── DeFi data schemas (defiRouter in api-server) ───────
-// Rows use passthrough() because DB columns may change; we validate the envelope.
+// FASE0 / A-03: contracts aligned to the REAL edge payload (verified live
+// 2026-08-09). Canonical fields are REQUIRED and passthrough() removed so
+// serializer drift EXPLODES in validation (R8) instead of rendering lies —
+// the prior dex/active + passthrough drift showed 61 live pools as DISABLED.
 
 export const DefiChainRowSchema = z.object({
   chain_id: z.number(),
   name: z.string(),
-  rpc_url: z.string().optional(),
-  is_active: z.boolean().optional(),
-}).passthrough();
+  native_currency: z.string().nullable().optional(),
+  explorer_url: z.string().nullable().optional(),
+  is_active: z.boolean(),
+});
+// /api/chains does NOT serve rpc_url — RPCs live in the /rpcs registry (D-02).
+// The chains page no longer renders an RPC URL column.
 
 export const DefiChainsResponseSchema = z.object({
   success: z.boolean(),
@@ -677,12 +683,15 @@ export const DefiRpcsResponseSchema = z.object({
 });
 
 export const DefiPoolRowSchema = z.object({
-  address: z.string().optional(),
-  token0_symbol: z.string().optional(),
-  token1_symbol: z.string().optional(),
-  dex: z.string().optional(),
-  active: z.boolean().optional(),
-}).passthrough();
+  address: z.string(),
+  chain_id: z.number(),
+  dex_name: z.string(),
+  protocol_type: z.string(),
+  fee_tier: z.number().nullable().optional(),
+  token0_symbol: z.string(),
+  token1_symbol: z.string(),
+  is_active: z.boolean(),
+});
 
 export const DefiPoolsResponseSchema = z.object({
   success: z.boolean(),
