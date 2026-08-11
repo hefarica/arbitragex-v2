@@ -46,6 +46,10 @@ pub struct ScannerCounters {
     pub pending_received: AtomicU64,
     /// Tx decoded successfully (passed calldata + router lookup).
     pub decoded_ok: AtomicU64,
+    /// N-01: Tx decode FAILED in the V2 orchestrator path (route_decoder error).
+    /// Without this counter the V2 decode bottleneck is invisible (the legacy
+    /// `decoded_ok` counter is skipped when orch_mode == V2).
+    pub decoded_err: AtomicU64,
     /// Candidate enriched via V2-only spread (no V3 quotes landed).
     pub enriched_v2: AtomicU64,
     /// Candidate enriched with V2 + V3 multicall quotes.
