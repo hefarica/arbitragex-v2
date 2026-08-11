@@ -935,6 +935,29 @@ impl Orchestrator {
         cfg: Option<&TradingConfigState>,
         chain_id: u64,
     ) -> anyhow::Result<()> {
+        // Build the multi-hop route topology ONCE from the candidate's populated
+        // arrays; thread it into every emit (accepted AND rejected) so the
+        // exchange dashboard's multi-leg A→B view + sim-ctl A1 enrichment get
+        // route_metadata for ALL persisted opps — including rejections. The
+        // orchestrator rejects most live opps (no_price_oracle /
+        // spot_product_le_one); those still deserve a visible route. (Fix 2026-08-11.)
+        let route_metadata = {
+            let c = &sc.candidate;
+            let rm = shared_rs::candidates::RouteMetadata {
+                pool_addresses: c.pool_addresses.clone(),
+                token_addresses: c.token_addresses.clone(),
+                dex_adapters: c.dex_adapters.clone(),
+                decimals: Default::default(),
+            };
+            if rm.is_populated() {
+                Some(rm)
+            } else {
+                let fallback =
+                    crate::persistence::build_route_metadata_from_plan(&sc.route_plan);
+                if fallback.is_populated() { Some(fallback) } else { None }
+            }
+        };
+        let route_ref = route_metadata.as_ref();
         let label = sc.label;
         let label_str = label.as_str();
 
@@ -963,7 +986,7 @@ impl Orchestrator {
             );
             self.ctx
                 .emitter
-                .emit_rejected(&opp_with_reason, label, &reason_owned)
+                .emit_rejected(&opp_with_reason, label, &reason_owned, route_ref)
                 .await?;
             return Ok(());
         }
@@ -996,7 +1019,7 @@ impl Orchestrator {
             );
             self.ctx
                 .emitter
-                .emit_rejected(&opp_with_reason, label, &reason)
+                .emit_rejected(&opp_with_reason, label, &reason, route_ref)
                 .await?;
             return Ok(());
         };
@@ -1072,7 +1095,7 @@ impl Orchestrator {
                     expected_profit_usd = ?opp.expected_profit_usd,
                     net_expected_profit_usd = ?opp.net_expected_profit_usd,
                 );
-                self.ctx.emitter.emit_rejected(&opp, label, &reason).await?;
+                self.ctx.emitter.emit_rejected(&opp, label, &reason, route_ref).await?;
             }
 
             ConfigGateOutcome::StrategyDisabled { strategy_kind: sk } => {
@@ -1096,7 +1119,7 @@ impl Orchestrator {
                     expected_profit_usd = ?opp.expected_profit_usd,
                     net_expected_profit_usd = ?opp.net_expected_profit_usd,
                 );
-                self.ctx.emitter.emit_rejected(&opp, label, &reason).await?;
+                self.ctx.emitter.emit_rejected(&opp, label, &reason, route_ref).await?;
             }
 
             ConfigGateOutcome::StrategyConfigGateBlocked { reason } => {
@@ -1123,7 +1146,7 @@ impl Orchestrator {
                 );
                 self.ctx
                     .emitter
-                    .emit_rejected(&opp, label, &reason_str)
+                    .emit_rejected(&opp, label, &reason_str, route_ref)
                     .await?;
             }
 
@@ -1161,7 +1184,7 @@ impl Orchestrator {
                     );
                     self.ctx
                         .emitter
-                        .emit_rejected(&opp, label, &reason_str)
+                        .emit_rejected(&opp, label, &reason_str, route_ref)
                         .await?;
                 } else {
                     // Passed all spine gates.
@@ -1204,7 +1227,7 @@ impl Orchestrator {
                                 );
                                 self.ctx
                                     .emitter
-                                    .emit_rejected(&opp, label, &reason_str)
+                                    .emit_rejected(&opp, label, &reason_str, route_ref)
                                     .await?;
                                 return Ok(());
                             }
@@ -1225,43 +1248,6 @@ impl Orchestrator {
                     // the emitter actually published. Previously it incremented
                     // BEFORE the emit call — a dedup hit or PG failure still counted
                     // as "published", inflating the dashboard counter vs reality.
-                    //
-                    // Build the multi-hop route topology for emit_accepted so the
-                    // exchange dashboard's multi-leg A→B view + sim-ctl A1
-                    // enrichment get real route_metadata. Prefer the
-                    // OpportunityCandidate's populated arrays (the V2 engines fill
-                    // pool_addresses/token_addresses/dex_adapters from the decoded
-                    // intent); fall back to route_plan legs when those are empty.
-                    // (Root-cause fix 2026-08-10: previously emit_accepted always
-                    // passed None, so route_metadata was always '{}'.)
-                    let c = &sc.candidate;
-                    let route_metadata = shared_rs::candidates::RouteMetadata {
-                        pool_addresses: c.pool_addresses.clone(),
-                        token_addresses: c.token_addresses.clone(),
-                        dex_adapters: c.dex_adapters.clone(),
-                        decimals: Default::default(),
-                    };
-                    let route_metadata = if route_metadata.is_populated() {
-                        route_metadata
-                    } else {
-                        crate::persistence::build_route_metadata_from_plan(&sc.route_plan)
-                    };
-                    let route_ref = if route_metadata.is_populated() {
-                        Some(&route_metadata)
-                    } else {
-                        None
-                    };
-                    tracing::info!(
-                        event = "orchestrator.route_metadata_diag",
-                        strategy = label.as_str(),
-                        rp_legs = sc.route_plan.legs.len(),
-                        cand_pools = c.pool_addresses.len(),
-                        cand_tokens = c.token_addresses.len(),
-                        cand_dexes = c.dex_adapters.len(),
-                        rm_pools = route_metadata.pool_addresses.len(),
-                        rm_tokens = route_metadata.token_addresses.len(),
-                        rm_used = route_ref.is_some(),
-                    );
                     let emit_outcome = self
                         .ctx
                         .emitter

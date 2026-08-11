@@ -296,6 +296,7 @@ impl OpportunityEmitter {
         opportunity: &Opportunity,
         strategy_label: StrategyLabel,
         rejection_reason: &str,
+        route: Option<&shared_rs::candidates::RouteMetadata>,
     ) -> anyhow::Result<EmitOutcome> {
         // Dry-run (shadow mode): log + record, no I/O.
         if self.dry_run {
@@ -323,7 +324,7 @@ impl OpportunityEmitter {
         let mut rejected = opportunity.clone();
         rejected.rejection_reason = Some(rejection_reason.to_owned());
 
-        let pg_ok = self.try_insert_pg(&rejected).await;
+        let pg_ok = self.try_insert_pg_with_route(&rejected, route).await;
 
         // ── Redis publish ─────────────────────────────────────────────────
         let mut redis = self.redis.clone();
@@ -459,27 +460,18 @@ impl OpportunityEmitter {
         }
     }
 
-    /// Attempts a PG insert and updates the `db_persisted` / `db_errors` counters.
+    /// Attempts a PG insert WITH route metadata and updates the `db_persisted` /
+    /// `db_errors` counters.
     ///
     /// Returns:
     /// - `PersistedAndPublished` → insert succeeded (caller still does Redis publish).
     /// - `DbError` → insert failed (caller still does Redis publish).
     /// - `NoDbConfigured` → `self.pool` is `None`.
     ///
-    /// Named `try_insert_pg` and returning the pre-publish outcome to keep
-    /// the counter semantics honest: `db_persisted` is only incremented when
-    /// the PG write actually succeeded.
-    async fn try_insert_pg(&self, opp: &Opportunity) -> EmitOutcome {
-        self.try_insert_pg_with_route(opp, None).await
-    }
-
-    /// Same as [`try_insert_pg`] but persists complete route metadata alongside
-    /// the opportunity (G-SIM-1 PR-B2b Fase 2 A1).
-    ///
-    /// When `route` is `Some` and populated, the `route_metadata` JSONB column
-    /// is written with the full multi-hop topology so sim-ctl can reconstruct
-    /// an `OpportunityCandidate` via the A1 enrichment path. When `None` or
-    /// empty, the column defaults to `'{}'::jsonb` (same as legacy).
+    /// Named `try_insert_pg_with_route` and returning the pre-publish outcome to
+    /// keep the counter semantics honest: `db_persisted` is only incremented when
+    /// the PG write actually succeeded. Pass `None` for `route` to persist without
+    /// route_metadata (legacy behavior).
     async fn try_insert_pg_with_route(
         &self,
         opp: &Opportunity,
