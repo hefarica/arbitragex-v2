@@ -789,8 +789,56 @@ app.get("/admin/audit", async (c) => {
   });
   const text = await upstream.text();
   c.header("content-type", upstream.headers.get("content-type") ?? "application/json");
+
+  // A-01 defense-in-depth: mask PII in the response only. The append-only
+  // store upstream is untouched. IP → /48 (v6) or /24 (v4); actor → SHA-256
+  // pseudonym so the same identity renders consistently without the email.
+  if (upstream.status === 200) {
+    try {
+      const parsed = JSON.parse(text);
+      if (parsed && Array.isArray(parsed.items)) {
+        parsed.items = await Promise.all(parsed.items.map(redactAuditRow));
+        return c.body(JSON.stringify(parsed), 200 as any);
+      }
+    } catch {
+      // unexpected shape (not rows JSON) → verbatim passthrough
+    }
+  }
   return c.body(text, upstream.status as any);
 });
+
+// A-01 PII redaction helpers (edge response masking; store stays byte-identical).
+async function redactAuditRow(
+  row: Record<string, unknown> | null,
+): Promise<Record<string, unknown> | null> {
+  if (!row || typeof row !== "object") return row;
+  const out: Record<string, unknown> = { ...row };
+  const ipVal = out.ip_address;
+  if (typeof ipVal === "string") out.ip_address = redactIp(ipVal);
+  const actorVal = out.actor;
+  if (typeof actorVal === "string" && actorVal.length > 0) out.actor = await hashActor(actorVal);
+  return out;
+}
+
+function redactIp(ip: string): string {
+  if (ip.includes(":")) {
+    return `${ip.split(":").slice(0, 3).join(":")}:x:x/48`;
+  }
+  const octets = ip.split(".");
+  if (octets.length === 4) return `${octets[0]}.${octets[1]}.${octets[2]}.x/24`;
+  return "redacted";
+}
+
+async function hashActor(actor: string): Promise<string> {
+  // Unsalted SHA-256 pseudonym for consistent rendering. NOTE: for irreversible
+  // redaction of low-entropy identifiers (emails), prefer a keyed HMAC at the
+  // write source — tracked as an A-01 residual follow-up.
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(actor));
+  const hex = Array.from(new Uint8Array(digest))
+    .map((b) => b.toString(16).padStart(2, "0"))
+    .join("");
+  return `actor:${hex.slice(0, 12)}`;
+}
 
 // Trading Config — public read of operator-tunable strategy params (chain-scoped).
 app.get("/api/trading-config", async (c) => {

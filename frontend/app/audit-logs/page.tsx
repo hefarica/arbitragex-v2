@@ -1,55 +1,34 @@
-import { AlertCircleIcon } from "lucide-react";
+import { AuditLogsClient } from "@/features/audit-logs/AuditLogsClient";
 
-import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
-import { FocusOnMount } from "@/components/focus-on-mount";
-import { PageHeader } from "@/components/page-header";
-import { AuditLogsTable } from "@/features/audit-logs/AuditLogsTable";
-import { AuditLogsEmpty } from "@/features/audit-logs/AuditLogsEmpty";
-import { getAuditLogs } from "@/lib/api-client";
-import { fmtTime } from "@/lib/formatters";
-
+// A-01: this page no longer fetches audit rows server-side (which required
+// injecting process.env.ARBX_ADMIN_TOKEN and leaked admin rows to anonymous
+// visitors). It is now a thin Server Component that forwards search params to a
+// client component; the client fetches via the httpOnly session cookie.
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
-export default async function AuditLogsPage({
+function firstParam(v: string | string[] | undefined): string | undefined {
+  if (Array.isArray(v)) return v[0];
+  return v;
+}
+
+export default function AuditLogsPage({
   searchParams,
 }: {
   searchParams: { [key: string]: string | string[] | undefined };
 }) {
-  const limit = searchParams.limit ? Number(searchParams.limit) : 100;
-  const action = typeof searchParams.action === "string" ? searchParams.action : undefined;
-  const actor = typeof searchParams.actor === "string" ? searchParams.actor : undefined;
-  const targetKind = typeof searchParams.target_kind === "string" ? searchParams.target_kind : undefined;
-
-  const res = await getAuditLogs(limit, undefined, action, actor, targetKind);
+  const limitRaw = firstParam(searchParams.limit);
+  const limit = limitRaw ? Number(limitRaw) : 100;
+  const action = firstParam(searchParams.action);
+  const actor = firstParam(searchParams.actor);
+  const targetKind = firstParam(searchParams.target_kind);
 
   return (
-    <>
-      <PageHeader
-        title="Audit Logs"
-        lede="Immutable record of administrative and edge auth actions. Strict append-only architecture."
-        meta={res.ok ? [
-          `${res.data.items.length} rows fetched`,
-          `snapshot ${fmtTime(res.data.ts)}`,
-        ] : undefined}
-        showRefresh
-      />
-
-      {!res.ok ? (
-        <FocusOnMount>
-          <Alert variant="destructive">
-            <AlertCircleIcon />
-            <AlertTitle>edge error</AlertTitle>
-            <AlertDescription>
-              <code className="font-mono text-xs">{res.error}</code>
-            </AlertDescription>
-          </Alert>
-        </FocusOnMount>
-      ) : res.data.items.length === 0 ? (
-        <AuditLogsEmpty />
-      ) : (
-        <AuditLogsTable items={res.data.items} />
-      )}
-    </>
+    <AuditLogsClient
+      limit={Number.isFinite(limit) ? limit : 100}
+      action={action}
+      actor={actor}
+      targetKind={targetKind}
+    />
   );
 }
