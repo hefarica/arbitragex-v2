@@ -958,6 +958,15 @@ impl Orchestrator {
             }
         };
         let route_ref = route_metadata.as_ref();
+        tracing::info!(
+            event = "orchestrator.route_build_diag",
+            strategy = sc.label.as_str(),
+            cand_pools = sc.candidate.pool_addresses.len(),
+            cand_tokens = sc.candidate.token_addresses.len(),
+            cand_dexes = sc.candidate.dex_adapters.len(),
+            rp_legs = sc.route_plan.legs.len(),
+            rm_used = route_ref.is_some(),
+        );
         let label = sc.label;
         let label_str = label.as_str();
 
