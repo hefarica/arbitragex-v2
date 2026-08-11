@@ -1572,6 +1572,20 @@ if (pool) {
 let paperArchiver: PaperTradeArchiver | null = null;
 if (pool && (process.env["ARBX_PAPER_ARCHIVER_MODE"] ?? "off").toLowerCase() === "on") {
   paperArchiver = new PaperTradeArchiver({ redisUrl: REDIS_URL, pool, logger });
+  // A-02: seed the outlier-guard capital from trading_config (best-effort;
+  // falls back to the $1000 floor if the read fails or capital is 0).
+  void (async () => {
+    try {
+      const r = await pool.query(
+        `SELECT capital_usd::float AS capital FROM trading_config WHERE enabled = true ORDER BY chain_id LIMIT 1`,
+      );
+      const cap = Number(r.rows[0]?.capital ?? 0);
+      paperArchiver?.setCapitalUsd(cap);
+      logger.info({ event: "paper_archiver.capital_seed", capital_usd: cap }, "A-02 outlier guard capital seeded");
+    } catch (e) {
+      logger.warn({ event: "paper_archiver.capital_seed_err", err: (e as Error).message }, "A-02 capital seed failed — using floor");
+    }
+  })();
   paperArchiver.start().catch((e) =>
     logger.error({ event: "paper_archiver.start_err", err: (e as Error).message },
       "paper_trade_runs archiver failed to start"),

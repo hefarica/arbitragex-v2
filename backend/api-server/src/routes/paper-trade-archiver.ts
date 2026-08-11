@@ -24,6 +24,7 @@ import { createHash } from "node:crypto";
 import { Redis } from "ioredis";
 import pg from "pg";
 import { OpportunitySchema, type Opportunity } from "@arbx/shared";
+import { isOutlierProfit, DEFAULT_OUTLIER_MULT, DEFAULT_CAPITAL_FLOOR_USD } from "../lib/paper-outlier-guard.js";
 
 const STREAM_IN = "arbx:opps:detected";
 const GROUP = "paper-archiver-g0";
@@ -42,6 +43,15 @@ export interface PaperTradeArchiverDeps {
   /** Shared pg pool from the api-server (DATABASE_URL must be configured). */
   pool: pg.Pool;
   logger: ArchiverLogger;
+  /**
+   * A-02 outlier guard: any |sim_expected_profit_usd| above this many × the
+   * operator's capital is quarantined (token-as-USD from unsized engines /
+   * Rhai `profit_usd_hint` smells exactly like this — $49–59M on a $1k capital).
+   * Default 10×. The capital floor (default $1000) bounds the threshold when
+   * trading_config.capital_usd is unavailable.
+   */
+  outlierMultiplier?: number;
+  capitalFloorUsd?: number;
 }
 
 /** Extract the value for `key` from a flat XREAD kv array [k1,v1,k2,v2,...]. */
@@ -69,8 +79,19 @@ export class PaperTradeArchiver {
   private redis: Redis | null = null;
   private running = false;
   private stopPromise: Promise<void> | null = null;
+  /**
+   * A-02: operator capital (USD) for the outlier guard. Refreshed from
+   * trading_config via setCapitalUsd (called by index.ts on boot + config
+   * reload). 0/unset → isOutlierProfit falls back to the floor.
+   */
+  private capitalUsd = 0;
 
   constructor(private readonly deps: PaperTradeArchiverDeps) {}
+
+  /** A-02: update the capital floor used by the outlier guard. */
+  setCapitalUsd(usd: number): void {
+    this.capitalUsd = Number.isFinite(usd) && usd > 0 ? usd : 0;
+  }
 
   async start(): Promise<void> {
     if (this.running) return;
@@ -148,6 +169,27 @@ export class PaperTradeArchiver {
       this.deps.logger.info(
         { event: "paper_archiver.skip_no_sim_profit", opportunity_id: opp.id },
         "no sim profit in payload — skipped (not fabricated)",
+      );
+      await this.redis.xack(STREAM_IN, GROUP, id).catch(() => {});
+      return;
+    }
+
+    // A-02 outlier guard: some unsized emit paths (Rhai profit_usd_hint,
+    // backrun/cex_dex placeholders) can carry token-as-USD magnitudes ($49–59M
+    // on a $1k capital). Quarantine implausible values rather than letting them
+    // contaminate the paper-history average ($10M fictitious). SKIP + XACK.
+    const mult = this.deps.outlierMultiplier ?? DEFAULT_OUTLIER_MULT;
+    const floor = this.deps.capitalFloorUsd ?? DEFAULT_CAPITAL_FLOOR_USD;
+    if (isOutlierProfit(simProfit, this.capitalUsd, mult, floor)) {
+      this.deps.logger.warn(
+        {
+          event: "paper_archiver.outlier_quarantined",
+          opportunity_id: opp.id,
+          sim_profit_usd: simProfit,
+          capital_usd: this.capitalUsd,
+          threshold: mult,
+        },
+        "sim profit exceeds outlier threshold — quarantined (token-as-USD suspected)",
       );
       await this.redis.xack(STREAM_IN, GROUP, id).catch(() => {});
       return;
