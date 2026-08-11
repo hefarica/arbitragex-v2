@@ -1226,19 +1226,42 @@ impl Orchestrator {
                     // BEFORE the emit call — a dedup hit or PG failure still counted
                     // as "published", inflating the dashboard counter vs reality.
                     //
-                    // Build the multi-hop route topology from the scored candidate's
-                    // RoutePlan so emit_accepted persists route_metadata (multi-leg
-                    // A→B for the exchange dashboard + sim-ctl A1 enrichment). The
-                    // V2 engines (dex_engine etc.) populate route_plan.legs from the
-                    // decoded intent; we thread that topology through instead of
-                    // discarding it at emit time (root-cause fix 2026-08-10).
-                    let route_metadata =
-                        crate::persistence::build_route_metadata_from_plan(&sc.route_plan);
+                    // Build the multi-hop route topology for emit_accepted so the
+                    // exchange dashboard's multi-leg A→B view + sim-ctl A1
+                    // enrichment get real route_metadata. Prefer the
+                    // OpportunityCandidate's populated arrays (the V2 engines fill
+                    // pool_addresses/token_addresses/dex_adapters from the decoded
+                    // intent); fall back to route_plan legs when those are empty.
+                    // (Root-cause fix 2026-08-10: previously emit_accepted always
+                    // passed None, so route_metadata was always '{}'.)
+                    let c = &sc.candidate;
+                    let route_metadata = shared_rs::candidates::RouteMetadata {
+                        pool_addresses: c.pool_addresses.clone(),
+                        token_addresses: c.token_addresses.clone(),
+                        dex_adapters: c.dex_adapters.clone(),
+                        decimals: Default::default(),
+                    };
+                    let route_metadata = if route_metadata.is_populated() {
+                        route_metadata
+                    } else {
+                        crate::persistence::build_route_metadata_from_plan(&sc.route_plan)
+                    };
                     let route_ref = if route_metadata.is_populated() {
                         Some(&route_metadata)
                     } else {
                         None
                     };
+                    tracing::info!(
+                        event = "orchestrator.route_metadata_diag",
+                        strategy = label.as_str(),
+                        rp_legs = sc.route_plan.legs.len(),
+                        cand_pools = c.pool_addresses.len(),
+                        cand_tokens = c.token_addresses.len(),
+                        cand_dexes = c.dex_adapters.len(),
+                        rm_pools = route_metadata.pool_addresses.len(),
+                        rm_tokens = route_metadata.token_addresses.len(),
+                        rm_used = route_ref.is_some(),
+                    );
                     let emit_outcome = self
                         .ctx
                         .emitter
