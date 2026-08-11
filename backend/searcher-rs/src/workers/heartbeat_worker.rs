@@ -55,6 +55,10 @@ pub struct HeartbeatSnapshot {
     pub pending_received: u64,
     #[serde(default)]
     pub decoded_ok: u64,
+    /// N-01: V2 path decode failures (route_decoder errors). Visible so the
+    /// decode bottleneck is never a silent drown.
+    #[serde(default)]
+    pub decoded_err: u64,
     #[serde(default)]
     pub enriched_v2: u64,
     #[serde(default)]
@@ -232,6 +236,7 @@ impl HeartbeatWorker {
             let c = chain_counters(self.chain_id);
             let pending = c.pending_received.swap(0, Ordering::Relaxed);
             let decoded = c.decoded_ok.swap(0, Ordering::Relaxed);
+            let decoded_err = c.decoded_err.swap(0, Ordering::Relaxed);
             let enriched_v2 = c.enriched_v2.swap(0, Ordering::Relaxed);
             let enriched_v3 = c.enriched_v3.swap(0, Ordering::Relaxed);
             let gate_token_na = c.gate_token_not_allowed.swap(0, Ordering::Relaxed);
@@ -270,6 +275,7 @@ impl HeartbeatWorker {
                 // In-memory pipeline counters (delta this period).
                 pending_received = pending,
                 decoded_ok = decoded,
+                decoded_err = decoded_err,
                 enriched_v2 = enriched_v2,
                 enriched_v3 = enriched_v3,
                 gate_token_not_allowed = gate_token_na,
@@ -316,6 +322,7 @@ impl HeartbeatWorker {
                 pg_period_profit_pos: pg_profit_pos,
                 pending_received: pending,
                 decoded_ok: decoded,
+                decoded_err,
                 enriched_v2,
                 enriched_v3,
                 gate_token_not_allowed: gate_token_na,

@@ -1385,6 +1385,11 @@ async fn decode_and_score_tx<'a>(
         ) {
             Ok(v) => v,
             Err(e) => {
+                // N-01: surface V2 decode failures in the heartbeat so the
+                // bottleneck is visible (not a silent drown like stage-1 was).
+                chain_counters(client.chain_id)
+                    .decoded_err
+                    .fetch_add(1, Ordering::Relaxed);
                 warn!(
                     event = "scanner.orch_decode_failed",
                     hash = %hash,
@@ -1397,6 +1402,14 @@ async fn decode_and_score_tx<'a>(
 
         // ── TASK 1 log #1: v2.route_decoder.done ─────────────────────────
         // Emitted once after decode, summarising all intents for this tx.
+        // N-01: increment decoded_ok so the heartbeat reflects the V2 path.
+        // Without this the legacy counter stays 0 (it's incremented below in
+        // code the V2 early-return skips), making the pipeline look dead.
+        if !intents.is_empty() {
+            chain_counters(client.chain_id)
+                .decoded_ok
+                .fetch_add(1, Ordering::Relaxed);
+        }
         info!(
             event = "v2.route_decoder.done",
             chain_id = client.chain_id,
