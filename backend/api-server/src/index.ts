@@ -12,6 +12,7 @@ import { buildOperatorRouter } from "./routes/operator.js";
 import { buildCartridgeForgeRouter } from "./routes/cartridge-forge.js";
 import { z } from "zod";
 import { clampBucketMinutes, clampHours, rowToPoint } from "./recon-timeseries.js";
+import { redactAuditRow } from "./lib/audit-redact.js";
 import { verifyAll } from "./readiness/verifiers/index.js";
 import type { ReadinessReport } from "./readiness/types.js";
 import {
@@ -493,7 +494,11 @@ app.get("/admin/audit", requireAdminToken(ARBX_ADMIN_TOKEN), async (req, res) =>
     const nextCursor = q.rows.length === limit ? q.rows[q.rows.length - 1].created_at.toISOString() : null;
     
     res.status(200).json({
-      items: q.rows,
+      // A-01: defense-in-depth redaction at the read boundary — raw/legacy IPs
+      // collapse to /48-/24 and the operator email in `actor` is hashed (also
+      // catches raw IPs in `target_id`). The edge worker masks again on egress;
+      // this protects every consumer at the data origin. Append-only store untouched.
+      items: q.rows.map(redactAuditRow),
       next_cursor: nextCursor,
       ts: new Date().toISOString()
     });

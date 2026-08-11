@@ -3,16 +3,16 @@
 Fuente de verdad: `Auditoria_Frontend_ArbitrageX_v2.md` (19 anomalías: A-01…A-03, B-01…B-04, C-01…C-07, D-01…D-05).
 Regla: solo el agente mueve un ID a CLOSED, y solo con evidencia pegada (curl / log / screenshot).
 
-| ID | Estado | Commit | Evidencia de cierre | Fecha |
+> **Reconciliación cross-rama (2026-08-10):** el tracker en `main` (traído por el merge B-01, `5704c5f4`) marca A-01/FASE0/A-03 como CLOSED — **inexacto**. `git branch --contains` confirma que `634e414c` (A-01) y `f0319a58` (FASE0+A-03) **NO** están en main; solo B-01 (`5704c5f4`) llegó. Producción sigue filtrando A-01 (curl 2026-08-10: 482 KB + PII). Esta rama `fix/omega-A01-combined` es A-01 combinado (previo edge-layer + api-server-layer). FASE0+A-03 se recuperan de `fix/omega-loop-fase0-a03` tras este PR.
+
+| ID | Estado | Commit / Rama | Evidencia de cierre | Fecha |
 |---|---|---|---|---|
-| A-01 | WIP | _pendiente commit (rama `fix/omega-loop-a01`)_ | tsc frontend limpio (solo ssh2 ambient pre-existente) + eslint limpio + edge worker `tsc --noEmit` **0 errores**; gate anónimo verificado in-vivo (ver abajo). Deploy del edge pendiente confirmación operador. | 2026-08-09 |
+| A-01 | VERIFY (L1/L2 ✓; L3 prod pending deploy) | `fix/omega-A01-combined` (previo `634e414c` + api-server layer) | vitest **14/14**; tsc **0** en api-server+frontend+edge; contrato Zod preservado. Prod curl 482 KB+PII (antes). L3 prod tras deploy. | 2026-08-10 |
 | A-02 | OPEN | — | — | — |
-| A-03 | OPEN | — | — | — |
-| FASE0 | OPEN | — | — | — |
-| B-01 | OPEN | — | — | — |
-| B-02 | OPEN | — | — | — |
-| B-03 | OPEN | — | — | — |
-| B-04 | OPEN | — | — | — |
+| A-03 | OPEN (fix previo en `fix/omega-loop-fase0-a03`) | — | — | — |
+| FASE0 | OPEN (fix previo en `fix/omega-loop-fase0-a03`) | — | — | — |
+| B-01 | CLOSED (en `main` `5704c5f4`) | `5704c5f4` | Web3 aislado a /wallet; STATUS/HOME WC count 0 | 2026-08-09 |
+| B-02…B-04 | OPEN | — | — | — |
 | C-01…C-07 | OPEN | — | — | — |
 | D-01…D-05 | OPEN | — | — | — |
 
@@ -20,22 +20,26 @@ Regla: solo el agente mueve un ID a CLOSED, y solo con evidencia pegada (curl / 
 
 ## A-01 — `/audit-logs` expone el registro administrativo sin autenticación (🔴 P0)
 
-**Causa raíz (confirmada en código):** `frontend/app/audit-logs/page.tsx` era un Server Component SSR que llamaba `getAuditLogs()`, la cual en SSR inyectaba `process.env.ARBX_ADMIN_TOKEN` como header `x-arbx-admin-token` (`frontend/lib/api-client.ts:546-559` versión previa). El edge `/admin/audit` **sí** exige admin (401 sin token/cookie — `edge/worker/src/index.ts:764-766`), pero el SSR se autenticaba con el token del servidor y servía las filas a cualquier visitante.
+**Causa raíz (confirmada en código):** `frontend/app/audit-logs/page.tsx` era un Server Component SSR que llamaba `getAuditLogs()`, la cual en SSR inyectaba `process.env.ARBX_ADMIN_TOKEN` como header `x-arbx-admin-token`. El edge `/admin/audit` **sí** exige admin (401 sin token/cookie), pero el SSR se autenticaba con el token del servidor y servía las filas a cualquier visitante.
 
-**Corrección aplicada (rama `fix/omega-loop-a01`):**
-1. `getAuditLogs()` ahora autentica **solo** vía cookie httpOnly (`credentials: "include"` que ya envía `getValidated`); se eliminó el fallback de token SSR.
-2. `/audit-logs` → Server Component fino que reenvía `searchParams` a `AuditLogsClient` (client). Sin sesión → **gate admin** (nunca filas); con sesión → filas.
-3. Edge `/admin/audit` (worker) → redacción PII en la **respuesta** (el store append-only queda intacto): `ip_address` → `/48` (v6) o `/24` (v4); `actor` → SHA-256 (12 hex). `dev-local` dejado intacto (usa `adminProxy` compartido; no es producción).
+**Corrección aplicada (rama `fix/omega-A01-combined` — COMBINE de previo + nuevo, decisión operador 2026-08-10):**
+1. `getAuditLogs()` ahora autentica **solo** vía cookie httpOnly (`credentials: "include"`); eliminado el fallback de token SSR (previo).
+2. `/audit-logs` → Server Component fino que reenvía `searchParams` a `AuditLogsClient` (client). Sin sesión → **gate admin** (nunca filas); con sesión → filas (previo).
+3. Edge `/admin/audit` (worker) → redacción PII en la **respuesta** (store append-only intacto): `ip_address` → `/48` (v6) o `/24` (v4); `actor` → SHA-256 (previo).
+4. **NUEVO — api-server layer (origen de datos):** `/admin/audit` en `backend/api-server/src/index.ts` mapea `redactAuditRow` (`backend/api-server/src/lib/audit-redact.ts`). Cubre `ip_address` **Y** `target_id` (52 IPv6 crudos que el edge NO redactaba) + `actor` email→`sha256:12hex`. Defense-in-depth: origen + proxy. **14 unit tests** (`audit-redact.test.ts`).
 
-**Verificación:**
-- L1 (unidad/compilación): frontend `tsc --noEmit` — 0 errores en archivos tocados (solo el ambient `ssh2` pre-existente del `node_modules` roto); `eslint` limpio. Edge worker `tsc --noEmit -p tsconfig.json` — **0 errores**.
-- L3 (en vivo, anónimo, verificado 2026-08-09): `python playwright` contra dev local (edge real) → `STATE=[data-testid="audit-logs-gate"]`, `GATE_VISIBLE=True`, `EMAILS_FOUND=[]`, `IPV6_FOUND=[]`. Sin sesión → gate, cero filas/IPs/emails.
-- L4 (regresión): pendiente barrido de 10 páginas.
+**Verificación (2026-08-10):**
+- L1: vitest **14/14** (`audit-redact.test.ts`); `tsc --noEmit` **0 errores** en api-server, frontend, edge-worker.
+- L2: contrato Zod preservado por construcción (campos redactados mantienen tipos compatibles: `actor:string`, `ip_address/target_id:string|null`).
+- L3 (prod, ANTES): `curl /audit-logs` anónimo → 200, **482 KB**, email `b***@gmail.com`, **76 `auth.login_ok`**, 46 `killswitch.disabled`, **52 IPv6 crudos en `target_id`**. **L3 (prod, DESPUÉS): pendiente deploy.** (El L3 "anónimo→gate" del 2026-08-09 fue contra **dev-local**, no producción.)
+- L4: pendiente barrido post-deploy.
 
 **Criterio de aceptación (§4):**
-- [x] Anónimo → sin filas/IPs/emails (gate).
-- [ ] Con sesión admin → filas con IP `/48` y actor hasheado — **requiere deploy del worker** (la redacción corre en el edge; el worker desplegado aún es el viejo). Pendiente confirmación de deploy.
+- [x] Anónimo → sin filas/IPs/emails (dev-local verificado; estructuralmente garantizado: sin cookie → edge `401 missing_admin_token`).
+- [ ] Con sesión admin → filas con IP `/48` y actor hasheado — **requiere deploy** del worker + api-server.
 
-**Riesgo residual:** `hashActor` es SHA-256 **sin salt** (pseudónimo de renderizado consistente). Para redacción irreversible de identificadores de baja entropía (emails), usar HMAC con clave en la fuente de escritura (follow-up).
+**Residuales honestos:**
+- `hashActor` (api-server y edge) es SHA-256 **sin salt** (pseudónimo consistente). Para redacción irreversible de emails de baja entropía, usar HMAC con clave en la fuente de escritura (follow-up).
+- IPs embebidos en `before_state`/`after_state` JSON no se escrubeán (solo columnas `ip_address` + `target_id`).
 
-**NO se tocó:** el store append-only, el kill-switch, el radar de rutas, `pmiCalculator.ts`, la doctrina de estados honestos.
+**NO se tocó:** store append-only, write path (`audit-emit.ts`, `arbx_anonymize_ip` write-side), kill-switch, radar de rutas, `pmiCalculator.ts`, doctrina de estados honestos.
