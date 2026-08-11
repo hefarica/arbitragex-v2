@@ -54,8 +54,13 @@ pub async fn insert_opportunity_with_route(
     let route_json: serde_json::Value = match route {
         Some(rm) if rm.is_populated() => {
             let hops = rm.dex_adapters.len();
-            let structurally_ok =
-                rm.token_addresses.len() == hops + 1 && rm.pool_addresses.len() == hops;
+            // Token path must be consistent (hops+1). Pools may be FEWER than
+            // hops — some legs legitimately have no resolved pool/factory at
+            // scan time (build_route_metadata_from_plan skips those), and the
+            // merge in orchestrator may leave pools shorter than hops. The token
+            // path is the load-bearing invariant; pools/dexes are advisory.
+            let structurally_ok = rm.token_addresses.len() == hops + 1
+                && rm.pool_addresses.len() <= hops;
             if !structurally_ok {
                 tracing::warn!(
                     event = "persist.route_metadata_invalid",

@@ -942,20 +942,39 @@ impl Orchestrator {
         // orchestrator rejects most live opps (no_price_oracle /
         // spot_product_le_one); those still deserve a visible route. (Fix 2026-08-11.)
         let route_metadata = {
+            // Build from BOTH sources and pick the most complete token path.
+            // sc.candidate carries pools/dexes (engines populate these) but
+            // often only the entry/exit tokens (e.g. triangular: [A, A]). The
+            // route_plan.legs carry the per-hop token_in/token_out, which yields
+            // the full traversal path (A→B→C→A). Prefer whichever source gives
+            // the LONGER token path; merge so pools/dexes come from candidate
+            // when the plan legs lack them.
             let c = &sc.candidate;
-            let rm = shared_rs::candidates::RouteMetadata {
+            let from_candidate = shared_rs::candidates::RouteMetadata {
                 pool_addresses: c.pool_addresses.clone(),
                 token_addresses: c.token_addresses.clone(),
                 dex_adapters: c.dex_adapters.clone(),
                 decimals: Default::default(),
             };
-            if rm.is_populated() {
-                Some(rm)
+            let from_plan =
+                crate::persistence::build_route_metadata_from_plan(&sc.route_plan);
+            // Prefer the source with the longer (more complete) token path.
+            let mut chosen = if from_plan.token_addresses.len()
+                > from_candidate.token_addresses.len()
+            {
+                from_plan
             } else {
-                let fallback =
-                    crate::persistence::build_route_metadata_from_plan(&sc.route_plan);
-                if fallback.is_populated() { Some(fallback) } else { None }
+                from_candidate
+            };
+            // Backfill pools/dexes from candidate if the chosen plan source
+            // left them shorter than the token path would imply.
+            if chosen.pool_addresses.len() < chosen.dex_adapters.len()
+                && c.pool_addresses.len() >= chosen.dex_adapters.len()
+            {
+                chosen.pool_addresses = c.pool_addresses.clone();
+                chosen.dex_adapters = c.dex_adapters.clone();
             }
+            if chosen.is_populated() { Some(chosen) } else { None }
         };
         let route_ref = route_metadata.as_ref();
         tracing::info!(
