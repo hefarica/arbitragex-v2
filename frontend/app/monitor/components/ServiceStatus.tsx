@@ -138,9 +138,9 @@ function useServiceHealth() {
     try {
       const base = process.env.NEXT_PUBLIC_EDGE_URL ?? "";
 
-      // Verificar health endpoint
+      // /api/status sirve { services: { <name>: { ok, status } }, killswitch, ... }
       const startTime = performance.now();
-      const res = await fetch(`${base.replace(/\/$/, "")}/health`, {
+      const res = await fetch(`${base.replace(/\/$/, "")}/api/status`, {
         headers: { accept: "application/json" },
         cache: "no-store",
       });
@@ -151,13 +151,13 @@ function useServiceHealth() {
 
         setServices((prev) =>
           prev.map((svc) => {
-            // Mapear estado del health endpoint a nuestros servicios
             const serviceHealth = data.services?.[svc.name];
 
             if (serviceHealth) {
+              // /api/status shape: { ok: boolean, status: number }
               return {
                 ...svc,
-                status: serviceHealth.status === "healthy" ? "running" : serviceHealth.status === "degraded" ? "degraded" : "down",
+                status: serviceHealth.ok ? "running" : "down",
                 latency: svc.name === "api-server" ? latency : serviceHealth.latency,
                 lastPing: new Date().toISOString(),
               };

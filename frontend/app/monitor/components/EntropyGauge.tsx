@@ -7,7 +7,7 @@ import { ThermometerIcon, TrendingDownIcon, TrendingUpIcon, ActivityIcon } from 
 import { useSocketIO } from "../hooks/useSocketIO";
 
 interface EntropyGaugeProps {
-  initialValue?: number;
+  initialValue?: number | null;
 }
 
 // Escala de colores basada en nivel de entropía
@@ -149,7 +149,7 @@ function TrendIndicator({
   );
 }
 
-export function EntropyGauge({ initialValue = 0 }: EntropyGaugeProps) {
+export function EntropyGauge({ initialValue = null }: EntropyGaugeProps) {
   const { entropy, isConnected, error } = useSocketIO();
 
   const [previousEntropy, setPreviousEntropy] = useState<number | null>(null);
