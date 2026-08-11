@@ -108,11 +108,11 @@ export default function PoolsPage() {
                 <td className="p-4 border-b border-border font-medium text-info">
                   {pool.token0_symbol ?? "?"}/{pool.token1_symbol ?? "?"}
                 </td>
-                <td className="p-4 border-b border-border">{pool.dex ?? "—"}</td>
+                <td className="p-4 border-b border-border">{pool.dex_name ?? "—"}</td>
                 <td className="p-4 border-b border-border font-mono text-xs text-muted-foreground truncate max-w-[200px]">{pool.address ?? "—"}</td>
                 <td className="p-4 border-b border-border">
-                  <span className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-medium border ${pool.active ? 'bg-success/10 text-success border-success/40' : 'bg-destructive/10 text-destructive border-destructive/40'}`}>
-                    {pool.active ? "ACTIVE" : "DISABLED"}
+                  <span className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-medium border ${pool.is_active ? 'bg-success/10 text-success border-success/40' : 'bg-destructive/10 text-destructive border-destructive/40'}`}>
+                    {pool.is_active ? "ACTIVE" : "DISABLED"}
                   </span>
                 </td>
               </motion.tr>
