@@ -69,9 +69,10 @@ describe("deriveLegs", () => {
     } as Record<string, unknown>);
     const legs = deriveLegs(opp);
     expect(legs).toHaveLength(3);
-    expect(legs[0].token_in).toBe(WETH);
-    expect(legs[0].token_out).toBe(USDC);
-    expect(legs[2].token_out).toBe(WETH); // closes the cycle
+    const [leg0, , leg2] = legs;
+    expect(leg0!.token_in).toBe(WETH);
+    expect(leg0!.token_out).toBe(USDC);
+    expect(leg2!.token_out).toBe(WETH); // closes the cycle
   });
 
   it("falls back to a synthetic 2-leg BUY/SELL when route_metadata is null (R8 honest)", () => {
@@ -88,8 +89,9 @@ describe("deriveLegs", () => {
     } as Record<string, unknown>);
     const legs = deriveLegs(opp);
     expect(legs).toHaveLength(2);
-    expect(legs[0].dex).toBe("uniswap-v2");
-    expect(legs[1].dex).toBe("sushiswap");
+    const [leg0, leg1] = legs;
+    expect(leg0!.dex).toBe("uniswap-v2");
+    expect(leg1!.dex).toBe("sushiswap");
   });
 
   it("returns [] only when there is genuinely no route (no dex_a, no dex_b)", () => {
