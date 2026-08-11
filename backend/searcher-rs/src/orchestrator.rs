@@ -1225,7 +1225,25 @@ impl Orchestrator {
                     // the emitter actually published. Previously it incremented
                     // BEFORE the emit call — a dedup hit or PG failure still counted
                     // as "published", inflating the dashboard counter vs reality.
-                    let emit_outcome = self.ctx.emitter.emit_accepted(&opp, label).await?;
+                    //
+                    // Build the multi-hop route topology from the scored candidate's
+                    // RoutePlan so emit_accepted persists route_metadata (multi-leg
+                    // A→B for the exchange dashboard + sim-ctl A1 enrichment). The
+                    // V2 engines (dex_engine etc.) populate route_plan.legs from the
+                    // decoded intent; we thread that topology through instead of
+                    // discarding it at emit time (root-cause fix 2026-08-10).
+                    let route_metadata =
+                        crate::persistence::build_route_metadata_from_plan(&sc.route_plan);
+                    let route_ref = if route_metadata.is_populated() {
+                        Some(&route_metadata)
+                    } else {
+                        None
+                    };
+                    let emit_outcome = self
+                        .ctx
+                        .emitter
+                        .emit_accepted(&opp, label, route_ref)
+                        .await?;
                     match emit_outcome {
                         EmitOutcome::Published
                         | EmitOutcome::PersistedAndPublished

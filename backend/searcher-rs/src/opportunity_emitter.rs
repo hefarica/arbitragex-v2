@@ -212,6 +212,7 @@ impl OpportunityEmitter {
         &self,
         opportunity: &Opportunity,
         strategy_label: StrategyLabel,
+        route: Option<&shared_rs::candidates::RouteMetadata>,
     ) -> anyhow::Result<EmitOutcome> {
         // Dry-run (shadow mode): log + record, no I/O.
         if self.dry_run {
@@ -254,7 +255,10 @@ impl OpportunityEmitter {
         self.score_and_publish(opportunity).await;
 
         // ── PG write ──────────────────────────────────────────────────────
-        let pg_ok = self.try_insert_pg(opportunity).await;
+        // Thread the multi-hop route topology (when the caller has it) so the
+        // route_metadata JSONB column is populated for sim-ctl A1 enrichment and
+        // the exchange dashboard's multi-leg A→B view.
+        let pg_ok = self.try_insert_pg_with_route(opportunity, route).await;
 
         // ── Redis publish ─────────────────────────────────────────────────
         let mut redis = self.redis.clone();
