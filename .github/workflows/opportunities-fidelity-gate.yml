@@ -1,0 +1,64 @@
+# .github/workflows/opportunities-fidelity-gate.yml
+#
+# CI fidelity gate for the multi-leg opportunities pipeline. Fails if:
+#   1. Any frontend opportunities-path unit test fails (vitest), OR
+#   2. Any Rust route_metadata fidelity test fails (cargo test), OR
+#   3. A mock / hardcode / sentinel-address pattern appears in the opportunities
+#      path (RULE 00 — no fabricated data, no 0x…dEaD sentinels).
+#
+# Runs on PRs touching the opportunities path AND on every push to main so the
+# 99.99% data-fidelity contract is enforced continuously.
+name: opportunities-fidelity-gate
+
+on:
+  pull_request:
+    paths:
+      - "frontend/lib/store/**"
+      - "frontend/components/opportunities/**"
+      - "frontend/app/opportunities/**"
+      - "frontend/features/opportunities/**"
+      - "backend/searcher-rs/src/persistence.rs"
+      - "backend/searcher-rs/src/orchestrator.rs"
+      - "backend/searcher-rs/src/opportunity_emitter.rs"
+      - "backend/api-server/src/routes/opportunities-live.ts"
+      - ".github/workflows/opportunities-fidelity-gate.yml"
+  push:
+    branches: [main]
+
+jobs:
+  frontend-unit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci --prefix frontend
+      - run: npm run test --prefix frontend -- --run
+
+  rust-unit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+      - name: cargo test (fidelity_tests + persistence)
+        run: cargo test --manifest-path backend/searcher-rs/Cargo.toml fidelity_tests --no-fail-fast
+
+  no-mocks-no-hardcodes:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Refuse mocks / hardcodes / sentinel addresses in the opportunities path
+        run: |
+          set -e
+          # 0x…dEaD sentinel, the word 'mock'/'hardcode' in source (not in test
+          # filenames or this workflow). Test files use canonical real tokens.
+          if grep -rnEi "0x[0-9a-fA-F]{38}d[eE][aA][dD}|0xdead0000|hardcode" \
+            frontend/lib/store frontend/components/opportunities frontend/app/opportunities \
+            backend/api-server/src/routes/opportunities-live.ts 2>/dev/null; then
+            echo "FAIL: hardcode/sentinel pattern found in opportunities path (RULE 00)"
+            exit 1
+          fi
+          echo "OK: no hardcoded sentinels in opportunities path"

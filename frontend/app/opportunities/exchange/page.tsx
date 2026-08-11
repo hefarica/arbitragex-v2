@@ -8,9 +8,16 @@ export const dynamic = "force-dynamic";
 async function getInitialOpportunities(): Promise<OpportunitiesSnapshot> {
   const EDGE_URL = process.env.INTERNAL_EDGE_URL || getApiBaseUrl();
   try {
-    const res = await fetch(`${EDGE_URL}/api/opportunities/live`, {
-      cache: "no-store",
-    });
+    // viable_only=false so the SSR snapshot includes ALL recent detections
+    // (rejected + viable), giving the operator a non-empty first paint instead
+    // of a blank grid while the live feed warms up. R8: rows are real PG rows,
+    // never fabricated.
+    const res = await fetch(
+      `${EDGE_URL}/api/opportunities/live?viable_only=false&limit=50`,
+      {
+        cache: "no-store",
+      },
+    );
 
     if (!res.ok) {
       return {

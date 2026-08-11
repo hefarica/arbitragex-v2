@@ -395,3 +395,31 @@ sizing, gates o frontend: *"¿Esto funcionaría correctamente con capital real e
 LIVE_MAINNET?"*. Si la respuesta implica "depende del modo" para la matemática →
 viola §34.1 y se rechaza.
 <!-- END: execution-modes-doctrine -->
+
+---
+
+# 36. DISCIPLINA DE BRANCHES CONCURRENTES (ANTI-CAOS MULTI-AGENTE)
+
+> Anexado de forma NO destructiva (2026-08-11). Previere perder commits cuando
+> múltiples agentes trabajan el mismo clone.
+
+Cuando múltiples agentes (worktrees, sesiones paralelas) operan el mismo
+repositorio, un commit puede aterrizar en la branch equivocada (la branch
+"chica" de otro agente), y `git push origin main` NO empuja tu commit si no
+estabas en `main`.
+
+**Reglas:**
+1. **Antes de commitear**, verifica `git branch --show-current` sea la branch
+   intencional (ej. `main`). Si estás en una branch ajena (`fix/omega-*`,
+   `feat/*`), tu commit no llegará a main con un push de main.
+2. **Si un commit aterrizó en branch ajena**, recupéralo con
+   `git checkout main && git cherry-pick <sha>` (no merges — cherry-pick
+   preserva la base correcta).
+3. **Nunca asumas** que `git push origin main` empujó tu commit si no
+   verificaste `git branch --show-current` primero.
+4. **Worktrees** (§16.2): para trabajo aislado sin tocar la working tree
+   compartida. Pero un worktree fresco tiene `target/` frío → `cargo check`
+   falla por Windows AppControl (os error 4551); usa el árbol principal con
+   `target/` caliente para compilar.
+
+<!-- END: concurrent-branch-discipline -->

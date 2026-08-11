@@ -329,11 +329,13 @@ export default function OpportunitiesExchangeClient({
             <span className="relative inline-flex rounded-full h-3 w-3 bg-success"></span>
           </div>
           <div>
-            <h3 className="font-bold text-success tracking-wide">SCANNING — NO MATCHES</h3>
+            <h3 className="font-bold text-success tracking-wide">
+              {opportunities.length === 0 ? "SCANNING — FEED WARMING UP" : "NO MATCHES FOR FILTERS"}
+            </h3>
             <p className="text-sm mt-1">
               {opportunities.length === 0
-                ? sanitizeForDisplay("Searcher-rs is actively hunting for resolution routes. Opportunities will appear here instantly.")
-                : "No opportunities match the current filters. Loosen the family/chain/yield filters to see more."}
+                ? "No detections in the live window yet. The searcher emits in bursts; opportunities will appear as they're detected."
+                : "No opportunities match the current family/chain/yield filters. Loosen them to see more."}
             </p>
           </div>
         </div>

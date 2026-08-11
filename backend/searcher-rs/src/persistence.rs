@@ -181,3 +181,98 @@ pub fn build_route_metadata_from_plan(plan: &RoutePlan) -> RouteMetadata {
         decimals: DecimalsMap::new(),
     }
 }
+
+// =============================================================================
+// Fidelity tests — build_route_metadata_from_plan token-path preservation
+// =============================================================================
+// These lock the multi-leg fidelity contract: the builder must extract the
+// exact traversal token path [A,B,C,A] from the plan's legs, and `is_populated`
+// must reflect whether a usable topology exists. RULE 00: addresses are
+// placeholders only (test-local), not fabricated operator/trading data.
+#[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used)]
+mod fidelity_tests {
+    use super::*;
+    use prioritization_spine::route_plan::{RouteLeg, RoutePlan};
+
+    fn leg(token_in: &str, token_out: &str, pool: Option<&str>, dex: &str) -> RouteLeg {
+        RouteLeg {
+            dex_id: dex.to_string(),
+            dex_name: dex.to_string(),
+            protocol_type: dex.to_string(),
+            factory_address: String::new(),
+            pool_id: None,
+            pool_address: pool.map(str::to_string),
+            token_in: token_in.to_string(),
+            token_out: token_out.to_string(),
+            fee_bps: None,
+            amount_in: None,
+            amount_out: None,
+            tvl_usd: None,
+            volume_24h_usd: None,
+            pool_is_active: true,
+        }
+    }
+
+    fn plan(legs: Vec<RouteLeg>) -> RoutePlan {
+        RoutePlan {
+            route_id: Some("test".into()),
+            strategy_kind: "test".into(),
+            chain_id: 1,
+            legs,
+            atomic: true,
+            estimated_slippage_pct: None,
+            price_impact_pct: None,
+        }
+    }
+
+    #[test]
+    fn build_from_plan_extracts_full_triangular_token_path() {
+        let p = plan(vec![
+            leg("0xA", "0xB", Some("0xp1"), "uniswap_v2_router"),
+            leg("0xB", "0xC", Some("0xp2"), "uniswap_v2_router"),
+            leg("0xC", "0xA", Some("0xp3"), "uniswap_v2_router"),
+        ]);
+        let rm = build_route_metadata_from_plan(&p);
+        assert_eq!(rm.token_addresses, vec!["0xA", "0xB", "0xC", "0xA"]);
+        assert_eq!(rm.pool_addresses.len(), 3);
+        assert_eq!(rm.dex_adapters.len(), 3);
+        assert!(rm.is_populated());
+    }
+
+    #[test]
+    fn build_from_plan_empty_legs_returns_empty() {
+        let p = plan(vec![]);
+        let rm = build_route_metadata_from_plan(&p);
+        assert!(!rm.is_populated());
+    }
+
+    #[test]
+    fn build_from_plan_two_leg_dex_path() {
+        let p = plan(vec![
+            leg("0xA", "0xB", Some("0xp1"), "uniswap_v2_router"),
+            leg("0xB", "0xA", Some("0xp2"), "sushiswap"),
+        ]);
+        let rm = build_route_metadata_from_plan(&p);
+        assert_eq!(rm.token_addresses, vec!["0xA", "0xB", "0xA"]);
+        assert_eq!(rm.dex_adapters, vec!["uniswap_v2_router", "sushiswap"]);
+        assert!(rm.is_populated());
+    }
+
+    #[test]
+    fn build_from_plan_keeps_pool_entry_empty_when_leg_lacks_pool() {
+        // A leg with neither pool_address nor factory → pool entry is an empty
+        // string, but still pushed (keeps pools aligned to dex_adapters by
+        // index). The structural gate (pools <= hops) tolerates this.
+        let p = plan(vec![
+            leg("0xA", "0xB", None, "uniswap_v2_router"),
+            leg("0xB", "0xA", Some("0xp1"), "uniswap_v2_router"),
+        ]);
+        let rm = build_route_metadata_from_plan(&p);
+        assert_eq!(rm.token_addresses, vec!["0xA", "0xB", "0xA"]);
+        assert_eq!(rm.pool_addresses.len(), 2);
+        assert!(rm.pool_addresses[0].is_empty());
+        assert!(!rm.pool_addresses[1].is_empty());
+    }
+}
+
