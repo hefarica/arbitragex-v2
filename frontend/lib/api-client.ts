@@ -96,6 +96,20 @@ const DEFAULT_RETRIES = 2;
 const MAX_ERROR_PREVIEW = 200;
 const MAX_SCHEMA_ISSUES = 3;
 
+/**
+ * SSR internal-auth header. Server Components fetch the edge via
+ * INTERNAL_EDGE_URL on the docker network — no Cloudflare, so cf-connecting-ip
+ * is absent and all SSR traffic would share one "anon" rate-limit bucket,
+ * self-DoSinge (429) on pages with parallel fetches. The edge worker bypasses
+ * the rate limit when x-arbx-edge-token matches. Browser has no token (public
+ * path is rate-limited per-IP via Cloudflare, as intended).
+ */
+function ssrEdgeTokenHeader(): Record<string, string> {
+  if (isBrowser) return {};
+  const tok = process.env.ARBX_EDGE_TOKEN;
+  return tok ? { "x-arbx-edge-token": tok } : {};
+}
+
 type Result<T> = { ok: true; data: T } | { ok: false; error: string };
 
 async function fetchWithTimeout(
@@ -134,7 +148,7 @@ async function getValidated<T>(
   const url = `${getApiBaseUrl()}${path}`;
   const init: RequestInit = {
     next: { revalidate: 0 },
-    headers: { accept: "application/json", ...(opts.extraHeaders ?? {}) },
+    headers: { accept: "application/json", ...ssrEdgeTokenHeader(), ...(opts.extraHeaders ?? {}) },
     // V-AT-1: browser sends the arbx_admin_session httpOnly cookie cross-port
     // so admin-gated GETs (e.g. /api/admin/chains) authenticate. Public GETs
     // ignore the cookie upstream; no harm in always including credentials.

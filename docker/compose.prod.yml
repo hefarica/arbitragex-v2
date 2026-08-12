@@ -431,6 +431,13 @@ services:
       # authenticate against the edge adminProxy via x-arbx-admin-token header.
       # The browser flow uses the httpOnly cookie; SSR has no browser session.
       ARBX_ADMIN_TOKEN: ${ARBX_ADMIN_TOKEN:?ARBX_ADMIN_TOKEN required}
+      # SSR rate-limit exemption: server components fetch the edge via
+      # INTERNAL_EDGE_URL without cf-connecting-ip (no Cloudflare on the docker
+      # network), so all SSR traffic shares one "anon" rate-limit bucket and
+      # self-DoSes (429) on pages that fan out parallel fetches. The edge worker
+      # bypasses the rate limit when x-arbx-edge-token matches this value.
+      # Same secret already used for edge↔api-server auth; reused here, not new.
+      ARBX_EDGE_TOKEN: ${ARBX_EDGE_TOKEN:?ARBX_EDGE_TOKEN required}
     ports:
     - 0.0.0.0:5173:5173
     depends_on:
