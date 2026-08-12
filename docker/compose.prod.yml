@@ -387,13 +387,14 @@ services:
     logging: *id001
     build:
       context: ..
-      dockerfile: edge/dev-local/Dockerfile
+      dockerfile: edge/worker/Dockerfile.node
     env_file:
     - ../.env
     environment:
       API_SERVER_URL: http://api-server:8080
       ARBX_EDGE_TOKEN: ${ARBX_EDGE_TOKEN:?ARBX_EDGE_TOKEN required}
       EDGE_PORT: '8787'
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379}
     ports:
     - 0.0.0.0:8787:8787
     depends_on:
