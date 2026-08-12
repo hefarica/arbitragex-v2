@@ -193,6 +193,37 @@ function resolveAdminToken(c: import("hono").Context<{ Bindings: Env }>): string
   const cookieToken = getCookie(c, SESSION_COOKIE);
   return cookieToken ?? null;
 }
+
+/**
+ * B-02: generic admin proxy — resolves the admin token (header or cookie),
+ * forwards the request to api-server with x-arbx-edge-token + x-arbx-admin-token,
+ * and returns the upstream response verbatim. Used by the admin routes that
+ * existed in dev-local but were missing from the canonical worker.
+ */
+async function adminProxy(
+  c: import("hono").Context<{ Bindings: Env }>,
+  upstreamPath: string,
+) {
+  const adminToken = resolveAdminToken(c);
+  if (!adminToken) return c.json({ error: "missing_admin_token" }, 401);
+  const qs = new URL(c.req.url).search;
+  const init: RequestInit = {
+    method: c.req.method,
+    headers: {
+      "content-type": "application/json",
+      "x-arbx-edge-token": c.env.ARBX_EDGE_TOKEN,
+      "x-arbx-admin-token": adminToken,
+      "x-arbx-trace-id": (c as unknown as { traceId: string }).traceId,
+    },
+  };
+  if (c.req.method === "POST" || c.req.method === "PUT" || c.req.method === "PATCH") {
+    init.body = await c.req.text();
+  }
+  const upstream = await fetch(`${c.env.API_SERVER_URL}${upstreamPath}${qs}`, init);
+  const text = await upstream.text();
+  c.header("content-type", upstream.headers.get("content-type") ?? "application/json");
+  return c.body(text, upstream.status as 200 | 400 | 401 | 403 | 404 | 500 | 501 | 502);
+}
 function isHttpsRequest(c: import("hono").Context<{ Bindings: Env }>): boolean {
   const forwardedProto = c.req.header("x-forwarded-proto")?.toLowerCase();
   if (forwardedProto === "https") return true;
@@ -560,6 +591,65 @@ app.get("/api/recon/summary",    (c) => proxy(c, "/api/v1/recon/summary",    "ar
 app.get("/api/recon/timeseries", (c) => proxy(c, "/api/v1/recon/timeseries", "arbx:cache:recon-ts", 15));
 app.get("/api/config/current",   (c) => proxy(c, "/api/v1/config/current",   "arbx:cache:config", 30));
 app.get("/api/readiness",        (c) => proxy(c, "/api/v1/readiness",        "arbx:cache:readiness", 15));
+
+// ── B-02: routes that existed in dev-local but were missing from the canonical
+// worker. All are passthrough GET proxies to api-server (same path or /api/v1/
+// rewrite). Grouped by subsystem. ─────────────────────────────────────────────
+
+// Registry / config pages (/chains, /rpcs, /dex-registry, /pools)
+app.get("/api/chains",  (c) => proxy(c, "/api/chains"));
+app.get("/api/rpcs",    (c) => proxy(c, "/api/rpcs"));
+app.get("/api/v1/dexes", (c) => proxy(c, "/api/v1/dexes"));
+app.get("/api/v1/dexes/:id", (c) => proxy(c, `/api/v1/dexes/${c.req.param("id")}`));
+app.get("/api/v1/dexes/:id/active", (c) => proxy(c, `/api/v1/dexes/${c.req.param("id")}/active`));
+
+// Paper history (/paper/history)
+app.get("/api/paper/history", (c) => proxy(c, "/api/v1/paper/history"));
+app.get("/api/paper/history/summary", (c) => proxy(c, "/api/v1/paper/history/summary"));
+
+// Route discovery telemetry (/routes/discovery, /strategies/forge)
+app.get("/api/route-discovery/status", (c) => proxy(c, "/api/route-discovery/status"));
+app.get("/api/route-discovery/latest", (c) => proxy(c, "/api/route-discovery/latest"));
+app.get("/api/route-discovery/metrics", (c) => proxy(c, "/api/route-discovery/metrics"));
+app.get("/api/route-discovery/routes", (c) => proxy(c, "/api/route-discovery/routes"));
+
+// Cartridges (/config/trading, /strategies/forge)
+app.get("/api/cartridges/runtime", (c) => proxy(c, "/api/cartridges/runtime"));
+app.get("/api/cartridges/status", (c) => proxy(c, "/api/cartridges/status"));
+app.get("/api/cartridges/telemetry/latest", (c) => proxy(c, "/api/cartridges/telemetry/latest"));
+
+// Worker health, metrics, onboarding
+app.get("/api/metrics/defi", (c) => proxy(c, "/api/metrics"));
+app.get("/api/onboarding/status", (c) => proxy(c, "/api/onboarding/status"));
+app.get("/api/sed/status", (c) => proxy(c, "/api/sed/status"));
+app.get("/api/health", (c) => proxy(c, "/api/health"));
+
+// Wallets
+app.get("/api/v1/wallets", (c) => proxy(c, "/api/v1/wallets"));
+app.get("/api/v1/wallets/:address/allowances", (c) =>
+  proxy(c, `/api/v1/wallets/${c.req.param("address")}/allowances`));
+app.get("/api/v1/wallets/:address/balances", (c) =>
+  proxy(c, `/api/v1/wallets/${c.req.param("address")}/balances`));
+
+// Math engine
+app.get("/api/math/evidence", (c) => proxy(c, "/api/math/evidence"));
+app.get("/api/math/evidence/all", (c) => proxy(c, "/api/math/evidence/all"));
+app.get("/api/math/operators", (c) => proxy(c, "/api/math/operators"));
+app.get("/api/math/operators/:id", (c) => proxy(c, `/api/math/operators/${c.req.param("id")}`));
+app.get("/api/math/matrix/operators", (c) => proxy(c, "/api/math/matrix/operators"));
+app.get("/api/math/matrix/projection", (c) => proxy(c, "/api/math/matrix/projection"));
+
+// Credentials + operator
+app.get("/api/credentials", (c) => proxy(c, "/api/credentials"));
+app.get("/api/relays", (c) => proxy(c, "/api/relays"));
+
+// Hot path (live-opportunities streaming)
+app.get("/hot/v1/health/fast", (c) => proxy(c, "/hot/v1/health/fast"));
+app.get("/hot/v1/metrics/entropy", (c) => proxy(c, "/hot/v1/metrics/entropy"));
+app.get("/hot/v1/metrics/throughput", (c) => proxy(c, "/hot/v1/metrics/throughput"));
+app.get("/hot/v1/opportunities/detected", (c) => proxy(c, "/hot/v1/opportunities/detected"));
+app.get("/hot/v1/opportunities/live", (c) => proxy(c, "/hot/v1/opportunities/live"));
+app.get("/hot/v1/opportunities/simulated", (c) => proxy(c, "/hot/v1/opportunities/simulated"));
 // Token-icon resolver — proxies api-server's cascade (Redis → Registry → PG
 // tokens.logo_url → DexScreener → jazzicon). Per-token KV cache (path-keyed) so
 // repeated card renders don't re-hit api-server. THIS ROUTE IS REQUIRED: without
@@ -1261,6 +1351,23 @@ app.post("/api/v1/admin/services/:name/:action", async (c) => {
   c.header("content-type", upstream.headers.get("content-type") ?? "application/json");
   return c.body(text, upstream.status as 200 | 400 | 401 | 403 | 404 | 500 | 501 | 502);
 });
+
+// ── B-02: admin POST routes (cartridge control, RPC import/reload, credentials,
+// onboarding complete, paper-mode toggle). All require admin token (cookie or header)
+// — mirrors the adminProxy pattern used by /admin/audit above. ────────────────
+app.post("/api/cartridges/runtime/:id/pause", (c) => adminProxy(c, `/api/cartridges/runtime/${c.req.param("id")}/pause`));
+app.post("/api/cartridges/runtime/:id/resume", (c) => adminProxy(c, `/api/cartridges/runtime/${c.req.param("id")}/resume`));
+app.post("/api/math/operators/:id/toggle", (c) => adminProxy(c, `/api/math/operators/${c.req.param("id")}/toggle`));
+app.post("/api/admin/rpcs/import", (c) => adminProxy(c, "/api/admin/rpcs/import"));
+app.post("/api/admin/rpcs/reload", (c) => adminProxy(c, "/api/admin/rpcs/reload"));
+app.post("/admin/onboarding/1/complete", (c) => adminProxy(c, "/admin/onboarding/1/complete"));
+app.put("/admin/config/paper-mode", (c) => adminProxy(c, "/admin/config/paper-mode"));
+
+// Admin credentials (GET + test)
+app.get("/admin/credentials", (c) => adminProxy(c, "/admin/credentials"));
+app.get("/admin/credentials/:provider/:scope", (c) =>
+  adminProxy(c, `/admin/credentials/${c.req.param("provider")}/${c.req.param("scope")}`));
+app.post("/admin/credentials/test", (c) => adminProxy(c, "/admin/credentials/test"));
 
 app.notFound((c) => c.json({ error: "not_found" }, 404));
 app.onError((err, c) => {
