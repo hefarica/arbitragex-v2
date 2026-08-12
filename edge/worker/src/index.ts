@@ -271,9 +271,21 @@ app.use("*", async (c, next) => {
   }
 
   // SEC-1: KV-backed cross-isolate rate limit.
-  const rl = await checkRl(c.env, ip, RL_GENERAL_MAX, RL_GENERAL_WINDOW_S, "rl");
-  c.header("x-ratelimit-remaining", String(rl.remaining));
-  if (!rl.ok) return c.json({ error: "rate_limited" }, 429);
+  // SSR-internal exemption: Server Components fetch via INTERNAL_EDGE_URL on
+  // the docker network (no Cloudflare → no cf-connecting-ip → all SSR traffic
+  // would share one "anon" bucket and self-DoSinge 429 on parallel fetches).
+  // When the caller presents a valid x-arbx-edge-token (the same secret used
+  // for edge↔api-server auth), it is internal trusted traffic — bypass the
+  // public rate limit. Public browser traffic never carries this token.
+  const ssrToken = c.req.header("x-arbx-edge-token");
+  const isInternalSsr = !!ssrToken && !!c.env.ARBX_EDGE_TOKEN && ssrToken === c.env.ARBX_EDGE_TOKEN;
+  if (isInternalSsr) {
+    c.header("x-ratelimit-remaining", "exempt");
+  } else {
+    const rl = await checkRl(c.env, ip, RL_GENERAL_MAX, RL_GENERAL_WINDOW_S, "rl");
+    c.header("x-ratelimit-remaining", String(rl.remaining));
+    if (!rl.ok) return c.json({ error: "rate_limited" }, 429);
+  }
 
   await next();
 
