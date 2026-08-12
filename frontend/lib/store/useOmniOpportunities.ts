@@ -19,7 +19,7 @@ import { useEffect, useRef, useCallback, startTransition } from "react";
 import { io } from "socket.io-client";
 import { createOpportunitySocket, type WsStatus } from "@/features/opportunities/socket-lifecycle";
 import { getAdminToken } from "@/lib/admin-token";
-import { getApiBaseUrl } from "@/lib/api-client";
+import { getApiBaseUrl, getWsBaseUrl } from "@/lib/api-client";
 import { useOmniStore } from "./omni-store";
 import { mapToOmniOpportunity, type OmniOpportunity } from "./types";
 
@@ -135,7 +135,7 @@ export function useOmniOpportunities({
 
     // R8 Fail-Honest: No hardcoded fallback to localhost.
     // Must be provided via NEXT_PUBLIC_WS_URL.
-    const wsUrl = process.env.NEXT_PUBLIC_WS_URL;
+    const wsUrl = getWsBaseUrl();
     if (!wsUrl) {
       console.warn("[WS] NEXT_PUBLIC_WS_URL is undefined. WebSocket disabled.");
       setWsStatus("STALE");

@@ -19,6 +19,7 @@
 import { useEffect, useState, useRef, useCallback, useMemo, startTransition } from "react";
 import { io, type Socket } from "socket.io-client";
 import { getAdminToken } from "@/lib/admin-token";
+import { getWsBaseUrl } from "@/lib/api-client";
 
 // ─── Type mirror (telemetry.rs event builders) ─────────────────────────────────
 export interface RouteDiscoveryTick {
@@ -130,7 +131,7 @@ export function useRouteDiscoveryTelemetry(): UseRouteDiscoveryTelemetryResult {
   useEffect(() => {
     if (typeof window === "undefined") return;
 
-    const wsUrl = process.env.NEXT_PUBLIC_WS_URL ?? "";
+    const wsUrl = getWsBaseUrl();
 
     const adminToken = getAdminToken();
     if (!adminToken) {

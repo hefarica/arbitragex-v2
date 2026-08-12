@@ -64,10 +64,15 @@ export function getApiBaseUrl(): string {
 }
 
 export function getWsBaseUrl(): string {
+  // FASE 0.5 (R6-01): BROWSER always same-origin. nginx /socket.io/ proxies
+  // the WS upgrade to api-server:8080. NEVER use the cross-origin env URL.
+  if (isBrowser) {
+    const loc = window.location;
+    const protocol = loc.protocol === "https:" ? "wss:" : "ws:";
+    return `${protocol}//${loc.host}`;
+  }
   const envUrl = process.env.NEXT_PUBLIC_WS_URL;
   const isProd = process.env.NODE_ENV === "production";
-
-  // H1 fix: same ARBX_ALLOW_LOCALHOST_PROD escape hatch as getApiBaseUrl().
   if (
     isProd &&
     process.env.ARBX_ALLOW_LOCALHOST_PROD !== "true" &&
@@ -76,17 +81,9 @@ export function getWsBaseUrl(): string {
   ) {
     throw new Error("Production WS base URL cannot point to localhost");
   }
-
   if (envUrl && envUrl.trim().length > 0) {
     return envUrl.replace(/\/$/, "");
   }
-
-  if (isBrowser) {
-    const loc = window.location;
-    const protocol = loc.protocol === "https:" ? "wss:" : "ws:";
-    return `${protocol}//${loc.host}`;
-  }
-
   return "";
 }
 

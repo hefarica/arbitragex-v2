@@ -14,6 +14,7 @@
 import { useEffect, useState, useRef, startTransition } from "react";
 import { io, type Socket } from "socket.io-client";
 import { getAdminToken } from "@/lib/admin-token";
+import { getWsBaseUrl } from "@/lib/api-client";
 
 // ─── Canonical type mirror ────────────────────────────────────────────────────
 // Must stay in sync with ConvergenceSignal in the Rust backend (sed-core).
@@ -55,7 +56,7 @@ export function useConvergenceStream(): UseConvergenceStreamResult {
   useEffect(() => {
     if (typeof window === "undefined") return;
 
-    const wsUrl = process.env.NEXT_PUBLIC_WS_URL ?? "";
+    const wsUrl = getWsBaseUrl();
 
     // C4 fix (audit 2026-05-10): the backend WS gateway rejects every
     // handshake without a valid admin token. Read the token from the

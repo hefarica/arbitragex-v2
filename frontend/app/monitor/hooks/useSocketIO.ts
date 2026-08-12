@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState, useCallback } from "react";
 import { io, Socket } from "socket.io-client";
+import { getWsBaseUrl } from "@/lib/api-client";
 
 // Tipos para métricas del sistema
 interface MetricsData {
@@ -63,7 +64,7 @@ interface UseSocketIOReturn {
 }
 
 // Constantes de configuración
-const DEFAULT_WS_URL = process.env.NEXT_PUBLIC_WS_URL ? process.env.NEXT_PUBLIC_WS_URL.replace('http', 'ws') : 'ws://[WS_URL]';
+const DEFAULT_WS_URL = getWsBaseUrl();
 const DEFAULT_RECONNECT_INTERVAL = 5000;
 const DEFAULT_MAX_RECONNECT_ATTEMPTS = 5;
 
