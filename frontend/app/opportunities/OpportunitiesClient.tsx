@@ -10,7 +10,7 @@ import { OpportunityTradeCard } from "@/components/OpportunityTradeCard";
 import { useOmniOpportunities } from "@/lib/store/useOmniOpportunities";
 import { useOmniStore } from "@/lib/store/omni-store";
 import { mapToOmniOpportunity, type OmniOpportunity } from "@/lib/store/types";
-import { getTradingConfig } from "@/lib/api-client";
+import { getApiBaseUrl, getTradingConfig } from "@/lib/api-client";
 import type { StrategyRuntimeConfig } from "@/lib/schemas";
 
 // Re-export types for backward compatibility with OpportunityDetailDialog
@@ -67,11 +67,10 @@ export default function OpportunitiesClient({
 }) {
   // ─── Omni-Store Integration ───────────────────────────────────────────────
   // Connect WebSocket stream to the store (replaces useOpportunitiesStream)
-  const EDGE_URL = process.env.NEXT_PUBLIC_EDGE_URL ?? "";
+  const EDGE_URL = getApiBaseUrl();
   const [viableOnly, setViableOnly] = useState(false);
   
   useOmniOpportunities({
-    edgeUrl: EDGE_URL,
     viableOnly,
     initialOpportunities: initialSnapshot.opportunities,
   });

@@ -10,6 +10,7 @@
  */
 
 import type { Metadata } from "next";
+import { getApiBaseUrl } from "@/lib/api-client";
 import { CredentialsClient, type CredentialsSnapshot } from "./CredentialsClient";
 
 export const dynamic = "force-dynamic";
@@ -20,7 +21,7 @@ export const metadata: Metadata = {
   description: "Operator credentials store — RPC, CEX, MEV, prices. Live status per credential.",
 };
 
-const EDGE_URL = process.env["NEXT_PUBLIC_EDGE_URL"] ?? "";
+const EDGE_URL = getApiBaseUrl();
 
 async function fetchInitial(): Promise<CredentialsSnapshot> {
   try {

@@ -9,6 +9,7 @@ import { emitSystemReadinessRefresh, useSystemReadiness } from "@/hooks/useSyste
 import { hasAdminSession } from "@/lib/admin-token";
 import { useSystemStore, type ActiveChain } from "@/store/useSystemStore";
 import { parseRpcUrls12Providers } from "@/lib/utils/rpc-parser-12-providers";
+import { getApiBaseUrl } from "@/lib/api-client";
 
 export type MempoolMode = "auto" | "filtered" | "firehose";
 
@@ -55,7 +56,6 @@ interface MutationEnvelope {
 
 interface ClientProps {
   initialSnapshot: TopologyInitialSnapshot;
-  edgeUrl: string;
 }
 
 const HTTP_EXAMPLE = "alchemy=https://eth-mainnet.g.alchemy.com/v2/TU_API_KEY,publicnode=https://ethereum-rpc.publicnode.com";
@@ -131,7 +131,7 @@ function ProviderTable({ title, providers }: { title: string; providers: Topolog
   );
 }
 
-export function TopologyVaultClient({ initialSnapshot, edgeUrl }: ClientProps) {
+export function TopologyVaultClient({ initialSnapshot }: ClientProps) {
   const router = useRouter();
   const [snapshot, setSnapshot] = useState<TopologyInitialSnapshot>(initialSnapshot);
   const [scope, setScope] = useState(initialSnapshot.topology?.scope ?? "staging");
@@ -163,7 +163,7 @@ export function TopologyVaultClient({ initialSnapshot, edgeUrl }: ClientProps) {
   const refresh = useCallback(async () => {
     setIsLoading(true);
     try {
-      const res = await fetch(`${edgeUrl}/api/admin/topology/snapshot`, {
+      const res = await fetch(`${getApiBaseUrl()}/api/admin/topology/snapshot`, {
         credentials: "include",
         cache: "no-store",
         headers: { accept: "application/json" },
@@ -188,7 +188,7 @@ export function TopologyVaultClient({ initialSnapshot, edgeUrl }: ClientProps) {
     } finally {
       setIsLoading(false);
     }
-  }, [clearTopology, edgeUrl, setTopologyReady]);
+  }, [clearTopology, setTopologyReady]);
 
   const applyMutation = useCallback(async () => {
     if (!canSubmit) {
@@ -201,7 +201,7 @@ export function TopologyVaultClient({ initialSnapshot, edgeUrl }: ClientProps) {
       const cleanedHttpProviders = cleanedRpc.httpUrls || rpcHttp.trim();
       const cleanedWssProviders = cleanedRpc.wssUrls || rpcWs.trim();
       
-      const res = await fetch(`${edgeUrl}/api/admin/topology/mutations`, {
+      const res = await fetch(`${getApiBaseUrl()}/api/admin/topology/mutations`, {
         method: "POST",
         credentials: "include",
         headers: {
@@ -246,7 +246,7 @@ export function TopologyVaultClient({ initialSnapshot, edgeUrl }: ClientProps) {
     } finally {
       setIsSaving(false);
     }
-  }, [actor, canSubmit, chainId, edgeUrl, mempoolMode, readiness, rpcHttp, rpcWs, scope, setTopologyReady]);
+  }, [actor, canSubmit, chainId, mempoolMode, readiness, rpcHttp, rpcWs, scope, setTopologyReady]);
 
   if (isMounted && !hasSession) {
     return (

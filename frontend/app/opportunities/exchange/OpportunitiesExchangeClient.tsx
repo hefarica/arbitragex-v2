@@ -3,6 +3,7 @@ import React, { useEffect, useState, useCallback, useMemo } from "react";
 import { Zap, WifiOff, ShieldAlert, RefreshCw, Radio, ChevronDown } from "lucide-react";
 import { sanitizeForDisplay } from "@/lib/omega-lexicon";
 import { toast } from "sonner";
+import { getApiBaseUrl } from "@/lib/api-client";
 import { OpportunityDetailDialog, type OpportunityDetail } from "@/components/OpportunityDetailDialog";
 import { OpportunityExchangeCard } from "@/components/opportunities/exchange/OpportunityExchangeCard";
 import {
@@ -56,10 +57,9 @@ export default function OpportunitiesExchangeClient({
 }: {
   initialSnapshot: OpportunitiesSnapshot;
 }) {
-  const EDGE_URL = process.env.NEXT_PUBLIC_EDGE_URL ?? "";
+  const EDGE_URL = getApiBaseUrl();
 
   useOmniOpportunities({
-    edgeUrl: EDGE_URL,
     viableOnly: false,
     initialOpportunities: initialSnapshot.opportunities,
   });
