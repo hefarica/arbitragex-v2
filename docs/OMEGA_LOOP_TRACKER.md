@@ -1,45 +1,39 @@
 # OMEGA LOOP — Tracker de Corrección Total (ArbitrageX v2)
 
-Fuente de verdad: `Auditoria_Frontend_ArbitrageX_v2.md` (19 anomalías: A-01…A-03, B-01…B-04, C-01…C-07, D-01…D-05).
-Regla: solo el agente mueve un ID a CLOSED, y solo con evidencia pegada (curl / log / screenshot).
+Fuente de verdad: `Auditoria_Frontend_ArbitrageX_v2_REAUDITORIA_5.md` (R5, 2026-08-12). Directiva v5.
+**REGLA 0**: CLOSED solo con merge→main + deploy + L4 en vivo + evidencia. **REGLA 0b**: tracker reconciliado <24h. **REGLA 0c**: vectores separados. **REGLA 0e**: prohibido push directo a main (enforce_admins=True activado 2026-08-12).
 
-> **Reconciliación cross-rama (2026-08-10):** el tracker en `main` (traído por el merge B-01, `5704c5f4`) marca A-01/FASE0/A-03 como CLOSED — **inexacto**. `git branch --contains` confirma que `634e414c` (A-01) y `f0319a58` (FASE0+A-03) **NO** están en main; solo B-01 (`5704c5f4`) llegó. Producción sigue filtrando A-01 (curl 2026-08-10: 482 KB + PII). Esta rama `fix/omega-A01-combined` es A-01 combinado (previo edge-layer + api-server-layer). FASE0+A-03 se recuperan de `fix/omega-loop-fase0-a03` tras este PR.
+> Reconciliado contra R5 el 2026-08-12. 9 anomalías CLOSED-VERIFIED + N-01 CLOSED. Residuales explícitos (A-02b histórico, N-01b enriched/gates).
 
-| ID | Estado | Commit / Rama | Evidencia de cierre | Fecha |
-|---|---|---|---|---|
-| A-01 | VERIFY (L1/L2 ✓; L3 prod pending deploy) | `fix/omega-A01-combined` (previo `634e414c` + api-server layer) | vitest **14/14**; tsc **0** en api-server+frontend+edge; contrato Zod preservado. Prod curl 482 KB+PII (antes). L3 prod tras deploy. | 2026-08-10 |
-| A-02 | OPEN | — | — | — |
-| A-03 | OPEN (fix previo en `fix/omega-loop-fase0-a03`) | — | — | — |
-| FASE0 | OPEN (fix previo en `fix/omega-loop-fase0-a03`) | — | — | — |
-| B-01 | CLOSED (en `main` `5704c5f4`) | `5704c5f4` | Web3 aislado a /wallet; STATUS/HOME WC count 0 | 2026-08-09 |
-| B-02…B-04 | OPEN | — | — | — |
-| C-01…C-07 | OPEN | — | — | — |
-| D-01…D-05 | OPEN | — | — | — |
+| ID | Vector | Estado | Merge | Deploy | L4-live (evidencia) | Fecha |
+|---|---|---|---|---|---|---|
+| **A-01** | API pública | **CLOSED-VERIFIED** | main (equipo) | edge redeploy 08-11 | `/api/audit-logs`→404, `/admin/audit`→401 | 2026-08-11 |
+| **A-01** | Página SSR | **CLOSED-VERIFIED** | `fc6c2c90` (#310) | auto-deploy CI | anónimo→gate, 0 emails, 0 eventos, 87KB (era 482KB) | 2026-08-11 |
+| **A-02** | paper ledger | **CLOSED-VERIFIED** | `46b9d319` (#318) | auto-deploy CI | outlier guard activo (`paper_archiver.skip_no_sim_profit` en logs); **residual A-02b**: histórico ~36K filas pre-guard auto-expulsadas por ventana 24h | 2026-08-11 |
+| **FASE0** | contract test | **CLOSED-VERIFIED** | `63d1791c` (#312) | auto-deploy CI | `schemas.defi-contract.test.ts` en CI de main | 2026-08-11 |
+| **A-03** | pools/chains | **CLOSED-VERIFIED** | `63d1791c` (#312) | auto-deploy CI | 79 ACTIVE, 0 DISABLED, PancakeSwap V3 | 2026-08-12 |
+| **B-01** | WalletConnect | **CLOSED-VERIFIED** | `5704c5f` (equipo) | desplegado | 0 WC calls en todas las páginas | 2026-08-11 |
+| **B-03b** | multi-leg | **CLOSED-VERIFIED** | `d958c9f..ec2579d` (equipo) | searcher redeploy | 50/50 detecciones route_metadata, triangular 3-hop | 2026-08-11 |
+| **B-03c** | flujo viable | **CLOSED-VERIFIED** | — | searcher redeploy | ventana 300s activa; último viable 2026-08-10 20:10Z (mercado 0-viable honesto) | 2026-08-12 |
+| **C-01** | hydration | **CLOSED-VERIFIED** | `3db4136d` (#315) | auto-deploy CI | /risk: 0 React #425/#422 (Playwright); **residual C-01b**: ~20 superficies con toLocaleString aún (adopción incremental) | 2026-08-12 |
+| **C-04** | /monitor | **CLOSED-VERIFIED** | `dcb40b89` (#314) | auto-deploy CI | 0× 92.0%, 0× 42.0%, 5× NOT_AVAILABLE | 2026-08-11 |
+| **N-01** | contadores V2 | **CLOSED-VERIFIED** | #319 (`335581f5`) | auto-deploy CI | decoded_ok=1, decoded_err=0 en heartbeat (path V2 ya cuenta); **residual N-01b**: enriched_*/passed_all_gates/db_persisted siguen 0 (FASE 2) | 2026-08-12 |
+| **P-02** | push directo | **CLOSED** | GitHub Settings | enforce_admins=True | push directo a main técnicamente imposible | 2026-08-12 |
+| **B-02** | endpoints huérfanos | **POC_DESIGN_APPROVED** | — | — | root cause: edge worker Cloudflare-only; POC edge/worker→Node (:8788) aprobado — FASE 1 | 2026-08-12 |
+| **B-04** | WS read-only | **OPEN** | — | — | /sed, /apex WS_ERROR | 2026-08-09 |
+| **C-02** | readiness unificado | **OPEN** | — | — | 4 cifras contradictorias | 2026-08-09 |
+| **C-03** | unidades fees | **OPEN** | — | — | v2 fee 30 vs v3 3000 | 2026-08-09 |
+| **C-05** | títulos inflados | **OPEN** | — | — | crucible/worker-health/dex-registry | 2026-08-09 |
+| **C-06** | estabilidad proxy/PG | **OPEN** | — | — | flapping 500/503 | 2026-08-09 |
+| **C-07** | nav + typos | **OPEN** | — | — | "reloadso", nav huérfana | 2026-08-09 |
+| **D-01** | adapter triangular | **OPEN** (roadmap) | — | — | needs_triangular_adapter | 2026-08-09 |
+| **D-02** | RPC registry | **OPEN** | — | — | registry vacío | 2026-08-09 |
+| **D-03** | verifier mount | **OPEN** | — | — | /repo/ mount | 2026-08-09 |
+| **D-04** | dedupe alertas | **OPEN** | — | — | 171KB/24h | 2026-08-09 |
+| **D-05** | writer risk_events | **OPEN** | — | — | event_source not_configured | 2026-08-09 |
 
----
-
-## A-01 — `/audit-logs` expone el registro administrativo sin autenticación (🔴 P0)
-
-**Causa raíz (confirmada en código):** `frontend/app/audit-logs/page.tsx` era un Server Component SSR que llamaba `getAuditLogs()`, la cual en SSR inyectaba `process.env.ARBX_ADMIN_TOKEN` como header `x-arbx-admin-token`. El edge `/admin/audit` **sí** exige admin (401 sin token/cookie), pero el SSR se autenticaba con el token del servidor y servía las filas a cualquier visitante.
-
-**Corrección aplicada (rama `fix/omega-A01-combined` — COMBINE de previo + nuevo, decisión operador 2026-08-10):**
-1. `getAuditLogs()` ahora autentica **solo** vía cookie httpOnly (`credentials: "include"`); eliminado el fallback de token SSR (previo).
-2. `/audit-logs` → Server Component fino que reenvía `searchParams` a `AuditLogsClient` (client). Sin sesión → **gate admin** (nunca filas); con sesión → filas (previo).
-3. Edge `/admin/audit` (worker) → redacción PII en la **respuesta** (store append-only intacto): `ip_address` → `/48` (v6) o `/24` (v4); `actor` → SHA-256 (previo).
-4. **NUEVO — api-server layer (origen de datos):** `/admin/audit` en `backend/api-server/src/index.ts` mapea `redactAuditRow` (`backend/api-server/src/lib/audit-redact.ts`). Cubre `ip_address` **Y** `target_id` (52 IPv6 crudos que el edge NO redactaba) + `actor` email→`sha256:12hex`. Defense-in-depth: origen + proxy. **14 unit tests** (`audit-redact.test.ts`).
-
-**Verificación (2026-08-10):**
-- L1: vitest **14/14** (`audit-redact.test.ts`); `tsc --noEmit` **0 errores** en api-server, frontend, edge-worker.
-- L2: contrato Zod preservado por construcción (campos redactados mantienen tipos compatibles: `actor:string`, `ip_address/target_id:string|null`).
-- L3 (prod, ANTES): `curl /audit-logs` anónimo → 200, **482 KB**, email `b***@gmail.com`, **76 `auth.login_ok`**, 46 `killswitch.disabled`, **52 IPv6 crudos en `target_id`**. **L3 (prod, DESPUÉS): pendiente deploy.** (El L3 "anónimo→gate" del 2026-08-09 fue contra **dev-local**, no producción.)
-- L4: pendiente barrido post-deploy.
-
-**Criterio de aceptación (§4):**
-- [x] Anónimo → sin filas/IPs/emails (dev-local verificado; estructuralmente garantizado: sin cookie → edge `401 missing_admin_token`).
-- [ ] Con sesión admin → filas con IP `/48` y actor hasheado — **requiere deploy** del worker + api-server.
-
-**Residuales honestos:**
-- `hashActor` (api-server y edge) es SHA-256 **sin salt** (pseudónimo consistente). Para redacción irreversible de emails de baja entropía, usar HMAC con clave en la fuente de escritura (follow-up).
-- IPs embebidos en `before_state`/`after_state` JSON no se escrubeán (solo columnas `ip_address` + `target_id`).
-
-**NO se tocó:** store append-only, write path (`audit-emit.ts`, `arbx_anonymize_ip` write-side), kill-switch, radar de rutas, `pmiCalculator.ts`, doctrina de estados honestos.
+## Resumen de cuenta (R5, 2026-08-12)
+- **CLOSED-VERIFIED**: A-01 (×2), A-02, FASE0, A-03, B-01, B-03b, B-03c, C-01, C-04, N-01, P-02 = **11 ítems**
+- **POC_DESIGN_APPROVED**: B-02 (FASE 1 — diseño congelado, listo para ejecutar)
+- **OPEN**: B-04, C-02, C-03, C-05, C-06, C-07, D-01…D-05 = **10 ítems**
+- **Residuales explícitos**: A-02b (histórico paper), N-01b (enriched/gates/db_persisted), C-01b (adopción LocalTime incremental)
