@@ -1,7 +1,7 @@
 import { XRayCard } from "@/components/XRayCard";
 import { StatCard } from "@/components/StatCard";
 import { GateSection } from "@/components/GateSection";
-import { getApiBaseUrl } from "@/lib/api-client";
+import { getApiBaseUrl, getReadinessDecision } from "@/lib/api-client";
 import type { OpportunityRow } from "@/lib/schemas";
 
 export const dynamic = "force-dynamic";
@@ -74,7 +74,10 @@ function toXRayProps(opp: OpportunityRow) {
 }
 
 export default async function HomePage() {
-  const { opportunities, source } = await getHomeData();
+  const [{ opportunities, source }, decisionRes] = await Promise.all([
+    getHomeData(),
+    getReadinessDecision(),
+  ]);
   const failed = source === "server-fetch-failed";
 
   // Derived honest stats — computed from the real payload, never fabricated.
@@ -195,7 +198,7 @@ export default async function HomePage() {
           </h2>
         </div>
 
-        <GateSection />
+        <GateSection decision={decisionRes.ok ? decisionRes.data : null} />
       </section>
     </div>
   );
