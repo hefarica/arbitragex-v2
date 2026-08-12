@@ -15,6 +15,7 @@
 import { useEffect, useState, useRef, useCallback, startTransition } from "react";
 import { io, type Socket } from "socket.io-client";
 import { getAdminToken } from "@/lib/admin-token";
+import { getWsBaseUrl } from "@/lib/api-client";
 
 // ─── Type mirror ──────────────────────────────────────────────────────────────
 // Matches the Rust `log_quantum` payload and the api-server CartridgeTelemetry
@@ -56,7 +57,7 @@ export function useCartridgeTelemetry(): UseCartridgeTelemetryResult {
   useEffect(() => {
     if (typeof window === "undefined") return;
 
-    const wsUrl = process.env.NEXT_PUBLIC_WS_URL ?? "";
+    const wsUrl = getWsBaseUrl();
 
     // Admin-token gate: the backend WS gateway rejects every handshake without a
     // valid admin token. When no admin session exists, go to STALE rather than

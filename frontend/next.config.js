@@ -25,7 +25,7 @@ if (process.env.NODE_ENV === "production" && process.env.ARBX_ALLOW_LOCALHOST_PR
 // template literal `connect-src 'self' ${edgeUrl} ${wsUrl}` produced
 // "connect-src 'self'  " (trailing spaces) when either var was undefined,
 // which some CSP parsers reject as malformed.
-const csp = (edgeUrl, wsUrl) => {
+const csp = () => {
   const connectSrcParts = [
     "'self'",
     "ws:",
@@ -36,9 +36,7 @@ const csp = (edgeUrl, wsUrl) => {
     // above already covers wss://relay.walletconnect.org.
     "https://api.web3modal.org",
     "https://pulse.walletconnect.org",
-    edgeUrl,
-    wsUrl,
-  ].filter(Boolean);
+  ];
   const connectSrc = connectSrcParts.join(" ");
   return [
     "default-src 'self'",
@@ -105,14 +103,12 @@ const nextConfig = {
     ];
   },
   async headers() {
-    const resolvedEdge = EDGE_URL || "";
-    const resolvedWs = WS_URL || "";
     const headers = [
       { key: "x-frame-options", value: "DENY" },
       { key: "x-content-type-options", value: "nosniff" },
       { key: "referrer-policy", value: "no-referrer" },
       { key: "permissions-policy", value: "camera=(), microphone=(), geolocation=()" },
-      { key: "content-security-policy-report-only", value: csp(resolvedEdge, resolvedWs) },
+      { key: "content-security-policy-report-only", value: csp() },
     ];
     // SEC-3: HSTS enabled when TLS is configured. 1y, includeSubDomains, NO preload
     // (audit recommendation — preload is irrevocable for ≥1y, defer until TLS is stable).

@@ -23,6 +23,7 @@ import {
 } from "@/features/opportunities/socket-lifecycle";
 // C4 fix (audit 2026-05-10): admin token gate on WS handshake.
 import { getAdminToken } from "@/lib/admin-token";
+import { getWsBaseUrl } from "@/lib/api-client";
 
 // ─── Canonical type mirror ────────────────────────────────────────────────────
 // Kept here so useOpportunitiesStream does not import from OpportunitiesClient.
@@ -260,7 +261,7 @@ export function useOpportunitiesStream(
   useEffect(() => {
     if (typeof window === "undefined") return;
 
-    const wsUrl = process.env.NEXT_PUBLIC_WS_URL ?? "";
+    const wsUrl = getWsBaseUrl();
 
     // C4 fix (audit 2026-05-10): the backend WS gateway rejects every
     // handshake without a valid admin token (`extractHandshakeToken`).
