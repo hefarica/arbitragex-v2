@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { cookies } from "next/headers";
 import { TopologyVaultClient, type TopologyInitialSnapshot } from "./TopologyVaultClient";
+import { getApiBaseUrl } from "@/lib/api-client";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
@@ -10,8 +11,7 @@ export const metadata: Metadata = {
   description: "Operator control plane for RPC/WSS topology mutations.",
 };
 
-const BROWSER_EDGE_URL = process.env["NEXT_PUBLIC_EDGE_URL"] ?? "";
-const SERVER_EDGE_URL = process.env["INTERNAL_EDGE_URL"] ?? BROWSER_EDGE_URL;
+const SERVER_EDGE_URL = getApiBaseUrl();
 
 async function buildAdminCookieHeader(): Promise<string | undefined> {
   const cookieStore = await cookies();
@@ -57,5 +57,5 @@ async function fetchInitial(): Promise<TopologyInitialSnapshot> {
 
 export default async function TopologyVaultPage() {
   const initial = await fetchInitial();
-  return <TopologyVaultClient initialSnapshot={initial} edgeUrl={BROWSER_EDGE_URL.replace(/\/$/, "")} />;
+  return <TopologyVaultClient initialSnapshot={initial} />;
 }

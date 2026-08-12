@@ -19,6 +19,7 @@ import { useEffect, useRef, useCallback, startTransition } from "react";
 import { io } from "socket.io-client";
 import { createOpportunitySocket, type WsStatus } from "@/features/opportunities/socket-lifecycle";
 import { getAdminToken } from "@/lib/admin-token";
+import { getApiBaseUrl } from "@/lib/api-client";
 import { useOmniStore } from "./omni-store";
 import { mapToOmniOpportunity, type OmniOpportunity } from "./types";
 
@@ -35,7 +36,6 @@ const MAX_ITEMS = 200;
 // =============================================================================
 
 interface UseOmniOpportunitiesOptions {
-  edgeUrl: string;
   viableOnly?: boolean;
   initialOpportunities?: OmniOpportunity[];
 }
@@ -51,7 +51,7 @@ interface UseOmniOpportunitiesOptions {
  * ```tsx
  * function MyComponent() {
  *   // Connect the stream
- *   useOmniOpportunities({ edgeUrl: EDGE_URL });
+ *   useOmniOpportunities({ viableOnly: false });
  *   
  *   // Read from store (selector prevents unnecessary re-renders)
  *   const opportunities = useOmniStore((state) => state.opportunities);
@@ -60,7 +60,6 @@ interface UseOmniOpportunitiesOptions {
  * ```
  */
 export function useOmniOpportunities({
-  edgeUrl,
   viableOnly = false,
   initialOpportunities = [],
 }: UseOmniOpportunitiesOptions) {
@@ -102,7 +101,7 @@ export function useOmniOpportunities({
       try {
         const viable = viableOnlyRef.current;
         const res = await fetch(
-          `${edgeUrl}/api/opportunities/live?viable_only=${viable}&limit=50`,
+          `${getApiBaseUrl()}/api/opportunities/live?viable_only=${viable}&limit=50`,
           {
             headers: { accept: "application/json" },
             signal: AbortSignal.timeout(POLL_INTERVAL_MS),
@@ -128,7 +127,7 @@ export function useOmniOpportunities({
 
     poll();
     pollingTimerRef.current = setInterval(poll, POLL_INTERVAL_MS);
-  }, [edgeUrl, setWsStatus, setOpportunities]);
+  }, [setWsStatus, setOpportunities]);
 
   // WebSocket lifecycle
   useEffect(() => {
@@ -189,7 +188,7 @@ export function useOmniOpportunities({
       usingPollingRef.current = false;
       setWsStatus("DISCONNECTED");
     };
-  }, [edgeUrl, startPolling, setWsStatus, addOpportunity]);
+  }, [startPolling, setWsStatus, addOpportunity]);
 
   // Return nothing — consumers read directly from store
   // This enforces SSOT pattern

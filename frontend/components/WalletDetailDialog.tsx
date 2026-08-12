@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
+import { getApiBaseUrl } from "@/lib/api-client";
 import {
   Sheet,
   SheetContent,
@@ -43,8 +44,7 @@ function EndpointNotice({ message }: { message: string }) {
 }
 
 export function WalletDetailDialog({ wallet, onClose }: Props) {
-  const EDGE_URL =
-    process.env.NEXT_PUBLIC_EDGE_URL ?? "";
+  const EDGE_URL = getApiBaseUrl();
 
   const [balances, setBalances] = useState<WalletBalance[] | null>(null);
   const [allowances, setAllowances] = useState<WalletAllowance[] | null>(null);

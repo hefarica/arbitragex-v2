@@ -20,6 +20,7 @@ import { toast } from "sonner";
 import { Square, Play, Loader2 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { getApiBaseUrl } from "@/lib/api-client";
 import {
   Card,
   CardContent,
@@ -105,8 +106,7 @@ interface ServiceControlPanelProps {
 export function ServiceControlPanel({ liveStatus = {}, onAfterControl }: ServiceControlPanelProps) {
   const [pending, setPending] = useState<Set<PendingKey>>(new Set());
 
-  const edgeUrl =
-    process.env.NEXT_PUBLIC_EDGE_URL ?? "";
+  const edgeUrl = getApiBaseUrl();
 
   const handleControl = useCallback(
     async (service: ServiceName, action: ControlAction) => {

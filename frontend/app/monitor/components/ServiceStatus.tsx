@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { ServerIcon, DatabaseIcon, CpuIcon, WifiIcon, WifiOffIcon, AlertCircleIcon } from "lucide-react";
+import { getApiBaseUrl } from "@/lib/api-client";
 
 // Tipos para estado de servicios
 type ServiceStatus = "running" | "degraded" | "down" | "unknown";
@@ -136,7 +137,7 @@ function useServiceHealth() {
     setIsChecking(true);
 
     try {
-      const base = process.env.NEXT_PUBLIC_EDGE_URL ?? "";
+      const base = getApiBaseUrl();
 
       // /api/status sirve { services: { <name>: { ok, status } }, killswitch, ... }
       const startTime = performance.now();

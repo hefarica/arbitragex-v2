@@ -15,6 +15,7 @@ import {
 } from "lucide-react";
 import { EntropyGauge } from "./components/EntropyGauge";
 import { ServiceStatus } from "./components/ServiceStatus";
+import { getApiBaseUrl } from "@/lib/api-client";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
@@ -45,7 +46,7 @@ async function getInitialMetrics(): Promise<{
   entropy: number | null;
 }> {
   try {
-    const base = process.env.NEXT_PUBLIC_EDGE_URL ?? "";
+    const base = getApiBaseUrl();
     const res = await fetch(`${base.replace(/\/$/, "")}/api/status`, {
       headers: { accept: "application/json" },
       cache: "no-store",
@@ -259,11 +260,11 @@ export default async function MonitorPage() {
         <div className="flex items-center gap-4">
           <div className="flex items-center gap-1.5">
             <ActivityIcon className="size-3.5" />
-            <span>Socket.IO: {process.env.NEXT_PUBLIC_WS_URL ? process.env.NEXT_PUBLIC_WS_URL.replace("http", "ws") : "ws://[WS_URL]"}</span>
+            <span>Socket.IO: same-origin</span>
           </div>
           <div className="flex items-center gap-1.5">
             <ServerIcon className="size-3.5" />
-            <span>Edge: {process.env.NEXT_PUBLIC_EDGE_URL ?? "[EDGE_URL]"}</span>
+            <span>Edge: proxied (same-origin)</span>
           </div>
         </div>
         <div className="flex items-center gap-1.5">
