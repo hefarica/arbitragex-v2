@@ -1136,8 +1136,44 @@ app.get("/api/operations/variance", async (c) => {
 
 // Phase 2 route-finder: DEX catalog + pool catalog (30s TTL — they change rarely).
 app.get("/api/dexes", (c) => proxy(c, "/api/v1/dexes", "arbx:cache:dexes", 30));
-// /api/pools (frontend convention) and /api/v1/pools (backend convention) both proxy to same upstream.
-app.get("/api/pools", (c) => proxy(c, "/api/v1/pools", "arbx:cache:pools", 30));
+// FASE 1 (R6-02): /api/pools — reshape the route-finder {count, items}
+// envelope to the frontend's {success, data} Zod contract
+// (DefiPoolsResponseSchema). Mirrors proxy() (query-scoped KV cache) but
+// transforms the body. /api/v1/pools stays raw passthrough (backend convention).
+app.get("/api/pools", async (c) => {
+  const incomingQs = new URL(c.req.url).search;
+  const upstreamPath = incomingQs ? `/api/v1/pools${incomingQs}` : "/api/v1/pools";
+  const cacheKey = `arbx:cache:pools${incomingQs}`;
+  const cached = await c.env.ARBX_CACHE.get(cacheKey);
+  if (cached) {
+    c.header("x-arbx-cache", "HIT");
+    c.header("content-type", "application/json");
+    return c.body(cached);
+  }
+  const upstream = await fetch(`${c.env.API_SERVER_URL}${upstreamPath}`, {
+    headers: {
+      "x-arbx-edge-token": c.env.ARBX_EDGE_TOKEN,
+      "x-arbx-trace-id": (c as unknown as { traceId: string }).traceId,
+      accept: "application/json",
+    },
+    cf: { cacheTtl: 0, cacheEverything: false },
+  });
+  const raw = await upstream.text();
+  // reshape {count, items} -> {success, data}; verbatim on non-JSON/non-ok (R8 fail-honest).
+  let body = raw;
+  if (upstream.ok) {
+    try {
+      const parsed = JSON.parse(raw) as { items?: unknown };
+      body = JSON.stringify({ success: true, data: Array.isArray(parsed.items) ? parsed.items : [] });
+    } catch {
+      // not JSON → verbatim
+    }
+  }
+  if (upstream.ok) await c.env.ARBX_CACHE.put(cacheKey, body, { expirationTtl: 30 });
+  c.header("x-arbx-cache", "MISS");
+  c.header("content-type", "application/json");
+  return c.body(body, upstream.status as 200 | 501 | 502);
+});
 app.get("/api/v1/pools", (c) => proxy(c, "/api/v1/pools", "arbx:cache:pools", 30));
 
 // Strategy catalog — Sprint 2 universal MEV strategy library (read-only).
