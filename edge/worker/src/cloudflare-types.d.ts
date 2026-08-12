@@ -39,7 +39,8 @@ interface D1Database {
 // --- Cloudflare WebSocket pair (Carnot /carnot-cycles route only) ---------
 interface WebSocket {
   accept(): void;
-  addEventListener(type: "message" | "open" | "close" | "error", listener: (ev: unknown) => void): void;
+  addEventListener(type: "message", listener: (ev: { data: unknown }) => void): void;
+  addEventListener(type: "open" | "close" | "error", listener: (ev: unknown) => void): void;
   send(data: unknown): void;
   close(code?: number, reason?: string): void;
   readonly readyState: number;
@@ -61,9 +62,13 @@ interface MessageEvent<T = unknown> extends Event {
 // --- fetch / Response CF extensions ---------------------------------------
 // `cf` on RequestInit and `webSocket` on ResponseInit are CF-only; Node's
 // implementations ignore unknown keys, so we widen the lib types structurally.
-interface RequestInit {
-  cf?: unknown;
-}
-interface ResponseInit {
-  webSocket?: unknown;
+// Node 20's fetch types come from undici-types (a module), so we augment that
+// module's RequestInit/ResponseInit rather than declaring loose globals.
+declare module "undici-types" {
+  interface RequestInit {
+    cf?: unknown;
+  }
+  interface ResponseInit {
+    webSocket?: unknown;
+  }
 }
