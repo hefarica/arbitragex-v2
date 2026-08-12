@@ -414,6 +414,41 @@ function doctrinalBlockers(): Blocker[] {
 // Aggregate
 // ---------------------------------------------------------------------------
 
+// R6: in-process cache for collectBlockers. readiness/decision is polled every
+// ~15-30s by the dashboard + SSR, and each call re-runs all 16 verifiers
+// (several hit Postgres). Under polling load the PG pool saturates → verifiers
+// hit the 5s connectionTimeoutMillis ("timeout exceeded trying to connect") →
+// readiness/decision takes 5s+ → SSR/edge 5s timeout → 503s + decision=null
+// (the C-02 intermittent). Readiness state changes slowly; a 20s TTL cuts the
+// PG demand from readiness ~10-20x. In-flight dedup prevents a thundering herd
+// of concurrent cold computes at cache expiry.
+const BLOCKERS_CACHE_TTL_MS = 20_000;
+let blockersCache: { result: { blockers: Blocker[]; paperMode: boolean }; ts: number } | null = null;
+let blockersInFlight: Promise<{ blockers: Blocker[]; paperMode: boolean }> | null = null;
+
+async function getCachedBlockers(deps: {
+  pool: pg.Pool | null;
+  redis: Redis | null;
+}): Promise<{ blockers: Blocker[]; paperMode: boolean }> {
+  const now = Date.now();
+  if (blockersCache && now - blockersCache.ts < BLOCKERS_CACHE_TTL_MS) {
+    return blockersCache.result;
+  }
+  if (blockersInFlight) {
+    return blockersInFlight;
+  }
+  blockersInFlight = (async () => {
+    try {
+      const result = await collectBlockers(deps);
+      blockersCache = { result, ts: Date.now() };
+      return result;
+    } finally {
+      blockersInFlight = null;
+    }
+  })();
+  return blockersInFlight;
+}
+
 async function collectBlockers(deps: {
   pool: pg.Pool | null;
   redis: Redis | null;
@@ -502,7 +537,7 @@ export function mountReadinessExtras(
 ): void {
   app.get("/api/v1/readiness/blockers", async (_req: Request, res: Response) => {
     try {
-      const { blockers } = await collectBlockers({ pool: deps.pool, redis: deps.redis });
+      const { blockers } = await getCachedBlockers({ pool: deps.pool, redis: deps.redis });
       const summary = summarize(blockers);
       const response: BlockersResponse = {
         generated_at: new Date().toISOString(),
@@ -520,7 +555,7 @@ export function mountReadinessExtras(
 
   app.get("/api/v1/readiness/decision", async (_req: Request, res: Response) => {
     try {
-      const { blockers, paperMode } = await collectBlockers({ pool: deps.pool, redis: deps.redis });
+      const { blockers, paperMode } = await getCachedBlockers({ pool: deps.pool, redis: deps.redis });
       const summary = summarize(blockers);
 
       const a4Blocker = blockers.find((b) => b.id === "a4_fork_real_not_executed");
