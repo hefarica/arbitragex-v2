@@ -1,42 +1,23 @@
-"use client";
+import type { ReadinessDecisionResponse } from "@/lib/schemas";
 
-interface GateCheck {
-  name: string;
-  status: "green" | "red";
-}
+// Server Component (no "use client"). Rebinds the doctrinal gate visual to the
+// real /api/readiness/decision verdict instead of a fabricated 12-gate array
+// (RULE 00 — Zero Mocks). On fetch failure the parent passes decision=null and
+// we render an R8 fail-honest block; no invented gates, no invented counts.
 
 interface GateSectionProps {
   title?: string;
   description?: string;
-  verdict?: string;
-  checks?: GateCheck[];
-  lockMessage?: string;
+  decision: ReadinessDecisionResponse | null; // null = fetch failed
 }
 
-const defaultChecks: GateCheck[] = [
-  { name: "Flash-loan discipline", status: "green" },
-  { name: "Simulation mandatory", status: "green" },
-  { name: "Net-profit gate", status: "green" },
-  { name: "RPC failover", status: "green" },
-  { name: "Token-safety screen", status: "green" },
-  { name: "KMS/HSM signer", status: "red" },
-  { name: "Risk limits", status: "green" },
-  { name: "MEV ethics", status: "green" },
-  { name: "Pre-execute checklist", status: "green" },
-  { name: "Crucible 72h/95%", status: "red" },
-  { name: "Pre-edit audit", status: "green" },
-  { name: "Contract atomicity", status: "red" },
-];
+const MAX_LED_ROWS = 6;
 
 export function GateSection({
   title = "Habilitación live · bloqueada por doctrina",
-  description = "El flip a live requiere 12 gates doctrinales en verde + confirmación manual del operador. Mientras tanto, capital expuesto permanece estructuralmente en $0.00. La restricción al launch es lo que convierte escépticos en creyentes.",
-  verdict = "VEREDICTO · NO-GO",
-  checks = defaultChecks,
-  lockMessage = "Activate live mode · LOCKED (3 gates red)",
+  description = "El flip a live requiere los gates doctrinales en verde + confirmación manual del operador. Mientras tanto, capital expuesto permanece estructuralmente en $0.00. La restricción al launch es lo que convierte escépticos en creyentes.",
+  decision,
 }: GateSectionProps) {
-  const redCount = checks.filter((c) => c.status === "red").length;
-
   return (
     <section className="gate-section">
       <div className="relative z-10">
@@ -44,22 +25,73 @@ export function GateSection({
         <p className="text-[var(--muted)] text-sm max-w-[52ch]">{description}</p>
       </div>
 
-      <div className="relative z-10 font-mono">
-        <div className="gate-verdict">{verdict}</div>
-
-        <div className="gate-checks">
-          {checks.map((check) => (
-            <div key={check.name} className={`gate-check ${check.status}`}>
+      {decision == null ? (
+        // R8 fail-honest: backend unavailable. No verdict, no LED wall, no LOCK pill.
+        <div className="relative z-10 font-mono">
+          <div className="gate-verdict">backend no disponible</div>
+          <div className="gate-checks">
+            <div className="gate-check red">
               <span className="led"></span>
-              <span>{check.name}</span>
+              <span>
+                Backend no disponible — no se pudo obtener /api/readiness/decision.
+                R8 fail-honest: no se fabrican gates.
+              </span>
             </div>
-          ))}
+          </div>
         </div>
+      ) : (
+        <div className="relative z-10 font-mono">
+          <div className="gate-verdict">
+            {decision.verdict === "NO_GO" ? "VEREDICTO · NO-GO" : "VEREDICTO · GO"}
+          </div>
 
-        <div className="mt-4 font-mono text-[11px] tracking-widest uppercase px-4 py-3 rounded-lg bg-[color-mix(in_oklab,var(--foreground)_8%,transparent)] text-[var(--muted)] border border-[var(--border)] text-center cursor-not-allowed">
-          {lockMessage.replace(/\d+ gates red/, `${redCount} gates red`)}
+          <div className="gate-checks">
+            {decision.reasons.length === 0 ? (
+              <div className="gate-check green">
+                <span className="led"></span>
+                <span>All gates clear</span>
+              </div>
+            ) : (
+              <>
+                {decision.reasons.slice(0, MAX_LED_ROWS).map((reason) => (
+                  <div key={reason} className="gate-check red">
+                    <span className="led"></span>
+                    <span>{reason}</span>
+                  </div>
+                ))}
+                {decision.reasons.length > MAX_LED_ROWS && (
+                  <div className="gate-check red">
+                    <span className="led"></span>
+                    <span>
+                      +{decision.reasons.length - MAX_LED_ROWS} more — ver /readiness
+                    </span>
+                  </div>
+                )}
+              </>
+            )}
+          </div>
+
+          <div className="mt-4 font-mono text-[11px] tracking-widest uppercase px-4 py-3 rounded-lg bg-[color-mix(in_oklab,var(--foreground)_8%,transparent)] text-[var(--muted)] border border-[var(--border)] text-center cursor-not-allowed">
+            {decision.verdict === "NO_GO"
+              ? `Activate live mode · LOCKED (${decision.reasons.length} gates red)`
+              : "Ready for operator confirmation"}
+          </div>
+
+          <div className="mt-3 font-mono text-[11px] tracking-widest uppercase text-[var(--muted)] text-center">
+            {decision.phase} · capital ${decision.capital_exposure_usd.toFixed(2)} · paper{" "}
+            {decision.paper_mode ? "ON" : "OFF"}
+          </div>
+
+          <div className="mt-3 text-center">
+            <a
+              href="/readiness"
+              className="font-mono text-[11px] tracking-widest uppercase text-[var(--primary)] hover:underline"
+            >
+              Full breakdown →
+            </a>
+          </div>
         </div>
-      </div>
+      )}
     </section>
   );
 }
