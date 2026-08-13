@@ -27,7 +27,7 @@ export async function verifyVAT1(opts?: {
   now?: () => Date;
 }): Promise<ReadinessItem> {
   const file = opts?.file ?? DEFAULT_FILE;
-  const probeUrl = opts?.probeUrl ?? "http://localhost:8080/admin/session";
+  const probeUrl = opts?.probeUrl ?? "http://api-server:8080/admin/session";
   const verified_at = (opts?.now ?? (() => new Date()))().toISOString();
   const base = {
     id: "V-AT-1",
