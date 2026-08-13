@@ -142,10 +142,13 @@ export function calculateRemainingHeadroom(gates: GateStatus[]): number {
  */
 export async function fetchGateStatusApi(): Promise<GateStatusResponse | null> {
   try {
-    const NEXT_PUBLIC_EDGE_URL =
-      process.env.NEXT_PUBLIC_EDGE_URL || 'http://localhost:8787';
+    // Use getApiBaseUrl() for same-origin (browser) or INTERNAL_EDGE_URL (SSR).
+    // NEVER use NEXT_PUBLIC_EDGE_URL directly — it's baked cross-origin and
+    // triggers CORS preflight failures from arbx.ape-tv.net → edge-arbx.
+    const { getApiBaseUrl } = await import('@/lib/api-client');
+    const base = getApiBaseUrl();
 
-    const url = `${NEXT_PUBLIC_EDGE_URL}/api/gates/status`;
+    const url = `${base}/api/gates/status`;
     const response = await fetch(url, {
       headers: { accept: 'application/json' },
       cache: 'no-store',
@@ -176,10 +179,10 @@ export async function fetchGateStatusApi(): Promise<GateStatusResponse | null> {
  */
 export async function fetchGateHealthApi(): Promise<boolean> {
   try {
-    const NEXT_PUBLIC_EDGE_URL =
-      process.env.NEXT_PUBLIC_EDGE_URL || 'http://localhost:8787';
+    const { getApiBaseUrl } = await import('@/lib/api-client');
+    const base = getApiBaseUrl();
 
-    const url = `${NEXT_PUBLIC_EDGE_URL}/api/gates/health`;
+    const url = `${base}/api/gates/health`;
     const response = await fetch(url, {
       headers: { accept: 'application/json' },
       cache: 'no-store',
