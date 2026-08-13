@@ -423,3 +423,37 @@ estabas en `main`.
    `target/` caliente para compilar.
 
 <!-- END: concurrent-branch-discipline -->
+
+---
+
+# 37. DOCTRINA — HARDENING ANTI-REGRESIÓN (v1, 2026-08-13)
+
+> **OBLIGATORIA en toda sesión de cambios.** Fuente de verdad:
+> `docs/governance/HARDENING_ANTI_REGRESION.md` (directiva completa + auditoría
+> de gates G1-G6 + los 9 guardianes baseline R7).
+
+**P-∅ — La carga de la prueba es del CAMBIO, no del sistema.** Un PR sin ID de
+anomalía (tracker o L4 con timestamp), sin medida de "qué pasa si no se hace",
+o sin revert declarado, se rechaza por incompleto. Un PR = UN ID (prohibido "de
+paso"). Prohibido reformateo ajeno, deps mezcladas, config de prod sin evidencia.
+
+**Lista de congelación:** Nivel 1 (intocable: `pmiCalculator.ts`, route-discovery,
+kill-switch, store append-only, estados vacíos honestos) · Nivel 2 (congelado por
+conquista R7: contrato defi `{success,data}`, 46 rutas worker #327, CORS same-origin,
+reshape, readiness cache, gate admin, paper-ledger outlier guard, LocalTime,
+heartbeat V2) · Nivel 3 (libre con embudo).
+
+**Gates G1-G6** (CI+deploy): contract tests required, paridad frontend↔edge,
+guardian smoke 9, deploy veraz (`git rev-parse HEAD` == SHA despachado), L4
+post-deploy + rollback, secuencia blindada. Estado actual: P-02 branch protection
+verde (14 required checks); G1 parcial; G2-G6 = huecos (cada uno su PR con ID).
+
+**Emergencia (Parte 5):** restaurar primero (`git revert` + redeploy), entender
+después. Todo incidente cierra con **revert + gate nuevo** — sin gate nuevo es una
+regresión esperando fecha.
+
+Antes de CUALQUIER cambio a oportunidades, estrategias, montos, chains, dex,
+pools, tokens: aplicar el embudo. Sin mocks ni hardcodes (RULE 00), datos en
+tiempo real, mode-invariant (Paper/Testnet/Mainnet), alineado a rutas y config.
+
+<!-- END: hardening-anti-regresion-doctrine -->
