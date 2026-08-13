@@ -33,7 +33,7 @@ export default function WorkerHealthPage() {
         <h1 className="text-3xl font-bold tracking-tight text-foreground">Worker Health &amp; Telemetry</h1>
         <div className="flex items-center gap-2 bg-success/10 text-success px-3 py-1.5 rounded-full border border-success/40">
           <Activity size={16} className="animate-pulse" />
-          <span className="text-sm font-semibold tracking-wide">LIVE</span>
+          <span className="text-sm font-semibold tracking-wide">{metrics.active_workers > 0 ? "LIVE" : "NO ACTIVE WORKERS"}</span>
         </div>
       </div>
 
