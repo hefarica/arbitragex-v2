@@ -69,9 +69,12 @@ const KNOWN_PROTOCOLS = ["UNISWAP_V2", "UNISWAP_V3", "CURVE", "BALANCER"];
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 
-function fmtFeeTier(tier: number | null | undefined): string {
+function fmtFeeTier(tier: number | null | undefined, protocolType?: string): string {
   if (tier == null) return DASH;
-  return `${(tier / 10_000).toFixed(tier % 100 === 0 ? 2 : 4)}%`;
+  // C-03: V3 fee_tier is in millionths (3000 = 0.3%). V2 fee_tier is in bps (30 = 0.3%).
+  const isV2 = protocolType?.includes("V2") ?? false;
+  const pct = isV2 ? tier / 100 : tier / 10_000;
+  return `${pct.toFixed(2)}%`;
 }
 
 function tokenPairLabel(pool: PoolInfo): string {
@@ -380,7 +383,7 @@ export function PoolsTab({ chainId }: Props) {
                     <ProtocolBadge type={pool.protocol_type} />
                   </TableCell>
                   <TableCell className="text-xs font-mono">
-                    {fmtFeeTier(pool.fee_tier)}
+                    {fmtFeeTier(pool.fee_tier, pool.protocol_type)}
                   </TableCell>
                   <TableCell className="text-right font-mono text-[10px] text-muted-foreground group-hover:text-foreground transition-colors">
                     {pool.address}

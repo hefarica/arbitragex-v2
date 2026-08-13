@@ -33,7 +33,7 @@ export default function CruciblePage() {
         Holesky · Arb Sepolia · Polygon Amoy — must hold ≥95% success across ≥72h with 0 non-doctrinal reverts
       </p>
       <div className={`mt-2 inline-block rounded px-3 py-1 text-sm font-medium ${ok ? "bg-emerald-500/15 text-emerald-500" : "bg-amber-500/15 text-amber-500"}`}>
-        {ok ? "CRUCIBLE PASSED" : "CRUCIBLE IN PROGRESS"}
+        {ok ? "CRUCIBLE PASSED" : rows.length === 0 ? "NOT STARTED — no crucible data yet" : "CRUCIBLE IN PROGRESS"}
       </div>
       <table className="mt-4 w-full text-sm">
         <thead><tr className="border-b border-border text-left">
