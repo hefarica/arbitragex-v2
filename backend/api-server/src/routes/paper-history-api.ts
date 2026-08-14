@@ -59,12 +59,13 @@ export function buildPaperHistoryRouter(pool: pg.Pool | null): Router {
            chain_id,
            created_at
          FROM paper_trade_runs
+         WHERE (reason IS NULL OR reason NOT LIKE '%unscaled_legacy%')
          ORDER BY created_at DESC
          LIMIT $1 OFFSET $2`,
         [limit, offset],
       );
       const countRes = await pool.query(
-        `SELECT count(*)::bigint AS total FROM paper_trade_runs`,
+        `SELECT count(*)::bigint AS total FROM paper_trade_runs WHERE (reason IS NULL OR reason NOT LIKE '%unscaled_legacy%')`,
       );
       res.json({
         ok: true,
@@ -95,7 +96,8 @@ export function buildPaperHistoryRouter(pool: pg.Pool | null): Router {
            count(DISTINCT strategy_kind)::int                                           AS strategies,
            count(DISTINCT chain_id)::int                                                AS chains
          FROM paper_trade_runs
-         WHERE created_at >= $1`,
+         WHERE created_at >= $1
+           AND (reason IS NULL OR reason NOT LIKE '%unscaled_legacy%')`,
         [since],
       );
       res.json({
