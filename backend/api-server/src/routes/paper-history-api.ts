@@ -80,10 +80,15 @@ export function buildPaperHistoryRouter(pool: pg.Pool | null): Router {
   });
 
   // ── GET /api/v1/paper/history/summary — aggregate stats over a time window ──
+  // A4 fix (R8-04): split into ACCEPTED (reason IS NULL) vs ALL rows.
+  // The dashboard was showing avg profit of REJECTED opportunities as if it
+  // were P&L — economically meaningless. The `accepted` block is the honest
+  // P&L signal; `all` remains for volume context.
   router.get("/api/v1/paper/history/summary", async (req: Request, res: Response) => {
     if (!pool) return unavailable(res, "db_unavailable");
     const hours = clampInt(req.query.hours, 24, 1, 336);
     const since = new Date(Date.now() - hours * 3600 * 1000);
+    const cleanFilter = `(reason IS NULL OR reason NOT LIKE '%unscaled_legacy%')`;
     try {
       const totals = await pool.query(
         `SELECT
@@ -95,7 +100,22 @@ export function buildPaperHistoryRouter(pool: pg.Pool | null): Router {
            count(DISTINCT strategy_kind)::int                                           AS strategies,
            count(DISTINCT chain_id)::int                                                AS chains
          FROM paper_trade_runs
-         WHERE created_at >= $1`,
+         WHERE created_at >= $1 AND ${cleanFilter}`,
+        [since],
+      );
+      const accepted = await pool.query(
+        `SELECT
+           count(*)::bigint                                                              AS total,
+           count(*) FILTER (WHERE (sim_expected_profit_usd - COALESCE(sim_gas_cost_usd, 0)) > 0)::bigint AS profitable,
+           avg(sim_expected_profit_usd)                                                 AS avg_expected_profit_usd,
+           avg(sim_expected_profit_usd - COALESCE(sim_gas_cost_usd, 0))                 AS avg_net_profit_usd,
+           sum(sim_gas_cost_usd)                                                        AS total_gas_cost_usd,
+           percentile_cont(0.25) WITHIN GROUP (ORDER BY (sim_expected_profit_usd - COALESCE(sim_gas_cost_usd, 0))) AS p25_net,
+           percentile_cont(0.50) WITHIN GROUP (ORDER BY (sim_expected_profit_usd - COALESCE(sim_gas_cost_usd, 0))) AS median_net,
+           percentile_cont(0.75) WITHIN GROUP (ORDER BY (sim_expected_profit_usd - COALESCE(sim_gas_cost_usd, 0))) AS p75_net,
+           count(DISTINCT strategy_kind)::int                                           AS strategies
+         FROM paper_trade_runs
+         WHERE created_at >= $1 AND reason IS NULL AND ${cleanFilter}`,
         [since],
       );
       res.json({
@@ -104,13 +124,15 @@ export function buildPaperHistoryRouter(pool: pg.Pool | null): Router {
         window_hours: hours,
         data: {
           totals: totals.rows[0] ?? {
-            total: 0,
-            profitable: 0,
-            avg_expected_profit_usd: null,
-            avg_net_profit_usd: null,
-            total_gas_cost_usd: null,
+            total: 0, profitable: 0, avg_expected_profit_usd: null,
+            avg_net_profit_usd: null, total_gas_cost_usd: null,
+            strategies: 0, chains: 0,
+          },
+          accepted: accepted.rows[0] ?? {
+            total: 0, profitable: 0, avg_expected_profit_usd: null,
+            avg_net_profit_usd: null, total_gas_cost_usd: null,
+            p25_net: null, median_net: null, p75_net: null,
             strategies: 0,
-            chains: 0,
           },
         },
       });
