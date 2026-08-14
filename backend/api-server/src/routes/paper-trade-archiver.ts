@@ -174,6 +174,23 @@ export class PaperTradeArchiver {
       return;
     }
 
+    // A3/R8-03 fix: derive gas_cost_usd from gross−net when both present.
+    // The Opportunity contract carries:
+    //   expected_profit_usd     = GROSS (before gas/slippage/relay)
+    //   net_expected_profit_usd = NET (after ALL costs, incl. gas)
+    // gas_cost = gross − net. When only gross is present (net = null), the
+    // SizeOptimizer wasn't run → gas is unknown → persist NULL (honest, not
+    // fabricated). This breaks the "net == expected always" fiction.
+    let simGasCost: number | null = null;
+    const gross = opp.expected_profit_usd;
+    const net = opp.net_expected_profit_usd;
+    if (gross !== null && gross !== undefined && net !== null && net !== undefined) {
+      const derived = gross - net;
+      if (Number.isFinite(derived) && derived >= 0) {
+        simGasCost = Math.round(derived * 1e6) / 1e6; // 6 decimal places (NUMERIC(18,6))
+      }
+    }
+
     // A-02 outlier guard: some unsized emit paths (Rhai profit_usd_hint,
     // backrun/cex_dex placeholders) can carry token-as-USD magnitudes ($49–59M
     // on a $1k capital). Quarantine implausible values rather than letting them
@@ -199,13 +216,14 @@ export class PaperTradeArchiver {
       await this.deps.pool.query(
         `INSERT INTO paper_trade_runs
            (opportunity_id, chain_id, strategy_kind, sim_expected_profit_usd,
-            sim_block_number, reason, route_hash)
-         VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+            sim_gas_cost_usd, sim_block_number, reason, route_hash)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
         [
           opp.id,
           opp.chain_id,
           opp.strategy_kind,
           simProfit,
+          simGasCost,
           opp.block_number ?? null,
           opp.rejection_reason ?? null,
           routeHash(opp),
