@@ -214,6 +214,10 @@ impl OpportunityEmitter {
         strategy_label: StrategyLabel,
         route: Option<&shared_rs::candidates::RouteMetadata>,
     ) -> anyhow::Result<EmitOutcome> {
+        // N-01b: increment passed_all_gates so the heartbeat reflects V2-path
+        // accepted candidates (previously only the legacy scanner incremented it).
+        counters().passed_all_gates.fetch_add(1, Ordering::Relaxed);
+
         // Dry-run (shadow mode): log + record, no I/O.
         if self.dry_run {
             tracing::debug!(
@@ -298,6 +302,25 @@ impl OpportunityEmitter {
         rejection_reason: &str,
         route: Option<&shared_rs::candidates::RouteMetadata>,
     ) -> anyhow::Result<EmitOutcome> {
+        // N-01b: increment the appropriate gate counter so the heartbeat
+        // reflects V2-path rejections (previously only the legacy scanner path
+        // incremented these, leaving the heartbeat blind to V2 rejections).
+        let c = counters();
+        let reason_lower = rejection_reason.to_ascii_lowercase();
+        if reason_lower.contains("token_not_allowed") || reason_lower.contains("tokennotallowed") {
+            c.gate_token_not_allowed.fetch_add(1, Ordering::Relaxed);
+        } else if reason_lower.contains("strategy_disabled") || reason_lower.contains("disabled") {
+            c.gate_strategy_disabled.fetch_add(1, Ordering::Relaxed);
+        } else if reason_lower.contains("no_config") || reason_lower.contains("noconfig") {
+            c.gate_no_config.fetch_add(1, Ordering::Relaxed);
+        } else if reason_lower.contains("unknown_token_price") || reason_lower.contains("unknown_price") {
+            c.gate_unknown_token_price.fetch_add(1, Ordering::Relaxed);
+        } else if reason_lower.contains("anomalous") {
+            c.gate_anomalous_math.fetch_add(1, Ordering::Relaxed);
+        } else {
+            c.gate_other_rejected.fetch_add(1, Ordering::Relaxed);
+        }
+
         // Dry-run (shadow mode): log + record, no I/O.
         if self.dry_run {
             tracing::debug!(
