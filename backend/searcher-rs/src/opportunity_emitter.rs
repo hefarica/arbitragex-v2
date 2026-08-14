@@ -214,6 +214,10 @@ impl OpportunityEmitter {
         strategy_label: StrategyLabel,
         route: Option<&shared_rs::candidates::RouteMetadata>,
     ) -> anyhow::Result<EmitOutcome> {
+        // A5/N-01b: increment passed_all_gates so the heartbeat reflects V2-path
+        // accepted candidates (previously only the legacy scanner incremented it).
+        counters().passed_all_gates.fetch_add(1, Ordering::Relaxed);
+
         // Dry-run (shadow mode): log + record, no I/O.
         if self.dry_run {
             tracing::debug!(
@@ -298,6 +302,24 @@ impl OpportunityEmitter {
         rejection_reason: &str,
         route: Option<&shared_rs::candidates::RouteMetadata>,
     ) -> anyhow::Result<EmitOutcome> {
+        // A5/N-01b: classify rejection reason and increment matching gate
+        // counter so the heartbeat reflects V2-path rejections.
+        let c = counters();
+        let rl = rejection_reason.to_ascii_lowercase();
+        if rl.contains("token_not_allowed") || rl.contains("tokennotallowed") {
+            c.gate_token_not_allowed.fetch_add(1, Ordering::Relaxed);
+        } else if rl.contains("strategy_disabled") || rl.contains("disabled") {
+            c.gate_strategy_disabled.fetch_add(1, Ordering::Relaxed);
+        } else if rl.contains("no_config") || rl.contains("noconfig") {
+            c.gate_no_config.fetch_add(1, Ordering::Relaxed);
+        } else if rl.contains("unknown_token_price") || rl.contains("unknown_price") {
+            c.gate_unknown_token_price.fetch_add(1, Ordering::Relaxed);
+        } else if rl.contains("anomalous") {
+            c.gate_anomalous_math.fetch_add(1, Ordering::Relaxed);
+        } else {
+            c.gate_other_rejected.fetch_add(1, Ordering::Relaxed);
+        }
+
         // Dry-run (shadow mode): log + record, no I/O.
         if self.dry_run {
             tracing::debug!(

@@ -92,12 +92,34 @@ impl WsChainClient {
     /// (26 CU) to fetch the body. Prefer `subscribe_pending_filtered_txs` when
     /// the upstream is Alchemy and we already know the routers we care about.
     pub async fn subscribe_pending(&self) -> anyhow::Result<impl Stream<Item = H256> + Send + '_> {
+        // A1/B-02 fix: PublicNode and other non-Alchemy providers send
+        // newPendingTransactions as JSON objects {hash: "0x...", ...} instead
+        // of bare hex strings. ethers-rs subscribe_pending_txs() tries to
+        // deserialize each item as H256, fails ("invalid type: map, expected
+        // ... 32 bytes"), and silently drops ALL items — pending_received=0.
+        //
+        // Fix: subscribe via the raw RPC method with serde_json::Value,
+        // then extract the hash from either:
+        //   (a) bare hex string:  "0xabcd..."  (Alchemy/Infura format)
+        //   (b) JSON object:      {"hash": "0xabcd..."} (PublicNode/drpc format)
         let sub = self
             .provider
-            .subscribe_pending_txs()
+            .subscribe("newPendingTransactions".to_string())
             .await
-            .context("subscribe_pending_txs")?;
-        Ok(sub.map(|h| h))
+            .context("subscribe newPendingTransactions (raw)")?;
+
+        let chain_id = self.chain_id;
+        Ok(sub
+            .map(move |item: serde_json::Value| match item {
+                serde_json::Value::String(s) => s.parse::<H256>().ok(),
+                serde_json::Value::Object(map) => map
+                    .get("hash")
+                    .and_then(|v| v.as_str())
+                    .and_then(|s| s.parse::<H256>().ok()),
+                _ => None,
+            })
+            .filter(|h| futures_util::future::ready(h.is_some()))
+            .map(|h| h.unwrap()))
     }
 
     /// Subscribe to pending transactions filtered upstream by `to` address,
