@@ -46,7 +46,26 @@ CHAIN_IDS = {
     "Blast": 81457,
     "Scroll": 534352,
 }
-PLACEHOLDER_MARKERS = ("<", ">", "${", "YOUR", "API_KEY", "apikey", "key=", "/v2/")
+PLACEHOLDER_MARKERS = ("<", ">", "${", "YOUR", "API_KEY", "apikey", "key=")
+# '/v2/' was removed from PLACEHOLDER_MARKERS because it also matches REAL
+# Alchemy keys (/v2/alch_...). Real keys start with 'alch_' and are >20 chars.
+# We keep the /v2/ skip ONLY when the segment after /v2/ looks like a placeholder.
+
+
+def _is_placeholder_url(url: str) -> bool:
+    """True when the URL has placeholder markers OR a /v2/<placeholder> segment."""
+    u = url.strip()
+    if any(m in u for m in PLACEHOLDER_MARKERS):
+        return True
+    if "/v2/" in u:
+        key_part = u.split("/v2/")[1].split("/")[0].split("?")[0]
+        # Real Alchemy keys: alch_ + 30+ chars. Real Infura: 32 hex chars.
+        if len(key_part) >= 20 and (key_part.startswith("alch_") or key_part.startswith("0x") or len(key_part) == 32):
+            return False  # Looks like a real key — include it
+        # Short/generic segment after /v2/ = placeholder
+        if len(key_part) < 20 or key_part.upper() in ("YOUR_KEY", "YOURKEY", "APIKEY", "KEY", "SECRET"):
+            return True
+    return False
 
 
 def provider_token_map(wb):
@@ -85,7 +104,7 @@ def main():
             unknown_chains.add(str(chain).strip())
             continue
         u = str(url).strip().rstrip("/")
-        if (not args.include_keyed) and any(m in u for m in PLACEHOLDER_MARKERS):
+        if (not args.include_keyed) and _is_placeholder_url(u):
             skipped.append(f"{chain} | {proto} | {prov} | {u}")
             continue
         pkey = "WS" if "WS" in str(proto).upper() else "HTTP"
