@@ -118,8 +118,23 @@ impl ChainSupervisor {
         // started will be picked up at boot, not lost across restart.
         let mut union: HashSet<u64> = initial_chains.into_iter().collect();
         if let Some(pool) = self.db_pool.as_ref() {
-            match fetch_all_enabled_chains(pool).await {
-                Ok(pg_chains) => {
+            // Boot-hang fix (P0): hard cap on the PG read. A stalled acquire
+            // here previously blocked the supervisor BEFORE any spawn_chain
+            // call, silently killing detection for every chain.
+            match tokio::time::timeout(
+                std::time::Duration::from_secs(10),
+                fetch_all_enabled_chains(pool),
+            )
+            .await
+            {
+                Err(_) => {
+                    warn!(
+                        event = "chain_supervisor.pg_initial_sync_timeout",
+                        timeout_secs = 10,
+                        "chains_runtime boot query exceeded 10s; static initial_chains only"
+                    );
+                }
+                Ok(Ok(pg_chains)) => {
                     info!(
                         event = "chain_supervisor.pg_initial_sync",
                         chains = ?pg_chains,
@@ -127,7 +142,7 @@ impl ChainSupervisor {
                     );
                     union.extend(pg_chains);
                 }
-                Err(e) => {
+                Ok(Err(e)) => {
                     warn!(
                         event = "chain_supervisor.pg_initial_sync_failed",
                         error = %e,
@@ -216,13 +231,38 @@ impl ChainSupervisor {
     async fn spawn_chain(&mut self, chain_id: u64) {
         let cancel = CancellationToken::new();
         self.running_tasks.insert(chain_id, cancel.clone());
+        info!(
+            event = "chain_supervisor.spawn_begin",
+            chain_id, "spawn_chain entered — building HTTP pool (30s cap)"
+        );
 
         // Resolve the HTTP pool. Preference order:
         //   1. PG `chains_runtime` row (operator-managed via admin UI).
         //   2. `RPC_HTTP_<chain_id>` env var (legacy / bootstrap fallback).
         // Falling back to env keeps the system functional when PG is
         // unreachable but the operator should know about it — emit warn.
-        let rpc_pool = self.build_http_pool(chain_id).await;
+        // Boot-hang fix (P0): build_http_pool awaits a PG row read plus
+        // per-provider eth_chainId probes; any stall here blocked the
+        // supervisor loop before the scanner task was even spawned. On timeout
+        // fall back to None — the scanner still spawns and WS detection reads
+        // its own env pool inside run_chain regardless.
+        let rpc_pool = match tokio::time::timeout(
+            std::time::Duration::from_secs(30),
+            self.build_http_pool(chain_id),
+        )
+        .await
+        {
+            Ok(p) => p,
+            Err(_) => {
+                warn!(
+                    event = "chain_supervisor.pool_build_timeout",
+                    chain_id,
+                    timeout_secs = 30,
+                    "build_http_pool exceeded 30s; spawning scanner with rpc_pool=None"
+                );
+                None
+            }
+        };
 
         // Reconstruct SimulatorV2 for this chain. Only attempted when an
         // RPC pool is available — without a URL we cannot snapshot a
@@ -261,28 +301,58 @@ impl ChainSupervisor {
                 event = "chain_supervisor.spawning",
                 chain_id, "spawning chain scanner task"
             );
-            if let Err(e) = scanner::run_chain(
-                chain_id,
-                cfg_c,
-                ks,
-                redis_c,
-                db_c,
-                dedup_c,
-                opp_dedup_c,
-                tc_c,
-                rpc_pool,
-                sim_v2,
-                decimals_provider_c,
-                cancel,
-            )
-            .await
-            {
-                error!(
-                    event = "chain_supervisor.spawn_failed",
+            // Detection loop restart: if run_chain exits with an error (e.g.,
+            // all WS providers failed subscription, stream ended), respawn it
+            // with backoff instead of dying permanently. The scanner's internal
+            // loop rotates providers, but a subscription error that propagates
+            // through `?` kills the entire task. Without this retry, a single
+            // transient provider outage silences detection forever until manual
+            // container restart.
+            let mut retry_count: u32 = 0;
+            const MAX_RETRIES: u32 = 10;
+            const RETRY_DELAY_SECS: u64 = 30;
+            loop {
+                if let Err(e) = scanner::run_chain(
                     chain_id,
-                    error = %e,
-                    "scanner::run_chain returned error"
-                );
+                    cfg_c.clone(),
+                    ks.clone(),
+                    redis_c.clone(),
+                    db_c.clone(),
+                    dedup_c.clone(),
+                    opp_dedup_c.clone(),
+                    tc_c.clone(),
+                    rpc_pool.clone(),
+                    sim_v2.clone(),
+                    decimals_provider_c.clone(),
+                    cancel.clone(),
+                )
+                .await
+                {
+                    retry_count += 1;
+                    if retry_count >= MAX_RETRIES {
+                        error!(
+                            event = "chain_supervisor.spawn_failed_permanent",
+                            chain_id,
+                            retries = retry_count,
+                            error = %e,
+                            "scanner task exhausted retries — giving up"
+                        );
+                        break;
+                    }
+                    warn!(
+                        event = "chain_supervisor.scanner_retry",
+                        chain_id,
+                        retry = retry_count,
+                        max_retries = MAX_RETRIES,
+                        next_attempt_secs = RETRY_DELAY_SECS,
+                        error = %e,
+                        "scanner task exited — respawning detection loop"
+                    );
+                    tokio::time::sleep(std::time::Duration::from_secs(RETRY_DELAY_SECS)).await;
+                    continue;
+                }
+                // run_chain returned Ok — it was cancelled or finished normally
+                break;
             }
         });
     }
