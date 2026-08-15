@@ -237,11 +237,26 @@ async fn build_orchestrator(
     // This ensures engines see real reserves on the first intents rather than cold-cache.
     // Best-effort: partial or empty hydration is R8 fail-honest (engines emit
     // reserves_cache_miss for pools not yet in cache rather than fabricating data).
-    match reserves_cache
-        .hydrate_from_redis(&mut redis, chain_id)
-        .await
+    // Boot-hang fix (P0): hard timeout. hydrate_from_redis does a SCAN fan-out
+    // plus one GET per key over arbx:pool_reserves:<chain>:* with no per-command
+    // timeout (redis-rs ConnectionManager does NOT time out a stalled response).
+    // On a large keyspace this blocked boot indefinitely and the detection loop
+    // never spawned. 30s cap -> cold start (R8 fail-honest, same as the Err arm).
+    match tokio::time::timeout(
+        Duration::from_secs(30),
+        reserves_cache.hydrate_from_redis(&mut redis, chain_id),
+    )
+    .await
     {
-        Ok(n) => {
+        Err(_) => {
+            warn!(
+                event = "scanner.reserves_cache_hydrate_timeout",
+                chain_id,
+                timeout_secs = 30,
+                "ReservesCache hydration exceeded 30s; starting cold (R8 fail-honest)"
+            );
+        }
+        Ok(Ok(n)) => {
             // TASK 1 log #5: renamed to v2.reserves.hydrated for Grafana event taxonomy.
             info!(
                 event = "v2.reserves.hydrated",
@@ -250,7 +265,7 @@ async fn build_orchestrator(
                 "ReservesCache hydrated from Redis at boot"
             );
         }
-        Err(e) => {
+        Ok(Err(e)) => {
             warn!(
                 event = "scanner.reserves_cache_hydrate_failed",
                 chain_id,
@@ -368,7 +383,10 @@ async fn build_orchestrator(
     // Build pool_map from Redis so TriangularEngine's cycle_registry matches
     // ImpactIndex's pool_to_cycles seeding (same data source: MVP_CYCLES × Redis).
     // Without this, ImpactIndex resolves cycle_ids but the engine can't look them up.
-    let pool_map = {
+    // Boot-hang fix (P0): same class of risk as hydration — sequential Redis
+    // GETs with no per-command timeout. Cap the whole build at 30s; an empty
+    // map degrades TriangularEngine honestly (registry misses, no fabrication).
+    let pool_map = match tokio::time::timeout(Duration::from_secs(30), async {
         let mut map = std::collections::HashMap::<(String, String), ethers::types::Address>::new();
         for &(_sym_a, sym_b, sym_c) in crate::workers::triangular_worker::MVP_CYCLES {
             // Each cycle has 3 edges; collect pool addresses for each unique edge.
@@ -397,6 +415,19 @@ async fn build_orchestrator(
             "Built pool_map from Redis for TriangularEngine cycle_registry"
         );
         map
+    })
+    .await
+    {
+        Ok(m) => m,
+        Err(_) => {
+            warn!(
+                event = "scanner.triangular_pool_map_timeout",
+                chain_id,
+                timeout_secs = 30,
+                "pool_map build exceeded 30s; TriangularEngine boots with empty map (R8 fail-honest)"
+            );
+            std::collections::HashMap::new()
+        }
     };
     let tri_engine = Arc::new(TriangularEngine::from_mvp_cycles(
         reserves_cache.clone(),
@@ -437,15 +468,31 @@ async fn build_orchestrator(
     //   - Redis pool_index  → pool_to_cycles        (triangular cycle seeds)
     // On failure (no DB, Redis unreachable) the index starts empty — R8
     // fail-honest: no fabrication, engines skip silently.
-    let impact_index_inner = match ImpactIndex::from_registry(
-        db.as_ref(),
-        &mut redis,
-        chain_id,
-        crate::workers::triangular_worker::MVP_CYCLES,
+    // Boot-hang fix (P0): hard timeout. from_registry runs the pools x factories
+    // x dexes x tokens JOIN (grows all day as pool_discovery inserts) plus Redis
+    // reads. A slow server-side plan or stalled Redis command previously blocked
+    // run_chain forever. 120s cap -> empty index (R8 fail-honest, same as Err arm).
+    let impact_index_inner = match tokio::time::timeout(
+        Duration::from_secs(120),
+        ImpactIndex::from_registry(
+            db.as_ref(),
+            &mut redis,
+            chain_id,
+            crate::workers::triangular_worker::MVP_CYCLES,
+        ),
     )
     .await
     {
-        Ok(idx) => {
+        Err(_) => {
+            warn!(
+                event = "scanner.impact_index_load_timeout",
+                chain_id,
+                timeout_secs = 120,
+                "ImpactIndex::from_registry exceeded 120s; booting with empty index (R8 fail-honest)"
+            );
+            ImpactIndex::empty()
+        }
+        Ok(Ok(idx)) => {
             info!(
                 event = "scanner.impact_index_loaded",
                 chain_id,
@@ -454,7 +501,7 @@ async fn build_orchestrator(
             );
             idx
         }
-        Err(e) => {
+        Ok(Err(e)) => {
             warn!(
                 event = "scanner.impact_index_load_failed",
                 chain_id,
@@ -687,6 +734,10 @@ pub async fn run_chain(
     decimals_provider: ScannerDecimalsProvider,
     cancel: tokio_util::sync::CancellationToken,
 ) -> anyhow::Result<ScannerHandle> {
+    info!(
+        event = "scanner.run_chain_entered",
+        chain_id, "run_chain boot begin — phase markers: ws_pool -> orchestrator -> detection_loop"
+    );
     // RPC failover discipline (G-RPC-1): build a multi-vendor pool from env.
     // CSV format `name=url,name=url`; bare URLs accepted for back-compat.
     let pool = match WsRpcPool::from_env(chain_id) {
@@ -716,6 +767,13 @@ pub async fn run_chain(
             return Ok(ScannerHandle { chain_id });
         }
     };
+
+    info!(
+        event = "scanner.ws_pool_built",
+        chain_id,
+        endpoints = pool.endpoints.len(),
+        "WS endpoint pool parsed from RPC_WS env"
+    );
 
     // Retain the optional HTTP RPC pool for V3 quoting (Multicall3 + QuoterV2).
     // V3 is mainnet-only for now; other chains fall through to V2-only enrichment.
@@ -790,37 +848,83 @@ pub async fn run_chain(
         Option<Arc<tokio::sync::RwLock<ImpactIndex>>>,
     ) = match orch_mode {
         OrchestratorMode::Shadow => {
-            match build_orchestrator(
-                orch_mode,
+            info!(
+                event = "scanner.orchestrator_build_start",
                 chain_id,
-                db.clone(),
-                redis.clone(),
-                opp_dedup.clone(),
-                trading_config.clone(),
-                rpc_http_pool.clone(),
-                cartridge_runner.clone(),
+                mode = orch_mode.as_str(),
+                "build_orchestrator begin (180s hard cap)"
+            );
+            // Boot-hang fix (P0): a hung build (stalled Redis command / oversized
+            // PG load) previously blocked run_chain forever — detection_loop never
+            // spawned and the supervisor observed neither Ok nor Err. Fail-open:
+            // detection spawns WITHOUT orchestrator rather than not at all. The
+            // None-orchestrator shape is already exercised by V1/Off modes.
+            match tokio::time::timeout(
+                Duration::from_secs(180),
+                build_orchestrator(
+                    orch_mode,
+                    chain_id,
+                    db.clone(),
+                    redis.clone(),
+                    opp_dedup.clone(),
+                    trading_config.clone(),
+                    rpc_http_pool.clone(),
+                    cartridge_runner.clone(),
+                ),
             )
             .await
             {
-                Some((orch, idx)) => (Some(orch), Some(idx)),
-                None => (None, None),
+                Ok(Some((orch, idx))) => (Some(orch), Some(idx)),
+                Ok(None) => (None, None),
+                Err(_) => {
+                    error!(
+                        event = "scanner.orchestrator_build_timeout",
+                        chain_id,
+                        timeout_secs = 180,
+                        "build_orchestrator exceeded 180s — detection_loop spawns WITHOUT orchestrator (fail-open; no fabricated state)"
+                    );
+                    (None, None)
+                }
             }
         }
         OrchestratorMode::V2 => {
-            match build_orchestrator(
-                orch_mode,
+            info!(
+                event = "scanner.orchestrator_build_start",
                 chain_id,
-                db.clone(),
-                redis.clone(),
-                opp_dedup.clone(),
-                trading_config.clone(),
-                rpc_http_pool.clone(),
-                cartridge_runner.clone(),
+                mode = orch_mode.as_str(),
+                "build_orchestrator begin (180s hard cap)"
+            );
+            // Boot-hang fix (P0): a hung build (stalled Redis command / oversized
+            // PG load) previously blocked run_chain forever — detection_loop never
+            // spawned and the supervisor observed neither Ok nor Err. Fail-open:
+            // detection spawns WITHOUT orchestrator rather than not at all. The
+            // None-orchestrator shape is already exercised by V1/Off modes.
+            match tokio::time::timeout(
+                Duration::from_secs(180),
+                build_orchestrator(
+                    orch_mode,
+                    chain_id,
+                    db.clone(),
+                    redis.clone(),
+                    opp_dedup.clone(),
+                    trading_config.clone(),
+                    rpc_http_pool.clone(),
+                    cartridge_runner.clone(),
+                ),
             )
             .await
             {
-                Some((orch, idx)) => (Some(orch), Some(idx)),
-                None => (None, None),
+                Ok(Some((orch, idx))) => (Some(orch), Some(idx)),
+                Ok(None) => (None, None),
+                Err(_) => {
+                    error!(
+                        event = "scanner.orchestrator_build_timeout",
+                        chain_id,
+                        timeout_secs = 180,
+                        "build_orchestrator exceeded 180s — detection_loop spawns WITHOUT orchestrator (fail-open; no fabricated state)"
+                    );
+                    (None, None)
+                }
             }
         }
         OrchestratorMode::V1 | OrchestratorMode::Off => (None, None),
@@ -958,6 +1062,13 @@ async fn detection_loop(
     decimals_provider: ScannerDecimalsProvider,
     cancel: tokio_util::sync::CancellationToken,
 ) {
+    info!(
+        event = "scanner.detection_loop_entered",
+        chain_id,
+        endpoints = endpoints.len(),
+        orchestrator_present = orchestrator.is_some(),
+        "detection loop task started"
+    );
     // Operator-selected mempool coverage. Read once at boot — re-deploy to
     // change. `Auto` is resolved per-endpoint inside `run_subscription` since
     // resolution depends on whether the active WS endpoint is Alchemy.
