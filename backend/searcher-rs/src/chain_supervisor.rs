@@ -261,28 +261,58 @@ impl ChainSupervisor {
                 event = "chain_supervisor.spawning",
                 chain_id, "spawning chain scanner task"
             );
-            if let Err(e) = scanner::run_chain(
-                chain_id,
-                cfg_c,
-                ks,
-                redis_c,
-                db_c,
-                dedup_c,
-                opp_dedup_c,
-                tc_c,
-                rpc_pool,
-                sim_v2,
-                decimals_provider_c,
-                cancel,
-            )
-            .await
-            {
-                error!(
-                    event = "chain_supervisor.spawn_failed",
+            // Detection loop restart: if run_chain exits with an error (e.g.,
+            // all WS providers failed subscription, stream ended), respawn it
+            // with backoff instead of dying permanently. The scanner's internal
+            // loop rotates providers, but a subscription error that propagates
+            // through `?` kills the entire task. Without this retry, a single
+            // transient provider outage silences detection forever until manual
+            // container restart.
+            let mut retry_count: u32 = 0;
+            const MAX_RETRIES: u32 = 10;
+            const RETRY_DELAY_SECS: u64 = 30;
+            loop {
+                if let Err(e) = scanner::run_chain(
                     chain_id,
-                    error = %e,
-                    "scanner::run_chain returned error"
-                );
+                    cfg_c.clone(),
+                    ks.clone(),
+                    redis_c.clone(),
+                    db_c.clone(),
+                    dedup_c.clone(),
+                    opp_dedup_c.clone(),
+                    tc_c.clone(),
+                    rpc_pool.clone(),
+                    sim_v2.clone(),
+                    decimals_provider_c.clone(),
+                    cancel.clone(),
+                )
+                .await
+                {
+                    retry_count += 1;
+                    if retry_count >= MAX_RETRIES {
+                        error!(
+                            event = "chain_supervisor.spawn_failed_permanent",
+                            chain_id,
+                            retries = retry_count,
+                            error = %e,
+                            "scanner task exhausted retries — giving up"
+                        );
+                        break;
+                    }
+                    warn!(
+                        event = "chain_supervisor.scanner_retry",
+                        chain_id,
+                        retry = retry_count,
+                        max_retries = MAX_RETRIES,
+                        next_attempt_secs = RETRY_DELAY_SECS,
+                        error = %e,
+                        "scanner task exited — respawning detection loop"
+                    );
+                    tokio::time::sleep(std::time::Duration::from_secs(RETRY_DELAY_SECS)).await;
+                    continue;
+                }
+                // run_chain returned Ok — it was cancelled or finished normally
+                break;
             }
         });
     }
