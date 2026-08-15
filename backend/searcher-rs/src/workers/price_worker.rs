@@ -32,8 +32,12 @@
 //! ## Failure modes (R8 fail-honest)
 //!
 //! - Alchemy down → log `price_worker.alchemy_failed`, all tokens fall to Coingecko.
-//! - Coingecko down → tokens missing from Alchemy stay missing in cache;
-//!   spine cascade falls through to ConfigPriceOracle (operator overrides).
+//! - Coingecko down / 429 → log `price_worker.coingecko_failed` once, then
+//!   skip Coingecko entirely for `COINGECKO_BACKOFF_SECS` (single
+//!   `price_worker.coingecko_backoff` INFO on transition) instead of
+//!   re-triggering the rate limit every tick; tokens missing from Alchemy stay
+//!   missing in cache; spine cascade falls through to ConfigPriceOracle
+//!   (operator overrides).
 //! - Both down → cache not updated this tick; existing TTL-bounded entries
 //!   continue serving (≤60s old). After TTL expiry, cache empties and the
 //!   spine cascades to ConfigPriceOracle. NEVER fabricates a price.
@@ -58,7 +62,7 @@ use serde::{Deserialize, Serialize};
 use shared_rs::price_oracle::redis_token_prices_key;
 use shared_rs::trading_config::{redis_key as trading_config_redis_key, TradingConfigState};
 use std::collections::HashMap;
-use std::sync::atomic::Ordering;
+use std::sync::atomic::{AtomicI64, Ordering};
 use std::time::{Duration, Instant};
 use tokio::time::interval;
 use tracing::{debug, info, warn};
@@ -87,6 +91,27 @@ pub const HTTP_TIMEOUT_SECS: u64 = 8;
 /// Lower this if `price_worker.coingecko_failed` rises under sustained
 /// Alchemy outage; the allowlist always survives the cut.
 pub const MAX_PRICED_TOKENS: usize = 300;
+/// Coingecko circuit breaker (CG429-01): after a batch failure (free-tier 429
+/// or any HTTP client error) skip Coingecko entirely for this long instead of
+/// re-triggering the rate limit every tick. Affected tokens keep falling
+/// through to ConfigPriceOracle exactly as on any other Coingecko failure
+/// (R8). A later successful response needs no reset — the window simply
+/// expires.
+pub const COINGECKO_BACKOFF_SECS: i64 = 300;
+
+/// Epoch-seconds deadline until which Coingecko attempts are suppressed.
+/// `fetch_max` extends the window while returning the previous value, so the
+/// transition INFO fires exactly once per backoff entry.
+static COINGECKO_BACKOFF_UNTIL: AtomicI64 = AtomicI64::new(0);
+
+/// Current wall-clock epoch seconds. 0 on clock error — degrades to "not in
+/// backoff" (same convention as `host_bindings`).
+fn unix_now_secs() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0)
+}
 
 // -------- Alchemy request/response types --------
 
@@ -450,6 +475,13 @@ impl PriceWorker {
         let mut coingecko_hits = 0usize;
         if !missing.is_empty() {
             for chunk in missing.chunks(MAX_BATCH_SIZE) {
+                // Circuit breaker (CG429-01): skip Coingecko entirely while the
+                // backoff window opened by a previous batch failure is still
+                // active — no request, no WARN. The missing tokens simply stay
+                // unpriced and cascade to ConfigPriceOracle downstream (R8).
+                if unix_now_secs() < COINGECKO_BACKOFF_UNTIL.load(Ordering::Relaxed) {
+                    break;
+                }
                 let chunk_owned: Vec<TokenRef> = chunk.iter().map(|t| (*t).clone()).collect();
                 match self.fetch_coingecko(&chunk_owned).await {
                     Ok(map) => {
@@ -467,6 +499,21 @@ impl PriceWorker {
                         counters()
                             .price_worker_errors
                             .fetch_add(1, Ordering::Relaxed);
+                        // Open the backoff window. INFO only when this failure
+                        // actually transitioned us in (previous deadline was
+                        // already expired) — ops sees the state once, not per tick.
+                        let prev = COINGECKO_BACKOFF_UNTIL.fetch_max(
+                            unix_now_secs() + COINGECKO_BACKOFF_SECS,
+                            Ordering::Relaxed,
+                        );
+                        if unix_now_secs() >= prev {
+                            info!(
+                                event = "price_worker.coingecko_backoff",
+                                chain_id = self.cfg.chain_id,
+                                retry_in_secs = COINGECKO_BACKOFF_SECS,
+                                "Coingecko entering backoff; affected tokens fall through to ConfigPriceOracle"
+                            );
+                        }
                         warn!(
                             event = "price_worker.coingecko_failed",
                             chain_id = self.cfg.chain_id,
