@@ -1179,7 +1179,10 @@ async fn detection_loop(
                 event = "scanner.subscription_error",
                 chain_id,
                 provider = %endpoint.name,
-                error = %e,
+                // WSSUB-05: `{e:#}` renders the FULL anyhow error chain (outer
+                // context + underlying JSON-RPC error). `%e` alone showed only
+                // the outermost context string and hid the real cause.
+                error = %format!("{e:#}"),
                 latency_ms = loop_start.elapsed().as_millis(),
                 "OMEGA_ALERTA: Caída de provider. Ejecutando evasión táctica y rotación."
             );

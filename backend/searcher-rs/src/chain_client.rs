@@ -41,7 +41,7 @@
 use anyhow::Context;
 use ethers::providers::{Middleware, Provider, StreamExt, SubscriptionStream, Ws};
 use ethers::types::{Transaction, H256};
-use futures_util::Stream;
+use futures_util::{future::Either, Stream};
 use serde_json::{json, Value};
 use std::sync::Arc;
 use std::time::Duration;
@@ -102,24 +102,70 @@ impl WsChainClient {
         // then extract the hash from either:
         //   (a) bare hex string:  "0xabcd..."  (Alchemy/Infura format)
         //   (b) JSON object:      {"hash": "0xabcd..."} (PublicNode/drpc format)
-        let sub = self
-            .provider
-            .subscribe("newPendingTransactions".to_string())
-            .await
-            .context("subscribe newPendingTransactions (raw)")?;
+        //
+        // WSSUB-05 (2026-08-15T23:03Z): the raw eth_subscribe can also FAIL AT
+        // SUBSCRIBE TIME — not just emit odd item shapes. L4 evidence:
+        // alchemy rejected `eth_subscribe("newPendingTransactions")` in 113ms
+        // (WS connect + get_chainid had already succeeded, so the key is valid
+        // — the subscribe call itself was refused) while publicnode hung ~60s
+        // before failing. Both errors hit the `?` and propagated to the
+        // scanner's provider rotation, which looped forever without a single
+        // successful subscription → heartbeat pending_received=0 forever.
+        // Mitigations:
+        //   1. Each subscribe attempt is capped at 15s (tokio::time::timeout)
+        //      so a hanging provider fails fast and rotation proceeds.
+        //   2. On raw-subscribe failure we fall back to the typed
+        //      `subscribe_pending_txs()` H256 stream (known-good against
+        //      Alchemy) before giving up. The tolerant raw item mapping below
+        //      is kept unchanged for providers that DO accept the raw method.
+        //   3. Error chains are logged in full (`{e:#}`) — the old
+        //      `scanner.subscription_error` line rendered only the outermost
+        //      context and hid the underlying JSON-RPC error.
+        let raw_sub = timeout(
+            Duration::from_secs(15),
+            self.provider
+                .subscribe("newPendingTransactions".to_string()),
+        )
+        .await
+        .map_err(|_| anyhow::anyhow!("subscribe timeout 15s"))
+        .and_then(|res| res.context("subscribe newPendingTransactions (raw)"));
 
-        let chain_id = self.chain_id;
-        Ok(sub
-            .map(move |item: serde_json::Value| match item {
-                serde_json::Value::String(s) => s.parse::<H256>().ok(),
-                serde_json::Value::Object(map) => map
-                    .get("hash")
-                    .and_then(|v| v.as_str())
-                    .and_then(|s| s.parse::<H256>().ok()),
-                _ => None,
-            })
-            .filter(|h| futures_util::future::ready(h.is_some()))
-            .map(|h| h.unwrap()))
+        let sub = match raw_sub {
+            Ok(raw) => Either::Left(
+                raw.map(move |item: serde_json::Value| match item {
+                    serde_json::Value::String(s) => s.parse::<H256>().ok(),
+                    serde_json::Value::Object(map) => map
+                        .get("hash")
+                        .and_then(|v| v.as_str())
+                        .and_then(|s| s.parse::<H256>().ok()),
+                    _ => None,
+                })
+                .filter(|h| futures_util::future::ready(h.is_some()))
+                .map(|h| h.unwrap()),
+            ),
+            Err(e) => {
+                warn!(
+                    event = "chain_client.subscribe_raw_failed",
+                    chain_id = self.chain_id,
+                    error = %format!("{e:#}"),
+                    "raw newPendingTransactions subscribe failed; trying typed fallback"
+                );
+                let typed_sub = timeout(
+                    Duration::from_secs(15),
+                    self.provider.subscribe_pending_txs(),
+                )
+                .await
+                .map_err(|_| anyhow::anyhow!("subscribe timeout 15s"))
+                .and_then(|res| res.context("subscribe_pending_txs (typed fallback)"))
+                .map_err(|typed_e| {
+                    typed_e.context(format!(
+                        "both pending-tx subscribe attempts failed; raw error: {e:#}"
+                    ))
+                })?;
+                Either::Right(typed_sub)
+            }
+        };
+        Ok(sub)
     }
 
     /// Subscribe to pending transactions filtered upstream by `to` address,
