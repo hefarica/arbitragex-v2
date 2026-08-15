@@ -502,10 +502,8 @@ impl PriceWorker {
                         // Open the backoff window. INFO only when this failure
                         // actually transitioned us in (previous deadline was
                         // already expired) — ops sees the state once, not per tick.
-                        let prev = COINGECKO_BACKOFF_UNTIL.fetch_max(
-                            unix_now_secs() + COINGECKO_BACKOFF_SECS,
-                            Ordering::Relaxed,
-                        );
+                        let prev = COINGECKO_BACKOFF_UNTIL
+                            .fetch_max(unix_now_secs() + COINGECKO_BACKOFF_SECS, Ordering::Relaxed);
                         if unix_now_secs() >= prev {
                             info!(
                                 event = "price_worker.coingecko_backoff",

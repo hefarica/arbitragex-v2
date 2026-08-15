@@ -955,8 +955,7 @@ pub async fn active_evaluate_and_emit(
                         reason = ?eval_result.reason,
                         "cartridge active eval: no opportunity"
                     );
-                    let reason_key =
-                        eval_result.reason.unwrap_or_else(|| "none".to_string());
+                    let reason_key = eval_result.reason.unwrap_or_else(|| "none".to_string());
                     *negative_reasons.entry(reason_key).or_insert(0) += 1;
                     negative_total += 1;
                     continue;
