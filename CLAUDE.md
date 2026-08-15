@@ -80,7 +80,7 @@ Docker Compose busca `.env` en el directorio del YAML, no en la raíz del proyec
 
 ---
 
-## 3. REGLAS ANTI-REINCIDENCIA (R1-R7)
+## 3. REGLAS ANTI-REINCIDENCIA (R1-R9)
 
 ### R1 — Cero Mismatch: Mounted Snapshot Pattern
 Toda página SSR en Next.js App Router:
@@ -150,6 +150,12 @@ curl localhost:8787/api/opportunities/live | head
 ### R8 — Fail-Honest Pattern
 El sistema debe fallar honestamente: `None = no computado`, `Some(0.0) = computado y exactamente cero`.
 Si no hay datos reales, registrar una **observation** con la razón exacta (`impact_zero`, `discovery_failed`, `discovery_no_pool_found`, `missing_reserves`, `unknown_token_price`, `no_base_candidates`, `watchlist_empty`, etc.) y detener esa rama. NUNCA inventar datos para avanzar. NUNCA fabricar una `Opportunity`.
+
+### R9 — Ventana de Logs antes de Concluir Ausencia (LOGFLOOD-01)
+Antes de diagnosticar "el evento X nunca ocurrió" desde `docker logs`:
+1. Verificar la ventana retenida: `docker inspect <c> --format '{{.HostConfig.LogConfig.Config}}'` (ej. `max-file:5 × max-size:10m` = 50MB).
+2. Comparar `State.StartedAt` vs el timestamp de la PRIMERA línea retenida (`docker logs <c> 2>&1 | head -1`). Si hay brecha → la ventana está rotada y la "ausencia" es un artefacto, no evidencia.
+3. Regla de logging en hot-loops: logs per-ítem a `debug!` + UN summary agregado a `info!` (histograma de razones, R8). Un loop honesto que emite 183 líneas/s destruye la observabilidad del resto del sistema (llenó 50MB en ~10 min y causó un falso diagnóstico de deadlock). Detalle completo: `docs/incidents/2026-08-15-LOGFLOOD-01.md`.
 
 ## 4. OMEGA ARCHITECTURAL FIDELITY
 
