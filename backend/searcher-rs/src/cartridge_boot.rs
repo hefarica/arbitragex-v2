@@ -934,19 +934,35 @@ pub async fn active_evaluate_and_emit(
         oracle.into_snapshot()
     };
 
+    // LOGFLOOD-01: per-cartridge negatives below log at DEBUG (was INFO —
+    // ~183 lines/s evicted every other log from the 50MB docker rotation
+    // window). One post-loop INFO summary preserves the full per-reason
+    // histogram (R8 fail-honest: reasons kept, never sampled).
+    let pertinent_count = pertinent.len();
+    let mut negative_reasons: std::collections::BTreeMap<String, u64> =
+        std::collections::BTreeMap::new();
+    let mut negative_total: u64 = 0;
+    let mut positive_total: u64 = 0;
+
     for (cartridge_id, category) in pertinent {
         match runner.evaluate(&cartridge_id, pool_data.clone()).await {
             Ok(eval_result) => {
                 if !eval_result.is_opportunity {
-                    info!(
+                    debug!(
                         event = "cartridge.active_eval_negative",
                         chain_id,
                         cartridge_id = %cartridge_id,
                         reason = ?eval_result.reason,
                         "cartridge active eval: no opportunity"
                     );
+                    let reason_key =
+                        eval_result.reason.unwrap_or_else(|| "none".to_string());
+                    *negative_reasons.entry(reason_key).or_insert(0) += 1;
+                    negative_total += 1;
                     continue;
                 }
+
+                positive_total += 1;
 
                 info!(
                     event = "cartridge.active_opportunity_detected",
@@ -1252,6 +1268,17 @@ pub async fn active_evaluate_and_emit(
             }
         }
     }
+
+    info!(
+        event = "cartridge.active_eval_summary",
+        chain_id,
+        tx_hash = %intent.tx_hash,
+        pertinent = pertinent_count,
+        negative = negative_total,
+        positive = positive_total,
+        reasons = ?negative_reasons,
+        "cartridge active eval summary (per-reason negatives)"
+    );
 }
 
 /// Process a cartridge-generated candidate through the full evaluation + emission pipeline.
