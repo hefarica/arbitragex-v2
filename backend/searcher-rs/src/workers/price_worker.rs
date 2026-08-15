@@ -72,7 +72,7 @@ pub const CACHE_TTL_MULTIPLIER: u64 = 2;
 /// Provider request limit safety bound; chunk allowlist into this many
 /// tokens per HTTP call. Both Alchemy and Coingecko accept comfortably more
 /// but smaller batches recover faster from individual provider hiccups.
-pub const MAX_BATCH_SIZE: usize = 30;
+pub const MAX_BATCH_SIZE: usize = 5;
 /// Per-request HTTP timeout. Prices are best-effort; we never want a hung
 /// upstream to delay the next worker tick.
 pub const HTTP_TIMEOUT_SECS: u64 = 8;
@@ -81,10 +81,11 @@ pub const HTTP_TIMEOUT_SECS: u64 = 8;
 /// `arbx:pool_index[:_v3]:<chain>:<sym0>:<sym1>` key names) fill the
 /// remainder up to this bound. Protects Alchemy (shared RPC key budget) and
 /// Coingecko (free-tier rate limit) from a blowout when pool discovery
-/// enumerates a long tail. At MAX_BATCH_SIZE=30 this is <= 10 Alchemy +
-/// <= 10 Coingecko batched calls per tick — within provider budgets. Lower
-/// this if `price_worker.coingecko_failed` rises under sustained Alchemy
-/// outage; the allowlist always survives the cut.
+/// enumerates a long tail. At MAX_BATCH_SIZE=5 this is <= 60 Alchemy +
+/// <= 60 Coingecko batched calls per tick — Alchemy free tier rejects
+/// batches >~10 addresses with 400 Bad Request (observed 2026-08-15).
+/// Lower this if `price_worker.coingecko_failed` rises under sustained
+/// Alchemy outage; the allowlist always survives the cut.
 pub const MAX_PRICED_TOKENS: usize = 300;
 
 // -------- Alchemy request/response types --------
