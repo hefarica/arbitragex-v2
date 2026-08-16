@@ -114,3 +114,14 @@ header. None are automated. The dedupe archive table
 | `099_opportunities_route_metadata.sql`  | Adds `route_metadata` JSONB column to `opportunities` storing complete route topology (`pool_addresses[]`, `token_addresses[]`, `dex_adapters[]`, `decimals{}`) for sim-ctl `OpportunityCandidate` reconstruction. GIN index on `pool_addresses`. Default `'{}'` for backward compat. |
 
 A1 enrichment path data-source foundation. Forward-only and idempotent.
+
+---
+
+## G-SIM-1 FASE 2 (readiness evidence registry) — 2026-08-16
+
+| File                                    | Purpose                                                  |
+|-----------------------------------------|----------------------------------------------------------|
+| `104_readiness_evidence.sql`            | Append-only evidence store for gate readiness checklists: `readiness_evidence` (latest row per `(gate_id, item_key)`, `status` constrained to `evidenced\|failed`) + sister `readiness_evidence_history` (PK `(gate_id, item_key, verified_at)`, never updated or deleted). Written only by api-server `POST /admin/readiness-evidence` (history insert → upsert, one transaction). Generalizes the `scripts/run_a4_fork_validation.sh` `gate_c_validation` INSERT + marker-file mechanism with freshness (30-day `is_fresh`, computed by readers) + provenance (`evidence_ref`, `verified_by`). |
+
+Forward-only and idempotent. The FASE 3 verifier reads PG directly via its own
+pool; `GET /admin/readiness-evidence` is a read-only operator convenience.
