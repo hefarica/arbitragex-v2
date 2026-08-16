@@ -1021,6 +1021,14 @@ async fn main() -> anyhow::Result<()> {
 mod tests {
     use super::*;
 
+    // CI-GATE-RELIABILITY (3rd strike 2026-08-16, #343/#344/#346): cargo test
+    // runs these in parallel threads, but the five tests below mutate the SAME
+    // process-global env vars — a set_var("true") from one race between the
+    // remove_var/assert of another and flipped the default-test red (flaky).
+    // Serialize every env-mutating test on one mutex (poison-tolerant: a
+    // panicked guard must not brick the rest of the suite).
+    static ENV_MUTEX: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
     // ── main::tests::legacy_workers_disabled_by_default ─────────────────────
     //
     // Verifies that, with no env vars set, all three legacy workers are
@@ -1028,6 +1036,7 @@ mod tests {
 
     #[test]
     fn legacy_workers_disabled_by_default() {
+        let _guard = ENV_MUTEX.lock().unwrap_or_else(|p| p.into_inner());
         // Ensure the flags are absent (they may be set in the test environment;
         // we remove them here to test the default).
         std::env::remove_var("ARBX_ENABLE_LEGACY_TRIANGULAR_WORKER");
@@ -1052,6 +1061,7 @@ mod tests {
 
     #[test]
     fn legacy_triangular_enabled_by_flag() {
+        let _guard = ENV_MUTEX.lock().unwrap_or_else(|p| p.into_inner());
         std::env::set_var("ARBX_ENABLE_LEGACY_TRIANGULAR_WORKER", "true");
         assert!(
             legacy_triangular_worker_enabled(),
@@ -1102,6 +1112,7 @@ mod tests {
 
     #[test]
     fn legacy_flashloan_enabled_by_flag() {
+        let _guard = ENV_MUTEX.lock().unwrap_or_else(|p| p.into_inner());
         std::env::set_var("ARBX_ENABLE_LEGACY_FLASHLOAN_WORKER", "true");
         assert!(legacy_flashloan_arb_worker_enabled());
         std::env::remove_var("ARBX_ENABLE_LEGACY_FLASHLOAN_WORKER");
@@ -1111,6 +1122,7 @@ mod tests {
 
     #[test]
     fn legacy_liquidation_enabled_by_flag() {
+        let _guard = ENV_MUTEX.lock().unwrap_or_else(|p| p.into_inner());
         std::env::set_var("ARBX_ENABLE_LEGACY_LIQUIDATION_WORKER", "true");
         assert!(legacy_liquidation_worker_enabled());
         std::env::remove_var("ARBX_ENABLE_LEGACY_LIQUIDATION_WORKER");
@@ -1120,6 +1132,7 @@ mod tests {
 
     #[test]
     fn false_string_keeps_worker_disabled() {
+        let _guard = ENV_MUTEX.lock().unwrap_or_else(|p| p.into_inner());
         std::env::set_var("ARBX_ENABLE_LEGACY_TRIANGULAR_WORKER", "false");
         assert!(!legacy_triangular_worker_enabled());
         std::env::set_var("ARBX_ENABLE_LEGACY_TRIANGULAR_WORKER", "0");
