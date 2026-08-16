@@ -49,7 +49,7 @@ export async function verifyAll(deps: {
     verifyRunbook({ now }),
     verifyGRPC1({ now }),
     verifyGNET1({ now }),
-    verifyGSIM1({ now }),
+    verifyGSIM1({ pool: deps.pool, now }),
     verifyGPEC1({ now }),
     verifyGRIS1({ pool: deps.pool, now }),
     verifyGTOK1({ pool: deps.pool, now }),
