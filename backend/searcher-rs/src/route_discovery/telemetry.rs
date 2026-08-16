@@ -267,13 +267,9 @@ mod tests {
         assert_eq!(e["mode"], "shadow");
         assert!(e["dispatch_deferred"].is_null());
 
-        let e2 = route_intent_emitted_event(
-            1,
-            "0xdef",
-            "triangular_arb",
-            "shadow",
-            Some("needs_triangular_adapter"),
-        );
-        assert_eq!(e2["dispatch_deferred"], "needs_triangular_adapter");
+        // Triangular is now dispatched (D-01): no deferral rides the event.
+        let e2 = route_intent_emitted_event(1, "0xdef", "triangular_arb", "shadow", None);
+        assert_eq!(e2["strategy"], "triangular_arb");
+        assert!(e2["dispatch_deferred"].is_null());
     }
 }

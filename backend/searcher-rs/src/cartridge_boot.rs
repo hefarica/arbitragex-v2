@@ -640,15 +640,15 @@ fn build_rd_outcome_v2(
 /// are absent on a swap, so the cartridge calls `get_token_meta(())` → "Function not found"
 /// and floods `cartridge.shadow_eval_error` while wasting Rhai cycles.
 ///
-/// Pertinence keys on `RouteIntent::source_event` (the intent's origin SHAPE):
+/// Pertinence keys on the intent's SHAPE — `source_event` for the observation
+/// vs position origin, plus the route's closed-cycle geometry:
 ///   - swap observations (`public_mempool`, `filtered_mempool`, `private_hint`,
-///     `new_block`) carry one observed swap leg → only `dex_arb` (cross-DEX spread on the
-///     observed pair) consumes that shape today.
+///     `new_block`) carry one observed swap leg → `dex_arb` (cross-DEX spread on
+///     the observed pair), EXCLUDING closed ≥3-leg cycles.
 ///   - lending / oracle events (`lending_position_update`, `oracle_update`) carry a
 ///     debt/collateral position → `liquidation`.
-///   - `triangular_arb` needs a `token_a/b/c` triangle that NO current detection source
-///     emits; it stays loaded but dormant (skipped, not silently dropped) until a
-///     triangle-scan source exists — re-enable its arm here when that lands.
+///   - `triangular_arb` matches closed ≥3-leg cycles: route_discovery's 3-hop
+///     closed routes are the triangle source (D-01, closed 2026-08-16).
 ///   - Unknown / custom categories are always evaluated: the operator who installed the
 ///     cartridge owns its input-shape contract, so we never silently drop it.
 fn cartridge_matches_intent(category: &str, intent: &RouteIntent) -> bool {
@@ -663,13 +663,18 @@ fn cartridge_matches_intent(category: &str, intent: &RouteIntent) -> bool {
         intent.source_event,
         DetectionSource::LendingPositionUpdate | DetectionSource::OracleUpdate
     );
+    // A closed ≥3-leg cycle (last leg's token_out = first leg's token_in) is a
+    // TRIANGLE shape: route_discovery's Triangular classification (D-01).
+    let is_closed_cycle = intent.legs.len() >= 3
+        && intent.legs.last().map(|l| l.token_out) == intent.legs.first().map(|l| l.token_in);
     match category {
-        // Consumes one observed swap leg (token_in/out + reserves_source).
-        "dex_arb" => is_swap_observation,
+        // Consumes one observed swap leg (token_in/out + reserves_source) — never
+        // a closed ≥3-leg cycle (a triangle is not a single-pair spread).
+        "dex_arb" => is_swap_observation && !is_closed_cycle,
         // Needs a debt/collateral position; only lending/oracle events carry it.
         "liquidation" => is_position_event,
-        // Needs a token_a/b/c triangle; no current source emits that shape.
-        "triangular_arb" => false,
+        // Closed ≥3-leg cycles from route_discovery's triangle source (D-01).
+        "triangular_arb" => is_closed_cycle,
         // Custom / unknown cartridge: don't gate it — evaluate against everything.
         _ => true,
     }
@@ -1627,6 +1632,35 @@ mod tests {
         .expect("valid intent")
     }
 
+    /// Two-leg cycle (A→B→A) — the shape the dispatcher's `build_intent` emits
+    /// for 2-token routes. Closed in the ≥2 sense but NOT a triangle (D-01's
+    /// shape gate keys on ≥3 legs): dex_arb's shape.
+    fn two_leg_cycle_intent(source: crate::route_intent::DetectionSource) -> RouteIntent {
+        use crate::route_intent::{RouteIntentLeg, RouterKind, SwapExactMode};
+        use ethers::types::{Address, H256, U256};
+        let mk = |a: u64, b: u64| RouteIntentLeg {
+            token_in: Address::from_low_u64_be(a),
+            token_out: Address::from_low_u64_be(b),
+            pool_hint: Some(Address::from_low_u64_be(0xCCCC)),
+            dex_hint: None,
+            fee_bps: None,
+            protocol_type: ProtocolType::V2,
+        };
+        RouteIntent::new(
+            1,
+            H256::zero(),
+            Address::zero(),
+            RouterKind::UniswapV2,
+            Address::zero(),
+            vec![mk(0xA, 0xB), mk(0xB, 0xA)],
+            U256::from(1234u64),
+            None,
+            SwapExactMode::ExactIn,
+            source,
+        )
+        .expect("valid intent")
+    }
+
     #[test]
     fn routing_swap_intent_goes_only_to_dex_arb() {
         // A confirmed V2 swap from the block scanner (NewBlock) must reach dex_arb and
@@ -1640,6 +1674,23 @@ mod tests {
         let pending = intent_with_source(DetectionSource::PublicMempool);
         assert!(cartridge_matches_intent("dex_arb", &pending));
         assert!(!cartridge_matches_intent("liquidation", &pending));
+    }
+
+    #[test]
+    fn routing_closed_cycle_goes_to_triangular_not_dex_arb() {
+        // Shape rule (D-01): a closed ≥3-leg cycle is a TRIANGLE → triangular_arb;
+        // dex_arb (cross-DEX spread on ONE observed pair) must not mis-evaluate it.
+        let tri = three_leg_intent();
+        assert!(cartridge_matches_intent("triangular_arb", &tri));
+        assert!(!cartridge_matches_intent("dex_arb", &tri));
+        assert!(!cartridge_matches_intent("liquidation", &tri));
+        // A 2-leg swap cycle (the dispatcher's dex_arb shape) stays dex_arb's.
+        let two = two_leg_cycle_intent(DetectionSource::NewBlock);
+        assert!(cartridge_matches_intent("dex_arb", &two));
+        assert!(!cartridge_matches_intent("triangular_arb", &two));
+        // A 1-leg swap is still not a triangle (the original flood guard holds).
+        let one = intent_with_source(DetectionSource::NewBlock);
+        assert!(!cartridge_matches_intent("triangular_arb", &one));
     }
 
     #[test]
