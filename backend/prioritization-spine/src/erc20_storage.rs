@@ -28,7 +28,7 @@ use ethers::types::{Address, H256, U256};
 use ethers::utils::keccak256;
 use shared_rs::chains::{
     AAVE_MAINNET_LC, DAI_MAINNET_LC, LINK_MAINNET_LC, UNI_MAINNET_LC, USDC_MAINNET_LC,
-    WBTC_MAINNET_LC, WETH_MAINNET_LC,
+    USDT_MAINNET_LC, WBTC_MAINNET_LC, WETH_MAINNET_LC,
 };
 
 /// Hardcoded balance mapping slot indices for top ERC20 tokens, derived
@@ -47,7 +47,7 @@ pub fn balance_slot_for(token: Address) -> Option<u32> {
         // WETH9 (0xc02aaa39…) — slot 3
         WETH_MAINNET_LC => Some(3),
         // USDT TetherToken (0xdac17f95…) — slot 2
-        "0xdac17f958d2ee523a2206206994597c13d831ec7" => Some(2),
+        USDT_MAINNET_LC => Some(2),
         // USDC FiatTokenV2_2 proxy (0xa0b86991…) — slot 9
         USDC_MAINNET_LC => Some(9),
         // DAI (0x6b175474…) — slot 2
@@ -112,7 +112,7 @@ pub fn allowance_slot_for(token: Address) -> Option<u32> {
         // WETH9 — slot 4 (after balances at 3)
         WETH_MAINNET_LC => Some(4),
         // USDT TetherToken — slot 5 (after balances at 2 + extra storage)
-        "0xdac17f958d2ee523a2206206994597c13d831ec7" => Some(5),
+        USDT_MAINNET_LC => Some(5),
         // USDC FiatTokenV2_2 proxy — slot 10 (after balances at 9)
         USDC_MAINNET_LC => Some(10),
         // DAI — slot 3 (after balances at 2)
@@ -173,14 +173,14 @@ mod tests {
     fn known_tokens_have_correct_balance_slots() {
         // Each pair verified from the contract source on Etherscan.
         for (token, expected_slot) in [
-            (WETH_MAINNET_LC, 3),                              // WETH
-            ("0xdac17f958d2ee523a2206206994597c13d831ec7", 2), // USDT
-            (USDC_MAINNET_LC, 9),                              // USDC
-            (DAI_MAINNET_LC, 2),                               // DAI
-            (WBTC_MAINNET_LC, 0),                              // WBTC
-            (LINK_MAINNET_LC, 1),                              // LINK
-            (UNI_MAINNET_LC, 4),                               // UNI
-            (AAVE_MAINNET_LC, 0),                              // AAVE
+            (WETH_MAINNET_LC, 3), // WETH
+            (USDT_MAINNET_LC, 2), // USDT
+            (USDC_MAINNET_LC, 9), // USDC
+            (DAI_MAINNET_LC, 2),  // DAI
+            (WBTC_MAINNET_LC, 0), // WBTC
+            (LINK_MAINNET_LC, 1), // LINK
+            (UNI_MAINNET_LC, 4),  // UNI
+            (AAVE_MAINNET_LC, 0), // AAVE
         ] {
             assert_eq!(
                 balance_slot_for(addr(token)),
@@ -289,14 +289,14 @@ mod tests {
     #[test]
     fn known_tokens_have_correct_allowance_slots() {
         for (token, expected_slot) in [
-            (WETH_MAINNET_LC, 4),                              // WETH
-            ("0xdac17f958d2ee523a2206206994597c13d831ec7", 5), // USDT
-            (USDC_MAINNET_LC, 10),                             // USDC
-            (DAI_MAINNET_LC, 3),                               // DAI
-            (WBTC_MAINNET_LC, 1),                              // WBTC
-            (LINK_MAINNET_LC, 2),                              // LINK
-            (UNI_MAINNET_LC, 5),                               // UNI
-            (AAVE_MAINNET_LC, 1),                              // AAVE
+            (WETH_MAINNET_LC, 4),  // WETH
+            (USDT_MAINNET_LC, 5),  // USDT
+            (USDC_MAINNET_LC, 10), // USDC
+            (DAI_MAINNET_LC, 3),   // DAI
+            (WBTC_MAINNET_LC, 1),  // WBTC
+            (LINK_MAINNET_LC, 2),  // LINK
+            (UNI_MAINNET_LC, 5),   // UNI
+            (AAVE_MAINNET_LC, 1),  // AAVE
         ] {
             assert_eq!(
                 allowance_slot_for(addr(token)),

@@ -28,6 +28,7 @@
 use crate::pool_candidate::{PoolCandidate, PoolEnumSource};
 use anyhow::Context;
 use serde::Deserialize;
+use shared_rs::chains::USDT_MAINNET_LC;
 use std::time::Duration;
 use tracing::warn;
 
@@ -50,7 +51,7 @@ fn pivot_tokens(chain_id: u64) -> Vec<&'static str> {
         1 | 10 | 42161 | 8453 => vec![
             "0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2", // WETH
             "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48", // USDC
-            "0xdac17f958d2ee523a2206206994597c13d831ec7", // USDT
+            USDT_MAINNET_LC,                              // USDT
         ],
         // Polygon: WMATIC/USDC/USDT.
         137 => vec![

@@ -75,6 +75,7 @@ const fn hex_nibble(c: u8) -> u8 {
 /// silences the generic-api-key heuristic at this one definition site only.
 pub const WETH_MAINNET: &str = "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"; // gitleaks:allow
 pub const USDC_MAINNET: &str = "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48"; // gitleaks:allow
+pub const USDT_MAINNET: &str = "0xdAC17F958D2ee523a2206206994597C13D831ec7"; // gitleaks:allow
 pub const DAI_MAINNET: &str = "0x6B175474E89094C44Da98b954EedeAC495271d0F"; // gitleaks:allow
 pub const WBTC_MAINNET: &str = "0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599"; // gitleaks:allow
 pub const LINK_MAINNET: &str = "0x514910771AF9Ca656af840dff83E8264EcF986CA"; // gitleaks:allow
@@ -88,11 +89,93 @@ pub const AAVE_MAINNET: &str = "0x7Fc66500c84A76Ad7e9c93437bFc5Ac33E2DDaE9"; // 
 /// both forms must stay byte-identical (pinned by the test below).
 pub const WETH_MAINNET_LC: &str = "0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2";
 pub const USDC_MAINNET_LC: &str = "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48";
+pub const USDT_MAINNET_LC: &str = "0xdac17f958d2ee523a2206206994597c13d831ec7";
 pub const DAI_MAINNET_LC: &str = "0x6b175474e89094c44da98b954eedeac495271d0f";
 pub const WBTC_MAINNET_LC: &str = "0x2260fac5e5542a773aa44fbcfedf7c193bc2c599";
 pub const LINK_MAINNET_LC: &str = "0x514910771af9ca656af840dff83e8264ecf986ca";
 pub const UNI_MAINNET_LC: &str = "0x1f9840a85d5af5bf1d1762f925bdaddc4201f984";
 pub const AAVE_MAINNET_LC: &str = "0x7fc66500c84a76ad7e9c93437bfc5ac33e2ddae9";
+
+// ─── Canonical stablecoins (STABLEARR-11) ─────────────────────────────────
+//
+// ONE replaceable definition for the stablecoin set: scattered per-site
+// enumerations (price_oracle's inline symbol match, dex/flashloan "$1.00"
+// arms, storage-slot tables) must reference this array or its consts, never
+// re-list addresses. Symbol set mirrors the locked trust list documented in
+// `price_oracle::is_known_stablecoin` (policy 2026-05-05).
+
+/// One entry of the canonical mainnet stablecoin set.
+#[derive(Debug, Clone, Copy)]
+pub struct StablecoinEntry {
+    pub symbol: &'static str,
+    pub address: &'static str,
+}
+
+/// Canonical mainnet stablecoins — single replaceable definition (STABLEARR-11).
+/// Addresses EIP-55; derived matchers below (`is_stablecoin_symbol`,
+/// `is_stablecoin_address_lc`) serve exact-match arms without needing an
+/// `_LC` twin per entry.
+pub const STABLECOINS_MAINNET: &[StablecoinEntry] = &[
+    StablecoinEntry {
+        symbol: "USDC",
+        address: USDC_MAINNET,
+    },
+    StablecoinEntry {
+        symbol: "USDT",
+        address: USDT_MAINNET,
+    },
+    StablecoinEntry {
+        symbol: "DAI",
+        address: DAI_MAINNET,
+    },
+    StablecoinEntry {
+        symbol: "BUSD",
+        address: "0x4Fabb145d64652a948d72533023f6E7A623C7C53", // gitleaks:allow
+    },
+    StablecoinEntry {
+        symbol: "FRAX",
+        address: "0x853d955aCEf822Db058eb8505911ED77F175b99e", // gitleaks:allow
+    },
+    StablecoinEntry {
+        symbol: "LUSD",
+        address: "0x5f98805A4E8be255a32880FDeC7F6728C6568bA0", // gitleaks:allow
+    },
+    StablecoinEntry {
+        symbol: "USDP",
+        address: "0x8E870D67F660D95d5be530380D0eC0bd388289E1", // gitleaks:allow
+    },
+    StablecoinEntry {
+        symbol: "TUSD",
+        address: "0x0000000000085d4780B73119b644AE5ecd22b376", // gitleaks:allow
+    },
+    StablecoinEntry {
+        symbol: "GUSD",
+        address: "0x056Fd409E1d7A124BD7017459dFEa2F387b6d5Cd", // gitleaks:allow
+    },
+    StablecoinEntry {
+        symbol: "USDD",
+        address: "0x4f8e5DE400DE08B164E7421B3EE387f461beCD1A", // gitleaks:allow
+    },
+    StablecoinEntry {
+        symbol: "PYUSD",
+        address: "0x6c3ea9036406852006290770BEdFcAbA0e23A0e8", // gitleaks:allow
+    },
+];
+
+/// Case-insensitive symbol membership in `STABLECOINS_MAINNET` — the one
+/// stablecoin definition site (STABLEARR-11).
+pub fn is_stablecoin_symbol(sym: &str) -> bool {
+    STABLECOINS_MAINNET
+        .iter()
+        .any(|e| e.symbol.eq_ignore_ascii_case(sym))
+}
+
+/// Case-insensitive canonical-address membership in `STABLECOINS_MAINNET`.
+pub fn is_stablecoin_address_lc(addr: &str) -> bool {
+    STABLECOINS_MAINNET
+        .iter()
+        .any(|e| e.address.eq_ignore_ascii_case(addr))
+}
 
 // Ethereum mainnet routers.
 const UNIV2_ROUTER_MAINNET: RouterEntry = RouterEntry {
@@ -428,6 +511,7 @@ mod tests {
         for (primary, lc) in [
             (WETH_MAINNET, WETH_MAINNET_LC),
             (USDC_MAINNET, USDC_MAINNET_LC),
+            (USDT_MAINNET, USDT_MAINNET_LC),
             (DAI_MAINNET, DAI_MAINNET_LC),
             (WBTC_MAINNET, WBTC_MAINNET_LC),
             (LINK_MAINNET, LINK_MAINNET_LC),
@@ -446,6 +530,37 @@ mod tests {
                 "_LC twin must be the lowercase of its primary"
             );
         }
+    }
+
+    /// STABLEARR-11: the stablecoin array is the single definition site —
+    /// every entry's address must be a valid EIP-55 checksum, symbols must be
+    /// unique, and the three majors (USDT/USDC/DAI) must be present so an
+    /// accidental truncation of the array fails loudly.
+    #[test]
+    fn stablecoins_mainnet_array_pinned() {
+        let mut seen = std::collections::HashSet::new();
+        for e in STABLECOINS_MAINNET {
+            let addr = Address::from_str(e.address).expect("stablecoin address parses");
+            assert_eq!(
+                &ethers::utils::to_checksum(&addr, None),
+                e.address,
+                "{} address must be stored in EIP-55 checksum form",
+                e.symbol
+            );
+            assert!(seen.insert(e.symbol), "duplicate symbol {}", e.symbol);
+        }
+        for sym in ["USDT", "USDC", "DAI"] {
+            assert!(
+                STABLECOINS_MAINNET.iter().any(|e| e.symbol == sym),
+                "{sym} must stay in STABLECOINS_MAINNET"
+            );
+        }
+        // Derived matchers iterate the same array and are case-insensitive.
+        assert!(is_stablecoin_symbol("usdt"));
+        assert!(is_stablecoin_symbol("PYUSD"));
+        assert!(!is_stablecoin_symbol("USDE"));
+        assert!(is_stablecoin_address_lc(USDT_MAINNET_LC));
+        assert!(!is_stablecoin_address_lc(WBTC_MAINNET_LC));
     }
 
     #[test]

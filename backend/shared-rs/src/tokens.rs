@@ -17,6 +17,8 @@
 //! assert!(addr.starts_with("0x"));
 //! ```
 
+use crate::chains::USDT_MAINNET_LC;
+
 /// A single entry in the token catalog.
 #[derive(Debug, Clone, Copy)]
 pub struct TokenEntry {
@@ -89,7 +91,7 @@ const USDC_MAINNET: TokenEntry = TokenEntry {
 const USDT_MAINNET: TokenEntry = TokenEntry {
     symbol: "USDT",
     chain_id: 1,
-    address: hex20_token("0xdac17f958d2ee523a2206206994597c13d831ec7"),
+    address: hex20_token(USDT_MAINNET_LC),
     decimals: 6,
     name: "Tether USD",
 };

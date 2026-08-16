@@ -32,6 +32,9 @@ use chrono::Utc;
 use ethers::types::{Address, H256, U256};
 use prioritization_spine::route_plan::{RouteLeg, RoutePlan};
 use prioritization_spine::types::OpportunityCandidate;
+use shared_rs::chains::{
+    DAI_MAINNET_LC, USDC_MAINNET_LC, USDT_MAINNET_LC, WBTC_MAINNET_LC, WETH_MAINNET_LC,
+};
 use shared_rs::contracts::Opportunity;
 use shared_rs::trading_config::TradingConfigState;
 use std::collections::HashMap;
@@ -433,13 +436,13 @@ impl LiquidationSnipeEngine {
 
     /// Returns the symbol for a well-known token address.
     fn token_symbol(token: &Address) -> String {
-        let addr_str = format!("{:040x}", token);
+        let addr_str = format!("0x{:040x}", token);
         match addr_str.as_str() {
-            "c02aaa39b223fe8d0a0e5c4f27ead9083c756cc2" => "WETH".to_string(),
-            "a0b86991c6218b36c1d19d4a2e9eb0ce3606eb48" => "USDC".to_string(),
-            "dac17f958d2ee523a2206206994597c13d831ec7" => "USDT".to_string(),
-            "6b175474e89094c44da98b954eedeac495271d0f" => "DAI".to_string(),
-            "2260fac5e5542a773aa44fbcfedf7c193bc2c599" => "WBTC".to_string(),
+            WETH_MAINNET_LC => "WETH".to_string(),
+            USDC_MAINNET_LC => "USDC".to_string(),
+            USDT_MAINNET_LC => "USDT".to_string(),
+            DAI_MAINNET_LC => "DAI".to_string(),
+            WBTC_MAINNET_LC => "WBTC".to_string(),
             _ => format!("0x{:08x}", token),
         }
     }

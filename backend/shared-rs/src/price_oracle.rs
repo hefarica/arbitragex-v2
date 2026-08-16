@@ -22,8 +22,10 @@ use crate::trading_config::TradingConfigState;
 use std::collections::HashMap;
 
 /// Hard-coded set of widely-trusted stablecoins valued at $1.00 by default.
-/// Symbols are matched case-insensitively at the call site; this list is
-/// canonical uppercase.
+/// Matching is case-insensitive. The set itself lives in ONE place —
+/// `chains::STABLECOINS_MAINNET` — and this fn delegates to
+/// `chains::is_stablecoin_symbol` (STABLEARR-11: no scattered per-site
+/// stablecoin enumerations).
 ///
 /// Selection criteria (locked-in 2026-05-05 — operator review required to
 /// add/remove):
@@ -37,20 +39,7 @@ use std::collections::HashMap;
 ///   - MIM (Magic Internet Money, exploit history)
 ///   - crvUSD, GHO (newer; operator should review trust manually)
 pub fn is_known_stablecoin(symbol_upper: &str) -> bool {
-    matches!(
-        symbol_upper,
-        "USDC"
-            | "USDT"
-            | "DAI"
-            | "BUSD"
-            | "FRAX"
-            | "LUSD"
-            | "USDP"
-            | "TUSD"
-            | "GUSD"
-            | "USDD"
-            | "PYUSD"
-    )
+    crate::chains::is_stablecoin_symbol(symbol_upper)
 }
 
 /// Per-token USD price resolution. `None` means the token is outside the
