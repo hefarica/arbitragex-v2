@@ -939,6 +939,7 @@ pub async fn run_chain(
     crate::route_discovery::route_discovery_worker::spawn_route_discovery(
         chain_id,
         redis.clone(),
+        rpc_http_pool.clone(),
         impact_index_opt.clone(),
         cartridge_runner.clone(),
         orchestrator.clone(),
