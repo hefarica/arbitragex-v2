@@ -674,7 +674,9 @@ fn cartridge_matches_intent(category: &str, intent: &RouteIntent) -> bool {
         // Needs a debt/collateral position; only lending/oracle events carry it.
         "liquidation" => is_position_event,
         // Closed ≥3-leg cycles from route_discovery's triangle source (D-01).
-        "triangular_arb" => is_closed_cycle,
+        // Swap-observation sources only: a closed lending/oracle position shape
+        // is not a triangle even if it geometrically closes (directiva F1-d).
+        "triangular_arb" => is_swap_observation && is_closed_cycle,
         // Custom / unknown cartridge: don't gate it — evaluate against everything.
         _ => true,
     }
@@ -1691,6 +1693,11 @@ mod tests {
         // A 1-leg swap is still not a triangle (the original flood guard holds).
         let one = intent_with_source(DetectionSource::NewBlock);
         assert!(!cartridge_matches_intent("triangular_arb", &one));
+        // Directiva F1-d: a geometrically-closed 3-leg shape from a POSITION
+        // source (lending/oracle) is NOT a triangle — swap-observation only.
+        let lending_tri = three_leg_intent_with_source(DetectionSource::LendingPositionUpdate);
+        assert!(!cartridge_matches_intent("triangular_arb", &lending_tri));
+        assert!(cartridge_matches_intent("liquidation", &lending_tri));
     }
 
     #[test]
@@ -1719,6 +1726,10 @@ mod tests {
 
     /// 3-leg cross-DEX cycle (V3 → Curve → V2) with distinct dex hints + fee tiers.
     fn three_leg_intent() -> RouteIntent {
+        three_leg_intent_with_source(crate::route_intent::DetectionSource::NewBlock)
+    }
+
+    fn three_leg_intent_with_source(source: crate::route_intent::DetectionSource) -> RouteIntent {
         use crate::route_intent::{DetectionSource, RouteIntentLeg, RouterKind, SwapExactMode};
         use ethers::types::{Address, H256, U256};
         let mk = |a: u64, b: u64, pool: u64, dex: &str, proto: ProtocolType, fee: Option<u32>| {
