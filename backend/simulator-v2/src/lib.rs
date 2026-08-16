@@ -25,6 +25,54 @@ pub mod revm_runner;
 // Unblocked by A.3.c.4's `DatabaseRef for LazyDb` foundation.
 pub mod sequence_runner;
 
+// ---------------------------------------------------------------------------
+// Compile-time capability truth (G-SIM-1 FASE 1)
+// ---------------------------------------------------------------------------
+
+/// Identity tag this crate reports for `simulator_backend` in sim-ctl's
+/// GET /capabilities. Declared HERE — in the crate that owns the modules —
+/// so downstream consumers relay it instead of hand-writing it (RULE 00).
+pub const BACKEND_TAG: &str = "v2";
+
+/// Compile-time capability snapshot of this crate.
+///
+/// RULE 00 Zero-Mocks: consumers (sim-ctl GET /capabilities) must serialize
+/// THIS, never their own hand-written module list. Linkage is the proof —
+/// the call only compiles when simulator-v2 is actually a dependency of the
+/// binary, so a build that dropped simulator-v2 fails to compile instead of
+/// reporting stale truth.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Capabilities {
+    /// Pub modules compiled into this crate. Mirrors the `pub mod` items at
+    /// the top of this file — kept side by side so drift is caught in review
+    /// of THIS file, not in a consumer.
+    pub modules: &'static [&'static str],
+    /// Cargo features actually enabled at compile time. Derived from `cfg!`
+    /// so the list can never claim a feature the build did not enable.
+    /// simulator-v2 declares no `[features]` table today → empty by
+    /// construction; adding a feature requires adding a `cfg!` line in
+    /// [`compiled_features`].
+    pub features: Vec<&'static str>,
+}
+
+/// Report the compile-time capabilities of this exact build of simulator-v2.
+pub fn capabilities() -> Capabilities {
+    Capabilities {
+        modules: &["bellman_ford", "lazy_db", "revm_runner", "sequence_runner"],
+        features: compiled_features(),
+    }
+}
+
+/// cfg!-derived feature list. Every entry must be gated by a `cfg!` check on
+/// the same name — no bare strings — so the array cannot diverge from the
+/// feature set the compiler actually saw.
+fn compiled_features() -> Vec<&'static str> {
+    // simulator-v2 defines no [features] table today. When one is added,
+    // switch to `let mut features = Vec::new();` and gate each entry, e.g.:
+    // if cfg!(feature = "some-flag") { features.push("some-flag"); }
+    Vec::new()
+}
+
 pub use lazy_db::LazyDb;
 pub use lazy_db::LazyDbError;
 // Phase A.3.c.3 — re-export revm primitives so downstream crates

@@ -34,3 +34,8 @@ simulator-v2 = { path = "../simulator-v2" }
 # SimulationOutcome types. Both are observer-only (no signer, no broadcast).
 sim-core = { path = "../sim-core" }
 prioritization-spine = { workspace = true }
+
+[dev-dependencies]
+# `util` exposes tower::util::ServiceExt (.oneshot) used by the /capabilities
+# handler tests in src/capabilities.rs (same pattern as math-engine's api.rs).
+tower = { workspace = true, features = ["util"] }

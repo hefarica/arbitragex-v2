@@ -642,6 +642,13 @@ async fn main() -> anyhow::Result<()> {
     let sim_router = Router::new()
         .route("/simulate", post(simulate_handler))
         .route("/fork-status", get(fork_status_handler))
+        // G-SIM-1 FASE 1: topological truth for the readiness verifier.
+        // Handler + tests live in the lib target (see src/lib.rs) so CI's
+        // `cargo test --workspace --lib` gate actually executes them.
+        .route(
+            sim_ctl::capabilities::CAPABILITIES_PATH,
+            get(sim_ctl::capabilities::capabilities_handler),
+        )
         .with_state(state);
     let app = build_health_router(ServiceInfo::new(SERVICE, VERSION)).merge(sim_router);
     let addr = SocketAddr::from(([0, 0, 0, 0], port));
