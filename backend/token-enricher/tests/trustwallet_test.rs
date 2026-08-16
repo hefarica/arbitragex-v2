@@ -1,4 +1,5 @@
 use alloy_primitives::Address;
+use shared_rs::chains::WETH_MAINNET;
 use std::str::FromStr;
 use token_enricher::trustwallet::{chain_path, checksum_url_for};
 
@@ -16,10 +17,10 @@ fn chain_path_known_chains() {
 #[test]
 fn weth_url_uses_eip55_checksum() {
     // WETH is 0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2 in EIP-55 checksum.
-    let weth = Address::from_str("0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2").unwrap();
+    let weth = Address::from_str(WETH_MAINNET).unwrap();
     let url = checksum_url_for(1, weth).unwrap();
     assert!(
-        url.contains("0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"),
+        url.contains(WETH_MAINNET),
         "URL must use EIP-55 checksum case, got: {url}"
     );
     assert!(url.starts_with(

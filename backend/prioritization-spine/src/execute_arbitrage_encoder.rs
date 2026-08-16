@@ -298,14 +298,13 @@ pub fn build_flash_funded_broadcast_calldata_with_intermediate(
 mod tests {
     use super::*;
     use ethers::abi::{decode, ParamType};
+    use shared_rs::chains::{USDC_MAINNET, WETH_MAINNET};
     use std::str::FromStr;
 
     /// Build a deterministic 2-token round trip context shared across tests.
     fn fixture() -> (RoundTripContext, [u8; 32], U256, Address) {
-        let token_in = Address::from_str("0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2")
-            .expect("valid token_in address");
-        let token_out = Address::from_str("0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48")
-            .expect("valid token_out address");
+        let token_in = Address::from_str(WETH_MAINNET).expect("valid token_in address");
+        let token_out = Address::from_str(USDC_MAINNET).expect("valid token_out address");
         let forward_router = Address::from_str("0x7a250d5630b4cf539739df2c5dacb4c659f2488d")
             .expect("valid forward router");
         let backward_router = Address::from_str("0x68b3465833fb72a70ecdf485e0e4c7bd8665fc45")

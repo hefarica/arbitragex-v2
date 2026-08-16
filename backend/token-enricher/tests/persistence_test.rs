@@ -27,6 +27,7 @@
 //! type-checks; actual execution is delegated to CI / VPS.
 
 use alloy_primitives::Address;
+use shared_rs::chains::{WETH_MAINNET, WETH_MAINNET_LC};
 use sqlx::Row;
 use std::str::FromStr;
 use token_enricher::persistence::{upsert_token, ResolvedToken};
@@ -97,7 +98,7 @@ async fn apply_token_migrations(pool: &sqlx::PgPool) -> sqlx::Result<()> {
 async fn upsert_token_inserts_lowercase_address(pool: sqlx::PgPool) -> sqlx::Result<()> {
     apply_token_migrations(&pool).await?;
 
-    let weth = Address::from_str("0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2").unwrap();
+    let weth = Address::from_str(WETH_MAINNET).unwrap();
     upsert_token(
         &pool,
         1,
@@ -121,7 +122,7 @@ async fn upsert_token_inserts_lowercase_address(pool: sqlx::PgPool) -> sqlx::Res
     let symbol: Option<String> = row.get("symbol");
     let decimals: Option<i16> = row.get("decimals");
     let resolved_via: String = row.get("resolved_via");
-    assert_eq!(address, "0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2");
+    assert_eq!(address, WETH_MAINNET_LC);
     assert_eq!(symbol.as_deref(), Some("WETH"));
     assert_eq!(decimals, Some(18));
     assert_eq!(resolved_via, "onchain_full");
