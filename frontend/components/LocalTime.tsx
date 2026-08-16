@@ -1,18 +1,18 @@
 "use client";
 
 /**
- * LocalTime — hydration-safe timestamp (C-01).
+ * LocalTime — locale-aware timestamp, hydration-safe (C-01).
  *
- * `fmtTime`/`fmtDateTime` use `Date.toLocaleString()` with no locale/tz args,
- * so SSR (Node, UTC) and the browser (local tz) render different strings for
- * the same ISO → React #425/#422 hydration mismatch on /risk, /paper/history,
- * /agent-insights. This component renders a stable placeholder on the server
- * AND the first client paint (identical → no mismatch, R1), then swaps to the
- * locale-aware string only after mount (useEffect).
+ * `fmtTime`/`fmtDateTime` render DETERMINISTIC UTC (since HYDRATE-09,
+ * 2026-08-16) — safe for SSR everywhere, but not locale-aware. When a surface
+ * genuinely wants the VIEWER's local time (dashboard conveniences), use this
+ * component: it renders a stable placeholder on the server AND the first
+ * client paint (identical → no React #425/#422 mismatch, R1), then swaps to
+ * the locale-aware string only after mount (useEffect).
  *
  * Usage: <LocalTime iso={row.created_at} /> or <LocalTime iso={ts} mode="datetime" />
- * For non-React / pure-string contexts where hydration is not a concern, keep
- * using fmtTime/fmtDateTime directly.
+ * Ledgers / anything correlated with block timestamps or by-hour analytics
+ * should prefer plain fmtTime/fmtDateTime (UTC) — deterministic AND honest.
  */
 import { useEffect, useState } from "react";
 
