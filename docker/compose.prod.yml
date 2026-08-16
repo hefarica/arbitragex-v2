@@ -423,10 +423,23 @@ services:
         # operator supplies the real id ONLY via VPS .env / CI secret — never
         # in-repo (arbx-no-hardcode-doctrine). Next frontend rebuild bakes it in.
         NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID: ${NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID:-}
+        # SEC-3 / RULE 03 class: next.config.js headers() is evaluated during
+        # `next build` — HSTS bakes into routes-manifest at BUILD time. The
+        # `environment:` ARBX_TLS_ENABLED entry below never reaches the bake;
+        # THIS arg closes the chain:
+        #   compose build.args -> Dockerfile ARG/ENV -> next.config headers().
+        ARBX_TLS_ENABLED: ${ARBX_TLS_ENABLED:-true}
     environment:
       NEXT_PUBLIC_EDGE_URL: ${NEXT_PUBLIC_EDGE_URL:?NEXT_PUBLIC_EDGE_URL required
         (public edge URL)}
       INTERNAL_EDGE_URL: http://edge:8787
+      # SEC-3: emit HSTS (next.config.js gates on this + NODE_ENV=production).
+      # The public dapp is HTTPS today — the header belongs on.
+      # NOTE (RULE 03 class): this runtime entry ALONE IS INSUFFICIENT — Next
+      # evaluates headers() at `next build`, so HSTS only bakes via the
+      # build.args ARBX_TLS_ENABLED above (frontend/Dockerfile ARG/ENV).
+      # Kept here for runtime introspection only.
+      ARBX_TLS_ENABLED: ${ARBX_TLS_ENABLED:-true}
       # V-AT-2: SSR server components (e.g. /audit-logs) need the admin token to
       # authenticate against the edge adminProxy via x-arbx-admin-token header.
       # The browser flow uses the httpOnly cookie; SSR has no browser session.

@@ -27,7 +27,14 @@ export async function verifyVAT1(opts?: {
   now?: () => Date;
 }): Promise<ReadinessItem> {
   const file = opts?.file ?? DEFAULT_FILE;
-  const probeUrl = opts?.probeUrl ?? "http://localhost:8080/admin/session";
+  // The /admin/session route lives in the EDGE worker (the browser-facing
+  // cookie setter), not in api-server. Probing ourselves (localhost:8080)
+  // always 404s and forced this item yellow while the endpoint was live.
+  // Override via ADMIN_SESSION_PROBE_URL for non-standard topologies.
+  const probeUrl =
+    opts?.probeUrl ??
+    process.env["ADMIN_SESSION_PROBE_URL"] ??
+    "http://edge:8787/admin/session";
   const verified_at = (opts?.now ?? (() => new Date()))().toISOString();
   const base = {
     id: "V-AT-1",

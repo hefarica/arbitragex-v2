@@ -122,9 +122,19 @@ describe("verifyPR1CSP()", () => {
     const item = await verifyPR1CSP({ url: "http://x", now: NOW });
     expect(item.status).toBe("yellow");
   });
-  it("returns green when CSP + frame-ancestors none present", async () => {
+  it("returns yellow when CSP + frame-ancestors ok but HSTS missing", async () => {
     globalThis.fetch = vi.fn(async () => new Response(null, { status: 200,
       headers: { "content-security-policy-report-only": "default-src 'self'; frame-ancestors 'none'" } })) as any;
+    const item = await verifyPR1CSP({ url: "http://x", now: NOW });
+    expect(item.status).toBe("yellow");
+    expect(item.reason).toMatch(/strict-transport-security/);
+  });
+  it("returns green when CSP + frame-ancestors none + HSTS present", async () => {
+    globalThis.fetch = vi.fn(async () => new Response(null, { status: 200,
+      headers: {
+        "content-security-policy-report-only": "default-src 'self'; frame-ancestors 'none'",
+        "strict-transport-security": "max-age=31536000; includeSubDomains",
+      } })) as any;
     const item = await verifyPR1CSP({ url: "http://x", now: NOW });
     expect(item.status).toBe("green");
   });
