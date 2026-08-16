@@ -182,11 +182,14 @@ fn parse_execute_args(body: &[u8], with_deadline: bool) -> Option<ExecuteArgs> {
         return None;
     }
 
-    // (d) walk the element offsets (each relative to the array data start at
-    // inputs_off). Offsets must be strictly increasing — equal or decreasing
+    // (d) walk the element offsets. Per the ABI spec (and ethabi's decoder,
+    // decoder.rs:163-166), element offsets are relative to the position AFTER
+    // the array length word — `inputs_off + 32` — not to the length word
+    // itself. Offsets must be strictly increasing — equal or decreasing
     // offsets would alias an earlier element, the amplification vector.
     let mut inputs = Vec::with_capacity(count);
-    let mut head_pos = inputs_off.checked_add(32)?;
+    let elems_base = inputs_off.checked_add(32)?;
+    let mut head_pos = elems_base;
     let mut prev_rel: Option<usize> = None;
     for _ in 0..count {
         let rel = word_at_as_bound(body, head_pos)?;
@@ -194,7 +197,7 @@ fn parse_execute_args(body: &[u8], with_deadline: bool) -> Option<ExecuteArgs> {
             return None;
         }
         prev_rel = Some(rel);
-        inputs.push(read_dyn_bytes(body, inputs_off.checked_add(rel)?)?);
+        inputs.push(read_dyn_bytes(body, elems_base.checked_add(rel)?)?);
         head_pos = head_pos.checked_add(32)?;
     }
 
