@@ -86,7 +86,9 @@ const V2_FEE_BPS: u32 = 30;
 /// block observed across the cycle. Beyond this gap we refuse to evaluate the
 /// cycle (R8 fail-honest — emitting on stale data risks broadcasting an opp
 /// that no longer exists).
-const MAX_RESERVE_LAG_BLOCKS: u64 = 5;
+// pub(crate): the SAME staleness bound the route_discovery triangular reserves
+// adapter enforces on cache freshness — single definition site, no drift.
+pub(crate) const MAX_RESERVE_LAG_BLOCKS: u64 = 5;
 
 /// Dedup window: keep entries for this many recent blocks. An (cycle, block)
 /// older than this is pruned each tick.
