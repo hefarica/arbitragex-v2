@@ -82,8 +82,9 @@ export async function verifyVAT1(opts?: {
       // 400 token_required = route alive demanding the token via httpOnly cookie.
       // 429 from THIS route's limiter = route alive AND rate-limit active — posture
       // confirmed. Readiness is computed per request and internal probes share the
-      // anon 5/min bucket, so frequent polling can legitimately trip the route
-      // limiter's 429 (not a regression). Attribution guard: the
+      // route limiter's per-caller bucket (keyed "anon" in the CF-worker variant;
+      // the api-server container IP under edge/dev-local), so frequent polling
+      // can legitimately trip its 429 (not a regression). Attribution guard: the
       // x-ratelimit-admin-session-remaining header is set only by the /admin/session
       // handler (edge/worker + edge/dev-local) immediately before its 429 return;
       // a bare 429 comes from the edge-global limiter or the auth lockout — not

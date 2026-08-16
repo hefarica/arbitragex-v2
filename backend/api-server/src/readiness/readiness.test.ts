@@ -391,4 +391,12 @@ describe("verifyAll() wires V_AT_1_PROBE_URL to the V-AT-1 probe", () => {
     await verifyAll({ pool: null, now: NOW });
     expect(urls).toContain("http://edge:8787/admin/session");
   });
+
+  it("falls back to the default edge URL when V_AT_1_PROBE_URL is empty or whitespace", async () => {
+    process.env["V_AT_1_PROBE_URL"] = "  ";
+    const urls: string[] = [];
+    recordingFetch(urls);
+    await verifyAll({ pool: null, now: NOW });
+    expect(urls).toContain("http://edge:8787/admin/session");
+  });
 });
