@@ -42,6 +42,7 @@ use chrono::Utc;
 use ethers::types::{Address, H256, U256};
 use prioritization_spine::route_plan::{RouteLeg, RoutePlan};
 use prioritization_spine::types::OpportunityCandidate;
+use shared_rs::chains::{DAI_MAINNET_LC, USDC_MAINNET_LC, USDT_MAINNET_LC};
 use shared_rs::contracts::{Opportunity, StrategyKind};
 use shared_rs::rpc_failover::AlloyHttpProvider;
 use shared_rs::trading_config::TradingConfigState;
@@ -581,9 +582,9 @@ fn canonical_token_price_usd(
     let addr_str = format!("0x{:040x}", addr);
     // Stables = $1 (canonical, no lookup needed).
     match addr_str.as_str() {
-        "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48" | // USDC
-        "0xdac17f958d2ee523a2206206994597c13d831ec7" | // USDT
-        "0x6b175474e89094c44da98b954eedeac495271d0f" => return Some(1.0), // DAI
+        USDC_MAINNET_LC | // USDC
+        USDT_MAINNET_LC | // USDT
+        DAI_MAINNET_LC => return Some(1.0), // DAI
         _ => {}
     }
     // Canonical tokens: look up the LIVE Redis price (DexScreener/Chainlink/
@@ -642,8 +643,8 @@ fn canonical_token_decimals(token: Option<Address>) -> u32 {
     let Some(addr) = token else { return 18 };
     match format!("0x{:040x}", addr).as_str() {
         // USDC (6), USDT (6)
-        "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48" => 6,
-        "0xdac17f958d2ee523a2206206994597c13d831ec7" => 6,
+        USDC_MAINNET_LC => 6,
+        USDT_MAINNET_LC => 6,
         // WBTC (8)
         "0x2260fac5e5542a773aa44fbcfedf7c193bc2c599" => 8,
         // Everything else (WETH, DAI, and the ERC-20 majority) → 18.

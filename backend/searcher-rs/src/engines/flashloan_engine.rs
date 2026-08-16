@@ -43,6 +43,7 @@
 
 use crate::engines::StrategyCandidate;
 use crate::strategy_label::StrategyLabel;
+use shared_rs::chains::{DAI_MAINNET_LC, USDC_MAINNET_LC, USDT_MAINNET_LC};
 use shared_rs::trading_config::TradingConfigState;
 use tracing::debug;
 
@@ -80,7 +81,7 @@ impl FlashloanProvider {
 const AAVE_V3_SUPPORTED_ASSETS_MAINNET: &[&str] = &[
     "0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2", // WETH
     "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48", // USDC
-    "0xdac17f958d2ee523a2206206994597c13d831ec7", // USDT
+    USDT_MAINNET_LC,                              // USDT
     "0x6b175474e89094c44da98b954eedeac495271d0f", // DAI
     "0x2260fac5e5542a773aa44fbcfedf7c193bc2c599", // WBTC
     "0x514910771af9ca656af840dff83e8264ecf986ca", // LINK
@@ -295,9 +296,9 @@ fn compute_borrow_usd(
 
     // Stablecoins (USDC, USDT, DAI): 1 USD per unit.
     let stable_addrs = [
-        "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48", // USDC
-        "0xdac17f958d2ee523a2206206994597c13d831ec7", // USDT
-        "0x6b175474e89094c44da98b954eedeac495271d0f", // DAI
+        USDC_MAINNET_LC, // USDC
+        USDT_MAINNET_LC, // USDT
+        DAI_MAINNET_LC,  // DAI
     ];
     if stable_addrs.contains(&borrow_asset) {
         return amount_in; // 1 USD per token

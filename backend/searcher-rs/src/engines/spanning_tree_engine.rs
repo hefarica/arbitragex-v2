@@ -27,6 +27,7 @@ use chrono::Utc;
 use ethers::types::{Address, H256, U256};
 use prioritization_spine::route_plan::{RouteLeg, RoutePlan};
 use prioritization_spine::types::OpportunityCandidate;
+use shared_rs::chains::USDT_MAINNET_LC;
 use shared_rs::contracts::Opportunity;
 use shared_rs::trading_config::TradingConfigState;
 use std::collections::HashMap;
@@ -586,7 +587,7 @@ impl SpanningTreeEngine {
         if let Ok(usdc) = Address::from_str("0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48") {
             map.insert(usdc, "USDC".to_string());
         }
-        if let Ok(usdt) = Address::from_str("0xdac17f958d2ee523a2206206994597c13d831ec7") {
+        if let Ok(usdt) = Address::from_str(USDT_MAINNET_LC) {
             map.insert(usdt, "USDT".to_string());
         }
         if let Ok(dai) = Address::from_str("0x6b175474e89094c44da98b954eedeac495271d0f") {
@@ -604,7 +605,7 @@ impl SpanningTreeEngine {
         if let Ok(usdc) = Address::from_str("0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48") {
             map.insert(usdc, 6);
         }
-        if let Ok(usdt) = Address::from_str("0xdac17f958d2ee523a2206206994597c13d831ec7") {
+        if let Ok(usdt) = Address::from_str(USDT_MAINNET_LC) {
             map.insert(usdt, 6);
         }
         if let Ok(dai) = Address::from_str("0x6b175474e89094c44da98b954eedeac495271d0f") {

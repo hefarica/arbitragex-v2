@@ -723,7 +723,7 @@ async fn main() -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use shared_rs::chains::{USDC_MAINNET, WETH_MAINNET};
+    use shared_rs::chains::{USDC_MAINNET, USDT_MAINNET_LC, WETH_MAINNET};
 
     // --- parse_enricher_chains ---
 
@@ -769,11 +769,7 @@ mod tests {
         let triples = vec![
             (1u64, WETH_MAINNET.to_string(), USDC_MAINNET.to_string()),
             // duplicate of first token_in
-            (
-                1u64,
-                WETH_MAINNET.to_string(),
-                "0xdac17f958d2ee523a2206206994597c13d831ec7".to_string(),
-            ),
+            (1u64, WETH_MAINNET.to_string(), USDT_MAINNET_LC.to_string()),
         ];
         let pairs = triples_to_pairs(triples);
         // 3 unique addresses across 2 triples.

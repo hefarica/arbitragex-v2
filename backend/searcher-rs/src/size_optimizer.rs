@@ -37,6 +37,7 @@ use crate::strategy_label::StrategyLabel;
 use crate::workers::triangular_worker::{clamp_to_cap_wei, evaluate_cycle, EvalInput};
 use ethers::types::{Address, U256};
 use prioritization_spine::route_plan::RouteLeg;
+use shared_rs::chains::USDT_MAINNET_LC;
 use shared_rs::trading_config::TradingConfigState;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -1517,7 +1518,8 @@ fn resolve_token_in_symbol(candidate: &StrategyCandidate, _state: &TradingConfig
         return match token_in_lower.as_str() {
             s if s.contains("c02aaa39b223fe8d0a0e5c4f27ead9083c756cc2") => "WETH".to_string(),
             s if s.contains("a0b86991c6218b36c1d19d4a2e9eb0ce3606eb48") => "USDC".to_string(),
-            s if s.contains("dac17f958d2ee523a2206206994597c13d831ec7") => "USDT".to_string(),
+            // `[2..]` strips the "0x" — matches with or without prefix, as before.
+            s if s.contains(&USDT_MAINNET_LC[2..]) => "USDT".to_string(),
             s if s.contains("6b175474e89094c44da98b954eedeac495271d0f") => "DAI".to_string(),
             s if s.contains("2260fac5e5542a773aa44fbcfedf7c193bc2c599") => "WBTC".to_string(),
             _ => {
