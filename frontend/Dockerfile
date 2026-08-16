@@ -9,9 +9,16 @@ ARG NEXT_PUBLIC_WS_URL
 # fail-honest ('walletconnect_project_id_missing'); injected/MetaMask unaffected.
 # The value comes from the caller's env (VPS .env / CI secret) — never hardcoded.
 ARG NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID=
+# SEC-3 (RULE 03 class): next.config.js headers() runs during `next build`,
+# so the HSTS gate (ARBX_TLS_ENABLED === "true") must be present in the BUILD
+# stage env — a compose `environment:` entry never reaches the bake. Compose
+# passes it via build.args (prod: ${ARBX_TLS_ENABLED:-true}, dev: :-false).
+# Default true: the public dapp is HTTPS; HTTP-only builds override to false.
+ARG ARBX_TLS_ENABLED=true
 ENV NEXT_PUBLIC_EDGE_URL=$NEXT_PUBLIC_EDGE_URL
 ENV NEXT_PUBLIC_WS_URL=$NEXT_PUBLIC_WS_URL
 ENV NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID=$NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID
+ENV ARBX_TLS_ENABLED=$ARBX_TLS_ENABLED
 # Prevent Corepack from mis-reading packageManager and trying yarn.
 ENV COREPACK_ENABLE_STRICT=0
 RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates \

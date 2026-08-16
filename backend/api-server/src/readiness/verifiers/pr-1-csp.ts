@@ -1,6 +1,14 @@
 import type { ReadinessItem } from "../types.js";
 
-const DEFAULT_URL = process.env["FRONTEND_INTERNAL_URL"] ?? "http://frontend:5173";
+// Target order: explicit CSP_PROBE_URL → FRONTEND_INTERNAL_URL → compose-internal
+// default. The edge worker does NOT serve the frontend (no upstream binding),
+// so the probe must reach the frontend itself — or the public URL via
+// CSP_PROBE_URL, which is equally valid evidence: it verifies exactly the
+// headers users receive.
+const DEFAULT_URL =
+  process.env["CSP_PROBE_URL"] ??
+  process.env["FRONTEND_INTERNAL_URL"] ??
+  "http://frontend:5173";
 
 /**
  * PR-1 — CSP header (Report-Only) + frame-ancestors none on frontend.
@@ -50,10 +58,23 @@ export async function verifyPR1CSP(opts?: {
         evidence: { kind: "endpoint", ref: `HEAD ${url}` },
       };
     }
+    // The item label also promises HSTS — verify it, never assume it.
+    // The frontend emits HSTS only when built with ARBX_TLS_ENABLED=true
+    // (frontend/next.config.js SEC-3). Yellow — never green — while missing.
+    const hsts = res.headers.get("strict-transport-security");
+    if (!hsts) {
+      return {
+        ...base,
+        status: "yellow",
+        reason:
+          "CSP + frame-ancestors 'none' OK, but no strict-transport-security header — set ARBX_TLS_ENABLED=true on the frontend (TLS is on)",
+        evidence: { kind: "endpoint", ref: `HEAD ${url}` },
+      };
+    }
     return {
       ...base,
       status: "green",
-      reason: `CSP-Report-Only present (${csp.length} chars, frame-ancestors 'none' enforced)`,
+      reason: `CSP-Report-Only present (${csp.length} chars, frame-ancestors 'none' enforced) + HSTS (${hsts})`,
       evidence: { kind: "endpoint", ref: `HEAD ${url}` },
     };
   } catch (e) {

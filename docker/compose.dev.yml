@@ -331,6 +331,10 @@ services:
         # throws under NODE_ENV=production. Dev fallback matches the runtime env.
         NEXT_PUBLIC_EDGE_URL: ${NEXT_PUBLIC_EDGE_URL:-http://localhost:8787}
         NEXT_PUBLIC_WS_URL: ${NEXT_PUBLIC_WS_URL:-http://localhost:3000}
+        # SEC-3: HSTS bake gate (RULE 03 class — see compose.prod.yml and
+        # frontend/Dockerfile). Dev serves plain HTTP, so default false keeps
+        # HSTS out of dev builds even though NODE_ENV=production at build.
+        ARBX_TLS_ENABLED: ${ARBX_TLS_ENABLED:-false}
     environment:
       NEXT_PUBLIC_EDGE_URL: ${NEXT_PUBLIC_EDGE_URL:-http://localhost:8787}
       NEXT_PUBLIC_WS_URL: ${NEXT_PUBLIC_WS_URL:-http://localhost:3000}
