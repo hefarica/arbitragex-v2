@@ -19,20 +19,26 @@ use crate::route_discovery::graph_builder::{build_graph, GraphBuildConfig, Graph
 use crate::route_discovery::route_intent_dispatcher::plan_dispatch;
 use crate::route_discovery::strategy_applicability::StrategyApplicabilityEngine;
 use crate::route_discovery::telemetry;
-use crate::route_discovery::types::RouteCandidate;
+use crate::route_discovery::triangular_adapter::{
+    cycle_legs, ensure_reserves, gate_dispatch_intents, AdapterOutcome, BackfillBudget,
+    RedisRpcBridge, Skipped,
+};
+use crate::route_discovery::types::{RouteCandidate, RouteKind};
 use crate::route_discovery::unique_route_finder::{find_routes, RouteFinderConfig};
 use crate::route_discovery::RouteDiscoveryMode;
 use crate::route_intent::RouteIntent;
-use ethers::types::Address;
+use alloy::providers::Provider as _;
+use ethers::types::{Address, H256};
 use redis::aio::ConnectionManager;
 use serde_json::Value;
+use shared_rs::rpc_failover::HttpRpcPool;
 use std::path::PathBuf;
 use std::str::FromStr;
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tokio::sync::RwLock;
 use tokio_util::sync::CancellationToken;
-use tracing::{info, warn};
+use tracing::{debug, info, warn};
 
 /// Phase-1 algorithm tag stamped onto all telemetry.
 pub const ALGORITHM: &str = "dfs_bounded";
@@ -276,6 +282,7 @@ pub fn evaluate_tick(
 async fn run_loop(
     mut redis: ConnectionManager,
     chain_id: u64,
+    rpc_pool: Option<Arc<HttpRpcPool>>,
     impact_index: Arc<RwLock<ImpactIndex>>,
     engine: StrategyApplicabilityEngine,
     cfg: WorkerConfig,
@@ -284,6 +291,9 @@ async fn run_loop(
     cancel: CancellationToken,
 ) {
     let dispatch_enabled = runner.is_some();
+    // FASE 2 (D-01/F2): per-block backfill allowance for the triangular
+    // reserves adapter — created ONCE so the budget persists across ticks.
+    let adapter_budget = BackfillBudget::new();
     let mut ticker = tokio::time::interval(Duration::from_millis(cfg.interval_ms.max(1_000)));
     ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     info!(
@@ -317,7 +327,7 @@ async fn run_loop(
             build_graph(&mut redis, chain_id, &pools, now_ts, &cfg.graph).await;
         let latency_ms = t0.elapsed().as_millis() as u64;
 
-        let tick = evaluate_tick(
+        let mut tick = evaluate_tick(
             &outcome,
             chain_id,
             &engine,
@@ -328,7 +338,136 @@ async fn run_loop(
             "shadow",
         );
 
+        // ── FASE 2 (D-01/F2): triangular reserves adapter — BEFORE dispatch ──
+        // The data bridge `needs_triangular_adapter` named: radar-discovered
+        // pools mostly lack cached reserves (6/93 coverage today), so every
+        // triangular cycle's 3 legs are served from cache when fresh (V2 ≤5
+        // blocks behind the chain head / V3 slot0 within its TTL) or
+        // backfilled via ONE bounded multicall before any dispatch. Skipped ⇒
+        // that route's dispatch is dropped for this tick (honest skip +
+        // telemetry — R8/RULE 00, never synthesized). Read-only data plumbing:
+        // no emitter, no orchestrator, `arbx:opps:detected` stays untouched.
+        // REGLA 0f: this PR merges BEFORE #350 (F1/F3) — the triangular
+        // dispatch #350 enables consumes this bridge.
+        let mut adapter_cache_hit = 0usize;
+        let mut adapter_backfill_ok = 0usize;
+        let mut adapter_backfill_fail = 0usize;
+        let mut adapter_budget_exhausted = 0usize;
+        let mut skipped_hashes: Vec<H256> = Vec::new();
+        let mut adapter_events: Vec<Value> = Vec::new();
+
+        // Current chain block for the ≤5-block freshness bound — one bounded
+        // RPC read per tick (mirrors pool_sync_worker's tick block fetch). 0 =
+        // fetch failed ⇒ freshness unverifiable ⇒ V2 legs read stale and force
+        // backfill (fail-honest, never a blind cache hit).
+        let current_block = match &rpc_pool {
+            Some(rpc) => tokio::time::timeout(
+                Duration::from_millis(
+                    crate::route_discovery::triangular_adapter::ADAPTER_CALL_TIMEOUT_MS,
+                ),
+                rpc.with_retry(|p| async move {
+                    p.get_block_number()
+                        .await
+                        .map_err(|e| anyhow::anyhow!("{e}"))
+                }),
+            )
+            .await
+            .ok()
+            .and_then(|r| r.ok())
+            .unwrap_or(0),
+            None => 0,
+        };
+
+        let bridge = RedisRpcBridge {
+            redis: redis.clone(),
+            rpc_pool: rpc_pool.clone(),
+        };
+        for c in tick
+            .routes
+            .iter()
+            .filter(|c| c.route_kind == RouteKind::Triangular)
+        {
+            let Some(legs) = cycle_legs(c) else {
+                warn!(
+                    event = "route_discovery.adapter_malformed_route",
+                    chain_id,
+                    route_hash = %c.route_hash,
+                    "ragged candidate vectors — adapter pass skipped (R8)"
+                );
+                continue;
+            };
+            match ensure_reserves(
+                &bridge,
+                &adapter_budget,
+                chain_id,
+                current_block,
+                now_ts,
+                &legs,
+            )
+            .await
+            {
+                AdapterOutcome::AllFresh => adapter_cache_hit += 1,
+                AdapterOutcome::Backfilled(n) => {
+                    adapter_backfill_ok += 1;
+                    debug!(
+                        event = "route_discovery.adapter_backfilled",
+                        chain_id,
+                        legs_written = n
+                    );
+                }
+                AdapterOutcome::Skipped(reason) => {
+                    match reason {
+                        Skipped::BudgetExhausted => adapter_budget_exhausted += 1,
+                        Skipped::MissingReserves(_) => adapter_backfill_fail += 1,
+                    }
+                    // The gate must know EVERY skipped route (exact
+                    // tx_hash == route_hash match); the per-route EVENT is
+                    // capped so a large triangular tick cannot flood the
+                    // telemetry channel (R9).
+                    if let Ok(h) = H256::from_str(&c.route_hash) {
+                        skipped_hashes.push(h);
+                    }
+                    if adapter_events.len() < cfg.max_telemetry_per_tick {
+                        let pool_hex = match reason {
+                            Skipped::MissingReserves(pool) => Some(format!("{pool:#x}")),
+                            Skipped::BudgetExhausted => None,
+                        };
+                        adapter_events.push(telemetry::adapter_skipped_event(
+                            chain_id,
+                            &c.route_hash,
+                            reason.as_str(),
+                            pool_hex.as_deref(),
+                        ));
+                    }
+                }
+            }
+        }
+
+        // Gate: drop dispatch for adapter-skipped routes BEFORE any spawn.
+        // Triangular plans are still deferred telemetry-only today (PR #350
+        // owns building their intents), so nothing is dropped yet — this is
+        // the enforcement point that dispatch flows through once #350 lands.
+        if !skipped_hashes.is_empty() {
+            let (kept, dropped) =
+                gate_dispatch_intents(std::mem::take(&mut tick.dispatch_intents), &skipped_hashes);
+            tick.dispatch_intents = kept;
+            if dropped > 0 {
+                tick.routes_dispatched = tick.routes_dispatched.saturating_sub(dropped);
+                tick.tick_summary["routes_dispatched"] = serde_json::json!(tick.routes_dispatched);
+            }
+        }
+
+        // Adapter counters ride the tick summary (same injection pattern as
+        // the multi_hop_* fields).
+        tick.tick_summary["adapter_cache_hit"] = serde_json::json!(adapter_cache_hit);
+        tick.tick_summary["adapter_backfill_ok"] = serde_json::json!(adapter_backfill_ok);
+        tick.tick_summary["adapter_backfill_fail"] = serde_json::json!(adapter_backfill_fail);
+        tick.tick_summary["adapter_budget_exhausted"] = serde_json::json!(adapter_budget_exhausted);
+
         for ev in &tick.events {
+            telemetry::publish(&mut redis, ev).await;
+        }
+        for ev in &adapter_events {
             telemetry::publish(&mut redis, ev).await;
         }
         telemetry::publish(&mut redis, &tick.tick_summary).await;
@@ -376,6 +515,7 @@ async fn run_loop(
 pub fn spawn_route_discovery(
     chain_id: u64,
     redis: ConnectionManager,
+    rpc_pool: Option<Arc<HttpRpcPool>>,
     impact_index: Option<Arc<RwLock<ImpactIndex>>>,
     runner: Option<Arc<CartridgeRunner>>,
     orchestrator: Option<Arc<Orchestrator>>,
@@ -386,10 +526,21 @@ pub fn spawn_route_discovery(
         event = "route_discovery.mode",
         chain_id,
         mode = mode.as_str(),
-        dispatch_enabled = runner.is_some()
+        dispatch_enabled = runner.is_some(),
+        adapter_backfill_rpc = rpc_pool.is_some()
     );
     if !mode.is_enabled() {
         return; // off → dormant, nothing spawned
+    }
+    if rpc_pool.is_none() {
+        // FASE 2 adapter honesty note: without an HTTP RPC pool (non-mainnet /
+        // RPC_HTTP_* unset) the adapter serves cache-fresh legs only — every
+        // miss/stale leg skips as `missing_reserves` instead of backfilling.
+        warn!(
+            event = "route_discovery.adapter_no_rpc_pool",
+            chain_id,
+            "triangular reserves adapter runs cache-read-only — backfills disabled (honest degradation)"
+        );
     }
 
     let impact_index = match impact_index {
@@ -422,6 +573,7 @@ pub fn spawn_route_discovery(
         run_loop(
             redis,
             chain_id,
+            rpc_pool,
             impact_index,
             engine,
             cfg,

@@ -29,6 +29,7 @@ pub mod route_discovery_worker;
 pub mod route_intent_dispatcher;
 pub mod strategy_applicability;
 pub mod telemetry;
+pub mod triangular_adapter;
 pub mod types;
 pub mod unique_route_finder;
 

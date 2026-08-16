@@ -106,6 +106,7 @@ import { mountCarnotCycles } from "./routes/carnot-cycles.js";
 import { mountStrategyRuntimeStatus } from "./routes/strategy-runtime-status.js";
 import { mountReadinessExtras } from "./routes/readiness-extras.js";
 import { mountReadinessSteps } from "./routes/readiness-steps.js";
+import { mountReadinessEvidence } from "./routes/readiness-evidence.js";
 import { mountAgentsStatus } from "./routes/agents-status.js";
 import { mountScoringStatus } from "./routes/scoring-status.js";
 import { mountPaperShadowMetrics } from "./routes/paper-shadow-metrics.js";
@@ -527,6 +528,9 @@ mountDefi(app, { pool, logger });
 mountStrategyRuntimeStatus(app, { pool, redis, logger });
 mountReadinessExtras(app, { pool, redis, logger });
 mountReadinessSteps(app, { pool, redis, logger });
+// G-SIM-1 FASE 2: append-only readiness evidence registry. Admin-gated
+// (requireAdminToken) inside the module; sits under the /admin/ rate limiter.
+mountReadinessEvidence(app, { pool, requireAdminToken, adminToken: ARBX_ADMIN_TOKEN, logger });
 registerGatesStatusRoutes(app, { pool, redis, logger });
 mountAgentsStatus(app, { pool, logger });
 mountScoringStatus(app, { pool, logger });

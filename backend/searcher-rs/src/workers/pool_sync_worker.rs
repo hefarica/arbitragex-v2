@@ -47,7 +47,9 @@ use crate::reserves::{
 /// return bytes decoded via `SolCall::abi_decode_returns()`. The RPC call goes
 /// through `AlloyProvider::call` (alloy `eth_call`). No live contract binding
 /// object is created — we only need the ABI codec.
-mod multicall_abi {
+// `pub(crate)` so `route_discovery::triangular_adapter` reuses the SAME ABI
+// codec (single definition site — no duplicated sol! block to drift).
+pub(crate) mod multicall_abi {
     use alloy::sol_types::sol;
 
     sol! {
@@ -71,18 +73,21 @@ mod multicall_abi {
 // The getReserves / slot0 / liquidity keccak selectors are computed at runtime
 // via ethers utils — no `abigen!` needed for single 4-byte constants.
 
-const MULTICALL3_ADDR: &str = "0xcA11bde05977b3631167028862bE2a173976CA11";
-const RESERVES_TTL_SECS: u64 = 30;
+// pub(crate): shared with route_discovery::triangular_adapter (canonical values).
+pub(crate) const MULTICALL3_ADDR: &str = "0xcA11bde05977b3631167028862bE2a173976CA11";
+pub(crate) const RESERVES_TTL_SECS: u64 = 30;
 /// TTL for `arbx:v3_slot0` keys. Matches V2 reserves TTL (30s). PoolSyncWorker
 /// ticks every ~5s so slots are refreshed 6x per TTL window.
-const V3_SLOT0_TTL_SECS: u64 = 30;
+pub(crate) const V3_SLOT0_TTL_SECS: u64 = 30;
 
 /// Minimum returnData length for a valid slot0() response.
 /// slot0 returns 7 ABI-words (uint160,int24,uint16,uint16,uint16,uint8,bool)
 /// each padded to 32 bytes = 224 bytes.
-const SLOT0_RETURN_LEN: usize = 7 * 32;
+// pub(crate): shared with route_discovery::triangular_adapter (canonical values).
+pub(crate) const SLOT0_RETURN_LEN: usize = 7 * 32;
 /// Minimum returnData length for a valid liquidity() response: 1 x uint128 = 32 bytes.
-const LIQUIDITY_RETURN_LEN: usize = 32;
+// pub(crate): shared with route_discovery::triangular_adapter (canonical values).
+pub(crate) const LIQUIDITY_RETURN_LEN: usize = 32;
 
 /// Default sub-calls per aggregate3. Kept in the [50, 100] band so a throttling
 /// provider that rejects an oversized batch only loses ONE sub-chunk's worth of pools
