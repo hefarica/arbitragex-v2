@@ -39,7 +39,10 @@ export async function verifyAll(deps: {
   const items = await Promise.all([
     verifyVNH1({ now }),
     verifyVDB1({ now }),
-    verifyVAT1({ now }),
+    // trim + || undefined: an empty/whitespace V_AT_1_PROBE_URL (e.g. the
+    // uncommented template line "V_AT_1_PROBE_URL=") falls back to the default
+    // instead of making fetch("") throw a misleading yellow.
+    verifyVAT1({ now, probeUrl: process.env["V_AT_1_PROBE_URL"]?.trim() || undefined }),
     verifyPR1CSP({ now }),
     verifyPR2Audit({ pool: deps.pool, now }),
     verifyMonitoring({ now }),

@@ -80,6 +80,48 @@ describe("verifyVAT1()", () => {
   });
 });
 
+describe("verifyVAT1() endpoint probe (prod path — no repo mount)", () => {
+  const origFetch = globalThis.fetch;
+  afterEach(() => { globalThis.fetch = origFetch; });
+
+  it("returns green when the probe answers 400 token_required", async () => {
+    globalThis.fetch = vi.fn(async () => new Response(null, { status: 400 })) as any;
+    const item = await verifyVAT1({ file: "/nonexistent/vat1-probe-test.ts", probeUrl: "http://vat1-test/admin/session", now: NOW });
+    expect(item.status).toBe("green");
+    expect(item.reason).toMatch(/endpoint probe/);
+    expect(item.evidence?.ref).toContain("400");
+  });
+  it("returns green when the route limiter answers 429 with its header (route alive + rate-limit active)", async () => {
+    globalThis.fetch = vi.fn(async () => new Response(null, { status: 429,
+      headers: { "x-ratelimit-admin-session-remaining": "0" } })) as any;
+    const item = await verifyVAT1({ file: "/nonexistent/vat1-probe-test.ts", probeUrl: "http://vat1-test/admin/session", now: NOW });
+    expect(item.status).toBe("green");
+    expect(item.reason).toContain("429");
+  });
+  it("returns yellow on a bare 429 without the route header (global limiter or lockout — not route-attributable)", async () => {
+    globalThis.fetch = vi.fn(async () => new Response(null, { status: 429 })) as any;
+    const item = await verifyVAT1({ file: "/nonexistent/vat1-probe-test.ts", probeUrl: "http://vat1-test/admin/session", now: NOW });
+    expect(item.status).toBe("yellow");
+    expect(item.reason).toMatch(/429/);
+  });
+  it("returns yellow when the probe answers 404 (route missing)", async () => {
+    globalThis.fetch = vi.fn(async () => new Response(null, { status: 404 })) as any;
+    const item = await verifyVAT1({ file: "/nonexistent/vat1-probe-test.ts", probeUrl: "http://vat1-test/admin/session", now: NOW });
+    expect(item.status).toBe("yellow");
+    expect(item.reason).toMatch(/404/);
+  });
+  it("returns yellow on an unexpected 500", async () => {
+    globalThis.fetch = vi.fn(async () => new Response(null, { status: 500 })) as any;
+    const item = await verifyVAT1({ file: "/nonexistent/vat1-probe-test.ts", probeUrl: "http://vat1-test/admin/session", now: NOW });
+    expect(item.status).toBe("yellow");
+  });
+  it("returns yellow when the probe throws (ECONNREFUSED)", async () => {
+    globalThis.fetch = vi.fn(async () => { throw new Error("ECONNREFUSED"); }) as any;
+    const item = await verifyVAT1({ file: "/nonexistent/vat1-probe-test.ts", probeUrl: "http://vat1-test/admin/session", now: NOW });
+    expect(item.status).toBe("yellow");
+  });
+});
+
 describe("verifyVNH1()", () => {
   let tmpDir: string;
   beforeEach(async () => { tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "vnh1-")); });
@@ -312,5 +354,49 @@ describe("verifyAll() integration", () => {
     } finally {
       globalThis.fetch = origFetch;
     }
+  });
+});
+
+describe("verifyAll() wires V_AT_1_PROBE_URL to the V-AT-1 probe", () => {
+  const origFetch = globalThis.fetch;
+  let origProbeUrl: string | undefined;
+
+  beforeEach(() => { origProbeUrl = process.env["V_AT_1_PROBE_URL"]; });
+  afterEach(() => {
+    if (origProbeUrl === undefined) delete process.env["V_AT_1_PROBE_URL"];
+    else process.env["V_AT_1_PROBE_URL"] = origProbeUrl;
+    globalThis.fetch = origFetch;
+  });
+
+  // Records every requested URL and answers 400 (V-AT-1 green posture).
+  function recordingFetch(urls: string[]) {
+    globalThis.fetch = vi.fn(async (url: unknown) => {
+      urls.push(String(url));
+      return new Response(null, { status: 400 });
+    }) as any;
+  }
+
+  it("probes the URL from V_AT_1_PROBE_URL when set", async () => {
+    process.env["V_AT_1_PROBE_URL"] = "http://vat1-env-test/admin/session";
+    const urls: string[] = [];
+    recordingFetch(urls);
+    await verifyAll({ pool: null, now: NOW });
+    expect(urls).toContain("http://vat1-env-test/admin/session");
+  });
+
+  it("probes the compose-internal edge URL when V_AT_1_PROBE_URL is unset", async () => {
+    delete process.env["V_AT_1_PROBE_URL"];
+    const urls: string[] = [];
+    recordingFetch(urls);
+    await verifyAll({ pool: null, now: NOW });
+    expect(urls).toContain("http://edge:8787/admin/session");
+  });
+
+  it("falls back to the default edge URL when V_AT_1_PROBE_URL is empty or whitespace", async () => {
+    process.env["V_AT_1_PROBE_URL"] = "  ";
+    const urls: string[] = [];
+    recordingFetch(urls);
+    await verifyAll({ pool: null, now: NOW });
+    expect(urls).toContain("http://edge:8787/admin/session");
   });
 });
