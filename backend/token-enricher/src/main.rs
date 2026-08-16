@@ -723,6 +723,7 @@ async fn main() -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use shared_rs::chains::{USDC_MAINNET, WETH_MAINNET};
 
     // --- parse_enricher_chains ---
 
@@ -766,15 +767,11 @@ mod tests {
     #[test]
     fn triples_to_pairs_deduplicates() {
         let triples = vec![
-            (
-                1u64,
-                "0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2".to_string(),
-                "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48".to_string(),
-            ),
+            (1u64, WETH_MAINNET.to_string(), USDC_MAINNET.to_string()),
             // duplicate of first token_in
             (
                 1u64,
-                "0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2".to_string(),
+                WETH_MAINNET.to_string(),
                 "0xdac17f958d2ee523a2206206994597c13d831ec7".to_string(),
             ),
         ];
@@ -785,11 +782,7 @@ mod tests {
 
     #[test]
     fn triples_to_pairs_skips_bad_addresses() {
-        let triples = vec![(
-            1u64,
-            "not-an-address".to_string(),
-            "0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2".to_string(),
-        )];
+        let triples = vec![(1u64, "not-an-address".to_string(), WETH_MAINNET.to_string())];
         let pairs = triples_to_pairs(triples);
         // Only the valid address survives.
         assert_eq!(pairs.len(), 1);

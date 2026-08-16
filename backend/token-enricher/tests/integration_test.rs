@@ -28,6 +28,7 @@
 
 use alloy_primitives::Address;
 use alloy_sol_types::SolCall;
+use shared_rs::chains::{USDC_MAINNET, WETH_MAINNET};
 use std::str::FromStr;
 use token_enricher::multicall::{
     build_calls_for, decode_decimals_result, decode_symbol_result, pair_results, IMulticall3,
@@ -56,8 +57,8 @@ fn multicall3_address_parses() {
 
 #[test]
 fn build_calls_produces_two_entries_per_address() {
-    let weth = Address::from_str("0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2").unwrap();
-    let usdc = Address::from_str("0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48").unwrap();
+    let weth = Address::from_str(WETH_MAINNET).unwrap();
+    let usdc = Address::from_str(USDC_MAINNET).unwrap();
     let calls = build_calls_for(&[weth, usdc]);
     // 2 addresses × 2 calls (symbol + decimals) = 4.
     assert_eq!(calls.len(), 4, "expected 4 Call3 entries for 2 addresses");
@@ -258,7 +259,7 @@ fn pair_results_two_tokens() {
 
 #[test]
 fn aggregate3_encode_decode_roundtrip() {
-    let weth = Address::from_str("0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2").unwrap();
+    let weth = Address::from_str(WETH_MAINNET).unwrap();
     let calls = build_calls_for(&[weth]);
 
     // Encode the call.

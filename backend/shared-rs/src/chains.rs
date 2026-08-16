@@ -75,6 +75,24 @@ const fn hex_nibble(c: u8) -> u8 {
 /// silences the generic-api-key heuristic at this one definition site only.
 pub const WETH_MAINNET: &str = "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"; // gitleaks:allow
 pub const USDC_MAINNET: &str = "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48"; // gitleaks:allow
+pub const DAI_MAINNET: &str = "0x6B175474E89094C44Da98b954EedeAC495271d0F"; // gitleaks:allow
+pub const WBTC_MAINNET: &str = "0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599"; // gitleaks:allow
+pub const LINK_MAINNET: &str = "0x514910771AF9Ca656af840dff83E8264EcF986CA"; // gitleaks:allow
+pub const UNI_MAINNET: &str = "0x1f9840a85d5aF5bf1D1762F925BDADdC4201F984"; // gitleaks:allow
+pub const AAVE_MAINNET: &str = "0x7Fc66500c84A76Ad7e9c93437bFc5Ac33E2DDaE9"; // gitleaks:allow
+
+/// Lowercase twins of the primaries above, for consumers that match on
+/// lowercased runtime strings (e.g. `format!("0x{:040x}", addr)` table
+/// lookups in erc20_storage). Match-arm patterns cannot call
+/// `.to_lowercase()` on a const, so the lowercase form needs its own const;
+/// both forms must stay byte-identical (pinned by the test below).
+pub const WETH_MAINNET_LC: &str = "0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2";
+pub const USDC_MAINNET_LC: &str = "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48";
+pub const DAI_MAINNET_LC: &str = "0x6b175474e89094c44da98b954eedeac495271d0f";
+pub const WBTC_MAINNET_LC: &str = "0x2260fac5e5542a773aa44fbcfedf7c193bc2c599";
+pub const LINK_MAINNET_LC: &str = "0x514910771af9ca656af840dff83e8264ecf986ca";
+pub const UNI_MAINNET_LC: &str = "0x1f9840a85d5af5bf1d1762f925bdaddc4201f984";
+pub const AAVE_MAINNET_LC: &str = "0x7fc66500c84a76ad7e9c93437bfc5ac33e2ddae9";
 
 // Ethereum mainnet routers.
 const UNIV2_ROUTER_MAINNET: RouterEntry = RouterEntry {
@@ -400,6 +418,35 @@ pub fn resolve_flashloan_executor_address(chain_id: u64) -> Result<Address, Exec
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Catalog primaries must be valid EIP-55 checksums (a mistyped case in
+    /// the const would silently diverge from the canonical deployment), and
+    /// every `_LC` twin must be the byte-identical lowercase of its primary
+    /// (match-arm consumers in erc20_storage depend on exact equality).
+    #[test]
+    fn token_consts_are_eip55_and_lc_twins_match() {
+        for (primary, lc) in [
+            (WETH_MAINNET, WETH_MAINNET_LC),
+            (USDC_MAINNET, USDC_MAINNET_LC),
+            (DAI_MAINNET, DAI_MAINNET_LC),
+            (WBTC_MAINNET, WBTC_MAINNET_LC),
+            (LINK_MAINNET, LINK_MAINNET_LC),
+            (UNI_MAINNET, UNI_MAINNET_LC),
+            (AAVE_MAINNET, AAVE_MAINNET_LC),
+        ] {
+            let addr = Address::from_str(primary).expect("primary parses as address");
+            assert_eq!(
+                &ethers::utils::to_checksum(&addr, None),
+                primary,
+                "primary must be the EIP-55 checksum form"
+            );
+            assert_eq!(
+                primary.to_lowercase(),
+                lc,
+                "_LC twin must be the lowercase of its primary"
+            );
+        }
+    }
 
     #[test]
     fn univ2_router_mainnet_address_bytes() {

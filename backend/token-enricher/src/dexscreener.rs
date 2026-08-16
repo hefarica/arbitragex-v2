@@ -692,7 +692,7 @@ mod tests {
 
     // --- select_best_pair + merge_priced ---
 
-    const ADDR: &str = "0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2";
+    const ADDR: &str = shared_rs::chains::WETH_MAINNET_LC;
 
     /// Test helper: extract just the price (production also uses the liquidity
     /// for cross-address symbol dedup, exercised in merge_priced* tests).

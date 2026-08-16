@@ -201,6 +201,7 @@ fn prepend_selector(selector: [u8; 4], args: Vec<u8>) -> Vec<u8> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use shared_rs::chains::{DAI_MAINNET, USDC_MAINNET, WETH_MAINNET};
     use std::str::FromStr;
 
     fn addr(hex: &str) -> Address {
@@ -214,10 +215,7 @@ mod tests {
         let calldata = encode_v2_swap_exact_tokens_for_tokens(
             U256::from(1_000_000u64),
             U256::from(900_000u64),
-            &[
-                addr("0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2"), // WETH
-                addr("0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48"), // USDC
-            ],
+            &[addr(WETH_MAINNET), addr(USDC_MAINNET)],
             addr("0x1111111111111111111111111111111111111111"),
             U256::from(1_700_000_000u64),
         );
@@ -228,10 +226,7 @@ mod tests {
     fn swap_exact_eth_for_tokens_starts_with_known_selector() {
         let calldata = encode_v2_swap_exact_eth_for_tokens(
             U256::from(900_000u64),
-            &[
-                addr("0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2"),
-                addr("0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48"),
-            ],
+            &[addr(WETH_MAINNET), addr(USDC_MAINNET)],
             addr("0x1111111111111111111111111111111111111111"),
             U256::from(1_700_000_000u64),
         );
@@ -251,7 +246,7 @@ mod tests {
 
     #[test]
     fn erc20_balance_of_selector_and_single_arg() {
-        let account = addr("0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2");
+        let account = addr(WETH_MAINNET);
         let calldata = encode_erc20_balance_of(account);
         assert_eq!(&calldata[..4], &[0x70, 0xa0, 0x82, 0x31]);
         assert_eq!(calldata.len(), 4 + 32); // selector + 1 address slot
@@ -273,9 +268,9 @@ mod tests {
     #[test]
     fn swap_supports_multi_hop_path() {
         let path = vec![
-            addr("0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2"), // WETH
-            addr("0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48"), // USDC
-            addr("0x6b175474e89094c44da98b954eedeac495271d0f"), // DAI
+            addr(WETH_MAINNET), // WETH
+            addr(USDC_MAINNET), // USDC
+            addr(DAI_MAINNET),  // DAI
         ];
         let calldata = encode_v2_swap_exact_tokens_for_tokens(
             U256::from(10_u64).pow(U256::from(18)),
@@ -294,13 +289,13 @@ mod tests {
     // ─── Uniswap V3 tests (Phase 2 of #6) ─────────────────────────────────
 
     fn weth() -> Address {
-        addr("0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2")
+        addr(WETH_MAINNET)
     }
     fn usdc() -> Address {
-        addr("0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48")
+        addr(USDC_MAINNET)
     }
     fn dai() -> Address {
-        addr("0x6b175474e89094c44da98b954eedeac495271d0f")
+        addr(DAI_MAINNET)
     }
 
     /// Selector verified against Etherscan disassembly of SwapRouter
@@ -391,10 +386,7 @@ mod tests {
         let calldata = encode_v2_swap_exact_tokens_for_tokens(
             U256::zero(),
             U256::zero(),
-            &[
-                addr("0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2"),
-                addr("0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48"),
-            ],
+            &[addr(WETH_MAINNET), addr(USDC_MAINNET)],
             Address::zero(),
             U256::zero(),
         );

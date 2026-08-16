@@ -637,6 +637,7 @@ impl GeckoTerminalOracle {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use shared_rs::chains::WETH_MAINNET_LC;
 
     // --- gt_network_slug ---
 
@@ -659,8 +660,8 @@ mod tests {
     #[test]
     fn icon_key_matches_reader_contract() {
         assert_eq!(
-            token_icon_key(1, "0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2"),
-            "arbx:token-icons:1:0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2"
+            token_icon_key(1, WETH_MAINNET_LC),
+            format!("arbx:token-icons:1:{}", WETH_MAINNET_LC)
         );
         assert_eq!(token_icon_key(137, "0xabc"), "arbx:token-icons:137:0xabc");
     }
@@ -810,7 +811,7 @@ mod tests {
         let parsed: GtResponse = serde_json::from_str(raw).unwrap();
         assert_eq!(parsed.data.len(), 2);
         let a0 = &parsed.data[0].attributes;
-        assert_eq!(a0.address, "0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2");
+        assert_eq!(a0.address, WETH_MAINNET_LC);
         assert_eq!(a0.symbol, "WETH");
         assert_eq!(parse_pos_f64(&a0.price_usd), Some(1593.0455682772));
         assert_eq!(parse_pos_f64(&a0.total_reserve_in_usd), Some(818020838.81));

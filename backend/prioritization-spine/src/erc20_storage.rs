@@ -26,6 +26,10 @@
 
 use ethers::types::{Address, H256, U256};
 use ethers::utils::keccak256;
+use shared_rs::chains::{
+    AAVE_MAINNET_LC, DAI_MAINNET_LC, LINK_MAINNET_LC, UNI_MAINNET_LC, USDC_MAINNET_LC,
+    WBTC_MAINNET_LC, WETH_MAINNET_LC,
+};
 
 /// Hardcoded balance mapping slot indices for top ERC20 tokens, derived
 /// from Etherscan source inspection. Adding a new token requires reading
@@ -41,21 +45,21 @@ pub fn balance_slot_for(token: Address) -> Option<u32> {
     let token_lower = format!("0x{:040x}", token);
     match token_lower.as_str() {
         // WETH9 (0xc02aaa39…) — slot 3
-        "0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2" => Some(3),
+        WETH_MAINNET_LC => Some(3),
         // USDT TetherToken (0xdac17f95…) — slot 2
         "0xdac17f958d2ee523a2206206994597c13d831ec7" => Some(2),
         // USDC FiatTokenV2_2 proxy (0xa0b86991…) — slot 9
-        "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48" => Some(9),
+        USDC_MAINNET_LC => Some(9),
         // DAI (0x6b175474…) — slot 2
-        "0x6b175474e89094c44da98b954eedeac495271d0f" => Some(2),
+        DAI_MAINNET_LC => Some(2),
         // WBTC (0x2260fac5…) — slot 0
-        "0x2260fac5e5542a773aa44fbcfedf7c193bc2c599" => Some(0),
+        WBTC_MAINNET_LC => Some(0),
         // LINK (0x51491077…) — slot 1
-        "0x514910771af9ca656af840dff83e8264ecf986ca" => Some(1),
+        LINK_MAINNET_LC => Some(1),
         // UNI (0x1f9840a8…) — slot 4
-        "0x1f9840a85d5af5bf1d1762f925bdaddc4201f984" => Some(4),
+        UNI_MAINNET_LC => Some(4),
         // AAVE (0x7fc66500…) — slot 0
-        "0x7fc66500c84a76ad7e9c93437bfc5ac33e2ddae9" => Some(0),
+        AAVE_MAINNET_LC => Some(0),
         _ => None,
     }
 }
@@ -106,21 +110,21 @@ pub fn allowance_slot_for(token: Address) -> Option<u32> {
     let token_lower = format!("0x{:040x}", token);
     match token_lower.as_str() {
         // WETH9 — slot 4 (after balances at 3)
-        "0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2" => Some(4),
+        WETH_MAINNET_LC => Some(4),
         // USDT TetherToken — slot 5 (after balances at 2 + extra storage)
         "0xdac17f958d2ee523a2206206994597c13d831ec7" => Some(5),
         // USDC FiatTokenV2_2 proxy — slot 10 (after balances at 9)
-        "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48" => Some(10),
+        USDC_MAINNET_LC => Some(10),
         // DAI — slot 3 (after balances at 2)
-        "0x6b175474e89094c44da98b954eedeac495271d0f" => Some(3),
+        DAI_MAINNET_LC => Some(3),
         // WBTC — slot 1 (after balances at 0)
-        "0x2260fac5e5542a773aa44fbcfedf7c193bc2c599" => Some(1),
+        WBTC_MAINNET_LC => Some(1),
         // LINK — slot 2 (after balances at 1)
-        "0x514910771af9ca656af840dff83e8264ecf986ca" => Some(2),
+        LINK_MAINNET_LC => Some(2),
         // UNI — slot 5 (after balances at 4)
-        "0x1f9840a85d5af5bf1d1762f925bdaddc4201f984" => Some(5),
+        UNI_MAINNET_LC => Some(5),
         // AAVE — slot 1 (after balances at 0)
-        "0x7fc66500c84a76ad7e9c93437bfc5ac33e2ddae9" => Some(1),
+        AAVE_MAINNET_LC => Some(1),
         _ => None,
     }
 }
@@ -158,6 +162,7 @@ pub fn allowance_storage_slot(token: Address, owner: Address, spender: Address) 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use shared_rs::chains::WETH_MAINNET;
     use std::str::FromStr;
 
     fn addr(hex: &str) -> Address {
@@ -168,14 +173,14 @@ mod tests {
     fn known_tokens_have_correct_balance_slots() {
         // Each pair verified from the contract source on Etherscan.
         for (token, expected_slot) in [
-            ("0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2", 3), // WETH
+            (WETH_MAINNET_LC, 3),                              // WETH
             ("0xdac17f958d2ee523a2206206994597c13d831ec7", 2), // USDT
-            ("0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48", 9), // USDC
-            ("0x6b175474e89094c44da98b954eedeac495271d0f", 2), // DAI
-            ("0x2260fac5e5542a773aa44fbcfedf7c193bc2c599", 0), // WBTC
-            ("0x514910771af9ca656af840dff83e8264ecf986ca", 1), // LINK
-            ("0x1f9840a85d5af5bf1d1762f925bdaddc4201f984", 4), // UNI
-            ("0x7fc66500c84a76ad7e9c93437bfc5ac33e2ddae9", 0), // AAVE
+            (USDC_MAINNET_LC, 9),                              // USDC
+            (DAI_MAINNET_LC, 2),                               // DAI
+            (WBTC_MAINNET_LC, 0),                              // WBTC
+            (LINK_MAINNET_LC, 1),                              // LINK
+            (UNI_MAINNET_LC, 4),                               // UNI
+            (AAVE_MAINNET_LC, 0),                              // AAVE
         ] {
             assert_eq!(
                 balance_slot_for(addr(token)),
@@ -205,10 +210,7 @@ mod tests {
         // The format!("{:040x}") output is always lowercase, so uppercase
         // input addresses still match. This avoids surprises when callers
         // pass a checksummed address.
-        assert_eq!(
-            balance_slot_for(addr("0xC02AAA39B223FE8D0A0E5C4F27EAD9083C756CC2")),
-            Some(3),
-        );
+        assert_eq!(balance_slot_for(addr(WETH_MAINNET)), Some(3));
     }
 
     #[test]
@@ -247,7 +249,7 @@ mod tests {
 
     #[test]
     fn balance_storage_slot_resolves_for_known_token() {
-        let weth = addr("0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2");
+        let weth = addr(WETH_MAINNET);
         let holder = addr("0x0000000000000000000000000000000000000001");
         let resolved = balance_storage_slot(weth, holder).expect("WETH should be known");
         assert_eq!(resolved, balance_storage_slot_at(holder, 3));
@@ -287,14 +289,14 @@ mod tests {
     #[test]
     fn known_tokens_have_correct_allowance_slots() {
         for (token, expected_slot) in [
-            ("0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2", 4), // WETH
+            (WETH_MAINNET_LC, 4),                              // WETH
             ("0xdac17f958d2ee523a2206206994597c13d831ec7", 5), // USDT
-            ("0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48", 10), // USDC
-            ("0x6b175474e89094c44da98b954eedeac495271d0f", 3), // DAI
-            ("0x2260fac5e5542a773aa44fbcfedf7c193bc2c599", 1), // WBTC
-            ("0x514910771af9ca656af840dff83e8264ecf986ca", 2), // LINK
-            ("0x1f9840a85d5af5bf1d1762f925bdaddc4201f984", 5), // UNI
-            ("0x7fc66500c84a76ad7e9c93437bfc5ac33e2ddae9", 1), // AAVE
+            (USDC_MAINNET_LC, 10),                             // USDC
+            (DAI_MAINNET_LC, 3),                               // DAI
+            (WBTC_MAINNET_LC, 1),                              // WBTC
+            (LINK_MAINNET_LC, 2),                              // LINK
+            (UNI_MAINNET_LC, 5),                               // UNI
+            (AAVE_MAINNET_LC, 1),                              // AAVE
         ] {
             assert_eq!(
                 allowance_slot_for(addr(token)),
@@ -349,7 +351,7 @@ mod tests {
 
     #[test]
     fn allowance_storage_slot_resolves_for_known_token() {
-        let weth = addr("0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2");
+        let weth = addr(WETH_MAINNET);
         let owner = addr("0x0000000000000000000000000000000000000001");
         let spender = addr("0x0000000000000000000000000000000000000002");
         let slot = allowance_storage_slot(weth, owner, spender).expect("WETH allowance known");
