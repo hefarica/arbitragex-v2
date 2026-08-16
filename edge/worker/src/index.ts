@@ -640,7 +640,10 @@ app.get("/api/math/matrix/operators", (c) => proxy(c, "/api/math/matrix/operator
 app.get("/api/math/matrix/projection", (c) => proxy(c, "/api/math/matrix/projection"));
 
 // Credentials + operator
-app.get("/api/credentials", (c) => proxy(c, "/api/credentials"));
+// MC-CRED-1: api-server's list route is /api/v1/credentials and is admin-gated.
+// The old proxy(c, "/api/credentials") hit a nonexistent path (Express HTML 404)
+// with no auth resolution — adminProxy forwards the browser cookie/token.
+app.get("/api/credentials", (c) => adminProxy(c, "/api/v1/credentials"));
 app.get("/api/relays", (c) => proxy(c, "/api/relays"));
 
 // Hot path (live-opportunities streaming)
@@ -1399,11 +1402,15 @@ app.post("/api/admin/rpcs/reload", (c) => adminProxy(c, "/api/admin/rpcs/reload"
 app.post("/admin/onboarding/1/complete", (c) => adminProxy(c, "/admin/onboarding/1/complete"));
 app.put("/admin/config/paper-mode", (c) => adminProxy(c, "/admin/config/paper-mode"));
 
-// Admin credentials (GET + test)
+// Admin credentials (test + upsert + delete — MC-CRED-1 completes the set
+// dev-local already exposed; the masked list GET lives at /api/credentials above)
 app.get("/admin/credentials", (c) => adminProxy(c, "/admin/credentials"));
 app.get("/admin/credentials/:provider/:scope", (c) =>
   adminProxy(c, `/admin/credentials/${c.req.param("provider")}/${c.req.param("scope")}`));
 app.post("/admin/credentials/test", (c) => adminProxy(c, "/admin/credentials/test"));
+app.put("/admin/credentials", (c) => adminProxy(c, "/admin/credentials"));
+app.delete("/admin/credentials/:provider/:scope", (c) =>
+  adminProxy(c, `/admin/credentials/${encodeURIComponent(c.req.param("provider"))}/${encodeURIComponent(c.req.param("scope"))}`));
 
 app.notFound((c) => c.json({ error: "not_found" }, 404));
 app.onError((err, c) => {
