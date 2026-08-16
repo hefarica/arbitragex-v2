@@ -1756,7 +1756,7 @@ mod tests {
             U256::from(1000u64),
             None,
             SwapExactMode::ExactIn,
-            DetectionSource::NewBlock,
+            source,
         )
         .expect("valid intent")
     }
