@@ -22,6 +22,7 @@ use shared_rs::chains::RouterKind;
 
 pub mod univ2;
 pub mod univ3;
+pub mod universal_router;
 
 // Re-export the protocol enums from route_intent so sub-decoders and callers
 // can use them without importing from two separate modules.
@@ -98,6 +99,9 @@ pub fn decode(input: &[u8], router: RouterKind) -> Result<DecodedSwap, DecodeFai
     match router {
         RouterKind::UniswapV2 | RouterKind::Sushi => univ2::decode(selector, &input[4..]),
         RouterKind::UniswapV3 => univ3::decode(selector, &input[4..]),
+        // Single-swap view of the UR batch (first swap). route_decoder calls
+        // `universal_router::decode_all` directly for the multi-swap path.
+        RouterKind::UniversalRouter => universal_router::decode(selector, &input[4..]),
         _ => Err(DecodeFailReason::UnknownRouter),
     }
 }

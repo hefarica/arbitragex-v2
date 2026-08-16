@@ -700,6 +700,7 @@ mod tests {
             min_amount_out: None,
             exact_mode: SwapExactMode::Unknown,
             source_event: DetectionSource::PublicMempool,
+            intra_tx_index: 0,
         };
         let set = idx.resolve(&intent);
         assert!(set.impacted_pairs.is_empty());

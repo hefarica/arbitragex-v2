@@ -54,7 +54,8 @@ const MAX_INTENTS_PER_TX: usize = 16;
 ///
 /// ### Returns
 /// - `Ok(Vec<RouteIntent>)` — possibly empty when the selector is unknown.
-///   A single-element vec is the common case.
+///   A single-element vec is the common case; Universal Router txs can yield
+///   several intents (one per swap command in the execute() batch).
 /// - `Err(_)` — only for internal bugs (never for calldata parse failures, which
 ///   produce an empty vec and an info-level log). The caller should log errors
 ///   but never crash the scanning loop.
@@ -74,43 +75,15 @@ pub fn decode_to_route_intents(
         return Ok(vec![]);
     }
 
-    // First-pass decode using the existing dispatcher.
-    // The returned `DecodedSwap` now carries `path_tokens`, `path_fees_bps`,
-    // `exact_mode`, and `protocol_type` — no further calldata parsing needed here.
+    // First-pass decode. The returned `DecodedSwap`s carry `path_tokens`,
+    // `path_fees_bps`, `exact_mode`, and `protocol_type` — no further calldata
+    // parsing needed here. Universal Router is a command-dispatcher contract
+    // (one execute() can carry several swaps), so it takes the multi-swap
+    // path; every other router yields a single DecodedSwap.
     let router_catalog_kind = router.kind;
-    let decoded = match calldata::decode(input, router_catalog_kind) {
-        Ok(d) => d,
-        Err(DecodeFailReason::UnknownRouter) => {
-            debug!(
-                event = "route_decoder.unknown_router",
-                tx_hash = %tx.hash,
-                router = %format!("0x{}", hex::encode(router.address)),
-            );
-            return Ok(vec![]);
-        }
-        Err(DecodeFailReason::UnsupportedSelector) => {
-            debug!(
-                event = "route_decoder.unsupported_selector",
-                tx_hash = %tx.hash,
-                selector = %hex::encode(&input[..4]),
-            );
-            return Ok(vec![]);
-        }
-        Err(DecodeFailReason::ShortInput) => {
-            debug!(
-                event = "route_decoder.short_body",
-                tx_hash = %tx.hash,
-            );
-            return Ok(vec![]);
-        }
-        Err(DecodeFailReason::AbiDecodeError) => {
-            warn!(
-                event = "route_decoder.abi_decode_error",
-                tx_hash = %tx.hash,
-                selector = %hex::encode(&input[..4]),
-            );
-            return Ok(vec![]);
-        }
+    let decoded_swaps = match decode_swaps(input, router_catalog_kind, tx, router) {
+        Some(v) => v,
+        None => return Ok(vec![]),
     };
 
     // Convert shared catalog RouterKind → local RouterKind.
@@ -119,62 +92,129 @@ pub fn decode_to_route_intents(
     // DEX hint: the static router name (e.g. "uniswap-v2", "sushi").
     let dex_hint = Some(router.kind.as_str().to_owned());
 
-    // Build legs directly from DecodedSwap.path_tokens + path_fees_bps.
-    // This replaces the previous calldata re-parsing in build_legs().
-    let legs = build_legs_from_decoded(&decoded, dex_hint)?;
-
-    if legs.is_empty() {
-        warn!(
-            event = "route_decoder.zero_legs_after_build",
-            tx_hash = %tx.hash,
-        );
-        return Ok(vec![]);
-    }
-
-    // amount_in: for ETH-in selectors the decoded amount_in is zero (caller
-    // fills from tx.value). Substitute tx.value when the decoded value is zero
-    // AND the selector indicates ETH-in.
-    let selector = [input[0], input[1], input[2], input[3]];
-    let amount_in = if decoded.amount_in.is_zero() && is_eth_in_selector(selector) {
-        tx.value
-    } else {
-        decoded.amount_in
-    };
-
-    // min_amount_out: R8 — keep Some(value) from decoder; 0 from the decoder
-    // is a real value (no slippage protection set by sender).
-    let min_amount_out = Some(decoded.min_amount_out);
-
     let sender = tx.from;
     let router_address = Address::from(router.address);
+    let selector = [input[0], input[1], input[2], input[3]];
 
-    let intent = match RouteIntent::new(
-        chain_id,
-        tx.hash,
-        router_address,
-        local_router_kind,
-        sender,
-        legs,
-        amount_in,
-        min_amount_out,
-        decoded.exact_mode,
-        source,
-    ) {
-        Some(i) => i,
-        None => {
-            // Invariant violation: build_legs_from_decoded returned non-empty
-            // but RouteIntent::new returned None — unreachable given the
-            // legs.is_empty() check above.
+    let mut intents = Vec::new();
+    for (swap_index, decoded) in decoded_swaps.iter().enumerate() {
+        // Build legs directly from DecodedSwap.path_tokens + path_fees_bps.
+        // This replaces the previous calldata re-parsing in build_legs().
+        let legs = build_legs_from_decoded(decoded, dex_hint.clone())?;
+
+        if legs.is_empty() {
             warn!(
-                event = "route_decoder.invariant_violation",
+                event = "route_decoder.zero_legs_after_build",
                 tx_hash = %tx.hash,
-                "legs was non-empty but RouteIntent::new returned None"
             );
-            return Ok(vec![]);
+            continue;
         }
+
+        // amount_in: for the legacy ETH-in selectors the decoded amount_in is
+        // zero — the real input is tx.value. (Universal Router amountIn == 0
+        // is the V2 ALREADY_PAID convention: the pair was pre-funded by a
+        // prior command, so the real amount is NOT tx.value — it stays 0, R8.)
+        let amount_in = if decoded.amount_in.is_zero() && is_eth_in_selector(selector) {
+            tx.value
+        } else {
+            decoded.amount_in
+        };
+
+        // min_amount_out: R8 — keep Some(value) from decoder; 0 from the decoder
+        // is a real value (no slippage protection set by sender).
+        let min_amount_out = Some(decoded.min_amount_out);
+
+        let mut intent = match RouteIntent::new(
+            chain_id,
+            tx.hash,
+            router_address,
+            local_router_kind,
+            sender,
+            legs,
+            amount_in,
+            min_amount_out,
+            decoded.exact_mode,
+            source,
+        ) {
+            Some(i) => i,
+            None => {
+                // Invariant violation: build_legs_from_decoded returned non-empty
+                // but RouteIntent::new returned None — unreachable given the
+                // legs.is_empty() check above.
+                warn!(
+                    event = "route_decoder.invariant_violation",
+                    tx_hash = %tx.hash,
+                    "legs was non-empty but RouteIntent::new returned None"
+                );
+                continue;
+            }
+        };
+        // Position of this swap inside its tx (0-based): distinguishes
+        // same-pair multi-swap batches (Universal Router) in downstream emit
+        // identities / dedup fingerprints.
+        intent.intra_tx_index = swap_index as u8;
+        intents.push(intent);
+        if intents.len() >= MAX_INTENTS_PER_TX {
+            break;
+        }
+    }
+
+    Ok(intents)
+}
+
+/// Run the appropriate decoder for the catalog kind and normalize every
+/// failure to `None` (log + skip — never crash the scanning loop, R8).
+///
+/// Universal Router takes the multi-swap path (`decode_all`, one entry per
+/// swap command); every other router uses the single-swap dispatcher and
+/// yields a one-element vec.
+fn decode_swaps(
+    input: &[u8],
+    router_kind: shared_rs::chains::RouterKind,
+    tx: &Transaction,
+    router: &RouterEntry,
+) -> Option<Vec<calldata::DecodedSwap>> {
+    let result = if router_kind == shared_rs::chains::RouterKind::UniversalRouter {
+        let selector = [input[0], input[1], input[2], input[3]];
+        calldata::universal_router::decode_all(selector, &input[4..])
+    } else {
+        calldata::decode(input, router_kind).map(|d| vec![d])
     };
 
-    Ok(vec![intent])
+    match result {
+        Ok(swaps) => Some(swaps),
+        Err(DecodeFailReason::UnknownRouter) => {
+            debug!(
+                event = "route_decoder.unknown_router",
+                tx_hash = %tx.hash,
+                router = %format!("0x{}", hex::encode(router.address)),
+            );
+            None
+        }
+        Err(DecodeFailReason::UnsupportedSelector) => {
+            debug!(
+                event = "route_decoder.unsupported_selector",
+                tx_hash = %tx.hash,
+                selector = %hex::encode(&input[..4]),
+            );
+            None
+        }
+        Err(DecodeFailReason::ShortInput) => {
+            debug!(
+                event = "route_decoder.short_body",
+                tx_hash = %tx.hash,
+            );
+            None
+        }
+        Err(DecodeFailReason::AbiDecodeError) => {
+            warn!(
+                event = "route_decoder.abi_decode_error",
+                tx_hash = %tx.hash,
+                selector = %hex::encode(&input[..4]),
+            );
+            None
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -690,5 +730,291 @@ mod tests {
             0,
             "truncated calldata must produce 0 intents"
         );
+    }
+    // ── Universal Router (multi-command execute()) ──────────────────────────
+
+    const UR_EXECUTE: [u8; 4] = [0x35, 0x93, 0x56, 0x4c];
+    const UR_EXECUTE_DEADLINE: [u8; 4] = [0x24, 0x85, 0x6b, 0xc3];
+
+    /// Pack a V3 path: token(20) [fee(3) token(20)]*.
+    fn ur_v3_path(tokens: &[Address], fees: &[u32]) -> Vec<u8> {
+        assert_eq!(tokens.len(), fees.len() + 1);
+        let mut out = tokens[0].as_bytes().to_vec();
+        for (i, fee) in fees.iter().enumerate() {
+            out.extend_from_slice(&fee.to_be_bytes()[1..]); // uint24 BE
+            out.extend_from_slice(tokens[i + 1].as_bytes());
+        }
+        out
+    }
+
+    fn ur_v3_input(recipient: Address, a: u64, b: u64, path: Vec<u8>) -> Vec<u8> {
+        encode(&[
+            Token::Address(recipient),
+            Token::Uint(U256::from(a)),
+            Token::Uint(U256::from(b)),
+            Token::Bytes(path),
+            Token::Bool(true),
+        ])
+    }
+
+    fn ur_v2_input(recipient: Address, a: u64, b: u64, path: Vec<Address>) -> Vec<u8> {
+        encode(&[
+            Token::Address(recipient),
+            Token::Uint(U256::from(a)),
+            Token::Uint(U256::from(b)),
+            Token::Array(path.into_iter().map(Token::Address).collect()),
+            Token::Bool(true),
+        ])
+    }
+
+    fn ur_execute(selector: [u8; 4], commands: Vec<u8>, inputs: Vec<Vec<u8>>) -> Vec<u8> {
+        let mut tokens = vec![
+            Token::Bytes(commands),
+            Token::Array(inputs.into_iter().map(Token::Bytes).collect()),
+        ];
+        if selector == UR_EXECUTE_DEADLINE {
+            tokens.push(Token::Uint(U256::from(9_999u64)));
+        }
+        pad_selector_body(selector, &tokens)
+    }
+
+    fn ur_router_entry() -> RouterEntry {
+        router_entry(SharedRK::UniversalRouter)
+    }
+
+    #[test]
+    fn ur_v3_exact_in_single_hop_intent() {
+        let input = ur_execute(
+            UR_EXECUTE,
+            vec![0x00],
+            vec![ur_v3_input(
+                token(0xCC),
+                1_000,
+                900,
+                ur_v3_path(&[token(0xA), token(0xB)], &[3000]),
+            )],
+        );
+        let tx = build_tx(input, U256::zero(), token(0xF));
+        let intents =
+            decode_to_route_intents(&tx, &ur_router_entry(), 1, DetectionSource::PublicMempool)
+                .unwrap();
+        assert_eq!(intents.len(), 1);
+        let intent = &intents[0];
+        assert_eq!(intent.legs.len(), 1);
+        assert_eq!(intent.legs[0].token_in, token(0xA));
+        assert_eq!(intent.legs[0].token_out, token(0xB));
+        assert_eq!(intent.legs[0].fee_bps, Some(30));
+        assert_eq!(intent.legs[0].protocol_type, ProtocolType::V3);
+        assert_eq!(intent.legs[0].dex_hint.as_deref(), Some("universal-router"));
+        assert_eq!(intent.amount_in, U256::from(1_000u64));
+        assert_eq!(intent.min_amount_out, Some(U256::from(900u64)));
+        assert_eq!(intent.exact_mode, SwapExactMode::ExactIn);
+    }
+
+    #[test]
+    fn ur_v3_exact_out_reversed_path_intent() {
+        // Encoded path REVERSED: tokenOut (B) first.
+        let input = ur_execute(
+            UR_EXECUTE,
+            vec![0x01],
+            vec![ur_v3_input(
+                token(0xCC),
+                950,
+                1_100,
+                ur_v3_path(&[token(0xB), token(0xA)], &[500]),
+            )],
+        );
+        let tx = build_tx(input, U256::zero(), token(0xF));
+        let intents =
+            decode_to_route_intents(&tx, &ur_router_entry(), 1, DetectionSource::PublicMempool)
+                .unwrap();
+        assert_eq!(intents.len(), 1);
+        let intent = &intents[0];
+        assert_eq!(intent.legs[0].token_in, token(0xA));
+        assert_eq!(intent.legs[0].token_out, token(0xB));
+        assert_eq!(intent.legs[0].fee_bps, Some(5));
+        assert_eq!(intent.exact_mode, SwapExactMode::ExactOut);
+        assert_eq!(intent.amount_in, U256::from(1_100u64)); // amountInMax
+        assert_eq!(intent.min_amount_out, Some(U256::from(950u64))); // amountOut
+    }
+
+    #[test]
+    fn ur_v2_exact_in_multi_hop_intent() {
+        let input = ur_execute(
+            UR_EXECUTE,
+            vec![0x08],
+            vec![ur_v2_input(
+                token(0xCC),
+                2_000,
+                1_800,
+                vec![token(0xA), token(0xB), token(0xC)],
+            )],
+        );
+        let tx = build_tx(input, U256::zero(), token(0xF));
+        let intents =
+            decode_to_route_intents(&tx, &ur_router_entry(), 1, DetectionSource::PublicMempool)
+                .unwrap();
+        assert_eq!(intents.len(), 1);
+        let intent = &intents[0];
+        assert_eq!(intent.legs.len(), 2);
+        assert_eq!(intent.legs[0].token_in, token(0xA));
+        assert_eq!(intent.legs[0].token_out, token(0xB));
+        assert_eq!(intent.legs[1].token_in, token(0xB));
+        assert_eq!(intent.legs[1].token_out, token(0xC));
+        assert_eq!(intent.legs[0].fee_bps, Some(30));
+        assert_eq!(intent.legs[1].fee_bps, Some(30));
+        assert_eq!(intent.legs[0].protocol_type, ProtocolType::V2);
+    }
+
+    #[test]
+    fn ur_multi_command_yields_one_intent_per_swap() {
+        let v3 = ur_v3_input(
+            token(0xCC),
+            1_000,
+            900,
+            ur_v3_path(&[token(0xA), token(0xB)], &[3000]),
+        );
+        let v2 = ur_v2_input(token(0xCC), 2_000, 1_800, vec![token(0xC), token(0xD)]);
+        let input = ur_execute(UR_EXECUTE, vec![0x00, 0x08], vec![v3, v2]);
+        let tx = build_tx(input, U256::zero(), token(0xF));
+        let intents =
+            decode_to_route_intents(&tx, &ur_router_entry(), 1, DetectionSource::PublicMempool)
+                .unwrap();
+        assert_eq!(intents.len(), 2);
+        assert_eq!(intents[0].legs[0].protocol_type, ProtocolType::V3);
+        assert_eq!(intents[1].legs[0].protocol_type, ProtocolType::V2);
+        assert_eq!(intents[0].tx_hash, intents[1].tx_hash);
+    }
+
+    #[test]
+    fn ur_allow_revert_flag_masked() {
+        // ALLOW_REVERT is bit 7 (0x80): 0x80|0x08 = 0x88 still decodes.
+        let v2 = ur_v2_input(token(0xCC), 1_000, 900, vec![token(0xA), token(0xB)]);
+        let input = ur_execute(UR_EXECUTE, vec![0x80 | 0x08], vec![v2]);
+        let tx = build_tx(input, U256::zero(), token(0xF));
+        let intents =
+            decode_to_route_intents(&tx, &ur_router_entry(), 1, DetectionSource::PublicMempool)
+                .unwrap();
+        assert_eq!(intents.len(), 1);
+    }
+
+    #[test]
+    fn ur_non_swap_commands_yield_zero_intents() {
+        // 0x0b = WRAP_ETH — skipped fail-honest.
+        let input = ur_execute(UR_EXECUTE, vec![0x0b], vec![vec![0xde, 0xad]]);
+        let tx = build_tx(input, U256::from(5u64), token(0xF));
+        let intents =
+            decode_to_route_intents(&tx, &ur_router_entry(), 1, DetectionSource::PublicMempool)
+                .unwrap();
+        assert_eq!(intents.len(), 0);
+    }
+
+    #[test]
+    fn ur_mixed_batch_keeps_swaps() {
+        let v2 = ur_v2_input(token(0xCC), 1_000, 900, vec![token(0xA), token(0xB)]);
+        let input = ur_execute(UR_EXECUTE, vec![0x0b, 0x08, 0x0c], vec![vec![], v2, vec![]]);
+        let tx = build_tx(input, U256::zero(), token(0xF));
+        let intents =
+            decode_to_route_intents(&tx, &ur_router_entry(), 1, DetectionSource::PublicMempool)
+                .unwrap();
+        assert_eq!(intents.len(), 1);
+    }
+
+    #[test]
+    fn ur_zero_amount_in_stays_zero() {
+        // V2 amountIn == 0 = ALREADY_PAID: the pair was pre-funded by a prior
+        // command. The real amount is not derivable from calldata (and is NOT
+        // tx.value) — it must stay 0 (R8), never substituted.
+        let v2 = ur_v2_input(token(0xCC), 0, 900, vec![token(0xA), token(0xB)]);
+        let input = ur_execute(UR_EXECUTE, vec![0x08], vec![v2]);
+        let tx = build_tx(input, U256::from(777u64), token(0xF));
+        let intents =
+            decode_to_route_intents(&tx, &ur_router_entry(), 1, DetectionSource::PublicMempool)
+                .unwrap();
+        assert_eq!(intents.len(), 1);
+        assert_eq!(intents[0].amount_in, U256::zero());
+    }
+
+    #[test]
+    fn ur_v2_exact_out_command_0x09_intent() {
+        // 0x09 V2_SWAP_EXACT_OUT end-to-end: amount_in = amountInMax (upper
+        // bound), min_amount_out = amountOut (exact); path NOT reversed.
+        let input = ur_execute(
+            UR_EXECUTE,
+            vec![0x09],
+            vec![ur_v2_input(
+                token(0xCC),
+                950,
+                1_100,
+                vec![token(0xA), token(0xB)],
+            )],
+        );
+        let tx = build_tx(input, U256::zero(), token(0xF));
+        let intents =
+            decode_to_route_intents(&tx, &ur_router_entry(), 1, DetectionSource::PublicMempool)
+                .unwrap();
+        assert_eq!(intents.len(), 1);
+        let intent = &intents[0];
+        assert_eq!(intent.legs[0].token_in, token(0xA));
+        assert_eq!(intent.legs[0].token_out, token(0xB));
+        assert_eq!(intent.amount_in, U256::from(1_100u64)); // amountInMax
+        assert_eq!(intent.min_amount_out, Some(U256::from(950u64))); // amountOut
+        assert_eq!(intent.exact_mode, SwapExactMode::ExactOut);
+    }
+
+    #[test]
+    fn ur_decode_caps_at_16_intents() {
+        // 20 swap commands → exactly 16 intents (decode_all MAX_SWAPS_PER_TX
+        // cap + this module's MAX_INTENTS_PER_TX bound).
+        let n = 20;
+        let inputs: Vec<Vec<u8>> = (0..n)
+            .map(|_| ur_v2_input(token(0xCC), 1_000, 900, vec![token(0xA), token(0xB)]))
+            .collect();
+        let input = ur_execute(UR_EXECUTE, vec![0x08; n], inputs);
+        let tx = build_tx(input, U256::zero(), token(0xF));
+        let intents =
+            decode_to_route_intents(&tx, &ur_router_entry(), 1, DetectionSource::PublicMempool)
+                .unwrap();
+        assert_eq!(intents.len(), 16);
+    }
+
+    #[test]
+    fn ur_intra_tx_index_distinguishes_same_pair_swaps() {
+        // Two same-pair swaps in one UR tx must carry distinct intra_tx_index
+        // so downstream emit identities (e.g. the cartridge route_fingerprint)
+        // do not collide into a single deduped observation.
+        let v2 = ur_v2_input(token(0xCC), 1_000, 900, vec![token(0xA), token(0xB)]);
+        let input = ur_execute(UR_EXECUTE, vec![0x08, 0x08], vec![v2.clone(), v2]);
+        let tx = build_tx(input, U256::zero(), token(0xF));
+        let intents =
+            decode_to_route_intents(&tx, &ur_router_entry(), 1, DetectionSource::PublicMempool)
+                .unwrap();
+        assert_eq!(intents.len(), 2);
+        assert_eq!(intents[0].intra_tx_index, 0);
+        assert_eq!(intents[1].intra_tx_index, 1);
+    }
+
+    #[test]
+    fn ur_deadline_overload_decodes() {
+        let v2 = ur_v2_input(token(0xCC), 1_000, 900, vec![token(0xA), token(0xB)]);
+        let input = ur_execute(UR_EXECUTE_DEADLINE, vec![0x08], vec![v2]);
+        let tx = build_tx(input, U256::zero(), token(0xF));
+        let intents =
+            decode_to_route_intents(&tx, &ur_router_entry(), 1, DetectionSource::PublicMempool)
+                .unwrap();
+        assert_eq!(intents.len(), 1);
+    }
+
+    #[test]
+    fn ur_malformed_body_zero_intents_no_panic() {
+        let tx = build_tx(
+            vec![0x35, 0x93, 0x56, 0x4c, 0x00, 0x01],
+            U256::zero(),
+            token(0xF),
+        );
+        let intents =
+            decode_to_route_intents(&tx, &ur_router_entry(), 1, DetectionSource::PublicMempool)
+                .unwrap();
+        assert_eq!(intents.len(), 0);
     }
 }

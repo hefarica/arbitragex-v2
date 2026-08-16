@@ -1029,7 +1029,12 @@ pub async fn active_evaluate_and_emit(
                 // Build OpportunityCandidate for ConfigAwareEvaluator
                 // Uses the real prioritization_spine::types::OpportunityCandidate shape
                 let candidate = prioritization_spine::types::OpportunityCandidate {
-                    route_fingerprint: format!("{}:{}", cartridge_id, intent.tx_hash),
+                    // Intra-tx index keeps same-pair multi-swap UR txs from
+                    // colliding into one deduped observation.
+                    route_fingerprint: format!(
+                        "{}:{}:{}",
+                        cartridge_id, intent.tx_hash, intent.intra_tx_index
+                    ),
                     pool_addresses: intent
                         .legs
                         .iter()

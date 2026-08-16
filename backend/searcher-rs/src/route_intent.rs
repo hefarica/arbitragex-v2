@@ -47,6 +47,12 @@ pub struct RouteIntent {
     pub exact_mode: SwapExactMode,
     /// How this intent was sourced (public mempool, private hint, etc.).
     pub source_event: DetectionSource,
+    /// Position of this swap within its transaction (0-based). Populated by
+    /// the Universal Router multi-swap path (0, 1, 2, ...) so same-pair swaps
+    /// inside one tx keep distinct emit identities (dedup fingerprints);
+    /// single-swap decode paths leave the default 0.
+    #[serde(default)]
+    pub intra_tx_index: u8,
 }
 
 impl RouteIntent {
@@ -85,6 +91,7 @@ impl RouteIntent {
             min_amount_out,
             exact_mode,
             source_event,
+            intra_tx_index: 0,
         })
     }
 }
@@ -206,6 +213,9 @@ pub enum RouterKind {
     Sushi,
     Curve,
     Balancer,
+    /// Uniswap Universal Router (multi-command dispatcher; one tx can carry
+    /// several swaps — see `calldata/universal_router.rs`).
+    UniversalRouter,
     /// 1inch aggregator router.
     OneInch,
     /// Router address not in the static catalog.
@@ -223,6 +233,7 @@ impl From<shared_rs::chains::RouterKind> for RouterKind {
             shared_rs::chains::RouterKind::Sushi => RouterKind::Sushi,
             shared_rs::chains::RouterKind::Curve => RouterKind::Curve,
             shared_rs::chains::RouterKind::Balancer => RouterKind::Balancer,
+            shared_rs::chains::RouterKind::UniversalRouter => RouterKind::UniversalRouter,
             shared_rs::chains::RouterKind::Unknown => RouterKind::Unknown,
         }
     }
@@ -348,6 +359,7 @@ mod tests {
             (Shared::Sushi, RouterKind::Sushi),
             (Shared::Curve, RouterKind::Curve),
             (Shared::Balancer, RouterKind::Balancer),
+            (Shared::UniversalRouter, RouterKind::UniversalRouter),
             (Shared::Unknown, RouterKind::Unknown),
         ];
         for &(shared, expected) in cases {
@@ -413,6 +425,7 @@ mod tests {
             RouterKind::Sushi,
             RouterKind::Curve,
             RouterKind::Balancer,
+            RouterKind::UniversalRouter,
             RouterKind::OneInch,
             RouterKind::Unknown,
         ] {

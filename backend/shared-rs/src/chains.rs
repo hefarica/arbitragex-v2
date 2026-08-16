@@ -15,6 +15,9 @@ pub enum RouterKind {
     Sushi,
     Curve,
     Balancer,
+    /// Uniswap Universal Router — command-dispatcher contract; a single
+    /// `execute()` call can carry several swaps (V2/V3) plus permits/wraps.
+    UniversalRouter,
     Unknown,
 }
 
@@ -26,6 +29,7 @@ impl RouterKind {
             RouterKind::Sushi => "sushi",
             RouterKind::Curve => "curve",
             RouterKind::Balancer => "balancer",
+            RouterKind::UniversalRouter => "universal-router",
             RouterKind::Unknown => "unknown",
         }
     }
@@ -90,11 +94,39 @@ const SUSHI_ROUTER_MAINNET: RouterEntry = RouterEntry {
     address: hex20("0xd9e1ce17f2641f24ae83637ab66a2cca9c378b9f"),
 };
 
+// Universal Router (command-dispatcher entrypoint). One execute() tx can
+// carry several swaps, so volume here is meaningful for the searcher.
+// Addresses per the official Uniswap deployments docs / deploy-addresses repo:
+//   v2     = current preferred entrypoint
+//   v2.1.1 = latest revision (Uniswap swapping API)
+//   v1.2   = legacy, still used by older integrators
+const UNIVERSAL_ROUTER_V2_MAINNET: RouterEntry = RouterEntry {
+    chain_id: 1,
+    name: "universal-router-v2",
+    kind: RouterKind::UniversalRouter,
+    address: hex20("0x66a9893cc07d91d95644aedd05d03f95e1dba8af"),
+};
+const UNIVERSAL_ROUTER_V2_1_1_MAINNET: RouterEntry = RouterEntry {
+    chain_id: 1,
+    name: "universal-router-v2-1-1",
+    kind: RouterKind::UniversalRouter,
+    address: hex20("0x4c82d1fbfe28c977cbb58d8c7ff8fcf9f70a2cca"),
+};
+const UNIVERSAL_ROUTER_V1_2_MAINNET: RouterEntry = RouterEntry {
+    chain_id: 1,
+    name: "universal-router-v1-2",
+    kind: RouterKind::UniversalRouter,
+    address: hex20("0x3fc91a3afd70395cd496c647d5a6cc9d4b2b7fad"),
+};
+
 pub const ROUTERS_MAINNET: &[RouterEntry] = &[
     UNIV2_ROUTER_MAINNET,
     UNIV3_SWAPROUTER_MAINNET,
     UNIV3_SWAPROUTER02_MAINNET,
     SUSHI_ROUTER_MAINNET,
+    UNIVERSAL_ROUTER_V2_MAINNET,
+    UNIVERSAL_ROUTER_V2_1_1_MAINNET,
+    UNIVERSAL_ROUTER_V1_2_MAINNET,
 ];
 
 // Sepolia testnet routers (chain_id: 11155111)
@@ -371,6 +403,27 @@ mod tests {
     }
 
     #[test]
+    fn universal_router_mainnet_address_bytes() {
+        // Byte-exact pins for the three catalogued UR deployments
+        // (0x66a9...a8af, 0x4c82...2cca, 0x3fc9...7fad).
+        let v2: [u8; 20] = [
+            0x66, 0xa9, 0x89, 0x3c, 0xc0, 0x7d, 0x91, 0xd9, 0x56, 0x44, 0xae, 0xdd, 0x05, 0xd0,
+            0x3f, 0x95, 0xe1, 0xdb, 0xa8, 0xaf,
+        ];
+        let v2_1_1: [u8; 20] = [
+            0x4c, 0x82, 0xd1, 0xfb, 0xfe, 0x28, 0xc9, 0x77, 0xcb, 0xb5, 0x8d, 0x8c, 0x7f, 0xf8,
+            0xfc, 0xf9, 0xf7, 0x0a, 0x2c, 0xca,
+        ];
+        let v1_2: [u8; 20] = [
+            0x3f, 0xc9, 0x1a, 0x3a, 0xfd, 0x70, 0x39, 0x5c, 0xd4, 0x96, 0xc6, 0x47, 0xd5, 0xa6,
+            0xcc, 0x9d, 0x4b, 0x2b, 0x7f, 0xad,
+        ];
+        assert_eq!(UNIVERSAL_ROUTER_V2_MAINNET.address, v2);
+        assert_eq!(UNIVERSAL_ROUTER_V2_1_1_MAINNET.address, v2_1_1);
+        assert_eq!(UNIVERSAL_ROUTER_V1_2_MAINNET.address, v1_2);
+    }
+
+    #[test]
     fn find_router_hits_and_misses() {
         let univ2 = UNIV2_ROUTER_MAINNET.address;
         assert!(find_router(1, &univ2).is_some());
@@ -383,6 +436,7 @@ mod tests {
     fn router_kind_str_is_stable() {
         assert_eq!(RouterKind::UniswapV2.as_str(), "uniswap-v2");
         assert_eq!(RouterKind::UniswapV3.as_str(), "uniswap-v3");
+        assert_eq!(RouterKind::UniversalRouter.as_str(), "universal-router");
         assert_eq!(RouterKind::Unknown.as_str(), "unknown");
     }
 
