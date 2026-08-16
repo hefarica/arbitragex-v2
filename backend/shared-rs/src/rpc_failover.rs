@@ -46,6 +46,14 @@ pub const CB_WINDOW: Duration = Duration::from_secs(60);
 pub const CB_OPEN_DURATION: Duration = Duration::from_secs(30);
 pub const EWMA_ALPHA_BPS: u64 = 3000; // 0.30 weight on new sample (in basis points / 10000)
 
+/// Boot-time eth_chainId probe attempts per provider before dropping it.
+/// MC-RPC-1: a provider that was merely slow at boot used to be excluded
+/// PERMANENTLY (10 `boot_check_failed` drops in 48h on prod silently shrank
+/// the failover pool). Retrying keeps transient outages from evicting
+/// healthy providers; a wrong chain id remains a permanent, no-retry drop.
+pub const BOOT_PROBE_ATTEMPTS: u32 = 3;
+pub const BOOT_PROBE_RETRY_DELAY: Duration = Duration::from_millis(750);
+
 // ---------- errors ----------
 
 #[derive(Debug, thiserror::Error)]
@@ -202,28 +210,53 @@ impl HttpRpcPool {
                     }),
             );
             // Validate chain id once; on mismatch we drop the entry rather than
-            // poisoning the pool (operator catches it via the warn log).
-            match provider.get_chain_id().await {
-                Ok(observed) => {
-                    if observed != chain_id {
-                        warn!(
-                            event = "rpc_pool.chain_mismatch",
-                            chain_id_expected = chain_id,
-                            chain_id_observed = observed,
-                            name,
-                            "dropping provider — wrong chain"
+            // poisoning the pool (operator catches it via the warn log). A wrong
+            // chain is a permanent config error — no retry. A transient network
+            // error, however, gets BOOT_PROBE_ATTEMPTS tries before the entry
+            // is dropped (MC-RPC-1: boot drops used to be permanent).
+            let mut admitted = false;
+            for attempt in 1..=BOOT_PROBE_ATTEMPTS {
+                match provider.get_chain_id().await {
+                    Ok(observed) => {
+                        if observed != chain_id {
+                            warn!(
+                                event = "rpc_pool.chain_mismatch",
+                                chain_id_expected = chain_id,
+                                chain_id_observed = observed,
+                                name = name.as_str(),
+                                "dropping provider — wrong chain"
+                            );
+                        } else {
+                            admitted = true;
+                        }
+                        break;
+                    }
+                    Err(_) if attempt < BOOT_PROBE_ATTEMPTS => {
+                        // The error payload can embed the provider URL (API
+                        // key) — deliberately NOT logged; retry silently.
+                        debug!(
+                            event = "rpc_pool.boot_probe_retry",
+                            chain_id,
+                            name = name.as_str(),
+                            attempt,
+                            "boot eth_chainid failed — retrying"
                         );
-                        continue;
+                        tokio::time::sleep(BOOT_PROBE_RETRY_DELAY).await;
+                    }
+                    Err(e) => {
+                        warn!(
+                            event = "rpc_pool.boot_check_failed",
+                            chain_id,
+                            name = name.as_str(),
+                            attempts = BOOT_PROBE_ATTEMPTS,
+                            error = %e,
+                            "dropping provider — boot eth_chainid failed after retries"
+                        );
                     }
                 }
-                Err(e) => {
-                    warn!(
-                        event = "rpc_pool.boot_check_failed",
-                        chain_id, name, error = %e,
-                        "dropping provider — boot eth_chainid failed"
-                    );
-                    continue;
-                }
+            }
+            if !admitted {
+                continue;
             }
             alive.push(Arc::new(HttpEntry {
                 name,
@@ -672,6 +705,14 @@ pub struct RpcProviderSnapshot {
 /// Parse a CSV of providers. Each token is either `name=url` or a bare URL
 /// (which is implicitly named `primary`, `secondary`, ...). Whitespace around
 /// commas/equals is trimmed. Empty tokens are skipped silently.
+///
+/// MC-RPC-1: malformed tokens (empty side of `name=`, unsupported scheme) are
+/// SKIPPED with a warn instead of failing the whole pool — one typo in a
+/// 10-provider CSV used to kill failover entirely (from_csv Err → supervisor
+/// fell through to env → pool None). Duplicate names get a `-2`, `-3`, …
+/// suffix so Prometheus labels and logs stay unambiguous. The returned vec is
+/// empty when nothing parsed; callers turn that into `PoolError::Empty`.
+/// Warns never include the URL (API keys live there — redacted-logger doctrine).
 pub fn parse_csv(raw: &str) -> Result<Vec<(String, String)>, PoolError> {
     let mut out: Vec<(String, String)> = Vec::new();
     let fallback_names = ["primary", "secondary", "tertiary", "quaternary"];
@@ -685,33 +726,31 @@ pub fn parse_csv(raw: &str) -> Result<Vec<(String, String)>, PoolError> {
             let name = n.trim().to_string();
             let url = u.trim().to_string();
             if name.is_empty() || url.is_empty() {
-                return Err(PoolError::InvalidUrl {
-                    name: name.clone(),
-                    detail: format!("empty side of name=url token: {tok:?}"),
-                });
+                warn!(
+                    event = "rpc_pool.csv_token_skipped",
+                    name = "(unnamed)",
+                    reason = "empty side of name=url token"
+                );
+                continue;
             }
-            if !(url.starts_with("http://")
-                || url.starts_with("https://")
-                || url.starts_with("ws://")
-                || url.starts_with("wss://"))
-            {
-                return Err(PoolError::InvalidUrl {
-                    name,
-                    detail: format!("unsupported scheme in {url:?}"),
-                });
+            if !is_supported_scheme(&url) {
+                warn!(
+                    event = "rpc_pool.csv_token_skipped",
+                    name = name.as_str(),
+                    reason = "unsupported scheme"
+                );
+                continue;
             }
-            out.push((name, url));
+            push_uniquely_named(&mut out, name, url);
         } else {
             // bare URL
-            if !(tok.starts_with("http://")
-                || tok.starts_with("https://")
-                || tok.starts_with("ws://")
-                || tok.starts_with("wss://"))
-            {
-                return Err(PoolError::InvalidUrl {
-                    name: "(bare)".into(),
-                    detail: format!("unsupported scheme in {tok:?}"),
-                });
+            if !is_supported_scheme(tok) {
+                warn!(
+                    event = "rpc_pool.csv_token_skipped",
+                    name = "(bare)",
+                    reason = "unsupported scheme"
+                );
+                continue;
             }
             let name = fallback_names
                 .get(bare_idx)
@@ -719,10 +758,32 @@ pub fn parse_csv(raw: &str) -> Result<Vec<(String, String)>, PoolError> {
                 .unwrap_or("extra")
                 .to_string();
             bare_idx += 1;
-            out.push((name, tok.to_string()));
+            push_uniquely_named(&mut out, name, tok.to_string());
         }
     }
     Ok(out)
+}
+
+fn is_supported_scheme(url: &str) -> bool {
+    url.starts_with("http://")
+        || url.starts_with("https://")
+        || url.starts_with("ws://")
+        || url.starts_with("wss://")
+}
+
+/// Append `(name, url)`, suffixing `-2`, `-3`, … on duplicate names so
+/// provider labels (Prometheus metrics, health logs) stay unambiguous when
+/// the operator reuses a placeholder name (e.g. `otro=` twice in one CSV).
+fn push_uniquely_named(out: &mut Vec<(String, String)>, name: String, url: String) {
+    if !out.iter().any(|(n, _)| *n == name) {
+        out.push((name, url));
+        return;
+    }
+    let mut i = 2usize;
+    while out.iter().any(|(n, _)| *n == format!("{name}-{i}")) {
+        i += 1;
+    }
+    out.push((format!("{name}-{i}"), url));
 }
 
 fn classify_cause(msg: &str) -> &'static str {
@@ -779,20 +840,34 @@ mod tests {
     }
 
     #[test]
-    fn parse_rejects_unsupported_scheme() {
-        let err = parse_csv("alchemy=ftp://nope").unwrap_err();
-        match err {
-            PoolError::InvalidUrl { name, .. } => assert_eq!(name, "alchemy"),
-            _ => panic!("expected InvalidUrl"),
-        }
+    fn parse_skips_unsupported_scheme_and_keeps_rest() {
+        let v = parse_csv("alchemy=ftp://nope,infura=https://i/v3/k").unwrap();
+        assert_eq!(v.len(), 1);
+        assert_eq!(v[0].0, "infura");
     }
 
     #[test]
-    fn parse_rejects_empty_side() {
-        let err = parse_csv("=https://nope").unwrap_err();
-        assert!(matches!(err, PoolError::InvalidUrl { .. }));
-        let err = parse_csv("alchemy=").unwrap_err();
-        assert!(matches!(err, PoolError::InvalidUrl { .. }));
+    fn parse_skips_empty_side_tokens() {
+        let v = parse_csv("=https://nope,alchemy=,drpc=https://d").unwrap();
+        assert_eq!(v.len(), 1);
+        assert_eq!(v[0].0, "drpc");
+    }
+
+    #[test]
+    fn parse_all_malformed_yields_empty_vec() {
+        // Callers map an empty vec to PoolError::Empty — the pool dies only
+        // when NOTHING parses, not when one token is a typo (MC-RPC-1).
+        assert!(parse_csv("alchemy=, = ,ftp://x").unwrap().is_empty());
+    }
+
+    #[test]
+    fn parse_uniquifies_duplicate_names() {
+        let v = parse_csv("otro=https://a/v2/k,otro=https://b/eth,drpc=https://d").unwrap();
+        assert_eq!(v.len(), 3);
+        assert_eq!(v[0].0, "otro");
+        assert_eq!(v[1].0, "otro-2");
+        assert_eq!(v[2].0, "drpc");
+        assert!(v[1].1.starts_with("https://b"));
     }
 
     #[test]

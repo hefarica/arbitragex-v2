@@ -26,7 +26,18 @@ const EDGE_URL = getApiBaseUrl();
 async function fetchInitial(): Promise<CredentialsSnapshot> {
   try {
     const res = await fetch(`${EDGE_URL}/api/credentials`, {
-      headers: { accept: "application/json" },
+      headers: {
+        accept: "application/json",
+        // V-AT-2: SSR has no browser session — authenticate the admin-gated
+        // list with the runtime token (same pattern as /audit-logs SSR) and
+        // bypass the edge rate limit like api-client's ssrEdgeTokenHeader.
+        ...(process.env.ARBX_ADMIN_TOKEN
+          ? { "x-arbx-admin-token": process.env.ARBX_ADMIN_TOKEN }
+          : {}),
+        ...(process.env.ARBX_EDGE_TOKEN
+          ? { "x-arbx-edge-token": process.env.ARBX_EDGE_TOKEN }
+          : {}),
+      },
       cache: "no-store",
     });
     if (!res.ok) {
@@ -45,5 +56,8 @@ async function fetchInitial(): Promise<CredentialsSnapshot> {
 
 export default async function CredentialsPage() {
   const initial = await fetchInitial();
-  return <CredentialsClient initialSnapshot={initial} edgeUrl={EDGE_URL} />;
+  // MC-CRED-1: never pass an SSR-computed base URL into the client — in the
+  // browser it resolved to the docker-internal http://edge:8787 (mixed content).
+  // CredentialsClient builds same-origin URLs via getApiBaseUrl() at call time.
+  return <CredentialsClient initialSnapshot={initial} />;
 }
