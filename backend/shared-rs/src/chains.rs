@@ -163,16 +163,210 @@ pub const STABLECOINS_MAINNET: &[StablecoinEntry] = &[
 ];
 
 /// Case-insensitive symbol membership in `STABLECOINS_MAINNET` — the one
-/// stablecoin definition site (STABLEARR-11).
+/// stablecoin definition site (STABLEARR-11). Mainnet wrapper kept for #343
+/// consumers; delegates to the chain-aware core (STABLEARR-12).
 pub fn is_stablecoin_symbol(sym: &str) -> bool {
-    STABLECOINS_MAINNET
+    is_stablecoin_symbol_for_chain(1, sym)
+}
+
+/// Case-insensitive canonical-address membership in `STABLECOINS_MAINNET`.
+/// Mainnet wrapper kept for #343 consumers; delegates to the chain-aware
+/// core (STABLEARR-12).
+pub fn is_stablecoin_address_lc(addr: &str) -> bool {
+    is_stablecoin_address_lc_for_chain(1, addr)
+}
+
+// ─── Multichain token catalogs (STABLEARR-12) ──────────────────────────────
+//
+// Catalogs for every Alchemy-servable chain + the repo's testnets so future
+// chain enablement is data-only (operator order). EVERY address below was
+// verified on-chain 2026-08-16 via `eth_call symbol()` (0x95d89b41) +
+// `decimals()` (0x313ce567) against chainId-checked public RPCs; the `symbol`
+// recorded is the literal decoded on-chain value. Candidates whose decode
+// mismatched or whose RPC was unreachable were EXCLUDED, not guessed
+// (fail-honest, RULE 00). Notable on-chain facts captured by that sweep:
+//
+//   - USDC choice: Circle-ISSUED NATIVE USDC is preferred over bridged
+//     USDC.e wherever it exists (Arbitrum, Optimism, Base, Polygon);
+//     the bridged variants are deliberately not catalogued.
+//   - Arbitrum: the classic bridged USDT contract carries NO code today
+//     (eth_getCode empty on two independent RPCs) — the live Tether issuance
+//     self-identifies as `USD₮0` (the ₮ is U+20AE, part of the symbol bytes).
+//   - Polygon: the classic USDT contract self-identifies as `USDT0` after
+//     the Tether migration; the wrapped-native contract (former WMATIC)
+//     self-identifies as `WPOL`.
+//   - Avalanche: Tether's symbol bytes are `USDt` (lowercase t) and the
+//     bridged DAI is `DAI.e`.
+//   - Arbitrum + Optimism DAI share one address (0xDA10…) — deterministic
+//     deployment coincidence, verified independently on each chain.
+//   - Testnets: only issuer-backed USDC (Circle test mints) exists
+//     canonically on Sepolia/Arb-Sepolia/OP-Sepolia; no canonical USDT/DAI
+//     deployments exist there, so those arrays are intentionally 1-entry.
+
+/// Native wrapped-token const per chain (WETH9/WETH/WPOL/WAVAX/WBNB), EIP-55.
+/// Same discipline as the mainnet primaries above: well-known public contract
+/// addresses, NOT secrets; `gitleaks:allow` at this definition site only.
+pub const WETH_ARBITRUM: &str = "0x82aF49447D8a07e3bd95BD0d56f35241523fBab1"; // gitleaks:allow
+pub const WETH_OPTIMISM: &str = "0x4200000000000000000000000000000000000006"; // gitleaks:allow
+pub const WETH_BASE: &str = "0x4200000000000000000000000000000000000006"; // gitleaks:allow
+/// Former WMATIC contract; symbol() now decodes `WPOL` (POL migration rename).
+pub const WPOL_POLYGON: &str = "0x0d500B1d8E8eF31E21C99d1Db9A6444d3ADf1270"; // gitleaks:allow
+pub const WAVAX_AVALANCHE: &str = "0xB31f66AA3C1e785363F0875A1B74E27b85FD66c7"; // gitleaks:allow
+pub const WBNB_BNB: &str = "0xbb4CdB9CBd36B01bD1cBaEBF2De08d9173bc095c"; // gitleaks:allow
+pub const WETH_SEPOLIA: &str = "0xfFf9976782d46CC05630D1f6eBAb18b2324d6B14"; // gitleaks:allow
+/// Per Arbitrum's official useful-addresses doc; the other widely-cited
+/// candidate sharing this prefix carries no code on 421614 (verified dead).
+pub const WETH_ARB_SEPOLIA: &str = "0x980B62Da83eFf3D4576C647993b0c1D7faf17c73"; // gitleaks:allow
+/// OP-Stack WETH predeploy — same canonical address on every OP-Stack chain.
+pub const WETH_OP_SEPOLIA: &str = "0x4200000000000000000000000000000000000006"; // gitleaks:allow
+
+/// Arbitrum — native Circle USDC preferred over bridged USDC.e; live Tether
+/// issuance self-identifies `USD₮0` (₮ = U+20AE, byte-exact as decoded).
+pub const STABLECOINS_ARBITRUM: &[StablecoinEntry] = &[
+    StablecoinEntry {
+        symbol: "USDC",
+        address: "0xaf88d065e77c8cC2239327C5EDb3A432268e5831", // gitleaks:allow
+    },
+    StablecoinEntry {
+        symbol: "USD₮0",
+        address: "0xFd086bC7CD5C481DCC9C85ebE478A1C0b69FCbb9", // gitleaks:allow
+    },
+    StablecoinEntry {
+        symbol: "DAI",
+        address: "0xDA10009cBd5D07dd0CeCc66161FC93D7c9000da1", // gitleaks:allow
+    },
+];
+
+/// Optimism — native Circle USDC preferred over bridged USDC.e.
+pub const STABLECOINS_OPTIMISM: &[StablecoinEntry] = &[
+    StablecoinEntry {
+        symbol: "USDC",
+        address: "0x0b2C639c533813f4Aa9D7837CAf62653d097Ff85", // gitleaks:allow
+    },
+    StablecoinEntry {
+        symbol: "USDT",
+        address: "0x94b008aA00579c1307B0EF2c499aD98a8ce58e58", // gitleaks:allow
+    },
+    StablecoinEntry {
+        symbol: "DAI",
+        address: "0xDA10009cBd5D07dd0CeCc66161FC93D7c9000da1", // gitleaks:allow
+    },
+];
+
+/// Base — no canonical USDT exists natively; honest 2-entry set.
+pub const STABLECOINS_BASE: &[StablecoinEntry] = &[
+    StablecoinEntry {
+        symbol: "USDC",
+        address: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913", // gitleaks:allow
+    },
+    StablecoinEntry {
+        symbol: "DAI",
+        address: "0x50c5725949A6F0c72E6C4a641F24049A917DB0Cb", // gitleaks:allow
+    },
+];
+
+/// Polygon — native Circle USDC preferred over bridged USDC.e; classic USDT
+/// contract self-identifies `USDT0` after the Tether migration.
+pub const STABLECOINS_POLYGON: &[StablecoinEntry] = &[
+    StablecoinEntry {
+        symbol: "USDC",
+        address: "0x3c499c542cEF5E3811e1192ce70d8cC03d5c3359", // gitleaks:allow
+    },
+    StablecoinEntry {
+        symbol: "USDT0",
+        address: "0xc2132D05D31c914a87C6611C10748AEb04B58e8F", // gitleaks:allow
+    },
+    StablecoinEntry {
+        symbol: "DAI",
+        address: "0x8f3Cf7ad23Cd3CaDbD9735AFf958023239c6A063", // gitleaks:allow
+    },
+];
+
+/// Avalanche — Tether symbol bytes are `USDt`; bridged Dai is `DAI.e`.
+pub const STABLECOINS_AVALANCHE: &[StablecoinEntry] = &[
+    StablecoinEntry {
+        symbol: "USDC",
+        address: "0xB97EF9Ef8734C71904D8002F8b6Bc66Dd9c48a6E", // gitleaks:allow
+    },
+    StablecoinEntry {
+        symbol: "USDt",
+        address: "0x9702230A8Ea53601f5cD2dc00fDBc13d4dF4A8c7", // gitleaks:allow
+    },
+    StablecoinEntry {
+        symbol: "DAI.e",
+        address: "0xd586E7F844cEa2F87f50152665BCbc2C279D8d70", // gitleaks:allow
+    },
+];
+
+/// BNB Smart Chain — Binance-pegged set (all 18 decimals on this chain).
+pub const STABLECOINS_BNB: &[StablecoinEntry] = &[
+    StablecoinEntry {
+        symbol: "USDC",
+        address: "0x8AC76a51cc950d9822D68b83fE1Ad97B32Cd580d", // gitleaks:allow
+    },
+    StablecoinEntry {
+        symbol: "USDT",
+        address: "0x55d398326f99059fF775485246999027B3197955", // gitleaks:allow
+    },
+    StablecoinEntry {
+        symbol: "DAI",
+        address: "0x1AF3F329e8BE154074D8769D1FFa4eE058B1DBc3", // gitleaks:allow
+    },
+];
+
+/// Sepolia — only issuer-backed canonical stable is Circle's test USDC.
+pub const STABLECOINS_SEPOLIA: &[StablecoinEntry] = &[StablecoinEntry {
+    symbol: "USDC",
+    address: "0x1c7D4B196Cb0C7B01d743Fbc6116a902379C7238", // gitleaks:allow
+}];
+
+/// Arbitrum Sepolia — only issuer-backed canonical stable is Circle's test
+/// USDC.
+pub const STABLECOINS_ARB_SEPOLIA: &[StablecoinEntry] = &[StablecoinEntry {
+    symbol: "USDC",
+    address: "0x75faf114eafb1BDbe2F0316DF893fd58CE46AA4d", // gitleaks:allow
+}];
+
+/// Optimism Sepolia — only issuer-backed canonical stable is Circle's test
+/// USDC.
+pub const STABLECOINS_OP_SEPOLIA: &[StablecoinEntry] = &[StablecoinEntry {
+    symbol: "USDC",
+    address: "0x5fd84259d66Cd46123540766Be93DFE6D43130D7", // gitleaks:allow
+}];
+
+/// Returns the static stablecoin catalog for a given chain — mirrors
+/// `routers_for_chain`. Unknown chains get an empty slice (fail-honest:
+/// no stablecoin is claimed for a chain that was never verified).
+pub fn stablecoins_for_chain(chain_id: u64) -> &'static [StablecoinEntry] {
+    match chain_id {
+        1 => STABLECOINS_MAINNET,
+        42161 => STABLECOINS_ARBITRUM,
+        10 => STABLECOINS_OPTIMISM,
+        8453 => STABLECOINS_BASE,
+        137 => STABLECOINS_POLYGON,
+        43114 => STABLECOINS_AVALANCHE,
+        56 => STABLECOINS_BNB,
+        11155111 => STABLECOINS_SEPOLIA,
+        421614 => STABLECOINS_ARB_SEPOLIA,
+        11155420 => STABLECOINS_OP_SEPOLIA,
+        _ => &[],
+    }
+}
+
+/// Case-insensitive symbol membership in a chain's stablecoin catalog
+/// (chain-aware core; the mainnet-signature `is_stablecoin_symbol` above
+/// delegates here with chain 1).
+pub fn is_stablecoin_symbol_for_chain(chain_id: u64, sym: &str) -> bool {
+    stablecoins_for_chain(chain_id)
         .iter()
         .any(|e| e.symbol.eq_ignore_ascii_case(sym))
 }
 
-/// Case-insensitive canonical-address membership in `STABLECOINS_MAINNET`.
-pub fn is_stablecoin_address_lc(addr: &str) -> bool {
-    STABLECOINS_MAINNET
+/// Case-insensitive canonical-address membership in a chain's stablecoin
+/// catalog (chain-aware core; the mainnet-signature `is_stablecoin_address_lc`
+/// above delegates here with chain 1).
+pub fn is_stablecoin_address_lc_for_chain(chain_id: u64, addr: &str) -> bool {
+    stablecoins_for_chain(chain_id)
         .iter()
         .any(|e| e.address.eq_ignore_ascii_case(addr))
 }
@@ -561,6 +755,164 @@ mod tests {
         assert!(!is_stablecoin_symbol("USDE"));
         assert!(is_stablecoin_address_lc(USDT_MAINNET_LC));
         assert!(!is_stablecoin_address_lc(WBTC_MAINNET_LC));
+    }
+
+    /// STABLEARR-12: every multichain wrapped-token const must be the valid
+    /// EIP-55 checksum form (a mistyped case would silently diverge from the
+    /// RPC-verified deployment), and the three OP-Stack chains must share the
+    /// canonical predeploy address.
+    #[test]
+    fn wrapped_token_consts_are_eip55() {
+        for c in [
+            WETH_ARBITRUM,
+            WETH_OPTIMISM,
+            WETH_BASE,
+            WPOL_POLYGON,
+            WAVAX_AVALANCHE,
+            WBNB_BNB,
+            WETH_SEPOLIA,
+            WETH_ARB_SEPOLIA,
+            WETH_OP_SEPOLIA,
+        ] {
+            let addr = Address::from_str(c).expect("wrapped-token const parses as address");
+            assert_eq!(
+                &ethers::utils::to_checksum(&addr, None),
+                c,
+                "wrapped-token const must be stored in EIP-55 checksum form"
+            );
+        }
+        // OP-Stack WETH predeploy is one canonical address across OP chains.
+        assert_eq!(WETH_OPTIMISM, "0x4200000000000000000000000000000000000006");
+        assert_eq!(WETH_BASE, WETH_OPTIMISM);
+        assert_eq!(WETH_OP_SEPOLIA, WETH_OPTIMISM);
+    }
+
+    /// STABLEARR-12: per-chain stablecoin catalogs pinned against the table
+    /// verified on-chain 2026-08-16 (eth_call symbol()/decimals() via
+    /// chainId-checked public RPCs). Any address/symbol drift from that
+    /// verified table must fail loudly here. Symbols are the LITERAL decoded
+    /// on-chain values (note USD₮0 on Arbitrum, USDT0 on Polygon, USDt on
+    /// Avalanche). A new chain addition must update BOTH the catalog above
+    /// and this table.
+    #[test]
+    fn multichain_stablecoin_catalogs_pinned() {
+        let verified: &[(u64, &[(&str, &str)])] = &[
+            (
+                42161,
+                &[
+                    ("USDC", "0xaf88d065e77c8cC2239327C5EDb3A432268e5831"),
+                    ("USD₮0", "0xFd086bC7CD5C481DCC9C85ebE478A1C0b69FCbb9"),
+                    ("DAI", "0xDA10009cBd5D07dd0CeCc66161FC93D7c9000da1"),
+                ],
+            ),
+            (
+                10,
+                &[
+                    ("USDC", "0x0b2C639c533813f4Aa9D7837CAf62653d097Ff85"),
+                    ("USDT", "0x94b008aA00579c1307B0EF2c499aD98a8ce58e58"),
+                    ("DAI", "0xDA10009cBd5D07dd0CeCc66161FC93D7c9000da1"),
+                ],
+            ),
+            (
+                8453,
+                &[
+                    ("USDC", "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913"),
+                    ("DAI", "0x50c5725949A6F0c72E6C4a641F24049A917DB0Cb"),
+                ],
+            ),
+            (
+                137,
+                &[
+                    ("USDC", "0x3c499c542cEF5E3811e1192ce70d8cC03d5c3359"),
+                    ("USDT0", "0xc2132D05D31c914a87C6611C10748AEb04B58e8F"),
+                    ("DAI", "0x8f3Cf7ad23Cd3CaDbD9735AFf958023239c6A063"),
+                ],
+            ),
+            (
+                43114,
+                &[
+                    ("USDC", "0xB97EF9Ef8734C71904D8002F8b6Bc66Dd9c48a6E"),
+                    ("USDt", "0x9702230A8Ea53601f5cD2dc00fDBc13d4dF4A8c7"),
+                    ("DAI.e", "0xd586E7F844cEa2F87f50152665BCbc2C279D8d70"),
+                ],
+            ),
+            (
+                56,
+                &[
+                    ("USDC", "0x8AC76a51cc950d9822D68b83fE1Ad97B32Cd580d"),
+                    ("USDT", "0x55d398326f99059fF775485246999027B3197955"),
+                    ("DAI", "0x1AF3F329e8BE154074D8769D1FFa4eE058B1DBc3"),
+                ],
+            ),
+            (
+                11155111,
+                &[("USDC", "0x1c7D4B196Cb0C7B01d743Fbc6116a902379C7238")],
+            ),
+            (
+                421614,
+                &[("USDC", "0x75faf114eafb1BDbe2F0316DF893fd58CE46AA4d")],
+            ),
+            (
+                11155420,
+                &[("USDC", "0x5fd84259d66Cd46123540766Be93DFE6D43130D7")],
+            ),
+        ];
+        for &(chain_id, expected) in verified {
+            let got = stablecoins_for_chain(chain_id);
+            assert_eq!(
+                got.len(),
+                expected.len(),
+                "chain {chain_id}: catalog size drifted from the verified table"
+            );
+            let mut seen = std::collections::HashSet::new();
+            for (e, (sym, addr)) in got.iter().zip(expected) {
+                assert_eq!(e.symbol, *sym, "chain {chain_id}: symbol drifted");
+                assert_eq!(e.address, *addr, "chain {chain_id}: address drifted");
+                let parsed = Address::from_str(e.address)
+                    .unwrap_or_else(|_| panic!("chain {chain_id}: address parses"));
+                assert_eq!(
+                    &ethers::utils::to_checksum(&parsed, None),
+                    e.address,
+                    "chain {chain_id}: {} must be stored in EIP-55 form",
+                    e.symbol
+                );
+                assert!(seen.insert(e.symbol), "chain {chain_id}: duplicate symbol");
+            }
+        }
+    }
+
+    /// STABLEARR-12: fail-honest dispatch — unknown chains get an empty
+    /// catalog and match nothing, and catalogs are chain-isolated (a mainnet
+    /// stable address must not match on another chain).
+    #[test]
+    fn stablecoin_dispatch_is_chain_aware_and_fail_honest() {
+        assert!(stablecoins_for_chain(999).is_empty());
+        assert!(!stablecoins_for_chain(999)
+            .iter()
+            .any(|e| e.symbol == "USDC"));
+        assert!(!is_stablecoin_symbol_for_chain(999, "USDC"));
+        assert!(!is_stablecoin_address_lc_for_chain(999, USDC_MAINNET_LC));
+
+        // Mainnet wrapper still behaves exactly as #343 (chain 1 core).
+        assert!(is_stablecoin_symbol("usdt"));
+        assert!(is_stablecoin_address_lc(USDC_MAINNET_LC));
+
+        // Chain-aware cores: verified symbols match per chain (recorded
+        // casing variants included)…
+        assert!(is_stablecoin_symbol_for_chain(42161, "USD₮0"));
+        assert!(is_stablecoin_symbol_for_chain(137, "usdt0"));
+        assert!(is_stablecoin_symbol_for_chain(43114, "USDT")); // case-insensitive vs USDt
+        assert!(is_stablecoin_address_lc_for_chain(
+            42161,
+            "0xaf88d065e77c8cc2239327c5edb3a432268e5831"
+        ));
+
+        // …and catalogs do NOT leak across chains: mainnet USDC address is
+        // not an Arbitrum/Polygon stable, and vice versa.
+        assert!(!is_stablecoin_address_lc_for_chain(42161, USDC_MAINNET_LC));
+        assert!(!is_stablecoin_address_lc(
+            "0xaf88d065e77c8cc2239327c5edb3a432268e5831"
+        ));
     }
 
     #[test]
