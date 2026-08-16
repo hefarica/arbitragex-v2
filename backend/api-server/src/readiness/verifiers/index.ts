@@ -39,7 +39,7 @@ export async function verifyAll(deps: {
   const items = await Promise.all([
     verifyVNH1({ now }),
     verifyVDB1({ now }),
-    verifyVAT1({ now }),
+    verifyVAT1({ now, probeUrl: process.env["V_AT_1_PROBE_URL"] }),
     verifyPR1CSP({ now }),
     verifyPR2Audit({ pool: deps.pool, now }),
     verifyMonitoring({ now }),

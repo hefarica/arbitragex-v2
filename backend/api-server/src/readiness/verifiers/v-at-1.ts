@@ -11,10 +11,12 @@ const FORBIDDEN_RE = /localStorage\s*\.\s*(?:setItem|getItem|removeItem)\s*\(\s*
  * Verification strategy (D-03 fix):
  * 1. If the repo is mounted at /repo (dev/local), regex over the source file.
  * 2. If the file is absent (production container — no repo mount), probe the
- *    /admin/session endpoint: a 400 token_required response proves the
- *    httpOnly cookie session exists and the route is not leaking tokens via
- *    localStorage. This replaces the broken "yellow: no repo mount" state
- *    that blocked readiness verification in production for months.
+ *    /admin/session endpoint: a 400 token_required response, or a 429 that
+ *    carries the route's own x-ratelimit-admin-session-remaining header
+ *    (route alive + rate-limit active = posture confirmed), proves
+ *    the httpOnly cookie session exists and the route is not leaking tokens
+ *    via localStorage. This replaces the broken "yellow: no repo mount"
+ *    state that blocked readiness verification in production for months.
  *
  * - Forbidden pattern found → red (XSS exposure regression).
  * - File exists, pattern absent → green.
@@ -23,18 +25,14 @@ const FORBIDDEN_RE = /localStorage\s*\.\s*(?:setItem|getItem|removeItem)\s*\(\s*
  */
 export async function verifyVAT1(opts?: {
   file?: string;
-  probeUrl?: string;
+  probeUrl?: string | undefined; // explicit undefined allowed (exactOptionalPropertyTypes)
   now?: () => Date;
 }): Promise<ReadinessItem> {
   const file = opts?.file ?? DEFAULT_FILE;
-  // The /admin/session route lives in the EDGE worker (the browser-facing
-  // cookie setter), not in api-server. Probing ourselves (localhost:8080)
-  // always 404s and forced this item yellow while the endpoint was live.
-  // Override via ADMIN_SESSION_PROBE_URL for non-standard topologies.
-  const probeUrl =
-    opts?.probeUrl ??
-    process.env["ADMIN_SESSION_PROBE_URL"] ??
-    "http://edge:8787/admin/session";
+  // The /admin/session route lives in the edge worker (edge/worker/src/index.ts),
+  // not in this process. Default = compose-internal DNS (service "edge", EDGE_PORT 8787);
+  // overridable by the caller via V_AT_1_PROBE_URL.
+  const probeUrl = opts?.probeUrl ?? "http://edge:8787/admin/session";
   const verified_at = (opts?.now ?? (() => new Date()))().toISOString();
   const base = {
     id: "V-AT-1",
@@ -77,21 +75,31 @@ export async function verifyVAT1(opts?: {
       body: JSON.stringify({}),
       signal: AbortSignal.timeout(3000),
     });
-    // 400 token_required = the /admin/session route exists and demands a token
-    // via httpOnly cookie — exactly the V-AT-1 security posture we want.
-    if (res.status === 400) {
+    if (
+      res.status === 400 ||
+      (res.status === 429 && res.headers.get("x-ratelimit-admin-session-remaining") !== null)
+    ) {
+      // 400 token_required = route alive demanding the token via httpOnly cookie.
+      // 429 from THIS route's limiter = route alive AND rate-limit active — posture
+      // confirmed. Readiness is computed per request and internal probes share the
+      // anon 5/min bucket, so frequent polling can legitimately trip the route
+      // limiter's 429 (not a regression). Attribution guard: the
+      // x-ratelimit-admin-session-remaining header is set only by the /admin/session
+      // handler (edge/worker + edge/dev-local) immediately before its 429 return;
+      // a bare 429 comes from the edge-global limiter or the auth lockout — not
+      // attributable to this route — and falls through to yellow (fail-honest).
       return {
         ...base,
         status: "green",
-        reason: "/admin/session endpoint active (400 token_required) — httpOnly cookie session confirmed via endpoint probe",
-        evidence: { kind: "endpoint", ref: "POST /admin/session → 400" },
+        reason: `/admin/session endpoint active (${res.status}) — httpOnly cookie session confirmed via endpoint probe`,
+        evidence: { kind: "endpoint", ref: `POST /admin/session → ${res.status}` },
       };
     }
     // 404 = the route doesn't exist — potential regression.
     return {
       ...base,
       status: "yellow",
-      reason: `/admin/session probe returned ${res.status} (expected 400) — cannot confirm httpOnly cookie session`,
+      reason: `/admin/session probe returned ${res.status} (expected 400/429) — cannot confirm httpOnly cookie session`,
     };
   } catch {
     return {
