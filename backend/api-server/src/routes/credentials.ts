@@ -34,6 +34,27 @@ interface Deps {
   logger: { warn: (obj: object, msg?: string) => void; info: (obj: object, msg?: string) => void };
 }
 
+/**
+ * MC-RPC-1: reduce the rpc_http/rpc_ws validator breakdown to a maskable
+ * {name, ok, detail} list. The raw `details.providers` rows carry the full
+ * provider URL — which embeds API keys — and must NEVER be persisted or
+ * returned by the masked list endpoint.
+ */
+function sanitizeProviderBreakdown(
+  details: Record<string, unknown> | undefined,
+): Array<{ name: string; ok: boolean; detail: string }> | undefined {
+  const providers = details?.["providers"];
+  if (!Array.isArray(providers)) return undefined;
+  const rows = providers
+    .filter((p): p is Record<string, unknown> => typeof p === "object" && p !== null)
+    .map((p) => ({
+      name: typeof p["name"] === "string" ? p["name"] : "?",
+      ok: p["ok"] === true,
+      detail: typeof p["detail"] === "string" ? p["detail"].slice(0, 80) : "",
+    }));
+  return rows.length > 0 ? rows : undefined;
+}
+
 export function buildCredentialsRouter(deps: Deps): Router {
   const r = Router();
 
@@ -125,12 +146,14 @@ export function buildCredentialsRouter(deps: Deps): Router {
 
     let validationStatus: "valid" | "invalid" | "untested" = "untested";
     let validationError: string | null = null;
+    let validationProviders: Array<{ name: string; ok: boolean; detail: string }> | undefined;
 
     if (secret_value && secret_value.length > 0) {
       try {
         const test = await runValidator(provider, scope, secret_value, metadata);
         validationStatus = test.status === "valid" ? "valid" : "invalid";
         validationError = test.status === "valid" ? null : test.message;
+        validationProviders = sanitizeProviderBreakdown(test.details);
       } catch (e) {
         validationStatus = "invalid";
         validationError = `validator_threw: ${(e as Error).message.slice(0, 200)}`;
@@ -143,7 +166,16 @@ export function buildCredentialsRouter(deps: Deps): Router {
         scope,
         display_name: display_name,
         secret_value,
-        metadata,
+        metadata: {
+          ...metadata,
+          // MC-RPC-1: persist the sanitized per-provider fallback-pool
+          // breakdown so the UI renders every provider's state without a
+          // live re-test. URLs (API keys) are stripped server-side — the
+          // masked-list contract must hold for metadata too.
+          ...(validationProviders
+            ? { _validation: { message: validationError, providers: validationProviders } }
+            : {}),
+        },
         status: validationStatus,
         validation_error: validationError,
         actor,
