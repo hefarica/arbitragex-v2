@@ -265,6 +265,39 @@ describe("verifyRunbook()", () => {
 describe("verifyGSIM1()", () => {
   const SIM = "http://sim-ctl.test";
   const PROM = "http://prom.test";
+  // /capabilities shape per FASE 1 (sim-ctl src/capabilities.rs): 4 modules
+  // is the real simulator-v2::capabilities() set.
+  const CAPS = {
+    simulator_backend: "v2",
+    build: { sha: "abc1234", features: [], revm_version: "19.0.0", alloy_primitives_version: "0.7.7" },
+    modules: ["bellman_ford", "lazy_db", "revm_runner", "sequence_runner"],
+    dispatch_gate: { env: "ARBX_USE_SIMULATOR_V2", active: true },
+    fork_suite: null,
+  };
+  // The closed 7-key checklist (directive 2026-08-16) — mirror of
+  // G_SIM_1_ITEM_KEYS in routes/readiness-evidence.ts.
+  const KEYS = [
+    "unit_tests",
+    "modules_merged",
+    "fork_suite",
+    "variance_benchmark",
+    "dep_tree",
+    "eth_callbundle_staging",
+    "second_signoff",
+  ];
+  // Registry rows: all evidenced + fresh (NOW − 1 day). NOW is
+  // 2026-05-01T12:00:00Z; the strict freshness boundary is 2026-04-01.
+  function freshRows(overrides: Record<string, string> = {}) {
+    return KEYS.map((k) => ({
+      item_key: k,
+      status: "evidenced",
+      verified_at: overrides[k] ?? "2026-04-30T12:00:00.000Z",
+    }));
+  }
+  function mockPool(rows: object[]) {
+    return { query: vi.fn(async () => ({ rows })) } as any;
+  }
+
   let origReady: string | undefined;
   let origFetch: typeof globalThis.fetch;
 
@@ -278,17 +311,29 @@ describe("verifyGSIM1()", () => {
     globalThis.fetch = origFetch;
   });
 
-  // fetch stub: /health → ok|throw; prom count()/increase() → sample strings.
-  // promThrows proves the prom query is NOT reached (used to assert the v2-stub
-  // short-circuit happens before any metric lookup).
-  function stubFetch(opts: { healthOk: boolean; count?: string; increase?: string; promThrows?: boolean }) {
+  // fetch stub: /health → ok|throw; /capabilities → caps JSON | throw | non-ok;
+  // prom count()/increase() → sample strings. promThrows proves the prom query
+  // is NOT reached (layer-2 red short-circuits before any metric lookup).
+  function stubFetch(opts: {
+    healthOk: boolean;
+    caps?: object | null;
+    capsThrow?: boolean;
+    count?: string;
+    increase?: string;
+    promThrows?: boolean;
+  }) {
     globalThis.fetch = vi.fn(async (url: string) => {
       const u = String(url);
       if (u.includes("/health")) {
         if (!opts.healthOk) throw new Error("ECONNREFUSED");
         return { ok: true, json: async () => ({}) };
       }
-      if (opts.promThrows) throw new Error("prom should not be queried for a stub simulator");
+      if (u.includes("/capabilities")) {
+        if (opts.capsThrow) throw new Error("ECONNREFUSED");
+        if (opts.caps === null) return { ok: false, json: async () => ({}) };
+        return { ok: true, json: async () => opts.caps ?? CAPS };
+      }
+      if (opts.promThrows) throw new Error("prom should not be queried for a red layer-2 verdict");
       if (u.includes("count(")) {
         return { ok: true, json: async () => ({ data: { result: [{ value: [0, opts.count ?? "0"] }] } }) };
       }
@@ -296,43 +341,207 @@ describe("verifyGSIM1()", () => {
     }) as any;
   }
 
-  it("returns red when sim-ctl /health is unreachable", async () => {
+  // (e) layer-1 unchanged.
+  it("(e) returns red when sim-ctl /health is unreachable", async () => {
     stubFetch({ healthOk: false });
-    const item = await verifyGSIM1({ simCtlUrl: SIM, promUrl: PROM, now: NOW });
+    const item = await verifyGSIM1({ simCtlUrl: SIM, promUrl: PROM, pool: null, now: NOW });
     expect(item.status).toBe("red");
     expect(item.reason).toMatch(/unreachable/);
+    expect(item.reason).toMatch(/bypass simulation/);
   });
 
-  it("returns red on a stub simulator-v2 WITHOUT querying metrics (hard live-flip blocker, evaluated before samples)", async () => {
+  // (a) directive: truthful IMPLEMENTADO language from the real topology.
+  it("(a) flag=false + 4 modules + 0/7 evidenced → red with IMPLEMENTADO language, no 'stub', prom never queried", async () => {
     process.env["ARBX_SIMULATOR_V2_READY"] = "false";
-    stubFetch({ healthOk: true, promThrows: true });
-    const item = await verifyGSIM1({ simCtlUrl: SIM, promUrl: PROM, now: NOW });
+    stubFetch({ healthOk: true, caps: CAPS, promThrows: true });
+    const item = await verifyGSIM1({ simCtlUrl: SIM, promUrl: PROM, pool: mockPool([]), now: NOW });
     expect(item.status).toBe("red");
+    expect(item.reason).toMatch(/IMPLEMENTADO/);
+    expect(item.reason).toMatch(/4 módulos/);
+    expect(item.reason).toMatch(/backend v2 disponible/);
+    expect(item.reason).toMatch(/0\/7/);
+    expect(item.reason).toContain("unit_tests"); // pending keys named
+    expect(item.reason).not.toMatch(/stub/);
+  });
+
+  // (b) checklist complete but flag still false: red, and the pending list is
+  // EMPTY — no "pendiente" wording, checklist-resolved language instead.
+  it("(b) flag=false + 7/7 fresh evidence → red with EMPTY pending list (checklist resolved, flag is the only step left)", async () => {
+    process.env["ARBX_SIMULATOR_V2_READY"] = "false";
+    stubFetch({ healthOk: true, caps: CAPS, promThrows: true });
+    const item = await verifyGSIM1({ simCtlUrl: SIM, promUrl: PROM, pool: mockPool(freshRows()), now: NOW });
+    expect(item.status).toBe("red");
+    expect(item.reason).toMatch(/7\/7/);
+    expect(item.reason).toMatch(/hard blocker de checklist resuelto/);
     expect(item.reason).toMatch(/ARBX_SIMULATOR_V2_READY=false/);
-    expect(item.reason).toMatch(/stub/);
+    expect(item.reason).not.toMatch(/pendiente/);
+    expect(item.reason).not.toMatch(/hasta completar/);
   });
 
-  it("returns red on a stub simulator-v2 even while simulations are flowing (structural, not traffic-based)", async () => {
-    process.env["ARBX_SIMULATOR_V2_READY"] = "false";
-    stubFetch({ healthOk: true, count: "1", increase: "42" });
-    const item = await verifyGSIM1({ simCtlUrl: SIM, promUrl: PROM, now: NOW });
-    expect(item.status).toBe("red");
-  });
-
-  it("returns yellow when simulator-v2 is ready but no recent samples (idle market)", async () => {
+  // (c) flag=true + full fresh checklist + prometheus flow → green (layer 3).
+  it("(c) flag=true + 7/7 fresh + simulations flowing → green", async () => {
     process.env["ARBX_SIMULATOR_V2_READY"] = "true";
-    stubFetch({ healthOk: true, count: "0", increase: "0" });
-    const item = await verifyGSIM1({ simCtlUrl: SIM, promUrl: PROM, now: NOW });
+    stubFetch({ healthOk: true, caps: CAPS, count: "1", increase: "42" });
+    const item = await verifyGSIM1({ simCtlUrl: SIM, promUrl: PROM, pool: mockPool(freshRows()), now: NOW });
+    expect(item.status).toBe("green");
+    expect(item.reason).toMatch(/42 simulations/);
+  });
+
+  // Layer 3 yellow (idle market) still applies with a complete checklist.
+  it("returns yellow when flag=true + 7/7 fresh but no recent samples (idle market)", async () => {
+    process.env["ARBX_SIMULATOR_V2_READY"] = "true";
+    stubFetch({ healthOk: true, caps: CAPS, count: "0", increase: "0" });
+    const item = await verifyGSIM1({ simCtlUrl: SIM, promUrl: PROM, pool: mockPool(freshRows()), now: NOW });
     expect(item.status).toBe("yellow");
     expect(item.reason).toMatch(/idle|no recent samples/);
   });
 
-  it("returns green when simulator-v2 is ready and simulations are flowing", async () => {
+  // FIX regression (capital-gate integrity): series presence alone must
+  // NEVER yield green. arbx_simulation_total is a lazily-created counter
+  // child that persists on every scrape, so series_present=1 with
+  // recent_count=0 is zero flow → yellow ("alive but quiet"), never green.
+  it("series_present=1 + recent_count=0 → yellow, never green without flow", async () => {
     process.env["ARBX_SIMULATOR_V2_READY"] = "true";
-    stubFetch({ healthOk: true, count: "1", increase: "42" });
-    const item = await verifyGSIM1({ simCtlUrl: SIM, promUrl: PROM, now: NOW });
+    stubFetch({ healthOk: true, caps: CAPS, count: "1", increase: "0" });
+    const item = await verifyGSIM1({ simCtlUrl: SIM, promUrl: PROM, pool: mockPool(freshRows()), now: NOW });
+    expect(item.status).toBe("yellow");
+    expect(item.reason).toMatch(/alive but quiet/);
+    expect(item.reason).not.toMatch(/simulations in last 24h/);
+  });
+
+  // FIX regression (NaN): a malformed Prometheus value string ("NaN") must
+  // fall back to 0 → yellow. Under parseInt/parseFloat the NaN broke every
+  // ===0 guard (NaN === 0 is false) and produced a GREEN with "NaN
+  // simulations in last 24h".
+  it("Prometheus value string 'NaN' → falls to 0 → yellow, never green", async () => {
+    process.env["ARBX_SIMULATOR_V2_READY"] = "true";
+    stubFetch({ healthOk: true, caps: CAPS, count: "NaN", increase: "NaN" });
+    const item = await verifyGSIM1({ simCtlUrl: SIM, promUrl: PROM, pool: mockPool(freshRows()), now: NOW });
+    expect(item.status).toBe("yellow");
+    expect(item.reason).toMatch(/no recent samples/);
+    expect(item.reason).not.toMatch(/NaN/);
+  });
+
+  // (d) 31-day-old evidenced item: pending AND flagged stale.
+  it("(d) an evidenced item 31 days old counts as pending and is flagged stale", async () => {
+    process.env["ARBX_SIMULATOR_V2_READY"] = "false";
+    stubFetch({ healthOk: true, caps: CAPS, promThrows: true });
+    const item = await verifyGSIM1({
+      simCtlUrl: SIM, promUrl: PROM,
+      pool: mockPool(freshRows({ fork_suite: "2026-03-31T12:00:00.000Z" })),
+      now: NOW,
+    });
+    expect(item.status).toBe("red");
+    expect(item.reason).toMatch(/6\/7/);
+    expect(item.reason).toMatch(/hard blocker hasta completar: \[fork_suite/);
+    expect(item.reason).toMatch(/stale \(>30d\): fork_suite/);
+  });
+
+  // (f) CONTRACT: with modules.length >= 1 the language NEVER says "stub".
+  it("(f) CONTRACT flag=false branch: modules >= 1 → reason never says 'stub'", async () => {
+    process.env["ARBX_SIMULATOR_V2_READY"] = "false";
+    stubFetch({ healthOk: true, caps: CAPS, promThrows: true });
+    const item = await verifyGSIM1({ simCtlUrl: SIM, promUrl: PROM, pool: mockPool([]), now: NOW });
+    expect(item.status).toBe("red");
+    expect(item.reason).not.toMatch(/stub/);
+  });
+
+  it("(f) CONTRACT flag=true premature branch: modules >= 1 → SECURE_BOOT red, never 'stub'", async () => {
+    process.env["ARBX_SIMULATOR_V2_READY"] = "true";
+    stubFetch({ healthOk: true, caps: CAPS, promThrows: true });
+    const item = await verifyGSIM1({ simCtlUrl: SIM, promUrl: PROM, pool: mockPool([]), now: NOW });
+    expect(item.status).toBe("red");
+    expect(item.reason).toMatch(/premature flag — SECURE_BOOT violated/);
+    expect(item.reason).toContain("unit_tests"); // missing keys named
+    expect(item.reason).not.toMatch(/stub/);
+  });
+
+  // (g) capabilities unreachable while /health alive: flag-only truthful
+  // reasoning, capabilities unavailability noted, no enumeration, no "stub".
+  it("(g) capabilities unreachable + health alive + flag=false → red, notes capabilities unavailable, no module enumeration, no 'stub'", async () => {
+    process.env["ARBX_SIMULATOR_V2_READY"] = "false";
+    stubFetch({ healthOk: true, capsThrow: true, promThrows: true });
+    const item = await verifyGSIM1({ simCtlUrl: SIM, promUrl: PROM, pool: mockPool([]), now: NOW });
+    expect(item.status).toBe("red");
+    expect(item.reason).toMatch(/\/capabilities unavailable/);
+    expect(item.reason).not.toMatch(/\d+ módulos/); // never enumerate a topology it could not read
+    expect(item.reason).not.toMatch(/IMPLEMENTADO/);
+    expect(item.reason).not.toMatch(/stub/);
+  });
+
+  // (h) pool null: 0/7 and the reason SAYS the registry is unavailable —
+  // never a silent 0/7 of a possibly-healthy registry.
+  it("(h) pool null → 0/7 evidenced with the reason stating the registry is unavailable", async () => {
+    process.env["ARBX_SIMULATOR_V2_READY"] = "false";
+    stubFetch({ healthOk: true, caps: CAPS, promThrows: true });
+    const item = await verifyGSIM1({ simCtlUrl: SIM, promUrl: PROM, pool: null, now: NOW });
+    expect(item.status).toBe("red");
+    expect(item.reason).toMatch(/0\/7/);
+    expect(item.reason).toMatch(/readiness_evidence registry unavailable/);
+  });
+
+  it("registry query error → 0/7 with the reason stating the registry is unreadable", async () => {
+    process.env["ARBX_SIMULATOR_V2_READY"] = "false";
+    stubFetch({ healthOk: true, caps: CAPS, promThrows: true });
+    const pool = { query: vi.fn(async () => { throw new Error('relation "readiness_evidence" does not exist'); }) } as any;
+    const item = await verifyGSIM1({ simCtlUrl: SIM, promUrl: PROM, pool, now: NOW });
+    expect(item.status).toBe("red");
+    expect(item.reason).toMatch(/0\/7/);
+    expect(item.reason).toMatch(/readiness_evidence registry unreadable/);
+  });
+
+  // Kept hard-blocker property: flag=false is red BEFORE any Prometheus
+  // lookup, even while simulations are flowing (structural, not traffic-based).
+  it("returns red on flag=false even while simulations are flowing", async () => {
+    process.env["ARBX_SIMULATOR_V2_READY"] = "false";
+    stubFetch({ healthOk: true, caps: CAPS, count: "1", increase: "42" });
+    const item = await verifyGSIM1({ simCtlUrl: SIM, promUrl: PROM, pool: mockPool([]), now: NOW });
+    expect(item.status).toBe("red");
+    expect(item.reason).toMatch(/ARBX_SIMULATOR_V2_READY=false|hard blocker/);
+  });
+
+  // The word "stub" remains permitted ONLY when /capabilities reports
+  // backend v1 (or the caps fetch itself failed) — honest degraded language.
+  it("flag=false with /capabilities reporting backend v1 → honest degraded language may say stub", async () => {
+    process.env["ARBX_SIMULATOR_V2_READY"] = "false";
+    stubFetch({ healthOk: true, caps: { simulator_backend: "v1", modules: [] }, promThrows: true });
+    const item = await verifyGSIM1({ simCtlUrl: SIM, promUrl: PROM, pool: mockPool([]), now: NOW });
+    expect(item.status).toBe("red");
+    expect(item.reason).toMatch(/stub/);
+    expect(item.reason).not.toMatch(/IMPLEMENTADO/);
+  });
+
+  // FIX (stub-permission directive): backend v2 with an empty modules field
+  // is a self-INCONSISTENT payload — truthful inconsistency language, red,
+  // no "stub", no module enumeration.
+  it("backend v2 + modules [] → red with inconsistency wording and NO 'stub'", async () => {
+    process.env["ARBX_SIMULATOR_V2_READY"] = "false";
+    stubFetch({ healthOk: true, caps: { simulator_backend: "v2", modules: [] }, promThrows: true });
+    const item = await verifyGSIM1({ simCtlUrl: SIM, promUrl: PROM, pool: mockPool([]), now: NOW });
+    expect(item.status).toBe("red");
+    expect(item.reason).toMatch(/inconsistencia en \/capabilities/);
+    expect(item.reason).toMatch(/backend v2 con 0 módulos/);
+    expect(item.reason).not.toMatch(/stub/);
+    expect(item.reason).not.toMatch(/IMPLEMENTADO/);
+  });
+
+  it("uses the capabilitiesPath override for the /capabilities fetch", async () => {
+    process.env["ARBX_SIMULATOR_V2_READY"] = "true";
+    const urls: string[] = [];
+    globalThis.fetch = vi.fn(async (url: unknown) => {
+      const u = String(url);
+      urls.push(u);
+      if (u.includes("/health")) return { ok: true, json: async () => ({}) };
+      if (u.includes("/caps-custom")) return { ok: true, json: async () => CAPS };
+      if (u.includes("count(")) return { ok: true, json: async () => ({ data: { result: [{ value: [0, "1"] }] } }) };
+      return { ok: true, json: async () => ({ data: { result: [{ value: [0, "42"] }] } }) };
+    }) as any;
+    const item = await verifyGSIM1({
+      simCtlUrl: SIM, promUrl: PROM, capabilitiesPath: "/caps-custom",
+      pool: mockPool(freshRows()), now: NOW,
+    });
     expect(item.status).toBe("green");
-    expect(item.reason).toMatch(/42 simulations/);
+    expect(urls).toContain(`${SIM}/caps-custom`);
   });
 });
 
@@ -351,6 +560,34 @@ describe("verifyAll() integration", () => {
       // No pending sentinels left — every gate is verified live.
       expect(report.summary.pending).toBe(0);
       expect(report.flip_blocked).toBe(true);
+    } finally {
+      globalThis.fetch = origFetch;
+    }
+  });
+});
+
+describe("verifyAll() wires the pg pool into verifyGSIM1", () => {
+  const origFetch = globalThis.fetch;
+  afterEach(() => { globalThis.fetch = origFetch; });
+
+  // G-SIM-1 only reaches the readiness_evidence SELECT after sim-ctl
+  // /health answers ok, so every fetch answers 200 with an empty JSON body
+  // (the caps shape only affects the reason wording, not whether the
+  // registry query runs).
+  it("runs the readiness_evidence SELECT against the pool passed to verifyAll", async () => {
+    const queries: Array<{ text: string; values: unknown[] }> = [];
+    const pool = {
+      query: vi.fn(async (text: string, values?: unknown[]) => {
+        queries.push({ text: String(text), values: values ?? [] });
+        return { rows: [] };
+      }),
+    } as any;
+    globalThis.fetch = vi.fn(async () => new Response("{}", { status: 200 })) as any;
+    try {
+      await verifyAll({ pool, now: NOW });
+      const evidence = queries.find((q) => q.text.includes("FROM readiness_evidence"));
+      expect(evidence).toBeDefined();
+      expect(evidence?.values).toEqual(["G-SIM-1"]);
     } finally {
       globalThis.fetch = origFetch;
     }
