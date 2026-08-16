@@ -120,6 +120,27 @@ pub fn route_intent_emitted_event(
     })
 }
 
+/// `route_discovery.adapter_skipped` — one triangular route the reserves
+/// adapter (FASE 2 / D-01/F2) could NOT serve this tick: a leg's reserves were
+/// unobtainable (`missing_reserves`, `pool` names the offending leg) or the
+/// per-block backfill allowance ran out (`budget_exhausted`, no pool).
+/// Telemetry-only: that route's dispatch is dropped for the tick, never
+/// fabricated (R8 fail-honest).
+pub fn adapter_skipped_event(
+    chain_id: u64,
+    route_hash: &str,
+    reason: &str,
+    pool: Option<&str>,
+) -> Value {
+    json!({
+        "event": "route_discovery.adapter_skipped",
+        "chain_id": chain_id,
+        "route_hash": route_hash,
+        "reason": reason,
+        "pool": pool,
+    })
+}
+
 /// Publish one payload to the route-discovery channel. Best-effort: a Redis
 /// error is logged, never fatal (observe-only subsystem).
 pub async fn publish(redis: &mut ConnectionManager, payload: &Value) {
@@ -275,5 +296,18 @@ mod tests {
             Some("needs_triangular_adapter"),
         );
         assert_eq!(e2["dispatch_deferred"], "needs_triangular_adapter");
+    }
+
+    #[test]
+    fn adapter_skipped_event_carries_reason_and_optional_pool() {
+        let e = adapter_skipped_event(1, "0xabc", "missing_reserves", Some("0xdead"));
+        assert_eq!(e["event"], "route_discovery.adapter_skipped");
+        assert_eq!(e["route_hash"], "0xabc");
+        assert_eq!(e["reason"], "missing_reserves");
+        assert_eq!(e["pool"], "0xdead");
+
+        let e2 = adapter_skipped_event(1, "0xdef", "budget_exhausted", None);
+        assert_eq!(e2["reason"], "budget_exhausted");
+        assert!(e2["pool"].is_null());
     }
 }
