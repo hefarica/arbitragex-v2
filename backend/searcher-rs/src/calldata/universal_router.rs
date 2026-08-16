@@ -158,8 +158,9 @@ fn parse_execute_args(body: &[u8], with_deadline: bool) -> Option<ExecuteArgs> {
     }
 
     // (a) head: offset words for the two dynamic args (+ inline deadline).
+    // NOTE: word_at_as_bound takes BYTE positions — word 1 lives at byte 32.
     let commands_off = word_at_as_bound(body, 0)?;
-    let inputs_off = word_at_as_bound(body, 1)?;
+    let inputs_off = word_at_as_bound(body, 32)?;
     let deadline = if with_deadline {
         U256::from_big_endian(body.get(64..96)?)
     } else {
