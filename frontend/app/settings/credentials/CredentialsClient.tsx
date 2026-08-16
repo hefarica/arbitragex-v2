@@ -15,9 +15,11 @@
  *     live test and it passed.
  */
 
+import * as React from "react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
+import { getApiBaseUrl } from "@/lib/api-client";
 import { hasAdminSession } from "@/lib/admin-token";
 import { rehydrateSystemStore, useSystemStore } from "@/store/useSystemStore";
 
@@ -335,11 +337,10 @@ function statusBadge(status: CredentialItem["status"] | "in_flight"): {
 interface CredentialCardProps {
   spec: CredentialSpec;
   current: CredentialItem | null;
-  edgeUrl: string;
   onSaved: () => void;
 }
 
-function CredentialCard({ spec, current, edgeUrl, onSaved }: CredentialCardProps) {
+function CredentialCard({ spec, current, onSaved }: CredentialCardProps) {
   const setCredentialStatus = useSystemStore((state) => state.setCredentialStatus);
   const [secret, setSecret] = useState("");
   const [metadata, setMetadata] = useState<Record<string, string>>({});
@@ -373,7 +374,7 @@ function CredentialCard({ spec, current, edgeUrl, onSaved }: CredentialCardProps
     setTransientStatus("in_flight");
     setTransientMessage(null);
     try {
-      const res = await fetch(`${edgeUrl}/admin/credentials/test`, {
+      const res = await fetch(`${getApiBaseUrl()}/admin/credentials/test`, {
         method: "POST",
         credentials: "include",
         headers: { "content-type": "application/json" },
@@ -405,7 +406,7 @@ function CredentialCard({ spec, current, edgeUrl, onSaved }: CredentialCardProps
     } finally {
       setInFlight("none");
     }
-  }, [edgeUrl, metadata, secret, setCredentialStatus, spec.display_name, spec.provider, spec.scope]);
+  }, [metadata, secret, setCredentialStatus, spec.display_name, spec.provider, spec.scope]);
 
   const handleSave = useCallback(async () => {
     if (!secret) {
@@ -414,7 +415,7 @@ function CredentialCard({ spec, current, edgeUrl, onSaved }: CredentialCardProps
     }
     setInFlight("saving");
     try {
-      const res = await fetch(`${edgeUrl}/admin/credentials`, {
+      const res = await fetch(`${getApiBaseUrl()}/admin/credentials`, {
         method: "PUT",
         credentials: "include",
         headers: { "content-type": "application/json" },
@@ -444,14 +445,14 @@ function CredentialCard({ spec, current, edgeUrl, onSaved }: CredentialCardProps
     } finally {
       setInFlight("none");
     }
-  }, [edgeUrl, metadata, secret, setCredentialStatus, spec.display_name, spec.provider, spec.scope, onSaved]);
+  }, [metadata, secret, setCredentialStatus, spec.display_name, spec.provider, spec.scope, onSaved]);
 
   const handleDelete = useCallback(async () => {
     if (!current) return;
     if (!confirm(`Delete ${spec.display_name}?`)) return;
     try {
       const res = await fetch(
-        `${edgeUrl}/admin/credentials/${encodeURIComponent(spec.provider)}/${encodeURIComponent(spec.scope)}`,
+        `${getApiBaseUrl()}/admin/credentials/${encodeURIComponent(spec.provider)}/${encodeURIComponent(spec.scope)}`,
         { method: "DELETE", credentials: "include" },
       );
       if (!res.ok) {
@@ -463,7 +464,7 @@ function CredentialCard({ spec, current, edgeUrl, onSaved }: CredentialCardProps
     } catch (e) {
       toast.error("Delete error", { description: (e as Error).message });
     }
-  }, [current, edgeUrl, onSaved, spec.display_name, spec.provider, spec.scope]);
+  }, [current, onSaved, spec.display_name, spec.provider, spec.scope]);
 
   return (
     <div className="bg-card border border-border rounded-xl p-5 space-y-3">
@@ -558,10 +559,9 @@ function CredentialCard({ spec, current, edgeUrl, onSaved }: CredentialCardProps
 
 interface ClientProps {
   initialSnapshot: CredentialsSnapshot;
-  edgeUrl: string;
 }
 
-export function CredentialsClient({ initialSnapshot, edgeUrl }: ClientProps) {
+export function CredentialsClient({ initialSnapshot }: ClientProps) {
   const router = useRouter();
   const [snapshot, setSnapshot] = useState<CredentialsSnapshot>(initialSnapshot);
   const [activeCategory, setActiveCategory] = useState<string>(CATEGORIES[0]!.id);
@@ -577,7 +577,7 @@ export function CredentialsClient({ initialSnapshot, edgeUrl }: ClientProps) {
 
   const refresh = useCallback(async () => {
     try {
-      const res = await fetch(`${edgeUrl}/api/credentials`, {
+      const res = await fetch(`${getApiBaseUrl()}/api/credentials`, {
         credentials: "include",
         cache: "no-store",
       });
@@ -594,7 +594,7 @@ export function CredentialsClient({ initialSnapshot, edgeUrl }: ClientProps) {
     } catch (e) {
       setSnapshot({ ...snapshot, error: (e as Error).message });
     }
-  }, [edgeUrl, snapshot]);
+  }, [snapshot]);
 
   const dynamicRpcCategory = useMemo(() => buildDynamicRpcCategory(activeChains), [activeChains]);
 
@@ -713,7 +713,6 @@ export function CredentialsClient({ initialSnapshot, edgeUrl }: ClientProps) {
               key={`${spec.provider}:${spec.scope}`}
               spec={spec}
               current={byKey.get(`${spec.provider}:${spec.scope}`) ?? null}
-              edgeUrl={edgeUrl}
               onSaved={refresh}
             />
           ))}
