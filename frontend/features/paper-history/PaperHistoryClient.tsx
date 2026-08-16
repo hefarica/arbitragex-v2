@@ -34,6 +34,15 @@ interface PaperTradeRow {
   strategy: string | null;
   chain_id: number | null;
   created_at: string;
+  // PAPERLEDGER-08: route context LEFT-JOINed from opportunities. Absent
+  // (null/undefined) when the source opportunity was purged (>30d retention)
+  // or the row predates the join — rendered honestly, never fabricated.
+  opp_pair_symbol?: string | null;
+  opp_token_in?: string | null;
+  opp_token_out?: string | null;
+  opp_dex_a?: string | null;
+  opp_dex_b?: string | null;
+  opp_amount_in_wei?: string | null;
 }
 
 interface PaperHistoryResponse {
@@ -78,6 +87,16 @@ function fmtProfit(val: string | null): string {
   return fmtMoney(n);
 }
 
+/** Route display: JOINed pair + dexes when present ("WETH/USDC · uniswap-v2→sushi"),
+ *  else the route_hash fingerprint slice, else honest "—". */
+function fmtRoute(row: PaperTradeRow): string {
+  if (row.opp_pair_symbol) {
+    const dexes = [row.opp_dex_a, row.opp_dex_b].filter(Boolean).join("→");
+    return dexes ? `${row.opp_pair_symbol} · ${dexes}` : row.opp_pair_symbol;
+  }
+  return row.route_hash ? `${row.route_hash.slice(0, 10)}…` : "—";
+}
+
 // ─── Summary strip ────────────────────────────────────────────────────────────
 function SummaryStrip({ summary }: { summary: PaperSummaryResponse }) {
   const t = summary.data.totals;
@@ -87,7 +106,8 @@ function SummaryStrip({ summary }: { summary: PaperSummaryResponse }) {
       <div className="flex items-center gap-2">
         <FlaskConicalIcon className="h-4 w-4 text-primary" />
         <span className="text-sm font-medium">Runs:</span>
-        <span className="text-sm font-semibold">{Number(t.total).toLocaleString()}</span>
+        {/* Deterministic grouping (R1): bare toLocaleString() differs server vs browser locale */}
+        <span className="text-sm font-semibold">{Number(t.total).toLocaleString("en-US")}</span>
       </div>
       <div className="flex items-center gap-2 text-sm text-muted-foreground">
         <TrendingUpIcon className="h-4 w-4" />
@@ -118,7 +138,7 @@ function PaperTradeRowCard({ row }: { row: PaperTradeRow }) {
         <Badge variant="outline" className="text-xs capitalize">{row.strategy ?? "—"}</Badge>
       </td>
       <td className="py-2 pr-3 text-xs text-muted-foreground">
-        {row.route_hash ? row.route_hash.slice(0, 10) + "…" : "—"}
+        {fmtRoute(row)}
       </td>
       <td className="py-2 pr-3 text-right font-mono text-xs">
         {fmtProfit(row.sim_expected_profit_usd)}
@@ -248,6 +268,10 @@ export function PaperHistoryClient({ initialData }: Props): React.ReactElement {
           </table>
         </div>
       )}
+      <p className="text-xs text-muted-foreground">
+        Rows before 2026-08-16 lack gas/route capture (written before the ledger
+        terminus populated those columns).
+      </p>
     </div>
   );
 }

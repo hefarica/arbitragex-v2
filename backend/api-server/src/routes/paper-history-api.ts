@@ -2,8 +2,10 @@
  * Paper Trade History API — READ-ONLY analytics over the durable
  * `paper_trade_runs` table (FASE OMEGA SHADOW drift-analysis surface).
  *
- * The PaperTradeArchiver (paper-trade-archiver.ts) WRITES the table passively.
- * This module is the missing READ-SIDE: nothing read it until now.
+ * The PaperTradeArchiver (paper-trade-archiver.ts) WRITES the table passively
+ * (and, since PAPERLEDGER-08, the relays-client Rust paper-mode terminus path
+ * writes it too — same gas derivation, same route_hash fingerprint).
+ * This module is the missing READ-SIDE.
  * 100% read-only / NO-ACTIVE — never touches capital, signers, or execution.
  *
  * R8 fail-honest: pool absent → 503; empty → ok:true with empty data (never fabricates).
@@ -11,6 +13,11 @@
  *
  *   GET /api/v1/paper/history?limit=50&offset=0
  *       → { ok, source, count, data: [ ...rows ] }
+ *       Rows carry `strategy` (alias of strategy_kind — the column the client
+ *       type expects), `route_hash`, and `opp_*` context from a LEFT JOIN on
+ *       opportunities (pair/tokens/dexes/amount). Rows whose source opportunity
+ *       was purged (>30d retention) JOIN to NULL — rendered honestly, never
+ *       fabricated.
  *
  *   GET /api/v1/paper/history/summary?hours=24
  *       → { ok, source, window_hours, data: { totals, avg_sim_profit_usd } }
@@ -48,18 +55,30 @@ export function buildPaperHistoryRouter(pool: pg.Pool | null): Router {
       // those references made this SELECT throw → HTTP 503. `sim_net_profit_usd`
       // is computed (expected − gas) and aliased so the response shape is
       // unchanged; `strategy_kind` is the real column.
+      // PAPERLEDGER-08: alias `strategy_kind AS strategy` (the client type reads
+      // `strategy`), select `route_hash`, and LEFT JOIN opportunities for route
+      // context (`opp_*` columns). The FK may dangle for runs whose opportunity
+      // was purged (>30d retention) — those JOIN to NULL and render honestly.
       const rows = await pool.query(
         `SELECT
-           id,
-           opportunity_id,
-           sim_expected_profit_usd,
-           sim_gas_cost_usd,
-           (sim_expected_profit_usd - COALESCE(sim_gas_cost_usd, 0)) AS sim_net_profit_usd,
-           strategy_kind,
-           chain_id,
-           created_at
-         FROM paper_trade_runs
-         ORDER BY created_at DESC
+           r.id,
+           r.opportunity_id,
+           r.sim_expected_profit_usd,
+           r.sim_gas_cost_usd,
+           (r.sim_expected_profit_usd - COALESCE(r.sim_gas_cost_usd, 0)) AS sim_net_profit_usd,
+           r.strategy_kind AS strategy,
+           r.route_hash,
+           r.chain_id,
+           r.created_at,
+           o.pair_symbol   AS opp_pair_symbol,
+           o.token_in      AS opp_token_in,
+           o.token_out     AS opp_token_out,
+           o.dex_a         AS opp_dex_a,
+           o.dex_b         AS opp_dex_b,
+           o.amount_in_wei AS opp_amount_in_wei
+         FROM paper_trade_runs r
+         LEFT JOIN opportunities o ON o.id = r.opportunity_id
+         ORDER BY r.created_at DESC
          LIMIT $1 OFFSET $2`,
         [limit, offset],
       );

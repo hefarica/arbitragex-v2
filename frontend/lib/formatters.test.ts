@@ -59,10 +59,12 @@ describe("fmtTime", () => {
     expect(fmtTime("")).toBe(DASH);
     expect(fmtTime("not-a-date")).toBe(DASH);
   });
-  it("returns a non-empty localized time for a valid ISO string", () => {
-    const out = fmtTime("2026-04-22T12:00:00.000Z");
-    expect(out).not.toBe(DASH);
-    expect(out.length).toBeGreaterThan(0);
+  it("returns DETERMINISTIC UTC time regardless of runtime locale/tz (HYDRATE-09)", () => {
+    // Same input must render byte-identically on the server (Node, any locale)
+    // and in the browser (es-ES/America/Bogota, etc.) — the property whose
+    // absence caused React #425/#422 hydration failures.
+    expect(fmtTime("2026-04-22T12:00:00.000Z")).toBe("12:00:00 UTC");
+    expect(fmtTime("2026-04-22T23:59:59.999Z")).toBe("23:59:59 UTC");
   });
 });
 
@@ -71,10 +73,8 @@ describe("fmtDateTime", () => {
     expect(fmtDateTime(null)).toBe(DASH);
     expect(fmtDateTime("garbage")).toBe(DASH);
   });
-  it("returns a non-empty localized string for valid ISO", () => {
-    const out = fmtDateTime("2026-04-22T12:00:00.000Z");
-    expect(out).not.toBe(DASH);
-    expect(out.length).toBeGreaterThan(0);
+  it("returns DETERMINISTIC UTC datetime (HYDRATE-09)", () => {
+    expect(fmtDateTime("2026-04-22T12:00:00.000Z")).toBe("2026-04-22 12:00:00 UTC");
   });
 });
 

@@ -31,3 +31,6 @@ hex.workspace = true
 reqwest.workspace = true
 sqlx.workspace = true
 bigdecimal.workspace = true
+# PAPERLEDGER-08: route_hash parity with the TS Shadow Archiver's sha256
+# fingerprint (paper-trade-archiver.ts). Already a workspace dep (searcher-rs).
+sha2.workspace = true

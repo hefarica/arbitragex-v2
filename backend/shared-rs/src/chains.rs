@@ -68,6 +68,14 @@ const fn hex_nibble(c: u8) -> u8 {
     }
 }
 
+/// Canonical mainnet token addresses (EIP-55) — the single definition site for
+/// the whole workspace (HARDCODE-10 doctrine: no inline `0x…` literals in
+/// consumers; reference these consts so any future change is one edit).
+/// Well-known public contract addresses, NOT secrets; the gitleaks:allow
+/// silences the generic-api-key heuristic at this one definition site only.
+pub const WETH_MAINNET: &str = "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"; // gitleaks:allow
+pub const USDC_MAINNET: &str = "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48"; // gitleaks:allow
+
 // Ethereum mainnet routers.
 const UNIV2_ROUTER_MAINNET: RouterEntry = RouterEntry {
     chain_id: 1,
