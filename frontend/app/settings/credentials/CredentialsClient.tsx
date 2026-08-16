@@ -44,6 +44,36 @@ export interface CredentialsSnapshot {
   error: string | null;
 }
 
+// ── MC-RPC-1: per-provider fallback-pool breakdown ────────────────────────
+// The rpc_http/rpc_ws validators probe EVERY provider in the CSV and return
+// {name, ok, detail} rows. The live Test response carries them under
+// `details.providers`; the server persists a sanitized (URL-free) copy under
+// `metadata._validation.providers` on every Save. Render both so the operator
+// sees the whole array — not just an aggregate "7/10" badge.
+interface ProviderProbeRow {
+  name: string;
+  ok: boolean;
+  detail: string;
+}
+
+function normalizeProviders(raw: unknown): ProviderProbeRow[] | null {
+  if (!Array.isArray(raw)) return null;
+  const rows = raw
+    .filter((p): p is Record<string, unknown> => typeof p === "object" && p !== null)
+    .map((p) => ({
+      name: typeof p["name"] === "string" ? p["name"] : "?",
+      ok: p["ok"] === true,
+      detail: typeof p["detail"] === "string" ? p["detail"] : "",
+    }));
+  return rows.length > 0 ? rows : null;
+}
+
+function persistedProviders(md: Record<string, unknown> | undefined): ProviderProbeRow[] {
+  const v = md?.["_validation"];
+  if (typeof v !== "object" || v === null) return [];
+  return normalizeProviders((v as Record<string, unknown>)["providers"]) ?? [];
+}
+
 interface CredentialSpec {
   provider: string;
   scope: string;
@@ -349,6 +379,7 @@ function CredentialCard({ spec, current, onSaved }: CredentialCardProps) {
     "untested" | "valid" | "invalid" | "in_flight" | null
   >(null);
   const [transientMessage, setTransientMessage] = useState<string | null>(null);
+  const [transientProviders, setTransientProviders] = useState<ProviderProbeRow[] | null>(null);
 
   // Hydrate metadata from current row (for non-secret fields like api_key).
   useEffect(() => {
@@ -364,6 +395,8 @@ function CredentialCard({ spec, current, onSaved }: CredentialCardProps) {
 
   const effectiveStatus = transientStatus ?? current?.status ?? "untested";
   const badge = statusBadge(inFlight === "testing" ? "in_flight" : effectiveStatus);
+  // Live test breakdown wins; otherwise the persisted sanitized snapshot.
+  const providerRows = transientProviders ?? persistedProviders(current?.metadata);
 
   const handleTest = useCallback(async () => {
     if (!secret) {
@@ -373,6 +406,7 @@ function CredentialCard({ spec, current, onSaved }: CredentialCardProps) {
     setInFlight("testing");
     setTransientStatus("in_flight");
     setTransientMessage(null);
+    setTransientProviders(null);
     try {
       const res = await fetch(`${getApiBaseUrl()}/admin/credentials/test`, {
         method: "POST",
@@ -385,7 +419,12 @@ function CredentialCard({ spec, current, onSaved }: CredentialCardProps) {
           metadata,
         }),
       });
-      const j = (await res.json()) as { status?: string; message?: string };
+      const j = (await res.json()) as {
+        status?: string;
+        message?: string;
+        details?: { providers?: unknown };
+      };
+      setTransientProviders(normalizeProviders(j.details?.providers));
       if (!res.ok) {
         setTransientStatus("invalid");
         setTransientMessage(j.message ?? `HTTP ${res.status}`);
@@ -435,6 +474,7 @@ function CredentialCard({ spec, current, onSaved }: CredentialCardProps) {
       setSecret(""); // clear the textbox after save so the suffix shows the persisted state.
       setTransientStatus(null);
       setTransientMessage(null);
+      setTransientProviders(null);
       const ok = j.status === "valid";
       setCredentialStatus(spec.provider, spec.scope, ok ? "valid" : "invalid", ok ? new Date().toISOString() : null);
       if (ok) toast.success(`${spec.display_name} saved + validated`);
@@ -497,6 +537,21 @@ function CredentialCard({ spec, current, onSaved }: CredentialCardProps) {
             : "bg-destructive/5 border-destructive/30 text-destructive"
         }`}>
           {transientMessage ?? current?.last_validation_error}
+        </div>
+      )}
+
+      {providerRows.length > 0 && (
+        <div className="text-xs font-mono p-2 rounded border border-border bg-muted/20 space-y-1">
+          <div className="text-muted-foreground">
+            Fallback pool — {providerRows.filter((r) => r.ok).length}/{providerRows.length} responding:
+          </div>
+          {providerRows.map((p, i) => (
+            <div key={`${p.name}-${i}`} className="flex items-center gap-2">
+              <span className={p.ok ? "text-success" : "text-destructive"}>{p.ok ? "✓" : "✗"}</span>
+              <span className="font-semibold">{p.name}</span>
+              <span className="text-muted-foreground truncate">{p.detail}</span>
+            </div>
+          ))}
         </div>
       )}
 

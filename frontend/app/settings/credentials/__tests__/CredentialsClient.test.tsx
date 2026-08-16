@@ -40,7 +40,19 @@ vi.mock("@/lib/admin-token", () => ({
 vi.mock("@/store/useSystemStore", () => ({
   rehydrateSystemStore: () => {},
   useSystemStore: (selector: (s: Record<string, unknown>) => unknown) =>
-    selector({ topology: { activeChains: [] }, setCredentialStatus: () => {} }),
+    selector({
+      topology: {
+        activeChains: [
+          {
+            chainId: 1,
+            name: "Ethereum",
+            rpcHttpHost: "eth-mainnet.g.alchemy.com",
+            rpcWsHost: "eth.drpc.org",
+          },
+        ],
+      },
+      setCredentialStatus: () => {},
+    }),
 }));
 
 import { CredentialsClient } from "../CredentialsClient";
@@ -78,6 +90,45 @@ describe("CredentialsClient — SSR markup", () => {
     // R8 fail-honest: the incident URL must never leak into markup.
     expect(html).not.toContain("http://edge");
     expect(html).not.toContain(":8787");
+  });
+
+  it("renders the per-provider fallback-pool breakdown (MC-RPC-1)", () => {
+    const item = {
+      id: "1",
+      provider: "rpc_http",
+      scope: "chain:1",
+      display_name: "RPC HTTP — Ethereum",
+      has_value: true,
+      value_suffix: "…key",
+      status: "valid" as const,
+      last_validated_at: "2026-08-16T17:00:00.000Z",
+      last_validation_error: null,
+      metadata: {
+        _validation: {
+          message: null,
+          providers: [
+            { name: "alchemy", ok: true, detail: "chain 1" },
+            { name: "otro-2", ok: false, detail: "invalid url" },
+          ],
+        },
+      },
+      updated_at: "2026-08-16T17:00:00.000Z",
+      updated_by: "operator",
+    };
+    const html = renderToStaticMarkup(
+      <CredentialsClient
+        initialSnapshot={{ items: [item], ts: "2026-08-16T00:00:00.000Z", error: null }}
+      />,
+    );
+    expect(html).toContain("Fallback pool — 1/2 responding");
+    expect(html).toContain("alchemy");
+    expect(html).toContain("otro-2");
+    // Masked-list contract: full provider URLs (they carry /v2/<key> on
+    // alchemy-style endpoints) never travel in metadata — only name/ok/detail.
+    // (The bare host "eth-mainnet.g.alchemy.com" DOES appear legitimately as
+    // the Topology Vault "Host activo" display, so we assert on the URL path
+    // marker instead.)
+    expect(html).not.toContain("/v2/");
   });
 
   it("surfaces the snapshot error verbatim (fail-honest)", () => {
