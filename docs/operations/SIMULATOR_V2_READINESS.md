@@ -64,26 +64,45 @@ forgotten. Inspect with `GET /admin/readiness-evidence?gate_id=G-SIM-1`.
 | `unit_tests` | `.github/workflows/sim-evidence-unit-tests.yml` — job `unit-tests` runs the FULL package (`cargo test -p simulator-v2 --locked`, lib + `tests/` integration, closing the F0 `--lib`-only gap) | push to `main` touching `backend/simulator-v2/**` + manual `workflow_dispatch` |
 | `dep_tree` | `.github/workflows/sim-evidence-unit-tests.yml` — job `dep-tree` runs `cargo tree -d --locked` and greps for duplicates of `alloy-primitives` / `revm` | same |
 | `fork_suite` | `.github/workflows/sim-fork-evidence.yml` runs the ignored `backend/simulator-v2/tests/fork_mainnet.rs` suite (anti-hollow guards: `FORK_SUITE_OUTCOME=PASS` marker + ≥1 passing libtest line required before any POST) | manual `workflow_dispatch` (optional `fork_block` input; default = latest via `eth_blockNumber`) |
+| `eth_callbundle_staging` | `.github/workflows/sim-staging-callbundle.yml` runs the ignored LIVE test `staging_callbundle_against_flashbots_simulate_endpoint` (`backend/relays-client/src/relay_flashbots.rs`): a REAL `eth_callBundle` round-trip with an EPHEMERAL throwaway signer + zero-value/zero-gas self-transfer probe (simulate-only, NO broadcast); asserts parsed response, `totalGasUsed > 0`, no tx error/revert and derived bundleGasPrice within `ARBX_STAGING_MAX_BUNDLE_GAS_PRICE_GWEI` (default 500) | manual `workflow_dispatch` |
+| `variance_benchmark` | `scripts/gsim1_variance_benchmark.sh` (VPS operator macro): exports REAL recent opportunities (`scripts/gsim1_variance_export.sql`) and replays each through the PRODUCTION multi-step REVM path at block B (detection block, resolved by timestamp bisection — PREDICTED) and B+1 (settled — OBSERVED) via `backend/sim-core/tests/variance_benchmark.rs`; PASS requires ≥ `VARIANCE_MIN_SAMPLES` (100) labeled pairs AND mean absolute drift < `VARIANCE_MAX_MEAN_DRIFT_PCT` (5%). Method recorded verbatim (`method: revm_b_vs_revm_b1_fork`); every skip is counted, never imputed | manual, ON the VPS (`bash scripts/gsim1_variance_benchmark.sh`) |
+
+Registry transport: every CI producer POSTs through
+`.github/actions/post-readiness-evidence` — direct URL when
+`ARBX_READINESS_EVIDENCE_URL` + `ARBX_ADMIN_TOKEN` secrets exist, else over the
+`VPS_SSH_*` secrets (the POST runs ON the VPS against `127.0.0.1:8080`; the
+admin token is read from the deployment `.env` and never leaves the host), else
+warn + skip.
 
 Honesty notes: `dep_tree` posts `status:"failed"` with the duplicate version list while the
-dedup is unresolved (today `alloy-primitives` resolves 0.4.2 / 0.7.7 / 1.6.0) — the item
-stays effectively pending until the dedup lands; it never fakes a clean tree. If the repo
-secrets below are absent, the workflows emit a `::warning::` annotation and skip the POST —
-the tests still gate, only the registry row is not written.
+dedup is unresolved (today `alloy-primitives` resolves 0.4.2 / 0.7.7 / 1.6.0 —
+pulled respectively by revm 3.5, simulator-v2 and alloy 1.8; unifying them is a
+major dependency migration, tracked separately) — the item
+stays effectively pending until the dedup lands; it never fakes a clean tree.
+
+Related observability fix (2026-08-17): the sim-ctl Redis consumer now counts
+every consumer-path simulation in `arbx_simulation_total` (labels
+`simulator`/`passed`). Before, only the `/simulate` HTTP REVM path incremented
+the counter — the anvil/eth_call path the consumer drives is the one with real
+24h flow, so G-SIM-1's layer-3 check saw zero flow while simulations were
+actually running.
 
 ### One-time operator provisioning (required for the automated producers)
 
 1. Repo secret `ARBX_READINESS_EVIDENCE_URL` — the FULL POST URL of the registry endpoint
-   (e.g. `https://<host>/admin/readiness-evidence`).
+   (e.g. `https://<host>/admin/readiness-evidence`). OPTIONAL since 2026-08-17: when this
+   secret is absent, the shared action falls back to the `VPS_SSH_*` repo secrets and POSTs
+   from the VPS itself (registry stays internal-only; the admin token never leaves the host).
 2. Repo secret `ARBX_ADMIN_TOKEN` — the api-server admin token (same value the other
-   `/admin/*` routes use).
-3. For `sim-fork-evidence.yml` only: a mainnet ARCHIVE RPC secret (`ALCHEMY_HTTP_URL`
-   preferred, falling back to `RPC_HTTP_1_ARCHIVE` then `RPC_HTTP_1`) — single bare URL.
+   `/admin/*` routes use). Only needed for the direct-URL transport.
+3. For `sim-fork-evidence.yml` / `sim-staging-callbundle.yml`: a mainnet RPC secret
+   (`ALCHEMY_HTTP_URL` preferred, falling back to `RPC_HTTP_1_ARCHIVE` then `RPC_HTTP_1`) —
+   single bare URL.
 
-The registry endpoint is **internal-only today** (api-server `/admin/*`, behind the admin
-token). The operator chooses how CI reaches it: expose a token-guarded public route for it,
-or run these workflows on a self-hosted runner inside the VPS network. Until one of those
-exists, the workflows warn + skip the POST and the registry stays manual.
+The registry endpoint is **internal-only by default** (api-server `/admin/*` on
+`127.0.0.1:8080`, behind the admin token). The two supported CI transports are the
+direct token-guarded public route (operator's choice to expose) and the SSH-tunnel
+transport above — which needs no new public exposure.
 
 ### Manual item procedures
 

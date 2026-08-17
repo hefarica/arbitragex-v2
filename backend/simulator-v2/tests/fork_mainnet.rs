@@ -146,9 +146,16 @@ fn require_success(outcome: CallOutcome, label: &str) -> u64 {
 /// Multi-step REVM sequence against a pinned real mainnet block:
 /// read → deposit(1 wei) → read (+1 exactly) → withdraw(1) → read (back to
 /// pre). See the module docs for the full honesty contract.
-#[test]
+///
+/// `multi_thread` flavor is REQUIRED: `LazyDb`'s sync-async bridge calls
+/// `tokio::time::timeout` (lazy_db.rs), which needs an ambient reactor at
+/// construction — a bare sync `#[test]` panics with "there is no reactor
+/// running" (found by the first real CI dispatch of sim-fork-evidence.yml,
+/// 2026-08-17), and the default current-thread `#[tokio::test]` parks its
+/// timer driver behind the owned-runtime fallback.
+#[tokio::test(flavor = "multi_thread")]
 #[ignore = "requires RPC_HTTP_1 (mainnet archive RPC) + optional FORK_BLOCK — see module docs"]
-fn fork_mainnet_weth_deposit_withdraw_round_trip() {
+async fn fork_mainnet_weth_deposit_withdraw_round_trip() {
     let rpc_url = match resolve_rpc_url() {
         Ok(url) => url,
         Err(missing) => panic!(
