@@ -85,9 +85,11 @@ if [ -z "$GAS_PRICE_WEI" ] || [ "$GAS_PRICE_WEI" = "(nil)" ]; then
 fi
 
 # ---- 1. Export real opportunities (always — the row count is real evidence) --
+# NOTE: the SQL file lives on the HOST; the postgres container does not mount
+# the repo — pipe the script via stdin (`-f` would resolve inside the container).
 mkdir -p "$WORK"
 docker exec -i "$PG_CONTAINER" psql -U postgres -d arbitragex -At \
-  -f "$DEPLOY_PATH/scripts/gsim1_variance_export.sql" > "$INPUT"
+  < "$DEPLOY_PATH/scripts/gsim1_variance_export.sql" > "$INPUT"
 ROWS=$(grep -c . "$INPUT" || true)
 echo "exported $ROWS candidate rows"
 
