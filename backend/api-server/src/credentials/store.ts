@@ -92,7 +92,7 @@ export async function readCredentialSecret(
   return { secret: r.secret_value, metadata: r.metadata ?? {} };
 }
 
-interface UpsertInput {
+export interface UpsertInput {
   provider: CredentialProvider;
   scope: string;
   display_name?: string | undefined;
@@ -101,6 +101,48 @@ interface UpsertInput {
   status: CredentialStatus;
   validation_error: string | null;
   actor: string;
+}
+
+/**
+ * RunFullSyncCycle FASE 1 — read the stored row WITHOUT masking for bulk
+ * noop-detection (secret unchanged + metadata unchanged ⇒ skip the write so
+ * updated_at does not rotate on idempotent re-runs). Server-internal only;
+ * callers MUST never return the raw secret.
+ */
+export interface StoredCredentialRow {
+  secret: string | null;
+  metadata: Record<string, unknown>;
+  status: CredentialStatus;
+  display_name: string;
+  updated_at: string;
+}
+
+export async function readCredentialForBulk(
+  pool: Pool,
+  provider: CredentialProvider,
+  scope: string,
+): Promise<StoredCredentialRow | null> {
+  const q = await pool.query<{
+    secret_value: string | null;
+    metadata: Record<string, unknown> | null;
+    status: string;
+    display_name: string;
+    updated_at: Date;
+  }>(
+    `SELECT secret_value, metadata, status, display_name, updated_at
+       FROM service_credentials
+      WHERE provider = $1 AND scope = $2`,
+    [provider, scope],
+  );
+  const r = q.rows[0];
+  if (!r) return null;
+  return {
+    secret: r.secret_value,
+    metadata: r.metadata ?? {},
+    status: r.status as CredentialStatus,
+    display_name: r.display_name,
+    updated_at: r.updated_at.toISOString(),
+  };
 }
 
 /**
