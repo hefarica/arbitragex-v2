@@ -7176,9 +7176,12 @@ dependencies = [
  "bigdecimal 0.4.10",
  "ethers",
  "prioritization-spine",
+ "serde",
+ "serde_json",
  "shared-rs",
  "simulator-v2",
  "thiserror 1.0.69",
+ "tokio",
  "tracing",
 ]
 

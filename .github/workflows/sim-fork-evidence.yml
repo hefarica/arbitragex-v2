@@ -115,17 +115,10 @@ jobs:
         if: always() && steps.preflight.outputs.skip != 'true' && steps.forktest.outcome != 'skipped' && steps.forktest.outcome != 'cancelled'
         shell: bash
         env:
-          EVIDENCE_URL: ${{ secrets.ARBX_READINESS_EVIDENCE_URL }}
-          ADMIN_TOKEN: ${{ secrets.ARBX_ADMIN_TOKEN }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
           BLOCK: ${{ steps.preflight.outputs.block }}
           TEST_OUTCOME: ${{ steps.forktest.outcome }}
         run: |
-          if [ -z "${EVIDENCE_URL:-}" ] || [ -z "${ADMIN_TOKEN:-}" ]; then
-            echo "::warning::evidence not recorded: operator must provision ARBX_READINESS_EVIDENCE_URL + ARBX_ADMIN_TOKEN"
-            exit 0
-          fi
-
           PASSED=$(grep -Eo 'test result: ok\. [1-9][0-9]* passed' fork-suite.log | head -n 1 || true)
 
           if [ "${TEST_OUTCOME}" = "success" ]; then
@@ -153,8 +146,17 @@ jobs:
               evidence_ref: $evidence_ref, detail: $detail,
               verified_by: $verified_by}' > evidence-payload.json
 
-          curl --fail-with-body -sS --max-time 20 -X POST \
-            -H "Content-Type: application/json" \
-            -H "x-arbx-admin-token: ${ADMIN_TOKEN}" \
-            --data-binary @evidence-payload.json \
-            "${EVIDENCE_URL}"
+      - name: POST fork_suite evidence → readiness_evidence registry
+        if: always() && steps.preflight.outputs.skip != 'true' && steps.forktest.outcome != 'skipped' && steps.forktest.outcome != 'cancelled'
+        uses: ./.github/actions/post-readiness-evidence
+        with:
+          # The record step runs with working-directory: backend — the payload
+          # lands there; composite-action steps run from the repo root.
+          payload_file: backend/evidence-payload.json
+          evidence_url: ${{ secrets.ARBX_READINESS_EVIDENCE_URL }}
+          admin_token: ${{ secrets.ARBX_ADMIN_TOKEN }}
+          ssh_key: ${{ secrets.VPS_SSH_KEY }}
+          ssh_host: ${{ secrets.VPS_SSH_HOST }}
+          ssh_port: ${{ secrets.VPS_SSH_PORT }}
+          ssh_user: ${{ secrets.VPS_SSH_USER }}
+          deploy_path: ${{ secrets.VPS_DEPLOY_PATH }}
