@@ -266,7 +266,7 @@ fn sim_at_block(
 // Benchmark (ignored)
 // ---------------------------------------------------------------------------
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread")]
 #[ignore = "requires RPC_HTTP_1 + ARBITRAGE_EXECUTOR + FLASHLOAN_EXECUTOR_1 + GAS_PRICE_WEI + VARIANCE_INPUT (JSONL of real opportunities) — see module docs"]
 async fn variance_benchmark_predicted_vs_settled_block() {
     let rpc = match std::env::var("RPC_HTTP_1") {
