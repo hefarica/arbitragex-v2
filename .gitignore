@@ -120,3 +120,8 @@ ArbitrageX_Secrets_Config.xlsx
 credentials-manifest*.json
 cred-manifest*.json
 !scripts/credentials-manifest.example.json
+
+# SECURITY (FREEZE-01 FASE 6.2): settings.json contains live agent tokens
+# (ANTHROPIC_AUTH_TOKEN). NEVER commit it. Copy settings.example.json and
+# fill values locally. History purge tracked in the security issue.
+.claude/settings.json

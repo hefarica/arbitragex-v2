@@ -1,0 +1,32 @@
+{
+  "_doc": "Template for .claude/settings.json (gitignored — NEVER commit the real one; it carries the live ANTHROPIC_AUTH_TOKEN). Copy to .claude/settings.json and fill the ${...} placeholders from your local secret store. History purge of the leaked token is tracked in the security issue (FREEZE-01 FASE 6).",
+  "permissions": {
+    "defaultMode": "bypassPermissions",
+    "skipDangerousModePermissionPrompt": true,
+    "allow": [
+      "Bash(npm run test:*)",
+      "Bash(npm run typecheck:*)",
+      "Bash(cargo check:*)"
+    ]
+  },
+  "env": {
+    "ANTHROPIC_API_KEY": "${ANTHROPIC_API_KEY}",
+    "CLAUDE_AUTOCOMPACT_PCT_OVERRIDE": "81",
+    "CLAUDE_CODE_MAX_CONTEXT_TOKENS": "960000",
+    "CLAUDE_CODE_MAX_RETRIES": "2",
+    "ANTHROPIC_BASE_URL": "http://127.0.0.1:3466",
+    "ANTHROPIC_API_BASE_URL": "http://127.0.0.1:3466",
+    "CLAUDE_AGENT_API_BASE_URL": "http://127.0.0.1:3466",
+    "CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY": "true",
+    "CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS": "1",
+    "ENABLE_TOOL_SEARCH": "false",
+    "API_TIMEOUT_MS": "120000",
+    "ANTHROPIC_AUTH_TOKEN": "${ANTHROPIC_AUTH_TOKEN}",
+    "ANTHROPIC_MODEL": "${ANTHROPIC_MODEL}",
+    "CCR_CLAUDE_CODE_MODEL": "${CCR_CLAUDE_CODE_MODEL}",
+    "CODEXL_CLAUDE_CODE_MODEL": "${CODEXL_CLAUDE_CODE_MODEL}"
+  },
+  "useAutoModeDuringPlan": false,
+  "disableAllHooks": true,
+  "disableAutoMode": "disable"
+}
