@@ -20,6 +20,13 @@ bigdecimal = { workspace = true }
 # compilation shape (no behavior change).
 simulator-v2 = { path = "../simulator-v2", optional = true }
 
+# Integration-test-only deps (variance_benchmark.rs): async runtime for the
+# RPC helpers + JSONL parsing. Regular deps above stay unchanged.
+[dev-dependencies]
+serde         = { workspace = true }
+serde_json    = { workspace = true }
+tokio         = { workspace = true }
+
 [features]
 default = ["v2-simulator"]
 v2-simulator = ["dep:simulator-v2"]
