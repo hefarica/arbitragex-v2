@@ -13,6 +13,7 @@ use redis::aio::ConnectionManager;
 use redis::AsyncCommands;
 use shared_rs::contracts::Opportunity;
 use shared_rs::killswitch::KillSwitchClient;
+use shared_rs::metrics::SIMULATIONS_TOTAL;
 use sqlx::postgres::PgPool;
 use std::time::Duration;
 use tracing::{debug, error, info, warn};
@@ -138,6 +139,25 @@ impl Consumer {
         };
 
         let sim = self.engine.simulate(&opportunity).await;
+
+        // G-SIM-1 layer-3 flow: count EVERY consumer-path simulation in the
+        // shared Prometheus counter (declared semantics: "Simulations by
+        // simulator and pass/fail"). Before this, only the /simulate HTTP REVM
+        // path (sim_runner) incremented the counter — the anvil/eth_call path
+        // this consumer drives is the one with real 24h flow, so
+        // arbx_simulation_total reported zero while simulations were actually
+        // running. The label mirrors the SimulationResult's own simulator kind
+        // (anvil / not_implemented / …) so the metric stays truthful per backend.
+        let sim_kind = match &sim.simulator {
+            shared_rs::contracts::SimulatorKind::Anvil => "anvil",
+            shared_rs::contracts::SimulatorKind::Tenderly => "tenderly",
+            shared_rs::contracts::SimulatorKind::Hardhat => "hardhat",
+            shared_rs::contracts::SimulatorKind::Revm => "revm",
+            shared_rs::contracts::SimulatorKind::NotImplemented => "not_implemented",
+        };
+        SIMULATIONS_TOTAL
+            .with_label_values(&[sim_kind, if sim.passed { "true" } else { "false" }])
+            .inc();
 
         // Persist; if it fails, do NOT ack — retry on next iteration.
         if let Err(e) = insert_simulation(&self.pool, &sim).await {
