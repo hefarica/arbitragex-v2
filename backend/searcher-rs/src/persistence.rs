@@ -81,7 +81,7 @@ pub async fn insert_opportunity_with_route(
         _ => serde_json::json!({}),
     };
 
-    sqlx::query(
+    let result = sqlx::query(
         r#"
         INSERT INTO opportunities (
             id, chain_id, strategy_kind, dex_a, dex_b, pair_symbol,
@@ -121,6 +121,19 @@ pub async fn insert_opportunity_with_route(
     .execute(pool)
     .await
     .context("insert opportunity")?;
+    // H2 (FREEZE-01): record the commit for the PIPELINE_SILENCE watchdog
+    // (monitoring/alerts.rules.yml). RULE 00: only an INSERT that actually
+    // landed a row moves this gauge — never a fabricated tick. The statement
+    // is `ON CONFLICT (id) DO NOTHING`, so a committed-but-duplicate
+    // redelivery (rows_affected == 0) must NOT tick it: a duplicate-only
+    // loop is exactly the "pipeline frozen but looks alive" signature the
+    // watchdog exists to catch. This is the single funnel for every
+    // opportunities write in this crate, so one hook covers all workers +
+    // the orchestrator emitter path.
+    if result.rows_affected() > 0 {
+        crate::metrics::PIPELINE_LAST_OPPORTUNITY_INSERT_UNIXTIME
+            .set(chrono::Utc::now().timestamp());
+    }
     Ok(())
 }
 
