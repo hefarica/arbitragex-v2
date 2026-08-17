@@ -1408,6 +1408,8 @@ app.get("/admin/credentials", (c) => adminProxy(c, "/admin/credentials"));
 app.get("/admin/credentials/:provider/:scope", (c) =>
   adminProxy(c, `/admin/credentials/${c.req.param("provider")}/${c.req.param("scope")}`));
 app.post("/admin/credentials/test", (c) => adminProxy(c, "/admin/credentials/test"));
+// RunFullSyncCycle FASE 1 — operator macro bulk entrance (same adminProxy gate).
+app.post("/admin/credentials/bulk", (c) => adminProxy(c, "/admin/credentials/bulk"));
 app.put("/admin/credentials", (c) => adminProxy(c, "/admin/credentials"));
 app.delete("/admin/credentials/:provider/:scope", (c) =>
   adminProxy(c, `/admin/credentials/${encodeURIComponent(c.req.param("provider"))}/${encodeURIComponent(c.req.param("scope"))}`));
