@@ -84,8 +84,7 @@ runs:
                  -H 'Content-Type: application/json' \
                  -H \"x-arbx-admin-token: \${TOKEN}\" \
                  --data-binary @- http://127.0.0.1:8080/admin/readiness-evidence" \
-              < "${PAYLOAD_FILE}"
-          SSH_RC=$?
+              < "${PAYLOAD_FILE}" && SSH_RC=0 || SSH_RC=$?
           rm -f "${HOME}/.ssh/gsim1_evidence_key"
           exit "${SSH_RC}"
         fi

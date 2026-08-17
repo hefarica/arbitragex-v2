@@ -69,8 +69,6 @@ jobs:
         id: staging
         if: steps.preflight.outputs.skip != 'true'
         shell: bash
-        env:
-          RPC_HTTP_1: ''
         run: |
           set -o pipefail
           cargo test -p relays-client staging_callbundle --locked -- --ignored --nocapture 2>&1 | tee staging.log
