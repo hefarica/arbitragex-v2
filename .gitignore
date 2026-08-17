@@ -111,6 +111,9 @@ scripts/extract-skills.js
 .claude/skills/arbitragex-omega-supreme-agent/references/567-skills-catalog.md
 .env.enc
 ArbitrageX_Secrets_Config.xlsx
+# RU-2 — canonical math catalog XLSX is operator-local source of truth; only the
+# distilled cartridges/manifests/math_map.json is committed (scripts/gen_math_manifest.py).
+ArbitrageX_264_Cartridge_Math_Architecture*.xlsx
 .claude/settings.local.json
 .claude/settings.local.json.bak
 
