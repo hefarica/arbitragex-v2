@@ -192,17 +192,57 @@ async fn main() -> anyhow::Result<()> {
         }
     }
 
-    let signer = match Signer::from_env(chain_id)? {
-        Some(s) => {
-            info!(event = "signer.loaded", address = %s.address, chain_id = s.chain_id);
-            Some(Arc::new(s))
-        }
-        None => {
-            warn!(
-                event = "signer.missing",
-                "FLASHBOTS_SIGNER_KEY empty/unset — /execute stays 501, consumer idle"
-            );
+    // FASE 3c (RunFullSyncCycle): relay credentials resolve with projection
+    // precedence — arbx:svc_cred:* (api-server credentials-store projection)
+    // first, legacy env fallback — logging cred_source per provider. A Redis
+    // failure degrades to env-only (warn); it never blocks the boot path.
+    let svc_redis: Option<redis::aio::ConnectionManager> = match redis::Client::open(redis_url.clone()) {
+        Ok(client) => match client.get_connection_manager().await {
+            Ok(mgr) => Some(mgr),
+            Err(e) => {
+                warn!(event = "svc_cred.manager_unavailable", error = %e, "resolving relay creds from env only");
+                None
+            }
+        },
+        Err(e) => {
+            warn!(event = "svc_cred.manager_unavailable", error = %e, "resolving relay creds from env only");
             None
+        }
+    };
+
+    let signer = {
+        let resolved = match svc_redis.as_ref() {
+            Some(mgr) => {
+                shared_rs::svc_cred::resolve(mgr, "FLASHBOTS_SIGNER_KEY", "flashbots_signer", "global").await
+            }
+            None => std::env::var("FLASHBOTS_SIGNER_KEY")
+                .ok()
+                .filter(|s| !s.is_empty())
+                .map(|value| shared_rs::svc_cred::ResolvedCred {
+                    value,
+                    source: shared_rs::svc_cred::CredSource::Env,
+                    status: None,
+                    metadata: None,
+                }),
+        };
+        info!(
+            event = "cred.source",
+            provider = "flashbots_signer",
+            source = resolved.as_ref().map(|r| r.source.as_str()).unwrap_or("none")
+        );
+        let key = resolved.map(|r| r.value).unwrap_or_default();
+        match Signer::from_key(&key, chain_id)? {
+            Some(s) => {
+                info!(event = "signer.loaded", address = %s.address, chain_id = s.chain_id);
+                Some(Arc::new(s))
+            }
+            None => {
+                warn!(
+                    event = "signer.missing",
+                    "FLASHBOTS_SIGNER_KEY empty/unset — /execute stays 501, consumer idle"
+                );
+                None
+            }
         }
     };
 
@@ -377,26 +417,73 @@ async fn main() -> anyhow::Result<()> {
             }
         }
 
-        // ── BloXRoute ────────────────────────────────────────────────────────
-        if let Some(blx) = BloXRouteClient::from_env() {
-            info!(event = "bloxroute.configured", "bloxroute backend added");
-            backends.push(Arc::new(blx));
-        } else {
-            info!(
-                event = "bloxroute.skipped",
-                reason = "BLOXROUTE_AUTH_HEADER not set"
-            );
+        // ── BloXRoute (FASE 3c: projection → env) ────────────────────────────
+        {
+            let blx_auth = match svc_redis.as_ref() {
+                Some(mgr) => {
+                    shared_rs::svc_cred::resolve(mgr, "BLOXROUTE_AUTH_HEADER", "bloxroute", "global")
+                        .await
+                        .map(|r| {
+                            info!(event = "cred.source", provider = "bloxroute", source = r.source.as_str());
+                            r.value
+                        })
+                }
+                None => std::env::var("BLOXROUTE_AUTH_HEADER").ok().filter(|v| !v.is_empty()),
+            };
+            if let Some(blx) = BloXRouteClient::from_auth_header(blx_auth.unwrap_or_default()) {
+                info!(event = "bloxroute.configured", "bloxroute backend added");
+                backends.push(Arc::new(blx));
+            } else {
+                info!(
+                    event = "bloxroute.skipped",
+                    reason = "no auth header (projection arbx:svc_cred:bloxroute:global and BLOXROUTE_AUTH_HEADER both unset)"
+                );
+            }
         }
 
-        // ── Titan ────────────────────────────────────────────────────────────
-        if let Some(titan) = TitanClient::from_env() {
-            info!(event = "titan.configured", "titan backend added");
-            backends.push(Arc::new(titan));
-        } else {
-            info!(
-                event = "titan.skipped",
-                reason = "TITAN_BUILDER_URL or TITAN_AUTH_HEADER not set"
-            );
+        // ── Titan (FASE 3c: projection secret=auth + metadata.url → env) ────
+        {
+            let (titan_url, titan_auth, titan_src) = match svc_redis.as_ref() {
+                Some(mgr) => {
+                    match shared_rs::svc_cred::resolve(mgr, "", "titan", "global").await {
+                        Some(r) if r.metadata.as_ref().and_then(|m| m.get("url")).and_then(|v| v.as_str()).is_some() => {
+                            let url = r
+                                .metadata
+                                .as_ref()
+                                .and_then(|m| m.get("url"))
+                                .and_then(|v| v.as_str())
+                                .map(|s| s.to_string());
+                            (url, Some(r.value), r.source.as_str())
+                        }
+                        _ => {
+                            // Projection without metadata.url — env fallback.
+                            let u = std::env::var("TITAN_BUILDER_URL").ok().filter(|v| !v.is_empty());
+                            let a = std::env::var("TITAN_AUTH_HEADER").ok().filter(|v| !v.is_empty());
+                            (u, a, "env")
+                        }
+                    }
+                }
+                None => {
+                    let u = std::env::var("TITAN_BUILDER_URL").ok().filter(|v| !v.is_empty());
+                    let a = std::env::var("TITAN_AUTH_HEADER").ok().filter(|v| !v.is_empty());
+                    (u, a, "env")
+                }
+            };
+            info!(event = "cred.source", provider = "titan", source = titan_src);
+            match (titan_url, titan_auth) {
+                (Some(u), Some(a)) => {
+                    if let Some(titan) = TitanClient::from_parts(u, a) {
+                        info!(event = "titan.configured", "titan backend added");
+                        backends.push(Arc::new(titan));
+                    }
+                }
+                _ => {
+                    info!(
+                        event = "titan.skipped",
+                        reason = "no builder URL + auth (projection arbx:svc_cred:titan:global without metadata.url, and TITAN_* env unset)"
+                    );
+                }
+            }
         }
 
         if backends.is_empty() {

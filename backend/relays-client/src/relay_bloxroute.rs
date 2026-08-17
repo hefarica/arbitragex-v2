@@ -38,10 +38,23 @@ pub struct BloXRouteClient {
 impl BloXRouteClient {
     /// Construct from environment. Returns `None` when `BLOXROUTE_AUTH_HEADER` is absent
     /// or empty — do not add this backend to the multi-relay pool in that case.
+    #[allow(dead_code)]
+    // Kept as the documented env entrypoint + unit-test target; main.rs
+    // resolves via projection first (RunFullSyncCycle FASE 3c).
     pub fn from_env() -> Option<Self> {
         let auth = std::env::var("BLOXROUTE_AUTH_HEADER")
             .ok()
             .filter(|v| !v.is_empty())?;
+        Self::from_auth_header(auth)
+    }
+
+    /// Build from an explicitly resolved auth header (RunFullSyncCycle FASE 3c:
+    /// caller resolves projection arbx:svc_cred:bloxroute:global → env, and
+    /// logs cred_source). Empty ⇒ None (backend skipped).
+    pub fn from_auth_header(auth: String) -> Option<Self> {
+        if auth.is_empty() {
+            return None;
+        }
         let url = std::env::var("BLOXROUTE_RELAY_URL")
             .ok()
             .filter(|v| !v.is_empty())

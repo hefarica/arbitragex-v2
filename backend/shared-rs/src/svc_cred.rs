@@ -54,6 +54,8 @@ pub struct ResolvedCred {
     pub source: CredSource,
     /// Projection status ("valid"/"invalid"/…) when resolved from the mirror.
     pub status: Option<String>,
+    /// Projection metadata (e.g. titan's `url`) when resolved from the mirror.
+    pub metadata: Option<serde_json::Value>,
 }
 
 pub fn svc_cred_key(provider: &str, scope: &str) -> String {
@@ -71,6 +73,7 @@ pub fn resolve_from_parts(projection_raw: Option<&str>, env_value: Option<String
                     value: p.secret_value,
                     source: CredSource::Projection,
                     status: p.status,
+                    metadata: if p.metadata.is_null() { None } else { Some(p.metadata) },
                 });
             }
         }
@@ -81,6 +84,7 @@ pub fn resolve_from_parts(projection_raw: Option<&str>, env_value: Option<String
             value,
             source: CredSource::Env,
             status: None,
+            metadata: None,
         })
 }
 

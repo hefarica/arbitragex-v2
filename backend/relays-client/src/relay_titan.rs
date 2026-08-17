@@ -31,6 +31,9 @@ pub struct TitanClient {
 
 impl TitanClient {
     /// Construct from environment. Returns `None` when any required env var is absent.
+    #[allow(dead_code)]
+    // Kept as the documented env entrypoint + unit-test target; main.rs
+    // resolves via projection first (RunFullSyncCycle FASE 3c).
     pub fn from_env() -> Option<Self> {
         let url = std::env::var("TITAN_BUILDER_URL")
             .ok()
@@ -38,6 +41,16 @@ impl TitanClient {
         let auth = std::env::var("TITAN_AUTH_HEADER")
             .ok()
             .filter(|v| !v.is_empty())?;
+        Self::from_parts(url, auth)
+    }
+
+    /// Build from explicitly resolved parts (RunFullSyncCycle FASE 3c: caller
+    /// resolves projection arbx:svc_cred:titan:global — secret_value=auth,
+    /// metadata.url=builder URL — → env fallback, and logs cred_source).
+    pub fn from_parts(url: String, auth: String) -> Option<Self> {
+        if url.is_empty() || auth.is_empty() {
+            return None;
+        }
         let http = reqwest::Client::builder()
             .timeout(Duration::from_secs(8))
             .build()
