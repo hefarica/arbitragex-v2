@@ -580,10 +580,11 @@ mod tests {
             .ok()
             .filter(|v| !v.trim().is_empty())
             .unwrap_or_else(|| "https://relay.flashbots.net".to_string());
-        let max_bundle_gas_price_gwei: f64 = std::env::var("ARBX_STAGING_MAX_BUNDLE_GAS_PRICE_GWEI")
-            .ok()
-            .and_then(|v| v.parse().ok())
-            .unwrap_or(500.0);
+        let max_bundle_gas_price_gwei: f64 =
+            std::env::var("ARBX_STAGING_MAX_BUNDLE_GAS_PRICE_GWEI")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(500.0);
 
         // Ephemeral throwaway signer (anvil test-account #0 vector — the SAME
         // convention signer.rs tests use; never an operator key).
@@ -628,10 +629,7 @@ mod tests {
         let raw_hex = format!("0x{}", hex::encode(typed.rlp_signed(&sig)));
 
         // The PRODUCTION client + method (BE-05), unmodified.
-        let client = FlashbotsClient::new(
-            relay_url.clone(),
-            std::time::Duration::from_secs(20),
-        );
+        let client = FlashbotsClient::new(relay_url.clone(), std::time::Duration::from_secs(20));
         let result = client
             .call_bundle(&signer, &raw_hex, target_block)
             .await

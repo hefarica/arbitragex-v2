@@ -210,7 +210,9 @@ async fn block_ts(
             return Ok(ts);
         }
     }
-    Err(format!("eth_getBlockByNumber({block}) failed after retries"))
+    Err(format!(
+        "eth_getBlockByNumber({block}) failed after retries"
+    ))
 }
 
 /// Smallest block whose timestamp >= target, searched inside [lo, hi]
@@ -274,10 +276,8 @@ async fn variance_benchmark_predicted_vs_settled_block() {
             _ => panic!("set RPC_HTTP_1 (or ALCHEMY_HTTP_URL) to a single bare mainnet RPC URL"),
         },
     };
-    let executor =
-        ethers::types::Address::from_str(&env_required("ARBITRAGE_EXECUTOR")).expect(
-            "ARBITRAGE_EXECUTOR must be a 0x-prefixed address",
-        );
+    let executor = ethers::types::Address::from_str(&env_required("ARBITRAGE_EXECUTOR"))
+        .expect("ARBITRAGE_EXECUTOR must be a 0x-prefixed address");
     // execute_multistep_revm resolves this internally; fail EARLY + explicit
     // here so the operator sees the missing var before minutes of RPC work.
     env_required("FLASHLOAN_EXECUTOR_1");
@@ -308,8 +308,8 @@ async fn variance_benchmark_predicted_vs_settled_block() {
     rows.sort_by(|a, b| b.detected_at_unix.cmp(&a.detected_at_unix));
     let mut seen_routes: std::collections::HashSet<String> = std::collections::HashSet::new();
 
-    let provider = Provider::<Http>::try_from(rpc.as_str())
-        .expect("RPC URL must parse as an HTTP endpoint");
+    let provider =
+        Provider::<Http>::try_from(rpc.as_str()).expect("RPC URL must parse as an HTTP endpoint");
     let tip = provider
         .get_block_number()
         .await
