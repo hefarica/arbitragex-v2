@@ -89,7 +89,7 @@ groups:
       #      The scrape-native up{job} DOES drop to 0 when the target fails.
       - alert: SEARCHER_SCRAPE_DOWN
         expr: up{job="searcher-rs"} == 0
-        for: 1m
+        for: 30s
         labels: { severity: critical, service: searcher-rs, platform: arbitragex }
         annotations:
           summary: "searcher-rs /metrics scrape DOWN (process dead or exporter hung)"
