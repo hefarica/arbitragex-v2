@@ -191,6 +191,18 @@ impl SimulatorV2 {
         let _ = self.block_number.set(block);
         self
     }
+
+    /// The memoized/pinned block, when one is already resolved.
+    ///
+    /// `Some(b)` after `with_block(b)` or a first `simulate()`; `None` when the
+    /// instance has not resolved a block yet (lazy "latest" mode). Used by
+    /// `sim_core::sim_multistep::execute_multistep_revm` so the multi-step REVM
+    /// path replays at the SAME pinned block the `SimulatorV2` was configured
+    /// with (variance-benchmark determinism) instead of always resolving
+    /// "latest".
+    pub fn pinned_block(&self) -> Option<u64> {
+        self.block_number.get().copied()
+    }
 }
 
 impl Simulator for SimulatorV2 {

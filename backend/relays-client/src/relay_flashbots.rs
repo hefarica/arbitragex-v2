@@ -524,4 +524,150 @@ mod tests {
         assert_eq!(parse_hex_u128(""), Some(0u128)); // empty hex = 0
         assert_eq!(parse_hex_u128("0xGG"), None); // invalid hex digits
     }
+
+    // -----------------------------------------------------------------------
+    // Staging verification (ignored — live network call)
+    // -----------------------------------------------------------------------
+
+    /// G-SIM-1 checklist item 6 — REAL staging verification of the
+    /// `eth_callBundle` integration against the Flashbots simulate-bundle
+    /// endpoint.
+    ///
+    /// `#[ignore]`d because it performs a LIVE network round-trip. Run with:
+    ///
+    /// ```bash
+    /// FLASHBOTS_STAGING_RPC_URL=<bare-mainnet-rpc> \
+    /// cargo test -p relays-client staging_callbundle -- --ignored --nocapture
+    /// ```
+    ///
+    /// ## What it proves (and what it deliberately does NOT do)
+    ///
+    /// * REAL `eth_callBundle` request signed with an EPHEMERAL throwaway key
+    ///   (the anvil test-account #0 vector — never an operator wallet), for a
+    ///   zero-value, zero-gas self-transfer signed by that throwaway key.
+    ///   `eth_callBundle` only SIMULATES: nothing is broadcast, no capital is
+    ///   exposed (paper-shadow doctrine §32).
+    /// * The response parses through the production `FlashbotsClient::
+    ///   call_bundle` path, carries `totalGasUsed > 0`, no tx-level
+    ///   error/revert, and the derived `bundleGasPrice` (coinbaseDiff /
+    ///   totalGasUsed, gwei) is within the configured staging limit
+    ///   (`ARBX_STAGING_MAX_BUNDLE_GAS_PRICE_GWEI`, default 500).
+    /// * Missing env PANICS (fail-honest) — the staging check can never be
+    ///   recorded from an unconfigured run.
+    ///
+    /// Emits the machine-greppable `ETH_CALLBUNDLE_STAGING_OUTCOME=PASS` marker
+    /// + a JSON detail line; `sim-staging-callbundle.yml` records the registry
+    /// row from them.
+    #[tokio::test]
+    #[ignore = "live network call — requires FLASHBOTS_STAGING_RPC_URL (bare mainnet RPC)"]
+    async fn staging_callbundle_against_flashbots_simulate_endpoint() {
+        use crate::signer::Signer;
+        use ethers::prelude::{Http, Middleware, Provider};
+        use ethers::signers::{LocalWallet, Signer as _};
+        use ethers::types::transaction::eip2718::TypedTransaction;
+        use ethers::types::TransactionRequest;
+
+        let rpc_url = std::env::var("FLASHBOTS_STAGING_RPC_URL")
+            .ok()
+            .filter(|v| !v.trim().is_empty())
+            .unwrap_or_else(|| {
+                panic!(
+                    "set FLASHBOTS_STAGING_RPC_URL to a single bare mainnet RPC URL — \
+                     the staging check resolves the target block from the real tip"
+                )
+            });
+        let relay_url = std::env::var("FLASHBOTS_STAGING_RELAY_URL")
+            .ok()
+            .filter(|v| !v.trim().is_empty())
+            .unwrap_or_else(|| "https://relay.flashbots.net".to_string());
+        let max_bundle_gas_price_gwei: f64 =
+            std::env::var("ARBX_STAGING_MAX_BUNDLE_GAS_PRICE_GWEI")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(500.0);
+
+        // Ephemeral throwaway signer (anvil test-account #0 vector — the SAME
+        // convention signer.rs tests use; never an operator key).
+        const EPHEMERAL_STAGING_KEY: &str =
+            "ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";
+        let wallet: LocalWallet = EPHEMERAL_STAGING_KEY
+            .parse()
+            .expect("ephemeral staging key parses");
+        let wallet = wallet.with_chain_id(1u64);
+        let signer = Signer {
+            address: wallet.address(),
+            wallet,
+            chain_id: 1,
+        };
+
+        // Resolve the target block from the real mainnet tip (bundle targets
+        // the next block, exactly as SubmitEngine does before broadcast).
+        let provider = Provider::<Http>::try_from(rpc_url.trim())
+            .expect("FLASHBOTS_STAGING_RPC_URL must be an HTTP endpoint");
+        let tip = provider
+            .get_block_number()
+            .await
+            .expect("eth_blockNumber against FLASHBOTS_STAGING_RPC_URL failed");
+        let target_block = tip.as_u64() + 1;
+
+        // Zero-value, zero-gas self-transfer: the read-only staging probe.
+        // gas_price 0 keeps the unfunded throwaway sender balance-check-clean
+        // inside the simulation; nothing here could ever cost anything.
+        let req = TransactionRequest::new()
+            .from(signer.address)
+            .to(signer.address)
+            .value(ethers::types::U256::zero())
+            .gas(21_000u64)
+            .gas_price(ethers::types::U256::zero())
+            .nonce(0u64);
+        let typed: TypedTransaction = req.into();
+        let sig = signer
+            .wallet
+            .sign_transaction(&typed)
+            .await
+            .expect("sign staging probe tx with ephemeral key");
+        let raw_hex = format!("0x{}", hex::encode(typed.rlp_signed(&sig)));
+
+        // The PRODUCTION client + method (BE-05), unmodified.
+        let client = FlashbotsClient::new(relay_url.clone(), std::time::Duration::from_secs(20));
+        let result = client
+            .call_bundle(&signer, &raw_hex, target_block)
+            .await
+            .expect("eth_callBundle against the staging relay endpoint failed");
+
+        assert!(
+            result.total_gas_used > 0,
+            "eth_callBundle returned totalGasUsed=0 — the simulation did not execute"
+        );
+        assert!(
+            !result.any_failed(),
+            "eth_callBundle flagged the probe tx failed: {:?}",
+            result.tx_results
+        );
+        let bundle_gas_price_gwei =
+            result.coinbase_diff_wei as f64 / result.total_gas_used as f64 / 1e9;
+        assert!(
+            bundle_gas_price_gwei <= max_bundle_gas_price_gwei,
+            "bundleGasPrice {bundle_gas_price_gwei} gwei exceeds the staging limit {max_bundle_gas_price_gwei} gwei"
+        );
+
+        let detail = serde_json::json!({
+            "method": "eth_callBundle",
+            "relay": relay_url,
+            "target_block": target_block,
+            "tip_block": tip.as_u64(),
+            "total_gas_used": result.total_gas_used,
+            "coinbase_diff_wei": result.coinbase_diff_wei,
+            "bundle_gas_price_gwei": bundle_gas_price_gwei,
+            "max_bundle_gas_price_gwei": max_bundle_gas_price_gwei,
+            "signer": "ephemeral-anvil-test-account (never an operator wallet)",
+            "probe": "zero-value zero-gas self-transfer (simulate-only, no broadcast)",
+        });
+        println!(
+            "ETH_CALLBUNDLE_STAGING_OUTCOME=PASS relay={relay_url} target_block={target_block} \
+             total_gas_used={} bundle_gas_price_gwei={bundle_gas_price_gwei:.6}",
+            result.total_gas_used
+        );
+        println!("ETH_CALLBUNDLE_STAGING_JSON={detail}");
+    }
 }
