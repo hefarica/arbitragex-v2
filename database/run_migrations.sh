@@ -11,13 +11,23 @@
 # on first boot; this script is the canonical path for post-boot schema sync.
 set -euo pipefail
 
+# ANTI-FREEZE FASE 2 - MIGRATION LOCKGUARD (2026-08-17, FREEZE-01 RCA #359):
+# a deploy re-applied migration 003 whose CREATE INDEX (no CONCURRENTLY)
+# queued behind the retention DELETE and froze the pipeline 21h. EVERY
+# statement here now runs with lock_timeout=10s + statement_timeout=10min
+# via PGOPTIONS: a migration that cannot take its lock in 10s FAILS FAST
+# (visible deploy error) instead of queueing against live inserts. A
+# migration that legitimately needs longer overrides per-session with
+# `SET statement_timeout = '...'` at the top of its own file (see 105_).
+MIG_LOCK_OPTS="-c lock_timeout=10s -c statement_timeout=10min"
+
 PGUSER=postgres
 PGDB=arbitragex
 CONTAINER="${PG_CONTAINER:-arbitragex-v2-postgres-1}"
 MIG_DIR="${MIGRATIONS_DIR:-/opt/arbitragex-v2/database/migrations}"
 
 run_sql() {
-  docker exec "$CONTAINER" psql -U "$PGUSER" -d "$PGDB" -v ON_ERROR_STOP=1 -c "$1"
+  docker exec -e PGOPTIONS="$MIG_LOCK_OPTS" "$CONTAINER" psql -U "$PGUSER" -d "$PGDB" -v ON_ERROR_STOP=1 -c "$1"
 }
 
 run_file() {
@@ -30,7 +40,7 @@ run_file() {
   local MIG_PW="${ARBX_MIGRATOR_PW:-arbx_migrator_dev_only}"
   local RW_PW="${ARBX_RW_PW:-arbx_rw_dev_only}"
   local RO_PW="${ARBX_RO_PW:-arbx_ro_dev_only}"
-  docker exec -i "$CONTAINER" psql -U "$PGUSER" -d "$PGDB" \
+  docker exec -i -e PGOPTIONS="$MIG_LOCK_OPTS" "$CONTAINER" psql -U "$PGUSER" -d "$PGDB" \
     -v ON_ERROR_STOP=1 \
     -v arbx_migrator_pw="$MIG_PW" \
     -v arbx_rw_pw="$RW_PW" \
