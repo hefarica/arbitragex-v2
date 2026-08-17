@@ -1,0 +1,124 @@
+name: G-SIM-1 Evidence — eth_callBundle staging verification
+
+# G-SIM-1 checklist item 6 → item_key "eth_callbundle_staging" (2026-08-17).
+#
+# Runs the `#[ignore]`d LIVE staging test inside
+# backend/relays-client/src/relay_flashbots.rs:
+#   cargo test -p relays-client staging_callbundle -- --ignored --nocapture
+#
+# The test performs a REAL `eth_callBundle` round-trip against the Flashbots
+# simulate-bundle endpoint with an EPHEMERAL throwaway signer and a zero-value,
+# zero-gas self-transfer probe. eth_callBundle only SIMULATES — nothing is
+# broadcast, no capital is exposed (paper-shadow doctrine §32; no operator
+# wallets touched).
+#
+# Secrets:
+#   RPC: ALCHEMY_HTTP_URL (preferred) → RPC_HTTP_1_ARCHIVE → RPC_HTTP_1,
+#        injected as FLASHBOTS_STAGING_RPC_URL. Must be a single bare URL.
+#   Evidence: same dual transport as the other G-SIM-1 workflows
+#        (.github/actions/post-readiness-evidence).
+#
+# Anti-hollow-pass: a green cargo exit code records NOTHING — the workflow
+# requires the `ETH_CALLBUNDLE_STAGING_OUTCOME=PASS` marker AND >= 1 passing
+# libtest line before posting evidence.
+
+on:
+  workflow_dispatch:
+
+# M2 Capa1 Fase 4 — read-only token.
+permissions:
+  contents: read
+
+jobs:
+  staging-callbundle:
+    name: eth_callBundle vs Flashbots simulate endpoint → item eth_callbundle_staging
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    env:
+      FLASHBOTS_STAGING_RPC_URL: ${{ secrets.ALCHEMY_HTTP_URL || secrets.RPC_HTTP_1_ARCHIVE || secrets.RPC_HTTP_1 }}
+
+    defaults:
+      run:
+        working-directory: backend
+
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # 1.91.0
+        with:
+          # Toolchain pin: 1.91.0 — see rust.yml; the repo-root
+          # rust-toolchain.toml overrides this input for every cargo
+          # invocation.
+          toolchain: 1.91.0
+
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+        with:
+          workspaces: backend
+
+      - name: Preflight — RPC secret present
+        id: preflight
+        shell: bash
+        run: |
+          if [ -z "${FLASHBOTS_STAGING_RPC_URL:-}" ]; then
+            echo "::warning::staging check not run: RPC secret missing — provision ALCHEMY_HTTP_URL (or RPC_HTTP_1_ARCHIVE / RPC_HTTP_1) with a single bare mainnet URL"
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: cargo test -p relays-client staging_callbundle -- --ignored
+        id: staging
+        if: steps.preflight.outputs.skip != 'true'
+        shell: bash
+        env:
+          RPC_HTTP_1: ''
+        run: |
+          set -o pipefail
+          cargo test -p relays-client staging_callbundle --locked -- --ignored --nocapture 2>&1 | tee staging.log
+          # Anti-hollow-pass guards: the LIVE marker + >= 1 passing libtest line.
+          grep -q 'ETH_CALLBUNDLE_STAGING_OUTCOME=PASS' staging.log
+          grep -Eq 'test result: ok\. [1-9][0-9]* passed' staging.log
+
+      - name: Record eth_callbundle_staging evidence (G-SIM-1 registry)
+        if: always() && steps.preflight.outputs.skip != 'true' && steps.staging.outcome != 'skipped' && steps.staging.outcome != 'cancelled'
+        shell: bash
+        env:
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          TEST_OUTCOME: ${{ steps.staging.outcome }}
+        run: |
+          if [ "${TEST_OUTCOME}" = "success" ]; then
+            STATUS="evidenced"
+            DETAIL_JSON=$(grep -Eo 'ETH_CALLBUNDLE_STAGING_JSON=\{.*\}' staging.log | head -n 1 | sed 's/^ETH_CALLBUNDLE_STAGING_JSON=//')
+            if [ -n "${DETAIL_JSON}" ]; then
+              DETAIL="${DETAIL_JSON}"
+            else
+              DETAIL='{"suite": "cargo test -p relays-client staging_callbundle -- --ignored", "note": "marker passed but JSON detail line absent"}'
+            fi
+          else
+            STATUS="failed"
+            TAIL=$(tail -n 50 staging.log || true)
+            DETAIL=$(jq -n --arg tail "${TAIL}" \
+              '{suite: "cargo test -p relays-client staging_callbundle -- --ignored", failing_tail: $tail}')
+          fi
+
+          jq -n \
+            --arg gate_id "G-SIM-1" \
+            --arg item_key "eth_callbundle_staging" \
+            --arg status "${STATUS}" \
+            --arg evidence_ref "${RUN_URL}" \
+            --argjson detail "${DETAIL}" \
+            --arg verified_by "ci:sim-staging-callbundle.yml" \
+            '{gate_id: $gate_id, item_key: $item_key, status: $status,
+              evidence_ref: $evidence_ref, detail: $detail,
+              verified_by: $verified_by}' > evidence-payload.json
+
+      - name: POST eth_callbundle_staging evidence → readiness_evidence registry
+        if: always() && steps.preflight.outputs.skip != 'true' && steps.staging.outcome != 'skipped' && steps.staging.outcome != 'cancelled'
+        uses: ./.github/actions/post-readiness-evidence
+        with:
+          evidence_url: ${{ secrets.ARBX_READINESS_EVIDENCE_URL }}
+          admin_token: ${{ secrets.ARBX_ADMIN_TOKEN }}
+          ssh_key: ${{ secrets.VPS_SSH_KEY }}
+          ssh_host: ${{ secrets.VPS_SSH_HOST }}
+          ssh_port: ${{ secrets.VPS_SSH_PORT }}
+          ssh_user: ${{ secrets.VPS_SSH_USER }}
+          deploy_path: ${{ secrets.VPS_DEPLOY_PATH }}

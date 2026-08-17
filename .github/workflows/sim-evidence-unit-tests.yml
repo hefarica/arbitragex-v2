@@ -72,20 +72,21 @@ jobs:
           # or the evidence recorded below would certify nothing.
           grep -Eq 'test result: ok\. [1-9][0-9]* passed' unit-tests.log
 
+      # The variance-benchmark harness (checklist item 4) lives in
+      # sim-core/tests/ — `cargo test --workspace --lib` in rust.yml never
+      # compiles integration tests, so this job is the compile gate for it
+      # (the #[ignore]d benchmark itself only runs on the VPS).
+      - name: cargo check -p sim-core --tests --locked (variance harness compiles)
+        shell: bash
+        run: cargo check -p sim-core --tests --locked
+
       - name: Record unit_tests evidence (G-SIM-1 registry)
         if: always() && steps.test.outcome != 'skipped' && steps.test.outcome != 'cancelled'
         shell: bash
         env:
-          EVIDENCE_URL: ${{ secrets.ARBX_READINESS_EVIDENCE_URL }}
-          ADMIN_TOKEN: ${{ secrets.ARBX_ADMIN_TOKEN }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
           TEST_OUTCOME: ${{ steps.test.outcome }}
         run: |
-          if [ -z "${EVIDENCE_URL:-}" ] || [ -z "${ADMIN_TOKEN:-}" ]; then
-            echo "::warning::evidence not recorded: operator must provision ARBX_READINESS_EVIDENCE_URL + ARBX_ADMIN_TOKEN"
-            exit 0
-          fi
-
           if [ "${TEST_OUTCOME}" = "success" ]; then
             STATUS="evidenced"
             DETAIL=$(jq -n '{suite: "cargo test -p simulator-v2 --locked"}')
@@ -107,11 +108,17 @@ jobs:
               evidence_ref: $evidence_ref, detail: $detail,
               verified_by: $verified_by}' > evidence-payload.json
 
-          curl --fail-with-body -sS --max-time 20 -X POST \
-            -H "Content-Type: application/json" \
-            -H "x-arbx-admin-token: ${ADMIN_TOKEN}" \
-            --data-binary @evidence-payload.json \
-            "${EVIDENCE_URL}"
+      - name: POST unit_tests evidence → readiness_evidence registry
+        if: always() && steps.test.outcome != 'skipped' && steps.test.outcome != 'cancelled'
+        uses: ./.github/actions/post-readiness-evidence
+        with:
+          evidence_url: ${{ secrets.ARBX_READINESS_EVIDENCE_URL }}
+          admin_token: ${{ secrets.ARBX_ADMIN_TOKEN }}
+          ssh_key: ${{ secrets.VPS_SSH_KEY }}
+          ssh_host: ${{ secrets.VPS_SSH_HOST }}
+          ssh_port: ${{ secrets.VPS_SSH_PORT }}
+          ssh_user: ${{ secrets.VPS_SSH_USER }}
+          deploy_path: ${{ secrets.VPS_DEPLOY_PATH }}
 
   dep-tree:
     name: cargo tree -d (alloy-primitives / revm dedup) → item dep_tree
@@ -154,16 +161,9 @@ jobs:
         if: always() && steps.deptree.outcome != 'skipped' && steps.deptree.outcome != 'cancelled'
         shell: bash
         env:
-          EVIDENCE_URL: ${{ secrets.ARBX_READINESS_EVIDENCE_URL }}
-          ADMIN_TOKEN: ${{ secrets.ARBX_ADMIN_TOKEN }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
           TREE_OUTCOME: ${{ steps.deptree.outcome }}
         run: |
-          if [ -z "${EVIDENCE_URL:-}" ] || [ -z "${ADMIN_TOKEN:-}" ]; then
-            echo "::warning::evidence not recorded: operator must provision ARBX_READINESS_EVIDENCE_URL + ARBX_ADMIN_TOKEN"
-            exit 0
-          fi
-
           DUPES=$(grep -E '^(alloy-primitives|revm) v[0-9]' dep-tree-duplicates.txt || true)
 
           if [ "${TREE_OUTCOME}" = "success" ] && [ -z "${DUPES}" ]; then
@@ -196,8 +196,14 @@ jobs:
               evidence_ref: $evidence_ref, detail: $detail,
               verified_by: $verified_by}' > evidence-payload.json
 
-          curl --fail-with-body -sS --max-time 20 -X POST \
-            -H "Content-Type: application/json" \
-            -H "x-arbx-admin-token: ${ADMIN_TOKEN}" \
-            --data-binary @evidence-payload.json \
-            "${EVIDENCE_URL}"
+      - name: POST dep_tree evidence → readiness_evidence registry
+        if: always() && steps.deptree.outcome != 'skipped' && steps.deptree.outcome != 'cancelled'
+        uses: ./.github/actions/post-readiness-evidence
+        with:
+          evidence_url: ${{ secrets.ARBX_READINESS_EVIDENCE_URL }}
+          admin_token: ${{ secrets.ARBX_ADMIN_TOKEN }}
+          ssh_key: ${{ secrets.VPS_SSH_KEY }}
+          ssh_host: ${{ secrets.VPS_SSH_HOST }}
+          ssh_port: ${{ secrets.VPS_SSH_PORT }}
+          ssh_user: ${{ secrets.VPS_SSH_USER }}
+          deploy_path: ${{ secrets.VPS_DEPLOY_PATH }}

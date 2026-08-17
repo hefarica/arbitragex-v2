@@ -1,0 +1,92 @@
+name: 'Post readiness evidence'
+description: >-
+  POST an evidence payload (evidence-payload.json) to the G-SIM-1
+  readiness_evidence registry (POST /admin/readiness-evidence on api-server).
+  Transport preference:
+    1. Direct URL — when ARBX_READINESS_EVIDENCE_URL + ARBX_ADMIN_TOKEN are
+       provisioned (public token-guarded route, operator's choice).
+    2. VPS SSH tunnel — when only the VPS_SSH_* secrets exist. The registry is
+       internal-only (api-server binds 127.0.0.1:8080), so the POST is executed
+       ON the VPS; the admin token is read from the deployment .env on the host
+       and never leaves it.
+    3. Neither — ::warning:: + skip (the cargo/test steps still gate; only the
+       registry row is not written).
+
+inputs:
+  payload_file:
+    description: 'Path to the JSON payload {gate_id,item_key,status,evidence_ref,detail,verified_by}'
+    required: false
+    default: evidence-payload.json
+  evidence_url:
+    description: 'secrets.ARBX_READINESS_EVIDENCE_URL — full POST URL (empty = not provisioned)'
+    required: false
+    default: ''
+  admin_token:
+    description: 'secrets.ARBX_ADMIN_TOKEN (empty = not provisioned)'
+    required: false
+    default: ''
+  ssh_key:
+    description: 'secrets.VPS_SSH_KEY — private key for the tunnel transport'
+    required: false
+    default: ''
+  ssh_host:
+    description: 'secrets.VPS_SSH_HOST'
+    required: false
+    default: ''
+  ssh_port:
+    description: 'secrets.VPS_SSH_PORT'
+    required: false
+    default: '22'
+  ssh_user:
+    description: 'secrets.VPS_SSH_USER'
+    required: false
+    default: ''
+  deploy_path:
+    description: 'secrets.VPS_DEPLOY_PATH — repo root on the VPS (holds .env with ARBX_ADMIN_TOKEN)'
+    required: false
+    default: '/opt/arbitragex-v2'
+
+runs:
+  using: composite
+  steps:
+    - name: POST evidence to the registry (direct URL → SSH tunnel → warn+skip)
+      shell: bash
+      env:
+        PAYLOAD_FILE: ${{ inputs.payload_file }}
+        EVIDENCE_URL: ${{ inputs.evidence_url }}
+        ADMIN_TOKEN: ${{ inputs.admin_token }}
+        SSH_KEY: ${{ inputs.ssh_key }}
+        SSH_HOST: ${{ inputs.ssh_host }}
+        SSH_PORT: ${{ inputs.ssh_port }}
+        SSH_USER: ${{ inputs.ssh_user }}
+        DEPLOY_PATH: ${{ inputs.deploy_path }}
+      run: |
+        set -euo pipefail
+        if [ -n "${EVIDENCE_URL}" ] && [ -n "${ADMIN_TOKEN}" ]; then
+          echo "recording evidence via direct registry URL"
+          curl --fail-with-body -sS --max-time 20 -X POST \
+            -H "Content-Type: application/json" \
+            -H "x-arbx-admin-token: ${ADMIN_TOKEN}" \
+            --data-binary @"${PAYLOAD_FILE}" \
+            "${EVIDENCE_URL}"
+          exit 0
+        fi
+        if [ -n "${SSH_KEY}" ] && [ -n "${SSH_HOST}" ]; then
+          echo "recording evidence via VPS SSH tunnel (registry internal-only; admin token stays on the host)"
+          mkdir -p "${HOME}/.ssh" && chmod 700 "${HOME}/.ssh"
+          printf '%s\n' "${SSH_KEY}" > "${HOME}/.ssh/gsim1_evidence_key"
+          chmod 600 "${HOME}/.ssh/gsim1_evidence_key"
+          ssh -o StrictHostKeyChecking=accept-new -o ConnectTimeout=10 \
+              -i "${HOME}/.ssh/gsim1_evidence_key" -p "${SSH_PORT}" \
+              "${SSH_USER}@${SSH_HOST}" \
+              "TOKEN=\$(grep -E '^ARBX_ADMIN_TOKEN=' '${DEPLOY_PATH}/.env' | cut -d= -f2-) && \
+               curl --fail-with-body -sS --max-time 20 -X POST \
+                 -H 'Content-Type: application/json' \
+                 -H \"x-arbx-admin-token: \${TOKEN}\" \
+                 --data-binary @- http://127.0.0.1:8080/admin/readiness-evidence" \
+              < "${PAYLOAD_FILE}"
+          SSH_RC=$?
+          rm -f "${HOME}/.ssh/gsim1_evidence_key"
+          exit "${SSH_RC}"
+        fi
+        echo "::warning::evidence not recorded: provision ARBX_READINESS_EVIDENCE_URL + ARBX_ADMIN_TOKEN (direct transport) or the VPS_SSH_* secrets (tunnel transport)"
