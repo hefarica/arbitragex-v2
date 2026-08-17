@@ -15,8 +15,19 @@ pub struct Signer {
 
 impl Signer {
     /// Attempt to load from env. Returns Ok(None) if the env var is empty/unset.
+    #[allow(dead_code)]
+    // Kept as the documented env entrypoint + unit-test target; main.rs
+    // resolves via projection first (RunFullSyncCycle FASE 3c).
     pub fn from_env(chain_id: u64) -> Result<Option<Self>> {
         let key = std::env::var("FLASHBOTS_SIGNER_KEY").unwrap_or_default();
+        Self::from_key(&key, chain_id)
+    }
+
+    /// Build from an explicitly resolved key (RunFullSyncCycle FASE 3c: the
+    /// caller resolves with projection precedence — arbx:svc_cred:
+    /// flashbots_signer:global first, env fallback — and logs cred_source).
+    /// Same semantics: empty key ⇒ Ok(None) (secure-boot /execute stays 501).
+    pub fn from_key(key: &str, chain_id: u64) -> Result<Option<Self>> {
         if key.is_empty() {
             return Ok(None);
         }
