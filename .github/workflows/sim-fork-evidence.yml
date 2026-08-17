@@ -1,0 +1,160 @@
+name: G-SIM-1 Evidence — simulator-v2 mainnet fork suite
+
+# G-SIM-1 FASE 4 (operator directive 2026-08-16): manual runner for the
+# `#[ignore]`d mainnet fork suite (checklist item 3 → item_key "fork_suite").
+#
+#   cargo test -p simulator-v2 --test fork_mainnet -- --ignored
+#
+# Fork-only, paper-only, read-only: the suite's committed calls mutate only
+# the in-process REVM CacheDB. NO signing, NO broadcast, NO capital (same
+# doctrine as scripts/run_a4_fork_validation.sh).
+#
+# Inputs:
+#   fork_block (optional) — decimal mainnet block to pin. Default: derive
+#   the latest block via eth_blockNumber against the RPC secret in a prior
+#   step.
+#
+# Secrets:
+#   RPC: ALCHEMY_HTTP_URL (preferred) → RPC_HTTP_1_ARCHIVE → RPC_HTTP_1,
+#        injected as RPC_HTTP_1 for the test. Must be a single bare archive
+#        URL (LazyDb does direct JSON-RPC; the multi-vendor CSV form is NOT
+#        parsed).
+#   Evidence: ARBX_READINESS_EVIDENCE_URL + ARBX_ADMIN_TOKEN — same
+#        secrets-missing contract as sim-evidence-unit-tests.yml (warn +
+#        skip the POST; never fail the job on absent secrets).
+#
+# Anti-hollow-pass (run_a4 rules): a green cargo exit code alone records
+# NOTHING. The workflow requires the suite's `FORK_SUITE_OUTCOME=PASS`
+# marker AND >= 1 passing libtest line before posting evidence.
+
+on:
+  workflow_dispatch:
+    inputs:
+      fork_block:
+        description: "Pinned mainnet block for the fork (default: latest via eth_blockNumber)"
+        type: string
+        required: false
+
+# M2 Capa1 Fase 4 — read-only token.
+permissions:
+  contents: read
+
+jobs:
+  fork-suite:
+    name: cargo test --test fork_mainnet --ignored → item fork_suite
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    env:
+      RPC_HTTP_1: ${{ secrets.ALCHEMY_HTTP_URL || secrets.RPC_HTTP_1_ARCHIVE || secrets.RPC_HTTP_1 }}
+
+    defaults:
+      run:
+        working-directory: backend
+
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # 1.91.0
+        with:
+          # Toolchain pin: 1.91.0 — see rust.yml; the repo-root
+          # rust-toolchain.toml overrides this input for every cargo
+          # invocation.
+          toolchain: 1.91.0
+
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+        with:
+          workspaces: backend
+
+      - name: Preflight — resolve fork block (eth_blockNumber)
+        id: preflight
+        shell: bash
+        env:
+          FORK_BLOCK_INPUT: ${{ inputs.fork_block }}
+        run: |
+          if [ -z "${RPC_HTTP_1:-}" ]; then
+            echo "::warning::fork suite not run and evidence not produced: RPC secret missing — provision ALCHEMY_HTTP_URL (or RPC_HTTP_1_ARCHIVE / RPC_HTTP_1) with a single bare mainnet archive URL"
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if [ -n "${FORK_BLOCK_INPUT:-}" ]; then
+            echo "block=${FORK_BLOCK_INPUT}" >> "$GITHUB_OUTPUT"
+            echo "using operator-supplied fork block ${FORK_BLOCK_INPUT}"
+            exit 0
+          fi
+          HEX=$(curl --fail-with-body -sS --max-time 20 -X POST \
+            -H "Content-Type: application/json" \
+            --data '{"jsonrpc":"2.0","method":"eth_blockNumber","params":[],"id":1}' \
+            "${RPC_HTTP_1}" | jq -r '.result')
+          case "${HEX}" in
+            0x*) BLOCK=$((HEX)) ;;
+            *)
+              echo "::error::eth_blockNumber returned an unexpected payload: ${HEX}"
+              exit 1
+              ;;
+          esac
+          echo "block=${BLOCK}" >> "$GITHUB_OUTPUT"
+          echo "derived fork block ${BLOCK} (latest via eth_blockNumber)"
+
+      - name: cargo test -p simulator-v2 --test fork_mainnet -- --ignored
+        id: forktest
+        if: steps.preflight.outputs.skip != 'true'
+        shell: bash
+        env:
+          FORK_BLOCK: ${{ steps.preflight.outputs.block }}
+        run: |
+          set -o pipefail
+          cargo test -p simulator-v2 --test fork_mainnet --locked -- --ignored --nocapture 2>&1 | tee fork-suite.log
+          # Anti-hollow-pass guards (mirror of scripts/run_a4_fork_validation.sh):
+          # cargo exits 0 even when 0 tests ran. Require the suite's real-outcome
+          # marker AND >= 1 passing libtest line, or nothing below records evidence.
+          grep -q 'FORK_SUITE_OUTCOME=PASS' fork-suite.log
+          grep -Eq 'test result: ok\. [1-9][0-9]* passed' fork-suite.log
+
+      - name: Record fork_suite evidence (G-SIM-1 registry)
+        if: always() && steps.preflight.outputs.skip != 'true' && steps.forktest.outcome != 'skipped' && steps.forktest.outcome != 'cancelled'
+        shell: bash
+        env:
+          EVIDENCE_URL: ${{ secrets.ARBX_READINESS_EVIDENCE_URL }}
+          ADMIN_TOKEN: ${{ secrets.ARBX_ADMIN_TOKEN }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          BLOCK: ${{ steps.preflight.outputs.block }}
+          TEST_OUTCOME: ${{ steps.forktest.outcome }}
+        run: |
+          if [ -z "${EVIDENCE_URL:-}" ] || [ -z "${ADMIN_TOKEN:-}" ]; then
+            echo "::warning::evidence not recorded: operator must provision ARBX_READINESS_EVIDENCE_URL + ARBX_ADMIN_TOKEN"
+            exit 0
+          fi
+
+          PASSED=$(grep -Eo 'test result: ok\. [1-9][0-9]* passed' fork-suite.log | head -n 1 || true)
+
+          if [ "${TEST_OUTCOME}" = "success" ]; then
+            STATUS="evidenced"
+            DETAIL=$(jq -n --arg block "${BLOCK}" --arg passed "${PASSED}" \
+              '{block: $block, passed: $passed,
+                suite: "cargo test -p simulator-v2 --test fork_mainnet --locked -- --ignored"}')
+          else
+            STATUS="failed"
+            TAIL=$(tail -n 50 fork-suite.log || true)
+            DETAIL=$(jq -n --arg block "${BLOCK}" --arg tail "${TAIL}" \
+              '{block: $block,
+                suite: "cargo test -p simulator-v2 --test fork_mainnet --locked -- --ignored",
+                failing_tail: $tail}')
+          fi
+
+          jq -n \
+            --arg gate_id "G-SIM-1" \
+            --arg item_key "fork_suite" \
+            --arg status "${STATUS}" \
+            --arg evidence_ref "${RUN_URL}" \
+            --argjson detail "${DETAIL}" \
+            --arg verified_by "ci:sim-fork-evidence.yml" \
+            '{gate_id: $gate_id, item_key: $item_key, status: $status,
+              evidence_ref: $evidence_ref, detail: $detail,
+              verified_by: $verified_by}' > evidence-payload.json
+
+          curl --fail-with-body -sS --max-time 20 -X POST \
+            -H "Content-Type: application/json" \
+            -H "x-arbx-admin-token: ${ADMIN_TOKEN}" \
+            --data-binary @evidence-payload.json \
+            "${EVIDENCE_URL}"
