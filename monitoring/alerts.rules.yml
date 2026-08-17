@@ -71,6 +71,30 @@ groups:
           summary: "Detection pipeline silent >10m — no opportunities INSERT committed"
           description: "searcher-rs has not committed a single opportunities INSERT in over 600s (gauge arbx_pipeline_last_opportunity_insert_unixtime frozen). Process is up but the pipeline is not persisting. Check: docker logs searcher-rs --tail 200 (persist errors), docker exec postgres psql -U postgres -d arbitragex -c 'SELECT MAX(detected_at) FROM opportunities;' (R7), Redis stream health, RPC provider state. Runbook: docs/incidents/2026-08-17-PIPELINE-FREEZE-PURGE-LOCKS.md (see PR #359 until merged)."
 
+      # ── FREEZE-01 FASE 5.2 (H1/H2b): close the crash-loop/dead-process gaps ──
+      # H1: if searcher-rs DIES, the gauge series goes absent and the rule above
+      #     stays silent (max() over no series = no alert). absent() closes it.
+      #     NOTE: promtool unit-tests cannot express absent() against an empty
+      #     series set — verified via promtool check rules + live behaviour.
+      - alert: PIPELINE_GAUGE_ABSENT
+        expr: absent(arbx_pipeline_last_opportunity_insert_unixtime)
+        for: 3m
+        labels: { severity: critical, service: searcher-rs, platform: arbitragex }
+        annotations:
+          summary: "searcher-rs insert gauge ABSENT — process dead or not exporting"
+          description: "The arbx_pipeline_last_opportunity_insert_unixtime series has been absent for 3m: searcher-rs is down, crashed, or running a build without the gauge. The silence rule cannot fire on an absent series — this one does. Check: docker ps --filter name=searcher-rs; docker logs searcher-rs --tail 100 (crash-loop?)."
+
+      # H2b: arbx_service_up is a custom gauge that only ever set(1) — it can
+      #      NEVER reach 0, so 'covered by arbx_service_up == 0' was aspirational.
+      #      The scrape-native up{job} DOES drop to 0 when the target fails.
+      - alert: SEARCHER_SCRAPE_DOWN
+        expr: up{job="searcher-rs"} == 0
+        for: 1m
+        labels: { severity: critical, service: searcher-rs, platform: arbitragex }
+        annotations:
+          summary: "searcher-rs /metrics scrape DOWN (process dead or exporter hung)"
+          description: "Prometheus cannot scrape searcher-rs:9001/metrics for over 1m (native up==0 — independent of any custom gauge). If the container is 'Up' but unscrapeable, the exporter thread is hung: restart container, then check docker logs searcher-rs --tail 200."
+
       - alert: RpcAllProvidersUnhealthy
         expr: count(arbx_rpc_provider_state == 0) == 0 and count(arbx_rpc_provider_state) > 0
         for: 2m
