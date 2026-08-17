@@ -15,6 +15,7 @@
 
 import { Router, type Request, type Response } from "express";
 import type { Pool } from "pg";
+import type { Redis } from "ioredis";
 import {
   CredentialTestSchema,
   CredentialUpsertSchema,
@@ -35,12 +36,43 @@ import {
   type StoredCredentialRow,
   type UpsertInput,
 } from "../credentials/store.js";
+import {
+  mirrorCredential,
+  unmirrorCredential,
+  type ProjectedCredential,
+} from "../credentials/projection.js";
 
 interface Deps {
   pool: Pool | null;
+  redis: Redis;
   requireAdminToken: (token: string) => (req: Request, res: Response, next: () => void) => void;
   adminToken: string;
   logger: { warn: (obj: object, msg?: string) => void; info: (obj: object, msg?: string) => void };
+}
+
+/**
+ * FASE 3: after any successful persistence, project the row to Redis
+ * (SET arbx:svc_cred:<provider>:<scope> + reload channel publish) so runtime
+ * consumers see the change without a restart. Fail-honest: mirror errors are
+ * logged by the projection layer and never fail the admin response.
+ */
+async function mirrorAfterWrite(
+  deps: Deps,
+  provider: CredentialBulkRowResult["provider"],
+  scope: string,
+): Promise<void> {
+  const stored = await readCredentialForBulk(deps.pool!, provider as never, scope);
+  if (!stored?.secret) return;
+  const row: ProjectedCredential = {
+    provider,
+    scope,
+    secret_value: stored.secret,
+    metadata: stored.metadata,
+    status: stored.status,
+    updated_at: stored.updated_at,
+    updated_by: null, // readCredentialForBulk does not track the writer; the PG row does.
+  };
+  await mirrorCredential({ redis: deps.redis, logger: deps.logger }, row);
 }
 
 /**
@@ -317,6 +349,8 @@ export function buildCredentialsRouter(deps: Deps): Router {
         status: validationStatus,
         actor,
       });
+      // FASE 3: project the persisted row to Redis (reload channel included).
+      await mirrorAfterWrite(deps, provider, scope);
       res.status(200).json(row);
     } catch (e) {
       deps.logger.warn({ event: "credentials.upsert_failed", err: (e as Error).message });
@@ -354,6 +388,10 @@ export function buildCredentialsRouter(deps: Deps): Router {
           actor,
         });
         res.status(200).json({ ok: true, removed });
+        // FASE 3: drop the row from the Redis projection + tombstone publish.
+        if (removed) {
+          await unmirrorCredential({ redis: deps.redis, logger: deps.logger }, provider.data, scope);
+        }
       } catch (e) {
         res.status(500).json({ error: "db_error", detail: (e as Error).message });
       }
@@ -397,6 +435,17 @@ export function buildCredentialsRouter(deps: Deps): Router {
           action: "error",
           error: (e as Error).message.slice(0, 200),
         });
+      }
+    }
+
+    // FASE 3: project every persisted row (apply path only — dry_run persists
+    // nothing, noop rows changed nothing). Mirror failures are logged by the
+    // projection layer and never fail the bulk response.
+    if (!dry_run) {
+      for (const r of results) {
+        if (r.action === "updated") {
+          await mirrorAfterWrite(deps, r.provider, r.scope);
+        }
       }
     }
 
