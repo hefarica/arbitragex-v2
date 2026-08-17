@@ -1,0 +1,203 @@
+name: G-SIM-1 Evidence — simulator-v2 unit tests + dep tree
+
+# G-SIM-1 FASE 4 (operator directive 2026-08-16): automated evidence
+# producers for the readiness_evidence registry.
+#
+#   job unit-tests → POST item_key "unit_tests"  (checklist item 1)
+#   job dep-tree   → POST item_key "dep_tree"    (checklist item 5)
+#
+# This closes the F0 gap where CI only ran `cargo test --workspace --lib`:
+# here we run the FULL simulator-v2 package (lib + tests/ integration).
+#
+# Evidence contract (backend/api-server/src/routes/readiness-evidence.ts):
+#   POST <ARBX_READINESS_EVIDENCE_URL>  with header x-arbx-admin-token
+#   {gate_id, item_key, status: evidenced|failed, evidence_ref, detail, verified_by}
+#
+# Secrets-missing contract: if ARBX_READINESS_EVIDENCE_URL or ARBX_ADMIN_TOKEN
+# is absent, DO NOT fail the job — emit a ::warning:: annotation and skip the
+# POST. The cargo test step still gates: on pull_request it blocks this check
+# run; on push to main it turns main red (post-merge safety net).
+# HONESTY (RULE 00): dep_tree posts status "failed" while duplicate
+# alloy-primitives/revm versions resolve — never fake a clean tree.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'backend/simulator-v2/**'
+      - '.github/workflows/sim-evidence-unit-tests.yml'
+  pull_request:
+    paths:
+      - 'backend/simulator-v2/**'
+      - '.github/workflows/sim-evidence-unit-tests.yml'
+  workflow_dispatch:
+
+# M2 Capa1 Fase 4 — read-only token.
+permissions:
+  contents: read
+
+jobs:
+  unit-tests:
+    name: cargo test -p simulator-v2 --locked → item unit_tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    defaults:
+      run:
+        working-directory: backend
+
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # 1.91.0
+        with:
+          # Toolchain pin: 1.91.0 — see rust.yml; the repo-root
+          # rust-toolchain.toml overrides this input for every cargo
+          # invocation.
+          toolchain: 1.91.0
+
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+        with:
+          workspaces: backend
+
+      - name: cargo test -p simulator-v2 --locked (lib + tests/)
+        id: test
+        shell: bash
+        run: |
+          set -o pipefail
+          cargo test -p simulator-v2 --locked 2>&1 | tee unit-tests.log
+          # Anti-hollow-pass guard (mirrors scripts/run_a4_fork_validation.sh):
+          # cargo exits 0 even when 0 tests ran (filtered / ignored / feature
+          # off). Require at least one libtest result line with >= 1 passed,
+          # or the evidence recorded below would certify nothing.
+          grep -Eq 'test result: ok\. [1-9][0-9]* passed' unit-tests.log
+
+      - name: Record unit_tests evidence (G-SIM-1 registry)
+        if: always() && steps.test.outcome != 'skipped' && steps.test.outcome != 'cancelled'
+        shell: bash
+        env:
+          EVIDENCE_URL: ${{ secrets.ARBX_READINESS_EVIDENCE_URL }}
+          ADMIN_TOKEN: ${{ secrets.ARBX_ADMIN_TOKEN }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          TEST_OUTCOME: ${{ steps.test.outcome }}
+        run: |
+          if [ -z "${EVIDENCE_URL:-}" ] || [ -z "${ADMIN_TOKEN:-}" ]; then
+            echo "::warning::evidence not recorded: operator must provision ARBX_READINESS_EVIDENCE_URL + ARBX_ADMIN_TOKEN"
+            exit 0
+          fi
+
+          if [ "${TEST_OUTCOME}" = "success" ]; then
+            STATUS="evidenced"
+            DETAIL=$(jq -n '{suite: "cargo test -p simulator-v2 --locked"}')
+          else
+            STATUS="failed"
+            TAIL=$(tail -n 50 unit-tests.log || true)
+            DETAIL=$(jq -n --arg tail "${TAIL}" \
+              '{suite: "cargo test -p simulator-v2 --locked", failing_tail: $tail}')
+          fi
+
+          jq -n \
+            --arg gate_id "G-SIM-1" \
+            --arg item_key "unit_tests" \
+            --arg status "${STATUS}" \
+            --arg evidence_ref "${RUN_URL}" \
+            --argjson detail "${DETAIL}" \
+            --arg verified_by "ci:sim-evidence-unit-tests.yml" \
+            '{gate_id: $gate_id, item_key: $item_key, status: $status,
+              evidence_ref: $evidence_ref, detail: $detail,
+              verified_by: $verified_by}' > evidence-payload.json
+
+          curl --fail-with-body -sS --max-time 20 -X POST \
+            -H "Content-Type: application/json" \
+            -H "x-arbx-admin-token: ${ADMIN_TOKEN}" \
+            --data-binary @evidence-payload.json \
+            "${EVIDENCE_URL}"
+
+  dep-tree:
+    name: cargo tree -d (alloy-primitives / revm dedup) → item dep_tree
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    defaults:
+      run:
+        working-directory: backend
+
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # 1.91.0
+        with:
+          toolchain: 1.91.0
+
+      - name: cargo tree -d (capture duplicate packages)
+        id: deptree
+        shell: bash
+        run: |
+          cargo tree -d --locked > dep-tree-duplicates.txt 2> dep-tree-stderr.log || {
+            cat dep-tree-stderr.log >&2
+            echo "::error::cargo tree -d failed"
+            exit 1
+          }
+          # Duplicate packages named EXACTLY alloy-primitives or revm.
+          # Anchored + " v" so alloy-primitives-utils / revm-primitives /
+          # revm-interpreter do NOT match.
+          DUPES=$(grep -E '^(alloy-primitives|revm) v[0-9]' dep-tree-duplicates.txt || true)
+          if [ -n "${DUPES}" ]; then
+            echo "duplicates=true" >> "$GITHUB_OUTPUT"
+            printf '%s\n' "${DUPES}"
+          else
+            echo "duplicates=false" >> "$GITHUB_OUTPUT"
+            echo "no duplicate alloy-primitives/revm versions in the backend dependency graph"
+          fi
+
+      - name: Record dep_tree evidence (G-SIM-1 registry)
+        if: always() && steps.deptree.outcome != 'skipped' && steps.deptree.outcome != 'cancelled'
+        shell: bash
+        env:
+          EVIDENCE_URL: ${{ secrets.ARBX_READINESS_EVIDENCE_URL }}
+          ADMIN_TOKEN: ${{ secrets.ARBX_ADMIN_TOKEN }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          TREE_OUTCOME: ${{ steps.deptree.outcome }}
+        run: |
+          if [ -z "${EVIDENCE_URL:-}" ] || [ -z "${ADMIN_TOKEN:-}" ]; then
+            echo "::warning::evidence not recorded: operator must provision ARBX_READINESS_EVIDENCE_URL + ARBX_ADMIN_TOKEN"
+            exit 0
+          fi
+
+          DUPES=$(grep -E '^(alloy-primitives|revm) v[0-9]' dep-tree-duplicates.txt || true)
+
+          if [ "${TREE_OUTCOME}" = "success" ] && [ -z "${DUPES}" ]; then
+            STATUS="evidenced"
+            DETAIL=$(jq -n '{command: "cargo tree -d --locked",
+                             duplicates: "none (alloy-primitives / revm single-version)"}')
+          elif [ "${TREE_OUTCOME}" = "success" ]; then
+            # HONEST failure: the item stays effectively pending until the
+            # dedup lands. Never fake a clean tree.
+            STATUS="failed"
+            DETAIL=$(jq -n --arg dupes "${DUPES}" \
+              '{command: "cargo tree -d --locked",
+                duplicates: $dupes,
+                note: "duplicate alloy-primitives/revm versions resolve; item stays pending until dedup lands"}')
+          else
+            STATUS="failed"
+            TAIL=$(tail -n 30 dep-tree-stderr.log || true)
+            DETAIL=$(jq -n --arg tail "${TAIL}" \
+              '{command: "cargo tree -d --locked", error_tail: $tail}')
+          fi
+
+          jq -n \
+            --arg gate_id "G-SIM-1" \
+            --arg item_key "dep_tree" \
+            --arg status "${STATUS}" \
+            --arg evidence_ref "${RUN_URL}" \
+            --argjson detail "${DETAIL}" \
+            --arg verified_by "ci:sim-evidence-unit-tests.yml" \
+            '{gate_id: $gate_id, item_key: $item_key, status: $status,
+              evidence_ref: $evidence_ref, detail: $detail,
+              verified_by: $verified_by}' > evidence-payload.json
+
+          curl --fail-with-body -sS --max-time 20 -X POST \
+            -H "Content-Type: application/json" \
+            -H "x-arbx-admin-token: ${ADMIN_TOKEN}" \
+            --data-binary @evidence-payload.json \
+            "${EVIDENCE_URL}"
