@@ -30,40 +30,72 @@ WORK=/tmp/gsim1
 INPUT="$WORK/input.jsonl"
 LOG="$WORK/harness.log"
 
-# ---- 0. Prerequisites (fail-honest) ----------------------------------------
+# ---- 0. Prerequisites (fail-honest, recorded) --------------------------------
+# A missing prerequisite is a REAL benchmark outcome: the row is recorded as
+# status=failed with the exact blocker (RULE 00/R8 — never silently skip, never
+# fabricate a pass). The export still runs so the row carries the real number of
+# available candidate rows at attempt time.
+MISSING_PREREQS=()
 for var_name in ARBITRAGE_EXECUTOR FLASHLOAN_EXECUTOR_1 ARBX_ADMIN_TOKEN; do
   val=$(grep -E "^${var_name}=" "$DEPLOY_PATH/.env" | cut -d= -f2- || true)
   if [ -z "$val" ]; then
-    echo "FATAL: $var_name missing from $DEPLOY_PATH/.env — refusing to run" >&2
-    exit 1
+    MISSING_PREREQS+=("$var_name")
+  else
+    declare "$var_name=$val"
   fi
-  declare "$var_name=$val"
 done
+
+record_failed_prereq() {
+  local why="$1" rows="${2:-0}"
+  curl --fail-with-body -sS --max-time 20 -X POST \
+    -H "Content-Type: application/json" \
+    -H "x-arbx-admin-token: ${ARBX_ADMIN_TOKEN}" \
+    --data-binary @- \
+    "${API_BASE}/admin/readiness-evidence" <<JSON
+{
+  "gate_id": "G-SIM-1",
+  "item_key": "variance_benchmark",
+  "status": "failed",
+  "evidence_ref": "harness $(date -u +%Y-%m-%dT%H:%M:%SZ) host=$(hostname) attempt aborted: ${why}",
+  "detail": {
+    "method": "revm_b_vs_revm_b1_fork",
+    "error": "${why}",
+    "candidate_rows_available": ${rows},
+    "note": "harness + driver ready (sim-core/tests/variance_benchmark.rs); item stays pending until the operator prerequisite lands (deployed FLE+AE executor stack — see docs/operations/SIMULATOR_V2_READINESS.md and searcher-rs/tests/multistep_fork.rs M5 note)"
+  },
+  "verified_by": "operator:gsim1-variance-harness"
+}
+JSON
+  echo "" >&2
+  echo "FATAL: ${why}" >&2
+  exit 1
+}
 
 # Single bare mainnet RPC (LazyDb does direct JSON-RPC; the multi-vendor CSV
 # form of RPC_HTTP_1 is NOT parsed). Default: the same URL the anvil fork uses.
 RPC_URL="${RPC_URL:-$(grep -E '^ANVIL_FORK_URL=' "$DEPLOY_PATH/.env" | cut -d= -f2-)}"
 if [ -z "$RPC_URL" ]; then
-  echo "FATAL: no bare RPC URL (set RPC_URL or ANVIL_FORK_URL in .env)" >&2
-  exit 1
+  MISSING_PREREQS+=("RPC_URL(ANVIL_FORK_URL)")
 fi
 
 # Live gas price from Redis (the same key sim-ctl's RevmBackend reads).
 GAS_PRICE_WEI=$(docker exec "$REDIS_CONTAINER" redis-cli --raw GET arbx:gas_price_wei:1 | tr -d '[:space:]')
 if [ -z "$GAS_PRICE_WEI" ] || [ "$GAS_PRICE_WEI" = "(nil)" ]; then
-  echo "FATAL: Redis arbx:gas_price_wei:1 empty — gas_oracle_worker not publishing" >&2
-  exit 1
+  MISSING_PREREQS+=("GAS_PRICE_WEI(arbx:gas_price_wei:1)")
 fi
 
-# ---- 1. Export real opportunities -------------------------------------------
+# ---- 1. Export real opportunities (always — the row count is real evidence) --
 mkdir -p "$WORK"
 docker exec -i "$PG_CONTAINER" psql -U postgres -d arbitragex -At \
   -f "$DEPLOY_PATH/scripts/gsim1_variance_export.sql" > "$INPUT"
 ROWS=$(grep -c . "$INPUT" || true)
 echo "exported $ROWS candidate rows"
+
+if [ "${#MISSING_PREREQS[@]}" -gt 0 ]; then
+  record_failed_prereq "missing prerequisites: ${MISSING_PREREQS[*]}" "$ROWS"
+fi
 if [ "$ROWS" -lt 100 ]; then
-  echo "FATAL: fewer than 100 exportable rows — run during active market hours" >&2
-  exit 1
+  record_failed_prereq "fewer than 100 exportable rows (${ROWS}) — run during active market hours" "$ROWS"
 fi
 
 # ---- 2. Run the harness in a pinned rust container ---------------------------
