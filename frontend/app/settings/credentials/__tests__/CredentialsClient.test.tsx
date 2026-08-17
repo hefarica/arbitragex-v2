@@ -123,6 +123,9 @@ describe("CredentialsClient — SSR markup", () => {
     expect(html).toContain("Fallback pool — 1/2 responding");
     expect(html).toContain("alchemy");
     expect(html).toContain("otro-2");
+    // MC-RPC-2: the sidebar category badge shows the provider-level ACTIVES
+    // count (counts only — no names) alongside the row-level cred counts.
+    expect(html).toContain("1/2 live");
     // Masked-list contract: full provider URLs (they carry /v2/<key> on
     // alchemy-style endpoints) never travel in metadata — only name/ok/detail.
     // (The bare host "eth-mainnet.g.alchemy.com" DOES appear legitimately as

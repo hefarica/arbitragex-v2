@@ -732,6 +732,18 @@ export function CredentialsClient({ initialSnapshot }: ClientProps) {
             const catRows = cat.creds.map((c) => byKey.get(`${c.provider}:${c.scope}`));
             const validInCat = catRows.filter((r) => r?.status === "valid").length;
             const invalidInCat = catRows.filter((r) => r?.status === "invalid").length;
+            // MC-RPC-2: provider-level ACTIVES count from the persisted
+            // validator breakdown (rpc CSVs) — counts only, no names.
+            const pool = catRows.reduce(
+              (acc, r) => {
+                for (const p of persistedProviders(r?.metadata)) {
+                  acc.total += 1;
+                  if (p.ok) acc.ok += 1;
+                }
+                return acc;
+              },
+              { ok: 0, total: 0 },
+            );
             return (
               <button
                 key={cat.id}
@@ -748,6 +760,20 @@ export function CredentialsClient({ initialSnapshot }: ClientProps) {
                   <span>{cat.creds.length} cred</span>
                   {validInCat > 0 && <span className="text-success">{validInCat}✓</span>}
                   {invalidInCat > 0 && <span className="text-destructive">{invalidInCat}✗</span>}
+                  {pool.total > 0 && (
+                    <span
+                      title={`${pool.ok} of ${pool.total} providers responding (last validation — refresh with Save + validate)`}
+                      className={
+                        pool.ok === pool.total
+                          ? "text-success"
+                          : pool.ok === 0
+                            ? "text-destructive"
+                            : "text-warning"
+                      }
+                    >
+                      {pool.ok}/{pool.total} live
+                    </span>
+                  )}
                 </div>
               </button>
             );
