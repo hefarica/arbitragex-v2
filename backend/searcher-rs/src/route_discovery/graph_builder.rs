@@ -9,13 +9,16 @@
 //! Redis fetch so it can be unit-tested deterministically (the caller injects
 //! `now_ts`).
 //!
-//! ## `log_weight` (Phase-2 forward-compat only)
+//! ## `log_weight` (RU-2: real for both protocols)
 //! For **V2** we compute `−ln((1−fee)·rate)` per direction from reserves
-//! (cheap, exact). For **V3** the precise spot rate needs `sqrtPriceX96` tick
-//! math; per the plan's guardrail #8 we leave `log_weight = None` for V3 in
-//! Phase 1 rather than ship incomplete pricing. Phase 1 ranks on nothing — the
-//! weight is stored only so the Phase-2 MMBF can consume it without rebuilding.
+//! (cheap, exact). For **V3** we compute it from the slot0 snapshot via
+//! `amm_math::v3_spot_snapshot`: marginal rate `(sqrtPriceX96/2^96)²` adjusted
+//! by token decimals (the price AT the active tick — depth across ticks stays
+//! on the QuoterV2/sizing path). A snapshot we cannot price (zero/unparseable
+//! sqrtPrice, non-finite magnitude) rejects the pool with `invalid_slot0` —
+//! never a synthetic weight (R8).
 
+use crate::amm_math::v3_spot_snapshot;
 use crate::impact_index::PoolRef;
 use crate::reserves::{
     get_reserves, get_token_meta, get_v3_slot0, ReservesEntry, TokenMeta, V3Slot0Entry,
@@ -177,15 +180,38 @@ pub fn build_edges_for_pool(
                 if now_ts.saturating_sub(s.ts) > cfg.max_age_secs {
                     return Err("stale_slot0".to_string());
                 }
-                let liq = s
+                let liq_raw: u128 = s
                     .liquidity
-                    .parse::<f64>()
+                    .parse()
                     .map_err(|_| "invalid_slot0".to_string())?;
-                if liq <= 0.0 {
+                if liq_raw == 0 {
                     return Err("missing_slot0".to_string());
                 }
-                // V3 spot-rate weight deferred to Phase 2 (guardrail #8): None.
-                (liq, None, None, s.ts, 0u64)
+                let sp_raw: u128 = s
+                    .sqrt_price_x96
+                    .parse()
+                    .map_err(|_| "invalid_slot0".to_string())?;
+                // Real V3 spot-rate weight (RU-2): (√P)² from slot0 → rate →
+                // −ln((1−fee)·rate), the same formula as V2. Fail-honest: a
+                // snapshot we cannot price (zero/uninitialized sqrtPrice,
+                // non-finite magnitudes) rejects the pool — never a synthetic
+                // weight (R8).
+                let snap = v3_spot_snapshot(sp_raw, liq_raw, dec0, dec1)
+                    .ok_or_else(|| "invalid_slot0".to_string())?;
+                // V3 fee tier arrives in the on-chain uint24 convention —
+                // millionths (100/500/3000/10000 pips from PG `pools.fee_tier`),
+                // NOT the V2 basis-point convention (500 pips = 0.05%, not 5%).
+                let fee = pool
+                    .fee_bps
+                    .map(|p| p as f64 / 1_000_000.0)
+                    .unwrap_or(0.003); // modal tier 3000 pips = 0.30%
+                (
+                    snap.virtual_reserves_hint,
+                    log_weight(fee, snap.rate_01),
+                    log_weight(fee, 1.0 / snap.rate_01),
+                    s.ts,
+                    0u64,
+                )
             }
             ProtocolType::Curve | ProtocolType::Balancer | ProtocolType::Unknown => {
                 return Err("unsupported_protocol".to_string());
@@ -388,8 +414,11 @@ mod tests {
     }
 
     #[test]
-    fn v3_pool_yields_edges_with_liquidity_but_no_log_weight() {
-        let p = v3_pool();
+    fn v3_pool_yields_edges_with_real_log_weight() {
+        // USDC(6)/WETH(18) 0.05% pool: sqrtPriceX96 ≈ 1.7727e33 → rate_01
+        // (WETH per USDC) ≈ 5.0054e-4. RU-2: the V3 edges now carry the SAME
+        // −ln((1−fee)·rate) weight as V2, not a deferred None.
+        let p = v3_pool(); // fee_bps = Some(500) — uint24 pips = 0.05%
         let (e0, e1) = build_edges_for_pool(
             &p,
             None,
@@ -401,11 +430,124 @@ mod tests {
         )
         .unwrap();
         assert!(e0.liquidity_hint.unwrap() > 0.0);
-        // Guardrail #8: V3 log_weight deferred to Phase 2.
-        assert!(e0.log_weight.is_none());
-        assert!(e1.log_weight.is_none());
+        let w0 = e0.log_weight.expect("V3 zero_for_one weight");
+        let w1 = e1.log_weight.expect("V3 one_for_zero weight");
+        assert!(w0.is_finite() && w1.is_finite());
+        // USDC→WETH: tiny rate → large positive weight (~7.60).
+        assert!(
+            (7.5..7.7).contains(&w0),
+            "w0={w0} expected ~7.60 (rate ≈ 5.0054e-4 WETH/USDC)"
+        );
+        // WETH→USDC: huge rate → large negative weight (~−7.60).
+        assert!(
+            (-7.7..-7.5).contains(&w1),
+            "w1={w1} expected ~−7.60"
+        );
         assert_eq!(e0.protocol, ProtocolType::V3);
         assert_eq!(e0.blk, 0); // V3 slot0 carries no block.
+    }
+
+    #[test]
+    fn v3_log_weight_sum_pins_fee_in_pips_not_bps() {
+        // −ln((1−f)·r) − ln((1−f)/r) = −2·ln(1−f) — the rate cancels, so this
+        // pins the FEE alone. fee_bps=Some(500) is the uint24 tier (pips):
+        // 500/1e6 = 0.05% ⇒ sum ≈ 0.0010003. If it were misread as bps
+        // (500/1e4 = 5%) the sum would be ≈ 0.1026 — 100× off.
+        let p = v3_pool();
+        let (e0, e1) = build_edges_for_pool(
+            &p,
+            None,
+            Some(&slot0(1000)),
+            Some(&meta(6)),
+            Some(&meta(18)),
+            1000,
+            &GraphBuildConfig::default(),
+        )
+        .unwrap();
+        let sum = e0.log_weight.unwrap() + e1.log_weight.unwrap();
+        let expected = -2.0 * (1.0 - 0.0005f64).ln();
+        assert!(
+            (sum - expected).abs() < 1e-9,
+            "sum={sum} expected={expected} (fee must be 500 pips = 0.05%)"
+        );
+    }
+
+    #[test]
+    fn v3_at_unit_price_weight_is_minus_fee_log() {
+        // sqrtPriceX96 = 2^96 with equal decimals → rate exactly 1.0 ⇒ both
+        // directions weigh −ln(1−fee) = 0.000500125 (fee 500 pips).
+        let p = v3_pool();
+        let s = V3Slot0Entry {
+            sqrt_price_x96: (1u128 << 96).to_string(),
+            liquidity: "1000000000000000000".to_string(),
+            ts: 1000,
+        };
+        let (e0, e1) = build_edges_for_pool(
+            &p,
+            None,
+            Some(&s),
+            Some(&meta(18)),
+            Some(&meta(18)),
+            1000,
+            &GraphBuildConfig::default(),
+        )
+        .unwrap();
+        let expected = -(1.0 - 0.0005f64).ln();
+        assert!((e0.log_weight.unwrap() - expected).abs() < 1e-12);
+        assert!((e1.log_weight.unwrap() - expected).abs() < 1e-12);
+        // Virtual-reserves hint at 1:1 with L = 1e18, 18 decimals: x_v = y_v =
+        // 1.0 token ⇒ hint = 2.0 (unit-consistent with the V2 r0+r1 hint).
+        assert!((e0.liquidity_hint.unwrap() - 2.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn v3_unpriceable_snapshot_rejects_never_synthetic() {
+        // Zero sqrtPrice (uninitialized), garbage, or > u128 (uint160 overflow
+        // guard) — all reject with `invalid_slot0`; zero liquidity keeps the
+        // historical `missing_slot0` reason. None of these may yield an edge
+        // with a fabricated weight (R8).
+        let p = v3_pool();
+        for (sqrt, reason) in [
+            ("0", "invalid_slot0"),
+            ("not-a-number", "invalid_slot0"),
+            (
+                "340282366920938463463374607431768211456", // 2^128 > u128::MAX
+                "invalid_slot0",
+            ),
+        ] {
+            let s = V3Slot0Entry {
+                sqrt_price_x96: sqrt.to_string(),
+                liquidity: "548640024015773269".to_string(),
+                ts: 1000,
+            };
+            let err = build_edges_for_pool(
+                &p,
+                None,
+                Some(&s),
+                Some(&meta(6)),
+                Some(&meta(18)),
+                1000,
+                &GraphBuildConfig::default(),
+            )
+            .unwrap_err();
+            assert_eq!(err, reason, "sqrt={sqrt}");
+        }
+        let s0liq = V3Slot0Entry {
+            sqrt_price_x96: "1772712074874819459120282715246463".to_string(),
+            liquidity: "0".to_string(),
+            ts: 1000,
+        };
+        let err = build_edges_for_pool(
+            &p,
+            None,
+            Some(&s0liq),
+            Some(&meta(6)),
+            Some(&meta(18)),
+            1000,
+            &GraphBuildConfig::default(),
+        )
+        .unwrap_err();
+        assert_eq!(err, "missing_slot0");
     }
 
     #[test]
