@@ -18,13 +18,22 @@ import type { Pool } from "pg";
 import {
   CredentialTestSchema,
   CredentialUpsertSchema,
+  CredentialBulkRequestSchema,
   CredentialProvider,
+  type CredentialBulkItem,
+  type CredentialBulkRowResult,
+  type CredentialRowPublic,
+  type CredentialStatus,
+  type CredentialTestResult,
 } from "@arbx/shared";
 import { runValidator } from "../credentials/validators.js";
 import {
   listCredentials,
   upsertCredential,
   deleteCredential,
+  readCredentialForBulk,
+  type StoredCredentialRow,
+  type UpsertInput,
 } from "../credentials/store.js";
 
 interface Deps {
@@ -53,6 +62,136 @@ function sanitizeProviderBreakdown(
       detail: typeof p["detail"] === "string" ? p["detail"].slice(0, 80) : "",
     }));
   return rows.length > 0 ? rows : undefined;
+}
+
+/**
+ * MC-RPC-1 shared by PUT and bulk: merge the sanitized per-provider breakdown
+ * (name/ok/detail — URLs with keys stripped) into the metadata that gets
+ * persisted, under the namespaced `_validation` key.
+ */
+function buildPersistMetadata(
+  itemMetadata: Record<string, unknown>,
+  validationProviders: Array<{ name: string; ok: boolean; detail: string }> | undefined,
+  validationError: string | null,
+): Record<string, unknown> {
+  return {
+    ...itemMetadata,
+    ...(validationProviders
+      ? { _validation: { message: validationError, providers: validationProviders } }
+      : {}),
+  };
+}
+
+// ── RunFullSyncCycle FASE 1: bulk row processor (DI for tests) ─────────────
+
+export interface BulkRowContext {
+  readStored: (
+    provider: CredentialProvider,
+    scope: string,
+  ) => Promise<StoredCredentialRow | null>;
+  validate: typeof runValidator;
+  upsert: (input: UpsertInput) => Promise<CredentialRowPublic>;
+  logger: Deps["logger"];
+}
+
+/** Canonical JSON (sorted keys, recursive) for metadata equality checks. */
+function canonicalJson(v: unknown): string {
+  if (Array.isArray(v)) return `[${v.map(canonicalJson).join(",")}]`;
+  if (v !== null && typeof v === "object") {
+    const o = v as Record<string, unknown>;
+    return `{${Object.keys(o)
+      .filter((k) => k !== "_validation") // server-managed — never user-compared
+      .sort()
+      .map((k) => `${JSON.stringify(k)}:${canonicalJson(o[k])}`)
+      .join(",")}}`;
+  }
+  return JSON.stringify(v) ?? "null";
+}
+
+/**
+ * Process ONE bulk row through the EXACT manual pipeline (runValidator →
+ * upsertCredential). Idempotency: when the stored secret is byte-identical and
+ * the metadata (minus `_validation`) is unchanged, the row is reported `noop`
+ * and NOTHING is written — updated_at does not rotate on re-runs.
+ */
+export async function processCredentialBulkRow(
+  ctx: BulkRowContext,
+  item: CredentialBulkItem,
+  opts: { dryRun: boolean; actor: string },
+): Promise<CredentialBulkRowResult> {
+  const stored = await ctx.readStored(item.provider, item.scope);
+
+  // Effective secret: the item's, else the stored one (metadata-only refresh).
+  const secret = item.secret_value ?? stored?.secret ?? null;
+  if (!secret) {
+    return {
+      provider: item.provider,
+      scope: item.scope,
+      action: "invalid",
+      error: "no secret provided and none stored",
+    };
+  }
+
+  const secretChanged = !stored?.secret || stored.secret !== secret;
+  const metaChanged =
+    !stored || canonicalJson(item.metadata) !== canonicalJson(stored.metadata);
+
+  // Strict idempotency (apply path only): nothing changed ⇒ no write at all.
+  if (!opts.dryRun && stored && !secretChanged && !metaChanged) {
+    return { provider: item.provider, scope: item.scope, action: "noop", status: stored.status };
+  }
+
+  let test: CredentialTestResult;
+  try {
+    test = await ctx.validate(item.provider, item.scope, secret, item.metadata);
+  } catch (e) {
+    test = {
+      status: "invalid",
+      message: `validator_threw: ${(e as Error).message.slice(0, 200)}`,
+      tested_at: new Date().toISOString(),
+    };
+  }
+  const providers = sanitizeProviderBreakdown(test.details);
+  const status: CredentialStatus = test.status === "valid" ? "valid" : "invalid";
+
+  if (opts.dryRun) {
+    // Homologation pass: report exactly what WOULD happen. No persistence.
+    return {
+      provider: item.provider,
+      scope: item.scope,
+      action: status === "valid" ? "validated" : "invalid",
+      status,
+      message: test.message,
+      providers,
+    };
+  }
+
+  const row = await ctx.upsert({
+    provider: item.provider,
+    scope: item.scope,
+    display_name: item.display_name,
+    secret_value: secret,
+    metadata: buildPersistMetadata(item.metadata, providers, status === "valid" ? null : test.message),
+    status,
+    validation_error: status === "valid" ? null : test.message,
+    actor: opts.actor,
+  });
+  ctx.logger.info({
+    event: "credentials.bulk_row",
+    provider: item.provider,
+    scope: item.scope,
+    action: "updated",
+    status,
+    actor: opts.actor,
+  });
+  return {
+    provider: item.provider,
+    scope: item.scope,
+    action: "updated",
+    status: row.status,
+    message: status === "valid" ? test.message : (row.last_validation_error ?? test.message),
+    providers,
+  };
 }
 
 export function buildCredentialsRouter(deps: Deps): Router {
@@ -166,16 +305,7 @@ export function buildCredentialsRouter(deps: Deps): Router {
         scope,
         display_name: display_name,
         secret_value,
-        metadata: {
-          ...metadata,
-          // MC-RPC-1: persist the sanitized per-provider fallback-pool
-          // breakdown so the UI renders every provider's state without a
-          // live re-test. URLs (API keys) are stripped server-side — the
-          // masked-list contract must hold for metadata too.
-          ...(validationProviders
-            ? { _validation: { message: validationError, providers: validationProviders } }
-            : {}),
-        },
+        metadata: buildPersistMetadata(metadata, validationProviders, validationError),
         status: validationStatus,
         validation_error: validationError,
         actor,
@@ -229,6 +359,62 @@ export function buildCredentialsRouter(deps: Deps): Router {
       }
     },
   );
+
+  // ── POST bulk (RunFullSyncCycle FASE 1 — operator macro entrance) ──────
+  // Same validator, same upsert, same persistence contract as the manual PUT:
+  // the macro is the manual path run in a batch. One bad row NEVER blocks the
+  // rest — results are per-row and fail-honest. dry_run validates everything
+  // and persists nothing (homologation pass).
+  r.post("/admin/credentials/bulk", deps.requireAdminToken(deps.adminToken), async (req, res) => {
+    if (!deps.pool) {
+      res.status(503).json({ error: "db_unavailable" });
+      return;
+    }
+    const parsed = CredentialBulkRequestSchema.safeParse(req.body);
+    if (!parsed.success) {
+      res.status(400).json({ error: "invalid_request", details: parsed.error.flatten() });
+      return;
+    }
+    const { items, dry_run } = parsed.data;
+    const actor = (req.header("x-arbx-actor") ?? "operator:macro").slice(0, 64);
+
+    const ctx: BulkRowContext = {
+      readStored: (provider, scope) => readCredentialForBulk(deps.pool!, provider, scope),
+      validate: runValidator,
+      upsert: (input) => upsertCredential(deps.pool!, input),
+      logger: deps.logger,
+    };
+
+    const results: CredentialBulkRowResult[] = [];
+    for (const item of items) {
+      try {
+        results.push(await processCredentialBulkRow(ctx, item, { dryRun: dry_run, actor }));
+      } catch (e) {
+        // Granular fail-honest: a row-level crash is reported on that row only.
+        results.push({
+          provider: item.provider,
+          scope: item.scope,
+          action: "error",
+          error: (e as Error).message.slice(0, 200),
+        });
+      }
+    }
+
+    const summary = {
+      total: results.length,
+      updated: results.filter((x) => x.action === "updated").length,
+      noop: results.filter((x) => x.action === "noop").length,
+      invalid: results.filter((x) => x.action === "invalid").length,
+      error: results.filter((x) => x.action === "error").length,
+    };
+    deps.logger.info({
+      event: "credentials.bulk",
+      dry_run,
+      actor,
+      ...summary,
+    });
+    res.status(200).json({ dry_run, summary, items: results });
+  });
 
   return r;
 }
