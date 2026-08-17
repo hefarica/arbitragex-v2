@@ -48,7 +48,7 @@ jobs:
         # until each --ignore below is re-justified or remediated. Keep this
         # date in sync with the allowlist comment header below.
         env:
-          ALLOWLIST_EXPIRES: "2026-07-31"
+          ALLOWLIST_EXPIRES: "2026-09-30"
         run: |
           today="$(date -u +%F)"
           if [[ "$today" > "$ALLOWLIST_EXPIRES" ]]; then
@@ -155,6 +155,35 @@ jobs:
           #                                     engine is a local shadow/read-only tool. cargo audit flags
           #                                     by crate version, not feature/usage → false-positive here.
           #                                     Plan: remediate on the rmcp 0.3→1.x migration
+          #
+          # ── RENEWAL 2026-08-17 (operator-executed, ID CI-GATE-RELIABILITY) ──
+          # Re-verified ALL 15 prior ignores against backend/Cargo.lock (present,
+          # same versions). Remediated in this renewal: RUSTSEC-2026-0220 (ruint
+          # 1.19.0 -> 1.20.0 in Cargo.lock — REMOVED from list, no ignore needed).
+          # NEW ignores (4), each with exposure + plan:
+          #   RUSTSEC-2026-0235  rkyv 0.7.46   (vuln)   Transitivo target-specific
+          #                                     (cargo tree -i rkyv: nothing on host
+          #                                     target). Fix = rkyv >=0.8 = MAJOR —
+          #                                     requires the alloy/revm major bump
+          #                                     sprint. Plan: retire with alloy bump.
+          #   RUSTSEC-2026-0189  rmcp 0.3.2     (vuln)  DIRECT dep of mcp-sim-engine
+          #                                     (MCP stdio server, NOT the trading
+          #                                     hot-path; paper/shadow only). Fix
+          #                                     >=1.4.0 = MAJOR breaking (macros/API).
+          #                                     Plan: mcp-sim-engine upgrade sprint
+          #                                     (dependabot #294 bumps rmcp 3.1.0).
+          #   RUSTSEC-2026-0249  smartstring 1.0.1 (unmaintained WARN) Vía sqlx 0.7.4
+          #                                     subtree. Dies with the sqlx ->0.8
+          #                                     upgrade already tracked by
+          #                                     RUSTSEC-2024-0363 below. No fix in
+          #                                     0.7 line. Plan: retire with sqlx 0.8.
+          #   RUSTSEC-2026-0253  lru 0.12.5 + 0.16.4 (unsound WARN) Same family as
+          #                                     2026-0002 (IterMut Stacked Borrows);
+          #                                     advisory now also covers 0.16.x.
+          #                                     No fixed upgrade available upstream.
+          #                                     Plan: monitor upstream lru release.
+          # Expiry bumped 2026-07-31 -> 2026-09-30 (60d) — next cliff forces
+          # another per-id re-verification. NEVER extend without re-verifying.
           #                                     (dependabot #145; breaking SDK bump, separate sprint;
           #                                     no security urgency).
           RUSTSEC_IGNORES: >-
@@ -173,6 +202,10 @@ jobs:
             --ignore RUSTSEC-2026-0104
             --ignore RUSTSEC-2024-0363
             --ignore RUSTSEC-2026-0173
+            --ignore RUSTSEC-2026-0235
+            --ignore RUSTSEC-2026-0189
+            --ignore RUSTSEC-2026-0249
+            --ignore RUSTSEC-2026-0253
             --ignore RUSTSEC-2026-0189
 
   gitleaks:
