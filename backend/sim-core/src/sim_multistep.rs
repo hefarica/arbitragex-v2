@@ -568,10 +568,12 @@ pub fn execute_multistep_revm(
     //    built, because the plan's wrapped-flash calldata encodes the leg-1
     //    backward `amountIn` from the REAL intermediate quoted off the forward
     //    leg — and that quote is a REVM `getAmountsOut` view call. Reuse the
-    //    simulator's pinned block when available; otherwise fall back to `None`
-    //    (LazyDb resolves "latest" once and memoizes — same convention
+    //    simulator's pinned block when available (`SimulatorV2::with_block`,
+    //    used by the G-SIM-1 variance-benchmark replay so both sides of the
+    //    comparison see deterministic chain state); otherwise fall back to
+    //    `None` (LazyDb resolves "latest" once and memoizes — same convention
     //    SimulatorV2 uses).
-    let lazy = match simulator_v2::LazyDb::new(&simulator.rpc_url, None) {
+    let lazy = match simulator_v2::LazyDb::new(&simulator.rpc_url, simulator.pinned_block()) {
         Ok(db) => db,
         Err(e) => {
             warn!(event = "multistep.lazy_db_failed", error = %e);
