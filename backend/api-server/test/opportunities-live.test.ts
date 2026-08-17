@@ -94,6 +94,10 @@ beforeAll(async () => {
     // deterministic breakage latent since the route started selecting the
     // column, surfaced on every PR run (CI-GATE-RELIABILITY part 3).
     "099_opportunities_route_metadata.sql",
+    // 102 formalizes opportunities.cartridge_id (existed in PROD only via a
+    // manual ALTER — schema drift; the live route SELECTs it). Same drift
+    // family as 099 above: without it the testcontainer query fails 503.
+    "102_opportunities_cartridge_id.sql",
   ]) {
     await pool.query(loadMigration(f));
   }
