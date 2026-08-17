@@ -95,6 +95,7 @@ import { mountTokenIconRoutes } from "./routes/token-icon.js";
 import { buildOperationsRouter } from "./routes/operations.js";
 import { buildStrategyCatalogRouter } from "./routes/strategy-catalog.js";
 import { buildCredentialsRouter } from "./routes/credentials.js";
+import { rehydrateSvcCredMirror } from "./credentials/projection.js";
 import { mountOpportunitiesLive } from "./routes/opportunities-live.js";
 import { mountDexes } from "./routes/dexes.js";
 import { mountPools } from "./routes/pools.js";
@@ -1325,6 +1326,12 @@ app.use(buildTradingConfigRouter({
 // boot and never throws (handles its own errors). Replays existing PG values only.
 void rehydrateTradingConfigMirror({ pool, redis, logger });
 
+// RunFullSyncCycle FASE 3: same boot-rehydration contract for the service
+// credential projection (arbx:svc_cred:<provider>:<scope>) — replays existing
+// PG rows only, fire-and-forget, never throws. Runtime consumers read this
+// projection with .env as fallback (precedence documented in projection.ts).
+void rehydrateSvcCredMirror({ pool, redis, logger });
+
 // ── Cartridge Filters (Idea 1 Phase-1 foundation — operator route pre-filter prefs) ─
 // Redis-only stored preference (arbx:cartridge:filters:<chain>). NOT yet consumed by
 // searcher-rs; the route pre-filter consumer + PG durability are a Phase 2 follow-up.
@@ -1358,6 +1365,7 @@ app.use(buildStrategyCatalogRouter({ pool, logger }));
 // after the api-server actually executes the provider-specific test.
 app.use(buildCredentialsRouter({
   pool,
+  redis,
   requireAdminToken,
   adminToken: ARBX_ADMIN_TOKEN,
   logger,
