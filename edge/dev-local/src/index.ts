@@ -962,6 +962,8 @@ app.delete("/admin/cartridges/:slug", (req, res) => {
 // all go through adminProxy too.
 app.get("/api/credentials", (req, res) => adminProxy("/api/v1/credentials", req, res, "GET"));
 app.post("/admin/credentials/test", (req, res) => adminProxy("/admin/credentials/test", req, res, "POST"));
+// RunFullSyncCycle FASE 1 — keep dev-local at parity with the canonical worker.
+app.post("/admin/credentials/bulk", (req, res) => adminProxy("/admin/credentials/bulk", req, res, "POST"));
 app.put("/admin/credentials", (req, res) => adminProxy("/admin/credentials", req, res, "PUT"));
 app.delete("/admin/credentials/:provider/:scope", (req, res) => {
   const provider = String(req.params.provider ?? "");

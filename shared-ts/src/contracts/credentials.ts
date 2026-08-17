@@ -91,3 +91,62 @@ export const CredentialsListResponseSchema = z.object({
   ts: z.string().datetime(),
 });
 export type CredentialsListResponse = z.infer<typeof CredentialsListResponseSchema>;
+
+/**
+ * RunFullSyncCycle FASE 1 — bulk upsert (operator macro).
+ * One row per item; same validator + same upsert as the manual PUT. One bad
+ * row never blocks the rest (fail-honest granular results).
+ */
+export const CredentialBulkItemSchema = z.object({
+  provider: CredentialProvider,
+  scope: CredentialScope,
+  display_name: z.string().min(1).max(200).optional(),
+  // Absent/null = keep the stored secret (metadata-only refresh).
+  secret_value: z.string().min(1).max(2048).nullable().optional(),
+  metadata: z.record(z.unknown()).default({}),
+});
+export type CredentialBulkItem = z.infer<typeof CredentialBulkItemSchema>;
+
+export const CredentialBulkRequestSchema = z.object({
+  items: z.array(CredentialBulkItemSchema).min(1).max(200),
+  // dry_run=true validates everything and persists NOTHING (homologation pass).
+  dry_run: z.boolean().default(false),
+});
+export type CredentialBulkRequest = z.infer<typeof CredentialBulkRequestSchema>;
+
+export const CredentialBulkAction = z.enum(["updated", "noop", "validated", "invalid", "error"]);
+export type CredentialBulkAction = z.infer<typeof CredentialBulkAction>;
+
+export const CredentialBulkRowResultSchema = z.object({
+  provider: z.string(),
+  scope: z.string(),
+  action: CredentialBulkAction,
+  status: CredentialStatus.optional(),
+  message: z.string().optional(),
+  // Sanitized per-provider breakdown for rpc_* CSV arrays (name/ok/detail —
+  // URLs with keys are stripped server-side).
+  providers: z
+    .array(
+      z.object({
+        name: z.string(),
+        ok: z.boolean(),
+        detail: z.string(),
+      }),
+    )
+    .optional(),
+  error: z.string().optional(),
+});
+export type CredentialBulkRowResult = z.infer<typeof CredentialBulkRowResultSchema>;
+
+export const CredentialBulkResponseSchema = z.object({
+  dry_run: z.boolean(),
+  summary: z.object({
+    total: z.number().int(),
+    updated: z.number().int(),
+    noop: z.number().int(),
+    invalid: z.number().int(),
+    error: z.number().int(),
+  }),
+  items: z.array(CredentialBulkRowResultSchema),
+});
+export type CredentialBulkResponse = z.infer<typeof CredentialBulkResponseSchema>;
