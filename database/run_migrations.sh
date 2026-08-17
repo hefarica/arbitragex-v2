@@ -16,8 +16,15 @@ PGDB=arbitragex
 CONTAINER="${PG_CONTAINER:-arbitragex-v2-postgres-1}"
 MIG_DIR="${MIGRATIONS_DIR:-/opt/arbitragex-v2/database/migrations}"
 
+# FREEZE-01/02 (2026-08-17): a migration statement that cannot acquire its lock
+# within 10s FAILS FAST instead of queueing — a queued DDL on a hot table
+# starves every INSERT behind it (PG fair lock queue; two pipeline freezes).
+# Deploy aborts honestly and retries; migrations are idempotent. Deliberately
+# NO statement_timeout: legitimate long index builds/backfills must finish.
+export PGOPTIONS="${PGOPTIONS:-} -c lock_timeout=10s"
+
 run_sql() {
-  docker exec "$CONTAINER" psql -U "$PGUSER" -d "$PGDB" -v ON_ERROR_STOP=1 -c "$1"
+  docker exec -e PGOPTIONS="$PGOPTIONS" "$CONTAINER" psql -U "$PGUSER" -d "$PGDB" -v ON_ERROR_STOP=1 -c "$1"
 }
 
 run_file() {
@@ -30,7 +37,7 @@ run_file() {
   local MIG_PW="${ARBX_MIGRATOR_PW:-arbx_migrator_dev_only}"
   local RW_PW="${ARBX_RW_PW:-arbx_rw_dev_only}"
   local RO_PW="${ARBX_RO_PW:-arbx_ro_dev_only}"
-  docker exec -i "$CONTAINER" psql -U "$PGUSER" -d "$PGDB" \
+  docker exec -i -e PGOPTIONS="$PGOPTIONS" "$CONTAINER" psql -U "$PGUSER" -d "$PGDB" \
     -v ON_ERROR_STOP=1 \
     -v arbx_migrator_pw="$MIG_PW" \
     -v arbx_rw_pw="$RW_PW" \
