@@ -113,6 +113,9 @@ scripts/extract-skills.js
 ArbitrageX_Secrets_Config.xlsx
 .claude/settings.local.json
 .claude/settings.local.json.bak
+# SEC-CCR-TOKEN-1 (2026-08-17): local harness config carries the live CCR
+# auth token — NEVER tracked. Template: .claude/settings.example.json
+.claude/settings.json
 
 # RunFullSyncCycle (FASE 2): operator credential manifests NEVER live in the repo
 # (env ARBX_CRED_MANIFEST points at a path outside the checkout). Defensive

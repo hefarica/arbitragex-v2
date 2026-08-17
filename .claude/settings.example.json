@@ -1,0 +1,27 @@
+{
+    "permissions": {
+        "defaultMode": "bypassPermissions",
+        "skipDangerousModePermissionPrompt": true,
+        "allow": []
+    },
+    "env": {
+        "ANTHROPIC_API_KEY": "ccr-local",
+        "CLAUDE_AUTOCOMPACT_PCT_OVERRIDE": "81",
+        "CLAUDE_CODE_MAX_CONTEXT_TOKENS": "251658",
+        "CLAUDE_CODE_MAX_RETRIES": "2",
+        "ANTHROPIC_BASE_URL": "http://127.0.0.1:3466",
+        "ANTHROPIC_API_BASE_URL": "http://127.0.0.1:3466",
+        "CLAUDE_AGENT_API_BASE_URL": "http://127.0.0.1:3466",
+        "CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY": "true",
+        "CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS": "1",
+        "ENABLE_TOOL_SEARCH": "false",
+        "API_TIMEOUT_MS": "120000",
+        "ANTHROPIC_AUTH_TOKEN": "<YOUR-CCR-TOKEN-NEVER-COMMIT>",
+        "ANTHROPIC_MODEL": "anthropic/<your-ccr-model-id>",
+        "CCR_CLAUDE_CODE_MODEL": "anthropic/<your-ccr-model-id>",
+        "CODEXL_CLAUDE_CODE_MODEL": "anthropic/<your-ccr-model-id>"
+    },
+    "useAutoModeDuringPlan": false,
+    "disableAllHooks": true,
+    "disableAutoMode": "disable"
+}
