@@ -10,12 +10,14 @@ on:
     paths:
       - 'monitoring/prometheus/**'
       - 'monitoring/alerts.rules.yml'
+      - 'monitoring/tests/**'
       - '.github/workflows/monitoring-config.yml'
   pull_request:
     branches: [main]
     paths:
       - 'monitoring/prometheus/**'
       - 'monitoring/alerts.rules.yml'
+      - 'monitoring/tests/**'
       - '.github/workflows/monitoring-config.yml'
 
 permissions:
@@ -53,6 +55,13 @@ jobs:
 
       - name: Check alert rules
         run: promtool check rules monitoring/alerts.rules.yml
+
+      - name: Unit-test alert rules (synthetic series)
+        # H2 (FREEZE-01): `check rules` only validates syntax; this replays
+        # PIPELINE_SILENCE against synthetic gauge series (frozen vs healthy
+        # cadence) to pin the threshold behaviour. Run from repo root — the
+        # rule_files paths inside the test file resolve against the CWD.
+        run: promtool test rules monitoring/tests/pipeline_silence_test.yml
 
       - name: Check prometheus.yml (dev)
         run: promtool check config monitoring/prometheus/prometheus.yml

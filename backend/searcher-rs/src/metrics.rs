@@ -380,6 +380,42 @@ pub static LEGACY_WORKERS_DISABLED_COUNT: Lazy<IntGauge> = Lazy::new(|| {
 });
 
 // ---------------------------------------------------------------------------
+// pipeline_last_opportunity_insert_unixtime  (H2 / FREEZE-01)
+// ---------------------------------------------------------------------------
+
+/// Gauge: unix timestamp (seconds) of the last successful `opportunities`
+/// INSERT committed by the searcher-rs persistence writer
+/// (`persistence::insert_opportunity_with_route` — the single funnel every
+/// opportunities write in this crate goes through).
+///
+/// Backs the PIPELINE_SILENCE alert in monitoring/alerts.rules.yml:
+///   time() - max(arbx_pipeline_last_opportunity_insert_unixtime) > 600
+///
+/// Motivation (incident FREEZE-01, 2026-08-16): opportunities was frozen 21h
+/// while a yellow readiness signal sat unread. This gauge converts a 21h
+/// freeze into a 10-minute alert.
+///
+/// RULE 00: set ONLY after a real, committed INSERT that landed a row
+/// (`rows_affected() > 0` — ON CONFLICT DO NOTHING duplicates do not tick) —
+/// never fabricated ticks. Seeded at boot to boot time in
+/// `init_orchestrator_metrics()` so a fresh process gets the full 10-minute
+/// grace window instead of alerting instantly.
+///
+/// Scope: tracks the canonical searcher-rs writer only. The api-server
+/// route-discovery bridge archiver also INSERTs into `opportunities`
+/// (dex_a='route_discovery'); it deliberately does NOT touch this gauge —
+/// if it did, a busy route-discovery stream would mask a frozen searcher.
+pub static PIPELINE_LAST_OPPORTUNITY_INSERT_UNIXTIME: Lazy<IntGauge> = Lazy::new(|| {
+    let g = IntGauge::new(
+        "arbx_pipeline_last_opportunity_insert_unixtime",
+        "Unix seconds of the last opportunities INSERT committed by searcher-rs (seeded at boot; real inserts only)",
+    )
+    .expect("metric");
+    REGISTRY.register(Box::new(g.clone())).expect("register");
+    g
+});
+
+// ---------------------------------------------------------------------------
 // Initialiser — call once at boot (main.rs after init_metrics())
 // ---------------------------------------------------------------------------
 
@@ -404,6 +440,10 @@ pub fn init_orchestrator_metrics() {
     let _ = &*POSITIONS_WATCHLIST_EMPTY_TOTAL;
     let _ = &*LEGACY_WORKER_DISABLED_TOTAL;
     let _ = &*LEGACY_WORKERS_DISABLED_COUNT;
+    // H2 (FREEZE-01): force-register the pipeline-silence gauge and seed it at
+    // boot time — the watchdog then measures silence FROM boot, so a fresh
+    // process does not instantly alert.
+    PIPELINE_LAST_OPPORTUNITY_INSERT_UNIXTIME.set(chrono::Utc::now().timestamp());
 }
 
 // ---------------------------------------------------------------------------
@@ -629,5 +669,36 @@ mod tests {
         assert_eq!(workers[0], "triangular_worker");
         assert_eq!(workers[1], "flashloan_arb_worker");
         assert_eq!(workers[2], "liquidation_worker");
+    }
+
+    // ── metrics::tests::pipeline_silence_gauge_name_pinned ──────────────────
+    //
+    // H2 (FREEZE-01): the PIPELINE_SILENCE alert in monitoring/alerts.rules.yml
+    // (behaviour-tested by promtool in CI: monitoring/tests/pipeline_silence_test.yml)
+    // references this exact metric name in its expr. If the exporter name drifts,
+    // the alert goes permanently stale (never fires) with zero compile errors —
+    // pin the string on the exporter side so a rename breaks this test first.
+
+    #[test]
+    fn pipeline_silence_gauge_name_pinned() {
+        // Force the Lazy registration FIRST: gather() only exports metrics
+        // that have actually been registered, and in a test binary nothing
+        // else (no main.rs boot path) touches this static before us.
+        let _ = PIPELINE_LAST_OPPORTUNITY_INSERT_UNIXTIME.get();
+
+        // Pin both the name AND the registration: the /metrics endpoint serves
+        // whatever is in the shared REGISTRY, and the alert can only see the
+        // gauge through that path.
+        let families = shared_rs::metrics::REGISTRY.gather();
+        let pinned = "arbx_pipeline_last_opportunity_insert_unixtime";
+        assert!(
+            families.iter().any(|f| f.get_name() == pinned),
+            "metric {pinned} must be registered — PIPELINE_SILENCE alert depends on it"
+        );
+
+        // Set-after-commit hook contract: settable and readable.
+        let now = chrono::Utc::now().timestamp();
+        PIPELINE_LAST_OPPORTUNITY_INSERT_UNIXTIME.set(now);
+        assert_eq!(PIPELINE_LAST_OPPORTUNITY_INSERT_UNIXTIME.get(), now);
     }
 }
