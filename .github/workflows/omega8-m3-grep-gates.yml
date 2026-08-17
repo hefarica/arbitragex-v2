@@ -131,3 +131,37 @@ jobs:
             exit 1
           fi
           echo "no-new-env-tracked OK"
+
+      - name: "P1-6 — FREEZE-02: purge/DDL on opportunities must carry lock discipline"
+        run: |
+          set -euo pipefail
+          # FREEZE-01/02 (2026-08-17): two pipeline freezes — a retention purge
+          # without lock_timeout held RowExclusiveLock 41 min and a queued
+          # CREATE INDEX starved every INSERT behind it (PG fair lock queue).
+          # Guard 1: the retention script must keep its lock discipline.
+          for tok in lock_timeout statement_timeout synchronous_commit; do
+            if ! grep -q "$tok" scripts/pg_retention.sh; then
+              echo "::error file=scripts/pg_retention.sh::P1-6 regression: purge lost '$tok' (FREEZE-01/02 class)"
+              exit 1
+            fi
+          done
+          # Guard 2: ANY script that DELETEs from opportunities must set
+          # lock_timeout in the same file.
+          viol_del=$(grep -rl "DELETE FROM opportunities" scripts/ 2>/dev/null \
+            | xargs -r grep -L "lock_timeout" || true)
+          if [ -n "$viol_del" ]; then
+            echo "::error::P1-6 regression: bulk DELETE on opportunities without lock_timeout (FREEZE-01/02 class)"
+            echo "$viol_del"
+            exit 1
+          fi
+          # Guard 3: no non-CONCURRENT CREATE INDEX on opportunities in
+          # scripts/ — 'IF NOT EXISTS' still queues ShareLock even when the
+          # index exists, starving INSERTs behind the fair lock queue.
+          viol_ddl=$(grep -rlE "CREATE[[:space:]]+INDEX([[:space:]]+IF[[:space:]]+NOT[[:space:]]+EXISTS)?[[:space:]]+[a-z_]+[[:space:]]+ON[[:space:]]+opportunities" scripts/ 2>/dev/null \
+            | xargs -r grep -L "CONCURRENTLY" || true)
+          if [ -n "$viol_ddl" ]; then
+            echo "::error::P1-6 regression: non-CONCURRENT CREATE INDEX on opportunities (FREEZE-01/02 class)"
+            echo "$viol_ddl"
+            exit 1
+          fi
+          echo "P1-6 OK"
