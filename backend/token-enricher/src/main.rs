@@ -433,7 +433,33 @@ async fn main() -> Result<()> {
     let database_url = require_env("DATABASE_URL")?;
     let redis_url = require_env("REDIS_URL")?;
     let enricher_chains_raw = require_env("ENRICHER_CHAINS")?;
-    let github_token = std::env::var("GITHUB_TOKEN").ok().filter(|s| !s.is_empty());
+    // FASE 3b (RunFullSyncCycle): GITHUB_TOKEN with projection precedence —
+    // `arbx:svc_cred:github_token:global` (api-server credentials-store
+    // projection) first, legacy env fallback. Boot log tells the operator
+    // where the credential resolved from (cred_source=projection|env).
+    let github_token_env = std::env::var("GITHUB_TOKEN").ok().filter(|s| !s.is_empty());
+    let github_token = match redis::Client::open(redis_url.clone()) {
+        Ok(client) => match redis::aio::ConnectionManager::new(client).await {
+            Ok(mgr) => {
+                let resolved =
+                    shared_rs::svc_cred::resolve(&mgr, "GITHUB_TOKEN", "github_token", "global").await;
+                info!(
+                    event = "cred.source",
+                    provider = "github_token",
+                    source = resolved.as_ref().map(|r| r.source.as_str()).unwrap_or("none")
+                );
+                resolved.map(|r| r.value)
+            }
+            Err(e) => {
+                warn!(event = "cred.source", provider = "github_token", source = "env", reason = %e);
+                github_token_env
+            }
+        },
+        Err(e) => {
+            warn!(event = "cred.source", provider = "github_token", source = "env", reason = %e);
+            github_token_env
+        }
+    };
     let metrics_port: u16 = std::env::var("ENRICHER_METRICS_PORT")
         .ok()
         .and_then(|v| v.parse().ok())
