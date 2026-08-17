@@ -37,22 +37,28 @@ vi.mock("sonner", () => ({
 vi.mock("@/lib/admin-token", () => ({
   hasAdminSession: () => false,
 }));
+
+// MC-CRED-2: the localStorage-backed store must be controllable per test —
+// the regression is exactly "store empty (wiped/never-written localStorage)
+// while the server still holds valid rpc_* rows". vi.hoisted keeps the state
+// object referenceable inside the hoisted vi.mock factory.
+const storeState = vi.hoisted(() => ({
+  topology: {
+    activeChains: [
+      {
+        chainId: 1,
+        name: "Ethereum",
+        rpcHttpHost: "eth-mainnet.g.alchemy.com",
+        rpcWsHost: "eth.drpc.org",
+      },
+    ] as Array<Record<string, unknown>>,
+  },
+  setCredentialStatus: () => {},
+}));
 vi.mock("@/store/useSystemStore", () => ({
   rehydrateSystemStore: () => {},
   useSystemStore: (selector: (s: Record<string, unknown>) => unknown) =>
-    selector({
-      topology: {
-        activeChains: [
-          {
-            chainId: 1,
-            name: "Ethereum",
-            rpcHttpHost: "eth-mainnet.g.alchemy.com",
-            rpcWsHost: "eth.drpc.org",
-          },
-        ],
-      },
-      setCredentialStatus: () => {},
-    }),
+    selector(storeState),
 }));
 
 import { CredentialsClient } from "../CredentialsClient";
@@ -60,6 +66,23 @@ import { CredentialsClient } from "../CredentialsClient";
 const here = path.dirname(fileURLToPath(import.meta.url));
 const clientSrc = readFileSync(path.join(here, "../CredentialsClient.tsx"), "utf8");
 const pageSrc = readFileSync(path.join(here, "../page.tsx"), "utf8");
+
+function validRpcItem(provider: "rpc_http" | "rpc_ws", scope = "chain:1") {
+  return {
+    id: `${provider}-${scope}`,
+    provider,
+    scope,
+    display_name: `${provider === "rpc_http" ? "RPC HTTP" : "RPC WebSocket"} — Chain 1`,
+    has_value: true,
+    value_suffix: "…abcd",
+    status: "valid" as const,
+    last_validated_at: "2026-08-17T00:45:00.000Z",
+    last_validation_error: null,
+    metadata: {},
+    updated_at: "2026-08-17T00:45:00.000Z",
+    updated_by: "operator",
+  };
+}
 
 describe("CredentialsClient — MC-CRED-1 source gates", () => {
   it("never receives an SSR-computed edgeUrl prop (mixed-content root cause)", () => {
@@ -123,6 +146,9 @@ describe("CredentialsClient — SSR markup", () => {
     expect(html).toContain("Fallback pool — 1/2 responding");
     expect(html).toContain("alchemy");
     expect(html).toContain("otro-2");
+    // MC-RPC-2: the sidebar category badge shows the provider-level ACTIVES
+    // count (counts only — no names) alongside the row-level cred counts.
+    expect(html).toContain("1/2 live");
     // Masked-list contract: full provider URLs (they carry /v2/<key> on
     // alchemy-style endpoints) never travel in metadata — only name/ok/detail.
     // (The bare host "eth-mainnet.g.alchemy.com" DOES appear legitimately as
@@ -138,5 +164,86 @@ describe("CredentialsClient — SSR markup", () => {
       />,
     );
     expect(html).toContain("HTTP 401");
+  });
+});
+
+describe("CredentialsClient — MC-CRED-2 (validation state survives reload)", () => {
+  // The incident (2026-08-17): rpc_* rows sit VALID in Postgres, but the RPC
+  // category was built ONLY from the localStorage store — an empty/wiped
+  // store rendered "0 cred" and the operator's saved+validated state
+  // "disappeared" on every refresh.
+
+  it("renders RPC cards + persisted VALID status from the SSR topology chains when the local store is empty", () => {
+    storeState.topology.activeChains = [];
+    try {
+      const html = renderToStaticMarkup(
+        <CredentialsClient
+          initialSnapshot={{
+            items: [validRpcItem("rpc_http"), validRpcItem("rpc_ws")],
+            ts: "2026-08-17T00:46:00.000Z",
+            error: null,
+          }}
+          initialActiveChains={[
+            {
+              chainId: 1,
+              name: "Chain 1",
+              rpcHttpHost: "eth-mainnet.g.alchemy.com",
+              rpcWsHost: "eth.drpc.org",
+              versionId: 1786916896,
+              validatedAt: "2026-08-17T00:00:00.000Z",
+            },
+          ]}
+        />,
+      );
+      expect(html).toContain("RPC HTTP — Chain 1");
+      expect(html).toContain("VALID");
+      expect(html).not.toContain("Primero publica una topología");
+    } finally {
+      storeState.topology.activeChains = [
+        {
+          chainId: 1,
+          name: "Ethereum",
+          rpcHttpHost: "eth-mainnet.g.alchemy.com",
+          rpcWsHost: "eth.drpc.org",
+        },
+      ];
+    }
+  });
+
+  it("renders RPC cards from persisted rows alone (topology fetch failed, store empty)", () => {
+    storeState.topology.activeChains = [];
+    try {
+      const html = renderToStaticMarkup(
+        <CredentialsClient
+          initialSnapshot={{
+            items: [validRpcItem("rpc_http"), validRpcItem("rpc_ws")],
+            ts: "2026-08-17T00:46:00.000Z",
+            error: null,
+          }}
+          initialActiveChains={[]}
+          topologyError="HTTP 503"
+        />,
+      );
+      // A saved row ALWAYS has a card — status (and Delete) stay reachable.
+      expect(html).toContain("RPC HTTP — Chain 1");
+      expect(html).toContain("VALID");
+      expect(html).toContain("Topology snapshot error: HTTP 503");
+      // Hosts unknown from a masked row → "pendiente", never fabricated.
+      expect(html).toContain("Host activo: pendiente");
+    } finally {
+      storeState.topology.activeChains = [
+        {
+          chainId: 1,
+          name: "Ethereum",
+          rpcHttpHost: "eth-mainnet.g.alchemy.com",
+          rpcWsHost: "eth.drpc.org",
+        },
+      ];
+    }
+  });
+
+  it("SSR page hydrates the RPC category from the Topology Vault snapshot (server SSOT)", () => {
+    expect(pageSrc).toContain("/api/admin/topology/snapshot");
+    expect(pageSrc).toContain("snapshotToActiveChains");
   });
 });
