@@ -21,6 +21,7 @@ vi.mock("@/components/ChainBadge", () => ({
 }));
 vi.mock("@/components/StrategyBadge", () => ({
   StrategyBadge: ({ strategy_kind }: { strategy_kind: string }) => <span>strat:{strategy_kind}</span>,
+  strategyLabel: (strategy_kind: string) => strategy_kind,
 }));
 vi.mock("@/components/StatusPill", () => ({
   StatusPill: ({ status }: { status: string }) => <span>status:{status}</span>,
