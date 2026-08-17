@@ -31,6 +31,7 @@ use crate::cartridge::subscriber::CartridgeSubscriber;
 use crate::cartridge::types::{CartridgeEvalResult, CartridgeState};
 use crate::cartridge_loader::{self, CARTRIDGE_DIR};
 use crate::route_intent::{DetectionSource, ProtocolType, RouteIntent};
+use crate::strategy_label::StrategyLabel;
 
 /// Telemetry channel the host bindings publish `log_quantum` messages to.
 /// Matches `cartridge::host_bindings` / `cartridge::runner` defaults.
@@ -704,6 +705,65 @@ fn cartridge_matches_intent(category: &str, intent: &RouteIntent) -> bool {
     }
 }
 
+/// Closed-cycle geometry from the built RoutePlan legs — same definition as the
+/// `is_closed_cycle` check in [`cartridge_matches_intent`] (last leg's
+/// token_out == first leg's token_in, ≥3 legs), computed from the canonical hex
+/// strings the plan carries. Decides whether the G03/G04 state-event families
+/// can evaluate as a closed-cycle triangle at the label-mapping site.
+fn route_plan_is_closed_cycle(legs: &[prioritization_spine::route_plan::RouteLeg]) -> bool {
+    legs.len() >= 3
+        && legs.last().map(|l| l.token_out.as_str()) == legs.first().map(|l| l.token_in.as_str())
+}
+
+/// Maps a cartridge category to its canonical [`StrategyLabel`] (Task 3,
+/// `docs/superpowers/plans/2026-08-17-cartridge-math-264.md`).
+///
+/// The 11 Excel families of the 264-cartridge catalog map onto EXISTING labels;
+/// C.5 is preserved — the granular cartridge identity lives in
+/// `RoutePlan.strategy_kind` (`cartridge_{category}`), never collapsed here:
+///
+///   - `cross_domain_engine` → `CrossChainArb` (cross-domain spread)
+///   - `credit_liquidation_engine` → `LiquidationSnipe` (health-factor sniping)
+///   - `route_graph_engine` | `amm_curve_engine` → `DexArbV2V2` (G01/G02
+///     spot-DEX; the granular variant is preserved in `RoutePlan.strategy_kind`)
+///   - `state_event_engine` | `parity_redemption_engine` → `TriangularArb`
+///     ONLY when the route shape is a closed ≥3-leg cycle (G03/G04 state-event
+///     evaluation is measurable today as a triangle; the dedicated profile
+///     arrives in RU-4). Non-closed → `Err(reason)`, fail-honest.
+///
+/// Everything else — `derivatives_engine`, `cex_external_engine`,
+/// `intents_solver_engine`, `nft_engine`, `prediction_engine` and unknown
+/// categories — has no honest engine yet and returns `Err(reason)` so the
+/// caller rejects with an explicit reason instead of silently mis-gating (R8).
+fn category_to_strategy_label(
+    category: &str,
+    is_closed_cycle: bool,
+) -> Result<StrategyLabel, String> {
+    match category {
+        "dex_arb" | "dex_arb_v2v2" => Ok(StrategyLabel::DexArbV2V2),
+        "dex_arb_v2v3" => Ok(StrategyLabel::DexArbV2V3),
+        "dex_arb_v3v2" => Ok(StrategyLabel::DexArbV3V2),
+        "dex_arb_v3v3" => Ok(StrategyLabel::DexArbV3V3),
+        "triangular_arb" => Ok(StrategyLabel::TriangularArb),
+        "flashloan_arb" => Ok(StrategyLabel::FlashloanArb),
+        "liquidation" => Ok(StrategyLabel::Liquidation),
+        "spanning_tree_arb" => Ok(StrategyLabel::SpanningTreeArb),
+        "cross_chain_arb" | "cross_domain_engine" => Ok(StrategyLabel::CrossChainArb),
+        "liquidation_snipe" | "credit_liquidation_engine" => Ok(StrategyLabel::LiquidationSnipe),
+        // G01/G02 spot-DEX families: the granular variant lives in
+        // RoutePlan.strategy_kind (C.5 — never collapse variants here).
+        "route_graph_engine" | "amm_curve_engine" => Ok(StrategyLabel::DexArbV2V2),
+        // G03/G04: state-event / parity-redemption evaluation — measurable today
+        // as a closed-cycle triangle; the dedicated profile arrives in RU-4.
+        "state_event_engine" | "parity_redemption_engine" if is_closed_cycle => {
+            Ok(StrategyLabel::TriangularArb)
+        }
+        // No honest engine yet (derivatives, cex_external, intents_solver, nft,
+        // prediction, unknown, and non-closed G03/G04) → explicit reason (R8).
+        other => Err(format!("cartridge_unmapped_strategy_label:{other}")),
+    }
+}
+
 /// Shadow-evaluates every ACTIVE cartridge against one live route intent and emits
 /// the result to logs/telemetry. **Read-only / observe-only**: it never constructs a
 /// `StrategyCandidate`, never touches `process_candidate`, and never reaches the
@@ -867,7 +927,6 @@ pub async fn active_evaluate_and_emit(
     use crate::engines::StrategyCandidate;
     use crate::metrics::REJECTED_NO_PROFIT_TOTAL;
     use crate::size_optimizer::{OptimizeOutcome, OptimizeRejectReason};
-    use crate::strategy_label::StrategyLabel;
     use ethers::types::{Address, U256};
     use shared_rs::contracts::{Opportunity, StrategyKind};
     use uuid::Uuid;
@@ -1142,28 +1201,26 @@ pub async fn active_evaluate_and_emit(
                 // reason rather than silently mis-gated. The dex_arb family cannot be
                 // disambiguated into v2v2/v2v3/v3v2/v3v3 from the category string
                 // alone; the granular variant is preserved in RoutePlan.strategy_kind.
-                let label = match category.as_str() {
-                    "dex_arb" | "dex_arb_v2v2" => StrategyLabel::DexArbV2V2,
-                    "dex_arb_v2v3" => StrategyLabel::DexArbV2V3,
-                    "dex_arb_v3v2" => StrategyLabel::DexArbV3V2,
-                    "dex_arb_v3v3" => StrategyLabel::DexArbV3V3,
-                    "triangular_arb" => StrategyLabel::TriangularArb,
-                    "flashloan_arb" => StrategyLabel::FlashloanArb,
-                    "liquidation" => StrategyLabel::Liquidation,
-                    "spanning_tree_arb" => StrategyLabel::SpanningTreeArb,
-                    "cross_chain_arb" => StrategyLabel::CrossChainArb,
-                    "liquidation_snipe" => StrategyLabel::LiquidationSnipe,
-                    other => {
+                //
+                // Task 3 (docs/superpowers/plans/2026-08-17-cartridge-math-264.md):
+                // the 11 Excel families map onto EXISTING labels via
+                // `category_to_strategy_label`; the closed-cycle geometry of the
+                // built plan decides the G03/G04 state-event families.
+                let label = match category_to_strategy_label(
+                    &category,
+                    route_plan_is_closed_cycle(&route_plan.legs),
+                ) {
+                    Ok(label) => label,
+                    Err(reason) => {
                         // R8: unknown category → reject, never silently collapse.
                         // The label passed to emit_rejected is a required-by-API
                         // placeholder (StrategyLabel has no Unknown variant); the
                         // rejection_reason carries the true category for diagnostics.
-                        let reason = format!("cartridge_unmapped_strategy_label:{other}");
                         warn!(
                             event = "cartridge.unmapped_strategy_label",
                             chain_id,
                             cartridge_id = %cartridge_id,
-                            category = %other,
+                            category = %category,
                             "rejecting cartridge with unmapped strategy category"
                         );
                         let mut opp = opportunity.clone();
@@ -1764,6 +1821,169 @@ mod tests {
         let lending = intent_with_source(DetectionSource::LendingPositionUpdate);
         assert!(cartridge_matches_intent("my_custom_strategy", &swap));
         assert!(cartridge_matches_intent("my_custom_strategy", &lending));
+    }
+
+    // ── Task 3: category → StrategyLabel mapping (11 Excel families) ─────────
+    // docs/superpowers/plans/2026-08-17-cartridge-math-264.md
+
+    #[test]
+    fn category_label_legacy_categories_unchanged() {
+        // The 10 legacy arms keep their exact labels (regression guard).
+        assert_eq!(
+            category_to_strategy_label("dex_arb", false),
+            Ok(StrategyLabel::DexArbV2V2)
+        );
+        assert_eq!(
+            category_to_strategy_label("dex_arb_v2v2", false),
+            Ok(StrategyLabel::DexArbV2V2)
+        );
+        assert_eq!(
+            category_to_strategy_label("dex_arb_v2v3", false),
+            Ok(StrategyLabel::DexArbV2V3)
+        );
+        assert_eq!(
+            category_to_strategy_label("dex_arb_v3v2", false),
+            Ok(StrategyLabel::DexArbV3V2)
+        );
+        assert_eq!(
+            category_to_strategy_label("dex_arb_v3v3", false),
+            Ok(StrategyLabel::DexArbV3V3)
+        );
+        assert_eq!(
+            category_to_strategy_label("triangular_arb", false),
+            Ok(StrategyLabel::TriangularArb)
+        );
+        assert_eq!(
+            category_to_strategy_label("flashloan_arb", false),
+            Ok(StrategyLabel::FlashloanArb)
+        );
+        assert_eq!(
+            category_to_strategy_label("liquidation", false),
+            Ok(StrategyLabel::Liquidation)
+        );
+        assert_eq!(
+            category_to_strategy_label("spanning_tree_arb", false),
+            Ok(StrategyLabel::SpanningTreeArb)
+        );
+        assert_eq!(
+            category_to_strategy_label("cross_chain_arb", false),
+            Ok(StrategyLabel::CrossChainArb)
+        );
+        assert_eq!(
+            category_to_strategy_label("liquidation_snipe", false),
+            Ok(StrategyLabel::LiquidationSnipe)
+        );
+        // Unknown category: still rejected with the exact reason (R8).
+        assert_eq!(
+            category_to_strategy_label("totally_unknown", true),
+            Err("cartridge_unmapped_strategy_label:totally_unknown".to_string())
+        );
+    }
+
+    #[test]
+    fn category_label_maps_six_engine_families() {
+        // The 6 of the 11 Excel families with an honest label today.
+        assert_eq!(
+            category_to_strategy_label("cross_domain_engine", false),
+            Ok(StrategyLabel::CrossChainArb)
+        );
+        assert_eq!(
+            category_to_strategy_label("credit_liquidation_engine", false),
+            Ok(StrategyLabel::LiquidationSnipe)
+        );
+        // G01/G02 spot-DEX — DexArbV2V2 label; the granular identity stays in
+        // RoutePlan.strategy_kind (C.5: variants are NOT collapsed).
+        assert_eq!(
+            category_to_strategy_label("route_graph_engine", false),
+            Ok(StrategyLabel::DexArbV2V2)
+        );
+        assert_eq!(
+            category_to_strategy_label("amm_curve_engine", false),
+            Ok(StrategyLabel::DexArbV2V2)
+        );
+        // G03/G04 — TriangularArb ONLY on a closed ≥3-leg cycle.
+        assert_eq!(
+            category_to_strategy_label("state_event_engine", true),
+            Ok(StrategyLabel::TriangularArb)
+        );
+        assert_eq!(
+            category_to_strategy_label("parity_redemption_engine", true),
+            Ok(StrategyLabel::TriangularArb)
+        );
+    }
+
+    #[test]
+    fn category_label_state_event_families_require_closed_cycle() {
+        // Guard fails → falls through to the reject arm with the exact reason.
+        for cat in ["state_event_engine", "parity_redemption_engine"] {
+            assert_eq!(
+                category_to_strategy_label(cat, false),
+                Err(format!("cartridge_unmapped_strategy_label:{cat}")),
+                "non-closed G03/G04 shape must reject with reason, not mis-label"
+            );
+        }
+    }
+
+    #[test]
+    fn category_label_five_no_engine_families_reject_with_exact_reason() {
+        // derivatives, cex_external, intents_solver, nft, prediction: no honest
+        // engine yet → fail-honest reject with the exact reason (never silence).
+        for cat in [
+            "derivatives_engine",
+            "cex_external_engine",
+            "intents_solver_engine",
+            "nft_engine",
+            "prediction_engine",
+        ] {
+            assert_eq!(
+                category_to_strategy_label(cat, true),
+                Err(format!("cartridge_unmapped_strategy_label:{cat}")),
+                "{cat} has no honest engine yet and must reject with reason"
+            );
+        }
+    }
+
+    #[test]
+    fn route_plan_closed_cycle_matches_intent_leg_definition() {
+        use prioritization_spine::route_plan::RouteLeg;
+        let leg = |token_in: &str, token_out: &str| RouteLeg {
+            dex_id: "dex".to_string(),
+            dex_name: "dex".to_string(),
+            protocol_type: "v2".to_string(),
+            factory_address: "0x0".to_string(),
+            pool_id: None,
+            pool_address: None,
+            token_in: token_in.to_string(),
+            token_out: token_out.to_string(),
+            fee_bps: Some(30),
+            amount_in: None,
+            amount_out: None,
+            tvl_usd: None,
+            volume_24h_usd: None,
+            pool_is_active: true,
+        };
+        // Closed 3-leg triangle A→B→C→A.
+        let tri = vec![leg("0xa", "0xb"), leg("0xb", "0xc"), leg("0xc", "0xa")];
+        assert!(route_plan_is_closed_cycle(&tri));
+        // Open 3-leg path A→B→C→D.
+        let open = vec![leg("0xa", "0xb"), leg("0xb", "0xc"), leg("0xc", "0xd")];
+        assert!(!route_plan_is_closed_cycle(&open));
+        // Closed 2-leg cycle is NOT a triangle (≥3 legs required — D-01 shape).
+        let two = vec![leg("0xa", "0xb"), leg("0xb", "0xa")];
+        assert!(!route_plan_is_closed_cycle(&two));
+        // Equivalence with the intent-legs definition used by smart routing:
+        // the same Address-formatting the call site performs must close.
+        let plan_from_intent: Vec<RouteLeg> = three_leg_intent()
+            .legs
+            .iter()
+            .map(|l| {
+                leg(
+                    &format!("{:#x}", l.token_in),
+                    &format!("{:#x}", l.token_out),
+                )
+            })
+            .collect();
+        assert!(route_plan_is_closed_cycle(&plan_from_intent));
     }
 
     // ── rd_outcome_v2 schema builders (Phase 1) ──────────────────────────────
