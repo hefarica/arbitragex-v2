@@ -1,0 +1,58 @@
+# H2 (FREEZE-01) — synthetic-series behaviour test for the PIPELINE_SILENCE alert.
+#
+# Run from the repo root (rule_files paths resolve against the CWD):
+#   promtool test rules monitoring/tests/pipeline_silence_test.yml
+# CI: .github/workflows/monitoring-config.yml ("Unit-test alert rules" step).
+#
+# promtool's unit-test timeline starts at unix t=0, so `time()` at eval_time T
+# equals T in seconds. A gauge series frozen at 0 therefore makes the expr
+# reduce to `elapsed > 600` — exactly the silence condition being pinned.
+#
+# The exporter side of the contract (metric name + set-after-commit) is pinned
+# by backend/searcher-rs/src/metrics.rs::pipeline_silence_gauge_name_pinned.
+
+rule_files:
+  - monitoring/alerts.rules.yml
+
+evaluation_interval: 1m
+
+tests:
+  # ── Case 1: gauge frozen (FREEZE-01 signature) ────────────────────────────
+  # Boot-seeded at t=0, never updated again — no INSERT committed since boot.
+  - interval: 1m
+    input_series:
+      - series: 'arbx_pipeline_last_opportunity_insert_unixtime{service="searcher-rs"}'
+        values: '0+0x30'
+    alert_rule_test:
+      - eval_time: 9m
+        alertname: PIPELINE_SILENCE
+        exp_alerts: []
+      - eval_time: 10m
+        # Exactly 600s of silence: the expr is a STRICT inequality (>), so the
+        # boundary itself must NOT fire.
+        alertname: PIPELINE_SILENCE
+        exp_alerts: []
+      - eval_time: 11m
+        alertname: PIPELINE_SILENCE
+        exp_alerts:
+          - exp_labels:
+              alertname: PIPELINE_SILENCE
+              severity: critical
+              service: searcher-rs
+              platform: arbitragex
+            exp_annotations:
+              summary: "Detection pipeline silent >10m — no opportunities INSERT committed"
+              description: |-
+                searcher-rs has not committed a single opportunities INSERT in over 600s (gauge arbx_pipeline_last_opportunity_insert_unixtime frozen). Process is up but the pipeline is not persisting. Check: docker logs searcher-rs --tail 200 (persist errors), docker exec postgres psql -U postgres -d arbitragex -c 'SELECT MAX(detected_at) FROM opportunities;' (R7), Redis stream health, RPC provider state. Runbook: docs/incidents/2026-08-17-PIPELINE-FREEZE-PURGE-LOCKS.md (see PR #359 until merged).
+
+  # ── Case 2: healthy cadence — gauge advances 1:1 with wall clock ─────────
+  # One committed INSERT per minute: time() - max(gauge) stays 0 forever.
+  # Proves a BUSY pipeline never trips the watchdog (no false positives).
+  - interval: 1m
+    input_series:
+      - series: 'arbx_pipeline_last_opportunity_insert_unixtime{service="searcher-rs"}'
+        values: '0+60x15'
+    alert_rule_test:
+      - eval_time: 15m
+        alertname: PIPELINE_SILENCE
+        exp_alerts: []

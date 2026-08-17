@@ -50,6 +50,27 @@ groups:
           summary: "No opportunities detected in the last 15m"
           description: "Searcher-rs may be idle or kill-switched; verify both."
 
+      # H2 (FREEZE-01, 2026-08-16): watchdog for a SILENT detection pipeline.
+      # Motivation: opportunities was frozen 21h while a yellow readiness
+      # signal sat unread — a >10min silence alert converts 21h into 10 minutes.
+      # The gauge arbx_pipeline_last_opportunity_insert_unixtime is exported by
+      # searcher-rs (persistence.rs sets it after every committed opportunities
+      # INSERT; seeded at boot so a fresh process gets the full grace window).
+      # RULE 00: the gauge reflects REAL committed inserts only.
+      # Complementary to ServiceDown: when searcher-rs is down the series goes
+      # absent and max() yields no value, so this rule stays silent — that path
+      # is covered by arbx_service_up == 0. This rule catches process-up-but-
+      # pipeline-frozen (the exact FREEZE-01 signature).
+      # Behaviour-tested with synthetic series: monitoring/tests/pipeline_silence_test.yml
+      # (promtool test rules, CI step in .github/workflows/monitoring-config.yml).
+      - alert: PIPELINE_SILENCE
+        expr: time() - max(arbx_pipeline_last_opportunity_insert_unixtime) > 600
+        for: 0m
+        labels: { severity: critical, service: searcher-rs, platform: arbitragex }
+        annotations:
+          summary: "Detection pipeline silent >10m — no opportunities INSERT committed"
+          description: "searcher-rs has not committed a single opportunities INSERT in over 600s (gauge arbx_pipeline_last_opportunity_insert_unixtime frozen). Process is up but the pipeline is not persisting. Check: docker logs searcher-rs --tail 200 (persist errors), docker exec postgres psql -U postgres -d arbitragex -c 'SELECT MAX(detected_at) FROM opportunities;' (R7), Redis stream health, RPC provider state. Runbook: docs/incidents/2026-08-17-PIPELINE-FREEZE-PURGE-LOCKS.md (see PR #359 until merged)."
+
       - alert: RpcAllProvidersUnhealthy
         expr: count(arbx_rpc_provider_state == 0) == 0 and count(arbx_rpc_provider_state) > 0
         for: 2m
