@@ -7,42 +7,26 @@ import { toast } from "sonner";
 import { ReadinessStepper } from "@/components/ReadinessStepper";
 import { emitSystemReadinessRefresh, useSystemReadiness } from "@/hooks/useSystemReadiness";
 import { hasAdminSession } from "@/lib/admin-token";
-import { useSystemStore, type ActiveChain } from "@/store/useSystemStore";
+import { useSystemStore } from "@/store/useSystemStore";
 import { parseRpcUrls12Providers } from "@/lib/utils/rpc-parser-12-providers";
 import { getApiBaseUrl } from "@/lib/api-client";
+// MC-CRED-2: shared contract + mapping — SSR pages (settings/credentials) and
+// this client must derive ActiveChains from the SAME server snapshot shape.
+import {
+  snapshotToActiveChains,
+  type MempoolMode,
+  type TopologySnapshot,
+  type TopologySnapshotEnvelope,
+  type TopologyProviderSnapshot,
+} from "@/lib/topology-snapshot";
 
-export type MempoolMode = "auto" | "filtered" | "firehose";
-
-interface TopologyProviderSnapshot {
-  name: string;
-  url_masked: string;
-  scheme: "http" | "https" | "ws" | "wss";
-  host: string;
-  provider_kind: "alchemy" | "standard";
-}
-
-interface TopologySnapshot {
-  scope: string;
-  chain_id: number;
-  mempool_mode: MempoolMode;
-  rpc_http_1: TopologyProviderSnapshot[];
-  rpc_ws_1: TopologyProviderSnapshot[];
-  checksum: string;
-  version_id: number;
-  updated_at: string;
-}
+// Re-exported for the existing /admin/topology page import.
+export type { MempoolMode, TopologySnapshot } from "@/lib/topology-snapshot";
 
 export interface TopologyInitialSnapshot {
   topology: TopologySnapshot | null;
   source: string;
   error: string | null;
-}
-
-interface SnapshotEnvelope {
-  ok?: boolean;
-  topology?: TopologySnapshot | null;
-  source?: string;
-  error?: string;
 }
 
 interface MutationEnvelope {
@@ -60,20 +44,6 @@ interface ClientProps {
 
 const HTTP_EXAMPLE = "alchemy=https://eth-mainnet.g.alchemy.com/v2/TU_API_KEY,publicnode=https://ethereum-rpc.publicnode.com";
 const WS_EXAMPLE = "alchemy=wss://eth-mainnet.g.alchemy.com/v2/TU_API_KEY,publicnode=wss://ethereum-rpc.publicnode.com";
-
-function snapshotToActiveChains(topology: TopologySnapshot | null | undefined, fallbackVersion?: number): ActiveChain[] {
-  if (!topology) return [];
-  const versionId = fallbackVersion ?? topology.version_id;
-  const validatedAt = topology.updated_at ?? new Date().toISOString();
-  return [{
-    chainId: topology.chain_id,
-    name: `Chain ${topology.chain_id}`,
-    rpcHttpHost: topology.rpc_http_1?.[0]?.host ?? "",
-    rpcWsHost: topology.rpc_ws_1?.[0]?.host ?? "",
-    versionId,
-    validatedAt,
-  }];
-}
 
 function formatErrorCode(code: string): string {
   const labels: Record<string, string> = {
@@ -168,7 +138,7 @@ export function TopologyVaultClient({ initialSnapshot }: ClientProps) {
         cache: "no-store",
         headers: { accept: "application/json" },
       });
-      const data = (await res.json().catch(() => ({}))) as SnapshotEnvelope;
+      const data = (await res.json().catch(() => ({}))) as TopologySnapshotEnvelope;
       if (!res.ok || !data.ok) {
         setSnapshot((prev) => ({ ...prev, error: data.error ?? `HTTP ${res.status}` }));
         return;
