@@ -2,10 +2,15 @@
  * OpportunityExchangeCard — memory-disciplined trading card for the
  * `/opportunities/exchange` grid.
  *
- * Visual language is IDENTICAL to OpportunityTradeCard (same Tailwind tokens,
- * same primitives: TokenChip / ChainBadge / StrategyBadge / StatusPill, same
- * header / detection-time / token-pair / net-yield / capital-ledger / strategy-
- * config / execute blocks). Two deliberate differences:
+ * Shell: operator-approved glass-morphism neon design, ported 1:1 from the
+ * docs/atlas_264.html prototype (rgba(14,18,28,0.35) glass + blur(14px) +
+ * royal-blue #4169E1 glow that intensifies on hover). The full-width DappBadge
+ * header (QuantumX logo from app/icon.svg + "Evaluada · <strategy>" + pulsing
+ * LED: green LIVE 2s for evaluated rows, orange PENDING 1.5s for detections)
+ * lives in DappBadge.tsx / LedIndicator.tsx / glass-neon.module.css. Inner
+ * financial fields (net yield, capital-path ledger, costs, route, target,
+ * config) keep the same Tailwind primitives as OpportunityTradeCard
+ * (TokenChip / ChainBadge / StrategyBadge / StatusPill). Deliberate rules:
  *
  *   1. NO framer-motion. The live grid mounts up to N cards; framer-motion's
  *      per-instance motion state (motion values, listeners) was the residual
@@ -42,7 +47,7 @@ import {
 
 import { TokenChip, type TokenInfo } from "@/components/TokenChip";
 import { ChainBadge } from "@/components/ChainBadge";
-import { StrategyBadge } from "@/components/StrategyBadge";
+import { StrategyBadge, strategyLabel } from "@/components/StrategyBadge";
 import { StatusPill } from "@/components/StatusPill";
 import {
   formatPctOrDash,
@@ -55,6 +60,8 @@ import {
 } from "@/lib/store/types";
 import type { StrategyRuntimeConfig } from "@/lib/schemas";
 import { shortAddr } from "@/lib/format";
+import { DappBadge } from "./DappBadge";
+import styles from "./glass-neon.module.css";
 
 // ─── Tone → token-based class map (mirrors OpportunityTradeCard) ─────────────
 const TONE_CLASS: Record<string, string> = {
@@ -242,24 +249,34 @@ function OpportunityExchangeCardImpl({
   return (
     <div
       style={cardStyle}
-      className="relative bg-card text-card-foreground border border-border rounded-2xl p-4 shadow-lg hover:shadow-xl hover:border-primary/40 transition-colors overflow-hidden"
+      className={`relative text-card-foreground rounded-[14px] p-4 overflow-hidden ${styles.card}`}
     >
-      {/* ⓘ discreet Inspect affordance — top-right corner */}
-      <button
-        type="button"
-        aria-label="Inspect details"
-        title="Inspect details"
-        onClick={(e) => {
-          e.stopPropagation();
-          onInspect(opp);
-        }}
-        className="absolute right-3 top-3 z-10 rounded-full p-1 text-muted-foreground/70 hover:text-foreground hover:bg-muted/60 border border-transparent hover:border-border transition-colors"
-      >
-        <Info size={15} />
-      </button>
+      {/* ── GLASS-NEON HEADER BADGE: QuantumX logo · "Evaluada · <strategy>" ·
+            LIVE LED (green, 2s pulse). The ⓘ Inspect affordance rides the
+            badge's right edge so the LED group never gets covered. ── */}
+      <DappBadge
+        label="Evaluada"
+        strategyName={strategyLabel(opp.strategy_kind)}
+        led="live"
+        className="mb-2.5"
+        trailing={
+          <button
+            type="button"
+            aria-label="Inspect details"
+            title="Inspect details"
+            onClick={(e) => {
+              e.stopPropagation();
+              onInspect(opp);
+            }}
+            className="shrink-0 rounded-full p-1 text-muted-foreground/70 hover:text-foreground hover:bg-muted/60 transition-colors"
+          >
+            <Info size={15} />
+          </button>
+        }
+      />
 
       {/* ── HEADER: chain · strategy · status · base token  |  ROI% ── */}
-      <div className="flex items-start justify-between gap-2 mb-2.5 pr-7">
+      <div className="flex items-start justify-between gap-2 mb-2.5">
         <div className="flex items-center gap-1.5 flex-wrap min-w-0">
           <ChainBadge chain_id={opp.chain_id} />
           <StrategyBadge strategy_kind={opp.strategy_kind} />
@@ -545,22 +562,34 @@ function DetectionDiagnosticCard({
   return (
     <div
       style={{ contentVisibility: "auto", containIntrinsicSize: "auto 210px" } as React.CSSProperties}
-      className="relative bg-muted/30 text-muted-foreground border border-dashed border-border rounded-2xl p-4 overflow-hidden"
+      className={`relative text-muted-foreground rounded-[14px] p-4 overflow-hidden ${styles.card} ${styles.cardWarn}`}
     >
-      <button
-        type="button"
-        aria-label="Inspect details"
-        onClick={(e) => {
-          e.stopPropagation();
-          onInspect(opp);
-        }}
-        className="absolute right-3 top-3 z-10 rounded-full p-1 text-muted-foreground/70 hover:text-foreground hover:bg-muted/60 border border-transparent hover:border-border transition-colors"
-      >
-        <Info size={15} />
-      </button>
+      {/* ── GLASS-NEON HEADER BADGE (warn): QuantumX logo · "Detección · Sin
+            evaluar" · PENDING LED (orange #ff6600, 1.5s pulse). The ⓘ Inspect
+            affordance rides the badge's right edge. ── */}
+      <DappBadge
+        label="Detección"
+        strategyName="Sin evaluar"
+        led="pending"
+        variant="warn"
+        className="mb-2.5"
+        trailing={
+          <button
+            type="button"
+            aria-label="Inspect details"
+            onClick={(e) => {
+              e.stopPropagation();
+              onInspect(opp);
+            }}
+            className="shrink-0 rounded-full p-1 text-muted-foreground/70 hover:text-foreground hover:bg-muted/60 transition-colors"
+          >
+            <Info size={15} />
+          </button>
+        }
+      />
 
       {/* header: chain · strategy · DETECCIÓN badge */}
-      <div className="flex items-center gap-1.5 flex-wrap mb-2 pr-7">
+      <div className="flex items-center gap-1.5 flex-wrap mb-2">
         <ChainBadge chain_id={opp.chain_id} />
         <StrategyBadge strategy_kind={opp.strategy_kind} />
         <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[9px] font-bold uppercase tracking-wide bg-warning/10 text-warning border border-warning/40">

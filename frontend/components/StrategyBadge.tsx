@@ -52,6 +52,21 @@ const STRATEGY_MAP: Record<string, StrategyMeta> = {
   },
 };
 
+/**
+ * Plain-text display label for a strategy_kind — the same three-branch
+ * mapping StrategyBadge renders, as a string (for the glass-neon DappBadge
+ * header, which needs the name without the badge chrome).
+ */
+export function strategyLabel(strategy_kind: string): string {
+  if (isBaseStrategy(strategy_kind)) {
+    return STRATEGY_MAP[strategy_kind]?.label ?? String(strategy_kind);
+  }
+  if (strategy_kind.startsWith("mev_") || strategy_kind.startsWith("cartridge_")) {
+    return familyOf(strategy_kind);
+  }
+  return String(strategy_kind);
+}
+
 export interface StrategyBadgeProps {
   /** Accepts any strategy_kind string — base families + 264 cartridge IDs. */
   strategy_kind: string;
