@@ -6,13 +6,13 @@
 //!   (observe-only). The dispatcher NEVER calls `on_route_intent`,
 //!   `process_candidate`, the emitter, or writes `arbx:opps:detected`.
 //! - Only strategies with an **existing, enabled cartridge** are dispatched
-//!   (`dex_arb`). `flashloan_arb`/`stable_arb` (no cartridge) are surfaced in
-//!   applicability telemetry but never dispatched.
-//! - **Triangular** routes are classified + telemetered but their dispatch is
-//!   **deferred** (`dispatch_deferred = "needs_triangular_adapter"`): there is
-//!   no triangular pool-data adapter yet, and `cartridge_matches_intent` returns
-//!   `false` for `triangular_arb` regardless — so a triangular intent would only
-//!   be mis-evaluated by `dex_arb`. We do not send it.
+//!   (`dex_arb`, `triangular_arb`). `flashloan_arb`/`stable_arb` (no cartridge)
+//!   are surfaced in applicability telemetry but never dispatched.
+//! - **Triangular** routes are dispatched like `dex_arb` (D-01, 2026-08-16):
+//!   route_discovery's closed 3-hop cycles are the triangle source, and
+//!   `cartridge_matches_intent` discriminates by shape — `triangular_arb` takes
+//!   closed ≥3-leg cycles, `dex_arb` excludes them (a triangle is not a
+//!   single-pair spread, the mis-evaluation the old deferral feared).
 //!
 //! Phase 1 builds intents with **no sizing** (`amount_in = 0`): the cartridge
 //! prices the source pool in shadow (e.g. `v3_source_priced`) and returns no
@@ -44,7 +44,7 @@ pub fn coarse_name(label: StrategyLabel) -> &'static str {
 /// One planned dispatch for a (route, strategy) pair.
 ///
 /// `intent.is_some()` ⇒ actually shadow-evaluate it; `intent.is_none()` with
-/// `dispatch_deferred = Some(..)` ⇒ telemetry-only (e.g. triangular).
+/// `dispatch_deferred = Some(..)` ⇒ telemetry-only (no current arm defers).
 #[derive(Debug, Clone)]
 pub struct DispatchPlan {
     pub route_hash: String,
@@ -60,8 +60,9 @@ pub struct DispatchPlan {
 ///   NOT a sentinel). `router`/`sender` are `zero` because a discovered route has
 ///   no originating router call — honest "N/A", and this intent is observe-only
 ///   (never persisted, never broadcast).
-/// - `source_event = NewBlock` so `cartridge_matches_intent` routes it to
-///   `dex_arb` (and only `dex_arb`).
+/// - `source_event = NewBlock` so `cartridge_matches_intent` routes it by
+///   shape: `dex_arb` for 2-leg cycles, `triangular_arb` for closed ≥3-leg
+///   cycles.
 /// - `amount_in = 0`: Phase 1 has no sizing.
 pub fn build_intent(c: &RouteCandidate) -> Option<RouteIntent> {
     // Guard every vector this function indexes by position (tokens/pools/
@@ -104,8 +105,8 @@ pub fn build_intent(c: &RouteCandidate) -> Option<RouteIntent> {
 /// Plan the dispatches for one annotated candidate.
 ///
 /// Iterates the candidate's `applicable_strategies`; only strategies whose
-/// cartridge exists+enabled produce a plan. `dex_arb` → real intent; triangular
-/// → deferred; everything else (no cartridge) → skipped.
+/// cartridge exists+enabled produce a plan. `dex_arb`/`triangular_arb` → real
+/// intent; everything else (no cartridge) → skipped.
 pub fn plan_dispatch(
     c: &RouteCandidate,
     engine: &StrategyApplicabilityEngine,
@@ -129,15 +130,18 @@ pub fn plan_dispatch(
                 }
             }
             "triangular_arb" => {
-                // No triangular pool-data adapter yet; cartridge_matches_intent
-                // also returns false for triangular_arb. Defer, telemetry-only.
-                plans.push(DispatchPlan {
-                    route_hash: c.route_hash.clone(),
-                    strategy_label: *label,
-                    strategy_name: name,
-                    intent: None,
-                    dispatch_deferred: Some("needs_triangular_adapter".to_string()),
-                });
+                // Closed 3-hop cycles are the triangle source (D-01): dispatch
+                // for real. cartridge_matches_intent's shape gate keeps this
+                // intent out of dex_arb (and swap shapes out of triangular).
+                if let Some(intent) = build_intent(c) {
+                    plans.push(DispatchPlan {
+                        route_hash: c.route_hash.clone(),
+                        strategy_label: *label,
+                        strategy_name: name,
+                        intent: Some(intent),
+                        dispatch_deferred: None,
+                    });
+                }
             }
             // liquidation has a cartridge but is position-based; it is never in
             // a DEX route's applicable set anyway. Defensive no-op.
@@ -233,7 +237,7 @@ mod tests {
     }
 
     #[test]
-    fn triangular_is_deferred_not_dispatched() {
+    fn triangular_cycle_is_dispatched() {
         let eng = StrategyApplicabilityEngine::default();
         let c = candidate(
             RouteKind::Triangular,
@@ -242,14 +246,13 @@ mod tests {
         let plans = plan_dispatch(&c, &eng);
         assert_eq!(plans.len(), 1);
         assert_eq!(plans[0].strategy_name, "triangular_arb");
-        assert!(
-            plans[0].intent.is_none(),
-            "triangular is NOT shadow-evaluated"
-        );
-        assert_eq!(
-            plans[0].dispatch_deferred.as_deref(),
-            Some("needs_triangular_adapter")
-        );
+        assert!(plans[0].intent.is_some(), "triangular IS shadow-evaluated");
+        assert!(plans[0].dispatch_deferred.is_none());
+        // The dispatched intent is the closed 3-leg cycle ending on token0.
+        let intent = plans[0].intent.as_ref().unwrap();
+        assert_eq!(intent.legs.len(), 3);
+        assert_eq!(intent.legs.first().unwrap().token_in, addr(1));
+        assert_eq!(intent.legs.last().unwrap().token_out, addr(1));
     }
 
     #[test]
