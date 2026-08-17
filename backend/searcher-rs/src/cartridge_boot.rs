@@ -1559,14 +1559,14 @@ mod tests {
         let m = build_cartridge_pool_data(&tri, None);
         let va = format!("{:#x}", ethers::types::Address::from_low_u64_be(0xA));
         assert_eq!(m.get("token_a").unwrap().to_string(), va);
-        assert!(m.get("token_b").is_some());
-        assert!(m.get("token_c").is_some());
+        assert!(m.contains_key("token_b"));
+        assert!(m.contains_key("token_c"));
         assert_eq!(m.get("route_closed").unwrap().to_string(), "true");
 
         let two = two_leg_cycle_intent(DetectionSource::NewBlock);
         let m2 = build_cartridge_pool_data(&two, None);
         assert!(
-            m2.get("token_a").is_none(),
+            !m2.contains_key("token_a"),
             "2-leg cycles must not carry triangle vertices"
         );
     }
