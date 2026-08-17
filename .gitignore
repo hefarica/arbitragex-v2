@@ -113,3 +113,10 @@ scripts/extract-skills.js
 ArbitrageX_Secrets_Config.xlsx
 .claude/settings.local.json
 .claude/settings.local.json.bak
+
+# RunFullSyncCycle (FASE 2): operator credential manifests NEVER live in the repo
+# (env ARBX_CRED_MANIFEST points at a path outside the checkout). Defensive
+# ignore in case one lands here — gitleaks would flag it, but git must not.
+credentials-manifest*.json
+cred-manifest*.json
+!scripts/credentials-manifest.example.json
