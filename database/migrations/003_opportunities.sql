@@ -27,9 +27,16 @@ CREATE TABLE IF NOT EXISTS opportunities (
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
-CREATE INDEX IF NOT EXISTS idx_opp_status_time ON opportunities(status, detected_at DESC);
-CREATE INDEX IF NOT EXISTS idx_opp_chain_strategy ON opportunities(chain_id, strategy_kind);
-CREATE INDEX IF NOT EXISTS idx_opp_trace ON opportunities(trace_id);
+-- FREEZE-01/02: these indexes exist since boot; run_migrations.sh re-applies
+-- every file on EVERY deploy, so a plain `CREATE INDEX IF NOT EXISTS` still
+-- queues ShareLock against the table (even when the index already exists) —
+-- behind a retention purge that starves every INSERT (PG fair lock queue; two
+-- incidents 2026-08-17). CONCURRENTLY takes ShareUpdateExclusiveLock, which
+-- does NOT conflict with the hot path's RowExclusiveLock (INSERT/DELETE).
+-- Requires autocommit (no BEGIN block) — the runner pipes without -1. ✓
+CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_opp_status_time ON opportunities(status, detected_at DESC);
+CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_opp_chain_strategy ON opportunities(chain_id, strategy_kind);
+CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_opp_trace ON opportunities(trace_id);
 
 CREATE OR REPLACE FUNCTION arbx_touch_updated_at() RETURNS trigger AS $$
 BEGIN NEW.updated_at := NOW(); RETURN NEW; END;
