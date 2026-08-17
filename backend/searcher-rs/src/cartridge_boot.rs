@@ -312,6 +312,28 @@ pub fn build_cartridge_pool_data(
         && intent.legs.last().map(|l| l.token_out) == intent.legs.first().map(|l| l.token_in);
     m.insert("route_closed".into(), Dynamic::from(route_closed));
 
+    // Triangular contract (D-01/F3 follow-up): the triangular_arb cartridge reads
+    // `pool_data.token_a/b/c` — the cycle's three vertices. For a closed 3-leg
+    // cycle A→B→C→A those are the legs' token_ins. Rhai resolves a MISSING map
+    // field to `()`, which cascades into a misleading
+    // `Function not found: get_token_meta (())` (observed live 2026-08-17 after
+    // dispatch enabled) — so populate the vertices whenever the shape is a
+    // triangle. Extra legs beyond the third are visible via `route[]`.
+    if route_closed && intent.legs.len() >= 3 {
+        m.insert(
+            "token_a".into(),
+            Dynamic::from(format!("{:#x}", intent.legs[0].token_in)),
+        );
+        m.insert(
+            "token_b".into(),
+            Dynamic::from(format!("{:#x}", intent.legs[1].token_in)),
+        );
+        m.insert(
+            "token_c".into(),
+            Dynamic::from(format!("{:#x}", intent.legs[2].token_in)),
+        );
+    }
+
     if let Some(rs) = reserves_source {
         let mut rmap = rhai::Map::new();
         rmap.insert("r0".into(), Dynamic::from(rs.r0.clone()));
@@ -1525,6 +1547,28 @@ mod tests {
         assert_eq!(m.get("amount_in").unwrap().to_string(), "1234");
         assert_eq!(m.get("protocol_type").unwrap().to_string(), "v2");
         assert!(!m.get("source_pool").unwrap().to_string().is_empty());
+    }
+
+    #[test]
+    fn pool_data_triangle_vertices_present_for_closed_cycle_only() {
+        // D-01/F3 follow-up: the triangular cartridge reads token_a/b/c. A closed
+        // 3-leg cycle must carry its vertices; a 2-leg cycle (dex_arb shape)
+        // must NOT (missing-field→() is the mis-eval cascade the shape gate
+        // exists to prevent).
+        let tri = three_leg_intent();
+        let m = build_cartridge_pool_data(&tri, None);
+        let va = format!("{:#x}", ethers::types::Address::from_low_u64_be(0xA));
+        assert_eq!(m.get("token_a").unwrap().to_string(), va);
+        assert!(m.contains_key("token_b"));
+        assert!(m.contains_key("token_c"));
+        assert_eq!(m.get("route_closed").unwrap().to_string(), "true");
+
+        let two = two_leg_cycle_intent(DetectionSource::NewBlock);
+        let m2 = build_cartridge_pool_data(&two, None);
+        assert!(
+            !m2.contains_key("token_a"),
+            "2-leg cycles must not carry triangle vertices"
+        );
     }
 
     #[test]

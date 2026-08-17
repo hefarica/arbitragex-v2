@@ -21,7 +21,7 @@ import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { getApiBaseUrl } from "@/lib/api-client";
 import { hasAdminSession } from "@/lib/admin-token";
-import { rehydrateSystemStore, useSystemStore } from "@/store/useSystemStore";
+import { rehydrateSystemStore, useSystemStore, type ActiveChain } from "@/store/useSystemStore";
 
 export interface CredentialItem {
   id: string;
@@ -525,7 +525,11 @@ function CredentialCard({ spec, current, onSaved }: CredentialCardProps) {
         <div className="text-xs text-muted-foreground flex items-center gap-3 font-mono">
           <span>stored: <code className="px-1 py-0.5 bg-muted rounded">{current.value_suffix}</code></span>
           {current.last_validated_at && (
-            <span>tested: {new Date(current.last_validated_at).toLocaleString()}</span>
+            // MC-CRED-2: RPC cards now SSR-render (server topology chains), so
+            // this locale/TZ-dependent string executes server-side for the first
+            // time — R1-sanctioned per-span suppression for the deterministic
+            // client value to win.
+            <span suppressHydrationWarning>tested: {new Date(current.last_validated_at).toLocaleString()}</span>
           )}
         </div>
       )}
@@ -614,15 +618,24 @@ function CredentialCard({ spec, current, onSaved }: CredentialCardProps) {
 
 interface ClientProps {
   initialSnapshot: CredentialsSnapshot;
+  /**
+   * MC-CRED-2: chains hydrated from the Topology Vault snapshot at SSR time
+   * (server SSOT). The dynamic RPC category previously read ONLY the local
+   * zustand store — an empty/wiped localStorage made saved rpc_* rows
+   * invisible on reload even though Postgres still had them valid.
+   */
+  initialActiveChains?: ActiveChain[];
+  /** Non-null when the SSR topology fetch failed (fail-honest surface). */
+  topologyError?: string | null;
 }
 
-export function CredentialsClient({ initialSnapshot }: ClientProps) {
+export function CredentialsClient({ initialSnapshot, initialActiveChains = [], topologyError = null }: ClientProps) {
   const router = useRouter();
   const [snapshot, setSnapshot] = useState<CredentialsSnapshot>(initialSnapshot);
   const [activeCategory, setActiveCategory] = useState<string>(CATEGORIES[0]!.id);
   const [isMounted, setIsMounted] = useState(false);
   const [hasSession, setHasSession] = useState(false);
-  const activeChains = useSystemStore((state) => state.topology.activeChains);
+  const storeChains = useSystemStore((state) => state.topology.activeChains);
 
   useEffect(() => {
     rehydrateSystemStore();
@@ -650,6 +663,44 @@ export function CredentialsClient({ initialSnapshot }: ClientProps) {
       setSnapshot({ ...snapshot, error: (e as Error).message });
     }
   }, [snapshot]);
+
+  // MC-CRED-2: chains come from three sources, merged by ascending precedence
+  // (later wins per chainId):
+  //   1. persisted rpc_* rows in the credentials snapshot themselves — a
+  //      saved row ALWAYS gets a card, so its server-side status (and Delete)
+  //      stay reachable even when the vault fetch fails and localStorage is
+  //      empty;
+  //   2. the local zustand store (rehydrated from localStorage in useEffect);
+  //   3. the SSR Topology Vault snapshot (server SSOT — richest metadata).
+  const rowChains = useMemo(() => {
+    const byId = new Map<number, ActiveChain>();
+    for (const it of snapshot.items) {
+      if (it.provider !== "rpc_http" && it.provider !== "rpc_ws") continue;
+      const m = /^chain:(\d+)$/.exec(it.scope);
+      if (!m) continue;
+      const chainId = Number(m[1]);
+      if (byId.has(chainId)) continue;
+      byId.set(chainId, {
+        chainId,
+        name: `Chain ${chainId}`,
+        // Hosts are unknown from a credential row (masked list contract) —
+        // the card shows "pendiente" rather than fabricating a host.
+        rpcHttpHost: "",
+        rpcWsHost: "",
+        versionId: 0,
+        validatedAt: it.updated_at,
+      });
+    }
+    return [...byId.values()];
+  }, [snapshot.items]);
+
+  const activeChains = useMemo(() => {
+    const byId = new Map<number, ActiveChain>();
+    for (const c of [...rowChains, ...storeChains, ...initialActiveChains]) {
+      byId.set(c.chainId, c);
+    }
+    return [...byId.values()].sort((a, b) => a.chainId - b.chainId);
+  }, [rowChains, storeChains, initialActiveChains]);
 
   const dynamicRpcCategory = useMemo(() => buildDynamicRpcCategory(activeChains), [activeChains]);
 
@@ -724,6 +775,11 @@ export function CredentialsClient({ initialSnapshot }: ClientProps) {
         {snapshot.error && (
           <div className="text-xs text-destructive mt-2">Last fetch error: {snapshot.error}</div>
         )}
+        {topologyError && (
+          <div className="text-xs text-destructive mt-1">
+            Topology snapshot error: {topologyError} — RPC cards fall back to persisted rows.
+          </div>
+        )}
       </div>
 
       <div className="grid grid-cols-[220px_1fr] gap-6">
@@ -732,6 +788,18 @@ export function CredentialsClient({ initialSnapshot }: ClientProps) {
             const catRows = cat.creds.map((c) => byKey.get(`${c.provider}:${c.scope}`));
             const validInCat = catRows.filter((r) => r?.status === "valid").length;
             const invalidInCat = catRows.filter((r) => r?.status === "invalid").length;
+            // MC-RPC-2: provider-level ACTIVES count from the persisted
+            // validator breakdown (rpc CSVs) — counts only, no names.
+            const pool = catRows.reduce(
+              (acc, r) => {
+                for (const p of persistedProviders(r?.metadata)) {
+                  acc.total += 1;
+                  if (p.ok) acc.ok += 1;
+                }
+                return acc;
+              },
+              { ok: 0, total: 0 },
+            );
             return (
               <button
                 key={cat.id}
@@ -748,6 +816,20 @@ export function CredentialsClient({ initialSnapshot }: ClientProps) {
                   <span>{cat.creds.length} cred</span>
                   {validInCat > 0 && <span className="text-success">{validInCat}✓</span>}
                   {invalidInCat > 0 && <span className="text-destructive">{invalidInCat}✗</span>}
+                  {pool.total > 0 && (
+                    <span
+                      title={`${pool.ok} of ${pool.total} providers responding (last validation — refresh with Save + validate)`}
+                      className={
+                        pool.ok === pool.total
+                          ? "text-success"
+                          : pool.ok === 0
+                            ? "text-destructive"
+                            : "text-warning"
+                      }
+                    >
+                      {pool.ok}/{pool.total} live
+                    </span>
+                  )}
                 </div>
               </button>
             );
