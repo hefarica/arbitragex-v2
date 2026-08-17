@@ -106,6 +106,36 @@ export interface OpportunityExchangeCardProps {
   onInspect: (opp: OmniOpportunity) => void;
 }
 
+// ─── SSOT two-state gate (RU-A) ─────────────────────────────────────────────
+// A row that never reached economic evaluation is NOT an opportunity — it is a
+// DETECTION diagnostic. Rendering the full trading-card skeleton for it (all
+// "—") dressed a hollow shell as an opportunity: the operator saw "fallback
+// cards" with no arbitrage and no profit. Fail-honest fix: render the shell as
+// what it IS, with the machine reason decoded, and never offer Execute on an
+// unevaluated row (garbage-in simulation).
+export function isUnevaluatedShell(opp: OmniOpportunity): boolean {
+  return (
+    opp.status === "detected" &&
+    opp.rejection_reason != null &&
+    opp.expected_profit_usd == null &&
+    opp.net_expected_profit_usd == null &&
+    opp.simulated_net_profit_usd == null
+  );
+}
+
+/** Human decoding of the machine rejection codes the engines emit. */
+function decodeRejectionReason(reason: string): string {
+  if (reason.startsWith("cartridge_unmapped_strategy_label:")) {
+    const label = reason.split(":")[1] ?? "?";
+    return `El cartucho detectó la forma pero su categoría "${label}" no está mapeada a ningún motor de evaluación — la economía (profit/ROI/riesgo) nunca se computó. Mapping en cartridge_boot.rs:1145 (RU-4 lo completa).`;
+  }
+  if (reason.includes("impact_zero")) return "El evento impactó 0 pools indexados.";
+  if (reason.includes("no_price") || reason.includes("unknown_token_price"))
+    return "Falta precio USD de un token del route — el valor no puede computarse honestamente.";
+  if (reason.includes("anomalous_math")) return "La matemática del pool resultó anómala (reserves inválidas).";
+  return "Razón sin decodificar — ver código crudo.";
+}
+
 function OpportunityExchangeCardImpl({
   opp,
   now,
@@ -117,6 +147,11 @@ function OpportunityExchangeCardImpl({
   onInspect,
 }: OpportunityExchangeCardProps) {
   const [evidence, setEvidence] = useState<SimEvidence | null>(null);
+
+  // ── SSOT gate: hollow detections render as diagnostics, never as trades ──
+  if (isUnevaluatedShell(opp)) {
+    return <DetectionDiagnosticCard opp={opp} now={now} isMounted={isMounted} onInspect={onInspect} />;
+  }
 
   // ── Detection time / age / vigency ─────────────────────────────────────────
   const detectedTime = new Date(opp.detected_at).getTime();
@@ -493,6 +528,81 @@ export const OpportunityExchangeCard = React.memo(
     );
   },
 );
+
+// ─── DetectionDiagnosticCard (RU-A SSOT) ────────────────────────────────────
+// The honest face of a hollow detection: identity + WHY it was never evaluated.
+// No ledger, no route placeholder, no Execute — an unevaluated row has no
+// arbitrage to show, and pretending otherwise was the "fallback card" lie.
+function DetectionDiagnosticCard({
+  opp,
+  now,
+  isMounted,
+  onInspect,
+}: Pick<OpportunityExchangeCardProps, "opp" | "now" | "isMounted" | "onInspect">) {
+  const ageSecs = isMounted ? Math.max(0, Math.floor((now - new Date(opp.detected_at).getTime()) / 1000)) : 0;
+  const reason = opp.rejection_reason ?? "unknown";
+  const degeneratePair = opp.token_in === opp.token_out;
+  return (
+    <div
+      style={{ contentVisibility: "auto", containIntrinsicSize: "auto 210px" } as React.CSSProperties}
+      className="relative bg-muted/30 text-muted-foreground border border-dashed border-border rounded-2xl p-4 overflow-hidden"
+    >
+      <button
+        type="button"
+        aria-label="Inspect details"
+        onClick={(e) => {
+          e.stopPropagation();
+          onInspect(opp);
+        }}
+        className="absolute right-3 top-3 z-10 rounded-full p-1 text-muted-foreground/70 hover:text-foreground hover:bg-muted/60 border border-transparent hover:border-border transition-colors"
+      >
+        <Info size={15} />
+      </button>
+
+      {/* header: chain · strategy · DETECCIÓN badge */}
+      <div className="flex items-center gap-1.5 flex-wrap mb-2 pr-7">
+        <ChainBadge chain_id={opp.chain_id} />
+        <StrategyBadge strategy_kind={opp.strategy_kind} />
+        <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[9px] font-bold uppercase tracking-wide bg-warning/10 text-warning border border-warning/40">
+          <AlertTriangle size={10} /> Detección — sin evaluar
+        </span>
+      </div>
+
+      {/* what IS real: cartridge identity, timestamp, age */}
+      <div className="flex items-center justify-between text-[10px] font-mono mb-2" suppressHydrationWarning>
+        <span className="flex items-center gap-1.5 text-muted-foreground/80">
+          <Clock size={11} />
+          {isMounted
+            ? new Date(opp.detected_at).toLocaleTimeString([], { hour12: false, hour: "2-digit", minute: "2-digit", second: "2-digit" })
+            : "--:--:--"}
+          <span className="text-muted-foreground/50">· {isMounted ? `${ageSecs}s` : "--"}</span>
+        </span>
+        <span className="font-mono text-[9px] text-muted-foreground/50">{opp.strategy_kind}</span>
+      </div>
+
+      {/* the WHY — decoded machine reason + raw code */}
+      <div className="rounded-lg border border-warning/30 bg-warning/5 p-2.5 space-y-1.5">
+        <div className="text-[10px] uppercase tracking-wide text-warning font-semibold">
+          Por qué NO pasó a evaluación
+        </div>
+        <p className="text-[11px] leading-snug text-foreground/90">{decodeRejectionReason(reason)}</p>
+        <code className="block text-[9px] font-mono text-muted-foreground/70 break-all">{reason}</code>
+      </div>
+
+      {/* degenerate-data flag when the detection itself carries no usable shape */}
+      {degeneratePair && (
+        <div className="mt-2 text-[10px] font-mono text-muted-foreground/60">
+          dato crudo: token_in == token_out (forma degenerada, sin route)
+        </div>
+      )}
+
+      {/* explicit truth: there is nothing to trade here — yet */}
+      <div className="mt-2 text-[10px] text-muted-foreground/70 italic">
+        Sin profit/ROI/riesgo: la evaluación económica no corrió. Cuando el motor correspondiente la evalúe, esta misma fila aparecerá como oportunidad con números reales.
+      </div>
+    </div>
+  );
+}
 
 // ─── Route leg row (A→B etapa a etapa) ───────────────────────────────────────
 function RouteLegRow({ leg, opp }: { leg: RouteLeg; opp: OmniOpportunity }) {
