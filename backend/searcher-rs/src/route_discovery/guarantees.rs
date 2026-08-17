@@ -196,7 +196,8 @@ fn all_dispatch_intents_are_observe_only_newblock_zero_amount() {
     let tick = evaluate_tick(&outcome, 1, &engine, &finder, 200, true, 0, "shadow");
     assert!(tick.routes_dispatched > 0);
     for intent in &tick.dispatch_intents {
-        // NewBlock → cartridge_matches_intent routes ONLY to dex_arb.
+        // NewBlock → cartridge_matches_intent routes by shape: dex_arb (these
+        // 2-leg cycles) / triangular_arb (closed ≥3-leg cycles, D-01).
         assert_eq!(intent.source_event, DetectionSource::NewBlock);
         // Phase 1 has NO sizing.
         assert_eq!(intent.amount_in, U256::zero());
