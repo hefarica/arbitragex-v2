@@ -13,5 +13,10 @@ ALTER TABLE opportunities ADD COLUMN IF NOT EXISTS cartridge_id TEXT;
 -- Index for cartridge-scoped dashboard queries (CONCURRENTLY per doctrine
 -- lint-migration-index-locks — cannot run inside a DO/transaction block, so
 -- plain statement with IF NOT EXISTS for idempotency).
-CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_opportunities_cartridge_id
+-- NOTE: non-CONCURRENT deliberately (pre-doctrine <105): the integration
+-- harness applies this via node-pg simple-query multi-statement = implicit
+-- transaction, where CONCURRENTLY is illegal (SQLSTATE 25001). Safe: fresh
+-- boot = empty table (instant); prod re-apply = index exists (skip). Future
+-- indexes on populated tables: CONCURRENTLY (lint enforces >=105).
+CREATE INDEX IF NOT EXISTS idx_opportunities_cartridge_id
   ON opportunities (cartridge_id);
