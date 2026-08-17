@@ -85,7 +85,15 @@ beforeAll(async () => {
     // nullable, chain_id required, lowercase-address check. Without it, a
     // discovered-token insert (address + resolved_via only) fails on the
     // legacy symbol NOT NULL from 021.
-    "072_reconcile_tokens_schema.sql",
+        "072_reconcile_tokens_schema.sql",
+    // 099 adds opportunities.route_metadata (JSONB): the live route SELECTs it
+    // (multi-leg A→B, PR hardening 2026-08-11); without this migration the
+    // testcontainer schema lacks the column and EVERY GET returns 503
+    // query_failed ("column route_metadata does not exist"). This was the
+    // persistent "flaky" third member of the CI trio — not flaky at all:
+    // deterministic breakage latent since the route started selecting the
+    // column, surfaced on every PR run (CI-GATE-RELIABILITY part 3).
+    "099_opportunities_route_metadata.sql",
   ]) {
     await pool.query(loadMigration(f));
   }
