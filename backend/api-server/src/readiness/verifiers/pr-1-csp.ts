@@ -25,7 +25,13 @@ export async function verifyPR1CSP(opts?: {
   now?: () => Date;
 }): Promise<ReadinessItem> {
   const url = opts?.url ?? DEFAULT_URL;
-  const timeout = opts?.timeoutMs ?? 3000;
+  // Evidence-based (ONDA 1 FASE 2 / H4, 2026-08-17): 10 cold HEADs against
+  // http://frontend:5173 measured p50=23ms warm but 2611ms cold-SSR (full GET
+  // 3095ms) right after a frontend redeploy — a 3000ms default raced that cold
+  // first hit and produced AbortError yellows while the site served fine.
+  // p95 + margin => 8000ms: covers cold SSR comfortably, still fails fast on
+  // genuine unavailability.
+  const timeout = opts?.timeoutMs ?? 8000;
   const verified_at = (opts?.now ?? (() => new Date()))().toISOString();
   const base = {
     id: "PR-1",
