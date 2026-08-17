@@ -9,6 +9,17 @@
 //! Phase 1 measures topology + applicability only; nothing here sizes or
 //! executes. `liquidation` is intentionally `route_based: false` — it is found
 //! by health-factor scan, not the DEX graph (corpus §finding 7).
+//!
+//! ## Excel family profiles (RU-4)
+//!
+//! The 264-cartridge canon declares 11 Excel categories. Each gets a FAMILY
+//! profile here (same YAML file, `families:` section): which `RouteKind`s it
+//! accepts, which engine(s) own its evaluation, and the additional gates that
+//! must pass before any dispatch. Family verdicts are pure applicability
+//! metadata — they never produce `StrategyLabel`s (that mapping is
+//! `cartridge_boot`'s job, RU-3), never size, never execute, and their
+//! `shadow_only` is forced true with the same invariant as the coarse
+//! strategies.
 
 use crate::route_discovery::types::{RejectedStrategy, RouteKind};
 use crate::route_intent::{ProtocolType, RouteIntentLeg};
@@ -27,6 +38,23 @@ const STRATEGY_ORDER: [&str; 5] = [
     "liquidation",
 ];
 
+/// Fixed evaluation order for Excel-family verdicts so telemetry output is
+/// stable across runs. Declaration order of the 264-cartridge Excel canon
+/// (36/31/31/30/30/25/20/18/17/14/12 cartridges per family).
+const FAMILY_ORDER: [&str; 11] = [
+    "route_graph_engine",
+    "state_event_engine",
+    "parity_redemption_engine",
+    "derivatives_engine",
+    "cross_domain_engine",
+    "credit_liquidation_engine",
+    "intents_solver_engine",
+    "nft_engine",
+    "amm_curve_engine",
+    "cex_external_engine",
+    "prediction_engine",
+];
+
 fn yes() -> bool {
     true
 }
@@ -35,6 +63,26 @@ fn default_max_pools_per_pair() -> usize {
 }
 fn default_max_depth() -> u8 {
     3
+}
+
+/// Constructor helper for the embedded SAFE family defaults (RU-4). Every
+/// family profile is `shadow_only` and has cartridges on disk (264 canon).
+fn family_profile(
+    enabled: bool,
+    route_based: bool,
+    accepts: &[&str],
+    target_engines: &[&str],
+    gates: &[&str],
+) -> FamilyProfile {
+    FamilyProfile {
+        enabled,
+        shadow_only: true,
+        route_based,
+        accepts: accepts.iter().map(|s| s.to_string()).collect(),
+        target_engines: target_engines.iter().map(|s| s.to_string()).collect(),
+        gates: gates.iter().map(|s| s.to_string()).collect(),
+        has_cartridge: true,
+    }
 }
 
 /// Discovery tunables (graph + DFS) read from the YAML `discovery:` section.
@@ -86,18 +134,60 @@ pub struct StrategyProfile {
     pub token_allowlist: Vec<String>,
 }
 
-/// Whole applicability config: discovery tunables + per-strategy profiles.
+/// One Excel strategy-family profile (264-cartridge canon, 11 categories — RU-4).
+///
+/// A FAMILY aggregates the cartridges of one Excel category and states, per
+/// `RouteKind`: whether the family applies, which engine(s) own its evaluation,
+/// and which additional gates must pass. Everything here is APPLICABILITY
+/// METADATA — no family path sizes or executes, and `shadow_only` is forced
+/// true at load exactly like the coarse strategy profiles.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct FamilyProfile {
+    /// `false` ⇒ stub that does not participate at all (late-phase families
+    /// nft/prediction, waves G10/G11) ⇒ rejected `family_stub_not_implemented`.
+    pub enabled: bool,
+    #[serde(default = "yes")]
+    pub shadow_only: bool,
+    /// `false` ⇒ the DEX route graph can never DISCOVER this family (external
+    /// anchor / off-graph surface) ⇒ every route is rejected
+    /// `family_not_route_based` (same semantics as the coarse `liquidation`).
+    #[serde(default = "yes")]
+    pub route_based: bool,
+    /// Accepted route_kind tokens (`v2v2`/`v2v3`/`v3v2`/`v3v3`/`triangular`).
+    #[serde(default)]
+    pub accepts: Vec<String>,
+    /// Engine(s) that own this family's evaluation. Metadata only — the
+    /// dispatch wiring ships with each family's wave; nothing here executes.
+    #[serde(default)]
+    pub target_engines: Vec<String>,
+    /// Additional REQUIRED gates: identifiers for the data/behaviour bindings
+    /// the family needs beyond route shape (e.g. `impact_index_post_state`).
+    /// A gate listed here must PASS before any dispatch decision.
+    #[serde(default)]
+    pub gates: Vec<String>,
+    /// Cartridges exist on disk for this category (all 11 do — 264 total).
+    #[serde(default)]
+    pub has_cartridge: bool,
+}
+
+/// Whole applicability config: discovery tunables + per-strategy profiles +
+/// Excel family profiles (RU-4).
 #[derive(Debug, Clone, Deserialize)]
 pub struct ApplicabilityConfig {
     #[serde(default)]
     pub discovery: DiscoverySettings,
     #[serde(default)]
     pub strategies: HashMap<String, StrategyProfile>,
+    /// Excel family profiles (11 categories). A YAML without a `families:`
+    /// section yields an empty map — no family verdicts, nothing fabricated.
+    #[serde(default)]
+    pub families: HashMap<String, FamilyProfile>,
 }
 
 impl Default for ApplicabilityConfig {
-    /// Embedded SAFE defaults — identical to the shipped YAML. Every profile is
-    /// `shadow_only`; `stable_arb` + `liquidation` disabled.
+    /// Embedded SAFE defaults — identical to the shipped YAML. Every profile
+    /// (strategies AND families) is `shadow_only`; `stable_arb` +
+    /// `liquidation` disabled; nft/prediction families are honest stubs.
     fn default() -> Self {
         let mut strategies = HashMap::new();
         strategies.insert(
@@ -161,9 +251,103 @@ impl Default for ApplicabilityConfig {
                 token_allowlist: Vec::new(),
             },
         );
+        // Excel family defaults (RU-4) — byte-identical to the shipped YAML
+        // `families:` section. Route-based families name the shapes the DEX
+        // graph can discover; `route_based: false` families name an off-graph
+        // surface (their verdict reports the missing surface honestly).
+        let mut families = HashMap::new();
+        families.insert(
+            "route_graph_engine".to_string(),
+            family_profile(
+                true,
+                true,
+                &["v2v2", "v2v3", "v3v2", "v3v3", "triangular"],
+                &["dex_engine", "spatial_engine", "triangular_engine"],
+                &[],
+            ),
+        );
+        families.insert(
+            "state_event_engine".to_string(),
+            family_profile(
+                true,
+                true,
+                &["v2v2", "v2v3", "v3v2", "v3v3", "triangular"],
+                &["backrun_engine"],
+                &["impact_index_post_state"],
+            ),
+        );
+        families.insert(
+            "parity_redemption_engine".to_string(),
+            family_profile(
+                true,
+                true,
+                &["v2v2", "v2v3", "v3v2", "v3v3"],
+                &["dex_engine"],
+                &["equivalence_edge_registry"],
+            ),
+        );
+        families.insert(
+            "derivatives_engine".to_string(),
+            family_profile(
+                true,
+                false,
+                &[],
+                &["funding_rate_engine"],
+                &["derivative_oracle_feed"],
+            ),
+        );
+        families.insert(
+            "cross_domain_engine".to_string(),
+            family_profile(
+                true,
+                false,
+                &[],
+                &["cross_chain_bridge_engine"],
+                &["bridge_leg_bindings"],
+            ),
+        );
+        families.insert(
+            "credit_liquidation_engine".to_string(),
+            family_profile(
+                true,
+                false,
+                &[],
+                &["liquidation_engine", "liquidation_snipe_engine"],
+                &["health_factor_index"],
+            ),
+        );
+        families.insert(
+            "intents_solver_engine".to_string(),
+            family_profile(true, false, &[], &["backrun_engine"], &["relay_intent_feed"]),
+        );
+        families.insert(
+            "nft_engine".to_string(),
+            // Late-phase stub (wave G10): no honest engine yet — fail-honest.
+            family_profile(false, false, &[], &[], &[]),
+        );
+        families.insert(
+            "amm_curve_engine".to_string(),
+            family_profile(
+                true,
+                true,
+                &["v2v2", "v2v3", "v3v2", "v3v3", "triangular"],
+                &["dex_engine"],
+                &["typed_edge_protocol_coverage"],
+            ),
+        );
+        families.insert(
+            "cex_external_engine".to_string(),
+            family_profile(true, false, &[], &["cex_dex_engine"], &["cex_price_feed"]),
+        );
+        families.insert(
+            "prediction_engine".to_string(),
+            // Late-phase stub (wave G11): no honest engine yet — fail-honest.
+            family_profile(false, false, &[], &[], &[]),
+        );
         Self {
             discovery: DiscoverySettings::default(),
             strategies,
+            families,
         }
     }
 }
@@ -469,6 +653,26 @@ pub fn classify_route_legs(legs: &[RouteIntentLeg]) -> StrategyApplicabilityV2 {
     classify_v2(&RouteShapeV2::from_legs(legs))
 }
 
+/// Applicability verdict of one Excel family for one discovered route kind
+/// (RU-4). Carries the profile's engine/gate metadata alongside the verdict so
+/// telemetry is self-describing, even on rejection (R8: never silence).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FamilyVerdict {
+    pub family: String,
+    pub applicable: bool,
+    /// Machine-readable reason: `family_route_kind_accepted` |
+    /// `family_route_kind_not_accepted` | `family_not_route_based` |
+    /// `family_stub_not_implemented`.
+    pub reason: String,
+    /// Engine(s) that own this family's evaluation (profile metadata; also
+    /// returned on rejection so the missing surface is visible).
+    pub target_engines: Vec<String>,
+    /// Additional gates the family requires (also returned on rejection).
+    pub gates: Vec<String>,
+    /// Always `true` — forced at load; a config can never enable execution.
+    pub shadow_only: bool,
+}
+
 /// Strategy applicability engine.
 #[derive(Debug, Clone, Default)]
 pub struct StrategyApplicabilityEngine {
@@ -581,12 +785,56 @@ impl StrategyApplicabilityEngine {
         }
         out
     }
+
+    // ── Excel family verdicts (RU-4) ─────────────────────────────────────────
+
+    /// Evaluate one Excel family against a route kind. `None` when the family
+    /// is unknown to the config (typo / not declared) — never a fabricated
+    /// verdict.
+    ///
+    /// Reason precedence is ENABLED first, then route-basedness, then the
+    /// accepted-kind check. (Deliberate difference from `evaluate`'s coarse
+    /// path, which checks `route_based` first: for families, a disabled profile
+    /// is a STUB that is not participating at all — nft/prediction, waves
+    /// G10/G11 — and that is the more important fact to surface.)
+    pub fn evaluate_family(&self, family: &str, route_kind: RouteKind) -> Option<FamilyVerdict> {
+        let p = self.config.families.get(family)?;
+        let (applicable, reason) = if !p.enabled {
+            (false, "family_stub_not_implemented")
+        } else if !p.route_based {
+            (false, "family_not_route_based")
+        } else if p.accepts.iter().any(|s| s == route_kind.as_str()) {
+            (true, "family_route_kind_accepted")
+        } else {
+            (false, "family_route_kind_not_accepted")
+        };
+        Some(FamilyVerdict {
+            family: family.to_string(),
+            applicable,
+            reason: reason.to_string(),
+            target_engines: p.target_engines.clone(),
+            gates: p.gates.clone(),
+            shadow_only: p.shadow_only,
+        })
+    }
+
+    /// Verdicts for every declared family, in `FAMILY_ORDER` (stable telemetry
+    /// output). Unknown-to-config families are skipped, not fabricated.
+    pub fn evaluate_families(&self, route_kind: RouteKind) -> Vec<FamilyVerdict> {
+        FAMILY_ORDER
+            .iter()
+            .filter_map(|f| self.evaluate_family(f, route_kind))
+            .collect()
+    }
 }
 
-/// Force `shadow_only = true` on every profile so a hostile/incorrect config can
-/// never enable execution.
+/// Force `shadow_only = true` on every profile — coarse strategies AND Excel
+/// families — so a hostile/incorrect config can never enable execution.
 fn force_shadow_only(config: &mut ApplicabilityConfig) {
     for p in config.strategies.values_mut() {
+        p.shadow_only = true;
+    }
+    for p in config.families.values_mut() {
         p.shadow_only = true;
     }
 }
@@ -704,6 +952,18 @@ strategies:
   flashloan_arb: { enabled: true, shadow_only: true, route_based: true, accepts: [v2v2, v2v3, v3v2, v3v3, triangular], has_cartridge: false }
   stable_arb: { enabled: false, shadow_only: true, route_based: true, accepts: [v2v2, v2v3, v3v2, v3v3], has_cartridge: false, token_allowlist: [] }
   liquidation: { enabled: false, shadow_only: true, route_based: false, accepts: [], has_cartridge: true }
+families:
+  route_graph_engine: { enabled: true, shadow_only: true, route_based: true, accepts: [v2v2, v2v3, v3v2, v3v3, triangular], target_engines: [dex_engine, spatial_engine, triangular_engine], gates: [], has_cartridge: true }
+  state_event_engine: { enabled: true, shadow_only: true, route_based: true, accepts: [v2v2, v2v3, v3v2, v3v3, triangular], target_engines: [backrun_engine], gates: [impact_index_post_state], has_cartridge: true }
+  parity_redemption_engine: { enabled: true, shadow_only: true, route_based: true, accepts: [v2v2, v2v3, v3v2, v3v3], target_engines: [dex_engine], gates: [equivalence_edge_registry], has_cartridge: true }
+  derivatives_engine: { enabled: true, shadow_only: true, route_based: false, accepts: [], target_engines: [funding_rate_engine], gates: [derivative_oracle_feed], has_cartridge: true }
+  cross_domain_engine: { enabled: true, shadow_only: true, route_based: false, accepts: [], target_engines: [cross_chain_bridge_engine], gates: [bridge_leg_bindings], has_cartridge: true }
+  credit_liquidation_engine: { enabled: true, shadow_only: true, route_based: false, accepts: [], target_engines: [liquidation_engine, liquidation_snipe_engine], gates: [health_factor_index], has_cartridge: true }
+  intents_solver_engine: { enabled: true, shadow_only: true, route_based: false, accepts: [], target_engines: [backrun_engine], gates: [relay_intent_feed], has_cartridge: true }
+  nft_engine: { enabled: false, shadow_only: true, route_based: false, accepts: [], target_engines: [], gates: [], has_cartridge: true }
+  amm_curve_engine: { enabled: true, shadow_only: true, route_based: true, accepts: [v2v2, v2v3, v3v2, v3v3, triangular], target_engines: [dex_engine], gates: [typed_edge_protocol_coverage], has_cartridge: true }
+  cex_external_engine: { enabled: true, shadow_only: true, route_based: false, accepts: [], target_engines: [cex_dex_engine], gates: [cex_price_feed], has_cartridge: true }
+  prediction_engine: { enabled: false, shadow_only: true, route_based: false, accepts: [], target_engines: [], gates: [], has_cartridge: true }
 "#;
         let eng = StrategyApplicabilityEngine::from_yaml_str(yaml);
         assert_eq!(eng.config().discovery.max_depth, 3);
@@ -711,6 +971,246 @@ strategies:
         let a = eng.evaluate(RouteKind::V2V3);
         assert!(a.applicable.contains(&StrategyLabel::DexArbV2V3));
         assert!(a.applicable.contains(&StrategyLabel::FlashloanArb));
+        // RU-4: the shipped YAML families are EXACTLY the embedded defaults.
+        assert_eq!(eng.config().families.len(), 11);
+        assert_eq!(
+            eng.config().families,
+            ApplicabilityConfig::default().families,
+            "shipped YAML families must match the embedded SAFE defaults"
+        );
+    }
+
+    // ── RU-4: Excel family profiles (11 categories, 264 cartridges) ──────────
+
+    const ALL_KINDS: [RouteKind; 6] = [
+        RouteKind::V2V2,
+        RouteKind::V2V3,
+        RouteKind::V3V2,
+        RouteKind::V3V3,
+        RouteKind::Triangular,
+        RouteKind::MultiHop,
+    ];
+
+    #[test]
+    fn family_defaults_cover_the_11_excel_categories() {
+        let eng = StrategyApplicabilityEngine::default();
+        assert_eq!(eng.config().families.len(), 11);
+        for f in FAMILY_ORDER {
+            assert!(eng.config().families.contains_key(f), "missing family {f}");
+        }
+    }
+
+    #[test]
+    fn family_route_graph_accepts_every_cycle_kind() {
+        let eng = StrategyApplicabilityEngine::default();
+        for k in [
+            RouteKind::V2V2,
+            RouteKind::V2V3,
+            RouteKind::V3V2,
+            RouteKind::V3V3,
+            RouteKind::Triangular,
+        ] {
+            let v = eng.evaluate_family("route_graph_engine", k).unwrap();
+            assert!(v.applicable, "route_graph must accept {k:?}");
+            assert_eq!(v.reason, "family_route_kind_accepted");
+            assert_eq!(
+                v.target_engines,
+                ["dex_engine", "spatial_engine", "triangular_engine"]
+            );
+            assert!(v.shadow_only, "family verdicts are always shadow-only");
+        }
+        // MultiHop is Phase-2 reserved — not an accepted kind for any family.
+        let v = eng
+            .evaluate_family("route_graph_engine", RouteKind::MultiHop)
+            .unwrap();
+        assert!(!v.applicable);
+        assert_eq!(v.reason, "family_route_kind_not_accepted");
+    }
+
+    #[test]
+    fn family_amm_curve_accepts_cycle_kinds_with_typed_edge_gate() {
+        let eng = StrategyApplicabilityEngine::default();
+        for k in [
+            RouteKind::V2V2,
+            RouteKind::V2V3,
+            RouteKind::V3V2,
+            RouteKind::V3V3,
+            RouteKind::Triangular,
+        ] {
+            let v = eng.evaluate_family("amm_curve_engine", k).unwrap();
+            assert!(v.applicable, "amm_curve must accept {k:?}");
+            assert_eq!(v.target_engines, ["dex_engine"]);
+        }
+        // The gate records that Curve/Balancer edge typing is outside the
+        // V2/V3-only Phase-1 graph (RouteKind::classify rejects those cycles).
+        let v = eng.evaluate_family("amm_curve_engine", RouteKind::V2V2).unwrap();
+        assert_eq!(v.gates, ["typed_edge_protocol_coverage"]);
+    }
+
+    #[test]
+    fn family_state_event_gated_on_impact_index() {
+        let eng = StrategyApplicabilityEngine::default();
+        for k in [
+            RouteKind::V2V2,
+            RouteKind::V2V3,
+            RouteKind::V3V2,
+            RouteKind::V3V3,
+            RouteKind::Triangular,
+        ] {
+            let v = eng.evaluate_family("state_event_engine", k).unwrap();
+            assert!(v.applicable, "state_event must accept {k:?}");
+            assert_eq!(v.target_engines, ["backrun_engine"]);
+            // Geometry alone never proves a backrun — the post-state signal
+            // (ImpactIndex) is a required gate.
+            assert_eq!(v.gates, ["impact_index_post_state"]);
+        }
+    }
+
+    #[test]
+    fn family_parity_redemption_is_two_cycle_only() {
+        let eng = StrategyApplicabilityEngine::default();
+        for k in [
+            RouteKind::V2V2,
+            RouteKind::V2V3,
+            RouteKind::V3V2,
+            RouteKind::V3V3,
+        ] {
+            let v = eng.evaluate_family("parity_redemption_engine", k).unwrap();
+            assert!(v.applicable, "parity must accept {k:?}");
+            assert_eq!(v.target_engines, ["dex_engine"]);
+            assert_eq!(v.gates, ["equivalence_edge_registry"]);
+        }
+        // A 3-leg cycle is not an equivalence round-trip — rejected.
+        let v = eng
+            .evaluate_family("parity_redemption_engine", RouteKind::Triangular)
+            .unwrap();
+        assert!(!v.applicable);
+        assert_eq!(v.reason, "family_route_kind_not_accepted");
+    }
+
+    #[test]
+    fn family_off_graph_families_reject_every_route_kind() {
+        // cex_external / cross_domain / derivatives / credit_liquidation /
+        // intents_solver: real engines exist, but their surface is OFF the DEX
+        // route graph (external price anchor, bridge legs, oracle legs,
+        // health-factor scan, relay intent feed) — every discovered route kind
+        // is rejected honestly, with the engine + gate metadata still reported.
+        let eng = StrategyApplicabilityEngine::default();
+        let off_graph: [(&str, Vec<&str>, Vec<&str>); 5] = [
+            (
+                "cex_external_engine",
+                vec!["cex_dex_engine"],
+                vec!["cex_price_feed"],
+            ),
+            (
+                "cross_domain_engine",
+                vec!["cross_chain_bridge_engine"],
+                vec!["bridge_leg_bindings"],
+            ),
+            (
+                "derivatives_engine",
+                vec!["funding_rate_engine"],
+                vec!["derivative_oracle_feed"],
+            ),
+            (
+                "credit_liquidation_engine",
+                vec!["liquidation_engine", "liquidation_snipe_engine"],
+                vec!["health_factor_index"],
+            ),
+            (
+                "intents_solver_engine",
+                vec!["backrun_engine"],
+                vec!["relay_intent_feed"],
+            ),
+        ];
+        for (fam, engines, gates) in off_graph {
+            for k in ALL_KINDS {
+                let v = eng.evaluate_family(fam, k).unwrap();
+                assert!(!v.applicable, "{fam} must not apply to {k:?}");
+                assert_eq!(v.reason, "family_not_route_based", "{fam} {k:?}");
+                assert_eq!(v.target_engines, engines, "{fam}");
+                assert_eq!(v.gates, gates, "{fam}");
+                assert!(v.shadow_only, "{fam}");
+            }
+        }
+    }
+
+    #[test]
+    fn family_nft_and_prediction_are_honest_stubs() {
+        // Late-phase waves G10/G11: profile declared, no honest engine yet —
+        // every kind rejects with the stub reason, never silence.
+        let eng = StrategyApplicabilityEngine::default();
+        for fam in ["nft_engine", "prediction_engine"] {
+            for k in ALL_KINDS {
+                let v = eng.evaluate_family(fam, k).unwrap();
+                assert!(!v.applicable, "{fam} {k:?}");
+                assert_eq!(v.reason, "family_stub_not_implemented", "{fam} {k:?}");
+                assert!(v.target_engines.is_empty(), "stub must not claim an engine");
+                assert!(v.shadow_only, "{fam}");
+            }
+        }
+    }
+
+    #[test]
+    fn family_shadow_only_false_in_yaml_is_forced_true() {
+        let yaml = r#"
+version: 1
+families:
+  route_graph_engine:
+    enabled: true
+    shadow_only: false
+    route_based: true
+    accepts: [v2v2]
+    target_engines: [dex_engine]
+"#;
+        let eng = StrategyApplicabilityEngine::from_yaml_str(yaml);
+        assert!(
+            eng.config()
+                .families
+                .get("route_graph_engine")
+                .unwrap()
+                .shadow_only,
+            "shadow_only:false must be forced to true for families too"
+        );
+        // And the verdict reflects it — no family path can enable execution.
+        let v = eng
+            .evaluate_family("route_graph_engine", RouteKind::V2V2)
+            .unwrap();
+        assert!(v.applicable);
+        assert!(v.shadow_only, "a verdict must never grant execution");
+    }
+
+    #[test]
+    fn evaluate_families_returns_stable_order_all_shadow() {
+        let eng = StrategyApplicabilityEngine::default();
+        let vs = eng.evaluate_families(RouteKind::V2V2);
+        assert_eq!(vs.len(), 11);
+        let names: Vec<&str> = vs.iter().map(|v| v.family.as_str()).collect();
+        assert_eq!(names, FAMILY_ORDER.to_vec());
+        assert!(vs.iter().all(|v| v.shadow_only), "NO-ACTIVE invariant");
+        // Exactly the 4 graph-expressible families apply to a V2V2 2-cycle.
+        let applicable: Vec<&str> = vs
+            .iter()
+            .filter(|v| v.applicable)
+            .map(|v| v.family.as_str())
+            .collect();
+        assert_eq!(
+            applicable,
+            [
+                "route_graph_engine",
+                "state_event_engine",
+                "parity_redemption_engine",
+                "amm_curve_engine",
+            ]
+        );
+    }
+
+    #[test]
+    fn unknown_family_returns_none_never_fabricated() {
+        let eng = StrategyApplicabilityEngine::default();
+        assert!(eng
+            .evaluate_family("does_not_exist", RouteKind::V2V2)
+            .is_none());
     }
 
     // ── classify_v2 — route shape → omega_strategy_pack dispatch key (Phase 2) ──
