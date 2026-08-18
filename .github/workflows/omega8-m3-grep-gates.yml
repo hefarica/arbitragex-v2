@@ -146,3 +146,11 @@ jobs:
         # Without this gate, someone could "fix" the blockers cosmetically
         # while the engine stays inert (8,184 operator relations = 0 signal).
         run: bash automation/tools/gate-math-engine-blockers.sh
+
+      - name: SHADOW-NO-ROUTE-CAPS gate (operator directive 2026-08-18)
+        # Shadow enumeration must be exhaustive-by-deferral — NEVER capped:
+        #   G-1: worker pins CapPolicy::DeferNeverDrop
+        #   G-2: depth floor MIN_SHADOW_DEPTH clamped (no shallow shadow)
+        #   G-3: the H1 exhaustiveness oracle test exists
+        #   G-4: no lossy route-cap telemetry in Rust sources
+        run: bash automation/tools/gate-shadow-no-route-caps.sh

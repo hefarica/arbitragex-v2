@@ -169,8 +169,16 @@ export function buildRouteDiscoveryRouter(cache: TelemetryCache): Router {
         edges_rejected: tick["edges_rejected"] ?? null,
         routes_found: tick["routes_found"] ?? null,
         routes_dispatched: tick["routes_dispatched"] ?? null,
-        routes_dropped_for_cap: tick["routes_dropped_for_cap"] ?? null,
-        routes_capped: tick["routes_capped"] ?? null,
+        // SHADOW-NO-ROUTE-CAPS: deferred ≠ lost — the enumeration cursor
+        // (deferred_cursor) resumes next tick. Rotation covers parallel pools
+        // across ladders. Old capped/dropped fields are gone by design.
+        routes_deferred: tick["routes_deferred"] ?? null,
+        deferred_cursor: tick["deferred_cursor"] ?? null,
+        pools_rotated: tick["pools_rotated"] ?? null,
+        depth_pass: tick["depth_pass"] ?? null,
+        rotation_epoch: tick["rotation_epoch"] ?? null,
+        pass_emitted_total: tick["pass_emitted_total"] ?? null,
+        ladder_complete: tick["ladder_complete"] ?? null,
         telemetry_emitted: tick["telemetry_emitted"] ?? null,
         latency_ms: tick["latency_ms"] ?? null,
       }),

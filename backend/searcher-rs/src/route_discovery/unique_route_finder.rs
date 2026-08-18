@@ -45,6 +45,24 @@ pub struct RouteFinderConfig {
     pub base_tokens: Vec<Address>,
     /// Discovery mode stamped onto each candidate (e.g. `"shadow"`).
     pub mode: String,
+    /// Enumeration policy (SHADOW-NO-ROUTE-CAPS, 2026-08-18). `BoundedLegacy`
+    /// is the original per-tick capped DFS (for the live hot path, where the
+    /// cap bounds emission work). `DeferNeverDrop` NEVER loses a route: the
+    /// budget only decides where to PAUSE — the traversal cursor persists
+    /// across ticks and resumes exactly where it stopped, so the enumeration
+    /// is exhaustive over 2..=max_depth cycles in finite ticks (operator
+    /// directive: shadow must never cap routes).
+    pub policy: CapPolicy,
+}
+
+/// Enumeration policy — see `RouteFinderConfig::policy`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum CapPolicy {
+    /// Original behaviour: per-tick cap, dropped routes lost until restart.
+    #[default]
+    BoundedLegacy,
+    /// Budget-deferred exhaustive enumeration with a persistent cursor.
+    DeferNeverDrop,
 }
 
 impl Default for RouteFinderConfig {
@@ -55,6 +73,7 @@ impl Default for RouteFinderConfig {
             max_routes_per_tick: 500,
             base_tokens: Vec::new(),
             mode: "shadow".to_string(),
+            policy: CapPolicy::default(),
         }
     }
 }
@@ -174,53 +193,12 @@ impl<'g> FinderState<'g> {
             self.capped = true;
             return;
         }
-        let l = path.len();
-        let tokens: Vec<Address> = path.iter().map(|e| e.token_in).collect();
-        let pools: Vec<Address> = path.iter().map(|e| e.pool).collect();
-        let protocols: Vec<ProtocolType> = path.iter().map(|e| e.protocol).collect();
-        let fee_tiers: Vec<Option<u32>> = path.iter().map(|e| e.fee_bps).collect();
-        let directions: Vec<RouteDirection> = path.iter().map(|e| e.direction).collect();
-
-        // Canonicalize FIRST (rotates to the smallest start token), then derive
-        // route_kind from the canonical protocol order — so the same physical
-        // cycle dedups regardless of which token discovery started from.
-        let canon = match canonicalize(
-            self.chain_id,
-            &tokens,
-            &pools,
-            &protocols,
-            &fee_tiers,
-            &directions,
-        ) {
-            Some(c) => c,
-            None => return,
-        };
-
-        // Graph holds only V2/V3 edges, so a 2-hop classify is always Some; bail safely otherwise.
-        let route_kind = match RouteKind::classify(&canon.protocols) {
-            Some(k) => k,
-            None => return,
-        };
-
-        // Dedup on the canonical hash: rotations collapse, inverses are kept.
-        if !self.seen.insert(canon.route_hash.clone()) {
-            return;
+        if let Some(c) = build_candidate(self.chain_id, &self.cfg.mode, path) {
+            // Dedup on the canonical hash: rotations collapse, inverses kept.
+            if self.seen.insert(c.route_hash.clone()) {
+                self.results.push(c);
+            }
         }
-
-        self.results.push(RouteCandidate {
-            chain_id: self.chain_id,
-            route_hash: canon.route_hash,
-            route_kind,
-            tokens: canon.tokens,
-            pools: canon.pools,
-            protocols: canon.protocols,
-            fee_tiers: canon.fee_tiers,
-            directions: canon.directions,
-            hops: l as u8,
-            applicable_strategies: Vec::new(),
-            rejected_strategies: Vec::new(),
-            mode: self.cfg.mode.clone(),
-        });
     }
 }
 
@@ -268,6 +246,379 @@ pub fn find_routes(
         dropped_for_cap: state.dropped_for_cap,
         capped: state.capped,
         pools_truncated: state.pools_truncated,
+    }
+}
+
+/// Shared candidate construction (canonicalize → classify → build), used by
+/// BOTH engines so the legacy DFS and the incremental engine can never drift
+/// on emission semantics. Returns `None` when canonicalization/classification
+/// rejects the path (R8: nothing fabricated). Dedup is the CALLER's concern —
+/// legacy dedups per tick, the incremental engine per ladder.
+fn build_candidate(chain_id: u64, mode: &str, path: &[RouteEdge]) -> Option<RouteCandidate> {
+    let l = path.len();
+    let tokens: Vec<Address> = path.iter().map(|e| e.token_in).collect();
+    let pools: Vec<Address> = path.iter().map(|e| e.pool).collect();
+    let protocols: Vec<ProtocolType> = path.iter().map(|e| e.protocol).collect();
+    let fee_tiers: Vec<Option<u32>> = path.iter().map(|e| e.fee_bps).collect();
+    let directions: Vec<RouteDirection> = path.iter().map(|e| e.direction).collect();
+
+    // Canonicalize FIRST (rotates to the smallest start token), then derive
+    // route_kind from the canonical protocol order — so the same physical
+    // cycle dedups regardless of which token discovery started from.
+    let canon = canonicalize(
+        chain_id,
+        &tokens,
+        &pools,
+        &protocols,
+        &fee_tiers,
+        &directions,
+    )?;
+    // Graph holds only V2/V3 edges, so a 2-hop classify is always Some; bail safely otherwise.
+    let route_kind = RouteKind::classify(&canon.protocols)?;
+
+    Some(RouteCandidate {
+        chain_id,
+        route_hash: canon.route_hash,
+        route_kind,
+        tokens: canon.tokens,
+        pools: canon.pools,
+        protocols: canon.protocols,
+        fee_tiers: canon.fee_tiers,
+        directions: canon.directions,
+        hops: l as u8,
+        applicable_strategies: Vec::new(),
+        rejected_strategies: Vec::new(),
+        mode: mode.to_string(),
+    })
+}
+
+// ---------------------------------------------------------------------------
+// Incremental engine — DeferNeverDrop (SHADOW-NO-ROUTE-CAPS, 2026-08-18)
+// ---------------------------------------------------------------------------
+
+/// One explicit-DFS stack frame: the paused `for edge in out` loop of the
+/// recursive engine. `edge_taken = None` identifies the root frame (the start
+/// token itself — nothing to restore when it pops).
+struct Frame {
+    /// Rotated out-edge snapshot for the node this frame sits on. Snapshotted
+    /// on push so mid-ladder rotation-epoch changes cannot reorder a live
+    /// traversal (rotation only advances between ladders).
+    out: Vec<RouteEdge>,
+    /// Index of the next sibling edge to try when execution returns here.
+    next: usize,
+    /// The edge that led INTO this frame's node (`None` for the root).
+    edge_taken: Option<RouteEdge>,
+}
+
+/// Output of one incremental tick. NOTHING here means "routes were lost" —
+/// `deferred` means the budget paused the pass and the cursor persists.
+#[derive(Debug)]
+pub struct IncrementalOutcome {
+    /// Candidates emitted THIS tick (≤ the tick budget).
+    pub routes: Vec<RouteCandidate>,
+    /// Budget paused the pass mid-traversal — next tick resumes at the cursor.
+    pub deferred: bool,
+    /// The full 2..=max_depth ladder COMPLETED this tick (exhaustive over the
+    /// retained pools): every closed cycle was emitted exactly once across the
+    /// ladder's ticks. A new ladder starts on the next tick.
+    pub ladder_complete: bool,
+    /// Current iterative-deepening depth (2..=max_depth).
+    pub depth_pass: u8,
+    /// Rotation epoch — increments once per completed ladder, rotating which
+    /// parallel pools per token-pair participate next ladder.
+    pub rotation_epoch: u64,
+    /// Some pair had more parallel pools than the branching cap this tick —
+    /// the retained window rotates per ladder (exhaustive across ladders).
+    pub pools_rotated: bool,
+    /// Total candidates emitted so far in the CURRENT ladder (across ticks).
+    pub pass_emitted_total: usize,
+    /// Human-readable cursor for telemetry, e.g. `"d3@t12:f2"`.
+    pub cursor: String,
+}
+
+/// Persistent exhaustive route finder (`CapPolicy::DeferNeverDrop`).
+///
+/// The tick budget NEVER drops a route: it only decides where the traversal
+/// PAUSES. The explicit DFS stack, start-token index, per-ladder dedup set and
+/// iterative-deepening depth live in `self` across `next_tick` calls, so the
+/// enumeration continues exactly where it stopped. Exhaustiveness contract:
+/// over a static graph, the union of every tick's routes within one ladder
+/// equals the complete set of closed cycles of length 2..=max_depth over the
+/// retained (rotated) pool set — pinned by the H1 test against a legacy
+/// uncapped run. A graph-generation change restarts the ladder (the topology
+/// changed; re-validating from depth 2 is correct, not a loss).
+pub struct UniqueRouteFinder {
+    cfg: RouteFinderConfig,
+    /// Rotation epoch lives on the FINDER so it survives ladder folds.
+    rotation_epoch: u64,
+    pass: Option<PassState>,
+}
+
+struct PassState {
+    graph_gen: u64,
+    depth_pass: u8,
+    starts: Vec<Address>,
+    start_idx: usize,
+    stack: Vec<Frame>,
+    /// Canonical hashes emitted this LADDER (persists across ticks AND depth
+    /// passes so a shorter cycle is never re-emitted by a deeper pass).
+    seen: HashSet<String>,
+    pools_rotated_ever: bool,
+    pass_emitted_total: usize,
+    // Traversal state, maintained in lockstep with `stack`:
+    path: Vec<RouteEdge>,
+    pools_used: HashSet<Address>,
+    visited: HashSet<Address>,
+}
+
+impl UniqueRouteFinder {
+    pub fn new(cfg: RouteFinderConfig) -> Self {
+        Self {
+            cfg,
+            rotation_epoch: 0,
+            pass: None,
+        }
+    }
+
+    /// Configuration snapshot (read-only access for callers that need the
+    /// bounds, e.g. the worker's telemetry).
+    pub fn config(&self) -> &RouteFinderConfig {
+        &self.cfg
+    }
+
+    /// Out-edges of `token` with the per-pair branching cap applied as a
+    /// ROTATED window: pairs with more parallel pools than the cap retain a
+    /// deterministic window offset by `rotation_epoch`, so every parallel pool
+    /// participates in some ladder (exhaustive across ladders, never silently
+    /// dropped forever).
+    fn rotated_out_edges(
+        graph: &TokenGraph,
+        token: &Address,
+        cap: usize,
+        rotation_epoch: u64,
+        rotated: &mut bool,
+    ) -> Vec<RouteEdge> {
+        let mut by_pair: HashMap<Address, Vec<RouteEdge>> = HashMap::new();
+        let mut pair_order: Vec<Address> = Vec::new();
+        for e in graph.out_edges(token) {
+            let entry = by_pair.entry(e.token_out).or_insert_with(|| {
+                pair_order.push(e.token_out);
+                Vec::new()
+            });
+            entry.push(e.clone());
+        }
+        let mut out = Vec::new();
+        for pair in pair_order {
+            let group = &by_pair[&pair];
+            if group.len() <= cap {
+                out.extend(group.iter().cloned());
+                continue;
+            }
+            *rotated = true; // a real parallel pool exists outside this ladder's window
+            let offset = (rotation_epoch % group.len() as u64) as usize;
+            for i in 0..cap {
+                out.push(group[(offset + i) % group.len()].clone());
+            }
+        }
+        out
+    }
+
+    /// One tick of the exhaustive enumeration. Continues from the persisted
+    /// cursor; emits at most `budget` candidates; defers (never drops) the rest.
+    pub fn next_tick(
+        &mut self,
+        graph: &TokenGraph,
+        chain_id: u64,
+        graph_gen: u64,
+        budget: usize,
+    ) -> IncrementalOutcome {
+        let max_depth = self.cfg.max_depth.max(2);
+        // (Re)start the ladder when there is no pass or the graph changed.
+        if self.pass.as_ref().map(|p| p.graph_gen) != Some(graph_gen) {
+            let starts: Vec<Address> = if self.cfg.base_tokens.is_empty() {
+                graph.tokens().cloned().collect()
+            } else {
+                self.cfg
+                    .base_tokens
+                    .iter()
+                    .filter(|t| graph.adjacency.contains_key(*t))
+                    .cloned()
+                    .collect()
+            };
+            self.pass = Some(PassState {
+                graph_gen,
+                depth_pass: 2,
+                starts,
+                start_idx: 0,
+                stack: Vec::new(),
+                seen: HashSet::new(),
+                pools_rotated_ever: false,
+                pass_emitted_total: 0,
+                path: Vec::new(),
+                pools_used: HashSet::new(),
+                visited: HashSet::new(),
+            });
+        }
+        let cfg = self.cfg.clone();
+        let rotation_epoch = self.rotation_epoch;
+        let pass = self.pass.as_mut().expect("pass initialized above");
+        let mut routes: Vec<RouteCandidate> = Vec::new();
+        let mut deferred = false;
+        let mut ladder_complete = false;
+        let cap = cfg.max_pools_per_pair.max(1);
+        let budget = budget.max(1);
+
+        // ── Explicit DFS step loop — the paused recursion ──────────────────
+        // Invariants mirrored 1:1 from the recursive engine: no pool reuse in
+        // a cycle, no repeated intermediate token, closure only back to the
+        // start, prune when the next hop cannot close within depth_pass.
+        'tick: loop {
+            // Root frame for the current start token when the stack is empty.
+            if pass.stack.is_empty() {
+                if pass.start_idx >= pass.starts.len() {
+                    // Depth pass complete → deepen (seen persists: shorter
+                    // cycles dedup out on the deeper pass) or finish ladder.
+                    if pass.depth_pass >= max_depth {
+                        ladder_complete = true;
+                        break 'tick;
+                    }
+                    pass.depth_pass += 1;
+                    pass.start_idx = 0;
+                    continue 'tick;
+                }
+                let start = pass.starts[pass.start_idx];
+                let out = Self::rotated_out_edges(
+                    graph,
+                    &start,
+                    cap,
+                    rotation_epoch,
+                    &mut pass.pools_rotated_ever,
+                );
+                pass.stack.push(Frame {
+                    out,
+                    next: 0,
+                    edge_taken: None,
+                });
+                continue 'tick;
+            }
+
+            // Budget check at the recursion-entry equivalent: stop exploring
+            // NEW siblings; the stack IS the resume state.
+            if routes.len() >= budget {
+                deferred = true;
+                break 'tick;
+            }
+
+            let exhaust_current = {
+                let frame = pass.stack.last().expect("non-empty checked above");
+                frame.next >= frame.out.len()
+            };
+            if exhaust_current {
+                // Subtree exhausted → pop and restore traversal state.
+                let popped = pass.stack.pop().expect("non-empty checked above");
+                match popped.edge_taken {
+                    Some(e) => {
+                        pass.visited.remove(&e.token_out);
+                        pass.pools_used.remove(&e.pool);
+                        pass.path.pop();
+                    }
+                    None => {
+                        // Root frame popped → this start token is done.
+                        pass.start_idx += 1;
+                        pass.visited.clear();
+                        pass.pools_used.clear();
+                        pass.path.clear();
+                    }
+                }
+                continue 'tick;
+            }
+
+            let edge = {
+                let frame = pass.stack.last_mut().expect("non-empty checked above");
+                let e = frame.out[frame.next].clone();
+                frame.next += 1;
+                e
+            };
+            let start = pass.starts[pass.start_idx];
+            let nt = edge.token_out;
+            let nd = pass.path.len() + 1;
+
+            if pass.pools_used.contains(&edge.pool) {
+                continue 'tick; // never reuse a pool within a cycle
+            }
+            if nt == start {
+                // Closes a cycle of length nd. Emit when within the ladder.
+                if (2..=max_depth as usize).contains(&nd) {
+                    pass.path.push(edge.clone());
+                    if let Some(c) = build_candidate(chain_id, &cfg.mode, &pass.path) {
+                        if pass.seen.insert(c.route_hash.clone()) {
+                            routes.push(c);
+                            pass.pass_emitted_total += 1;
+                        }
+                    }
+                    pass.path.pop();
+                }
+                continue 'tick; // a simple cycle closes exactly once
+            }
+            if pass.visited.contains(&nt) {
+                continue 'tick; // no repeated intermediate token
+            }
+            if nd < pass.depth_pass as usize {
+                // Descend: push child frame, extend traversal state.
+                let out = Self::rotated_out_edges(
+                    graph,
+                    &nt,
+                    cap,
+                    rotation_epoch,
+                    &mut pass.pools_rotated_ever,
+                );
+                pass.path.push(edge.clone());
+                pass.pools_used.insert(edge.pool);
+                pass.visited.insert(nt);
+                pass.stack.push(Frame {
+                    out,
+                    next: 0,
+                    edge_taken: Some(edge),
+                });
+            }
+            // else: nd == depth_pass and nt != start → cannot close → prune.
+        }
+
+        let cursor = format!(
+            "d{}@t{}:f{}",
+            pass.depth_pass,
+            pass.start_idx,
+            pass.stack.len()
+        );
+        if ladder_complete {
+            // Fold the completed ladder: rotate the parallel-pool window and
+            // start fresh next tick (re-validates the whole topology — with a
+            // static graph the next ladder re-emits the same exhaustive set).
+            let summary = IncrementalOutcome {
+                routes,
+                deferred: false,
+                ladder_complete: true,
+                depth_pass: max_depth,
+                rotation_epoch,
+                pools_rotated: pass.pools_rotated_ever,
+                pass_emitted_total: pass.pass_emitted_total,
+                cursor,
+            };
+            self.rotation_epoch = rotation_epoch.wrapping_add(1);
+            self.pass = None; // next_tick reinitializes with the bumped epoch
+            return summary;
+        }
+
+        IncrementalOutcome {
+            routes,
+            deferred,
+            ladder_complete: false,
+            depth_pass: pass.depth_pass,
+            rotation_epoch,
+            pools_rotated: pass.pools_rotated_ever,
+            pass_emitted_total: pass.pass_emitted_total,
+            cursor,
+        }
     }
 }
 
@@ -495,5 +846,204 @@ mod tests {
             assert_eq!(r.mode, "shadow");
             assert!(r.route_hash.starts_with("0x"));
         }
+    }
+
+    // ── H1 (SHADOW-NO-ROUTE-CAPS): exhaustividad matemática del engine ──────
+    //
+    // El oráculo es el propio motor legacy SIN cap (budget enorme): su
+    // conjunto exhaustivo == la UNIÓN de los ticks incrementales con budget
+    // mínimo. Si DeferNeverDrop perdiera UNA sola ruta, este test falla.
+
+    fn defer_cfg(max_depth: u8) -> RouteFinderConfig {
+        RouteFinderConfig {
+            max_depth,
+            max_pools_per_pair: 8,
+            max_routes_per_tick: 500, // budget per TICK is set per-test below
+            base_tokens: Vec::new(),
+            mode: "shadow".to_string(),
+            policy: CapPolicy::DeferNeverDrop,
+        }
+    }
+
+    /// Grafo con 2- y 3-ciclos de verdad: triángulo A-B-C + paralelo D-E.
+    fn triangle_graph() -> TokenGraph {
+        use ProtocolType::V2;
+        graph_from(&[
+            (0x10, 1, 2, V2),
+            (0x20, 1, 2, V2), // paralelo sobre (A,B)
+            (0x30, 2, 3, V2),
+            (0x40, 1, 3, V2),
+            (0x50, 4, 5, V2),
+            (0x60, 4, 5, V2),
+        ])
+    }
+
+    #[test]
+    fn h1_exhaustive_union_equals_uncapped_legacy() {
+        let g = triangle_graph();
+        let depth = 3u8;
+        // Oráculo: legacy con cap imposible de alcanzar en este grafo.
+        let mut legacy_cfg = defer_cfg(depth);
+        legacy_cfg.policy = CapPolicy::BoundedLegacy;
+        legacy_cfg.max_routes_per_tick = 100_000;
+        let oracle: HashSet<String> = find_routes(&g, 1, &legacy_cfg)
+            .routes
+            .iter()
+            .map(|r| r.route_hash.clone())
+            .collect();
+        assert!(!oracle.is_empty(), "oracle must find routes");
+
+        // Sujeto: incremental con budget 2 (forzando MANY defers).
+        let mut f = UniqueRouteFinder::new(defer_cfg(depth));
+        let mut union: HashSet<String> = HashSet::new();
+        let mut ticks = 0usize;
+        loop {
+            let out = f.next_tick(&g, 1, 42, 2);
+            assert!(out.routes.len() <= 2, "budget respected");
+            for r in &out.routes {
+                assert!(
+                    union.insert(r.route_hash.clone()),
+                    "no route emitted twice in a ladder"
+                );
+            }
+            ticks += 1;
+            if out.ladder_complete {
+                break;
+            }
+            assert!(
+                out.deferred,
+                "mid-ladder ticks must be deferred (budget < total)"
+            );
+            assert!(ticks < 10_000, "ladder must terminate");
+        }
+        assert_eq!(
+            union, oracle,
+            "H1: incremental union == uncapped legacy set"
+        );
+        assert!(
+            ticks > 1,
+            "budget 2 must have forced multiple ticks (defers happened)"
+        );
+    }
+
+    #[test]
+    fn h1_cursor_advances_new_routes_each_tick() {
+        let g = triangle_graph();
+        let mut f = UniqueRouteFinder::new(defer_cfg(3));
+        let t1 = f.next_tick(&g, 1, 42, 2);
+        assert!(t1.deferred);
+        let t2 = f.next_tick(&g, 1, 42, 2);
+        assert!(t2.deferred || t2.ladder_complete);
+        // The second tick must NOT re-emit the first tick's routes (cursor advanced).
+        let s1: HashSet<&str> = t1.routes.iter().map(|r| r.route_hash.as_str()).collect();
+        for r in &t2.routes {
+            assert!(
+                !s1.contains(r.route_hash.as_str()),
+                "cursor must advance, not repeat"
+            );
+        }
+    }
+
+    #[test]
+    fn h1_graph_change_restarts_ladder_without_duplicates() {
+        let g = triangle_graph();
+        let mut f = UniqueRouteFinder::new(defer_cfg(3));
+        let _ = f.next_tick(&g, 1, 42, 2);
+        // Same graph content, different generation → restart (defensive path).
+        let mut union: HashSet<String> = HashSet::new();
+        let out = f.next_tick(&g, 1, 99, 2);
+        assert!(!out.ladder_complete || out.deferred);
+        for r in &out.routes {
+            union.insert(r.route_hash.clone()); // restart-call routes count too
+        }
+        // Completing the restarted ladder is still exhaustive (H1 oracle).
+        let mut legacy_cfg = defer_cfg(3);
+        legacy_cfg.policy = CapPolicy::BoundedLegacy;
+        legacy_cfg.max_routes_per_tick = 100_000;
+        let oracle: HashSet<String> = find_routes(&g, 1, &legacy_cfg)
+            .routes
+            .into_iter()
+            .map(|r| r.route_hash)
+            .collect();
+        loop {
+            let o = f.next_tick(&g, 1, 99, 2);
+            for r in &o.routes {
+                union.insert(r.route_hash.clone());
+            }
+            if o.ladder_complete {
+                break;
+            }
+        }
+        assert_eq!(union, oracle);
+    }
+
+    #[test]
+    fn h1_parallel_pools_rotate_across_ladders() {
+        // 4 parallel V2 pools over one pair — cap 2 retains a rotated window.
+        use ProtocolType::V2;
+        let g = graph_from(&[
+            (0x11, 1, 2, V2),
+            (0x22, 1, 2, V2),
+            (0x33, 1, 2, V2),
+            (0x44, 1, 2, V2),
+        ]);
+        // cap 2 vs 4 parallel pools → rotated window per ladder.
+        let mut cfg = defer_cfg(2);
+        cfg.max_pools_per_pair = 2;
+        let mut f = UniqueRouteFinder::new(cfg);
+        let mut seen_pools: HashSet<Address> = HashSet::new();
+        for _ladder in 0..3 {
+            loop {
+                let o = f.next_tick(&g, 1, 42, 100);
+                for r in &o.routes {
+                    for p in &r.pools {
+                        seen_pools.insert(*p);
+                    }
+                }
+                if o.ladder_complete {
+                    assert!(
+                        o.pools_rotated,
+                        "4 parallel pools vs cap 2 must flag rotation"
+                    );
+                    break;
+                }
+            }
+        }
+        // Across rotated ladders EVERY parallel pool participates in some route.
+        assert_eq!(
+            seen_pools.len(),
+            4,
+            "rotation must eventually cover all parallel pools"
+        );
+    }
+
+    #[test]
+    fn depth_floor_iterative_deepening_reaches_max_depth() {
+        // Observable deepening: with budget 2, the FIRST tick must still be in
+        // the depth-2 pass emitting ONLY 2-hop cycles; deeper cycles arrive in
+        // later ticks once the ladder deepens (a pure-3-cycle graph would
+        // finish depth 2 inside the first call and only then surface depth 3).
+        let g = triangle_graph(); // has 2-cycles (AB, DE) AND 3-cycles
+        let mut f = UniqueRouteFinder::new(defer_cfg(3));
+        let first = f.next_tick(&g, 1, 42, 2);
+        assert!(first.deferred, "tiny budget defers mid-depth-2 pass");
+        assert_eq!(first.depth_pass, 2, "ladder starts at depth 2");
+        for r in &first.routes {
+            assert_eq!(r.hops, 2, "depth-2 pass emits only 2-hop cycles");
+        }
+        let mut saw_deeper = false;
+        loop {
+            let o = f.next_tick(&g, 1, 42, 2);
+            if o.routes.iter().any(|r| r.hops == 3) {
+                saw_deeper = true;
+            }
+            if o.ladder_complete {
+                break;
+            }
+        }
+        assert!(
+            saw_deeper,
+            "3-hop cycles found once the ladder deepens past 2"
+        );
     }
 }

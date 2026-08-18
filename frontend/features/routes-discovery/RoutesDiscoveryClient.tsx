@@ -48,7 +48,13 @@ interface DiscoveryStatusData {
     latency_ms: number;
     mode: string;
     pools_total: number;
-    routes_capped: boolean;
+    /** SHADOW-NO-ROUTE-CAPS: deferred = budget paused the exhaustive
+     *  enumeration; the cursor resumes next tick. NOT a loss. */
+    routes_deferred: boolean;
+    deferred_cursor?: string | null;
+    depth_pass?: number;
+    pass_emitted_total?: number;
+    ladder_complete?: boolean;
     multi_hop_profitable_cycles: number;
   };
 }
@@ -184,8 +190,18 @@ export function RoutesDiscoveryClient({ initialData }: Props) {
           <span className="text-sm text-muted-foreground">Edges built: <strong>{tick.edges_built}</strong></span>
           <span className="text-sm text-muted-foreground">Pools: <strong>{tick.pools_total}</strong></span>
           <span className="text-sm text-muted-foreground">Latency: <strong>{tick.latency_ms}ms</strong></span>
-          <Badge variant={tick.routes_capped ? "destructive" : "secondary"} className="text-xs">
-            {tick.routes_capped ? "routes capped" : "routes ok"}
+          <Badge
+            variant={tick.routes_deferred ? "default" : "secondary"}
+            className="text-xs"
+            title={
+              tick.routes_deferred
+                ? `Exhaustive enumeration paused by tick budget — resumes at cursor ${tick.deferred_cursor ?? "?"} next tick. No routes are lost (SHADOW-NO-ROUTE-CAPS).`
+                : "Enumeration running within budget this tick"
+            }
+          >
+            {tick.routes_deferred
+              ? `deferred (continues @ ${tick.deferred_cursor ?? "?"})`
+              : "routes ok"}
           </Badge>
           <Badge variant="outline" className="text-xs capitalize">mode: {tick.mode}</Badge>
         </div>
