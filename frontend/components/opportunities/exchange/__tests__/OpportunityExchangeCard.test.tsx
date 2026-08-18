@@ -68,6 +68,21 @@ describe("isUnevaluatedShell", () => {
   it("true for detected+rejected+no economics", () => {
     expect(isUnevaluatedShell(makeOpp())).toBe(true);
   });
+  it("true for the live-feed hollow case: NO rejection_reason, no economics (gate v2)", () => {
+    // The production feed showed 50/50 "Evaluada · LIVE" cards whose entire
+    // ledger was "—" (degenerate AGLD⇄AGLD rows) — rows that escape the old
+    // status+reason gate. Zero economics ANYWHERE ⇒ DETECCIÓN face.
+    expect(
+      isUnevaluatedShell(makeOpp({ rejection_reason: null })),
+    ).toBe(true);
+  });
+  it("false when ANY economics exist — even partial (simulated amount only)", () => {
+    expect(
+      isUnevaluatedShell(
+        makeOpp({ rejection_reason: null, simulated_amount_in_usd: 12000 }),
+      ),
+    ).toBe(false);
+  });
   it("false when a simulated net exists (economics ran somewhere)", () => {
     expect(isUnevaluatedShell(makeOpp({ simulated_net_profit_usd: 1.2 }))).toBe(false);
   });
@@ -95,6 +110,36 @@ describe("OpportunityExchangeCard — SSOT two states", () => {
     expect(html).not.toContain("Gross out (AMM)");
     expect(html).not.toContain("Ruta");
     expect(html).not.toContain("Interés a pagar");
+  });
+
+  it("hollow row WITHOUT rejection reason renders the DETECCIÓN face honestly (gate v2)", () => {
+    // The production AGLD⇄AGLD case: no reason recorded, no economics. The
+    // face must NOT claim REJECTED (nothing rejected it) and must surface the
+    // honest no-economics WHY instead of a decoded machine reason.
+    const html = renderToStaticMarkup(
+      <OpportunityExchangeCard
+        {...props(
+          makeOpp({
+            rejection_reason: null,
+            token_in: "0x3235999x",
+            token_out: "0x3235999x",
+          }),
+        )}
+      />,
+    );
+    expect(html).toContain("Detección");
+    expect(html).toContain("Sin evaluar");
+    // honest WHY for reason-less rows:
+    expect(html).toContain("Sin evaluación económica computada");
+    // R8: never claim REJECTED when no rejection exists:
+    expect(html).not.toContain("→ REJECTED");
+    // machine-reason row degrades to "—" instead of the string "unknown":
+    expect(html).not.toContain(">unknown<");
+    // degenerate raw-data flag surfaces (same token both legs):
+    expect(html).toContain("token_in == token_out");
+    // and never the trading skeleton:
+    expect(html).not.toContain('class="btn"');
+    expect(html).not.toContain("Gross out (AMM)");
   });
 
   it("evaluated row keeps the full trading card", () => {
