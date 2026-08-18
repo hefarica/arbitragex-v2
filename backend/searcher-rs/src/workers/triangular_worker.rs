@@ -530,6 +530,42 @@ impl HopKind {
             HopKind::V3 { pool_addr, .. } => pool_addr,
         }
     }
+
+    /// Dex adapter label for `RouteMetadata` (§IV blocker A1): reflects the
+    /// hop's actual protocol so sim-ctl resolves the right adapter per leg.
+    fn dex_adapter(&self) -> &'static str {
+        match self {
+            HopKind::V2(_) => "uniswap_v2_router",
+            HopKind::V3 { .. } => "uniswap_v3_router",
+        }
+    }
+}
+
+/// §IV blocker A1: build the `RouteMetadata` for a 3-hop triangular cycle
+/// (A→B→C→A). Uses the resolved cycle token addresses — NOT each pool's
+/// token0_addr, which is pool-ordering-dependent and not the actual traversal
+/// sequence (the old code produced 4× token0, meaningless as a route path).
+/// `pool_addresses` and `dex_adapters` carry one entry per hop, aligned by
+/// index. Decimals are resolved separately downstream (fail-honest — see
+/// `persistence::build_route_metadata_from_plan`).
+fn build_triangular_route_metadata(
+    pool_addresses: Vec<String>,
+    dex_adapters: Vec<String>,
+    addr_a: &str,
+    addr_b: &str,
+    addr_c: &str,
+) -> RouteMetadata {
+    RouteMetadata {
+        pool_addresses,
+        token_addresses: vec![
+            addr_a.to_string(),
+            addr_b.to_string(),
+            addr_c.to_string(),
+            addr_a.to_string(),
+        ],
+        dex_adapters,
+        decimals: Default::default(),
+    }
 }
 
 /// Resolve one hop (token_in → token_out) by looking up the V2 pool index +
@@ -1507,25 +1543,17 @@ impl TriangularWorker {
         // — NOT each pool's token0_addr, which is pool-ordering-dependent and
         // not the actual traversal sequence (the old code produced 4× token0,
         // which is meaningless as a route path).
-        let route_metadata = RouteMetadata {
-            pool_addresses: vec![
-                hop1.pool_addr.to_string(),
-                hop2.pool_addr.to_string(),
-                hop3.pool_addr.to_string(),
+        let route_metadata = build_triangular_route_metadata(
+            vec![
+                hop1.pool_addr.clone(),
+                hop2.pool_addr.clone(),
+                hop3.pool_addr.clone(),
             ],
-            token_addresses: vec![
-                addr_a.clone(),
-                addr_b.clone(),
-                addr_c.clone(),
-                addr_a.clone(),
-            ],
-            dex_adapters: vec![
-                "uniswap_v2_router".to_string(),
-                "uniswap_v2_router".to_string(),
-                "uniswap_v2_router".to_string(),
-            ],
-            decimals: Default::default(),
-        };
+            vec!["uniswap_v2_router".to_string(); 3],
+            &addr_a,
+            &addr_b,
+            &addr_c,
+        );
 
         // Persist + publish (best-effort, mirror scanner.rs pattern).
         if let Some(pool) = db {
@@ -1939,29 +1967,19 @@ impl TriangularWorker {
             // the exchange dashboard can resolve the 3-hop cycle (A→B→C→A).
             // V3-bearing cycles may mix V2/V3 pools; dex_adapters reflect each
             // hop's actual protocol. Decimals resolved separately downstream.
-            let route_metadata = RouteMetadata {
-                pool_addresses: plan
-                    .hops
+            let route_metadata = build_triangular_route_metadata(
+                plan.hops
                     .iter()
                     .map(|h| h.pool_addr().to_string())
                     .collect(),
-                token_addresses: vec![
-                    plan.addr_a.clone(),
-                    plan.addr_b.clone(),
-                    plan.addr_c.clone(),
-                    plan.addr_a.clone(),
-                ],
-                dex_adapters: plan
-                    .hops
+                plan.hops
                     .iter()
-                    .map(|h| match h {
-                        HopKind::V2(_) => "uniswap_v2_router",
-                        HopKind::V3 { .. } => "uniswap_v3_router",
-                    })
-                    .map(String::from)
+                    .map(|h| h.dex_adapter().to_string())
                     .collect(),
-                decimals: Default::default(),
-            };
+                &plan.addr_a,
+                &plan.addr_b,
+                &plan.addr_c,
+            );
 
             if let Some(pool) = db {
                 if let Err(e) =
@@ -3662,5 +3680,93 @@ mod tests {
             r.is_some(),
             "chain-consistent profitable cycle must produce Some — got None"
         );
+    }
+
+    // ---------------------------------------------------------------
+    // RouteMetadata — §IV blocker A1
+    // ---------------------------------------------------------------
+
+    #[test]
+    fn route_metadata_full_cycle_token_path_preserved() {
+        let rm = build_triangular_route_metadata(
+            vec!["0xp1".into(), "0xp2".into(), "0xp3".into()],
+            vec![
+                "uniswap_v2_router".into(),
+                "uniswap_v2_router".into(),
+                "uniswap_v2_router".into(),
+            ],
+            "0xA",
+            "0xB",
+            "0xC",
+        );
+
+        // Non-empty topology — persists as real route_metadata, not '{}'.
+        assert!(rm.is_populated(), "triangular route must be populated");
+        // Traversal order A→B→C→A (NOT pool token0 orderings).
+        assert_eq!(rm.token_addresses, vec!["0xA", "0xB", "0xC", "0xA"]);
+        // One pool + one adapter per hop, aligned by index.
+        assert_eq!(rm.pool_addresses, vec!["0xp1", "0xp2", "0xp3"]);
+        assert_eq!(
+            rm.dex_adapters,
+            vec![
+                "uniswap_v2_router",
+                "uniswap_v2_router",
+                "uniswap_v2_router"
+            ]
+        );
+        // Structural gate enforced by persistence::insert_opportunity_with_route:
+        // token_addresses.len() == hops + 1 AND pool_addresses.len() <= hops.
+        let hops = rm.dex_adapters.len();
+        assert_eq!(rm.token_addresses.len(), hops + 1);
+        assert!(rm.pool_addresses.len() <= hops);
+    }
+
+    #[test]
+    fn route_metadata_mixed_v2v3_cycle_labels_each_hop() {
+        // Mixed cycle: V2 hop 1, V3 hop 2, V2 hop 3 → adapters must reflect
+        // each hop's actual protocol (what sim-ctl uses to pick the leg math).
+        let v3_hop = HopKind::V3 {
+            pool_addr: "0xv3pool".into(),
+            fee_bps: 500,
+            token_in_addr: "0xB".into(),
+            token_out_addr: "0xC".into(),
+        };
+        let hops: Vec<HopKind> = vec![
+            HopKind::V2(make_hop(100)),
+            v3_hop,
+            HopKind::V2(make_hop(101)),
+        ];
+
+        let rm = build_triangular_route_metadata(
+            hops.iter().map(|h| h.pool_addr().to_string()).collect(),
+            hops.iter().map(|h| h.dex_adapter().to_string()).collect(),
+            "0xA",
+            "0xB",
+            "0xC",
+        );
+        assert_eq!(
+            rm.dex_adapters,
+            vec![
+                "uniswap_v2_router",
+                "uniswap_v3_router",
+                "uniswap_v2_router"
+            ]
+        );
+        assert_eq!(rm.pool_addresses[1], "0xv3pool");
+        assert!(rm.is_populated());
+    }
+
+    #[test]
+    fn route_metadata_decimals_empty_by_design() {
+        // Decimals are resolved separately downstream (A1 enrichment) — the
+        // empty map is the documented fail-honest contract.
+        let rm = build_triangular_route_metadata(
+            vec!["0xp1".into()],
+            vec!["uniswap_v2_router".into()],
+            "0xA",
+            "0xB",
+            "0xC",
+        );
+        assert!(rm.decimals.map.is_empty());
     }
 }
