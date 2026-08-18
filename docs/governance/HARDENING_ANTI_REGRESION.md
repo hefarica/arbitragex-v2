@@ -181,3 +181,26 @@ PR con ID de anomalía (no un mega-PR — violaría P-∅).**
 **v1** — nace del arco R5.2→R7: un swap sin gate tumbó el sitio; los gates
 correctos (paridad, guardianes, deploy veraz, embudo de necesidad) son la vacuna.
 El sistema conquistado se defiende con máquinas, no con buenas intenciones.
+
+## §IV Motor Matemático — Bloqueadores Protegidos (vivid-grove, 2026-08-17)
+
+**Estado:** El motor §IV (31 operadores × 264 estrategias = 8.184 relaciones) está cableado pero en `flat_prior` — produce telemetría, no señal econométrica. La cadena de bloqueo es determinista:
+
+```
+A1: route_metadata vacío → sim-ctl sin rutas → sin Y-labels
+A2: ArbitrageExecutor 501 → sin simulación → sin evidence (e,Y)
+    → <200 parejas → math_operator_calibration vacía
+    → posterior = flat_prior → Kelly sizing con p=0.5+ruido
+    → 0% del potencial discriminante activo
+```
+
+**Gate CI:** `automation/tools/gate-math-engine-blockers.sh` (cableado en `omega8-m3-grep-gates.yml`)
+
+**Prohibiciones (hasta cierre con evidencia):**
+1. TODO worker nuevo que inserte opportunities DEBE emitir `route_metadata` — sin excepción
+2. `ARBX_TRADE_EXECUTOR` solo con dirección real desplegada (nunca placeholder)
+3. `source_context` no se hardcodea a `calibrated` — se deriva de la tabla
+4. Kelly sizing permanece ADVISORY (paper) hasta calibración real verificada
+5. Cerrar A1/A2 requiere: sim-ctl resuelve rutas AND B2c devuelve 200 AND tabla tiene filas
+
+**El "0 viables" se explica por esta cadena** — no es el mercado, es la infraestructura.
