@@ -16,6 +16,7 @@ import { describe, it, expect } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
 
 import { OpportunityExchangeCard, isUnevaluatedShell } from "../OpportunityExchangeCard";
+import { shortAddr } from "@/lib/format";
 import type { OmniOpportunity } from "@/lib/store/types";
 
 function makeOpp(over: Partial<Record<string, unknown>> = {}): OmniOpportunity {
@@ -114,5 +115,88 @@ describe("OpportunityExchangeCard — SSOT two states", () => {
     expect(html).toContain("Net Yield");
     expect(html).toContain("EXECUTE");
     expect(html).not.toContain("Detección — sin evaluar");
+  });
+
+  // ── F2 (audit §11 RC1): intermediate route legs show their currency code ──
+  const A = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+  const B = "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+  const C = "0xcccccccccccccccccccccccccccccccccccccccc";
+  const D = "0xdddddddddddddddddddddddddddddddddddddddd";
+
+  it("route summary resolves intermediate legs via leg_symbols — no shortAddr", () => {
+    const opp = makeOpp({
+      status: "viable",
+      rejection_reason: null,
+      expected_profit_usd: 42.5,
+      net_expected_profit_usd: 18.2,
+      roi_pct: 1.7,
+      token_in: A,
+      token_out: D,
+      route_metadata: {
+        dex_adapters: ["uniswap_v2", "sushiswap", "uniswap_v3"],
+        token_addresses: [A, B, C, D],
+        pool_addresses: ["0xpool1", "0xpool2", "0xpool3"],
+      },
+      leg_symbols: { [B]: "PEPE", [C]: "USDC" },
+    });
+    const html = renderToStaticMarkup(<OpportunityExchangeCard {...props(opp)} />);
+    // Intermediate legs render their currency codes…
+    expect(html).toContain("PEPE");
+    expect(html).toContain("USDC");
+    // …and never the truncated intermediate addresses.
+    expect(html).not.toContain(shortAddr(B));
+    expect(html).not.toContain(shortAddr(C));
+  });
+
+  it("absent leg_symbols keeps the honest shortAddr fallback (R8)", () => {
+    const opp = makeOpp({
+      status: "viable",
+      rejection_reason: null,
+      expected_profit_usd: 42.5,
+      net_expected_profit_usd: 18.2,
+      roi_pct: 1.7,
+      token_in: A,
+      token_out: D,
+      route_metadata: {
+        dex_adapters: ["uniswap_v2", "sushiswap", "uniswap_v3"],
+        token_addresses: [A, B, C, D],
+        pool_addresses: ["0xpool1", "0xpool2", "0xpool3"],
+      },
+      // No leg_symbols (legacy payload) → intermediates fall back honestly.
+    });
+    const html = renderToStaticMarkup(<OpportunityExchangeCard {...props(opp)} />);
+    expect(html).toContain(shortAddr(B));
+    expect(html).toContain(shortAddr(C));
+  });
+
+  // ── F1 (audit §11 RC2): registry_symbol as display fallback ────────────────
+  it("pair token falls back to registry_symbol when symbol is null", () => {
+    const opp = makeOpp({
+      status: "viable",
+      rejection_reason: null,
+      expected_profit_usd: 42.5,
+      net_expected_profit_usd: 18.2,
+      roi_pct: 1.7,
+      token_in: A,
+      token_out: D,
+      token_in_info: {
+        symbol: null,
+        decimals: null,
+        logo_url: null,
+        resolved_via: "failed",
+        registry_symbol: "WETH",
+      },
+      route_metadata: {
+        dex_adapters: ["uniswap_v2"],
+        token_addresses: [A, D],
+        pool_addresses: ["0xpool1"],
+      },
+    });
+    const html = renderToStaticMarkup(<OpportunityExchangeCard {...props(opp)} />);
+    // registry_symbol is real curated-list data — it surfaces as the chip's
+    // symbol label instead of the truncated address. (The dedicated
+    // "Contratos" row keeps showing raw addresses by design.)
+    expect(html).toContain("<span>WETH</span>");
+    expect(html).not.toContain(`<span>${shortAddr(A)}</span>`);
   });
 });
