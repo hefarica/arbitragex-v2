@@ -10,7 +10,7 @@
  *
  * No-hardcode doctrine: the addresses + logo URLs below are NOT invented — they
  * are copied verbatim from the repo's committed curated source
- * `backend/api-server/src/services/uniswap-tokenlist.json` (the same TrustWallet
+ * `shared-ts/src/tokenlists/data/uniswap-tokenlist.json` (the same TrustWallet
  * assets CDN the backend `tokenRegistry` serves). This is reference data sourced
  * from the repo (analogous to `backend/shared-rs/src/tokens.rs`), not operator
  * configuration. If a logo URL ever 404s, `TokenIcon`'s `<img onError>` degrades
@@ -56,7 +56,7 @@ interface KnownToken {
 
 /**
  * chainId → lowercased-address → known token. Mainnet (chain 1) canonical set.
- * Source: backend/api-server/src/services/uniswap-tokenlist.json (committed).
+ * Source: shared-ts/src/tokenlists/data/uniswap-tokenlist.json (committed).
  * Extend conservatively — only addresses + URLs verifiable against that file.
  */
 const KNOWN_TOKENS: Record<number, Record<string, KnownToken>> = {
