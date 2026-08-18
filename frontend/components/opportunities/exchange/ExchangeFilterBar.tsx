@@ -23,7 +23,7 @@
 "use client";
 
 import React, { useMemo } from "react";
-import { Eye, EyeOff, Search, Filter } from "lucide-react";
+import { Eye, EyeOff, Filter } from "lucide-react";
 import { useChains } from "@/lib/chains";
 import { familyOf, BASE_STRATEGIES } from "@/lib/strategy-kinds";
 import type { OmniOpportunity } from "@/lib/store/types";
@@ -92,117 +92,96 @@ export function ExchangeFilterBar({
   };
 
   return (
-    <div className="mb-6 rounded-2xl border border-border bg-card/60 backdrop-blur p-3 shadow-sm">
-      {/* Row 1: family chips + mode badge */}
-      <div className="flex items-start justify-between gap-3 flex-wrap">
-        <div className="flex items-center gap-1.5 flex-wrap min-w-0">
-          <span className="inline-flex items-center gap-1 text-[10px] uppercase tracking-wide text-muted-foreground font-semibold mr-1">
-            <Filter size={11} /> Strategy
-          </span>
-          {families.map((fam) => {
-            const enabled = isFamilyEnabled(fam);
-            const label = BASE_FAMILY_LABEL[fam] ?? fam;
-            return (
-              <button
-                key={fam}
-                type="button"
-                onClick={() => toggleFamily(fam)}
-                aria-pressed={enabled}
-                title={fam}
-                className={`px-2 py-0.5 rounded-full border text-[10px] font-bold uppercase tracking-wide transition-colors ${
-                  enabled
-                    ? "bg-primary/15 text-primary border-primary/40 hover:bg-primary/25"
-                    : "bg-muted/30 text-muted-foreground/60 border-border hover:bg-muted/50"
-                }`}
-              >
-                {label}
-              </button>
-            );
-          })}
-        </div>
+    <div className="controls atlas-controls">
+      {/* Row 1: family chips + mode badge (led-group style) */}
+      <div className="atlas-chiprow">
+        <span className="atlas-chiplabel">
+          <Filter size={11} /> Strategy
+        </span>
+        {families.map((fam) => {
+          const enabled = isFamilyEnabled(fam);
+          const label = BASE_FAMILY_LABEL[fam] ?? fam;
+          return (
+            <button
+              key={fam}
+              type="button"
+              onClick={() => toggleFamily(fam)}
+              aria-pressed={enabled}
+              title={fam}
+              className={`chip ${enabled ? "chip-on" : "chip-off"}`}
+            >
+              {label}
+            </button>
+          );
+        })}
 
-        {/* Mode badge — read-only terminus display */}
-        <div
-          className={`shrink-0 inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full border text-[10px] font-bold uppercase tracking-wide ${
-            modeLabel === "live"
-              ? "bg-destructive/10 border-destructive/40 text-destructive"
-              : "bg-info/10 border-info/40 text-info"
-          }`}
+        {/* Mode badge — read-only terminus display (led-group style) */}
+        <span
+          className="led-group"
           title={`Effective execution terminus: ${modeLabel}${modeConfidence ? ` · confidence ${modeConfidence}` : ""}. Mode switching lives in /config + /killswitch (§34).`}
         >
-          <span className={`size-1.5 rounded-full ${modeLabel === "live" ? "bg-destructive" : "bg-info"} animate-pulse`} />
-          {modeLabel}
+          <span className={`led wait ${modeLabel === "live" ? "led-hot" : ""}`} />
+          <span className={modeLabel === "live" ? "led-text-hot" : "led-text-live"}>{modeLabel}</span>
           {modeConfidence && modeConfidence !== "explicit" && (
-            <span className="opacity-70 normal-case font-mono">· {modeConfidence}</span>
+            <span style={{ opacity: 0.7 }}>· {modeConfidence}</span>
           )}
-        </div>
+        </span>
       </div>
 
       {/* Row 2: chain · search · viable · min-yield */}
-      <div className="flex items-center gap-2 flex-wrap mt-3">
-        <select
-          value={String(filters.chainId)}
+      <select
+        value={String(filters.chainId)}
+        onChange={(e) =>
+          onChange({
+            ...filters,
+            chainId: e.target.value === "all" ? "all" : Number(e.target.value),
+          })
+        }
+        title="Filter by chain"
+      >
+        <option value="all">All chains</option>
+        {chains.map((c) => (
+          <option key={c.chain_id} value={String(c.chain_id)}>
+            {c.short} · {c.name}
+          </option>
+        ))}
+      </select>
+
+      <input
+        type="search"
+        value={filters.search}
+        onChange={(e) => onChange({ ...filters, search: e.target.value })}
+        placeholder="cartridge / strategy id (e.g. mev_01_007)"
+        aria-label="Filter by cartridge / strategy id"
+      />
+
+      <label className="atlas-minlabel">
+        <span>min net $</span>
+        <input
+          type="number"
+          min={0}
+          step={0.5}
+          value={filters.minYieldUsd ?? ""}
           onChange={(e) =>
             onChange({
               ...filters,
-              chainId: e.target.value === "all" ? "all" : Number(e.target.value),
+              minYieldUsd: e.target.value === "" ? null : Number(e.target.value),
             })
           }
-          className="bg-muted/40 border border-border rounded-lg px-2 py-1.5 text-xs text-foreground focus:outline-none focus:border-primary/50"
-          title="Filter by chain"
-        >
-          <option value="all">All chains</option>
-          {chains.map((c) => (
-            <option key={c.chain_id} value={String(c.chain_id)}>
-              {c.short} · {c.name}
-            </option>
-          ))}
-        </select>
+          placeholder="—"
+        />
+      </label>
 
-        <div className="relative flex-1 min-w-[160px]">
-          <Search size={13} className="absolute left-2 top-1/2 -translate-y-1/2 text-muted-foreground/60" />
-          <input
-            type="text"
-            value={filters.search}
-            onChange={(e) => onChange({ ...filters, search: e.target.value })}
-            placeholder="cartridge / strategy id (e.g. mev_01_007)"
-            className="w-full bg-muted/40 border border-border rounded-lg pl-7 pr-2 py-1.5 text-xs text-foreground placeholder:text-muted-foreground/50 focus:outline-none focus:border-primary/50"
-          />
-        </div>
-
-        <label className="inline-flex items-center gap-1.5 text-xs text-muted-foreground">
-          <span>min net $</span>
-          <input
-            type="number"
-            min={0}
-            step={0.5}
-            value={filters.minYieldUsd ?? ""}
-            onChange={(e) =>
-              onChange({
-                ...filters,
-                minYieldUsd: e.target.value === "" ? null : Number(e.target.value),
-              })
-            }
-            placeholder="—"
-            className="w-16 bg-muted/40 border border-border rounded-lg px-2 py-1.5 text-xs text-foreground placeholder:text-muted-foreground/50 focus:outline-none focus:border-primary/50"
-          />
-        </label>
-
-        <button
-          type="button"
-          onClick={() => onChange({ ...filters, viableOnly: !filters.viableOnly })}
-          aria-pressed={filters.viableOnly}
-          className={`inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border text-xs font-semibold transition-colors ${
-            filters.viableOnly
-              ? "bg-success/10 border-success/40 text-success hover:bg-success/20"
-              : "bg-destructive/10 border-destructive/40 text-destructive hover:bg-destructive/20"
-          }`}
-          title={filters.viableOnly ? "Showing viable only — click to show all" : "Showing all — click for viable only"}
-        >
-          {filters.viableOnly ? <Eye size={13} /> : <EyeOff size={13} />}
-          {filters.viableOnly ? "Viable" : "All"}
-        </button>
-      </div>
+      <button
+        type="button"
+        onClick={() => onChange({ ...filters, viableOnly: !filters.viableOnly })}
+        aria-pressed={filters.viableOnly}
+        className={`chip ${filters.viableOnly ? "chip-on" : "chip-off"}`}
+        title={filters.viableOnly ? "Showing viable only — click to show all" : "Showing all — click for viable only"}
+      >
+        {filters.viableOnly ? <Eye size={12} /> : <EyeOff size={12} />}
+        {filters.viableOnly ? "Viable" : "All"}
+      </button>
     </div>
   );
 }
