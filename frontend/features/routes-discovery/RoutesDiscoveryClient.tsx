@@ -15,6 +15,7 @@ import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { DegradedBanner } from "@/components/DegradedBanner";
 import { SourceMeta } from "@/components/SourceMeta";
+import { RouteDiscoverySettingsSheet, FinancingBadges } from "./RouteDiscoverySettingsSheet";
 
 const POLL_INTERVAL_MS = 8_000;
 
@@ -37,6 +38,16 @@ interface RouteEntry {
   rejected_strategies: RejectedStrategy[];
   dispatch_strategy: string;
   dispatch_deferred: string | null;
+  /** CAPA 2 G2 — parallel financing verdicts (born/died/resized per mode). */
+  financing?: Array<{
+    mode: string;
+    label: string;
+    enabled: boolean;
+    viable: boolean;
+    reason?: string | null;
+    fee_bps: number;
+    max_size_usd: number;
+  }>;
 }
 
 interface DiscoveryStatusData {
@@ -95,6 +106,8 @@ function RouteCard({ route, idx }: { route: RouteEntry; idx: number }) {
             ))}
           </div>
         )}
+        {/* CAPA 2 G2 — the financing comparison: born ✓ / died ✗ / size per mode */}
+        <FinancingBadges financing={route.financing ?? []} />
         {route.dispatch_strategy && (
           <div className="flex items-center gap-1 text-xs">
             <ZapIcon className="h-3 w-3 text-primary" />
@@ -204,6 +217,7 @@ export function RoutesDiscoveryClient({ initialData }: Props) {
               : "routes ok"}
           </Badge>
           <Badge variant="outline" className="text-xs capitalize">mode: {tick.mode}</Badge>
+          <RouteDiscoverySettingsSheet chainId={tick.chain_id} />
         </div>
       )}
 

@@ -227,10 +227,133 @@ export function buildRouteDiscoveryRouter(cache: TelemetryCache): Router {
         rejected_strategies: a?.["rejected_strategies"] ?? [],
         dispatch_strategy: i?.["strategy"] ?? null,
         dispatch_deferred: i?.["dispatch_deferred"] ?? null,
+        // CAPA 2 G2 — financing parallel evaluation (doctrine §2): the SAME
+        // route's verdict under every mode; the frontend renders
+        // born/died/resized badges from this array.
+        financing: Array.isArray(c["financing"]) ? (c["financing"] as unknown[]) : [],
       };
     });
 
     res.json(ok({ routes }));
+  });
+
+  return router;
+}
+
+/**
+ * ROUTES_CROWN_JEWEL §3 — live route-discovery runtime config endpoints.
+ *
+ * GET  /api/v1/route-discovery/config?chain_id=1  (public read)
+ * PUT  /admin/route-discovery-config/:chain_id    (admin-gated + audit)
+ *
+ * Same channel shape as trading_config: PG source-of-truth → Redis mirror key
+ * `arbx:route_discovery_config:<chain>` → the Rust worker reads it live (1s
+ * cache). No PG table yet in this slice: the Redis key IS the durable store
+ * (rehydrated by this PUT; a PG migration lands with F1-full if persistence
+ * across Redis restarts becomes a requirement — noted honestly, not hidden).
+ */
+export interface RouteDiscoveryConfigRouterDeps {
+  redis?: Redis;
+  /** Admin-token middleware factory — gates the PUT. */
+  requireAdminToken?: (expected: string) => RequestHandler;
+  adminToken?: string;
+  /** Audit writer (api-server writeAudit) — optional, best-effort. */
+  writeAudit?: (action: string, actor: string, detail: unknown) => void;
+}
+
+/** Defaults MUST mirror the Rust `RouteDiscoveryRuntimeConfig` (single source:
+ * both sides default identically; the Redis key carries the explicit truth). */
+const RD_CONFIG_DEFAULTS = {
+  routes_per_tick: 500,
+  max_hops: 7,
+  financing_enabled: {
+    own_capital: true,
+    aave_fl: true,
+    balancer_fl: true,
+    v2_flash_swap: true,
+    flash_mint_dai: true,
+  },
+  fee_bps_overrides: {} as Record<string, number>,
+  own_inventory_usd: 5000,
+  min_notional_usd: 500,
+};
+
+export function buildRouteDiscoveryConfigRouter(
+  deps: RouteDiscoveryConfigRouterDeps = {},
+): Router {
+  const { redis, requireAdminToken, adminToken, writeAudit } = deps;
+  const router = Router();
+
+  const keyOf = (chain: number) => `arbx:route_discovery_config:${chain}`;
+
+  // ── GET — current effective config (live key or honest defaults) ─────────
+  router.get("/api/v1/route-discovery/config", async (req, res) => {
+    const chain = Number(req.query["chain_id"] ?? 1) || 1;
+    if (!redis) {
+      res.json({ ok: true, source: "defaults", chain_id: chain, config: RD_CONFIG_DEFAULTS });
+      return;
+    }
+    try {
+      const raw = await redis.get(keyOf(chain));
+      if (!raw) {
+        res.json({ ok: true, source: "defaults", chain_id: chain, config: RD_CONFIG_DEFAULTS });
+        return;
+      }
+      const parsed = JSON.parse(raw) as unknown;
+      res.json({ ok: true, source: "redis", chain_id: chain, config: parsed });
+    } catch (e) {
+      res.status(503).json({ error: "config_read_failed", detail: (e as Error).message });
+    }
+  });
+
+  // ── PUT — admin-gated live upsert (+ pub/sub notify + audit) ─────────────
+  if (requireAdminToken && adminToken) {
+    router.use("/admin/route-discovery-config", requireAdminToken(adminToken));
+  }
+  router.put("/admin/route-discovery-config/:chain_id", async (req, res) => {
+    const chain = Number(req.params["chain_id"]) || 1;
+    if (!redis) {
+      res.status(503).json({ error: "redis_unavailable" });
+      return;
+    }
+    // Validate the fields we know; pass through the rest verbatim (the Rust
+    // side's serde defaults absorb partials). Numbers bounded, modes boolean.
+    const b = req.body as Record<string, unknown>;
+    const errs: string[] = [];
+    if (
+      b["routes_per_tick"] != null &&
+      !(Number.isFinite(Number(b["routes_per_tick"])) && Number(b["routes_per_tick"]) >= 1 && Number(b["routes_per_tick"]) <= 100_000)
+    ) {
+      errs.push("routes_per_tick must be 1..100000");
+    }
+    if (
+      b["max_hops"] != null &&
+      !(Number.isFinite(Number(b["max_hops"])) && Number(b["max_hops"]) >= 2 && Number(b["max_hops"]) <= 12)
+    ) {
+      errs.push("max_hops must be 2..12");
+    }
+    if (b["financing_enabled"] != null && typeof b["financing_enabled"] !== "object") {
+      errs.push("financing_enabled must be an object of mode→boolean");
+    }
+    if (errs.length > 0) {
+      res.status(400).json({ error: "invalid_config", detail: errs.join("; ") });
+      return;
+    }
+    try {
+      // Read-merge-write so a partial PUT doesn't erase untouched fields.
+      const existingRaw = await redis.get(keyOf(chain));
+      const existing = existingRaw ? (JSON.parse(existingRaw) as Record<string, unknown>) : { ...RD_CONFIG_DEFAULTS };
+      const merged = { ...existing, ...b };
+      await redis.set(keyOf(chain), JSON.stringify(merged));
+      await redis.publish("arbx:route_discovery_config:changes", JSON.stringify({ chain_id: chain }));
+      writeAudit?.("route_discovery_config.upsert", String(req.headers["x-arbx-actor"] ?? "operator"), {
+        chain_id: chain,
+        fields: Object.keys(b),
+      });
+      res.json({ ok: true, chain_id: chain, config: merged });
+    } catch (e) {
+      res.status(503).json({ error: "config_write_failed", detail: (e as Error).message });
+    }
   });
 
   return router;

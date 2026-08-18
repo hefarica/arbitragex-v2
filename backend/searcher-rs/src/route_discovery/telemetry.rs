@@ -93,6 +93,22 @@ pub fn route_candidate_event(chain_id: u64, algorithm: &str, c: &RouteCandidate)
     })
 }
 
+/// `route_discovery.route_candidate` + the financing parallel evaluation
+/// (CAPA 2 G2 — ROUTES_CROWN_JEWEL §2): the SAME route's verdict under EVERY
+/// financing mode, so the frontend renders born/died/resized per mode.
+pub fn route_candidate_event_with_financing(
+    chain_id: u64,
+    algorithm: &str,
+    c: &RouteCandidate,
+    financing: Option<&Vec<crate::route_discovery::financing::ModeVerdict>>,
+) -> Value {
+    let mut e = route_candidate_event(chain_id, algorithm, c);
+    if let Some(verdicts) = financing {
+        e["financing"] = serde_json::to_value(verdicts).unwrap_or(serde_json::Value::Null);
+    }
+    e
+}
+
 /// `route_discovery.strategy_applicability` — which strategies apply to a route.
 pub fn strategy_applicability_event(chain_id: u64, c: &RouteCandidate) -> Value {
     json!({
