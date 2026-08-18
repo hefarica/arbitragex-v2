@@ -173,6 +173,13 @@ export interface OmniOpportunity {
   token_in_info: TokenInfo | null;
   token_out_info: TokenInfo | null;
   chain_base_token_symbol: string | null;
+  /**
+   * F2 (audit §11 RC1): symbols for INTERMEDIATE route legs (multi-hop
+   * cycles), hydrated by the api-server from the tokens table + on-demand
+   * eth_call. Keyed by lowercased address; only resolved addresses present.
+   * null/absent on legacy payloads → the card's honest shortAddr fallback.
+   */
+  leg_symbols?: Record<string, string> | null;
 
   // === Profit Metrics ===
   expected_profit_usd: number | null;
