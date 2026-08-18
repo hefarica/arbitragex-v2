@@ -84,4 +84,25 @@ describe("TokenChip", () => {
     // shortAddr produces "0xc02a…6cc2"
     expect(html).toContain("0xc02a");
   });
+
+  // F1 (audit §11 RC2): registry_symbol is real curated-list data resolved by
+  // the api-server — it must surface before the "—" pending placeholder.
+  it("falls back to registry_symbol when symbol is null (case E)", () => {
+    const html = renderToStaticMarkup(
+      <TokenChip
+        token_address={ADDR}
+        chain_id={1}
+        info={{
+          symbol: null,
+          decimals: null,
+          logo_url: null,
+          resolved_via: "failed",
+          registry_symbol: "WETH",
+        }}
+      />
+    );
+    expect(html).toContain("WETH");
+    // the honest-pending "—" placeholder must NOT mask a known registry symbol
+    expect(html).not.toContain(">—<");
+  });
 });

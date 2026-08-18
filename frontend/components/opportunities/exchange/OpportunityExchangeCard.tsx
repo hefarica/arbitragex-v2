@@ -76,9 +76,14 @@ function usdCost(value: number | null | undefined): string {
   return `-$${Math.abs(value).toFixed(2)}`;
 }
 
-/** Token symbol with honest fallback (shortAddr) when metadata is missing. */
+/**
+ * Token symbol with honest fallbacks when metadata is missing.
+ * F1 (audit §11 RC2): registry_symbol is REAL curated-list data resolved by
+ * the api-server for every token — surface it before the truncated address
+ * instead of discarding it. R8 intact: still no fabrication.
+ */
 function tokenSymbol(addr: string, info: TokenInfo | null): string {
-  return info?.symbol ?? shortAddr(addr);
+  return info?.symbol ?? info?.registry_symbol ?? shortAddr(addr);
 }
 
 /** Deterministic fallback hue from the symbol (tokEl port, model lines 308-321). */
@@ -235,7 +240,17 @@ function OpportunityExchangeCardImpl({
   // Route summary: "SYM→SYM (DEX) → SYM (DEX)" with real symbols, shortAddr fallback.
   const routeText = (() => {
     if (legCount === 0) return "—";
-    const sym = (addr: string): string => tokenSymbol(addr, addr === opp.token_in ? opp.token_in_info : addr === opp.token_out ? opp.token_out_info : null);
+    // F2 (audit §11 RC1): pair tokens use their enriched info; INTERMEDIATE
+    // legs (previously always shortAddr) resolve via the server-hydrated
+    // leg_symbols map. Absent entry → honest shortAddr fallback (R8).
+    const sym = (addr: string): string => {
+      const lc = addr.toLowerCase();
+      if (lc === opp.token_in.toLowerCase() && opp.token_in_info)
+        return tokenSymbol(addr, opp.token_in_info);
+      if (lc === opp.token_out.toLowerCase() && opp.token_out_info)
+        return tokenSymbol(addr, opp.token_out_info);
+      return opp.leg_symbols?.[lc] ?? shortAddr(addr);
+    };
     return legs
       .map((leg, i) =>
         i === 0
