@@ -2569,8 +2569,14 @@ async fn decode_and_score_tx<'a>(
     }
 
     // Persist + publish. Both are best-effort with their own error paths.
+    // §IV blocker A1: persist WITH the route topology captured above (same
+    // `route_metadata` the rejection paths already carry) so sim-ctl can
+    // resolve the route from every scored row, not just rejected ones.
     if let Some(pool) = db {
-        if let Err(e) = persistence::insert_opportunity(pool, &opportunity).await {
+        if let Err(e) =
+            persistence::insert_opportunity_with_route(pool, &opportunity, Some(&route_metadata))
+                .await
+        {
             chain_counters(client.chain_id)
                 .db_errors
                 .fetch_add(1, Ordering::Relaxed);
