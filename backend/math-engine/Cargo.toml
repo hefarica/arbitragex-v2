@@ -28,7 +28,7 @@ rand_distr = "0.4"
 statrs = "0.16"
 
 # ML primitives (crates.io dependencies, not external repo ports)
-candle-core = { version = "0.4", optional = true }
+candle-core = { version = "0.11", optional = true }
 candle-nn = { version = "0.4", optional = true }
 
 [features]
