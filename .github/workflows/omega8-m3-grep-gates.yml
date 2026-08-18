@@ -137,3 +137,12 @@ jobs:
         # migrations >= 105 (the exact shape that froze the pipeline 21h;
         # RCA docs/incidents/2026-08-17-PIPELINE-FREEZE-PURGE-LOCKS.md).
         run: bash automation/tools/lint-migration-index-locks.sh
+
+      - name: §IV motor blocker gate (A1+A2+M6 — vivid-grove audit)
+        # Protects the mathematical engine §IV activation chain:
+        #   A1: workers that insert opportunities MUST emit route_metadata
+        #   A2: ARBITRAGE_EXECUTOR must never contain placeholder addresses
+        #   M6: source_context='calibrated' must come from data, not hardcoded
+        # Without this gate, someone could "fix" the blockers cosmetically
+        # while the engine stays inert (8,184 operator relations = 0 signal).
+        run: bash automation/tools/gate-math-engine-blockers.sh
