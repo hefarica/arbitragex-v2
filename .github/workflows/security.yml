@@ -63,8 +63,13 @@ jobs:
         # To accept a known advisory: add --ignore RUSTSEC-XXXX-NNNN to RUSTSEC_IGNORES
         # in the repo/env with operator approval and a comment explaining the risk decision.
         # NEVER use continue-on-error here — that defeats the gate.
+        # NOTE: NO --deny flag. #405's intent was "block only on real vulnerabilities,
+        # not unmaintained warnings" — but `--deny vulnerabilities` is an INVALID value
+        # for cargo-audit (parse error, exit 2) and killed every PR's audit since it
+        # landed. The default behavior is exactly the intent: vulnerabilities FAIL the
+        # run, unmaintained/yanked warnings don't.
         run: |
-          cargo audit --deny vulnerabilities \
+          cargo audit \
             ${RUSTSEC_IGNORES:-}
         env:
           # ── OMEGA-102 OPERATOR-APPROVED ALLOWLIST · 2026-05-16 · renewed 2026-07-03 ──
