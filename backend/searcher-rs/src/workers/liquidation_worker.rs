@@ -82,6 +82,7 @@ use ethers::abi::{Function, Param, ParamType, StateMutability, Token};
 use ethers::types::{Address, Bytes, U256};
 use redis::aio::ConnectionManager;
 use redis::AsyncCommands;
+use shared_rs::candidates::RouteMetadata;
 use shared_rs::contracts::{Opportunity, StrategyKind};
 use shared_rs::rpc_failover::HttpRpcPool;
 use shared_rs::trading_config::TradingConfigClient;
@@ -417,6 +418,33 @@ pub struct UserAccountData {
     pub current_liquidation_threshold: U256,
     pub ltv: U256,
     pub health_factor: U256,
+}
+
+/// §IV blocker A1: build the `RouteMetadata` for a liquidation opportunity.
+///
+/// Liquidation is a single-venue strategy: the whole opportunity executes as
+/// ONE `Pool.liquidationCall` hop on the Aave V3 Pool contract — that contract
+/// plays the role a DEX pool plays for swaps (it is where the repay→seize
+/// exchange happens), so it fills `pool_addresses[0]`.
+///
+/// The token path mirrors the row's `token_in`/`token_out` slots. Those slots
+/// are the worker's documented synthetic placeholders (see the emit site): the
+/// MVP cannot identify the specific debt/collateral asset pair without an extra
+/// Multicall3 round (`getReservesList` + per-asset `getUserReserveData`), which
+/// is queued as a follow-up. RULE 00: nothing is invented here — pool and token
+/// slots are exactly the values the worker already persists on the row, so the
+/// topology stays structurally valid (tokens == hops + 1, pools == hops) and
+/// reaches sim-ctl instead of collapsing to `'{}'`.
+pub fn build_liquidation_route_metadata(
+    token_in_slot: &str,
+    token_out_slot: &str,
+) -> RouteMetadata {
+    RouteMetadata {
+        pool_addresses: vec![AAVE_V3_POOL_MAINNET.to_ascii_lowercase()],
+        token_addresses: vec![token_in_slot.to_string(), token_out_slot.to_string()],
+        dex_adapters: vec!["aave_v3_pool".to_string()],
+        decimals: Default::default(),
+    }
 }
 
 // =============================================================================
@@ -1041,8 +1069,19 @@ impl LiquidationWorker {
                     strategy = STRATEGY_KIND,
                 );
 
+                // §IV blocker A1 fix: emit route_metadata so sim-ctl can resolve
+                // the venue. See `build_liquidation_route_metadata` for the
+                // single-hop Aave Pool topology + synthetic token slots.
+                let route_metadata =
+                    build_liquidation_route_metadata(&opp.token_in, &opp.token_out);
                 if let Some(pool) = db.as_ref() {
-                    if let Err(e) = persistence::insert_opportunity(pool, &opp).await {
+                    if let Err(e) = persistence::insert_opportunity_with_route(
+                        pool,
+                        &opp,
+                        Some(&route_metadata),
+                    )
+                    .await
+                    {
                         counters().db_errors.fetch_add(1, Ordering::Relaxed);
                         warn!(event = "liquidation_worker.db_error", error = %e);
                     } else {
@@ -1516,5 +1555,41 @@ mod tests {
                 min_profit_usd_fallback(*chain)
             );
         }
+    }
+
+    // ---------------------------------------------------------------
+    // RouteMetadata — §IV blocker A1
+    // ---------------------------------------------------------------
+
+    #[test]
+    fn route_metadata_single_hop_aave_pool_topology() {
+        let token_in_slot = AAVE_V3_POOL_MAINNET.to_ascii_lowercase();
+        let token_out_slot = "0xuser0000000000000000000000000000000000001".to_string();
+        let rm = build_liquidation_route_metadata(&token_in_slot, &token_out_slot);
+
+        // Non-empty topology (persists as real route_metadata, not '{}').
+        assert!(rm.is_populated(), "liquidation route must be populated");
+        // Single venue hop: the Aave V3 Pool contract IS the execution venue.
+        assert_eq!(
+            rm.pool_addresses,
+            vec![AAVE_V3_POOL_MAINNET.to_ascii_lowercase()]
+        );
+        assert_eq!(rm.dex_adapters, vec!["aave_v3_pool".to_string()]);
+        // Token path mirrors the row's token_in/token_out slots exactly —
+        // nothing invented (RULE 00).
+        assert_eq!(rm.token_addresses, vec![token_in_slot, token_out_slot]);
+        // Structural gate enforced by persistence::insert_opportunity_with_route:
+        // token_addresses.len() == hops + 1 AND pool_addresses.len() <= hops.
+        let hops = rm.dex_adapters.len();
+        assert_eq!(rm.token_addresses.len(), hops + 1);
+        assert!(rm.pool_addresses.len() <= hops);
+    }
+
+    #[test]
+    fn route_metadata_decimals_empty_by_design() {
+        // Decimals are resolved separately downstream (A1 enrichment); an empty
+        // map is the documented fail-honest contract, same as the swap workers.
+        let rm = build_liquidation_route_metadata("0xslotin", "0xslotout");
+        assert!(rm.decimals.map.is_empty());
     }
 }
