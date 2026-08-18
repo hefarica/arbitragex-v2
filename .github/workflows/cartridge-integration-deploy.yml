@@ -151,9 +151,20 @@ jobs:
       - name: Install Playwright
         run: npx playwright install --with-deps chromium
 
+      - name: psql shim (cached postgres:16 image — no apt)
+        # CI-FLAKE-PSQL-APT (2026-08-17): apt-get hung until job timeout on a
+        # black-holed mirror; the postgres:16 service image is already on the
+        # runner, so the shim needs zero network. Same pattern as migrate.sh's
+        # own docker fallback, pinned to the cached tag.
+        run: |
+          set -euo pipefail
+          printf '#!/bin/sh\nexec docker run --rm -v "$PWD:$PWD" -w "$PWD" --network host postgres:16 psql "$@"\n' \
+            | sudo tee /usr/local/bin/psql >/dev/null
+          sudo chmod +x /usr/local/bin/psql
+          psql --version
+
       - name: Apply DB migrations
         run: |
-          sudo apt-get update && sudo apt-get install -y postgresql-client
           psql "postgres://postgres:postgres@localhost:5432/arbitragex" \
             -v ON_ERROR_STOP=1 -c "CREATE EXTENSION IF NOT EXISTS pgcrypto;"
           bash automation/scripts/migrate.sh
