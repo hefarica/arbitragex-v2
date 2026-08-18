@@ -171,8 +171,14 @@ export class StreamConsumer {
     });
     if (pre) return pre;
 
-    const safety = await checkToken(this.deps.pool, this.deps.tokenSafetyCb, this.deps.cfg, opp.chain_id, opp.token_in);
-    // Note: for paired safety we could check token_out too; kept single for S3 minimalism.
+    // Worst-of-pair safety (2026-08-18, "real y confiable"): a route is only
+    // as safe as its LEAST safe token. Previously only token_in was checked —
+    // a WETH→SCAM pair sailed through on WETH's score alone. Both legs are
+    // now checked (token_out on its destination chain when the opportunity
+    // declares one) and the decision consumes the lower record.
+    const safetyIn = await checkToken(this.deps.pool, this.deps.tokenSafetyCb, this.deps.cfg, opp.chain_id, opp.token_in);
+    const safetyOut = await checkToken(this.deps.pool, this.deps.tokenSafetyCb, this.deps.cfg, opp.chain_id_out ?? opp.chain_id, opp.token_out);
+    const safety = safetyIn.safety_score <= safetyOut.safety_score ? safetyIn : safetyOut;
     const scored = scoreOpportunity(opp, null, safety.safety_score, weightsFromConfig(this.deps.cfg), this.deps.cfg.risk.max_gas_price_gwei);
 
     return decide({ scored, safety, sim: null, cfg: this.deps.cfg });

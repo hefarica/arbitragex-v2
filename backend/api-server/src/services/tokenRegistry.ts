@@ -48,28 +48,7 @@
  *     separately as `registry_name` for operator context.
  */
 
-import { readFileSync } from "node:fs";
-import path from "node:path";
-import { fileURLToPath } from "node:url";
-
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const UNISWAP_LIST_PATH = path.join(__dirname, "uniswap-tokenlist.json");
-const COINGECKO_LIST_PATH = path.join(__dirname, "coingecko-coinslist.json");
-
-interface RawTokenEntry {
-  chainId: number;
-  address: string;
-  symbol: string;
-  name: string;
-  decimals: number;
-  logoURI?: string;
-}
-
-interface RawTokenList {
-  name: string;
-  version: { major: number; minor: number; patch: number };
-  tokens: RawTokenEntry[];
-}
+import { getCoinGeckoSnapshot, getUniswapTokenlist } from "@arbx/shared/tokenlists";
 
 export interface RegistryEntry {
   chain_id: number;
@@ -141,11 +120,9 @@ interface CoinGeckoSnapshot {
 }
 
 function loadUniswapInto(m: Map<string, RegistryEntry>): number {
-  const raw = readFileSync(UNISWAP_LIST_PATH, "utf8");
-  const parsed = JSON.parse(raw) as RawTokenList;
-  if (!parsed || !Array.isArray(parsed.tokens)) {
-    throw new Error("invalid Uniswap tokenlist shape");
-  }
+  // SSOT: the snapshots live in @arbx/shared/tokenlists (also consumed by the
+  // selector-api safety gate). Same parsed shape, one source of truth.
+  const parsed = getUniswapTokenlist();
   let added = 0;
   for (const t of parsed.tokens) {
     if (
@@ -173,14 +150,13 @@ function loadUniswapInto(m: Map<string, RegistryEntry>): number {
 }
 
 function loadCoinGeckoInto(m: Map<string, RegistryEntry>): number {
-  let raw: string;
+  let parsed: CoinGeckoSnapshot;
   try {
-    raw = readFileSync(COINGECKO_LIST_PATH, "utf8");
+    parsed = getCoinGeckoSnapshot();
   } catch {
     // CoinGecko snapshot is optional — Uniswap-only deployments still work.
     return 0;
   }
-  const parsed = JSON.parse(raw) as CoinGeckoSnapshot;
   if (!parsed || !Array.isArray(parsed.coins)) {
     throw new Error("invalid CoinGecko coinslist shape");
   }
