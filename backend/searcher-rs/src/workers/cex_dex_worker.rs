@@ -58,7 +58,10 @@
 //! 3. Add `StrategyKind::CexDex` to `shared_rs::contracts` + extend
 //!    `persistence::strategy_kind_str` (two lines).
 //! 4. Construct `Opportunity` and call `publisher::publish` +
-//!    `persistence::insert_opportunity`.
+//!    `persistence::insert_opportunity_with_route` with a complete
+//!    `RouteMetadata` (pool_addresses / token_addresses / dex_adapters from
+//!    `CexDexPair.dex_pool_addr` + the quoted pair) so sim-ctl can resolve the
+//!    route (§IV blocker A1: the no-route legacy insert is forbidden).
 //! 5. Add heartbeat counters `cex_dex_pairs_scanned` + `cex_dex_opps_emitted`
 //!    to `counters::ScannerCounters`.
 
@@ -291,7 +294,9 @@ impl CexDexWorker {
                 spread_bps,
                 direction,
                 pool = %pair.dex_pool_addr,
-                // Phase 2: construct Opportunity + persist + publish here.
+                // Phase 2: construct Opportunity + persist here via
+                // insert_opportunity_with_route (route_metadata from
+                // dex_pool_addr + quoted pair — §IV blocker A1).
                 note = "scaffold_only — opportunity emission deferred to BE-3.2 Phase 2"
             );
         } else {
