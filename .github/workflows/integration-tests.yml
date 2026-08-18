@@ -62,8 +62,19 @@ jobs:
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
 
-      - name: Install psql client
-        run: sudo apt-get update && sudo apt-get install -y postgresql-client
+      - name: psql shim (cached postgres:16 image — no apt)
+        # CI-FLAKE-PSQL-APT (2026-08-17): `apt-get install postgresql-client`
+        # hung until the job timeout twice (black-holed apt mirror on the
+        # runner), cancelling the job with no test output. The postgres:16
+        # image is already on the runner (services), so this shim provides
+        # psql with ZERO network dependency — same pattern as migrate.sh's
+        # own docker fallback, pinned to the cached tag.
+        run: |
+          set -euo pipefail
+          printf '#!/bin/sh\nexec docker run --rm -v "$PWD:$PWD" -w "$PWD" --network host postgres:16 psql "$@"\n' \
+            | sudo tee /usr/local/bin/psql >/dev/null
+          sudo chmod +x /usr/local/bin/psql
+          psql --version
 
       - name: Apply DB migrations (canonical migrate.sh)
         # Reuses automation/scripts/migrate.sh — the production migrator. It
@@ -130,8 +141,14 @@ jobs:
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
 
-      - name: Install psql client
-        run: sudo apt-get update && sudo apt-get install -y postgresql-client
+      - name: psql shim (cached postgres:16 image — no apt)
+        # CI-FLAKE-PSQL-APT (2026-08-17): see rust-integration job above.
+        run: |
+          set -euo pipefail
+          printf '#!/bin/sh\nexec docker run --rm -v "$PWD:$PWD" -w "$PWD" --network host postgres:16 psql "$@"\n' \
+            | sudo tee /usr/local/bin/psql >/dev/null
+          sudo chmod +x /usr/local/bin/psql
+          psql --version
 
       - name: Apply DB migrations (canonical migrate.sh)
         env:
