@@ -3,29 +3,17 @@
  *
  * A hollow detection (status=detected + rejected + no economics anywhere) is a
  * DIAGNOSTIC, not an opportunity. These tests pin the contract:
- *   - Shell ⇒ renders the Detection face: "Detección — sin evaluar", the
+ *   - Shell ⇒ renders the Detection face ("Detección · Sin evaluar" badge), the
  *     decoded WHY, the raw machine reason — and NEVER the trading skeleton
- *     (no "Net yield", no "Execute", no capital-path ledger).
+ *     (no EXECUTE button, no computed ledger rows; the atlas_264 model face
+ *     honestly renders the ledger labels with "—" placeholders, so the guards
+ *     below pin structure, not casing).
  *   - Evaluated row ⇒ the full trading card (net yield + ledger + execute).
  *   - A row with ANY computed economics (even a simulated net) is NOT a shell.
  */
 import React from "react";
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
-
-vi.mock("@/components/TokenChip", () => ({
-  TokenChip: ({ token_address }: { token_address: string }) => <span>tok:{token_address.slice(0, 6)}</span>,
-}));
-vi.mock("@/components/ChainBadge", () => ({
-  ChainBadge: ({ chain_id }: { chain_id: number }) => <span>chain:{chain_id}</span>,
-}));
-vi.mock("@/components/StrategyBadge", () => ({
-  StrategyBadge: ({ strategy_kind }: { strategy_kind: string }) => <span>strat:{strategy_kind}</span>,
-  strategyLabel: (strategy_kind: string) => strategy_kind,
-}));
-vi.mock("@/components/StatusPill", () => ({
-  StatusPill: ({ status }: { status: string }) => <span>status:{status}</span>,
-}));
 
 import { OpportunityExchangeCard, isUnevaluatedShell } from "../OpportunityExchangeCard";
 import type { OmniOpportunity } from "@/lib/store/types";
@@ -92,13 +80,20 @@ describe("isUnevaluatedShell", () => {
 describe("OpportunityExchangeCard — SSOT two states", () => {
   it("shell renders the DETECTION face with decoded reason — never the trading skeleton", () => {
     const html = renderToStaticMarkup(<OpportunityExchangeCard {...props(makeOpp())} />);
-    expect(html).toContain("Detección — sin evaluar");
+    // atlas_264 model badge splits the old single string into badge words.
+    expect(html).toContain("Detección");
+    expect(html).toContain("Sin evaluar");
     expect(html).toContain("cartridge_unmapped_strategy_label:route_graph_engine");
-    expect(html).toContain("la evaluación económica no corrió");
-    // trading skeleton must NOT dress a shell:
-    expect(html).not.toContain("Net yield");
-    expect(html).not.toContain("Execute");
-    expect(html).not.toContain("Capital path");
+    // model footer wording (Sin evaluación económica no hay Execute…).
+    expect(html).toContain("Sin evaluación económica no hay Execute");
+    // trading skeleton must NOT dress a shell — structural guards (casing-proof):
+    // no execute button element, none of the evaluated-face-only ledger rows
+    // ("Gross out (AMM)", "Ruta", "Interés a pagar"); the diag face DOES show
+    // "Net Yield —" and "Interés —" placeholders per the atlas_264 model.
+    expect(html).not.toContain('class="btn"');
+    expect(html).not.toContain("Gross out (AMM)");
+    expect(html).not.toContain("Ruta");
+    expect(html).not.toContain("Interés a pagar");
   });
 
   it("evaluated row keeps the full trading card", () => {
@@ -115,8 +110,9 @@ describe("OpportunityExchangeCard — SSOT two states", () => {
       },
     });
     const html = renderToStaticMarkup(<OpportunityExchangeCard {...props(opp)} />);
-    expect(html).toContain("Net yield");
-    expect(html).toContain("Execute");
+    // model labels are title-case ("Net Yield") and the button is uppercase.
+    expect(html).toContain("Net Yield");
+    expect(html).toContain("EXECUTE");
     expect(html).not.toContain("Detección — sin evaluar");
   });
 });
