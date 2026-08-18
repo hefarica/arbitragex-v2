@@ -1,89 +1,109 @@
 /**
- * OpportunityExchangeCard — memory-disciplined trading card for the
+ * OpportunityExchangeCard — SSOT "glass neon" trading card for the
  * `/opportunities/exchange` grid.
  *
- * Shell: operator-approved glass-morphism neon design, ported 1:1 from the
- * docs/atlas_264.html prototype (rgba(14,18,28,0.35) glass + blur(14px) +
- * royal-blue #4169E1 glow that intensifies on hover). The full-width DappBadge
- * header (QuantumX logo from app/icon.svg + "Evaluada · <strategy>" + pulsing
- * LED: green LIVE 2s for evaluated rows, orange PENDING 1.5s for detections)
- * lives in DappBadge.tsx / LedIndicator.tsx / glass-neon.module.css. Inner
- * financial fields (net yield, capital-path ledger, costs, route, target,
- * config) keep the same Tailwind primitives as OpportunityTradeCard
- * (TokenChip / ChainBadge / StrategyBadge / StatusPill). Deliberate rules:
+ * Visual language is a VERBATIM port of the canonical two-state showcase in
+ * `docs/atlas_264.html` (lines 184-229): the evaluated row renders `.demo.eval`
+ * (green neon glass kv ledger + QuantumX dapp-badge + ⚡ EXECUTE button), the
+ * hollow-detection row renders `.demo.diag` (amber glass diagnostic with the
+ * decoded "Por qué NO pasó" box). Styles live in
+ * `app/opportunities/exchange/atlas-glass.css`, scoped under `.atlas-scope`.
  *
- *   1. NO framer-motion. The live grid mounts up to N cards; framer-motion's
- *      per-instance motion state (motion values, listeners) was the residual
- *      source of the 3.4 GB tab footprint. The card renders a plain <div>.
- *
- *   2. `content-visibility: auto` + `contain-intrinsic-size` — the browser
- *      skips layout/paint/decode for off-screen cards (native virtualization),
- *      so only the visible window actually costs render memory. Combined with
- *      `loading="lazy"` on every token logo (owned by TokenIcon) this bounds
- *      the grid's footprint to the viewport, not the list length.
- *
- *   3. ADDITIVE "Route A→B" section — renders the full multi-hop cycle
- *      (2..N legs) from `route_metadata` (migration 099), falling back to a
- *      synthetic 2-leg BUY→SELL cycle from dex_a/dex_b for legacy rows. This
- *      is the operator's "etapa a etapa" route view the card grid lacked.
- *
- * R8 fail-honest throughout: null → "—", never 0 dressed as a computed value.
+ * Kept from the previous discipline (RU-A + memory):
+ *   - NO framer-motion (plain divs).
+ *   - `content-visibility: auto` + `contain-intrinsic-size` per state.
+ *   - React.memo + business-equality comparator (store batch replacements).
+ *   - R8 fail-honest throughout: null → "—", never 0 dressed as a computed value.
+ *   - R1: non-deterministic time text only after mount ("--:--:--" on SSR),
+ *     suppressHydrationWarning ONLY on the time span.
  */
 "use client";
 
 import React, { useState } from "react";
-import {
-  AlertTriangle,
-  ArrowDownRight,
-  ArrowUpRight,
-  CheckCircle2,
-  Clock,
-  Info,
-  Loader2,
-  Play,
-  TrendingUp,
-  XCircle,
-} from "lucide-react";
+import { Info, Loader2 } from "lucide-react";
 
-import { TokenChip, type TokenInfo } from "@/components/TokenChip";
-import { ChainBadge } from "@/components/ChainBadge";
-import { StrategyBadge, strategyLabel } from "@/components/StrategyBadge";
-import { StatusPill } from "@/components/StatusPill";
-import {
-  formatPctOrDash,
-  formatProfitUSD,
-} from "@/lib/format";
-import {
-  deriveLegs,
-  type OmniOpportunity,
-  type RouteLeg,
-} from "@/lib/store/types";
+import { formatPctOrDash, formatProfitUSD, shortAddr } from "@/lib/format";
+import { deriveLegs, type OmniOpportunity, type TokenInfo } from "@/lib/store/types";
+import { familyOf } from "@/lib/strategy-kinds";
 import type { StrategyRuntimeConfig } from "@/lib/schemas";
-import { shortAddr } from "@/lib/format";
-import { DappBadge } from "./DappBadge";
-import styles from "./glass-neon.module.css";
 
-// ─── Tone → token-based class map (mirrors OpportunityTradeCard) ─────────────
-const TONE_CLASS: Record<string, string> = {
-  positive: "text-success",
-  negative: "text-destructive",
-  zero: "text-muted-foreground",
-  neutral: "text-muted-foreground",
-  pending: "text-muted-foreground/60 italic",
-};
-
-/** Compact USD for ledger cells (`$12.5k`, `$1.8M`, `$0.0123`). */
-function usd(value: number | null | undefined, digits = 2): string {
-  if (value == null || !Number.isFinite(value)) return "—";
-  const abs = Math.abs(value);
-  if (abs >= 1_000_000) return `$${(value / 1_000_000).toFixed(2)}M`;
-  if (abs >= 1_000) return `$${(value / 1_000).toFixed(1)}k`;
-  if (abs >= 1) return `$${value.toFixed(digits)}`;
-  return `$${value.toFixed(4)}`;
-}
+// ── QuantumX orbital logo — SVG data-URI copied VERBATIM from the model
+//    (docs/atlas_264.html line 185). Do not regenerate. ──────────────────────
+const QUANTUMX_LOGO =
+  "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 48 48'%3E%3Crect width='48' height='48' rx='11' fill='%230C1230'/%3E%3Cdefs%3E%3ClinearGradient id='o' x1='10' y1='10' x2='38' y2='38' gradientUnits='userSpaceOnUse'%3E%3Cstop stop-color='%239BC0FF'/%3E%3Cstop offset='0.52' stop-color='%234F7BF7'/%3E%3Cstop offset='1' stop-color='%232742E0'/%3E%3C/linearGradient%3E%3CradialGradient id='n' cx='0.5' cy='0.45' r='0.6'%3E%3Cstop stop-color='%23EAF2FF'/%3E%3Cstop offset='0.55' stop-color='%236E9CFF'/%3E%3Cstop offset='1' stop-color='%232C54EE'/%3E%3C/radialGradient%3E%3C/defs%3E%3Cellipse cx='24' cy='24' rx='15.5' ry='5.6' transform='rotate(45 24 24)' stroke='url(%23o)' stroke-width='2.4'/%3E%3Cellipse cx='24' cy='24' rx='15.5' ry='5.6' transform='rotate(-45 24 24)' stroke='url(%23o)' stroke-width='2.4'/%3E%3Ccircle cx='24' cy='24' r='3.8' fill='url(%23n)'/%3E%3Ccircle cx='34.9' cy='13.1' r='1.8' fill='%239BC0FF'/%3E%3Ccircle cx='13.1' cy='34.9' r='1.8' fill='%235B86F7'/%3E%3C/svg%3E";
 
 /** Freshness window (matches the existing card's 12s staleness heuristic). */
 const STALE_SECS = 12;
+
+// ─── Family label for the dapp-badge subtitle ────────────────────────────────
+// Mirrors StrategyBadge's canonical base labels; cartridge kinds surface their
+// MEV-XX family prefix via familyOf (same source of truth).
+const BASE_FAMILY_LABEL: Record<string, string> = {
+  dex_arb: "DEX CONVERGENCE",
+  triangular: "TRIANGULAR RESOLUTION",
+  backrun: "TEMPORAL BACKRUN",
+  liquidation: "ENTROPY LIQUIDATION",
+  flashloan_arb: "FLASH CONVERGENCE",
+};
+
+function strategyFamilyLabel(kind: string): string {
+  const base = BASE_FAMILY_LABEL[kind];
+  if (base) return base;
+  if (kind.startsWith("mev_") || kind.startsWith("cartridge_")) return familyOf(kind);
+  return kind; // R8 fail-honest: surface the raw kind, never hide it
+}
+
+/** "mev_01_023_x_y" → "MEV-01-023" (compact showcase id, local transform). */
+function compactStrategyId(kind: string): string {
+  const m = kind.match(/^mev_(\d{2})_(\d{3})_/);
+  if (m) return `MEV-${m[1]}-${m[2]}`;
+  return kind.toUpperCase();
+}
+
+// ─── Number formatting (model: $12,000.00 / -$10.80 / +$18.93) ───────────────
+/** Full USD amount with en-US commas and 2 decimals ("$12,000.00"); "—" if absent. */
+function usdAmount(value: number | null | undefined): string {
+  if (value == null || !Number.isFinite(value)) return "—";
+  return `$${value.toLocaleString("en-US", {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  })}`;
+}
+
+/** Cost cell with explicit minus ("-$10.80"); "—" if absent. */
+function usdCost(value: number | null | undefined): string {
+  if (value == null || !Number.isFinite(value)) return "—";
+  return `-$${Math.abs(value).toFixed(2)}`;
+}
+
+/** Token symbol with honest fallback (shortAddr) when metadata is missing. */
+function tokenSymbol(addr: string, info: TokenInfo | null): string {
+  return info?.symbol ?? shortAddr(addr);
+}
+
+/** Deterministic fallback hue from the symbol (tokEl port, model lines 308-321). */
+function hueOf(sym: string): number {
+  return [...sym].reduce((a, c) => a + c.charCodeAt(0), 0) % 360;
+}
+
+// ─── Single .tok chip: 18px logo (lazy) or deterministic hsl fallback ────────
+function TokEl({ addr, info }: { addr: string; info: TokenInfo | null }) {
+  const sym = tokenSymbol(addr, info);
+  const logo = info?.logo_url;
+  return (
+    <span className="tok">
+      {logo ? (
+        // eslint-disable-next-line @next/next/no-img-element
+        <img src={logo} alt={sym} width={18} height={18} loading="lazy" />
+      ) : (
+        <span className="fallback" style={{ background: `hsl(${hueOf(sym)} 45% 35%)` }}>
+          {sym.slice(0, 2)}
+        </span>
+      )}
+      <span>{sym}</span>
+    </span>
+  );
+}
 
 interface SimEvidence {
   passed: boolean | null;
@@ -170,57 +190,60 @@ function OpportunityExchangeCardImpl({
   const simulatedNet = opp.simulated_net_profit_usd ?? null;
   const netSource: "canonical" | "simulated" | "none" =
     canonicalNet != null ? "canonical" : simulatedNet != null ? "simulated" : "none";
-  const net = formatProfitUSD(canonicalNet ?? simulatedNet);
+  const netUsd = canonicalNet ?? simulatedNet;
+  const netFmt = formatProfitUSD(netUsd);
 
   const roi = opp.roi_pct;
-  const roiTone: "pos" | "neg" | "muted" =
-    roi == null ? "muted" : roi > 0 ? "pos" : roi < 0 ? "neg" : "muted";
 
   // ── Route legs (A→B cycle) ─────────────────────────────────────────────────
   const legs = deriveLegs(opp);
   const legCount = legs.length;
-  const startToken = legs[0]?.token_in ?? opp.token_in;
-  const endToken = legs[legs.length - 1]?.token_out ?? opp.token_in;
 
-  // ── Step-ladder ledger (capital path USD) ──────────────────────────────────
-  const simInUsd = opp.simulated_amount_in_usd ?? null;
-  const capitalInUsd = simInUsd;
-  const cb = opp.simulated_cost_breakdown;
-  const grossUsd = opp.expected_profit_usd ?? null;
-  const netUsd = canonicalNet ?? simulatedNet;
-
-  const endValueUsd: number | null =
-    capitalInUsd != null && netUsd != null ? capitalInUsd + netUsd : null;
-
-  const flashFee = cb?.flashloan_fee_usd ?? null;
-  const repayUsd: number | null =
-    capitalInUsd != null && flashFee != null ? capitalInUsd + flashFee : null;
-
+  // ── Capital / costs (real values only — RULE 00 / R8) ──────────────────────
   const tgt = opp.simulated_target;
-  const targetVerdict: { label: string; tone: "pass" | "fail" | "na" } = (() => {
-    if (tgt == null) return { label: "no target", tone: "na" };
+  const cb = opp.simulated_cost_breakdown;
+  const capitalInUsd =
+    opp.simulated_amount_in_usd ??
+    (tgt != null && Number.isFinite(tgt.suggested_amount_in_usd) ? tgt.suggested_amount_in_usd : null);
+  const flashFee = cb?.flashloan_fee_usd ?? null;
+  const grossUsd = opp.expected_profit_usd ?? null;
+
+  // Interest % = fee / amount * 100 — only when both real numbers exist.
+  const interestPct =
+    flashFee != null && capitalInUsd != null && capitalInUsd > 0
+      ? (flashFee / capitalInUsd) * 100
+      : null;
+
+  // Gross out (AMM): capital + gross when both exist, else "—".
+  const grossOutUsd =
+    capitalInUsd != null && grossUsd != null ? capitalInUsd + grossUsd : null;
+
+  // Target verdict (same infeasible floors as before).
+  const targetText = (() => {
+    if (tgt == null) return "—";
     const infeasible =
-      tgt.binding_floor === "roi-unreachable" ||
-      tgt.binding_floor === "net-per-usd-nonpositive";
-    return tgt.meets_target_at_cap && !infeasible
-      ? { label: "PASS", tone: "pass" }
-      : { label: "FAIL", tone: "fail" };
+      tgt.binding_floor === "roi-unreachable" || tgt.binding_floor === "net-per-usd-nonpositive";
+    const verdict = tgt.meets_target_at_cap && !infeasible ? "PASS" : "FAIL";
+    const segs: string[] = [verdict];
+    if (tgt.target_net_usd != null && Number.isFinite(tgt.target_net_usd))
+      segs.push(`min $${tgt.target_net_usd.toFixed(2)}`);
+    if (tgt.target_roi_pct != null && Number.isFinite(tgt.target_roi_pct))
+      segs.push(`≥${tgt.target_roi_pct.toFixed(2)}%`);
+    return segs.join(" · ");
   })();
 
-  const costRows: Array<[string, number | null]> = [
-    ["Gas", cb?.gas_usd ?? null],
-    ["LP fees", cb?.lp_fees_usd ?? null],
-    ["Decoherence (slippage)", cb?.slippage_usd ?? null],
-    ["TLS fee (flash)", cb?.flashloan_fee_usd ?? null],
-    ["Relay fee", cb?.relay_fee_usd ?? null],
-    ["Capital cost", cb?.capital_cost_usd ?? null],
-    ["Failure buffer", cb?.failure_buffer_usd ?? null],
-    ["Ops overhead", cb?.ops_overhead_usd ?? null],
-  ];
-  const knownCostSum = costRows.reduce<number | null>(
-    (acc, [, v]) => (v == null ? acc : (acc ?? 0) + v),
-    null,
-  );
+  // Route summary: "SYM→SYM (DEX) → SYM (DEX)" with real symbols, shortAddr fallback.
+  const routeText = (() => {
+    if (legCount === 0) return "—";
+    const sym = (addr: string): string => tokenSymbol(addr, addr === opp.token_in ? opp.token_in_info : addr === opp.token_out ? opp.token_out_info : null);
+    return legs
+      .map((leg, i) =>
+        i === 0
+          ? `${sym(leg.token_in)}→${sym(leg.token_out)} (${leg.dex || "—"})`
+          : `${sym(leg.token_out)} (${leg.dex || "—"})`,
+      )
+      .join(" → ");
+  })();
 
   const handleExecute = async (e: React.MouseEvent) => {
     e.stopPropagation();
@@ -247,230 +270,155 @@ function OpportunityExchangeCardImpl({
   } as React.CSSProperties;
 
   return (
-    <div
-      style={cardStyle}
-      className={`relative text-card-foreground rounded-[14px] p-4 overflow-hidden ${styles.card}`}
-    >
-      {/* ── GLASS-NEON HEADER BADGE: QuantumX logo · "Evaluada · <strategy>" ·
-            LIVE LED (green, 2s pulse). The ⓘ Inspect affordance rides the
-            badge's right edge so the LED group never gets covered. ── */}
-      <DappBadge
-        label="Evaluada"
-        strategyName={strategyLabel(opp.strategy_kind)}
-        led="live"
-        className="mb-2.5"
-        trailing={
-          <button
-            type="button"
-            aria-label="Inspect details"
-            title="Inspect details"
-            onClick={(e) => {
-              e.stopPropagation();
-              onInspect(opp);
-            }}
-            className="shrink-0 rounded-full p-1 text-muted-foreground/70 hover:text-foreground hover:bg-muted/60 transition-colors"
-          >
-            <Info size={15} />
-          </button>
-        }
-      />
+    <div style={cardStyle} className="demo eval">
+      {/* ⓘ discreet Inspect affordance — top-right corner */}
+      <button
+        type="button"
+        aria-label="Inspect details"
+        title="Inspect details"
+        onClick={(e) => {
+          e.stopPropagation();
+          onInspect(opp);
+        }}
+        className="inspect-btn"
+      >
+        <Info size={13} />
+      </button>
 
-      {/* ── HEADER: chain · strategy · status · base token  |  ROI% ── */}
-      <div className="flex items-start justify-between gap-2 mb-2.5">
-        <div className="flex items-center gap-1.5 flex-wrap min-w-0">
-          <ChainBadge chain_id={opp.chain_id} />
-          <StrategyBadge strategy_kind={opp.strategy_kind} />
-          <StatusPill status={opp.status} rejection_reason={opp.rejection_reason} />
-          {opp.chain_base_token_symbol && (
-            <span className="text-[10px] px-1.5 py-0.5 rounded bg-muted/50 text-muted-foreground/90 border border-border/60 font-mono uppercase tracking-wide">
-              {opp.chain_base_token_symbol}
-            </span>
-          )}
-        </div>
-        <div
-          className={`flex items-center gap-1 font-bold text-base whitespace-nowrap ${
-            roiTone === "pos" ? "text-success" : roiTone === "neg" ? "text-destructive" : "text-muted-foreground"
-          }`}
-          title="Net Convergence Ratio (ROI %) — fail-honest '—' when not computed"
-        >
-          {roiTone === "pos" && <TrendingUp size={14} />}
-          {formatPctOrDash(opp.roi_pct)}
-        </div>
-      </div>
-
-      {/* ── DETECTION TIME · AGE · VIGENCY ── */}
-      <div className="flex items-center justify-between gap-2 mb-3 text-[10px] font-mono">
-        <div className="flex items-center gap-1.5 text-muted-foreground" suppressHydrationWarning>
-          <Clock size={11} />
-          <span suppressHydrationWarning>
-            {isMounted
-              ? new Date(opp.detected_at).toLocaleTimeString([], {
-                  hour12: false,
-                  hour: "2-digit",
-                  minute: "2-digit",
-                  second: "2-digit",
-                })
-              : "--:--:--"}
+      {/* ── dapp-badge: QuantumX · family label · LIVE/STALE LED ── */}
+      <div className="dapp-badge">
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img src={QUANTUMX_LOGO} alt="QuantumX" />
+        <span>Evaluada</span>
+        <span className="sep">·</span>
+        <span title={opp.strategy_kind}>{strategyFamilyLabel(opp.strategy_kind)}</span>
+        <span className="led-group">
+          {isStale ? <span className="led wait" /> : <span className="led on" />}
+          <span className={isStale ? "led-text-wait" : "led-text-live"}>
+            {isStale ? "STALE" : "LIVE"}
           </span>
-          <span className="text-muted-foreground/60">·</span>
-          <span suppressHydrationWarning>{isMounted ? `${ageSecs}s` : "--"}</span>
-        </div>
-        <span
-          className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded border font-bold uppercase tracking-wide ${
-            isStale
-              ? "bg-destructive/10 text-destructive border-destructive/30"
-              : "bg-success/10 text-success border-success/30"
-          }`}
-        >
-          {isStale ? <AlertTriangle size={10} className="animate-pulse" /> : <CheckCircle2 size={10} />}
-          {isStale ? "stale" : "vigente"}
         </span>
       </div>
 
-      {/* ── ROUTE A→B (multi-leg cycle, etapa a etapa) ──
-           The operator's "start token → each leg → close" view. Each leg shows
-           the DEX adapter + the token pair it swaps; the start token closes
-           back to itself for an atomic cycle. Honest "—" when no topology. */}
-      <div className="rounded-lg border border-border bg-muted/20 mb-3 overflow-hidden">
-        <div className="px-2.5 py-1.5 border-b border-border/60 flex items-center justify-between text-[9px] uppercase tracking-wide text-muted-foreground font-semibold">
-          <span>Route A→B · {legCount > 0 ? `${legCount} leg${legCount > 1 ? "s" : ""}` : "no topology"}</span>
-          <span className="font-mono normal-case tracking-normal opacity-70">
-            {startToken === endToken ? "closed cycle" : "open path"}
-          </span>
-        </div>
-        {legCount > 0 ? (
-          <div className="p-2 space-y-1">
-            {legs.map((leg) => (
-              <RouteLegRow key={leg.index} leg={leg} opp={opp} />
-            ))}
-          </div>
-        ) : (
-          <div className="p-2 text-[11px] font-mono text-muted-foreground/60 italic">
-            No route topology persisted for this detection.
-          </div>
-        )}
+      {/* ── identity + detection ── */}
+      <div className="kv">
+        <span>{opp.chain_base_token_symbol ?? String(opp.chain_id)}</span>
+        <span className="hi">{compactStrategyId(opp.strategy_kind)}</span>
+      </div>
+      <div className="kv">
+        <span>Detección</span>
+        <span className="v" suppressHydrationWarning>
+          {isMounted
+            ? new Date(opp.detected_at).toLocaleTimeString([], {
+                hour12: false,
+                hour: "2-digit",
+                minute: "2-digit",
+                second: "2-digit",
+              })
+            : "--:--:--"}{" "}
+          · {isMounted ? `${ageSecs}s` : "--"} · {isStale ? "stale" : "vigente"}
+        </span>
       </div>
 
-      {/* ── EXECUTIVE RESULT: net yield + target verdict ── */}
-      <div className="grid grid-cols-2 gap-2 mb-3">
-        <div className="rounded-lg bg-muted/40 p-2">
-          <div className="text-[9px] uppercase tracking-wide text-muted-foreground">Net yield</div>
-          <div className="flex items-center gap-1">
-            <span
-              className={`font-mono text-lg font-bold ${TONE_CLASS[net.tone] ?? "text-muted-foreground"}`}
-              title={
-                netSource === "canonical"
-                  ? "Canonical spine net = gross − all costs"
-                  : netSource === "simulated"
-                    ? "TS forward-sim net (canonical pending)"
-                    : "Not yet computed (R8: '—')"
-              }
-            >
-              {netSource === "simulated" ? `~${net.display}` : net.display}
-            </span>
-            {netSource === "simulated" && (
-              <span className="text-[9px] font-bold px-1 rounded bg-info/15 text-info border border-info/40">SIM</span>
-            )}
-          </div>
-        </div>
-        <div className="rounded-lg bg-muted/40 p-2">
-          <div className="text-[9px] uppercase tracking-wide text-muted-foreground">
-            Target · {tgt?.target_source === "strategy_config" ? "/strategies" : tgt?.target_source === "simulation_tab" ? "Sim tab" : "none"}
-          </div>
-          <div
-            className={`font-mono text-lg font-bold ${
-              targetVerdict.tone === "pass"
-                ? "text-success"
-                : targetVerdict.tone === "fail"
-                  ? "text-destructive"
-                  : "text-muted-foreground"
-            }`}
-          >
-            {targetVerdict.label}
-          </div>
-        </div>
+      <div style={{ height: 6 }} />
+
+      {/* ── token pair + contracts ── */}
+      <div className="kv">
+        <span>Token par</span>
+        <span className="v tokpair">
+          <TokEl addr={opp.token_in} info={opp.token_in_info} />
+          <span className="arrow">⇄</span>
+          <TokEl addr={opp.token_out} info={opp.token_out_info} />
+        </span>
+      </div>
+      <div className="kv">
+        <span>Contratos</span>
+        <span className="v">
+          {shortAddr(opp.token_in)} / {shortAddr(opp.token_out)}
+        </span>
       </div>
 
-      {/* ── STEP LADDER: capital path with running USD totals ── */}
-      <div className="rounded-lg border border-border bg-muted/20 mb-3 overflow-hidden">
-        <div className="px-2.5 py-1.5 border-b border-border/60 text-[9px] uppercase tracking-wide text-muted-foreground font-semibold">
-          Capital path (USD)
-        </div>
-        <div className="p-2 space-y-0.5 font-mono text-[11px]">
-          <LedgerRow
-            up
-            label={`Flash loan in (TLS)${opp.chain_base_token_symbol ? ` · ${opp.chain_base_token_symbol}` : ""}`}
-            value={capitalInUsd}
-          />
-          <LedgerRow
-            label={`Buy A · ${opp.dex_a || "—"}`}
-            value={capitalInUsd}
-            muted
-            hint="swap leg 1"
-          />
-          <LedgerRow
-            label={`Buy B · ${opp.dex_b ?? "single-DEX"}`}
-            value={null}
-            muted
-            hint={opp.dex_b ? "swap leg 2" : "1-leg route"}
-          />
-          <LedgerRow
-            up
-            label="Gross out (AMM spread)"
-            value={grossUsd}
-            tone="text-foreground"
-          />
-          <div className="my-1 border-t border-border/50" />
-          <LedgerRow down label={`Repay (principal + TLS fee)`} value={repayUsd} />
-          {costRows.map(([label, v]) => (
-            <LedgerRow key={label} down label={label} value={v} small />
-          ))}
-          <div className="my-1 border-t border-border/50" />
-          <LedgerRow
-            label="Total cost"
-            value={knownCostSum}
-            tone="text-destructive"
-            strong
-          />
-          <LedgerRow
-            up={netUsd != null && netUsd > 0}
-            down={netUsd != null && netUsd < 0}
-            label={`Net yield${netSource === "simulated" ? " (SIM)" : ""}`}
-            value={netUsd}
-            tone={netUsd == null ? undefined : netUsd > 0 ? "text-success" : netUsd < 0 ? "text-destructive" : "text-muted-foreground"}
-            strong
-          />
-        </div>
+      <div style={{ height: 8 }} />
+
+      {/* ── capital ledger (real values; "—" when not computed) ── */}
+      <div className="kv">
+        <span className="lbl-acc">Monto a invertir</span>
+        <span className="hi">{usdAmount(capitalInUsd)}</span>
+      </div>
+      <div className="kv">
+        <span className="lbl-acc">Monto a prestar (TLS)</span>
+        <span className="hi">{usdAmount(capitalInUsd)}</span>
+      </div>
+      <div className="kv">
+        <span>
+          Interés a pagar{interestPct != null ? ` (${interestPct.toFixed(2)}%)` : ""}
+        </span>
+        <span className="neg">{usdCost(flashFee)}</span>
+      </div>
+      <div className="kv">
+        <span>Gas (estimado)</span>
+        <span className="neg">{usdCost(cb?.gas_usd ?? null)}</span>
+      </div>
+      <div className="kv">
+        <span>LP fees{legCount > 0 ? ` (${legCount} legs)` : ""}</span>
+        <span className="neg">{usdCost(cb?.lp_fees_usd ?? null)}</span>
+      </div>
+      <div className="kv">
+        <span>Decoherencia (slip)</span>
+        <span className="neg">{usdCost(cb?.slippage_usd ?? null)}</span>
       </div>
 
-      {/* ── APPLIED STRATEGY CONFIG (from /strategies) ── */}
-      <div className="rounded-lg border border-border bg-muted/20 mb-3 p-2">
-        <div className="text-[9px] uppercase tracking-wide text-muted-foreground font-semibold mb-1.5">
-          Applied strategy config
-        </div>
-        {tgt ? (
-          <div className="grid grid-cols-2 gap-x-3 gap-y-1 font-mono text-[11px]">
-            <ConfigRow label="min net USD" value={tgt.target_net_usd != null ? usd(tgt.target_net_usd) : "—"} />
-            <ConfigRow label="min ROI %" value={tgt.target_roi_pct != null ? `${tgt.target_roi_pct.toFixed(2)}%` : "—"} />
-            <ConfigRow
-              label="binding floor"
-              value={tgt.binding_floor}
-              tone={
-                tgt.binding_floor === "roi-unreachable" || tgt.binding_floor === "net-per-usd-nonpositive"
-                  ? "text-destructive"
-                  : "text-foreground"
-              }
-            />
-            <ConfigRow
-              label="suggested borrow"
-              value={Number.isFinite(tgt.suggested_amount_in_usd) ? usd(tgt.suggested_amount_in_usd) : "—"}
-            />
-          </div>
-        ) : (
-          <div className="text-[11px] font-mono text-muted-foreground/60 italic">
-            No target applied (inverse-sizing not run for this route).
-          </div>
-        )}
+      <div style={{ height: 6, borderTop: "1px solid rgba(74,222,128,0.15)" }} />
+
+      {/* ── results ── */}
+      <div className="kv">
+        <span>Gross out (AMM)</span>
+        <span>{usdAmount(grossOutUsd)}</span>
+      </div>
+      <div className="kv">
+        <span className="lbl-net">Net Yield</span>
+        <span
+          className={netUsd == null ? "v" : netUsd > 0 ? "num" : netUsd < 0 ? "neg" : "v"}
+          title={
+            netSource === "canonical"
+              ? "Canonical spine net = gross − all costs"
+              : netSource === "simulated"
+                ? "TS forward-sim net (canonical pending)"
+                : "Not yet computed (R8: '—')"
+          }
+        >
+          {netFmt.display}
+        </span>
+      </div>
+      <div className="kv">
+        <span>ROI</span>
+        <span className={roi == null ? "v" : roi > 0 ? "num" : roi < 0 ? "neg" : "v"}>
+          {formatPctOrDash(roi)}
+        </span>
+      </div>
+      <div className="kv">
+        <span>Target</span>
+        <span className="v">{targetText}</span>
+      </div>
+
+      <div style={{ height: 6 }} />
+
+      {/* ── route + source ── */}
+      <div className="kv">
+        <span>Ruta</span>
+        <span className="v">{routeText}</span>
+      </div>
+      <div className="kv">
+        <span>Buy px / Sell px</span>
+        <span className="v" title="Per-leg execution prices are not persisted on this row (R8 fail-honest)">
+          —
+        </span>
+      </div>
+      <div className="kv">
+        <span>Fuente</span>
+        <span className="v">
+          {netSource === "canonical" ? "canonical spine" : netSource === "simulated" ? "simulated (SIM)" : "—"}
+        </span>
       </div>
 
       {/* ── EXECUTE (shadow) + evidence ──
@@ -478,38 +426,31 @@ function OpportunityExchangeCardImpl({
            safe under paper, testnet, and mainnet (§34). The label surfaces the
            effective terminus mode so the operator knows which settlement the
            real (non-shadow) path would target. */}
-      <div className="space-y-2">
-        <button
-          type="button"
-          onClick={handleExecute}
-          disabled={simLoading}
-          className="w-full py-2.5 rounded-lg bg-primary text-primary-foreground text-xs font-bold uppercase tracking-wide hover:bg-primary/90 active:scale-[0.99] disabled:opacity-60 disabled:cursor-not-allowed transition-all inline-flex items-center justify-center gap-2"
-          title={`Shadow-simulate on the Anvil fork (read-only, capital $0). Effective terminus: ${modeLabel}.`}
-        >
-          {simLoading ? (
-            <>
-              <Loader2 size={14} className="animate-spin" /> Simulating…
-            </>
-          ) : (
-            <>
-              <Play size={14} /> Execute ({modeLabel})
-            </>
-          )}
-        </button>
-
-        {evidence && (
-          <div className="rounded-md border border-border bg-muted/30 px-2 py-1.5 font-mono text-[10px] text-muted-foreground flex items-center gap-2">
-            {evidence.passed === true && <CheckCircle2 size={11} className="text-success" />}
-            {evidence.passed === false && <XCircle size={11} className="text-destructive" />}
-            <span className="truncate">
-              shadow-sim dispatched · trace{" "}
-              <span className="text-foreground">{evidence.traceId ?? "—"}</span>
-              {evidence.gasEstimateWei ? ` · gas ${evidence.gasEstimateWei}` : ""}
-              {evidence.failReason ? ` · ${evidence.failReason}` : ""}
-            </span>
-          </div>
+      <button
+        type="button"
+        onClick={handleExecute}
+        disabled={simLoading}
+        className="btn"
+        title={`Shadow-simulate on the Anvil fork (read-only, capital $0). Effective terminus: ${modeLabel}.`}
+      >
+        {simLoading ? (
+          <span className="sim-note">
+            <Loader2 size={12} style={{ verticalAlign: "-2px", marginRight: "4px" }} className="animate-spin" /> SIMULATING…
+          </span>
+        ) : (
+          `⚡ EXECUTE (${modeLabel === "paper" ? "PAPER SHADOW" : "LIVE SHADOW"})`
         )}
-      </div>
+      </button>
+
+      {evidence && (
+        <div className="evidence">
+          <span className="truncate">
+            shadow-sim dispatched · trace <span className="ev-hi">{evidence.traceId ?? "—"}</span>
+            {evidence.gasEstimateWei ? ` · gas ${evidence.gasEstimateWei}` : ""}
+            {evidence.failReason ? ` · ${evidence.failReason}` : ""}
+          </span>
+        </div>
+      )}
     </div>
   );
 }
@@ -517,8 +458,17 @@ function OpportunityExchangeCardImpl({
 // PERF: memoize so parent re-renders (age ticker, store batch replacement) do
 // NOT re-render every card. Business-equality fields are checked because the
 // store emits a fresh array after each batch replacement (reference equality on
-// `opp` would always fail). Also keys on route_metadata identity so a newly
-// enriched multi-leg topology re-renders the card.
+// `opp` would always fail). The comparator must cover every field the card
+// READS: the rejection/simulation fields flip the SSOT two-state gate
+// (diagnostic vs evaluated face), the nested simulated_* payloads drive the
+// capital ledger, route_metadata drives the Ruta row, and token symbol
+// enrichment replaces shortAddr fallbacks. Nested wire payloads are compared by
+// serialized content (small objects) so a batch that only enriches them still
+// re-renders the card.
+function sameJson(a: unknown, b: unknown): boolean {
+  return a === b || JSON.stringify(a) === JSON.stringify(b);
+}
+
 export const OpportunityExchangeCard = React.memo(
   OpportunityExchangeCardImpl,
   (prev: OpportunityExchangeCardProps, next: OpportunityExchangeCardProps): boolean => {
@@ -529,12 +479,22 @@ export const OpportunityExchangeCard = React.memo(
     return (
       p.id === n.id &&
       p.status === n.status &&
+      p.strategy_kind === n.strategy_kind &&
+      p.chain_base_token_symbol === n.chain_base_token_symbol &&
+      p.detected_at === n.detected_at &&
+      p.rejection_reason === n.rejection_reason &&
       p.expected_profit_usd === n.expected_profit_usd &&
       p.net_expected_profit_usd === n.net_expected_profit_usd &&
       p.roi_pct === n.roi_pct &&
-      p.detected_at === n.detected_at &&
+      p.simulated_net_profit_usd === n.simulated_net_profit_usd &&
+      p.simulated_amount_in_usd === n.simulated_amount_in_usd &&
+      sameJson(p.simulated_cost_breakdown, n.simulated_cost_breakdown) &&
+      sameJson(p.simulated_target, n.simulated_target) &&
+      sameJson(p.route_metadata, n.route_metadata) &&
       p.token_in_info?.logo_url === n.token_in_info?.logo_url &&
       p.token_out_info?.logo_url === n.token_out_info?.logo_url &&
+      p.token_in_info?.symbol === n.token_in_info?.symbol &&
+      p.token_out_info?.symbol === n.token_out_info?.symbol &&
       prev.isMounted === next.isMounted &&
       prev.simLoading === next.simLoading &&
       prev.modeLabel === next.modeLabel &&
@@ -546,10 +506,10 @@ export const OpportunityExchangeCard = React.memo(
   },
 );
 
-// ─── DetectionDiagnosticCard (RU-A SSOT) ────────────────────────────────────
+// ─── DetectionDiagnosticCard (RU-A SSOT — .demo.diag of the model) ───────────
 // The honest face of a hollow detection: identity + WHY it was never evaluated.
-// No ledger, no route placeholder, no Execute — an unevaluated row has no
-// arbitrage to show, and pretending otherwise was the "fallback card" lie.
+// No ledger numbers, no Execute — an unevaluated row has no arbitrage to show,
+// and pretending otherwise was the "fallback card" lie.
 function DetectionDiagnosticCard({
   opp,
   now,
@@ -557,172 +517,125 @@ function DetectionDiagnosticCard({
   onInspect,
 }: Pick<OpportunityExchangeCardProps, "opp" | "now" | "isMounted" | "onInspect">) {
   const ageSecs = isMounted ? Math.max(0, Math.floor((now - new Date(opp.detected_at).getTime()) / 1000)) : 0;
+  const isStale = ageSecs > STALE_SECS;
   const reason = opp.rejection_reason ?? "unknown";
   const degeneratePair = opp.token_in === opp.token_out;
+
   return (
     <div
-      style={{ contentVisibility: "auto", containIntrinsicSize: "auto 210px" } as React.CSSProperties}
-      className={`relative text-muted-foreground rounded-[14px] p-4 overflow-hidden ${styles.card} ${styles.cardWarn}`}
+      style={{ contentVisibility: "auto", containIntrinsicSize: "auto 460px" } as React.CSSProperties}
+      className="demo diag"
     >
-      {/* ── GLASS-NEON HEADER BADGE (warn): QuantumX logo · "Detección · Sin
-            evaluar" · PENDING LED (orange #ff6600, 1.5s pulse). The ⓘ Inspect
-            affordance rides the badge's right edge. ── */}
-      <DappBadge
-        label="Detección"
-        strategyName="Sin evaluar"
-        led="pending"
-        variant="warn"
-        className="mb-2.5"
-        trailing={
-          <button
-            type="button"
-            aria-label="Inspect details"
-            onClick={(e) => {
-              e.stopPropagation();
-              onInspect(opp);
-            }}
-            className="shrink-0 rounded-full p-1 text-muted-foreground/70 hover:text-foreground hover:bg-muted/60 transition-colors"
-          >
-            <Info size={15} />
-          </button>
-        }
-      />
+      <button
+        type="button"
+        aria-label="Inspect details"
+        onClick={(e) => {
+          e.stopPropagation();
+          onInspect(opp);
+        }}
+        className="inspect-btn"
+      >
+        <Info size={13} />
+      </button>
 
-      {/* header: chain · strategy · DETECCIÓN badge */}
-      <div className="flex items-center gap-1.5 flex-wrap mb-2">
-        <ChainBadge chain_id={opp.chain_id} />
-        <StrategyBadge strategy_kind={opp.strategy_kind} />
-        <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[9px] font-bold uppercase tracking-wide bg-warning/10 text-warning border border-warning/40">
-          <AlertTriangle size={10} /> Detección — sin evaluar
+      {/* ── dapp-badge warn: QuantumX (dimmed) · Detección · PENDING LED ── */}
+      <div className="dapp-badge warn">
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img src={QUANTUMX_LOGO} alt="QuantumX" />
+        <span>Detección</span>
+        <span className="sep">·</span>
+        <span>Sin evaluar</span>
+        <span className="led-group">
+          <span className="led wait" />
+          <span className="led-text-hot">PENDING</span>
         </span>
       </div>
 
       {/* what IS real: cartridge identity, timestamp, age */}
-      <div className="flex items-center justify-between text-[10px] font-mono mb-2" suppressHydrationWarning>
-        <span className="flex items-center gap-1.5 text-muted-foreground/80">
-          <Clock size={11} />
-          {isMounted
-            ? new Date(opp.detected_at).toLocaleTimeString([], { hour12: false, hour: "2-digit", minute: "2-digit", second: "2-digit" })
-            : "--:--:--"}
-          <span className="text-muted-foreground/50">· {isMounted ? `${ageSecs}s` : "--"}</span>
+      <div className="kv">
+        <span>{opp.chain_base_token_symbol ?? String(opp.chain_id)}</span>
+        <span className="hi" title={opp.strategy_kind}>
+          {compactStrategyId(opp.strategy_kind)}
         </span>
-        <span className="font-mono text-[9px] text-muted-foreground/50">{opp.strategy_kind}</span>
       </div>
+      <div className="kv">
+        <span>Detección</span>
+        <span className="v" suppressHydrationWarning>
+          {isMounted
+            ? new Date(opp.detected_at).toLocaleTimeString([], {
+                hour12: false,
+                hour: "2-digit",
+                minute: "2-digit",
+                second: "2-digit",
+              })
+            : "--:--:--"}{" "}
+          · {isMounted ? `${ageSecs}s` : "--"} · {isStale ? "stale" : "vigente"}
+        </span>
+      </div>
+
+      <div style={{ height: 6 }} />
+
+      <div className="kv">
+        <span>Token par</span>
+        <span className="v tokpair">
+          <TokEl addr={opp.token_in} info={opp.token_in_info} />
+          <span className="arrow">⇄</span>
+          <TokEl addr={opp.token_out} info={opp.token_out_info} />
+        </span>
+      </div>
+      <div className="kv">
+        <span>Estado</span>
+        <span className="v val-warn">{opp.status.toUpperCase()} → REJECTED</span>
+      </div>
+
+      <div style={{ height: 8 }} />
 
       {/* the WHY — decoded machine reason + raw code */}
-      <div className="rounded-lg border border-warning/30 bg-warning/5 p-2.5 space-y-1.5">
-        <div className="text-[10px] uppercase tracking-wide text-warning font-semibold">
-          Por qué NO pasó a evaluación
-        </div>
-        <p className="text-[11px] leading-snug text-foreground/90">{decodeRejectionReason(reason)}</p>
-        <code className="block text-[9px] font-mono text-muted-foreground/70 break-all">{reason}</code>
+      <div className="kv why-box">
+        <span className="why-label">Por qué NO pasó</span>
+      </div>
+      <div className="kv">
+        <span className="why-text">{decodeRejectionReason(reason)}</span>
       </div>
 
-      {/* degenerate-data flag when the detection itself carries no usable shape */}
-      {degeneratePair && (
-        <div className="mt-2 text-[10px] font-mono text-muted-foreground/60">
-          dato crudo: token_in == token_out (forma degenerada, sin route)
-        </div>
-      )}
+      <div style={{ height: 6 }} />
 
-      {/* explicit truth: there is nothing to trade here — yet */}
-      <div className="mt-2 text-[10px] text-muted-foreground/70 italic">
-        Sin profit/ROI/riesgo: la evaluación económica no corrió. Cuando el motor correspondiente la evalúe, esta misma fila aparecerá como oportunidad con números reales.
+      <div className="kv">
+        <span>Razón máquina</span>
+        <span className="v raw-code">{reason}</span>
       </div>
-    </div>
-  );
-}
-
-// ─── Route leg row (A→B etapa a etapa) ───────────────────────────────────────
-function RouteLegRow({ leg, opp }: { leg: RouteLeg; opp: OmniOpportunity }) {
-  // First/last legs reuse the enriched token metadata the row already carries;
-  // intermediate legs resolve lazily via TokenChip's icon cascade.
-  const isInStart = leg.index === 0;
-  const infoFor = (addr: string): TokenInfo | null => {
-    if (isInStart && addr === opp.token_in) return opp.token_in_info;
-    if (addr === opp.token_out) return opp.token_out_info;
-    return null;
-  };
-  const dexLabel = leg.dex || "—";
-  return (
-    <div className="flex items-center gap-2 min-w-0 text-[11px]">
-      <span className="shrink-0 inline-flex items-center justify-center size-4 rounded-full bg-primary/10 text-primary border border-primary/30 font-bold text-[9px]">
-        {leg.index + 1}
-      </span>
-      <span className="min-w-0 flex-1">
-        <TokenChip token_address={leg.token_in} chain_id={opp.chain_id} info={infoFor(leg.token_in)} />
-      </span>
-      <span className="shrink-0 inline-flex items-center gap-1 px-1.5 py-0.5 rounded border bg-muted/40 border-border text-[9px] font-bold uppercase tracking-wide text-muted-foreground" title={`DEX adapter: ${dexLabel}`}>
-        {dexLabel}
-      </span>
-      <span className="text-muted-foreground/60 shrink-0" aria-hidden="true">→</span>
-      <span className="min-w-0 flex-1">
-        <TokenChip token_address={leg.token_out} chain_id={opp.chain_id_out ?? opp.chain_id} info={infoFor(leg.token_out)} />
-      </span>
-      {leg.pool && (
-        <span className="shrink-0 font-mono text-[9px] text-muted-foreground/50" title={`Pool: ${leg.pool}`}>
-          {shortAddr(leg.pool)}
+      <div className="kv">
+        <span>Dato crudo</span>
+        <span className="v">
+          {degeneratePair ? "token_in == token_out (degenerada)" : "—"}
         </span>
-      )}
-    </div>
-  );
-}
+      </div>
 
-// ─── Ledger row (capital path) ───────────────────────────────────────────────
-function LedgerRow({
-  label,
-  value,
-  up = false,
-  down = false,
-  muted = false,
-  strong = false,
-  small = false,
-  tone,
-  hint,
-}: {
-  label: string;
-  value: number | null;
-  up?: boolean;
-  down?: boolean;
-  muted?: boolean;
-  strong?: boolean;
-  small?: boolean;
-  tone?: string;
-  hint?: string;
-}) {
-  return (
-    <div
-      className={`flex items-center justify-between gap-2 ${
-        muted ? "text-muted-foreground/70" : "text-foreground"
-      } ${small ? "text-[10px]" : ""} ${strong ? "font-bold" : ""}`}
-    >
-      <span className="flex items-center gap-1 min-w-0">
-        {up && <ArrowUpRight size={11} className="text-success shrink-0" />}
-        {down && <ArrowDownRight size={11} className="text-destructive shrink-0" />}
-        <span className="truncate">{label}</span>
-        {hint && <span className="text-[9px] text-muted-foreground/50 italic">({hint})</span>}
-      </span>
-      <span className={tone ?? (muted ? "text-muted-foreground/60" : "text-foreground")}>
-        {usd(value)}
-      </span>
-    </div>
-  );
-}
+      <div style={{ height: 6 }} />
 
-// ─── Config row (applied strategy config) ────────────────────────────────────
-function ConfigRow({
-  label,
-  value,
-  tone = "text-foreground",
-}: {
-  label: string;
-  value: string;
-  tone?: string;
-}) {
-  return (
-    <div className="flex items-center justify-between gap-2">
-      <span className="text-muted-foreground">{label}</span>
-      <span className={tone}>{value}</span>
+      {/* explicit truth: economics never ran — nothing to trade here, yet */}
+      <div className="kv">
+        <span>Monto a invertir</span>
+        <span className="v">—</span>
+      </div>
+      <div className="kv">
+        <span>Monto a prestar</span>
+        <span className="v">—</span>
+      </div>
+      <div className="kv">
+        <span>Interés</span>
+        <span className="v">—</span>
+      </div>
+      <div className="kv">
+        <span>Net Yield</span>
+        <span className="v">—</span>
+      </div>
+      <div className="kv diag-footer">
+        <span className="diag-footer-text">
+          Sin evaluación económica no hay Execute. Cuando el motor correspondiente la evalúe,
+          esta misma fila aparecerá como oportunidad con números reales.
+        </span>
+      </div>
     </div>
   );
 }
