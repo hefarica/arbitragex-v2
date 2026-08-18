@@ -223,6 +223,12 @@ export const OpportunityListItemSchema = z.object({
   token_in_info: TokenInfoSchema.nullable(),
   token_out: z.string().regex(/^0x[a-fA-F0-9]{40}$/),
   token_out_info: TokenInfoSchema.nullable(),
+  // F2 (audit §11 RC1): symbols for INTERMEDIATE route legs (multi-hop
+  // cycles), hydrated by the api-server from the tokens table + on-demand
+  // eth_call. Keyed by lowercased address; only resolved addresses present.
+  // Optional — legacy payloads lack it and the client falls back honestly
+  // to shortAddr (R8: no fabrication).
+  leg_symbols: z.record(z.string()).nullable().optional(),
   amount_in_wei: BigIntStr,
   expected_profit_usd: z.number().nullable(),
   roi_pct: z.number().nullable(),
