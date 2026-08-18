@@ -243,10 +243,29 @@ function storeFactory(
 
       addOpportunity: (opp: OmniOpportunity) =>
         set((state) => {
-          // PERF (2026-08-10): dedupe before update. The same id can arrive via
-          // WebSocket reconnects or overlapping poll ticks; without this guard
-          // duplicates accumulate and churn the list.
-          if (state.opportunities.some((o) => o.id === opp.id)) return state;
+          // UPSERT by id — Binance-style streaming (operator directive
+          // 2026-08-18). The same id arrives from THREE directions now:
+          //   - WS INSERT pushes  (new detection → prepend, card enters top)
+          //   - WS UPDATE pushes  (economics computed / status transition /
+          //                        paper-execution values — migration 107:
+          //                        only rows that actually CHANGED notify)
+          //   - reconnect replays / overlapping poll ticks
+          // Existing id → REPLACE IN PLACE (position preserved — the card
+          // updates where it is; React.memo + the card's business-equality
+          // comparator skip the re-render when nothing visual changed).
+          // Unknown id → prepend like before. This replaces the old
+          // skip-duplicates guard, which silently DISCARDED row updates and
+          // kept emitted cards frozen until the next full poll.
+          const idx = state.opportunities.findIndex((o) => o.id === opp.id);
+          if (idx !== -1) {
+            if (state.opportunities[idx] === opp) return state;
+            const next = state.opportunities.slice();
+            next[idx] = opp;
+            return {
+              opportunities: next,
+              lastUpdate: new Date().toISOString(),
+            };
+          }
           return {
             opportunities: [opp, ...state.opportunities].slice(0, MAX_OPPORTUNITIES),
             lastUpdate: new Date().toISOString(),
