@@ -145,15 +145,28 @@ export interface OpportunityExchangeCardProps {
 // cards" with no arbitrage and no profit. Fail-honest fix: render the shell as
 // what it IS, with the machine reason decoded, and never offer Execute on an
 // unevaluated row (garbage-in simulation).
+//
+// GATE v2 (2026-08-18): the live feed showed 50/50 "Evaluada · LIVE" cards
+// whose ENTIRE ledger was "—" — degenerate rows (AGLD⇄AGLD, same address both
+// legs) that reach the feed WITHOUT rejection_reason, escaping the old gate's
+// status/reason conditions. The honest invariant is ECONOMIC, not procedural:
+// zero computed economics ANYWHERE (no profit field, no simulated amount, no
+// cost breakdown) ⇒ DETECCIÓN face. Any economics (even partial: a simulated
+// amount or a cost breakdown) ⇒ evaluated face. Rows flip diag→eval the
+// moment real numbers land (memo comparator already covers those fields).
 export function isUnevaluatedShell(opp: OmniOpportunity): boolean {
   return (
-    opp.status === "detected" &&
-    opp.rejection_reason != null &&
     opp.expected_profit_usd == null &&
     opp.net_expected_profit_usd == null &&
-    opp.simulated_net_profit_usd == null
+    opp.simulated_net_profit_usd == null &&
+    opp.simulated_amount_in_usd == null &&
+    opp.simulated_cost_breakdown == null
   );
 }
+
+/** Honest explanation when the row carries NO machine reason at all. */
+const NO_ECONOMICS_TEXT =
+  "Sin evaluación económica computada: esta fila no lleva profit/ROI/riesgo ni razón de rechazo registrada — el motor de evaluación no corrió para esta detección.";
 
 /** Human decoding of the machine rejection codes the engines emit. */
 function decodeRejectionReason(reason: string): string {
@@ -533,7 +546,7 @@ function DetectionDiagnosticCard({
 }: Pick<OpportunityExchangeCardProps, "opp" | "now" | "isMounted" | "onInspect">) {
   const ageSecs = isMounted ? Math.max(0, Math.floor((now - new Date(opp.detected_at).getTime()) / 1000)) : 0;
   const isStale = ageSecs > STALE_SECS;
-  const reason = opp.rejection_reason ?? "unknown";
+  const reason = opp.rejection_reason;
   const degeneratePair = opp.token_in === opp.token_out;
 
   return (
@@ -600,7 +613,10 @@ function DetectionDiagnosticCard({
       </div>
       <div className="kv">
         <span>Estado</span>
-        <span className="v val-warn">{opp.status.toUpperCase()} → REJECTED</span>
+        {/* R8: only claim REJECTED when a machine rejection actually exists. */}
+        <span className="v val-warn">
+          {reason != null ? `${opp.status.toUpperCase()} → REJECTED` : opp.status.toUpperCase()}
+        </span>
       </div>
 
       <div style={{ height: 8 }} />
@@ -610,14 +626,16 @@ function DetectionDiagnosticCard({
         <span className="why-label">Por qué NO pasó</span>
       </div>
       <div className="kv">
-        <span className="why-text">{decodeRejectionReason(reason)}</span>
+        <span className="why-text">
+          {reason != null ? decodeRejectionReason(reason) : NO_ECONOMICS_TEXT}
+        </span>
       </div>
 
       <div style={{ height: 6 }} />
 
       <div className="kv">
         <span>Razón máquina</span>
-        <span className="v raw-code">{reason}</span>
+        <span className="v raw-code">{reason ?? "—"}</span>
       </div>
       <div className="kv">
         <span>Dato crudo</span>
