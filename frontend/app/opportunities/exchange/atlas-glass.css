@@ -1,0 +1,578 @@
+/**
+ * atlas-glass.css — SSOT "glass neon" design language for /opportunities/exchange.
+ *
+ * Ported VERBATIM from the canonical model `docs/atlas_264.html` (two-state
+ * showcase, lines 8-153), scoped under `.atlas-scope` so it cannot leak into
+ * other pages. Model tokens are namespaced `--atlas-*` (same exact values) to
+ * avoid colliding with the shadcn semantic tokens in globals.css
+ * (--accent/--muted/--success/…).
+ *
+ * The only animation is atlasLedPulse (the model's ledPulse). No framer-motion.
+ */
+
+/* ── Model tokens (values verbatim from :root of atlas_264.html) ── */
+.atlas-scope {
+  --atlas-ground: #050810;
+  --atlas-text: #e8ecf4;
+  --atlas-muted: #8a94a8;
+  --atlas-accent: #6ea8fe;
+  --atlas-accent-dim: #3b5f9e;
+  --atlas-success: #4ade80;
+  --atlas-warning: #fbbf24;
+  --atlas-destructive: #f87171;
+  --atlas-glass-bg: rgba(14, 18, 28, 0.35);
+  --atlas-glass-bg-hover: rgba(14, 18, 28, 0.5);
+  --atlas-glass-border: rgba(110, 168, 254, 0.18);
+  --atlas-glass-blur: blur(14px);
+  --atlas-neon-glow: 0 0 1px rgba(110, 168, 254, 0.5), 0 0 8px rgba(110, 168, 254, 0.08);
+  --atlas-neon-glow-hover: 0 0 1px rgba(110, 168, 254, 0.7), 0 0 12px rgba(110, 168, 254, 0.15);
+  --atlas-mono: "SF Mono", "Cascadia Code", "Consolas", "Menlo", monospace;
+  --atlas-sans: "Segoe UI", "system-ui", "Roboto", sans-serif;
+}
+
+/* ── Ground: page body of the model (body{background…}) ── */
+.atlas-scope.atlas-ground {
+  background: var(--atlas-ground);
+  background-image:
+    radial-gradient(ellipse at 20% 0%, rgba(59, 95, 158, 0.06) 0%, transparent 60%),
+    radial-gradient(ellipse at 80% 100%, rgba(74, 222, 128, 0.03) 0%, transparent 50%);
+  color: var(--atlas-text);
+  font-family: var(--atlas-sans);
+  line-height: 1.5;
+  min-height: 100vh;
+  /* model `main` padding — keeps content off the shell edges */
+  padding: 32px 24px 80px;
+}
+
+/* STALE feed tint (replaces the old bg-destructive/5 — keeps the ground) */
+.atlas-scope.atlas-ground.atlas-error {
+  box-shadow: inset 0 0 120px rgba(248, 113, 113, 0.06);
+}
+
+/* ── Header (h1 / .sub) ── */
+.atlas-scope h1 {
+  font-size: 24px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  margin-bottom: 6px;
+  color: var(--atlas-text);
+}
+.atlas-scope .sub {
+  color: var(--atlas-muted);
+  font-size: 13px;
+  margin-bottom: 20px;
+  max-width: 70ch;
+}
+
+/* ── Chips ── */
+.atlas-scope .chips {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 24px;
+  align-items: center;
+}
+.atlas-scope .chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-family: var(--atlas-mono);
+  font-size: 11px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: var(--atlas-glass-bg);
+  border: 1px solid var(--atlas-glass-border);
+  backdrop-filter: var(--atlas-glass-blur);
+  -webkit-backdrop-filter: var(--atlas-glass-blur);
+  color: var(--atlas-muted);
+}
+.atlas-scope .chip b {
+  color: var(--atlas-text);
+  font-weight: 700;
+}
+.atlas-scope button.chip {
+  cursor: pointer;
+  transition: border-color 0.2s, color 0.2s, box-shadow 0.2s;
+}
+.atlas-scope button.chip:hover {
+  border-color: var(--atlas-accent);
+  color: var(--atlas-text);
+  box-shadow: 0 0 8px rgba(110, 168, 254, 0.15);
+}
+/* family-chip state: active = accent border, inactive = dimmed */
+.atlas-scope .chip.chip-on {
+  border-color: var(--atlas-accent);
+  color: var(--atlas-text);
+}
+.atlas-scope .chip.chip-off {
+  opacity: 0.55;
+}
+
+/* ── Controls (search / selects) ── */
+.atlas-scope .controls {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-bottom: 28px;
+  align-items: center;
+}
+.atlas-scope .controls input[type="search"] {
+  flex: 1;
+  min-width: 200px;
+  padding: 9px 14px;
+  border: 1px solid var(--atlas-glass-border);
+  border-radius: 8px;
+  background: var(--atlas-glass-bg);
+  backdrop-filter: var(--atlas-glass-blur);
+  -webkit-backdrop-filter: var(--atlas-glass-blur);
+  color: var(--atlas-text);
+  font-family: var(--atlas-mono);
+  font-size: 12px;
+  outline: none;
+  transition: border-color 0.2s;
+}
+.atlas-scope .controls input[type="search"]::placeholder {
+  color: var(--atlas-muted);
+  opacity: 0.6;
+}
+.atlas-scope .controls input[type="number"] {
+  width: 110px;
+  padding: 9px 10px;
+  border: 1px solid var(--atlas-glass-border);
+  border-radius: 8px;
+  background: var(--atlas-glass-bg);
+  backdrop-filter: var(--atlas-glass-blur);
+  -webkit-backdrop-filter: var(--atlas-glass-blur);
+  color: var(--atlas-text);
+  font-family: var(--atlas-mono);
+  font-size: 12px;
+  outline: none;
+  transition: border-color 0.2s;
+}
+.atlas-scope .controls input:focus {
+  border-color: var(--atlas-accent);
+  box-shadow: 0 0 8px rgba(110, 168, 254, 0.2);
+}
+.atlas-scope select {
+  padding: 8px 12px;
+  border: 1px solid var(--atlas-glass-border);
+  border-radius: 8px;
+  background: var(--atlas-glass-bg);
+  backdrop-filter: var(--atlas-glass-blur);
+  -webkit-backdrop-filter: var(--atlas-glass-blur);
+  color: var(--atlas-text);
+  font-size: 12px;
+  outline: none;
+}
+.atlas-scope select option {
+  background: #0e121c;
+  color: var(--atlas-text);
+}
+/* keyboard focus must stay visible even though the resting outline is none
+   (mirrors the input :focus rule — WCAG 2.4.7) */
+.atlas-scope select:focus {
+  border-color: var(--atlas-accent);
+  box-shadow: 0 0 8px rgba(110, 168, 254, 0.2);
+}
+.atlas-scope .controls .atlas-chiprow {
+  flex-basis: 100%;
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+.atlas-scope .controls .atlas-chiplabel {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-family: var(--atlas-mono);
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--atlas-muted);
+  margin-right: 2px;
+}
+.atlas-scope .controls .atlas-minlabel {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-family: var(--atlas-mono);
+  font-size: 11px;
+  color: var(--atlas-muted);
+}
+
+/* ── Two-state showcase cards (.demo.eval / .demo.diag) ── */
+.atlas-scope .atlas-cards2 {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+  gap: 14px;
+  margin-top: 14px;
+}
+.atlas-scope .demo {
+  position: relative;
+  border-radius: 14px;
+  padding: 16px;
+  font-size: 12.5px;
+  backdrop-filter: var(--atlas-glass-blur);
+  -webkit-backdrop-filter: var(--atlas-glass-blur);
+  overflow-wrap: break-word;
+}
+.atlas-scope .demo.eval {
+  background: rgba(14, 18, 28, 0.4);
+  box-shadow: 0 0 1px rgba(74, 222, 128, 0.4), 0 0 10px rgba(74, 222, 128, 0.06);
+}
+.atlas-scope .demo.eval::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: 14px;
+  padding: 1px;
+  background: linear-gradient(135deg, rgba(74, 222, 128, 0.3), rgba(74, 222, 128, 0.05) 40%, rgba(74, 222, 128, 0.2));
+  -webkit-mask: linear-gradient(black, black) content-box, linear-gradient(black, black);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+  pointer-events: none;
+}
+.atlas-scope .demo.diag {
+  background: rgba(251, 191, 36, 0.04);
+  box-shadow: 0 0 1px rgba(251, 191, 36, 0.3), 0 0 8px rgba(251, 191, 36, 0.05);
+}
+.atlas-scope .demo.diag::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: 14px;
+  padding: 1px;
+  background: linear-gradient(135deg, rgba(251, 191, 36, 0.3), rgba(251, 191, 36, 0.05) 40%, rgba(251, 191, 36, 0.2));
+  -webkit-mask: linear-gradient(black, black) content-box, linear-gradient(black, black);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+  pointer-events: none;
+}
+
+/* ── kv rows ── */
+.atlas-scope .kv {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  font-family: var(--atlas-mono);
+  font-size: 11.5px;
+  padding: 3px 0;
+  border-bottom: 1px solid rgba(110, 168, 254, 0.04);
+}
+.atlas-scope .kv:last-child {
+  border-bottom: none;
+}
+.atlas-scope .kv .v {
+  color: var(--atlas-muted);
+  text-align: right;
+}
+.atlas-scope .kv .num {
+  color: var(--atlas-success);
+  font-weight: 700;
+  text-shadow: 0 0 8px rgba(74, 222, 128, 0.2);
+}
+.atlas-scope .kv .neg {
+  color: var(--atlas-destructive);
+}
+.atlas-scope .kv .hi {
+  color: var(--atlas-accent);
+  font-weight: 600;
+}
+/* model inline label/value styles, as classes */
+.atlas-scope .kv .lbl-acc {
+  color: var(--atlas-accent);
+  font-weight: 600;
+}
+.atlas-scope .kv .lbl-net {
+  font-weight: 700;
+  color: var(--atlas-success);
+}
+.atlas-scope .kv .val-warn {
+  color: var(--atlas-warning);
+}
+/* "Por qué NO pasó" box (model inline style, line 218) */
+.atlas-scope .kv.why-box {
+  border: 1px solid rgba(251, 191, 36, 0.15);
+  border-radius: 6px;
+  padding: 6px 8px;
+  margin: 2px 0;
+}
+.atlas-scope .kv.why-box .why-label {
+  color: var(--atlas-warning);
+}
+/* decoded-why paragraph (model inline style, line 219) */
+.atlas-scope .kv .why-text {
+  font-size: 10.5px;
+  color: var(--atlas-muted);
+  line-height: 1.4;
+  text-align: left;
+}
+/* raw machine reason (model inline style, line 221) */
+.atlas-scope .kv .raw-code {
+  font-size: 9.5px;
+}
+/* diag footer (model inline style, line 228) */
+.atlas-scope .kv.diag-footer {
+  margin-top: 6px;
+  padding-top: 6px;
+  border-top: 1px dashed rgba(251, 191, 36, 0.15);
+  border-bottom: none;
+}
+.atlas-scope .kv.diag-footer .diag-footer-text {
+  font-style: italic;
+  color: var(--atlas-muted);
+  font-size: 10.5px;
+  text-align: left;
+}
+
+/* ── Dapp logo badge (QuantumX — royal-blue neon, LED indicators) ── */
+.atlas-scope .dapp-badge {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 6px 12px 6px 10px;
+  border-radius: 8px;
+  margin-bottom: 10px;
+  background: linear-gradient(135deg, rgba(30, 58, 180, 0.25), rgba(20, 35, 120, 0.15));
+  border: 1px solid rgba(59, 95, 246, 0.35);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: #4169e1;
+  text-shadow: 0 0 10px rgba(65, 105, 225, 0.4), 0 0 20px rgba(65, 105, 225, 0.1);
+  box-shadow: inset 0 0 12px rgba(65, 105, 225, 0.08), 0 0 6px rgba(65, 105, 225, 0.15);
+  transition: box-shadow 0.3s;
+}
+.atlas-scope .dapp-badge:hover {
+  box-shadow: inset 0 0 16px rgba(65, 105, 225, 0.12), 0 0 12px rgba(65, 105, 225, 0.25);
+}
+.atlas-scope .dapp-badge img {
+  width: 22px;
+  height: 22px;
+  border-radius: 5px;
+  flex-shrink: 0;
+  filter: drop-shadow(0 0 4px rgba(65, 105, 225, 0.3));
+}
+.atlas-scope .dapp-badge .sep {
+  color: rgba(65, 105, 225, 0.5);
+  font-weight: 400;
+  margin: 0 2px;
+}
+.atlas-scope .led-group {
+  margin-left: auto;
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 9px;
+  font-family: var(--atlas-mono);
+  font-weight: 500;
+  text-transform: none;
+  letter-spacing: 0;
+}
+.atlas-scope .led.on {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #00ff88;
+  box-shadow: 0 0 4px #00ff88, 0 0 10px rgba(0, 255, 136, 0.5), 0 0 18px rgba(0, 255, 136, 0.2);
+  animation: atlasLedPulse 2s ease-in-out infinite;
+}
+.atlas-scope .led.wait {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #ffb000;
+  box-shadow: 0 0 4px #ffb000, 0 0 10px rgba(255, 176, 0, 0.5), 0 0 18px rgba(255, 176, 0, 0.2);
+  animation: atlasLedPulse 1.5s ease-in-out infinite;
+}
+/* orange variant (model's PENDING led in the warn badge / STALE feed) */
+.atlas-scope .led.led-hot {
+  background: #ff6600;
+  box-shadow: 0 0 4px #ff6600, 0 0 10px rgba(255, 102, 0, 0.5), 0 0 18px rgba(255, 102, 0, 0.2);
+}
+@keyframes atlasLedPulse {
+  0%,
+  100% {
+    opacity: 1;
+    filter: brightness(1.3);
+  }
+  50% {
+    opacity: 0.7;
+    filter: brightness(0.8);
+  }
+}
+/* vestibular accessibility: kill the infinite glow pulse when the user asked
+   for reduced motion (the static colored LED still reads as on/wait/hot) */
+@media (prefers-reduced-motion: reduce) {
+  .atlas-scope .led {
+    animation: none;
+  }
+}
+.atlas-scope .dapp-badge.warn {
+  border-color: rgba(251, 191, 36, 0.25);
+  background: linear-gradient(135deg, rgba(180, 58, 30, 0.15), rgba(120, 35, 20, 0.08));
+}
+.atlas-scope .dapp-badge.warn img {
+  filter: grayscale(0.3);
+  opacity: 0.8;
+}
+.atlas-scope .dapp-badge.warn .led.wait {
+  background: #ff6600;
+  box-shadow: 0 0 4px #ff6600, 0 0 10px rgba(255, 102, 0, 0.5), 0 0 18px rgba(255, 102, 0, 0.2);
+}
+/* LED label colors (model inline styles) */
+.atlas-scope .led-text-live {
+  color: #00ff88;
+  text-shadow: 0 0 6px rgba(0, 255, 136, 0.4);
+}
+.atlas-scope .led-text-wait {
+  color: #ffb000;
+  text-shadow: 0 0 6px rgba(255, 176, 0, 0.4);
+}
+.atlas-scope .led-text-hot {
+  color: #ff6600;
+  text-shadow: 0 0 6px rgba(255, 102, 0, 0.4);
+}
+
+/* ── Token logos (tokEl port) ── */
+.atlas-scope .tok {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.atlas-scope .tok img {
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  box-shadow: 0 0 4px rgba(110, 168, 254, 0.15);
+}
+.atlas-scope .tok .fallback {
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 8px;
+  font-weight: 700;
+  font-family: var(--atlas-mono);
+  color: #fff;
+}
+.atlas-scope .tokpair {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.atlas-scope .tokpair .arrow {
+  color: var(--atlas-accent-dim);
+  font-size: 11px;
+}
+
+/* ── Execute button ── */
+.atlas-scope .btn {
+  display: block;
+  width: 100%;
+  text-align: center;
+  margin-top: 12px;
+  padding: 10px;
+  border-radius: 8px;
+  background: linear-gradient(135deg, rgba(110, 168, 254, 0.3), rgba(110, 168, 254, 0.1));
+  color: var(--atlas-accent);
+  font-weight: 700;
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  border: 1px solid rgba(110, 168, 254, 0.3);
+  backdrop-filter: var(--atlas-glass-blur);
+  -webkit-backdrop-filter: var(--atlas-glass-blur);
+  text-shadow: 0 0 10px rgba(110, 168, 254, 0.3);
+  cursor: pointer;
+  transition: all 0.2s;
+}
+.atlas-scope .btn:hover:not(:disabled) {
+  background: rgba(110, 168, 254, 0.2);
+  box-shadow: 0 0 12px rgba(110, 168, 254, 0.2);
+}
+.atlas-scope .btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+.atlas-scope .btn .sim-note {
+  font-family: var(--atlas-mono);
+  font-size: 10px;
+  letter-spacing: 0.08em;
+}
+/* evidence line under the button */
+.atlas-scope .evidence {
+  margin-top: 8px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-family: var(--atlas-mono);
+  font-size: 10px;
+  color: var(--atlas-muted);
+}
+.atlas-scope .evidence .ev-hi {
+  color: var(--atlas-text);
+}
+
+/* ── discreet ⓘ inspect affordance (glass) ── */
+.atlas-scope .inspect-btn {
+  position: absolute;
+  right: 8px;
+  top: 8px;
+  z-index: 10;
+  padding: 3px;
+  border-radius: 6px;
+  color: var(--atlas-muted);
+  background: var(--atlas-glass-bg);
+  border: 1px solid var(--atlas-glass-border);
+  backdrop-filter: var(--atlas-glass-blur);
+  -webkit-backdrop-filter: var(--atlas-glass-blur);
+  cursor: pointer;
+  transition: color 0.2s, box-shadow 0.2s;
+}
+.atlas-scope .inspect-btn:hover {
+  color: var(--atlas-text);
+  box-shadow: 0 0 8px rgba(110, 168, 254, 0.2);
+}
+
+/* ── glass panels (banners / empty states) ── */
+.atlas-scope .glass-panel {
+  border-radius: 12px;
+  padding: 14px 16px;
+  background: var(--atlas-glass-bg);
+  border: 1px solid var(--atlas-glass-border);
+  backdrop-filter: var(--atlas-glass-blur);
+  -webkit-backdrop-filter: var(--atlas-glass-blur);
+  color: var(--atlas-text);
+}
+.atlas-scope .glass-panel.warn {
+  border-color: rgba(251, 191, 36, 0.3);
+  color: var(--atlas-warning);
+  box-shadow: 0 0 1px rgba(251, 191, 36, 0.3);
+}
+.atlas-scope .glass-panel.err {
+  border-color: rgba(248, 113, 113, 0.3);
+  color: var(--atlas-destructive);
+  box-shadow: 0 0 1px rgba(248, 113, 113, 0.3);
+}
+
+/* ── Accessibility: reduced motion (adopted from PR #385's guard) ──────────
+   Same pattern as glass-neon.module.css: users who prefer reduced motion get
+   a static LED dot — zero default-look change. */
+@media (prefers-reduced-motion: reduce) {
+  .atlas-scope .led.on,
+  .atlas-scope .led.wait,
+  .atlas-scope .led.led-hot {
+    animation: none;
+  }
+}
