@@ -453,6 +453,7 @@ function rowToOpportunity(
   sim: SimContext | undefined,
   chainBaseTokenSymbol: string | null,
   validations: Map<string, TokenValidationRow>,
+  legSymbols: Map<string, string>,
 ) {
   // Look up the per-token validation snapshots. Key format mirrors
   // tokenValidation/index.ts: `${chain_id}:${address.toLowerCase()}`.
@@ -503,6 +504,26 @@ function rowToOpportunity(
     token_in_info:            tokenInfoFromRow(row, "token_in", validationIn),
     token_out:                row.token_out,
     token_out_info:           tokenInfoFromRow(row, "token_out", validationOut),
+    // F2 (audit §11 RC1): symbols for intermediate route legs (multi-hop).
+    // Only resolved addresses are included; an absent entry = unresolved →
+    // the client falls back to its honest shortAddr (R8: no fabrication).
+    leg_symbols: (() => {
+      const rm = row.route_metadata;
+      if (!rm || typeof rm !== "object") return null;
+      const addrs = (rm as { token_addresses?: unknown }).token_addresses;
+      if (!Array.isArray(addrs) || addrs.length === 0) return null;
+      const out: Record<string, string> = {};
+      let any = false;
+      for (const a of addrs) {
+        if (typeof a !== "string") continue;
+        const s = legSymbols.get(tokenCacheKey(row.chain_id, a));
+        if (s) {
+          out[a.toLowerCase()] = s;
+          any = true;
+        }
+      }
+      return any ? out : null;
+    })(),
     amount_in_wei:            row.amount_in_wei,
     // C5 fix (audit 2026-05-10): both gross and net surfaced separately so
     // the UI labels honestly. R8: both can be null (data not yet computed).
@@ -650,6 +671,68 @@ export function mountOpportunitiesLive(
         }
       }
 
+      // ── F2 (audit §11 RC1): intermediate route-leg token symbols ─────────
+      //
+      // Multi-hop routes (triangular A→B→C→A) carry the intermediate token
+      // only inside route_metadata.token_addresses — the LIVE_QUERY LEFT JOIN
+      // enriches the PAIR's token_in/token_out, so intermediate legs rendered
+      // as truncated addresses on the exchange cards. Hydrate the batch's
+      // leg symbols here: first from the tokens table (ONE unnest join),
+      // then via the on-demand eth_call resolver for the misses (which also
+      // persists them back). Emitted per-item as `leg_symbols`
+      // (lowercased address → symbol, resolved-only): unresolved addresses
+      // are omitted so the client's honest shortAddr fallback still applies
+      // (R8: no fabrication).
+      const legSymbols = new Map<string, string>();
+      const legMissing: Array<{ chain_id: number; address: string }> = [];
+      const legSeen = new Set<string>();
+      const LEG_ADDR_RE = /^0x[0-9a-fA-F]{40}$/;
+      for (const r of q.rows) {
+        const rm = r.route_metadata;
+        if (!rm || typeof rm !== "object") continue;
+        const addrs = (rm as { token_addresses?: unknown }).token_addresses;
+        if (!Array.isArray(addrs)) continue;
+        for (const a of addrs) {
+          if (typeof a !== "string" || !LEG_ADDR_RE.test(a)) continue;
+          const key = tokenCacheKey(r.chain_id, a);
+          if (legSeen.has(key)) continue;
+          legSeen.add(key);
+          // Pair tokens are already enriched via the LEFT JOIN above.
+          if (a.toLowerCase() === r.token_in.toLowerCase()) continue;
+          if (a.toLowerCase() === r.token_out.toLowerCase()) continue;
+          legMissing.push({ chain_id: r.chain_id, address: a });
+        }
+      }
+      if (legMissing.length > 0) {
+        try {
+          const legQ = await pool.query<{
+            chain_id: number;
+            address: string;
+            symbol: string;
+          }>(
+            `SELECT t.chain_id, t.address, t.symbol
+               FROM tokens t
+               JOIN unnest($1::int[], $2::text[]) AS u(chain_id, address)
+                 ON t.chain_id = u.chain_id AND t.address = u.address
+              WHERE t.symbol IS NOT NULL`,
+            [
+              legMissing.map((p) => p.chain_id),
+              legMissing.map((p) => p.address.toLowerCase()),
+            ],
+          );
+          for (const lrow of legQ.rows) {
+            legSymbols.set(tokenCacheKey(lrow.chain_id, lrow.address), lrow.symbol);
+          }
+        } catch {
+          // Best-effort hydrate — the on-demand resolver below fills misses.
+        }
+        const stillMissing = legMissing.filter(
+          (p) => !legSymbols.has(tokenCacheKey(p.chain_id, p.address)),
+        );
+        const legResolved = await resolveTokensOnDemand(pool, stillMissing);
+        for (const [k, m] of legResolved) legSymbols.set(k, m.symbol);
+      }
+
       // ── Target-driven simulation (per chain, per row) ──────────────────────
       //
       // For every row whose canonical Rust spine net (`net_expected_profit_usd`)
@@ -749,6 +832,7 @@ export function mountOpportunitiesLive(
                               simByRowId.get(r.id),
                               snapshots.get(r.chain_id)?.base_token_symbol ?? null,
                               validations,
+                              legSymbols,
                             ),
                           ),
         ts:              new Date().toISOString(),
