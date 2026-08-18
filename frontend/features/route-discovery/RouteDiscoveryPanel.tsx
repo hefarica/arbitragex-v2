@@ -77,7 +77,8 @@ function DispatchCell({ r }: { r: MergedRoute }) {
 
 function MetricGrid({ tick, loading }: { tick: RouteDiscoveryTick | null; loading: boolean }) {
   const t = (tick ?? {}) as Record<string, unknown>;
-  const capped = typeof t["routes_capped"] === "boolean" ? (t["routes_capped"] as boolean) : null;
+  // SHADOW-NO-ROUTE-CAPS: deferred = paused, resumes next tick (never lost).
+  const deferred = typeof t["routes_deferred"] === "boolean" ? (t["routes_deferred"] as boolean) : null;
   const rejected = num(t["edges_rejected"]);
   return (
     <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
@@ -88,13 +89,22 @@ function MetricGrid({ tick, loading }: { tick: RouteDiscoveryTick | null; loadin
         loading={loading}
         tone="success"
       />
-      <MetricCard label="Dropped (cap)" value={num(t["routes_dropped_for_cap"])} loading={loading} />
       <MetricCard
-        label="Capped"
-        value={capped}
+        label="Deferred"
+        value={deferred}
         loading={loading}
-        tone={capped ? "warning" : "default"}
-        hint={capped ? "sampling (raise cap for full)" : undefined}
+        tone={deferred ? "warning" : "default"}
+        hint={
+          deferred
+            ? `paused @ ${String(t["deferred_cursor"] ?? "?")} — resumes next tick, nothing lost`
+            : undefined
+        }
+      />
+      <MetricCard
+        label="Ladder"
+        value={`${num(t["depth_pass"])}${t["ladder_complete"] ? " ✓" : " …"} · ${num(t["pass_emitted_total"])}`}
+        loading={loading}
+        hint="iterative-deepening depth / cumulative routes this ladder"
       />
       <MetricCard label="Latency" value={num(t["latency_ms"])} hint="ms / tick" loading={loading} />
       <MetricCard label="Pools" value={num(t["pools_total"])} loading={loading} />
@@ -213,8 +223,8 @@ export function RouteDiscoveryPanel() {
               <h4 className="text-sm font-semibold">Discovered routes</h4>
               <span className="text-xs text-muted-foreground">
                 showing {routes.length}
-                {(lastTick as { routes_capped?: boolean } | null)?.routes_capped
-                  ? " · capped (sampled)"
+                {(lastTick as { routes_deferred?: boolean } | null)?.routes_deferred
+                  ? " · deferred (enumeration continues next tick)"
                   : ""}
               </span>
             </div>

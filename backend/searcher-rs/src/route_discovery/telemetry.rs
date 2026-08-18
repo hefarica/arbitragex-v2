@@ -21,9 +21,11 @@ pub const ROUTE_DISCOVERY_TELEMETRY_CHANNEL: &str = "arbx:route_discovery:teleme
 
 /// `route_discovery.tick` — one per loop iteration.
 ///
-/// `routes_capped` is the honest truncation signal: `true` ⇒ the route cap
-/// stopped enumeration early, so `routes_found` is incomplete and
-/// `routes_dropped_for_cap` is only a lower bound (R8 fail-honest).
+/// SHADOW-NO-ROUTE-CAPS (2026-08-18): `routes_deferred` replaces the old
+/// lossy capped signal — `true` means the tick budget PAUSED the
+/// exhaustive enumeration and the traversal cursor (`deferred_cursor`)
+/// resumes exactly there next tick. NO route is lost; across ticks the
+/// ladder is exhaustive (operator directive: shadow never caps routes).
 #[allow(clippy::too_many_arguments)]
 pub fn tick_event(
     chain_id: u64,
@@ -34,9 +36,13 @@ pub fn tick_event(
     routes_found: usize,
     routes_dispatched: usize,
     telemetry_emitted: usize,
-    routes_dropped_for_cap: usize,
-    routes_capped: bool,
-    pools_truncated: bool,
+    routes_deferred: bool,
+    deferred_cursor: &str,
+    pools_rotated: bool,
+    depth_pass: u8,
+    rotation_epoch: u64,
+    pass_emitted_total: usize,
+    ladder_complete: bool,
     latency_ms: u64,
     mode: &str,
 ) -> Value {
@@ -50,11 +56,21 @@ pub fn tick_event(
         "routes_found": routes_found,
         "routes_dispatched": routes_dispatched,
         "telemetry_emitted": telemetry_emitted,
-        "routes_dropped_for_cap": routes_dropped_for_cap,
-        "routes_capped": routes_capped,
-        // R8: a parallel pool was dropped by the per-pair branching cap this tick —
-        // the route set is not provably exhaustive over the full pool universe.
-        "pools_truncated": pools_truncated,
+        // Budget paused the pass — enumeration continues from the cursor next
+        // tick (DeferNeverDrop). NOT a loss signal.
+        "routes_deferred": routes_deferred,
+        "deferred_cursor": deferred_cursor,
+        // R8: a pair had more parallel pools than the branching cap — the
+        // retained window ROTATES per completed ladder (epoch below), so the
+        // pool universe is covered across ladders, never dropped forever.
+        "pools_rotated": pools_rotated,
+        // Iterative-deepening state: current depth pass (2..=max_depth),
+        // rotation epoch (bumps per completed ladder), cumulative candidates
+        // this ladder, and whether the full ladder COMPLETED this tick.
+        "depth_pass": depth_pass,
+        "rotation_epoch": rotation_epoch,
+        "pass_emitted_total": pass_emitted_total,
+        "ladder_complete": ladder_complete,
         "latency_ms": latency_ms,
         "mode": mode,
     })
@@ -213,9 +229,15 @@ mod tests {
             12,
             3,
             8,
-            1,
+            // routes_deferred, cursor, pools_rotated
             true,
+            "d3@t12:f2",
             true,
+            // depth_pass, rotation_epoch, pass_emitted_total, ladder_complete
+            3,
+            2,
+            87,
+            false,
             42,
             "shadow",
         );
@@ -224,9 +246,13 @@ mod tests {
         assert_eq!(e["pools_total"], 26);
         assert_eq!(e["routes_found"], 12);
         assert_eq!(e["routes_dispatched"], 3);
-        assert_eq!(e["routes_dropped_for_cap"], 1);
-        assert_eq!(e["routes_capped"], true);
-        assert_eq!(e["pools_truncated"], true);
+        assert_eq!(e["routes_deferred"], true);
+        assert_eq!(e["deferred_cursor"], "d3@t12:f2");
+        assert_eq!(e["pools_rotated"], true);
+        assert_eq!(e["depth_pass"], 3);
+        assert_eq!(e["rotation_epoch"], 2);
+        assert_eq!(e["pass_emitted_total"], 87);
+        assert_eq!(e["ladder_complete"], false);
         assert_eq!(e["latency_ms"], 42);
         assert_eq!(e["mode"], "shadow");
     }
