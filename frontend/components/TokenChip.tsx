@@ -283,7 +283,17 @@ function SymbolPlusAddress({
 export function TokenChip({ token_address, chain_id, info }: TokenChipProps) {
   const hasLogo = info?.logo_url != null && info.logo_url.length > 0;
   const hasSymbol = info?.symbol != null && info.symbol.length > 0;
-  const symbol = hasSymbol ? info!.symbol : null;
+  // F1 (audit §11 RC2): registry_symbol is REAL curated-list data resolved
+  // by the api-server for every token — surface it before rendering "—" so
+  // long-tail tokens still show their code. (The impersonation case always
+  // has a non-null on-chain symbol, so this fallback never masks it.)
+  const hasRegistrySymbol =
+    !hasSymbol && info?.registry_symbol != null && info.registry_symbol.length > 0;
+  const symbol = hasSymbol
+    ? info!.symbol
+    : hasRegistrySymbol
+      ? info!.registry_symbol!
+      : null;
 
   // Case A: payload logo — <img> layered over a DeterministicAvatar base. The
   // logo shows when the external URL loads; onError hides only the <img>,
