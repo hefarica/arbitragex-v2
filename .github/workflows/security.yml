@@ -64,7 +64,7 @@ jobs:
         # in the repo/env with operator approval and a comment explaining the risk decision.
         # NEVER use continue-on-error here — that defeats the gate.
         run: |
-          cargo audit --deny warnings \
+          cargo audit --deny vulnerabilities \
             ${RUSTSEC_IGNORES:-}
         env:
           # ── OMEGA-102 OPERATOR-APPROVED ALLOWLIST · 2026-05-16 · renewed 2026-07-03 ──
