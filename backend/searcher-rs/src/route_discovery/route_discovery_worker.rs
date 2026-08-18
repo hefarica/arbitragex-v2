@@ -199,6 +199,7 @@ pub fn evaluate_tick(
     finder: &RouteFinderConfig,
     incremental: &mut UniqueRouteFinder,
     graph_gen: u64,
+    financing_cfg: &crate::route_discovery::financing::RouteDiscoveryRuntimeConfig,
     max_telemetry_per_tick: usize,
     dispatch_enabled: bool,
     latency_ms: u64,
@@ -207,14 +208,18 @@ pub fn evaluate_tick(
     // SHADOW-NO-ROUTE-CAPS: this worker is shadow-only and its config is
     // built with `CapPolicy::DeferNeverDrop` (from_env_and_engine, pinned by
     // the CI gate). The budget below NEVER drops a route — it defers, and the
-    // cursor inside `incremental` resumes next tick.
+    // cursor inside `incremental` resumes next tick. Live operator config
+    // overrides the per-tick budget (pacing only — coverage is never capped;
+    // 0/absent in live config falls back to the boot env value).
+    let budget = if financing_cfg.routes_per_tick >= 1 {
+        financing_cfg.routes_per_tick
+    } else {
+        finder.max_routes_per_tick
+    };
     let found = match finder.policy {
-        CapPolicy::DeferNeverDrop => incremental.next_tick(
-            &outcome.graph,
-            chain_id,
-            graph_gen,
-            finder.max_routes_per_tick,
-        ),
+        CapPolicy::DeferNeverDrop => {
+            incremental.next_tick(&outcome.graph, chain_id, graph_gen, budget)
+        }
         CapPolicy::BoundedLegacy => {
             // Defensive: unreachable from this worker (gate-pinned); kept so a
             // future library caller cannot silently lose the exhaustive engine.
@@ -231,6 +236,43 @@ pub fn evaluate_tick(
         c.rejected_strategies = appl.rejected;
     }
 
+    // ── CAPA 2 · G2 — financing parallel evaluation (ROUTES_CROWN_JEWEL §2) ──
+    // The SAME route evaluated under EVERY mode at once; every death carries a
+    // reason. Leg liquidity comes from the graph edges (pool → liquidity_hint).
+    use std::collections::HashMap;
+    let mut pool_liquidity: HashMap<ethers::types::Address, f64> = HashMap::new();
+    for e in outcome.graph.edges.iter() {
+        if let Some(l) = e.liquidity_hint {
+            pool_liquidity.entry(e.pool).or_insert(l);
+        }
+    }
+    let mut financing_by_hash: HashMap<
+        String,
+        Vec<crate::route_discovery::financing::ModeVerdict>,
+    > = HashMap::new();
+    // Funnel ledger: hop_tier → mode → (born, dead) — what the dapp renders.
+    let mut funnel: std::collections::BTreeMap<u8, std::collections::BTreeMap<String, (u64, u64)>> =
+        std::collections::BTreeMap::new();
+    for c in routes.iter() {
+        let legs: Vec<f64> = c
+            .pools
+            .iter()
+            .map(|p| pool_liquidity.get(p).copied().unwrap_or(0.0))
+            .collect();
+        let verdicts =
+            crate::route_discovery::financing::evaluate_route_financing(c, &legs, financing_cfg);
+        let tier = funnel.entry(c.hops).or_default();
+        for v in verdicts.iter() {
+            let e = tier.entry(v.mode.clone()).or_insert((0, 0));
+            if v.viable {
+                e.0 += 1;
+            } else {
+                e.1 += 1;
+            }
+        }
+        financing_by_hash.insert(c.route_hash.clone(), verdicts);
+    }
+
     let mut events: Vec<Value> = Vec::new();
     let mut telemetry_emitted = 0usize;
 
@@ -238,7 +280,10 @@ pub fn evaluate_tick(
         if telemetry_emitted >= max_telemetry_per_tick {
             break;
         }
-        events.push(telemetry::route_candidate_event(chain_id, ALGORITHM, c));
+        let fin = financing_by_hash.get(&c.route_hash);
+        events.push(telemetry::route_candidate_event_with_financing(
+            chain_id, ALGORITHM, c, fin,
+        ));
         events.push(telemetry::strategy_applicability_event(chain_id, c));
         telemetry_emitted += 1;
     }
@@ -314,6 +359,35 @@ pub fn evaluate_tick(
     tick_summary["multi_hop_profitable_cycles"] = serde_json::json!(multi_hop_cycles_found);
     tick_summary["multi_hop_v3_skipped"] = serde_json::json!(mh.v3_skipped);
     tick_summary["multi_hop_capped"] = serde_json::json!(mh.capped);
+    // CAPA 2 funnel: hop_tier → mode → {born, dead} — feeds the dapp panels.
+    let funnel_json: serde_json::Value = funnel
+        .iter()
+        .map(|(hops, modes)| {
+            (
+                hops.to_string(),
+                serde_json::Value::Object(
+                    modes
+                        .iter()
+                        .map(|(mode, (born, dead))| {
+                            (
+                                mode.clone(),
+                                serde_json::json!({ "born": born, "dead": dead }),
+                            )
+                        })
+                        .collect(),
+                ),
+            )
+        })
+        .collect::<serde_json::Map<String, serde_json::Value>>()
+        .into();
+    tick_summary["funnel"] = funnel_json;
+    tick_summary["financing_config_source"] = serde_json::json!(if financing_cfg
+        == &crate::route_discovery::financing::RouteDiscoveryRuntimeConfig::default()
+    {
+        "defaults"
+    } else {
+        "live"
+    });
 
     TickOutput {
         routes_found: routes.len(),
@@ -384,6 +458,8 @@ async fn run_loop(
     // SHADOW-NO-ROUTE-CAPS: the exhaustive enumeration state — the traversal
     // cursor persists ACROSS ticks (defers, never drops). Created once here.
     let mut incremental = UniqueRouteFinder::new(cfg.finder.clone());
+    // CAPA 2 live financing config (floating panel → Redis → here, 1s cache).
+    let rt_config_client = crate::route_discovery::financing::RouteDiscoveryConfigClient::new();
     // FASE 2 (D-01/F2): per-block backfill allowance for the triangular
     // reserves adapter — created ONCE so the budget persists across ticks.
     let adapter_budget = BackfillBudget::new();
@@ -420,6 +496,10 @@ async fn run_loop(
             build_graph(&mut redis, chain_id, &pools, now_ts, &cfg.graph).await;
         let latency_ms = t0.elapsed().as_millis() as u64;
 
+        // Live operator config (floating panel). Defaults on Redis miss — R8:
+        // absence of config is honest defaults, never a fabricated override.
+        let (rt_cfg, rt_from_redis) = rt_config_client.get(&mut redis, chain_id).await;
+
         let mut tick = evaluate_tick(
             &outcome,
             chain_id,
@@ -427,11 +507,13 @@ async fn run_loop(
             &cfg.finder,
             &mut incremental,
             graph_generation(&outcome.graph),
+            &rt_cfg,
             cfg.max_telemetry_per_tick,
             dispatch_enabled,
             latency_ms,
             "shadow",
         );
+        tick.tick_summary["financing_config_from_redis"] = serde_json::json!(rt_from_redis);
 
         // ── FASE 2 (D-01/F2): triangular reserves adapter — BEFORE dispatch ──
         // The data bridge `needs_triangular_adapter` named: radar-discovered
@@ -745,6 +827,7 @@ mod tests {
             &finder,
             &mut UniqueRouteFinder::new(finder.clone()),
             graph_generation(&outcome.graph),
+            &Default::default(),
             200,
             false,
             42,
@@ -802,6 +885,7 @@ mod tests {
             &finder,
             &mut UniqueRouteFinder::new(finder.clone()),
             graph_generation(&outcome.graph),
+            &Default::default(),
             1,
             false,
             0,
@@ -832,6 +916,7 @@ mod tests {
             &finder,
             &mut UniqueRouteFinder::new(finder.clone()),
             graph_generation(&outcome.graph),
+            &Default::default(),
             200,
             true,
             0,
@@ -864,6 +949,7 @@ mod tests {
             &finder,
             &mut UniqueRouteFinder::new(finder.clone()),
             graph_generation(&outcome.graph),
+            &Default::default(),
             200,
             true,
             7,
