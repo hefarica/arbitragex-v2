@@ -2,6 +2,9 @@ import OpportunitiesExchangeClient, {
   type OpportunitiesSnapshot,
 } from "./OpportunitiesExchangeClient";
 import { getApiBaseUrl } from "@/lib/api-client";
+// SSOT "glass neon" design language (verbatim port of docs/atlas_264.html),
+// scoped under .atlas-scope — only this page loads it.
+import "./atlas-glass.css";
 
 export const dynamic = "force-dynamic";
 

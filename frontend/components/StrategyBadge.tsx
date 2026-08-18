@@ -54,8 +54,8 @@ const STRATEGY_MAP: Record<string, StrategyMeta> = {
 
 /**
  * Plain-text display label for a strategy_kind — the same three-branch
- * mapping StrategyBadge renders, as a string (for the glass-neon DappBadge
- * header, which needs the name without the badge chrome).
+ * mapping StrategyBadge renders, as a string (for headers which need the
+ * name without the badge chrome, e.g. the exchange card badge).
  */
 export function strategyLabel(strategy_kind: string): string {
   if (isBaseStrategy(strategy_kind)) {
