@@ -13,13 +13,14 @@
     "./metrics": "./dist/metrics/index.js",
     "./middleware": "./dist/middleware/index.js",
     "./contracts": "./dist/contracts/index.js",
-    "./circuit_breaker": "./dist/circuit_breaker/index.js"
+    "./circuit_breaker": "./dist/circuit_breaker/index.js",
+    "./tokenlists": "./dist/tokenlists/index.js"
   },
   "files": [
     "dist"
   ],
   "scripts": {
-    "build": "tsc -p tsconfig.json",
+    "build": "tsc -p tsconfig.json && node scripts/copy-tokenlists.mjs",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "test": "vitest run",
     "lint": "echo 'lint placeholder for shared-ts'"
