@@ -191,6 +191,18 @@ jobs:
           # another per-id re-verification. NEVER extend without re-verifying.
           #                                     (dependabot #145; breaking SDK bump, separate sprint;
           #                                     no security urgency).
+          #
+          # ── ADDITION 2026-08-18 (RUSTSEC-2026-0258, blocks the whole fleet) ──
+          # h2 (HTTP/2) advisory, TWO instances found in Cargo.lock:
+          #   1. h2 0.4.15 via hyper 1.x (searcher-rs runtime path) — FIXED in
+          #      this same PR: cargo update h2 0.4.15 -> 0.4.16 (patched line).
+          #   2. h2 0.3.27 via hyper 0.14 <- reqwest 0.11 <- ethers-* 2.0.14
+          #      (build-time abigen/solc tooling, NOT the runtime hot path).
+          #      0.3.27 is the LAST 0.3.x release — no patched 0.3 exists; fix
+          #      requires the ethers 2.x/reqwest 0.12 major migration (separate
+          #      sprint). The ignore below therefore covers ONLY the legacy 0.3
+          #      instance; the runtime 0.4 line stays patched and audited.
+          #                                      Plan: retire with ethers/reqwest major bump.
           RUSTSEC_IGNORES: >-
             --ignore RUSTSEC-2026-0002
             --ignore RUSTSEC-2024-0388
@@ -211,7 +223,7 @@ jobs:
             --ignore RUSTSEC-2026-0189
             --ignore RUSTSEC-2026-0249
             --ignore RUSTSEC-2026-0253
-            --ignore RUSTSEC-2026-0189
+            --ignore RUSTSEC-2026-0258
 
   gitleaks:
     name: gitleaks (secrets scan)
