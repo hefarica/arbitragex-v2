@@ -739,6 +739,33 @@ async fn fetch_pool_data(
     })
 }
 
+/// §IV blocker A1: build the `RouteMetadata` for a flashloan-arb opportunity.
+///
+/// Two hops across two V2 pools: A→B on the buy pool, B→A on the sell pool
+/// (3 token entries, 2 pools, 2 dex adapters). Decimals are resolved
+/// separately downstream (fail-honest — see
+/// `persistence::build_route_metadata_from_plan`).
+fn build_flashloan_route_metadata(
+    buy_pool: &str,
+    sell_pool: &str,
+    token_a: &str,
+    token_b: &str,
+) -> RouteMetadata {
+    RouteMetadata {
+        pool_addresses: vec![buy_pool.to_string(), sell_pool.to_string()],
+        token_addresses: vec![
+            token_a.to_string(),
+            token_b.to_string(),
+            token_a.to_string(),
+        ],
+        dex_adapters: vec![
+            "uniswap_v2_router".to_string(),
+            "uniswap_v2_router".to_string(),
+        ],
+        decimals: Default::default(),
+    }
+}
+
 // =============================================================================
 // WORKER
 // =============================================================================
@@ -1082,18 +1109,12 @@ impl FlashloanArbWorker {
 
                 // §IV Gap 1 fix: build RouteMetadata so sim-ctl can resolve the route
                 // (A→B on buy pool, B→A on sell pool). 2 hops, 3 tokens.
-                let route_metadata = RouteMetadata {
-                    pool_addresses: vec![
-                        buy_pd.pool_addr.to_string(),
-                        sell_pd.pool_addr.to_string(),
-                    ],
-                    token_addresses: vec![addr_a.clone(), addr_b.clone(), addr_a.clone()],
-                    dex_adapters: vec![
-                        "uniswap_v2_router".to_string(),
-                        "uniswap_v2_router".to_string(),
-                    ],
-                    decimals: Default::default(),
-                };
+                let route_metadata = build_flashloan_route_metadata(
+                    &buy_pd.pool_addr,
+                    &sell_pd.pool_addr,
+                    &addr_a,
+                    &addr_b,
+                );
                 if let Some(pool) = db {
                     if let Err(e) = persistence::insert_opportunity_with_route(
                         pool,
@@ -1987,5 +2008,58 @@ mod tests {
     fn flashloan_arb_worker_new_preserves_interval() {
         let w = FlashloanArbWorker::new(12, 1);
         assert_eq!(w.period.as_secs(), 12);
+    }
+
+    // ---------------------------------------------------------------
+    // RouteMetadata — §IV blocker A1
+    // ---------------------------------------------------------------
+
+    #[test]
+    fn route_metadata_two_hop_round_trip_topology() {
+        let rm = build_flashloan_route_metadata(
+            "0xbuypool00000000000000000000000000000000001",
+            "0xsellpool0000000000000000000000000000000002",
+            "0xtokena0000000000000000000000000000000000a",
+            "0xtokenb0000000000000000000000000000000000b",
+        );
+
+        // Non-empty topology — persists as real route_metadata, not '{}'.
+        assert!(rm.is_populated(), "flashloan route must be populated");
+        // Round trip A→B→A on the buy pool then the sell pool.
+        assert_eq!(
+            rm.token_addresses,
+            vec![
+                "0xtokena0000000000000000000000000000000000a".to_string(),
+                "0xtokenb0000000000000000000000000000000000b".to_string(),
+                "0xtokena0000000000000000000000000000000000a".to_string(),
+            ]
+        );
+        assert_eq!(
+            rm.pool_addresses,
+            vec![
+                "0xbuypool00000000000000000000000000000000001".to_string(),
+                "0xsellpool0000000000000000000000000000000002".to_string(),
+            ]
+        );
+        assert_eq!(
+            rm.dex_adapters,
+            vec![
+                "uniswap_v2_router".to_string(),
+                "uniswap_v2_router".to_string(),
+            ]
+        );
+        // Structural gate enforced by persistence::insert_opportunity_with_route:
+        // token_addresses.len() == hops + 1 AND pool_addresses.len() <= hops.
+        let hops = rm.dex_adapters.len();
+        assert_eq!(rm.token_addresses.len(), hops + 1);
+        assert!(rm.pool_addresses.len() <= hops);
+    }
+
+    #[test]
+    fn route_metadata_decimals_empty_by_design() {
+        // Decimals are resolved separately downstream (A1 enrichment) — the
+        // empty map is the documented fail-honest contract.
+        let rm = build_flashloan_route_metadata("0xp1", "0xp2", "0xa", "0xb");
+        assert!(rm.decimals.map.is_empty());
     }
 }
