@@ -1,6 +1,6 @@
 "use client";
 import React, { useEffect, useState, useCallback, useMemo } from "react";
-import { Zap, WifiOff, ShieldAlert, RefreshCw, Radio, ChevronDown } from "lucide-react";
+import { WifiOff, ShieldAlert, RefreshCw, ChevronDown } from "lucide-react";
 import { sanitizeForDisplay } from "@/lib/omega-lexicon";
 import { toast } from "sonner";
 import { getApiBaseUrl } from "@/lib/api-client";
@@ -233,58 +233,61 @@ export default function OpportunitiesExchangeClient({
 
   const isError = feedStatus === "STALE";
 
-  return (
-    <div className={`p-8 min-h-screen transition-colors duration-500 text-foreground ${isError ? "bg-destructive/5" : ""}`}>
-      <div className="flex justify-between items-center border-b border-border pb-4 mb-6">
-        <div>
-          <h1 className={`text-4xl font-extrabold tracking-tight bg-clip-text text-transparent ${isError ? "bg-gradient-to-r from-destructive to-destructive/70" : "bg-gradient-to-r from-primary to-success"}`}>
-            {sanitizeForDisplay("Exchange Feed")}
-          </h1>
-          <p className="text-muted-foreground mt-2 text-sm" suppressHydrationWarning>
-            {feedStatus === "LIVE"
-              ? "Live stream via WebSocket"
-              : feedStatus === "POLLING"
-              ? `Fallback: polling edge every ${POLL_INTERVAL_MS / 1000}s`
-              : feedStatus === "STALE"
-              ? "Stream disconnected — reconnecting…"
-              : feedStatus === "CONNECTING"
-              ? "Connecting to stream…"
-              : "Edge connection error"}
-            {" · "}
-            {isMounted && lastRefresh ? `Last refresh: ${lastRefresh.toLocaleTimeString()}` : "Loading..."}
-          </p>
-          {isMounted && (
-            <p className="text-xs mt-1 text-muted-foreground">
-              <span className="text-success font-semibold">{filtered.length}</span> matching
-              {" · "}
-              <span className="text-foreground font-semibold">{opportunities.length}</span> total detected
-            </p>
-          )}
-        </div>
+  // Semantic LED for the FEED chip: LIVE → green on, STALE → orange hot,
+  // POLLING/CONNECTING/other → amber wait.
+  const feedLedClass =
+    feedStatus === "LIVE" ? "led on" : feedStatus === "STALE" ? "led wait led-hot" : "led wait";
+  const feedTextClass =
+    feedStatus === "LIVE" ? "led-text-live" : feedStatus === "STALE" ? "led-text-hot" : "led-text-wait";
 
-        <div className="flex items-center gap-3">
+  return (
+    <div className={`atlas-scope atlas-ground min-h-screen ${isError ? "atlas-error" : ""}`}>
+      <header>
+        <h1>{sanitizeForDisplay("Exchange Feed")}</h1>
+        <p className="sub">
+          {feedStatus === "LIVE"
+            ? "Live stream via WebSocket"
+            : feedStatus === "POLLING"
+            ? `Fallback: polling edge every ${POLL_INTERVAL_MS / 1000}s`
+            : feedStatus === "STALE"
+            ? "Stream disconnected — reconnecting…"
+            : feedStatus === "CONNECTING"
+            ? "Connecting to stream…"
+            : "Edge connection error"}
+          {" · "}
+          {/* R1: only the clock segment is non-deterministic — suppress on this
+              span alone, never on the whole container. */}
+          <span suppressHydrationWarning>
+            {isMounted && lastRefresh ? `Last refresh: ${lastRefresh.toLocaleTimeString()}` : "Loading..."}
+          </span>
+        </p>
+
+        {/* Feed chips: refresh + matching/total counts + live LED status */}
+        <div className="chips">
           <button
             type="button"
             onClick={fetchOpportunities}
-            className="p-2 rounded-lg bg-muted hover:bg-accent transition-colors border border-border"
+            className="chip"
             title="Force refresh"
           >
-            <RefreshCw size={16} className="text-muted-foreground" />
+            <RefreshCw size={11} /> REFRESH
           </button>
-          <div className={`flex items-center gap-2 px-4 py-2 rounded-full border shadow-lg ${
-            feedStatus === "LIVE"       ? "bg-success/10 border-success/40 text-success" :
-            feedStatus === "POLLING"    ? "bg-info/10 border-info/40 text-info" :
-            feedStatus === "CONNECTING" ? "bg-muted border-border text-muted-foreground" :
-            /* STALE */                   "bg-warning/10 border-warning/40 text-warning animate-pulse"
-          }`}>
-            {feedStatus === "LIVE"       ? <Zap size={18} /> :
-             feedStatus === "POLLING"    ? <Radio size={18} className="animate-pulse" /> :
-             feedStatus === "CONNECTING" ? <Radio size={18} className="animate-pulse" /> :
-             /* STALE */                   <WifiOff size={18} />}
-            <span className="text-sm font-bold tracking-widest">{feedStatus}</span>
-          </div>
+          {isMounted && (
+            <>
+              <span className="chip">
+                MATCHING <b>{filtered.length}</b>
+              </span>
+              <span className="chip">
+                TOTAL DETECTED <b>{opportunities.length}</b>
+              </span>
+            </>
+          )}
+          <span className="chip" title="Feed transport status">
+            <span className={feedLedClass} />
+            FEED <b className={feedTextClass}>{feedStatus}</b>
+          </span>
         </div>
-      </div>
+      </header>
 
       <ExchangeFilterBar
         opportunities={opportunities}
@@ -295,7 +298,7 @@ export default function OpportunitiesExchangeClient({
       />
 
       {feedStatus === "STALE" && (
-        <div className="mb-6 p-4 bg-warning/10 border border-warning/30 rounded-xl flex items-center gap-4 text-warning">
+        <div className="glass-panel warn mb-6 flex items-center gap-4">
           <WifiOff size={24} />
           <div>
             <h3 className="font-bold">STREAM DISCONNECTED</h3>
@@ -305,7 +308,7 @@ export default function OpportunitiesExchangeClient({
       )}
 
       {errorMsg !== null && (
-        <div className="mb-6 p-4 bg-destructive/10 border border-destructive/30 rounded-xl flex items-center gap-4 text-destructive">
+        <div className="glass-panel err mb-6 flex items-center gap-4">
           <ShieldAlert size={24} />
           <div>
             <h3 className="font-bold">EDGE REFRESH ERROR</h3>
@@ -323,7 +326,7 @@ export default function OpportunitiesExchangeClient({
       )}
 
       {(feedStatus === "LIVE" || feedStatus === "POLLING" || feedStatus === "CONNECTING") && filtered.length === 0 && (
-        <div className="mb-6 p-4 bg-muted/50 border border-border rounded-xl flex items-center gap-4 text-muted-foreground shadow-inner">
+        <div className="glass-panel mb-6 flex items-center gap-4">
           <div className="relative flex h-3 w-3">
             <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-success opacity-75"></span>
             <span className="relative inline-flex rounded-full h-3 w-3 bg-success"></span>
@@ -342,7 +345,7 @@ export default function OpportunitiesExchangeClient({
       )}
 
       {/* ── Card grid (memory-disciplined: capped mount + content-visibility) ── */}
-      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+      <div className="atlas-cards2">
         {visible.map((opp) => (
           <OpportunityExchangeCard
             key={routeKeyOf(opp)}
@@ -369,9 +372,9 @@ export default function OpportunitiesExchangeClient({
           <button
             type="button"
             onClick={() => setCap((c) => c + VISIBLE_CAP)}
-            className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg border border-border bg-muted/40 hover:bg-muted/70 text-xs font-semibold transition-colors"
+            className="chip"
           >
-            <ChevronDown size={14} /> Show {Math.min(VISIBLE_CAP, filtered.length - visible.length)} more
+            <ChevronDown size={12} /> Show {Math.min(VISIBLE_CAP, filtered.length - visible.length)} more
           </button>
         </div>
       )}
