@@ -27,7 +27,9 @@ import type { Pool } from "pg";
 
 interface TokenMeta {
   symbol: string;
-  decimals: number;
+  /** F3 (audit §11 RC3): null when the on-chain decimals() call failed —
+   *  decimals gate math, not display; a valid symbol still surfaces. */
+  decimals: number | null;
 }
 
 interface CacheEntry {
@@ -36,6 +38,10 @@ interface CacheEntry {
 }
 
 const CACHE_TTL_MS = 60_000;
+// F4 (audit §11 RC4): failed lookups retry sooner — a transient RPC hiccup
+// (1.5s timeout, provider 5xx) must not freeze a token as "unresolved" for a
+// full minute. Successes keep the 60s TTL.
+const NEG_CACHE_TTL_MS = 15_000;
 const RPC_TIMEOUT_MS = 1500;
 // ERC-20 method selectors. These are protocol-level constants (RULE 00
 // exception), not productive secrets.
@@ -153,13 +159,16 @@ async function fetchOneTokenMeta(
 
   const symHex = (symRes as JsonRpcReply | null)?.result;
   const decHex = (decRes as JsonRpcReply | null)?.result;
-  if (!symHex || !decHex) return null;
+  if (!symHex) return null;
 
   const symbol = decodeStringResult(symHex);
-  const decimals = decodeUint8Result(decHex);
-  if (!symbol || decimals === null) return null;
   // Sanity: ERC-20 symbols are short. Reject anything wild.
-  if (symbol.length > 24) return null;
+  if (!symbol || symbol.length > 24) return null;
+  // F3 (audit §11 RC3): display-first. Previously ALL-OR-NOTHING — a symbol
+  // that decoded fine was discarded when decimals() reverted or returned a
+  // value outside [0,36]. Decimals only gate math; the symbol gates display.
+  // Keep the symbol, carry decimals as null (persistToken COALESCEs).
+  const decimals = decHex ? decodeUint8Result(decHex) : null;
   return { symbol, decimals };
 }
 
@@ -169,6 +178,12 @@ async function persistToken(
   address: string,
   meta: TokenMeta,
 ): Promise<void> {
+  // tokens.decimals is NOT NULL (migration 021). F3 symbol-only results
+  // (decimals() failed) cannot be persisted without breaking the constraint —
+  // they live in the 60s in-process cache only, and the enricher (which owns
+  // the full on-chain resolution) fills the row later. Dropping the NOT NULL
+  // would be its own migration PR if this case proves common.
+  if (meta.decimals == null) return;
   try {
     await pool.query(
       `INSERT INTO tokens (chain_id, address, symbol, decimals, resolved_via, resolved_at)
@@ -206,7 +221,8 @@ export async function resolveTokensOnDemand(
     const key = cacheKey(chain_id, address);
     if (result.has(key)) continue;
     const cached = cache.get(key);
-    if (cached && now - cached.fetched_at < CACHE_TTL_MS) {
+    // F4: TTL depends on outcome — successes stick 60s, misses retry at 15s.
+    if (cached && now - cached.fetched_at < (cached.meta ? CACHE_TTL_MS : NEG_CACHE_TTL_MS)) {
       if (cached.meta) result.set(key, cached.meta);
       continue;
     }
