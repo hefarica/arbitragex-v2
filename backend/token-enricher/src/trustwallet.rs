@@ -39,6 +39,10 @@ pub fn checksum_url_for(chain_id: u64, address: Address) -> Option<String> {
 }
 
 /// HTTP client that verifies Trust Wallet logo URLs via HEAD request.
+///
+/// `Clone` is cheap (reqwest `Client` is an `Arc` internally) — lets the
+/// RU-TOKEN-REFRESH tick spawn detached runs sharing this client.
+#[derive(Clone)]
 pub struct TrustWalletClient {
     http: Client,
     auth_token: Option<String>,
@@ -85,5 +89,38 @@ impl TrustWalletClient {
                 Ok(None)
             }
         }
+    }
+
+    /// HEAD an arbitrary logo URL (RU-TOKEN-REFRESH monthly refresh).
+    ///
+    /// Unlike `verify`, this probes the EXACT stored URL (any host) and
+    /// performs no pass/fail interpretation — classification lives in
+    /// `logo_refresh`. Returns the HTTP status plus the `Content-Length`
+    /// header when the CDN provides one.
+    pub async fn head_url(&self, url: &str) -> Result<(u16, Option<u64>)> {
+        let mut req = self.http.head(url);
+        if let Some(t) = &self.auth_token {
+            req = req.header("authorization", format!("Bearer {t}"));
+        }
+        let resp = req.send().await?;
+        let status = resp.status().as_u16();
+        let content_length = resp
+            .headers()
+            .get(reqwest::header::CONTENT_LENGTH)
+            .and_then(|v| v.to_str().ok())
+            .and_then(|v| v.trim().parse::<u64>().ok());
+        Ok((status, content_length))
+    }
+
+    /// GET download of a logo URL (RU-TOKEN-REFRESH re-download confirmation).
+    /// Returns the body byte count. Errors on transport failure or non-2xx.
+    pub async fn download_url(&self, url: &str) -> Result<u64> {
+        let mut req = self.http.get(url);
+        if let Some(t) = &self.auth_token {
+            req = req.header("authorization", format!("Bearer {t}"));
+        }
+        let resp = req.send().await?.error_for_status()?;
+        let bytes = resp.bytes().await?;
+        Ok(bytes.len() as u64)
     }
 }
