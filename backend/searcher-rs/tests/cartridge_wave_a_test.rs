@@ -137,7 +137,10 @@ fn leg(pool: &str, token_in: &str, token_out: &str, fee_bps: i64) -> Map {
 fn closed_route_pool_data(legs: Vec<Map>) -> Map {
     let mut pd = Map::new();
     pd.insert("chain_id".into(), Dynamic::from(1_i64));
-    pd.insert("route".into(), Dynamic::from_array(legs.into_iter().map(Dynamic::from).collect()));
+    pd.insert(
+        "route".into(),
+        Dynamic::from_array(legs.into_iter().map(Dynamic::from).collect()),
+    );
     pd.insert("route_closed".into(), Dynamic::from(true));
     pd
 }
@@ -156,9 +159,18 @@ fn wave_a_empty_data_fail_honest_reasons() {
         ("mev_01_011_amm_rfq_arbitrage", "missing_route"),
         ("mev_01_012_rfq_rfq_arbitrage", "missing_route"),
         ("mev_01_027_basket_arbitrage", "basket_state_unavailable"),
-        ("mev_01_028_index_arbitrage", "index_composition_unavailable"),
-        ("mev_01_030_coincidence_of_wants_arbitrage", "intent_batch_unavailable"),
-        ("mev_02_007_proactive_market_maker_arbitrage", "missing_route"),
+        (
+            "mev_01_028_index_arbitrage",
+            "index_composition_unavailable",
+        ),
+        (
+            "mev_01_030_coincidence_of_wants_arbitrage",
+            "intent_batch_unavailable",
+        ),
+        (
+            "mev_02_007_proactive_market_maker_arbitrage",
+            "missing_route",
+        ),
         ("mev_02_008_dynamic_liquidity_arbitrage", "missing_route"),
         ("mev_02_009_dynamic_weight_arbitrage", "missing_route"),
         ("mev_02_010_bonding_curve_arbitrage", "missing_route"),
@@ -249,7 +261,9 @@ fn g02_012_vamm_positive_spread_gated_on_derivative_state() {
 fn g02_014_twamm_stale_reserves_refused() {
     let mut engine = math_engine();
     // Head far ahead of the synced reserves block => pre-advance state.
-    engine.register_fn("get_block_number", || -> Dynamic { Dynamic::from(20_000_100_i64) });
+    engine.register_fn("get_block_number", || -> Dynamic {
+        Dynamic::from(20_000_100_i64)
+    });
     let pd = closed_route_pool_data(vec![
         leg("0xab1", "0xa", "0xb", 30),
         leg("0xba2", "0xb", "0xa", 30),
@@ -292,7 +306,10 @@ fn g01_009_amm_clob_vwap_hunts_cross_venue_spread() {
     ]);
     let src = cartridge("mev_01_009_amm_clob_arbitrage");
     let r = eval(&engine, &src, pd);
-    assert!(is_opp(&r), "5% book edge over the AMM must be an opportunity");
+    assert!(
+        is_opp(&r),
+        "5% book edge over the AMM must be an opportunity"
+    );
     assert_eq!(reason(&r), "amm_clob_vwap_profit");
     assert!(r.get("estimated_profit").unwrap().as_float().unwrap() > 0.0);
 }
@@ -380,7 +397,10 @@ fn g01_012_rfq_rfq_crossed_firm_quotes() {
     assert_eq!(reason(&r), "rfq_rfq_firm_quote_profit");
     let profit = r.get("estimated_profit").unwrap().as_float().unwrap();
     // ~1.3% of the 1000-token executable cap, in A units (~12.9 A).
-    assert!(profit > 1.0, "linear firm-quote profit ~12.9 A, got {profit}");
+    assert!(
+        profit > 1.0,
+        "linear firm-quote profit ~12.9 A, got {profit}"
+    );
 }
 
 fn basket_pool_data(field: &str) -> Map {
@@ -409,7 +429,10 @@ fn g01_027_basket_nav_redeem_hunts() {
     let pd = basket_pool_data("basket");
     let src = cartridge("mev_01_027_basket_arbitrage");
     let r = eval(&engine, &src, pd);
-    assert!(is_opp(&r), "20% redeem premium over NAV must be an opportunity");
+    assert!(
+        is_opp(&r),
+        "20% redeem premium over NAV must be an opportunity"
+    );
     assert_eq!(reason(&r), "basket_nav_redeem_profit");
     assert!(r.get("estimated_profit").unwrap().as_float().unwrap() > 0.0);
 }
@@ -440,17 +463,23 @@ fn g01_030_cow_crossing_intents_match() {
     pd.insert(
         "orders".into(),
         Dynamic::from_array(vec![
-            order("0xa", "0xb", 10e18, 20e18),  // sells A, min 2 B per A
-            order("0xb", "0xa", 21e18, 10e18),  // buys A, pays up to 2.1 B per A
+            order("0xa", "0xb", 10e18, 20e18), // sells A, min 2 B per A
+            order("0xb", "0xa", 21e18, 10e18), // buys A, pays up to 2.1 B per A
         ]),
     );
     let src = cartridge("mev_01_030_coincidence_of_wants_arbitrage");
     let r = eval(&engine, &src, pd);
-    assert!(is_opp(&r), "crossing limit intents are internally matchable");
+    assert!(
+        is_opp(&r),
+        "crossing limit intents are internally matchable"
+    );
     assert_eq!(reason(&r), "cow_crossing_pair_surplus");
     // Surplus = q*(2.1-2) with q=min(10, 21/2.1)=10 A => 1 B = 1e18 base units.
     let profit = r.get("estimated_profit").unwrap().as_float().unwrap();
-    assert!((profit - 1.0).abs() < 0.01, "surplus ~1 B token, got {profit}");
+    assert!(
+        (profit - 1.0).abs() < 0.01,
+        "surplus ~1 B token, got {profit}"
+    );
 }
 
 #[test]
@@ -505,7 +534,11 @@ fn wave_a_payloads_observe_only() {
             .unwrap()
             .cast::<Map>();
         assert_eq!(
-            out.get("target_contract").unwrap().clone().into_string().unwrap(),
+            out.get("target_contract")
+                .unwrap()
+                .clone()
+                .into_string()
+                .unwrap(),
             "0x0000000000000000000000000000000000000000",
             "{file} payload targets nothing (SHADOW / S32)"
         );
