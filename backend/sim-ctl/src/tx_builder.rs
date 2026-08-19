@@ -86,14 +86,52 @@ pub fn build_probe(opp: &Opportunity, signer_from: Address) -> Result<ProbeTx, B
     })
 }
 
-/// Search router catalog by human-readable `dex_a` name (e.g. "uniswap-v2").
+/// Fold a DEX name into a case/separator-insensitive comparison key:
+/// lowercase + strip everything that is not alphanumeric.
+/// "UniswapV3" → "uniswapv3" · "uniswap-v2-router-02" → "uniswapv2router02"
+/// "PancakeSwap V3" → "pancakeswapv3".
+fn fold_dex_name(s: &str) -> String {
+    s.chars()
+        .filter(|c| c.is_ascii_alphanumeric())
+        .map(|c| c.to_ascii_lowercase())
+        .collect()
+}
+
+/// Observed `dex_a` spellings (PG DISTINCT 2026-08-19: "UniswapV2",
+/// "UniswapV3", "SushiSwap", "uniswap-v2", "PancakeSwap V3", "unknown")
+/// → catalog-matching query. The catalog names are kebab-case ("sushi-router");
+/// a pure fold of "SushiSwap" ("sushiswap") prefixes nothing in the catalog,
+/// so the family alias pins it. PancakeSwap is genuinely ABSENT from the
+/// mainnet catalog — folded but honestly unmatched (tracked, never fabricated).
+fn canonical_dex_query(raw: &str) -> String {
+    let f = fold_dex_name(raw);
+    match f.as_str() {
+        "sushiswap" | "sushiswapv3" => "sushi".to_owned(),
+        _ => f,
+    }
+}
+
+/// Search router catalog by human-readable `dex_a` name. G-ECON-3: matching is
+/// now case/separator-insensitive (folded both sides, bidirectional prefix) —
+/// the old `starts_with(dex_a)` was case-sensitive kebab-only and rejected
+/// every CamelCase spelling ("UniswapV3", "SushiSwap", …), which was 415
+/// `build_error: router not in catalog` rejections in 2h of prod while the
+/// routers WERE in the catalog.
 fn find_router_by_name(
     chain_id: u64,
     dex_a: &str,
 ) -> Option<&'static shared_rs::chains::RouterEntry> {
+    let q = canonical_dex_query(dex_a);
+    if q.is_empty() {
+        return None;
+    }
     shared_rs::chains::routers_for_chain(chain_id)
         .iter()
-        .find(|r| r.name.starts_with(dex_a) || r.kind.as_str() == dex_a)
+        .find(|r| {
+            let name_fold = fold_dex_name(r.name);
+            let kind_fold = fold_dex_name(r.kind.as_str());
+            name_fold.starts_with(&q) || kind_fold.starts_with(&q) || q.starts_with(&name_fold)
+        })
 }
 
 fn parse_addr(s: &str) -> Result<Address, BuildError> {
@@ -233,6 +271,47 @@ mod tests {
             build_probe(&o, [0; 20].into()),
             Err(BuildError::UnsupportedChain(137))
         ));
+    }
+
+    // ── G-ECON-3: observed dex_a spellings must resolve to catalog routers ──
+
+    #[test]
+    fn fold_dex_name_is_case_and_separator_insensitive() {
+        assert_eq!(fold_dex_name("UniswapV3"), "uniswapv3");
+        assert_eq!(fold_dex_name("uniswap-v2-router-02"), "uniswapv2router02");
+        assert_eq!(fold_dex_name("PancakeSwap V3"), "pancakeswapv3");
+        assert_eq!(fold_dex_name("  SUSHIswap "), "sushiswap");
+    }
+
+    #[test]
+    fn camelcase_dex_names_resolve_to_catalog_routers() {
+        // The exact spellings observed in PG DISTINCT (2h window, 2026-08-19)
+        // that the case-sensitive matcher rejected as UnknownRouter.
+        for spelling in ["UniswapV2", "uniswap-v2", "UniswapV3", "uniswap-v3", "SushiSwap"] {
+            assert!(
+                find_router_by_name(1, spelling).is_some(),
+                "spelling '{spelling}' must resolve to a catalog router"
+            );
+        }
+    }
+
+    #[test]
+    fn uniswap_v3_spelling_resolves_to_the_v3_swap_router() {
+        let r = find_router_by_name(1, "UniswapV3").expect("resolves");
+        assert!(r.name.starts_with("uniswap-v3"));
+    }
+
+    #[test]
+    fn absent_pancakeswap_stays_honestly_unknown() {
+        // PancakeSwap has NO mainnet catalog entry — the miss is real, never
+        // fabricated by fuzzy matching (tracked as a catalog follow-up).
+        assert!(find_router_by_name(1, "PancakeSwap V3").is_none());
+    }
+
+    #[test]
+    fn empty_query_matches_nothing() {
+        assert!(find_router_by_name(1, "").is_none());
+        assert!(find_router_by_name(1, "---").is_none());
     }
 
     #[test]
