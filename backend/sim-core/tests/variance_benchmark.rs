@@ -258,17 +258,51 @@ fn sim_at_block(
     ctx: &prioritization_spine::round_trip_executor::RoundTripContext,
     cfg: &MultiStepExecutionConfig,
 ) -> prioritization_spine::round_trip_executor::SimulationOutcome {
-    let simulator = Arc::new(SimulatorV2::new(rpc).with_block(block));
-    execute_multistep_revm(ctx, simulator, cfg)
+    // NUCLEAR OPTION — leak everything that could contain a Tokio runtime.
+    // ethers Provider, SimulatorV2, LazyDb, reqwest Clients — ALL of them
+    // internally create runtimes that panic when dropped in async context.
+    // The test binary exits after, so process-scoped leaks are moot.
+    // The scoped OS thread isolates from the test's ambient async runtime,
+    // and mem::forget on the mini-runtime prevents its blocking-shutdown
+    // Drop from running. Belt, suspenders, and duct tape.
+    std::thread::scope(|s| {
+        s.spawn(|| {
+            let rt = tokio::runtime::Builder::new_multi_thread()
+                .worker_threads(1)
+                .enable_all()
+                .build()
+                .expect("failed to build simulation runtime");
+            let result = rt.block_on(async {
+                let simulator = Arc::new(SimulatorV2::new(rpc).with_block(block));
+                execute_multistep_revm(ctx, simulator, cfg)
+            });
+            // Prevent the runtime's blocking-shutdown Drop from panicking.
+            std::mem::forget(rt);
+            result
+        })
+        .join()
+        .expect("simulation thread panicked")
+    })
 }
 
 // ---------------------------------------------------------------------------
 // Benchmark (ignored)
 // ---------------------------------------------------------------------------
 
-#[tokio::test(flavor = "multi_thread")]
+// NOT #[tokio::test] — the test creates MANY nested Tokio runtimes internally
+// (ethers Provider, SimulatorV2 per-row, LazyDb HTTP clients). Dropping any of
+// them inside an ambient async runtime panics ("Cannot drop a runtime in a
+// context where blocking is not allowed"). Running in a plain #[test] with a
+// manually-managed runtime means the drop happens in SYNC context (allowed).
+#[test]
 #[ignore = "requires RPC_HTTP_1 + ARBITRAGE_EXECUTOR + FLASHLOAN_EXECUTOR_1 + GAS_PRICE_WEI + VARIANCE_INPUT (JSONL of real opportunities) — see module docs"]
-async fn variance_benchmark_predicted_vs_settled_block() {
+fn variance_benchmark_predicted_vs_settled_block() {
+    tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(4)
+        .enable_all()
+        .build()
+        .expect("failed to build Tokio runtime for variance benchmark")
+        .block_on(async {
     let rpc = match std::env::var("RPC_HTTP_1") {
         Ok(v) if !v.trim().is_empty() => v.trim().to_owned(),
         _ => match std::env::var("ALCHEMY_HTTP_URL") {
@@ -308,8 +342,13 @@ async fn variance_benchmark_predicted_vs_settled_block() {
     rows.sort_by(|a, b| b.detected_at_unix.cmp(&a.detected_at_unix));
     let mut seen_routes: std::collections::HashSet<String> = std::collections::HashSet::new();
 
-    let provider =
-        Provider::<Http>::try_from(rpc.as_str()).expect("RPC URL must parse as an HTTP endpoint");
+    // Box::leak: ethers Provider<Http> creates an internal Tokio runtime that
+    // panics when dropped inside #[tokio::test] ("Cannot drop a runtime in a
+    // context where blocking is not allowed"). Leaking keeps it alive for the
+    // process lifetime — the test binary exits after, so the leak is moot.
+    let provider: &'static Provider<Http> = Box::leak(Box::new(
+        Provider::<Http>::try_from(rpc.as_str()).expect("RPC URL must parse as an HTTP endpoint"),
+    ));
     let tip = provider
         .get_block_number()
         .await
@@ -545,6 +584,7 @@ async fn variance_benchmark_predicted_vs_settled_block() {
         hist.labeled, mean_abs, p95, max
     );
     println!("VARIANCE_BENCH_JSON={stats}");
+    }) // .block_on(async { ... })
 }
 
 // ---------------------------------------------------------------------------
