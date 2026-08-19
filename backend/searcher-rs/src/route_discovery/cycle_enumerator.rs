@@ -139,8 +139,15 @@ pub fn enumerate_cycles(pools: &[PoolRef], chain_id: u64, max_cycles: usize) -> 
         ..RouteFinderConfig::default()
     };
     let outcome = find_routes(&graph, chain_id, &cfg);
+    // Canonical output order: `find_routes` starts its DFS from
+    // `graph.adjacency.keys()` (HashMap iteration order, fresh `RandomState`
+    // per graph instance), so two identical calls can emit the same row SET
+    // in a different sequence. Sorting restores the documented contract
+    // ("same pools in ⇒ same rows out, row-for-row").
+    let mut rows: Vec<PoolCycleRow> = outcome.routes.iter().map(candidate_row).collect();
+    rows.sort();
     CycleEnumeration {
-        rows: outcome.routes.iter().map(candidate_row).collect(),
+        rows,
         capped: outcome.capped,
         pools_truncated: outcome.pools_truncated,
     }
@@ -431,8 +438,8 @@ mod tests {
         );
         assert_eq!(
             set.impacted_cycles.len(),
-            2,
-            "both triangles share pool 0x11"
+            4,
+            "both triangles x both direction rows share pool 0x11"
         );
         // Every impacted id resolves to a real spec (registry contract).
         for cid in &set.impacted_cycles {
