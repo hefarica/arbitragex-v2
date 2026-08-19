@@ -668,12 +668,38 @@ async fn main() -> anyhow::Result<()> {
         .ok()
         .and_then(|v| v.parse().ok())
         .unwrap_or(workers::price_worker::DEFAULT_PERIOD_SECS);
-    let price_alchemy_key = workers::price_worker::alchemy_key_from_env(primary_chain);
+    // FASE 3b (RunFullSyncCycle): price-worker credentials resolve with
+    // projection precedence (arbx:svc_cred:* ← api-server credentials store)
+    // over the legacy env, logging cred_source per provider.
+    let price_alchemy_key = match workers::price_worker::alchemy_key_with_source(
+        Some(&redis_conn),
+        primary_chain,
+    )
+    .await
+    {
+        Some((key, src)) => {
+            info!(
+                event = "cred.source",
+                provider = "alchemy_prices",
+                source = src.as_str()
+            );
+            Some(key)
+        }
+        None => None,
+    };
     // Coingecko Demo/Pro key (optional). When set, fetch_coingecko attaches the
     // x-cg-demo-api-key header (free tier now 400s unauth). Plan A.2 code-gap.
-    let price_coingecko_key = std::env::var("COINGECKO_API_KEY")
-        .ok()
-        .filter(|s| !s.trim().is_empty());
+    let price_coingecko_key =
+        shared_rs::svc_cred::resolve(&redis_conn, "COINGECKO_API_KEY", "coingecko_pro", "global")
+            .await
+            .map(|r| {
+                info!(
+                    event = "cred.source",
+                    provider = "coingecko_pro",
+                    source = r.source.as_str()
+                );
+                r.value
+            });
     let price_redis = redis_conn.clone();
     let price_chain = primary_chain;
     // Tier-0 Chainlink on-chain feeds: needs the PG pool (reads operator-seeded

@@ -1005,6 +1005,22 @@ pub fn alchemy_key_from_env(chain_id: u64) -> Option<String> {
     extract_alchemy_key_from_rpc_env(&csv)
 }
 
+/// FASE 3b (RunFullSyncCycle): alchemy prices key with projection precedence —
+/// `arbx:svc_cred:alchemy_prices:global` (api-server credentials-store
+/// projection) first, the legacy RPC-CSV env extraction as fallback. Returns
+/// the key plus its source so main.rs can log `cred_source=projection|env`.
+pub async fn alchemy_key_with_source(
+    redis: Option<&redis::aio::ConnectionManager>,
+    chain_id: u64,
+) -> Option<(String, shared_rs::svc_cred::CredSource)> {
+    if let Some(mgr) = redis {
+        if let Some(r) = shared_rs::svc_cred::resolve(mgr, "", "alchemy_prices", "global").await {
+            return Some((r.value, r.source));
+        }
+    }
+    alchemy_key_from_env(chain_id).map(|k| (k, shared_rs::svc_cred::CredSource::Env))
+}
+
 #[cfg(test)]
 mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used)] // M11: test module
