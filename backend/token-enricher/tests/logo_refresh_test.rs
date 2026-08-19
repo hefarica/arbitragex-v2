@@ -152,11 +152,11 @@ async fn redis_hget(
 }
 
 /// Distinct lowercase 40-hex addresses (`0x` + 39 chars + one digit).
-const ADDR_A: &str = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa1";
-const ADDR_B: &str = "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb2";
-const ADDR_C: &str = "0xcccccccccccccccccccccccccccccccccccccc3";
-const ADDR_D: &str = "0xdddddddddddddddddddddddddddddddddddddd4";
-const ADDR_E: &str = "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee5";
+const ADDR_A: &str = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa1";
+const ADDR_B: &str = "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb2";
+const ADDR_C: &str = "0xccccccccccccccccccccccccccccccccccccccc3";
+const ADDR_D: &str = "0xddddddddddddddddddddddddddddddddddddddd4";
+const ADDR_E: &str = "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee5";
 
 // ---------------------------------------------------------------------------
 // Tests
