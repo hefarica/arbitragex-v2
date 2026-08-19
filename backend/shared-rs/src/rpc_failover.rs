@@ -424,7 +424,7 @@ impl HttpRpcPool {
         crate::metrics::RPC_PROVIDER_ERRORS_TOTAL
             .with_label_values(&[entry.name.as_str(), "http", classify_cause(cause)])
             .inc();
-
+        emit_rotation_needed_if_credential_error(entry, cause);
         let mut cb = entry.circuit.write().await;
         let now = Instant::now();
         cb.failures_window
@@ -529,11 +529,13 @@ impl HttpRpcPool {
                             }
                         }
                         Ok(Err(err)) => {
+                            let cause = format!("{err}");
+                            emit_rotation_needed_if_credential_error(e, &cause);
                             crate::metrics::RPC_PROVIDER_ERRORS_TOTAL
                                 .with_label_values(&[
                                     e.name.as_str(),
                                     "http",
-                                    classify_cause(&format!("{err}")),
+                                    classify_cause(&cause),
                                 ])
                                 .inc();
                             let mut cb = e.circuit.write().await;
@@ -801,6 +803,26 @@ fn classify_cause(msg: &str) -> &'static str {
     }
 }
 
+/// PIEZA B (svc_cred FASE 4): a credential-class failure (401/403/429/quota)
+/// is NOT transient — the circuit breaker below mutes the provider, but the
+/// only real fix is rotating its API key (titular→fallback, `cred_rotation`).
+/// Emit the signal so credential consumers pick it up. Gated on not-Open so a
+/// hard-down provider does not flood the log (R9); the cause string itself is
+/// never logged (it can embed the provider URL — redacted-logger doctrine).
+fn emit_rotation_needed_if_credential_error(entry: &HttpEntry, cause: &str) {
+    if entry.snapshot_state() == ProviderState::Open {
+        return; // breaker already muted this provider — the signal was sent.
+    }
+    if let Some(reason) = crate::cred_rotation::credential_error_reason(cause) {
+        warn!(
+            event = "credential.rotation_needed",
+            provider = %entry.name,
+            reason,
+            "credential-class failure — provider API key must rotate (titular→fallback, svc_cred FASE 4)"
+        );
+    }
+}
+
 // ---------- tests ----------
 
 #[cfg(test)]
@@ -968,6 +990,23 @@ mod tests {
         assert_eq!(e.snapshot_state(), ProviderState::Open);
         let cb = e.circuit.read().await;
         assert!(cb.opened_at.is_some());
+    }
+
+    #[tokio::test]
+    async fn report_failure_credential_error_still_trips_breaker() {
+        // PIEZA B smoke: a 401 goes through the new credential-classification
+        // path (emitting `credential.rotation_needed`) without disturbing the
+        // breaker's failure accounting.
+        let pool = HttpRpcPool {
+            chain_id: 1,
+            entries: vec![dummy_entry("a")],
+        };
+        let e = pool.entries[0].clone();
+        for _ in 0..CB_ERROR_LIMIT {
+            pool.report_failure(&e, "HTTP status client error (401 Unauthorized)")
+                .await;
+        }
+        assert_eq!(e.snapshot_state(), ProviderState::Open);
     }
 
     #[tokio::test]
