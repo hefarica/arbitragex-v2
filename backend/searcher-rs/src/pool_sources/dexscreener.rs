@@ -141,25 +141,49 @@ pub async fn fetch(
         if out.len() >= top_n {
             break;
         }
-        // /latest/dex/tokens/{tokenAddress} — returns `{"pairs": [...]}` with
-        // pairAddress/baseToken/quoteToken/liquidity/volume per pair. (The
-        // `/token-pairs/v1/{chain}/{token}` path 404s for these pivots; the
-        // tokens endpoint is the reliable, documented one.)
-        let url = format!("{base}/latest/dex/tokens/{tok}");
+        // Chain-scoped pivot FIRST (2026-08-18, RESERVES-COVERAGE anomaly):
+        // `/token-pairs/v1/{chain}/{token}` returns ~30 pairs for the TARGET
+        // chain only. The legacy `/latest/dex/tokens/{tokenAddress}` caps at 30
+        // pairs ACROSS ALL networks — with WETH indexed on a dozen chains only
+        // ~6 of the 30 were ethereum, which is exactly the 6 candidates/tick
+        // observed in live prod (verified against the live API from the VPS:
+        // token-pairs returns 200 + 30 ethereum-only pairs per pivot). Fall
+        // back to the legacy endpoint when the scoped one is unavailable, so a
+        // mid-flight API change degrades to the old behaviour instead of zero.
+        let scoped_url = format!("{base}/token-pairs/v1/{net}/{tok}");
+        let legacy_url = format!("{base}/latest/dex/tokens/{tok}");
         let resp = match client
-            .get(&url)
+            .get(&scoped_url)
             .header("accept", "application/json")
             .send()
             .await
         {
-            Ok(r) => r,
-            Err(e) => {
+            Ok(r) if r.status().is_success() => r,
+            scoped => {
+                let status = scoped.as_ref().map(|r| r.status().as_u16()).unwrap_or(0);
                 warn!(
-                    event = "poolenum.dexscreener.fetch_err",
-                    chain_id, pivot = tok, error = %e,
-                    "DexScreener tokens GET failed — skipping pivot (fail-honest)"
+                    event = "poolenum.dexscreener.scoped_fallback",
+                    chain_id,
+                    pivot = tok,
+                    status,
+                    "chain-scoped token-pairs unavailable — retrying via legacy /latest/dex/tokens"
                 );
-                continue;
+                match client
+                    .get(&legacy_url)
+                    .header("accept", "application/json")
+                    .send()
+                    .await
+                {
+                    Ok(r) => r,
+                    Err(e) => {
+                        warn!(
+                            event = "poolenum.dexscreener.fetch_err",
+                            chain_id, pivot = tok, error = %e,
+                            "DexScreener tokens GET failed — skipping pivot (fail-honest)"
+                        );
+                        continue;
+                    }
+                }
             }
         };
         if !resp.status().is_success() {
@@ -173,19 +197,28 @@ pub async fn fetch(
             // Surface the HTTP error so the per-source circuit breaker can count it.
             anyhow::bail!("dexscreener HTTP {}", resp.status());
         }
+        // Both endpoint shapes carry the same camelCase pair objects; only the
+        // envelope differs (scoped = bare array, legacy = {"pairs": [...]}).
         #[derive(Deserialize)]
         struct TokenResp {
             #[serde(default)]
             pairs: Vec<DsPair>,
         }
-        let parsed: TokenResp = match resp.json().await {
-            Ok(v) => v,
+        #[derive(Deserialize)]
+        #[serde(untagged)]
+        enum Resp {
+            Scoped(Vec<DsPair>),
+            Legacy(TokenResp),
+        }
+        let pair_list: Vec<DsPair> = match resp.json::<Resp>().await {
+            Ok(Resp::Scoped(v)) => v,
+            Ok(Resp::Legacy(t)) => t.pairs,
             Err(e) => {
                 warn!(event = "poolenum.dexscreener.parse_err", chain_id, pivot = tok, error = %e);
                 continue;
             }
         };
-        for p in parsed.pairs {
+        for p in pair_list {
             if out.len() >= top_n {
                 break;
             }
