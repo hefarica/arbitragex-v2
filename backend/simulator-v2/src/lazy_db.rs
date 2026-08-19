@@ -29,7 +29,7 @@
 //! wraps the future in `tokio::time::timeout` as defense-in-depth.
 
 use std::future::Future;
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 
 use dashmap::DashMap;
@@ -67,6 +67,33 @@ pub enum LazyDbError {
 const DEFAULT_RPC_TIMEOUT_SECS: u64 = 5;
 
 // ---------------------------------------------------------------------------
+// Global fallback runtime (G-SIM-1 BUG 1+2 fix, 2026-08-19)
+// ---------------------------------------------------------------------------
+
+/// Process-wide fallback Tokio runtime for LazyDb's sync-async bridge.
+///
+/// ROOT CAUSE this fixes: every `LazyDb` used to create its OWN `Arc<Runtime>`
+/// in the constructor. When the LazyDb was dropped (e.g., at the end of a
+/// test), that runtime was dropped too. Dropping a Tokio runtime inside an
+/// ambient async context (like `#[tokio::test]`) panics with "Cannot drop a
+/// runtime in a context where blocking is not allowed". This blocked both
+/// the fork_suite and variance_benchmark tests (G-SIM-1 items).
+///
+/// FIX: a single process-wide static runtime, created ONCE on first use,
+/// NEVER dropped (statics live for the process lifetime). Multiple LazyDb
+/// instances share this runtime — no per-instance runtime is ever created
+/// or destroyed. The Drop panic is structurally impossible.
+static FALLBACK_RT: OnceLock<Runtime> = OnceLock::new();
+
+/// Get (or lazily create) the global fallback runtime.
+fn fallback_runtime() -> &'static Runtime {
+    FALLBACK_RT.get_or_init(|| {
+        Runtime::new()
+            .unwrap_or_else(|e| panic!("failed to create global LazyDb fallback runtime: {e}"))
+    })
+}
+
+// ---------------------------------------------------------------------------
 // Cache key types
 // ---------------------------------------------------------------------------
 
@@ -97,7 +124,6 @@ mod bridge {
     /// The outer `tokio::time::timeout` is defense-in-depth: even if the HTTP
     /// client does not honour its deadline, this stops the worker parking.
     pub(super) fn block_on_with_timeout<F, T>(
-        owned_rt: &Arc<Runtime>,
         timeout_secs: u64,
         fut: F,
         context: &str,
@@ -111,8 +137,9 @@ mod bridge {
                 // Safe: multi-thread scheduler keeps other workers alive.
                 tokio::task::block_in_place(|| handle.block_on(timed))
             }
-            // CurrentThread flavor or no ambient runtime: use owned fallback.
-            _ => owned_rt.block_on(timed),
+            // CurrentThread flavor or no ambient runtime: use the global
+            // fallback runtime (static, never dropped — no Drop panic).
+            _ => fallback_runtime().block_on(timed),
         };
         res.map_err(|_| LazyDbError::Timeout(format!("rpc timeout ({timeout_secs}s): {context}")))
     }
@@ -140,9 +167,6 @@ pub struct LazyDb {
     storage_cache: DashMap<StorageKey, U256>,
     /// Block-hash cache: block_number_u64 → B256.
     block_hash_cache: DashMap<u64, B256>,
-    /// Owned Tokio runtime — always present.  Serves as the fallback for both
-    /// `CurrentThread` runtimes and "no runtime" contexts (unit tests).
-    fallback_rt: Arc<Runtime>,
     /// Per-call RPC timeout in seconds.
     timeout_secs: u64,
 }
@@ -185,18 +209,15 @@ impl LazyDb {
         let http = Http::new_with_client(url, http_client);
         let client = Arc::new(Provider::new(http));
 
-        // Always create an owned fallback runtime.
-        // It handles both CurrentThread contexts and no-runtime contexts.
-        let fallback_rt = Arc::new(
-            Runtime::new().map_err(|e| LazyDbError::Provider(format!("tokio rt create: {e}")))?,
-        );
+        // No per-instance runtime is created — the global static
+        // `fallback_runtime()` handles all fallback paths and is never
+        // dropped (G-SIM-1 BUG 1+2 fix).
 
         let (pinned_block_number, pinned_block) = match block_number {
             Some(n) => (n, BlockId::Number(BlockNumber::Number(EU64::from(n)))),
             None => {
                 // Resolve latest with runtime-flavor guard + timeout (CRITICAL #1).
                 let bn_result = bridge::block_on_with_timeout(
-                    &fallback_rt,
                     timeout_secs,
                     client.get_block_number(),
                     "get_block_number",
@@ -215,7 +236,6 @@ impl LazyDb {
             account_cache: DashMap::new(),
             storage_cache: DashMap::new(),
             block_hash_cache: DashMap::new(),
-            fallback_rt,
             timeout_secs,
         })
     }
@@ -243,7 +263,7 @@ impl LazyDb {
     where
         F: Future<Output = Result<T, ethers::providers::ProviderError>>,
     {
-        bridge::block_on_with_timeout(&self.fallback_rt, self.timeout_secs, fut, context)?
+        bridge::block_on_with_timeout(self.timeout_secs, fut, context)?
             .map_err(|e| LazyDbError::Provider(format!("{context}: {e}")))
     }
 
@@ -316,7 +336,6 @@ impl LazyDb {
         // Three parallel fetches: balance, nonce, code.
         // Uses bridge::block_on_with_timeout for runtime-flavor guard + timeout.
         let (balance_res, nonce_res, code_res) = bridge::block_on_with_timeout(
-            &self.fallback_rt,
             self.timeout_secs,
             async move {
                 let b_fut = client.get_balance(eth_addr, block);
