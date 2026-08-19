@@ -333,7 +333,10 @@ mod tests {
             credential_error_reason("monthly quota exceeded for key"),
             Some("quota_exceeded")
         );
-        assert_eq!(credential_error_reason("QUOTA EXCEEDED"), Some("quota_exceeded"));
+        assert_eq!(
+            credential_error_reason("QUOTA EXCEEDED"),
+            Some("quota_exceeded")
+        );
     }
 
     #[test]
@@ -365,7 +368,11 @@ mod tests {
     #[test]
     fn should_rotate_false_for_transport_errors() {
         assert!(!should_rotate(&RotationState::default(), "timeout", 1_000));
-        assert!(!should_rotate(&RotationState::default(), "connection reset", 1_000));
+        assert!(!should_rotate(
+            &RotationState::default(),
+            "connection reset",
+            1_000
+        ));
     }
 
     #[test]
@@ -427,7 +434,10 @@ mod tests {
     #[test]
     fn current_entry_defaults_to_titular() {
         let (n, u) = current_entry(CSV, &RotationState::default()).unwrap();
-        assert_eq!((n.as_str(), u.as_str()), ("titular", "https://a.example/v2/K1"));
+        assert_eq!(
+            (n.as_str(), u.as_str()),
+            ("titular", "https://a.example/v2/K1")
+        );
     }
 
     #[test]
@@ -480,11 +490,7 @@ mod tests {
         }
         // c fails 429 → wrap-around: titular re-probe scheduled at now+60s
         match rotate("c", csv, &st, "429", now) {
-            RotationOutcome::Rotated {
-                name,
-                state,
-                ..
-            } => {
+            RotationOutcome::Rotated { name, state, .. } => {
                 assert_eq!(name, "a");
                 assert_eq!(state.degraded_until_ms, Some(now + 60_000));
                 st = state;
@@ -492,7 +498,10 @@ mod tests {
             other => panic!("expected Rotated(wrap), got {other:?}"),
         }
         // titular fails again INSIDE the cooldown → fail-honest terminal
-        assert_eq!(rotate("a", csv, &st, "401", now + 1_000), RotationOutcome::AllFailedCooldown);
+        assert_eq!(
+            rotate("a", csv, &st, "401", now + 1_000),
+            RotationOutcome::AllFailedCooldown
+        );
 
         // cooldown expires → rotation resumes from the titular
         match rotate("a", csv, &st, "401", now + 60_001) {
@@ -530,7 +539,11 @@ mod tests {
                 other => panic!("expected Rotated, got {other:?}"),
             }
         }
-        assert_eq!(st.degraded_until_ms, Some(after_first + 2 + 300_000), "second cycle → 5 min");
+        assert_eq!(
+            st.degraded_until_ms,
+            Some(after_first + 2 + 300_000),
+            "second cycle → 5 min"
+        );
     }
 
     #[test]
@@ -556,11 +569,7 @@ mod tests {
         let csv = "solo=https://solo";
         let now = 42_000u64;
         match rotate("solo", csv, &RotationState::default(), "401", now) {
-            RotationOutcome::Rotated {
-                name,
-                state,
-                ..
-            } => {
+            RotationOutcome::Rotated { name, state, .. } => {
                 assert_eq!(name, "solo");
                 assert_eq!(state.degraded_until_ms, Some(now + 60_000));
             }
@@ -576,7 +585,10 @@ mod tests {
         let before = CREDENTIAL_ROTATION_TOTAL.with_label_values(&[p]).get();
         record_rotation(p);
         record_rotation(p);
-        assert_eq!(CREDENTIAL_ROTATION_TOTAL.with_label_values(&[p]).get(), before + 2);
+        assert_eq!(
+            CREDENTIAL_ROTATION_TOTAL.with_label_values(&[p]).get(),
+            before + 2
+        );
     }
 
     #[test]
@@ -584,7 +596,10 @@ mod tests {
         let p = "mt-allfailed-test";
         let before = CREDENTIAL_ALL_FAILED_TOTAL.with_label_values(&[p]).get();
         record_all_failed(p);
-        assert_eq!(CREDENTIAL_ALL_FAILED_TOTAL.with_label_values(&[p]).get(), before + 1);
+        assert_eq!(
+            CREDENTIAL_ALL_FAILED_TOTAL.with_label_values(&[p]).get(),
+            before + 1
+        );
     }
 
     #[test]
@@ -593,7 +608,9 @@ mod tests {
         let p_rot = "mt-wrap-rot";
         let p_fail = "mt-wrap-allfailed";
         let rot_before = CREDENTIAL_ROTATION_TOTAL.with_label_values(&[p_rot]).get();
-        let fail_before = CREDENTIAL_ALL_FAILED_TOTAL.with_label_values(&[p_fail]).get();
+        let fail_before = CREDENTIAL_ALL_FAILED_TOTAL
+            .with_label_values(&[p_fail])
+            .get();
 
         let mut st = RotationState::default();
         for provider in ["mt-wrap-rot", "mt-wrap-rot", "mt-wrap-allfailed"] {
@@ -613,7 +630,9 @@ mod tests {
             1
         );
         assert_eq!(
-            CREDENTIAL_ALL_FAILED_TOTAL.with_label_values(&[p_fail]).get(),
+            CREDENTIAL_ALL_FAILED_TOTAL
+                .with_label_values(&[p_fail])
+                .get(),
             fail_before + 1,
             "wrap-around bumps the all-failed metric exactly once"
         );

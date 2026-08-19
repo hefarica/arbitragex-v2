@@ -1003,8 +1003,7 @@ mod tests {
         };
         let e = pool.entries[0].clone();
         for _ in 0..CB_ERROR_LIMIT {
-            pool
-                .report_failure(&e, "HTTP status client error (401 Unauthorized)")
+            pool.report_failure(&e, "HTTP status client error (401 Unauthorized)")
                 .await;
         }
         assert_eq!(e.snapshot_state(), ProviderState::Open);
