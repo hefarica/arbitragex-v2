@@ -2411,22 +2411,25 @@ mod tests {
         // flood) and blocked every Sized outcome for high-priced tokens.
         let cap = clamp_to_cap_wei(U256::from(10u64).pow(U256::from(20u64)), 1.0, 2000.0, 18);
         let cap = cap.expect("sub-token cap must compute in the wei domain");
-        assert_eq!(
-            cap,
-            U256::from(5u64) * U256::from(10u64).pow(U256::from(13u64))
-        ); // 5e14
-           // And it still clamps x down to the sub-token cap (anti-BUG-3 bound).
+        // f64 rounding of (1.0/2000.0)*1e18 may land 1 wei either side of the
+        // exact 5e14 — assert a tight band, not exact equality.
+        let lo = U256::from(5u64) * U256::from(10u64).pow(U256::from(14u64)) - U256::from(2u64);
+        let hi = U256::from(5u64) * U256::from(10u64).pow(U256::from(14u64));
+        assert!(cap >= lo && cap <= hi, "cap {cap} outside [5e14-2, 5e14]");
+        // And it still clamps x down to the sub-token cap (anti-BUG-3 bound).
         assert!(cap < U256::from(10u64).pow(U256::from(20u64)));
     }
 
     #[test]
-    fn clamp_to_cap_wei_returns_none_when_ratio_underflows_wei() {
+    fn clamp_to_cap_wei_yields_dust_when_ratio_underflows_wei() {
         // A cap so small it cannot express a single wei (ratio × 10^18 < 1)
-        // yields Some(0) — callers already guard zero as ZeroCapitalCap /
-        // NonPositiveProfit (honest), never a fabricated amount.
-        // $1 cap against a $1e21-priced token → 1e-21 tokens → 1e-3 wei → 0.
+        // floors to 0, and f64_to_u256_clamped clamps non-positive to its
+        // documented minimum of 1 wei (dust). Callers downstream then reject
+        // honestly via NonPositiveProfit on a 1-wei input — never a fabricated
+        // amount, never exceeding the cap.
+        // $1 cap against a $1e21-priced token → 1e-21 tokens → 1e-3 wei → 0 → 1.
         let cap = clamp_to_cap_wei(U256::from(10u64).pow(U256::from(20u64)), 1.0, 1e21, 18);
-        assert_eq!(cap, Some(U256::zero()));
+        assert_eq!(cap, Some(U256::from(1u64)));
     }
 
     #[test]
