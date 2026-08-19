@@ -54,6 +54,9 @@ impl BackendSelection {
     /// Parse the Redis toggle value. Unknown/missing values fall back to
     /// `Ethers` — the production path — so a bad toggle can never silently
     /// switch the hot-path to the unverified backend.
+    // Returns Self with a fail-safe default, not the std FromStr Result
+    // contract (same precedent as searcher-rs `pool_candidate.rs`).
+    #[allow(clippy::should_implement_trait)]
     pub fn from_str(s: &str) -> Self {
         match s {
             "alloy" => Self::Alloy,
