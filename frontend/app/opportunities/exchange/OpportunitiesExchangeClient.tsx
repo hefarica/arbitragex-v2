@@ -6,6 +6,7 @@ import { toast } from "sonner";
 import { getApiBaseUrl } from "@/lib/api-client";
 import { OpportunityDetailDialog, type OpportunityDetail } from "@/components/OpportunityDetailDialog";
 import { OpportunityExchangeCard } from "@/components/opportunities/exchange/OpportunityExchangeCard";
+import { PriceTicker } from "@/components/opportunities/exchange/PriceTicker";
 import {
   ExchangeFilterBar,
   applyExchangeFilters,
@@ -231,6 +232,18 @@ export default function OpportunitiesExchangeClient({
   );
   const visible = useMemo(() => filtered.slice(0, cap), [filtered, cap]);
 
+  // ── G-PRICE-1 — live price tape symbols (deduped, from the visible pairs) ──
+  const tickerSymbols = useMemo(() => {
+    const syms = new Set<string>();
+    for (const opp of visible) {
+      for (const leg of (opp.pair_symbol ?? "").split(/[/\-]+/)) {
+        const s = leg.trim().toUpperCase();
+        if (s) syms.add(s);
+      }
+    }
+    return Array.from(syms);
+  }, [visible]);
+
   const isError = feedStatus === "STALE";
 
   // Semantic LED for the FEED chip: LIVE → green on, STALE → orange hot,
@@ -296,6 +309,9 @@ export default function OpportunitiesExchangeClient({
         modeLabel={modeLabel}
         modeConfidence={paperMode.data.confidence}
       />
+
+      {/* G-PRICE-1 — exchange-style snapshot+push USD price tape */}
+      <PriceTicker chainId={primaryChainId} edgeUrl={EDGE_URL} symbols={tickerSymbols} />
 
       {feedStatus === "STALE" && (
         <div className="glass-panel warn mb-6 flex items-center gap-4">
