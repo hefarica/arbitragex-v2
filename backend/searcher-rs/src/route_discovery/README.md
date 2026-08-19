@@ -17,10 +17,12 @@ ImpactIndex.all_pools()  +  Redis (reserves / slot0 / token meta)
         │
         ▼
 RouteGraphBuilder ── graph_builder.rs ──►  TokenGraph (directed RouteEdges)  +  rejections
-        │                                   (V2 log_weight computed; V3 deferred — guardrail #8)
+        │                                   (log_weight for V2 AND V3 — RU-2: V3 from slot0 sqrtPriceX96;
+        │                                    unpriceable snapshot ⇒ rejection, never a synthetic weight)
         ▼
 UniqueRouteFinder ── unique_route_finder.rs ──►  closed cycles (bounded DFS 2–3 hops)
         │                                         2-cycles (V2V2/V2V3/V3V2/V3V3) + triangulars (from the graph)
+        │                                         parallel pools capped per pair by ranked top-K (TVL, then net rate)
         ▼
 RouteCanonicalizer ── canonicalizer.rs ──►  deterministic route_hash
         │                                    (rotation-collapsing, inverse-preserving; route_kind derived from canonical order)
