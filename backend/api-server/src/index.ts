@@ -97,6 +97,8 @@ import { buildStrategyCatalogRouter } from "./routes/strategy-catalog.js";
 import { buildCredentialsRouter } from "./routes/credentials.js";
 import { rehydrateSvcCredMirror } from "./credentials/projection.js";
 import { mountOpportunitiesLive } from "./routes/opportunities-live.js";
+import { mountPricesLive } from "./routes/prices-live.js";
+import { attachPriceRooms, subscribeToPriceUpdates } from "./prices-stream.js";
 import { mountDexes } from "./routes/dexes.js";
 import { mountPools } from "./routes/pools.js";
 import { mountStubs } from "./routes/stubs.js";
@@ -521,6 +523,8 @@ function requireDbPool(): pg.Pool | null {
 }
 
 mountOpportunitiesLive(app, pool, redis, logger);
+// G-PRICE-1 — REST price snapshot (SSR initial state, WS-degraded polling, L4 curl target).
+mountPricesLive(app, redis, logger);
 const carnotStore = new CarnotStore();
 mountCarnotCycles(app, { store: carnotStore, logger });
 mountDexes(app, { pool, logger });
@@ -1482,6 +1486,12 @@ app.get("/api/v1/readiness", async (req, res) => {
 const PORT = Number(process.env["API_PORT"] ?? 8080);
 const httpServer = createServer(app);
 const io = setupWebSocketGateway(httpServer, carnotStore);
+
+// G-PRICE-1 — snapshot+push price rooms (`subscribe:prices` → `prices:snapshot`
+// + `prices:update`). Additive `io.on('connection')` listener; the gateway's
+// own handlers are untouched. Requires the shared command `redis` (NOT the
+// subscriber instances below).
+attachPriceRooms(io, redis);
 
 // OMEGA Health & Telemetry endpoints — léxico físico-matemático
 // Montar DESPUÉS de que pool/redis/io estén inicializados
