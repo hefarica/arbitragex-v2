@@ -97,6 +97,8 @@ import { buildStrategyCatalogRouter } from "./routes/strategy-catalog.js";
 import { buildCredentialsRouter } from "./routes/credentials.js";
 import { rehydrateSvcCredMirror } from "./credentials/projection.js";
 import { mountOpportunitiesLive } from "./routes/opportunities-live.js";
+import { mountPricesLive } from "./routes/prices-live.js";
+import { attachPriceRooms, subscribeToPriceUpdates } from "./prices-stream.js";
 import { mountDexes } from "./routes/dexes.js";
 import { mountPools } from "./routes/pools.js";
 import { mountStubs } from "./routes/stubs.js";
@@ -113,6 +115,7 @@ import { mountScoringStatus } from "./routes/scoring-status.js";
 import { mountPaperShadowMetrics } from "./routes/paper-shadow-metrics.js";
 import { mountForkStatus } from "./routes/fork-status.js";
 import { mountRpcRegistry } from "./routes/rpc-registry.js";
+import { mountRpcBackend } from "./routes/rpc-backend.js";
 import { mountOpportunitySimulate } from "./routes/opportunity-simulate.js";
 import { buildMathEngineRouter } from "./routes/math-engine-proxy.js";
 import { buildMathEvidenceRouter } from "./routes/math-evidence.js";
@@ -520,6 +523,8 @@ function requireDbPool(): pg.Pool | null {
 }
 
 mountOpportunitiesLive(app, pool, redis, logger);
+// G-PRICE-1 — REST price snapshot (SSR initial state, WS-degraded polling, L4 curl target).
+mountPricesLive(app, redis, logger);
 const carnotStore = new CarnotStore();
 mountCarnotCycles(app, { store: carnotStore, logger });
 mountDexes(app, { pool, logger });
@@ -625,6 +630,10 @@ mountPaperModeReconcile(app, {
 // RPC registry sync (Excel catalog → rpc_endpoints): public status + admin import/reload.
 // status is counts-only (ungated); import/reload are requireAdminToken-gated.
 mountRpcRegistry(app, { pool, redis, requireAdminToken, adminToken: ARBX_ADMIN_TOKEN, logger });
+// RPC backend toggle (alloy dual-track FASE 4) — Redis arbx:rpc_backend:<service>.
+// Admin-gated GET/PUT; every effective change audited (before/after). Mode-invariant
+// (§34.1): selects the RPC implementation track only, never trading mode/capital.
+mountRpcBackend(app, { redis, requireAdminToken, adminToken: ARBX_ADMIN_TOKEN, writeAudit, reqUA, logger });
 mountAlertmanagerWebhook(app, {
   requireAdminToken,
   adminToken: ARBX_ADMIN_TOKEN,
@@ -1478,6 +1487,12 @@ const PORT = Number(process.env["API_PORT"] ?? 8080);
 const httpServer = createServer(app);
 const io = setupWebSocketGateway(httpServer, carnotStore);
 
+// G-PRICE-1 — snapshot+push price rooms (`subscribe:prices` → `prices:snapshot`
+// + `prices:update`). Additive `io.on('connection')` listener; the gateway's
+// own handlers are untouched. Requires the shared command `redis` (NOT the
+// subscriber instances below).
+attachPriceRooms(io, redis);
+
 // OMEGA Health & Telemetry endpoints — léxico físico-matemático
 // Montar DESPUÉS de que pool/redis/io estén inicializados
 app.use("/api/v1/health", mountHealthRouter({ pool, redis, io }));
@@ -1533,6 +1548,12 @@ if (pool) {
 // Fail-honest: si Redis falla, las oportunidades por PostgreSQL NOTIFY
 // siguen funcionando; la conexión se auto-reconecta.
 const convergenceSubscriber = subscribeToConvergenceSignals(io, REDIS_URL);
+
+// G-PRICE-1 hotfix — the pub/sub→room bridge was imported in #418 but never
+// STARTED, so `prices:update` never fired (snapshots worked; pushes didn't —
+// L4 caught it). Dedicated subscriber connection + its own command client,
+// exactly like the convergence/cartridge bridges above.
+const priceUpdatesSubscriber = subscribeToPriceUpdates(io, REDIS_URL);
 
 // FASE OMEGA — puente Redis Pub/Sub → WebSocket para la telemetría de cartuchos
 // (`log_quantum` del motor Rhai en Rust). Misma postura fail-honest que convergencia.

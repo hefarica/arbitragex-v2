@@ -522,6 +522,19 @@ impl DexScreenerPriceOracle {
             return Ok(0);
         }
         pipe.expire(&key, ttl_secs).ignore();
+        // G-PRICE-1: notify subscribers (api-server prices-stream bridge) in the
+        // same atomic pipeline — the receiver re-reads the hash for the data.
+        pipe.cmd("PUBLISH")
+            .arg(shared_rs::price_oracle::prices_updated_channel(chain_id))
+            .arg(
+                serde_json::json!({
+                    "source": "dexscreener",
+                    "chain_id": chain_id,
+                    "written": written,
+                })
+                .to_string(),
+            )
+            .ignore();
         pipe.query_async::<_, ()>(conn)
             .await
             .context("redis HSET token prices pipeline")?;

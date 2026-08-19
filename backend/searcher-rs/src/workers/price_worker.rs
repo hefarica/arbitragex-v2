@@ -967,6 +967,21 @@ impl PriceWorker {
             .saturating_mul(CACHE_TTL_MULTIPLIER)
             .max(60);
         pipe.expire(&key, ttl as i64).ignore();
+        // G-PRICE-1: notify subscribers (api-server prices-stream bridge) in the
+        // same atomic pipeline — the receiver re-reads the hash for the data.
+        pipe.cmd("PUBLISH")
+            .arg(shared_rs::price_oracle::prices_updated_channel(
+                self.cfg.chain_id,
+            ))
+            .arg(
+                serde_json::json!({
+                    "source": "price_worker",
+                    "chain_id": self.cfg.chain_id,
+                    "written": prices.len(),
+                })
+                .to_string(),
+            )
+            .ignore();
         let _: () = pipe.query_async(redis).await?;
         Ok(())
     }
