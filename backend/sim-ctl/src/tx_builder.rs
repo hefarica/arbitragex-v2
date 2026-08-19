@@ -237,9 +237,12 @@ mod tests {
             ("UniswapV3", "0xe592427a0aece92de3edee1f18e0157c05861564"),
             ("SushiSwap", "0xd9e1ce17f2641f24ae83637ab66a2cca9c378b9f"),
         ] {
-            let entry = find_router_by_name(1, dex)
-                .unwrap_or_else(|| panic!("catalog miss for {dex}"));
-            assert_eq!(format!("{:#x}", Address::from(entry.address)), expected_router);
+            let entry =
+                find_router_by_name(1, dex).unwrap_or_else(|| panic!("catalog miss for {dex}"));
+            assert_eq!(
+                format!("{:#x}", Address::from(entry.address)),
+                expected_router
+            );
         }
     }
 
