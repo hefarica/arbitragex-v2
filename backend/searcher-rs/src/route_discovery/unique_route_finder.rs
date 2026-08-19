@@ -101,9 +101,7 @@ fn rank_parallel_pools(a: &RouteEdge, b: &RouteEdge) -> std::cmp::Ordering {
     use std::cmp::Ordering;
     let a_liq = a.liquidity_hint.unwrap_or(0.0);
     let b_liq = b.liquidity_hint.unwrap_or(0.0);
-    let by_tvl = b_liq
-        .partial_cmp(&a_liq)
-        .unwrap_or(Ordering::Equal); // NaN hints (impossible post-R8) fall through
+    let by_tvl = b_liq.partial_cmp(&a_liq).unwrap_or(Ordering::Equal); // NaN hints (impossible post-R8) fall through
     if by_tvl != Ordering::Equal {
         return by_tvl;
     }
@@ -629,10 +627,7 @@ mod tests {
     #[test]
     fn tvl_tie_breaks_by_best_net_rate() {
         // Equal TVL; P2 carries the better net rate (lower log_weight).
-        let g = triangle_with_parallel_ab(&[
-            (0x10, 10.0, Some(0.5)),
-            (0x20, 10.0, Some(-0.2)),
-        ]);
+        let g = triangle_with_parallel_ab(&[(0x10, 10.0, Some(0.5)), (0x20, 10.0, Some(-0.2))]);
         let cfg = RouteFinderConfig {
             max_pools_per_pair: 1,
             ..Default::default()
@@ -652,10 +647,7 @@ mod tests {
     fn unpriced_edge_ranks_below_priced_on_tie() {
         // Equal TVL; P1 has no weight (unpriceable), P2 is priced. The priced
         // edge wins the slot even though its rate is mediocre.
-        let g = triangle_with_parallel_ab(&[
-            (0x10, 10.0, None),
-            (0x20, 10.0, Some(9.9)),
-        ]);
+        let g = triangle_with_parallel_ab(&[(0x10, 10.0, None), (0x20, 10.0, Some(9.9))]);
         let cfg = RouteFinderConfig {
             max_pools_per_pair: 1,
             ..Default::default()
@@ -675,10 +667,7 @@ mod tests {
     fn full_tie_falls_back_to_deterministic_address_order() {
         // Identical hint and weight → smaller pool address kept: the ranking is
         // a total order, so enumeration is reproducible run-to-run.
-        let g = triangle_with_parallel_ab(&[
-            (0x30, 10.0, Some(0.1)),
-            (0x20, 10.0, Some(0.1)),
-        ]);
+        let g = triangle_with_parallel_ab(&[(0x30, 10.0, Some(0.1)), (0x20, 10.0, Some(0.1))]);
         let cfg = RouteFinderConfig {
             max_pools_per_pair: 1,
             ..Default::default()
@@ -696,10 +685,7 @@ mod tests {
     fn per_pair_cap_without_surplus_does_not_sort_or_flag() {
         // Under the cap: no truncation flag, all pools retained (regression
         // guard for the pre-RU-2 behaviour of the same scenario).
-        let g = triangle_with_parallel_ab(&[
-            (0x10, 1.0, Some(0.01)),
-            (0x20, 100.0, Some(0.01)),
-        ]);
+        let g = triangle_with_parallel_ab(&[(0x10, 1.0, Some(0.01)), (0x20, 100.0, Some(0.01))]);
         let o = find_routes(&g, 1, &RouteFinderConfig::default()); // cap 8
         assert!(!o.pools_truncated);
         assert!(o.routes.iter().any(|r| r.pools.contains(&addr(0x10))));

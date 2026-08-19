@@ -439,10 +439,7 @@ mod tests {
             "w0={w0} expected ~7.60 (rate ≈ 5.0054e-4 WETH/USDC)"
         );
         // WETH→USDC: huge rate → large negative weight (~−7.60).
-        assert!(
-            (-7.7..-7.5).contains(&w1),
-            "w1={w1} expected ~−7.60"
-        );
+        assert!((-7.7..-7.5).contains(&w1), "w1={w1} expected ~−7.60");
         assert_eq!(e0.protocol, ProtocolType::V3);
         assert_eq!(e0.blk, 0); // V3 slot0 carries no block.
     }
