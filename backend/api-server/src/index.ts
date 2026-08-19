@@ -1549,6 +1549,12 @@ if (pool) {
 // siguen funcionando; la conexión se auto-reconecta.
 const convergenceSubscriber = subscribeToConvergenceSignals(io, REDIS_URL);
 
+// G-PRICE-1 hotfix — the pub/sub→room bridge was imported in #418 but never
+// STARTED, so `prices:update` never fired (snapshots worked; pushes didn't —
+// L4 caught it). Dedicated subscriber connection + its own command client,
+// exactly like the convergence/cartridge bridges above.
+const priceUpdatesSubscriber = subscribeToPriceUpdates(io, REDIS_URL);
+
 // FASE OMEGA — puente Redis Pub/Sub → WebSocket para la telemetría de cartuchos
 // (`log_quantum` del motor Rhai en Rust). Misma postura fail-honest que convergencia.
 const cartridgeTelemetrySubscriber = subscribeToCartridgeTelemetry(
