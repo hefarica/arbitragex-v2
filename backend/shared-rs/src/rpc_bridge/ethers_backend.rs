@@ -92,8 +92,14 @@ fn u256_to_alloy(v: &EthersU256) -> AlloyU256 {
 }
 
 fn u256_to_u64(v: &ethers::types::U256) -> Result<u64, BridgeError> {
-    v.as_u64()
-        .ok_or_else(|| BridgeError::Invalid("numeric result exceeds u64".to_string()))
+    // `as_u64()` truncates silently in this primitive-types version, so the
+    // u64 bound is enforced explicitly before converting (fail-honest).
+    if *v > EthersU256::from(u64::MAX) {
+        return Err(BridgeError::Invalid(
+            "numeric result exceeds u64".to_string(),
+        ));
+    }
+    Ok(v.as_u64())
 }
 
 /// ethers-based implementation of the neutral [`RpcReader`] contract.
