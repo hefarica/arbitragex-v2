@@ -318,7 +318,13 @@ impl Default for ApplicabilityConfig {
         );
         families.insert(
             "intents_solver_engine".to_string(),
-            family_profile(true, false, &[], &["backrun_engine"], &["relay_intent_feed"]),
+            family_profile(
+                true,
+                false,
+                &[],
+                &["backrun_engine"],
+                &["relay_intent_feed"],
+            ),
         );
         families.insert(
             "nft_engine".to_string(),
@@ -1043,7 +1049,9 @@ families:
         }
         // The gate records that Curve/Balancer edge typing is outside the
         // V2/V3-only Phase-1 graph (RouteKind::classify rejects those cycles).
-        let v = eng.evaluate_family("amm_curve_engine", RouteKind::V2V2).unwrap();
+        let v = eng
+            .evaluate_family("amm_curve_engine", RouteKind::V2V2)
+            .unwrap();
         assert_eq!(v.gates, ["typed_edge_protocol_coverage"]);
     }
 
