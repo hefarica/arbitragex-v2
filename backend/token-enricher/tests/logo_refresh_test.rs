@@ -109,11 +109,7 @@ async fn redis_del(conn: &mut redis::aio::MultiplexedConnection, keys: &[String]
 }
 
 async fn redis_set_icon(conn: &mut redis::aio::MultiplexedConnection, key: &str, url: &str) {
-    let _: redis::RedisResult<()> = redis::cmd("SET")
-        .arg(key)
-        .arg(url)
-        .query_async(conn)
-        .await;
+    let _: redis::RedisResult<()> = redis::cmd("SET").arg(key).arg(url).query_async(conn).await;
 }
 
 async fn redis_exists(conn: &mut redis::aio::MultiplexedConnection, key: &str) -> Option<bool> {
@@ -183,9 +179,17 @@ async fn logo_refresh_nulls_dead_logos_only(pool: sqlx::PgPool) -> sqlx::Result<
         .create_async()
         .await;
     // B: logo removed upstream → 404 → dead.
-    let mock_b = server.mock("HEAD", "/b.png").with_status(404).create_async().await;
+    let mock_b = server
+        .mock("HEAD", "/b.png")
+        .with_status(404)
+        .create_async()
+        .await;
     // C: rate-limited → probe error, logo untouched.
-    let mock_c = server.mock("HEAD", "/c.png").with_status(403).create_async().await;
+    let mock_c = server
+        .mock("HEAD", "/c.png")
+        .with_status(403)
+        .create_async()
+        .await;
 
     let url_a = format!("{}/a.png", server.url());
     let url_b = format!("{}/b.png", server.url());
@@ -201,7 +205,12 @@ async fn logo_refresh_nulls_dead_logos_only(pool: sqlx::PgPool) -> sqlx::Result<
     if let Some(conn) = redis.as_mut() {
         redis_del(
             conn,
-            [icon_key(1, ADDR_A), icon_key(1, ADDR_B), icon_key(1, ADDR_C)].as_ref(),
+            [
+                icon_key(1, ADDR_A),
+                icon_key(1, ADDR_B),
+                icon_key(1, ADDR_C),
+            ]
+            .as_ref(),
         )
         .await;
         redis_hdel(
@@ -210,8 +219,8 @@ async fn logo_refresh_nulls_dead_logos_only(pool: sqlx::PgPool) -> sqlx::Result<
                 baseline_field(1, ADDR_A),
                 baseline_field(1, ADDR_B),
                 baseline_field(1, ADDR_C),
-                ]
-                .as_ref(),
+            ]
+            .as_ref(),
         )
         .await;
         // Baseline for A matches the HEAD Content-Length → unchanged.
@@ -222,7 +231,9 @@ async fn logo_refresh_nulls_dead_logos_only(pool: sqlx::PgPool) -> sqlx::Result<
     }
 
     let tw = TrustWalletClient::new(None).unwrap();
-    let stats = run_logo_refresh(&pool, &tw, &test_redis_url()).await.unwrap();
+    let stats = run_logo_refresh(&pool, &tw, &test_redis_url())
+        .await
+        .unwrap();
 
     assert_eq!(
         stats,
@@ -254,7 +265,10 @@ async fn logo_refresh_nulls_dead_logos_only(pool: sqlx::PgPool) -> sqlx::Result<
     .await?;
     assert_eq!(logo_a.as_deref(), Some(url_a.as_str()));
     assert_eq!(via_a, "onchain_full");
-    assert!(stale_a, "unchanged token must NOT have last_seen_at advanced");
+    assert!(
+        stale_a,
+        "unchanged token must NOT have last_seen_at advanced"
+    );
 
     // C: error → row completely untouched.
     let (logo_c, via_c): (Option<String>, String) =
@@ -275,7 +289,10 @@ async fn logo_refresh_nulls_dead_logos_only(pool: sqlx::PgPool) -> sqlx::Result<
             redis_hget(conn, &baseline_field(1, ADDR_A)).await,
             Some(Some("100".into()))
         );
-        assert_eq!(redis_hget(conn, &baseline_field(1, ADDR_B)).await, Some(None));
+        assert_eq!(
+            redis_hget(conn, &baseline_field(1, ADDR_B)).await,
+            Some(None)
+        );
     }
 
     mock_a.assert();
@@ -322,7 +339,9 @@ async fn logo_refresh_updates_changed_logo_and_invalidates_cache(
     }
 
     let tw = TrustWalletClient::new(None).unwrap();
-    let stats = run_logo_refresh(&pool, &tw, &test_redis_url()).await.unwrap();
+    let stats = run_logo_refresh(&pool, &tw, &test_redis_url())
+        .await
+        .unwrap();
 
     assert_eq!(
         stats,

@@ -164,7 +164,9 @@ fn classify_head(info: HeadInfo, baseline: Option<u64>) -> HeadVerdict {
         Some(len) if baseline.is_none_or(|b| b == len) => HeadVerdict::Unchanged {
             content_length: Some(len),
         },
-        Some(len) => HeadVerdict::Changed { content_length: len },
+        Some(len) => HeadVerdict::Changed {
+            content_length: len,
+        },
     }
 }
 
@@ -233,27 +235,29 @@ async fn probe_token<C: LogoHttp>(
             Verdict::Error
         }
         HeadVerdict::Unchanged { content_length } => Verdict::Unchanged { content_length },
-        HeadVerdict::Changed { content_length } => match http.download_logo(&token.logo_url).await {
-            Ok(n) if n > 0 => Verdict::Updated { content_length },
-            Ok(_) => {
-                warn!(
-                    event = "logo_refresh.empty_redownload",
-                    chain_id = token.chain_id,
-                    address = %token.address,
-                    "re-download returned an empty body — treating as probe error"
-                );
-                Verdict::Error
+        HeadVerdict::Changed { content_length } => {
+            match http.download_logo(&token.logo_url).await {
+                Ok(n) if n > 0 => Verdict::Updated { content_length },
+                Ok(_) => {
+                    warn!(
+                        event = "logo_refresh.empty_redownload",
+                        chain_id = token.chain_id,
+                        address = %token.address,
+                        "re-download returned an empty body — treating as probe error"
+                    );
+                    Verdict::Error
+                }
+                Err(e) => {
+                    debug!(
+                        event = "logo_refresh.redownload_err",
+                        chain_id = token.chain_id,
+                        address = %token.address,
+                        err = %e
+                    );
+                    Verdict::Error
+                }
             }
-            Err(e) => {
-                debug!(
-                    event = "logo_refresh.redownload_err",
-                    chain_id = token.chain_id,
-                    address = %token.address,
-                    err = %e
-                );
-                Verdict::Error
-            }
-        },
+        }
     }
 }
 
@@ -413,7 +417,8 @@ async fn apply_redis_effects(conn: &mut redis::aio::MultiplexedConnection, outco
     let mut pipe = redis::pipe();
     for &(chain_id, ref address) in &outcome.dead {
         pipe.del(token_icon_key(chain_id, address)).ignore();
-        pipe.hdel(SIZES_HASH, baseline_field(chain_id, address)).ignore();
+        pipe.hdel(SIZES_HASH, baseline_field(chain_id, address))
+            .ignore();
     }
     for &(chain_id, ref address, _) in &outcome.updated {
         pipe.del(token_icon_key(chain_id, address)).ignore();
@@ -546,7 +551,11 @@ pub fn parse_logo_refresh_interval(raw: Option<&str>) -> u64 {
 
 /// Read [`ENV_LOGO_REFRESH_INTERVAL_SECS`] from the environment.
 pub fn logo_refresh_interval_from_env() -> u64 {
-    parse_logo_refresh_interval(std::env::var(ENV_LOGO_REFRESH_INTERVAL_SECS).ok().as_deref())
+    parse_logo_refresh_interval(
+        std::env::var(ENV_LOGO_REFRESH_INTERVAL_SECS)
+            .ok()
+            .as_deref(),
+    )
 }
 
 // ---------------------------------------------------------------------------
@@ -640,7 +649,9 @@ mod tests {
         // No Content-Length header → cannot judge → unchanged, no baseline.
         assert_eq!(
             classify_head(head(200, None), Some(1)),
-            HeadVerdict::Unchanged { content_length: None }
+            HeadVerdict::Unchanged {
+                content_length: None
+            }
         );
         // First observation (no baseline) → unchanged, baseline recorded.
         assert_eq!(
@@ -699,7 +710,8 @@ mod tests {
             }),
         );
         // timeout
-        mock.heads.insert("https://cdn/d.png".into(), Err("timed out"));
+        mock.heads
+            .insert("https://cdn/d.png".into(), Err("timed out"));
 
         let tokens = vec![
             token(1, 1, "https://cdn/a.png"),
@@ -740,15 +752,20 @@ mod tests {
             out.baselines.get(&baseline_field(1, &tokens[1].address)),
             Some(&2048)
         );
-        assert!(!out.baselines.contains_key(&baseline_field(1, &tokens[2].address)));
-        assert!(!out.baselines.contains_key(&baseline_field(137, &tokens[3].address)));
+        assert!(!out
+            .baselines
+            .contains_key(&baseline_field(1, &tokens[2].address)));
+        assert!(!out
+            .baselines
+            .contains_key(&baseline_field(137, &tokens[3].address)));
     }
 
     #[tokio::test]
     async fn probe_all_timeout_is_error_not_dead() {
         // Fail-safe: a network blip must not NULL any logo.
         let mut mock = MockLogoHttp::default();
-        mock.heads.insert("https://cdn/x.png".into(), Err("timed out"));
+        mock.heads
+            .insert("https://cdn/x.png".into(), Err("timed out"));
         let tokens = vec![token(1, 1, "https://cdn/x.png")];
 
         let out = probe_all(&mock, &tokens, &HashMap::new(), 50, BATCH_PAUSE).await;
@@ -784,7 +801,8 @@ mod tests {
                 content_length: Some(2048),
             }),
         );
-        mock.downloads.insert("https://cdn/x.png".into(), Err("timed out"));
+        mock.downloads
+            .insert("https://cdn/x.png".into(), Err("timed out"));
         let tokens = vec![token(1, 1, "https://cdn/x.png")];
         let mut baselines = HashMap::new();
         baselines.insert(baseline_field(1, &tokens[0].address), 1024u64);
@@ -793,7 +811,9 @@ mod tests {
         assert_eq!(out.stats.errors, 1);
         assert_eq!(out.stats.updated, 0);
         // No new baseline is recorded → the change stays detectable next run.
-        assert!(!out.baselines.contains_key(&baseline_field(1, &tokens[0].address)));
+        assert!(!out
+            .baselines
+            .contains_key(&baseline_field(1, &tokens[0].address)));
     }
 
     #[tokio::test]
@@ -822,32 +842,37 @@ mod tests {
     async fn probe_all_pauses_between_batches() {
         // 5 tokens / batch_size 2 → 3 batches → exactly 2 pauses of 2s.
         let mock = MockLogoHttp::head_ok("https://cdn/t.png", Some(10));
-        let tokens: Vec<RefreshToken> = (1..=5)
-            .map(|n| token(1, n, "https://cdn/t.png"))
-            .collect();
+        let tokens: Vec<RefreshToken> = (1..=5).map(|n| token(1, n, "https://cdn/t.png")).collect();
 
         let t0 = tokio::time::Instant::now();
         let out = probe_all(&mock, &tokens, &HashMap::new(), 2, Duration::from_secs(2)).await;
         let elapsed = t0.elapsed();
 
         assert_eq!(out.stats.checked, 5);
-        assert!(elapsed >= Duration::from_secs(4), "expected 2 inter-batch pauses, elapsed {elapsed:?}");
-        assert!(elapsed < Duration::from_secs(6), "no pause expected after the LAST batch, elapsed {elapsed:?}");
+        assert!(
+            elapsed >= Duration::from_secs(4),
+            "expected 2 inter-batch pauses, elapsed {elapsed:?}"
+        );
+        assert!(
+            elapsed < Duration::from_secs(6),
+            "no pause expected after the LAST batch, elapsed {elapsed:?}"
+        );
     }
 
     #[tokio::test(start_paused = true)]
     async fn probe_all_single_batch_has_no_pause() {
         let mock = MockLogoHttp::head_ok("https://cdn/t.png", Some(10));
-        let tokens: Vec<RefreshToken> = (1..=5)
-            .map(|n| token(1, n, "https://cdn/t.png"))
-            .collect();
+        let tokens: Vec<RefreshToken> = (1..=5).map(|n| token(1, n, "https://cdn/t.png")).collect();
 
         let t0 = tokio::time::Instant::now();
         let out = probe_all(&mock, &tokens, &HashMap::new(), 50, Duration::from_secs(2)).await;
         let elapsed = t0.elapsed();
 
         assert_eq!(out.stats.checked, 5);
-        assert!(elapsed < Duration::from_secs(2), "single batch must not pause, elapsed {elapsed:?}");
+        assert!(
+            elapsed < Duration::from_secs(2),
+            "single batch must not pause, elapsed {elapsed:?}"
+        );
     }
 
     // --- key contracts ---
@@ -856,10 +881,7 @@ mod tests {
     fn token_icon_key_matches_api_server_reader_contract() {
         // Must equal api-server routes/token-icon.ts `tokenIconKey`:
         // `arbx:token-icons:${chainId}:${address}` (address lowercase).
-        assert_eq!(
-            token_icon_key(1, "0xabc"),
-            "arbx:token-icons:1:0xabc"
-        );
+        assert_eq!(token_icon_key(1, "0xabc"), "arbx:token-icons:1:0xabc");
         assert_eq!(
             token_icon_key(137, "0xdef123"),
             "arbx:token-icons:137:0xdef123"
