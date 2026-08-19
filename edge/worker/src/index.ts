@@ -1401,6 +1401,9 @@ app.post("/api/admin/rpcs/import", (c) => adminProxy(c, "/api/admin/rpcs/import"
 app.post("/api/admin/rpcs/reload", (c) => adminProxy(c, "/api/admin/rpcs/reload"));
 app.post("/admin/onboarding/1/complete", (c) => adminProxy(c, "/admin/onboarding/1/complete"));
 app.put("/admin/config/paper-mode", (c) => adminProxy(c, "/admin/config/paper-mode"));
+// RPC backend toggle (alloy dual-track FASE 4) — per-service ethers/alloy/shadow.
+app.get("/api/admin/rpc-backend", (c) => adminProxy(c, "/api/admin/rpc-backend"));
+app.put("/api/admin/rpc-backend", (c) => adminProxy(c, "/api/admin/rpc-backend"));
 
 // Admin credentials (test + upsert + delete — MC-CRED-1 completes the set
 // dev-local already exposed; the masked list GET lives at /api/credentials above)
