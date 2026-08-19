@@ -147,15 +147,14 @@ fn require_success(outcome: CallOutcome, label: &str) -> u64 {
 /// read → deposit(1 wei) → read (+1 exactly) → withdraw(1) → read (back to
 /// pre). See the module docs for the full honesty contract.
 ///
-/// `multi_thread` flavor is REQUIRED: `LazyDb`'s sync-async bridge calls
-/// `tokio::time::timeout` (lazy_db.rs), which needs an ambient reactor at
-/// construction — a bare sync `#[test]` panics with "there is no reactor
-/// running" (found by the first real CI dispatch of sim-fork-evidence.yml,
-/// 2026-08-17), and the default current-thread `#[tokio::test]` parks its
-/// timer driver behind the owned-runtime fallback.
-#[tokio::test(flavor = "multi_thread")]
-#[ignore = "requires RPC_HTTP_1 (mainnet archive RPC) + optional FORK_BLOCK — see module docs"]
-async fn fork_mainnet_weth_deposit_withdraw_round_trip() {
+// NOT #[tokio::test] — LazyDb/SimulatorV2 internally use Handle::try_current()
+// to find an ambient multi-thread runtime. With rt.enter(), they find OUR
+// runtime and use block_in_place — no nested runtimes are ever created.
+// Everything drops in sync context at the end of the function. This is the
+// canonical pattern for testing code that internally uses Tokio.
+#[test]
+#[ignore = "requires RPC_HTTP_1 (mainnet archive RPC) + optional FORK_BLOCK — see module docs. Run with --release: revm-interpreter 1.3.0 has a debug-mode unsafe precondition bug in Stack::dup"]
+fn fork_mainnet_weth_deposit_withdraw_round_trip() {
     let rpc_url = match resolve_rpc_url() {
         Ok(url) => url,
         Err(missing) => panic!(
@@ -165,6 +164,17 @@ async fn fork_mainnet_weth_deposit_withdraw_round_trip() {
         ),
     };
     let fork_block = resolve_fork_block();
+
+    // Build a multi-thread runtime and ENTER it — LazyDb's sync-async bridge
+    // uses Handle::try_current() to find this runtime and does block_in_place.
+    // No nested runtimes are ever created because our runtime IS the ambient one.
+    // All drops happen in sync context at the end of this function — no panic.
+    let rt = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(4)
+        .enable_all()
+        .build()
+        .expect("failed to build multi-thread runtime for fork suite");
+    let _rt_guard = rt.enter();
 
     // 1. LazyDb pinned over the real RPC. With FORK_BLOCK set, construction
     //    never resolves "latest"; with it unset, LazyDb resolves and
@@ -275,6 +285,18 @@ async fn fork_mainnet_weth_deposit_withdraw_round_trip() {
          successful_calls={} gas_used_total={} weth_pre={pre} round_trip_wei={DEPOSIT_WEI}",
         summary.successful_calls, summary.gas_used_total
     );
+
+    // CRITICAL DROP ORDER: the runtime guard must be released BEFORE ctx/lazy
+    // drop, because LazyDb internally owns a fallback Runtime whose Drop needs
+    // blocking (shutdown of its worker threads). If the EnterGuard is still
+    // active when LazyDb drops, the thread is in "async context" and the
+    // runtime Drop panics. Explicit drops ensure the correct sequence:
+    //   1. _rt_guard → thread exits runtime context (blocking allowed again)
+    //   2. ctx       → drops SequenceContext (which drops lazy → owned_rt)
+    //   3. rt        → our runtime, dropped in plain sync context — safe
+    drop(_rt_guard);
+    drop(ctx);
+    drop(rt);
 }
 
 // ---------------------------------------------------------------------------
