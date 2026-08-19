@@ -946,6 +946,28 @@ pub async fn run_chain(
         cancel.clone(),
     );
 
+    // RU-3 — proactive per-block multi-hop scan: on every newHeads, run the
+    // multi_hop_search negative-cycle finder over the full token graph and
+    // emit profitable cycles that pass the anchor gate (h≤3 full universe;
+    // h4-5 ≥1 anchor {WETH,USDC,USDT,DAI,WBTC}; h6-8 ≥2 anchors + SHADOW
+    // forced) as RouteIntents to the orchestrator — no mempool event needed.
+    // Gated by ARBX_ROUTE_SCANNER_MODE (default off → not spawned, zero
+    // overhead). Spawned here (the per-chain boot) rather than main.rs because
+    // the orchestrator + ImpactIndex + WS pool it consumes are constructed in
+    // run_chain — same spawn point as spawn_route_discovery above.
+    {
+        let ws_urls: Vec<String> = pool.endpoints.iter().map(|e| e.url.clone()).collect();
+        crate::workers::route_scanner_worker::spawn_route_scanner(
+            chain_id,
+            redis.clone(),
+            ws_urls,
+            impact_index_opt.clone(),
+            cartridge_runner.clone(),
+            orchestrator.clone(),
+            cancel.clone(),
+        );
+    }
+
     // FASE OMEGA — Block/log backrun mode: subscribe to `newHeads` + `eth_getLogs`(Swap)
     // instead of the pending-tx firehose (free-RPC friendly). Spawns the block scanner and
     // SKIPS the pending-tx detection_loop entirely. Requires orch_mode v2/shadow so an
