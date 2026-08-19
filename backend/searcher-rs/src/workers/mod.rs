@@ -17,6 +17,9 @@ pub mod pool_enumeration_worker;
 pub mod pool_sync_worker;
 pub mod price_worker;
 pub mod rpc_health_worker;
+// RU-3 — proactive per-block multi-hop negative-cycle scan (anchor-gated
+// RouteIntent emission). Gated by ARBX_ROUTE_SCANNER_MODE (default off).
+pub mod route_scanner_worker;
 #[cfg(feature = "experimental-engines")]
 pub mod spatial_worker;
 pub mod triangular_worker;
