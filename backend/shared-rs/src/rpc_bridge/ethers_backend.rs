@@ -91,7 +91,7 @@ fn u256_to_alloy(v: &EthersU256) -> AlloyU256 {
     AlloyU256::from_be_bytes(buf)
 }
 
-fn u64_of(v: ethers::types::U64) -> Result<u64, BridgeError> {
+fn u256_to_u64(v: &ethers::types::U256) -> Result<u64, BridgeError> {
     v.as_u64()
         .ok_or_else(|| BridgeError::Invalid("numeric result exceeds u64".to_string()))
 }
@@ -107,9 +107,10 @@ impl EthersReader {
     /// Build a reader for an HTTP RPC endpoint. No network I/O happens here;
     /// an unparseable URL (or a corrupt embedded ABI) fails honestly.
     pub fn new(url: &str) -> Result<Self, BridgeError> {
-        let provider: Provider<Http> = url
-            .parse()
+        let parsed = url
+            .parse::<reqwest::Url>()
             .map_err(|e| BridgeError::Invalid(format!("invalid RPC url {url:?}: {e}")))?;
+        let provider: Provider<Http> = Provider::new(parsed);
         Ok(Self {
             provider: Arc::new(provider),
             pair_abi: parse_abi(PAIR_ABI_JSON, "IUniswapV2Pair")?,
@@ -160,7 +161,8 @@ impl RpcReader for EthersReader {
                 .get_block_number()
                 .await
                 .map_err(|e| BridgeError::Rpc(format!("eth_blockNumber failed: {e}")))?;
-            u64_of(n)
+            // ethers' U64::as_u64 is total (u64-wide type).
+            Ok(n.as_u64())
         })
         .await
     }
@@ -172,7 +174,7 @@ impl RpcReader for EthersReader {
                 .get_chainid()
                 .await
                 .map_err(|e| BridgeError::Rpc(format!("eth_chainId failed: {e}")))?;
-            u64_of(id)
+            u256_to_u64(&id)
         })
         .await
     }

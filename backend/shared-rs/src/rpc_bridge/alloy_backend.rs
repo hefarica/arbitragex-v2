@@ -14,6 +14,7 @@ use alloy::network::Ethereum;
 use alloy::primitives::{Address, Bytes, U256};
 use alloy::providers::{Provider, ProviderBuilder, RootProvider};
 use alloy::rpc::types::{TransactionInput, TransactionRequest};
+use alloy::sol_types::SolCall;
 use std::time::Duration;
 
 /// Client-level HTTP timeout. The reqwest client enforces this inside the
@@ -59,16 +60,18 @@ impl AlloyReader {
         let parsed = url
             .parse::<reqwest::Url>()
             .map_err(|e| BridgeError::Invalid(format!("invalid RPC url {url:?}: {e}")))?;
-        // Pre-build the reqwest client so the request timeout is enforced at
-        // the transport level (fallible, unlike the `with_reqwest` closure
-        // which forces an infallible client construction).
-        let client = reqwest::Client::builder()
-            .timeout(Duration::from_millis(CALL_TIMEOUT_MS))
-            .build()
-            .map_err(|e| BridgeError::Rpc(format!("reqwest client build failed: {e}")))?;
+        // Same construction as `rpc_failover.rs`: `with_reqwest` hands us
+        // alloy's OWN reqwest ClientBuilder (no cross-reqwest-version Client
+        // type), and the builder-level timeout enforces the bound inside the
+        // transport, where a wedged `eth_call` cannot be preempted from
+        // outside. Only TLS-backend init can fail inside the closure.
         let provider = ProviderBuilder::new()
             .disable_recommended_fillers()
-            .connect_reqwest(client, parsed);
+            .with_reqwest(parsed, |b| {
+                b.timeout(Duration::from_millis(CALL_TIMEOUT_MS))
+                    .build()
+                    .expect("rpc-bridge: build reqwest client with request timeout")
+            });
         Ok(Self { provider })
     }
 
@@ -126,8 +129,8 @@ impl RpcReader for AlloyReader {
         let decoded = IUniswapV2Pair::getReservesCall::abi_decode_returns(&ret)
             .map_err(|e| BridgeError::Invalid(format!("getReserves decode failed: {e}")))?;
         Ok(V2Reserves {
-            reserve0: U256::from_uint(decoded.reserve0),
-            reserve1: U256::from_uint(decoded.reserve1),
+            reserve0: U256::from(decoded.reserve0),
+            reserve1: U256::from(decoded.reserve1),
         })
     }
 
@@ -148,7 +151,7 @@ impl RpcReader for AlloyReader {
         let liquidity = IUniswapV3Pool::liquidityCall::abi_decode_returns(&liquidity)
             .map_err(|e| BridgeError::Invalid(format!("liquidity decode failed: {e}")))?;
         Ok(V3Slot0 {
-            sqrt_price_x96: U256::from_uint(slot0.sqrtPriceX96),
+            sqrt_price_x96: U256::from(slot0.sqrtPriceX96),
             liquidity,
             tick: i32::try_from(slot0.tick)
                 .map_err(|e| BridgeError::Invalid(format!("tick out of i32 range: {e}")))?,
@@ -205,11 +208,11 @@ mod tests {
         let decoded = contracts::IUniswapV2Pair::getReservesCall::abi_decode_returns(&data)
             .expect("valid 3-word return blob must decode");
         assert_eq!(
-            U256::from_uint(decoded.reserve0),
+            U256::from(decoded.reserve0),
             U256::from(1_000_000_000_000_000_000u128)
         );
         assert_eq!(
-            U256::from_uint(decoded.reserve1),
+            U256::from(decoded.reserve1),
             U256::from(2_500_000_000_000_000_000u128)
         );
         assert_eq!(decoded.blockTimestampLast, 1_700_000_000);
@@ -229,10 +232,7 @@ mod tests {
 
         let decoded = contracts::IUniswapV3Pool::slot0Call::abi_decode_returns(&slot0)
             .expect("valid 6-word slot0 blob must decode");
-        assert_eq!(
-            U256::from_uint(decoded.sqrtPriceX96),
-            U256::from(2u128.pow(96))
-        );
+        assert_eq!(U256::from(decoded.sqrtPriceX96), U256::from(2u128.pow(96)));
         assert_eq!(
             i32::try_from(decoded.tick).expect("int24 always fits i32"),
             -5
