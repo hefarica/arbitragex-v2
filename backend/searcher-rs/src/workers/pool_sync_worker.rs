@@ -431,14 +431,14 @@ impl PoolSyncWorker {
         // V2 pools enter the reserves polling loop (getReserves every tick).
         // V3 pools enter the slot0 polling loop (slot0+liquidity every tick)
         // to populate `arbx:v3_slot0` keys for the spine price-impact path.
-        let pools = self.load_pools(&db).await?;
+        let mut pools = self.load_pools(&db).await?;
         info!(
             event = "pool_sync.pools_loaded",
             chain_id = self.chain_id,
             count = pools.len()
         );
 
-        let v3_pools = self.load_v3_pools(&db).await?;
+        let mut v3_pools = self.load_v3_pools(&db).await?;
 
         self.bootstrap_token_cache(&db, &mut redis).await?;
         self.bootstrap_pool_index_cache(&pools, &mut redis).await?;
@@ -508,7 +508,61 @@ impl PoolSyncWorker {
             "resilient multicall batching active (chunk + timeout + exponential-backoff retry + dynamic sub-chunk degradation)"
         );
 
+        // Pool-set refresh (2026-08-18, RESERVES-COVERAGE anomaly): the working
+        // set was previously loaded at BOOT ONLY — pools discovered later by the
+        // enumeration worker landed in PG but NEVER entered the sync loop (the
+        // live cache held 87 V2 / 79 V3 pools forever while intents touched
+        // pools outside that set → `missing_reserves` on 28-56 cartridges per
+        // block). Every `reload_every` ticks the worker re-reads the active-pool
+        // queries and swaps its working set, so a discovered pool starts syncing
+        // reserves within minutes. 0 disables the refresh (boot set frozen —
+        // legacy behaviour). Env-tunable cadence knob, not operator data.
+        let reload_every: u64 = std::env::var("POOL_SYNC_RELOAD_EVERY_TICKS")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(60); // 60 × ~5s tick ≈ 5 min
+        let mut tick: u64 = 0;
+
         loop {
+            tick += 1;
+            if reload_every > 0 && tick % reload_every == 0 {
+                match (self.load_pools(&db).await, self.load_v3_pools(&db).await) {
+                    (Ok(new_v2), Ok(new_v3)) => {
+                        let (old_v2, old_v3) = (pools.len(), v3_pools.len());
+                        if new_v2.len() != old_v2 || new_v3.len() != old_v3 {
+                            info!(
+                                event = "pool_sync.set_refreshed",
+                                chain_id = self.chain_id,
+                                v2_pools = new_v2.len(),
+                                v3_pools = new_v3.len(),
+                                v2_delta = new_v2.len() as i64 - old_v2 as i64,
+                                v3_delta = new_v3.len() as i64 - old_v3 as i64,
+                                "active-pool working set reloaded from PG (discovered pools now sync)"
+                            );
+                        }
+                        pools = new_v2;
+                        v3_pools = new_v3;
+                        // Refresh the Redis pair/pool indexes so cartridges'
+                        // get_pool_index sees newly discovered pools too
+                        // (idempotent SETs — same call as boot).
+                        if let Err(e) = self.bootstrap_pool_index_cache(&pools, &mut redis).await {
+                            warn!(
+                                event = "pool_sync.set_refresh_index_failed",
+                                chain_id = self.chain_id,
+                                error = %e
+                            );
+                        }
+                    }
+                    (Err(e), _) | (_, Err(e)) => {
+                        warn!(
+                            event = "pool_sync.set_refresh_failed",
+                            chain_id = self.chain_id,
+                            error = %e,
+                            "pool-set reload query failed — keeping the previous working set"
+                        );
+                    }
+                }
+            }
             let tick_start = Instant::now();
             // Bracketing diagnostics: pinpoint exactly which await wedges (the tick never
             // completed pre-fix despite a timeout). Demote to debug once flow is confirmed.
