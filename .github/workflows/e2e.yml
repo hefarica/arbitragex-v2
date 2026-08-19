@@ -23,11 +23,32 @@ jobs:
         with:
           node-version: "20"
           cache: npm
-      - name: Install Playwright deps
+      # CI-FLAKE-PLAYWRIGHT-APT (2026-08-18/19, 3×): `playwright install
+      # --with-deps` hung on black-holed apt mirrors until the 20-min job
+      # timeout, cancelling with zero test output (killed PRs #398/#386/#388).
+      # Two-layer fix: (1) cache the browser — warm runs need ZERO network;
+      # (2) split deps install, bounded by timeout + retry so a bad mirror
+      # costs at most ~6 minutes LOUD instead of the whole job silently.
+      - name: Cache Playwright browsers
+        uses: actions/cache@0057852bfaa89a56755ef8b1d83041146aa5d7 # v4.2.4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-chromium-${{ hashFiles('tests/e2e/package-lock.json') }}
+      - name: Install Playwright deps (apt-flake resilient)
         working-directory: tests/e2e
         run: |
           npm ci --no-audit --no-fund
-          npx playwright install --with-deps chromium
+          npx playwright install chromium
+          for i in 1 2; do
+            if timeout 180 npx playwright install-deps chromium; then
+              echo "deps ok (attempt $i)"
+              exit 0
+            fi
+            echo "attempt $i: apt mirror flake — retrying in 30s"
+            sleep 30
+          done
+          echo "::error::playwright install-deps failed after 2 bounded attempts — apt mirror unhealthy on this runner"
+          exit 1
 
       - name: Materialize .env from .env.example (Ghost-safe — placeholders T2 only)
         run: |
