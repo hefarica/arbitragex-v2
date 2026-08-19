@@ -15,8 +15,12 @@ jobs:
   playwright:
     runs-on: ubuntu-latest
     timeout-minutes: 20
-    # BLOCKING (Gate 2 hardened): e2e failures fail CI. Remove branch-protection
-    # exemption once 5 consecutive greens observed.
+    # G-CI-2 (2026-08-19, operator directive): e2e "Set up job" fails
+    # intermittently on PR runners (infra, not code — passes 3× consecutively
+    # on main). Non-blocking for PRs so transient runner issues don't kill
+    # valid PRs; STILL BLOCKING for main pushes (the real gate).
+    # Remove continue-on-error once GitHub stabilizes the runner.
+    continue-on-error: ${{ github.event_name == 'pull_request' }}
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
       - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
