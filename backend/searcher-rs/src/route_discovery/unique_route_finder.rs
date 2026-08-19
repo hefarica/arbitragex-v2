@@ -13,7 +13,8 @@
 //! - Opposite traversal directions are **distinct** routes (canonical hash
 //!   preserves direction); same-direction rotations **dedup** to one route.
 //! - **Bounded**: depth ∈ {2, `max_depth`}, `max_pools_per_pair` caps parallel
-//!   pools between two tokens, `max_routes_per_tick` caps total output. When the
+//!   pools between two tokens (keeping the ranked top-K: TVL first, best net
+//!   rate tie-break — RU-2), `max_routes_per_tick` caps total output. When the
 //!   route cap is hit, enumeration stops early and `capped` is set so consumers
 //!   know the result set is **incomplete** (R8 fail-honest — we signal
 //!   truncation rather than implying completeness). `dropped_for_cap` is a
@@ -90,23 +91,65 @@ struct FinderState<'g> {
     pools_truncated: bool,
 }
 
+/// Ranking of parallel pools between the same token pair for the per-pair
+/// top-K selection (RU-2). Deeper TVL proxy (`liquidity_hint`) first; ties
+/// broken by the better net rate (lower `log_weight` ⇒ higher `(1−fee)·rate`);
+/// unpriced edges (`log_weight = None` — cannot happen for fresh V2/V3
+/// snapshots but hand-built graphs may carry them) rank LAST; final
+/// deterministic tie-break on pool address so enumeration is reproducible.
+fn rank_parallel_pools(a: &RouteEdge, b: &RouteEdge) -> std::cmp::Ordering {
+    use std::cmp::Ordering;
+    let a_liq = a.liquidity_hint.unwrap_or(0.0);
+    let b_liq = b.liquidity_hint.unwrap_or(0.0);
+    let by_tvl = b_liq.partial_cmp(&a_liq).unwrap_or(Ordering::Equal); // NaN hints (impossible post-R8) fall through
+    if by_tvl != Ordering::Equal {
+        return by_tvl;
+    }
+    let by_rate = match (a.log_weight, b.log_weight) {
+        (Some(x), Some(y)) => x.partial_cmp(&y).unwrap_or(Ordering::Equal),
+        (Some(_), None) => Ordering::Less,
+        (None, Some(_)) => Ordering::Greater,
+        (None, None) => Ordering::Equal,
+    };
+    if by_rate != Ordering::Equal {
+        return by_rate;
+    }
+    a.pool.cmp(&b.pool)
+}
+
 impl<'g> FinderState<'g> {
-    /// Out-edges leaving `token`, capped to `max_pools_per_pair` per destination.
+    /// Out-edges leaving `token`: parallel pools to the same destination are
+    /// ranked (TVL, then best net rate) and only the top `max_pools_per_pair`
+    /// survive — replacing the Phase-1 "first pools in insertion order" MVP.
     /// Returns `(edges, truncated)` where `truncated` is `true` iff at least one
     /// parallel pool was dropped by the per-pair cap — so the caller can flag the
     /// result set as not-provably-exhaustive (R8) instead of silently swallowing it.
     fn collect_out_edges(&self, token: Address) -> (Vec<RouteEdge>, bool) {
-        let mut per_pair: HashMap<Address, usize> = HashMap::new();
+        // Group parallel pools by destination, preserving first-seen destination
+        // order so enumeration (and cap-driven drops) stay deterministic.
+        let mut pair_order: Vec<Address> = Vec::new();
+        let mut per_pair: HashMap<Address, Vec<RouteEdge>> = HashMap::new();
+        for e in self.graph.out_edges(&token) {
+            per_pair
+                .entry(e.token_out)
+                .and_modify(|v| v.push(e.clone()))
+                .or_insert_with(|| {
+                    pair_order.push(e.token_out);
+                    vec![e.clone()]
+                });
+        }
+
         let mut out = Vec::new();
         let mut truncated = false;
-        for e in self.graph.out_edges(&token) {
-            let c = per_pair.entry(e.token_out).or_insert(0);
-            if *c >= self.cfg.max_pools_per_pair {
-                truncated = true; // a real pool exists but was excluded by the branching cap
-                continue;
+        for dest in pair_order {
+            if let Some(mut edges) = per_pair.remove(&dest) {
+                if edges.len() > self.cfg.max_pools_per_pair {
+                    truncated = true; // real pools exist but only the ranked top-K are kept
+                    edges.sort_by(rank_parallel_pools);
+                    edges.truncate(self.cfg.max_pools_per_pair);
+                }
+                out.extend(edges);
             }
-            *c += 1;
-            out.push(e.clone());
         }
         (out, truncated)
     }
@@ -495,5 +538,157 @@ mod tests {
             assert_eq!(r.mode, "shadow");
             assert!(r.route_hash.starts_with("0x"));
         }
+    }
+
+    // ------------------------------------------------------------------
+    // RU-2: ranked per-pair top-K (TVL, then best net rate)
+    // ------------------------------------------------------------------
+
+    /// Edge with explicit `liquidity_hint` / `log_weight` (ranking inputs).
+    fn ranked_edge(
+        pool: u64,
+        ti: u64,
+        to: u64,
+        proto: ProtocolType,
+        hint: f64,
+        weight: Option<f64>,
+    ) -> RouteEdge {
+        RouteEdge {
+            chain_id: 1,
+            pool: addr(pool),
+            token_in: addr(ti),
+            token_out: addr(to),
+            token0: addr(ti),
+            token1: addr(to),
+            protocol: proto,
+            fee_bps: Some(30),
+            liquidity_hint: Some(hint),
+            log_weight: weight,
+            freshness_ts: 0,
+            blk: 0,
+            direction: RouteDirection::from_in_token0(addr(ti), addr(ti)),
+        }
+    }
+
+    fn graph_from_edges(edges: Vec<RouteEdge>) -> TokenGraph {
+        let mut adjacency: HashMap<Address, Vec<usize>> = HashMap::new();
+        for (i, e) in edges.iter().enumerate() {
+            adjacency.entry(e.token_in).or_default().push(i);
+        }
+        TokenGraph { edges, adjacency }
+    }
+
+    /// Triangle A(1)-B(2)-C(3) where the A-B hop has three parallel pools with
+    /// the given hints, inserted SHALLOW-FIRST to prove the cap keeps the
+    /// ranked deepest pools rather than the first-inserted ones.
+    fn triangle_with_parallel_ab(hints: &[(u64, f64, Option<f64>)]) -> TokenGraph {
+        use ProtocolType::V2;
+        let mut edges = Vec::new();
+        for &(pool, hint, w) in hints {
+            edges.push(ranked_edge(pool, 1, 2, V2, hint, w));
+            edges.push(ranked_edge(pool, 2, 1, V2, hint, w));
+        }
+        // Closing hops B-C and C-A (single pools, priced).
+        edges.push(ranked_edge(0x40, 2, 3, V2, 1.0, Some(0.01)));
+        edges.push(ranked_edge(0x40, 3, 2, V2, 1.0, Some(0.01)));
+        edges.push(ranked_edge(0x50, 3, 1, V2, 1.0, Some(0.01)));
+        edges.push(ranked_edge(0x50, 1, 3, V2, 1.0, Some(0.01)));
+        graph_from_edges(edges)
+    }
+
+    #[test]
+    fn per_pair_cap_keeps_ranked_deepest_pools_not_first_inserted() {
+        // Insertion order shallow(1.0), deep(100.0), mid(10.0); cap 2 → the
+        // ranked top-2 {100, 10} survive; the FIRST-inserted shallow pool drops.
+        let g = triangle_with_parallel_ab(&[
+            (0x10, 1.0, Some(0.01)),
+            (0x20, 100.0, Some(0.01)),
+            (0x30, 10.0, Some(0.01)),
+        ]);
+        let cfg = RouteFinderConfig {
+            max_pools_per_pair: 2,
+            ..Default::default()
+        };
+        let o = find_routes(&g, 1, &cfg);
+        assert!(o.pools_truncated, "third parallel pool dropped → flagged");
+        assert!(!o.routes.is_empty());
+        for r in &o.routes {
+            assert!(
+                !r.pools.contains(&addr(0x10)),
+                "shallowest pool must not survive the ranked top-K"
+            );
+        }
+        // The two deepest pools DO appear across the emitted routes.
+        let uses_deep = o.routes.iter().any(|r| r.pools.contains(&addr(0x20)));
+        let uses_mid = o.routes.iter().any(|r| r.pools.contains(&addr(0x30)));
+        assert!(uses_deep && uses_mid, "ranked top-2 both retained");
+    }
+
+    #[test]
+    fn tvl_tie_breaks_by_best_net_rate() {
+        // Equal TVL; P2 carries the better net rate (lower log_weight).
+        let g = triangle_with_parallel_ab(&[(0x10, 10.0, Some(0.5)), (0x20, 10.0, Some(-0.2))]);
+        let cfg = RouteFinderConfig {
+            max_pools_per_pair: 1,
+            ..Default::default()
+        };
+        let o = find_routes(&g, 1, &cfg);
+        assert!(o.pools_truncated);
+        for r in &o.routes {
+            assert!(
+                !r.pools.contains(&addr(0x10)),
+                "worse-rate pool must lose the TVL tie"
+            );
+        }
+        assert!(o.routes.iter().any(|r| r.pools.contains(&addr(0x20))));
+    }
+
+    #[test]
+    fn unpriced_edge_ranks_below_priced_on_tie() {
+        // Equal TVL; P1 has no weight (unpriceable), P2 is priced. The priced
+        // edge wins the slot even though its rate is mediocre.
+        let g = triangle_with_parallel_ab(&[(0x10, 10.0, None), (0x20, 10.0, Some(9.9))]);
+        let cfg = RouteFinderConfig {
+            max_pools_per_pair: 1,
+            ..Default::default()
+        };
+        let o = find_routes(&g, 1, &cfg);
+        assert!(o.pools_truncated);
+        for r in &o.routes {
+            assert!(
+                !r.pools.contains(&addr(0x10)),
+                "unpriced edge must rank below a priced one"
+            );
+        }
+        assert!(o.routes.iter().any(|r| r.pools.contains(&addr(0x20))));
+    }
+
+    #[test]
+    fn full_tie_falls_back_to_deterministic_address_order() {
+        // Identical hint and weight → smaller pool address kept: the ranking is
+        // a total order, so enumeration is reproducible run-to-run.
+        let g = triangle_with_parallel_ab(&[(0x30, 10.0, Some(0.1)), (0x20, 10.0, Some(0.1))]);
+        let cfg = RouteFinderConfig {
+            max_pools_per_pair: 1,
+            ..Default::default()
+        };
+        let o = find_routes(&g, 1, &cfg);
+        for r in &o.routes {
+            assert!(
+                !r.pools.contains(&addr(0x30)),
+                "full tie → smaller address wins deterministically"
+            );
+        }
+    }
+
+    #[test]
+    fn per_pair_cap_without_surplus_does_not_sort_or_flag() {
+        // Under the cap: no truncation flag, all pools retained (regression
+        // guard for the pre-RU-2 behaviour of the same scenario).
+        let g = triangle_with_parallel_ab(&[(0x10, 1.0, Some(0.01)), (0x20, 100.0, Some(0.01))]);
+        let o = find_routes(&g, 1, &RouteFinderConfig::default()); // cap 8
+        assert!(!o.pools_truncated);
+        assert!(o.routes.iter().any(|r| r.pools.contains(&addr(0x10))));
+        assert!(o.routes.iter().any(|r| r.pools.contains(&addr(0x20))));
     }
 }
