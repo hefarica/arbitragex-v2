@@ -65,7 +65,10 @@ pub fn svc_cred_key(provider: &str, scope: &str) -> String {
 /// Pure resolution core (unit-testable): projection JSON first, env fallback.
 /// An empty `secret_value` or a malformed projection falls through to env —
 /// the projection never yields a value the operator did not persist.
-pub fn resolve_from_parts(projection_raw: Option<&str>, env_value: Option<String>) -> Option<ResolvedCred> {
+pub fn resolve_from_parts(
+    projection_raw: Option<&str>,
+    env_value: Option<String>,
+) -> Option<ResolvedCred> {
     if let Some(raw) = projection_raw {
         if let Ok(p) = serde_json::from_str::<SvcCredProjection>(raw) {
             if !p.secret_value.is_empty() {
@@ -73,7 +76,11 @@ pub fn resolve_from_parts(projection_raw: Option<&str>, env_value: Option<String
                     value: p.secret_value,
                     source: CredSource::Projection,
                     status: p.status,
-                    metadata: if p.metadata.is_null() { None } else { Some(p.metadata) },
+                    metadata: if p.metadata.is_null() {
+                        None
+                    } else {
+                        Some(p.metadata)
+                    },
                 });
             }
         }

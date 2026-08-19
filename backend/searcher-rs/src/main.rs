@@ -671,27 +671,35 @@ async fn main() -> anyhow::Result<()> {
     // FASE 3b (RunFullSyncCycle): price-worker credentials resolve with
     // projection precedence (arbx:svc_cred:* ← api-server credentials store)
     // over the legacy env, logging cred_source per provider.
-    let price_alchemy_key =
-        match workers::price_worker::alchemy_key_with_source(Some(&redis_conn), primary_chain).await {
-            Some((key, src)) => {
-                info!(event = "cred.source", provider = "alchemy_prices", source = src.as_str());
-                Some(key)
-            }
-            None => None,
-        };
-    // Coingecko Demo/Pro key (optional). When set, fetch_coingecko attaches the
-    // x-cg-demo-api-key header (free tier now 400s unauth). Plan A.2 code-gap.
-    let price_coingecko_key = shared_rs::svc_cred::resolve(
-        &redis_conn,
-        "COINGECKO_API_KEY",
-        "coingecko_pro",
-        "global",
+    let price_alchemy_key = match workers::price_worker::alchemy_key_with_source(
+        Some(&redis_conn),
+        primary_chain,
     )
     .await
-    .map(|r| {
-        info!(event = "cred.source", provider = "coingecko_pro", source = r.source.as_str());
-        r.value
-    });
+    {
+        Some((key, src)) => {
+            info!(
+                event = "cred.source",
+                provider = "alchemy_prices",
+                source = src.as_str()
+            );
+            Some(key)
+        }
+        None => None,
+    };
+    // Coingecko Demo/Pro key (optional). When set, fetch_coingecko attaches the
+    // x-cg-demo-api-key header (free tier now 400s unauth). Plan A.2 code-gap.
+    let price_coingecko_key =
+        shared_rs::svc_cred::resolve(&redis_conn, "COINGECKO_API_KEY", "coingecko_pro", "global")
+            .await
+            .map(|r| {
+                info!(
+                    event = "cred.source",
+                    provider = "coingecko_pro",
+                    source = r.source.as_str()
+                );
+                r.value
+            });
     let price_redis = redis_conn.clone();
     let price_chain = primary_chain;
     // Tier-0 Chainlink on-chain feeds: needs the PG pool (reads operator-seeded

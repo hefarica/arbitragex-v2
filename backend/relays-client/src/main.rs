@@ -196,7 +196,9 @@ async fn main() -> anyhow::Result<()> {
     // precedence — arbx:svc_cred:* (api-server credentials-store projection)
     // first, legacy env fallback — logging cred_source per provider. A Redis
     // failure degrades to env-only (warn); it never blocks the boot path.
-    let svc_redis: Option<redis::aio::ConnectionManager> = match redis::Client::open(redis_url.clone()) {
+    let svc_redis: Option<redis::aio::ConnectionManager> = match redis::Client::open(
+        redis_url.clone(),
+    ) {
         Ok(client) => match client.get_connection_manager().await {
             Ok(mgr) => Some(mgr),
             Err(e) => {
@@ -213,7 +215,13 @@ async fn main() -> anyhow::Result<()> {
     let signer = {
         let resolved = match svc_redis.as_ref() {
             Some(mgr) => {
-                shared_rs::svc_cred::resolve(mgr, "FLASHBOTS_SIGNER_KEY", "flashbots_signer", "global").await
+                shared_rs::svc_cred::resolve(
+                    mgr,
+                    "FLASHBOTS_SIGNER_KEY",
+                    "flashbots_signer",
+                    "global",
+                )
+                .await
             }
             None => std::env::var("FLASHBOTS_SIGNER_KEY")
                 .ok()
@@ -228,7 +236,10 @@ async fn main() -> anyhow::Result<()> {
         info!(
             event = "cred.source",
             provider = "flashbots_signer",
-            source = resolved.as_ref().map(|r| r.source.as_str()).unwrap_or("none")
+            source = resolved
+                .as_ref()
+                .map(|r| r.source.as_str())
+                .unwrap_or("none")
         );
         let key = resolved.map(|r| r.value).unwrap_or_default();
         match Signer::from_key(&key, chain_id)? {
@@ -420,15 +431,24 @@ async fn main() -> anyhow::Result<()> {
         // ── BloXRoute (FASE 3c: projection → env) ────────────────────────────
         {
             let blx_auth = match svc_redis.as_ref() {
-                Some(mgr) => {
-                    shared_rs::svc_cred::resolve(mgr, "BLOXROUTE_AUTH_HEADER", "bloxroute", "global")
-                        .await
-                        .map(|r| {
-                            info!(event = "cred.source", provider = "bloxroute", source = r.source.as_str());
-                            r.value
-                        })
-                }
-                None => std::env::var("BLOXROUTE_AUTH_HEADER").ok().filter(|v| !v.is_empty()),
+                Some(mgr) => shared_rs::svc_cred::resolve(
+                    mgr,
+                    "BLOXROUTE_AUTH_HEADER",
+                    "bloxroute",
+                    "global",
+                )
+                .await
+                .map(|r| {
+                    info!(
+                        event = "cred.source",
+                        provider = "bloxroute",
+                        source = r.source.as_str()
+                    );
+                    r.value
+                }),
+                None => std::env::var("BLOXROUTE_AUTH_HEADER")
+                    .ok()
+                    .filter(|v| !v.is_empty()),
             };
             if let Some(blx) = BloXRouteClient::from_auth_header(blx_auth.unwrap_or_default()) {
                 info!(event = "bloxroute.configured", "bloxroute backend added");
@@ -446,7 +466,13 @@ async fn main() -> anyhow::Result<()> {
             let (titan_url, titan_auth, titan_src) = match svc_redis.as_ref() {
                 Some(mgr) => {
                     match shared_rs::svc_cred::resolve(mgr, "", "titan", "global").await {
-                        Some(r) if r.metadata.as_ref().and_then(|m| m.get("url")).and_then(|v| v.as_str()).is_some() => {
+                        Some(r)
+                            if r.metadata
+                                .as_ref()
+                                .and_then(|m| m.get("url"))
+                                .and_then(|v| v.as_str())
+                                .is_some() =>
+                        {
                             let url = r
                                 .metadata
                                 .as_ref()
@@ -457,19 +483,31 @@ async fn main() -> anyhow::Result<()> {
                         }
                         _ => {
                             // Projection without metadata.url — env fallback.
-                            let u = std::env::var("TITAN_BUILDER_URL").ok().filter(|v| !v.is_empty());
-                            let a = std::env::var("TITAN_AUTH_HEADER").ok().filter(|v| !v.is_empty());
+                            let u = std::env::var("TITAN_BUILDER_URL")
+                                .ok()
+                                .filter(|v| !v.is_empty());
+                            let a = std::env::var("TITAN_AUTH_HEADER")
+                                .ok()
+                                .filter(|v| !v.is_empty());
                             (u, a, "env")
                         }
                     }
                 }
                 None => {
-                    let u = std::env::var("TITAN_BUILDER_URL").ok().filter(|v| !v.is_empty());
-                    let a = std::env::var("TITAN_AUTH_HEADER").ok().filter(|v| !v.is_empty());
+                    let u = std::env::var("TITAN_BUILDER_URL")
+                        .ok()
+                        .filter(|v| !v.is_empty());
+                    let a = std::env::var("TITAN_AUTH_HEADER")
+                        .ok()
+                        .filter(|v| !v.is_empty());
                     (u, a, "env")
                 }
             };
-            info!(event = "cred.source", provider = "titan", source = titan_src);
+            info!(
+                event = "cred.source",
+                provider = "titan",
+                source = titan_src
+            );
             match (titan_url, titan_auth) {
                 (Some(u), Some(a)) => {
                     if let Some(titan) = TitanClient::from_parts(u, a) {

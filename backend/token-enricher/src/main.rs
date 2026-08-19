@@ -442,11 +442,15 @@ async fn main() -> Result<()> {
         Ok(client) => match redis::aio::ConnectionManager::new(client).await {
             Ok(mgr) => {
                 let resolved =
-                    shared_rs::svc_cred::resolve(&mgr, "GITHUB_TOKEN", "github_token", "global").await;
+                    shared_rs::svc_cred::resolve(&mgr, "GITHUB_TOKEN", "github_token", "global")
+                        .await;
                 info!(
                     event = "cred.source",
                     provider = "github_token",
-                    source = resolved.as_ref().map(|r| r.source.as_str()).unwrap_or("none")
+                    source = resolved
+                        .as_ref()
+                        .map(|r| r.source.as_str())
+                        .unwrap_or("none")
                 );
                 resolved.map(|r| r.value)
             }
