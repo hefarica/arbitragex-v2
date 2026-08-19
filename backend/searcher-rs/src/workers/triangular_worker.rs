@@ -2411,8 +2411,11 @@ mod tests {
         // flood) and blocked every Sized outcome for high-priced tokens.
         let cap = clamp_to_cap_wei(U256::from(10u64).pow(U256::from(20u64)), 1.0, 2000.0, 18);
         let cap = cap.expect("sub-token cap must compute in the wei domain");
-        assert_eq!(cap, U256::from(5u64) * U256::from(10u64).pow(U256::from(13u64))); // 5e14
-        // And it still clamps x down to the sub-token cap (anti-BUG-3 bound).
+        assert_eq!(
+            cap,
+            U256::from(5u64) * U256::from(10u64).pow(U256::from(13u64))
+        ); // 5e14
+           // And it still clamps x down to the sub-token cap (anti-BUG-3 bound).
         assert!(cap < U256::from(10u64).pow(U256::from(20u64)));
     }
 
