@@ -113,6 +113,7 @@ import { mountScoringStatus } from "./routes/scoring-status.js";
 import { mountPaperShadowMetrics } from "./routes/paper-shadow-metrics.js";
 import { mountForkStatus } from "./routes/fork-status.js";
 import { mountRpcRegistry } from "./routes/rpc-registry.js";
+import { mountRpcBackend } from "./routes/rpc-backend.js";
 import { mountOpportunitySimulate } from "./routes/opportunity-simulate.js";
 import { buildMathEngineRouter } from "./routes/math-engine-proxy.js";
 import { buildMathEvidenceRouter } from "./routes/math-evidence.js";
@@ -625,6 +626,10 @@ mountPaperModeReconcile(app, {
 // RPC registry sync (Excel catalog → rpc_endpoints): public status + admin import/reload.
 // status is counts-only (ungated); import/reload are requireAdminToken-gated.
 mountRpcRegistry(app, { pool, redis, requireAdminToken, adminToken: ARBX_ADMIN_TOKEN, logger });
+// RPC backend toggle (alloy dual-track FASE 4) — Redis arbx:rpc_backend:<service>.
+// Admin-gated GET/PUT; every effective change audited (before/after). Mode-invariant
+// (§34.1): selects the RPC implementation track only, never trading mode/capital.
+mountRpcBackend(app, { redis, requireAdminToken, adminToken: ARBX_ADMIN_TOKEN, writeAudit, reqUA, logger });
 mountAlertmanagerWebhook(app, {
   requireAdminToken,
   adminToken: ARBX_ADMIN_TOKEN,
