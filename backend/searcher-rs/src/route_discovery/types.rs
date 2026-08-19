@@ -158,12 +158,17 @@ pub struct RouteEdge {
     pub token1: Address,
     pub protocol: ProtocolType,
     pub fee_bps: Option<u32>,
-    /// Coarse liquidity magnitude for low-liquidity rejection / ordering.
-    /// V2: `r0+r1` normalized by decimals; V3: active `liquidity`. `None` when
-    /// reserves/slot0 are missing.
+    /// Coarse liquidity magnitude (TVL proxy) for low-liquidity rejection and
+    /// per-pair top-K ordering. V2: `r0+r1` normalized by decimals; V3: virtual
+    /// reserves `L/√P + L·√P` normalized — unit-consistent with V2 so parallel
+    /// pools of both protocols rank comparably. `None` when reserves/slot0
+    /// are missing.
     pub liquidity_hint: Option<f64>,
-    /// **Phase-2 forward-compat only** — `−log((1−fee)·rate)` (MMBF edge weight).
-    /// `None` when the rate is not computable. Phase 1 does NOT rank on this.
+    /// MMBF edge weight `−ln((1−fee)·rate)` — computed for **both** protocols
+    /// (V2 from reserves, V3 from slot0 `sqrtPriceX96`; RU-2). Consumed by the
+    /// per-pair top-K ranking (`best net rate` tie-break) and the multi-hop
+    /// negative-cycle search. `None` when the rate is not computable — never
+    /// a fabricated value.
     pub log_weight: Option<f64>,
     /// Unix epoch seconds of the underlying reserves/slot0 snapshot.
     pub freshness_ts: u64,
