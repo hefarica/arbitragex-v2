@@ -37,7 +37,7 @@ use prioritization_spine::round_trip_executor::RoundTripContext;
 use searcher_rs::amm_math::v2_amount_out;
 use searcher_rs::route_discovery::graph_builder::TokenGraph;
 use searcher_rs::route_discovery::types::{RouteDirection, RouteEdge};
-use searcher_rs::route_discovery::unique_route_finder::{find_routes, RouteFinderConfig};
+use searcher_rs::route_discovery::unique_route_finder::{find_routes, CapPolicy, RouteFinderConfig};
 use searcher_rs::route_intent::ProtocolType;
 use searcher_rs::sim_orchestrator::{execute_round_trip_revm, RoundTripExecutionConfig};
 
@@ -396,6 +396,9 @@ impl SimEngine {
             max_routes_per_tick: p.max_routes.unwrap_or(500).min(MAX_ROUTES_CAP),
             base_tokens,
             mode: "shadow".to_string(),
+            // MCP tool = one-shot query → BoundedLegacy is the correct policy here
+            // (the DeferNeverDrop cursor engine is for the long-running worker).
+            policy: CapPolicy::BoundedLegacy,
         };
 
         let outcome = find_routes(&graph, p.chain_id, &cfg);
