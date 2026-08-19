@@ -14,6 +14,7 @@ pub mod candidates;
 pub mod chains;
 pub mod config;
 pub mod contracts;
+pub mod cred_rotation;
 pub mod db_pool;
 pub mod health;
 pub mod killswitch;
@@ -29,6 +30,7 @@ pub mod tokens;
 pub mod trading_config;
 
 pub use config::{AppConfig, ConfigError};
+pub use cred_rotation::{RotationOutcome, RotationState};
 pub use db_pool::{connect_pool, options_with_timeouts, PoolConfig};
 pub use health::{build_health_router, ServiceInfo};
 pub use killswitch::{KillSwitchClient, KillSwitchError, KillSwitchState};
