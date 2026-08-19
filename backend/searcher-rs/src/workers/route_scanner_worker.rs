@@ -462,9 +462,7 @@ async fn scan_block(
     if pools.is_empty() {
         debug!(
             event = "route_scanner.no_pools",
-            chain_id,
-            block_number,
-            "empty pool universe — honest skip (no fabricated graph)"
+            chain_id, block_number, "empty pool universe — honest skip (no fabricated graph)"
         );
         return;
     }
@@ -621,8 +619,7 @@ async fn run_scan_subscription(
     let mut blocks = client.subscribe_blocks().await?;
     info!(
         event = "route_scanner.connected",
-        chain_id,
-        "subscribed to newHeads (per-block multi-hop scan active)"
+        chain_id, "subscribed to newHeads (per-block multi-hop scan active)"
     );
     loop {
         tokio::select! {
@@ -722,7 +719,13 @@ pub fn spawn_route_scanner(
         event = "route_scanner.mode",
         chain_id,
         mode = mode.as_str(),
-        dispatch_path = if orchestrator.is_some() { "orchestrator" } else if runner.is_some() { "cartridge_shadow" } else { "telemetry_only" }
+        dispatch_path = if orchestrator.is_some() {
+            "orchestrator"
+        } else if runner.is_some() {
+            "cartridge_shadow"
+        } else {
+            "telemetry_only"
+        }
     );
     if mode != RouteScannerMode::On {
         return; // off → dormant, nothing spawned
@@ -991,18 +994,15 @@ mod tests {
         assert_eq!(scan.v3_skipped, 0, "all edges are V2 (weighted)");
         // 2 two-hop rotations + 4 anchored four-hop rotations.
         assert_eq!(scan.dispatchable.len(), 6);
-        assert!(
-            scan.dispatchable
-                .iter()
-                .all(|c| c.hop_count == 2 || c.hop_count == 4)
-        );
+        assert!(scan
+            .dispatchable
+            .iter()
+            .all(|c| c.hop_count == 2 || c.hop_count == 4));
         // 6 rotations of the hexagon, all carrying both anchors.
         assert_eq!(scan.shadow_only.len(), 6);
         assert!(scan.shadow_only.iter().all(|c| c.hop_count == 6));
         assert!(
-            scan.shadow_only
-                .iter()
-                .all(|c| c.sum_log_weight < 0.0),
+            scan.shadow_only.iter().all(|c| c.sum_log_weight < 0.0),
             "shadow-forced cycles are still profitable — just not dispatched"
         );
         // 4 rotations of the un-anchored square, all rejected by the gate.
