@@ -286,6 +286,17 @@ pub fn redis_token_prices_key(chain_id: u64) -> String {
     format!("arbx:token_prices:{chain_id}")
 }
 
+/// Pub/sub channel notified whenever a writer persists prices into
+/// `arbx:token_prices:<chain_id>` (G-PRICE-1: snapshot+push price streaming).
+/// Payload is a small JSON notice (`{"source":"price_worker","written":33}`);
+/// receivers re-read the hash for the actual data, keeping the Redis hash as
+/// the single source of truth (no payload drift between writers).
+/// Writers: searcher-rs `price_worker`, token-enricher DexScreener and
+/// GeckoTerminal tiers. Consumer: api-server `prices-stream` WS bridge.
+pub fn prices_updated_channel(chain_id: u64) -> String {
+    format!("arbx:prices:updated:{chain_id}")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
