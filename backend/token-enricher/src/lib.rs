@@ -1,6 +1,7 @@
 pub mod consumer;
 pub mod dexscreener;
 pub mod geckoterminal_tier;
+pub mod logo_refresh;
 pub mod metrics;
 pub mod multicall;
 pub mod persistence;

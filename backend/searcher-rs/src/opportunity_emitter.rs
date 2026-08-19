@@ -214,6 +214,33 @@ impl OpportunityEmitter {
         strategy_label: StrategyLabel,
         route: Option<&shared_rs::candidates::RouteMetadata>,
     ) -> anyhow::Result<EmitOutcome> {
+        // GATE (2026-08-18, "arbitrajes reales, no de fallback"): an ACCEPTED
+        // row must carry computed economics. Live prod showed rows emitted as
+        // accepted with amount_in_wei=0 and BOTH profit fields None — cosmetic
+        // acceptances that rendered as hollow cards and inflated the accepted
+        // class with nothing to act on. A candidate whose economics were never
+        // computed is NOT an opportunity yet: reclassify to an honest rejection
+        // (R8: visible with its reason, never silently dropped) via the
+        // rejected path. Guard sits BEFORE passed_all_gates so reclassifications
+        // don't inflate that counter, and covers every emitter (current and
+        // future) at the single publish gate.
+        if !has_computed_economics(opportunity) {
+            tracing::warn!(
+                event = "opportunity_emitter.accept_without_economics",
+                opp_id = %opportunity.id,
+                strategy = strategy_label.as_str(),
+                cartridge_id = ?opportunity.cartridge_id,
+                "accepted emission without computed economics — reclassifying as no_computable_economics"
+            );
+            return self
+                .emit_rejected(
+                    opportunity,
+                    strategy_label,
+                    "no_computable_economics",
+                    route,
+                )
+                .await;
+        }
         // A5/N-01b: increment passed_all_gates so the heartbeat reflects V2-path
         // accepted candidates (previously only the legacy scanner incremented it).
         counters().passed_all_gates.fetch_add(1, Ordering::Relaxed);
@@ -528,6 +555,15 @@ impl OpportunityEmitter {
 /// Builds the route fingerprint string used as the `OppDedup` key.
 ///
 /// The fingerprint matches the pattern used in `scanner.rs`:
+/// True when the opportunity carries at least one computed economics figure
+/// (gross OR net). Accepted emissions REQUIRE this — the 2026-08-18 gate in
+/// `emit_accepted` reclassifies economy-less acceptances as
+/// `no_computable_economics` rejections ("arbitrajes reales, no de fallback":
+/// an accepted row the operator cannot act on is a cosmetic acceptance).
+fn has_computed_economics(opp: &Opportunity) -> bool {
+    opp.expected_profit_usd.is_some() || opp.net_expected_profit_usd.is_some()
+}
+
 /// `<dex_a>_<token_in>_<token_out>` — stable, lowercase, separator-delimited.
 ///
 /// Lowercasing ensures address case variants don't defeat dedup.
@@ -672,6 +708,29 @@ mod tests {
         assert!(!hash.is_empty());
         // The opp value is unchanged.
         assert!(opp.expected_profit_usd.is_none());
+    }
+
+    // ── 2026-08-18 gate: accepted requires computed economics ────────────────
+
+    #[test]
+    fn no_economics_is_not_computed_economics() {
+        // The exact live-prod signature: amount 0, gross None, net None →
+        // must NOT qualify as an accepted-class opportunity.
+        let mut opp = make_opp(Uuid::new_v4(), None, None);
+        opp.amount_in_wei = "0".to_owned();
+        assert!(!has_computed_economics(&opp));
+    }
+
+    #[test]
+    fn gross_or_net_each_qualify() {
+        // Gross alone qualifies…
+        let gross_only = make_opp(Uuid::new_v4(), Some(1.5), None);
+        assert!(has_computed_economics(&gross_only));
+        // …and net alone qualifies (spine accepted path sets net even when
+        // gross came through as None — the row still carries real economics).
+        let mut net_only = make_opp(Uuid::new_v4(), None, None);
+        net_only.net_expected_profit_usd = Some(0.42);
+        assert!(has_computed_economics(&net_only));
     }
 
     // ── opportunity_emitter::tests::accepted_dedupe_hit_skips_io ────────────
