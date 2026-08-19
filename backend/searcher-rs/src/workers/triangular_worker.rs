@@ -390,14 +390,22 @@ pub fn clamp_to_cap_wei(
     if !token_a_price_usd.is_finite() || token_a_price_usd <= 0.0 {
         return None;
     }
-    // tokens_capped = cap_usd / price_usd_per_token. floor() so we never EXCEED.
-    let tokens_capped = (cap_usd / token_a_price_usd).floor();
-    if !tokens_capped.is_finite() || tokens_capped <= 0.0 {
+    // G-ECON-2 (2026-08-19): clamp at WEI granularity, not whole-token
+    // granularity. The previous code floored cap/price to whole tokens BEFORE
+    // converting to wei — any cap smaller than one whole token (e.g. $1,000
+    // sim cap against WETH at ~$3k) floored to 0 → None → CapClampFailed.
+    // That single floor was 23% of ALL rejections (2,765/11,896 in 2h of prod)
+    // and the direct reason the SizeOptimizer never returned `Sized` (hence
+    // net_expected_profit_usd never flowed). Sub-token amounts are perfectly
+    // representable in the wei domain the AMM math already operates on.
+    let ratio = cap_usd / token_a_price_usd;
+    if !ratio.is_finite() || ratio <= 0.0 {
         return None;
     }
     // Convert to wei (10^decimals scaling). decimals ∈ [0, 24] in practice; we
-    // saturate the multiplier to f64 precision then convert.
-    let wei_f = tokens_capped * 10f64.powi(decimals as i32);
+    // saturate the multiplier to f64 precision then convert. The floor() here
+    // is in the WEI domain — the finest expressible unit.
+    let wei_f = ratio * 10f64.powi(decimals as i32);
     let cap_wei = f64_to_u256_clamped(wei_f.floor());
     let result = if x_star < cap_wei { x_star } else { cap_wei };
     // Defensive bound (anti-BUG-3): even if the math above had a subtle bug,
@@ -2396,13 +2404,26 @@ mod tests {
     }
 
     #[test]
-    fn clamp_to_cap_wei_returns_none_when_floor_yields_zero_tokens() {
-        // cap=$1, price=$2000/WETH → 0.0005 floor = 0 → None.
+    fn clamp_to_cap_wei_supports_sub_token_caps_in_wei() {
+        // G-ECON-2: cap=$1, price=$2000/WETH → 0.0005 WETH = 5e14 wei — a
+        // perfectly expressible wei-domain amount. The whole-token floor that
+        // used to None here was 23% of all prod rejections (CapClampFailed
+        // flood) and blocked every Sized outcome for high-priced tokens.
         let cap = clamp_to_cap_wei(U256::from(10u64).pow(U256::from(20u64)), 1.0, 2000.0, 18);
-        assert!(
-            cap.is_none(),
-            "sub-token cap must yield None, not silently emit 0 wei"
-        );
+        let cap = cap.expect("sub-token cap must compute in the wei domain");
+        assert_eq!(cap, U256::from(5u64) * U256::from(10u64).pow(U256::from(13u64))); // 5e14
+        // And it still clamps x down to the sub-token cap (anti-BUG-3 bound).
+        assert!(cap < U256::from(10u64).pow(U256::from(20u64)));
+    }
+
+    #[test]
+    fn clamp_to_cap_wei_returns_none_when_ratio_underflows_wei() {
+        // A cap so small it cannot express a single wei (ratio × 10^18 < 1)
+        // yields Some(0) — callers already guard zero as ZeroCapitalCap /
+        // NonPositiveProfit (honest), never a fabricated amount.
+        // $1 cap against a $1e21-priced token → 1e-21 tokens → 1e-3 wei → 0.
+        let cap = clamp_to_cap_wei(U256::from(10u64).pow(U256::from(20u64)), 1.0, 1e21, 18);
+        assert_eq!(cap, Some(U256::zero()));
     }
 
     #[test]
