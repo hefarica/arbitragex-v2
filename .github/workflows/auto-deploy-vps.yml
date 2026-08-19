@@ -62,7 +62,12 @@ jobs:
               if [ "$STATUS" = "completed" ] && [ "$CONCLUSION" != "success" ]; then
                 echo "e2e failed with conclusion=$CONCLUSION"
                 echo "e2e_success=false" >> "$GITHUB_OUTPUT"
-                exit 0
+                # G4 HARDENING (2026-08-18): exit 0 + skipped deploy = the workflow
+                # reports GREEN while nothing deployed — the exact silent-stale
+                # incident (VPS stuck 2 deploys behind on a "success"). FAIL RED
+                # instead; manual workflow_dispatch remains the override path.
+                echo "::error::e2e failed for $TARGET_SHA — deploy will NOT run silently-green. Re-run e2e or use workflow_dispatch."
+                exit 1
               fi
             else
               echo "[$i/$MAX_ITERATIONS] e2e run not found yet for SHA $TARGET_SHA"
@@ -73,6 +78,8 @@ jobs:
 
           echo "Timed out waiting for e2e"
           echo "e2e_success=false" >> "$GITHUB_OUTPUT"
+          echo "::error::Timed out waiting for e2e on $TARGET_SHA — deploy skipped LOUDLY (was silently green)."
+          exit 1
 
   deploy-to-vps:
     name: Deploy to VPS
@@ -154,9 +161,34 @@ jobs:
             git fetch origin main --prune
             git reset --hard origin/main
           fi
-          # Pin exactly to the SHA that just passed e2e when possible.
-          if git cat-file -e "${TARGET_SHA}^{commit}" 2>/dev/null; then
-            git reset --hard "$TARGET_SHA"
+          # G4 HARDENING (deploy-veraz, 2026-08-18): the pin to TARGET_SHA is now
+          # MANDATORY, not best-effort. The old soft `if` silently SKIPPED the pin
+          # when a lagging mirror hadn't seen the SHA yet, deploying a stale
+          # checkout under a green workflow. Now: retry the fetch until the SHA is
+          # reachable, then FAIL LOUD instead of deploying stale.
+          ANCHORED=0
+          for attempt in 1 2 3; do
+            if git cat-file -e "${TARGET_SHA}^{commit}" 2>/dev/null; then
+              git reset --hard "$TARGET_SHA"
+              ANCHORED=1
+              break
+            fi
+            echo "attempt ${attempt}: TARGET_SHA not reachable yet (mirror lag) — refetching in 30s"
+            if git remote get-url github >/dev/null 2>&1; then
+              git fetch github main --prune || git fetch origin main --prune
+            else
+              git fetch origin main --prune
+            fi
+            sleep 30
+          done
+          if [ "$ANCHORED" != "1" ]; then
+            echo "::error::TARGET_SHA ${TARGET_SHA} NOT reachable after 3 fetch attempts — REFUSING to deploy a stale checkout (G4 deploy-veraz)."
+            exit 1
+          fi
+          HEAD_NOW="$(git rev-parse HEAD)"
+          if [ "$HEAD_NOW" != "$TARGET_SHA" ]; then
+            echo "::error::anchor mismatch: HEAD=${HEAD_NOW} != TARGET=${TARGET_SHA} — aborting."
+            exit 1
           fi
           echo "HEAD=$(git rev-parse --short HEAD) $(git log -1 --oneline)"
 
@@ -345,6 +377,20 @@ jobs:
           echo "hot-path trace (arbx:opps:detected XLEN):"
           docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" exec -T redis \
             redis-cli XLEN arbx:opps:detected 2>/dev/null || echo "redis stream not yet available"
+          echo "[9/9b] G4 DEPLOY-VERAZ assertion (post-deploy truth)..."
+          # The deploy is only TRUE if the repo STILL sits at TARGET_SHA and the
+          # frontend serves the new build. A green workflow with a stale box is
+          # the incident this closes (2026-08-18: VPS 2 deploys behind on green).
+          POST_HEAD="$(git rev-parse HEAD)"
+          if [ "$POST_HEAD" != "$TARGET_SHA" ]; then
+            echo "::error::POST-DEPLOY DRIFT: HEAD=${POST_HEAD} != TARGET=${TARGET_SHA}"
+            exit 1
+          fi
+          if ! curl -sf -o /dev/null http://127.0.0.1:5173/opportunities/exchange; then
+            echo "::error::frontend NOT serving /opportunities/exchange after deploy"
+            exit 1
+          fi
+          echo "G4 PASS: box anchored at ${TARGET_SHA:0:8} + frontend serving the new build"
           echo "✅ Deploy completed at $(git rev-parse --short HEAD)"
           EOF
 
