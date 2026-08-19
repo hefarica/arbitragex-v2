@@ -240,6 +240,41 @@ pub static RPC_POOL_DRIFT_DETECTED_TOTAL: Lazy<IntCounterVec> = Lazy::new(|| {
     c
 });
 
+// ---- Credential rotation counters (RunFullSyncCycle FASE 4 — svc_cred) ----
+//
+// `arbx_credential_rotation_total`    — every titular→fallback advance of the
+//   rotation state for a credential CSV (rpc_http / rpc_ws arrays; first entry
+//   is the titular, the rest are fallbacks in priority order).
+// `arbx_credential_all_failed_total`  — times EVERY entry in a CSV failed
+//   (wrap-around). The consumer must then declare itself degraded with reason
+//   `all_credentials_failed` (RULE 00: no synthetic data, no last-good-value).
+
+pub static CREDENTIAL_ROTATION_TOTAL: Lazy<IntCounterVec> = Lazy::new(|| {
+    let c = IntCounterVec::new(
+        prometheus::opts!(
+            "arbx_credential_rotation_total",
+            "Credential rotations titular→fallback by provider (svc_cred FASE 4)"
+        ),
+        &["provider"],
+    )
+    .expect("metric");
+    REGISTRY.register(Box::new(c.clone())).expect("register");
+    c
+});
+
+pub static CREDENTIAL_ALL_FAILED_TOTAL: Lazy<IntCounterVec> = Lazy::new(|| {
+    let c = IntCounterVec::new(
+        prometheus::opts!(
+            "arbx_credential_all_failed_total",
+            "Times every entry in a credential CSV failed — consumer degrades (all_credentials_failed)"
+        ),
+        &["provider"],
+    )
+    .expect("metric");
+    REGISTRY.register(Box::new(c.clone())).expect("register");
+    c
+});
+
 // ---- Bundle inclusion counters (N7 — audit 2026-05-10) ----
 //
 // These counters back the BundleSnipedRateHigh alert in
@@ -332,6 +367,8 @@ pub fn init_metrics() {
     let _ = &*BUNDLE_INCLUDED_TOTAL;
     let _ = &*BUNDLE_INCLUDED_NO_PROFIT_TOTAL;
     let _ = &*GAS_PRICE_TS_SECONDS;
+    let _ = &*CREDENTIAL_ROTATION_TOTAL;
+    let _ = &*CREDENTIAL_ALL_FAILED_TOTAL;
     SERVICE_UP.set(1);
 }
 
