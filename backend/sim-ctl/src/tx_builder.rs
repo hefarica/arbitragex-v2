@@ -287,7 +287,13 @@ mod tests {
     fn camelcase_dex_names_resolve_to_catalog_routers() {
         // The exact spellings observed in PG DISTINCT (2h window, 2026-08-19)
         // that the case-sensitive matcher rejected as UnknownRouter.
-        for spelling in ["UniswapV2", "uniswap-v2", "UniswapV3", "uniswap-v3", "SushiSwap"] {
+        for spelling in [
+            "UniswapV2",
+            "uniswap-v2",
+            "UniswapV3",
+            "uniswap-v3",
+            "SushiSwap",
+        ] {
             assert!(
                 find_router_by_name(1, spelling).is_some(),
                 "spelling '{spelling}' must resolve to a catalog router"
