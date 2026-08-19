@@ -66,3 +66,138 @@ strategies:
     route_based: false
     accepts: []
     has_cartridge: true
+
+# ── Excel family profiles (RU-4) ─────────────────────────────────────────────
+# One profile per 264-cartridge Excel category (11 families). A family states
+# which route kinds it accepts, which engine(s) own its evaluation, and the
+# additional gates that must PASS before any dispatch decision. Pure
+# applicability metadata: nothing here sizes or executes, and shadow_only is
+# ALWAYS forced true at load (same invariant as the strategies above).
+#
+# `route_based: false` = the DEX route graph can never DISCOVER the family
+# (its surface is external / off-graph) → every route is rejected with
+# `family_not_route_based`; the target engine + gates are still reported so
+# telemetry explains exactly what the family is missing (R8, never silence).
+families:
+  # 36 cartridges — pure graph cycles across every discovered shape.
+  route_graph_engine:
+    enabled: true
+    shadow_only: true
+    route_based: true
+    accepts: [v2v2, v2v3, v3v2, v3v3, triangular]
+    target_engines: [dex_engine, spatial_engine, triangular_engine]
+    gates: []
+    has_cartridge: true
+
+  # 31 cartridges — post-state imbalance backruns. Route-based but geometry
+  # alone proves nothing: the confirmed post-state signal (ImpactIndex) is a
+  # required gate.
+  state_event_engine:
+    enabled: true
+    shadow_only: true
+    route_based: true
+    accepts: [v2v2, v2v3, v3v2, v3v3, triangular]
+    target_engines: [backrun_engine]
+    gates: [impact_index_post_state]
+    has_cartridge: true
+
+  # 31 cartridges — equivalence-edge round-trips (LST/LRT/stables/wrapped).
+  # An equivalence redemption is a 2-cycle (A↔A' across two venues), so the
+  # triangular kind is not accepted.
+  parity_redemption_engine:
+    enabled: true
+    shadow_only: true
+    route_based: true
+    accepts: [v2v2, v2v3, v3v2, v3v3]
+    target_engines: [dex_engine]
+    gates: [equivalence_edge_registry]
+    has_cartridge: true
+
+  # 30 cartridges — funding/perp vs spot, delta-neutral. Off-graph surface:
+  # the derivative legs live on oracle/perp feeds, not on closed DEX cycles.
+  derivatives_engine:
+    enabled: true
+    shadow_only: true
+    route_based: false
+    accepts: []
+    target_engines: [funding_rate_engine]
+    gates: [derivative_oracle_feed]
+    has_cartridge: true
+
+  # 30 cartridges — cross-chain price divergence via bridges. Off-graph
+  # surface: bridge legs span chains; the discovery graph is single-chain.
+  cross_domain_engine:
+    enabled: true
+    shadow_only: true
+    route_based: false
+    accepts: []
+    target_engines: [cross_chain_bridge_engine]
+    gates: [bridge_leg_bindings]
+    has_cartridge: true
+
+  # 25 cartridges — lending liquidations. Found by health-factor scan, not by
+  # the DEX graph (same semantics as the coarse `liquidation` strategy).
+  credit_liquidation_engine:
+    enabled: true
+    shadow_only: true
+    route_based: false
+    accepts: []
+    target_engines: [liquidation_engine, liquidation_snipe_engine]
+    gates: [health_factor_index]
+    has_cartridge: true
+
+  # 20 cartridges — intent solving over a relay intent feed. Off-graph
+  # surface: intents arrive via relays, not by scanning the DEX graph.
+  intents_solver_engine:
+    enabled: true
+    shadow_only: true
+    route_based: false
+    accepts: []
+    target_engines: [backrun_engine]
+    gates: [relay_intent_feed]
+    has_cartridge: true
+
+  # 18 cartridges — late-phase stub (wave G10): no honest engine yet →
+  # disabled, every kind rejects `family_stub_not_implemented`.
+  nft_engine:
+    enabled: false
+    shadow_only: true
+    route_based: false
+    accepts: []
+    target_engines: []
+    gates: []
+    has_cartridge: true
+
+  # 17 cartridges — typed-graph AMM curves (V2/V3/Curve/Balancer). Accepts the
+  # V2/V3 kinds the Phase-1 graph can type; the gate records that
+  # Curve/Balancer edge typing is still outside `RouteKind::classify`.
+  amm_curve_engine:
+    enabled: true
+    shadow_only: true
+    route_based: true
+    accepts: [v2v2, v2v3, v3v2, v3v3, triangular]
+    target_engines: [dex_engine]
+    gates: [typed_edge_protocol_coverage]
+    has_cartridge: true
+
+  # 14 cartridges — CEX/DEX convergence. Off-graph surface: the DEX leg is a
+  # single swap anchored to an external CEX price, never a discovered cycle.
+  cex_external_engine:
+    enabled: true
+    shadow_only: true
+    route_based: false
+    accepts: []
+    target_engines: [cex_dex_engine]
+    gates: [cex_price_feed]
+    has_cartridge: true
+
+  # 12 cartridges — late-phase stub (wave G11): no honest engine yet →
+  # disabled, every kind rejects `family_stub_not_implemented`.
+  prediction_engine:
+    enabled: false
+    shadow_only: true
+    route_based: false
+    accepts: []
+    target_engines: []
+    gates: []
+    has_cartridge: true
