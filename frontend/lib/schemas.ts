@@ -1151,3 +1151,41 @@ export const DEFAULT_SAFE_STATE: PaperModeState = {
   reasons: ["endpoint_unavailable"],
   chains: [],
 };
+
+// ─────── RPC backend toggle (alloy dual-track FASE 4) ───────
+//
+// Per-service RPC implementation track (ethers | alloy | shadow), read from
+// GET /api/admin/rpc-backend (Redis arbx:rpc_backend:<service>, no TTL).
+// "ethers" is the canonical default when the key is absent. `current` stays a
+// permissive string so an out-of-enum stored value surfaces honestly (R8)
+// instead of failing the whole panel schema.
+
+export const RPC_BACKEND_SERVICES = ["searcher-rs", "relays-client", "sim-ctl"] as const;
+export const RPC_BACKEND_KINDS = ["ethers", "alloy", "shadow"] as const;
+
+export const RpcBackendKindSchema = z.enum(RPC_BACKEND_KINDS);
+export type RpcBackendKind = z.infer<typeof RpcBackendKindSchema>;
+
+export const RpcBackendServiceSchema = z.object({
+  name: z.string().min(1),
+  current: z.string().min(1),
+  options: z.array(RpcBackendKindSchema),
+});
+export type RpcBackendService = z.infer<typeof RpcBackendServiceSchema>;
+
+export const RpcBackendStateSchema = z.object({
+  services: z.array(RpcBackendServiceSchema),
+  updated_at: z.string().nullable(),
+});
+export type RpcBackendState = z.infer<typeof RpcBackendStateSchema>;
+
+// updated_at=null marks "not yet confirmed from the server" — the toggle UI
+// gates changes on a live read (same fail-safe spirit as DEFAULT_SAFE_STATE).
+export const DEFAULT_RPC_BACKEND_STATE: RpcBackendState = {
+  services: RPC_BACKEND_SERVICES.map((name) => ({
+    name,
+    current: "ethers",
+    options: [...RPC_BACKEND_KINDS],
+  })),
+  updated_at: null,
+};

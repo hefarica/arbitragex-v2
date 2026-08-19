@@ -595,6 +595,13 @@ app.post("/api/admin/rpcs/import", (req, res) => {
 app.post("/api/admin/rpcs/reload", (req, res) => {
   adminProxy("/api/v1/admin/rpcs/reload", req, res, "POST");
 });
+// RPC backend toggle (alloy dual-track FASE 4) — per-service ethers/alloy/shadow.
+app.get("/api/admin/rpc-backend", (req, res) => {
+  adminProxy("/api/admin/rpc-backend", req, res, "GET");
+});
+app.put("/api/admin/rpc-backend", (req, res) => {
+  adminProxy("/api/admin/rpc-backend", req, res, "PUT");
+});
 // Topology Vault — admin-token gated RPC/WSS hot-swap control plane.
 // Uses the same V-AT-1 httpOnly cookie translation as Chains Admin; the
 // upstream API Server stores full URLs in Vault/Redis and returns only masked
