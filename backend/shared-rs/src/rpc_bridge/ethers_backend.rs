@@ -110,7 +110,7 @@ impl EthersReader {
         let parsed = url
             .parse::<reqwest::Url>()
             .map_err(|e| BridgeError::Invalid(format!("invalid RPC url {url:?}: {e}")))?;
-        let provider: Provider<Http> = Provider::new(parsed);
+        let provider: Provider<Http> = Provider::new(Http::new(parsed));
         Ok(Self {
             provider: Arc::new(provider),
             pair_abi: parse_abi(PAIR_ABI_JSON, "IUniswapV2Pair")?,
