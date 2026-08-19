@@ -698,6 +698,50 @@ async fn main() -> anyhow::Result<()> {
         }
     });
 
+    // G-PRICE-3 — Chainlink event-driven subscriber: subscribes to
+    // AnswerUpdated on each aggregator via WS instead of waiting for the
+    // price_worker's 30s poll. When Chainlink posts a new round on-chain,
+    // the price flows to Redis + WS push in <2s. The price_worker stays as
+    // the reconciliation fallback. Read-only; no signing.
+    let ws_raw = std::env::var(format!("RPC_WS_{}", primary_chain)).unwrap_or_default();
+    let ws_first = ws_raw
+        .split(',')
+        .filter_map(|tok| {
+            let t = tok.trim();
+            if t.is_empty() {
+                return None;
+            }
+            let url = if t.contains('=') {
+                t.splitn(2, '=').nth(1)?.trim()
+            } else {
+                t
+            };
+            if url.starts_with("wss://") || url.starts_with("ws://") {
+                Some(url.to_string())
+            } else {
+                None
+            }
+        })
+        .next();
+    if let (Some(db), Some(ws_url)) = (db_pool.clone(), ws_first) {
+        let cl_redis = redis_conn.clone();
+        let cl_chain = primary_chain;
+        tokio::spawn(async move {
+            if let Err(e) = workers::chainlink_subscriber::ChainlinkSubscriber::spawn(
+                cl_chain, ws_url, db, cl_redis,
+            )
+            .await
+            {
+                warn!(
+                    event = "chainlink_subscriber.boot_failed",
+                    chain_id = cl_chain,
+                    error = %e,
+                    "event subscriber failed to start — price_worker poll covers the gap"
+                );
+            }
+        });
+    }
+
     // Heartbeat worker — pipeline-state pulse every 60s. Without this, sparse
     // scanner events (sometimes a few per hour) make docker logs look idle even
     // when detection is healthy. The heartbeat emits Redis stream delta + PG
