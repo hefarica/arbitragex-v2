@@ -187,6 +187,89 @@ pub fn v3_amount_out_single_tick(
 }
 
 // ============================================================================
+// Uniswap V3 marginal (spot) pricing from slot0 — RU-2
+// ============================================================================
+
+/// 2^96 as f64 — the fixed-point denominator of `sqrtPriceX96`. Written as the
+/// exact integer 79228162514264337593543950336; a power of two is exactly
+/// representable in f64 (no rounding on conversion).
+const Q96_F64: f64 = 79_228_162_514_264_337_593_543_950_336.0;
+
+/// Marginal V3 pricing snapshot derived from `slot0.sqrtPriceX96` + `liquidity()`.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct V3SpotSnapshot {
+    /// Marginal (spot) rate in human units — token1 per token0:
+    /// `(sqrtPriceX96 / 2^96)² · 10^(dec0 − dec1)`. This is the price at zero
+    /// trade size (the price AT the active tick), the correct magnitude for an
+    /// MMBF edge weight; how fast it degrades with size (depth across ticks) is
+    /// the QuoterV2 / `v3_amount_out_single_tick` path, not this one.
+    pub rate_01: f64,
+    /// TVL proxy unit-consistent with the V2 graph-builder hint (`r0 + r1`
+    /// normalized by decimals): the virtual reserves of the constant-product
+    /// pool that reproduces this tick's local behaviour —
+    /// `L/√P · 10^−dec0 + L·√P · 10^−dec1`. Without this, ranking parallel
+    /// V2/V3 pools of the same pair would compare token units against raw
+    /// uint128 liquidity (~17 orders of magnitude apart).
+    pub virtual_reserves_hint: f64,
+}
+
+/// Compute the V3 marginal spot rate + virtual-reserves hint from the slot0
+/// snapshot (RU-2: real `log_weight` for V3 graph edges).
+///
+/// `sqrt_price_x96` / `liquidity` are the raw on-chain uint160/uint128 values
+/// (`V3Slot0Entry` stores them as decimal strings; `pool_sync_worker` refuses
+/// to cache sqrtPrice > u128::MAX, so u128 covers the cached domain).
+/// `tickSpacing` is deliberately NOT an input: it parameterizes tick
+/// granularity — how liquidity distributes ACROSS ticks — not the spot price
+/// AT the active tick, and it is not part of the cached snapshot.
+///
+/// R8 fail-honest: returns `None` — never a synthetic value — when either
+/// input is zero (uninitialized pool / empty range ⇒ no price exists) or any
+/// derived magnitude is non-finite or non-positive.
+///
+/// f64 precision: converting u128 inputs rounds to a 53-bit mantissa
+/// (~1e-16 relative) — ample for a ranking weight whose fee component is
+/// 1e-4..1e-2. The executable path keeps integer math
+/// (`v3_amount_out_single_tick` / QuoterV2); this is scoring only (RULE 00).
+pub fn v3_spot_snapshot(
+    sqrt_price_x96: u128,
+    liquidity: u128,
+    dec0: u8,
+    dec1: u8,
+) -> Option<V3SpotSnapshot> {
+    if sqrt_price_x96 == 0 || liquidity == 0 {
+        return None; // uninitialized pool or empty active range — no price exists
+    }
+    let sp = sqrt_price_x96 as f64;
+    let l = liquidity as f64;
+    let sqrt_p = sp / Q96_F64; // √P in raw token1-wei per token0-wei
+    let raw_price = sqrt_p * sqrt_p;
+    if !(raw_price.is_finite() && raw_price > 0.0) {
+        return None;
+    }
+    let rate_01 = raw_price * 10f64.powi(dec0 as i32 - dec1 as i32);
+    if !(rate_01.is_finite() && rate_01 > 0.0) {
+        return None;
+    }
+    // Virtual reserves (raw wei): x = L/√P, y = L·√P. Both stay finite for the
+    // full u128 input domain (products ≤ ~1e77 << f64::MAX).
+    let x_v = l / sqrt_p;
+    let y_v = l * sqrt_p;
+    if !(x_v.is_finite() && x_v > 0.0 && y_v.is_finite() && y_v > 0.0) {
+        return None;
+    }
+    let hint = x_v / 10f64.powi(dec0 as i32) + y_v / 10f64.powi(dec1 as i32);
+    if hint.is_finite() && hint > 0.0 {
+        Some(V3SpotSnapshot {
+            rate_01,
+            virtual_reserves_hint: hint,
+        })
+    } else {
+        None
+    }
+}
+
+// ============================================================================
 // Uniswap V3 batch quoting via Multicall3
 // ============================================================================
 
@@ -810,5 +893,90 @@ mod v3_single_tick_tests {
             deep < amt,
             "still bounded by input (zero-fee, positive slippage)"
         );
+    }
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used)]
+mod v3_spot_snapshot_tests {
+    use super::*;
+
+    fn q96_u128() -> u128 {
+        1u128 << 96
+    }
+
+    #[test]
+    fn unit_price_same_decimals_is_one_and_hint_is_two_virtual_reserves() {
+        // sqrtPriceX96 = 2^96 → raw price exactly 1.0. With dec0 == dec1 the
+        // human rate is 1.0, and the virtual reserves are (L, L) — so the hint
+        // is 2L normalized (mirrors the CPMM(L,L) reduction pinned by
+        // `v3_at_1to1_price_zero_fee_equals_cpmm_virtual_reserves`).
+        let l = 10u128.pow(18);
+        let snap = v3_spot_snapshot(q96_u128(), l, 18, 18).unwrap();
+        assert!((snap.rate_01 - 1.0).abs() < 1e-12, "rate={}", snap.rate_01);
+        assert!(
+            (snap.virtual_reserves_hint - 2.0).abs() < 1e-9,
+            "hint={}",
+            snap.virtual_reserves_hint
+        );
+    }
+
+    #[test]
+    fn usdc_weth_mainnet_vector() {
+        // Real USDC/WETH 0.05% pool shape: token0=USDC (6 dec), token1=WETH
+        // (18 dec). sqrtPriceX96 ≈ 1.7727e33 → √P ≈ 22372.8 → raw price
+        // ≈ 5.0054e8 wei-WETH per wei-USDC → human ≈ 5.0054e-4 WETH per USDC
+        // (i.e. ETH ≈ $2000 — sanity-checks the decimal adjustment sign).
+        let sp = 1_772_712_074_874_819_459_120_282_715_246_463u128;
+        let l = 548_640_024_015_773_269u128;
+        let snap = v3_spot_snapshot(sp, l, 6, 18).unwrap();
+        let expected = 5.0054e-4;
+        assert!(
+            ((snap.rate_01 - expected) / expected).abs() < 1e-3,
+            "rate={} expected ~{}",
+            snap.rate_01,
+            expected
+        );
+        // Virtual reserves: x = L/√P ≈ 2.45e7 USDC, y = L·√P ≈ 1.2e4 WETH.
+        assert!(snap.virtual_reserves_hint.is_finite());
+        assert!(snap.virtual_reserves_hint > 1.0e6);
+        assert!(snap.virtual_reserves_hint < 1.0e9);
+    }
+
+    #[test]
+    fn decimal_adjustment_shifts_rate_by_ten_pow_dec_delta() {
+        // Same sqrtPrice with swapped decimals models two orientations of the
+        // same raw price: the human rate shifts by exactly 10^(Δdec) —
+        // rate(18,6)/rate(6,18) = 10^24 here. (A real WETH-first pool of the
+        // same pair would carry the RECIPROCAL sqrtPrice; the cycle-level
+        // symmetry that matters — lw01+lw10 = −2·ln(1−fee), rate cancels — is
+        // pinned in graph_builder.)
+        let sp = 1_772_712_074_874_819_459_120_282_715_246_463u128;
+        let l = 548_640_024_015_773_269u128;
+        let a = v3_spot_snapshot(sp, l, 6, 18).unwrap().rate_01;
+        let b = v3_spot_snapshot(sp, l, 18, 6).unwrap().rate_01;
+        let ratio = b / a;
+        assert!(
+            (ratio / 1e24 - 1.0).abs() < 1e-9,
+            "ratio={ratio:e} expected 1e24"
+        );
+    }
+
+    #[test]
+    fn zero_sqrt_price_or_liquidity_is_none() {
+        // Uninitialized pool (sqrt=0) or empty active range (L=0): no price
+        // exists — None, never a synthetic rate (R8).
+        let l = 10u128.pow(18);
+        assert_eq!(v3_spot_snapshot(0, l, 18, 18), None);
+        assert_eq!(v3_spot_snapshot(q96_u128(), 0, 18, 18), None);
+    }
+
+    #[test]
+    fn extreme_u128_inputs_stay_finite() {
+        // Full u128 domain must not panic or produce ±∞/NaN — the graph edge
+        // built from it must never carry a non-finite weight.
+        let snap = v3_spot_snapshot(u128::MAX, u128::MAX, 18, 0).unwrap();
+        assert!(snap.rate_01.is_finite() && snap.rate_01 > 0.0);
+        assert!(snap.virtual_reserves_hint.is_finite() && snap.virtual_reserves_hint > 0.0);
     }
 }

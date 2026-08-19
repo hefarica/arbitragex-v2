@@ -10,7 +10,8 @@
 //!   7. Enter main `tokio::select!` loop:
 //!      a. Redis consumer tick (live entries from `arbx:opps:detected`).
 //!      b. Reconciliation tick (every 5 minutes, pulls unresolved from PG).
-//!      c. Graceful shutdown on SIGTERM (Linux) or ctrl-c (cross-platform).
+//!      c. Logo refresh tick (RU-TOKEN-REFRESH, `LOGO_REFRESH_INTERVAL_SECS`).
+//!      d. Graceful shutdown on SIGTERM (Linux) or ctrl-c (cross-platform).
 //!   8. Serve `/metrics` on ENRICHER_METRICS_PORT (default 9004) via a
 //!      background tokio task (does not block the main loop).
 //!
@@ -26,6 +27,7 @@
 //! |                         |          |          | URL. One env var per chain. Required if that chain   |
 //! |                         |          |          | appears in ENRICHER_CHAINS; missing = warn + skip.   |
 //! | `ENRICHER_METRICS_PORT` | NO       | 9004     | Prometheus /metrics port                             |
+//! | `LOGO_REFRESH_INTERVAL_SECS` | NO  | 2592000  | Logo refresh tick (RU-TOKEN-REFRESH); 0 disables     |
 //! | `RUST_LOG`              | NO       | info     | tracing-subscriber filter                            |
 //! | `GITHUB_TOKEN`          | NO       | —        | Bearer token for TrustWallet CDN                     |
 //!
@@ -67,6 +69,7 @@ use token_enricher::{
     consumer::EnricherConsumer,
     dexscreener::{DexScreenerConfig, DexScreenerPriceOracle},
     geckoterminal_tier::{GeckoTerminalConfig, GeckoTerminalOracle},
+    logo_refresh,
     metrics::{
         init_metrics, serve_metrics, BATCHES_TOTAL, ENRICHER_UP, PENDING_UNRESOLVED,
         RPC_CALLS_TOTAL, TOKENS_RESOLVED_TOTAL,
@@ -571,6 +574,24 @@ async fn main() -> Result<()> {
     // Skip the first immediate tick so reconciliation doesn't fire at t=0.
     recon_tick.tick().await;
 
+    // Logo refresh tick (RU-TOKEN-REFRESH): monthly HEAD re-verification of
+    // every logo-bearing token (liveness + content-length change detection +
+    // Redis icon invalidation). Interval via LOGO_REFRESH_INTERVAL_SECS
+    // (default 30 days); 0 disables. First tick is SKIPPED — a full scan must
+    // never coincide with boot.
+    let logo_refresh_interval_secs = logo_refresh::logo_refresh_interval_from_env();
+    let mut logo_refresh_tick = if logo_refresh_interval_secs == 0 {
+        info!(event = "enricher.logo_refresh_disabled");
+        None
+    } else {
+        let mut tick = tokio::time::interval(Duration::from_secs(logo_refresh_interval_secs));
+        // A monthly job that overruns its interval must not fire a burst of
+        // catch-up ticks (default MissedTickBehavior::Burst).
+        tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+        tick.tick().await; // consume the immediate t=0 tick
+        Some(tick)
+    };
+
     info!(event = "enricher.main_loop_started");
 
     loop {
@@ -676,6 +697,30 @@ async fn main() -> Result<()> {
                         }
                     }
                 }
+            }
+
+            // Logo refresh tick (RU-TOKEN-REFRESH): re-verify every
+            // logo-bearing token. The job logs its own `logo_refresh.done`
+            // telemetry (stats + elapsed); only job-level failures land here.
+            // Detached (same idiom as the DexScreener/GeckoTerminal tiers) so
+            // a full scan's inter-batch pauses never stall the consumer and
+            // reconciliation arms.
+            _ = async {
+                match logo_refresh_tick.as_mut() {
+                    Some(tick) => {
+                        tick.tick().await;
+                    }
+                    None => std::future::pending::<()>().await,
+                }
+            } => {
+                let pool = pool.clone();
+                let tw = tw.clone();
+                let redis_url = redis_url.clone();
+                tokio::spawn(async move {
+                    if let Err(e) = logo_refresh::run_logo_refresh(&pool, &tw, &redis_url).await {
+                        error!(event = "enricher.logo_refresh_err", err = %e);
+                    }
+                });
             }
 
             // Consumer arm: one XREADGROUP read (BLOCK 2000ms).
