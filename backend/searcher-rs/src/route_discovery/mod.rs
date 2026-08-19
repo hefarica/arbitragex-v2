@@ -23,6 +23,7 @@
 //! (the default) nothing is spawned — zero overhead, binary behavior unchanged.
 
 pub mod canonicalizer;
+pub mod cycle_enumerator;
 pub mod graph_builder;
 pub mod multi_hop_search;
 pub mod route_discovery_worker;

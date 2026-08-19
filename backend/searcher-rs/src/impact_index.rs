@@ -10,8 +10,10 @@
 //! which triangular cycles, DEX pools, and lending positions are affected?"*
 //!
 //! The index is built at boot from:
-//!   1. `pool_to_cycles`: derived from `MVP_CYCLES` in `triangular_worker` (scaffold)
-//!      and optionally extended from a `pool_cycles` PG table (future sprint).
+//!   1. `pool_to_cycles`: loaded from the `pool_cycles` PG table — the DYNAMIC
+//!      route universe enumerated by `route_discovery::cycle_enumerator`
+//!      (RU-1). Cold-boot fallback (table missing/empty): the `MVP_CYCLES`
+//!      constant in `triangular_worker` resolved via the Redis pool index.
 //!   2. `token_pair_to_pools`: derived from the `pools` PG table at boot; refreshed
 //!      when `pool_sync_worker` calls `add_pool`.
 //!   3. `token_to_lending_positions`: empty until `LendingPositionIndexer` ships
@@ -44,9 +46,10 @@ use tracing::{info, warn};
 
 /// Stable identifier for a triangular cycle.
 ///
-/// For the MVP `MVP_CYCLES` constant, the ID is the 0-based index into that
-/// slice. When a future `pool_cycles` PG table is introduced, the ID will be
-/// the PG row's stable integer primary key.
+/// For cycles persisted in the `pool_cycles` PG table (the dynamic universe),
+/// the ID is the row's `cycle_id` BIGSERIAL primary key — stable across boots,
+/// which is what the `CycleSpec` registry is keyed on. For the cold-boot
+/// `MVP_CYCLES` fallback, the ID is the 0-based index into that slice.
 pub type CycleId = u64;
 
 /// Normalised sorted pair key: `token_lo < token_hi` by address bytes.
@@ -140,6 +143,30 @@ pub struct MvpCycleSeed {
     pub pool_address: Address,
 }
 
+/// A discovered cycle persisted in the `pool_cycles` PG table — one entry of
+/// the dynamic route universe (RU-1) that the strategy engines evaluate against.
+///
+/// Paths are OPEN cycles (no closing repeat): hop `i` swaps
+/// `token_path[i] → token_path[(i+1) % len]` via `pool_path[i]`, in canonical
+/// rotation — the same convention as `route_discovery::types::RouteCandidate`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CycleSpec {
+    pub cycle_id: CycleId,
+    pub chain_id: u64,
+    pub token_path: Vec<Address>,
+    pub pool_path: Vec<Address>,
+}
+
+/// The parsed `pool_cycles` universe for one chain: the pool→cycles reverse
+/// index consumed by `resolve()`, plus the id-addressable [`CycleSpec`]
+/// registry consumers (e.g. `triangular_worker`) read instead of the
+/// `MVP_CYCLES` constant.
+#[derive(Debug, Clone, Default)]
+pub struct CycleUniverse {
+    pub pool_to_cycles: HashMap<Address, Vec<CycleId>>,
+    pub specs: Vec<CycleSpec>,
+}
+
 /// The resolved set of impacted entities for a given `RouteIntent`.
 ///
 /// This is what the orchestrator fans out to individual strategy engines.
@@ -169,9 +196,14 @@ pub struct ImpactSet {
 /// legs and P = average number of pools per token pair.
 pub struct ImpactIndex {
     /// pool_address (lowercase) → cycle IDs that contain this pool.
-    /// Populated from `MVP_CYCLES` at boot and optionally from `pool_cycles`
-    /// PG table in future sprints.
+    /// Loaded from the `pool_cycles` PG table (dynamic universe) at boot;
+    /// cold-boot fallback seeds it from `MVP_CYCLES` via Redis.
     pool_to_cycles: HashMap<Address, Vec<CycleId>>,
+
+    /// Id-addressable registry of the discovered cycles backing
+    /// `pool_to_cycles` (empty on cold-boot MVP seeding — specs exist only for
+    /// cycles persisted in PG).
+    cycles: Vec<CycleSpec>,
 
     /// Sorted (token_lo, token_hi) → pools holding that pair.
     /// Loaded from the `pools` PG table at boot and updated incrementally by
@@ -205,6 +237,7 @@ impl ImpactIndex {
     pub fn empty() -> Self {
         Self {
             pool_to_cycles: HashMap::new(),
+            cycles: Vec::new(),
             token_pair_to_pools: HashMap::new(),
             token_to_lending_positions: HashMap::new(),
             router_to_protocol: HashMap::new(),
@@ -221,8 +254,10 @@ impl ImpactIndex {
     /// "index is ready; some maps may be empty".
     ///
     /// ### Load sources
-    /// 1. `mvp_cycles` (caller-supplied, typically `triangular_worker::MVP_CYCLES`)
-    ///    → Redis pool index `arbx:pool_index:<chain>:<sym0>:<sym1>` → `pool_to_cycles`.
+    /// 1. PG `pool_cycles` table → `pool_to_cycles` + the `CycleSpec` registry
+    ///    (dynamic universe, RU-1). Cold-boot fallback: `mvp_cycles`
+    ///    (caller-supplied, typically `triangular_worker::MVP_CYCLES`) → Redis
+    ///    pool index `arbx:pool_index:<chain>:<sym0>:<sym1>` → `pool_to_cycles`.
     ///    Decoupled from `workers` crate so this module compiles as a library target.
     /// 2. PG `pools` table → `token_pair_to_pools`.
     /// 3. `token_to_lending_positions` → empty (indexer not yet shipped).
@@ -259,16 +294,50 @@ impl ImpactIndex {
             }
         }
 
-        // ── Step 2: seed MVP_CYCLES from Redis pool index ─────────────────
-        let seeds = build_mvp_seeds_from_redis(redis, chain_id, mvp_cycles).await;
-        let seed_count = seeds.len();
-        idx.seed_cycles_from_mvp(&seeds);
-        info!(
-            event = "impact_index.cycles_seeded",
-            chain_id,
-            cycle_count = seed_count,
-            "seeded pool_to_cycles from MVP_CYCLES"
-        );
+        // ── Step 2: pool_to_cycles — dynamic `pool_cycles` universe, MVP fallback ──
+        // Primary source (RU-1): the `pool_cycles` PG table populated by
+        // `route_discovery::cycle_enumerator`. Cold-boot (table missing/empty)
+        // or a load error falls back to seeding from the `MVP_CYCLES` constant
+        // via the Redis pool index — the previous behavior — with a loud warn
+        // on the error path (R8 fail-honest).
+        let mut db_universe: Option<CycleUniverse> = None;
+        if let Some(pg) = pool {
+            match load_pool_cycles_from_pg(pg, chain_id).await {
+                Ok(rows) if !rows.is_empty() => {
+                    db_universe = Some(load_pool_to_cycles(&rows, chain_id));
+                }
+                Ok(_) => {} // cold-boot: table empty → MVP seed below
+                Err(e) => {
+                    warn!(
+                        event = "impact_index.pool_cycles_load_failed",
+                        chain_id,
+                        error = %e,
+                        "failed to load pool_cycles; falling back to MVP_CYCLES seed"
+                    );
+                }
+            }
+        }
+
+        if let Some(universe) = db_universe {
+            let cycle_count = universe.specs.len();
+            idx.load_pool_cycles(universe);
+            info!(
+                event = "impact_index.cycles_loaded",
+                chain_id,
+                cycle_count,
+                "pool_to_cycles loaded from PG pool_cycles (dynamic universe)"
+            );
+        } else {
+            let seeds = build_mvp_seeds_from_redis(redis, chain_id, mvp_cycles).await;
+            let seed_count = seeds.len();
+            idx.seed_cycles_from_mvp(&seeds);
+            info!(
+                event = "impact_index.cycles_seeded",
+                chain_id,
+                cycle_count = seed_count,
+                "seeded pool_to_cycles from MVP_CYCLES (cold-boot: pool_cycles empty/unavailable)"
+            );
+        }
 
         // ── Step 3: lending positions ─────────────────────────────────────
         // LendingPositionIndexer not yet shipped (Phase 11). Map stays empty.
@@ -311,8 +380,8 @@ impl ImpactIndex {
     /// Multiple seeds for the same pool address (different cycle_id values)
     /// accumulate correctly.
     ///
-    /// This is a TEMPORARY scaffold — replace with reading from a `pool_cycles`
-    /// PG table when that is added in a future sprint.
+    /// COLD-BOOT FALLBACK ONLY (RU-1): used when the `pool_cycles` PG table is
+    /// missing or empty. The primary source is [`Self::load_pool_cycles`].
     pub fn seed_cycles_from_mvp(&mut self, seeds: &[MvpCycleSeed]) {
         for seed in seeds {
             self.pool_to_cycles
@@ -320,6 +389,21 @@ impl ImpactIndex {
                 .or_default()
                 .push(seed.cycle_id);
         }
+    }
+
+    /// Installs a cycle universe loaded from the `pool_cycles` PG table,
+    /// REPLACING any MVP-seeded mapping — the persisted universe is the source
+    /// of truth once it exists.
+    pub fn load_pool_cycles(&mut self, universe: CycleUniverse) {
+        self.pool_to_cycles = universe.pool_to_cycles;
+        self.cycles = universe.specs;
+    }
+
+    /// Looks up the [`CycleSpec`] of a discovered cycle by its stable
+    /// `cycle_id`. Returns `None` for cold-boot MVP-seeded ids (no persisted
+    /// spec exists for them — honest, never fabricated) or unknown ids.
+    pub fn cycle_spec(&self, id: CycleId) -> Option<&CycleSpec> {
+        self.cycles.iter().find(|c| c.cycle_id == id)
     }
 
     // -----------------------------------------------------------------------
@@ -460,7 +544,10 @@ impl ImpactIndex {
 /// The query joins `pools` → `factories` → `dexes` to recover `dex_name` and
 /// `protocol_type`, and joins `tokens` twice to recover `token0`/`token1`
 /// addresses. Returns an empty Vec (not Err) when the table is empty.
-async fn load_pools_from_pg(pg: &PgPool, chain_id: u64) -> anyhow::Result<Vec<PoolRef>> {
+///
+/// `pub(crate)`: also the pool source of `route_discovery::cycle_enumerator`,
+/// so both the index and the enumerator see the SAME active pool universe.
+pub(crate) async fn load_pools_from_pg(pg: &PgPool, chain_id: u64) -> anyhow::Result<Vec<PoolRef>> {
     // Use sqlx::query (not query!) to avoid offline data file requirement.
     // The join structure: pools → factories → dexes for dex_name/protocol_type,
     // pools → tokens (x2) for token addresses.
@@ -565,6 +652,137 @@ fn parse_protocol_type(s: &str) -> ProtocolType {
         "BALANCER" => ProtocolType::Balancer,
         _ => ProtocolType::Unknown,
     }
+}
+
+// ---------------------------------------------------------------------------
+// pool_cycles loader (dynamic universe, RU-1)
+// ---------------------------------------------------------------------------
+
+/// Parses comma-joined lowercase-hex addresses into `Address` values.
+/// An empty/blank input yields an empty Vec (the caller's length guard skips
+/// the row); an unparseable element yields `None` for the whole path (skip the
+/// row — R8: a half-parsed cycle must never enter the index).
+fn parse_csv_addresses(csv: &str) -> Option<Vec<Address>> {
+    if csv.trim().is_empty() {
+        return Some(Vec::new());
+    }
+    csv.split(',')
+        .map(|part| Address::from_str(part.trim()).ok())
+        .collect()
+}
+
+/// Loads the dynamic cycle universe from the `pool_cycles` PG table.
+///
+/// Produces exactly the row form consumed by [`load_pool_to_cycles`]:
+/// `(cycle_id, token_path, pool_path)` with the paths comma-joined (safe —
+/// `0x`-hex addresses contain no commas). Ordered by `cycle_id` for stable
+/// boot logs. An empty table returns an empty Vec (not Err) — callers treat
+/// that as cold-boot and fall back to the `MVP_CYCLES` seed.
+async fn load_pool_cycles_from_pg(
+    pg: &PgPool,
+    chain_id: u64,
+) -> anyhow::Result<Vec<(String, String, String)>> {
+    let rows = sqlx::query(
+        r#"
+        SELECT cycle_id::TEXT                      AS cycle_id,
+               array_to_string(token_path, ',')    AS token_path,
+               array_to_string(pool_path, ',')     AS pool_path
+        FROM pool_cycles
+        WHERE chain_id = $1
+          AND active = TRUE
+        ORDER BY cycle_id
+        "#,
+    )
+    .bind(chain_id as i64)
+    .fetch_all(pg)
+    .await
+    .context("load pool_cycles from PG for ImpactIndex")?;
+
+    let mut out = Vec::with_capacity(rows.len());
+    for row in rows {
+        use sqlx::Row;
+        let cycle_id: String = row
+            .try_get("cycle_id")
+            .context("pool_cycles row: missing cycle_id")?;
+        let token_path: String = row
+            .try_get("token_path")
+            .context("pool_cycles row: missing token_path")?;
+        let pool_path: String = row
+            .try_get("pool_path")
+            .context("pool_cycles row: missing pool_path")?;
+        out.push((cycle_id, token_path, pool_path));
+    }
+    Ok(out)
+}
+
+/// Parses `pool_cycles` rows into the pool→cycle reverse index plus the
+/// [`CycleSpec`] registry.
+///
+/// Row tuple = `(cycle_id, token_path, pool_path)` — the string form produced
+/// by [`load_pool_cycles_from_pg`]. A row whose id or addresses fail to parse,
+/// or whose paths don't line up (equal length ≥ 2), is SKIPPED with a `warn`
+/// (R8 fail-honest — a corrupt row never enters the index, and nothing is
+/// fabricated to replace it).
+pub fn load_pool_to_cycles(rows: &[(String, String, String)], chain_id: u64) -> CycleUniverse {
+    let mut universe = CycleUniverse::default();
+    for (id_str, token_csv, pool_csv) in rows {
+        let cycle_id = match id_str.parse::<CycleId>() {
+            Ok(id) => id,
+            Err(e) => {
+                warn!(
+                    event = "impact_index.cycle_row_skip",
+                    cycle_id = %id_str,
+                    error = %e,
+                    "skip pool_cycles row: bad cycle_id"
+                );
+                continue;
+            }
+        };
+        let token_path = match parse_csv_addresses(token_csv) {
+            Some(p) => p,
+            None => {
+                warn!(
+                    event = "impact_index.cycle_row_skip",
+                    cycle_id, "skip pool_cycles row: unparseable token_path"
+                );
+                continue;
+            }
+        };
+        let pool_path = match parse_csv_addresses(pool_csv) {
+            Some(p) => p,
+            None => {
+                warn!(
+                    event = "impact_index.cycle_row_skip",
+                    cycle_id, "skip pool_cycles row: unparseable pool_path"
+                );
+                continue;
+            }
+        };
+        if token_path.len() != pool_path.len() || token_path.len() < 2 {
+            warn!(
+                event = "impact_index.cycle_row_skip",
+                cycle_id,
+                tokens = token_path.len(),
+                pools = pool_path.len(),
+                "skip pool_cycles row: path length mismatch or too short"
+            );
+            continue;
+        }
+
+        for pool in &pool_path {
+            let entry = universe.pool_to_cycles.entry(*pool).or_default();
+            if !entry.contains(&cycle_id) {
+                entry.push(cycle_id);
+            }
+        }
+        universe.specs.push(CycleSpec {
+            cycle_id,
+            chain_id,
+            token_path,
+            pool_path,
+        });
+    }
+    universe
 }
 
 // ---------------------------------------------------------------------------
@@ -973,5 +1191,163 @@ mod tests {
             1,
             "pool must not be duplicated for same-pair multi-leg intent"
         );
+    }
+
+    // ── pool_cycles dynamic universe (RU-1) ─────────────────────────────────
+
+    fn csv_addrs(ids: &[u64]) -> String {
+        ids.iter()
+            .map(|i| format!("{:#x}", addr(*i)))
+            .collect::<Vec<_>>()
+            .join(",")
+    }
+
+    #[test]
+    fn load_pool_to_cycles_builds_reverse_index_and_specs() {
+        let rows = vec![
+            // cycle 5: triangle A(1)→B(2)→C(3), pools 0x11/0x22/0x33
+            (
+                "5".to_string(),
+                csv_addrs(&[1, 2, 3]),
+                csv_addrs(&[0x11, 0x22, 0x33]),
+            ),
+            // cycle 6: shares pool 0x11 with cycle 5
+            (
+                "6".to_string(),
+                csv_addrs(&[1, 2, 4]),
+                csv_addrs(&[0x11, 0x55, 0x44]),
+            ),
+        ];
+        let universe = load_pool_to_cycles(&rows, 1);
+
+        // Every pool of cycle 5 maps to id 5; pool 0x11 maps to BOTH cycles.
+        assert_eq!(
+            universe.pool_to_cycles.get(&addr(0x11)),
+            Some(&vec![5u64, 6u64]),
+            "shared pool maps to both cycle ids"
+        );
+        assert_eq!(universe.pool_to_cycles.get(&addr(0x22)), Some(&vec![5u64]));
+        assert_eq!(universe.pool_to_cycles.get(&addr(0x33)), Some(&vec![5u64]));
+        assert_eq!(universe.pool_to_cycles.get(&addr(0x55)), Some(&vec![6u64]));
+        assert_eq!(universe.pool_to_cycles.get(&addr(0x44)), Some(&vec![6u64]));
+
+        // Registry: 2 specs, stable ids, parsed open paths.
+        assert_eq!(universe.specs.len(), 2);
+        let spec5 = universe.specs.iter().find(|s| s.cycle_id == 5);
+        assert_eq!(
+            spec5.map(|s| s.token_path.clone()),
+            Some(vec![addr(1), addr(2), addr(3)]),
+            "open path (no closing repeat)"
+        );
+        assert_eq!(
+            spec5.map(|s| s.pool_path.clone()),
+            Some(vec![addr(0x11), addr(0x22), addr(0x33)])
+        );
+    }
+
+    #[test]
+    fn load_pool_to_cycles_skips_corrupt_rows() {
+        let rows = vec![
+            (
+                "not-a-number".to_string(),
+                csv_addrs(&[1, 2]),
+                csv_addrs(&[0x11, 0x22]),
+            ),
+            (
+                "7".to_string(),
+                "0xZZ,0x22".to_string(),
+                csv_addrs(&[0x11, 0x22]),
+            ),
+            // length mismatch: 3 tokens, 2 pools
+            (
+                "8".to_string(),
+                csv_addrs(&[1, 2, 3]),
+                csv_addrs(&[0x11, 0x22]),
+            ),
+            // too short: a 1-hop "cycle" cannot exist
+            ("9".to_string(), csv_addrs(&[1]), csv_addrs(&[0x11])),
+            // the one VALID row
+            (
+                "10".to_string(),
+                csv_addrs(&[1, 2]),
+                csv_addrs(&[0x11, 0x22]),
+            ),
+        ];
+        let universe = load_pool_to_cycles(&rows, 1);
+        assert_eq!(universe.specs.len(), 1, "only the valid row survives");
+        assert_eq!(universe.specs[0].cycle_id, 10);
+        assert_eq!(
+            universe.pool_to_cycles.get(&addr(0x11)),
+            Some(&vec![10u64]),
+            "corrupt rows contribute nothing (R8)"
+        );
+    }
+
+    #[test]
+    fn cycle_spec_getter_resolves_registry_and_none_for_mvp_ids() {
+        let mut idx = ImpactIndex::empty();
+        assert!(
+            idx.cycle_spec(0).is_none(),
+            "empty registry → None (no fabrication)"
+        );
+
+        let universe = load_pool_to_cycles(
+            &[(
+                "42".to_string(),
+                csv_addrs(&[1, 2, 3]),
+                csv_addrs(&[0x11, 0x22, 0x33]),
+            )],
+            1,
+        );
+        idx.load_pool_cycles(universe);
+
+        let spec = idx.cycle_spec(42).cloned();
+        assert_eq!(
+            spec.map(|s| s.token_path),
+            Some(vec![addr(1), addr(2), addr(3)])
+        );
+        assert!(idx.cycle_spec(43).is_none(), "unknown id → None");
+    }
+
+    #[test]
+    fn load_pool_cycles_replaces_mvp_seeds() {
+        // Installing the DB universe must REPLACE any MVP-seeded mapping —
+        // the persisted universe is the source of truth.
+        let mvp_pool = addr(0xAB);
+        let mut idx = ImpactIndex::empty();
+        idx.seed_cycles_from_mvp(&[MvpCycleSeed {
+            cycle_id: 0,
+            pool_address: mvp_pool,
+        }]);
+        assert_eq!(idx.pool_to_cycles.get(&mvp_pool), Some(&vec![0u64]));
+
+        let universe = load_pool_to_cycles(
+            &[(
+                "77".to_string(),
+                csv_addrs(&[1, 2]),
+                csv_addrs(&[0x11, 0x22]),
+            )],
+            1,
+        );
+        idx.load_pool_cycles(universe);
+
+        // MVP mapping fully replaced by the DB universe.
+        assert!(
+            !idx.pool_to_cycles.contains_key(&mvp_pool),
+            "MVP-seeded mapping must not survive a DB universe install"
+        );
+        assert_eq!(idx.pool_to_cycles.get(&addr(0x11)), Some(&vec![77u64]));
+        assert!(idx.cycle_spec(77).is_some());
+        assert!(idx.cycle_spec(0).is_none(), "MVP-only ids carry no spec");
+    }
+
+    #[test]
+    fn parse_csv_addresses_empty_blank_and_valid() {
+        assert!(parse_csv_addresses("").is_some());
+        assert!(parse_csv_addresses("   ").is_some());
+        assert_eq!(parse_csv_addresses("").map(|v| v.len()), Some(0));
+        let parsed = parse_csv_addresses(&csv_addrs(&[1, 2]));
+        assert_eq!(parsed, Some(vec![addr(1), addr(2)]));
+        assert!(parse_csv_addresses("0xnothex,0x22").is_none());
     }
 }
