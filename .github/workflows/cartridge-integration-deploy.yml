@@ -148,8 +148,28 @@ jobs:
       - name: Install dependencies
         run: npm install
 
-      - name: Install Playwright
-        run: npx playwright install --with-deps chromium
+      # CI-FLAKE-PLAYWRIGHT-APT (2026-08-18/19, 3×): same apt-mirror hang as
+      # e2e.yml — cache the browser (warm runs = zero network) and bound the
+      # deps install with timeout + retry so a bad mirror fails LOUD in
+      # minutes instead of eating the job timeout silently.
+      - name: Cache Playwright browsers
+        uses: actions/cache@0057852bfaa89a56755ef8b1d83041146aa5d7 # v4.2.4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-chromium-cid-${{ hashFiles('package.json') }}
+      - name: Install Playwright (apt-flake resilient)
+        run: |
+          npx playwright install chromium
+          for i in 1 2; do
+            if timeout 180 npx playwright install-deps chromium; then
+              echo "deps ok (attempt $i)"
+              exit 0
+            fi
+            echo "attempt $i: apt mirror flake — retrying in 30s"
+            sleep 30
+          done
+          echo "::error::playwright install-deps failed after 2 bounded attempts"
+          exit 1
 
       - name: psql shim (cached postgres:16 image — no apt)
         # CI-FLAKE-PSQL-APT (2026-08-17): apt-get hung until job timeout on a
