@@ -16,7 +16,9 @@
 //! deduplication of cached simulation results without re-running revm.
 //!
 //! ### Gas limit
-//! We hard-code `30_000_000` (current Ethereum block limit).  This is high
+//! We hard-code `16_777_216` (revm 42 `SpecId::OSAKA` block gas cap). revm 42
+//! rejects transactions whose gas limit exceeds the spec's cap — 30M (the
+//! historical Ethereum block limit) now fails validation. This is still high
 //! enough for any realistic arbitrage bundle and keeps the simulation bounded.
 //!
 //! ### Spec
@@ -167,7 +169,7 @@ fn build_env_parts(
 
     let tx = TxEnv {
         caller,
-        gas_limit: 30_000_000,
+        gas_limit: 16_777_216,
         // Forward gas price so revm deducts gas from the caller's balance.
         // net_profit_wei = balance_delta = profit_tokens - gas_cost (CRITICAL #2).
         gas_price: candidate.gas_price_wei,
