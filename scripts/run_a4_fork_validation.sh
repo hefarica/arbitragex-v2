@@ -34,7 +34,7 @@ fail() { echo "A.4 ABORTED: $*" >&2; exit 1; }
 
 # --- 1. Require real RPC + executor + gas price (no invention) -------------
 [ -n "${RPC_HTTP_1:-}" ] || fail "RPC_HTTP_1 is not set (need a single bare archive RPC URL; LazyDb does direct JSON-RPC — the multi-vendor CSV form is NOT parsed here)."
-[ -n "${EXECUTOR_1:-}" ] || fail "EXECUTOR_1 is not set (any non-zero, code-less address; used only as the caller label — an address with on-chain code risks EIP-3607 rejection)."
+[ -n "${EXECUTOR_1:-}" ] || fail "EXECUTOR_1 is not set (any non-zero, code-less address; used only as the caller label — an address with on-chain code risks EIP-3607 rejection). NOTE (7702 era): an EIP-7702 delegation designator (0xef0100...) counts as code and trips RejectCallerWithCode — verify with cast code that the label is truly code-less (vitalik.eth is delegated; Binance cold wallets are not)."
 [ -n "${SIM_ORCHESTRATOR_GAS_PRICE_WEI:-}" ] || fail "SIM_ORCHESTRATOR_GAS_PRICE_WEI is not set (decimal wei; the test requires it for net-profit accounting)."
 
 echo "A.4 fork validation @ ${TS}"
@@ -46,6 +46,15 @@ echo "  log        = ${LOG}"
 # `--features v2-simulator` is explicit on purpose: the test is gated by
 # `#[cfg(feature = "v2-simulator")]`. Without the feature it compiles to
 # nothing, `--ignored` runs 0 tests, and cargo still exits 0 — a false "pass".
+#
+# RUSTFLAGS: Rust >=1.9x debug builds enable unsafe-precondition (ub_checks)
+# checks that abort revm-interpreter 1.3.0's intentional capacity-beyond-len
+# Stack writes (stack.rs:206 get_unchecked_mut(len)) on the first DUP/SWAP of
+# real bytecode execution (SIGABRT). Evidence: A.4 runs 20260820T004455Z/
+# 005735Z + CI 32061502321 (simulator-v2 fork_mainnet, same stack.rs:206:28).
+# Scoped to THIS fork-validation invocation only — dev/CI unit-test profiles
+# keep their debug assertions.
+export RUSTFLAGS="-Cdebug-assertions=off"
 set +e
 cargo test --manifest-path "${REPO_ROOT}/backend/Cargo.toml" \
   --package searcher-rs --features v2-simulator \
