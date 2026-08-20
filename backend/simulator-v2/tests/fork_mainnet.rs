@@ -166,6 +166,23 @@ async fn fork_mainnet_weth_deposit_withdraw_round_trip() {
     };
     let fork_block = resolve_fork_block();
 
+    // LazyDb owns an internal tokio runtime for its JSON-RPC client.
+    // Constructing/dropping it on an async worker thread panics at tokio's
+    // blocking-pool shutdown (tokio-1.52.3 runtime/blocking/shutdown.rs:51 —
+    // bit the first RUSTFLAGS-passing dispatch of this suite, 2026-08-20,
+    // after PR #436 removed the earlier revm ub-checks abort). Same hazard
+    // A.4's multistep_fork test documented and dodged: the whole sync REVM
+    // sequence runs on a blocking thread that legally owns — and drops —
+    // the inner runtime.
+    tokio::task::spawn_blocking(move || fork_suite_weth_round_trip(rpc_url, fork_block))
+        .await
+        .expect("spawn_blocking joined");
+}
+
+/// Sync body of the ignored fork suite (see the async wrapper above for why
+/// it must run under `spawn_blocking`). Panics propagate through the
+/// JoinHandle, so assertion failures still fail the test verbatim.
+fn fork_suite_weth_round_trip(rpc_url: String, fork_block: Option<u64>) {
     // 1. LazyDb pinned over the real RPC. With FORK_BLOCK set, construction
     //    never resolves "latest"; with it unset, LazyDb resolves and
     //    memoizes the current tip once.
