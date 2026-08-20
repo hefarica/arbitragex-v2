@@ -42,7 +42,11 @@ const csp = () => {
     "default-src 'self'",
     "script-src 'self' 'unsafe-inline' 'unsafe-eval'",
     "style-src 'self' 'unsafe-inline'",
-    "img-src 'self' data: blob:",
+    // CSP-IMG-1 (2026-08-20): token logos are third-party hosted — TrustWallet
+    // GitHub raw (tokens.logo_url in PG) and CoinGecko asset CDNs (token-icons
+    // Redis cache). Hosts sourced from live PG/Redis inventory, NOT wildcarded
+    // to https: — tight allowlist only.
+    "img-src 'self' data: blob: https://raw.githubusercontent.com https://assets.coingecko.com https://coin-images.coingecko.com",
     "font-src 'self' data:",
     // Parameterized connect-src: only declared endpoints, no hardcoded localhost.
     `connect-src ${connectSrc}`,
