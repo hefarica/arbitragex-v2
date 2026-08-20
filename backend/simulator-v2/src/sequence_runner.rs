@@ -45,7 +45,7 @@
 
 use revm::context::{BlockEnv, CfgEnv, TxEnv};
 use revm::context_interface::result::ExecutionResult;
-use revm::context_interface::TransactTo;
+use revm::context_interface::{ContextTr, TransactTo};
 use revm::database::CacheDB;
 use revm::handler::{MainBuilder, MainnetContext, MainnetEvm};
 use revm::primitives::{hardfork::SpecId, Address, Bytes, U256};
