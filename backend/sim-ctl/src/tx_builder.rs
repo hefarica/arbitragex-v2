@@ -87,13 +87,38 @@ pub fn build_probe(opp: &Opportunity, signer_from: Address) -> Result<ProbeTx, B
 }
 
 /// Search router catalog by human-readable `dex_a` name (e.g. "uniswap-v2").
+///
+/// 2026-08-18 (anomaly "router not in catalog"): producers emit the SAME dex
+/// under several spellings — catalog entries are kebab-case ("uniswap-v3-swap-
+/// router"), kinds are kebab-case ("uniswap-v3"), while detection paths emit
+/// PascalCase display names ("UniswapV3", "SushiSwap"). The old case-sensitive
+/// `starts_with`/`==` match missed them → `build_error: router not in catalog`
+/// on 15/50 live rows for routers that WERE in the catalog. Normalizing both
+/// sides (lowercase + strip `-`/`_`/spaces) makes the match spelling-proof
+/// without touching the catalog or upstream producers:
+///   "UniswapV3" → "uniswapv3" matches "uniswap-v3-swap-router" → "uniswapv3…"
+///   "SushiSwap" → "sushiswap" matches kind "sushi" name "sushi-router" → "sushirouter"
 fn find_router_by_name(
     chain_id: u64,
     dex_a: &str,
 ) -> Option<&'static shared_rs::chains::RouterEntry> {
+    fn norm(s: &str) -> String {
+        s.chars()
+            .filter(|c| !matches!(c, '-' | '_' | ' '))
+            .flat_map(|c| c.to_lowercase())
+            .collect()
+    }
+    let want = norm(dex_a);
+    if want.is_empty() {
+        return None;
+    }
     shared_rs::chains::routers_for_chain(chain_id)
         .iter()
-        .find(|r| r.name.starts_with(dex_a) || r.kind.as_str() == dex_a)
+        .find(|r| {
+            norm(r.name).starts_with(&want)
+                || norm(r.kind.as_str()).starts_with(&want)
+                || want.starts_with(&norm(r.kind.as_str()))
+        })
 }
 
 fn parse_addr(s: &str) -> Result<Address, BuildError> {
@@ -199,6 +224,44 @@ mod tests {
         assert_eq!(tx.data.as_ref()[0..4], [0x38, 0xed, 0x17, 0x39]);
         assert_eq!(tx.value, U256::zero());
         assert_eq!(tx.from, signer);
+    }
+
+    // ── 2026-08-18 anomaly regression: PascalCase display names must resolve ──
+    // Live feed rejected 15/50 rows as "router not in catalog" with dex_a =
+    // "UniswapV3"/"UniswapV2"/"SushiSwap" while the catalog HAS those routers —
+    // the old case-sensitive match just couldn't see them.
+    #[test]
+    fn pascalcase_display_names_resolve_in_catalog() {
+        for (dex, expected_router) in [
+            ("UniswapV2", "0x7a250d5630b4cf539739df2c5dacb4c659f2488d"),
+            ("UniswapV3", "0xe592427a0aece92de3edee1f18e0157c05861564"),
+            ("SushiSwap", "0xd9e1ce17f2641f24ae83637ab66a2cca9c378b9f"),
+        ] {
+            let entry =
+                find_router_by_name(1, dex).unwrap_or_else(|| panic!("catalog miss for {dex}"));
+            assert_eq!(
+                format!("{:#x}", Address::from(entry.address)),
+                expected_router
+            );
+        }
+    }
+
+    #[test]
+    fn kebab_and_lowercase_names_still_resolve() {
+        // Pre-existing spellings keep working (no regression on the old paths).
+        for dex in ["uniswap-v2", "uniswap-v3", "sushi", "sushi-router"] {
+            assert!(
+                find_router_by_name(1, dex).is_some(),
+                "regression: {dex} stopped resolving"
+            );
+        }
+    }
+
+    #[test]
+    fn unknown_dex_still_misses() {
+        // Fail-closed preserved: garbage names must NOT fuzzy-match a router.
+        assert!(find_router_by_name(1, "notarealdeck").is_none());
+        assert!(find_router_by_name(1, "").is_none());
     }
 
     #[test]
