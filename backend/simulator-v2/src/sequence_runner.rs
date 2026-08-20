@@ -382,8 +382,14 @@ impl SequenceContext {
     ) -> Result<U256, SequenceError> {
         let calldata = build_get_amounts_out_calldata(amount_in, path);
 
+        // Caller must be code-less: revm 3.5.0 has EIP-3607 hard-enabled (no
+        // `optional_eip3607` feature), so a caller with on-chain code is
+        // rejected at validation (`RejectCallerWithCode` → TransactInfra).
+        // On a real fork the router HAS code — unit-test mocks (code-less
+        // router accounts) hide this. `getAmountsOut` has no msg.sender
+        // dependency, so the canonical eth_call sender is safe here.
         self.evm.env.tx = TxEnv {
-            caller: router,
+            caller: Address::ZERO,
             transact_to: TransactTo::Call(router),
             data: Bytes::copy_from_slice(&calldata),
             value: U256::ZERO,

@@ -100,3 +100,4 @@ sha2          = "0.10"
 [workspace.lints.clippy]
 unwrap_used = "warn"
 expect_used = "warn"
+
