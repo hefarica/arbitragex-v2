@@ -1918,13 +1918,19 @@ mod tests {
     }
 
     #[test]
-    fn category_label_state_event_families_require_closed_cycle() {
-        // Guard fails → falls through to the reject arm with the exact reason.
+    fn category_label_state_event_families_map_unconditionally() {
+        // FIX (2026-08-19): the `if is_closed_cycle` guard was removed — it
+        // killed 6/10 opportunities with `cartridge_unmapped_strategy_label`
+        // before the degenerate-route gates could reject honestly. G03/G04
+        // now map to the triangle label unconditionally; degenerate routes
+        // are rejected by the proper downstream gates, not at label mapping.
         for cat in ["state_event_engine", "parity_redemption_engine"] {
-            assert_eq!(
-                category_to_strategy_label(cat, false),
-                Err(format!("cartridge_unmapped_strategy_label:{cat}")),
-                "non-closed G03/G04 shape must reject with reason, not mis-label"
+            assert!(
+                matches!(
+                    category_to_strategy_label(cat, false),
+                    Ok(StrategyLabel::TriangularArb)
+                ),
+                "{cat} must map to the triangle label regardless of closed-cycle; degenerate rejection belongs downstream"
             );
         }
     }
