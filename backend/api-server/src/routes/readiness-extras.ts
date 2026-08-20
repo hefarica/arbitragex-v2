@@ -316,22 +316,20 @@ function doctrinalBlockers(): Blocker[] {
   // to "resolved" only when the corresponding milestone PASSES (which would
   // require a code change to this list — exactly what we want: a deliberate
   // re-evaluation at each milestone).
+  //
+  // A.4 (a4_fork_real_not_executed) was RESOLVED 2026-08-20 and removed from
+  // this list: the canonical runner `scripts/run_a4_fork_validation.sh`
+  // executed the ignored `multistep_fork` test against a real mainnet archive
+  // RPC and recorded the pass — gate_c_validation row
+  // ('a4_fork_validation','passed','a4_fork_validation_20260820T013304Z.log'),
+  // dashboard `a4_state = A4_PASSED` (GET /api/v1/scoring/status). Outcome:
+  // A4_OUTCOME=SIM_REVERT reason=multistep_gross_spread_non_positive (the
+  // full 4-step wrapped-flash sequence ran against real mainnet state —
+  // real reserves quote, real WETH bytecode balance reads, honest typed
+  // rejection at the spread gate; SIM_SUCCESS stays deferred to M5 testnet).
+  // Enablers: PR #431 (EIP-3607 quote caller + scoped RUSTFLAGS for the
+  // revm 1.3.0 ub-checks abort + 7702-safe EXECUTOR_1 doctrine note).
   return [
-    {
-      id: "a4_fork_real_not_executed",
-      category: "doctrinal_phase",
-      severity: "critical",
-      status: "blocked",
-      title: "A.4 fork validation has not executed against real RPC",
-      description:
-        "tests/multistep_fork.rs exists with #[ignore]; it has not been run against a real archive RPC + deployed EXECUTOR. Without this, REVM cannot be trusted on mainnet state.",
-      required_action:
-        "Provide RPC_HTTP_1 + EXECUTOR_1 + verify ERC20 storage layouts with `cast storage`, then run `cargo test -p searcher-rs --test multistep_fork -- --ignored --nocapture`.",
-      operator_required: true,
-      can_auto_resolve: false,
-      blocks: ["A.4", "A.5", "LIVE"],
-      evidence: { env_present: false, redacted_value: null, value_length: null, source: "doctrine" },
-    },
     {
       id: "a5_paper_shadow_not_executed",
       category: "doctrinal_phase",
