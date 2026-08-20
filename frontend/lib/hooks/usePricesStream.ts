@@ -82,6 +82,34 @@ export function applyPriceEvent(prev: PricesState, evt: unknown): PricesState {
 const MAX_WS_ERRORS = 3;
 const POLL_INTERVAL_MS = 4_000;
 
+// ── EDGE-HARD-1 silence watchdog ─────────────────────────────────────────────
+// The price stream has a WRITTEN liveness contract: the Rust writers persist
+// prices on fixed cadences (price_worker 30s + DexScreener 15s), so a healthy
+// room emits a frame at least every ~35s. A connected-but-silent socket means
+// something died silently (server bridge, Redis pub/sub, room routing) — the
+// transport-level ping/pong CANNOT see this. Recovery ladder: force a
+// reconnect (fresh snapshot on subscribe) up to MAX_FORCED_RECONNECTS times;
+// if silence persists, degrade to HTTP polling which self-refreshes forever.
+export const SILENCE_RECONNECT_MS = 90_000;
+export const MAX_FORCED_RECONNECTS = 3;
+
+export type SilenceAction = "ok" | "reconnect" | "degrade";
+
+/** Pure decision for the watchdog — exported for unit tests. */
+export function silenceAction(
+  lastFrameAtMs: number | null,
+  forcedReconnects: number,
+  nowMs: number,
+  silenceMs: number = SILENCE_RECONNECT_MS,
+  maxForced: number = MAX_FORCED_RECONNECTS,
+): SilenceAction {
+  if (lastFrameAtMs === null) return "ok"; // no frame yet — connect flow owns it
+  const silentFor = nowMs - lastFrameAtMs;
+  if (silentFor < silenceMs) return "ok";
+  if (forcedReconnects < maxForced) return "reconnect";
+  return "degrade";
+}
+
 export interface UsePricesStreamResult {
   state: PricesState;
   status: PricesStatus;
@@ -161,17 +189,49 @@ export function usePricesStream(
     });
     handle.dispose = () => socket.close();
 
+    // EDGE-HARD-1: last-frame clock + forced-reconnect budget. Arm on
+    // connect (snapshot expected within ~1s); every frame re-arms it.
+    let lastFrameAt: number | null = null;
+    let forcedReconnects = 0;
+    let watchdogTimer: ReturnType<typeof setInterval> | null = null;
+    const armWatchdog = () => {
+      lastFrameAt = Date.now();
+    };
     socket.on("connect", () => {
       socket.emit("subscribe:prices", { chain_id: chainIdRef.current });
+      armWatchdog();
+      if (watchdogTimer === null) {
+        watchdogTimer = setInterval(() => {
+          if (usingPollingRef.current) return;
+          const action = silenceAction(lastFrameAt, forcedReconnects, Date.now());
+          if (action === "ok") return;
+          if (action === "degrade") {
+            console.warn("[PricesStream] silent >" + SILENCE_RECONNECT_MS + "ms after " + forcedReconnects + " forced reconnects — degrading to polling");
+            handle.dispose();
+            startPolling();
+            return;
+          }
+          forcedReconnects += 1;
+          console.warn("[PricesStream] silent >" + SILENCE_RECONNECT_MS + "ms — forcing reconnect (" + forcedReconnects + "/" + MAX_FORCED_RECONNECTS + ")");
+          // Full teardown+reconnect: a fresh connect re-subscribes and pulls a
+          // fresh snapshot, recovering from ANY silent server/room failure.
+          socket.disconnect();
+          socket.connect();
+        }, 15_000);
+      }
     });
     socket.on("prices:snapshot", (evt: unknown) => {
       if (usingPollingRef.current) return; // degraded — ignore WS noise
       setStatus("LIVE");
+      armWatchdog();
+      forcedReconnects = 0; // a frame proves the path is alive again
       applyEvent(evt);
     });
     socket.on("prices:update", (evt: unknown) => {
       if (usingPollingRef.current) return;
       setStatus("LIVE");
+      armWatchdog();
+      forcedReconnects = 0;
       applyEvent(evt);
     });
     socket.on("prices:error", () => {
@@ -190,6 +250,9 @@ export function usePricesStream(
 
     return () => {
       handle.dispose();
+      if (watchdogTimer !== null) {
+        clearInterval(watchdogTimer);
+      }
       if (pollingTimerRef.current !== null) {
         clearInterval(pollingTimerRef.current);
         pollingTimerRef.current = null;
