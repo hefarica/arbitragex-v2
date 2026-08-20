@@ -143,13 +143,15 @@ export function useOmniOpportunities({
       return;
     }
 
-    // C4 fix: admin token required for WS handshake
-    const adminToken = getAdminToken();
-    if (!adminToken) {
-      setWsStatus("STALE");
-      startPolling();
-      return;
-    }
+    // WS-POLL-1 (2026-08-20): the opportunities room is PUBLIC by design — the
+    // api-server gateway accepts anonymous connections (io.use only FLAGS the
+    // admin capability for the runtime_ack room; it never rejects). The old
+    // hard bail here forced every admin-session-less visitor straight into
+    // STALE+polling even with a perfectly healthy server ("FEED POLLING"
+    // chip). Attach the admin token when the session has one (keeps the C4
+    // capability path); connect anonymously otherwise and let the transport
+    // itself decide (3-error degrade below still applies).
+    const adminToken = getAdminToken() ?? undefined;
 
     const handle = createOpportunitySocket({
       url: wsUrl,
