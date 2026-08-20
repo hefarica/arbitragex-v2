@@ -293,7 +293,7 @@ impl LazyDb {
 // underlying implementation we extract the bodies to `*_inner` helpers that
 // take `&self`. Both traits delegate. This makes the equivalence between
 // `Database` and `DatabaseRef` structural (one code path = one truth) and
-// unlocks `revm::db::CacheDB<LazyDb>` for the multi-step REVM executor
+// unlocks `revm::database::CacheDB<LazyDb>` for the multi-step REVM executor
 // (Phase A.3.c.3).
 impl LazyDb {
     /// Shared body for `Database::basic` and `DatabaseRef::basic_ref`.
@@ -477,7 +477,7 @@ impl Database for LazyDb {
 
 // ---------------------------------------------------------------------------
 // revm::DatabaseRef — shared-reference trait. Required by
-// `revm::db::CacheDB<DB>` so multi-step REVM executors can persist state
+// `revm::database::CacheDB<DB>` so multi-step REVM executors can persist state
 // between transactions (Phase A.3.c.3 sequence_runner). Delegates to the
 // same `*_inner` helpers as `Database` — Database and DatabaseRef are
 // structurally equivalent.
@@ -551,7 +551,7 @@ pub fn block_hash_cache_len(db: &LazyDb) -> usize {
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
     use super::*;
-    use revm::db::CacheDB;
+    use revm::database::CacheDB;
 
     /// Construct a LazyDb without contacting the chain. `connect_lazy`-style
     /// setup: the constructor only fails on URL parse, so any well-formed

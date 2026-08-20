@@ -46,7 +46,7 @@
 use revm::context::{BlockEnv, CfgEnv, TxEnv};
 use revm::context_interface::result::ExecutionResult;
 use revm::context_interface::TransactTo;
-use revm::db::CacheDB;
+use revm::database::CacheDB;
 use revm::handler::{MainBuilder, MainnetContext, MainnetEvm};
 use revm::primitives::{hardfork::SpecId, Address, Bytes, U256};
 use revm::{Context, ExecuteCommitEvm, ExecuteEvm, MainContext};
@@ -190,7 +190,7 @@ impl SequenceContext {
         let cache_db = CacheDB::new(lazy_db);
         let mut cfg = CfgEnv::default();
         cfg.chain_id = chain_id;
-        cfg.spec = SpecId::LATEST;
+        cfg.spec = SpecId::OSAKA;
         let block = BlockEnv {
             number: U256::from(block_number),
             ..BlockEnv::default()
@@ -268,7 +268,7 @@ impl SequenceContext {
                     output: bytes.to_vec(),
                 }
             }
-            ExecutionResult::Revert { gas, output } => {
+            ExecutionResult::Revert { gas, output, .. } => {
                 let gas_used = gas.tx_gas_used();
                 self.gas_used_total += gas_used;
                 let reason = decode_revert_reason(&output);
@@ -280,7 +280,7 @@ impl SequenceContext {
                 );
                 CallOutcome::Reverted { gas_used, reason }
             }
-            ExecutionResult::Halt { reason, gas } => {
+            ExecutionResult::Halt { reason, gas, .. } => {
                 let gas_used = gas.tx_gas_used();
                 self.gas_used_total += gas_used;
                 warn!(

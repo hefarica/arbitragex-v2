@@ -20,7 +20,7 @@
 //! enough for any realistic arbitrage bundle and keeps the simulation bounded.
 //!
 //! ### Spec
-//! We use `SpecId::LATEST` so all opcodes are available.  The spec can be made
+//! We use `SpecId::OSAKA` so all opcodes are available.  The spec can be made
 //! configurable in a future iteration if we need BSC / Optimism behaviour.
 
 use revm::context::{BlockEnv, CfgEnv, TxEnv};
@@ -101,7 +101,7 @@ where
             );
             (gas_used, output.data().clone())
         }
-        ExecutionResult::Revert { gas, output } => {
+        ExecutionResult::Revert { gas, output, .. } => {
             let gas_used = gas.tx_gas_used();
             let reason = decode_revert_reason(output);
             warn!(
@@ -112,7 +112,7 @@ where
             );
             return Err(SimError::Reverted(reason));
         }
-        ExecutionResult::Halt { reason, gas } => {
+        ExecutionResult::Halt { reason, gas, .. } => {
             let gas_used = gas.tx_gas_used();
             warn!(
                 event = "revm_runner.tx_halted",
@@ -156,7 +156,7 @@ fn build_env_parts(
 ) -> (CfgEnv, BlockEnv, TxEnv) {
     let mut cfg = CfgEnv::default();
     cfg.chain_id = candidate.chain_id;
-    cfg.spec = SpecId::LATEST;
+    cfg.spec = SpecId::OSAKA;
 
     let block = BlockEnv {
         // Use effective_block, not candidate.block_number, so DB and BlockEnv
