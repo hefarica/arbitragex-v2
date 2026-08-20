@@ -140,6 +140,8 @@ mod shared;
 #[allow(dead_code)]
 mod lending_position_indexer;
 mod workers;
+mod tip_optimizer;
+mod split_route_optimizer;
 // Phase 12-13: StateProjector + SizeOptimizer — wired in Phase 14.
 // Individual methods (project_v2_post_swap, project_triangular_cycle) are
 // Phase-15 hooks not yet called from the binary; allow dead_code.

@@ -38,6 +38,7 @@ pub mod op_28_jit_liquidity;
 pub mod op_29_shapley;
 pub mod op_30_gnn_encoder;
 pub mod op_31_drl_agent;
+pub mod op_32_vpin;
 
 #[cfg(test)]
 mod real_ops_tests;
@@ -157,6 +158,7 @@ impl OperatorRegistry {
             29 => Box::new(crate::operators::op_29_shapley::ShapleyOperator::new()),
             30 => Box::new(crate::operators::op_30_gnn_encoder::GnnEncoderOperator::new()),
             31 => Box::new(crate::operators::op_31_drl_agent::DrlAgentOperator::new()),
+            32 => Box::new(crate::operators::op_32_vpin::VpinOperator::new()),
         }
     }
 
