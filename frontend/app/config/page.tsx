@@ -9,6 +9,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { PageHeader } from "@/components/page-header";
 import { getConfigCurrent } from "@/lib/api-client";
 import { PaperModeToggle } from "@/components/paper-mode-toggle";
+import { RpcBackendToggle } from "@/components/settings/RpcBackendToggle";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
@@ -69,8 +70,9 @@ export default async function ConfigPage() {
             <AlertDescription>LIVE CAPITAL EXECUTION ENABLED. Opportunities will be sent to the mempool.</AlertDescription>
           </Alert>
         )}
-        <div className="flex-shrink-0 p-4 border rounded-xl bg-card">
+        <div className="flex-shrink-0 flex flex-col gap-3 p-4 border rounded-xl bg-card">
           <PaperModeToggle chainId={1} />
+          <RpcBackendToggle />
         </div>
       </div>
 

@@ -28,7 +28,12 @@
 //! | reason                    | meaning                                     |
 //! |---------------------------|---------------------------------------------|
 //! | `single_pool_no_spread`   | only one pool in `ImpactSet` for this pair  |
-//! | `no_price_oracle`         | neither token priceable — R8 None upstream  |
+//! | `no_price_oracle`         | token_out has NO canonical USD price (the   |
+//! |                           | genuine price miss — G-ECON-1 narrowed it)  |
+//! | `v3_quote_unavailable`    | V3 projector missing / quote failed on a    |
+//! |                           | leg / both legs quoted zero (G-ECON-1)      |
+//! | `spread_zero_equilibrium` | both legs quoted identical amounts — an     |
+//! |                           | efficient market, not a data gap (G-ECON-1) |
 //! | `non_positive_spread`     | spread <= 0 after CPMM math                 |
 
 use crate::amm_math;
@@ -53,6 +58,39 @@ use uuid::Uuid;
 // ---------------------------------------------------------------------------
 // DexEngine
 // ---------------------------------------------------------------------------
+
+/// G-ECON-1 — classified outcome of the V3 gross-USD computation, replacing
+/// the bare `Option<f64>` whose `None` collapsed three distinct failure modes
+/// under the misleading `no_price_oracle` label.
+#[derive(Debug, Clone, Copy)]
+pub(crate) enum V3GrossOutcome {
+    /// Computed gross spread in USD.
+    Usd(f64),
+    /// Projector missing, quote failed on either leg, or both legs quoted
+    /// zero — the quote pipeline produced nothing usable.
+    QuoteUnavailable,
+    /// Both legs quoted IDENTICAL amounts out — an efficient market with no
+    /// spread to capture (honest equilibrium, not a data gap).
+    SpreadZeroEquilibrium,
+    /// The token_out has no canonical USD price — the one case that truly
+    /// deserves the `no_price_oracle` label.
+    NoTokenPrice,
+    /// No trading config snapshot (V2-only path never consults the projector).
+    NoConfig,
+    /// The pair was priceable via the V2 reserves path — projector not needed.
+    Skipped,
+}
+
+impl V3GrossOutcome {
+    /// `Some(usd)` when computed, `None` otherwise (callers keep their
+    /// Option-shaped gross plumbing).
+    fn usd(&self) -> Option<f64> {
+        match self {
+            V3GrossOutcome::Usd(v) => Some(*v),
+            _ => None,
+        }
+    }
+}
 
 /// Engine that converts impacted pool pairs into DEX arb candidates.
 ///
@@ -260,11 +298,11 @@ impl DexEngine {
                         };
 
                     // For V3 paths: try to get a virtual quote via state_projector.
-                    let v3_gross_usd: Option<f64> = if !can_price_v2 {
+                    let v3_gross_usd = if !can_price_v2 {
                         self.compute_v3_gross_usd(pool_a, pool_b, probe_amount, &cfg_opt, intent)
                             .await
                     } else {
-                        None
+                        V3GrossOutcome::Skipped
                     };
 
                     // USD pricing: V2 cascade first, then V3 projector result.
@@ -275,7 +313,7 @@ impl DexEngine {
                             intent.legs.first().map(|l| l.token_out),
                         )
                     } else {
-                        v3_gross_usd
+                        v3_gross_usd.usd()
                     };
 
                     // EMIT the candidate — the SizeOptimizer decides final profitability.
@@ -287,9 +325,21 @@ impl DexEngine {
                     //
                     // Exception: single-pool (handled above). V3 with no projector (below).
 
-                    // R8: if both tokens unpriceable AND config present → no_price_oracle.
+                    // R8 + G-ECON-1: reject with an HONEST, specific reason. The
+                    // old blanket `no_price_oracle` label misclassified three
+                    // different conditions (56% of ALL rejections in prod were
+                    // WETH/USDT-class pairs that ARE priced — the actual causes
+                    // were V3 quote failures and zero-spread equilibria).
                     if gross_profit_usd.is_none() && cfg_opt.is_some() && !can_price_v2 {
-                        // Config present but no V3 projector and both pools need quoting.
+                        let reason = match v3_gross_usd {
+                            V3GrossOutcome::QuoteUnavailable => "v3_quote_unavailable",
+                            V3GrossOutcome::SpreadZeroEquilibrium => "spread_zero_equilibrium",
+                            // The genuine token-price miss — keeps the original label.
+                            V3GrossOutcome::NoTokenPrice => "no_price_oracle",
+                            // Unreachable in this branch (Usd ⇒ gross Some; Skipped/NoConfig
+                            // ⇒ !can_price_v2 false or cfg absent) — honest fallback.
+                            _ => "no_price_oracle",
+                        };
                         let (opp, cand, rp) =
                             build_rejected_opportunity(chain_id, tx_hash, pool_a, pool_b, label);
                         candidates.push(StrategyCandidate {
@@ -299,7 +349,7 @@ impl DexEngine {
                             route_plan: rp,
                             gross_profit_usd: None,
                             net_expected_profit_usd: None,
-                            rejection_reason: Some("no_price_oracle".to_owned()),
+                            rejection_reason: Some(reason.to_owned()),
                             source_intent_hash: tx_hash,
                             base_strategy: None,
                         });
@@ -355,10 +405,13 @@ impl DexEngine {
     ///   - Get virtual quote from pool_a for `probe_amount` → `out_a`.
     ///   - Get virtual quote from pool_b for `probe_amount` → `out_b`.
     ///   - `spread = |out_a - out_b|` (same orientation check as V2 path).
-    ///   - Convert to USD via base_token_price_usd.
+    ///   - Convert to USD via the token_out canonical price.
     ///
-    /// Returns `None` when no projector is wired, when pool is V2 (handled
-    /// separately), or when the quote fails (R8 honest).
+    /// G-ECON-1: returns a classified outcome instead of a bare `Option` so the
+    /// rejection reason is HONEST about which of the three distinct failure
+    /// modes fired (the old blanket `no_price_oracle` mislabeled quote failures
+    /// and zero-spread equilibria as missing prices — 56% of all prod
+    /// rejections, dominated by WETH/USDT pairs that ARE priced).
     async fn compute_v3_gross_usd(
         &self,
         pool_a: &PoolRef,
@@ -366,22 +419,34 @@ impl DexEngine {
         probe_amount: U256,
         cfg_opt: &Option<TradingConfigState>,
         intent: &RouteIntent,
-    ) -> Option<f64> {
-        let projector = self.state_projector.as_ref()?;
-        let cfg = cfg_opt.as_ref()?;
+    ) -> V3GrossOutcome {
+        let Some(projector) = self.state_projector.as_ref() else {
+            return V3GrossOutcome::QuoteUnavailable;
+        };
+        let Some(cfg) = cfg_opt.as_ref() else {
+            return V3GrossOutcome::NoConfig;
+        };
 
         // For each V3 pool, get a virtual quote using project_v3_quote.
         // V2 pools: use v2_amount_out with canonical unit reserves (same approximation
         // as compute_spread_v2_only — the real reserves are used by size_optimizer).
-        let out_a = self
+        let Some(out_a) = self
             .get_pool_quote(pool_a, probe_amount, projector, intent)
-            .await?;
-        let out_b = self
+            .await
+        else {
+            return V3GrossOutcome::QuoteUnavailable;
+        };
+        let Some(out_b) = self
             .get_pool_quote(pool_b, probe_amount, projector, intent)
-            .await?;
+            .await
+        else {
+            return V3GrossOutcome::QuoteUnavailable;
+        };
 
         if out_a.is_zero() && out_b.is_zero() {
-            return None;
+            // Projector answered but produced nothing usable on either leg
+            // (e.g. zero-liquidity slot0) — same operator action as a miss.
+            return V3GrossOutcome::QuoteUnavailable;
         }
 
         // Spread = |out_a - out_b| if both are quoting the same direction.
@@ -392,7 +457,9 @@ impl DexEngine {
         };
 
         if spread.is_zero() {
-            return None;
+            // Both legs quoted an IDENTICAL amount out — the honest reading is
+            // an efficient market with no spread to capture, NOT a missing price.
+            return V3GrossOutcome::SpreadZeroEquilibrium;
         }
 
         // Price by the ACTUAL denomination token (token_out), NOT a blanket
@@ -401,9 +468,12 @@ impl DexEngine {
         // causing the no_price_oracle pre-rejection flood (45/62 pools are V3).
         let spread_f64 = u256_to_f64_lossy(spread) / 1e18_f64;
         let token_out = intent.legs.first().map(|l| l.token_out);
-        let price_usd =
-            canonical_token_price_usd(token_out, cfg.base_token_price_usd, &cfg.token_prices_usd)?;
-        Some(spread_f64 * price_usd)
+        let Some(price_usd) =
+            canonical_token_price_usd(token_out, cfg.base_token_price_usd, &cfg.token_prices_usd)
+        else {
+            return V3GrossOutcome::NoTokenPrice;
+        };
+        V3GrossOutcome::Usd(spread_f64 * price_usd)
     }
 
     /// Get amount_out for `probe_amount` of token_in from a V3 pool using
@@ -816,6 +886,18 @@ mod tests {
     use crate::strategy_label::StrategyLabel;
     use ethers::types::{Address, H256, U256};
     use shared_rs::contracts::StrategyKind;
+
+    /// G-ECON-1: the Option-shaped plumbing only surfaces Usd; every failure
+    /// classification stays invisible to gross consumers by design.
+    #[test]
+    fn v3_gross_outcome_usd_only_for_computed() {
+        assert_eq!(V3GrossOutcome::Usd(1.5).usd(), Some(1.5));
+        assert_eq!(V3GrossOutcome::QuoteUnavailable.usd(), None);
+        assert_eq!(V3GrossOutcome::SpreadZeroEquilibrium.usd(), None);
+        assert_eq!(V3GrossOutcome::NoTokenPrice.usd(), None);
+        assert_eq!(V3GrossOutcome::NoConfig.usd(), None);
+        assert_eq!(V3GrossOutcome::Skipped.usd(), None);
+    }
 
     // ── Helpers ──────────────────────────────────────────────────────────────
 
