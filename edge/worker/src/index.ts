@@ -583,6 +583,9 @@ app.get("/api/operator/credentials/status", (c) => proxy(c, "/api/operator/crede
 app.get("/api/operator/selftest", (c) => proxy(c, "/api/operator/selftest", "arbx:cache:operator-selftest", 10));
 
 app.get("/api/opportunities/live", (c) => proxy(c, "/api/v1/opportunities/live", "arbx:cache:opps", 2));
+// G-PRICE-1 — USD token-price snapshot (WS `prices:snapshot` equivalent).
+// Pass-through, NO KV cache: freshness is the entire point of this route.
+app.get("/api/prices/live", (c) => proxyPassThrough(c, "/api/v1/prices/live"));
 // Risk alerts view (read-only). No cache in S1; S3 adds.
 app.get("/api/risk/alerts", (c) => proxy(c, "/api/v1/risk/alerts"));
 // S7: executions feed, recon summary, config view.
@@ -1401,6 +1404,9 @@ app.post("/api/admin/rpcs/import", (c) => adminProxy(c, "/api/admin/rpcs/import"
 app.post("/api/admin/rpcs/reload", (c) => adminProxy(c, "/api/admin/rpcs/reload"));
 app.post("/admin/onboarding/1/complete", (c) => adminProxy(c, "/admin/onboarding/1/complete"));
 app.put("/admin/config/paper-mode", (c) => adminProxy(c, "/admin/config/paper-mode"));
+// RPC backend toggle (alloy dual-track FASE 4) — per-service ethers/alloy/shadow.
+app.get("/api/admin/rpc-backend", (c) => adminProxy(c, "/api/admin/rpc-backend"));
+app.put("/api/admin/rpc-backend", (c) => adminProxy(c, "/api/admin/rpc-backend"));
 
 // Admin credentials (test + upsert + delete — MC-CRED-1 completes the set
 // dev-local already exposed; the masked list GET lives at /api/credentials above)
