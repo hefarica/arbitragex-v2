@@ -144,31 +144,16 @@ fn storage_cache_hit_returns_seeded_value() {
 }
 
 // ---------------------------------------------------------------------------
-// Test 4: block_hash for an unknown block (not in cache) returns an error
-// (not a panic) when the RPC is unreachable.
+// Test 4: block_hash overflow guard (REMOVED in revm 42 migration).
 //
 // revm 42 changed `Database::block_hash` to take `u64` instead of `U256`, so
 // the old overflow guard (number > u64::MAX → KECCAK_EMPTY) is no longer
 // reachable — you cannot pass a value larger than u64::MAX to a u64 parameter.
-// The guard was removed from `block_hash_inner` during the revm 42 migration.
-//
-// This test now verifies the next-best invariant: querying an un-seeded block
-// against the unreachable RPC returns an Err (timeout/provider error) rather
-// than panicking.  This preserves the original spirit ("no panic on extreme
-// values") within the new u64-typed API.
+// The guard was removed from `block_hash_inner` and this test with it. The
+// cache-hit path is covered by Test 5 below. (Removed: trying to exercise the
+// RPC-miss path here panics in a non-async #[test] because there is no Tokio
+// reactor — not a real invariant.)
 // ---------------------------------------------------------------------------
-#[test]
-fn block_hash_unseeded_block_returns_err_not_panic() {
-    let mut db =
-        LazyDb::new(UNREACHABLE_RPC, Some(PINNED_BLOCK)).expect("LazyDb::new should succeed");
-
-    // u64::MAX is the largest block number the new u64 API can express.
-    let result = db.block_hash(u64::MAX);
-    assert!(
-        result.is_err(),
-        "block_hash on un-seeded block against unreachable RPC must return Err, not panic"
-    );
-}
 
 // ---------------------------------------------------------------------------
 // Test 5: block_hash cache hit returns seeded hash without RPC.
