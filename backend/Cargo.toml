@@ -100,3 +100,24 @@ sha2          = "0.10"
 [workspace.lints.clippy]
 unwrap_used = "warn"
 expect_used = "warn"
+
+# ---------------------------------------------------------------------------
+# revm-interpreter 1.3.0 vs Rust ≥1.91 debug ub-checks (A.4 / G-SIM-1 fork).
+#
+# revm 1.3.0's EVM operand Stack pre-allocates `Vec::with_capacity(1024)` and
+# uses capacity-beyond-len unchecked writes (`get_unchecked_mut(len)` before
+# `set_len(len+1)` in Stack::dup/push/swap — stack.rs:206). Rust 1.91 debug
+# builds enable `unsafe_precondition` checks (ub_checks) that validate the
+# index against slice.len(), so EVERY DUP/SWAP of real bytecode execution
+# panics in dev profile ("slice::get_unchecked_mut requires that the index is
+# within the slice" → SIGABRT). In release the checks are off and the manual
+# Vec invariant (capacity == STACK_LIMIT) holds. Evidence:
+#   * A.4 fork run 20260820T005735Z (searcher-rs multistep_fork, VPS)
+#   * CI run 32061502321 (simulator-v2 fork_mainnet, 2026-08-17) — same
+#     stack.rs:206:28 panic in fork_mainnet_weth_deposit_withdraw_round_trip.
+# Scoped fix: disable debug assertions (and the ub_checks they gate) for the
+# interpreter crate only, so `cargo test` dev-profile fork suites execute
+# real mainnet bytecode again. Upgrading revm is the long-term fix.
+# ---------------------------------------------------------------------------
+[profile.dev.package.revm-interpreter]
+debug-assertions = false
