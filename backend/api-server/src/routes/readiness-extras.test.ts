@@ -5,7 +5,8 @@
  *   - probeEnv redacts values and reports presence/length only.
  *   - envBlockers detects missing critical vars.
  *   - envBlockers tolerates paper-mode and blocks non-paper modes.
- *   - doctrinalBlockers always emits the 6 phase items.
+ *   - doctrinalBlockers emits the 5 remaining phase items (A.4 resolved
+ *     2026-08-20 via gate_c_validation fork-validation evidence).
  *   - summarize counts severities + unions blocked phases.
  *   - overallStatus follows the precedence (critical > partial > ready).
  */
@@ -113,12 +114,16 @@ describe("envBlockers", () => {
 });
 
 describe("doctrinalBlockers", () => {
-  it("emits exactly 6 doctrinal phase blockers (A.4..A.9)", () => {
+  // A.4 (a4_fork_real_not_executed) was resolved 2026-08-20 — removed from
+  // the blocker list after the canonical fork-validation pass (evidence:
+  // gate_c_validation row a4_fork_validation_20260820T013304Z.log,
+  // a4_state=A4_PASSED). See the readiness-extras.ts doctrinalBlockers
+  // comment for the full evidence trail.
+  it("emits exactly 5 doctrinal phase blockers (A.5..A.9) — A.4 resolved 2026-08-20", () => {
     const b = doctrinalBlockers();
-    expect(b.length).toBe(6);
+    expect(b.length).toBe(5);
     const ids = b.map((x) => x.id).sort();
     expect(ids).toEqual([
-      "a4_fork_real_not_executed",
       "a5_paper_shadow_not_executed",
       "a6_circuit_breakers_partial",
       "a7_private_relay_no_submit_pending",
@@ -127,10 +132,9 @@ describe("doctrinalBlockers", () => {
     ]);
   });
 
-  it("A.4 blocks A.4 + A.5 + LIVE", () => {
+  it("A.4 blocker is gone (resolved via gate_c_validation evidence)", () => {
     const b = doctrinalBlockers();
-    const a4 = b.find((x) => x.id === "a4_fork_real_not_executed");
-    expect(a4!.blocks).toEqual(["A.4", "A.5", "LIVE"]);
+    expect(b.find((x) => x.id === "a4_fork_real_not_executed")).toBeUndefined();
   });
 
   it("A.5 blocks A.5 + LIVE (NOT A.4)", () => {

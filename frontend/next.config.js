@@ -42,7 +42,11 @@ const csp = () => {
     "default-src 'self'",
     "script-src 'self' 'unsafe-inline' 'unsafe-eval'",
     "style-src 'self' 'unsafe-inline'",
-    "img-src 'self' data: blob:",
+    // CSP-IMG-1 (2026-08-20): token logos are third-party hosted — TrustWallet
+    // GitHub raw (tokens.logo_url in PG) and CoinGecko asset CDNs (token-icons
+    // Redis cache). Hosts sourced from live PG/Redis inventory, NOT wildcarded
+    // to https: — tight allowlist only.
+    "img-src 'self' data: blob: https://raw.githubusercontent.com https://assets.coingecko.com https://coin-images.coingecko.com",
     "font-src 'self' data:",
     // Parameterized connect-src: only declared endpoints, no hardcoded localhost.
     `connect-src ${connectSrc}`,
@@ -72,6 +76,12 @@ const csp = () => {
 // INTERNAL_EDGE_URL is a runtime env var (not baked), so it resolves correctly
 // even when NEXT_PUBLIC_EDGE_URL was missing at build time.
 const INTERNAL_EDGE = process.env.INTERNAL_EDGE_URL || "http://edge:8787";
+// WS-POLL-1 (2026-08-20): /socket.io must terminate at the api-server WS
+// gateway — the edge worker (Hono) has NO socket.io route, so proxying there
+// 404'd every handshake and the feed degraded to HTTP polling. RULE 02:
+// WebSocket goes DIRECT to api-server, never via Edge. Same runtime-env
+// pattern as INTERNAL_EDGE_URL.
+const INTERNAL_API = process.env.INTERNAL_API_URL || "http://api-server:8080";
 
 const nextConfig = {
   reactStrictMode: true,
@@ -88,9 +98,15 @@ const nextConfig = {
         destination: `${INTERNAL_EDGE}/api/:path*`,
       },
       {
-        // Proxy /socket.io/* to the edge for Socket.IO polling fallback.
+        // WS-POLL-1: proxy /socket.io/* DIRECTLY to the api-server gateway
+        // (RULE 02). The previous target (edge) 404'd — the Hono worker has no
+        // socket.io route — so every handshake failed and the feed fell back
+        // to HTTP polling ("FEED POLLING" chip). Next rewrites are HTTP-only:
+        // socket.io will run its POLLING TRANSPORT through this proxy (a LIVE
+        // connection); the true websocket upgrade needs the nginx path
+        // (nginx /socket.io/ → api-server:8080, fixed on the VPS 2026-08-20).
         source: "/socket.io/:path*",
-        destination: `${INTERNAL_EDGE}/socket.io/:path*`,
+        destination: `${INTERNAL_API}/socket.io/:path*`,
       },
       {
         // H2 fix: proxy /admin/* (killswitch toggle, trading-config PUT,
