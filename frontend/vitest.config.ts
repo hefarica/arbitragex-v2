@@ -17,6 +17,10 @@ export default defineConfig({
   test: {
     environment: "node",
     include: [
+      // Root-level config guard tests (e.g. next.config.guard.test.ts) were
+      // silently NOT collected by the directory patterns below — a guard that
+      // never runs is worse than none (EDGE-HARD-1 landed hollow until this).
+      "next.config.guard.test.ts",
       "lib/**/*.test.ts",
       "components/**/*.test.{ts,tsx}",
       "features/**/*.test.{ts,tsx}",
