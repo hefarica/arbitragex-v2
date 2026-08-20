@@ -101,6 +101,7 @@ impl Database for LazyRpcDatabase {
             nonce: nonce.as_u64(),
             code_hash,
             code: Some(code_bytes.clone()),
+            ..Default::default()
         };
 
         self.accounts.insert(address, info.clone());
