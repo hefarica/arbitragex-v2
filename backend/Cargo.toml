@@ -32,8 +32,8 @@ rust-version = "1.85"
 license = "Proprietary"
 
 [workspace.dependencies]
-revm          = { version = "3.5.0", default-features = false, features = ["std"] }
-alloy-primitives = { version = "0.7" }
+revm          = { version = "42", default-features = false, features = ["std"] }
+alloy-primitives = { version = "1", features = ["std", "serde", "rlp"] }
 tokio         = { version = "1", features = ["full"] }
 tokio-util    = { version = "0.7", features = ["rt"] }
 anyhow        = "1"
