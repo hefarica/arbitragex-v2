@@ -760,9 +760,7 @@ fn category_to_strategy_label(
         // degenerate-route check could run. Now the cartridge evaluates the route,
         // and degenerate routes (token_in == token_out, empty metadata) get
         // rejected by the proper downstream gates instead of dying at label mapping.
-        "state_event_engine" | "parity_redemption_engine" => {
-            Ok(StrategyLabel::TriangularArb)
-        }
+        "state_event_engine" | "parity_redemption_engine" => Ok(StrategyLabel::TriangularArb),
         // No honest engine yet (derivatives, cex_external, intents_solver, nft,
         // prediction, unknown) → explicit reason (R8).
         other => Err(format!("cartridge_unmapped_strategy_label:{other}")),

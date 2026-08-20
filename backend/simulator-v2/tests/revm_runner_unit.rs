@@ -21,9 +21,9 @@
 
 use std::collections::HashMap;
 
+use revm::bytecode::Bytecode;
 use revm::primitives::{Address, Bytes as RevmBytes, B256, KECCAK_EMPTY, U256};
 use revm::state::AccountInfo;
-use revm::bytecode::Bytecode;
 use revm::Database;
 use simulator_v2::revm_runner::run;
 use simulator_v2::{CandidateInput, SimError};

@@ -1,9 +1,9 @@
 use ethers::providers::{Middleware, Provider, Ws};
 use ethers::types::{H160, H256, U256 as EthersU256};
 use revm::{
+    bytecode::Bytecode,
     primitives::{Address, B256, U256},
     state::AccountInfo,
-    bytecode::Bytecode,
     Database,
 };
 use std::collections::HashMap;
