@@ -28,6 +28,19 @@ describe("next.config rewrites (WS-POLL-1 regression guard)", () => {
     expect(socketio.destination).not.toContain(":8787");
   });
 
+  it("bare /socket.io also rewrites (slash-less requests after normalization)", async () => {
+    const rewrites = await nextConfig.rewrites();
+    const bare = rewrites.find((r: { source: string }) => r.source === "/socket.io");
+    expect(bare, "bare /socket.io rewrite must exist (engine.io 308 follow-up)").toBeDefined();
+    expect(bare.destination).toContain(`${INTERNAL_API}/socket.io/`);
+  });
+
+  it("skipTrailingSlashRedirect stays ON (the 308 killed the handshake pre-rewrite)", async () => {
+    // WS-POLL-1 live follow-up: Next's trailing-slash 308 ran BEFORE the
+    // rewrites, turning /socket.io/?EIO=4 into /socket.io (no match) → 404.
+    expect(nextConfig.skipTrailingSlashRedirect).toBe(true);
+  });
+
   it("/api/* keeps routing through the edge perimeter (RULE 02 REST role)", async () => {
     const rewrites = await nextConfig.rewrites();
     const api = rewrites.find((r: { source: string }) => r.source === "/api/:path*");
