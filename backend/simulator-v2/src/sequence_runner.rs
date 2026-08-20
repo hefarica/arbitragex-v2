@@ -43,11 +43,13 @@
 //!    NOT bump the gas counter.
 //! 5. The caller (sim_multistep) computes `gross_profit = final_balance - amount_in`. Prefund is structurally excluded because the storage override establishes `amount_in` as the BASE, not as a bonus on top of pre-existing balance.
 
+use revm::context::{BlockEnv, CfgEnv, TxEnv};
+use revm::context_interface::result::ExecutionResult;
+use revm::context_interface::TransactTo;
 use revm::db::CacheDB;
-use revm::primitives::{
-    Address, BlockEnv, Bytes, CfgEnv, Env, ExecutionResult, SpecId, TransactTo, TxEnv, U256,
-};
-use revm::EVM;
+use revm::handler::{MainBuilder, MainnetContext, MainnetEvm};
+use revm::primitives::{hardfork::SpecId, Address, Bytes, U256};
+use revm::{Context, ExecuteCommitEvm, ExecuteEvm, MainContext};
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use thiserror::Error;
@@ -173,7 +175,7 @@ pub struct SequenceResult {
 /// hot path) wraps the entire simulation in `spawn_blocking` so the
 /// tokio runtime is never parked on REVM.
 pub struct SequenceContext {
-    evm: EVM<CacheDB<LazyDb>>,
+    evm: MainnetEvm<MainnetContext<CacheDB<LazyDb>>>,
     reads: HashMap<String, U256>,
     gas_used_total: u64,
     hasher: Sha256,
@@ -188,18 +190,19 @@ impl SequenceContext {
         let cache_db = CacheDB::new(lazy_db);
         let mut cfg = CfgEnv::default();
         cfg.chain_id = chain_id;
-        cfg.spec_id = SpecId::LATEST;
+        cfg.spec = SpecId::LATEST;
         let block = BlockEnv {
             number: U256::from(block_number),
             ..BlockEnv::default()
         };
-        let env = Env {
-            cfg,
-            block,
-            tx: TxEnv::default(),
-        };
-        let mut evm = EVM::with_env(env);
-        evm.database(cache_db);
+        let evm = Context::mainnet()
+            .with_db(cache_db)
+            .with_block(block)
+            .modify_cfg_chained(|c| {
+                c.chain_id = cfg.chain_id;
+                c.spec = cfg.spec;
+            })
+            .build_mainnet();
         Self {
             evm,
             reads: HashMap::new(),
@@ -214,7 +217,7 @@ impl SequenceContext {
     /// the underlying CacheDB rejects the insertion (only happens when
     /// the DatabaseRef fetch for the existing account fails).
     pub fn apply_storage(&mut self, over: StorageOverride) -> Result<(), SequenceError> {
-        let db = self.evm.db().ok_or(SequenceError::EvmDbMissing)?;
+        let db = self.evm.db_mut();
         db.insert_account_storage(over.contract, over.slot, over.value)
             .map_err(|e| SequenceError::StorageOverrideFailed(format!("{e}")))?;
         debug!(
@@ -231,27 +234,24 @@ impl SequenceContext {
     /// so subsequent steps see the post-state. Returns the outcome —
     /// the orchestrator inspects it and decides whether to continue.
     pub fn call(&mut self, call: SequenceCall) -> Result<CallOutcome, SequenceError> {
-        self.evm.env.tx = TxEnv {
+        let tx = TxEnv {
             caller: call.from,
-            transact_to: TransactTo::Call(call.to),
+            kind: TransactTo::Call(call.to),
             data: Bytes::copy_from_slice(&call.calldata),
             value: U256::from(call.value_wei),
-            gas_price: U256::from(call.gas_price_wei),
+            gas_price: call.gas_price_wei,
             gas_limit: call.gas_limit,
-            nonce: None,
-            chain_id: None,
             ..TxEnv::default()
         };
 
         let exec = self
             .evm
-            .transact_commit()
+            .transact_commit(tx)
             .map_err(|e| SequenceError::TransactInfra(format!("{e}")))?;
 
         let outcome = match exec {
-            ExecutionResult::Success {
-                gas_used, output, ..
-            } => {
+            ExecutionResult::Success { gas, output, .. } => {
+                let gas_used = gas.tx_gas_used();
                 self.gas_used_total += gas_used;
                 self.successful_calls += 1;
                 let bytes = output.into_data();
@@ -268,7 +268,8 @@ impl SequenceContext {
                     output: bytes.to_vec(),
                 }
             }
-            ExecutionResult::Revert { gas_used, output } => {
+            ExecutionResult::Revert { gas, output } => {
+                let gas_used = gas.tx_gas_used();
                 self.gas_used_total += gas_used;
                 let reason = decode_revert_reason(&output);
                 warn!(
@@ -279,7 +280,8 @@ impl SequenceContext {
                 );
                 CallOutcome::Reverted { gas_used, reason }
             }
-            ExecutionResult::Halt { reason, gas_used } => {
+            ExecutionResult::Halt { reason, gas } => {
+                let gas_used = gas.tx_gas_used();
                 self.gas_used_total += gas_used;
                 warn!(
                     event = "sequence_runner.call_halt",
@@ -321,21 +323,19 @@ impl SequenceContext {
         // the same class of failure A.4 uncovered in read_amounts_out
         // (caller: router, fixed to Address::ZERO in PR #431). Use a
         // code-less view caller here when the FLE becomes a contract.
-        self.evm.env.tx = TxEnv {
+        let tx = TxEnv {
             caller: account,
-            transact_to: TransactTo::Call(token),
+            kind: TransactTo::Call(token),
             data: Bytes::copy_from_slice(&calldata),
             value: U256::ZERO,
-            gas_price: U256::ZERO,
+            gas_price: 0,
             gas_limit: 5_000_000,
-            nonce: None,
-            chain_id: None,
             ..TxEnv::default()
         };
 
         let result = self
             .evm
-            .transact()
+            .transact(tx)
             .map_err(|e| SequenceError::TransactInfra(format!("{e}")))?;
 
         let amount = match result.result {
@@ -389,27 +389,25 @@ impl SequenceContext {
     ) -> Result<U256, SequenceError> {
         let calldata = build_get_amounts_out_calldata(amount_in, path);
 
-        // Caller must be code-less: revm 3.5.0 has EIP-3607 hard-enabled (no
+        // Caller must be code-less: revm has EIP-3607 hard-enabled (no
         // `optional_eip3607` feature), so a caller with on-chain code is
         // rejected at validation (`RejectCallerWithCode` → TransactInfra).
         // On a real fork the router HAS code — unit-test mocks (code-less
         // router accounts) hide this. `getAmountsOut` has no msg.sender
         // dependency, so the canonical eth_call sender is safe here.
-        self.evm.env.tx = TxEnv {
+        let tx = TxEnv {
             caller: Address::ZERO,
-            transact_to: TransactTo::Call(router),
+            kind: TransactTo::Call(router),
             data: Bytes::copy_from_slice(&calldata),
             value: U256::ZERO,
-            gas_price: U256::ZERO,
+            gas_price: 0,
             gas_limit: 5_000_000,
-            nonce: None,
-            chain_id: None,
             ..TxEnv::default()
         };
 
         let result = self
             .evm
-            .transact()
+            .transact(tx)
             .map_err(|e| SequenceError::TransactInfra(format!("{e}")))?;
 
         let amount = match result.result {
@@ -582,7 +580,9 @@ fn decode_amounts_out_last(bytes: &[u8]) -> Result<U256, SequenceError> {
 mod tests {
     use super::*;
     use crate::lazy_db::seed_account;
-    use revm::primitives::{AccountInfo, Bytecode, KECCAK_EMPTY};
+    use revm::bytecode::Bytecode;
+    use revm::primitives::KECCAK_EMPTY;
+    use revm::state::AccountInfo;
 
     fn lazy_offline() -> LazyDb {
         LazyDb::new("http://127.0.0.1:1/never", Some(1))
@@ -612,6 +612,7 @@ mod tests {
                 nonce: 0,
                 code_hash: KECCAK_EMPTY,
                 code: Some(Bytecode::new()),
+                ..Default::default()
             },
         );
         let mut ctx = SequenceContext::new(lazy, 1, 100);

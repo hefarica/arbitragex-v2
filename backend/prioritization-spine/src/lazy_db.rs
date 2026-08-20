@@ -1,13 +1,29 @@
 use ethers::providers::{Middleware, Provider, Ws};
 use ethers::types::{H160, H256, U256 as EthersU256};
 use revm::{
-    primitives::{AccountInfo, Address, Bytecode, B256, U256},
+    primitives::{Address, B256, U256},
+    state::AccountInfo,
+    bytecode::Bytecode,
     Database,
 };
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::runtime::Handle;
 use tracing::{debug, warn};
+
+/// Error type for the LazyRpcDatabase Database impl.
+///
+/// revm 42 (revm-database-interface) requires the `Database::Error` associated
+/// type to implement `DBErrorMarker`. `String` is a foreign type so we cannot
+/// impl the foreign trait on it (orphan rule); this newtype is the local
+/// carrier. In practice every method below returns `Ok(...)` and never
+/// materializes an `Err`, so this type exists solely to satisfy the trait
+/// bound — it is constructible but never constructed by this impl.
+#[derive(Debug, thiserror::Error)]
+#[error("{0}")]
+pub struct LazyDbError(pub String);
+
+impl revm::database_interface::DBErrorMarker for LazyDbError {}
 
 /// A Database for REVM that lazily fetches state from an RPC using ethers-rs.
 /// It caches results locally in memory to avoid repeated network calls.
@@ -47,7 +63,7 @@ impl LazyRpcDatabase {
 }
 
 impl Database for LazyRpcDatabase {
-    type Error = String;
+    type Error = LazyDbError;
 
     fn basic(&mut self, address: Address) -> Result<Option<AccountInfo>, Self::Error> {
         if let Some(acc) = self.accounts.get(&address) {
@@ -143,7 +159,7 @@ impl Database for LazyRpcDatabase {
         Ok(alloy_val)
     }
 
-    fn block_hash(&mut self, _number: U256) -> Result<B256, Self::Error> {
+    fn block_hash(&mut self, _number: u64) -> Result<B256, Self::Error> {
         // Just return a dummy or mocked block hash to avoid extra RPC calls unless strictly necessary
         Ok(B256::ZERO)
     }

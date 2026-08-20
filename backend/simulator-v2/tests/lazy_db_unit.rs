@@ -12,7 +12,9 @@
 
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
-use revm::primitives::{AccountInfo, Address, Bytecode, B256, KECCAK_EMPTY, U256};
+use revm::bytecode::Bytecode;
+use revm::primitives::{Address, B256, KECCAK_EMPTY, U256};
+use revm::state::AccountInfo;
 use revm::Database;
 use simulator_v2::lazy_db::{
     account_cache_len, block_hash_cache_len, seed_account, seed_block_hash, seed_storage,
@@ -37,6 +39,7 @@ fn make_account_info(balance_eth: u64) -> AccountInfo {
         nonce: 1,
         code_hash: KECCAK_EMPTY,
         code: Some(Bytecode::new()),
+        ..Default::default()
     }
 }
 
@@ -141,31 +144,29 @@ fn storage_cache_hit_returns_seeded_value() {
 }
 
 // ---------------------------------------------------------------------------
-// Test 4: block_hash for an unknown block (not in cache, not fetched) returns
-// B256::ZERO via the fallback path when the seeded block number is absent.
+// Test 4: block_hash for an unknown block (not in cache) returns an error
+// (not a panic) when the RPC is unreachable.
 //
-// We test this by querying a block number that was never seeded.  Since the
-// provider is unreachable, the only way this can succeed is if the code has
-// a guard that avoids the RPC call for "unknown" blocks.
+// revm 42 changed `Database::block_hash` to take `u64` instead of `U256`, so
+// the old overflow guard (number > u64::MAX → KECCAK_EMPTY) is no longer
+// reachable — you cannot pass a value larger than u64::MAX to a u64 parameter.
+// The guard was removed from `block_hash_inner` during the revm 42 migration.
 //
-// BUT: block_hash() for an un-seeded block WOULD call the provider.  So we
-// cannot test the "missing block returns zero" path without a running server.
-//
-// Instead, we test the *overflow guard*: block numbers > u64::MAX must not
-// cause a panic or provider call, and must return KECCAK_EMPTY.
+// This test now verifies the next-best invariant: querying an un-seeded block
+// against the unreachable RPC returns an Err (timeout/provider error) rather
+// than panicking.  This preserves the original spirit ("no panic on extreme
+// values") within the new u64-typed API.
 // ---------------------------------------------------------------------------
 #[test]
-fn block_hash_overflow_returns_keccak_empty() {
+fn block_hash_unseeded_block_returns_err_not_panic() {
     let mut db =
         LazyDb::new(UNREACHABLE_RPC, Some(PINNED_BLOCK)).expect("LazyDb::new should succeed");
 
-    // U256 value larger than u64::MAX.
-    let huge_number = U256::from(u64::MAX) + U256::from(1u64);
-    let result = db.block_hash(huge_number).expect("overflow must not error");
-
-    assert_eq!(
-        result, KECCAK_EMPTY,
-        "block number > u64::MAX should return KECCAK_EMPTY"
+    // u64::MAX is the largest block number the new u64 API can express.
+    let result = db.block_hash(u64::MAX);
+    assert!(
+        result.is_err(),
+        "block_hash on un-seeded block against unreachable RPC must return Err, not panic"
     );
 }
 
@@ -184,7 +185,7 @@ fn block_hash_cache_hit_returns_seeded_hash() {
     assert_eq!(block_hash_cache_len(&db), 1);
 
     let result = db
-        .block_hash(U256::from(block_num))
+        .block_hash(block_num)
         .expect("block_hash() should succeed on cache hit");
 
     assert_eq!(

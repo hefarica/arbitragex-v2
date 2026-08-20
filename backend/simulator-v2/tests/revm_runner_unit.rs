@@ -21,12 +21,20 @@
 
 use std::collections::HashMap;
 
-use revm::primitives::{
-    AccountInfo, Address, Bytecode, Bytes as RevmBytes, B256, KECCAK_EMPTY, U256,
-};
+use revm::primitives::{Address, Bytes as RevmBytes, B256, KECCAK_EMPTY, U256};
+use revm::state::AccountInfo;
+use revm::bytecode::Bytecode;
 use revm::Database;
 use simulator_v2::revm_runner::run;
 use simulator_v2::{CandidateInput, SimError};
+
+/// Test-only error type. revm 42 requires `Database::Error: DBErrorMarker`;
+/// `String` is foreign so we use this local newtype.
+#[derive(Debug, thiserror::Error)]
+#[error("{0}")]
+struct TestDbError(String);
+
+impl revm::database_interface::DBErrorMarker for TestDbError {}
 
 // ---------------------------------------------------------------------------
 // MapDb — minimal in-memory revm::Database for tests
@@ -56,7 +64,7 @@ impl MapDb {
 }
 
 impl Database for MapDb {
-    type Error = String;
+    type Error = TestDbError;
 
     fn basic(&mut self, address: Address) -> Result<Option<AccountInfo>, Self::Error> {
         Ok(Some(
@@ -72,7 +80,7 @@ impl Database for MapDb {
         Ok(*self.storage.get(&(address, index)).unwrap_or(&U256::ZERO))
     }
 
-    fn block_hash(&mut self, _number: U256) -> Result<B256, Self::Error> {
+    fn block_hash(&mut self, _number: u64) -> Result<B256, Self::Error> {
         Ok(B256::ZERO)
     }
 }
@@ -141,6 +149,7 @@ fn valid_call_returns_ok_sim_result_with_nonzero_gas() {
             nonce: 0,
             code_hash: KECCAK_EMPTY,
             code: Some(Bytecode::new()),
+            ..Default::default()
         },
     );
     // Deploy a NOOP contract at `contract`.
@@ -151,6 +160,7 @@ fn valid_call_returns_ok_sim_result_with_nonzero_gas() {
             nonce: 1,
             code_hash,
             code: Some(noop_code),
+            ..Default::default()
         },
     );
 
@@ -199,6 +209,7 @@ fn reverted_call_returns_sim_error_reverted() {
             nonce: 0,
             code_hash: KECCAK_EMPTY,
             code: Some(Bytecode::new()),
+            ..Default::default()
         },
     );
     db.insert_account(
@@ -208,6 +219,7 @@ fn reverted_call_returns_sim_error_reverted() {
             nonce: 1,
             code_hash,
             code: Some(revert_code),
+            ..Default::default()
         },
     );
 
@@ -257,6 +269,7 @@ fn net_profit_wei_reflects_balance_delta() {
             nonce: 0,
             code_hash: KECCAK_EMPTY,
             code: Some(Bytecode::new()),
+            ..Default::default()
         },
     );
     db.insert_account(
@@ -266,6 +279,7 @@ fn net_profit_wei_reflects_balance_delta() {
             nonce: 1,
             code_hash,
             code: Some(noop_code),
+            ..Default::default()
         },
     );
 
@@ -312,6 +326,7 @@ fn trace_hash_is_deterministic_for_identical_calls() {
                 nonce: 0,
                 code_hash: KECCAK_EMPTY,
                 code: Some(Bytecode::new()),
+                ..Default::default()
             },
         );
         db.insert_account(
@@ -321,6 +336,7 @@ fn trace_hash_is_deterministic_for_identical_calls() {
                 nonce: 1,
                 code_hash,
                 code: Some(noop_code.clone()),
+                ..Default::default()
             },
         );
         db
@@ -365,6 +381,7 @@ fn trace_hash_differs_for_different_calldata() {
                 nonce: 0,
                 code_hash: KECCAK_EMPTY,
                 code: Some(Bytecode::new()),
+                ..Default::default()
             },
         );
         db.insert_account(
@@ -374,6 +391,7 @@ fn trace_hash_differs_for_different_calldata() {
                 nonce: 1,
                 code_hash,
                 code: Some(noop_code.clone()),
+                ..Default::default()
             },
         );
         db
@@ -410,22 +428,22 @@ fn trace_hash_differs_for_different_calldata() {
 struct ErrorDb;
 
 impl Database for ErrorDb {
-    type Error = String;
+    type Error = TestDbError;
 
     fn basic(&mut self, _address: Address) -> Result<Option<AccountInfo>, Self::Error> {
-        Err("simulated RPC failure".to_owned())
+        Err(TestDbError("simulated RPC failure".to_owned()))
     }
 
     fn code_by_hash(&mut self, _: B256) -> Result<Bytecode, Self::Error> {
-        Err("simulated RPC failure".to_owned())
+        Err(TestDbError("simulated RPC failure".to_owned()))
     }
 
     fn storage(&mut self, _: Address, _: U256) -> Result<U256, Self::Error> {
-        Err("simulated RPC failure".to_owned())
+        Err(TestDbError("simulated RPC failure".to_owned()))
     }
 
-    fn block_hash(&mut self, _: U256) -> Result<B256, Self::Error> {
-        Err("simulated RPC failure".to_owned())
+    fn block_hash(&mut self, _: u64) -> Result<B256, Self::Error> {
+        Err(TestDbError("simulated RPC failure".to_owned()))
     }
 }
 
@@ -486,6 +504,7 @@ fn test_loss_path_gas_and_value_deduction_yields_negative_profit() {
             nonce: 0,
             code_hash: KECCAK_EMPTY,
             code: Some(Bytecode::new()),
+            ..Default::default()
         },
     );
     db.insert_account(
@@ -495,6 +514,7 @@ fn test_loss_path_gas_and_value_deduction_yields_negative_profit() {
             nonce: 1,
             code_hash,
             code: Some(noop_code),
+            ..Default::default()
         },
     );
 
@@ -557,6 +577,7 @@ fn test_block_memoization_with_block_is_consistent() {
                 nonce: 0,
                 code_hash: KECCAK_EMPTY,
                 code: Some(Bytecode::new()),
+                ..Default::default()
             },
         );
         db.insert_account(
@@ -566,6 +587,7 @@ fn test_block_memoization_with_block_is_consistent() {
                 nonce: 1,
                 code_hash,
                 code: Some(noop_code.clone()),
+                ..Default::default()
             },
         );
         db
@@ -631,6 +653,7 @@ fn test_block_env_number_matches_effective_block() {
             nonce: 0,
             code_hash: KECCAK_EMPTY,
             code: Some(Bytecode::new()),
+            ..Default::default()
         },
     );
     db.insert_account(
@@ -640,6 +663,7 @@ fn test_block_env_number_matches_effective_block() {
             nonce: 1,
             code_hash,
             code: Some(block_number_bytecode),
+            ..Default::default()
         },
     );
 
@@ -689,6 +713,7 @@ fn test_block_env_number_matches_effective_block() {
             nonce: 0,
             code_hash: KECCAK_EMPTY,
             code: Some(Bytecode::new()),
+            ..Default::default()
         },
     );
     db2.insert_account(
@@ -698,6 +723,7 @@ fn test_block_env_number_matches_effective_block() {
             nonce: 1,
             code_hash: code_hash2,
             code: Some(noop2),
+            ..Default::default()
         },
     );
 
