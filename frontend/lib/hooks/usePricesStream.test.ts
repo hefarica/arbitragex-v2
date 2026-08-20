@@ -1,6 +1,8 @@
 import { describe, it, expect } from "vitest";
 import {
   applyPriceEvent,
+  silenceAction,
+  SILENCE_RECONNECT_MS,
   EMPTY_PRICES_STATE,
   type PricesState,
 } from "./usePricesStream";
@@ -73,5 +75,28 @@ describe("applyPriceEvent (G-PRICE-1 pure transitions)", () => {
     expect(s2.ts).toBe("2026-08-19T17:01:00Z");
     expect(s2.seq).toBe(7);
     expect(s2.ttlSecs).toBeNull();
+  });
+});
+
+describe("silenceAction (EDGE-HARD-1 watchdog)", () => {
+  const NOW = 1_000_000;
+
+  it("ok while frames flow within the liveness contract (<90s)", () => {
+    expect(silenceAction(NOW - 35_000, 0, NOW)).toBe("ok");
+    expect(silenceAction(NOW - 89_999, 2, NOW)).toBe("ok");
+  });
+
+  it("no frame yet → ok (connect flow owns the initial window)", () => {
+    expect(silenceAction(null, 0, NOW)).toBe("ok");
+  });
+
+  it("silent past 90s with budget left → reconnect", () => {
+    expect(silenceAction(NOW - SILENCE_RECONNECT_MS, 0, NOW)).toBe("reconnect");
+    expect(silenceAction(NOW - 300_000, 2, NOW)).toBe("reconnect");
+  });
+
+  it("silent past 90s with budget spent → degrade to polling", () => {
+    expect(silenceAction(NOW - SILENCE_RECONNECT_MS, 3, NOW)).toBe("degrade");
+    expect(silenceAction(NOW - 600_000, 10, NOW)).toBe("degrade");
   });
 });
