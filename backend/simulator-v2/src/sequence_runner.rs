@@ -314,6 +314,13 @@ impl SequenceContext {
         padded[12..32].copy_from_slice(account.as_slice());
         calldata.extend_from_slice(&padded);
 
+        // HAZARD (EIP-3607, latent): `caller: account` only passes validation
+        // while `account` is code-less. The day a REAL FlashLoanExecutor
+        // contract sits at that address (or an EIP-7702 delegation
+        // 0xef0100... is set on it), this read trips RejectCallerWithCode —
+        // the same class of failure A.4 uncovered in read_amounts_out
+        // (caller: router, fixed to Address::ZERO in PR #431). Use a
+        // code-less view caller here when the FLE becomes a contract.
         self.evm.env.tx = TxEnv {
             caller: account,
             transact_to: TransactTo::Call(token),
