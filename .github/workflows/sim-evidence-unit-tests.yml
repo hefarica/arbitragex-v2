@@ -151,8 +151,20 @@ jobs:
           # Duplicate packages named EXACTLY alloy-primitives or revm.
           # Anchored + " v" so alloy-primitives-utils / revm-primitives /
           # revm-interpreter do NOT match.
-          DUPES=$(grep -E '^(alloy-primitives|revm) v[0-9]' dep-tree-duplicates.txt || true)
-          if [ -n "${DUPES}" ]; then
+          #
+          # cargo tree -d lists a crate once per distinct feature-set, so the
+          # SAME version can appear in two blocks (e.g. alloy-primitives v1.6.1
+          # once via alloy-provider with `serde` and once via alloy-json-abi
+          # without it). That is NOT a type-conflict — the same version
+          # produces the same types; Rust's feature unification merges them at
+          # compile time. Only DISTINCT versions (e.g. 0.4.2 + 1.6.1) break
+          # type unification. `sort -u` collapses identical lines; if two or
+          # more distinct version lines remain, that is a real conflict.
+          RAW=$(grep -E '^(alloy-primitives|revm) v[0-9]' dep-tree-duplicates.txt || true)
+          DISTINCT=$(printf '%s\n' "$RAW" | sort -u)
+          DUPCOUNT=$(printf '%s\n' "$DISTINCT" | grep -c . || true)
+          if [ "$DUPCOUNT" -gt 1 ]; then
+            DUPES="$DISTINCT"
             echo "duplicates=true" >> "$GITHUB_OUTPUT"
             printf '%s\n' "${DUPES}"
           else
@@ -167,9 +179,14 @@ jobs:
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
           TREE_OUTCOME: ${{ steps.deptree.outcome }}
         run: |
-          DUPES=$(grep -E '^(alloy-primitives|revm) v[0-9]' dep-tree-duplicates.txt || true)
+          # Same distinct-version criterion as the deptree step above: the
+          # same version can appear once per feature-set; only >1 distinct
+          # version line is a real conflict.
+          RAW=$(grep -E '^(alloy-primitives|revm) v[0-9]' dep-tree-duplicates.txt || true)
+          DUPES=$(printf '%s\n' "$RAW" | sort -u)
+          DUPCOUNT=$(printf '%s\n' "$DUPES" | grep -c . || true)
 
-          if [ "${TREE_OUTCOME}" = "success" ] && [ -z "${DUPES}" ]; then
+          if [ "${TREE_OUTCOME}" = "success" ] && [ "$DUPCOUNT" -le 1 ]; then
             STATUS="evidenced"
             DETAIL=$(jq -n '{command: "cargo tree -d --locked",
                              duplicates: "none (alloy-primitives / revm single-version)"}')

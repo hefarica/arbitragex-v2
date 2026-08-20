@@ -16,20 +16,21 @@
 //! deduplication of cached simulation results without re-running revm.
 //!
 //! ### Gas limit
-//! We hard-code `30_000_000` (current Ethereum block limit).  This is high
+//! We hard-code `16_777_216` (revm 42 `SpecId::OSAKA` block gas cap). revm 42
+//! rejects transactions whose gas limit exceeds the spec's cap — 30M (the
+//! historical Ethereum block limit) now fails validation. This is still high
 //! enough for any realistic arbitrage bundle and keeps the simulation bounded.
 //!
 //! ### Spec
-//! We use `SpecId::LATEST` so all opcodes are available.  The spec can be made
+//! We use `SpecId::OSAKA` so all opcodes are available.  The spec can be made
 //! configurable in a future iteration if we need BSC / Optimism behaviour.
 
-use revm::primitives::{
-    Address, BlockEnv, Bytes, CfgEnv, Env, ExecutionResult, SpecId, TransactTo, TxEnv, U256,
-};
-use revm::Database;
-use revm::EVM;
-// revm's State type is hashbrown::HashMap (re-exported from revm-primitives).
-use revm::primitives::State as RevmState;
+use revm::context::{BlockEnv, CfgEnv, TxEnv};
+use revm::context_interface::result::ExecutionResult;
+use revm::context_interface::TransactTo;
+use revm::primitives::{hardfork::SpecId, Address, Bytes, U256};
+use revm::state::EvmState as RevmState;
+use revm::{Context, Database, ExecuteEvm, MainBuilder, MainContext};
 use sha2::{Digest, Sha256};
 use tracing::{info, warn};
 
@@ -73,31 +74,37 @@ where
         .unwrap_or(U256::ZERO);
 
     let to = Address::from(candidate.to);
-    let env = build_env(candidate, caller, to, effective_block);
+    let (cfg, block, tx) = build_env_parts(candidate, caller, to, effective_block);
 
-    let mut evm = EVM::with_env(env);
-    evm.database(db);
+    let mut evm = Context::mainnet()
+        .with_db(db)
+        .with_block(block)
+        .modify_cfg_chained(|c| {
+            c.chain_id = cfg.chain_id;
+            c.spec = cfg.spec;
+        })
+        .build_mainnet();
 
     let result_and_state = evm
-        .transact()
+        .transact(tx)
         .map_err(|e| SimError::Provider(format!("revm transact: {e}")))?;
 
     let execution_result = result_and_state.result;
     let post_state = result_and_state.state;
 
     let (gas_used, output_bytes) = match &execution_result {
-        ExecutionResult::Success {
-            gas_used, output, ..
-        } => {
+        ExecutionResult::Success { gas, output, .. } => {
+            let gas_used = gas.tx_gas_used();
             info!(
                 event = "revm_runner.tx_executed",
                 status = "success",
                 gas_used,
                 "simulation succeeded"
             );
-            (*gas_used, output.data().clone())
+            (gas_used, output.data().clone())
         }
-        ExecutionResult::Revert { gas_used, output } => {
+        ExecutionResult::Revert { gas, output, .. } => {
+            let gas_used = gas.tx_gas_used();
             let reason = decode_revert_reason(output);
             warn!(
                 event = "revm_runner.tx_reverted",
@@ -107,7 +114,8 @@ where
             );
             return Err(SimError::Reverted(reason));
         }
-        ExecutionResult::Halt { reason, gas_used } => {
+        ExecutionResult::Halt { reason, gas, .. } => {
+            let gas_used = gas.tx_gas_used();
             warn!(
                 event = "revm_runner.tx_halted",
                 gas_used,
@@ -133,7 +141,7 @@ where
 // Private helpers
 // ---------------------------------------------------------------------------
 
-/// Build the revm `Env` from the candidate and resolved addresses.
+/// Build the revm env parts from the candidate and resolved addresses.
 ///
 /// `effective_block` is the block number agreed between the DB and this env
 /// (MAJOR #6 fix). It must equal the block `LazyDb` is pinned to so that
@@ -142,15 +150,15 @@ where
 /// `candidate.gas_price_wei` is forwarded to `TxEnv.gas_price` so revm
 /// deducts actual gas cost from the caller's balance (CRITICAL #2 fix).
 /// `SimResult.net_profit_wei` is therefore true net-of-gas P&L (G-NET-1).
-fn build_env(
+fn build_env_parts(
     candidate: &CandidateInput,
     caller: Address,
     to: Address,
     effective_block: u64,
-) -> Env {
+) -> (CfgEnv, BlockEnv, TxEnv) {
     let mut cfg = CfgEnv::default();
     cfg.chain_id = candidate.chain_id;
-    cfg.spec_id = SpecId::LATEST;
+    cfg.spec = SpecId::OSAKA;
 
     let block = BlockEnv {
         // Use effective_block, not candidate.block_number, so DB and BlockEnv
@@ -161,19 +169,17 @@ fn build_env(
 
     let tx = TxEnv {
         caller,
-        gas_limit: 30_000_000,
+        gas_limit: 16_777_216,
         // Forward gas price so revm deducts gas from the caller's balance.
         // net_profit_wei = balance_delta = profit_tokens - gas_cost (CRITICAL #2).
-        gas_price: U256::from(candidate.gas_price_wei),
-        transact_to: TransactTo::Call(to),
+        gas_price: candidate.gas_price_wei,
+        kind: TransactTo::Call(to),
         value: U256::from(candidate.value_wei),
         data: Bytes::copy_from_slice(&candidate.calldata),
-        nonce: None,
-        chain_id: None,
         ..TxEnv::default()
     };
 
-    Env { cfg, block, tx }
+    (cfg, block, tx)
 }
 
 /// Return the caller's balance from the post-execution `state` diff.
