@@ -1296,23 +1296,29 @@ mod tests {
             .await
             .expect("must not error");
 
-        // With a 0.001 USD cap and 3000 USD/WETH price:
-        // cap_wei ≈ 0.001/3000 * 1e18 ≈ 333_333_333 wei — extremely small.
-        // evaluate_cycle will try but cap clamps x_star to nearly 0, likely
-        // causing profit_at_clamped ≤ 0 → returns None → "spot_product_le_one".
-        // That's also a valid R8 outcome.
-        // Either rejection_reason is "spot_product_le_one" OR
-        // "sanity_reject_implausible_profit" — both are correct.
+        // G-ECON-2 (2026-08-19): with WEI-granularity caps, a $0.001 cap no
+        // longer force-rejects everything — the old whole-token floor WAS the
+        // bug this program fixes (CapClampFailed flood). cap_wei ≈
+        // 0.001/3000 × 1e18 ≈ 333_333_333 wei can legitimately produce a
+        // micro-trade. The invariant this test actually guards is the SANITY
+        // bound: any candidate that survives is either rejected, or accepted
+        // with a plausible (≤ 5× cap) profit — never an implausible multiple.
         assert!(
             !result.is_empty(),
             "must produce at least one candidate (either accepted or rejected)"
         );
-        // All candidates must have a rejection_reason.
-        let all_rejected = result.iter().all(|c| c.rejection_reason.is_some());
-        assert!(
-            all_rejected,
-            "all candidates must be rejected with tiny cap"
-        );
+        for c in &result {
+            match c.rejection_reason {
+                Some(_) => { /* rejected — honest outcome */ }
+                None => {
+                    let p = c.gross_profit_usd.unwrap_or(0.0);
+                    assert!(
+                        p <= 5.0 * 0.001,
+                        "accepted candidate profit {p} exceeds the 5×cap plausibility bound (cap $0.001)"
+                    );
+                }
+            }
+        }
     }
 
     // ── triangular_engine::tests::route_plan_strategy_kind_is_triangular_arb ─
