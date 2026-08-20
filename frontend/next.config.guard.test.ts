@@ -11,7 +11,9 @@
 // fails CI before it ships.
 
 import { describe, it, expect } from "vitest";
-// eslint-disable-next-line @typescript-eslint/no-require-imports
+// `require` of the CJS next.config is intentional here; the frontend eslint
+// config has no no-require-imports rule, so a disable pragma for it is itself
+// a lint error ("Definition for rule ... was not found").
 const nextConfig = require("./next.config.js");
 
 const INTERNAL_EDGE = process.env.INTERNAL_EDGE_URL || "http://edge:8787";
