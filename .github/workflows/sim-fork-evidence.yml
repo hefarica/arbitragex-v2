@@ -102,6 +102,15 @@ jobs:
         shell: bash
         env:
           FORK_BLOCK: ${{ steps.preflight.outputs.block }}
+          # revm-interpreter 1.3.0 writes its EVM operand Stack beyond the
+          # Vec len (capacity 1024 pre-allocated) — legal under its manual
+          # invariant, but Rust >=1.9x debug builds enable unsafe-precondition
+          # (ub_checks) that abort (SIGABRT) on the first DUP/SWAP of real
+          # bytecode. Killed both fork suites 2026-08-17 (this workflow's
+          # runs) and A.4 (see scripts/run_a4_fork_validation.sh — same fix
+          # proven there 2026-08-20). Scoped to this invocation; unit-test
+          # profiles keep their debug assertions.
+          RUSTFLAGS: -Cdebug-assertions=off
         run: |
           set -o pipefail
           cargo test -p simulator-v2 --test fork_mainnet --locked -- --ignored --nocapture 2>&1 | tee fork-suite.log
