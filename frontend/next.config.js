@@ -86,6 +86,14 @@ const INTERNAL_API = process.env.INTERNAL_API_URL || "http://api-server:8080";
 const nextConfig = {
   reactStrictMode: true,
   poweredByHeader: false,
+  // WS-POLL-1 (2026-08-20, live follow-up): Next's built-in trailing-slash
+  // REDIRECT runs before rewrites — the engine.io client requests
+  // `/socket.io/?EIO=4&transport=polling`, Next 308s it to `/socket.io`
+  // (no slash), the `/socket.io/:path*` pattern no longer matches, and the
+  // handshake 404s (verified live: FEED still POLLING after PR #437).
+  // Skipping the slash redirect lets the rewrite see the original path.
+  // Only /socket.io semantics change: app routes don't rely on the 308.
+  skipTrailingSlashRedirect: true,
   env: {
     NEXT_PUBLIC_EDGE_URL: EDGE_URL,
     NEXT_PUBLIC_WS_URL: WS_URL,
@@ -96,6 +104,11 @@ const nextConfig = {
         // Proxy all /api/* requests to the edge (server-side, no CORS issues).
         source: "/api/:path*",
         destination: `${INTERNAL_EDGE}/api/:path*`,
+      },
+      {
+        // WS-POLL-1 (bare path): covers slash-less /socket.io requests.
+        source: "/socket.io",
+        destination: `${INTERNAL_API}/socket.io/`,
       },
       {
         // WS-POLL-1: proxy /socket.io/* DIRECTLY to the api-server gateway
