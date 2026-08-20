@@ -23,16 +23,10 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { GenericContainer, type StartedTestContainer, Wait } from "testcontainers";
 import { Pool } from "pg";
-import { readFileSync } from "node:fs";
-import path from "node:path";
-import { fileURLToPath } from "node:url";
 import express from "express";
 import request from "supertest";
 import type { Redis } from "ioredis";
 import { mountRpcRegistry } from "../src/routes/rpc-registry.js";
-
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const MIGRATIONS_DIR = path.join(__dirname, "../../../database/migrations");
 
 let container: StartedTestContainer;
 let pool: Pool;
@@ -41,10 +35,6 @@ let pool: Pool;
 // route; the status route never touches it. A minimal double keeps the test
 // focused on the status contract (import coverage belongs to its own suite).
 const redisDouble = { publish: async () => 1 } as unknown as Redis;
-
-function loadMigration(filename: string): string {
-  return readFileSync(path.join(MIGRATIONS_DIR, filename), "utf-8");
-}
 
 beforeAll(async () => {
   container = await new GenericContainer("postgres:15")
@@ -58,7 +48,31 @@ beforeAll(async () => {
   pool = new Pool({
     connectionString: `postgres://postgres:test@127.0.0.1:${port}/arbitragex`,
   });
-  await pool.query(loadMigration("066_omni_entity_registries.sql"));
+  // Test-local DDL mirroring the 066 migration's rpc_endpoints shape. Loading
+  // the real migration drags its FK dependency chain ("chains" et al.); the
+  // status contract only needs the columns the handler reads.
+  await pool.query(`
+    CREATE TABLE rpc_endpoints (
+      id BIGSERIAL PRIMARY KEY,
+      chain_id INTEGER NOT NULL,
+      url TEXT NOT NULL,
+      transport TEXT NOT NULL,
+      tier TEXT NOT NULL DEFAULT 'primary',
+      auth_kind TEXT NOT NULL DEFAULT 'none',
+      auth_credential_id UUID,
+      weight INTEGER NOT NULL DEFAULT 100,
+      rate_limit_rps INTEGER,
+      max_concurrency INTEGER NOT NULL DEFAULT 16,
+      enabled BOOLEAN NOT NULL DEFAULT TRUE,
+      status TEXT NOT NULL DEFAULT 'pending_validation',
+      notes TEXT,
+      config_hash TEXT,
+      created_by TEXT,
+      updated_by TEXT,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      UNIQUE (chain_id, url)
+    )`);
 });
 
 afterAll(async () => {
