@@ -263,21 +263,12 @@ export function useOpportunitiesStream(
 
     const wsUrl = getWsBaseUrl();
 
-    // C4 fix (audit 2026-05-10): the backend WS gateway rejects every
-    // handshake without a valid admin token (`extractHandshakeToken`).
-    // Read the token from the operator's existing admin session and pass
-    // it to the socket factory. When no admin session exists, skip the
-    // WS connection entirely and degrade to polling immediately —
-    // attempting an authless connection just produces noisy 401s.
-    const adminToken = getAdminToken();
-    if (!adminToken) {
-      // No admin session → polling is the only honest option.
-      // The dashboard already renders a "WS locked: admin session
-      // required" state when wsStatus stays at "STALE" via the badge.
-      setWsStatus("STALE");
-      startPolling();
-      return;
-    }
+    // WS-POLL-1 (2026-08-20): the opportunities room is PUBLIC — the gateway
+    // accepts anonymous handshakes (io.use only sets the admin capability
+    // flag; it never rejects). The old hard bail forced session-less visitors
+    // into STALE+polling with a healthy server. Attach the admin token when
+    // present (C4 capability path); the 3-error degrade below still guards.
+    const adminToken = getAdminToken() ?? undefined;
 
     const handle = createOpportunitySocket({
       url: wsUrl,
