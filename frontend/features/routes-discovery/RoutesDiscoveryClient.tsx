@@ -15,6 +15,7 @@ import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { DegradedBanner } from "@/components/DegradedBanner";
 import { SourceMeta } from "@/components/SourceMeta";
+import { RouteDiscoverySettingsSheet, FinancingBadges } from "./RouteDiscoverySettingsSheet";
 
 const POLL_INTERVAL_MS = 8_000;
 
@@ -37,6 +38,16 @@ interface RouteEntry {
   rejected_strategies: RejectedStrategy[];
   dispatch_strategy: string;
   dispatch_deferred: string | null;
+  /** CAPA 2 G2 — parallel financing verdicts (born/died/resized per mode). */
+  financing?: Array<{
+    mode: string;
+    label: string;
+    enabled: boolean;
+    viable: boolean;
+    reason?: string | null;
+    fee_bps: number;
+    max_size_usd: number;
+  }>;
 }
 
 interface DiscoveryStatusData {
@@ -48,7 +59,13 @@ interface DiscoveryStatusData {
     latency_ms: number;
     mode: string;
     pools_total: number;
-    routes_capped: boolean;
+    /** SHADOW-NO-ROUTE-CAPS: deferred = budget paused the exhaustive
+     *  enumeration; the cursor resumes next tick. NOT a loss. */
+    routes_deferred: boolean;
+    deferred_cursor?: string | null;
+    depth_pass?: number;
+    pass_emitted_total?: number;
+    ladder_complete?: boolean;
     multi_hop_profitable_cycles: number;
   };
 }
@@ -89,6 +106,8 @@ function RouteCard({ route, idx }: { route: RouteEntry; idx: number }) {
             ))}
           </div>
         )}
+        {/* CAPA 2 G2 — the financing comparison: born ✓ / died ✗ / size per mode */}
+        <FinancingBadges financing={route.financing ?? []} />
         {route.dispatch_strategy && (
           <div className="flex items-center gap-1 text-xs">
             <ZapIcon className="h-3 w-3 text-primary" />
@@ -184,10 +203,21 @@ export function RoutesDiscoveryClient({ initialData }: Props) {
           <span className="text-sm text-muted-foreground">Edges built: <strong>{tick.edges_built}</strong></span>
           <span className="text-sm text-muted-foreground">Pools: <strong>{tick.pools_total}</strong></span>
           <span className="text-sm text-muted-foreground">Latency: <strong>{tick.latency_ms}ms</strong></span>
-          <Badge variant={tick.routes_capped ? "destructive" : "secondary"} className="text-xs">
-            {tick.routes_capped ? "routes capped" : "routes ok"}
+          <Badge
+            variant={tick.routes_deferred ? "default" : "secondary"}
+            className="text-xs"
+            title={
+              tick.routes_deferred
+                ? `Exhaustive enumeration paused by tick budget — resumes at cursor ${tick.deferred_cursor ?? "?"} next tick. No routes are lost (SHADOW-NO-ROUTE-CAPS).`
+                : "Enumeration running within budget this tick"
+            }
+          >
+            {tick.routes_deferred
+              ? `deferred (continues @ ${tick.deferred_cursor ?? "?"})`
+              : "routes ok"}
           </Badge>
           <Badge variant="outline" className="text-xs capitalize">mode: {tick.mode}</Badge>
+          <RouteDiscoverySettingsSheet chainId={tick.chain_id} />
         </div>
       )}
 

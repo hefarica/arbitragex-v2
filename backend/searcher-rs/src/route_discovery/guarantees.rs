@@ -9,7 +9,7 @@
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
 use crate::route_discovery::graph_builder::{GraphBuildOutcome, RejectedEdge, TokenGraph};
-use crate::route_discovery::route_discovery_worker::evaluate_tick;
+use crate::route_discovery::route_discovery_worker::{evaluate_tick, graph_generation};
 use crate::route_discovery::strategy_applicability::StrategyApplicabilityEngine;
 use crate::route_discovery::telemetry::{
     rejected_event, route_candidate_event, route_intent_emitted_event,
@@ -17,6 +17,7 @@ use crate::route_discovery::telemetry::{
 };
 use crate::route_discovery::types::{RouteCandidate, RouteDirection, RouteEdge, RouteKind};
 use crate::route_discovery::unique_route_finder::RouteFinderConfig;
+use crate::route_discovery::unique_route_finder::UniqueRouteFinder;
 use crate::route_discovery::RouteDiscoveryMode;
 use crate::route_intent::{DetectionSource, ProtocolType};
 use ethers::types::{Address, U256};
@@ -121,9 +122,15 @@ fn every_telemetry_builder_avoids_opps_detected() {
             1,
             0,
             1,
+            // routes_deferred, cursor, pools_rotated
+            false,
+            "-",
+            false,
+            // depth_pass, rotation_epoch, pass_emitted_total, ladder_complete
+            7,
             0,
-            false,
-            false,
+            1,
+            true,
             5,
             "shadow",
         ),
@@ -155,7 +162,19 @@ fn dispatch_off_produces_no_intents_or_emitted_events() {
     let outcome = routable_outcome();
     let engine = StrategyApplicabilityEngine::default();
     let finder = RouteFinderConfig::default();
-    let tick = evaluate_tick(&outcome, 1, &engine, &finder, 200, false, 0, "shadow");
+    let tick = evaluate_tick(
+        &outcome,
+        1,
+        &engine,
+        &finder,
+        &mut UniqueRouteFinder::new(finder.clone()),
+        graph_generation(&outcome.graph),
+        &Default::default(),
+        200,
+        false,
+        0,
+        "shadow",
+    );
     assert!(tick.routes_found > 0, "graph is routable");
     assert_eq!(tick.routes_dispatched, 0);
     assert!(tick.dispatch_intents.is_empty());
@@ -171,7 +190,19 @@ fn shadow_tick_stamps_algorithm_dfs_bounded_everywhere() {
     let outcome = routable_outcome();
     let engine = StrategyApplicabilityEngine::default();
     let finder = RouteFinderConfig::default();
-    let tick = evaluate_tick(&outcome, 1, &engine, &finder, 200, true, 0, "shadow");
+    let tick = evaluate_tick(
+        &outcome,
+        1,
+        &engine,
+        &finder,
+        &mut UniqueRouteFinder::new(finder.clone()),
+        graph_generation(&outcome.graph),
+        &Default::default(),
+        200,
+        true,
+        0,
+        "shadow",
+    );
     // Every event that carries an algorithm field must say dfs_bounded.
     for e in tick
         .events
@@ -193,7 +224,19 @@ fn all_dispatch_intents_are_observe_only_newblock_zero_amount() {
     let outcome = routable_outcome();
     let engine = StrategyApplicabilityEngine::default();
     let finder = RouteFinderConfig::default();
-    let tick = evaluate_tick(&outcome, 1, &engine, &finder, 200, true, 0, "shadow");
+    let tick = evaluate_tick(
+        &outcome,
+        1,
+        &engine,
+        &finder,
+        &mut UniqueRouteFinder::new(finder.clone()),
+        graph_generation(&outcome.graph),
+        &Default::default(),
+        200,
+        true,
+        0,
+        "shadow",
+    );
     assert!(tick.routes_dispatched > 0);
     for intent in &tick.dispatch_intents {
         // NewBlock → cartridge_matches_intent routes by shape: dex_arb (these

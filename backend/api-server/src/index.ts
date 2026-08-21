@@ -145,6 +145,7 @@ import {
 import {
   TelemetryCache,
   buildRouteDiscoveryRouter,
+  buildRouteDiscoveryConfigRouter,
   buildCartridgesRouter,
 } from "./routes/route-discovery.js";
 import { createServer } from "http";
@@ -659,6 +660,21 @@ const routeDiscoveryCache = new TelemetryCache(200);
 const cartridgeTelemetryCache = new TelemetryCache(200);
 app.use(buildRouteDiscoveryRouter(routeDiscoveryCache));
 app.use(buildCartridgesRouter(cartridgeTelemetryCache, { redis, requireAdminToken, adminToken: ARBX_ADMIN_TOKEN }));
+// ROUTES_CROWN_JEWEL §3 — live route-discovery runtime config (floating panel
+// payload). GET public read + PUT admin-gated upsert → Redis mirror the Rust
+// worker reads live. Same channel discipline as trading_config.
+app.use(
+  buildRouteDiscoveryConfigRouter({
+    redis,
+    requireAdminToken,
+    adminToken: ARBX_ADMIN_TOKEN,
+    writeAudit: (action, actor, detail) => {
+      void writeAudit(
+        action, actor, "route_discovery_config", null, null, detail, null, null,
+      ).catch(() => {});
+    },
+  }),
+);
 
 // FASE B Gate-C — read-only analytics over the durable route_discovery_outcomes
 // table (the shadow outcomes the sink persists, incl. the Paso 9 `reason`). This is

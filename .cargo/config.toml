@@ -1,0 +1,6 @@
+# WDAC bypass: Windows Code Integrity (Policy {0283ac0f-...}) blocks test
+# executables under Desktop\...\target\debug\deps\ (Event 3077). Redirecting
+# the build target to ~/.cargo/ (Rust's own root, already trusted by the
+# policy) avoids the intermittent block on rebuilt binaries with new hashes.
+[build]
+target-dir = "C:/Users/HFRC/.cargo/target-win"
