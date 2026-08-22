@@ -29,12 +29,7 @@ use std::str::FromStr;
 // schema state only needs adding here (single source of truth, no scattered
 // literals). The mirror must hold: a row with rejection_reason IS NULL must
 // always land in a status ∈ VIABLE_STATUSES so the LIVE_QUERY surfaces it.
-pub const VIABLE_STATUSES: &[&str] = &[
-    "detected",
-    "validated",
-    "simulated",
-    "scored",
-];
+pub const VIABLE_STATUSES: &[&str] = &["detected", "validated", "simulated", "scored"];
 
 /// The terminal non-viable status a row takes when a gate rejected it. Mirrors
 /// the paper executor's `REJECTED` classification (executor.ts:250) so the
