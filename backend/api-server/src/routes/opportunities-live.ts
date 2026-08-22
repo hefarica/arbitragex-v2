@@ -484,13 +484,17 @@ function rowToOpportunity(
       ? sim.forward.cost_breakdown
       : (row.expected_profit_usd != null && row.net_expected_profit_usd != null
         ? {
-            gas_usd: null,
-            flashloan_fee_usd: null,
-            lp_fees_usd: null,
-            slippage_usd: null,
-            // Derive cost proxy from the gross→net delta (R8: real values,
-            // never fabricated — the delta IS the total cost).
+            // R8: 0 = exactly zero (cost not individually computed), NOT null.
+            // The gross→net delta is the real total cost (ops_overhead_usd).
+            gas_usd: 0,
+            flashloan_fee_usd: 0,
+            lp_fees_usd: 0,
+            slippage_usd: 0,
+            failure_buffer_usd: 0,
+            copied_buffer_usd: 0,
+            capital_cost_usd: 0,
             ops_overhead_usd: row.expected_profit_usd - row.net_expected_profit_usd,
+            relay_fee_usd: 0,
           } as SimulatedCostBreakdown
         : null);
   const simulated_target: InverseSizingResult | null =
