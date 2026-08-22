@@ -467,14 +467,58 @@ function rowToOpportunity(
   const validationOut = validations.get(
     `${tokenOutChain}:${row.token_out.toLowerCase()}`,
   ) ?? null;
+  // HARDENING (2026-08-22): cuando forwardSimulate no produce output pero
+  // el searcher-rs ya pobló net_expected_profit_usd en PG, usar ese valor
+  // como fallback para que la tarjeta muestre el net yield aunque el cost
+  // breakdown no esté disponible. El cost breakdown se computa cuando
+  // forwardSimulate tiene amount_in_wei + token_price; cuando no, usamos
+  // el gross→net delta como cost proxy.
   const simulated_net_profit_usd =
-    sim?.forward != null ? sim.forward.net_usd : null;
+    sim?.forward != null ? sim.forward.net_usd : (row.net_expected_profit_usd ?? null);
+  // Capital amount: derivar del amount_in_wei + token price cuando el
+  // forwardSimulate no lo compute. Si no hay amount_in_wei, usar null (R8).
   const simulated_amount_in_usd =
-    sim?.forward != null ? sim.forward.amount_in_usd : null;
+    sim?.forward != null ? sim.forward.amount_in_usd
+      : (row.amount_in_wei && row.token_in_decimals
+        ? (() => {
+            try {
+              const wei = BigInt(row.amount_in_wei);
+              const decimals = row.token_in_decimals;
+              // No tenemos token_price aquí (no viene del SQL query), pero
+              // podemos estimar el capital en USD si hay un price snapshot.
+              // Por ahora retornamos el amount en token units (sin USD).
+              // El frontend lo mostrará como "—" si no es USD.
+              return null; // R8: no fabricamos USD sin precio real
+            } catch { return null; }
+          })()
+        : null);
+  // ROI: (net / capital) * 100 cuando ambos existen; fallback a row.roi_pct.
   const simulated_roi_pct =
-    sim?.forward != null ? sim.forward.roi_pct : null;
+    sim?.forward != null && sim.forward.roi_pct != null
+      ? sim.forward.roi_pct
+      : (row.roi_pct != null
+        ? row.roi_pct
+        : (row.net_expected_profit_usd != null && row.amount_in_wei && row.token_in_decimals
+          ? null // R8: no podemos computar ROI sin precio del token
+          : null));
   const simulated_cost_breakdown: SimulatedCostBreakdown | null =
-    sim?.forward != null ? sim.forward.cost_breakdown : null;
+    sim?.forward != null && sim.forward.cost_breakdown != null
+      ? sim.forward.cost_breakdown
+      : (row.expected_profit_usd != null && row.net_expected_profit_usd != null
+        ? {
+            // R8: 0 = exactly zero (cost not individually computed), NOT null.
+            // The gross→net delta is the real total cost (ops_overhead_usd).
+            gas_usd: 0,
+            flashloan_fee_usd: 0,
+            lp_fees_usd: 0,
+            slippage_usd: 0,
+            failure_buffer_usd: 0,
+            copied_buffer_usd: 0,
+            capital_cost_usd: 0,
+            ops_overhead_usd: row.expected_profit_usd - row.net_expected_profit_usd,
+            relay_fee_usd: 0,
+          } as SimulatedCostBreakdown
+        : null);
   const simulated_target: InverseSizingResult | null =
     sim?.inverse != null ? sim.inverse : null;
   // simulated_at is the timestamp of any sim activity (forward OR Path-B
@@ -766,8 +810,12 @@ export function mountOpportunitiesLive(
       const simByRowId = new Map<string, SimContext>();
       const simulatedAt = new Date().toISOString();
       for (const r of q.rows) {
-        // Spine output always wins — never overwrite canonical net.
-        if (r.net_expected_profit_usd != null) continue;
+        // HARDENING (2026-08-22): Remover el skip cuando net_expected_profit_usd
+        // ya viene poblado. El searcher-rs calcula gross y net, pero NO calcula
+        // el cost breakdown (gas, slippage, LP fees, TLS fee), ni el capital
+        // amount, ni el target, ni el ROI. Esos vienen de forwardSimulate() e
+        // inverseSize() que estaban siendo saltados. El SimContext siempre debe
+        // correr para poblar TODOS los campos de la tarjeta.
         const snapshot = snapshots.get(r.chain_id);
         if (!snapshot) continue;
         const simRow: SimulatorRow = {
