@@ -14,7 +14,11 @@ discovery:
   # When set, use lowercase 0x-prefixed addresses (e.g. WETH/USDC/USDT/DAI).
   base_tokens: []
   # Reject edges whose liquidity_hint is below this (0.0 disables the check).
-  min_liquidity_hint: 0.0
+  # PR-ROUTE-02: raised from 0.0 to 1.0 (normalized units, conservative floor).
+  # A 0.0 floor admitted thin pools that produced wash 2-hop cycles and bowtie
+  # 4-hop noise, inflating multi_hop_profitable_cycles with garbage. The gate at
+  # graph_builder.rs:221-223 was already tested, just disabled.
+  min_liquidity_hint: 1.0
   # Branching cap: max parallel pools explored between any two tokens.
   max_pools_per_pair: 8
   # Max cycle length in hops (2 = 2-cycles only; 3 = + triangulars).

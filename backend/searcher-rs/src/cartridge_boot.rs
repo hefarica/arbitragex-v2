@@ -313,6 +313,22 @@ pub fn build_cartridge_pool_data(
         && intent.legs.last().map(|l| l.token_out) == intent.legs.first().map(|l| l.token_in);
     m.insert("route_closed".into(), Dynamic::from(route_closed));
 
+    // WIRE-1 (PR-ROUTE-03): inject the route-shape dispatch key the
+    // `omega_strategy_pack.rhai` dispatch table reads at `pool_data["strategy_kind"]`
+    // (line 107). Without it, the pack rejects every intent with
+    // `missing_strategy_kind` (line 103-104) and its `multi_hop_cycle` /
+    // `flashloan_atomic` / `flashmint_atomic` arms stay structurally dead. The
+    // classifier is the SAME pure function already used for shadow telemetry
+    // (build_shadow_outcome, line 562) — re-derived here so the cartridge map is
+    // self-describing. Fail-honest: an unclassifiable shape yields the empty
+    // string, which the pack rejects with `unsupported_strategy_kind` (R8).
+    let applicability =
+        crate::route_discovery::strategy_applicability::classify_route_legs(&intent.legs);
+    m.insert(
+        "strategy_kind".into(),
+        Dynamic::from(applicability.strategy_kind.clone()),
+    );
+
     // Triangular contract (D-01/F3 follow-up): the triangular_arb cartridge reads
     // `pool_data.token_a/b/c` — the cycle's three vertices. For a closed 3-leg
     // cycle A→B→C→A those are the legs' token_ins. Rhai resolves a MISSING map
