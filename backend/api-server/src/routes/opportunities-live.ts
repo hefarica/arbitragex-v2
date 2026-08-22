@@ -25,6 +25,16 @@ import type { Pool, QueryResultRow } from "pg";
 import type { Redis } from "ioredis";
 import { resolveTokensOnDemand, tokenCacheKey } from "./tokenResolver.js";
 
+// CARDS-MIRROR-01 — the set of `opportunities.status` values that count as
+// VIABLE (cards-visible when viable_only=true). Sourced from the schema CHECK
+// constraint (migration 003_opportunities.sql:20) — the forward lifecycle states
+// before a gate rejects. This is the single source of truth for the api-server;
+// it MUST mirror `VIABLE_STATUSES` in backend/searcher-rs/src/persistence.rs so
+// a row the searcher persists as viable is surfaced by this endpoint. A new
+// schema state only needs adding in BOTH places (kept in sync by the
+// cards-mirror regression test). No literals inline in the LIVE_QUERY SQL.
+export const VIABLE_STATUSES = ["detected", "validated", "simulated", "scored"] as const;
+
 // ── Token Symbol Cache ───────────────────────────────────────────────────────
 // Cache en memoria para símbolos de tokens (reduce queries repetidas a DB)
 // TTL: 60 segundos - balance entre frescura de datos y rendimiento
@@ -275,7 +285,7 @@ LEFT JOIN tokens to_
 --                    historical viable rows.
 WHERE o.detected_at >= NOW() - ($3::int * INTERVAL '1 second')
   AND ($2::bool = false
-       OR (o.status IN ('detected', 'validated', 'simulated', 'scored')
+       OR (o.status = ANY($4::text[])
            AND o.rejection_reason IS NULL))
 ORDER BY o.detected_at DESC
 LIMIT $1
@@ -668,6 +678,7 @@ export function mountOpportunitiesLive(
         limit,
         viableOnly,
         maxAgeSeconds,
+        [...VIABLE_STATUSES],
       ]);
 
       // 2026-05-10 operator request: every token row must surface a symbol
