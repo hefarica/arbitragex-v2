@@ -704,12 +704,17 @@ impl SizeOptimizer {
             );
             // HARDENING: poblar el SizedCandidate con los valores calculados
             // aunque net <= 0. El operador necesita ver los números.
-            let mut sized = candidate.clone();
-            sized.opportunity.amount_in_wei = eval_result.amount_in_wei.to_string();
-            sized.gross_profit_usd = gross_usd;
-            sized.estimated_net_profit_usd = net_usd;
-            sized.net_negative = true;
-            return OptimizeOutcome::Sized(Box::new(sized));
+            let mut cand = candidate.clone();
+            cand.opportunity.amount_in_wei = eval_result.amount_in_wei.to_string();
+            cand.opportunity.expected_profit_usd = Some(gross_usd);
+            cand.opportunity.net_expected_profit_usd = Some(net_usd);
+            return OptimizeOutcome::Sized(Box::new(SizedCandidate {
+                candidate: cand,
+                optimal_amount_in: eval_result.amount_in_wei,
+                gross_profit_usd: gross_usd,
+                estimated_net_profit_usd: net_usd,
+                net_negative: true,
+            }));
         }
 
         let mut sized = candidate.clone();
@@ -896,14 +901,17 @@ impl SizeOptimizer {
             );
             // HARDENING: poblar el SizedCandidate con los valores calculados
             // aunque net <= 0. El operador necesita ver los números.
-            let mut sized = candidate.clone();
-            sized.opportunity.amount_in_wei = amount_in_wei.to_string();
-            sized.opportunity.expected_profit_usd = Some(gross_usd);
-            sized.opportunity.net_expected_profit_usd = Some(net_usd);
-            sized.gross_profit_usd = gross_usd;
-            sized.estimated_net_profit_usd = net_usd;
-            sized.net_negative = true;
-            return OptimizeOutcome::Sized(Box::new(sized));
+            let mut cand = candidate.clone();
+            cand.opportunity.amount_in_wei = amount_in_wei.to_string();
+            cand.opportunity.expected_profit_usd = Some(gross_usd);
+            cand.opportunity.net_expected_profit_usd = Some(net_usd);
+            return OptimizeOutcome::Sized(Box::new(SizedCandidate {
+                candidate: cand,
+                optimal_amount_in: amount_in_wei,
+                gross_profit_usd: gross_usd,
+                estimated_net_profit_usd: net_usd,
+                net_negative: true,
+            }));
         }
 
         let _ = intent;
@@ -1122,14 +1130,17 @@ impl SizeOptimizer {
             );
             // HARDENING: poblar el SizedCandidate con los valores calculados
             // aunque net <= 0. El operador necesita ver los números.
-            let mut sized = candidate.clone();
-            sized.opportunity.amount_in_wei = amount_in.to_string();
-            sized.opportunity.expected_profit_usd = Some(gross_usd);
-            sized.gross_profit_usd = Some(gross_usd);
-            sized.net_expected_profit_usd = Some(net_usd);
-            sized.estimated_net_profit_usd = net_usd;
-            sized.net_negative = true;
-            return OptimizeOutcome::Sized(Box::new(sized));
+            let mut cand = candidate.clone();
+            cand.opportunity.amount_in_wei = amount_in.to_string();
+            cand.opportunity.expected_profit_usd = Some(gross_usd);
+            cand.opportunity.net_expected_profit_usd = Some(net_usd);
+            return OptimizeOutcome::Sized(Box::new(SizedCandidate {
+                candidate: cand,
+                optimal_amount_in: amount_in,
+                gross_profit_usd: gross_usd,
+                estimated_net_profit_usd: net_usd,
+                net_negative: true,
+            }));
         }
 
         let _ = (intent, cap_usd);
