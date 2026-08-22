@@ -264,6 +264,8 @@ pub fn evaluate_tick(
     tick_summary["multi_hop_profitable_cycles"] = serde_json::json!(multi_hop_cycles_found);
     tick_summary["multi_hop_v3_skipped"] = serde_json::json!(mh.v3_skipped);
     tick_summary["multi_hop_capped"] = serde_json::json!(mh.capped);
+    // PR-ROUTE-06: surface the noise-floor prune so it never dies in silence (R8).
+    tick_summary["multi_hop_noise_dropped"] = serde_json::json!(mh.noise_dropped);
 
     TickOutput {
         routes_found: routes.len(),
