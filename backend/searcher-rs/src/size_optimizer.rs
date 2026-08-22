@@ -583,6 +583,11 @@ impl SizeOptimizer {
 
         if new_net <= 0.0 {
             // HARDENING: conservar los valores calculados aunque net <= 0.
+            // Propagar el Kelly cap al amount_in para consistencia con el gross
+            // escalado (new_gross); sin esto la tarjeta mostraría el amount del
+            // kernel (10^18) junto al gross escalado (0.1) — datos inconsistentes
+            // (0.1 gross corresponde a 0.001 WETH, no 1 WETH). Fix KELLY-CAPS-01.
+            sized.optimal_amount_in = kelly_cap_wei;
             sized.gross_profit_usd = new_gross;
             sized.estimated_net_profit_usd = new_net;
             sized.net_negative = true;
