@@ -224,8 +224,9 @@ impl Default for ApplicabilityConfig {
                     "v3v2".into(),
                     "v3v3".into(),
                     "triangular".into(),
+                    "multihop".into(),
                 ],
-                has_cartridge: false,
+                has_cartridge: true,
                 token_allowlist: Vec::new(),
             },
         );
