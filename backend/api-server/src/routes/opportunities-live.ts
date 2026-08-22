@@ -467,14 +467,32 @@ function rowToOpportunity(
   const validationOut = validations.get(
     `${tokenOutChain}:${row.token_out.toLowerCase()}`,
   ) ?? null;
+  // HARDENING (2026-08-22): cuando forwardSimulate no produce output pero
+  // el searcher-rs ya pobló net_expected_profit_usd en PG, usar ese valor
+  // como fallback para que la tarjeta muestre el net yield aunque el cost
+  // breakdown no esté disponible. El cost breakdown se computa cuando
+  // forwardSimulate tiene amount_in_wei + token_price; cuando no, usamos
+  // el gross→net delta como cost proxy.
   const simulated_net_profit_usd =
-    sim?.forward != null ? sim.forward.net_usd : null;
+    sim?.forward != null ? sim.forward.net_usd : (row.net_expected_profit_usd ?? null);
   const simulated_amount_in_usd =
     sim?.forward != null ? sim.forward.amount_in_usd : null;
   const simulated_roi_pct =
-    sim?.forward != null ? sim.forward.roi_pct : null;
+    sim?.forward != null ? sim.forward.roi_pct : row.roi_pct ?? null;
   const simulated_cost_breakdown: SimulatedCostBreakdown | null =
-    sim?.forward != null ? sim.forward.cost_breakdown : null;
+    sim?.forward != null && sim.forward.cost_breakdown != null
+      ? sim.forward.cost_breakdown
+      : (row.expected_profit_usd != null && row.net_expected_profit_usd != null
+        ? {
+            gas_usd: null,
+            flashloan_fee_usd: null,
+            lp_fees_usd: null,
+            slippage_usd: null,
+            // Derive cost proxy from the gross→net delta (R8: real values,
+            // never fabricated — the delta IS the total cost).
+            ops_overhead_usd: row.expected_profit_usd - row.net_expected_profit_usd,
+          } as SimulatedCostBreakdown
+        : null);
   const simulated_target: InverseSizingResult | null =
     sim?.inverse != null ? sim.inverse : null;
   // simulated_at is the timestamp of any sim activity (forward OR Path-B
@@ -766,8 +784,12 @@ export function mountOpportunitiesLive(
       const simByRowId = new Map<string, SimContext>();
       const simulatedAt = new Date().toISOString();
       for (const r of q.rows) {
-        // Spine output always wins — never overwrite canonical net.
-        if (r.net_expected_profit_usd != null) continue;
+        // HARDENING (2026-08-22): Remover el skip cuando net_expected_profit_usd
+        // ya viene poblado. El searcher-rs calcula gross y net, pero NO calcula
+        // el cost breakdown (gas, slippage, LP fees, TLS fee), ni el capital
+        // amount, ni el target, ni el ROI. Esos vienen de forwardSimulate() e
+        // inverseSize() que estaban siendo saltados. El SimContext siempre debe
+        // correr para poblar TODOS los campos de la tarjeta.
         const snapshot = snapshots.get(r.chain_id);
         if (!snapshot) continue;
         const simRow: SimulatorRow = {
