@@ -246,11 +246,15 @@ mod tests {
             vec![StrategyLabel::DexArbV2V3, StrategyLabel::FlashloanArb],
         );
         let plans = plan_dispatch(&c, &eng);
-        // dex_arb dispatched (intent Some); flashloan_arb has no cartridge → skipped.
-        assert_eq!(plans.len(), 1);
+        // PR-ROUTE-04: both dex_arb AND flashloan_arb now dispatch (pack is the
+        // cartridge via the polymorphic catch-all). Order follows applicable list.
+        assert_eq!(plans.len(), 2);
         assert_eq!(plans[0].strategy_name, "dex_arb");
         assert!(plans[0].intent.is_some());
         assert!(plans[0].dispatch_deferred.is_none());
+        assert_eq!(plans[1].strategy_name, "flashloan_arb");
+        assert!(plans[1].intent.is_some());
+        assert!(plans[1].dispatch_deferred.is_none());
     }
 
     #[test]
@@ -261,7 +265,8 @@ mod tests {
             vec![StrategyLabel::TriangularArb, StrategyLabel::FlashloanArb],
         );
         let plans = plan_dispatch(&c, &eng);
-        assert_eq!(plans.len(), 1);
+        // PR-ROUTE-04: triangular + flashloan both dispatch now.
+        assert_eq!(plans.len(), 2);
         assert_eq!(plans[0].strategy_name, "triangular_arb");
         assert!(plans[0].intent.is_some(), "triangular IS shadow-evaluated");
         assert!(plans[0].dispatch_deferred.is_none());
@@ -270,15 +275,22 @@ mod tests {
         assert_eq!(intent.legs.len(), 3);
         assert_eq!(intent.legs.first().unwrap().token_in, addr(1));
         assert_eq!(intent.legs.last().unwrap().token_out, addr(1));
+        // flashloan wraps the same cycle in a TLS capital source.
+        assert_eq!(plans[1].strategy_name, "flashloan_arb");
+        assert!(plans[1].intent.is_some());
     }
 
     #[test]
-    fn flashloan_only_route_dispatches_nothing() {
+    fn flashloan_only_route_dispatches_flashloan() {
         let eng = StrategyApplicabilityEngine::default();
-        // Only flashloan applicable (no cartridge) → no plans.
+        // PR-ROUTE-04: flashloan now has a cartridge (omega_strategy_pack) → it
+        // dispatches the same observe-only intent as the other arms.
         let c = candidate(RouteKind::V2V2, vec![StrategyLabel::FlashloanArb]);
         let plans = plan_dispatch(&c, &eng);
-        assert!(plans.is_empty());
+        assert_eq!(plans.len(), 1);
+        assert_eq!(plans[0].strategy_name, "flashloan_arb");
+        assert!(plans[0].intent.is_some());
+        assert!(plans[0].dispatch_deferred.is_none());
     }
 
     #[test]
