@@ -10,6 +10,53 @@ use shared_rs::contracts::Opportunity;
 use sqlx::{postgres::PgPool, types::BigDecimal};
 use std::str::FromStr;
 
+// CARDS-MIRROR-01 — the opportunities table `status` state-machine.
+//
+// Sourced from the schema CHECK constraint (migration 003_opportunities.sql:20):
+//   status TEXT NOT NULL DEFAULT 'detected' CHECK (status IN (
+//     'detected','validated','simulated','scored','executing',
+//     'executed','reconciled','rejected','failed'
+//   ))
+//
+// An opportunity is VIABLE (cards-visible) when it carries NO rejection_reason —
+// its lifecycle is one of the forward states below. It is REJECTED when a gate
+// set a reason, regardless of how far it advanced. The `rejection_reason` field
+// is the single source of truth for which class a row belongs to (R8: NULL =
+// not rejected, Some(reason) = rejected with the honest reason).
+//
+// This array is the ONLY place the viable-state set is declared; the
+// /opportunities/live LIVE_QUERY and this function both read from it so a new
+// schema state only needs adding here (single source of truth, no scattered
+// literals). The mirror must hold: a row with rejection_reason IS NULL must
+// always land in a status ∈ VIABLE_STATUSES so the LIVE_QUERY surfaces it.
+pub const VIABLE_STATUSES: &[&str] = &["detected", "validated", "simulated", "scored"];
+
+/// The terminal non-viable status a row takes when a gate rejected it. Mirrors
+/// the paper executor's `REJECTED` classification (executor.ts:250) so the
+/// opportunities table and paper_trade_runs agree on the row's class.
+pub const REJECTED_STATUS: &str = "rejected";
+
+/// Derive the `opportunities.status` value from `rejection_reason`.
+///
+/// NULL  → the row's forward lifecycle state (default `detected`; a future
+///         enrichment pass can UPDATE it to validated/simulated/scored).
+/// Some  → `rejected` — the row is visible in the dashboard with its honest
+///         reason, never silently dropped (R8). This replaces the old bug where
+///         `status` was hardcoded to `'detected'` for BOTH accepted and
+///         rejected rows, producing a detected-row-with-a-reason contradiction
+///         that the LIVE_QUERY's `rejection_reason IS NULL` filter excluded —
+///         hiding 100% of rejected opportunities and (once the bridge writes
+///         accepted rows too) any row the gates hadn't yet promoted.
+///
+/// Pure + total: covers every `Option<String>` input. No literals inline in
+/// the SQL INSERT — this is the single derivation point.
+pub fn status_from_rejection_reason(rejection_reason: &Option<String>) -> &'static str {
+    match rejection_reason {
+        None => VIABLE_STATUSES[0], // 'detected' — forward lifecycle entry point
+        Some(_) => REJECTED_STATUS,
+    }
+}
+
 /// Insert an opportunity WITHOUT route metadata (legacy path).
 ///
 /// `route_metadata` column defaults to `'{}'::jsonb`. Use
@@ -81,6 +128,21 @@ pub async fn insert_opportunity_with_route(
         _ => serde_json::json!({}),
     };
 
+    // CARDS-MIRROR-01: derive `status` from `rejection_reason` via a pure
+    // function over the schema's status enum — NO literal inline in the SQL.
+    // The old INSERT always wrote status='detected' regardless of whether the
+    // opportunity was accepted (emit_accepted) or rejected (emit_rejected). A
+    // rejected row landed as status='detected' WITH its rejection_reason
+    // populated — a logical contradiction. The /opportunities/live LIVE_QUERY
+    // filters `status IN (viable...) AND rejection_reason IS NULL`, so these
+    // contradictory rows were excluded → cards showed 0 while paper_trade_runs
+    // (which derives status correctly in the paper executor) had 579K rows.
+    // `status_from_rejection_reason` is the single source of truth: it reads the
+    // `VIABLE_STATUSES` array (sourced from the opportunities table CHECK
+    // constraint, migration 003) — if the schema grows a new viable state, the
+    // array is the only thing that changes, not the SQL or callers.
+    let status = status_from_rejection_reason(&o.rejection_reason);
+
     let result = sqlx::query(
         r#"
         INSERT INTO opportunities (
@@ -93,7 +155,7 @@ pub async fn insert_opportunity_with_route(
             $1, $2, $3, $4, $5, $6,
             $7, $8, $9,
             $10, $11, $12, $13,
-            $14, 'detected', $15, $16, $17,
+            $14, $20, $15, $16, $17,
             $18, $19
         )
         ON CONFLICT (id) DO NOTHING
@@ -118,6 +180,7 @@ pub async fn insert_opportunity_with_route(
     .bind(o.detected_at)
     .bind(route_json)
     .bind(o.cartridge_id.as_deref())
+    .bind(status)
     .execute(pool)
     .await
     .context("insert opportunity")?;

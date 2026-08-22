@@ -14,7 +14,7 @@
  *   3. expected_profit_usd is null (R8 fail-honest — not coerced to 0)
  *   4. cross-chain row: chain_id_out present, bridge/bridge_fee_usd null
  *   5. HTTP 503 when pool is null (db_unavailable)
- *   6. viable_only=false returns rejected rows; viable_only=true (default) excludes them
+ *   6. viable_only=true excludes rejected rows; viable_only=false (default) returns them
  */
 
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
@@ -271,7 +271,7 @@ describe("GET /api/v1/opportunities/live — db_unavailable", () => {
 // ── Test: viable_only filter (regression for commit 97ffc52) ─────────────────
 
 describe("GET /api/v1/opportunities/live — viable_only filter", () => {
-  it("viable_only=false returns rejected rows; default=true excludes them", async () => {
+  it("viable_only=true excludes rejected rows; default=false returns them (CARDS-MIRROR-01)", async () => {
     const tokenIn  = "0x" + "e".repeat(39) + "1";
     const tokenOut = "0x" + "f".repeat(39) + "1";
 
@@ -282,7 +282,7 @@ describe("GET /api/v1/opportunities/live — viable_only filter", () => {
       VALUES (1, 'dex_arb', 'uniswap-v2', $1, $2, 100, gen_random_uuid(), 'TokenNotAllowed')
     `, [tokenIn, tokenOut]);
 
-    // viable_only=true (default) must NOT return the rejected row.
+    // viable_only=true must NOT return the rejected row (opt-in filter).
     const resViable = await request(buildApp())
       .get("/api/v1/opportunities/live?viable_only=true&limit=200")
       .expect(200);
@@ -303,14 +303,17 @@ describe("GET /api/v1/opportunities/live — viable_only filter", () => {
     expect(present).toBeDefined();
     expect(present.rejection_reason).toBe("TokenNotAllowed");
 
-    // Default (no param) behaves identically to viable_only=true.
+    // Default (no param) behaves identically to viable_only=false — cards must
+    // show ALL recent opps including rejected ones, never hide them (directive
+    // 2026-08-22 CARDS-MIRROR-01: cards mirror paper history).
     const resDefault = await request(buildApp())
       .get("/api/v1/opportunities/live?limit=200")
       .expect(200);
-    expect(resDefault.body.viable_only).toBe(true);
-    const notPresentDefault = resDefault.body.items.find(
+    expect(resDefault.body.viable_only).toBe(false);
+    const presentDefault = resDefault.body.items.find(
       (o: any) => o.token_in === tokenIn && o.rejection_reason === "TokenNotAllowed",
     );
-    expect(notPresentDefault).toBeUndefined();
+    expect(presentDefault).toBeDefined();
+    expect(presentDefault.rejection_reason).toBe("TokenNotAllowed");
   });
 });

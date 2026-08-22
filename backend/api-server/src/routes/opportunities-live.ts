@@ -4,9 +4,10 @@
  * Extracted from index.ts inline handler (commit 97ffc52 baseline) and
  * enriched with LEFT JOIN tokens for nested token_in_info / token_out_info.
  *
- * Contract (unchanged from 97ffc52):
- *   - viable_only=true (default): excludes rows where rejection_reason IS NOT NULL.
- *   - viable_only=false: returns all rows in active statuses.
+ * Contract (CARDS-MIRROR-01, 2026-08-22):
+ *   - viable_only=false (default): returns all recent rows including rejected ones
+ *     (rejection_reason visible per-item). R8: rows are real PG rows, never fabricated.
+ *   - viable_only=true: opt-in filter that excludes rows where rejection_reason IS NOT NULL.
  *   - rejection_reason field always present in each item (null or string).
  *   - HTTP 503 { error: "db_unavailable" } when pool is null.
  *   - HTTP 503 { error: "query_failed" } on PG error.
@@ -24,6 +25,16 @@ import type { Application, Request, Response } from "express";
 import type { Pool, QueryResultRow } from "pg";
 import type { Redis } from "ioredis";
 import { resolveTokensOnDemand, tokenCacheKey } from "./tokenResolver.js";
+
+// CARDS-MIRROR-01 — the set of `opportunities.status` values that count as
+// VIABLE (cards-visible when viable_only=true). Sourced from the schema CHECK
+// constraint (migration 003_opportunities.sql:20) — the forward lifecycle states
+// before a gate rejects. This is the single source of truth for the api-server;
+// it MUST mirror `VIABLE_STATUSES` in backend/searcher-rs/src/persistence.rs so
+// a row the searcher persists as viable is surfaced by this endpoint. A new
+// schema state only needs adding in BOTH places (kept in sync by the
+// cards-mirror regression test). No literals inline in the LIVE_QUERY SQL.
+export const VIABLE_STATUSES = ["detected", "validated", "simulated", "scored"] as const;
 
 // ── Token Symbol Cache ───────────────────────────────────────────────────────
 // Cache en memoria para símbolos de tokens (reduce queries repetidas a DB)
@@ -275,7 +286,7 @@ LEFT JOIN tokens to_
 --                    historical viable rows.
 WHERE o.detected_at >= NOW() - ($3::int * INTERVAL '1 second')
   AND ($2::bool = false
-       OR (o.status IN ('detected', 'validated', 'simulated', 'scored')
+       OR (o.status = ANY($4::text[])
            AND o.rejection_reason IS NULL))
 ORDER BY o.detected_at DESC
 LIMIT $1
@@ -642,13 +653,17 @@ export function mountOpportunitiesLive(
 
     // viable_only filters out rows persisted as gate rejections (rejection_reason
     // populated by spine when an opportunity is rejected before profit eval).
-    // Default TRUE — the route contract (see header) and the regression guard
-    // for commit 97ffc52 require that, with no param, only viable opportunities
-    // are returned. Callers pass viable_only=false to also see rejected rows.
-    // The interactive client always sends the flag explicitly; SSR/default
-    // callers get the safe viable-only view.
+    // CARDS-MIRROR-01: viable_only is an opt-in filter, NOT the default. Default
+    // FALSE — cards must reflect real pipeline activity (including gate
+    // rejections with their honest reason visible per-item), not hide behind a
+    // viable-only default that returned 0 when every recent opp was
+    // gate-rejected (the operator's empty-cards symptom, 2026-08-22). The
+    // interactive client still sends the flag explicitly; SSR/default callers
+    // now get the full recent view (viable + rejected with reasons), mirroring
+    // what paper history shows. viable_only=true remains available for callers
+    // who want only non-rejected rows.
     const viableOnly =
-      String(req.query["viable_only"] ?? "true").toLowerCase() !== "false";
+      String(req.query["viable_only"] ?? "false").toLowerCase() === "true";
 
     // 2026-05-10 hotfix: bound the live window so the SSR snapshot can never
     // surface opportunities from days ago when no fresh viable rows exist.
@@ -668,6 +683,7 @@ export function mountOpportunitiesLive(
         limit,
         viableOnly,
         maxAgeSeconds,
+        [...VIABLE_STATUSES],
       ]);
 
       // 2026-05-10 operator request: every token row must surface a symbol
