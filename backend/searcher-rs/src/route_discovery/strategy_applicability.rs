@@ -224,8 +224,9 @@ impl Default for ApplicabilityConfig {
                     "v3v2".into(),
                     "v3v3".into(),
                     "triangular".into(),
+                    "multihop".into(),
                 ],
-                has_cartridge: false,
+                has_cartridge: true,
                 token_allowlist: Vec::new(),
             },
         );
@@ -905,8 +906,9 @@ mod tests {
         let eng = StrategyApplicabilityEngine::default();
         assert!(eng.has_cartridge("dex_arb"));
         assert!(eng.has_cartridge("triangular_arb"));
-        // flashloan has no cartridge; liquidation is disabled.
-        assert!(!eng.has_cartridge("flashloan_arb"));
+        // PR-ROUTE-04: flashloan now dispatches via the omega_strategy_pack
+        // (polymorphic_pack catch-all). liquidation is still disabled.
+        assert!(eng.has_cartridge("flashloan_arb"));
         assert!(!eng.has_cartridge("liquidation"));
         assert!(!eng.has_cartridge("nonexistent"));
     }

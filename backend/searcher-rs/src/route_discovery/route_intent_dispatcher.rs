@@ -105,8 +105,8 @@ pub fn build_intent(c: &RouteCandidate) -> Option<RouteIntent> {
 /// Plan the dispatches for one annotated candidate.
 ///
 /// Iterates the candidate's `applicable_strategies`; only strategies whose
-/// cartridge exists+enabled produce a plan. `dex_arb`/`triangular_arb` → real
-/// intent; everything else (no cartridge) → skipped.
+/// cartridge exists+enabled produce a plan. `dex_arb`/`triangular_arb`/
+/// `flashloan_arb` → real intent; everything else (no cartridge) → skipped.
 pub fn plan_dispatch(
     c: &RouteCandidate,
     engine: &StrategyApplicabilityEngine,
@@ -115,7 +115,7 @@ pub fn plan_dispatch(
     for label in &c.applicable_strategies {
         let name = coarse_name(*label);
         if !engine.has_cartridge(name) {
-            continue; // flashloan_arb / stable_arb / disabled → telemetry-only, no dispatch
+            continue; // stable_arb / disabled → telemetry-only, no dispatch
         }
         match name {
             "dex_arb" => {
@@ -133,6 +133,23 @@ pub fn plan_dispatch(
                 // Closed 3-hop cycles are the triangle source (D-01): dispatch
                 // for real. cartridge_matches_intent's shape gate keeps this
                 // intent out of dex_arb (and swap shapes out of triangular).
+                if let Some(intent) = build_intent(c) {
+                    plans.push(DispatchPlan {
+                        route_hash: c.route_hash.clone(),
+                        strategy_label: *label,
+                        strategy_name: name,
+                        intent: Some(intent),
+                        dispatch_deferred: None,
+                    });
+                }
+            }
+            // PR-ROUTE-04: flashloan_arb now has a cartridge (omega_strategy_pack
+            // via the polymorphic_pack catch-all at cartridge_boot.rs:704). It
+            // wraps any base route shape (v2v2..v3v3, triangular, multihop) in a
+            // TLS capital source. Dispatch the same observe-only intent as the
+            // other arms; the pack's flashloan_atomic arm handles evaluation.
+            // Capital stays $0 in shadow — no signer, no broadcast (§34).
+            "flashloan_arb" => {
                 if let Some(intent) = build_intent(c) {
                     plans.push(DispatchPlan {
                         route_hash: c.route_hash.clone(),
@@ -229,11 +246,15 @@ mod tests {
             vec![StrategyLabel::DexArbV2V3, StrategyLabel::FlashloanArb],
         );
         let plans = plan_dispatch(&c, &eng);
-        // dex_arb dispatched (intent Some); flashloan_arb has no cartridge → skipped.
-        assert_eq!(plans.len(), 1);
+        // PR-ROUTE-04: both dex_arb AND flashloan_arb now dispatch (pack is the
+        // cartridge via the polymorphic catch-all). Order follows applicable list.
+        assert_eq!(plans.len(), 2);
         assert_eq!(plans[0].strategy_name, "dex_arb");
         assert!(plans[0].intent.is_some());
         assert!(plans[0].dispatch_deferred.is_none());
+        assert_eq!(plans[1].strategy_name, "flashloan_arb");
+        assert!(plans[1].intent.is_some());
+        assert!(plans[1].dispatch_deferred.is_none());
     }
 
     #[test]
@@ -244,7 +265,8 @@ mod tests {
             vec![StrategyLabel::TriangularArb, StrategyLabel::FlashloanArb],
         );
         let plans = plan_dispatch(&c, &eng);
-        assert_eq!(plans.len(), 1);
+        // PR-ROUTE-04: triangular + flashloan both dispatch now.
+        assert_eq!(plans.len(), 2);
         assert_eq!(plans[0].strategy_name, "triangular_arb");
         assert!(plans[0].intent.is_some(), "triangular IS shadow-evaluated");
         assert!(plans[0].dispatch_deferred.is_none());
@@ -253,15 +275,22 @@ mod tests {
         assert_eq!(intent.legs.len(), 3);
         assert_eq!(intent.legs.first().unwrap().token_in, addr(1));
         assert_eq!(intent.legs.last().unwrap().token_out, addr(1));
+        // flashloan wraps the same cycle in a TLS capital source.
+        assert_eq!(plans[1].strategy_name, "flashloan_arb");
+        assert!(plans[1].intent.is_some());
     }
 
     #[test]
-    fn flashloan_only_route_dispatches_nothing() {
+    fn flashloan_only_route_dispatches_flashloan() {
         let eng = StrategyApplicabilityEngine::default();
-        // Only flashloan applicable (no cartridge) → no plans.
+        // PR-ROUTE-04: flashloan now has a cartridge (omega_strategy_pack) → it
+        // dispatches the same observe-only intent as the other arms.
         let c = candidate(RouteKind::V2V2, vec![StrategyLabel::FlashloanArb]);
         let plans = plan_dispatch(&c, &eng);
-        assert!(plans.is_empty());
+        assert_eq!(plans.len(), 1);
+        assert_eq!(plans[0].strategy_name, "flashloan_arb");
+        assert!(plans[0].intent.is_some());
+        assert!(plans[0].dispatch_deferred.is_none());
     }
 
     #[test]

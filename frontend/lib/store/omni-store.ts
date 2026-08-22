@@ -277,10 +277,42 @@ function storeFactory(
       // then addOpportunity() 50 times — 51 Zustand updates + 51 devtools
       // serializations every 4-5 seconds, which was the dominant source of
       // memory churn and retained snapshots. setOpportunities does it in one.
+      //
+      // HARDENING (2026-08-21): MERGE by id instead of replace-all. The old
+      // replace-all discarded the entire array and rebuilt from scratch every
+      // poll — cards that hadn't changed got re-rendered anyway because their
+      // array reference changed. Merge upserts: existing ids update in place
+      // (React.memo + business-equality comparator skip re-render when nothing
+      // visual changed), new ids prepend. This is the streaming snapshot+push
+      // pattern: poll is the snapshot, WS is the push, merge keeps both
+      // efficient by only touching what changed.
       setOpportunities: (opps: OmniOpportunity[]) =>
-        set({
-          opportunities: opps.slice(0, MAX_OPPORTUNITIES),
-          lastUpdate: new Date().toISOString(),
+        set((state) => {
+          const existing = new Map(state.opportunities.map((o) => [o.id, o]));
+          const result: OmniOpportunity[] = [];
+          // New/updated opps first (prepend, newest at top)
+          const newOnes: OmniOpportunity[] = [];
+          for (const opp of opps) {
+            if (existing.has(opp.id)) {
+              // Update in place — only if reference changed
+              const old = existing.get(opp.id)!;
+              if (old !== opp) {
+                existing.set(opp.id, opp);
+              }
+            } else {
+              newOnes.push(opp);
+            }
+          }
+          // Build: new ones at top, then existing in their original order
+          result.push(...newOnes);
+          for (const opp of state.opportunities) {
+            const updated = existing.get(opp.id);
+            if (updated) result.push(updated);
+          }
+          return {
+            opportunities: result.slice(0, MAX_OPPORTUNITIES),
+            lastUpdate: new Date().toISOString(),
+          };
         }),
 
       clearOpportunities: () => set({ opportunities: [], lastUpdate: null }),

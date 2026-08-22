@@ -199,6 +199,12 @@ pub struct SizedCandidate {
     pub gross_profit_usd: f64,
     /// Net profit after gas + fees + ops overhead.
     pub estimated_net_profit_usd: f64,
+    /// Hardening flag: true when net <= 0 (opportunity is not viable but the
+    /// values are real and must be surfaced to the operator in the dashboard).
+    /// The gate of net-positive is an EXECUTION gate, not a DETECTION gate —
+    /// the card must show the numbers so the operator can see WHY it's not
+    /// viable instead of seeing "—" everywhere.
+    pub net_negative: bool,
 }
 
 // ---------------------------------------------------------------------------
@@ -476,7 +482,12 @@ impl SizeOptimizer {
         let gross_usd = sized.gross_profit_usd;
         let net_usd = sized.estimated_net_profit_usd;
         if gross_usd <= 0.0 || net_usd <= 0.0 {
-            return OptimizeOutcome::Rejected(OptimizeRejectReason::NonPositiveNetUsd);
+            // HARDENING: retornar el SizedCandidate con los valores calculados
+            // aunque net <= 0. El gate de net-positive es de ejecución, no de
+            // detección. La tarjeta debe mostrar los valores reales (gross, net,
+            // costs) para que el operador vea POR QUÉ no es viable.
+            sized.net_negative = true;
+            return OptimizeOutcome::Sized(Box::new(sized));
         }
 
         // Cost proxy: everything that the kernel subtracted from gross to
@@ -571,7 +582,16 @@ impl SizeOptimizer {
         let new_net = (new_gross - cost_proxy_usd).max(0.0);
 
         if new_net <= 0.0 {
-            return OptimizeOutcome::Rejected(OptimizeRejectReason::NonPositiveNetUsd);
+            // HARDENING: conservar los valores calculados aunque net <= 0.
+            // Propagar el Kelly cap al amount_in para consistencia con el gross
+            // escalado (new_gross); sin esto la tarjeta mostraría el amount del
+            // kernel (10^18) junto al gross escalado (0.1) — datos inconsistentes
+            // (0.1 gross corresponde a 0.001 WETH, no 1 WETH). Fix KELLY-CAPS-01.
+            sized.optimal_amount_in = kelly_cap_wei;
+            sized.gross_profit_usd = new_gross;
+            sized.estimated_net_profit_usd = new_net;
+            sized.net_negative = true;
+            return OptimizeOutcome::Sized(Box::new(sized));
         }
         // Re-check gas floor on the scaled profit. A Kelly cap that drives
         // profit below the floor means the size we were forced down to is
@@ -687,7 +707,19 @@ impl SizeOptimizer {
                 event = "size_optimizer.triangular_negative_net",
                 gross_usd, gas_cost, ops_overhead, net_usd,
             );
-            return OptimizeOutcome::Rejected(OptimizeRejectReason::NonPositiveNetUsd);
+            // HARDENING: poblar el SizedCandidate con los valores calculados
+            // aunque net <= 0. El operador necesita ver los números.
+            let mut cand = candidate.clone();
+            cand.opportunity.amount_in_wei = eval_result.amount_in_wei.to_string();
+            cand.opportunity.expected_profit_usd = Some(gross_usd);
+            cand.opportunity.net_expected_profit_usd = Some(net_usd);
+            return OptimizeOutcome::Sized(Box::new(SizedCandidate {
+                candidate: cand,
+                optimal_amount_in: eval_result.amount_in_wei,
+                gross_profit_usd: gross_usd,
+                estimated_net_profit_usd: net_usd,
+                net_negative: true,
+            }));
         }
 
         let mut sized = candidate.clone();
@@ -700,6 +732,7 @@ impl SizeOptimizer {
             optimal_amount_in: eval_result.amount_in_wei,
             gross_profit_usd: gross_usd,
             estimated_net_profit_usd: net_usd,
+            net_negative: false,
         }))
     }
 
@@ -871,7 +904,19 @@ impl SizeOptimizer {
                 flashloan_fee_usd,
                 net_usd,
             );
-            return OptimizeOutcome::Rejected(OptimizeRejectReason::NonPositiveNetUsd);
+            // HARDENING: poblar el SizedCandidate con los valores calculados
+            // aunque net <= 0. El operador necesita ver los números.
+            let mut cand = candidate.clone();
+            cand.opportunity.amount_in_wei = amount_in.to_string();
+            cand.opportunity.expected_profit_usd = Some(gross_usd);
+            cand.opportunity.net_expected_profit_usd = Some(net_usd);
+            return OptimizeOutcome::Sized(Box::new(SizedCandidate {
+                candidate: cand,
+                optimal_amount_in: amount_in,
+                gross_profit_usd: gross_usd,
+                estimated_net_profit_usd: net_usd,
+                net_negative: true,
+            }));
         }
 
         let _ = intent;
@@ -895,6 +940,7 @@ impl SizeOptimizer {
             optimal_amount_in: amount_in,
             gross_profit_usd: gross_usd,
             estimated_net_profit_usd: net_usd,
+            net_negative: false,
         }))
     }
 
@@ -1087,7 +1133,19 @@ impl SizeOptimizer {
                 flashloan_fee_usd,
                 net_usd,
             );
-            return OptimizeOutcome::Rejected(OptimizeRejectReason::NonPositiveNetUsd);
+            // HARDENING: poblar el SizedCandidate con los valores calculados
+            // aunque net <= 0. El operador necesita ver los números.
+            let mut cand = candidate.clone();
+            cand.opportunity.amount_in_wei = amount_in.to_string();
+            cand.opportunity.expected_profit_usd = Some(gross_usd);
+            cand.opportunity.net_expected_profit_usd = Some(net_usd);
+            return OptimizeOutcome::Sized(Box::new(SizedCandidate {
+                candidate: cand,
+                optimal_amount_in: amount_in,
+                gross_profit_usd: gross_usd,
+                estimated_net_profit_usd: net_usd,
+                net_negative: true,
+            }));
         }
 
         let _ = (intent, cap_usd);
@@ -1111,6 +1169,7 @@ impl SizeOptimizer {
             optimal_amount_in: amount_in,
             gross_profit_usd: gross_usd,
             estimated_net_profit_usd: net_usd,
+            net_negative: false,
         }))
     }
 
@@ -2625,6 +2684,7 @@ mod tests {
             optimal_amount_in: optimal_amount_in_wei,
             gross_profit_usd: gross_usd,
             estimated_net_profit_usd: net_usd,
+            net_negative: false,
         }
     }
 
