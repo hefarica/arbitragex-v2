@@ -364,6 +364,20 @@ impl ImpactIndex {
         self.token_pair_to_pools.contains_key(&key)
     }
 
+    /// Number of pools indexed for the given pair key (0 if unmapped).
+    /// PR-ROUTE-07: replaces the boolean `has_pools_for_pair` short-circuit in
+    /// `pool_discovery::discover_from_intent` so the reactive multi-factory
+    /// enumeration (getPair/getPool against every seeded factory + all 4 V3 fee
+    /// tiers) keeps running until the per-pair cap is reached. The old boolean
+    /// guard stopped as soon as ONE pool existed (e.g. the UniswapV2 seed),
+    /// starving the 2-hop dex_arb tier which needs ≥2 distinct pools per pair.
+    pub fn pool_count_for_pair(&self, key: TokenPairKey) -> usize {
+        self.token_pair_to_pools
+            .get(&key)
+            .map(|v| v.len())
+            .unwrap_or(0)
+    }
+
     /// Returns a clone of every known pool reference across all token pairs. Used by
     /// the block/log backrun scanner to build the `eth_getLogs` address filter and to
     /// map a pool's Swap event back to its `(token0, token1)`.

@@ -157,18 +157,29 @@ impl PoolDiscoveryService {
         for leg in &intent.legs {
             let key = crate::impact_index::TokenPairKey::canonical(leg.token_in, leg.token_out);
             let idx = self.impact_index.read().await;
-            if idx.has_pools_for_pair(key) {
+            // PR-ROUTE-07: short-circuit only when the per-pair cap is reached,
+            // not when ANY pool exists. The old boolean `has_pools_for_pair`
+            // guard stopped the multi-factory enumeration (getPair/getPool
+            // against every seeded factory + all 4 V3 fee tiers) as soon as ONE
+            // pool was indexed (e.g. the UniswapV2 seed), starving the 2-hop
+            // dex_arb tier which needs ≥2 distinct pools per pair. The cap
+            // mirrors route_applicability.yaml max_pools_per_pair (default 8).
+            let max_pools = std::env::var("ARBX_MAX_POOLS_PER_PAIR")
+                .ok()
+                .and_then(|s| s.parse::<usize>().ok())
+                .unwrap_or(8);
+            if idx.pool_count_for_pair(key) >= max_pools {
                 continue;
             }
             drop(idx);
 
             info!(
-                event = "pool_discovery.unmapped_pair",
+                event = "pool_discovery.pair_below_cap",
                 chain_id,
                 tx_hash = %intent.tx_hash,
                 token_in = ?leg.token_in,
                 token_out = ?leg.token_out,
-                "Attempting dynamic pool discovery for unmapped pair"
+                "Attempting dynamic pool discovery for pair below max_pools_per_pair"
             );
 
             let rpc = match &self.rpc_pool {
