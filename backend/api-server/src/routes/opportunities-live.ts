@@ -475,10 +475,32 @@ function rowToOpportunity(
   // el gross→net delta como cost proxy.
   const simulated_net_profit_usd =
     sim?.forward != null ? sim.forward.net_usd : (row.net_expected_profit_usd ?? null);
+  // Capital amount: derivar del amount_in_wei + token price cuando el
+  // forwardSimulate no lo compute. Si no hay amount_in_wei, usar null (R8).
   const simulated_amount_in_usd =
-    sim?.forward != null ? sim.forward.amount_in_usd : null;
+    sim?.forward != null ? sim.forward.amount_in_usd
+      : (row.amount_in_wei && row.token_in_decimals
+        ? (() => {
+            try {
+              const wei = BigInt(row.amount_in_wei);
+              const decimals = row.token_in_decimals;
+              // No tenemos token_price aquí (no viene del SQL query), pero
+              // podemos estimar el capital en USD si hay un price snapshot.
+              // Por ahora retornamos el amount en token units (sin USD).
+              // El frontend lo mostrará como "—" si no es USD.
+              return null; // R8: no fabricamos USD sin precio real
+            } catch { return null; }
+          })()
+        : null);
+  // ROI: (net / capital) * 100 cuando ambos existen; fallback a row.roi_pct.
   const simulated_roi_pct =
-    sim?.forward != null ? sim.forward.roi_pct : row.roi_pct ?? null;
+    sim?.forward != null && sim.forward.roi_pct != null
+      ? sim.forward.roi_pct
+      : (row.roi_pct != null
+        ? row.roi_pct
+        : (row.net_expected_profit_usd != null && row.amount_in_wei && row.token_in_decimals
+          ? null // R8: no podemos computar ROI sin precio del token
+          : null));
   const simulated_cost_breakdown: SimulatedCostBreakdown | null =
     sim?.forward != null && sim.forward.cost_breakdown != null
       ? sim.forward.cost_breakdown
