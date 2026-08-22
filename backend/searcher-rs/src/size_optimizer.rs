@@ -902,12 +902,12 @@ impl SizeOptimizer {
             // HARDENING: poblar el SizedCandidate con los valores calculados
             // aunque net <= 0. El operador necesita ver los números.
             let mut cand = candidate.clone();
-            cand.opportunity.amount_in_wei = amount_in_wei.to_string();
+            cand.opportunity.amount_in_wei = amount_in.to_string();
             cand.opportunity.expected_profit_usd = Some(gross_usd);
             cand.opportunity.net_expected_profit_usd = Some(net_usd);
             return OptimizeOutcome::Sized(Box::new(SizedCandidate {
                 candidate: cand,
-                optimal_amount_in: amount_in_wei,
+                optimal_amount_in: amount_in,
                 gross_profit_usd: gross_usd,
                 estimated_net_profit_usd: net_usd,
                 net_negative: true,
