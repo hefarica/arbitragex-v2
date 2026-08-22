@@ -4,9 +4,10 @@
  * Extracted from index.ts inline handler (commit 97ffc52 baseline) and
  * enriched with LEFT JOIN tokens for nested token_in_info / token_out_info.
  *
- * Contract (unchanged from 97ffc52):
- *   - viable_only=true (default): excludes rows where rejection_reason IS NOT NULL.
- *   - viable_only=false: returns all rows in active statuses.
+ * Contract (CARDS-MIRROR-01, 2026-08-22):
+ *   - viable_only=false (default): returns all recent rows including rejected ones
+ *     (rejection_reason visible per-item). R8: rows are real PG rows, never fabricated.
+ *   - viable_only=true: opt-in filter that excludes rows where rejection_reason IS NOT NULL.
  *   - rejection_reason field always present in each item (null or string).
  *   - HTTP 503 { error: "db_unavailable" } when pool is null.
  *   - HTTP 503 { error: "query_failed" } on PG error.
@@ -652,13 +653,17 @@ export function mountOpportunitiesLive(
 
     // viable_only filters out rows persisted as gate rejections (rejection_reason
     // populated by spine when an opportunity is rejected before profit eval).
-    // Default TRUE — the route contract (see header) and the regression guard
-    // for commit 97ffc52 require that, with no param, only viable opportunities
-    // are returned. Callers pass viable_only=false to also see rejected rows.
-    // The interactive client always sends the flag explicitly; SSR/default
-    // callers get the safe viable-only view.
+    // CARDS-MIRROR-01: viable_only is an opt-in filter, NOT the default. Default
+    // FALSE — cards must reflect real pipeline activity (including gate
+    // rejections with their honest reason visible per-item), not hide behind a
+    // viable-only default that returned 0 when every recent opp was
+    // gate-rejected (the operator's empty-cards symptom, 2026-08-22). The
+    // interactive client still sends the flag explicitly; SSR/default callers
+    // now get the full recent view (viable + rejected with reasons), mirroring
+    // what paper history shows. viable_only=true remains available for callers
+    // who want only non-rejected rows.
     const viableOnly =
-      String(req.query["viable_only"] ?? "true").toLowerCase() !== "false";
+      String(req.query["viable_only"] ?? "false").toLowerCase() === "true";
 
     // 2026-05-10 hotfix: bound the live window so the SSR snapshot can never
     // surface opportunities from days ago when no fresh viable rows exist.
