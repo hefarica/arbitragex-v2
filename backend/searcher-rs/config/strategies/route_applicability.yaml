@@ -6,7 +6,7 @@
 # values below. `shadow_only` is ALWAYS forced to true at load time — a config
 # can never enable execution (there is no active route-discovery mode).
 #
-# route_kind tokens: v2v2 | v2v3 | v3v2 | v3v3 | triangular
+# route_kind tokens: v2v2 | v2v3 | v3v2 | v3v3 | triangular | multihop
 version: 1
 
 discovery:
@@ -14,7 +14,11 @@ discovery:
   # When set, use lowercase 0x-prefixed addresses (e.g. WETH/USDC/USDT/DAI).
   base_tokens: []
   # Reject edges whose liquidity_hint is below this (0.0 disables the check).
-  min_liquidity_hint: 0.0
+  # PR-ROUTE-02: raised from 0.0 to 1.0 (normalized units, conservative floor).
+  # A 0.0 floor admitted thin pools that produced wash 2-hop cycles and bowtie
+  # 4-hop noise, inflating multi_hop_profitable_cycles with garbage. The gate at
+  # graph_builder.rs:221-223 was already tested, just disabled.
+  min_liquidity_hint: 1.0
   # Branching cap: max parallel pools explored between any two tokens.
   max_pools_per_pair: 8
   # Max cycle length in hops (2 = 2-cycles only; 3 = + triangulars).
@@ -39,14 +43,17 @@ strategies:
     # adapter; the dispatcher marks it dispatch_deferred until that ships.
     has_cartridge: true
 
-  # Any base route wrapped in a flashloan capital source. No cartridge yet →
-  # surfaced as applicable in telemetry but NOT dispatched.
+  # Any base route wrapped in a flashloan capital source (TLS). The
+  # omega_strategy_pack.rhai is the cartridge (category polymorphic_pack, catch-all
+  # at cartridge_boot.rs:704) — it handles flashloan_atomic + flashmint_atomic +
+  # multi_hop_cycle dispatch arms. PR-ROUTE-04: added "multihop" to accepts and
+  # flipped has_cartridge true so plan_dispatch stops skipping flashloan_arb.
   flashloan_arb:
     enabled: true
     shadow_only: true
     route_based: true
-    accepts: [v2v2, v2v3, v3v2, v3v3, triangular]
-    has_cartridge: false
+    accepts: [v2v2, v2v3, v3v2, v3v3, triangular, multihop]
+    has_cartridge: true
 
   # Stablecoin-only profile of dex_arb. NOT a StrategyLabel — surfaced as a tag
   # only. Disabled by default; enable + set token_allowlist to use.

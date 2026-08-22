@@ -264,6 +264,8 @@ pub fn evaluate_tick(
     tick_summary["multi_hop_profitable_cycles"] = serde_json::json!(multi_hop_cycles_found);
     tick_summary["multi_hop_v3_skipped"] = serde_json::json!(mh.v3_skipped);
     tick_summary["multi_hop_capped"] = serde_json::json!(mh.capped);
+    // PR-ROUTE-06: surface the noise-floor prune so it never dies in silence (R8).
+    tick_summary["multi_hop_noise_dropped"] = serde_json::json!(mh.noise_dropped);
 
     TickOutput {
         routes_found: routes.len(),
@@ -730,21 +732,27 @@ mod tests {
         let engine = StrategyApplicabilityEngine::default();
         let finder = RouteFinderConfig::default();
         let tick = evaluate_tick(&outcome, 1, &engine, &finder, 200, true, 7, "shadow");
-        // Two V2V2 routes → dex_arb dispatched for each (flashloan has no cartridge).
-        assert_eq!(tick.routes_dispatched, 2);
-        assert_eq!(tick.dispatch_intents.len(), 2);
-        assert_eq!(tick.tick_summary["routes_dispatched"], 2);
-        // route_intent.emitted events present, all shadow, none deferred (dex_arb).
+        // PR-ROUTE-04: Two V2V2 routes × {dex_arb, flashloan_arb} = 4 dispatched.
+        // flashloan now dispatches via the omega_strategy_pack (polymorphic catch-all).
+        assert_eq!(tick.routes_dispatched, 4);
+        assert_eq!(tick.dispatch_intents.len(), 4);
+        assert_eq!(tick.tick_summary["routes_dispatched"], 4);
+        // route_intent.emitted events present, all shadow, none deferred.
         let emitted: Vec<_> = tick
             .events
             .iter()
             .filter(|e| e["event"] == "route_intent.emitted")
             .collect();
-        assert_eq!(emitted.len(), 2);
+        assert_eq!(emitted.len(), 4);
         for e in emitted {
             assert_eq!(e["mode"], "shadow");
             assert!(e["dispatch_deferred"].is_null());
-            assert_eq!(e["strategy"], "dex_arb_v2v2");
+            // PR-ROUTE-04: both dex_arb_v2v2 and flashloan_arb strategies emit.
+            let strat = e["strategy"].as_str().unwrap_or_default();
+            assert!(
+                strat == "dex_arb_v2v2" || strat == "flashloan_arb",
+                "unexpected strategy {strat}"
+            );
         }
     }
 

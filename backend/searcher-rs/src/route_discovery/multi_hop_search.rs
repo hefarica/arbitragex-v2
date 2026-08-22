@@ -93,6 +93,9 @@ pub struct MultiHopResult {
     pub dropped_for_cap: usize,
     /// Edges skipped because `log_weight` was `None` (V3 sizing pending — R8 honesty).
     pub v3_skipped: usize,
+    /// PR-ROUTE-06: cycles dropped because |sum_log_weight| was below the
+    /// 1e-6 noise floor (floating-point / stale-reserve artifact, no economic basis).
+    pub noise_dropped: usize,
 }
 
 /// Find profitable (negative summed `log_weight`) closed cycles of length 2..=max_hops
@@ -119,12 +122,24 @@ pub fn find_profitable_cycles(
         // DFS state: current token, path of edge indices, pools used, summed weight.
         let mut path: Vec<usize> = Vec::with_capacity(max_hops);
         let mut pools: Vec<Address> = Vec::with_capacity(max_hops);
+        // PR-ROUTE-05: visited_tokens prevents degenerate bowtie cycles where the
+        // same intermediate token is bought/sold twice without economic basis
+        // (e.g. A→B→C→B→A). The start token is inserted once; intermediate tokens
+        // are inserted on entry and removed on backtrack (mirroring
+        // unique_route_finder.rs:197-199). MMBF theory is preserved: any non-simple
+        // negative cycle decomposes into simple negative cycles at least as
+        // profitable (fewer fees) — pruning to simple cycles loses zero realizable
+        // yield. The cartridge MEV-01-019 already states this constraint.
+        use std::collections::HashSet;
+        let mut visited_tokens: HashSet<Address> = HashSet::new();
+        visited_tokens.insert(start);
         dfs_cycles(
             graph,
             start,
             start,
             &mut path,
             &mut pools,
+            &mut visited_tokens,
             0.0,
             max_hops,
             max_cycles,
@@ -135,11 +150,24 @@ pub fn find_profitable_cycles(
         );
     }
 
+    // PR-ROUTE-06: drop cycles whose profitability is floating-point / stale-reserve
+    // noise. The fee floor alone is ~0.3% (30 bps) per leg; a cycle whose
+    // |sum_log_weight| is below 1e-6 is either a rounding artifact or a stale
+    // reserve snapshot that briefly looked negative. Such "profitable" cycles
+    // have no economic basis — they would never survive the net-profit gate
+    // (gas alone dwarfs a 1e-6 log spread). Honest prune (R8): not fabricated,
+    // just excluded from the observe-only counter that feeds telemetry.
+    const MIN_LOG_PROFIT: f64 = 1e-6;
+    let before = out.len();
+    out.retain(|c| c.sum_log_weight.abs() >= MIN_LOG_PROFIT);
+    let noise_dropped = before - out.len();
+
     MultiHopResult {
         cycles: out,
         capped,
         dropped_for_cap,
         v3_skipped,
+        noise_dropped,
     }
 }
 
@@ -150,6 +178,7 @@ fn dfs_cycles(
     current: Address,
     path: &mut Vec<usize>,
     pools: &mut Vec<Address>,
+    visited_tokens: &mut std::collections::HashSet<Address>,
     sum_w: f64,
     max_hops: usize,
     max_cycles: usize,
@@ -171,6 +200,14 @@ fn dfs_cycles(
 
         // Skip immediate same-pool reuse.
         if pools.last() == Some(&e.pool) {
+            continue;
+        }
+        // PR-ROUTE-05: anti-degeneracy — a non-start token already in the path
+        // means the cycle revisits an intermediate token (bowtie shape like
+        // A→B→C→B→A). Block it: the same token bought/sold twice mid-cycle has
+        // no economic basis beyond wash-fee-burning. The start token is the
+        // only allowed revisit (it closes the cycle, handled below).
+        if e.token_out != start && visited_tokens.contains(&e.token_out) {
             continue;
         }
         // R8: V3 (or any) edge without a computable weight is skipped, never faked.
@@ -202,12 +239,14 @@ fn dfs_cycles(
             }
             // Do not extend past a closed cycle on the start token.
         } else if e.token_out != start {
+            visited_tokens.insert(e.token_out);
             dfs_cycles(
                 graph,
                 start,
                 e.token_out,
                 path,
                 pools,
+                visited_tokens,
                 next_sum,
                 max_hops,
                 max_cycles,
@@ -216,6 +255,7 @@ fn dfs_cycles(
                 dropped_for_cap,
                 v3_skipped,
             );
+            visited_tokens.remove(&e.token_out);
         }
 
         path.pop();

@@ -903,12 +903,12 @@ impl Orchestrator {
                         .inc();
                     let mut c = candidate;
                     c.rejection_reason = Some(reason_str);
-                    // R8: the SizeOptimizer's rejection supersedes the
-                    // dex_engine's pre-sizing heuristic (e.g. the token-mispriced
-                    // gross). Clear it so the published Opportunity never carries
-                    // a contradictory `expected_profit_usd` (was the $10.7M
-                    // flashloan display bug: huge gross + non_positive reject).
-                    c.opportunity.expected_profit_usd = None;
+                    // HARDENING: NO vaciar expected_profit_usd. Mantener el valor
+                    // que el SizeOptimizer calculó (gross) para que la tarjeta lo
+                    // muestre. El gate de net-positive es de EJECUCIÓN, no de
+                    // detección. La tarjeta debe mostrar los números reales para
+                    // que el operador vea POR QUÉ no es viable.
+                    // c.opportunity.expected_profit_usd = None;  ← REMOVIDO
                     c
                 }
             };
