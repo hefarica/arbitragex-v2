@@ -41,7 +41,7 @@ function routeKeyOf(opp: OmniOpportunity): string {
   ].join("|");
 }
 
-const POLL_INTERVAL_MS = 4_000;
+const POLL_INTERVAL_MS = 30_000; // HARDENING: 30s fallback — WS push is primary (streaming snapshot+push)
 /** Hard cap on simultaneously mounted cards — the memory-discipline bound.
  * Combined with each card's `content-visibility:auto`, this keeps the grid's
  * footprint proportional to the viewport, not the feed length. */
