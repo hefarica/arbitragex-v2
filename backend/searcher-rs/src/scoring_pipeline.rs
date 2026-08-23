@@ -22,8 +22,11 @@
 //! reused (not reimplemented) so the integer ppm math is identical to production.
 //!
 //! ## Honesty with no history (flat prior)
-//! The posterior is built from per-pair history via the REAL
-//! `bayesian_filter::bayes_update(Beta(1,1), profitable, unprofitable)`. With no
+//! The posterior is built from per-STRATEGY history via the REAL
+//! `bayesian_filter::bayes_update(Beta(1,1), profitable, unprofitable)`
+//! (STRAT-IDENT-01: calibration identity is the strategy — cartridge stem or
+//! engine kind — never the pair; every one of the 264 strategies keeps an
+//! INDEPENDENT prior). With no
 //! calibrated prior (`observation_count == 0`) this collapses to the uniform
 //! Beta(1,1) flat prior (mean 0.5) and `source_context = "flat_prior"`. No win is
 //! fabricated. Calibration only happens once the A.5 paper-shadow window
@@ -59,8 +62,11 @@ const DEFAULT_KELLY_MAX_CAPITAL_USD: f64 = 5000.0;
 const DEFAULT_GAIN_ON_WIN: f64 = 2.0;
 const DEFAULT_LOSS_ON_LOSS: f64 = 1.0;
 
-/// Per-pair prior state loaded from the `bayesian_priors` table (or `None` when
-/// the pair has never been calibrated → flat prior).
+/// Per-STRATEGY prior state loaded from the `bayesian_priors` table (or `None`
+/// when the strategy has never been calibrated → flat prior). STRAT-IDENT-01:
+/// calibration accumulates per strategy (the cartridge stem / engine kind) —
+/// never per pair or per class. All 264 cartridges trading the same pair keep
+/// INDEPENDENT priors: each strategy has its own win distribution.
 #[derive(Clone, Copy, Debug)]
 pub struct PriorState {
     pub observation_count: u64,
@@ -153,9 +159,11 @@ impl ScoringPipeline {
         !self.cfg.hard_gate || score.bayesian_accepted
     }
 
-    /// Compute a [`ConfidenceScore`] for one paper opportunity. `prior` is the
-    /// per-pair calibrated state (or `None` ⇒ flat prior). Invokes the real
-    /// primitives; never fails (degrades to safe defaults), never moves capital.
+    /// Compute a [`ConfidenceScore`] for one paper opportunity. `strategy_key`
+    /// is the STRATEGY identity (cartridge stem / engine kind — STRAT-IDENT-01)
+    /// and `prior` is that strategy's calibrated state (or `None` ⇒ flat
+    /// prior). Invokes the real primitives; never fails (degrades to safe
+    /// defaults), never moves capital.
     ///
     /// Async to match the wiring point (`emit_accepted` is async) and to allow a
     /// future async prior-loader; the math itself is pure.
@@ -163,7 +171,7 @@ impl ScoringPipeline {
     pub async fn evaluate_paper_opportunity(
         &self,
         opportunity_id: &str,
-        token_pair: &str,
+        strategy_key: &str,
         net_profit_usd: Option<f64>,
         chain_id: Option<i64>,
         prior: Option<PriorState>,
@@ -171,7 +179,7 @@ impl ScoringPipeline {
         tracing::debug!(
             event = "scoring.evaluate.start",
             opportunity_id,
-            token_pair,
+            strategy_key,
             chain_id,
             net_profit_usd,
             calibrated = prior.map(|p| p.observation_count > 0).unwrap_or(false),
@@ -180,19 +188,19 @@ impl ScoringPipeline {
         if score.bayesian_accepted {
             tracing::debug!(
                 event = "scoring.bayesian.accepted",
-                token_pair,
+                strategy_key,
                 posterior_prob = score.posterior_prob
             );
         } else {
             tracing::debug!(
                 event = "scoring.bayesian.rejected",
-                token_pair,
+                strategy_key,
                 posterior_prob = score.posterior_prob
             );
         }
         tracing::debug!(
             event = "scoring.kelly.computed",
-            token_pair,
+            strategy_key,
             kelly_fraction = score.kelly_fraction,
             recommended_position_usd = score.recommended_position_usd,
         );
