@@ -33,7 +33,11 @@
 "use client";
 
 import React, { useState } from "react";
-import { motion } from "framer-motion";
+// MEM-RENDER-01: framer-motion removed from the live card grid. 200 motion.div
+// nodes churning at prod feed rates (up to ~2 mounts/s) retained animation
+// state/drivers in the renderer until the tab reached multi-GB heaps. The enter
+// animation is now CSS-only (.arbx-card-enter in globals.css) — zero JS state.
+// Same discipline as the memory-budgeted /opportunities/exchange page.
 import {
   AlertTriangle,
   ArrowDownRight,
@@ -200,11 +204,8 @@ function OpportunityTradeCardImpl({
   };
 
   return (
-    <motion.div
-      initial={{ opacity: 0, y: 8, scale: 0.98 }}
-      animate={{ opacity: 1, y: 0, scale: 1 }}
-      transition={{ duration: 0.25 }}
-      className="relative bg-card text-card-foreground border border-border rounded-2xl p-4 shadow-lg hover:shadow-xl hover:border-primary/40 transition-all overflow-hidden"
+    <div
+      className="arbx-card-enter relative bg-card text-card-foreground border border-border rounded-2xl p-4 shadow-lg hover:shadow-xl hover:border-primary/40 transition-all overflow-hidden"
     >
       {/* ⓘ discreet Inspect affordance — top-right corner */}
       <button
@@ -443,13 +444,13 @@ function OpportunityTradeCardImpl({
           </div>
         )}
       </div>
-    </motion.div>
+    </div>
   );
 }
 
 // PERF (2026-08-09): memoize the card so the parent re-renders do NOT re-render
 // every card. The parent used to push a fresh `now` every second → all ~200
-// motion.div cards re-rendered each second. The comparator re-renders a card
+// cards re-rendered each second. The comparator re-renders a card
 // only when its own data changed OR its displayed age (seconds) ticked over.
 // Business-equality fields are checked because the store emits a fresh array
 // after each batch replacement, so reference equality on `opp` would fail.
