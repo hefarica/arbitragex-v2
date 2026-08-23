@@ -101,6 +101,10 @@ pub use sim_core::sim_prefund;
 // Phase OMEGA: Kelly Criterion + V3 concentrated liquidity math primitives.
 // Pure module exposed so size_optimizer + tests can consume Kelly sizing.
 pub mod kelly_sizing;
+// QUOTEBASE-264 10_LATENCY: the 8-stage discovery budget (lat.* keys),
+// p50/p95 recorder + PASS_p95 gate (XLS-QB-07). Lib-only instrument; the
+// discovery hot path is the future wiring consumer.
+pub mod latency_budget;
 // Phase OMEGA 3.2: Bayesian inference + VPIN/PIN filters. Pure module
 // exposed so the prioritization-spine evaluator can consume posterior
 // acceptance gates without re-implementing the math.

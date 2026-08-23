@@ -35,10 +35,10 @@ pub const EXEC_MODES: [&str; 3] = ["LIVE_MAINNET", "TESTNET", "PAPER_SHADOW"];
 /// Canonical financing-mode tokens (02_FINANCING — first-class modes).
 pub const FINANCING_MODES: [&str; 4] = ["OWN_CAPITAL", "AAVE_FL", "BALANCER_FL", "V2_FLASH_SWAP"];
 
-/// The 49 canonical knobs, field names exactly matching the workbook tokens
+/// The 50 canonical knobs, field names exactly matching the workbook tokens
 /// (snake_case), defaults exactly the `01_CONFIG` values: 42 from the ULTRA
-/// workbook + 7 from QUOTEBASE-264's `01_CONFIG` (`min_net_bps`, `beam_k`,
-/// and the five `quote_w_*` weights — XLS-QB-03/06).
+/// workbook + 8 from QUOTEBASE-264's `01_CONFIG` (`min_net_bps`, `beam_k`,
+/// the five `quote_w_*` weights, and `discovery_sla_ms` — XLS-QB-03/06/07).
 #[derive(Debug, Clone, PartialEq)]
 pub struct CanonicalKnobs {
     // ── Discovery ────────────────────────────────────────────────────────
@@ -73,6 +73,11 @@ pub struct CanonicalKnobs {
     pub quote_w_venue_coverage: f64, // 0.2 (Quote_w_VenueCoverage)
     pub quote_w_stability: f64,      // 0.1 (Quote_w_Stability)
     pub quote_w_cross_dex: f64,      // 0.1 (Quote_w_CrossDex)
+    // ── Discovery latency budget (QUOTEBASE-264 01_CONFIG r20 — XLS-QB-07).
+    // Target p95 for discovery/ranking PRE-simulation (remote RPC and
+    // simulation are explicitly OUT of this budget — 00_MANUAL r13).
+    // Consumed by latency_budget (PASS_p95 gate, 10_LATENCY r18).
+    pub discovery_sla_ms: f64, // 30 (Discovery_SLA_ms)
     // ── Runtime budgets ──────────────────────────────────────────────────
     pub emission_budget_routes_block: usize,  // 50_000
     pub candidate_budget_routes_block: usize, // 250_000
@@ -135,6 +140,7 @@ impl Default for CanonicalKnobs {
             quote_w_venue_coverage: 0.2,
             quote_w_stability: 0.1,
             quote_w_cross_dex: 0.1,
+            discovery_sla_ms: 30.0,
             emission_budget_routes_block: 50_000,
             candidate_budget_routes_block: 250_000,
             block_cadence_s: 12,
@@ -239,6 +245,7 @@ impl CanonicalKnobs {
             ),
             quote_w_stability: env_f64("ARBX_KNOB_QUOTE_W_STABILITY", d.quote_w_stability),
             quote_w_cross_dex: env_f64("ARBX_KNOB_QUOTE_W_CROSS_DEX", d.quote_w_cross_dex),
+            discovery_sla_ms: env_f64("ARBX_KNOB_DISCOVERY_SLA_MS", d.discovery_sla_ms),
             emission_budget_routes_block: env_u64(
                 "ARBX_KNOB_EMISSION_BUDGET_ROUTES_BLOCK",
                 d.emission_budget_routes_block as u64,
@@ -369,6 +376,11 @@ impl CanonicalKnobs {
                 "quote weights must sum to 1.0 (got {qw_sum:.6} — 01_CONFIG rows 15–19)"
             ));
         }
+        // QUOTEBASE-264 01_CONFIG r20 (XLS-QB-07): the discovery SLA must be
+        // a finite positive duration (a zero/negative budget is meaningless).
+        if !self.discovery_sla_ms.is_finite() || self.discovery_sla_ms <= 0.0 {
+            return Err("discovery_sla_ms must be finite and > 0".to_string());
+        }
         if self.emission_budget_routes_block == 0 || self.candidate_budget_routes_block == 0 {
             return Err("route budgets must be > 0".to_string());
         }
@@ -427,11 +439,11 @@ impl CanonicalKnobs {
     /// `GET /api/v1/config/canonical-knobs`). Values only — never secrets.
     ///
     /// Built with explicit `Map` inserts, NOT one `json!({...})` literal: a
-    /// single 50-key `json!` macro expansion exceeds the crate's default
+    /// single 51-key `json!` macro expansion exceeds the crate's default
     /// `recursion_limit` (rust-check CI failure) — the incremental build stays
     /// under it without a crate-wide attribute.
     pub fn to_json(&self) -> serde_json::Value {
-        let mut m = serde_json::Map::with_capacity(51);
+        let mut m = serde_json::Map::with_capacity(52);
         m.insert("max_hops".into(), json!(self.max_hops));
         m.insert("min_hops".into(), json!(self.min_hops));
         m.insert("selected_financing".into(), json!(self.selected_financing));
@@ -460,6 +472,7 @@ impl CanonicalKnobs {
         );
         m.insert("quote_w_stability".into(), json!(self.quote_w_stability));
         m.insert("quote_w_cross_dex".into(), json!(self.quote_w_cross_dex));
+        m.insert("discovery_sla_ms".into(), json!(self.discovery_sla_ms));
         m.insert(
             "emission_budget_routes_block".into(),
             json!(self.emission_budget_routes_block),
@@ -574,6 +587,7 @@ mod tests {
         assert_eq!(k.quote_w_venue_coverage, 0.2);
         assert_eq!(k.quote_w_stability, 0.1);
         assert_eq!(k.quote_w_cross_dex, 0.1);
+        assert_eq!(k.discovery_sla_ms, 30.0); // r20 (XLS-QB-07)
         assert_eq!(k.emission_budget_routes_block, 50_000);
         assert_eq!(k.candidate_budget_routes_block, 250_000);
         assert_eq!(k.block_cadence_s, 12);
@@ -665,6 +679,10 @@ mod tests {
         k.quote_w_stability = -0.1;
         k.quote_w_cross_dex = 0.3; // sum still 1.0 but a weight is negative
         assert!(k.validate().is_err(), "negative quote weight rejected");
+
+        let mut k = CanonicalKnobs::default();
+        k.discovery_sla_ms = 0.0;
+        assert!(k.validate().is_err(), "discovery_sla_ms must be > 0");
     }
 
     /// Env overrides win over defaults (single test fn — `set_var` is
@@ -711,12 +729,12 @@ mod tests {
     }
 
     #[test]
-    fn snapshot_json_has_all_49_knobs_and_source() {
+    fn snapshot_json_has_all_50_knobs_and_source() {
         let j = CanonicalKnobs::default().to_json();
         let obj = j.as_object().expect("snapshot is an object");
-        // 49 knob fields (ULTRA 01_CONFIG ×42 + QUOTEBASE-264 01_CONFIG ×7,
-        // XLS-QB-03/06) + 1 source field.
-        assert_eq!(obj.len(), 50);
+        // 50 knob fields (ULTRA 01_CONFIG ×42 + QUOTEBASE-264 01_CONFIG ×8,
+        // XLS-QB-03/06/07) + 1 source field.
+        assert_eq!(obj.len(), 51);
         assert_eq!(
             obj["source"],
             "canonical_knobs.rs (01_CONFIG ULTRA workbook)"
@@ -726,6 +744,7 @@ mod tests {
         assert_eq!(obj["beam_k"], 4);
         assert_eq!(obj["quote_w_prior"], 0.3);
         assert_eq!(obj["quote_w_cross_dex"], 0.1);
+        assert_eq!(obj["discovery_sla_ms"], 30.0);
         assert_eq!(obj["killswitch"], false);
     }
 }
