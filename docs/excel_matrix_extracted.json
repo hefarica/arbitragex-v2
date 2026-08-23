@@ -1,0 +1,3584 @@
+[
+  {
+    "mev_id": "MEV-01-001",
+    "strategy": "DEX\u2013DEX arbitrage",
+    "detector": "R_CLOSED_CYCLE",
+    "operators": {
+      "op_01": "1",
+      "op_15": "2",
+      "op_16": "2",
+      "op_21": "2",
+      "op_22": "1",
+      "op_26": "1",
+      "op_27": "2",
+      "op_30": "1"
+    }
+  },
+  {
+    "mev_id": "MEV-01-002",
+    "strategy": "Cross-pool arbitrage",
+    "detector": "R_CLOSED_CYCLE",
+    "operators": {
+      "op_01": "1",
+      "op_15": "2",
+      "op_16": "2",
+      "op_21": "2",
+      "op_22": "1",
+      "op_26": "1",
+      "op_27": "2",
+      "op_30": "1"
+    }
+  },
+  {
+    "mev_id": "MEV-01-003",
+    "strategy": "Cross-protocol arbitrage",
+    "detector": "R_CLOSED_CYCLE",
+    "operators": {
+      "op_01": "1",
+      "op_15": "2",
+      "op_16": "2",
+      "op_21": "2",
+      "op_22": "1",
+      "op_26": "1",
+      "op_27": "2",
+      "op_30": "1"
+    }
+  },
+  {
+    "mev_id": "MEV-01-004",
+    "strategy": "Cross-version arbitrage",
+    "detector": "R_CLOSED_CYCLE",
+    "operators": {
+      "op_01": "1",
+      "op_15": "2",
+      "op_16": "2",
+      "op_21": "2",
+      "op_22": "1",
+      "op_26": "1",
+      "op_27": "2",
+      "op_30": "1"
+    }
+  },
+  {
+    "mev_id": "MEV-01-005",
+    "strategy": "Cross-fork arbitrage",
+    "detector": "R_CLOSED_CYCLE",
+    "operators": {
+      "op_01": "1",
+      "op_15": "2",
+      "op_16": "2",
+      "op_21": "2",
+      "op_22": "1",
+      "op_26": "1",
+      "op_27": "2",
+      "op_30": "1"
+    }
+  },
+  {
+    "mev_id": "MEV-01-006",
+    "strategy": "Cross-fee-tier arbitrage",
+    "detector": "R_CLOSED_CYCLE",
+    "operators": {
+      "op_01": "1",
+      "op_15": "2",
+      "op_16": "2",
+      "op_21": "2",
+      "op_22": "1",
+      "op_26": "1",
+      "op_27": "2",
+      "op_30": "1"
+    }
+  },
+  {
+    "mev_id": "MEV-01-007",
+    "strategy": "Cross-liquidity-tier arbitrage",
+    "detector": "R_CLOSED_CYCLE",
+    "operators": {
+      "op_01": "1",
+      "op_15": "2",
+      "op_16": "2",
+      "op_21": "2",
+      "op_22": "1",
+      "op_26": "1",
+      "op_27": "2",
+      "op_30": "1"
+    }
+  },
+  {
+    "mev_id": "MEV-01-008",
+    "strategy": "AMM\u2013AMM arbitrage",
+    "detector": "R_CLOSED_CYCLE",
+    "operators": {
+      "op_01": "1",
+      "op_15": "2",
+      "op_16": "2",
+      "op_21": "2",
+      "op_22": "1",
+      "op_26": "1",
+      "op_27": "2",
+      "op_30": "1"
+    }
+  },
+  {
+    "mev_id": "MEV-01-009",
+    "strategy": "AMM\u2013CLOB arbitrage",
+    "detector": "R_ORDERBOOK",
+    "operators": {
+      "op_08": "2",
+      "op_10": "2",
+      "op_11": "2",
+      "op_13": "1",
+      "op_16": "1",
+      "op_22": "1",
+      "op_23": "2"
+    }
+  },
+  {
+    "mev_id": "MEV-01-010",
+    "strategy": "CLOB\u2013CLOB arbitrage",
+    "detector": "R_ORDERBOOK",
+    "operators": {
+      "op_08": "2",
+      "op_10": "2",
+      "op_11": "2",
+      "op_13": "1",
+      "op_16": "1",
+      "op_22": "1",
+      "op_23": "2"
+    }
+  },
+  {
+    "mev_id": "MEV-01-011",
+    "strategy": "AMM\u2013RFQ arbitrage",
+    "detector": "R_ORDERBOOK",
+    "operators": {
+      "op_08": "2",
+      "op_10": "2",
+      "op_11": "2",
+      "op_13": "1",
+      "op_16": "1",
+      "op_22": "1",
+      "op_23": "2"
+    }
+  },
+  {
+    "mev_id": "MEV-01-012",
+    "strategy": "RFQ\u2013RFQ arbitrage",
+    "detector": "R_ORDERBOOK",
+    "operators": {
+      "op_08": "2",
+      "op_10": "2",
+      "op_11": "2",
+      "op_13": "1",
+      "op_16": "1",
+      "op_22": "1",
+      "op_23": "2"
+    }
+  },
+  {
+    "mev_id": "MEV-01-013",
+    "strategy": "Aggregator\u2013DEX arbitrage",
+    "detector": "R_CLOSED_CYCLE",
+    "operators": {
+      "op_01": "1",
+      "op_15": "2",
+      "op_16": "2",
+      "op_21": "2",
+      "op_22": "1",
+      "op_26": "1",
+      "op_27": "2",
+      "op_30": "1"
+    }
+  },
+  {
+    "mev_id": "MEV-01-014",
+    "strategy": "Router\u2013pool arbitrage",
+    "detector": "R_CLOSED_CYCLE",
+    "operators": {
+      "op_01": "1",
+      "op_15": "2",
+      "op_16": "2",
+      "op_21": "2",
+      "op_22": "1",
+      "op_26": "1",
+      "op_27": "2",
+      "op_30": "1"
+    }
+  },
+  {
+    "mev_id": "MEV-01-015",
+    "strategy": "Two-leg arbitrage",
+    "detector": "R_CLOSED_CYCLE",
+    "operators": {
+      "op_01": "1",
+      "op_15": "2",
+      "op_16": "2",
+      "op_21": "2",
+      "op_22": "1",
+      "op_26": "1",
+      "op_27": "2",
+      "op_30": "1"
+    }
+  },
+  {
+    "mev_id": "MEV-01-016",
+    "strategy": "Triangular arbitrage",
+    "detector": "R_CLOSED_CYCLE",
+    "operators": {
+      "op_01": "1",
+      "op_15": "2",
+      "op_16": "2",
+      "op_21": "2",
+      "op_22": "1",
+      "op_26": "1",
+      "op_27": "2",
+      "op_30": "1"
+    }
+  },
+  {
+    "mev_id": "MEV-01-017",
+    "strategy": "Quadrangular arbitrage",
+    "detector": "R_CLOSED_CYCLE",
+    "operators": {
+      "op_01": "1",
+      "op_15": "2",
+      "op_16": "2",
+      "op_21": "2",
+      "op_22": "1",
+      "op_26": "1",
+      "op_27": "2",
+      "op_30": "1"
+    }
+  },
+  {
+    "mev_id": "MEV-01-018",
+    "strategy": "N-leg cyclic arbitrage",
+    "detector": "R_CLOSED_CYCLE",
+    "operators": {
+      "op_01": "1",
+      "op_15": "2",
+      "op_16": "2",
+      "op_21": "2",
+      "op_22": "1",
+      "op_26": "1",
+      "op_27": "2",
+      "op_30": "1"
+    }
+  },
+  {
+    "mev_id": "MEV-01-019",
+    "strategy": "Multi-hop arbitrage",
+    "detector": "R_CLOSED_CYCLE",
+    "operators": {
+      "op_01": "1",
+      "op_15": "2",
+      "op_16": "2",
+      "op_21": "2",
+      "op_22": "1",
+      "op_26": "1",
+      "op_27": "2",
+      "op_30": "1"
+    }
+  },
+  {
+    "mev_id": "MEV-01-020",
+    "strategy": "Multi-DEX cyclic arbitrage",
+    "detector": "R_CLOSED_CYCLE",
+    "operators": {
+      "op_01": "1",
+      "op_15": "2",
+      "op_16": "2",
+      "op_21": "2",
+      "op_22": "1",
+      "op_26": "1",
+      "op_27": "2",
+      "op_30": "1"
+    }
+  },
+  {
+    "mev_id": "MEV-01-021",
+    "strategy": "Intra-DEX cyclic arbitrage",
+    "detector": "R_CLOSED_CYCLE",
+    "operators": {
+      "op_01": "1",
+      "op_15": "2",
+      "op_16": "2",
+      "op_21": "2",
+      "op_22": "1",
+      "op_26": "1",
+      "op_27": "2",
+      "op_30": "1"
+    }
+  },
+  {
+    "mev_id": "MEV-01-022",
+    "strategy": "Non-cyclic inventory arbitrage",
+    "detector": "R_CLOSED_CYCLE",
+    "operators": {
+      "op_01": "1",
+      "op_15": "2",
+      "op_16": "2",
+      "op_21": "2",
+      "op_22": "1",
+      "op_26": "1",
+      "op_27": "2",
+      "op_30": "1"
+    }
+  },
+  {
+    "mev_id": "MEV-01-023",
+    "strategy": "Path inconsistency arbitrage",
+    "detector": "R_DIRECT_INDIRECT",
+    "operators": {
+      "op_01": "1",
+      "op_15": "2",
+      "op_20": "1",
+      "op_21": "2",
+      "op_22": "1",
+      "op_27": "2"
+    }
+  },
+  {
+    "mev_id": "MEV-01-024",
+    "strategy": "Direct-vs-indirect-route arbitrage",
+    "detector": "R_DIRECT_INDIRECT",
+    "operators": {
+      "op_01": "1",
+      "op_15": "2",
+      "op_20": "1",
+      "op_21": "2",
+      "op_22": "1",
+      "op_27": "2"
+    }
+  },
+  {
+    "mev_id": "MEV-01-025",
+    "strategy": "Split-route arbitrage",
+    "detector": "R_SPLIT",
+    "operators": {
+      "op_15": "2",
+      "op_19": "2",
+      "op_20": "2",
+      "op_21": "1",
+      "op_22": "1",
+      "op_27": "1"
+    }
+  },
+  {
+    "mev_id": "MEV-01-026",
+    "strategy": "Parallel-route arbitrage",
+    "detector": "R_SPLIT",
+    "operators": {
+      "op_15": "2",
+      "op_19": "2",
+      "op_20": "2",
+      "op_21": "1",
+      "op_22": "1",
+      "op_27": "1"
+    }
+  },
+  {
+    "mev_id": "MEV-01-027",
+    "strategy": "Basket arbitrage",
+    "detector": "R_BASKET_NAV",
+    "operators": {
+      "op_08": "1",
+      "op_11": "1",
+      "op_13": "2",
+      "op_16": "1",
+      "op_19": "2",
+      "op_21": "2",
+      "op_22": "1"
+    }
+  },
+  {
+    "mev_id": "MEV-01-028",
+    "strategy": "Index arbitrage",
+    "detector": "R_BASKET_NAV",
+    "operators": {
+      "op_08": "1",
+      "op_11": "1",
+      "op_13": "2",
+      "op_16": "1",
+      "op_19": "2",
+      "op_21": "2",
+      "op_22": "1"
+    }
+  },
+  {
+    "mev_id": "MEV-01-029",
+    "strategy": "Ring arbitrage",
+    "detector": "R_CLOSED_CYCLE",
+    "operators": {
+      "op_01": "1",
+      "op_15": "2",
+      "op_16": "2",
+      "op_21": "2",
+      "op_22": "1",
+      "op_26": "1",
+      "op_27": "2",
+      "op_30": "1"
+    }
+  },
+  {
+    "mev_id": "MEV-01-030",
+    "strategy": "Coincidence-of-Wants arbitrage",
+    "detector": "R_COW",
+    "operators": {
+      "op_19": "2",
+      "op_20": "1",
+      "op_22": "1",
+      "op_23": "1",
+      "op_24": "2",
+      "op_27": "2",
+      "op_29": "2"
+    }
+  },
+  {
+    "mev_id": "MEV-01-031",
+    "strategy": "Exact-in/exact-out arbitrage",
+    "detector": "R_CLOSED_CYCLE",
+    "operators": {
+      "op_01": "1",
+      "op_15": "2",
+      "op_16": "2",
+      "op_21": "2",
+      "op_22": "1",
+      "op_26": "1",
+      "op_27": "2",
+      "op_30": "1"
+    }
+  },
+  {
+    "mev_id": "MEV-01-032",
+    "strategy": "Fee-adjusted arbitrage",
+    "detector": "R_CLOSED_CYCLE",
+    "operators": {
+      "op_01": "1",
+      "op_15": "2",
+      "op_16": "2",
+      "op_21": "2",
+      "op_22": "1",
+      "op_26": "1",
+      "op_27": "2",
+      "op_30": "1"
+    }
+  },
+  {
+    "mev_id": "MEV-01-033",
+    "strategy": "Gas-adjusted arbitrage",
+    "detector": "R_CLOSED_CYCLE",
+    "operators": {
+      "op_01": "1",
+      "op_15": "2",
+      "op_16": "2",
+      "op_21": "2",
+      "op_22": "1",
+      "op_26": "1",
+      "op_27": "2",
+      "op_30": "1"
+    }
+  },
+  {
+    "mev_id": "MEV-01-034",
+    "strategy": "Rebate arbitrage",
+    "detector": "R_CLOSED_CYCLE",
+    "operators": {
+      "op_01": "1",
+      "op_15": "2",
+      "op_16": "2",
+      "op_21": "2",
+      "op_22": "1",
+      "op_26": "1",
+      "op_27": "2",
+      "op_30": "1"
+    }
+  },
+  {
+    "mev_id": "MEV-01-035",
+    "strategy": "Dynamic-fee arbitrage",
+    "detector": "R_CLOSED_CYCLE",
+    "operators": {
+      "op_01": "1",
+      "op_15": "2",
+      "op_16": "2",
+      "op_21": "2",
+      "op_22": "1",
+      "op_26": "1",
+      "op_27": "2",
+      "op_30": "1"
+    }
+  },
+  {
+    "mev_id": "MEV-01-036",
+    "strategy": "Hook arbitrage",
+    "detector": "R_CLOSED_CYCLE",
+    "operators": {
+      "op_01": "1",
+      "op_15": "2",
+      "op_16": "2",
+      "op_21": "2",
+      "op_22": "1",
+      "op_26": "1",
+      "op_27": "2",
+      "op_30": "1"
+    }
+  },
+  {
+    "mev_id": "MEV-02-001",
+    "strategy": "Constant-product arbitrage",
+    "detector": "CF_CPMM",
+    "operators": {
+      "op_15": "2",
+      "op_16": "1",
+      "op_21": "2",
+      "op_22": "1",
+      "op_26": "1",
+      "op_27": "2"
+    }
+  },
+  {
+    "mev_id": "MEV-02-002",
+    "strategy": "Constant-sum arbitrage",
+    "detector": "CF_CONSTANT_SUM",
+    "operators": {
+      "op_15": "2",
+      "op_19": "2",
+      "op_21": "2",
+      "op_22": "1"
+    }
+  },
+  {
+    "mev_id": "MEV-02-003",
+    "strategy": "StableSwap arbitrage",
+    "detector": "CF_STABLESWAP",
+    "operators": {
+      "op_15": "2",
+      "op_16": "1",
+      "op_21": "2",
+      "op_22": "1",
+      "op_27": "2"
+    }
+  },
+  {
+    "mev_id": "MEV-02-004",
+    "strategy": "Weighted-pool arbitrage",
+    "detector": "CF_WEIGHTED",
+    "operators": {
+      "op_15": "2",
+      "op_16": "1",
+      "op_19": "2",
+      "op_21": "2",
+      "op_22": "1"
+    }
+  },
+  {
+    "mev_id": "MEV-02-005",
+    "strategy": "Concentrated-liquidity arbitrage",
+    "detector": "CF_CLAMM",
+    "operators": {
+      "op_10": "1",
+      "op_15": "2",
+      "op_16": "1",
+      "op_21": "2",
+      "op_22": "1",
+      "op_27": "2",
+      "op_30": "1"
+    }
+  },
+  {
+    "mev_id": "MEV-02-006",
+    "strategy": "Liquidity-bin arbitrage",
+    "detector": "CF_LB",
+    "operators": {
+      "op_10": "1",
+      "op_15": "2",
+      "op_21": "2",
+      "op_22": "1",
+      "op_27": "2"
+    }
+  },
+  {
+    "mev_id": "MEV-02-007",
+    "strategy": "Proactive Market Maker arbitrage",
+    "detector": "CF_PMM",
+    "operators": {
+      "op_08": "2",
+      "op_13": "1",
+      "op_15": "2",
+      "op_21": "2",
+      "op_22": "1"
+    }
+  },
+  {
+    "mev_id": "MEV-02-008",
+    "strategy": "Dynamic-liquidity arbitrage",
+    "detector": "CF_DYNAMIC",
+    "operators": {
+      "op_08": "2",
+      "op_10": "2",
+      "op_13": "1",
+      "op_15": "2",
+      "op_21": "2",
+      "op_22": "1"
+    }
+  },
+  {
+    "mev_id": "MEV-02-009",
+    "strategy": "Dynamic-weight arbitrage",
+    "detector": "CF_DYNAMIC",
+    "operators": {
+      "op_08": "2",
+      "op_10": "2",
+      "op_13": "1",
+      "op_15": "2",
+      "op_21": "2",
+      "op_22": "1"
+    }
+  },
+  {
+    "mev_id": "MEV-02-010",
+    "strategy": "Bonding-curve arbitrage",
+    "detector": "CF_BOND",
+    "operators": {
+      "op_13": "1",
+      "op_15": "2",
+      "op_20": "2",
+      "op_21": "2",
+      "op_22": "1"
+    }
+  },
+  {
+    "mev_id": "MEV-02-011",
+    "strategy": "Oracle-priced AMM arbitrage",
+    "detector": "CF_DYNAMIC",
+    "operators": {
+      "op_08": "2",
+      "op_10": "2",
+      "op_13": "1",
+      "op_15": "2",
+      "op_21": "2",
+      "op_22": "1"
+    }
+  },
+  {
+    "mev_id": "MEV-02-012",
+    "strategy": "Virtual-AMM arbitrage",
+    "detector": "CF_VAMM",
+    "operators": {
+      "op_08": "2",
+      "op_10": "1",
+      "op_13": "2",
+      "op_21": "2",
+      "op_22": "1"
+    }
+  },
+  {
+    "mev_id": "MEV-02-013",
+    "strategy": "Hybrid AMM/CLOB arbitrage",
+    "detector": "CF_DYNAMIC",
+    "operators": {
+      "op_08": "2",
+      "op_10": "2",
+      "op_13": "1",
+      "op_15": "2",
+      "op_21": "2",
+      "op_22": "1"
+    }
+  },
+  {
+    "mev_id": "MEV-02-014",
+    "strategy": "TWAMM arbitrage",
+    "detector": "CF_TWAMM",
+    "operators": {
+      "op_05": "2",
+      "op_08": "1",
+      "op_21": "2",
+      "op_22": "1",
+      "op_27": "2"
+    }
+  },
+  {
+    "mev_id": "MEV-02-015",
+    "strategy": "Batch-AMM arbitrage",
+    "detector": "CF_BATCH",
+    "operators": {
+      "op_19": "2",
+      "op_20": "1",
+      "op_22": "1",
+      "op_23": "1",
+      "op_24": "2",
+      "op_29": "2"
+    }
+  },
+  {
+    "mev_id": "MEV-02-016",
+    "strategy": "Auction-managed AMM arbitrage",
+    "detector": "CF_BATCH",
+    "operators": {
+      "op_19": "2",
+      "op_20": "1",
+      "op_22": "1",
+      "op_23": "1",
+      "op_24": "2",
+      "op_29": "2"
+    }
+  },
+  {
+    "mev_id": "MEV-02-017",
+    "strategy": "Cross-invariant arbitrage",
+    "detector": "CF_CROSSINV",
+    "operators": {
+      "op_15": "2",
+      "op_19": "1",
+      "op_21": "2",
+      "op_22": "1",
+      "op_27": "2",
+      "op_30": "1"
+    }
+  },
+  {
+    "mev_id": "MEV-03-001",
+    "strategy": "Swap backrun arbitrage",
+    "detector": "E_POST",
+    "operators": {
+      "op_05": "2",
+      "op_08": "1",
+      "op_10": "1",
+      "op_11": "1",
+      "op_21": "2",
+      "op_22": "1",
+      "op_25": "2",
+      "op_27": "2"
+    }
+  },
+  {
+    "mev_id": "MEV-03-002",
+    "strategy": "Multi-swap backrun",
+    "detector": "E_POST",
+    "operators": {
+      "op_05": "2",
+      "op_08": "1",
+      "op_10": "1",
+      "op_11": "1",
+      "op_21": "2",
+      "op_22": "1",
+      "op_25": "2",
+      "op_27": "2"
+    }
+  },
+  {
+    "mev_id": "MEV-03-003",
+    "strategy": "Cross-pool ripple arbitrage",
+    "detector": "E_POST",
+    "operators": {
+      "op_05": "2",
+      "op_08": "1",
+      "op_10": "1",
+      "op_11": "1",
+      "op_21": "2",
+      "op_22": "1",
+      "op_25": "2",
+      "op_27": "2"
+    }
+  },
+  {
+    "mev_id": "MEV-03-004",
+    "strategy": "Top-of-block arbitrage",
+    "detector": "E_POST",
+    "operators": {
+      "op_05": "2",
+      "op_08": "1",
+      "op_10": "1",
+      "op_11": "1",
+      "op_21": "2",
+      "op_22": "1",
+      "op_25": "2",
+      "op_27": "2"
+    }
+  },
+  {
+    "mev_id": "MEV-03-005",
+    "strategy": "End-of-block arbitrage",
+    "detector": "E_POST",
+    "operators": {
+      "op_05": "2",
+      "op_08": "1",
+      "op_10": "1",
+      "op_11": "1",
+      "op_21": "2",
+      "op_22": "1",
+      "op_25": "2",
+      "op_27": "2"
+    }
+  },
+  {
+    "mev_id": "MEV-03-006",
+    "strategy": "Inter-block arbitrage",
+    "detector": "E_POST",
+    "operators": {
+      "op_05": "2",
+      "op_08": "1",
+      "op_10": "1",
+      "op_11": "1",
+      "op_21": "2",
+      "op_22": "1",
+      "op_25": "2",
+      "op_27": "2"
+    }
+  },
+  {
+    "mev_id": "MEV-03-007",
+    "strategy": "Stale-price arbitrage",
+    "detector": "E_LATENCY",
+    "operators": {
+      "op_08": "2",
+      "op_10": "2",
+      "op_11": "2",
+      "op_13": "1",
+      "op_16": "1",
+      "op_22": "1",
+      "op_23": "2"
+    }
+  },
+  {
+    "mev_id": "MEV-03-008",
+    "strategy": "Latency arbitrage",
+    "detector": "E_LATENCY",
+    "operators": {
+      "op_08": "2",
+      "op_10": "2",
+      "op_11": "2",
+      "op_13": "1",
+      "op_16": "1",
+      "op_22": "1",
+      "op_23": "2"
+    }
+  },
+  {
+    "mev_id": "MEV-03-009",
+    "strategy": "Oracle-update arbitrage",
+    "detector": "E_ORACLE",
+    "operators": {
+      "op_05": "1",
+      "op_08": "2",
+      "op_10": "1",
+      "op_11": "2",
+      "op_21": "2",
+      "op_22": "1",
+      "op_25": "2"
+    }
+  },
+  {
+    "mev_id": "MEV-03-010",
+    "strategy": "OEV \u2014 Oracle Extractable Value",
+    "detector": "E_ORACLE",
+    "operators": {
+      "op_05": "1",
+      "op_08": "2",
+      "op_10": "1",
+      "op_11": "2",
+      "op_21": "2",
+      "op_22": "1",
+      "op_25": "2"
+    }
+  },
+  {
+    "mev_id": "MEV-03-011",
+    "strategy": "Rebase arbitrage",
+    "detector": "E_STATE",
+    "operators": {
+      "op_05": "2",
+      "op_08": "2",
+      "op_11": "1",
+      "op_13": "1",
+      "op_21": "2",
+      "op_22": "1"
+    }
+  },
+  {
+    "mev_id": "MEV-03-012",
+    "strategy": "Interest-index update arbitrage",
+    "detector": "E_STATE",
+    "operators": {
+      "op_05": "2",
+      "op_08": "2",
+      "op_11": "1",
+      "op_13": "1",
+      "op_21": "2",
+      "op_22": "1"
+    }
+  },
+  {
+    "mev_id": "MEV-03-013",
+    "strategy": "Funding-update arbitrage",
+    "detector": "E_STATE",
+    "operators": {
+      "op_05": "2",
+      "op_08": "2",
+      "op_11": "1",
+      "op_13": "1",
+      "op_21": "2",
+      "op_22": "1"
+    }
+  },
+  {
+    "mev_id": "MEV-03-014",
+    "strategy": "Epoch-rollover arbitrage",
+    "detector": "E_STATE",
+    "operators": {
+      "op_05": "2",
+      "op_08": "2",
+      "op_11": "1",
+      "op_13": "1",
+      "op_21": "2",
+      "op_22": "1"
+    }
+  },
+  {
+    "mev_id": "MEV-03-015",
+    "strategy": "Settlement arbitrage",
+    "detector": "E_STATE",
+    "operators": {
+      "op_05": "2",
+      "op_08": "2",
+      "op_11": "1",
+      "op_13": "1",
+      "op_21": "2",
+      "op_22": "1"
+    }
+  },
+  {
+    "mev_id": "MEV-03-016",
+    "strategy": "Mint/burn state arbitrage",
+    "detector": "E_STATE",
+    "operators": {
+      "op_05": "2",
+      "op_08": "2",
+      "op_11": "1",
+      "op_13": "1",
+      "op_21": "2",
+      "op_22": "1"
+    }
+  },
+  {
+    "mev_id": "MEV-03-017",
+    "strategy": "Redemption-state arbitrage",
+    "detector": "E_STATE",
+    "operators": {
+      "op_05": "2",
+      "op_08": "2",
+      "op_11": "1",
+      "op_13": "1",
+      "op_21": "2",
+      "op_22": "1"
+    }
+  },
+  {
+    "mev_id": "MEV-03-018",
+    "strategy": "Liquidity-add arbitrage",
+    "detector": "E_STATE",
+    "operators": {
+      "op_05": "2",
+      "op_08": "2",
+      "op_11": "1",
+      "op_13": "1",
+      "op_21": "2",
+      "op_22": "1"
+    }
+  },
+  {
+    "mev_id": "MEV-03-019",
+    "strategy": "Liquidity-removal arbitrage",
+    "detector": "E_STATE",
+    "operators": {
+      "op_05": "2",
+      "op_08": "2",
+      "op_11": "1",
+      "op_13": "1",
+      "op_21": "2",
+      "op_22": "1"
+    }
+  },
+  {
+    "mev_id": "MEV-03-020",
+    "strategy": "Pool-initialization arbitrage",
+    "detector": "E_STATE",
+    "operators": {
+      "op_05": "2",
+      "op_08": "2",
+      "op_11": "1",
+      "op_13": "1",
+      "op_21": "2",
+      "op_22": "1"
+    }
+  },
+  {
+    "mev_id": "MEV-03-021",
+    "strategy": "Migration arbitrage",
+    "detector": "E_STATE",
+    "operators": {
+      "op_05": "2",
+      "op_08": "2",
+      "op_11": "1",
+      "op_13": "1",
+      "op_21": "2",
+      "op_22": "1"
+    }
+  },
+  {
+    "mev_id": "MEV-03-022",
+    "strategy": "Fee-switch arbitrage",
+    "detector": "E_STATE",
+    "operators": {
+      "op_05": "2",
+      "op_08": "2",
+      "op_11": "1",
+      "op_13": "1",
+      "op_21": "2",
+      "op_22": "1"
+    }
+  },
+  {
+    "mev_id": "MEV-03-023",
+    "strategy": "Parameter-update arbitrage",
+    "detector": "E_STATE",
+    "operators": {
+      "op_05": "2",
+      "op_08": "2",
+      "op_11": "1",
+      "op_13": "1",
+      "op_21": "2",
+      "op_22": "1"
+    }
+  },
+  {
+    "mev_id": "MEV-03-024",
+    "strategy": "Governance-execution arbitrage",
+    "detector": "E_STATE",
+    "operators": {
+      "op_05": "2",
+      "op_08": "2",
+      "op_11": "1",
+      "op_13": "1",
+      "op_21": "2",
+      "op_22": "1"
+    }
+  },
+  {
+    "mev_id": "MEV-03-025",
+    "strategy": "Keeper-triggered arbitrage",
+    "detector": "E_AUCTION",
+    "operators": {
+      "op_08": "1",
+      "op_19": "2",
+      "op_21": "2",
+      "op_22": "1",
+      "op_23": "2",
+      "op_24": "2"
+    }
+  },
+  {
+    "mev_id": "MEV-03-026",
+    "strategy": "Auction-clearing arbitrage",
+    "detector": "E_AUCTION",
+    "operators": {
+      "op_08": "1",
+      "op_19": "2",
+      "op_21": "2",
+      "op_22": "1",
+      "op_23": "2",
+      "op_24": "2"
+    }
+  },
+  {
+    "mev_id": "MEV-03-027",
+    "strategy": "Block-time arbitrage",
+    "detector": "E_LATENCY",
+    "operators": {
+      "op_08": "2",
+      "op_10": "2",
+      "op_11": "2",
+      "op_13": "1",
+      "op_16": "1",
+      "op_22": "1",
+      "op_23": "2"
+    }
+  },
+  {
+    "mev_id": "MEV-03-028",
+    "strategy": "Sequencer-latency arbitrage",
+    "detector": "E_LATENCY",
+    "operators": {
+      "op_08": "2",
+      "op_10": "2",
+      "op_11": "2",
+      "op_13": "1",
+      "op_16": "1",
+      "op_22": "1",
+      "op_23": "2"
+    }
+  },
+  {
+    "mev_id": "MEV-03-029",
+    "strategy": "Spam arbitrage",
+    "detector": "OBSERVE",
+    "operators": {
+      "op_10": "2",
+      "op_11": "2",
+      "op_22": "1"
+    }
+  },
+  {
+    "mev_id": "MEV-03-030",
+    "strategy": "Reorg/time-bandit arbitrage",
+    "detector": "OBSERVE",
+    "operators": {
+      "op_10": "2",
+      "op_11": "2",
+      "op_22": "1"
+    }
+  },
+  {
+    "mev_id": "MEV-03-031",
+    "strategy": "Fork-state arbitrage",
+    "detector": "E_STATE",
+    "operators": {
+      "op_05": "2",
+      "op_08": "2",
+      "op_11": "1",
+      "op_13": "1",
+      "op_21": "2",
+      "op_22": "1"
+    }
+  },
+  {
+    "mev_id": "MEV-04-001",
+    "strategy": "Stablecoin peg arbitrage",
+    "detector": "P_PEG",
+    "operators": {
+      "op_08": "2",
+      "op_11": "1",
+      "op_13": "1",
+      "op_15": "2",
+      "op_21": "2",
+      "op_22": "1"
+    }
+  },
+  {
+    "mev_id": "MEV-04-002",
+    "strategy": "Cross-stablecoin arbitrage",
+    "detector": "P_PEG",
+    "operators": {
+      "op_08": "2",
+      "op_11": "1",
+      "op_13": "1",
+      "op_15": "2",
+      "op_21": "2",
+      "op_22": "1"
+    }
+  },
+  {
+    "mev_id": "MEV-04-003",
+    "strategy": "Algorithmic-stablecoin arbitrage",
+    "detector": "P_PEG",
+    "operators": {
+      "op_08": "2",
+      "op_11": "1",
+      "op_13": "1",
+      "op_15": "2",
+      "op_21": "2",
+      "op_22": "1"
+    }
+  },
+  {
+    "mev_id": "MEV-04-004",
+    "strategy": "Collateralized-stablecoin arbitrage",
+    "detector": "P_PEG",
+    "operators": {
+      "op_08": "2",
+      "op_11": "1",
+      "op_13": "1",
+      "op_15": "2",
+      "op_21": "2",
+      "op_22": "1"
+    }
+  },
+  {
+    "mev_id": "MEV-04-005",
+    "strategy": "Mint\u2013redeem stablecoin arbitrage",
+    "detector": "P_PEG",
+    "operators": {
+      "op_08": "2",
+      "op_11": "1",
+      "op_13": "1",
+      "op_15": "2",
+      "op_21": "2",
+      "op_22": "1"
+    }
+  },
+  {
+    "mev_id": "MEV-04-006",
+    "strategy": "Native\u2013wrapped arbitrage",
+    "detector": "P_WRAP",
+    "operators": {
+      "op_08": "2",
+      "op_13": "2",
+      "op_15": "1",
+      "op_21": "2",
+      "op_22": "1"
+    }
+  },
+  {
+    "mev_id": "MEV-04-007",
+    "strategy": "Canonical\u2013bridged token arbitrage",
+    "detector": "P_WRAP",
+    "operators": {
+      "op_08": "2",
+      "op_13": "2",
+      "op_15": "1",
+      "op_21": "2",
+      "op_22": "1"
+    }
+  },
+  {
+    "mev_id": "MEV-04-008",
+    "strategy": "Cross-wrapper arbitrage",
+    "detector": "P_WRAP",
+    "operators": {
+      "op_08": "2",
+      "op_13": "2",
+      "op_15": "1",
+      "op_21": "2",
+      "op_22": "1"
+    }
+  },
+  {
+    "mev_id": "MEV-04-009",
+    "strategy": "Synthetic\u2013underlying arbitrage",
+    "detector": "P_WRAP",
+    "operators": {
+      "op_08": "2",
+      "op_13": "2",
+      "op_15": "1",
+      "op_21": "2",
+      "op_22": "1"
+    }
+  },
+  {
+    "mev_id": "MEV-04-010",
+    "strategy": "Receipt-token arbitrage",
+    "detector": "P_4626",
+    "operators": {
+      "op_08": "2",
+      "op_13": "2",
+      "op_15": "1",
+      "op_21": "2",
+      "op_22": "1"
+    }
+  },
+  {
+    "mev_id": "MEV-04-011",
+    "strategy": "ERC-4626 share-price arbitrage",
+    "detector": "P_4626",
+    "operators": {
+      "op_08": "2",
+      "op_13": "2",
+      "op_15": "1",
+      "op_21": "2",
+      "op_22": "1"
+    }
+  },
+  {
+    "mev_id": "MEV-04-012",
+    "strategy": "Vault share\u2013underlying arbitrage",
+    "detector": "P_4626",
+    "operators": {
+      "op_08": "2",
+      "op_13": "2",
+      "op_15": "1",
+      "op_21": "2",
+      "op_22": "1"
+    }
+  },
+  {
+    "mev_id": "MEV-04-013",
+    "strategy": "LP-token NAV arbitrage",
+    "detector": "P_NAV",
+    "operators": {
+      "op_08": "1",
+      "op_11": "1",
+      "op_13": "2",
+      "op_19": "2",
+      "op_21": "2",
+      "op_22": "1"
+    }
+  },
+  {
+    "mev_id": "MEV-04-014",
+    "strategy": "Index token\u2013basket arbitrage",
+    "detector": "P_NAV",
+    "operators": {
+      "op_08": "1",
+      "op_11": "1",
+      "op_13": "2",
+      "op_19": "2",
+      "op_21": "2",
+      "op_22": "1"
+    }
+  },
+  {
+    "mev_id": "MEV-04-015",
+    "strategy": "ETF-like token arbitrage",
+    "detector": "P_NAV",
+    "operators": {
+      "op_08": "1",
+      "op_11": "1",
+      "op_13": "2",
+      "op_19": "2",
+      "op_21": "2",
+      "op_22": "1"
+    }
+  },
+  {
+    "mev_id": "MEV-04-016",
+    "strategy": "RWA\u2013NAV arbitrage",
+    "detector": "P_NAV",
+    "operators": {
+      "op_08": "1",
+      "op_11": "1",
+      "op_13": "2",
+      "op_19": "2",
+      "op_21": "2",
+      "op_22": "1"
+    }
+  },
+  {
+    "mev_id": "MEV-04-017",
+    "strategy": "Rebasing-token arbitrage",
+    "detector": "P_PEG",
+    "operators": {
+      "op_08": "2",
+      "op_11": "1",
+      "op_13": "1",
+      "op_15": "2",
+      "op_21": "2",
+      "op_22": "1"
+    }
+  },
+  {
+    "mev_id": "MEV-04-018",
+    "strategy": "Fee-on-transfer token arbitrage",
+    "detector": "P_PEG",
+    "operators": {
+      "op_08": "2",
+      "op_11": "1",
+      "op_13": "1",
+      "op_15": "2",
+      "op_21": "2",
+      "op_22": "1"
+    }
+  },
+  {
+    "mev_id": "MEV-04-019",
+    "strategy": "Liquid-staking-token arbitrage",
+    "detector": "P_LST",
+    "operators": {
+      "op_08": "2",
+      "op_11": "1",
+      "op_13": "2",
+      "op_21": "2",
+      "op_22": "1",
+      "op_23": "1"
+    }
+  },
+  {
+    "mev_id": "MEV-04-020",
+    "strategy": "LST redemption arbitrage",
+    "detector": "P_LST",
+    "operators": {
+      "op_08": "2",
+      "op_11": "1",
+      "op_13": "2",
+      "op_21": "2",
+      "op_22": "1",
+      "op_23": "1"
+    }
+  },
+  {
+    "mev_id": "MEV-04-021",
+    "strategy": "Liquid-restaking-token arbitrage",
+    "detector": "P_LST",
+    "operators": {
+      "op_08": "2",
+      "op_11": "1",
+      "op_13": "2",
+      "op_21": "2",
+      "op_22": "1",
+      "op_23": "1"
+    }
+  },
+  {
+    "mev_id": "MEV-04-022",
+    "strategy": "Cross-LST arbitrage",
+    "detector": "P_LST",
+    "operators": {
+      "op_08": "2",
+      "op_11": "1",
+      "op_13": "2",
+      "op_21": "2",
+      "op_22": "1",
+      "op_23": "1"
+    }
+  },
+  {
+    "mev_id": "MEV-04-023",
+    "strategy": "Governance-wrapper arbitrage",
+    "detector": "P_WRAP",
+    "operators": {
+      "op_08": "2",
+      "op_13": "2",
+      "op_15": "1",
+      "op_21": "2",
+      "op_22": "1"
+    }
+  },
+  {
+    "mev_id": "MEV-04-024",
+    "strategy": "Vote-escrow derivative arbitrage",
+    "detector": "P_YIELD",
+    "operators": {
+      "op_08": "2",
+      "op_13": "2",
+      "op_15": "1",
+      "op_16": "1",
+      "op_21": "2",
+      "op_22": "1"
+    }
+  },
+  {
+    "mev_id": "MEV-04-025",
+    "strategy": "Tokenized-position arbitrage",
+    "detector": "P_NAV",
+    "operators": {
+      "op_08": "1",
+      "op_11": "1",
+      "op_13": "2",
+      "op_19": "2",
+      "op_21": "2",
+      "op_22": "1"
+    }
+  },
+  {
+    "mev_id": "MEV-04-026",
+    "strategy": "Principal-token arbitrage",
+    "detector": "P_PTYT",
+    "operators": {
+      "op_08": "1",
+      "op_13": "2",
+      "op_15": "2",
+      "op_16": "1",
+      "op_21": "2",
+      "op_22": "1"
+    }
+  },
+  {
+    "mev_id": "MEV-04-027",
+    "strategy": "Yield-token arbitrage",
+    "detector": "P_PTYT",
+    "operators": {
+      "op_08": "1",
+      "op_13": "2",
+      "op_15": "2",
+      "op_16": "1",
+      "op_21": "2",
+      "op_22": "1"
+    }
+  },
+  {
+    "mev_id": "MEV-04-028",
+    "strategy": "PT\u2013YT parity arbitrage",
+    "detector": "P_PTYT",
+    "operators": {
+      "op_08": "1",
+      "op_13": "2",
+      "op_15": "2",
+      "op_16": "1",
+      "op_21": "2",
+      "op_22": "1"
+    }
+  },
+  {
+    "mev_id": "MEV-04-029",
+    "strategy": "Cross-maturity yield arbitrage",
+    "detector": "P_YIELD",
+    "operators": {
+      "op_08": "2",
+      "op_13": "2",
+      "op_15": "1",
+      "op_16": "1",
+      "op_21": "2",
+      "op_22": "1"
+    }
+  },
+  {
+    "mev_id": "MEV-04-030",
+    "strategy": "Fixed-yield/floating-yield arbitrage",
+    "detector": "P_YIELD",
+    "operators": {
+      "op_08": "2",
+      "op_13": "2",
+      "op_15": "1",
+      "op_16": "1",
+      "op_21": "2",
+      "op_22": "1"
+    }
+  },
+  {
+    "mev_id": "MEV-04-031",
+    "strategy": "Points/pre-token arbitrage",
+    "detector": "OBSERVE",
+    "operators": {
+      "op_10": "2",
+      "op_11": "2",
+      "op_22": "1"
+    }
+  },
+  {
+    "mev_id": "MEV-05-001",
+    "strategy": "CEX\u2013DEX spot arbitrage",
+    "detector": "C_CEXDEX",
+    "operators": {
+      "op_08": "2",
+      "op_10": "2",
+      "op_11": "1",
+      "op_13": "1",
+      "op_16": "1",
+      "op_21": "2",
+      "op_22": "1",
+      "op_23": "2"
+    }
+  },
+  {
+    "mev_id": "MEV-05-002",
+    "strategy": "DEX\u2013CEX spot arbitrage",
+    "detector": "C_CEXDEX",
+    "operators": {
+      "op_08": "2",
+      "op_10": "2",
+      "op_11": "1",
+      "op_13": "1",
+      "op_16": "1",
+      "op_21": "2",
+      "op_22": "1",
+      "op_23": "2"
+    }
+  },
+  {
+    "mev_id": "MEV-05-003",
+    "strategy": "CEX\u2013DEX triangular arbitrage",
+    "detector": "C_CEXDEX",
+    "operators": {
+      "op_08": "2",
+      "op_10": "2",
+      "op_11": "1",
+      "op_13": "1",
+      "op_16": "1",
+      "op_21": "2",
+      "op_22": "1",
+      "op_23": "2"
+    }
+  },
+  {
+    "mev_id": "MEV-05-004",
+    "strategy": "CEX\u2013multi-DEX arbitrage",
+    "detector": "C_CEXDEX",
+    "operators": {
+      "op_08": "2",
+      "op_10": "2",
+      "op_11": "1",
+      "op_13": "1",
+      "op_16": "1",
+      "op_21": "2",
+      "op_22": "1",
+      "op_23": "2"
+    }
+  },
+  {
+    "mev_id": "MEV-05-005",
+    "strategy": "Multi-CEX\u2013DEX arbitrage",
+    "detector": "C_CEXDEX",
+    "operators": {
+      "op_08": "2",
+      "op_10": "2",
+      "op_11": "1",
+      "op_13": "1",
+      "op_16": "1",
+      "op_21": "2",
+      "op_22": "1",
+      "op_23": "2"
+    }
+  },
+  {
+    "mev_id": "MEV-05-006",
+    "strategy": "CEX order-book\u2013AMM arbitrage",
+    "detector": "C_CEXDEX",
+    "operators": {
+      "op_08": "2",
+      "op_10": "2",
+      "op_11": "1",
+      "op_13": "1",
+      "op_16": "1",
+      "op_21": "2",
+      "op_22": "1",
+      "op_23": "2"
+    }
+  },
+  {
+    "mev_id": "MEV-05-007",
+    "strategy": "CEX futures\u2013DEX spot arbitrage",
+    "detector": "C_CEXDERIV",
+    "operators": {
+      "op_08": "2",
+      "op_10": "1",
+      "op_11": "1",
+      "op_13": "2",
+      "op_16": "1",
+      "op_21": "2",
+      "op_22": "1",
+      "op_23": "2"
+    }
+  },
+  {
+    "mev_id": "MEV-05-008",
+    "strategy": "CEX perpetual\u2013DEX spot arbitrage",
+    "detector": "C_CEXDERIV",
+    "operators": {
+      "op_08": "2",
+      "op_10": "1",
+      "op_11": "1",
+      "op_13": "2",
+      "op_16": "1",
+      "op_21": "2",
+      "op_22": "1",
+      "op_23": "2"
+    }
+  },
+  {
+    "mev_id": "MEV-05-009",
+    "strategy": "CEX price-lead latency arbitrage",
+    "detector": "E_LATENCY",
+    "operators": {
+      "op_08": "2",
+      "op_10": "2",
+      "op_11": "2",
+      "op_13": "1",
+      "op_16": "1",
+      "op_22": "1",
+      "op_23": "2"
+    }
+  },
+  {
+    "mev_id": "MEV-05-010",
+    "strategy": "DEX price-lead arbitrage",
+    "detector": "E_LATENCY",
+    "operators": {
+      "op_08": "2",
+      "op_10": "2",
+      "op_11": "2",
+      "op_13": "1",
+      "op_16": "1",
+      "op_22": "1",
+      "op_23": "2"
+    }
+  },
+  {
+    "mev_id": "MEV-05-011",
+    "strategy": "OTC\u2013DEX arbitrage",
+    "detector": "C_CEXDEX",
+    "operators": {
+      "op_08": "2",
+      "op_10": "2",
+      "op_11": "1",
+      "op_13": "1",
+      "op_16": "1",
+      "op_21": "2",
+      "op_22": "1",
+      "op_23": "2"
+    }
+  },
+  {
+    "mev_id": "MEV-05-012",
+    "strategy": "Market-maker inventory\u2013DEX arbitrage",
+    "detector": "C_CEXDEX",
+    "operators": {
+      "op_08": "2",
+      "op_10": "2",
+      "op_11": "1",
+      "op_13": "1",
+      "op_16": "1",
+      "op_21": "2",
+      "op_22": "1",
+      "op_23": "2"
+    }
+  },
+  {
+    "mev_id": "MEV-05-013",
+    "strategy": "Cross-custodian arbitrage",
+    "detector": "C_CEXDEX",
+    "operators": {
+      "op_08": "2",
+      "op_10": "2",
+      "op_11": "1",
+      "op_13": "1",
+      "op_16": "1",
+      "op_21": "2",
+      "op_22": "1",
+      "op_23": "2"
+    }
+  },
+  {
+    "mev_id": "MEV-05-014",
+    "strategy": "Fiat\u2013stablecoin\u2013DEX arbitrage",
+    "detector": "C_CEXDEX",
+    "operators": {
+      "op_08": "2",
+      "op_10": "2",
+      "op_11": "1",
+      "op_13": "1",
+      "op_16": "1",
+      "op_21": "2",
+      "op_22": "1",
+      "op_23": "2"
+    }
+  },
+  {
+    "mev_id": "MEV-06-001",
+    "strategy": "L1\u2013L1 arbitrage",
+    "detector": "X_PREPOS",
+    "operators": {
+      "op_06": "2",
+      "op_07": "2",
+      "op_08": "1",
+      "op_11": "1",
+      "op_16": "2",
+      "op_22": "1",
+      "op_23": "2",
+      "op_27": "1"
+    }
+  },
+  {
+    "mev_id": "MEV-06-002",
+    "strategy": "L1\u2013L2 arbitrage",
+    "detector": "X_PREPOS",
+    "operators": {
+      "op_06": "2",
+      "op_07": "2",
+      "op_08": "1",
+      "op_11": "1",
+      "op_16": "2",
+      "op_22": "1",
+      "op_23": "2",
+      "op_27": "1"
+    }
+  },
+  {
+    "mev_id": "MEV-06-003",
+    "strategy": "L2\u2013L1 arbitrage",
+    "detector": "X_PREPOS",
+    "operators": {
+      "op_06": "2",
+      "op_07": "2",
+      "op_08": "1",
+      "op_11": "1",
+      "op_16": "2",
+      "op_22": "1",
+      "op_23": "2",
+      "op_27": "1"
+    }
+  },
+  {
+    "mev_id": "MEV-06-004",
+    "strategy": "L2\u2013L2 cross-rollup arbitrage",
+    "detector": "X_PREPOS",
+    "operators": {
+      "op_06": "2",
+      "op_07": "2",
+      "op_08": "1",
+      "op_11": "1",
+      "op_16": "2",
+      "op_22": "1",
+      "op_23": "2",
+      "op_27": "1"
+    }
+  },
+  {
+    "mev_id": "MEV-06-005",
+    "strategy": "Rollup\u2013sidechain arbitrage",
+    "detector": "X_PREPOS",
+    "operators": {
+      "op_06": "2",
+      "op_07": "2",
+      "op_08": "1",
+      "op_11": "1",
+      "op_16": "2",
+      "op_22": "1",
+      "op_23": "2",
+      "op_27": "1"
+    }
+  },
+  {
+    "mev_id": "MEV-06-006",
+    "strategy": "Sidechain\u2013sidechain arbitrage",
+    "detector": "X_PREPOS",
+    "operators": {
+      "op_06": "2",
+      "op_07": "2",
+      "op_08": "1",
+      "op_11": "1",
+      "op_16": "2",
+      "op_22": "1",
+      "op_23": "2",
+      "op_27": "1"
+    }
+  },
+  {
+    "mev_id": "MEV-06-007",
+    "strategy": "Appchain arbitrage",
+    "detector": "X_PREPOS",
+    "operators": {
+      "op_06": "2",
+      "op_07": "2",
+      "op_08": "1",
+      "op_11": "1",
+      "op_16": "2",
+      "op_22": "1",
+      "op_23": "2",
+      "op_27": "1"
+    }
+  },
+  {
+    "mev_id": "MEV-06-008",
+    "strategy": "Cross-VM arbitrage",
+    "detector": "X_BRIDGE",
+    "operators": {
+      "op_06": "2",
+      "op_07": "2",
+      "op_11": "1",
+      "op_13": "1",
+      "op_16": "1",
+      "op_22": "2",
+      "op_23": "2"
+    }
+  },
+  {
+    "mev_id": "MEV-06-009",
+    "strategy": "Cross-consensus arbitrage",
+    "detector": "X_BRIDGE",
+    "operators": {
+      "op_06": "2",
+      "op_07": "2",
+      "op_11": "1",
+      "op_13": "1",
+      "op_16": "1",
+      "op_22": "2",
+      "op_23": "2"
+    }
+  },
+  {
+    "mev_id": "MEV-06-010",
+    "strategy": "Cross-domain DEX\u2013DEX arbitrage",
+    "detector": "X_PREPOS",
+    "operators": {
+      "op_06": "2",
+      "op_07": "2",
+      "op_08": "1",
+      "op_11": "1",
+      "op_16": "2",
+      "op_22": "1",
+      "op_23": "2",
+      "op_27": "1"
+    }
+  },
+  {
+    "mev_id": "MEV-06-011",
+    "strategy": "Cross-domain triangular arbitrage",
+    "detector": "X_PREPOS",
+    "operators": {
+      "op_06": "2",
+      "op_07": "2",
+      "op_08": "1",
+      "op_11": "1",
+      "op_16": "2",
+      "op_22": "1",
+      "op_23": "2",
+      "op_27": "1"
+    }
+  },
+  {
+    "mev_id": "MEV-06-012",
+    "strategy": "Cross-chain cyclic arbitrage",
+    "detector": "X_BRIDGE",
+    "operators": {
+      "op_06": "2",
+      "op_07": "2",
+      "op_11": "1",
+      "op_13": "1",
+      "op_16": "1",
+      "op_22": "2",
+      "op_23": "2"
+    }
+  },
+  {
+    "mev_id": "MEV-06-013",
+    "strategy": "Multi-chain N-leg arbitrage",
+    "detector": "X_BRIDGE",
+    "operators": {
+      "op_06": "2",
+      "op_07": "2",
+      "op_11": "1",
+      "op_13": "1",
+      "op_16": "1",
+      "op_22": "2",
+      "op_23": "2"
+    }
+  },
+  {
+    "mev_id": "MEV-06-014",
+    "strategy": "Canonical bridge arbitrage",
+    "detector": "X_BRIDGE",
+    "operators": {
+      "op_06": "2",
+      "op_07": "2",
+      "op_11": "1",
+      "op_13": "1",
+      "op_16": "1",
+      "op_22": "2",
+      "op_23": "2"
+    }
+  },
+  {
+    "mev_id": "MEV-06-015",
+    "strategy": "Fast-bridge arbitrage",
+    "detector": "X_BRIDGE",
+    "operators": {
+      "op_06": "2",
+      "op_07": "2",
+      "op_11": "1",
+      "op_13": "1",
+      "op_16": "1",
+      "op_22": "2",
+      "op_23": "2"
+    }
+  },
+  {
+    "mev_id": "MEV-06-016",
+    "strategy": "Bridge-rate arbitrage",
+    "detector": "X_BRIDGE",
+    "operators": {
+      "op_06": "2",
+      "op_07": "2",
+      "op_11": "1",
+      "op_13": "1",
+      "op_16": "1",
+      "op_22": "2",
+      "op_23": "2"
+    }
+  },
+  {
+    "mev_id": "MEV-06-017",
+    "strategy": "Bridge-liquidity arbitrage",
+    "detector": "X_BRIDGE",
+    "operators": {
+      "op_06": "2",
+      "op_07": "2",
+      "op_11": "1",
+      "op_13": "1",
+      "op_16": "1",
+      "op_22": "2",
+      "op_23": "2"
+    }
+  },
+  {
+    "mev_id": "MEV-06-018",
+    "strategy": "Bridge-rebalancing arbitrage",
+    "detector": "X_BRIDGE",
+    "operators": {
+      "op_06": "2",
+      "op_07": "2",
+      "op_11": "1",
+      "op_13": "1",
+      "op_16": "1",
+      "op_22": "2",
+      "op_23": "2"
+    }
+  },
+  {
+    "mev_id": "MEV-06-019",
+    "strategy": "Canonical-vs-fast-bridge arbitrage",
+    "detector": "X_BRIDGE",
+    "operators": {
+      "op_06": "2",
+      "op_07": "2",
+      "op_11": "1",
+      "op_13": "1",
+      "op_16": "1",
+      "op_22": "2",
+      "op_23": "2"
+    }
+  },
+  {
+    "mev_id": "MEV-06-020",
+    "strategy": "Wrapped-representation arbitrage",
+    "detector": "X_BRIDGE",
+    "operators": {
+      "op_06": "2",
+      "op_07": "2",
+      "op_11": "1",
+      "op_13": "1",
+      "op_16": "1",
+      "op_22": "2",
+      "op_23": "2"
+    }
+  },
+  {
+    "mev_id": "MEV-06-021",
+    "strategy": "Message-latency arbitrage",
+    "detector": "X_BRIDGE",
+    "operators": {
+      "op_06": "2",
+      "op_07": "2",
+      "op_11": "1",
+      "op_13": "1",
+      "op_16": "1",
+      "op_22": "2",
+      "op_23": "2"
+    }
+  },
+  {
+    "mev_id": "MEV-06-022",
+    "strategy": "Finality-delay arbitrage",
+    "detector": "X_BRIDGE",
+    "operators": {
+      "op_06": "2",
+      "op_07": "2",
+      "op_11": "1",
+      "op_13": "1",
+      "op_16": "1",
+      "op_22": "2",
+      "op_23": "2"
+    }
+  },
+  {
+    "mev_id": "MEV-06-023",
+    "strategy": "Pre-positioned inventory arbitrage",
+    "detector": "X_PREPOS",
+    "operators": {
+      "op_06": "2",
+      "op_07": "2",
+      "op_08": "1",
+      "op_11": "1",
+      "op_16": "2",
+      "op_22": "1",
+      "op_23": "2",
+      "op_27": "1"
+    }
+  },
+  {
+    "mev_id": "MEV-06-024",
+    "strategy": "Bridge-in-the-loop arbitrage",
+    "detector": "X_BRIDGE",
+    "operators": {
+      "op_06": "2",
+      "op_07": "2",
+      "op_11": "1",
+      "op_13": "1",
+      "op_16": "1",
+      "op_22": "2",
+      "op_23": "2"
+    }
+  },
+  {
+    "mev_id": "MEV-06-025",
+    "strategy": "Cross-chain intent arbitrage",
+    "detector": "X_BRIDGE",
+    "operators": {
+      "op_06": "2",
+      "op_07": "2",
+      "op_11": "1",
+      "op_13": "1",
+      "op_16": "1",
+      "op_22": "2",
+      "op_23": "2"
+    }
+  },
+  {
+    "mev_id": "MEV-06-026",
+    "strategy": "Cross-chain solver arbitrage",
+    "detector": "X_BRIDGE",
+    "operators": {
+      "op_06": "2",
+      "op_07": "2",
+      "op_11": "1",
+      "op_13": "1",
+      "op_16": "1",
+      "op_22": "2",
+      "op_23": "2"
+    }
+  },
+  {
+    "mev_id": "MEV-06-027",
+    "strategy": "Shared-sequencer arbitrage",
+    "detector": "X_PREPOS",
+    "operators": {
+      "op_06": "2",
+      "op_07": "2",
+      "op_08": "1",
+      "op_11": "1",
+      "op_16": "2",
+      "op_22": "1",
+      "op_23": "2",
+      "op_27": "1"
+    }
+  },
+  {
+    "mev_id": "MEV-06-028",
+    "strategy": "Sequencer\u2013builder cross-domain arbitrage",
+    "detector": "X_PREPOS",
+    "operators": {
+      "op_06": "2",
+      "op_07": "2",
+      "op_08": "1",
+      "op_11": "1",
+      "op_16": "2",
+      "op_22": "1",
+      "op_23": "2",
+      "op_27": "1"
+    }
+  },
+  {
+    "mev_id": "MEV-06-029",
+    "strategy": "Cross-domain oracle arbitrage",
+    "detector": "X_ORACLE",
+    "operators": {
+      "op_06": "2",
+      "op_07": "1",
+      "op_08": "2",
+      "op_11": "2",
+      "op_13": "1",
+      "op_22": "1",
+      "op_23": "2"
+    }
+  },
+  {
+    "mev_id": "MEV-06-030",
+    "strategy": "Cross-chain liquidation arbitrage",
+    "detector": "X_ORACLE",
+    "operators": {
+      "op_06": "2",
+      "op_07": "1",
+      "op_08": "2",
+      "op_11": "2",
+      "op_13": "1",
+      "op_22": "1",
+      "op_23": "2"
+    }
+  },
+  {
+    "mev_id": "MEV-07-001",
+    "strategy": "Spot\u2013perpetual arbitrage",
+    "detector": "D_BASIS",
+    "operators": {
+      "op_08": "2",
+      "op_10": "1",
+      "op_13": "2",
+      "op_16": "1",
+      "op_21": "2",
+      "op_22": "1",
+      "op_23": "1"
+    }
+  },
+  {
+    "mev_id": "MEV-07-002",
+    "strategy": "Perpetual\u2013perpetual arbitrage",
+    "detector": "D_BASIS",
+    "operators": {
+      "op_08": "2",
+      "op_10": "1",
+      "op_13": "2",
+      "op_16": "1",
+      "op_21": "2",
+      "op_22": "1",
+      "op_23": "1"
+    }
+  },
+  {
+    "mev_id": "MEV-07-003",
+    "strategy": "Spot\u2013future arbitrage",
+    "detector": "D_BASIS",
+    "operators": {
+      "op_08": "2",
+      "op_10": "1",
+      "op_13": "2",
+      "op_16": "1",
+      "op_21": "2",
+      "op_22": "1",
+      "op_23": "1"
+    }
+  },
+  {
+    "mev_id": "MEV-07-004",
+    "strategy": "Future\u2013future arbitrage",
+    "detector": "D_BASIS",
+    "operators": {
+      "op_08": "2",
+      "op_10": "1",
+      "op_13": "2",
+      "op_16": "1",
+      "op_21": "2",
+      "op_22": "1",
+      "op_23": "1"
+    }
+  },
+  {
+    "mev_id": "MEV-07-005",
+    "strategy": "Cash-and-carry arbitrage",
+    "detector": "D_BASIS",
+    "operators": {
+      "op_08": "2",
+      "op_10": "1",
+      "op_13": "2",
+      "op_16": "1",
+      "op_21": "2",
+      "op_22": "1",
+      "op_23": "1"
+    }
+  },
+  {
+    "mev_id": "MEV-07-006",
+    "strategy": "Reverse cash-and-carry arbitrage",
+    "detector": "D_BASIS",
+    "operators": {
+      "op_08": "2",
+      "op_10": "1",
+      "op_13": "2",
+      "op_16": "1",
+      "op_21": "2",
+      "op_22": "1",
+      "op_23": "1"
+    }
+  },
+  {
+    "mev_id": "MEV-07-007",
+    "strategy": "Basis arbitrage",
+    "detector": "D_BASIS",
+    "operators": {
+      "op_08": "2",
+      "op_10": "1",
+      "op_13": "2",
+      "op_16": "1",
+      "op_21": "2",
+      "op_22": "1",
+      "op_23": "1"
+    }
+  },
+  {
+    "mev_id": "MEV-07-008",
+    "strategy": "Funding-rate arbitrage",
+    "detector": "D_FUNDING",
+    "operators": {
+      "op_08": "2",
+      "op_10": "2",
+      "op_11": "1",
+      "op_13": "2",
+      "op_16": "1",
+      "op_22": "1",
+      "op_23": "1"
+    }
+  },
+  {
+    "mev_id": "MEV-07-009",
+    "strategy": "Cross-exchange funding arbitrage",
+    "detector": "D_FUNDING",
+    "operators": {
+      "op_08": "2",
+      "op_10": "2",
+      "op_11": "1",
+      "op_13": "2",
+      "op_16": "1",
+      "op_22": "1",
+      "op_23": "1"
+    }
+  },
+  {
+    "mev_id": "MEV-07-010",
+    "strategy": "Calendar-spread arbitrage",
+    "detector": "D_BASIS",
+    "operators": {
+      "op_08": "2",
+      "op_10": "1",
+      "op_13": "2",
+      "op_16": "1",
+      "op_21": "2",
+      "op_22": "1",
+      "op_23": "1"
+    }
+  },
+  {
+    "mev_id": "MEV-07-011",
+    "strategy": "Cross-maturity futures arbitrage",
+    "detector": "D_BASIS",
+    "operators": {
+      "op_08": "2",
+      "op_10": "1",
+      "op_13": "2",
+      "op_16": "1",
+      "op_21": "2",
+      "op_22": "1",
+      "op_23": "1"
+    }
+  },
+  {
+    "mev_id": "MEV-07-012",
+    "strategy": "Index-price arbitrage",
+    "detector": "D_BASIS",
+    "operators": {
+      "op_08": "2",
+      "op_10": "1",
+      "op_13": "2",
+      "op_16": "1",
+      "op_21": "2",
+      "op_22": "1",
+      "op_23": "1"
+    }
+  },
+  {
+    "mev_id": "MEV-07-013",
+    "strategy": "Mark-price arbitrage",
+    "detector": "D_BASIS",
+    "operators": {
+      "op_08": "2",
+      "op_10": "1",
+      "op_13": "2",
+      "op_16": "1",
+      "op_21": "2",
+      "op_22": "1",
+      "op_23": "1"
+    }
+  },
+  {
+    "mev_id": "MEV-07-014",
+    "strategy": "Oracle\u2013perpetual arbitrage",
+    "detector": "D_BASIS",
+    "operators": {
+      "op_08": "2",
+      "op_10": "1",
+      "op_13": "2",
+      "op_16": "1",
+      "op_21": "2",
+      "op_22": "1",
+      "op_23": "1"
+    }
+  },
+  {
+    "mev_id": "MEV-07-015",
+    "strategy": "vAMM\u2013spot arbitrage",
+    "detector": "D_BASIS",
+    "operators": {
+      "op_08": "2",
+      "op_10": "1",
+      "op_13": "2",
+      "op_16": "1",
+      "op_21": "2",
+      "op_22": "1",
+      "op_23": "1"
+    }
+  },
+  {
+    "mev_id": "MEV-07-016",
+    "strategy": "Options put\u2013call parity arbitrage",
+    "detector": "D_OPTIONS_PARITY",
+    "operators": {
+      "op_08": "1",
+      "op_11": "1",
+      "op_13": "2",
+      "op_19": "2",
+      "op_21": "2",
+      "op_22": "1"
+    }
+  },
+  {
+    "mev_id": "MEV-07-017",
+    "strategy": "Conversion arbitrage",
+    "detector": "D_OPTIONS_PARITY",
+    "operators": {
+      "op_08": "1",
+      "op_11": "1",
+      "op_13": "2",
+      "op_19": "2",
+      "op_21": "2",
+      "op_22": "1"
+    }
+  },
+  {
+    "mev_id": "MEV-07-018",
+    "strategy": "Reversal arbitrage",
+    "detector": "D_OPTIONS_PARITY",
+    "operators": {
+      "op_08": "1",
+      "op_11": "1",
+      "op_13": "2",
+      "op_19": "2",
+      "op_21": "2",
+      "op_22": "1"
+    }
+  },
+  {
+    "mev_id": "MEV-07-019",
+    "strategy": "Box-spread arbitrage",
+    "detector": "D_OPTIONS_PARITY",
+    "operators": {
+      "op_08": "1",
+      "op_11": "1",
+      "op_13": "2",
+      "op_19": "2",
+      "op_21": "2",
+      "op_22": "1"
+    }
+  },
+  {
+    "mev_id": "MEV-07-020",
+    "strategy": "Cross-strike arbitrage",
+    "detector": "D_OPTIONS_SURFACE",
+    "operators": {
+      "op_08": "2",
+      "op_11": "1",
+      "op_13": "2",
+      "op_14": "1",
+      "op_19": "2",
+      "op_22": "1"
+    }
+  },
+  {
+    "mev_id": "MEV-07-021",
+    "strategy": "Cross-expiry options arbitrage",
+    "detector": "D_OPTIONS_SURFACE",
+    "operators": {
+      "op_08": "2",
+      "op_11": "1",
+      "op_13": "2",
+      "op_14": "1",
+      "op_19": "2",
+      "op_22": "1"
+    }
+  },
+  {
+    "mev_id": "MEV-07-022",
+    "strategy": "Options AMM\u2013order-book arbitrage",
+    "detector": "D_OPTIONS_SURFACE",
+    "operators": {
+      "op_08": "2",
+      "op_11": "1",
+      "op_13": "2",
+      "op_14": "1",
+      "op_19": "2",
+      "op_22": "1"
+    }
+  },
+  {
+    "mev_id": "MEV-07-023",
+    "strategy": "Cross-venue implied-volatility arbitrage",
+    "detector": "D_OPTIONS_SURFACE",
+    "operators": {
+      "op_08": "2",
+      "op_11": "1",
+      "op_13": "2",
+      "op_14": "1",
+      "op_19": "2",
+      "op_22": "1"
+    }
+  },
+  {
+    "mev_id": "MEV-07-024",
+    "strategy": "Volatility-surface inconsistency arbitrage",
+    "detector": "D_OPTIONS_SURFACE",
+    "operators": {
+      "op_08": "2",
+      "op_11": "1",
+      "op_13": "2",
+      "op_14": "1",
+      "op_19": "2",
+      "op_22": "1"
+    }
+  },
+  {
+    "mev_id": "MEV-07-025",
+    "strategy": "Delta-hedged options arbitrage",
+    "detector": "D_OPTIONS_SURFACE",
+    "operators": {
+      "op_08": "2",
+      "op_11": "1",
+      "op_13": "2",
+      "op_14": "1",
+      "op_19": "2",
+      "op_22": "1"
+    }
+  },
+  {
+    "mev_id": "MEV-07-026",
+    "strategy": "Settlement-price arbitrage",
+    "detector": "D_SETTLE",
+    "operators": {
+      "op_08": "2",
+      "op_11": "1",
+      "op_13": "1",
+      "op_21": "2",
+      "op_22": "1",
+      "op_23": "2"
+    }
+  },
+  {
+    "mev_id": "MEV-07-027",
+    "strategy": "Expiry arbitrage",
+    "detector": "D_SETTLE",
+    "operators": {
+      "op_08": "2",
+      "op_11": "1",
+      "op_13": "1",
+      "op_21": "2",
+      "op_22": "1",
+      "op_23": "2"
+    }
+  },
+  {
+    "mev_id": "MEV-07-028",
+    "strategy": "Derivative-liquidation arbitrage",
+    "detector": "D_SETTLE",
+    "operators": {
+      "op_08": "2",
+      "op_11": "1",
+      "op_13": "1",
+      "op_21": "2",
+      "op_22": "1",
+      "op_23": "2"
+    }
+  },
+  {
+    "mev_id": "MEV-07-029",
+    "strategy": "Structured-product parity arbitrage",
+    "detector": "D_SETTLE",
+    "operators": {
+      "op_08": "2",
+      "op_11": "1",
+      "op_13": "1",
+      "op_21": "2",
+      "op_22": "1",
+      "op_23": "2"
+    }
+  },
+  {
+    "mev_id": "MEV-07-030",
+    "strategy": "Leverage-token rebalancing arbitrage",
+    "detector": "D_SETTLE",
+    "operators": {
+      "op_08": "2",
+      "op_11": "1",
+      "op_13": "1",
+      "op_21": "2",
+      "op_22": "1",
+      "op_23": "2"
+    }
+  },
+  {
+    "mev_id": "MEV-08-001",
+    "strategy": "Borrow-rate arbitrage",
+    "detector": "L_RATE",
+    "operators": {
+      "op_08": "2",
+      "op_10": "1",
+      "op_11": "1",
+      "op_13": "2",
+      "op_16": "1",
+      "op_21": "2",
+      "op_22": "1"
+    }
+  },
+  {
+    "mev_id": "MEV-08-002",
+    "strategy": "Supply-rate arbitrage",
+    "detector": "L_RATE",
+    "operators": {
+      "op_08": "2",
+      "op_10": "1",
+      "op_11": "1",
+      "op_13": "2",
+      "op_16": "1",
+      "op_21": "2",
+      "op_22": "1"
+    }
+  },
+  {
+    "mev_id": "MEV-08-003",
+    "strategy": "Cross-lending-protocol arbitrage",
+    "detector": "L_RATE",
+    "operators": {
+      "op_08": "2",
+      "op_10": "1",
+      "op_11": "1",
+      "op_13": "2",
+      "op_16": "1",
+      "op_21": "2",
+      "op_22": "1"
+    }
+  },
+  {
+    "mev_id": "MEV-08-004",
+    "strategy": "Fixed-rate/floating-rate arbitrage",
+    "detector": "L_RATE",
+    "operators": {
+      "op_08": "2",
+      "op_10": "1",
+      "op_11": "1",
+      "op_13": "2",
+      "op_16": "1",
+      "op_21": "2",
+      "op_22": "1"
+    }
+  },
+  {
+    "mev_id": "MEV-08-005",
+    "strategy": "Refinancing arbitrage",
+    "detector": "L_RATE",
+    "operators": {
+      "op_08": "2",
+      "op_10": "1",
+      "op_11": "1",
+      "op_13": "2",
+      "op_16": "1",
+      "op_21": "2",
+      "op_22": "1"
+    }
+  },
+  {
+    "mev_id": "MEV-08-006",
+    "strategy": "Collateral-price arbitrage",
+    "detector": "L_COLLATERAL",
+    "operators": {
+      "op_08": "2",
+      "op_11": "1",
+      "op_13": "2",
+      "op_21": "2",
+      "op_22": "1"
+    }
+  },
+  {
+    "mev_id": "MEV-08-007",
+    "strategy": "Collateral-wrapper arbitrage",
+    "detector": "L_COLLATERAL",
+    "operators": {
+      "op_08": "2",
+      "op_11": "1",
+      "op_13": "2",
+      "op_21": "2",
+      "op_22": "1"
+    }
+  },
+  {
+    "mev_id": "MEV-08-008",
+    "strategy": "Debt-token arbitrage",
+    "detector": "L_COLLATERAL",
+    "operators": {
+      "op_08": "2",
+      "op_11": "1",
+      "op_13": "2",
+      "op_21": "2",
+      "op_22": "1"
+    }
+  },
+  {
+    "mev_id": "MEV-08-009",
+    "strategy": "Flash-loan rate arbitrage",
+    "detector": "L_RATE",
+    "operators": {
+      "op_08": "2",
+      "op_10": "1",
+      "op_11": "1",
+      "op_13": "2",
+      "op_16": "1",
+      "op_21": "2",
+      "op_22": "1"
+    }
+  },
+  {
+    "mev_id": "MEV-08-010",
+    "strategy": "Credit-delegation arbitrage",
+    "detector": "L_RATE",
+    "operators": {
+      "op_08": "2",
+      "op_10": "1",
+      "op_11": "1",
+      "op_13": "2",
+      "op_16": "1",
+      "op_21": "2",
+      "op_22": "1"
+    }
+  },
+  {
+    "mev_id": "MEV-08-011",
+    "strategy": "Leverage-loop arbitrage",
+    "detector": "L_LOOP",
+    "operators": {
+      "op_13": "1",
+      "op_16": "1",
+      "op_17": "2",
+      "op_20": "2",
+      "op_21": "2",
+      "op_22": "1"
+    }
+  },
+  {
+    "mev_id": "MEV-08-012",
+    "strategy": "Liquidation discount arbitrage",
+    "detector": "L_LIQ",
+    "operators": {
+      "op_08": "2",
+      "op_11": "1",
+      "op_13": "1",
+      "op_16": "2",
+      "op_21": "2",
+      "op_22": "1",
+      "op_23": "1",
+      "op_26": "2"
+    }
+  },
+  {
+    "mev_id": "MEV-08-013",
+    "strategy": "Partial-liquidation arbitrage",
+    "detector": "L_LIQ",
+    "operators": {
+      "op_08": "2",
+      "op_11": "1",
+      "op_13": "1",
+      "op_16": "2",
+      "op_21": "2",
+      "op_22": "1",
+      "op_23": "1",
+      "op_26": "2"
+    }
+  },
+  {
+    "mev_id": "MEV-08-014",
+    "strategy": "Full-liquidation arbitrage",
+    "detector": "L_LIQ",
+    "operators": {
+      "op_08": "2",
+      "op_11": "1",
+      "op_13": "1",
+      "op_16": "2",
+      "op_21": "2",
+      "op_22": "1",
+      "op_23": "1",
+      "op_26": "2"
+    }
+  },
+  {
+    "mev_id": "MEV-08-015",
+    "strategy": "Cross-protocol liquidation arbitrage",
+    "detector": "L_LIQ",
+    "operators": {
+      "op_08": "2",
+      "op_11": "1",
+      "op_13": "1",
+      "op_16": "2",
+      "op_21": "2",
+      "op_22": "1",
+      "op_23": "1",
+      "op_26": "2"
+    }
+  },
+  {
+    "mev_id": "MEV-08-016",
+    "strategy": "Cross-chain liquidation arbitrage",
+    "detector": "L_LIQ",
+    "operators": {
+      "op_08": "2",
+      "op_11": "1",
+      "op_13": "1",
+      "op_16": "2",
+      "op_21": "2",
+      "op_22": "1",
+      "op_23": "1",
+      "op_26": "2"
+    }
+  },
+  {
+    "mev_id": "MEV-08-017",
+    "strategy": "Oracle-update liquidation backrun",
+    "detector": "L_LIQ",
+    "operators": {
+      "op_08": "2",
+      "op_11": "1",
+      "op_13": "1",
+      "op_16": "2",
+      "op_21": "2",
+      "op_22": "1",
+      "op_23": "1",
+      "op_26": "2"
+    }
+  },
+  {
+    "mev_id": "MEV-08-018",
+    "strategy": "Liquidation-auction arbitrage",
+    "detector": "L_AUCTION",
+    "operators": {
+      "op_08": "1",
+      "op_11": "1",
+      "op_19": "2",
+      "op_21": "2",
+      "op_22": "1",
+      "op_23": "2"
+    }
+  },
+  {
+    "mev_id": "MEV-08-019",
+    "strategy": "Dutch-auction liquidation arbitrage",
+    "detector": "L_AUCTION",
+    "operators": {
+      "op_08": "1",
+      "op_11": "1",
+      "op_19": "2",
+      "op_21": "2",
+      "op_22": "1",
+      "op_23": "2"
+    }
+  },
+  {
+    "mev_id": "MEV-08-020",
+    "strategy": "Bad-debt auction arbitrage",
+    "detector": "L_AUCTION",
+    "operators": {
+      "op_08": "1",
+      "op_11": "1",
+      "op_19": "2",
+      "op_21": "2",
+      "op_22": "1",
+      "op_23": "2"
+    }
+  },
+  {
+    "mev_id": "MEV-08-021",
+    "strategy": "Recapitalization auction arbitrage",
+    "detector": "L_AUCTION",
+    "operators": {
+      "op_08": "1",
+      "op_11": "1",
+      "op_19": "2",
+      "op_21": "2",
+      "op_22": "1",
+      "op_23": "2"
+    }
+  },
+  {
+    "mev_id": "MEV-08-022",
+    "strategy": "Collateral redemption arbitrage",
+    "detector": "L_COLLATERAL",
+    "operators": {
+      "op_08": "2",
+      "op_11": "1",
+      "op_13": "2",
+      "op_21": "2",
+      "op_22": "1"
+    }
+  },
+  {
+    "mev_id": "MEV-08-023",
+    "strategy": "Debt-repayment arbitrage",
+    "detector": "L_COLLATERAL",
+    "operators": {
+      "op_08": "2",
+      "op_11": "1",
+      "op_13": "2",
+      "op_21": "2",
+      "op_22": "1"
+    }
+  },
+  {
+    "mev_id": "MEV-08-024",
+    "strategy": "Underwater-position takeover arbitrage",
+    "detector": "L_LIQ",
+    "operators": {
+      "op_08": "2",
+      "op_11": "1",
+      "op_13": "1",
+      "op_16": "2",
+      "op_21": "2",
+      "op_22": "1",
+      "op_23": "1",
+      "op_26": "2"
+    }
+  },
+  {
+    "mev_id": "MEV-08-025",
+    "strategy": "Interest-accrual timing arbitrage",
+    "detector": "L_RATE",
+    "operators": {
+      "op_08": "2",
+      "op_10": "1",
+      "op_11": "1",
+      "op_13": "2",
+      "op_16": "1",
+      "op_21": "2",
+      "op_22": "1"
+    }
+  },
+  {
+    "mev_id": "MEV-09-001",
+    "strategy": "Solver arbitrage",
+    "detector": "I_ROUTE",
+    "operators": {
+      "op_19": "2",
+      "op_20": "1",
+      "op_22": "1",
+      "op_23": "1",
+      "op_24": "1",
+      "op_27": "2",
+      "op_29": "2"
+    }
+  },
+  {
+    "mev_id": "MEV-09-002",
+    "strategy": "Intent-to-AMM arbitrage",
+    "detector": "I_ROUTE",
+    "operators": {
+      "op_19": "2",
+      "op_20": "1",
+      "op_22": "1",
+      "op_23": "1",
+      "op_24": "1",
+      "op_27": "2",
+      "op_29": "2"
+    }
+  },
+  {
+    "mev_id": "MEV-09-003",
+    "strategy": "Intent-to-CLOB arbitrage",
+    "detector": "I_ROUTE",
+    "operators": {
+      "op_19": "2",
+      "op_20": "1",
+      "op_22": "1",
+      "op_23": "1",
+      "op_24": "1",
+      "op_27": "2",
+      "op_29": "2"
+    }
+  },
+  {
+    "mev_id": "MEV-09-004",
+    "strategy": "Intent-to-RFQ arbitrage",
+    "detector": "I_ROUTE",
+    "operators": {
+      "op_19": "2",
+      "op_20": "1",
+      "op_22": "1",
+      "op_23": "1",
+      "op_24": "1",
+      "op_27": "2",
+      "op_29": "2"
+    }
+  },
+  {
+    "mev_id": "MEV-09-005",
+    "strategy": "Cross-intent netting arbitrage",
+    "detector": "I_BATCH",
+    "operators": {
+      "op_19": "2",
+      "op_20": "1",
+      "op_22": "1",
+      "op_24": "2",
+      "op_27": "1",
+      "op_29": "2"
+    }
+  },
+  {
+    "mev_id": "MEV-09-006",
+    "strategy": "Coincidence-of-Wants settlement",
+    "detector": "I_BATCH",
+    "operators": {
+      "op_19": "2",
+      "op_20": "1",
+      "op_22": "1",
+      "op_24": "2",
+      "op_27": "1",
+      "op_29": "2"
+    }
+  },
+  {
+    "mev_id": "MEV-09-007",
+    "strategy": "Batch-auction arbitrage",
+    "detector": "I_BATCH",
+    "operators": {
+      "op_19": "2",
+      "op_20": "1",
+      "op_22": "1",
+      "op_24": "2",
+      "op_27": "1",
+      "op_29": "2"
+    }
+  },
+  {
+    "mev_id": "MEV-09-008",
+    "strategy": "Combinatorial-auction arbitrage",
+    "detector": "I_BATCH",
+    "operators": {
+      "op_19": "2",
+      "op_20": "1",
+      "op_22": "1",
+      "op_24": "2",
+      "op_27": "1",
+      "op_29": "2"
+    }
+  },
+  {
+    "mev_id": "MEV-09-009",
+    "strategy": "Dutch-auction decay arbitrage",
+    "detector": "I_DUTCH",
+    "operators": {
+      "op_08": "1",
+      "op_11": "1",
+      "op_21": "2",
+      "op_22": "1",
+      "op_23": "2",
+      "op_24": "2"
+    }
+  },
+  {
+    "mev_id": "MEV-09-010",
+    "strategy": "Exclusive-order-flow arbitrage",
+    "detector": "I_ORDERFLOW",
+    "operators": {
+      "op_11": "1",
+      "op_22": "1",
+      "op_23": "1",
+      "op_24": "2",
+      "op_25": "2",
+      "op_27": "2"
+    }
+  },
+  {
+    "mev_id": "MEV-09-011",
+    "strategy": "Order-flow-auction arbitrage",
+    "detector": "I_ORDERFLOW",
+    "operators": {
+      "op_11": "1",
+      "op_22": "1",
+      "op_23": "1",
+      "op_24": "2",
+      "op_25": "2",
+      "op_27": "2"
+    }
+  },
+  {
+    "mev_id": "MEV-09-012",
+    "strategy": "Surplus-capture arbitrage",
+    "detector": "I_ROUTE",
+    "operators": {
+      "op_19": "2",
+      "op_20": "1",
+      "op_22": "1",
+      "op_23": "1",
+      "op_24": "1",
+      "op_27": "2",
+      "op_29": "2"
+    }
+  },
+  {
+    "mev_id": "MEV-09-013",
+    "strategy": "Price-improvement arbitrage",
+    "detector": "I_ROUTE",
+    "operators": {
+      "op_19": "2",
+      "op_20": "1",
+      "op_22": "1",
+      "op_23": "1",
+      "op_24": "1",
+      "op_27": "2",
+      "op_29": "2"
+    }
+  },
+  {
+    "mev_id": "MEV-09-014",
+    "strategy": "Internalization arbitrage",
+    "detector": "I_ROUTE",
+    "operators": {
+      "op_19": "2",
+      "op_20": "1",
+      "op_22": "1",
+      "op_23": "1",
+      "op_24": "1",
+      "op_27": "2",
+      "op_29": "2"
+    }
+  },
+  {
+    "mev_id": "MEV-09-015",
+    "strategy": "Solver-routing arbitrage",
+    "detector": "I_ROUTE",
+    "operators": {
+      "op_19": "2",
+      "op_20": "1",
+      "op_22": "1",
+      "op_23": "1",
+      "op_24": "1",
+      "op_27": "2",
+      "op_29": "2"
+    }
+  },
+  {
+    "mev_id": "MEV-09-016",
+    "strategy": "Solver\u2013solver latency arbitrage",
+    "detector": "I_ROUTE",
+    "operators": {
+      "op_19": "2",
+      "op_20": "1",
+      "op_22": "1",
+      "op_23": "1",
+      "op_24": "1",
+      "op_27": "2",
+      "op_29": "2"
+    }
+  },
+  {
+    "mev_id": "MEV-09-017",
+    "strategy": "Private-order-flow backrun",
+    "detector": "I_ORDERFLOW",
+    "operators": {
+      "op_11": "1",
+      "op_22": "1",
+      "op_23": "1",
+      "op_24": "2",
+      "op_25": "2",
+      "op_27": "2"
+    }
+  },
+  {
+    "mev_id": "MEV-09-018",
+    "strategy": "MEV-Share backrun arbitrage",
+    "detector": "I_ORDERFLOW",
+    "operators": {
+      "op_11": "1",
+      "op_22": "1",
+      "op_23": "1",
+      "op_24": "2",
+      "op_25": "2",
+      "op_27": "2"
+    }
+  },
+  {
+    "mev_id": "MEV-09-019",
+    "strategy": "Builder-integrated arbitrage",
+    "detector": "OBSERVE",
+    "operators": {
+      "op_10": "2",
+      "op_11": "2",
+      "op_22": "1"
+    }
+  },
+  {
+    "mev_id": "MEV-09-020",
+    "strategy": "Searcher\u2013builder vertically integrated arbitrage",
+    "detector": "OBSERVE",
+    "operators": {
+      "op_10": "2",
+      "op_11": "2",
+      "op_22": "1"
+    }
+  },
+  {
+    "mev_id": "MEV-10-001",
+    "strategy": "Cross-marketplace NFT arbitrage",
+    "detector": "N_IDENTICAL",
+    "operators": {
+      "op_08": "2",
+      "op_10": "2",
+      "op_11": "1",
+      "op_21": "2",
+      "op_22": "1",
+      "op_23": "1"
+    }
+  },
+  {
+    "mev_id": "MEV-10-002",
+    "strategy": "Floor-price arbitrage",
+    "detector": "N_FLOOR",
+    "operators": {
+      "op_08": "2",
+      "op_10": "2",
+      "op_11": "2",
+      "op_13": "1",
+      "op_22": "1"
+    }
+  },
+  {
+    "mev_id": "MEV-10-003",
+    "strategy": "Trait-floor arbitrage",
+    "detector": "N_FLOOR",
+    "operators": {
+      "op_08": "2",
+      "op_10": "2",
+      "op_11": "2",
+      "op_13": "1",
+      "op_22": "1"
+    }
+  },
+  {
+    "mev_id": "MEV-10-004",
+    "strategy": "Collection basket arbitrage",
+    "detector": "N_FLOOR",
+    "operators": {
+      "op_08": "2",
+      "op_10": "2",
+      "op_11": "2",
+      "op_13": "1",
+      "op_22": "1"
+    }
+  },
+  {
+    "mev_id": "MEV-10-005",
+    "strategy": "Bid\u2013ask NFT arbitrage",
+    "detector": "N_IDENTICAL",
+    "operators": {
+      "op_08": "2",
+      "op_10": "2",
+      "op_11": "1",
+      "op_21": "2",
+      "op_22": "1",
+      "op_23": "1"
+    }
+  },
+  {
+    "mev_id": "MEV-10-006",
+    "strategy": "AMM\u2013marketplace NFT arbitrage",
+    "detector": "N_AMM",
+    "operators": {
+      "op_08": "2",
+      "op_10": "1",
+      "op_15": "2",
+      "op_21": "2",
+      "op_22": "1"
+    }
+  },
+  {
+    "mev_id": "MEV-10-007",
+    "strategy": "NFT AMM\u2013NFT AMM arbitrage",
+    "detector": "N_AMM",
+    "operators": {
+      "op_08": "2",
+      "op_10": "1",
+      "op_15": "2",
+      "op_21": "2",
+      "op_22": "1"
+    }
+  },
+  {
+    "mev_id": "MEV-10-008",
+    "strategy": "Mint-to-secondary-market arbitrage",
+    "detector": "N_IDENTICAL",
+    "operators": {
+      "op_08": "2",
+      "op_10": "2",
+      "op_11": "1",
+      "op_21": "2",
+      "op_22": "1",
+      "op_23": "1"
+    }
+  },
+  {
+    "mev_id": "MEV-10-009",
+    "strategy": "Underpriced-listing arbitrage",
+    "detector": "N_FLOOR",
+    "operators": {
+      "op_08": "2",
+      "op_10": "2",
+      "op_11": "2",
+      "op_13": "1",
+      "op_22": "1"
+    }
+  },
+  {
+    "mev_id": "MEV-10-010",
+    "strategy": "NFT fractionalization arbitrage",
+    "detector": "N_REDEEM",
+    "operators": {
+      "op_08": "1",
+      "op_11": "1",
+      "op_13": "2",
+      "op_19": "2",
+      "op_21": "2",
+      "op_22": "1"
+    }
+  },
+  {
+    "mev_id": "MEV-10-011",
+    "strategy": "Fractional-token redemption arbitrage",
+    "detector": "N_REDEEM",
+    "operators": {
+      "op_08": "1",
+      "op_11": "1",
+      "op_13": "2",
+      "op_19": "2",
+      "op_21": "2",
+      "op_22": "1"
+    }
+  },
+  {
+    "mev_id": "MEV-10-012",
+    "strategy": "NFT-backed-loan liquidation arbitrage",
+    "detector": "N_LIQ",
+    "operators": {
+      "op_08": "2",
+      "op_11": "2",
+      "op_16": "1",
+      "op_21": "2",
+      "op_22": "1",
+      "op_23": "1"
+    }
+  },
+  {
+    "mev_id": "MEV-10-013",
+    "strategy": "NFT rental-rights arbitrage",
+    "detector": "N_FLOOR",
+    "operators": {
+      "op_08": "2",
+      "op_10": "2",
+      "op_11": "2",
+      "op_13": "1",
+      "op_22": "1"
+    }
+  },
+  {
+    "mev_id": "MEV-10-014",
+    "strategy": "Gaming-asset marketplace arbitrage",
+    "detector": "N_IDENTICAL",
+    "operators": {
+      "op_08": "2",
+      "op_10": "2",
+      "op_11": "1",
+      "op_21": "2",
+      "op_22": "1",
+      "op_23": "1"
+    }
+  },
+  {
+    "mev_id": "MEV-10-015",
+    "strategy": "Cross-chain NFT arbitrage",
+    "detector": "N_IDENTICAL",
+    "operators": {
+      "op_08": "2",
+      "op_10": "2",
+      "op_11": "1",
+      "op_21": "2",
+      "op_22": "1",
+      "op_23": "1"
+    }
+  },
+  {
+    "mev_id": "MEV-10-016",
+    "strategy": "Royalty-adjusted marketplace arbitrage",
+    "detector": "N_IDENTICAL",
+    "operators": {
+      "op_08": "2",
+      "op_10": "2",
+      "op_11": "1",
+      "op_21": "2",
+      "op_22": "1",
+      "op_23": "1"
+    }
+  },
+  {
+    "mev_id": "MEV-10-017",
+    "strategy": "Bundle/unbundle NFT arbitrage",
+    "detector": "N_REDEEM",
+    "operators": {
+      "op_08": "1",
+      "op_11": "1",
+      "op_13": "2",
+      "op_19": "2",
+      "op_21": "2",
+      "op_22": "1"
+    }
+  },
+  {
+    "mev_id": "MEV-10-018",
+    "strategy": "Redeemable-NFT arbitrage",
+    "detector": "N_REDEEM",
+    "operators": {
+      "op_08": "1",
+      "op_11": "1",
+      "op_13": "2",
+      "op_19": "2",
+      "op_21": "2",
+      "op_22": "1"
+    }
+  },
+  {
+    "mev_id": "MEV-11-001",
+    "strategy": "Binary complement arbitrage",
+    "detector": "M_COMPLETE",
+    "operators": {
+      "op_08": "1",
+      "op_11": "2",
+      "op_14": "1",
+      "op_19": "2",
+      "op_21": "2",
+      "op_22": "1"
+    }
+  },
+  {
+    "mev_id": "MEV-11-002",
+    "strategy": "Complete-set arbitrage",
+    "detector": "M_COMPLETE",
+    "operators": {
+      "op_08": "1",
+      "op_11": "2",
+      "op_14": "1",
+      "op_19": "2",
+      "op_21": "2",
+      "op_22": "1"
+    }
+  },
+  {
+    "mev_id": "MEV-11-003",
+    "strategy": "Cross-platform prediction arbitrage",
+    "detector": "M_CROSS",
+    "operators": {
+      "op_08": "2",
+      "op_11": "2",
+      "op_13": "2",
+      "op_14": "1",
+      "op_22": "1",
+      "op_23": "1"
+    }
+  },
+  {
+    "mev_id": "MEV-11-004",
+    "strategy": "Mutually-exclusive outcomes arbitrage",
+    "detector": "M_LOGIC",
+    "operators": {
+      "op_11": "2",
+      "op_13": "1",
+      "op_14": "2",
+      "op_19": "2",
+      "op_22": "1"
+    }
+  },
+  {
+    "mev_id": "MEV-11-005",
+    "strategy": "Exhaustive-outcome basket arbitrage",
+    "detector": "M_COMPLETE",
+    "operators": {
+      "op_08": "1",
+      "op_11": "2",
+      "op_14": "1",
+      "op_19": "2",
+      "op_21": "2",
+      "op_22": "1"
+    }
+  },
+  {
+    "mev_id": "MEV-11-006",
+    "strategy": "Conditional-token arbitrage",
+    "detector": "M_LOGIC",
+    "operators": {
+      "op_11": "2",
+      "op_13": "1",
+      "op_14": "2",
+      "op_19": "2",
+      "op_22": "1"
+    }
+  },
+  {
+    "mev_id": "MEV-11-007",
+    "strategy": "Nested-market logical arbitrage",
+    "detector": "M_LOGIC",
+    "operators": {
+      "op_11": "2",
+      "op_13": "1",
+      "op_14": "2",
+      "op_19": "2",
+      "op_22": "1"
+    }
+  },
+  {
+    "mev_id": "MEV-11-008",
+    "strategy": "Correlated-event arbitrage",
+    "detector": "M_LOGIC",
+    "operators": {
+      "op_11": "2",
+      "op_13": "1",
+      "op_14": "2",
+      "op_19": "2",
+      "op_22": "1"
+    }
+  },
+  {
+    "mev_id": "MEV-11-009",
+    "strategy": "Resolution-source arbitrage",
+    "detector": "OBSERVE",
+    "operators": {
+      "op_10": "2",
+      "op_11": "2",
+      "op_22": "1"
+    }
+  },
+  {
+    "mev_id": "MEV-11-010",
+    "strategy": "Oracle-resolution timing arbitrage",
+    "detector": "OBSERVE",
+    "operators": {
+      "op_10": "2",
+      "op_11": "2",
+      "op_22": "1"
+    }
+  },
+  {
+    "mev_id": "MEV-11-011",
+    "strategy": "Pre-resolution settlement arbitrage",
+    "detector": "OBSERVE",
+    "operators": {
+      "op_10": "2",
+      "op_11": "2",
+      "op_22": "1"
+    }
+  },
+  {
+    "mev_id": "MEV-11-012",
+    "strategy": "Prediction AMM\u2013order-book arbitrage",
+    "detector": "M_AMM",
+    "operators": {
+      "op_08": "2",
+      "op_11": "1",
+      "op_19": "2",
+      "op_21": "2",
+      "op_22": "1"
+    }
+  },
+  {
+    "mev_id": "Legend",
+    "strategy": "2",
+    "detector": "PRIMARY",
+    "operators": {}
+  },
+  {
+    "mev_id": "Legend",
+    "strategy": "1",
+    "detector": "SECONDARY",
+    "operators": {}
+  },
+  {
+    "mev_id": "Legend",
+    "strategy": "0",
+    "detector": "N/A",
+    "operators": {}
+  }
+]

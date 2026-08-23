@@ -1,0 +1,45 @@
+{
+  "files": {
+    "ULTRA": {
+      "sheets": 21,
+      "cells": 38165,
+      "formulas": 5300
+    },
+    "MASTER_LIVE": {
+      "sheets": 11,
+      "cells": 261174,
+      "formulas": 24552
+    },
+    "MASTER_BA": {
+      "sheets": 9,
+      "cells": 219908,
+      "formulas": 0
+    },
+    "CART_MATH": {
+      "sheets": 6,
+      "cells": 15051,
+      "formulas": 0
+    }
+  },
+  "strategies": {
+    "count": 267,
+    "expected": 264,
+    "coverage_pct": 101.1
+  },
+  "operators": {
+    "count": 31,
+    "expected": 31,
+    "coverage_pct": 100.0
+  },
+  "strategy_operator_links": {
+    "count": 1716,
+    "expected": 8184,
+    "note": "actual may include secondary/tertiary roles"
+  },
+  "detectors": {
+    "count": 60
+  },
+  "total_sheets_ingested": 47,
+  "total_cells_scanned": 534298,
+  "total_formulas_found": 29852
+}
