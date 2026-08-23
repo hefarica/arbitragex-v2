@@ -19,6 +19,13 @@
       "sheets": 6,
       "cells": 15051,
       "formulas": 0
+    },
+    "QUOTEBASE": {
+      "sheets": 17,
+      "cells": 43487,
+      "formulas": 3219,
+      "path": "C:/Users/HFRC/Downloads/ArbitrageX_Dynamic_QuoteBase_Route_Manual_264.xlsx",
+      "note": "Dynamic Quote/Base Route Manual - engine contract layer (XLS-QB program)"
     }
   },
   "strategies": {
@@ -39,7 +46,20 @@
   "detectors": {
     "count": 60
   },
-  "total_sheets_ingested": 47,
-  "total_cells_scanned": 534298,
-  "total_formulas_found": 29852
+  "total_sheets_ingested": 64,
+  "total_cells_scanned": 577785,
+  "total_formulas_found": 33071,
+  "quotebase_strategy_hop": {
+    "strategies": 264,
+    "valid_combos": 1436,
+    "hop_distribution": {
+      "2": 245,
+      "3": 262,
+      "4": 260,
+      "5": 233,
+      "6": 233,
+      "7": 203
+    },
+    "detectors": 60
+  }
 }
