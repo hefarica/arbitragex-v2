@@ -69,6 +69,10 @@ Encoding confirmado del `HopMask_u8`: bit `h−2` para `h∈[2,7]`; mask 63 = to
 
 ## 3. Gap analysis — contrato de 15 pasos (hoja 15) vs repo
 
+> **Snapshot del estado EN INGESTIÓN (2026-08-23 mañana).** El estado actual
+> por entregable vive en §4 — varias ❌/🟡 de esta tabla ya tienen módulo
+> entregado (PairIndex, StrategyHopMask, dirty-pairs, QuoteScore, lat.*).
+
 Leyenda: ✅ PRESERVED (existe, evidencia) · 🟡 PARTIAL · ❌ GAP.
 
 | Paso | Requisito del manual | Estado | Evidencia repo |
@@ -100,19 +104,32 @@ Leyenda: ✅ PRESERVED (existe, evidencia) · 🟡 PARTIAL · ❌ GAP.
 | Presupuesto <30ms con p95 demostrado | ❌ | SLA definido (29ms sobre 7 etapas); sin harness de benchmark |
 | Status/Execution_Class en dispatch | ❌ | Solo 79/264 ROUTE_READY — el dispatch runtime debe respetar Status honesto (174 NEEDS_ROUTE_DATA no generan rutas) |
 
-## 4. Plan incremental (PR-sized, P-∅: un PR = un ID)
+## 4. Plan incremental (PR-sized, P-∅: un PR = un ID) — ESTADO 2026-08-23
 
-| ID | Entregable | Scope mínimo verificable |
-|---|---|---|
-| **XLS-QB-01** (este) | Ingesta + extracción + gap analysis + JSONs canónicos a `docs/` | 17/18 checks diferenciales PASS |
-| XLS-QB-02 | Enums `GRAPH_MODELS` ×10 + `SURFACES` ×10 en `canonical_enums.rs` + `StrategyHopMask` tabla estática 264×u8 generada del JSON + tests (biyección con extracción, admissibility min/max legs) | cargo check + tests CI (local AppControl: clippy only) |
-| XLS-QB-03 | Dispatch hop-aware en route_discovery (mask test O(1) antes de expandir) + knob `Min_Net_bps` + `Beam_K` en `canonical_knobs.rs` | unit tests mask-prune; sin cambio de matemática |
-| XLS-QB-04 | `DenseIdBuilder` + `PairIndex` + `PairBuckets` (capa densa PRESERVANDO el path HashMap actual) + property tests (inyectividad, rango, biyección edges↔buckets) | differential vs extracción §2 |
-| XLS-QB-05 | DirtyPair propagation (PoolToPair map + bitset + ring queue) + hot-seed queue | replay fixtures |
-| XLS-QB-06 | QuoteScore dinámico (5 weights como knobs) + normalización F_e como prefilter (NO proof) | fixtures de spreads conocidos |
-| XLS-QB-07 | Telemetry `lat.*` 8 stages + harness benchmark (matriz N=8..128) + KPI p50/p95 al dashboard | SLA p95 medido, no prometido |
+| ID | Entregable | Scope mínimo verificable | Estado |
+|---|---|---|---|
+| **XLS-QB-01** (este) | Ingesta + extracción + gap analysis + JSONs canónicos a `docs/` | 17/18 checks diferenciales PASS | ✅ db031e43 |
+| XLS-QB-02 | Enums `GRAPH_MODELS` ×10 + `SURFACES` ×10 en `canonical_enums.rs` + `StrategyHopMask` tabla estática 264×u8 generada del JSON + tests (biyección con extracción, admissibility min/max legs) | cargo check + tests CI (local AppControl: clippy only) | ✅ 908ccc34 — enums 1:1 + `strategy_hop_mask.rs` (generator `scripts/xls/gen_hopmask_rs.py`, 8 tests, fixture in-crate) |
+| XLS-QB-03 | Dispatch hop-aware en route_discovery (mask test O(1) antes de expandir) + knob `Min_Net_bps` + `Beam_K` en `canonical_knobs.rs` | unit tests mask-prune; sin cambio de matemática | ✅ 094589ec + fix-forward 3cf0e691 — `admissible_hop_bounds` en `route_discovery_worker` (observe-only, default MEV-01-001 mask 63 = comportamiento desplegado idéntico); knobs declarativos con roadmap de consumo; VPS `cargo check -p searcher-rs --locked` EXIT=0 |
+| XLS-QB-04 | `DenseIdBuilder` + `PairIndex` + `PairBuckets` (capa densa PRESERVANDO el path HashMap actual) + property tests (inyectividad, rango, biyección edges↔buckets) | differential vs extracción §2 | ✅ 2f0604a0 — `pair_index.rs` (índice triangular O(1), decode binario, techo N!/[h(N−h)!] derivado; 7/7 tests incl. inyectividad exhaustiva N≤24). DenseIdBuilder/PairBuckets quedan como follow-up del consumidor |
+| XLS-QB-05 | DirtyPair propagation (PoolToPair map + bitset + ring queue) + hot-seed queue | replay fixtures | ✅ 74ab55cf — `dirty_pairs.rs`: DirtyPairSet (bitset ceil(C(N,2)/64), version-scoped dedupe) + PoolToPair (fan-out exacto, pools paralelos colapsan) + HotSeedQueue (ring bounded, evicción observable) + DirtyPairEngine (PoolEventOutcome honesto); 16/16. Wiring al hot path de reserves = follow-up declarado |
+| XLS-QB-06 | QuoteScore dinámico (5 weights como knobs) + normalización F_e como prefilter (NO proof) | fixtures de spreads conocidos | ✅ 03a9345f — `quote_score.rs` (forma lineal exacta 05 r11; fixtures USDC 96.0 / WETH 91.0 / WBTC 75.0 / LINK 55.5; sin umbral inventado — el workbook no define QuoteEligible threshold) + 5 knobs quote_w_* validados sum==1.0; 10/10. F_e normalization = follow-up (requiere QuoteState anchor) |
+| XLS-QB-07 | Telemetry `lat.*` 8 stages + harness benchmark (matriz N=8..128) + KPI p50/p95 al dashboard | SLA p95 medido, no prometido | 🟡 e07d0c5f — `latency_budget.rs` (tabla 8 stages lat.* 2/3/4/3/7/5/3/2, total 29 DERIVADO, recorder p50/p95 nearest-rank, Headroom_p95 firmado, PASS_p95 vs knob `discovery_sla_ms`=30) + knob; 7/7. **Pendiente honesto**: wiring Instant en el hot path + benchmark matrix + KPI dashboard — el <30ms NO se afirma hasta medirse (fila 21 del workbook) |
+
+**Knobs QUOTEBASE-264 absorbidos: 8/8** (`min_net_bps`, `beam_k`, 5×`quote_w_*`, `discovery_sla_ms`) — `canonical_knobs.rs` ahora 50 knobs (42 ULTRA + 8 QUOTEBASE), to_json 51 keys. Los 2 observacionales (Dirty_Seeds metric, Avg_Parallel_Pools) son telemetría de runtime, no knobs.
+
+**Branches (stack, base = QB-04 hacia main):** `feat/xls-qb-01-quotebase-ingestion` (db031e43) ← `feat/xls-qb-02-hopmask-enums` (908ccc34) ← `feat/xls-qb-03-hop-dispatch` (3cf0e691) ← `feat/xls-qb-04-pair-index` (2f0604a0) ← `feat/xls-qb-06-quote-score` (03a9345f) ← `feat/xls-qb-05-dirty-pairs` (74ab55cf) ← `feat/xls-qb-07-latency-budget` (e07d0c5f). Todas pushed a origin; merge en orden.
 
 Orden razona dependencia: QB-02 (datos/enum) → QB-03 (dispatch usa mask) → QB-04/05 (estructuras) → QB-06 (señal) → QB-07 (evidencia). QB-07 alimenta además la deuda de evidencia A.5 (pata latencia por etapa).
+
+### Follow-ups declarados (consumidores runtime, cada uno su PR con ID)
+
+1. **Wiring dirty_pairs al hot path de reserves** (QB-05b): `on_pool_event` desde el reserve-update path + `Dirty_Seeds` metric a telemetría.
+2. **DenseIdBuilder + PairBuckets** (QB-04b): asignación de TokenIds densos desde TokenRegistry + buckets C(N,2) PRESERVANDO el HashMap actual.
+3. **F_e normalization prefilter** (QB-06b): requiere QuoteState anchor + freshness/version (05 r19-25).
+4. **lat.* wiring + benchmark matrix** (QB-07b): Instant por stage en route_discovery + matriz N=8..128 + KPIs al dashboard — PASS_p95 solo con p95 MEDIDO.
+5. **Consumo de knobs declarativos**: `min_net_bps` (net gate evaluation) y `beam_k` (DFS beam con la seed queue de QB-05).
+6. **Paso 2 del contrato** (ChainResolver runtime symbol→TokenKey) — sigue 🟡, clase de bug CARTRIDGE-GATE-ADDR-01.
 
 ## 5. Definition of Done de este engine (hoja 15, filas 22–29) — estado inicial
 
