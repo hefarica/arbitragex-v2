@@ -75,6 +75,27 @@ function routeHash(opp: Opportunity): string {
   return "rh:" + createHash("sha256").update(canonical).digest("hex").slice(0, 32);
 }
 
+/**
+ * LATLED-01: detection→ledger latency for `paper_trade_runs.execution_time_ms`.
+ *
+ * Wall-clock ms from the opportunity's `detected_at` (ISO string with offset,
+ * stamped by the scanner at detection) to the moment the paper-run row is
+ * written — the pipeline-latency leg of the A.5 daily audit (revert rate /
+ * latency / sim error rate; the column sat at 0/591,753 rows until
+ * 2026-08-23). EXACT MIRROR of relays-client `detection_to_ledger_ms`
+ * (persistence.rs): both MUST stay in the same semantics or
+ * `AVG(execution_time_ms)` (sed-status.ts) mixes incomparable populations.
+ *
+ * R8 fail-honest: clock skew (detected_at in the future) records 0, never a
+ * negative number; NaN from an unparseable timestamp is impossible (the zod
+ * schema validated `.datetime()` before this runs) but defended to 0 anyway.
+ */
+export function detectionToLedgerMs(detectedAtIso: string, nowMs: number): number {
+  const elapsed = Math.round(nowMs - new Date(detectedAtIso).getTime());
+  if (!Number.isFinite(elapsed) || elapsed < 0) return 0;
+  return Math.min(elapsed, 2_147_483_647); // i32 saturation — INTEGER column
+}
+
 export class PaperTradeArchiver {
   private redis: Redis | null = null;
   private running = false;
@@ -213,11 +234,14 @@ export class PaperTradeArchiver {
     }
 
     try {
+      // LATLED-01: computed at write time (uniform with relays-client's
+      // insert_paper_trade_run — see detectionToLedgerMs doc).
+      const executionTimeMs = detectionToLedgerMs(opp.detected_at, Date.now());
       await this.deps.pool.query(
         `INSERT INTO paper_trade_runs
            (opportunity_id, chain_id, strategy_kind, sim_expected_profit_usd,
-            sim_gas_cost_usd, sim_block_number, reason, route_hash)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+            sim_gas_cost_usd, sim_block_number, reason, route_hash, execution_time_ms)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
         [
           opp.id,
           opp.chain_id,
@@ -227,6 +251,7 @@ export class PaperTradeArchiver {
           opp.block_number ?? null,
           opp.rejection_reason ?? null,
           routeHash(opp),
+          executionTimeMs,
         ],
       );
       await this.redis.xack(STREAM_IN, GROUP, id);
