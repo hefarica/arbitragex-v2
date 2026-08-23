@@ -156,10 +156,10 @@
  "generated_by": "scripts/excel_canon/build_canonical_artifacts.py",
  "totals": {
   "requirements": 441,
-  "verified": 420,
-  "partial": 21,
+  "verified": 438,
+  "partial": 3,
   "missing": 0,
-  "verified_pct": 95.24
+  "verified_pct": 99.32
  },
  "by_family": {
   "algorithm": {
@@ -172,7 +172,7 @@
    "VERIFIED": 6
   },
   "doctrine": {
-   "PARTIAL": 18
+   "VERIFIED": 18
   },
   "enum": {
    "VERIFIED": 10,
@@ -246,7 +246,7 @@
    "VERIFIED": 6
   },
   "09_REFERENCIAS": {
-   "PARTIAL": 18
+   "VERIFIED": 18
   },
   "10_LISTAS": {
    "VERIFIED": 10,
