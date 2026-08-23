@@ -12261,9 +12261,10 @@
       "target": "\\benable_bfm\\b",
       "hit": true,
       "matches": [
+       "backend/searcher-rs/src/canonical_enums.rs",
        "backend/searcher-rs/src/canonical_knobs.rs"
       ],
-      "n": 1
+      "n": 2
      }
     ]
    }
@@ -12396,9 +12397,10 @@
       "target": "\\benable_convex_size\\b",
       "hit": true,
       "matches": [
+       "backend/searcher-rs/src/canonical_enums.rs",
        "backend/searcher-rs/src/canonical_knobs.rs"
       ],
-      "n": 1
+      "n": 2
      }
     ]
    }
@@ -13053,7 +13055,7 @@
        "backend/math-engine/src/operators/op_22_monte_carlo.rs",
        "backend/math-engine/src/operators/op_28_jit_liquidity.rs"
       ],
-      "n": 94
+      "n": 95
      }
     ]
    }
@@ -13203,7 +13205,7 @@
        "backend/api-server/src/index.ts",
        "backend/api-server/src/lib/pii-wireado-recursive.test.ts"
       ],
-      "n": 641
+      "n": 642
      }
     ]
    }
@@ -13235,21 +13237,22 @@
        "backend/api-server/src/routes/stubs.ts",
        "backend/math-engine/src/route_math.rs",
        "backend/searcher-rs/cartridges/omega_strategy_pack.rhai",
+       "backend/searcher-rs/src/canonical_enums.rs",
        "backend/searcher-rs/src/engines/spanning_tree_engine.rs",
        "backend/searcher-rs/src/orchestrator.rs",
-       "backend/searcher-rs/src/route_discovery/README.md",
-       "backend/searcher-rs/src/strategy_label.rs"
+       "backend/searcher-rs/src/route_discovery/README.md"
       ],
-      "n": 11
+      "n": 12
      },
      {
       "kind": "regex",
       "target": "negative_cycle|neg_cycle",
       "hit": true,
       "matches": [
-       "backend/searcher-rs/cartridges/omega_strategy_pack.rhai"
+       "backend/searcher-rs/cartridges/omega_strategy_pack.rhai",
+       "backend/searcher-rs/src/canonical_enums.rs"
       ],
-      "n": 1
+      "n": 2
      }
     ]
    }
@@ -13275,15 +13278,15 @@
       "hit": true,
       "matches": [
        "backend/searcher-rs/src/amm_math.rs",
+       "backend/searcher-rs/src/canonical_enums.rs",
        "backend/searcher-rs/src/canonical_knobs.rs",
        "backend/searcher-rs/src/route_discovery/README.md",
        "backend/searcher-rs/src/route_discovery/graph_builder.rs",
        "backend/searcher-rs/src/route_discovery/mod.rs",
        "backend/searcher-rs/src/route_discovery/multi_hop_search.rs",
-       "backend/searcher-rs/src/route_discovery/types.rs",
-       "backend/searcher-rs/src/workers/route_scanner_worker.rs"
+       "backend/searcher-rs/src/route_discovery/types.rs"
       ],
-      "n": 12
+      "n": 13
      }
     ]
    }
@@ -13308,11 +13311,12 @@
       "target": "johnson",
       "hit": true,
       "matches": [
+       "backend/searcher-rs/src/canonical_enums.rs",
        "backend/searcher-rs/src/canonical_knobs.rs",
        "skills/arbitragex-ultra/SUPER_SKILL.md",
        "skills/arbitragex-ultra/world/graph-algorithms/FINDINGS.md"
       ],
-      "n": 3
+      "n": 4
      }
     ]
    }
@@ -13337,16 +13341,16 @@
       "target": "bounded.*dfs|dfs.*bounded|find_routes|simple cycle",
       "hit": true,
       "matches": [
+       "backend/searcher-rs/src/canonical_enums.rs",
        "backend/searcher-rs/src/canonical_knobs.rs",
        "backend/searcher-rs/src/route_discovery/README.md",
        "backend/searcher-rs/src/route_discovery/cycle_enumerator.rs",
        "backend/searcher-rs/src/route_discovery/guarantees.rs",
        "backend/searcher-rs/src/route_discovery/mod.rs",
        "backend/searcher-rs/src/route_discovery/multi_hop_search.rs",
-       "backend/searcher-rs/src/route_discovery/route_discovery_worker.rs",
-       "backend/searcher-rs/src/route_discovery/telemetry.rs"
+       "backend/searcher-rs/src/route_discovery/route_discovery_worker.rs"
       ],
-      "n": 15
+      "n": 16
      }
     ]
    }
@@ -13380,7 +13384,7 @@
        "backend/searcher-rs/cartridges/strategies/mev_04_010_receipt_token_arbitrage.rhai",
        "backend/searcher-rs/cartridges/strategies/mev_04_011_erc_4626_share_price_arbitrage.rhai"
       ],
-      "n": 31
+      "n": 32
      }
     ]
    }
@@ -13412,9 +13416,9 @@
        "backend/searcher-rs/cartridges/strategies/mev_07_023_cross_venue_implied_volatility_arbitrage.rhai",
        "backend/searcher-rs/cartridges/strategies/mev_07_024_volatility_surface_inconsistency_arbitrage.rhai",
        "backend/searcher-rs/cartridges/strategies/mev_07_025_delta_hedged_options_arbitrage.rhai",
-       "backend/searcher-rs/src/canonical_knobs.rs"
+       "backend/searcher-rs/src/canonical_enums.rs"
       ],
-      "n": 20
+      "n": 21
      }
     ]
    }
@@ -13448,7 +13452,7 @@
        "backend/api-server/src/index.ts",
        "backend/api-server/src/lib/audit-redact.test.ts"
       ],
-      "n": 786
+      "n": 787
      }
     ]
    }
@@ -13512,15 +13516,15 @@
       "hit": true,
       "matches": [
        "backend/api-server/src/routes/paper-trade-archiver.ts",
+       "backend/searcher-rs/src/canonical_enums.rs",
        "backend/searcher-rs/src/cartridge_boot.rs",
        "backend/searcher-rs/src/engines/dex_engine.rs",
        "backend/searcher-rs/src/lib.rs",
        "backend/searcher-rs/src/main.rs",
        "backend/searcher-rs/src/metrics.rs",
-       "backend/searcher-rs/src/orchestrator.rs",
-       "backend/searcher-rs/src/scanner.rs"
+       "backend/searcher-rs/src/orchestrator.rs"
       ],
-      "n": 17
+      "n": 18
      }
     ]
    }
@@ -13584,15 +13588,15 @@
       "hit": true,
       "matches": [
        "backend/api-server/src/routes/paper-trade-archiver.ts",
+       "backend/searcher-rs/src/canonical_enums.rs",
        "backend/searcher-rs/src/cartridge_boot.rs",
        "backend/searcher-rs/src/engines/dex_engine.rs",
        "backend/searcher-rs/src/lib.rs",
        "backend/searcher-rs/src/main.rs",
        "backend/searcher-rs/src/metrics.rs",
-       "backend/searcher-rs/src/orchestrator.rs",
-       "backend/searcher-rs/src/scanner.rs"
+       "backend/searcher-rs/src/orchestrator.rs"
       ],
-      "n": 17
+      "n": 18
      }
     ]
    }
@@ -13656,15 +13660,15 @@
       "hit": true,
       "matches": [
        "backend/api-server/src/routes/paper-trade-archiver.ts",
+       "backend/searcher-rs/src/canonical_enums.rs",
        "backend/searcher-rs/src/cartridge_boot.rs",
        "backend/searcher-rs/src/engines/dex_engine.rs",
        "backend/searcher-rs/src/lib.rs",
        "backend/searcher-rs/src/main.rs",
        "backend/searcher-rs/src/metrics.rs",
-       "backend/searcher-rs/src/orchestrator.rs",
-       "backend/searcher-rs/src/scanner.rs"
+       "backend/searcher-rs/src/orchestrator.rs"
       ],
-      "n": 17
+      "n": 18
      }
     ]
    }
@@ -13728,15 +13732,15 @@
       "hit": true,
       "matches": [
        "backend/api-server/src/routes/paper-trade-archiver.ts",
+       "backend/searcher-rs/src/canonical_enums.rs",
        "backend/searcher-rs/src/cartridge_boot.rs",
        "backend/searcher-rs/src/engines/dex_engine.rs",
        "backend/searcher-rs/src/lib.rs",
        "backend/searcher-rs/src/main.rs",
        "backend/searcher-rs/src/metrics.rs",
-       "backend/searcher-rs/src/orchestrator.rs",
-       "backend/searcher-rs/src/scanner.rs"
+       "backend/searcher-rs/src/orchestrator.rs"
       ],
-      "n": 17
+      "n": 18
      }
     ]
    }
@@ -13800,15 +13804,15 @@
       "hit": true,
       "matches": [
        "backend/api-server/src/routes/paper-trade-archiver.ts",
+       "backend/searcher-rs/src/canonical_enums.rs",
        "backend/searcher-rs/src/cartridge_boot.rs",
        "backend/searcher-rs/src/engines/dex_engine.rs",
        "backend/searcher-rs/src/lib.rs",
        "backend/searcher-rs/src/main.rs",
        "backend/searcher-rs/src/metrics.rs",
-       "backend/searcher-rs/src/orchestrator.rs",
-       "backend/searcher-rs/src/scanner.rs"
+       "backend/searcher-rs/src/orchestrator.rs"
       ],
-      "n": 17
+      "n": 18
      }
     ]
    }
@@ -13872,15 +13876,15 @@
       "hit": true,
       "matches": [
        "backend/api-server/src/routes/paper-trade-archiver.ts",
+       "backend/searcher-rs/src/canonical_enums.rs",
        "backend/searcher-rs/src/cartridge_boot.rs",
        "backend/searcher-rs/src/engines/dex_engine.rs",
        "backend/searcher-rs/src/lib.rs",
        "backend/searcher-rs/src/main.rs",
        "backend/searcher-rs/src/metrics.rs",
-       "backend/searcher-rs/src/orchestrator.rs",
-       "backend/searcher-rs/src/scanner.rs"
+       "backend/searcher-rs/src/orchestrator.rs"
       ],
-      "n": 17
+      "n": 18
      }
     ]
    }
@@ -13944,15 +13948,15 @@
       "hit": true,
       "matches": [
        "backend/api-server/src/routes/paper-trade-archiver.ts",
+       "backend/searcher-rs/src/canonical_enums.rs",
        "backend/searcher-rs/src/cartridge_boot.rs",
        "backend/searcher-rs/src/engines/dex_engine.rs",
        "backend/searcher-rs/src/lib.rs",
        "backend/searcher-rs/src/main.rs",
        "backend/searcher-rs/src/metrics.rs",
-       "backend/searcher-rs/src/orchestrator.rs",
-       "backend/searcher-rs/src/scanner.rs"
+       "backend/searcher-rs/src/orchestrator.rs"
       ],
-      "n": 17
+      "n": 18
      }
     ]
    }
@@ -13986,7 +13990,7 @@
        "backend/api-server/src/routes/live-testnet.ts",
        "backend/api-server/src/routes/paper-mode-reconcile.ts"
       ],
-      "n": 35
+      "n": 36
      }
     ]
    }
@@ -14247,7 +14251,7 @@
        "backend/api-server/src/routes/scoring-status.ts",
        "backend/relays-client/src/executor/mod.rs"
       ],
-      "n": 14
+      "n": 15
      }
     ]
    }
@@ -14370,9 +14374,10 @@
       "target": "by.*financing|financing.*mode",
       "hit": true,
       "matches": [
+       "backend/searcher-rs/src/canonical_enums.rs",
        "backend/searcher-rs/src/canonical_knobs.rs"
       ],
-      "n": 1
+      "n": 2
      }
     ]
    }
@@ -14431,12 +14436,12 @@
        "backend/api-server/src/routes/route-discovery.ts",
        "backend/api-server/src/routes/viable-kpis.test.ts",
        "backend/api-server/src/routes/viable-kpis.ts",
+       "backend/searcher-rs/src/canonical_enums.rs",
        "backend/searcher-rs/src/route_discovery/README.md",
        "backend/searcher-rs/src/route_discovery/canonicalizer.rs",
-       "backend/searcher-rs/src/route_discovery/guarantees.rs",
-       "backend/searcher-rs/src/route_discovery/route_discovery_worker.rs"
+       "backend/searcher-rs/src/route_discovery/guarantees.rs"
       ],
-      "n": 16
+      "n": 17
      }
     ]
    }
@@ -14523,7 +14528,7 @@
        "backend/api-server/src/index.ts",
        "backend/api-server/src/lib/audit-redact.test.ts"
       ],
-      "n": 1180
+      "n": 1181
      }
     ]
    }
@@ -14712,43 +14717,48 @@
     }
    ],
    "verification": {
-    "status": "PARTIAL",
+    "status": "VERIFIED",
     "evidence": [
      {
       "kind": "regex",
       "target": "BOUNDED_DFS",
       "hit": true,
       "matches": [
+       "backend/searcher-rs/src/canonical_enums.rs",
        "backend/searcher-rs/src/canonical_knobs.rs"
       ],
-      "n": 1
+      "n": 2
      },
      {
       "kind": "regex",
       "target": "JOHNSON",
       "hit": true,
       "matches": [
+       "backend/searcher-rs/src/canonical_enums.rs",
        "backend/searcher-rs/src/canonical_knobs.rs",
        "skills/arbitragex-ultra/SUPER_SKILL.md",
        "skills/arbitragex-ultra/world/graph-algorithms/FINDINGS.md"
       ],
-      "n": 3
+      "n": 4
      },
      {
       "kind": "regex",
       "target": "BFM_NEG_CYCLE",
-      "hit": false,
-      "matches": [],
-      "n": 0
+      "hit": true,
+      "matches": [
+       "backend/searcher-rs/src/canonical_enums.rs"
+      ],
+      "n": 1
      },
      {
       "kind": "regex",
       "target": "MMBF_LINE_GRAPH",
       "hit": true,
       "matches": [
+       "backend/searcher-rs/src/canonical_enums.rs",
        "backend/searcher-rs/src/route_discovery/README.md"
       ],
-      "n": 1
+      "n": 2
      }
     ]
    }
@@ -14847,7 +14857,7 @@
     }
    ],
    "verification": {
-    "status": "PARTIAL",
+    "status": "VERIFIED",
     "evidence": [
      {
       "kind": "regex",
@@ -14860,10 +14870,10 @@
        "backend/searcher-rs/src/calldata/mod.rs",
        "backend/searcher-rs/src/calldata/univ2.rs",
        "backend/searcher-rs/src/calldata/universal_router.rs",
-       "backend/searcher-rs/src/connectors/reserve_reader.rs",
-       "backend/searcher-rs/src/engines/triangular_engine.rs"
+       "backend/searcher-rs/src/canonical_enums.rs",
+       "backend/searcher-rs/src/connectors/reserve_reader.rs"
       ],
-      "n": 23
+      "n": 24
      },
      {
       "kind": "regex",
@@ -14875,18 +14885,20 @@
        "backend/searcher-rs/src/amm_math.rs",
        "backend/searcher-rs/src/block_scanner.rs",
        "backend/searcher-rs/src/calldata/mod.rs",
+       "backend/searcher-rs/src/canonical_enums.rs",
        "backend/searcher-rs/src/cartridge/host_bindings.rs",
-       "backend/searcher-rs/src/engines/spatial_engine.rs",
-       "backend/searcher-rs/src/impact_index.rs"
+       "backend/searcher-rs/src/engines/spatial_engine.rs"
       ],
-      "n": 30
+      "n": 31
      },
      {
       "kind": "regex",
       "target": "Sushi\\ V2",
-      "hit": false,
-      "matches": [],
-      "n": 0
+      "hit": true,
+      "matches": [
+       "backend/searcher-rs/src/canonical_enums.rs"
+      ],
+      "n": 1
      },
      {
       "kind": "regex",
@@ -14902,7 +14914,7 @@
        "backend/api-server/src/services/tokenValidation/liquidityReality.ts",
        "backend/math-engine/src/strategies/classifier.rs"
       ],
-      "n": 135
+      "n": 136
      }
     ]
    }
@@ -15264,7 +15276,7 @@
        "backend/api-server/src/index.ts",
        "backend/api-server/src/lib/audit-redact.test.ts"
       ],
-      "n": 1864
+      "n": 1865
      },
      {
       "kind": "regex",
@@ -15280,7 +15292,7 @@
        "backend/api-server/src/lib/audit-redact.test.ts",
        "backend/api-server/src/lib/audit-redact.ts"
       ],
-      "n": 1823
+      "n": 1824
      },
      {
       "kind": "regex",
@@ -15296,7 +15308,7 @@
        "backend/api-server/src/index.ts",
        "backend/api-server/src/lib/audit-redact.test.ts"
       ],
-      "n": 1680
+      "n": 1681
      },
      {
       "kind": "regex",
@@ -15312,7 +15324,7 @@
        "backend/api-server/src/lib/audit-redact.test.ts",
        "backend/api-server/src/lib/audit-redact.ts"
       ],
-      "n": 1374
+      "n": 1375
      }
     ]
    }
@@ -15935,7 +15947,7 @@
        "backend/searcher-rs/cartridges/strategies/mev_01_004_cross_version_arbitrage.rhai",
        "backend/searcher-rs/cartridges/strategies/mev_01_005_cross_fork_arbitrage.rhai"
       ],
-      "n": 292
+      "n": 293
      }
     ]
    }
@@ -16071,7 +16083,7 @@
        "backend/api-server/src/routes/opportunities-live.ts",
        "backend/api-server/src/routes/route-discovery-outcome-sink.ts"
       ],
-      "n": 643
+      "n": 644
      }
     ]
    }
