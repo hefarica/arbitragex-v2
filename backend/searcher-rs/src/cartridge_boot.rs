@@ -1650,7 +1650,10 @@ mod tests {
     #[test]
     fn gate_token_symbol_falls_back_to_address_when_meta_missing() {
         // Fail-honest: unknown token → raw address → explicit gate rejection.
-        assert_eq!(gate_token_symbol(None, "0xabc0000000000000000000000000000000000def"), "0xabc0000000000000000000000000000000000def");
+        assert_eq!(
+            gate_token_symbol(None, "0xabc0000000000000000000000000000000000def"),
+            "0xabc0000000000000000000000000000000000def"
+        );
     }
 
     #[test]
@@ -1662,7 +1665,10 @@ mod tests {
             decimals: 18,
             is_stablecoin: false,
         };
-        assert_eq!(gate_token_symbol(Some(&meta), "0xdead00000000000000000000000000000000beef"), "0xdead00000000000000000000000000000000beef");
+        assert_eq!(
+            gate_token_symbol(Some(&meta), "0xdead00000000000000000000000000000000beef"),
+            "0xdead00000000000000000000000000000000beef"
+        );
     }
 
     #[test]
