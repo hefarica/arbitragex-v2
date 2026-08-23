@@ -16501,12 +16501,12 @@
     }
    ],
    "verification": {
-    "status": "PARTIAL",
+    "status": "VERIFIED",
     "evidence": [
      {
       "kind": "path",
       "target": "docs/ROUTES_CROWN_JEWEL_DOCTRINE.md",
-      "hit": false
+      "hit": true
      },
      {
       "kind": "glob",
@@ -16541,12 +16541,12 @@
     }
    ],
    "verification": {
-    "status": "PARTIAL",
+    "status": "VERIFIED",
     "evidence": [
      {
       "kind": "path",
       "target": "docs/ROUTES_CROWN_JEWEL_DOCTRINE.md",
-      "hit": false
+      "hit": true
      },
      {
       "kind": "glob",
@@ -16581,12 +16581,12 @@
     }
    ],
    "verification": {
-    "status": "PARTIAL",
+    "status": "VERIFIED",
     "evidence": [
      {
       "kind": "path",
       "target": "docs/ROUTES_CROWN_JEWEL_DOCTRINE.md",
-      "hit": false
+      "hit": true
      },
      {
       "kind": "glob",
@@ -16621,12 +16621,12 @@
     }
    ],
    "verification": {
-    "status": "PARTIAL",
+    "status": "VERIFIED",
     "evidence": [
      {
       "kind": "path",
       "target": "docs/ROUTES_CROWN_JEWEL_DOCTRINE.md",
-      "hit": false
+      "hit": true
      },
      {
       "kind": "glob",
@@ -16661,12 +16661,12 @@
     }
    ],
    "verification": {
-    "status": "PARTIAL",
+    "status": "VERIFIED",
     "evidence": [
      {
       "kind": "path",
       "target": "docs/ROUTES_CROWN_JEWEL_DOCTRINE.md",
-      "hit": false
+      "hit": true
      },
      {
       "kind": "glob",
@@ -16701,12 +16701,12 @@
     }
    ],
    "verification": {
-    "status": "PARTIAL",
+    "status": "VERIFIED",
     "evidence": [
      {
       "kind": "path",
       "target": "docs/ROUTES_CROWN_JEWEL_DOCTRINE.md",
-      "hit": false
+      "hit": true
      },
      {
       "kind": "glob",
@@ -16741,12 +16741,12 @@
     }
    ],
    "verification": {
-    "status": "PARTIAL",
+    "status": "VERIFIED",
     "evidence": [
      {
       "kind": "path",
       "target": "docs/ROUTES_CROWN_JEWEL_DOCTRINE.md",
-      "hit": false
+      "hit": true
      },
      {
       "kind": "glob",
@@ -16781,12 +16781,12 @@
     }
    ],
    "verification": {
-    "status": "PARTIAL",
+    "status": "VERIFIED",
     "evidence": [
      {
       "kind": "path",
       "target": "docs/ROUTES_CROWN_JEWEL_DOCTRINE.md",
-      "hit": false
+      "hit": true
      },
      {
       "kind": "glob",
@@ -16821,12 +16821,12 @@
     }
    ],
    "verification": {
-    "status": "PARTIAL",
+    "status": "VERIFIED",
     "evidence": [
      {
       "kind": "path",
       "target": "docs/ROUTES_CROWN_JEWEL_DOCTRINE.md",
-      "hit": false
+      "hit": true
      },
      {
       "kind": "glob",
@@ -16861,12 +16861,12 @@
     }
    ],
    "verification": {
-    "status": "PARTIAL",
+    "status": "VERIFIED",
     "evidence": [
      {
       "kind": "path",
       "target": "docs/ROUTES_CROWN_JEWEL_DOCTRINE.md",
-      "hit": false
+      "hit": true
      },
      {
       "kind": "glob",
@@ -16901,12 +16901,12 @@
     }
    ],
    "verification": {
-    "status": "PARTIAL",
+    "status": "VERIFIED",
     "evidence": [
      {
       "kind": "path",
       "target": "docs/ROUTES_CROWN_JEWEL_DOCTRINE.md",
-      "hit": false
+      "hit": true
      },
      {
       "kind": "glob",
@@ -16941,12 +16941,12 @@
     }
    ],
    "verification": {
-    "status": "PARTIAL",
+    "status": "VERIFIED",
     "evidence": [
      {
       "kind": "path",
       "target": "docs/ROUTES_CROWN_JEWEL_DOCTRINE.md",
-      "hit": false
+      "hit": true
      },
      {
       "kind": "glob",
@@ -16981,12 +16981,12 @@
     }
    ],
    "verification": {
-    "status": "PARTIAL",
+    "status": "VERIFIED",
     "evidence": [
      {
       "kind": "path",
       "target": "docs/ROUTES_CROWN_JEWEL_DOCTRINE.md",
-      "hit": false
+      "hit": true
      },
      {
       "kind": "glob",
@@ -17021,12 +17021,12 @@
     }
    ],
    "verification": {
-    "status": "PARTIAL",
+    "status": "VERIFIED",
     "evidence": [
      {
       "kind": "path",
       "target": "docs/ROUTES_CROWN_JEWEL_DOCTRINE.md",
-      "hit": false
+      "hit": true
      },
      {
       "kind": "glob",
@@ -17061,12 +17061,12 @@
     }
    ],
    "verification": {
-    "status": "PARTIAL",
+    "status": "VERIFIED",
     "evidence": [
      {
       "kind": "path",
       "target": "docs/ROUTES_CROWN_JEWEL_DOCTRINE.md",
-      "hit": false
+      "hit": true
      },
      {
       "kind": "glob",
@@ -17101,12 +17101,12 @@
     }
    ],
    "verification": {
-    "status": "PARTIAL",
+    "status": "VERIFIED",
     "evidence": [
      {
       "kind": "path",
       "target": "docs/ROUTES_CROWN_JEWEL_DOCTRINE.md",
-      "hit": false
+      "hit": true
      },
      {
       "kind": "glob",
@@ -17141,12 +17141,12 @@
     }
    ],
    "verification": {
-    "status": "PARTIAL",
+    "status": "VERIFIED",
     "evidence": [
      {
       "kind": "path",
       "target": "docs/ROUTES_CROWN_JEWEL_DOCTRINE.md",
-      "hit": false
+      "hit": true
      },
      {
       "kind": "glob",
@@ -17181,12 +17181,12 @@
     }
    ],
    "verification": {
-    "status": "PARTIAL",
+    "status": "VERIFIED",
     "evidence": [
      {
       "kind": "path",
       "target": "docs/ROUTES_CROWN_JEWEL_DOCTRINE.md",
-      "hit": false
+      "hit": true
      },
      {
       "kind": "glob",
