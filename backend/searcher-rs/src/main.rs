@@ -118,6 +118,12 @@ mod source_supervisor;
 #[allow(dead_code)]
 mod route_discovery;
 mod route_intent;
+// XLS-QB-02: declared in BOTH crates — route_discovery_worker references
+// `crate::strategy_hop_mask` (XLS-QB-03 hop-mask dispatch), which resolves
+// against each target's own module tree. The bin uses only
+// `admissible_hop_bounds`; the lookup helpers are exercised in lib tests.
+#[allow(dead_code)]
+mod strategy_hop_mask;
 mod strategy_label;
 // Phase 7-8: orchestrator + engines — fully wired in Phase 14.
 // `engines` still has Phase-15 hooks (insert, from_mvp_cycles, etc.) unused
