@@ -36,6 +36,9 @@ use std::collections::{HashMap, HashSet};
 /// Tunables for the bounded DFS. Defaults mirror the env caps in the plan.
 #[derive(Debug, Clone)]
 pub struct RouteFinderConfig {
+    /// Minimum cycle length in hops (XLS-CANON-01 `Min_Hops`, default 2).
+    /// Cycles shorter than this are not emitted.
+    pub min_depth: u8,
     /// Maximum cycle length in hops (default 3 → 2- and 3-cycles).
     pub max_depth: u8,
     /// Maximum parallel pools explored between any two tokens (branching cap).
@@ -51,6 +54,7 @@ pub struct RouteFinderConfig {
 impl Default for RouteFinderConfig {
     fn default() -> Self {
         Self {
+            min_depth: 2,
             max_depth: 3,
             max_pools_per_pair: 8,
             max_routes_per_tick: 500,
@@ -185,8 +189,10 @@ impl<'g> FinderState<'g> {
             let new_depth = depth + 1;
 
             if nt == start {
-                // Closes a cycle of length `new_depth`. Emit when 2 ≤ len ≤ max.
-                if (2..=self.cfg.max_depth as usize).contains(&new_depth) {
+                // Closes a cycle of length `new_depth`. Emit when min ≤ len ≤ max
+                // (min = XLS-CANON-01 `Min_Hops`, canonical floor 2).
+                let min_len = (self.cfg.min_depth.max(2)) as usize;
+                if (min_len..=self.cfg.max_depth as usize).contains(&new_depth) {
                     path.push(edge.clone());
                     self.try_emit(path);
                     path.pop();

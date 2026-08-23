@@ -26,6 +26,7 @@
 
 mod amm_math;
 mod calldata;
+mod canonical_knobs;
 mod chain_client;
 mod chain_supervisor;
 mod counters;
@@ -279,6 +280,39 @@ async fn main() -> anyhow::Result<()> {
     // Shared redis connection manager for scanners.
     let redis_client = redis::Client::open(redis_url.clone())?;
     let redis_conn = redis_client.get_connection_manager().await?;
+
+    // ── XLS-CANON-01 — canonical knobs (01_CONFIG ULTRA workbook) ─────────────
+    // Load the 42-knob canonical surface, validate (fail-fast boot on invariant
+    // violation — config validation is defensive, not speculative), log it, and
+    // publish the snapshot to Redis for the api-server surface
+    // (`GET /api/v1/config/canonical-knobs`). Declarative/observability only:
+    // mode authority stays in relays-client::live_exec_policy (§34.3) and the
+    // existing kill-switch system — these knobs never flip execution semantics.
+    {
+        let knobs = canonical_knobs::CanonicalKnobs::from_env();
+        if let Err(err) = knobs.validate() {
+            anyhow::bail!("canonical knobs invalid (XLS-CANON-01): {err}");
+        }
+        let snapshot = knobs.to_json();
+        info!(
+            event = "config.canonical_knobs",
+            knobs = %snapshot,
+            "canonical knobs loaded (42-knob 01_CONFIG surface; precedence env>yaml>workbook)"
+        );
+        let mut knobs_redis = redis_conn.clone();
+        let payload = snapshot.to_string();
+        let set_result: Result<(), redis::RedisError> = redis::cmd("SET")
+            .arg("arbx:config:canonical_knobs")
+            .arg(&payload)
+            .query_async(&mut knobs_redis)
+            .await;
+        if set_result.is_err() {
+            warn!(
+                event = "config.canonical_knobs.publish_failed",
+                "canonical-knobs snapshot not published to Redis (non-fatal; retried at next boot)"
+            );
+        }
+    }
 
     // Phase 2 — Topology Vault runtime (durable fallback + Redis Pub/Sub).
     // Full RPC/WS URLs stay inside this process. Operators may set
