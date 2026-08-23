@@ -33,67 +33,66 @@ use serde_json::json;
 pub const EXEC_MODES: [&str; 3] = ["LIVE_MAINNET", "TESTNET", "PAPER_SHADOW"];
 
 /// Canonical financing-mode tokens (02_FINANCING — first-class modes).
-pub const FINANCING_MODES: [&str; 4] =
-    ["OWN_CAPITAL", "AAVE_FL", "BALANCER_FL", "V2_FLASH_SWAP"];
+pub const FINANCING_MODES: [&str; 4] = ["OWN_CAPITAL", "AAVE_FL", "BALANCER_FL", "V2_FLASH_SWAP"];
 
 /// The 43 canonical knobs, field names exactly matching the workbook tokens
 /// (snake_case), defaults exactly the `01_CONFIG` values.
 #[derive(Debug, Clone, PartialEq)]
 pub struct CanonicalKnobs {
     // ── Discovery ────────────────────────────────────────────────────────
-    pub max_hops: u8,                     // 7  (hops)
-    pub min_hops: u8,                     // 2  (hops)
+    pub max_hops: u8, // 7  (hops)
+    pub min_hops: u8, // 2  (hops)
     // ── Financing (selected mode for KPIs/ranking; 02_FINANCING) ────────
-    pub selected_financing: String,       // OWN_CAPITAL
+    pub selected_financing: String, // OWN_CAPITAL
     // ── Graph pruning / sizing / filters (USD or unit per field) ─────────
-    pub min_pool_liquidity_usd: f64,      // 150_000 (USD, route bottleneck)
-    pub max_pool_utilization_pct: f64,    // 0.2    (% TVL, fraction)
-    pub min_gross_edge_bps: f64,          // 12     (bps)
-    pub max_gas_usd: f64,                 // 120    (USD)
-    pub max_freshness_s: u64,             // 15     (seconds)
-    pub min_size_usd: f64,                // 10_000 (USD)
+    pub min_pool_liquidity_usd: f64, // 150_000 (USD, route bottleneck)
+    pub max_pool_utilization_pct: f64, // 0.2    (% TVL, fraction)
+    pub min_gross_edge_bps: f64,     // 12     (bps)
+    pub max_gas_usd: f64,            // 120    (USD)
+    pub max_freshness_s: u64,        // 15     (seconds)
+    pub min_size_usd: f64,           // 10_000 (USD)
     // ── Ranking ──────────────────────────────────────────────────────────
-    pub min_ev_usd: f64,                  // 25     (USD, net of all costs)
-    pub risk_haircut_pct: f64,            // 0.1    (fraction)
-    pub slippage_factor: f64,             // 0.06   (proxy; exact sim is truth)
+    pub min_ev_usd: f64,       // 25     (USD, net of all costs)
+    pub risk_haircut_pct: f64, // 0.1    (fraction)
+    pub slippage_factor: f64,  // 0.06   (proxy; exact sim is truth)
     // ── Runtime budgets ──────────────────────────────────────────────────
-    pub emission_budget_routes_block: usize, // 50_000
+    pub emission_budget_routes_block: usize,  // 50_000
     pub candidate_budget_routes_block: usize, // 250_000
-    pub block_cadence_s: u64,             // 12
-    pub cpu_op_budget_block: u64,         // 200_000_000
-    pub estimated_cycles: u64,            // 100_000
+    pub block_cadence_s: u64,                 // 12
+    pub cpu_op_budget_block: u64,             // 200_000_000
+    pub estimated_cycles: u64,                // 100_000
     // ── Control (declarative only — see module docs §34) ────────────────
-    pub execution_mode: String,           // PAPER_SHADOW
+    pub execution_mode: String, // PAPER_SHADOW
     // ── Route kinds ──────────────────────────────────────────────────────
-    pub enable_2v2: bool,                 // true
-    pub enable_v2v3: bool,                // true
-    pub enable_triangular: bool,          // true
-    pub enable_nhop: bool,                // true
+    pub enable_2v2: bool,        // true
+    pub enable_v2v3: bool,       // true
+    pub enable_triangular: bool, // true
+    pub enable_nhop: bool,       // true
     // ── Algorithms (04_ALGORITMOS toggles) ───────────────────────────────
-    pub enable_bfm: bool,                 // true
-    pub enable_mmbf: bool,                // true
-    pub enable_johnson: bool,             // false (output-explosive)
-    pub enable_bounded_dfs: bool,         // true
-    pub enable_rich: bool,                // true
-    pub enable_convex_size: bool,         // true
+    pub enable_bfm: bool,         // true
+    pub enable_mmbf: bool,        // true
+    pub enable_johnson: bool,     // false (output-explosive)
+    pub enable_bounded_dfs: bool, // true
+    pub enable_rich: bool,        // true
+    pub enable_convex_size: bool, // true
     // ── 264-strategy integration (11_STRATEGY_CATALOG / 15_STRAT_ROUTE_OPT)
-    pub selected_strategy_id: String,     // MEV-01-001
-    pub selected_execution_mode: String,  // PAPER_SHADOW
-    pub min_strategy_fit_pct: f64,        // 0.65
-    pub min_operator_coverage_pct: f64,   // 0.5
-    pub enable_observe_only: bool,        // false (never makes executable)
-    pub strict_surface_match: bool,       // true
-    pub strict_dependency_match: bool,    // true
-    pub route_capacity: usize,            // 72
+    pub selected_strategy_id: String,    // MEV-01-001
+    pub selected_execution_mode: String, // PAPER_SHADOW
+    pub min_strategy_fit_pct: f64,       // 0.65
+    pub min_operator_coverage_pct: f64,  // 0.5
+    pub enable_observe_only: bool,       // false (never makes executable)
+    pub strict_surface_match: bool,      // true
+    pub strict_dependency_match: bool,   // true
+    pub route_capacity: usize,           // 72
     // ── Operator weights (12_OPERATOR_CONTROL) ───────────────────────────
-    pub primary_operator_weight: f64,     // 1.0
-    pub secondary_operator_weight: f64,   // 0.35
+    pub primary_operator_weight: f64,   // 1.0
+    pub secondary_operator_weight: f64, // 0.35
     // ── Rank composition (sum = 1.0) ─────────────────────────────────────
-    pub rank_economic_weight: f64,        // 0.45
-    pub rank_strategy_fit_weight: f64,    // 0.35
-    pub rank_operator_weight: f64,        // 0.20
+    pub rank_economic_weight: f64,     // 0.45
+    pub rank_strategy_fit_weight: f64, // 0.35
+    pub rank_operator_weight: f64,     // 0.20
     // ── Kill-switch (orthogonal control; declarative here) ───────────────
-    pub killswitch: bool,                 // false (OFF)
+    pub killswitch: bool, // false (OFF)
 }
 
 impl Default for CanonicalKnobs {
@@ -198,10 +197,7 @@ impl CanonicalKnobs {
                 "ARBX_KNOB_MAX_POOL_UTILIZATION_PCT",
                 d.max_pool_utilization_pct,
             ),
-            min_gross_edge_bps: env_f64(
-                "ARBX_KNOB_MIN_GROSS_EDGE_BPS",
-                d.min_gross_edge_bps,
-            ),
+            min_gross_edge_bps: env_f64("ARBX_KNOB_MIN_GROSS_EDGE_BPS", d.min_gross_edge_bps),
             max_gas_usd: env_f64("ARBX_KNOB_MAX_GAS_USD", d.max_gas_usd),
             max_freshness_s: env_u64("ARBX_KNOB_MAX_FRESHNESS_S", d.max_freshness_s),
             min_size_usd: env_f64("ARBX_KNOB_MIN_SIZE_USD", d.min_size_usd),
@@ -238,10 +234,7 @@ impl CanonicalKnobs {
                 "ARBX_KNOB_SELECTED_EXECUTION_MODE",
                 &d.selected_execution_mode,
             ),
-            min_strategy_fit_pct: env_f64(
-                "ARBX_KNOB_MIN_STRATEGY_FIT_PCT",
-                d.min_strategy_fit_pct,
-            ),
+            min_strategy_fit_pct: env_f64("ARBX_KNOB_MIN_STRATEGY_FIT_PCT", d.min_strategy_fit_pct),
             min_operator_coverage_pct: env_f64(
                 "ARBX_KNOB_MIN_OPERATOR_COVERAGE_PCT",
                 d.min_operator_coverage_pct,
@@ -264,18 +257,12 @@ impl CanonicalKnobs {
                 "ARBX_KNOB_SECONDARY_OPERATOR_WEIGHT",
                 d.secondary_operator_weight,
             ),
-            rank_economic_weight: env_f64(
-                "ARBX_KNOB_RANK_ECONOMIC_WEIGHT",
-                d.rank_economic_weight,
-            ),
+            rank_economic_weight: env_f64("ARBX_KNOB_RANK_ECONOMIC_WEIGHT", d.rank_economic_weight),
             rank_strategy_fit_weight: env_f64(
                 "ARBX_KNOB_RANK_STRATEGY_FIT_WEIGHT",
                 d.rank_strategy_fit_weight,
             ),
-            rank_operator_weight: env_f64(
-                "ARBX_KNOB_RANK_OPERATOR_WEIGHT",
-                d.rank_operator_weight,
-            ),
+            rank_operator_weight: env_f64("ARBX_KNOB_RANK_OPERATOR_WEIGHT", d.rank_operator_weight),
             killswitch: env_bool("ARBX_KNOB_KILLSWITCH", d.killswitch),
         }
     }
@@ -284,7 +271,10 @@ impl CanonicalKnobs {
     /// config validation is defensive, not speculative).
     pub fn validate(&self) -> Result<(), String> {
         if !(2..=7).contains(&self.max_hops) {
-            return Err(format!("max_hops {} outside canonical 2..=7", self.max_hops));
+            return Err(format!(
+                "max_hops {} outside canonical 2..=7",
+                self.max_hops
+            ));
         }
         if self.min_hops < 2 || self.min_hops > self.max_hops {
             return Err(format!(
@@ -348,7 +338,9 @@ impl CanonicalKnobs {
         if !(0.0..=1.0).contains(&self.min_strategy_fit_pct)
             || !(0.0..=1.0).contains(&self.min_operator_coverage_pct)
         {
-            return Err("strategy fit / operator coverage thresholds must be in [0, 1]".to_string());
+            return Err(
+                "strategy fit / operator coverage thresholds must be in [0, 1]".to_string(),
+            );
         }
         if self.route_capacity == 0 {
             return Err("route_capacity must be > 0".to_string());
@@ -359,9 +351,8 @@ impl CanonicalKnobs {
         if self.secondary_operator_weight > self.primary_operator_weight {
             return Err("secondary operator weight cannot exceed primary".to_string());
         }
-        let w_sum = self.rank_economic_weight
-            + self.rank_strategy_fit_weight
-            + self.rank_operator_weight;
+        let w_sum =
+            self.rank_economic_weight + self.rank_strategy_fit_weight + self.rank_operator_weight;
         if (w_sum - 1.0).abs() > 1e-9 {
             return Err(format!(
                 "rank weights must sum to 1.0 (got {w_sum:.6}: {}/{}/{} — 01_CONFIG 'Sum=1')",
@@ -373,52 +364,111 @@ impl CanonicalKnobs {
 
     /// Serializable snapshot (boot log, Redis `arbx:config:canonical_knobs`,
     /// `GET /api/v1/config/canonical-knobs`). Values only — never secrets.
+    ///
+    /// Built with explicit `Map` inserts, NOT one `json!({...})` literal: a
+    /// single 44-key `json!` macro expansion exceeds the crate's default
+    /// `recursion_limit` (rust-check CI failure) — the incremental build stays
+    /// under it without a crate-wide attribute.
     pub fn to_json(&self) -> serde_json::Value {
-        json!({
-            "max_hops": self.max_hops,
-            "min_hops": self.min_hops,
-            "selected_financing": self.selected_financing,
-            "min_pool_liquidity_usd": self.min_pool_liquidity_usd,
-            "max_pool_utilization_pct": self.max_pool_utilization_pct,
-            "min_gross_edge_bps": self.min_gross_edge_bps,
-            "max_gas_usd": self.max_gas_usd,
-            "max_freshness_s": self.max_freshness_s,
-            "min_size_usd": self.min_size_usd,
-            "min_ev_usd": self.min_ev_usd,
-            "risk_haircut_pct": self.risk_haircut_pct,
-            "slippage_factor": self.slippage_factor,
-            "emission_budget_routes_block": self.emission_budget_routes_block,
-            "candidate_budget_routes_block": self.candidate_budget_routes_block,
-            "block_cadence_s": self.block_cadence_s,
-            "cpu_op_budget_block": self.cpu_op_budget_block,
-            "estimated_cycles": self.estimated_cycles,
-            "execution_mode": self.execution_mode,
-            "enable_2v2": self.enable_2v2,
-            "enable_v2v3": self.enable_v2v3,
-            "enable_triangular": self.enable_triangular,
-            "enable_nhop": self.enable_nhop,
-            "enable_bfm": self.enable_bfm,
-            "enable_mmbf": self.enable_mmbf,
-            "enable_johnson": self.enable_johnson,
-            "enable_bounded_dfs": self.enable_bounded_dfs,
-            "enable_rich": self.enable_rich,
-            "enable_convex_size": self.enable_convex_size,
-            "selected_strategy_id": self.selected_strategy_id,
-            "selected_execution_mode": self.selected_execution_mode,
-            "min_strategy_fit_pct": self.min_strategy_fit_pct,
-            "min_operator_coverage_pct": self.min_operator_coverage_pct,
-            "enable_observe_only": self.enable_observe_only,
-            "strict_surface_match": self.strict_surface_match,
-            "strict_dependency_match": self.strict_dependency_match,
-            "route_capacity": self.route_capacity,
-            "primary_operator_weight": self.primary_operator_weight,
-            "secondary_operator_weight": self.secondary_operator_weight,
-            "rank_economic_weight": self.rank_economic_weight,
-            "rank_strategy_fit_weight": self.rank_strategy_fit_weight,
-            "rank_operator_weight": self.rank_operator_weight,
-            "killswitch": self.killswitch,
-            "source": "canonical_knobs.rs (01_CONFIG ULTRA workbook)",
-        })
+        let mut m = serde_json::Map::with_capacity(44);
+        m.insert("max_hops".into(), json!(self.max_hops));
+        m.insert("min_hops".into(), json!(self.min_hops));
+        m.insert("selected_financing".into(), json!(self.selected_financing));
+        m.insert(
+            "min_pool_liquidity_usd".into(),
+            json!(self.min_pool_liquidity_usd),
+        );
+        m.insert(
+            "max_pool_utilization_pct".into(),
+            json!(self.max_pool_utilization_pct),
+        );
+        m.insert("min_gross_edge_bps".into(), json!(self.min_gross_edge_bps));
+        m.insert("max_gas_usd".into(), json!(self.max_gas_usd));
+        m.insert("max_freshness_s".into(), json!(self.max_freshness_s));
+        m.insert("min_size_usd".into(), json!(self.min_size_usd));
+        m.insert("min_ev_usd".into(), json!(self.min_ev_usd));
+        m.insert("risk_haircut_pct".into(), json!(self.risk_haircut_pct));
+        m.insert("slippage_factor".into(), json!(self.slippage_factor));
+        m.insert(
+            "emission_budget_routes_block".into(),
+            json!(self.emission_budget_routes_block),
+        );
+        m.insert(
+            "candidate_budget_routes_block".into(),
+            json!(self.candidate_budget_routes_block),
+        );
+        m.insert("block_cadence_s".into(), json!(self.block_cadence_s));
+        m.insert(
+            "cpu_op_budget_block".into(),
+            json!(self.cpu_op_budget_block),
+        );
+        m.insert("estimated_cycles".into(), json!(self.estimated_cycles));
+        m.insert("execution_mode".into(), json!(self.execution_mode));
+        m.insert("enable_2v2".into(), json!(self.enable_2v2));
+        m.insert("enable_v2v3".into(), json!(self.enable_v2v3));
+        m.insert("enable_triangular".into(), json!(self.enable_triangular));
+        m.insert("enable_nhop".into(), json!(self.enable_nhop));
+        m.insert("enable_bfm".into(), json!(self.enable_bfm));
+        m.insert("enable_mmbf".into(), json!(self.enable_mmbf));
+        m.insert("enable_johnson".into(), json!(self.enable_johnson));
+        m.insert("enable_bounded_dfs".into(), json!(self.enable_bounded_dfs));
+        m.insert("enable_rich".into(), json!(self.enable_rich));
+        m.insert("enable_convex_size".into(), json!(self.enable_convex_size));
+        m.insert(
+            "selected_strategy_id".into(),
+            json!(self.selected_strategy_id),
+        );
+        m.insert(
+            "selected_execution_mode".into(),
+            json!(self.selected_execution_mode),
+        );
+        m.insert(
+            "min_strategy_fit_pct".into(),
+            json!(self.min_strategy_fit_pct),
+        );
+        m.insert(
+            "min_operator_coverage_pct".into(),
+            json!(self.min_operator_coverage_pct),
+        );
+        m.insert(
+            "enable_observe_only".into(),
+            json!(self.enable_observe_only),
+        );
+        m.insert(
+            "strict_surface_match".into(),
+            json!(self.strict_surface_match),
+        );
+        m.insert(
+            "strict_dependency_match".into(),
+            json!(self.strict_dependency_match),
+        );
+        m.insert("route_capacity".into(), json!(self.route_capacity));
+        m.insert(
+            "primary_operator_weight".into(),
+            json!(self.primary_operator_weight),
+        );
+        m.insert(
+            "secondary_operator_weight".into(),
+            json!(self.secondary_operator_weight),
+        );
+        m.insert(
+            "rank_economic_weight".into(),
+            json!(self.rank_economic_weight),
+        );
+        m.insert(
+            "rank_strategy_fit_weight".into(),
+            json!(self.rank_strategy_fit_weight),
+        );
+        m.insert(
+            "rank_operator_weight".into(),
+            json!(self.rank_operator_weight),
+        );
+        m.insert("killswitch".into(), json!(self.killswitch));
+        m.insert(
+            "source".into(),
+            json!("canonical_knobs.rs (01_CONFIG ULTRA workbook)"),
+        );
+        serde_json::Value::Object(m)
     }
 }
 
@@ -541,7 +591,10 @@ mod tests {
         assert!(k.enable_johnson);
         assert_eq!(k.selected_financing, "AAVE_FL");
         assert!(k.killswitch);
-        assert!(k.validate().is_ok(), "explicit operator overrides must validate");
+        assert!(
+            k.validate().is_ok(),
+            "explicit operator overrides must validate"
+        );
         // Invalid numeric falls back to default (validate still guards ranges).
         std::env::set_var("ARBX_KNOB_MAX_HOPS", "not-a-number");
         let k = CanonicalKnobs::from_env();
@@ -560,7 +613,10 @@ mod tests {
         let obj = j.as_object().expect("snapshot is an object");
         // 43 knob fields + 1 source field.
         assert_eq!(obj.len(), 44);
-        assert_eq!(obj["source"], "canonical_knobs.rs (01_CONFIG ULTRA workbook)");
+        assert_eq!(
+            obj["source"],
+            "canonical_knobs.rs (01_CONFIG ULTRA workbook)"
+        );
         assert_eq!(obj["max_hops"], 7);
         assert_eq!(obj["killswitch"], false);
     }
