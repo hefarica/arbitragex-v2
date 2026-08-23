@@ -307,6 +307,7 @@ mod tests {
             log_weight,
             freshness_ts: 1_700_000_000,
             blk: 20_000_000,
+            hot_token: false,
             direction: RouteDirection::ZeroForOne,
         }
     }

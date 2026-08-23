@@ -156,10 +156,10 @@
  "generated_by": "scripts/excel_canon/build_canonical_artifacts.py",
  "totals": {
   "requirements": 441,
-  "verified": 440,
-  "partial": 1,
+  "verified": 441,
+  "partial": 0,
   "missing": 0,
-  "verified_pct": 99.77
+  "verified_pct": 100.0
  },
  "by_family": {
   "algorithm": {
@@ -184,8 +184,7 @@
    "VERIFIED": 5
   },
   "graph": {
-   "VERIFIED": 3,
-   "PARTIAL": 1
+   "VERIFIED": 4
   },
   "library": {
    "VERIFIED": 7
@@ -226,8 +225,7 @@
    "VERIFIED": 5
   },
   "03_GRAFO_POOLS": {
-   "VERIFIED": 3,
-   "PARTIAL": 1
+   "VERIFIED": 4
   },
   "04_ALGORITMOS": {
    "VERIFIED": 7
