@@ -36,6 +36,9 @@ pub mod pool_candidate;
 pub mod pool_discovery;
 pub mod pool_sources;
 pub mod publisher;
+// QUOTEBASE-264 05_QUOTE_BASE: QuoteScore weighted form + workbook fixtures
+// (XLS-QB-06). Lib-only: consumers are the future dense-id quote-base layer.
+pub mod quote_score;
 pub mod reserves;
 pub mod route_api;
 pub mod route_decoder;
