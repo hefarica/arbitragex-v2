@@ -29,7 +29,17 @@ import { mapToOmniOpportunity, type OmniOpportunity } from "./types";
 
 const MAX_WS_ERRORS = 3;
 const POLL_INTERVAL_MS = 5000;
-const MAX_ITEMS = 200;
+
+// MEM-RENDER-01: the WS path used to call addOpportunity PER MESSAGE (one
+// Zustand update + new 200-item array + full grid reconciliation per event —
+// ~54-122 events/min measured on prod bursts, for hours). Buffer incoming
+// events and flush ONCE per cadence with a single batch merge. Same pattern
+// the polling path already uses (see setOpportunities PERF note).
+const WS_FLUSH_MS = 1000;
+
+// MEM-RENDER-01: vigency window. A card older than this (by detection time)
+// is pruned on every flush — only active/vigent routes stay in the grid.
+const OPP_TTL_MS = 5 * 60_000;
 
 // =============================================================================
 // Types
@@ -64,8 +74,8 @@ export function useOmniOpportunities({
   initialOpportunities = [],
 }: UseOmniOpportunitiesOptions) {
   // Store actions (stable references)
-  const addOpportunity = useOmniStore((state) => state.addOpportunity);
   const setOpportunities = useOmniStore((state) => state.setOpportunities);
+  const pruneStale = useOmniStore((state) => state.pruneStale);
   const setWsStatus = useOmniStore((state) => state.setWsStatus);
 
   // Refs for stable closure access
@@ -74,6 +84,8 @@ export function useOmniOpportunities({
   const pollingTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const viableOnlyRef = useRef(viableOnly);
   const initializedRef = useRef(false);
+  // MEM-RENDER-01: WS ingest buffer — upsert by id, flushed on WS_FLUSH_MS.
+  const pendingRef = useRef<Map<string, OmniOpportunity>>(new Map());
 
   // Keep viableOnly ref in sync
   useEffect(() => {
@@ -120,6 +132,9 @@ export function useOmniOpportunities({
         // Each addOpportunity triggered a separate Zustand update + devtools
         // serialization; with 50 items every 4-5s that caused severe memory churn.
         setOpportunities(rawItems.map((raw) => mapToOmniOpportunity(raw as Record<string, unknown>)));
+        // MEM-RENDER-01: vigency applies on every path, not only the WS flush —
+        // a stale row inside the server snapshot must not resurrect a card.
+        pruneStale(OPP_TTL_MS);
       } catch {
         // Swallow — status badge already shows "POLLING" (degraded)
       }
@@ -127,7 +142,7 @@ export function useOmniOpportunities({
 
     poll();
     pollingTimerRef.current = setInterval(poll, POLL_INTERVAL_MS);
-  }, [setWsStatus, setOpportunities]);
+  }, [setWsStatus, setOpportunities, pruneStale]);
 
   // WebSocket lifecycle
   useEffect(() => {
@@ -153,6 +168,19 @@ export function useOmniOpportunities({
     // itself decide (3-error degrade below still applies).
     const adminToken = getAdminToken() ?? undefined;
 
+    // MEM-RENDER-01: flush the WS ingest buffer in ONE store update per
+    // cadence. Collapses burst arrivals (measured up to ~2 events/s on prod)
+    // into a single merge + a single vigency prune per second.
+    const pending = pendingRef.current;
+    const flushPending = () => {
+      if (pending.size === 0) return;
+      const batch = Array.from(pending.values());
+      pending.clear();
+      setOpportunities(batch);
+      pruneStale(OPP_TTL_MS);
+    };
+    const flushTimer = setInterval(flushPending, WS_FLUSH_MS);
+
     const handle = createOpportunitySocket({
       url: wsUrl,
       ioFactory: (url, opts) => io(url, opts),
@@ -166,6 +194,8 @@ export function useOmniOpportunities({
           errorCountRef.current += 1;
           if (errorCountRef.current >= MAX_WS_ERRORS) {
             handle.dispose();
+            clearInterval(flushTimer);
+            flushPending();
             startPolling();
           }
         } else if (status === "LIVE") {
@@ -173,12 +203,16 @@ export function useOmniOpportunities({
         }
       },
       onOpportunity: (opp) => {
-        // Transform raw WS data through mapper before storing
-        addOpportunity(mapToOmniOpportunity(opp as unknown as Record<string, unknown>));
+        // MEM-RENDER-01: buffer the mapped row — the store is touched only by
+        // flushPending (1 Hz), not per message.
+        const mapped = mapToOmniOpportunity(opp as unknown as Record<string, unknown>);
+        pending.set(mapped.id, mapped);
       },
     });
 
     return () => {
+      clearInterval(flushTimer);
+      pending.clear();
       handle.dispose();
       if (pollingTimerRef.current !== null) {
         clearInterval(pollingTimerRef.current);
@@ -190,7 +224,7 @@ export function useOmniOpportunities({
       usingPollingRef.current = false;
       setWsStatus("DISCONNECTED");
     };
-  }, [startPolling, setWsStatus, addOpportunity]);
+  }, [startPolling, setWsStatus, setOpportunities, pruneStale]);
 
   // Return nothing — consumers read directly from store
   // This enforces SSOT pattern
