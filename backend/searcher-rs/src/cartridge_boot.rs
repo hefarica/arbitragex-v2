@@ -1064,7 +1064,7 @@ pub async fn active_evaluate_and_emit(
     let mut negative_total: u64 = 0;
     let mut positive_total: u64 = 0;
 
-    for (cartridge_id, _category, declared_primary_ops, declared_secondary_ops) in pertinent {
+    for (cartridge_id, category, declared_primary_ops, declared_secondary_ops) in pertinent {
         match runner.evaluate(&cartridge_id, pool_data.clone()).await {
             Ok(eval_result) => {
                 if !eval_result.is_opportunity {
@@ -1156,11 +1156,8 @@ pub async fn active_evaluate_and_emit(
                     let runner_ev = runner.clone();
                     let registry_ev = math_registry.clone();
                     let reserves_ev = reserves_cache.clone();
-                    let pools_ev: Vec<Address> = intent
-                        .legs
-                        .iter()
-                        .filter_map(|l| l.pool_hint)
-                        .collect();
+                    let pools_ev: Vec<Address> =
+                        intent.legs.iter().filter_map(|l| l.pool_hint).collect();
                     let strategy_key_ev = cartridge_id.clone();
                     let primary_ev = declared_primary_ops.clone();
                     let secondary_ev = declared_secondary_ops.clone();

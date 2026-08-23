@@ -445,8 +445,7 @@ impl OpportunityEmitter {
         // strategy_evidence_key — the pre-fix reader keyed `{:?}` of the
         // StrategyKind newtype while the writer keyed `{:?}` of RouterKind;
         // the keys never matched and evidence_vector was always null.
-        let evidence_key =
-            crate::math_evidence::strategy_evidence_key(opp.chain_id, &strategy_key);
+        let evidence_key = crate::math_evidence::strategy_evidence_key(opp.chain_id, &strategy_key);
         let evidence_vector: Option<serde_json::Value> = {
             let mut r = self.redis.clone();
             let json: Option<String> = redis::cmd("GET")

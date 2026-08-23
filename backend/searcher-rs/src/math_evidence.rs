@@ -117,10 +117,7 @@ pub fn declared_combo_snapshot(
     primary: &[(u32, Option<f64>, String)],
     secondary: &[(u32, Option<f64>, String)],
 ) -> serde_json::Value {
-    fn to_values(
-        entries: &[(u32, Option<f64>, String)],
-        role: &str,
-    ) -> Vec<serde_json::Value> {
+    fn to_values(entries: &[(u32, Option<f64>, String)], role: &str) -> Vec<serde_json::Value> {
         entries
             .iter()
             .map(|(id, scalar, name)| {
