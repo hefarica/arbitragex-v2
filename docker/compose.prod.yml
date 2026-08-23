@@ -456,9 +456,15 @@ services:
     depends_on:
     - edge
     healthcheck:
+      # READY-CIRC-01: liveness must probe a static asset, never `/`. `/` is
+      # force-dynamic SSR that fetches readiness/decision from the edge →
+      # api-server verifyAll() → PR-1 HEAD frontend `/` — the healthcheck and
+      # the readiness cycle self-deadlock (5s timeout < 8s PR-1 abort →
+      # unhealthy flaps every ~39s TTL beat). /favicon.ico serves the same
+      # origin without SSR.
       test:
       - CMD-SHELL
-      - node -e "require('http').get('http://localhost:5173/',r=>process.exit(r.statusCode<500?0:1)).on('error',()=>process.exit(1))"
+      - node -e "require('http').get('http://localhost:5173/favicon.ico',r=>process.exit(r.statusCode<500?0:1)).on('error',()=>process.exit(1))"
       interval: 30s
       timeout: 5s
       retries: 5
