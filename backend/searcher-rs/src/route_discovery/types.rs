@@ -174,6 +174,14 @@ pub struct RouteEdge {
     pub freshness_ts: u64,
     /// Block number of the snapshot (`0` for V3 — slot0 carries no block).
     pub blk: u64,
+    /// Hot-token classification (workbook `03_GRAFO_POOLS` col P): `true` when
+    /// EITHER side of the pool is a canonical hub token (default set
+    /// {WETH, USDC, WBTC, USDT} — `GraphBuildConfig::hot_tokens`). Hubs carry
+    /// the graph's liquidity concentration; the optional
+    /// `GraphBuildConfig::hot_token_only` prune keeps only these edges.
+    /// A symbol outside the hub set is `false` (a pool without token metadata
+    /// never reaches classification — it rejects with `missing_token_metadata`).
+    pub hot_token: bool,
     pub direction: RouteDirection,
 }
 
