@@ -351,6 +351,7 @@ mod tests {
             log_weight: None,
             freshness_ts: 0,
             blk: 0,
+            hot_token: false,
             direction: RouteDirection::from_in_token0(addr(ti), addr(t0)),
         }
     }
@@ -580,6 +581,7 @@ mod tests {
             log_weight: weight,
             freshness_ts: 0,
             blk: 0,
+            hot_token: false,
             direction: RouteDirection::from_in_token0(addr(ti), addr(ti)),
         }
     }

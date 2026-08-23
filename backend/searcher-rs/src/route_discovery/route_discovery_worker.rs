@@ -144,12 +144,39 @@ impl WorkerConfig {
                 Some(crate::canonical_knobs::CanonicalKnobs::default().selected_strategy_id)
             });
 
+        // XLS-GRAPH-01 hot-token classification (workbook 03 col P). The hub
+        // set defaults to the workbook formula ({WETH, USDC, WBTC, USDT});
+        // `ARBX_GRAPH_HOT_TOKENS` overrides per-chain (comma-separated symbols).
+        // The prune itself is default-OFF — `ARBX_GRAPH_HOT_TOKEN_ONLY=true`
+        // is an explicit operator decision (topology change). Orthogonal to
+        // the hop mask above: this gates WHICH pools enter the graph, the
+        // mask gates HOW MANY hops expansion may take.
+        let hot_tokens = std::env::var("ARBX_GRAPH_HOT_TOKENS")
+            .ok()
+            .map(|raw| {
+                raw.split(',')
+                    .map(|s| s.trim().to_uppercase())
+                    .filter(|s| !s.is_empty())
+                    .collect::<Vec<_>>()
+            })
+            .filter(|v| !v.is_empty())
+            .unwrap_or_default();
+        let hot_token_only = std::env::var("ARBX_GRAPH_HOT_TOKEN_ONLY")
+            .map(|v| v.eq_ignore_ascii_case("true"))
+            .unwrap_or(false);
+
         Self {
             interval_ms,
             max_telemetry_per_tick: max_telemetry,
             graph: GraphBuildConfig {
                 max_age_secs,
                 min_liquidity_hint: disc.min_liquidity_hint,
+                hot_tokens: if hot_tokens.is_empty() {
+                    GraphBuildConfig::default().hot_tokens
+                } else {
+                    hot_tokens
+                },
+                hot_token_only,
             },
             finder: RouteFinderConfig {
                 min_depth,
@@ -678,6 +705,7 @@ mod tests {
             log_weight: None,
             freshness_ts: 0,
             blk: 0,
+            hot_token: false,
             direction: RouteDirection::from_in_token0(addr(ti), addr(t0)),
         }
     }
