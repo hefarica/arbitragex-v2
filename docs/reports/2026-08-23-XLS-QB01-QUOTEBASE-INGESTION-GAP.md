@@ -131,6 +131,21 @@ Orden razona dependencia: QB-02 (datos/enum) → QB-03 (dispatch usa mask) → Q
 5. **Consumo de knobs declarativos**: `min_net_bps` (net gate evaluation) y `beam_k` (DFS beam con la seed queue de QB-05).
 6. **Paso 2 del contrato** (ChainResolver runtime symbol→TokenKey) — sigue 🟡, clase de bug CARTRIDGE-GATE-ADDR-01.
 
+### Registro world-layer — lo mejor del mundo integrado a los follow-ups (regla omniscience: "el Excel es el 5%")
+
+Fuentes: `skills/arbitragex-ultra/world/{graph-algorithms,quant-math,mev-practice}/BETTER_THAN_EXCEL.md` (repo canon) + verificación web 2026-08-23. Clasificación anti-alucinación en cada ítem.
+
+| # | Hallazgo mundial | Clase | Integración en este programa |
+|---|---|---|---|
+| W1 | **El shortfall medido es STALE STATE, no faltan estrategias**: 2.02 bps/pair promedio ($24M/$120B SCO vs FVO), "most of it from stale state"; staleness 1.29–1.78 bps/bloque de lag | PRIMARY_SOURCE (arXiv:2607.20762, 2502.08258; world graph-algorithms ítem 5) | **QB-05b y QB-07b son el follow-up de mayor palanca** — dirty-pair propagation + budget <30ms SON la máquina anti-staleness. El prize está cuantificado. |
+| W2 | **Cycle-edge inverted indexes**: amms-rs mantiene grafo persistente con reserves actualizados in-place por evento + índice invertido edge→ciclos para re-validar SOLO los ciclos afectados (vs rebuild por scan) | CANONICAL_REPO/world (graph-algorithms ítem 7) | **QB-05c (nuevo)**: extender `DirtyPairEngine` con `CycleIndex` (pair→ciclos que lo contienen) — fan-out dirty pair→ciclos, no solo pair. El módulo actual es la capa 1 (pair-level); la capa 2 (cycle-level) es el upgrade. |
+| W3 | **RICH exact-k** (color-coding + Held-Karp DP, O(2^k·|V|·|E|), 32.69× más rápido que el competidor, 0.02–3.9% error) domina DFS bounded en k≥4 (DFS 330–2194× más lento en k=6) | PRIMARY_SOURCE (VLDB 2025, vldb.org/pvldb/vol18/p4081-luo.pdf) | **QB-05b/QB-07b**: la política de expansión del hot-seed queue usa RICH (knob `enable_rich` ya canónico desde #456) para k≥4; DFS/beam solo k≤3. |
+| W4 | **Split-route convex global** (MPO/G-FVO: marginal-price equalization λ*, UNA variable por token, 200× más rápido que solvers genéricos) vs path-then-size | PRIMARY_SOURCE (arXiv:2502.08258, 2607.20762) | **QB-06c (nuevo)**: los AmountBuckets del workbook (09 r11) escalan hacia split-allocation vectorial; SizeOptimizer queda como capa per-path del funnel, MPO como refinamiento final. |
+| W5 | **LVR/adverse selection sin operador en los 31**: no-arbitrage band A(f;v)=(v/8)/(1+√(2λ/v)f) — el mundo modela impact como STATE STALENESS con triggers cerrados, no slippage estático | PRIMARY_SOURCE (arXiv:2505.05113, 2606.21769) | **Gate candidato post-QB**: edge computado como dislocación − banda LVR-style; conecta con W1 (stale = dentro de banda). NO se implementa en QB (fuera de scope del workbook — registrar como estrategia world nueva en NEW_STRATEGIES.md). |
+| W6 | **Búsqueda web 2026-08-23**: nada más nuevo que el canon world/ para incremental cycle revalidation (RICH VLDB'25 + linaje Bender–Fineman–Gilbert–Tarjan/Bernstein = fundamento de dirty-edge propagation) | PRIMARY_SOURCE (web) | Canon world/ confirmado vigente — sin deriva. |
+
+**Principio del operador (2026-08-23): "nada de lo desarrollado se pierde; buscar a nivel mundial lo mejor; integrar el mejor-de-ambos-mundos o el mejor mundo prevalece."** Los módulos QB-01..07 se PRESERVAN como capa Excel-canónica; W1–W6 se integran como upgrades en los follow-ups, cada uno con su PR + ID.
+
 ## 5. Definition of Done de este engine (hoja 15, filas 22–29) — estado inicial
 
 | DoD | Estado |
