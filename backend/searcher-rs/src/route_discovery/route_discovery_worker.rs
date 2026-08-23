@@ -874,12 +874,18 @@ mod tests {
         finder.hop_mask_strategy_id = Some("MEV-01-015".to_string()); // mask 1 → hop 2 only
         let tick = evaluate_tick(&outcome, 1, &engine, &finder, 200, false, 0, "shadow");
         assert_eq!(tick.tick_summary["multi_hop_mask_strategy"], "MEV-01-015");
-        assert_eq!(tick.tick_summary["multi_hop_hops_effective"], (2u8, 2u8));
+        assert_eq!(
+            tick.tick_summary["multi_hop_hops_effective"],
+            serde_json::json!((2u8, 2u8))
+        );
         assert_eq!(tick.tick_summary["multi_hop_mask_skip"], false);
 
         let tick = evaluate_tick(&outcome, 1, &engine, &base, 200, false, 0, "shadow");
         assert!(tick.tick_summary["multi_hop_mask_strategy"].is_null());
-        assert_eq!(tick.tick_summary["multi_hop_hops_effective"], (2u8, 3u8));
+        assert_eq!(
+            tick.tick_summary["multi_hop_hops_effective"],
+            serde_json::json!((2u8, 3u8))
+        );
         assert_eq!(tick.tick_summary["multi_hop_mask_skip"], false);
 
         let mut finder = base.clone();
