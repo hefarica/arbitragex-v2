@@ -2,6 +2,7 @@ import { RadarIcon, ShieldCheckIcon } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
 import { RouteDiscoveryOutcomesPanel } from "@/features/route-discovery/RouteDiscoveryOutcomesPanel";
+import { ViableByHopsPanel } from "@/features/route-discovery/ViableByHopsPanel";
 
 export const metadata = {
   title: "Route Outcomes — ArbitrageX",
@@ -47,6 +48,9 @@ export default function RouteOutcomesPage() {
 
       <section className="flex flex-col gap-6">
         <RouteDiscoveryOutcomesPanel />
+        {/* XLS-DASH-01 — workbook 29_SUPER_DASHBOARD viable-KPI set (by hops /
+            by kind / viability %) over REAL opportunities rows. */}
+        <ViableByHopsPanel />
       </section>
     </main>
   );

@@ -1262,6 +1262,11 @@ app.get("/api/risk/circuit-breakers/events", (c) => proxy(c, "/api/v1/risk/circu
 app.get("/api/route-discovery-outcomes/summary", (c) => proxy(c, "/api/v1/route-discovery-outcomes/summary", "arbx:cache:rdo-summary", 15));
 app.get("/api/route-discovery-outcomes", (c) => proxy(c, "/api/v1/route-discovery-outcomes", "arbx:cache:rdo-list", 15));
 
+// XLS-DASH-01 — workbook 29_SUPER_DASHBOARD viable-KPI set (by_hops / by_kind /
+// viability %) over REAL opportunities rows. proxy() query-scopes the KV cache
+// key so ?hours= windows never collide. 15s TTL. Read-only / observe-only.
+app.get("/api/viable-kpis", (c) => proxy(c, "/api/v1/analytics/viable-kpis", "arbx:cache:viable-kpis", 15));
+
 // Topology Vault — Admin-token gated; edge forwards header.
 // GET snapshot uses short cache (5s) since topology changes infrequently.
 // POST mutations is pass-through (mutation).

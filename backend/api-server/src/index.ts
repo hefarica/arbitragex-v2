@@ -7,6 +7,7 @@ import { ScoredOpportunitiesArchiver } from "./routes/scored-opportunities-archi
 import { RouteDiscoveryOutcomeSink, outcomeSinkEnabled } from "./routes/route-discovery-outcome-sink.js";
 import { OpportunitiesBridgeArchiver, opportunitiesBridgeEnabled } from "./routes/opportunities-bridge-archiver.js";
 import { buildRouteDiscoveryOutcomesRouter } from "./routes/route-discovery-outcomes-api.js";
+import { buildViableKpisRouter } from "./routes/viable-kpis.js";
 import { buildPaperHistoryRouter } from "./routes/paper-history-api.js";
 import { buildOperatorRouter } from "./routes/operator.js";
 import { buildCartridgeForgeRouter } from "./routes/cartridge-forge.js";
@@ -666,6 +667,9 @@ app.use(buildCartridgesRouter(cartridgeTelemetryCache, { redis, requireAdminToke
 // table (the shadow outcomes the sink persists, incl. the Paso 9 `reason`). This is
 // the missing READ side for that passive sink. NO-ACTIVE: pure SELECT, never writes.
 app.use(buildRouteDiscoveryOutcomesRouter(pool));
+// XLS-DASH-01 — workbook 29_SUPER_DASHBOARD KPI set (viable by_hops / by_kind +
+// viability %) over REAL opportunities rows. Read-only SELECT, observe-only.
+app.use(buildViableKpisRouter(pool));
 // FASE OMEGA SHADOW — paper_trade_runs read-side (drift-analysis surface).
 // 100% read-only / NO-ACTIVE: pure SELECT, never touches capital or execution.
 app.use(buildPaperHistoryRouter(pool));
