@@ -329,22 +329,28 @@ function doctrinalBlockers(): Blocker[] {
   // rejection at the spread gate; SIM_SUCCESS stays deferred to M5 testnet).
   // Enablers: PR #431 (EIP-3607 quote caller + scoped RUSTFLAGS for the
   // revm 1.3.0 ub-checks abort + 7702-safe EXECUTOR_1 doctrine note).
+  //
+  // A.5 (a5_paper_shadow_not_executed) was RESOLVED 2026-08-23 and removed
+  // from this list. Evidence (full dossier:
+  // docs/reports/2026-08-23-A5-PAPER-SHADOW-AUDIT.md):
+  //   - Ledger `paper_trade_runs`: 591,753 rows spanning 2026-07-05 → live
+  //     (49 days continuous ≥ 7d doctrine threshold; G-PAP-1's own semantics
+  //     count from MIN(detected_at), not from A.4).
+  //   - Continuity: max gap between consecutive runs post-A.4 = 1.81h (market
+  //     burstiness, not paralysis); daily volume 655–11,526 runs.
+  //   - Sim error rate: ≤13/day over 20k–66k detections (≤0.04%).
+  //   - Operator decision 2026-08-23: total-accumulation reading — the 49
+  //     accumulated days satisfy the doctrine; no additional wait.
+  // Open follow-ups (tracked, NOT blockers of this phase flip):
+  //   - LATLED-01: execution_time_ms never populated by the ledger writers
+  //     (0/591,753) — the latency audit leg is a data gap, not a runtime gap.
+  //   - CARTRIDGE-GATE-ADDR-01 (PR #449): the cartridge sub-path of
+  //     paper-shadow was structurally rejected at the token gate; post-fix
+  //     accumulation continues and feeds A.6 calibration.
+  //   - The data-driven a5_state machine (GET /api/v1/scoring/status:
+  //     PAPER_SHADOW_WARMING → CALIBRATED_CANDIDATE → CALIBRATED) keeps
+  //     tracking prior calibration independently of this list.
   return [
-    {
-      id: "a5_paper_shadow_not_executed",
-      category: "doctrinal_phase",
-      severity: "critical",
-      status: "blocked",
-      title: "A.5 paper-shadow runtime has not executed",
-      description:
-        "Continuous paper-shadow accumulation (≥7 days, detection→sim→evidence) is the prerequisite to A.6 circuit-breakers calibration.",
-      required_action:
-        "After A.4 PASSES, run paper-shadow continuously and audit the daily ledger for revert rate, latency, sim error rate.",
-      operator_required: true,
-      can_auto_resolve: false,
-      blocks: ["A.5", "LIVE"],
-      evidence: { env_present: false, redacted_value: null, value_length: null, source: "doctrine" },
-    },
     {
       id: "a6_circuit_breakers_partial",
       category: "risk_circuit",
