@@ -2,8 +2,8 @@
 
 - **Workbook**: `ArbitrageX_Route_Strategy_Optimizer_264_ULTRA (1).xlsx` (sha256 `362ba8762edea602…`, 21 sheets)
 - **Strategies**: 264 · **Operators**: 31 · **Matrix links (non-zero)**: 1716 of 8184 grid cells
-- **Requirements**: 441 — ✅ VERIFIED 420 · 🟡 PARTIAL 21 · ❌ MISSING 0
-- **VERIFIED coverage**: **95.24%**
+- **Requirements**: 441 — ✅ VERIFIED 438 · 🟡 PARTIAL 3 · ❌ MISSING 0
+- **VERIFIED coverage**: **99.32%**
 
 > Generado por `scripts/excel_canon/build_canonical_artifacts.py`. Cada estado se VERIFICA contra el working tree (path/regex anchors) — nada declarativo. Counts derivados del workbook, jamás hardcodeados (RULE 00/R8).
 
@@ -19,7 +19,7 @@
 | 06_SENSIBILIDAD | 2 | 2 | 0 | 0 |
 | 07_GATES | 8 | 8 | 0 | 0 |
 | 08_DASHBOARD+29_SUPER_DASHBOARD | 6 | 6 | 0 | 0 |
-| 09_REFERENCIAS | 18 | 0 | 18 | 0 |
+| 09_REFERENCIAS | 18 | 18 | 0 | 0 |
 | 10_LISTAS | 12 | 10 | 2 | 0 |
 | 11_STRATEGY_CATALOG | 264 | 264 | 0 | 0 |
 | 12_OPERATOR_CONTROL | 31 | 31 | 0 | 0 |
@@ -37,7 +37,7 @@
 | algorithm | 7 | 0 | 0 |
 | config | 42 | 0 | 0 |
 | dashboard | 6 | 0 | 0 |
-| doctrine | 0 | 18 | 0 |
+| doctrine | 18 | 0 | 0 |
 | enum | 10 | 2 | 0 |
 | field-map | 11 | 0 | 0 |
 | financing | 5 | 0 | 0 |
