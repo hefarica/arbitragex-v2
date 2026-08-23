@@ -2,8 +2,8 @@
 
 - **Workbook**: `ArbitrageX_Route_Strategy_Optimizer_264_ULTRA (1).xlsx` (sha256 `362ba8762edea602…`, 21 sheets)
 - **Strategies**: 264 · **Operators**: 31 · **Matrix links (non-zero)**: 1716 of 8184 grid cells
-- **Requirements**: 441 — ✅ VERIFIED 440 · 🟡 PARTIAL 1 · ❌ MISSING 0
-- **VERIFIED coverage**: **99.77%**
+- **Requirements**: 441 — ✅ VERIFIED 441 · 🟡 PARTIAL 0 · ❌ MISSING 0
+- **VERIFIED coverage**: **100.0%**
 
 > Generado por `scripts/excel_canon/build_canonical_artifacts.py`. Cada estado se VERIFICA contra el working tree (path/regex anchors) — nada declarativo. Counts derivados del workbook, jamás hardcodeados (RULE 00/R8).
 
@@ -13,7 +13,7 @@
 |---|---:|---:|---:|---:|
 | 01_CONFIG | 42 | 42 | 0 | 0 |
 | 02_FINANCING | 5 | 5 | 0 | 0 |
-| 03_GRAFO_POOLS | 4 | 3 | 1 | 0 |
+| 03_GRAFO_POOLS | 4 | 4 | 0 | 0 |
 | 04_ALGORITMOS | 7 | 7 | 0 | 0 |
 | 05_RUTAS | 7 | 7 | 0 | 0 |
 | 06_SENSIBILIDAD | 2 | 2 | 0 | 0 |
@@ -41,7 +41,7 @@
 | enum | 12 | 0 | 0 |
 | field-map | 11 | 0 | 0 |
 | financing | 5 | 0 | 0 |
-| graph | 3 | 1 | 0 |
+| graph | 4 | 0 | 0 |
 | library | 7 | 0 | 0 |
 | matrix | 1 | 0 | 0 |
 | operator | 31 | 0 | 0 |
@@ -55,4 +55,3 @@
 
 ## Gaps prioritarios (MISSING/PARTIAL con impacto)
 
-- 🟡 **REQ-GRAPH-ELIGIBILITY** (03_GRAFO_POOLS, graph): Elegibilidad de pool por liquidez mínima (poda del grafo) + Hot_Token para pruning por concentración

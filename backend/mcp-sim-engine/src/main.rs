@@ -370,6 +370,10 @@ impl SimEngine {
                     log_weight: None,
                     freshness_ts: 0,
                     blk: 0,
+                    // No token metadata in the MCP tool's pool rows — hot-token
+                    // classification is graph_builder's job (workbook 03 col P);
+                    // honest neutral value here.
+                    hot_token: false,
                     direction: RouteDirection::from_in_token0(ti, t0),
                 });
             }

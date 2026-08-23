@@ -812,6 +812,7 @@ mod tests {
             log_weight,
             freshness_ts: 1_700_000_000,
             blk: 20_000_000,
+            hot_token: false,
             direction: RouteDirection::ZeroForOne,
         }
     }
@@ -951,6 +952,7 @@ mod tests {
             log_weight,
             freshness_ts: 1_700_000_000,
             blk: 20_000_000,
+            hot_token: false,
             direction: RouteDirection::from_in_token0(token_in, token_in),
         }
     }

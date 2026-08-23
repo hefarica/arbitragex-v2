@@ -40,6 +40,16 @@ pub struct GraphBuildConfig {
     /// Reject when `liquidity_hint < min_liquidity_hint`. `0.0` disables the
     /// check (default) — Phase 1 keeps thin pools as topology.
     pub min_liquidity_hint: f64,
+    /// Hub-token SYMBOLS for the hot-token classification (workbook
+    /// `03_GRAFO_POOLS` col P: pool is hot when either side ∈ this set).
+    /// Default = the workbook formula's set {WETH, USDC, WBTC, USDT}. Override
+    /// per-chain via `ARBX_GRAPH_HOT_TOKENS` (comma-separated).
+    pub hot_tokens: Vec<String>,
+    /// When `true`, prune non-hot edges from the graph entirely (concentration
+    /// pruning — Network-Analysis-of-Uniswap core). Default `false`: the
+    /// classification is stamped on every edge but the topology is unchanged;
+    /// flipping it is an explicit operator decision (`ARBX_GRAPH_HOT_TOKEN_ONLY`).
+    pub hot_token_only: bool,
 }
 
 impl Default for GraphBuildConfig {
@@ -47,9 +57,15 @@ impl Default for GraphBuildConfig {
         Self {
             max_age_secs: 120,
             min_liquidity_hint: 0.0,
+            hot_tokens: DEFAULT_HOT_TOKENS.iter().map(|s| s.to_string()).collect(),
+            hot_token_only: false,
         }
     }
 }
+
+/// The workbook `03_GRAFO_POOLS` col-P hub set (the exact IF/OR formula's
+/// tokens): the liquidity-concentration core of the graph.
+pub const DEFAULT_HOT_TOKENS: [&str; 4] = ["WETH", "USDC", "WBTC", "USDT"];
 
 /// A pool that did not yield edges, with the reason (telemetry: `route_discovery.rejected`).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -222,6 +238,16 @@ pub fn build_edges_for_pool(
         return Err("low_liquidity".to_string());
     }
 
+    // Hot-token classification (workbook 03 col P): either side's SYMBOL in the
+    // hub set. A missing meta/symbol is NOT hot (R8: unknown ≠ hot).
+    let hot_token = [meta0, meta1]
+        .into_iter()
+        .flatten()
+        .any(|m| cfg.hot_tokens.iter().any(|h| h == &m.symbol));
+    if cfg.hot_token_only && !hot_token {
+        return Err("non_hot_token_edge".to_string());
+    }
+
     let edge_01 = RouteEdge {
         chain_id: pool.chain_id,
         pool: pool.address,
@@ -235,6 +261,7 @@ pub fn build_edges_for_pool(
         log_weight: lw_01,
         freshness_ts: ts,
         blk,
+        hot_token,
         direction: RouteDirection::ZeroForOne,
     };
     let edge_10 = RouteEdge {
@@ -689,6 +716,7 @@ mod tests {
         let cfg = GraphBuildConfig {
             max_age_secs: 120,
             min_liquidity_hint: 1e30, // absurdly high → reject
+            ..Default::default()
         };
         let err = build_edges_for_pool(
             &p,
@@ -701,6 +729,90 @@ mod tests {
         )
         .unwrap_err();
         assert_eq!(err, "low_liquidity");
+    }
+
+    /// XLS-GRAPH-01 (workbook 03 col P): a pool with either side in the hub set
+    /// is hot; unknown symbols are NOT hot (R8); both directed edges carry the
+    /// same classification; the prune rejects non-hot pools with an explicit
+    /// reason when enabled.
+    #[test]
+    fn hot_token_classification_and_prune() {
+        let p = v2_pool();
+        let mut weth = meta(18);
+        weth.symbol = "WETH".to_string();
+        let base = GraphBuildConfig::default();
+
+        // Either side hot → both edges classified hot.
+        let (e0, e1) = build_edges_for_pool(
+            &p,
+            Some(&reserves(1000)),
+            None,
+            Some(&weth),
+            Some(&meta(6)),
+            1000,
+            &base,
+        )
+        .unwrap();
+        assert!(e0.hot_token);
+        assert!(e1.hot_token);
+
+        // No hub side → not hot, and kept when the prune is OFF (default:
+        // topology unchanged).
+        let (e0, _) = build_edges_for_pool(
+            &p,
+            Some(&reserves(1000)),
+            None,
+            Some(&meta(6)),
+            Some(&meta(6)),
+            1000,
+            &base,
+        )
+        .unwrap();
+        assert!(!e0.hot_token);
+
+        // Missing meta never reaches classification — the pool rejects earlier
+        // with its own reason (`missing_token_metadata`), so "unknown symbol"
+        // in practice means "symbol not in the hub set" (covered above).
+        let err = build_edges_for_pool(
+            &p,
+            Some(&reserves(1000)),
+            None,
+            None,
+            Some(&meta(6)),
+            1000,
+            &base,
+        )
+        .unwrap_err();
+        assert_eq!(err, "missing_token_metadata");
+
+        // Prune ON → non-hot pool rejected with the machine-readable reason.
+        let pruning = GraphBuildConfig {
+            hot_token_only: true,
+            ..Default::default()
+        };
+        let err = build_edges_for_pool(
+            &p,
+            Some(&reserves(1000)),
+            None,
+            Some(&meta(6)),
+            Some(&meta(6)),
+            1000,
+            &pruning,
+        )
+        .unwrap_err();
+        assert_eq!(err, "non_hot_token_edge");
+
+        // Prune ON + hub side → accepted (hub topology survives the prune).
+        assert!(build_edges_for_pool(
+            &p,
+            Some(&reserves(1000)),
+            None,
+            Some(&weth),
+            Some(&meta(6)),
+            1000,
+            &pruning,
+        )
+        .is_ok());
     }
 
     #[test]

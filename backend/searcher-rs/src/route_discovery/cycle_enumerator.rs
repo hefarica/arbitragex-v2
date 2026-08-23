@@ -97,6 +97,7 @@ fn topology_graph(pools: &[PoolRef]) -> TokenGraph {
             log_weight: None,
             freshness_ts: 0,
             blk: 0,
+            hot_token: false,
             direction: RouteDirection::ZeroForOne,
         };
         let reverse = RouteEdge {
