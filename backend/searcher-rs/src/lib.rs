@@ -24,17 +24,25 @@ pub mod canonical_knobs;
 pub mod chain_client;
 pub mod counters;
 pub mod dedup;
+// QUOTEBASE-264 09_RUNTIME_STRUCTURES: DirtyPairs bitset + PoolToPair fan-out
+// + bounded HotSeedQueue (XLS-QB-05). Lib-only: the reserve-update hot path is
+// the future consumer of `DirtyPairEngine::on_pool_event`.
+pub mod dirty_pairs;
 // Phase 16: per-strategy Prometheus metrics for the orchestrator.
 pub mod impact_index;
 pub mod metrics;
 pub mod models;
 pub mod opportunity_emitter;
+pub mod pair_index;
 pub mod patterns;
 pub mod persistence;
 pub mod pool_candidate;
 pub mod pool_discovery;
 pub mod pool_sources;
 pub mod publisher;
+// QUOTEBASE-264 05_QUOTE_BASE: QuoteScore weighted form + workbook fixtures
+// (XLS-QB-06). Lib-only: consumers are the future dense-id quote-base layer.
+pub mod quote_score;
 pub mod reserves;
 pub mod route_api;
 pub mod route_decoder;
@@ -44,6 +52,7 @@ pub mod scoring;
 pub mod scoring_pipeline;
 pub mod shared;
 pub mod source_supervisor;
+pub mod strategy_hop_mask;
 pub mod strategy_label;
 // Task 2: HotPathEmitter for sub-100ms detection pipeline (Redis streams)
 pub mod hot_path_emitter;
