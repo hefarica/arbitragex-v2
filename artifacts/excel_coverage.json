@@ -156,10 +156,10 @@
  "generated_by": "scripts/excel_canon/build_canonical_artifacts.py",
  "totals": {
   "requirements": 441,
-  "verified": 438,
-  "partial": 3,
+  "verified": 440,
+  "partial": 1,
   "missing": 0,
-  "verified_pct": 99.32
+  "verified_pct": 99.77
  },
  "by_family": {
   "algorithm": {
@@ -175,8 +175,7 @@
    "VERIFIED": 18
   },
   "enum": {
-   "VERIFIED": 10,
-   "PARTIAL": 2
+   "VERIFIED": 12
   },
   "field-map": {
    "VERIFIED": 11
@@ -249,8 +248,7 @@
    "VERIFIED": 18
   },
   "10_LISTAS": {
-   "VERIFIED": 10,
-   "PARTIAL": 2
+   "VERIFIED": 12
   },
   "11_STRATEGY_CATALOG": {
    "VERIFIED": 264
