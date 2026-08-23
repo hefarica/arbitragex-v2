@@ -5,10 +5,16 @@ import type { ReadinessItem } from "../types.js";
 // so the probe must reach the frontend itself — or the public URL via
 // CSP_PROBE_URL, which is equally valid evidence: it verifies exactly the
 // headers users receive.
-const DEFAULT_URL =
+// READY-CIRC-01: the probe target MUST be a static asset (/favicon.ico), never
+// `/`. `/` is force-dynamic SSR that fetches /api/readiness/decision →
+// verifyAll() → this verifier → self-deadlock (HEAD / waits for itself, abort
+// 8s, every ~39s TTL beat). /favicon.ico is served by Next static middleware
+// with the SAME CSP-Report-Only + frame-ancestors + HSTS headers (verified
+// live: 416-char CSP identical, 5-60ms vs 6174ms cold SSR).
+export const DEFAULT_URL =
   process.env["CSP_PROBE_URL"] ??
   process.env["FRONTEND_INTERNAL_URL"] ??
-  "http://frontend:5173";
+  "http://frontend:5173/favicon.ico";
 
 /**
  * PR-1 — CSP header (Report-Only) + frame-ancestors none on frontend.
