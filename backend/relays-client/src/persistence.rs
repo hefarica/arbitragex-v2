@@ -154,6 +154,11 @@ pub async fn insert_paper_trade_run(pool: &PgPool, opp: &Opportunity) -> Result<
     // PAPERLEDGER-08 / R8 fail-honest gas derivation — see `derived_gas_cost_usd`.
     let sim_gas_cost_usd = derived_gas_cost_usd(opp);
 
+    // LATLED-01: populate execution_time_ms at write time — uniform across all
+    // three call sites in submit_engine (measured up to the actual ledger
+    // write, not up to the gate decision).
+    let execution_time_ms = detection_to_ledger_ms(opp.detected_at, chrono::Utc::now());
+
     sqlx::query(
         r#"
         INSERT INTO paper_trade_runs (
@@ -164,8 +169,9 @@ pub async fn insert_paper_trade_run(pool: &PgPool, opp: &Opportunity) -> Result<
             sim_gas_cost_usd,
             sim_block_number,
             reason,
-            route_hash
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+            route_hash,
+            execution_time_ms
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
         "#,
     )
     .bind(opp.id)
@@ -176,6 +182,7 @@ pub async fn insert_paper_trade_run(pool: &PgPool, opp: &Opportunity) -> Result<
     .bind(opp.block_number.map(|n| n as i64))
     .bind(opp.rejection_reason.as_deref())
     .bind(route_hash(opp))
+    .bind(execution_time_ms)
     .execute(pool)
     .await
     .context("insert paper_trade_run")?;
@@ -195,6 +202,27 @@ fn derived_gas_cost_usd(opp: &Opportunity) -> Option<f64> {
         (Some(gross), Some(net)) => Some(((gross - net).max(0.0) * 1e6).round() / 1e6),
         _ => None,
     }
+}
+
+/// LATLED-01: detection→ledger latency for `paper_trade_runs.execution_time_ms`.
+///
+/// Wall-clock ms from the opportunity's `detected_at` (stamped by the scanner
+/// at detection) to the moment the paper-run row is written. This is the
+/// pipeline-latency leg of the A.5 daily audit (revert rate / latency / sim
+/// error rate) — the column sat at 0/591,753 rows until 2026-08-23. The TS
+/// Shadow Archiver (`paper-trade-archiver.ts detectionToLedgerMs`) computes
+/// the same quantity at its write; both MUST stay in the same semantics or
+/// `AVG(execution_time_ms)` (sed-status.ts) mixes incomparable populations.
+///
+/// R8 fail-honest: clock skew (detected_at in the future) records 0, never a
+/// negative number; values clamp to i32 for the INTEGER column.
+fn detection_to_ledger_ms(
+    detected_at: chrono::DateTime<chrono::Utc>,
+    now: chrono::DateTime<chrono::Utc>,
+) -> i32 {
+    now.signed_duration_since(detected_at)
+        .num_milliseconds()
+        .clamp(0, i32::MAX as i64) as i32
 }
 
 /// Deterministic route fingerprint — EXACT MIRROR of the TS Shadow Archiver's
@@ -282,5 +310,28 @@ mod tests {
         assert_eq!(derived_gas_cost_usd(&opp), None);
         opp.net_expected_profit_usd = Some(11.0); // net > gross → clamp to 0, not negative
         assert_eq!(derived_gas_cost_usd(&opp), Some(0.0));
+    }
+
+    /// LATLED-01: latency = now − detected_at; clock skew clamps to 0, never
+    /// negative; i32 saturation for the INTEGER column.
+    #[test]
+    fn detection_to_ledger_ms_measures_elapsed() {
+        let now = chrono::Utc::now();
+        let detected = now - chrono::Duration::milliseconds(1500);
+        assert_eq!(detection_to_ledger_ms(detected, now), 1500);
+    }
+
+    #[test]
+    fn detection_to_ledger_ms_skew_clamps_to_zero() {
+        let now = chrono::Utc::now();
+        let future_detected = now + chrono::Duration::seconds(5);
+        assert_eq!(detection_to_ledger_ms(future_detected, now), 0);
+    }
+
+    #[test]
+    fn detection_to_ledger_ms_saturates_at_i32_max() {
+        let now = chrono::Utc::now();
+        let ancient = now - chrono::Duration::days(3650);
+        assert_eq!(detection_to_ledger_ms(ancient, now), i32::MAX);
     }
 }
