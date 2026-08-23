@@ -81,6 +81,12 @@ interface OpportunitySlice {
   addOpportunity: (opp: OmniOpportunity) => void;
   /** Replace the entire opportunity list in a single update (batch) */
   setOpportunities: (opps: OmniOpportunity[]) => void;
+  /**
+   * MEM-RENDER-01: drop opportunities detected more than maxAgeMs ago.
+   * Vigency eviction — the live grid keeps only active/vigent cards instead
+   * of retaining the last 200 unique detections for hours.
+   */
+  pruneStale: (maxAgeMs: number) => void;
   /** Clear all opportunities */
   clearOpportunities: () => void;
   /** Update WS status (called by socket lifecycle) */
@@ -316,6 +322,23 @@ function storeFactory(
         }),
 
       clearOpportunities: () => set({ opportunities: [], lastUpdate: null }),
+
+      // MEM-RENDER-01: vigency eviction. In LIVE mode nothing removes dead
+      // cards (the periodic snapshot only runs in degraded POLLING mode), so
+      // stale routes lingered until displaced by 200 newer events — hours at
+      // real feed rates. Called on every batched WS flush and every poll.
+      // R8 fail-honest: an unparseable/missing detected_at keeps the card —
+      // we never silently drop data we cannot date.
+      pruneStale: (maxAgeMs: number) =>
+        set((state) => {
+          const cutoff = Date.now() - maxAgeMs;
+          const next = state.opportunities.filter((o) => {
+            const t = Date.parse(o.detected_at);
+            return Number.isNaN(t) || t >= cutoff;
+          });
+          if (next.length === state.opportunities.length) return state;
+          return { opportunities: next };
+        }),
 
       setWsStatus: (status: WsStatus) => set({ wsStatus: status }),
 
