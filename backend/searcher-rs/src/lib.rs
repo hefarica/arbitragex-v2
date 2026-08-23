@@ -29,6 +29,7 @@ pub mod impact_index;
 pub mod metrics;
 pub mod models;
 pub mod opportunity_emitter;
+pub mod pair_index;
 pub mod patterns;
 pub mod persistence;
 pub mod pool_candidate;
