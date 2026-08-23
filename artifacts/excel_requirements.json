@@ -13203,7 +13203,7 @@
        "backend/api-server/src/index.ts",
        "backend/api-server/src/lib/pii-wireado-recursive.test.ts"
       ],
-      "n": 638
+      "n": 641
      }
     ]
    }
@@ -13448,7 +13448,7 @@
        "backend/api-server/src/index.ts",
        "backend/api-server/src/lib/audit-redact.test.ts"
       ],
-      "n": 783
+      "n": 786
      }
     ]
    }
@@ -13498,13 +13498,13 @@
        "backend/api-server/src/routes/opportunities-live.ts",
        "backend/api-server/src/routes/opportunity-simulate.ts",
        "backend/api-server/src/routes/searcher-route-client.ts",
+       "backend/api-server/src/routes/viable-kpis.test.ts",
+       "backend/api-server/src/routes/viable-kpis.ts",
        "backend/searcher-rs/src/opportunity_emitter.rs",
        "backend/searcher-rs/src/orchestrator.rs",
-       "backend/searcher-rs/src/persistence.rs",
-       "backend/searcher-rs/src/route_api.rs",
-       "backend/searcher-rs/src/scanner.rs"
+       "backend/searcher-rs/src/persistence.rs"
       ],
-      "n": 26
+      "n": 29
      },
      {
       "kind": "regex",
@@ -13570,13 +13570,13 @@
        "backend/api-server/src/routes/opportunities-live.ts",
        "backend/api-server/src/routes/opportunity-simulate.ts",
        "backend/api-server/src/routes/searcher-route-client.ts",
+       "backend/api-server/src/routes/viable-kpis.test.ts",
+       "backend/api-server/src/routes/viable-kpis.ts",
        "backend/searcher-rs/src/opportunity_emitter.rs",
        "backend/searcher-rs/src/orchestrator.rs",
-       "backend/searcher-rs/src/persistence.rs",
-       "backend/searcher-rs/src/route_api.rs",
-       "backend/searcher-rs/src/scanner.rs"
+       "backend/searcher-rs/src/persistence.rs"
       ],
-      "n": 26
+      "n": 29
      },
      {
       "kind": "regex",
@@ -13642,13 +13642,13 @@
        "backend/api-server/src/routes/opportunities-live.ts",
        "backend/api-server/src/routes/opportunity-simulate.ts",
        "backend/api-server/src/routes/searcher-route-client.ts",
+       "backend/api-server/src/routes/viable-kpis.test.ts",
+       "backend/api-server/src/routes/viable-kpis.ts",
        "backend/searcher-rs/src/opportunity_emitter.rs",
        "backend/searcher-rs/src/orchestrator.rs",
-       "backend/searcher-rs/src/persistence.rs",
-       "backend/searcher-rs/src/route_api.rs",
-       "backend/searcher-rs/src/scanner.rs"
+       "backend/searcher-rs/src/persistence.rs"
       ],
-      "n": 26
+      "n": 29
      },
      {
       "kind": "regex",
@@ -13714,13 +13714,13 @@
        "backend/api-server/src/routes/opportunities-live.ts",
        "backend/api-server/src/routes/opportunity-simulate.ts",
        "backend/api-server/src/routes/searcher-route-client.ts",
+       "backend/api-server/src/routes/viable-kpis.test.ts",
+       "backend/api-server/src/routes/viable-kpis.ts",
        "backend/searcher-rs/src/opportunity_emitter.rs",
        "backend/searcher-rs/src/orchestrator.rs",
-       "backend/searcher-rs/src/persistence.rs",
-       "backend/searcher-rs/src/route_api.rs",
-       "backend/searcher-rs/src/scanner.rs"
+       "backend/searcher-rs/src/persistence.rs"
       ],
-      "n": 26
+      "n": 29
      },
      {
       "kind": "regex",
@@ -13786,13 +13786,13 @@
        "backend/api-server/src/routes/opportunities-live.ts",
        "backend/api-server/src/routes/opportunity-simulate.ts",
        "backend/api-server/src/routes/searcher-route-client.ts",
+       "backend/api-server/src/routes/viable-kpis.test.ts",
+       "backend/api-server/src/routes/viable-kpis.ts",
        "backend/searcher-rs/src/opportunity_emitter.rs",
        "backend/searcher-rs/src/orchestrator.rs",
-       "backend/searcher-rs/src/persistence.rs",
-       "backend/searcher-rs/src/route_api.rs",
-       "backend/searcher-rs/src/scanner.rs"
+       "backend/searcher-rs/src/persistence.rs"
       ],
-      "n": 26
+      "n": 29
      },
      {
       "kind": "regex",
@@ -13858,13 +13858,13 @@
        "backend/api-server/src/routes/opportunities-live.ts",
        "backend/api-server/src/routes/opportunity-simulate.ts",
        "backend/api-server/src/routes/searcher-route-client.ts",
+       "backend/api-server/src/routes/viable-kpis.test.ts",
+       "backend/api-server/src/routes/viable-kpis.ts",
        "backend/searcher-rs/src/opportunity_emitter.rs",
        "backend/searcher-rs/src/orchestrator.rs",
-       "backend/searcher-rs/src/persistence.rs",
-       "backend/searcher-rs/src/route_api.rs",
-       "backend/searcher-rs/src/scanner.rs"
+       "backend/searcher-rs/src/persistence.rs"
       ],
-      "n": 26
+      "n": 29
      },
      {
       "kind": "regex",
@@ -13930,13 +13930,13 @@
        "backend/api-server/src/routes/opportunities-live.ts",
        "backend/api-server/src/routes/opportunity-simulate.ts",
        "backend/api-server/src/routes/searcher-route-client.ts",
+       "backend/api-server/src/routes/viable-kpis.test.ts",
+       "backend/api-server/src/routes/viable-kpis.ts",
        "backend/searcher-rs/src/opportunity_emitter.rs",
        "backend/searcher-rs/src/orchestrator.rs",
-       "backend/searcher-rs/src/persistence.rs",
-       "backend/searcher-rs/src/route_api.rs",
-       "backend/searcher-rs/src/scanner.rs"
+       "backend/searcher-rs/src/persistence.rs"
       ],
-      "n": 26
+      "n": 29
      },
      {
       "kind": "regex",
@@ -14306,16 +14306,16 @@
       "target": "viability|viable",
       "hit": true,
       "matches": [
+       "backend/api-server/src/index.ts",
        "backend/api-server/src/routes/opportunities-bridge-archiver.ts",
        "backend/api-server/src/routes/opportunities-live.ts",
        "backend/api-server/src/routes/strategy-runtime-status.ts",
+       "backend/api-server/src/routes/viable-kpis.test.ts",
+       "backend/api-server/src/routes/viable-kpis.ts",
        "backend/api-server/src/services/tokenValidation/score.test.ts",
-       "backend/api-server/src/services/tokenValidation/score.ts",
-       "backend/math-engine/src/lib.rs",
-       "backend/math-engine/src/roi_engine.rs",
-       "backend/math-engine/src/strategies/canonical_strategy.rs"
+       "backend/api-server/src/services/tokenValidation/score.ts"
       ],
-      "n": 43
+      "n": 48
      }
     ]
    }
@@ -14390,14 +14390,19 @@
     }
    ],
    "verification": {
-    "status": "MISSING",
+    "status": "VERIFIED",
     "evidence": [
      {
       "kind": "regex",
       "target": "by_hops|per_hop",
-      "hit": false,
-      "matches": [],
-      "n": 0
+      "hit": true,
+      "matches": [
+       "backend/api-server/src/index.ts",
+       "backend/api-server/src/routes/viable-kpis.test.ts",
+       "backend/api-server/src/routes/viable-kpis.ts",
+       "frontend/lib/hooks/useViableKpis.ts"
+      ],
+      "n": 4
      }
     ]
    }
@@ -14422,16 +14427,16 @@
       "target": "by_kind|per_kind|route_kind",
       "hit": true,
       "matches": [
+       "backend/api-server/src/index.ts",
        "backend/api-server/src/routes/route-discovery.ts",
+       "backend/api-server/src/routes/viable-kpis.test.ts",
+       "backend/api-server/src/routes/viable-kpis.ts",
        "backend/searcher-rs/src/route_discovery/README.md",
        "backend/searcher-rs/src/route_discovery/canonicalizer.rs",
        "backend/searcher-rs/src/route_discovery/guarantees.rs",
-       "backend/searcher-rs/src/route_discovery/route_discovery_worker.rs",
-       "backend/searcher-rs/src/route_discovery/route_intent_dispatcher.rs",
-       "backend/searcher-rs/src/route_discovery/strategy_applicability.rs",
-       "backend/searcher-rs/src/route_discovery/telemetry.rs"
+       "backend/searcher-rs/src/route_discovery/route_discovery_worker.rs"
       ],
-      "n": 12
+      "n": 16
      }
     ]
    }
@@ -14518,7 +14523,7 @@
        "backend/api-server/src/index.ts",
        "backend/api-server/src/lib/audit-redact.test.ts"
       ],
-      "n": 1177
+      "n": 1180
      }
     ]
    }
@@ -14815,7 +14820,7 @@
        "backend/api-server/src/readiness/verifiers/g-net-1.ts",
        "backend/api-server/src/readiness/verifiers/g-pap-1.ts"
       ],
-      "n": 673
+      "n": 676
      }
     ]
    }
@@ -15259,7 +15264,7 @@
        "backend/api-server/src/index.ts",
        "backend/api-server/src/lib/audit-redact.test.ts"
       ],
-      "n": 1861
+      "n": 1864
      },
      {
       "kind": "regex",
@@ -15275,7 +15280,7 @@
        "backend/api-server/src/lib/audit-redact.test.ts",
        "backend/api-server/src/lib/audit-redact.ts"
       ],
-      "n": 1820
+      "n": 1823
      },
      {
       "kind": "regex",
@@ -15291,7 +15296,7 @@
        "backend/api-server/src/index.ts",
        "backend/api-server/src/lib/audit-redact.test.ts"
       ],
-      "n": 1677
+      "n": 1680
      },
      {
       "kind": "regex",
@@ -15307,7 +15312,7 @@
        "backend/api-server/src/lib/audit-redact.test.ts",
        "backend/api-server/src/lib/audit-redact.ts"
       ],
-      "n": 1372
+      "n": 1374
      }
     ]
    }
@@ -15998,7 +16003,7 @@
        "backend/api-server/src/readiness/verifiers/g-ris-1.ts",
        "backend/api-server/src/readiness/verifiers/pr-2-audit.ts"
       ],
-      "n": 156
+      "n": 157
      }
     ]
    }
@@ -16066,7 +16071,7 @@
        "backend/api-server/src/routes/opportunities-live.ts",
        "backend/api-server/src/routes/route-discovery-outcome-sink.ts"
       ],
-      "n": 642
+      "n": 643
      }
     ]
    }
