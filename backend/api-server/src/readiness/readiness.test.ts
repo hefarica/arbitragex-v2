@@ -6,7 +6,7 @@ import { pending } from "./verifiers/pending.js";
 import { verifyVDB1 } from "./verifiers/v-db-1.js";
 import { verifyVAT1 } from "./verifiers/v-at-1.js";
 import { verifyVNH1 } from "./verifiers/v-nh-1.js";
-import { verifyPR1CSP } from "./verifiers/pr-1-csp.js";
+import { verifyPR1CSP, DEFAULT_URL } from "./verifiers/pr-1-csp.js";
 import { verifyPR2Audit } from "./verifiers/pr-2-audit.js";
 import { verifyMonitoring } from "./verifiers/monitoring.js";
 import { verifyRunbook } from "./verifiers/runbook.js";
@@ -184,6 +184,15 @@ describe("verifyPR1CSP()", () => {
     globalThis.fetch = vi.fn(async () => { throw new Error("ECONNREFUSED"); }) as any;
     const item = await verifyPR1CSP({ url: "http://x", now: NOW });
     expect(item.status).toBe("yellow");
+  });
+  // READY-CIRC-01 regression: the compose-internal DEFAULT_URL must target a
+  // static asset (/favicon.ico), never `/`. `/` triggers force-dynamic SSR →
+  // getReadinessDecision() → verifyAll() → PR-1 HEAD `/` self-deadlock (8s
+  // abort every ~39s TTL beat, observed live 2026-08-22). Env overrides keep
+  // their exact target (operator-controlled CSP_PROBE_URL / dev
+  // FRONTEND_INTERNAL_URL), so only the built-in default is asserted.
+  it("READY-CIRC-01: DEFAULT_URL probes /favicon.ico, never the SSR root", async () => {
+    expect(DEFAULT_URL).toBe("http://frontend:5173/favicon.ico");
   });
 });
 
