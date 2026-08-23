@@ -473,6 +473,9 @@ impl CanonicalKnobs {
 }
 
 #[cfg(test)]
+// Tests deliberately build single-field variants off `Default` then mutate —
+// the clearest way to pin each knob's validation boundary.
+#[allow(clippy::field_reassign_with_default)]
 mod tests {
     use super::*;
 
