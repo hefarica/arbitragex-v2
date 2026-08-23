@@ -1,0 +1,322 @@
+{
+ "workbook": {
+  "source": "C:\\Users\\HFRC\\Downloads\\ArbitrageX_Route_Strategy_Optimizer_264_ULTRA (1).xlsx",
+  "sha256": "362ba8762edea6025fb61ac83aff5d482d14564245533009eb50ad4b2b4adc6d",
+  "sheets": {
+   "00_GUIA": {
+    "max_row": null,
+    "max_col": null,
+    "non_empty_cells": 39,
+    "formulas": 0,
+    "content_sha256": "bba69785733ce681cb6941faa8dc0c03dd407bf3cd39e63e97e4023df6aa04ef"
+   },
+   "01_CONFIG": {
+    "max_row": null,
+    "max_col": null,
+    "non_empty_cells": 260,
+    "formulas": 0,
+    "content_sha256": "2c5aa999beacc31202541a4b199368f858386e39c9d480cd6cd7d5889cc65d71"
+   },
+   "02_FINANCING": {
+    "max_row": null,
+    "max_col": null,
+    "non_empty_cells": 44,
+    "formulas": 0,
+    "content_sha256": "c9c836455593352e851b4269c68dd2338adbe31fb3116bc26605367faff9cc35"
+   },
+   "03_GRAFO_POOLS": {
+    "max_row": null,
+    "max_col": null,
+    "non_empty_cells": 733,
+    "formulas": 252,
+    "content_sha256": "59a8e6b2b0c3d6cb42cf1f53477a775ae9ad59772c9fdd266a3d1276f7831903"
+   },
+   "04_ALGORITMOS": {
+    "max_row": null,
+    "max_col": null,
+    "non_empty_cells": 145,
+    "formulas": 18,
+    "content_sha256": "58754c5e1e63779bc7d1283a9cf43527cee5cec00cd88343abe71b1b2cc9f6ba"
+   },
+   "05_RUTAS": {
+    "max_row": null,
+    "max_col": null,
+    "non_empty_cells": 3433,
+    "formulas": 1944,
+    "content_sha256": "0e48725ec7478e46bd95fbca2a381dc450ff23de7d6a1686fcddd4c59e241cf3"
+   },
+   "06_SENSIBILIDAD": {
+    "max_row": null,
+    "max_col": null,
+    "non_empty_cells": 98,
+    "formulas": 62,
+    "content_sha256": "14c44b87037169405afbc76a0ebf1fb4035056c6ec01fdd279f7832b1384d2c7"
+   },
+   "07_GATES": {
+    "max_row": null,
+    "max_col": null,
+    "non_empty_cells": 64,
+    "formulas": 17,
+    "content_sha256": "0bc61b3f1af4faa9b13a0c63a3a866c37111176091a5ab8a2d4c19d6420d142d"
+   },
+   "08_DASHBOARD": {
+    "max_row": null,
+    "max_col": null,
+    "non_empty_cells": 137,
+    "formulas": 100,
+    "content_sha256": "17dad44aca629c02299ff819cf878db782c2f65cd94ef7c9e3e894503d01e128"
+   },
+   "09_REFERENCIAS": {
+    "max_row": null,
+    "max_col": null,
+    "non_empty_cells": 114,
+    "formulas": 0,
+    "content_sha256": "abedec069414ba210f9dc33a6049801481ff4328e4f4e58a1d867663d0659f11"
+   },
+   "10_LISTAS": {
+    "max_row": null,
+    "max_col": null,
+    "non_empty_cells": 399,
+    "formulas": 0,
+    "content_sha256": "9de5eee356166325b8f11949210142d0319838488b248237c4822614b6e293e4"
+   },
+   "11_STRATEGY_CATALOG": {
+    "max_row": null,
+    "max_col": null,
+    "non_empty_cells": 11459,
+    "formulas": 0,
+    "content_sha256": "4f5d7e4ad06fcdaa48d6c2b7c1557fd3f0c19809ee74aa015cc2a9cd3dd82535"
+   },
+   "12_OPERATOR_CONTROL": {
+    "max_row": null,
+    "max_col": null,
+    "non_empty_cells": 323,
+    "formulas": 0,
+    "content_sha256": "adf6c5c7b6eedcd7c04cb38404ec54978c081242dda39f67b6e70333fe9950ff"
+   },
+   "13_STRAT_OP_MATRIX": {
+    "max_row": null,
+    "max_col": null,
+    "non_empty_cells": 10874,
+    "formulas": 0,
+    "content_sha256": "9b2e364869a3540d29c640e9fd44d281aceb970076cabadc4ae86ff80b276122"
+   },
+   "14_STRATEGY_TEMPLATES": {
+    "max_row": null,
+    "max_col": null,
+    "non_empty_cells": 5300,
+    "formulas": 0,
+    "content_sha256": "774a93cef526c839fe59391c713a2452424630660ab20177feb3f4671d3fbffb"
+   },
+   "15_STRAT_ROUTE_OPT": {
+    "max_row": null,
+    "max_col": null,
+    "non_empty_cells": 2882,
+    "formulas": 2825,
+    "content_sha256": "4deecb319027be9a37543b5ee9f11703f988b7a97e9d2135bdae67fd94e93c68"
+   },
+   "16_STRATEGY_SCOREBOARD": {
+    "max_row": null,
+    "max_col": null,
+    "non_empty_cells": 147,
+    "formulas": 0,
+    "content_sha256": "999d211f9457b378244b6d55abda73e82400e32a7565b403f5983ad7187c02bc"
+   },
+   "17_SOURCE_AUDIT": {
+    "max_row": null,
+    "max_col": null,
+    "non_empty_cells": 94,
+    "formulas": 0,
+    "content_sha256": "6a3ae356f4795d8da324915e19d786bc812f181fa065fca0e0543e3ef93aa417"
+   },
+   "18_CANONICAL_LIBRARY": {
+    "max_row": null,
+    "max_col": null,
+    "non_empty_cells": 1341,
+    "formulas": 0,
+    "content_sha256": "298298ad8c5bc8f284d19276b2a49abc7ead285d6d19f2ed85655732f671fee1"
+   },
+   "19_SOURCE_FIELD_MAP": {
+    "max_row": null,
+    "max_col": null,
+    "non_empty_cells": 73,
+    "formulas": 0,
+    "content_sha256": "dec8aedffaf3e094512e377ddd9fd586c880c2b469a86b6f3588a317700d636c"
+   },
+   "29_SUPER_DASHBOARD": {
+    "max_row": null,
+    "max_col": null,
+    "non_empty_cells": 206,
+    "formulas": 82,
+    "content_sha256": "e0c1b0eedca3941c8da0950c3ca1d36c143577fd9a56ed6fb390ebe5420922e8"
+   }
+  },
+  "derived_at_counting": "counts below are derived from parsed rows, never hardcoded"
+ },
+ "mappings": [
+  {
+   "source_sheet": "01_MEV_MATRIX_1_11",
+   "records": 264,
+   "columns": 27,
+   "fields": "MEV_ID | Grupo | Familia | Estrategia | Descripción operativa | Clasificación determinista | Certeza/settlement | Atómico posible | Tipo de atomicidad | No atómico posible | Tipo no atómico | Legs mínimos | Legs máximos | Modelo de legs | Trigger/order position | Inventario requerido | Dependencia oracle | Dependencia bridge | Dependencia CEX/externa | Riesgos dominantes | Toxicidad | Módulo backend | Toggle frontend | Modo inicial | Gate LIVE | Implementado | Notas de implementación",
+   "integrated_into": "11_STRATEGY_CATALOG / 14_STRATEGY_TEMPLATES",
+   "treatment": "Merged by MEV_ID; execution/risk/atomicity retained",
+   "_row": 3
+  },
+  {
+   "source_sheet": "00_CARTRIDGE_ARCH",
+   "records": 38,
+   "columns": 8,
+   "fields": "ArbitrageX — Arquitectura objetivo para 264 cartuchos de estrategia | None | None | None | None | None | None | None",
+   "integrated_into": "18_CANONICAL_LIBRARY",
+   "treatment": "Canonical library retained",
+   "_row": 4
+  },
+  {
+   "source_sheet": "02_CARTRIDGE_MATH_MAP",
+   "records": 264,
+   "columns": 28,
+   "fields": "MEV_ID | Grupo | Estrategia | Familia Excel | Módulo backend | Toggle frontend | Legs mínimos | Legs máximos | Modelo de legs | Clasificación determinista | Atómico posible | Dependencia oracle | Dependencia bridge | Dependencia CEX/externa | Detector ID | Detector matemático | Clase de ejecución | Ecuación / criterio de descubrimiento | Operadores primarios (math-engine) | Operadores secundarios | Datos / bindings requeridos | Configuración frontend propuesta | Nota específica de estrategia | Gate LIVE original | Fuente matemática 1 | Fuente matemática 2 | Fuente matemática 3 | Estado de diseño",
+   "integrated_into": "11_STRATEGY_CATALOG / 14_STRATEGY_TEMPLATES",
+   "treatment": "All 264 detector/equation/operator/binding fields normalized",
+   "_row": 5
+  },
+  {
+   "source_sheet": "03_DETECTOR_FAMILIES",
+   "records": 60,
+   "columns": 12,
+   "fields": "Detector ID | Nombre | Clase ejecución | Ecuación / criterio | Operadores primarios | Operadores secundarios | Datos requeridos | Frontend config | Fuente 1 | Fuente 2 | Fuente 3 | Nº estrategias",
+   "integrated_into": "18_CANONICAL_LIBRARY",
+   "treatment": "All 60 detector families retained",
+   "_row": 6
+  },
+  {
+   "source_sheet": "04_FRONTEND_CONTRACT",
+   "records": 30,
+   "columns": 6,
+   "fields": "Nivel | Campo | Tipo | Origen | Editable | Regla / propósito",
+   "integrated_into": "18_CANONICAL_LIBRARY / 01_CONFIG",
+   "treatment": "Frontend controls retained",
+   "_row": 7
+  },
+  {
+   "source_sheet": "05_OPERATOR_CATALOG",
+   "records": 31,
+   "columns": 4,
+   "fields": "ID | Código | Operador real math-engine | Rol propuesto en cartuchos",
+   "integrated_into": "12_OPERATOR_CONTROL / 13_STRAT_OP_MATRIX",
+   "treatment": "31 operators normalized",
+   "_row": 8
+  },
+  {
+   "source_sheet": "06_B_STATIC_DIAG",
+   "records": 21,
+   "columns": 8,
+   "fields": "Track B — Diagnóstico estático del hot path (main actual) | None | None | None | None | None | None | None",
+   "integrated_into": "18_CANONICAL_LIBRARY",
+   "treatment": "Diagnostics retained",
+   "_row": 9
+  },
+  {
+   "source_sheet": "07_MASTER_264x31",
+   "records": 8184,
+   "columns": 36,
+   "fields": "MEV_ID | Grupo | Estrategia | Detector_ID | Operator_ID | Operador | Audited_Role | Audited_Phase | Audited_Semantic_Role | Requirement | Resolved_Weight | Weight_State | JSON_Role | JSON_Weight | JSON_Applicable | JSON_Status | RHAI_Applicable | RHAI_Status | Canonical_Applicable | Canonical_Status | Current_Excel_Role | Current_Excel_Status | Conflict_Type | Resolution | Rationale | Calibration_State | Frontend_Exposable | Source_URL_JSON | Source_URL_RHAI_Registry | Source_URL_Canonical | Source_URL_Audited_Matrix | Canonical_Mode_Baseline | LIVE_MAINNET_Role | TESTNET_Role | PAPER_SHADOW_Role | Mode_Invariant",
+   "integrated_into": "13_STRAT_OP_MATRIX / 11_STRATEGY_CATALOG / 17_SOURCE_AUDIT",
+   "treatment": "8,184 links fully consumed; role/phase/requirement/mode semantics drive the integrated model",
+   "_row": 10
+  },
+  {
+   "source_sheet": "08_CONFLICTS",
+   "records": 6,
+   "columns": 10,
+   "fields": "Conflict_ID | MEV_ID | Operator | Fuente A | Valor A | Fuente B | Valor B | Resolución propuesta | Razonamiento | Status",
+   "integrated_into": "18_CANONICAL_LIBRARY",
+   "treatment": "Conflict audit retained",
+   "_row": 11
+  },
+  {
+   "source_sheet": "09_EXECUTION_MODES",
+   "records": 19,
+   "columns": 10,
+   "fields": "ArbitrageX — Modelo canónico de ejecución: LIVE MAINNET como referencia | None | None | None | None | None | None | None | None | None",
+   "integrated_into": "18_CANONICAL_LIBRARY / 01_CONFIG",
+   "treatment": "Canonical modes retained",
+   "_row": 12
+  },
+  {
+   "source_sheet": "10_MODE_MIGRATION",
+   "records": 11,
+   "columns": 8,
+   "fields": "Execution-mode migration plan — single LIVE-first hot path | None | None | None | None | None | None | None",
+   "integrated_into": "18_CANONICAL_LIBRARY",
+   "treatment": "Migration rules retained",
+   "_row": 13
+  }
+ ],
+ "critical_numeric_contracts": {
+  "note": "operator directive: decimals, token0/token1, sqrtPriceX96, wei/gwei/ETH, bps — unidades y conversiones en un solo mapa"
+ },
+ "repo_field_index": {
+  "sqrtPriceX96": [
+   "backend/math-engine/src/amm_math.rs",
+   "backend/math-engine/src/subgraph_client.rs",
+   "backend/searcher-rs/cartridges/dex_arb.rhai",
+   "backend/searcher-rs/cartridges/manifests/math_map.json",
+   "backend/searcher-rs/src/amm_math.rs",
+   "backend/searcher-rs/src/block_scanner.rs",
+   "backend/searcher-rs/src/cartridge/host_bindings.rs",
+   "backend/searcher-rs/src/cartridge/runner.rs",
+   "backend/searcher-rs/src/kelly_sizing.rs",
+   "backend/searcher-rs/src/pool_discovery.rs"
+  ],
+  "decimals": [
+   "backend/api-server/src/routes/opportunities-live.ts",
+   "backend/api-server/src/routes/searcher-route-client.ts",
+   "backend/api-server/src/routes/tokenResolver.ts",
+   "backend/api-server/src/routes/wallets.ts",
+   "backend/api-server/src/services/tokenRegistry.test.ts",
+   "backend/api-server/src/services/tokenRegistry.ts",
+   "backend/api-server/src/services/tokenValidation/index.ts",
+   "backend/api-server/src/services/tokenValidation/onChainTruth.ts",
+   "backend/api-server/src/services/tokenValidation/score.ts",
+   "backend/api-server/src/simulation/computeSimulatedNet.ts"
+  ],
+  "token0_token1": [
+   "backend/api-server/src/routes/operator-selftest.test.ts",
+   "backend/api-server/src/routes/pools.ts",
+   "backend/math-engine/src/amm_math.rs",
+   "backend/math-engine/src/operators/mod.rs",
+   "backend/math-engine/src/operators/op_26_flash_loan.rs",
+   "backend/math-engine/src/subgraph_client.rs",
+   "backend/searcher-rs/cartridges/backrun.rhai",
+   "backend/searcher-rs/cartridges/dex_arb.rhai",
+   "backend/searcher-rs/cartridges/strategies/mev_01_001_dex_dex_arbitrage.rhai",
+   "backend/searcher-rs/cartridges/strategies/mev_01_002_cross_pool_arbitrage.rhai"
+  ],
+  "wei_gwei": [
+   "backend/api-server/src/routes/trading-config.ts",
+   "backend/api-server/src/services/tokenValidation/score.test.ts",
+   "backend/api-server/src/simulation/computeSimulatedNet.test.ts",
+   "backend/api-server/src/simulation/computeSimulatedNet.ts",
+   "backend/api-server/src/simulation/tradingConfigSnapshot.ts",
+   "backend/api-server/src/simulation/vacuumDecoherenceCost.ts",
+   "backend/api-server/src/websocket.ts",
+   "backend/math-engine/src/api.rs",
+   "backend/math-engine/src/control/regime_router.rs",
+   "backend/math-engine/src/matrix/topology_map.rs"
+  ],
+  "bps": [
+   "backend/api-server/src/routes/risk-circuit-breakers.ts",
+   "backend/api-server/src/routes/scoring-status.ts",
+   "backend/api-server/src/simulation/computeSimulatedNet.ts",
+   "backend/api-server/src/simulation/vacuumDecoherenceCost.ts",
+   "backend/math-engine/src/operators/op_15_golden_section.rs",
+   "backend/math-engine/src/operators/op_21_newton.rs",
+   "backend/searcher-rs/cartridges/dex_arb.rhai",
+   "backend/searcher-rs/cartridges/funding_rate_arbitrage.rhai",
+   "backend/searcher-rs/cartridges/strategies/math_models/MEV-01-001.json",
+   "backend/searcher-rs/cartridges/strategies/math_models/MEV-01-002.json"
+  ]
+ }
+}

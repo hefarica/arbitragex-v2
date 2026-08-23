@@ -98,15 +98,19 @@ pub struct MultiHopResult {
     pub noise_dropped: usize,
 }
 
-/// Find profitable (negative summed `log_weight`) closed cycles of length 2..=max_hops
-/// starting and ending at the same token, via bounded DFS. Honest: skips `None`-weight
-/// edges (V3) and caps the result count.
+/// Find profitable (negative summed `log_weight`) closed cycles of length
+/// `min_hops..=max_hops` starting and ending at the same token, via bounded DFS.
+/// Honest: skips `None`-weight edges (V3) and caps the result count.
+/// `min_hops`/`max_hops` are the XLS-CANON-01 `Min_Hops`/`Max_Hops` knobs
+/// (01_CONFIG workbook; canonical floor 2, ceiling 7).
 pub fn find_profitable_cycles(
     graph: &TokenGraph,
+    min_hops: usize,
     max_hops: usize,
     max_cycles: usize,
 ) -> MultiHopResult {
     let max_hops = max_hops.clamp(2, 7);
+    let min_hops = min_hops.clamp(2, max_hops);
     let mut out: Vec<ProfitableCycle> = Vec::new();
     let mut capped = false;
     let mut dropped_for_cap = 0usize;
@@ -141,6 +145,7 @@ pub fn find_profitable_cycles(
             &mut pools,
             &mut visited_tokens,
             0.0,
+            min_hops,
             max_hops,
             max_cycles,
             &mut out,
@@ -180,6 +185,7 @@ fn dfs_cycles(
     pools: &mut Vec<Address>,
     visited_tokens: &mut std::collections::HashSet<Address>,
     sum_w: f64,
+    min_hops: usize,
     max_hops: usize,
     max_cycles: usize,
     out: &mut Vec<ProfitableCycle>,
@@ -223,7 +229,7 @@ fn dfs_cycles(
         path.push(idx);
         pools.push(e.pool);
 
-        if e.token_out == start && path.len() >= 2 {
+        if e.token_out == start && path.len() >= min_hops {
             // Closed cycle. Profitable iff Σ log_weight < 0.
             if next_sum < 0.0 {
                 if out.len() >= max_cycles {
@@ -248,6 +254,7 @@ fn dfs_cycles(
                 pools,
                 visited_tokens,
                 next_sum,
+                min_hops,
                 max_hops,
                 max_cycles,
                 out,
@@ -344,7 +351,7 @@ mod tests {
             edge(0xA, 0xB, 1, Some(-0.02)),
             edge(0xB, 0xA, 2, Some(-0.01)), // different pool → valid spatial backrun
         ]);
-        let r = find_profitable_cycles(&g, 7, 100);
+        let r = find_profitable_cycles(&g, 2, 7, 100);
         assert!(!r.capped);
         assert!(
             r.cycles
@@ -362,7 +369,7 @@ mod tests {
             edge(0xB, 0xC, 2, Some(-0.02)),
             edge(0xC, 0xA, 3, Some(-0.02)),
         ]);
-        let r = find_profitable_cycles(&profitable, 7, 100);
+        let r = find_profitable_cycles(&profitable, 2, 7, 100);
         assert!(
             r.cycles.iter().any(|c| c.hop_count == 3),
             "profitable triangle must be found"
@@ -374,7 +381,7 @@ mod tests {
             edge(0xB, 0xC, 2, Some(0.01)),
             edge(0xC, 0xA, 3, Some(0.01)),
         ]);
-        let r2 = find_profitable_cycles(&flat, 7, 100);
+        let r2 = find_profitable_cycles(&flat, 2, 7, 100);
         assert!(
             r2.cycles.is_empty(),
             "positive-sum (lossy) cycle must NOT be reported"
@@ -388,7 +395,7 @@ mod tests {
             edge(0xA, 0xB, 1, None), // V3, no weight
             edge(0xB, 0xA, 2, Some(-0.05)),
         ]);
-        let r = find_profitable_cycles(&g, 7, 100);
+        let r = find_profitable_cycles(&g, 2, 7, 100);
         assert!(r.v3_skipped > 0, "V3 edge must be counted as skipped (R8)");
         assert!(
             r.cycles.is_empty(),
@@ -405,7 +412,7 @@ mod tests {
             edge(0xC, 0xD, 3, Some(-0.02)),
             edge(0xD, 0xC, 4, Some(-0.02)),
         ]);
-        let r = find_profitable_cycles(&g, 7, 1);
+        let r = find_profitable_cycles(&g, 2, 7, 1);
         assert!(r.capped, "hitting the cap must set capped=true");
         assert!(r.dropped_for_cap >= 1);
         assert_eq!(r.cycles.len(), 1);

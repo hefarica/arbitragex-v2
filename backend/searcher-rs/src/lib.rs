@@ -19,6 +19,7 @@
 // Phase 1-3 modules re-exported so the library target compiles standalone.
 pub mod amm_math;
 pub mod calldata;
+pub mod canonical_knobs;
 pub mod chain_client;
 pub mod counters;
 pub mod dedup;
