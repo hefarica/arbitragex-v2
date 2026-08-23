@@ -125,3 +125,13 @@ A1 enrichment path data-source foundation. Forward-only and idempotent.
 
 Forward-only and idempotent. The FASE 3 verifier reads PG directly via its own
 pool; `GET /admin/readiness-evidence` is a read-only operator convenience.
+
+---
+
+## STRAT-IDENT-01 (per-strategy scoring identity) — 2026-08-23
+
+| File                                    | Purpose                                                  |
+|-----------------------------------------|----------------------------------------------------------|
+| `108_strategy_identity_scoring.sql`     | Re-keys the Gate-C calibration store per STRATEGY: `scored_opportunities.strategy_key` (nullable, no backfill — R8) + `bayesian_priors.strategy_key` with UNIQUE replacing the per-pair unique (table empty, no writer existed). Operator directive: each of the 264+ strategies declares its own applicable structures (primary/secondary operators) — scoring/calibration must accumulate per strategy, never per class (pair / router / family). |
+
+Forward-only and idempotent. Paper-only telemetry.

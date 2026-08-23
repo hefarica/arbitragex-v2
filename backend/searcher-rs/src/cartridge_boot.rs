@@ -934,6 +934,7 @@ pub async fn shadow_evaluate_intent(
 ///
 /// R8 fail-honest: unknown figures are `None`, never fabricated. Candidates with
 /// missing data (no pool_hint, no token addresses) are rejected with explicit reason.
+#[allow(clippy::too_many_arguments)] // 9 params: eval pipeline + STRAT-IDENT-01 evidence deps
 pub async fn active_evaluate_and_emit(
     runner: Arc<CartridgeRunner>,
     intent: RouteIntent,
@@ -942,6 +943,8 @@ pub async fn active_evaluate_and_emit(
     cfg_provider: Arc<crate::orchestrator::ConfigProvider>,
     size_optimizer: Arc<crate::size_optimizer::SizeOptimizer>,
     ctx_chain_id: u64,
+    math_registry: Arc<math_engine::OperatorRegistry>,
+    reserves_cache: Arc<crate::engines::triangular_engine::ReservesCache>,
 ) {
     use crate::engines::StrategyCandidate;
     use crate::metrics::REJECTED_NO_PROFIT_TOTAL;
@@ -971,13 +974,23 @@ pub async fn active_evaluate_and_emit(
         }
     };
 
-    // Get active cartridges pertinent to this intent
-    let actives: Vec<(String, String)> = runner
+    // Get active cartridges pertinent to this intent. STRAT-IDENT-01: keep the
+    // strategy's DECLARED operator combo (primary/secondary from
+    // `init_strategy()`, mirroring the canonical STRATEGY.json) — each strategy
+    // says which structures apply to IT; no class-level flattening.
+    let actives: Vec<(String, String, Vec<u32>, Vec<u32>)> = runner
         .list_cartridges()
         .await
         .into_iter()
         .filter(|(_, _, state)| *state == CartridgeState::Active)
-        .map(|(id, meta, _)| (id, meta.category))
+        .map(|(id, meta, _)| {
+            (
+                id,
+                meta.category,
+                meta.primary_operators,
+                meta.secondary_operators,
+            )
+        })
         .collect();
 
     info!(
@@ -993,9 +1006,9 @@ pub async fn active_evaluate_and_emit(
     }
 
     // Smart routing: only evaluate cartridges pertinent to this intent shape
-    let pertinent: Vec<(String, String)> = actives
+    let pertinent: Vec<(String, String, Vec<u32>, Vec<u32>)> = actives
         .into_iter()
-        .filter(|(_, category)| cartridge_matches_intent(category, &intent))
+        .filter(|(_, category, _, _)| cartridge_matches_intent(category, &intent))
         .collect();
 
     info!(
@@ -1051,7 +1064,7 @@ pub async fn active_evaluate_and_emit(
     let mut negative_total: u64 = 0;
     let mut positive_total: u64 = 0;
 
-    for (cartridge_id, category) in pertinent {
+    for (cartridge_id, _category, declared_primary_ops, declared_secondary_ops) in pertinent {
         match runner.evaluate(&cartridge_id, pool_data.clone()).await {
             Ok(eval_result) => {
                 if !eval_result.is_opportunity {
@@ -1132,6 +1145,52 @@ pub async fn active_evaluate_and_emit(
                     detected_at: chrono::Utc::now(),
                     trace_id: Uuid::new_v4(), // Generate new trace ID for cartridge path
                 };
+
+                // ── STRAT-IDENT-01: publish THIS strategy's declared-combo §IV
+                // evidence (observe-only, detached — zero hot-path latency).
+                // The strategy declares its applicable operators; we evaluate
+                // exactly that combo and key the snapshot by the strategy's own
+                // identity — the canonical key the emitter reads and the
+                // api-server /api/math/evidence route serves.
+                {
+                    let runner_ev = runner.clone();
+                    let registry_ev = math_registry.clone();
+                    let reserves_ev = reserves_cache.clone();
+                    let pools_ev: Vec<Address> = intent
+                        .legs
+                        .iter()
+                        .filter_map(|l| l.pool_hint)
+                        .collect();
+                    let strategy_key_ev = cartridge_id.clone();
+                    let primary_ev = declared_primary_ops.clone();
+                    let secondary_ev = declared_secondary_ops.clone();
+                    let chain_ev = chain_id;
+                    tokio::spawn(async move {
+                        let mut redis_ev = runner_ev.redis_connection().await;
+                        let block_number = runner_ev
+                            .host_block_number_handle()
+                            .load(std::sync::atomic::Ordering::Relaxed);
+                        let base_fee_gwei = (runner_ev
+                            .host_base_fee_handle()
+                            .load(std::sync::atomic::Ordering::Relaxed)
+                            as f64)
+                            / 1e9;
+                        crate::math_evidence::publish_declared_combo_evidence(
+                            &reserves_ev,
+                            &registry_ev,
+                            &mut redis_ev,
+                            &pools_ev,
+                            chain_ev,
+                            &strategy_key_ev,
+                            &primary_ev,
+                            &secondary_ev,
+                            base_fee_gwei,
+                            block_number,
+                            0, // block_timestamp — not carried on the intent (observe-only)
+                        )
+                        .await;
+                    });
+                }
 
                 // Build OpportunityCandidate for ConfigAwareEvaluator
                 // Uses the real prioritization_spine::types::OpportunityCandidate shape

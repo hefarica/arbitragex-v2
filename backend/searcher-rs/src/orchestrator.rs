@@ -260,6 +260,8 @@ impl Orchestrator {
         let cfg_provider = self.ctx.config_provider.clone();
         let size_optimizer = self.ctx.size_optimizer.clone();
         let ctx_chain_id = self.ctx.chain_id;
+        let math_registry = self.ctx.math_registry.clone();
+        let reserves_cache = self.ctx.dex_engine.reserves_cache.clone();
         tokio::spawn(async move {
             crate::cartridge_boot::active_evaluate_and_emit(
                 runner,
@@ -269,6 +271,8 @@ impl Orchestrator {
                 cfg_provider,
                 size_optimizer,
                 ctx_chain_id,
+                math_registry,
+                reserves_cache,
             )
             .await;
         });
@@ -384,6 +388,8 @@ impl Orchestrator {
             let cfg_provider = self.ctx.config_provider.clone();
             let size_optimizer = self.ctx.size_optimizer.clone();
             let ctx_chain_id = self.ctx.chain_id;
+            let math_registry = self.ctx.math_registry.clone();
+            let reserves_cache = self.ctx.dex_engine.reserves_cache.clone();
 
             tokio::spawn(async move {
                 debug!(
@@ -402,6 +408,8 @@ impl Orchestrator {
                         cfg_provider,
                         size_optimizer,
                         ctx_chain_id,
+                        math_registry,
+                        reserves_cache,
                     )
                     .await;
                 } else {

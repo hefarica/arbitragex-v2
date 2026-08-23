@@ -404,6 +404,15 @@ impl OpportunityEmitter {
         }
         let net_profit_usd = opp.net_expected_profit_usd.or(opp.expected_profit_usd);
         let chain_id_i64 = i64::try_from(opp.chain_id).unwrap_or(-1);
+        // STRAT-IDENT-01: score by STRATEGY, not by pair/class. Each of the 264
+        // cartridges carries its own identity (cartridge_id ≡ strategy_kind
+        // stem); the 5 core engines are individual strategies identified by
+        // their kind. The pair stays as context in the record — never as the
+        // calibration bucket.
+        let strategy_key = opp
+            .cartridge_id
+            .clone()
+            .unwrap_or_else(|| opp.strategy_kind.as_str().to_string());
         // Flat prior: `bayesian_priors` is empty until the A.5 paper-shadow
         // window; a priors cache feeds real PriorState in the A.5 follow-up.
         // Passing None is the honest "wired but not calibrated" state.
@@ -411,7 +420,7 @@ impl OpportunityEmitter {
             .scoring
             .evaluate_paper_opportunity(
                 &opp.id.to_string(),
-                &opp.pair_symbol,
+                &strategy_key,
                 net_profit_usd,
                 Some(chain_id_i64),
                 None,
@@ -430,12 +439,14 @@ impl OpportunityEmitter {
         };
 
         // §IV capture: read the per-(chain,strategy) math-evidence snapshot from
-        // Redis (written by math_evidence::evaluate_math_evidence, TTL 120s — covers
-        // the emit→score latency). Missing ⇒ null (honest, non-blocking).
-        let evidence_key = format!(
-            "arbx:math_evidence:{}:{:?}",
-            opp.chain_id, opp.strategy_kind
-        );
+        // Redis (written by math_evidence::publish_declared_combo_evidence,
+        // TTL 120s — covers the emit→score latency). Missing ⇒ null (honest,
+        // non-blocking). STRAT-IDENT-01: ONE canonical key via
+        // strategy_evidence_key — the pre-fix reader keyed `{:?}` of the
+        // StrategyKind newtype while the writer keyed `{:?}` of RouterKind;
+        // the keys never matched and evidence_vector was always null.
+        let evidence_key =
+            crate::math_evidence::strategy_evidence_key(opp.chain_id, &strategy_key);
         let evidence_vector: Option<serde_json::Value> = {
             let mut r = self.redis.clone();
             let json: Option<String> = redis::cmd("GET")
@@ -449,6 +460,7 @@ impl OpportunityEmitter {
         // XADD the score (non-fatal) — twin of `publisher::publish`.
         let record = serde_json::json!({
             "opportunity_id": opp.id.to_string(),
+            "strategy_key": strategy_key,
             "token_pair": opp.pair_symbol,
             "posterior_prob": score.posterior_prob,
             "kelly_fraction": score.kelly_fraction,
@@ -496,13 +508,13 @@ impl OpportunityEmitter {
         if self.scoring.should_emit_downstream(&score) {
             tracing::debug!(
                 event = "scoring.paper_opportunity.annotated",
-                token_pair = %opp.pair_symbol,
+                strategy_key = %strategy_key,
                 bayesian_accepted = score.bayesian_accepted,
             );
         } else {
             tracing::info!(
                 event = "scoring.hard_gate.flagged",
-                token_pair = %opp.pair_symbol,
+                strategy_key = %strategy_key,
                 posterior_prob = score.posterior_prob,
                 "HARD_GATE advisory: a live layer would gate this; opps:detected emission preserved",
             );
