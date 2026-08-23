@@ -106,6 +106,147 @@ pub fn evaluate_strategy_operators(
         .collect()
 }
 
+/// Pure snapshot builder for a strategy's declared-combo evidence (testable).
+///
+/// `roles` marks each operator as `"primary"` / `"secondary"` — the strategy's
+/// OWN declaration of which structures apply to it, not a regime or class
+/// guess. R8 fail-honest: an operator that cannot compute keeps `scalar: null`.
+pub fn declared_combo_snapshot(
+    chain_id: u64,
+    strategy_key: &str,
+    primary: &[(u32, Option<f64>, String)],
+    secondary: &[(u32, Option<f64>, String)],
+) -> serde_json::Value {
+    fn to_values(entries: &[(u32, Option<f64>, String)], role: &str) -> Vec<serde_json::Value> {
+        entries
+            .iter()
+            .map(|(id, scalar, name)| {
+                serde_json::json!({
+                    "op": id,
+                    "role": role,
+                    "name": name,
+                    "scalar": scalar,
+                })
+            })
+            .collect()
+    }
+    let computed = primary
+        .iter()
+        .chain(secondary.iter())
+        .filter(|(_, s, _)| s.is_some())
+        .count();
+    serde_json::json!({
+        "chain_id": chain_id,
+        "strategy_kind": strategy_key,
+        "source": "declared_combo",
+        "primary_operators": to_values(primary, "primary"),
+        "secondary_operators": to_values(secondary, "secondary"),
+        "operators": primary.len() + secondary.len(),
+        "operators_computed": computed,
+        "updated_at_ms": std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis() as u64)
+            .unwrap_or(0),
+    })
+}
+
+/// Redis key for a strategy's §IV evidence snapshot. ONE canonical key format
+/// for every reader/writer (STRAT-IDENT-01): before this, the orchestrator
+/// writer keyed `{:?}` of `RouterKind` (a DEX router class) while the emitter
+/// reader keyed `{:?}` of the `StrategyKind` newtype — the keys NEVER matched
+/// and `evidence_vector` was structurally always null.
+pub fn strategy_evidence_key(chain_id: u64, strategy_key: &str) -> String {
+    format!("arbx:math_evidence:{}:{}", chain_id, strategy_key)
+}
+
+/// STRAT-IDENT-01: publish the per-strategy §IV evidence from the strategy's
+/// OWN declared combo (operator directive 2026-08-23: "evaluar directamente
+/// cada estrategia y esta dirá cuáles son las estructuras que le aplican y con
+/// ello armas el combo particular y específico").
+///
+/// Evaluates `evaluate_strategy_operators` over the operators the strategy
+/// DECLARES (`CartridgeMetadata.primary_operators` / `secondary_operators`,
+/// mirroring the canonical STRATEGY.json) and publishes the snapshot to
+/// `strategy_evidence_key` (TTL 120s) — the key the emitter's
+/// `score_and_publish` reads and the api-server `/api/math/evidence` route
+/// serves. Observe-only: never alters scoring decisions.
+///
+/// R8 fail-honest: no reserves for any pool → logs `insufficient_state` and
+/// publishes NOTHING (never a fabricated MarketState). Returns the number of
+/// operators that computed a value.
+#[allow(clippy::too_many_arguments)] // strategy declaration + market context; mirrors evaluate_math_evidence
+pub async fn publish_declared_combo_evidence(
+    reserves_cache: &Arc<ReservesCache>,
+    registry: &OperatorRegistry,
+    redis: &mut redis::aio::ConnectionManager,
+    pool_addresses: &[Address],
+    chain_id: u64,
+    strategy_key: &str,
+    primary_operator_ids: &[u32],
+    secondary_operator_ids: &[u32],
+    gas_price_gwei: f64,
+    block_number: u64,
+    block_timestamp: u64,
+) -> usize {
+    // Features: the strategy evaluation context carries none today (same as
+    // evaluate_math_evidence's callers) — operators requiring features compute
+    // None honestly.
+    let state = match build_market_state(
+        reserves_cache,
+        pool_addresses,
+        gas_price_gwei,
+        block_number,
+        block_timestamp,
+        std::collections::HashMap::new(),
+    )
+    .await
+    {
+        Some(s) => s,
+        None => {
+            debug!(
+                event = "math_evidence.combo_insufficient_state",
+                chain_id,
+                strategy_key,
+                pools = pool_addresses.len(),
+                "declared-combo evidence skipped — no reserves to build MarketState"
+            );
+            return 0;
+        }
+    };
+
+    let primary = evaluate_strategy_operators(&state, registry, primary_operator_ids);
+    let secondary = evaluate_strategy_operators(&state, registry, secondary_operator_ids);
+    let computed = primary
+        .iter()
+        .chain(secondary.iter())
+        .filter(|(_, s, _)| s.is_some())
+        .count();
+
+    let snapshot = declared_combo_snapshot(chain_id, strategy_key, &primary, &secondary);
+    if let Ok(json) = serde_json::to_string(&snapshot) {
+        use redis::AsyncCommands;
+        let key = strategy_evidence_key(chain_id, strategy_key);
+        if let Err(e) = redis.set_ex::<_, _, ()>(&key, json, 120).await {
+            debug!(
+                event = "math_evidence.combo_persist_failed",
+                chain_id,
+                strategy_key,
+                error = %e,
+                "failed to persist declared-combo evidence (non-fatal)"
+            );
+        }
+    }
+    debug!(
+        event = "math_evidence.combo_published",
+        chain_id,
+        strategy_key,
+        declared = primary_operator_ids.len() + secondary_operator_ids.len(),
+        computed,
+        "declared-combo evidence published (observe-only)"
+    );
+    computed
+}
+
 #[allow(clippy::too_many_arguments)] // 11 params: the full math-evidence pipeline context (reserves, registry, router, redis, pools, chain, gas, block, features, strategy). Refactoring to a struct would obscure the data flow.
 pub async fn evaluate_math_evidence(
     reserves_cache: &Arc<ReservesCache>,
@@ -319,5 +460,44 @@ mod evidence_tests {
             "posterior = prior + lr·e = 0.1+0.5 = 0.6: {lo}"
         );
         assert_eq!(ctx, "calibrated");
+    }
+}
+
+#[cfg(test)]
+mod combo_tests {
+    use super::*;
+
+    /// STRAT-IDENT-01: the ONE canonical key format — plain strategy identity,
+    /// no Debug-wrapped newtype, no RouterKind class.
+    #[test]
+    fn strategy_evidence_key_is_plain_strategy_identity() {
+        assert_eq!(
+            strategy_evidence_key(1, "mev_01_001_dex_dex"),
+            "arbx:math_evidence:1:mev_01_001_dex_dex"
+        );
+        assert_eq!(
+            strategy_evidence_key(1, "flashloan_arb"),
+            "arbx:math_evidence:1:flashloan_arb"
+        );
+    }
+
+    /// The snapshot carries the strategy's declared roles and honest nulls.
+    #[test]
+    fn declared_combo_snapshot_marks_roles_and_counts_computed() {
+        let primary = vec![(15u32, Some(0.42), "op_15".to_string())];
+        let secondary = vec![
+            (1u32, None, "op_01".to_string()),
+            (22u32, Some(0.7), "op_22".to_string()),
+        ];
+        let s = declared_combo_snapshot(1, "mev_01_001", &primary, &secondary);
+        assert_eq!(s["strategy_kind"], "mev_01_001");
+        assert_eq!(s["source"], "declared_combo");
+        assert_eq!(s["operators"], 3);
+        assert_eq!(s["operators_computed"], 2);
+        assert_eq!(s["primary_operators"][0]["role"], "primary");
+        assert_eq!(s["secondary_operators"][0]["role"], "secondary");
+        // R8: un-computable operator keeps scalar null — never fabricated.
+        assert!(s["secondary_operators"][0]["scalar"].is_null());
+        assert_eq!(s["primary_operators"][0]["scalar"], 0.42);
     }
 }

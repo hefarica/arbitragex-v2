@@ -123,6 +123,7 @@ import { mountAlertmanagerWebhook } from "./routes/alertmanager-webhook.js";
 import { mountRiskCircuitBreakers } from "./routes/risk-circuit-breakers.js";
 import { mountAdminChains } from "./routes/admin-chains.js";
 import { mountSedStatus } from "./routes/sed-status.js";
+import { mountSimPipeline } from "./routes/sim-pipeline.js";
 import { mountSystemManifest } from "./routes/system-manifest.js";
 import { mountLiveTestnet } from "./routes/live-testnet.js";
 import { mountWalletRoutes } from "./routes/wallet.js";
@@ -696,6 +697,10 @@ if (pool) {
 }
 
 mountSedStatus(app, { pool, logger });
+
+// A.8 surface: Gate-C confidence-scoring pipeline state, per STRATEGY
+// (STRAT-IDENT-01). Read-only aggregates from scored_opportunities.
+mountSimPipeline(app, { pool, logger });
 
 // Scanner heartbeat snapshot — read latest pipeline counters from Redis.
 // Persisted by searcher-rs::workers::heartbeat_worker every period (default

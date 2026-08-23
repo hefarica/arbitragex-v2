@@ -47,6 +47,8 @@ export interface ScoredOpportunitiesArchiverDeps {
  */
 const ScoredRecordSchema = z.object({
   opportunity_id: z.string().min(1),
+  /** STRAT-IDENT-01: per-strategy identity (cartridge stem / engine kind). */
+  strategy_key: z.string().min(1).nullable().optional(),
   token_pair: z.string().min(1),
   posterior_prob: z.number().finite(),
   kelly_fraction: z.number().finite(),
@@ -145,13 +147,14 @@ export class ScoredOpportunitiesArchiver {
     }
 
     try {
-      // stream_id UNIQUE → idempotent at-least-once consume.
+      // stream_id UNIQUE → idempotent at-least-once consume. strategy_key is
+      // NULL for records emitted before STRAT-IDENT-01 (honest — no backfill).
       await this.deps.pool.query(
         `INSERT INTO scored_opportunities
            (stream_id, opportunity_id, token_pair, posterior_prob, kelly_fraction,
             recommended_usd, net_profit_usd, bayesian_accepted, prior_log_odds,
-            chain_id, source_context, scoring_mode, evidence_vector)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+            chain_id, source_context, scoring_mode, evidence_vector, strategy_key)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
          ON CONFLICT (stream_id) DO NOTHING`,
         [
           id,
@@ -167,6 +170,7 @@ export class ScoredOpportunitiesArchiver {
           rec.source_context ?? null,
           rec.scoring_mode,
           rec.evidence_vector ? JSON.stringify(rec.evidence_vector) : null,
+          rec.strategy_key ?? null,
         ],
       );
       await this.redis.xack(STREAM_IN, GROUP, id);
