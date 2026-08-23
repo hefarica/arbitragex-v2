@@ -1,0 +1,66 @@
+[
+ {
+  "Source": "Uniswap Smart Order Router",
+  "Current technique": "Candidate-pool heuristics; top-N/direct/base-token/second-hop; max hops/splits trade latency vs quality.",
+  "Why relevant": "Avoid exploring every pool and every path.",
+  "ArbitrageX application": "Candidate selection/pruning + route cache; keep arbitrage-specific parallel edges.",
+  "URL": "https://github.com/Uniswap/smart-order-router",
+  "Date/Status": "checked 2026-08"
+ },
+ {
+  "Source": "Velora / ParaSwap DexLib",
+  "Current technique": "Event-based pricing: initial Multicall state, subscribe to events, update in-memory, quote without RPC.",
+  "Why relevant": "Directly supports <30ms architecture.",
+  "ArbitrageX application": "Dirty pool state in RAM; RPC only initialization/recovery.",
+  "URL": "https://github.com/VeloraDEX/paraswap-dex-lib",
+  "Date/Status": "checked 2026-08"
+ },
+ {
+  "Source": "RICH / PVLDB 2025",
+  "Current technique": "Color-coding + dynamic programming + bitwise color sets for most-negative hop-bounded cycles.",
+  "Why relevant": "Candidate route finder for k-hop arbitrage under hop constraint.",
+  "ArbitrageX application": "Use as prioritized detector; exact executable profit still requires protocol quote/simulation.",
+  "URL": "https://www.vldb.org/pvldb/vol18/p4081-luo.pdf",
+  "Date/Status": "PVLDB 2025"
+ },
+ {
+  "Source": "Optimal Routing for CFMMs",
+  "Current technique": "Optimal routing/arbitrage can be convex optimization without fixed execution costs.",
+  "Why relevant": "Correctness/reference solver.",
+  "ArbitrageX application": "Use differential/offline validation; not necessarily hot path.",
+  "URL": "https://arxiv.org/abs/2204.05238",
+  "Date/Status": "2022"
+ },
+ {
+  "Source": "Efficient CFMM Routing",
+  "Current technique": "Decomposition method for heterogeneous CFMM routing.",
+  "Why relevant": "Protocol heterogeneity.",
+  "ArbitrageX application": "Refine selected routes / split flow across pools.",
+  "URL": "https://arxiv.org/abs/2302.04938",
+  "Date/Status": "2023"
+ },
+ {
+  "Source": "Marginal Price Optimization",
+  "Current technique": "Price-boundary/root-finding formulation; reports up to 200× improvement vs Clarabel in experiments.",
+  "Why relevant": "Fast sizing/allocation candidate.",
+  "ArbitrageX application": "Use after route topology is known, with exact protocol adapters.",
+  "URL": "https://arxiv.org/abs/2502.08258",
+  "Date/Status": "2025"
+ },
+ {
+  "Source": "Multi-Path Routing DEX Networks",
+  "Current technique": "Directed token multigraph; gas-aware marginal k-shortest candidates; continuous allocation; pool-simple constraint.",
+  "Why relevant": "Modern decomposition candidate paths vs flow allocation.",
+  "ArbitrageX application": "Optional finalist optimizer; separates topology discovery from sizing.",
+  "URL": "https://arxiv.org/abs/2607.22540",
+  "Date/Status": "2026"
+ },
+ {
+  "Source": "Roaring Bitmap Rust",
+  "Current technique": "Compressed bitmap implementation for Rust; benchmarks provided.",
+  "Why relevant": "Dynamic N >64 and sparse sets.",
+  "ArbitrageX application": "Use only when graph universe becomes large+sparse; small N favors dense bitsets.",
+  "URL": "https://github.com/RoaringBitmap/roaring-rs",
+  "Date/Status": "checked 2026-08"
+ }
+]

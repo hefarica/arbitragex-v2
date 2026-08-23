@@ -1,0 +1,121 @@
+[
+ {
+  "parameter": "Allowed_Symbol_Count",
+  "value": 0,
+  "unit": "tokens",
+  "meaning": "COUNT dinámico de símbolos habilitados",
+  "runtime_binding": "allowed_symbols.len()"
+ },
+ {
+  "parameter": "N_Active_Chain",
+  "value": 22,
+  "unit": "nodes",
+  "meaning": "Tokens efectivos de la chain seleccionada; sustituir por registry real",
+  "runtime_binding": "chain_graph.node_count"
+ },
+ {
+  "parameter": "Avg_Active_Degree",
+  "value": 6,
+  "unit": "neighbors/node",
+  "meaning": "Grado medio tras filtros de liquidez/freshness",
+  "runtime_binding": "graph.avg_degree"
+ },
+ {
+  "parameter": "Avg_Parallel_Pools",
+  "value": 2.5,
+  "unit": "edges/pair",
+  "meaning": "Pools/venues ejecutables promedio por pareja",
+  "runtime_binding": "pair_bucket.avg_edges"
+ },
+ {
+  "parameter": "Dirty_Seeds",
+  "value": 4,
+  "unit": "pairs/event-window",
+  "meaning": "Pares/aristas afectados que entran al hot queue",
+  "runtime_binding": "dirty_queue.len"
+ },
+ {
+  "parameter": "Beam_K",
+  "value": 4,
+  "unit": "branches/node",
+  "meaning": "Top-K outgoing branches retained per expansion",
+  "runtime_binding": "route.beam_k"
+ },
+ {
+  "parameter": "Max_Hops",
+  "value": 7,
+  "unit": "hops",
+  "meaning": "Techo global; cada estrategia aplica su propio mask",
+  "runtime_binding": "route.max_hops"
+ },
+ {
+  "parameter": "Min_Hops",
+  "value": 2,
+  "unit": "hops",
+  "meaning": "Piso solicitado",
+  "runtime_binding": "route.min_hops"
+ },
+ {
+  "parameter": "Min_Liquidity_USD",
+  "value": 100000,
+  "unit": "USD",
+  "meaning": "Gate de liquidez",
+  "runtime_binding": "gates.min_liquidity_usd"
+ },
+ {
+  "parameter": "Min_Net_bps",
+  "value": 5,
+  "unit": "bps",
+  "meaning": "Gate mínimo beneficio neto",
+  "runtime_binding": "gates.min_net_bps"
+ },
+ {
+  "parameter": "Max_State_Age_Blocks",
+  "value": 2,
+  "unit": "blocks",
+  "meaning": "Freshness",
+  "runtime_binding": "gates.max_state_age_blocks"
+ },
+ {
+  "parameter": "Quote_w_Prior",
+  "value": 0.3,
+  "unit": "weight",
+  "meaning": "Peso prior estructural",
+  "runtime_binding": "quote.weights.prior"
+ },
+ {
+  "parameter": "Quote_w_Liquidity",
+  "value": 0.3,
+  "unit": "weight",
+  "meaning": "Peso liquidez",
+  "runtime_binding": "quote.weights.liquidity"
+ },
+ {
+  "parameter": "Quote_w_VenueCoverage",
+  "value": 0.2,
+  "unit": "weight",
+  "meaning": "Peso cobertura venues",
+  "runtime_binding": "quote.weights.venues"
+ },
+ {
+  "parameter": "Quote_w_Stability",
+  "value": 0.1,
+  "unit": "weight",
+  "meaning": "Peso estabilidad",
+  "runtime_binding": "quote.weights.stability"
+ },
+ {
+  "parameter": "Quote_w_CrossDex",
+  "value": 0.1,
+  "unit": "weight",
+  "meaning": "Peso cobertura cross-DEX",
+  "runtime_binding": "quote.weights.crossdex"
+ },
+ {
+  "parameter": "Discovery_SLA_ms",
+  "value": 30,
+  "unit": "ms",
+  "meaning": "Objetivo p95 discovery/ranking, no simulación remota",
+  "runtime_binding": "telemetry.discovery_sla_ms"
+ }
+]
