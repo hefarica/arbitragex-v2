@@ -1147,13 +1147,16 @@ pub async fn active_evaluate_and_emit(
                         .iter()
                         .filter_map(|l| l.pool_hint.map(|p| format!("{:#x}", p)))
                         .collect(),
-                    token_addresses: intent
-                        .legs
-                        .iter()
-                        .flat_map(|l| {
-                            vec![format!("{:#x}", l.token_in), format!("{:#x}", l.token_out)]
-                        })
-                        .collect(),
+                    // CARTRIDGE-GATE-ADDR: the spine token gate compares against
+                    // the operator's SYMBOL allowlist (`allowed_token_symbols`),
+                    // not addresses. The previous raw-address form could never
+                    // match → EVERY cartridge candidate died at
+                    // TokenNotAllowed:0x… (≈14.8K rows/day dominated by the AGLD
+                    // pool, verified in the paper ledger 2026-08-23) — the A.5
+                    // paper-shadow runtime could not accumulate a single
+                    // accepted cartridge run. Resolve addr→symbol via the Redis
+                    // token meta cache (same idiom as scanner.rs's gate prep).
+                    token_addresses: resolve_gate_tokens(runner.as_ref(), chain_id, &intent).await,
                     dex_adapters: intent
                         .legs
                         .iter()
@@ -1491,6 +1494,44 @@ async fn process_cartridge_candidate(
     Ok(())
 }
 
+/// CARTRIDGE-GATE-ADDR: map each leg token ADDRESS to its SYMBOL for the spine
+/// token gate (the operator allowlist is symbol-keyed — see
+/// `TradingConfigState::token_allowed`). Unknown tokens keep the raw lowercase
+/// address, which still fails the gate — explicitly and honestly (identical
+/// semantics to the scanner path's gate prep). Deduped in traversal order.
+async fn resolve_gate_tokens(
+    runner: &CartridgeRunner,
+    chain_id: u64,
+    intent: &RouteIntent,
+) -> Vec<String> {
+    let mut redis_conn = runner.redis_connection().await;
+    let mut out: Vec<String> = Vec::new();
+    for leg in &intent.legs {
+        for addr in [leg.token_in, leg.token_out] {
+            let addr_lower = format!("{addr:#x}");
+            let meta = crate::reserves::get_token_meta(&mut redis_conn, chain_id, &addr_lower)
+                .await
+                .ok()
+                .flatten();
+            let token = gate_token_symbol(meta.as_ref(), &addr_lower);
+            if !out.contains(&token) {
+                out.push(token);
+            }
+        }
+    }
+    out
+}
+
+/// Pure half of the mapping (unit-testable without Redis): known meta → its
+/// symbol; missing meta or empty symbol → the raw address (fail-honest
+/// unknown-token rejection, never a fabricated symbol).
+fn gate_token_symbol(meta: Option<&crate::reserves::TokenMeta>, addr_lower: &str) -> String {
+    match meta {
+        Some(m) if !m.symbol.is_empty() => m.symbol.clone(),
+        _ => addr_lower.to_string(),
+    }
+}
+
 /// Redis key the searcher publishes its loaded-cartridge registry snapshot to.
 /// Read by api-server `GET /api/cartridges`. One key per chain.
 pub fn cartridge_registry_redis_key(chain_id: u64) -> String {
@@ -1591,6 +1632,37 @@ mod tests {
         assert_eq!(CartridgeMode::Off.as_str(), "off");
         assert_eq!(CartridgeMode::Shadow.as_str(), "shadow");
         assert_eq!(CartridgeMode::Active.as_str(), "active");
+    }
+
+    // ── CARTRIDGE-GATE-ADDR: gate input must be SYMBOLS, not addresses ────
+    // Regression for the ≈14.8K rows/day TokenNotAllowed:0x… flood (2026-08-23)
+    // — raw addresses can never match the symbol-keyed allowlist.
+    #[test]
+    fn gate_token_symbol_maps_known_meta_to_symbol() {
+        let meta = crate::reserves::TokenMeta {
+            symbol: "AGLD".to_string(),
+            decimals: 18,
+            is_stablecoin: false,
+        };
+        assert_eq!(gate_token_symbol(Some(&meta), "0x3235…"), "AGLD");
+    }
+
+    #[test]
+    fn gate_token_symbol_falls_back_to_address_when_meta_missing() {
+        // Fail-honest: unknown token → raw address → explicit gate rejection.
+        assert_eq!(gate_token_symbol(None, "0xabc0000000000000000000000000000000000def"), "0xabc0000000000000000000000000000000000def");
+    }
+
+    #[test]
+    fn gate_token_symbol_falls_back_to_address_when_symbol_empty() {
+        // Defensive: a meta row with an empty symbol must not yield an
+        // always-matching "" entry — fall back to the address.
+        let meta = crate::reserves::TokenMeta {
+            symbol: String::new(),
+            decimals: 18,
+            is_stablecoin: false,
+        };
+        assert_eq!(gate_token_symbol(Some(&meta), "0xdead00000000000000000000000000000000beef"), "0xdead00000000000000000000000000000000beef");
     }
 
     #[test]
