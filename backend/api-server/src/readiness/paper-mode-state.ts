@@ -40,8 +40,14 @@ export interface RedisLike {
 
 const GLOBAL_KEY = "arbx:papermode";
 
+// PAPKEY-01: the canonical per-chain writer (POST /admin/config/paper-mode,
+// index.ts + paper-mode-reconcile.ts, writer since B0.2) sets
+// `arbx:papermode:<chain_id>`. This resolver used to read a divergent
+// `arbx:papermode:chain:<chain_id>` — a key nobody writes — so G-PAP-1 could
+// never observe an explicit flip (confidence stuck at "inferred" → yellow
+// forever). Read the canonical key; the legacy global stays as fallback.
 function chainKey(chainId: number): string {
-  return `arbx:papermode:chain:${chainId}`;
+  return `arbx:papermode:${chainId}`;
 }
 
 function parseEnabled(raw: string | null): boolean | null {
