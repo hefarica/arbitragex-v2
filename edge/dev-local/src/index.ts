@@ -564,6 +564,11 @@ app.get("/api/operator/selftest", (req, res) => proxy("/api/operator/selftest", 
 app.get("/api/route-discovery-outcomes/summary", (req, res) => proxy("/api/v1/route-discovery-outcomes/summary", req, res));
 app.get("/api/route-discovery-outcomes", (req, res) => proxy("/api/v1/route-discovery-outcomes", req, res));
 
+// XLS-DASH-01 — workbook 29_SUPER_DASHBOARD viable-KPI set (by_hops / by_kind /
+// viability %) over REAL opportunities rows (api-server aggregates; ?hours=
+// forwarded verbatim). Read-only / observe-only.
+app.get("/api/viable-kpis", (req, res) => proxy("/api/v1/analytics/viable-kpis", req, res));
+
 // Chains Admin registry — admin-token gated. Routed through adminProxy so the
 // V-AT-1 httpOnly cookie (arbx_admin_session) is translated to the upstream
 // x-arbx-admin-token header. adminProxy is defined later in the file; function

@@ -156,10 +156,10 @@
  "generated_by": "scripts/excel_canon/build_canonical_artifacts.py",
  "totals": {
   "requirements": 441,
-  "verified": 419,
+  "verified": 420,
   "partial": 21,
-  "missing": 1,
-  "verified_pct": 95.01
+  "missing": 0,
+  "verified_pct": 95.24
  },
  "by_family": {
   "algorithm": {
@@ -169,8 +169,7 @@
    "VERIFIED": 42
   },
   "dashboard": {
-   "VERIFIED": 5,
-   "MISSING": 1
+   "VERIFIED": 6
   },
   "doctrine": {
    "PARTIAL": 18
@@ -244,8 +243,7 @@
    "VERIFIED": 8
   },
   "08_DASHBOARD+29_SUPER_DASHBOARD": {
-   "VERIFIED": 5,
-   "MISSING": 1
+   "VERIFIED": 6
   },
   "09_REFERENCIAS": {
    "PARTIAL": 18
