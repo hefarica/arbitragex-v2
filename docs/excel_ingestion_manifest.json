@@ -1,0 +1,402 @@
+{
+  "ULTRA": {
+    "path": "C:\\Users\\HFRC\\Downloads\\ArbitrageX_Route_Strategy_Optimizer_264_ULTRA.xlsx",
+    "total_sheets": 21,
+    "sheets": {
+      "00_GUIA": {
+        "state": "visible",
+        "dimensions": "A1:H23",
+        "max_row": 23,
+        "max_col": 8,
+        "non_empty_cells": 39,
+        "formulas": 0
+      },
+      "01_CONFIG": {
+        "state": "visible",
+        "dimensions": "A1:F46",
+        "max_row": 46,
+        "max_col": 6,
+        "non_empty_cells": 260,
+        "formulas": 0
+      },
+      "02_FINANCING": {
+        "state": "visible",
+        "dimensions": "A1:H14",
+        "max_row": 14,
+        "max_col": 8,
+        "non_empty_cells": 44,
+        "formulas": 0
+      },
+      "03_GRAFO_POOLS": {
+        "state": "visible",
+        "dimensions": "A1:Q47",
+        "max_row": 47,
+        "max_col": 17,
+        "non_empty_cells": 733,
+        "formulas": 252
+      },
+      "04_ALGORITMOS": {
+        "state": "visible",
+        "dimensions": "A1:K24",
+        "max_row": 24,
+        "max_col": 11,
+        "non_empty_cells": 145,
+        "formulas": 18
+      },
+      "05_RUTAS": {
+        "state": "visible",
+        "dimensions": "A1:AU77",
+        "max_row": 77,
+        "max_col": 47,
+        "non_empty_cells": 3433,
+        "formulas": 1944
+      },
+      "06_SENSIBILIDAD": {
+        "state": "visible",
+        "dimensions": "A1:M18",
+        "max_row": 18,
+        "max_col": 13,
+        "non_empty_cells": 98,
+        "formulas": 62
+      },
+      "07_GATES": {
+        "state": "visible",
+        "dimensions": "A1:G14",
+        "max_row": 14,
+        "max_col": 7,
+        "non_empty_cells": 64,
+        "formulas": 17
+      },
+      "08_DASHBOARD": {
+        "state": "visible",
+        "dimensions": "A1:N34",
+        "max_row": 34,
+        "max_col": 14,
+        "non_empty_cells": 137,
+        "formulas": 100
+      },
+      "09_REFERENCIAS": {
+        "state": "visible",
+        "dimensions": "A1:F22",
+        "max_row": 22,
+        "max_col": 6,
+        "non_empty_cells": 114,
+        "formulas": 0
+      },
+      "10_LISTAS": {
+        "state": "visible",
+        "dimensions": "A1:M267",
+        "max_row": 267,
+        "max_col": 13,
+        "non_empty_cells": 399,
+        "formulas": 0
+      },
+      "11_STRATEGY_CATALOG": {
+        "state": "visible",
+        "dimensions": "A1:AS265",
+        "max_row": 265,
+        "max_col": 45,
+        "non_empty_cells": 11459,
+        "formulas": 0
+      },
+      "12_OPERATOR_CONTROL": {
+        "state": "visible",
+        "dimensions": "A1:J36",
+        "max_row": 36,
+        "max_col": 10,
+        "non_empty_cells": 323,
+        "formulas": 0
+      },
+      "13_STRAT_OP_MATRIX": {
+        "state": "visible",
+        "dimensions": "A1:AO269",
+        "max_row": 269,
+        "max_col": 41,
+        "non_empty_cells": 10874,
+        "formulas": 0
+      },
+      "14_STRATEGY_TEMPLATES": {
+        "state": "visible",
+        "dimensions": "A1:T265",
+        "max_row": 265,
+        "max_col": 20,
+        "non_empty_cells": 5300,
+        "formulas": 0
+      },
+      "15_STRAT_ROUTE_OPT": {
+        "state": "visible",
+        "dimensions": "A1:AM81",
+        "max_row": 81,
+        "max_col": 39,
+        "non_empty_cells": 2882,
+        "formulas": 2825
+      },
+      "16_STRATEGY_SCOREBOARD": {
+        "state": "visible",
+        "dimensions": "A1:L16",
+        "max_row": 16,
+        "max_col": 12,
+        "non_empty_cells": 147,
+        "formulas": 0
+      },
+      "17_SOURCE_AUDIT": {
+        "state": "visible",
+        "dimensions": "A1:G22",
+        "max_row": 22,
+        "max_col": 7,
+        "non_empty_cells": 94,
+        "formulas": 0
+      },
+      "18_CANONICAL_LIBRARY": {
+        "state": "visible",
+        "dimensions": "A1:L211",
+        "max_row": 211,
+        "max_col": 12,
+        "non_empty_cells": 1341,
+        "formulas": 0
+      },
+      "19_SOURCE_FIELD_MAP": {
+        "state": "visible",
+        "dimensions": "A1:F14",
+        "max_row": 14,
+        "max_col": 6,
+        "non_empty_cells": 73,
+        "formulas": 0
+      },
+      "29_SUPER_DASHBOARD": {
+        "state": "visible",
+        "dimensions": "A1:N34",
+        "max_row": 34,
+        "max_col": 14,
+        "non_empty_cells": 206,
+        "formulas": 82
+      }
+    }
+  },
+  "MASTER_LIVE": {
+    "path": "C:\\Users\\HFRC\\Downloads\\ArbitrageX_Master_264x31_LIVE_First.xlsx",
+    "total_sheets": 11,
+    "sheets": {
+      "01_MEV_MATRIX_1_11": {
+        "state": "visible",
+        "dimensions": "A1:AA265",
+        "max_row": 265,
+        "max_col": 27,
+        "non_empty_cells": 7155,
+        "formulas": 0
+      },
+      "00_CARTRIDGE_ARCH": {
+        "state": "visible",
+        "dimensions": "A1:H39",
+        "max_row": 39,
+        "max_col": 8,
+        "non_empty_cells": 96,
+        "formulas": 0
+      },
+      "02_CARTRIDGE_MATH_MAP": {
+        "state": "visible",
+        "dimensions": "A1:AB265",
+        "max_row": 265,
+        "max_col": 28,
+        "non_empty_cells": 6954,
+        "formulas": 0
+      },
+      "03_DETECTOR_FAMILIES": {
+        "state": "visible",
+        "dimensions": "A1:L61",
+        "max_row": 61,
+        "max_col": 12,
+        "non_empty_cells": 621,
+        "formulas": 0
+      },
+      "04_FRONTEND_CONTRACT": {
+        "state": "visible",
+        "dimensions": "A1:F31",
+        "max_row": 31,
+        "max_col": 6,
+        "non_empty_cells": 180,
+        "formulas": 0
+      },
+      "05_OPERATOR_CATALOG": {
+        "state": "visible",
+        "dimensions": "A1:D32",
+        "max_row": 32,
+        "max_col": 4,
+        "non_empty_cells": 128,
+        "formulas": 0
+      },
+      "06_B_STATIC_DIAG": {
+        "state": "visible",
+        "dimensions": "A1:H22",
+        "max_row": 22,
+        "max_col": 8,
+        "non_empty_cells": 153,
+        "formulas": 0
+      },
+      "07_MASTER_264x31": {
+        "state": "visible",
+        "dimensions": "A1:AJ8185",
+        "max_row": 8185,
+        "max_col": 36,
+        "non_empty_cells": 245603,
+        "formulas": 24552
+      },
+      "08_CONFLICTS": {
+        "state": "visible",
+        "dimensions": "A1:J7",
+        "max_row": 7,
+        "max_col": 10,
+        "non_empty_cells": 67,
+        "formulas": 0
+      },
+      "09_EXECUTION_MODES": {
+        "state": "visible",
+        "dimensions": "A1:J20",
+        "max_row": 20,
+        "max_col": 10,
+        "non_empty_cells": 136,
+        "formulas": 0
+      },
+      "10_MODE_MIGRATION": {
+        "state": "visible",
+        "dimensions": "A1:H12",
+        "max_row": 12,
+        "max_col": 8,
+        "non_empty_cells": 81,
+        "formulas": 0
+      }
+    }
+  },
+  "MASTER_BA": {
+    "path": "C:\\Users\\HFRC\\Downloads\\ArbitrageX_Master_264x31_B_then_A.xlsx",
+    "total_sheets": 9,
+    "sheets": {
+      "01_MEV_MATRIX_1_11": {
+        "state": "visible",
+        "dimensions": "A1:AA265",
+        "max_row": 265,
+        "max_col": 27,
+        "non_empty_cells": 7155,
+        "formulas": 0
+      },
+      "00_CARTRIDGE_ARCH": {
+        "state": "visible",
+        "dimensions": "A1:H28",
+        "max_row": 28,
+        "max_col": 8,
+        "non_empty_cells": 76,
+        "formulas": 0
+      },
+      "02_CARTRIDGE_MATH_MAP": {
+        "state": "visible",
+        "dimensions": "A1:AB265",
+        "max_row": 265,
+        "max_col": 28,
+        "non_empty_cells": 6954,
+        "formulas": 0
+      },
+      "03_DETECTOR_FAMILIES": {
+        "state": "visible",
+        "dimensions": "A1:L61",
+        "max_row": 61,
+        "max_col": 12,
+        "non_empty_cells": 621,
+        "formulas": 0
+      },
+      "04_FRONTEND_CONTRACT": {
+        "state": "visible",
+        "dimensions": "A1:F22",
+        "max_row": 22,
+        "max_col": 6,
+        "non_empty_cells": 132,
+        "formulas": 0
+      },
+      "05_OPERATOR_CATALOG": {
+        "state": "visible",
+        "dimensions": "A1:D32",
+        "max_row": 32,
+        "max_col": 4,
+        "non_empty_cells": 128,
+        "formulas": 0
+      },
+      "06_B_STATIC_DIAG": {
+        "state": "visible",
+        "dimensions": "A1:H14",
+        "max_row": 14,
+        "max_col": 8,
+        "non_empty_cells": 97,
+        "formulas": 0
+      },
+      "07_MASTER_264x31": {
+        "state": "visible",
+        "dimensions": "A1:AE8185",
+        "max_row": 8185,
+        "max_col": 31,
+        "non_empty_cells": 204678,
+        "formulas": 0
+      },
+      "08_CONFLICTS": {
+        "state": "visible",
+        "dimensions": "A1:J7",
+        "max_row": 7,
+        "max_col": 10,
+        "non_empty_cells": 67,
+        "formulas": 0
+      }
+    }
+  },
+  "CART_MATH": {
+    "path": "C:\\Users\\HFRC\\Downloads\\ArbitrageX_264_Cartridge_Math_Architecture.xlsx",
+    "total_sheets": 6,
+    "sheets": {
+      "01_MEV_MATRIX_1_11": {
+        "state": "visible",
+        "dimensions": "A1:AA265",
+        "max_row": 265,
+        "max_col": 27,
+        "non_empty_cells": 7155,
+        "formulas": 0
+      },
+      "00_CARTRIDGE_ARCH": {
+        "state": "visible",
+        "dimensions": "A1:H28",
+        "max_row": 28,
+        "max_col": 8,
+        "non_empty_cells": 61,
+        "formulas": 0
+      },
+      "02_CARTRIDGE_MATH_MAP": {
+        "state": "visible",
+        "dimensions": "A1:AB265",
+        "max_row": 265,
+        "max_col": 28,
+        "non_empty_cells": 6954,
+        "formulas": 0
+      },
+      "03_DETECTOR_FAMILIES": {
+        "state": "visible",
+        "dimensions": "A1:L61",
+        "max_row": 61,
+        "max_col": 12,
+        "non_empty_cells": 621,
+        "formulas": 0
+      },
+      "04_FRONTEND_CONTRACT": {
+        "state": "visible",
+        "dimensions": "A1:F22",
+        "max_row": 22,
+        "max_col": 6,
+        "non_empty_cells": 132,
+        "formulas": 0
+      },
+      "05_OPERATOR_CATALOG": {
+        "state": "visible",
+        "dimensions": "A1:D32",
+        "max_row": 32,
+        "max_col": 4,
+        "non_empty_cells": 128,
+        "formulas": 0
+      }
+    }
+  }
+}

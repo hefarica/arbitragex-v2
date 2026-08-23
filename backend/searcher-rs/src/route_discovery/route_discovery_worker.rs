@@ -114,9 +114,22 @@ impl WorkerConfig {
             "ARBX_ROUTE_DISCOVERY_MAX_POOLS_PER_PAIR",
             disc.max_pools_per_pair.max(1),
         );
-        let max_depth = env_u8("ARBX_ROUTE_DISCOVERY_MAX_DEPTH", disc.max_depth.max(2));
+        // XLS-CANON-01: the canonical knob (workbook 01_CONFIG `Max_Hops`) is
+        // the TOP explicit tier — `ARBX_KNOB_MAX_HOPS` > legacy env > yaml.
+        // Defaults stay the deploy's yaml (no silent hot-path change).
+        let max_depth = env_u8(
+            "ARBX_KNOB_MAX_HOPS",
+            env_u8("ARBX_ROUTE_DISCOVERY_MAX_DEPTH", disc.max_depth.max(2)),
+        )
+        .clamp(2, 7);
+        // XLS-CANON-01 `Min_Hops` (canonical floor 2) — same precedence tier.
+        let min_depth = env_u8("ARBX_KNOB_MIN_HOPS", 2).clamp(2, max_depth);
         let interval_ms = env_u64("ARBX_ROUTE_DISCOVERY_INTERVAL_MS", DEFAULT_INTERVAL_MS);
-        let max_age_secs = env_u64("ARBX_ROUTE_DISCOVERY_MAX_AGE_SECS", DEFAULT_MAX_AGE_SECS);
+        // XLS-CANON-01 `Max_Freshness_s` — canonical knob > legacy env > default.
+        let max_age_secs = env_u64(
+            "ARBX_KNOB_MAX_FRESHNESS_S",
+            env_u64("ARBX_ROUTE_DISCOVERY_MAX_AGE_SECS", DEFAULT_MAX_AGE_SECS),
+        );
 
         Self {
             interval_ms,
@@ -126,6 +139,7 @@ impl WorkerConfig {
                 min_liquidity_hint: disc.min_liquidity_hint,
             },
             finder: RouteFinderConfig {
+                min_depth,
                 max_depth,
                 max_pools_per_pair,
                 max_routes_per_tick: max_routes,
@@ -237,9 +251,12 @@ pub fn evaluate_tick(
     // negative-`log_weight` cycle finder over the SAME graph snapshot, bounded by
     // the already-configured DFS depth (no new explosion surface) and the per-tick
     // route cap. Fail-honest: V3 (None-weight) legs are skipped inside the finder.
+    // XLS-CANON-01: Min_Hops/Max_Hops knobs flow through the finder bounds.
     let mh_max_hops = (finder.max_depth as usize).clamp(2, 7);
+    let mh_min_hops = (finder.min_depth as usize).clamp(2, mh_max_hops);
     let mh = crate::route_discovery::multi_hop_search::find_profitable_cycles(
         &outcome.graph,
+        mh_min_hops,
         mh_max_hops,
         finder.max_routes_per_tick,
     );

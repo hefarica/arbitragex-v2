@@ -267,13 +267,19 @@ pub struct ScanOutput {
 /// Pure scan evaluation: enumerate profitable cycles over `graph` and classify
 /// each by the RU-3 anchor gate. No Redis, no clock, no dispatch — the async
 /// loop injects time and executes the emission.
+///
+/// XLS-CANON-01: `min_hops` mirrors the finder's new 4-arg bound (knob
+/// `ARBX_KNOB_MIN_HOPS`); the scanner path passes the canonical floor `2`,
+/// which reproduces its pre-existing `2..=max_hops` enumeration exactly —
+/// the knob'd floor flows through the live `route_discovery_worker` path.
 pub fn evaluate_scan(
     graph: &TokenGraph,
     anchors: &HashSet<Address>,
+    min_hops: usize,
     max_hops: usize,
     max_cycles: usize,
 ) -> ScanOutput {
-    let result = find_profitable_cycles(graph, max_hops, max_cycles);
+    let result = find_profitable_cycles(graph, min_hops, max_hops, max_cycles);
     let mut out = ScanOutput {
         cycles_found: result.cycles.len(),
         capped: result.capped,
@@ -477,11 +483,12 @@ async fn scan_block(
     // CPU-bound DFS on the blocking pool so a big graph cannot stall the async
     // executor; the cycle cap bounds worst-case completion.
     let anchors = cfg.anchors.clone();
+    let min_hops = 2; // canonical floor — see evaluate_scan doc (XLS-CANON-01)
     let max_hops = cfg.max_hops;
     let max_cycles = cfg.budget.max_cycles_per_block;
     let enum_started = Instant::now();
     let joined = tokio::task::spawn_blocking(move || {
-        let scan = evaluate_scan(&graph, &anchors, max_hops, max_cycles);
+        let scan = evaluate_scan(&graph, &anchors, min_hops, max_hops, max_cycles);
         (scan, graph)
     })
     .await;
@@ -897,7 +904,7 @@ mod tests {
             edge(0xC, 0xD, 3, Some(-0.02)),
             edge(0xD, 0xC, 4, Some(-0.02)),
         ]);
-        let scan = evaluate_scan(&g, &default_anchors(), 7, 1);
+        let scan = evaluate_scan(&g, &default_anchors(), 2, 7, 1);
         assert!(scan.capped, "hitting the cycle cap must set capped=true");
         assert!(scan.dropped_for_cap >= 1);
         assert_eq!(
@@ -988,7 +995,7 @@ mod tests {
     #[test]
     fn evaluate_scan_partitions_cycles_by_anchor_policy() {
         let (g, anchors) = classified_graph();
-        let scan = evaluate_scan(&g, &anchors, 7, 500);
+        let scan = evaluate_scan(&g, &anchors, 2, 7, 500);
         assert!(!scan.capped);
         assert_eq!(scan.malformed, 0);
         assert_eq!(scan.v3_skipped, 0, "all edges are V2 (weighted)");

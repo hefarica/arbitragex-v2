@@ -1,0 +1,282 @@
+{
+ "workbook": {
+  "source": "C:\\Users\\HFRC\\Downloads\\ArbitrageX_Route_Strategy_Optimizer_264_ULTRA (1).xlsx",
+  "sha256": "362ba8762edea6025fb61ac83aff5d482d14564245533009eb50ad4b2b4adc6d",
+  "sheets": {
+   "00_GUIA": {
+    "max_row": null,
+    "max_col": null,
+    "non_empty_cells": 39,
+    "formulas": 0,
+    "content_sha256": "bba69785733ce681cb6941faa8dc0c03dd407bf3cd39e63e97e4023df6aa04ef"
+   },
+   "01_CONFIG": {
+    "max_row": null,
+    "max_col": null,
+    "non_empty_cells": 260,
+    "formulas": 0,
+    "content_sha256": "2c5aa999beacc31202541a4b199368f858386e39c9d480cd6cd7d5889cc65d71"
+   },
+   "02_FINANCING": {
+    "max_row": null,
+    "max_col": null,
+    "non_empty_cells": 44,
+    "formulas": 0,
+    "content_sha256": "c9c836455593352e851b4269c68dd2338adbe31fb3116bc26605367faff9cc35"
+   },
+   "03_GRAFO_POOLS": {
+    "max_row": null,
+    "max_col": null,
+    "non_empty_cells": 733,
+    "formulas": 252,
+    "content_sha256": "59a8e6b2b0c3d6cb42cf1f53477a775ae9ad59772c9fdd266a3d1276f7831903"
+   },
+   "04_ALGORITMOS": {
+    "max_row": null,
+    "max_col": null,
+    "non_empty_cells": 145,
+    "formulas": 18,
+    "content_sha256": "58754c5e1e63779bc7d1283a9cf43527cee5cec00cd88343abe71b1b2cc9f6ba"
+   },
+   "05_RUTAS": {
+    "max_row": null,
+    "max_col": null,
+    "non_empty_cells": 3433,
+    "formulas": 1944,
+    "content_sha256": "0e48725ec7478e46bd95fbca2a381dc450ff23de7d6a1686fcddd4c59e241cf3"
+   },
+   "06_SENSIBILIDAD": {
+    "max_row": null,
+    "max_col": null,
+    "non_empty_cells": 98,
+    "formulas": 62,
+    "content_sha256": "14c44b87037169405afbc76a0ebf1fb4035056c6ec01fdd279f7832b1384d2c7"
+   },
+   "07_GATES": {
+    "max_row": null,
+    "max_col": null,
+    "non_empty_cells": 64,
+    "formulas": 17,
+    "content_sha256": "0bc61b3f1af4faa9b13a0c63a3a866c37111176091a5ab8a2d4c19d6420d142d"
+   },
+   "08_DASHBOARD": {
+    "max_row": null,
+    "max_col": null,
+    "non_empty_cells": 137,
+    "formulas": 100,
+    "content_sha256": "17dad44aca629c02299ff819cf878db782c2f65cd94ef7c9e3e894503d01e128"
+   },
+   "09_REFERENCIAS": {
+    "max_row": null,
+    "max_col": null,
+    "non_empty_cells": 114,
+    "formulas": 0,
+    "content_sha256": "abedec069414ba210f9dc33a6049801481ff4328e4f4e58a1d867663d0659f11"
+   },
+   "10_LISTAS": {
+    "max_row": null,
+    "max_col": null,
+    "non_empty_cells": 399,
+    "formulas": 0,
+    "content_sha256": "9de5eee356166325b8f11949210142d0319838488b248237c4822614b6e293e4"
+   },
+   "11_STRATEGY_CATALOG": {
+    "max_row": null,
+    "max_col": null,
+    "non_empty_cells": 11459,
+    "formulas": 0,
+    "content_sha256": "4f5d7e4ad06fcdaa48d6c2b7c1557fd3f0c19809ee74aa015cc2a9cd3dd82535"
+   },
+   "12_OPERATOR_CONTROL": {
+    "max_row": null,
+    "max_col": null,
+    "non_empty_cells": 323,
+    "formulas": 0,
+    "content_sha256": "adf6c5c7b6eedcd7c04cb38404ec54978c081242dda39f67b6e70333fe9950ff"
+   },
+   "13_STRAT_OP_MATRIX": {
+    "max_row": null,
+    "max_col": null,
+    "non_empty_cells": 10874,
+    "formulas": 0,
+    "content_sha256": "9b2e364869a3540d29c640e9fd44d281aceb970076cabadc4ae86ff80b276122"
+   },
+   "14_STRATEGY_TEMPLATES": {
+    "max_row": null,
+    "max_col": null,
+    "non_empty_cells": 5300,
+    "formulas": 0,
+    "content_sha256": "774a93cef526c839fe59391c713a2452424630660ab20177feb3f4671d3fbffb"
+   },
+   "15_STRAT_ROUTE_OPT": {
+    "max_row": null,
+    "max_col": null,
+    "non_empty_cells": 2882,
+    "formulas": 2825,
+    "content_sha256": "4deecb319027be9a37543b5ee9f11703f988b7a97e9d2135bdae67fd94e93c68"
+   },
+   "16_STRATEGY_SCOREBOARD": {
+    "max_row": null,
+    "max_col": null,
+    "non_empty_cells": 147,
+    "formulas": 0,
+    "content_sha256": "999d211f9457b378244b6d55abda73e82400e32a7565b403f5983ad7187c02bc"
+   },
+   "17_SOURCE_AUDIT": {
+    "max_row": null,
+    "max_col": null,
+    "non_empty_cells": 94,
+    "formulas": 0,
+    "content_sha256": "6a3ae356f4795d8da324915e19d786bc812f181fa065fca0e0543e3ef93aa417"
+   },
+   "18_CANONICAL_LIBRARY": {
+    "max_row": null,
+    "max_col": null,
+    "non_empty_cells": 1341,
+    "formulas": 0,
+    "content_sha256": "298298ad8c5bc8f284d19276b2a49abc7ead285d6d19f2ed85655732f671fee1"
+   },
+   "19_SOURCE_FIELD_MAP": {
+    "max_row": null,
+    "max_col": null,
+    "non_empty_cells": 73,
+    "formulas": 0,
+    "content_sha256": "dec8aedffaf3e094512e377ddd9fd586c880c2b469a86b6f3588a317700d636c"
+   },
+   "29_SUPER_DASHBOARD": {
+    "max_row": null,
+    "max_col": null,
+    "non_empty_cells": 206,
+    "formulas": 82,
+    "content_sha256": "e0c1b0eedca3941c8da0950c3ca1d36c143577fd9a56ed6fb390ebe5420922e8"
+   }
+  },
+  "derived_at_counting": "counts below are derived from parsed rows, never hardcoded"
+ },
+ "generated_by": "scripts/excel_canon/build_canonical_artifacts.py",
+ "totals": {
+  "requirements": 441,
+  "verified": 419,
+  "partial": 21,
+  "missing": 1,
+  "verified_pct": 95.01
+ },
+ "by_family": {
+  "algorithm": {
+   "VERIFIED": 7
+  },
+  "config": {
+   "VERIFIED": 42
+  },
+  "dashboard": {
+   "VERIFIED": 5,
+   "MISSING": 1
+  },
+  "doctrine": {
+   "PARTIAL": 18
+  },
+  "enum": {
+   "VERIFIED": 10,
+   "PARTIAL": 2
+  },
+  "field-map": {
+   "VERIFIED": 11
+  },
+  "financing": {
+   "VERIFIED": 5
+  },
+  "graph": {
+   "VERIFIED": 3,
+   "PARTIAL": 1
+  },
+  "library": {
+   "VERIFIED": 7
+  },
+  "matrix": {
+   "VERIFIED": 1
+  },
+  "operator": {
+   "VERIFIED": 31
+  },
+  "promotion-gate": {
+   "VERIFIED": 8
+  },
+  "provenance": {
+   "VERIFIED": 4
+  },
+  "route": {
+   "VERIFIED": 7
+  },
+  "route-opt": {
+   "VERIFIED": 1
+  },
+  "scoreboard": {
+   "VERIFIED": 11
+  },
+  "sensitivity": {
+   "VERIFIED": 2
+  },
+  "strategy": {
+   "VERIFIED": 264
+  }
+ },
+ "by_sheet": {
+  "01_CONFIG": {
+   "VERIFIED": 42
+  },
+  "02_FINANCING": {
+   "VERIFIED": 5
+  },
+  "03_GRAFO_POOLS": {
+   "VERIFIED": 3,
+   "PARTIAL": 1
+  },
+  "04_ALGORITMOS": {
+   "VERIFIED": 7
+  },
+  "05_RUTAS": {
+   "VERIFIED": 7
+  },
+  "06_SENSIBILIDAD": {
+   "VERIFIED": 2
+  },
+  "07_GATES": {
+   "VERIFIED": 8
+  },
+  "08_DASHBOARD+29_SUPER_DASHBOARD": {
+   "VERIFIED": 5,
+   "MISSING": 1
+  },
+  "09_REFERENCIAS": {
+   "PARTIAL": 18
+  },
+  "10_LISTAS": {
+   "VERIFIED": 10,
+   "PARTIAL": 2
+  },
+  "11_STRATEGY_CATALOG": {
+   "VERIFIED": 264
+  },
+  "12_OPERATOR_CONTROL": {
+   "VERIFIED": 31
+  },
+  "13_STRAT_OP_MATRIX": {
+   "VERIFIED": 1
+  },
+  "15_STRAT_ROUTE_OPT": {
+   "VERIFIED": 1
+  },
+  "16_STRATEGY_SCOREBOARD": {
+   "VERIFIED": 11
+  },
+  "17_SOURCE_AUDIT": {
+   "VERIFIED": 4
+  },
+  "18_CANONICAL_LIBRARY": {
+   "VERIFIED": 7
+  },
+  "19_SOURCE_FIELD_MAP": {
+   "VERIFIED": 11
+  }
+ }
+}
