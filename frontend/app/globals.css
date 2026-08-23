@@ -444,6 +444,20 @@ body::after {
   to { transform: translateX(-50%); }
 }
 
+/* MEM-RENDER-01: CSS-only enter animation for live opportunity cards.
+   Replaces the framer-motion motion.div wrapper — JS animation state on ~200
+   churning cards was a renderer memory sink (multi-GB tab). CSS animations
+   hold no JS heap state. Visual parity with the old motion config:
+   opacity 0→1, y 8→0, scale 0.98→1 over 0.25s. */
+@keyframes arbx-card-enter {
+  from { opacity: 0; transform: translateY(8px) scale(0.98); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+.arbx-card-enter {
+  animation: arbx-card-enter 0.25s ease-out both;
+}
+
 .ticker-item {
   display: inline-flex;
   align-items: center;
