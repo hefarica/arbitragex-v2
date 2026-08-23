@@ -13129,7 +13129,7 @@
     }
    ],
    "verification": {
-    "status": "PARTIAL",
+    "status": "VERIFIED",
     "evidence": [
      {
       "kind": "regex",
@@ -13150,9 +13150,16 @@
      {
       "kind": "regex",
       "target": "hot_token",
-      "hit": false,
-      "matches": [],
-      "n": 0
+      "hit": true,
+      "matches": [
+       "backend/searcher-rs/src/route_discovery/cycle_enumerator.rs",
+       "backend/searcher-rs/src/route_discovery/graph_builder.rs",
+       "backend/searcher-rs/src/route_discovery/guarantees.rs",
+       "backend/searcher-rs/src/route_discovery/multi_hop_search.rs",
+       "backend/searcher-rs/src/route_discovery/route_discovery_worker.rs",
+       "backend/searcher-rs/src/route_discovery/types.rs"
+      ],
+      "n": 6
      }
     ]
    }
