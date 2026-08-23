@@ -1,0 +1,92 @@
+[
+ {
+  "check": "01_CONFIG knobs == 18",
+  "pass": false,
+  "detail": "got 17"
+ },
+ {
+  "check": "11 hop_map strategies == 264",
+  "pass": true,
+  "detail": "got 264"
+ },
+ {
+  "check": "HopMask_u8 == recomputado(H2..H7) en 264/264",
+  "pass": true,
+  "detail": "mismatches: []"
+ },
+ {
+  "check": "hop 2 compatibles == 245",
+  "pass": true,
+  "detail": "got 245"
+ },
+ {
+  "check": "hop 3 compatibles == 262",
+  "pass": true,
+  "detail": "got 262"
+ },
+ {
+  "check": "hop 4 compatibles == 260",
+  "pass": true,
+  "detail": "got 260"
+ },
+ {
+  "check": "hop 5 compatibles == 233",
+  "pass": true,
+  "detail": "got 233"
+ },
+ {
+  "check": "hop 6 compatibles == 233",
+  "pass": true,
+  "detail": "got 233"
+ },
+ {
+  "check": "hop 7 compatibles == 203",
+  "pass": true,
+  "detail": "got 203"
+ },
+ {
+  "check": "12 combos == 1436",
+  "pass": true,
+  "detail": "got 1436"
+ },
+ {
+  "check": "12 combos == suma(245+262+260+233+233+203)=1436",
+  "pass": true,
+  "detail": ""
+ },
+ {
+  "check": "mapa↔expandido biyectivo",
+  "pass": true,
+  "detail": "solo_en_mapa=0 solo_en_expandido=0"
+ },
+ {
+  "check": "13 detectores == 60",
+  "pass": true,
+  "detail": "got 60"
+ },
+ {
+  "check": "Detector_IDs del mapa ⊆ política 60",
+  "pass": true,
+  "detail": "sin política: []"
+ },
+ {
+  "check": "14 research refs == 8",
+  "pass": true,
+  "detail": "got 8"
+ },
+ {
+  "check": "PairIndex(3,17,22) == 73 (ejemplo workbook)",
+  "pass": true,
+  "detail": "got 73"
+ },
+ {
+  "check": "PairIndex inyectivo N=22 (231 pares, 0 colisiones)",
+  "pass": true,
+  "detail": "colisiones=0 pares=231"
+ },
+ {
+  "check": "PairIndex rango [0, C(22,2)-1=230]",
+  "pass": true,
+  "detail": "min=0 max=230"
+ }
+]
