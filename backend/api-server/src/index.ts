@@ -703,7 +703,7 @@ mountSedStatus(app, { pool, logger });
 // (STRAT-IDENT-01). Read-only aggregates from scored_opportunities.
 mountSimPipeline(app, { pool, logger });
 
-// XLS-CANON-01: the 43-knob canonical configuration surface (workbook
+// XLS-CANON-01: the 42-knob canonical configuration surface (workbook
 // 01_CONFIG) — searcher-rs boot snapshot from Redis, served verbatim.
 mountCanonicalKnobs(app, { redis, logger });
 

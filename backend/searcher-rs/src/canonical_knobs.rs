@@ -1,4 +1,4 @@
-//! Canonical knobs — the 43 live-configuration surface of the ULTRA workbook
+//! Canonical knobs — the 42 live-configuration surface of the ULTRA workbook
 //! (sheet `01_CONFIG`, "CONFIGURACIÓN VIVA — knobs que cambian el SET de
 //! rutas") — XLS-CANON-01.
 //!
@@ -35,7 +35,7 @@ pub const EXEC_MODES: [&str; 3] = ["LIVE_MAINNET", "TESTNET", "PAPER_SHADOW"];
 /// Canonical financing-mode tokens (02_FINANCING — first-class modes).
 pub const FINANCING_MODES: [&str; 4] = ["OWN_CAPITAL", "AAVE_FL", "BALANCER_FL", "V2_FLASH_SWAP"];
 
-/// The 43 canonical knobs, field names exactly matching the workbook tokens
+/// The 42 canonical knobs, field names exactly matching the workbook tokens
 /// (snake_case), defaults exactly the `01_CONFIG` values.
 #[derive(Debug, Clone, PartialEq)]
 pub struct CanonicalKnobs {
@@ -476,7 +476,7 @@ impl CanonicalKnobs {
 mod tests {
     use super::*;
 
-    /// The 43 defaults are EXACTLY the workbook `01_CONFIG` table — the
+    /// The 42 defaults are EXACTLY the workbook `01_CONFIG` table — the
     /// canonical surface must never drift from the Excel (XLS-CANON-01).
     #[test]
     fn defaults_match_workbook_01_config_exactly() {
@@ -608,11 +608,12 @@ mod tests {
     }
 
     #[test]
-    fn snapshot_json_has_all_43_knobs_and_source() {
+    fn snapshot_json_has_all_42_knobs_and_source() {
         let j = CanonicalKnobs::default().to_json();
         let obj = j.as_object().expect("snapshot is an object");
-        // 43 knob fields + 1 source field.
-        assert_eq!(obj.len(), 44);
+        // 42 knob fields (workbook 01_CONFIG defines exactly 42 — the coverage
+        // matrix carries REQ-CONFIG-* × 42) + 1 source field.
+        assert_eq!(obj.len(), 43);
         assert_eq!(
             obj["source"],
             "canonical_knobs.rs (01_CONFIG ULTRA workbook)"

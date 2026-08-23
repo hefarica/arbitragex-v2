@@ -1,5 +1,5 @@
 /**
- * GET /api/v1/config/canonical-knobs — the 43-knob canonical configuration
+ * GET /api/v1/config/canonical-knobs — the 42-knob canonical configuration
  * surface (XLS-CANON-01, workbook ULTRA sheet 01_CONFIG).
  *
  * Serves the EXACT snapshot published by searcher-rs at boot

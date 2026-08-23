@@ -282,7 +282,7 @@ async fn main() -> anyhow::Result<()> {
     let redis_conn = redis_client.get_connection_manager().await?;
 
     // ── XLS-CANON-01 — canonical knobs (01_CONFIG ULTRA workbook) ─────────────
-    // Load the 43-knob canonical surface, validate (fail-fast boot on invariant
+    // Load the 42-knob canonical surface, validate (fail-fast boot on invariant
     // violation — config validation is defensive, not speculative), log it, and
     // publish the snapshot to Redis for the api-server surface
     // (`GET /api/v1/config/canonical-knobs`). Declarative/observability only:
@@ -297,7 +297,7 @@ async fn main() -> anyhow::Result<()> {
         info!(
             event = "config.canonical_knobs",
             knobs = %snapshot,
-            "canonical knobs loaded (43-knob 01_CONFIG surface; precedence env>yaml>workbook)"
+            "canonical knobs loaded (42-knob 01_CONFIG surface; precedence env>yaml>workbook)"
         );
         let mut knobs_redis = redis_conn.clone();
         let payload = snapshot.to_string();
