@@ -5,7 +5,7 @@
 //! `GRAPH_MODELS`). The runtime lists that already have canonical homes are
 //! NOT duplicated here:
 //!   - `FINANCING_MODES` / `EXECUTION_MODES` → [`crate::canonical_knobs`]
-//!     (the 43-knob surface).
+//!     (the 44-knob surface).
 //!   - `ROUTE_KINDS` / `STRATEGY_IDS` / `DETECTOR_IDS` → carried
 //!     by their real consumers (route dispatch, capability matrix, cartridges).
 //!

@@ -1,6 +1,6 @@
-//! Canonical knobs — the 42 live-configuration surface of the ULTRA workbook
-//! (sheet `01_CONFIG`, "CONFIGURACIÓN VIVA — knobs que cambian el SET de
-//! rutas") — XLS-CANON-01.
+//! Canonical knobs — the 44 live-configuration surface: the ULTRA workbook's
+//! 42 (sheet `01_CONFIG`, "CONFIGURACIÓN VIVA — knobs que cambian el SET de
+//! rutas" — XLS-CANON-01) + 2 from QUOTEBASE-264 `01_CONFIG` (XLS-QB-03).
 //!
 //! ## Authority & precedence (anti-regression §37)
 //! Every knob resolves as **explicit operator env > deploy YAML (where an
@@ -35,8 +35,10 @@ pub const EXEC_MODES: [&str; 3] = ["LIVE_MAINNET", "TESTNET", "PAPER_SHADOW"];
 /// Canonical financing-mode tokens (02_FINANCING — first-class modes).
 pub const FINANCING_MODES: [&str; 4] = ["OWN_CAPITAL", "AAVE_FL", "BALANCER_FL", "V2_FLASH_SWAP"];
 
-/// The 42 canonical knobs, field names exactly matching the workbook tokens
-/// (snake_case), defaults exactly the `01_CONFIG` values.
+/// The 44 canonical knobs, field names exactly matching the workbook tokens
+/// (snake_case), defaults exactly the `01_CONFIG` values: 42 from the ULTRA
+/// workbook + 2 from QUOTEBASE-264's `01_CONFIG` (`min_net_bps`, `beam_k` —
+/// XLS-QB-03).
 #[derive(Debug, Clone, PartialEq)]
 pub struct CanonicalKnobs {
     // ── Discovery ────────────────────────────────────────────────────────
@@ -55,6 +57,15 @@ pub struct CanonicalKnobs {
     pub min_ev_usd: f64,       // 25     (USD, net of all costs)
     pub risk_haircut_pct: f64, // 0.1    (fraction)
     pub slippage_factor: f64,  // 0.06   (proxy; exact sim is truth)
+    // ── Dynamic N-engine (QUOTEBASE-264 01_CONFIG, workbook #5 — XLS-QB-03).
+    // Declared + validated here; consumption lands at their true layers
+    // (same declarative-only precedent as `execution_mode`).
+    pub min_net_bps: f64, // 5 (bps — Min_Net_bps: gate mínimo beneficio neto;
+    //                       evaluation-layer net gate, amount-aware exact net
+    //                       stays the truth — G-ECON doctrine, this is the floor)
+    pub beam_k: u16, // 4 (branches/node — Beam_K: top-K outgoing branches kept
+    //                  per expansion; DFS beam consumption lands with the
+    //                  dirty-pair queue, XLS-QB-05)
     // ── Runtime budgets ──────────────────────────────────────────────────
     pub emission_budget_routes_block: usize,  // 50_000
     pub candidate_budget_routes_block: usize, // 250_000
@@ -110,6 +121,8 @@ impl Default for CanonicalKnobs {
             min_ev_usd: 25.0,
             risk_haircut_pct: 0.1,
             slippage_factor: 0.06,
+            min_net_bps: 5.0,
+            beam_k: 4,
             emission_budget_routes_block: 50_000,
             candidate_budget_routes_block: 250_000,
             block_cadence_s: 12,
@@ -204,6 +217,8 @@ impl CanonicalKnobs {
             min_ev_usd: env_f64("ARBX_KNOB_MIN_EV_USD", d.min_ev_usd),
             risk_haircut_pct: env_f64("ARBX_KNOB_RISK_HAIRCUT_PCT", d.risk_haircut_pct),
             slippage_factor: env_f64("ARBX_KNOB_SLIPPAGE_FACTOR", d.slippage_factor),
+            min_net_bps: env_f64("ARBX_KNOB_MIN_NET_BPS", d.min_net_bps),
+            beam_k: env_u64("ARBX_KNOB_BEAM_K", d.beam_k as u64) as u16,
             emission_budget_routes_block: env_u64(
                 "ARBX_KNOB_EMISSION_BUDGET_ROUTES_BLOCK",
                 d.emission_budget_routes_block as u64,
@@ -308,6 +323,14 @@ impl CanonicalKnobs {
         if self.slippage_factor < 0.0 {
             return Err("slippage_factor cannot be negative".to_string());
         }
+        // QUOTEBASE-264 01_CONFIG (XLS-QB-03): Min_Net_bps ≥ 0 finite; Beam_K
+        // in 1..=256 (the per-hop-tier DirtySeed beam bounds run up to 256).
+        if !self.min_net_bps.is_finite() || self.min_net_bps < 0.0 {
+            return Err("min_net_bps must be finite and >= 0".to_string());
+        }
+        if !(1..=256).contains(&self.beam_k) {
+            return Err(format!("beam_k {} outside 1..=256", self.beam_k));
+        }
         if self.emission_budget_routes_block == 0 || self.candidate_budget_routes_block == 0 {
             return Err("route budgets must be > 0".to_string());
         }
@@ -370,7 +393,7 @@ impl CanonicalKnobs {
     /// `recursion_limit` (rust-check CI failure) — the incremental build stays
     /// under it without a crate-wide attribute.
     pub fn to_json(&self) -> serde_json::Value {
-        let mut m = serde_json::Map::with_capacity(44);
+        let mut m = serde_json::Map::with_capacity(46);
         m.insert("max_hops".into(), json!(self.max_hops));
         m.insert("min_hops".into(), json!(self.min_hops));
         m.insert("selected_financing".into(), json!(self.selected_financing));
@@ -389,6 +412,8 @@ impl CanonicalKnobs {
         m.insert("min_ev_usd".into(), json!(self.min_ev_usd));
         m.insert("risk_haircut_pct".into(), json!(self.risk_haircut_pct));
         m.insert("slippage_factor".into(), json!(self.slippage_factor));
+        m.insert("min_net_bps".into(), json!(self.min_net_bps));
+        m.insert("beam_k".into(), json!(self.beam_k));
         m.insert(
             "emission_budget_routes_block".into(),
             json!(self.emission_budget_routes_block),
@@ -496,6 +521,8 @@ mod tests {
         assert_eq!(k.min_ev_usd, 25.0);
         assert_eq!(k.risk_haircut_pct, 0.1);
         assert_eq!(k.slippage_factor, 0.06);
+        assert_eq!(k.min_net_bps, 5.0); // QUOTEBASE-264 01_CONFIG Min_Net_bps
+        assert_eq!(k.beam_k, 4); // QUOTEBASE-264 01_CONFIG Beam_K
         assert_eq!(k.emission_budget_routes_block, 50_000);
         assert_eq!(k.candidate_budget_routes_block, 250_000);
         assert_eq!(k.block_cadence_s, 12);
@@ -568,6 +595,16 @@ mod tests {
         let mut k = CanonicalKnobs::default();
         k.secondary_operator_weight = 2.0;
         assert!(k.validate().is_err(), "secondary weight > primary");
+
+        let mut k = CanonicalKnobs::default();
+        k.min_net_bps = -1.0;
+        assert!(k.validate().is_err(), "min_net_bps negative");
+
+        let mut k = CanonicalKnobs::default();
+        k.beam_k = 0;
+        assert!(k.validate().is_err(), "beam_k < 1");
+        k.beam_k = 257;
+        assert!(k.validate().is_err(), "beam_k > 256");
     }
 
     /// Env overrides win over defaults (single test fn — `set_var` is
@@ -581,6 +618,7 @@ mod tests {
             "ARBX_KNOB_ENABLE_JOHNSON",
             "ARBX_KNOB_SELECTED_FINANCING",
             "ARBX_KNOB_KILLSWITCH",
+            "ARBX_KNOB_MIN_NET_BPS",
         ];
         let saved: Vec<Option<String>> = keys.iter().map(|k| std::env::var(k).ok()).collect();
         std::env::set_var("ARBX_KNOB_MAX_HOPS", "5");
@@ -588,12 +626,14 @@ mod tests {
         std::env::set_var("ARBX_KNOB_ENABLE_JOHNSON", "true");
         std::env::set_var("ARBX_KNOB_SELECTED_FINANCING", "AAVE_FL");
         std::env::set_var("ARBX_KNOB_KILLSWITCH", "ON");
+        std::env::set_var("ARBX_KNOB_MIN_NET_BPS", "8.5");
         let k = CanonicalKnobs::from_env();
         assert_eq!(k.max_hops, 5);
         assert_eq!(k.max_gas_usd, 77.5);
         assert!(k.enable_johnson);
         assert_eq!(k.selected_financing, "AAVE_FL");
         assert!(k.killswitch);
+        assert_eq!(k.min_net_bps, 8.5);
         assert!(
             k.validate().is_ok(),
             "explicit operator overrides must validate"
@@ -611,17 +651,19 @@ mod tests {
     }
 
     #[test]
-    fn snapshot_json_has_all_42_knobs_and_source() {
+    fn snapshot_json_has_all_44_knobs_and_source() {
         let j = CanonicalKnobs::default().to_json();
         let obj = j.as_object().expect("snapshot is an object");
-        // 42 knob fields (workbook 01_CONFIG defines exactly 42 — the coverage
-        // matrix carries REQ-CONFIG-* × 42) + 1 source field.
-        assert_eq!(obj.len(), 43);
+        // 44 knob fields (ULTRA 01_CONFIG ×42 + QUOTEBASE-264 01_CONFIG ×2,
+        // XLS-QB-03) + 1 source field.
+        assert_eq!(obj.len(), 45);
         assert_eq!(
             obj["source"],
             "canonical_knobs.rs (01_CONFIG ULTRA workbook)"
         );
         assert_eq!(obj["max_hops"], 7);
+        assert_eq!(obj["min_net_bps"], 5.0);
+        assert_eq!(obj["beam_k"], 4);
         assert_eq!(obj["killswitch"], false);
     }
 }

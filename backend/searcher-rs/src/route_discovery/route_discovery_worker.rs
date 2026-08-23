@@ -130,11 +130,27 @@ impl WorkerConfig {
             "ARBX_KNOB_MAX_FRESHNESS_S",
             env_u64("ARBX_ROUTE_DISCOVERY_MAX_AGE_SECS", DEFAULT_MAX_AGE_SECS),
         );
+        // XLS-QB-03 (workbook step 9 StrategyMask): the canonical
+        // `selected_strategy_id` (ARBX_KNOB_SELECTED_STRATEGY_ID > workbook
+        // default MEV-01-001) bounds the multi-hop expansion via its 264×u8
+        // HopMask BEFORE enumeration. Boot validation of the knobs (which
+        // requires the id to be MEV-prefixed) runs elsewhere; here an id
+        // unknown to the table honestly skips the pass with telemetry (R8).
+        let hop_mask_strategy_id = std::env::var("ARBX_KNOB_SELECTED_STRATEGY_ID")
+            .ok()
+            .map(|v| v.trim().to_string())
+            .filter(|v| !v.is_empty())
+            .or_else(|| {
+                Some(crate::canonical_knobs::CanonicalKnobs::default().selected_strategy_id)
+            });
+
         // XLS-GRAPH-01 hot-token classification (workbook 03 col P). The hub
         // set defaults to the workbook formula ({WETH, USDC, WBTC, USDT});
         // `ARBX_GRAPH_HOT_TOKENS` overrides per-chain (comma-separated symbols).
         // The prune itself is default-OFF — `ARBX_GRAPH_HOT_TOKEN_ONLY=true`
-        // is an explicit operator decision (topology change).
+        // is an explicit operator decision (topology change). Orthogonal to
+        // the hop mask above: this gates WHICH pools enter the graph, the
+        // mask gates HOW MANY hops expansion may take.
         let hot_tokens = std::env::var("ARBX_GRAPH_HOT_TOKENS")
             .ok()
             .map(|raw| {
@@ -169,6 +185,7 @@ impl WorkerConfig {
                 max_routes_per_tick: max_routes,
                 base_tokens: parse_base_tokens(&disc.base_tokens),
                 mode: "shadow".to_string(),
+                hop_mask_strategy_id,
             },
         }
     }
@@ -278,12 +295,38 @@ pub fn evaluate_tick(
     // XLS-CANON-01: Min_Hops/Max_Hops knobs flow through the finder bounds.
     let mh_max_hops = (finder.max_depth as usize).clamp(2, 7);
     let mh_min_hops = (finder.min_depth as usize).clamp(2, mh_max_hops);
-    let mh = crate::route_discovery::multi_hop_search::find_profitable_cycles(
-        &outcome.graph,
-        mh_min_hops,
-        mh_max_hops,
-        finder.max_routes_per_tick,
-    );
+    // XLS-QB-03 (workbook step 9 StrategyMask): the selected strategy's
+    // HopMask bounds the expansion BEFORE enumeration — O(1) mask test per
+    // (strategy, range), the returned span is the mask's admissible EXTENT
+    // (observe-only over-approximation, never under-reports). Empty
+    // intersection (or unknown MEV_ID) ⇒ honest skip with a reason (R8),
+    // never a silently-empty search.
+    let (mh_mask_strategy, mh_bounds) = match &finder.hop_mask_strategy_id {
+        Some(id) => (
+            Some(id.clone()),
+            crate::strategy_hop_mask::admissible_hop_bounds(
+                id,
+                mh_min_hops as u8,
+                mh_max_hops as u8,
+            ),
+        ),
+        None => (None, Some((mh_min_hops as u8, mh_max_hops as u8))),
+    };
+    let mh = match mh_bounds {
+        Some((lo, hi)) => crate::route_discovery::multi_hop_search::find_profitable_cycles(
+            &outcome.graph,
+            lo as usize,
+            hi as usize,
+            finder.max_routes_per_tick,
+        ),
+        None => crate::route_discovery::multi_hop_search::MultiHopResult {
+            cycles: Vec::new(),
+            capped: false,
+            dropped_for_cap: 0,
+            v3_skipped: 0,
+            noise_dropped: 0,
+        },
+    };
     let multi_hop_cycles_found = mh.cycles.len();
 
     let mut tick_summary = telemetry::tick_event(
@@ -307,6 +350,12 @@ pub fn evaluate_tick(
     tick_summary["multi_hop_capped"] = serde_json::json!(mh.capped);
     // PR-ROUTE-06: surface the noise-floor prune so it never dies in silence (R8).
     tick_summary["multi_hop_noise_dropped"] = serde_json::json!(mh.noise_dropped);
+    // XLS-QB-03: make the StrategyMask hop bounds observable — which strategy
+    // gated the pass, the effective span, and an honest skip reason when the
+    // mask∩knobs intersection is empty (0 cycles MUST be explainable).
+    tick_summary["multi_hop_mask_strategy"] = serde_json::json!(mh_mask_strategy);
+    tick_summary["multi_hop_hops_effective"] = serde_json::json!(mh_bounds);
+    tick_summary["multi_hop_mask_skip"] = serde_json::json!(mh_bounds.is_none());
 
     TickOutput {
         routes_found: routes.len(),
@@ -346,6 +395,7 @@ async fn run_loop(
         max_depth = cfg.finder.max_depth,
         max_routes_per_tick = cfg.finder.max_routes_per_tick,
         max_pools_per_pair = cfg.finder.max_pools_per_pair,
+        hop_mask_strategy = ?cfg.finder.hop_mask_strategy_id,
         algorithm = ALGORITHM,
         "route discovery worker started (shadow-only)"
     );
@@ -807,5 +857,41 @@ mod tests {
         ]);
         assert_eq!(parsed.len(), 2);
         assert_eq!(parsed[0], addr(1));
+    }
+
+    /// XLS-QB-03 (workbook step 9): the selected strategy's HopMask bounds the
+    /// multi-hop expansion before enumeration, observably in the tick summary.
+    /// MEV-01-015's mask (1) admits hop 2 only ⇒ the effective span narrows to
+    /// (2,2) even though the knob range is (2,3). Default (None) keeps the
+    /// knob span; an unknown MEV_ID skips honestly (R8).
+    #[test]
+    fn evaluate_tick_applies_strategy_hop_mask() {
+        let outcome = outcome_two_v2();
+        let engine = StrategyApplicabilityEngine::default();
+        let base = RouteFinderConfig::default(); // min 2, max 3
+
+        let mut finder = base.clone();
+        finder.hop_mask_strategy_id = Some("MEV-01-015".to_string()); // mask 1 → hop 2 only
+        let tick = evaluate_tick(&outcome, 1, &engine, &finder, 200, false, 0, "shadow");
+        assert_eq!(tick.tick_summary["multi_hop_mask_strategy"], "MEV-01-015");
+        assert_eq!(
+            tick.tick_summary["multi_hop_hops_effective"],
+            serde_json::json!((2u8, 2u8))
+        );
+        assert_eq!(tick.tick_summary["multi_hop_mask_skip"], false);
+
+        let tick = evaluate_tick(&outcome, 1, &engine, &base, 200, false, 0, "shadow");
+        assert!(tick.tick_summary["multi_hop_mask_strategy"].is_null());
+        assert_eq!(
+            tick.tick_summary["multi_hop_hops_effective"],
+            serde_json::json!((2u8, 3u8))
+        );
+        assert_eq!(tick.tick_summary["multi_hop_mask_skip"], false);
+
+        let mut finder = base.clone();
+        finder.hop_mask_strategy_id = Some("MEV-99-999".to_string()); // unknown → honest skip
+        let tick = evaluate_tick(&outcome, 1, &engine, &finder, 200, false, 0, "shadow");
+        assert_eq!(tick.tick_summary["multi_hop_mask_skip"], true);
+        assert_eq!(tick.multi_hop_cycles_found, 0);
     }
 }

@@ -118,6 +118,31 @@ pub fn allowed_hops(mev_id: &str) -> Vec<u8> {{
     }}
 }}
 
+/// Tightest `(min, max)` admissible hop span for a strategy after
+/// intersecting its HopMask with the requested `[min_hops, max_hops]` range
+/// (each side clamped to the canonical `2..=7`). `None` when the
+/// intersection is empty or the MEV_ID is unknown — the caller must SKIP
+/// expansion and report the skip (R8), never run a silently-empty search.
+///
+/// The returned pair is the mask's admissible EXTENT within the request: a
+/// mask admitting only {{2, 5}} yields `(2, 5)`, so hops 3–4 inside the span
+/// may still be enumerated by an observe-only expansion (safe
+/// over-approximation — it can never under-report candidates). Exact
+/// per-hop gating belongs to per-strategy dispatch (workbook
+/// 15_IMPLEMENTATION_CONTRACT step 9 — XLS-QB-03 consumer:
+/// `route_discovery_worker`'s multi-hop pass).
+pub fn admissible_hop_bounds(mev_id: &str, min_hops: u8, max_hops: u8) -> Option<(u8, u8)> {{
+    let mask = hop_mask(mev_id)?;
+    let lo = min_hops.max(2);
+    let hi = max_hops.min(7);
+    (lo..=hi)
+        .filter(|h| mask & (1 << (h - 2)) != 0)
+        .fold(None::<(u8, u8)>, |acc, h| match acc {{
+            None => Some((h, h)),
+            Some((first, _)) => Some((first, h)),
+        }})
+}}
+
 #[cfg(test)]
 mod tests {{
     use super::*;
@@ -240,6 +265,42 @@ mod tests {{
         assert_eq!(ids, sorted);
         let dedup_len = ids.iter().collect::<std::collections::BTreeSet<_>>().len();
         assert_eq!(dedup_len, ids.len());
+    }}
+
+    /// Differential: for every fixture strategy, the full-range bounds equal
+    /// (first, last) of its admissible-hop list; sub-ranges intersect
+    /// correctly on both edges.
+    #[test]
+    fn admissible_bounds_match_fixture_extent() {{
+        for row in fixture() {{
+            let hops = &row.2;
+            let full = admissible_hop_bounds(&row.0, 0, 9);
+            assert_eq!(full, hops.first().zip(hops.last()).map(|(&a, &b)| (a, b)));
+            // Left-edge cut: raise min past the first admissible hop.
+            if let Some(&first) = hops.first() {{
+                let cut = admissible_hop_bounds(&row.0, first + 1, 7);
+                let rest: Vec<u8> = hops.iter().copied().filter(|h| *h > first).collect();
+                assert_eq!(cut, rest.first().zip(rest.last()).map(|(&a, &b)| (a, b)));
+            }}
+        }}
+    }}
+
+    /// XLS-QB-03 dispatch semantics: mask-all MEV-01-001 keeps the requested
+    /// span; empty intersections and unknown ids return None (skip honestly).
+    #[test]
+    fn admissible_bounds_dispatch_semantics() {{
+        assert_eq!(admissible_hop_bounds("MEV-01-001", 2, 7), Some((2, 7)));
+        assert_eq!(admissible_hop_bounds("MEV-01-001", 3, 5), Some((3, 5)));
+        assert_eq!(admissible_hop_bounds("MEV-01-001", 0, 9), Some((2, 7)));
+        // A strategy whose mask excludes the whole requested span → None.
+        let fx = fixture();
+        let restricted = fx
+            .iter()
+            .find(|r| r.2.first() == Some(&3))
+            .expect("fixture carries a ≥3-hop-only strategy");
+        assert_eq!(admissible_hop_bounds(&restricted.0, 2, 2), None);
+        // Unknown id → None regardless of span.
+        assert_eq!(admissible_hop_bounds("MEV-99-999", 2, 7), None);
     }}
 }}
 '''
