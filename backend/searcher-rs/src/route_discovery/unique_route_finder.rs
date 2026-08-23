@@ -49,6 +49,13 @@ pub struct RouteFinderConfig {
     pub base_tokens: Vec<Address>,
     /// Discovery mode stamped onto each candidate (e.g. `"shadow"`).
     pub mode: String,
+    /// XLS-QB-03 (workbook step 9 StrategyMask): the canonical
+    /// `selected_strategy_id` whose HopMask bounds the multi-hop expansion
+    /// BEFORE enumeration (O(1) mask test). `None` ⇒ no mask constraint
+    /// (mask-less behavior preserved). The main 2–3 hop finder is NOT
+    /// bounded by it — it serves every coarse strategy; only the
+    /// observe-only multi-hop pass runs in a single-strategy context.
+    pub hop_mask_strategy_id: Option<String>,
 }
 
 impl Default for RouteFinderConfig {
@@ -60,6 +67,7 @@ impl Default for RouteFinderConfig {
             max_routes_per_tick: 500,
             base_tokens: Vec::new(),
             mode: "shadow".to_string(),
+            hop_mask_strategy_id: None,
         }
     }
 }
