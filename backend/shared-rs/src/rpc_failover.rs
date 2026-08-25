@@ -100,8 +100,8 @@ pub const MULTICALL3_ADDRESS: alloy::primitives::Address =
 pub const LOAD_PROBE_CALLDATA: &[u8] = &[
     // aggregate3(Call3[]) selector
     0x82, 0xad, 0x56, 0xcb, // head: offset of the dynamic `calls` argument (32)
-    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 32,
-    // tail: Call3[] length = 0 (empty)
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    32, // tail: Call3[] length = 0 (empty)
     0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
 ];
 
