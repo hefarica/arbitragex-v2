@@ -385,7 +385,11 @@ impl SimEngine {
         }
         // ARBX-0019: dense view left unbuilt — `None` until build_dense; the
         // HashMap fallback is the pinned-equivalent path for hand-built graphs.
-        let graph = TokenGraph { edges, adjacency, dense: None };
+        let graph = TokenGraph {
+            edges,
+            adjacency,
+            dense: None,
+        };
 
         let base_tokens: Vec<Address> = p
             .base_tokens
@@ -398,6 +402,10 @@ impl SimEngine {
             // Canonical floor (XLS-CANON-01 Min_Hops default) — the tool exposes
             // only max_depth; 2 keeps this finder's pre-canon 2..=max enumeration.
             min_depth: 2,
+            // XLS-QB-03 fix-forward: this MCP tool carries no selected-strategy
+            // context — None = no hop-mask bounding (the tool's callers pick
+            // max_depth explicitly, pre-QB behavior unchanged).
+            hop_mask_strategy_id: None,
             max_depth: p.max_depth.unwrap_or(3).clamp(2, 3),
             max_pools_per_pair: 8,
             // DoS guard: cap total emitted routes so a caller can't lift the cap to
@@ -405,9 +413,6 @@ impl SimEngine {
             max_routes_per_tick: p.max_routes.unwrap_or(500).min(MAX_ROUTES_CAP),
             base_tokens,
             mode: "shadow".to_string(),
-            // No workbook hop-mask pinning: the tool enumerates by min/max
-            // depth (pre-canon semantics) — None is the canonical Default.
-            hop_mask_strategy_id: None,
         };
 
         let outcome = find_routes(&graph, p.chain_id, &cfg);

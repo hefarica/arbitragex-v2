@@ -3,6 +3,7 @@
 //! Exposes internal modules for integration tests and future orchestrator crates.
 //! hash-rotation 2026-08-24 (WP-V V-004): la metadata de la lib rota el disambiguador de TODOS los bins de test dependientes — workaround documentado AppControl 4551 (bloqueo por hash de binario). Contenido semántico inalterado.
 //! The binary entry point is `main.rs`.
+//! hash-rotation 2026-08-25 (WP-F merge): segunda rotacion post-merge main (QB-02..04 landings).
 
 // Suppress the same lints as main.rs for consistency. Individual modules
 // carry their own allows where the pattern is demonstrably safe.
