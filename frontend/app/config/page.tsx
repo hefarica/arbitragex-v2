@@ -10,6 +10,10 @@ import { PageHeader } from "@/components/page-header";
 import { getConfigCurrent } from "@/lib/api-client";
 import { PaperModeToggle } from "@/components/paper-mode-toggle";
 import { RpcBackendToggle } from "@/components/settings/RpcBackendToggle";
+import { CanonicalKnobsPanel } from "@/components/CanonicalKnobsPanel";
+// FE-0041 (§52-§54): scope labeling — the two toggles on this page are the
+// only runtime mutations here; every KV/table below is view-only.
+import { ControlScopeBadge } from "@/components/ControlScopeBadge";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
@@ -71,7 +75,15 @@ export default async function ConfigPage() {
           </Alert>
         )}
         <div className="flex-shrink-0 flex flex-col gap-3 p-4 border rounded-xl bg-card">
+          <div className="flex items-center justify-between gap-2">
+            <span className="text-xs font-medium text-muted-foreground">Paper mode</span>
+            <ControlScopeBadge kind="RUNTIME_MUTATION" />
+          </div>
           <PaperModeToggle chainId={1} />
+          <div className="flex items-center justify-between gap-2">
+            <span className="text-xs font-medium text-muted-foreground">RPC backend</span>
+            <ControlScopeBadge kind="RUNTIME_MUTATION" />
+          </div>
           <RpcBackendToggle />
         </div>
       </div>
@@ -174,6 +186,13 @@ export default async function ConfigPage() {
           </Table>
         </CardContent>
       </Card>
+
+      {/* FE-0061 (FE-CFG-001): workbook 01_CONFIG vs effective searcher knobs. */}
+      <div className="mt-6 flex items-center gap-2">
+        <span className="text-sm font-semibold">Canonical knobs</span>
+        <ControlScopeBadge kind="VIEW_ONLY" />
+      </div>
+      <CanonicalKnobsPanel />
     </>
   );
 }

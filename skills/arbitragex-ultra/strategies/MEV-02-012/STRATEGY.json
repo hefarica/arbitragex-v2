@@ -1,0 +1,21 @@
+{
+  "mev_id": "MEV-02-012",
+  "grupo": "2",
+  "estrategia": "Virtual-AMM arbitrage",
+  "familia": "Arbitrajes seg\u00fan la curva del AMM",
+  "required_surface": "DEX_AMM",
+  "backend_module": "amm_curve_engine",
+  "toggle_frontend": "strategy.02.012.enabled",
+  "min_legs": 2,
+  "max_legs": 8,
+  "legs_model": "Ruta din\u00e1mica",
+  "primary_operators": [
+    "op_08",
+    "op_13",
+    "op_21"
+  ],
+  "secondary_operators": [
+    "op_10",
+    "op_22"
+  ]
+}

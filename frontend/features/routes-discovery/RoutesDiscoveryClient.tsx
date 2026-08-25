@@ -9,12 +9,27 @@
  * Safety: observe-only. No capital, no execution, no broadcast.
  * Zero-Mocks: all data from /api/route-discovery/*; no fabricated defaults.
  */
+// SSR-test support (repo pattern, cf. MarketEventPipelineHeader): classic JSX
+// path needs React in module scope. Added by d9 during FE-0036 (tab mount).
+import * as React from "react";
 import { useEffect, useState } from "react";
 import { RadarIcon, ZapIcon, NetworkIcon } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { DegradedBanner } from "@/components/DegradedBanner";
 import { SourceMeta } from "@/components/SourceMeta";
+import { useRouteTick } from "@/lib/store/omni-store";
+
+import { MarketEventPipelineHeader } from "./MarketEventPipelineHeader";
+import { HopControls } from "./HopControls";
+// FE-0036 (§43/§44): the Performance tab over the same provider-fed tick.
+import { PerformancePanel } from "./PerformancePanel";
+import {
+  filterRoutesByHops,
+  filterRoutesByKpi,
+  hopCounts,
+  type PipelineKpiId,
+} from "./pipeline";
 
 const POLL_INTERVAL_MS = 8_000;
 
@@ -113,6 +128,26 @@ export function RoutesDiscoveryClient({ initialData }: Props) {
   const [data, setData] = useState<DiscoverySnapshot>(initialData);
   const [pollError, setPollError] = useState<string | null>(null);
   const [lastOk, setLastOk] = useState<number | null>(null);
+  // FE-0026 (§18): the funnel header reads the provider-fed tick (WS push +
+  // REST fallback — FE-0008 owns the cadence) and owns the KPI filter state.
+  // SSR reads the store INITIAL state (tick null → honest dashes) — R1-safe.
+  const routeTick = useRouteTick();
+  const [activeKpi, setActiveKpi] = useState<PipelineKpiId | null>(null);
+  const toggleKpi = (id: PipelineKpiId) =>
+    setActiveKpi((prev) => (prev === id ? null : id));
+  // FE-0027 (§19/§20): hop chips are a VIEW filter over the same grid — they
+  // never touch the runtime hop policy (the effective bounds ride the tick).
+  const [activeHops, setActiveHops] = useState<Set<number> | null>(null);
+  const toggleHop = (h: number) =>
+    setActiveHops((prev) => {
+      const next = new Set(prev ?? []);
+      if (next.has(h)) next.delete(h);
+      else next.add(h);
+      return next.size === 0 ? null : next;
+    });
+  // FE-0036 (§43/§44): Radar | Performance view switch over the SAME tick —
+  // pure view state, the radar poll and the funnel/hop filters are untouched.
+  const [view, setView] = useState<"radar" | "performance">("radar");
 
   useEffect(() => {
     let alive = true;
@@ -149,7 +184,13 @@ export function RoutesDiscoveryClient({ initialData }: Props) {
     };
   }, []);
 
-  const routes = data.routes?.routes ?? [];
+  const allRoutes = data.routes?.routes ?? [];
+  // Both view filters compose (KPI predicate ∧ hop set) over the SAME set.
+  const routes = filterRoutesByHops(
+    filterRoutesByKpi(allRoutes, activeKpi),
+    activeHops,
+  );
+  const counts = hopCounts(allRoutes);
   const tick = data.status?.data?.last_tick;
 
   return (
@@ -173,8 +214,54 @@ export function RoutesDiscoveryClient({ initialData }: Props) {
 
       <SourceMeta source="edge" at={lastOk} pollMs={POLL_INTERVAL_MS} className="px-1" />
 
+      {/* FE-0036 (§43/§44): view tabs — Radar (routes grid + §18/§19 views) |
+          Performance (10_LATENCY stages). Same provider-fed tick, pure view. */}
+      <div
+        role="tablist"
+        aria-label="Route Discovery view"
+        data-testid="routes-view-tabs"
+        className="flex gap-1.5"
+      >
+        {(["radar", "performance"] as const).map((v) => (
+          <button
+            key={v}
+            type="button"
+            role="tab"
+            aria-selected={view === v}
+            onClick={() => setView(v)}
+            className={`rounded-md border px-3 py-1.5 text-xs font-mono transition-colors ${
+              view === v
+                ? "border-primary bg-primary/10 text-primary"
+                : "border-border text-muted-foreground hover:bg-muted/50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-ring"
+            }`}
+          >
+            {v}
+          </button>
+        ))}
+      </div>
+
+      {/* FE-0036 (§43/§44): Performance view — the latency half of the tick. */}
+      {view === "performance" && <PerformancePanel tick={routeTick} />}
+
+      {/* FE-0026 (§18): market event pipeline — KPI slots from the provider-fed
+          tick; filterable slots (routes/strategies) toggle the grid filter. */}
+      {view === "radar" && (
+        <MarketEventPipelineHeader tick={routeTick} active={activeKpi} onToggle={toggleKpi} />
+      )}
+
+      {/* FE-0027 (§19/§20/§63): hop view-filter — VIEW_FILTER, never a runtime
+          mutation; the effective bounds beside it come from the tick wire. */}
+      {view === "radar" && (
+      <HopControls
+        counts={counts}
+        active={activeHops}
+        onToggle={toggleHop}
+        effectiveBounds={routeTick?.multi_hop_hops_effective ?? null}
+      />
+      )}
+
       {/* Status strip */}
-      {tick && (
+      {view === "radar" && tick && (
         <div className="flex flex-wrap items-center gap-4 rounded-lg border p-4" data-testid="routes-discovery-status">
           <div className="flex items-center gap-2">
             <RadarIcon className="h-4 w-4 text-primary" />
@@ -192,22 +279,29 @@ export function RoutesDiscoveryClient({ initialData }: Props) {
       )}
 
       {/* Routes grid */}
-      {routes.length === 0 ? (
-        <div className="rounded-lg border p-8 text-center text-sm text-muted-foreground" data-testid="routes-empty">
-          No routes discovered yet — the route-discovery worker may still be initializing.
-        </div>
-      ) : (
-        <section data-testid="routes-grid">
-          <h2 className="mb-3 text-sm font-semibold text-muted-foreground">
-            Discovered Routes ({routes.length})
-          </h2>
-          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-            {routes.map((route, idx) => (
-              <RouteCard key={route.route_hash} route={route} idx={idx} />
-            ))}
+      {view === "radar" &&
+        (routes.length === 0 ? (
+          <div className="rounded-lg border p-8 text-center text-sm text-muted-foreground" data-testid="routes-empty">
+            {allRoutes.length > 0 && (activeKpi !== null || activeHops !== null)
+              ? `Ninguna de las ${allRoutes.length} rutas servidas pasa el filtro activo.`
+              : "No routes discovered yet — the route-discovery worker may still be initializing."}
           </div>
-        </section>
-      )}
+        ) : (
+          <section data-testid="routes-grid">
+            <h2 className="mb-3 text-sm font-semibold text-muted-foreground">
+              Discovered Routes ({routes.length}
+              {(activeKpi !== null || activeHops !== null) && routes.length !== allRoutes.length
+                ? ` de ${allRoutes.length}`
+                : ""}
+              )
+            </h2>
+            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+              {routes.map((route, idx) => (
+                <RouteCard key={route.route_hash} route={route} idx={idx} />
+              ))}
+            </div>
+          </section>
+        ))}
     </div>
   );
 }

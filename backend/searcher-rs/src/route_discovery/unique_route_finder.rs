@@ -32,6 +32,7 @@ use crate::route_discovery::types::{RouteCandidate, RouteDirection, RouteEdge, R
 use crate::route_intent::ProtocolType;
 use ethers::types::Address;
 use std::collections::{HashMap, HashSet};
+use std::time::Instant;
 
 /// Tunables for the bounded DFS. Defaults mirror the env caps in the plan.
 #[derive(Debug, Clone)]
@@ -90,6 +91,34 @@ pub struct RouteFinderOutcome {
     /// excluded by the per-pair branching cap" — so the set is not provably exhaustive
     /// over the full pool universe (R8: don't let a per-pair drop masquerade as complete).
     pub pools_truncated: bool,
+    /// ARBX-0010 (workbook r7/r8 stage split): Pair (2-leg direct) vs Expand
+    /// (deeper) attribution of this pass's wall time. `pair_ns + expand_ns`
+    /// equals the pass's TOTAL elapsed (invariant); the split follows the
+    /// documented segment convention below.
+    pub timings: DiscoveryTimings,
+}
+
+/// ARBX-0010 — Pair/Expand attribution of one `find_routes` pass.
+///
+/// One DFS produces 2-leg and ≥3-leg cycles interleaved, so exact per-stage
+/// attribution does not exist; this is the measurable CONVENTION (documented,
+/// not fabricated): the segment of wall time between two consecutive cycle
+/// EMISSIONS is attributed to the hop class of the cycle emitted at its END
+/// (`l == 2` ⇒ Pair). Everything else — dead ends, deduped/dropped paths,
+/// and the tail after the last emission — lands in `expand_ns` via the
+/// total−pair identity, so the sum always equals the pass's real total and
+/// the legacy single-bucket `Expand` number is preserved bit-for-bit as
+/// `pair_ns + expand_ns`. Cost: one `Instant::now()` per emitted cycle
+/// (bounded by `max_routes_per_tick`), zero when nothing emits.
+#[derive(Debug, Clone, Default)]
+pub struct DiscoveryTimings {
+    /// Wall ns attributed to 2-leg (Pair, workbook r7 "Direct inefficiency")
+    /// emissions. An honest 0 for a tick with no 2-leg emissions (min_depth
+    /// raised by the StrategyMask, or a graph with no 2-cycles).
+    pub pair_ns: u64,
+    /// Wall ns of everything else in the pass (≥3-leg emissions' segments,
+    /// dead-end work, tail). `pair_ns + expand_ns == total elapsed`.
+    pub expand_ns: u64,
 }
 
 struct FinderState<'g> {
@@ -101,6 +130,9 @@ struct FinderState<'g> {
     dropped_for_cap: usize,
     capped: bool,
     pools_truncated: bool,
+    /// ARBX-0010: segment-attribution clocks (see [`DiscoveryTimings`]).
+    t_last_emit: Instant,
+    pair_ns: u64,
 }
 
 /// Ranking of parallel pools between the same token pair for the per-pair
@@ -141,7 +173,20 @@ impl<'g> FinderState<'g> {
         // order so enumeration (and cap-driven drops) stay deterministic.
         let mut pair_order: Vec<Address> = Vec::new();
         let mut per_pair: HashMap<Address, Vec<RouteEdge>> = HashMap::new();
-        for e in self.graph.out_edges(&token) {
+        // ARBX-0019: dense O(1) out-edge indices when the view is built (same
+        // shared id space `pair_index` owns); the HashMap path stays the
+        // fallback — both views are pinned equivalent in graph_builder tests.
+        let out_ix: Vec<usize> = match self.graph.dense_out_indices(&token) {
+            Some(ix) => ix.iter().map(|&i| i as usize).collect(),
+            None => self
+                .graph
+                .adjacency
+                .get(&token)
+                .map(|v| v.to_vec())
+                .unwrap_or_default(),
+        };
+        for i in out_ix {
+            let e = &self.graph.edges[i];
             per_pair
                 .entry(e.token_out)
                 .and_modify(|v| v.push(e.clone()))
@@ -278,6 +323,16 @@ impl<'g> FinderState<'g> {
             rejected_strategies: Vec::new(),
             mode: self.cfg.mode.clone(),
         });
+
+        // ARBX-0010: attribute the segment since the previous emission to
+        // this cycle's hop class (2-leg ⇒ Pair). One clock per emitted
+        // cycle; dead-end/tail work stays in `expand_ns` via the
+        // total−pair identity in `find_routes`.
+        let now = Instant::now();
+        if l == 2 {
+            self.pair_ns += now.duration_since(self.t_last_emit).as_nanos() as u64;
+        }
+        self.t_last_emit = now;
     }
 }
 
@@ -287,6 +342,9 @@ pub fn find_routes(
     chain_id: u64,
     cfg: &RouteFinderConfig,
 ) -> RouteFinderOutcome {
+    // ARBX-0010: one clock for both anchors so the segment identity
+    // `pair_ns + expand_ns == t0.elapsed()` holds exactly.
+    let t0 = Instant::now();
     let mut state = FinderState {
         graph,
         chain_id,
@@ -296,6 +354,8 @@ pub fn find_routes(
         dropped_for_cap: 0,
         capped: false,
         pools_truncated: false,
+        t_last_emit: t0,
+        pair_ns: 0,
     };
 
     let starts: Vec<Address> = if cfg.base_tokens.is_empty() {
@@ -320,11 +380,22 @@ pub fn find_routes(
         state.dfs(start, start, &mut path, &mut pools_used, &mut visited);
     }
 
+    // ARBX-0010: expand absorbs everything not attributed to Pair so the
+    // split preserves the legacy single-bucket total bit-for-bit.
+    let timings = DiscoveryTimings {
+        pair_ns: state.pair_ns,
+        expand_ns: t0
+            .elapsed()
+            .as_nanos()
+            .saturating_sub(u128::from(state.pair_ns)) as u64,
+    };
+
     RouteFinderOutcome {
         routes: state.results,
         dropped_for_cap: state.dropped_for_cap,
         capped: state.capped,
         pools_truncated: state.pools_truncated,
+        timings,
     }
 }
 
@@ -368,7 +439,11 @@ mod tests {
         for (i, e) in edges.iter().enumerate() {
             adjacency.entry(e.token_in).or_default().push(i);
         }
-        TokenGraph { edges, adjacency }
+        TokenGraph {
+            edges,
+            adjacency,
+            dense: None,
+        }
     }
 
     fn kinds(o: &RouteFinderOutcome) -> Vec<RouteKind> {
@@ -591,7 +666,11 @@ mod tests {
         for (i, e) in edges.iter().enumerate() {
             adjacency.entry(e.token_in).or_default().push(i);
         }
-        TokenGraph { edges, adjacency }
+        TokenGraph {
+            edges,
+            adjacency,
+            dense: None,
+        }
     }
 
     /// Triangle A(1)-B(2)-C(3) where the A-B hop has three parallel pools with
@@ -706,5 +785,79 @@ mod tests {
         assert!(!o.pools_truncated);
         assert!(o.routes.iter().any(|r| r.pools.contains(&addr(0x10))));
         assert!(o.routes.iter().any(|r| r.pools.contains(&addr(0x20))));
+    }
+
+    // ── ARBX-0010: Pair/Expand timing split ─────────────────────────────
+
+    /// A pair-only tick (max_depth=2, every token pair carries TWO distinct
+    /// pools ⇒ valid 2-cycles) attributes real time to `pair_ns`; a tick with
+    /// NO 2-leg emissions keeps the honest 0 (min_depth raised by the
+    /// StrategyMask ⇒ nothing to pair).
+    #[test]
+    fn pair_only_tick_attributed_to_pair_bucket() {
+        // 200 independent token pairs, each with two parallel pools (a 2-cycle
+        // needs two DISTINCT pools — pool reuse within a cycle is forbidden).
+        // Sized so every inter-emit segment clears the QPC resolution.
+        let mut pools: Vec<(u64, u64, u64, ProtocolType)> = Vec::new();
+        for i in 0..200u64 {
+            let (a, b) = (0x10_000 + 2 * i, 0x10_000 + 2 * i + 1);
+            pools.push((2 * i + 1, a, b, ProtocolType::V2));
+            pools.push((2 * i + 2, a, b, ProtocolType::V2));
+        }
+        let g = graph_from(&pools);
+        let pair_cfg = RouteFinderConfig {
+            min_depth: 2,
+            max_depth: 2,
+            ..Default::default()
+        };
+        let o = find_routes(&g, 1, &pair_cfg);
+        assert!(!o.routes.is_empty());
+        assert!(o.routes.iter().all(|r| r.hops == 2));
+        assert!(
+            o.timings.pair_ns > 0,
+            "two-leg emissions must attribute real ns to Pair (got {})",
+            o.timings.pair_ns
+        );
+
+        // Same graph, mask raised to 3+ only ⇒ zero pair emissions ⇒ honest 0.
+        let expand_only = RouteFinderConfig {
+            min_depth: 3,
+            max_depth: 3,
+            ..Default::default()
+        };
+        let o3 = find_routes(&g, 1, &expand_only);
+        assert!(o3.routes.is_empty());
+        assert_eq!(o3.timings.pair_ns, 0, "no 2-leg emissions ⇒ honest 0");
+    }
+
+    /// A mixed tick (2-cycles + triangles) splits BOTH buckets: some segments
+    /// end in 2-leg emits (Pair), the 3-leg emits and tail keep Expand > 0.
+    #[test]
+    fn mixed_tick_splits_both_buckets() {
+        // 60 token pairs with two parallel pools each (⇒ 2-cycles) + 60 fully
+        // connected triangles on distinct tokens — both classes emit
+        // interleaved in one DFS, with segments well over clock resolution.
+        let mut pools: Vec<(u64, u64, u64, ProtocolType)> = Vec::new();
+        let mut next_pool = 1u64;
+        for i in 0..60u64 {
+            let (a, b) = (0x20_000 + 3 * i, 0x20_000 + 3 * i + 1);
+            pools.push((next_pool, a, b, ProtocolType::V2));
+            pools.push((next_pool + 1, a, b, ProtocolType::V2));
+            // triangle over (a, b, c) on distinct pools.
+            let c = 0x20_000 + 3 * i + 2;
+            pools.push((next_pool + 2, b, c, ProtocolType::V2));
+            pools.push((next_pool + 3, c, a, ProtocolType::V2));
+            next_pool += 4;
+        }
+        let g = graph_from(&pools);
+        let o = find_routes(&g, 1, &RouteFinderConfig::default()); // 2..=3
+        assert!(o.routes.iter().any(|r| r.hops == 2));
+        assert!(o.routes.iter().any(|r| r.hops == 3));
+        assert!(o.timings.pair_ns > 0, "2-leg emits exist ⇒ Pair > 0");
+        assert!(
+            o.timings.expand_ns > 0,
+            "3-leg emits + tail ⇒ Expand > 0 (got {})",
+            o.timings.expand_ns
+        );
     }
 }

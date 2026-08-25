@@ -505,9 +505,18 @@ export const TradingConfigResponseSchema = z.discriminatedUnion("configured", [
   TradingConfigUnconfiguredSchema,
 ]);
 
+// FE-0016 drift fix: the admin PUT (trading-config.ts:803-812) answers with the
+// dual-channel subscriber counts + the EMIT-04 universe versioning — it NEVER
+// sends `subscribers_notified`. The old key failed safeParse on every real
+// save (FE tests mocked putTradingConfig, so the drift survived them). Both
+// versioning keys are null when the edit left allowed_token_symbols unchanged
+// (no universe bump, no ACK row — EMIT-04 set-semantics fingerprint).
 export const TradingConfigPutResultSchema = z.object({
   ok: z.literal(true),
-  subscribers_notified: z.number().int().nonnegative(),
+  subscribers_trading_config: z.number().int().nonnegative(),
+  subscribers_hot_reload: z.number().int().nonnegative(),
+  universe_version: z.number().int().nullable(),
+  runtime_ack_event_id: z.string().uuid().nullable(),
   ...TradingConfigBaseFields,
 });
 

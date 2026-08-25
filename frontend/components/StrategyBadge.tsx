@@ -56,8 +56,10 @@ const STRATEGY_MAP: Record<string, StrategyMeta> = {
  * Plain-text display label for a strategy_kind — the same three-branch
  * mapping StrategyBadge renders, as a string (for headers which need the
  * name without the badge chrome, e.g. the exchange card badge).
+ * FE-0029 (§28): null (malformed payload, no fabricated kind) → "—".
  */
-export function strategyLabel(strategy_kind: string): string {
+export function strategyLabel(strategy_kind: string | null): string {
+  if (strategy_kind == null) return "—";
   if (isBaseStrategy(strategy_kind)) {
     return STRATEGY_MAP[strategy_kind]?.label ?? String(strategy_kind);
   }
@@ -68,11 +70,22 @@ export function strategyLabel(strategy_kind: string): string {
 }
 
 export interface StrategyBadgeProps {
-  /** Accepts any strategy_kind string — base families + 264 cartridge IDs. */
-  strategy_kind: string;
+  /** Accepts any strategy_kind string — base families + 264 cartridge IDs.
+   *  FE-0029 (§28): null = malformed payload → UNKNOWN badge, never a
+   *  fabricated kind. */
+  strategy_kind: string | null;
 }
 
 export function StrategyBadge({ strategy_kind }: StrategyBadgeProps) {
+  // FE-0029 (§28): absent kind — an honest UNKNOWN, never a claimed family.
+  if (strategy_kind == null) {
+    return (
+      <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-bold uppercase tracking-wide bg-muted/60 text-muted-foreground border border-border">
+        UNKNOWN
+      </span>
+    );
+  }
+
   // Base 5: use canonical label/colour.
   if (isBaseStrategy(strategy_kind)) {
     const meta = STRATEGY_MAP[strategy_kind];

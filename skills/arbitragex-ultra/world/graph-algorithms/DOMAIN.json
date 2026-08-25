@@ -1,0 +1,8 @@
+{
+  "domain": "Graph algorithms for AMM/DEX arbitrage route discovery (2024-2026 state of the art): negative-cycle detection, cycle enumeration, convex-optimization multi-pool routing, graph pruning, incremental updates, and route ranking under staleness/adverse selection.",
+  "research_date": "2026-08-19",
+  "findings_length": 16603,
+  "has_better_than_excel": true,
+  "has_new_strategies": true,
+  "has_gaps": true
+}

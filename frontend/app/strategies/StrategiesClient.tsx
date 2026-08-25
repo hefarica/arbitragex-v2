@@ -17,17 +17,22 @@ import Link from "next/link";
 
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+// FE-0041 (§52-§54): per-tab scope labels. Classification verified by write
+// grep (putTradingConfig / admin POST-PUT) — see
+// docs/reports/2026-08-24-FE-0041-control-scope-audit.md.
+import { ControlScopeBadge } from "@/components/ControlScopeBadge";
 import { getAdminToken } from "@/lib/admin-token";
 import type { StrategyCatalogEntry, TradingConfigConfigured, TradingConfigResponse } from "@/lib/schemas";
 
 import { CapitalRiskTab } from "./tabs/CapitalRiskTab";
-import { StrategyCatalogTab } from "./tabs/StrategyCatalogTab";
+import { EngineCatalogClient } from "./EngineCatalogClient";
 import { RuntimeCartridgesTab } from "./tabs/RuntimeCartridgesTab";
 import { MathOperatorsTab } from "./tabs/MathOperatorsTab";
 import { DexesTab } from "./tabs/DexesTab";
 import { PoolsTab } from "./tabs/PoolsTab";
 import { MevRelaysTab } from "./tabs/MevRelaysTab";
-import { TokenAllowlistTab } from "./tabs/TokenAllowlistTab";
+import { DetectorPolicyPanel } from "./tabs/DetectorPolicyPanel";
+import { TokensTabClient } from "./tabs/TokensTabClient";
 import { AuditTab } from "./tabs/AuditTab";
 import { SimulationTab } from "./tabs/SimulationTab";
 
@@ -85,17 +90,24 @@ export function StrategiesClient({ initialConfig, initialCatalog, initialError }
         <TabsTrigger value="dexes">Exchanges</TabsTrigger>
         <TabsTrigger value="pools">Pools</TabsTrigger>
         <TabsTrigger value="relays">Resolution Relays</TabsTrigger>
+        <TabsTrigger value="detectors">Detector Policy</TabsTrigger>
         <TabsTrigger value="tokens">Tokens</TabsTrigger>
         <TabsTrigger value="simulation">Simulation</TabsTrigger>
         <TabsTrigger value="audit">Audit Trail</TabsTrigger>
       </TabsList>
 
       <TabsContent value="capital-risk" className="mt-4">
+        <ControlScopeBadge kind="RUNTIME_MUTATION" className="mb-2" />
         <CapitalRiskTab config={config} onSaved={setConfig} adminToken={adminToken} actor={actor} />
       </TabsContent>
 
+      {/* FE-MASTER §21-§24 (P6): Engine Catalog gains the Workbook-264 canon
+          view next to the runtime-kinds view (EMIT-07 consumer). */}
       <TabsContent value="catalog" className="mt-4">
-        <StrategyCatalogTab
+        {/* Catalog mixes the canon VIEW with the mutating runtime-kinds list
+            (StrategyCatalogTab → putTradingConfig). */}
+        <ControlScopeBadge kind="RUNTIME_MUTATION" className="mb-2" />
+        <EngineCatalogClient
           config={config}
           catalog={initialCatalog}
           onSaved={setConfig}
@@ -105,6 +117,7 @@ export function StrategiesClient({ initialConfig, initialCatalog, initialError }
       </TabsContent>
 
       <TabsContent value="runtime" className="mt-4">
+        <ControlScopeBadge kind="RUNTIME_MUTATION" className="mb-2" />
         <RuntimeCartridgesTab
           chainId={config.chain_id}
           config={config}
@@ -115,30 +128,49 @@ export function StrategiesClient({ initialConfig, initialCatalog, initialError }
       </TabsContent>
 
       <TabsContent value="math" className="mt-4">
+        <ControlScopeBadge kind="VIEW_ONLY" className="mb-2" />
         <MathOperatorsTab adminToken={adminToken} actor={actor} />
       </TabsContent>
 
       <TabsContent value="dexes" className="mt-4">
+        <ControlScopeBadge kind="RUNTIME_MUTATION" className="mb-2" />
         <DexesTab config={config} onSaved={setConfig} adminToken={adminToken} actor={actor} />
       </TabsContent>
 
       <TabsContent value="pools" className="mt-4">
+        <ControlScopeBadge kind="VIEW_ONLY" className="mb-2" />
         <PoolsTab chainId={config.chain_id} />
       </TabsContent>
 
       <TabsContent value="relays" className="mt-4">
+        <ControlScopeBadge kind="VIEW_ONLY" className="mb-2" />
         <MevRelaysTab />
       </TabsContent>
 
+      {/* FE-MASTER ARBX-DP-005: the four emission tiers (OBSERVATION /
+          SIGNAL / CANDIDATE / EXECUTABLE) as distinct feeds over the
+          detector policy catalog (EMIT-08). */}
+      <TabsContent value="detectors" className="mt-4">
+        <ControlScopeBadge kind="VIEW_ONLY" className="mb-2" />
+        <DetectorPolicyPanel />
+      </TabsContent>
+
       <TabsContent value="tokens" className="mt-4">
-        <TokenAllowlistTab config={config} onSaved={setConfig} adminToken={adminToken} actor={actor} />
+        {/* FE-MASTER §6: sub-vistas Universe | Quote/Base | Pair Intelligence
+            (FE-0017) — segmented control, no nested Radix Tabs. The tab is
+            RUNTIME_MUTATION because its allowlist subvista saves via
+            putTradingConfig (TokenAllowlistTab). */}
+        <ControlScopeBadge kind="RUNTIME_MUTATION" className="mb-2" />
+        <TokensTabClient config={config} onSaved={setConfig} adminToken={adminToken} actor={actor} />
       </TabsContent>
 
       <TabsContent value="simulation" className="mt-4">
+        <ControlScopeBadge kind="RUNTIME_MUTATION" className="mb-2" />
         <SimulationTab config={config} onSaved={setConfig} adminToken={adminToken} actor={actor} />
       </TabsContent>
 
       <TabsContent value="audit" className="mt-4">
+        <ControlScopeBadge kind="VIEW_ONLY" className="mb-2" />
         <AuditTab />
       </TabsContent>
     </Tabs>

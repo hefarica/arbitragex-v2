@@ -9,6 +9,17 @@
 # OR rename to scripts/deploy-dev.sh / scripts/deploy-prod.sh.
 #
 # Always exports .env vars before docker compose to ensure proper interpolation.
+#
+# ARBX-R-0004 (REGRESSION, incident 08-22 16:22 — VPS on a foreign branch while
+# deploys kept "succeeding"): `git pull origin main` MERGES INTO whatever branch
+# is checked out, and the old `|| WARN; continue` fallback deployed unverified
+# local HEAD. Gates now (§37 G4 "deploy veraz"):
+#   1. deploy ALWAYS from verified main — refuse any other branch/detached HEAD;
+#   2. checkout state documented — branch + HEAD sha before AND after pull;
+#   3. KNOWN_GOOD_REVISION explicit — REQUIRED for prod (the SHA CI verified),
+#      optional for dev; any drift (incl. post-pull HEAD != origin/main) aborts.
+# Untracked files (.env, logs) are legitimate VPS runtime state — only TRACKED
+# modifications dirty the tree (submodules ignored: not in the built images).
 set -euo pipefail
 
 cd /opt/arbitragex-v2
@@ -41,8 +52,51 @@ echo "Args: $*"
 # shellcheck disable=SC2046
 export $(grep -v '^#' .env | grep -v '^$' | xargs)
 
-# Pull latest (best-effort; do not fail deploy if upstream unreachable)
-git pull origin main 2>/dev/null || echo "WARN: git pull failed; continuing with local HEAD"
+# ── ARBX-R-0004 gate 1+2: verified main + documented checkout ─────────────────
+BRANCH="$(git rev-parse --abbrev-ref HEAD)"
+HEAD_BEFORE="$(git rev-parse HEAD)"
+echo "Checkout state: branch=$BRANCH HEAD=$HEAD_BEFORE"
+
+if [ "$BRANCH" != "main" ]; then
+    echo "ERROR: working tree is on branch '$BRANCH', not main — refusing to deploy (ARBX-R-0004)" >&2
+    echo "  Incident 08-22: git pull would merge INTO this branch. Fix: git checkout main" >&2
+    exit 1
+fi
+
+if ! git -c diff.ignoreSubmodules=all diff --quiet HEAD || \
+   ! git -c diff.ignoreSubmodules=all diff --cached --quiet; then
+    echo "ERROR: tracked files are modified — the deployed tree would match no revision (ARBX-R-0004)" >&2
+    git -c diff.ignoreSubmodules=all status --porcelain | grep -v '^??' | head -20 >&2
+    exit 1
+fi
+
+# Pull with FULL output (no 2>/dev/null — it is the audit trail). With errexit,
+# a failed pull aborts: an unverifiable tree is not deployable (fail-closed).
+git pull origin main
+
+HEAD_AFTER="$(git rev-parse HEAD)"
+ORIGIN_MAIN="$(git rev-parse origin/main)"
+echo "Post-pull state: HEAD=$HEAD_AFTER origin/main=$ORIGIN_MAIN"
+
+if [ "$HEAD_AFTER" != "$ORIGIN_MAIN" ]; then
+    echo "ERROR: HEAD ($HEAD_AFTER) != origin/main ($ORIGIN_MAIN) after pull — refusing (ARBX-R-0004)" >&2
+    exit 1
+fi
+
+# ── ARBX-R-0004 gate 3: KNOWN_GOOD_REVISION explicit ──────────────────────────
+# Prod requires the SHA the operator/CI verified (e.g. the merged PR SHA); dev
+# may omit it. Any mismatch aborts BEFORE a container is touched.
+if [ "${CONFIRM_PROD_DEPLOY:-}" = "true" ] && [ -z "${KNOWN_GOOD_REVISION:-}" ]; then
+    echo "ERROR: prod deploy without KNOWN_GOOD_REVISION — pass the verified SHA (ARBX-R-0004)" >&2
+    exit 1
+fi
+if [ -n "${KNOWN_GOOD_REVISION:-}" ]; then
+    if [ "$HEAD_AFTER" != "$KNOWN_GOOD_REVISION" ]; then
+        echo "ERROR: HEAD ($HEAD_AFTER) != KNOWN_GOOD_REVISION ($KNOWN_GOOD_REVISION) — refusing (ARBX-R-0004)" >&2
+        exit 1
+    fi
+    echo "Known-good revision verified: $KNOWN_GOOD_REVISION"
+fi
 
 # Deploy
 docker compose --env-file .env -f "$COMPOSE_FILE" "$@"

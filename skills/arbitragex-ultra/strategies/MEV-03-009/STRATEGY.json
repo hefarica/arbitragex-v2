@@ -1,0 +1,23 @@
+{
+  "mev_id": "MEV-03-009",
+  "grupo": "3",
+  "estrategia": "Oracle-update arbitrage",
+  "familia": "Arbitrajes disparados por transacciones o cambios de estado",
+  "required_surface": "DEX_STATE",
+  "backend_module": "state_event_engine",
+  "toggle_frontend": "strategy.03.009.enabled",
+  "min_legs": 2,
+  "max_legs": 8,
+  "legs_model": "Ruta din\u00e1mica",
+  "primary_operators": [
+    "op_08",
+    "op_11",
+    "op_21",
+    "op_25"
+  ],
+  "secondary_operators": [
+    "op_05",
+    "op_10",
+    "op_22"
+  ]
+}

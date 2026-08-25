@@ -241,6 +241,30 @@ impl OpportunityEmitter {
                 )
                 .await;
         }
+        // ARBX-DP-003: Execution_Class taxonomy at the publish seam. Workbook
+        // strategies whose class tiers as Observation (OBSERVE_ONLY) or Signal
+        // (SIGNAL_UNLESS_FIRM_EXIT / *_DATA_REQUIRED / NONATOMIC_* / latency /
+        // settlement-delay) NEVER take the Opportunity{confidence} shape —
+        // 13_DETECTOR_POLICY routes them to the observation/signal feeds.
+        // Reclassify honestly (R8) instead of silently dropping. Rows without
+        // workbook identity (core engines, cartridge_id = None; non-workbook
+        // stems) pass: the taxonomy covers the 264 workbook strategies.
+        match crate::signal_tier::opportunity_verdict(opportunity.cartridge_id.as_deref()) {
+            crate::signal_tier::EmissionVerdict::Pass => {}
+            crate::signal_tier::EmissionVerdict::Blocked { reason } => {
+                tracing::warn!(
+                    event = "opportunity_emitter.tier_gate",
+                    opp_id = %opportunity.id,
+                    strategy = strategy_label.as_str(),
+                    cartridge_id = ?opportunity.cartridge_id,
+                    reason,
+                    "tier-blocked from the Opportunity shape — reclassifying as rejected"
+                );
+                return self
+                    .emit_rejected(opportunity, strategy_label, reason, route)
+                    .await;
+            }
+        }
         // A5/N-01b: increment passed_all_gates so the heartbeat reflects V2-path
         // accepted candidates (previously only the legacy scanner incremented it).
         counters().passed_all_gates.fetch_add(1, Ordering::Relaxed);

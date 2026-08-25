@@ -344,6 +344,9 @@ app.get("/api/risk/alerts", (req, res) => proxy("/api/v1/risk/alerts", req, res)
 app.get("/api/executions/recent", (req, res) => proxy("/api/v1/executions/recent", req, res));
 app.get("/api/recon/summary", (req, res) => proxy("/api/v1/recon/summary", req, res));
 app.get("/api/config/current", (req, res) => proxy("/api/v1/config/current", req, res));
+// Canonical knobs (XLS-CANON-01): searcher boot snapshot (env > deploy yaml >
+// workbook). Live surface — 503 knobs_not_published until the searcher boots.
+app.get("/api/config/canonical-knobs", (req, res) => proxy("/api/v1/config/canonical-knobs", req, res));
 // Credentials health summary (counts only) for the sidebar "needs attention" badge.
 app.get("/api/credentials/summary", (req, res) => proxy("/api/v1/credentials/summary", req, res));
 // RPC registry status (counts only) for the /rpcs panel.
@@ -407,6 +410,12 @@ app.get("/api/route-discovery/status", (req, res) => proxy("/api/route-discovery
 app.get("/api/route-discovery/latest", (req, res) => proxy("/api/route-discovery/latest", req, res));
 app.get("/api/route-discovery/metrics", (req, res) => proxy("/api/route-discovery/metrics", req, res));
 app.get("/api/route-discovery/routes", (req, res) => proxy("/api/route-discovery/routes", req, res));
+// EMIT-05 (FE-MASTER §18/§43-44): the durable tick snapshot — Redis key
+// arbx:route_discovery:tick:<chain_id> written by the searcher each tick
+// (SET .. EX 60). Same family as the four above (api-server serves the SAME
+// path, no /v1/). 404 when the key is absent = discovery down or restarted
+// (honest absence; the client shows loading, never a zeroed funnel).
+app.get("/api/route-discovery/tick", (req, res) => proxy("/api/route-discovery/tick", req, res));
 app.get("/api/cartridges/status", (req, res) => proxy("/api/cartridges/status", req, res));
 app.get("/api/cartridges/telemetry/latest", (req, res) => proxy("/api/cartridges/telemetry/latest", req, res));
 // Runtime cartridge registry (searcher-rs loaded .rhai set — the 264-strategy
@@ -617,6 +626,14 @@ app.get("/api/admin/topology/snapshot", (req, res) => {
 app.post("/api/admin/topology/mutations", (req, res) => {
   adminProxy("/api/admin/topology/mutations", req, res, "POST");
 });
+// EMIT-01 (FE-MASTER §4-§6): symbol → TokenKey resolution over the
+// searcher's pre-indexed universe snapshot. Admin-gated (V-AT-1 token
+// translation in adminProxy); x-arbx-actor rides through. api-server serves
+// the SAME path; 404 when the universe snapshot is absent = searcher down
+// or recently restarted (honest absence).
+app.post("/api/admin/tokens/resolve", (req, res) => {
+  adminProxy("/api/admin/tokens/resolve", req, res, "POST");
+});
 // Trading Config — operator-tunable strategy parameters per chain.
 app.get("/api/trading-config", (req, res) => {
   const chain = typeof req.query["chain_id"] === "string" ? req.query["chain_id"] : "1";
@@ -651,6 +668,23 @@ app.get("/api/strategy-catalog", (req, res) => proxy("/api/v1/strategy-catalog",
 app.get("/api/strategy-catalog/active", (req, res) => {
   const chain = typeof req.query["chain_id"] === "string" ? req.query["chain_id"] : "1";
   proxy(`/api/v1/strategy-catalog/active?chain_id=${encodeURIComponent(chain)}`, req, res);
+});
+// QuoteBase workbook catalogs (EMIT-07/08 — FE-MASTER P6/P7). Static-per-canon
+// tables served by the api-server's generated module; no /v1 prefix, same path
+// both sides. Same REGLA EDGE as every route: explicit, no generic /api/*.
+app.get("/api/strategies/catalog", (req, res) => proxy("/api/strategies/catalog", req, res));
+app.get("/api/detectors/catalog", (req, res) => proxy("/api/detectors/catalog", req, res));
+// EMIT-02 Layer-2 (FE-MASTER P4): live quote-anchor view — plain proxy, never
+// cached (the snapshot carries a 35s TTL; a dead searcher must surface as the
+// endpoint's honest 503, not a stale cached 200).
+app.get("/api/quote/anchor", (req, res) => proxy("/api/quote/anchor", req, res));
+// EMIT-06 (FE-MASTER P5 §13): effective pair universe — PG registry + live
+// reserves + undrained dirty set. Plain proxy (dev-local has no cache layer).
+app.get("/api/pairs", (req, res) => proxy("/api/pairs", req, res));
+// EMIT-03: preview-before-apply for quote weights (admin, no mutation) —
+// token-translating admin proxy like the other admin mutations.
+app.post("/api/admin/quote/preview", (req, res) => {
+  adminProxy("/api/admin/quote/preview", req, res, "POST");
 });
 // DeFi data routes (defiRouter is mounted at /api in api-server, no /v1/ prefix).
 app.get("/api/chains",  (req, res) => proxy("/api/chains", req, res));

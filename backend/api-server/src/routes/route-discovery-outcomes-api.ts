@@ -9,7 +9,8 @@
  * pool absent -> 503; empty -> ok:true with empty data (never fabricates).
  *
  *   GET /api/v1/route-discovery-outcomes/summary?hours=24
- *       -> { ok, source, window_hours, data: { totals, by_reason, by_chain } }
+ *       -> { ok, source, window_hours, data: { totals, by_reason, by_chain,
+ *            by_cartridge, by_pair } }   // FE-0038 §47 groupings
  *   GET /api/v1/route-discovery-outcomes?limit=100
  *       -> { ok, source, count, data: [ ...rows ] }
  */
@@ -57,11 +58,33 @@ export function buildRouteDiscoveryOutcomesRouter(pool: pg.Pool | null): Router 
          FROM route_discovery_outcomes WHERE ts_ms >= $1 GROUP BY 1 ORDER BY 2 DESC LIMIT 25`,
         [since],
       );
+      // FE-0038 (§47): by-strategy (cartridge_id) and by-pair groupings over the
+      // SAME window — the dimensions the sink already persists. hop / detector /
+      // DEX are NOT columns of this table; the FE renders them as honest gaps
+      // (nivel-(b)) rather than this route inventing joins.
+      const byCartridge = await pool.query(
+        `SELECT COALESCE(NULLIF(cartridge_id, ''), '(null)') AS cartridge_id, count(*)::bigint AS n,
+                count(*) FILTER (WHERE is_opportunity)::bigint AS opportunities
+         FROM route_discovery_outcomes WHERE ts_ms >= $1 GROUP BY 1 ORDER BY 2 DESC LIMIT 25`,
+        [since],
+      );
+      const byPair = await pool.query(
+        `SELECT token_in, token_out, count(*)::bigint AS n,
+                count(*) FILTER (WHERE is_opportunity)::bigint AS opportunities
+         FROM route_discovery_outcomes WHERE ts_ms >= $1 GROUP BY 1, 2 ORDER BY 3 DESC LIMIT 25`,
+        [since],
+      );
       res.json({
         ok: true,
         source: "postgres",
         window_hours: hours,
-        data: { totals: totals.rows[0], by_reason: byReason.rows, by_chain: byChain.rows },
+        data: {
+          totals: totals.rows[0],
+          by_reason: byReason.rows,
+          by_chain: byChain.rows,
+          by_cartridge: byCartridge.rows,
+          by_pair: byPair.rows,
+        },
       });
     } catch (e) {
       failed(res, e);

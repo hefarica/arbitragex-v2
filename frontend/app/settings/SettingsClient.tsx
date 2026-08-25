@@ -23,7 +23,7 @@
  * until FE-11 is wired, but it is persisted for future use).
  */
 
-import { useEffect, useState } from "react";
+import React, { useEffect, useState } from "react";
 import { toast } from "sonner";
 import { SaveIcon } from "lucide-react";
 
@@ -42,6 +42,9 @@ import { Switch } from "@/components/ui/switch";
 import { Separator } from "@/components/ui/separator";
 
 import { useUserPrefs, DEFAULT_PREFS, type UserPrefs } from "@/lib/user-prefs";
+// FE-0041 (§53): /settings is presentation scope by contract — every control
+// here writes ONLY localStorage; the badge makes that explicit per card.
+import { ControlScopeBadge } from "@/components/ControlScopeBadge";
 
 // ─── Local form state type (all fields as strings for controlled inputs) ──────
 
@@ -122,7 +125,9 @@ export function SettingsClient() {
       {/* Notifications */}
       <Card>
         <CardHeader className="pb-3">
-          <h2 className="text-base font-semibold mt-0 mb-0">Notifications</h2>
+          <h2 className="text-base font-semibold mt-0 mb-0">
+            Notifications <ControlScopeBadge kind="LOCAL_PREFS" className="ml-2 align-middle" />
+          </h2>
           <p className="text-xs text-muted-foreground">
             Toast alerts triggered when a live opportunity exceeds the yield threshold.
           </p>
@@ -156,7 +161,9 @@ export function SettingsClient() {
       {/* Feed settings */}
       <Card>
         <CardHeader className="pb-3">
-          <h2 className="text-base font-semibold mt-0 mb-0">Feed &amp; Polling</h2>
+          <h2 className="text-base font-semibold mt-0 mb-0">
+            Feed &amp; Polling <ControlScopeBadge kind="LOCAL_PREFS" className="ml-2 align-middle" />
+          </h2>
           <p className="text-xs text-muted-foreground">
             Controls how often live feeds poll the edge. Minimum 1000 ms.
           </p>
@@ -215,7 +222,9 @@ export function SettingsClient() {
       {/* Display */}
       <Card>
         <CardHeader className="pb-3">
-          <h2 className="text-base font-semibold mt-0 mb-0">Display</h2>
+          <h2 className="text-base font-semibold mt-0 mb-0">
+            Display <ControlScopeBadge kind="LOCAL_PREFS" className="ml-2 align-middle" />
+          </h2>
         </CardHeader>
         <CardContent className="space-y-4">
           <div className="space-y-1.5">

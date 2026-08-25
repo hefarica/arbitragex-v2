@@ -415,3 +415,78 @@ export const META = {
   objective:
     "llevar arbitragex-v2 del estado actual (CI 100% rojo, repo PUBLIC, branch protection sin status checks) a producción operativa en VPS via GitHub Actions",
 };
+
+// ─── FE-0059 (§64): DEPLOY LOCKED — the UI reflects the REAL workflow ─────────
+//
+// Grounding (RULE 00 — nothing fabricated): the operator's PROTOCOLO ABSOLUTO
+// (2026-08-23) holds COMMITS=0 / PUSHES=0 / DEPLOYS=0 until the master
+// checklist is 100% + full validation (WP-F final gate). `locked: true` IS the
+// current workflow state, not synthesized telemetry.
+//
+// Per-reason LIVE status is nivel-(b): no runtime endpoint exposes registry/CI
+// state to the FE today. The reasons therefore state their UNLOCK CONDITION
+// (verifiable against the canonical local sources), never a live PASS/FAIL —
+// that would be a fabricated status. When a status endpoint exists, this
+// banner consumes it.
+export interface DeployLockReason {
+  id: string;
+  label: string;
+  unlock_condition: string;
+  source: string;
+}
+
+export interface DeployLock {
+  locked: true;
+  protocol: string;
+  since: string;
+  effect: string;
+  live_status: string;
+  reasons: DeployLockReason[];
+}
+
+export const DEPLOY_LOCK: DeployLock = {
+  locked: true,
+  protocol: "PROTOCOLO ABSOLUTO del operador — commit/push/branch/PR/deploy = 0 hasta checklist 100% + validación integral",
+  since: "2026-08-23",
+  effect: "UN commit → push → CI → deploy al final (gate WP-F), luego L4 vs arbx.ape-tv.net",
+  live_status:
+    "nivel-(b): sin endpoint runtime de registry/CI — el estado vivo por razón NO se muestra ni se fabrica (RULE 00)",
+  reasons: [
+    {
+      id: "checklist",
+      label: "Checklist maestro incompleto",
+      unlock_condition: "100% de las tareas implementables CLOSED/verificadas (XLS-QB 88 + FE-MASTER + WP-R)",
+      source: ".ai-work/TASK_REGISTRY.json (fuente canónica local)",
+    },
+    {
+      id: "tests",
+      label: "Validación integral local pendiente",
+      unlock_condition: "suite completa + typecheck verde sobre el árbol final (no por-tarea)",
+      source: "§78 matriz de aceptación del gate final",
+    },
+    {
+      id: "review",
+      label: "Revisión cruzada pendiente",
+      unlock_condition: "0 filas PENDING/IN_PROGRESS en el registry (R3/R6 cerrados en ambas lanes)",
+      source: ".ai-work/TEAM_BOARD.md (vista derivada)",
+    },
+    {
+      id: "regression",
+      label: "Gates de regresión sin verificación post-deploy",
+      unlock_condition: "ARBX-R-0001..0004 + G-Gates §37 verdes en L4 post-deploy (probe vivo, no local)",
+      source: "docs/governance/HARDENING_ANTI_REGRESION.md",
+    },
+    {
+      id: "ci",
+      label: "CI no puede correr bajo el protocolo",
+      unlock_condition: "el ÚNICO commit del gate final dispara los 14 required checks — nada antes",
+      source: ".github/workflows (branch protection 14 checks)",
+    },
+    {
+      id: "operator",
+      label: "Autorización operador del gate final",
+      unlock_condition: "aprobación explícita WP-F + KNOWN_GOOD_REVISION (gate ARBX-R-0004 en scripts/deploy.sh)",
+      source: "scripts/deploy.sh (gates veraces) + directiva operador",
+    },
+  ],
+};

@@ -27,6 +27,50 @@ import type { Chain, DEX, Pool } from "@/lib/registries/types";
 import type { OmniOpportunity } from "./types";
 import type { WalletRow } from "@/lib/api/wallets";
 import { getApiBaseUrl } from "@/lib/api-client";
+import {
+  createRuntimeAckSlice,
+  createTelemetrySlice,
+  createUniverseSlice,
+  createVersionSlice,
+  type RuntimeAckSlice,
+  type RuntimeVersions,
+  type TelemetrySlice,
+  type UniverseSlice,
+  type VersionSlice,
+  type FetchStatus,
+} from "./runtime-slices";
+import {
+  createRealtimeSlice,
+  type RealtimeSlice,
+} from "./realtime-slices";
+import {
+  createDetectorsSlice,
+  createPairsSlice,
+  createStrategiesSlice,
+  type DetectorsSlice,
+  type PairsSlice,
+  type StrategiesSlice,
+} from "./catalog-slices";
+import {
+  createQuoteAnchorSlice,
+  type QuoteAnchorSlice,
+} from "./quote-slices";
+
+// Re-export the FE-MASTER runtime slice types for consumers.
+export type {
+  RuntimeAckSlice,
+  RuntimeVersions,
+  TelemetrySlice,
+  UniverseSlice,
+  VersionSlice,
+  FetchStatus,
+} from "./runtime-slices";
+export type {
+  DetectorsSlice,
+  PairsSlice,
+  StrategiesSlice,
+} from "./catalog-slices";
+export type { QuoteAnchorSlice } from "./quote-slices";
 
 // Re-export OmniOpportunity as the canonical opportunity type
 export type { OmniOpportunity } from "./types";
@@ -122,7 +166,18 @@ interface WalletSlice {
 // Composed Store Type
 // =============================================================================
 
-type OmniStoreState = RegistrySlice & OpportunitySlice & WalletSlice;
+type OmniStoreState = RegistrySlice &
+  OpportunitySlice &
+  WalletSlice &
+  UniverseSlice &
+  TelemetrySlice &
+  VersionSlice &
+  RuntimeAckSlice &
+  StrategiesSlice &
+  DetectorsSlice &
+  PairsSlice &
+  QuoteAnchorSlice &
+  RealtimeSlice;
 
 // =============================================================================
 // Constants
@@ -149,6 +204,26 @@ function storeFactory(
   get: () => OmniStoreState,
 ): OmniStoreState {
   return {
+    // FE-MASTER runtime slices (FE-0004) — see runtime-slices.ts.
+    ...createUniverseSlice(set),
+    ...createTelemetrySlice(set, () => get()),
+    ...createVersionSlice(set),
+    ...createRuntimeAckSlice(set),
+
+    // FE-MASTER catalog slices (FE-0004 tramo 2) — see catalog-slices.ts.
+    ...createStrategiesSlice(set, () => get()),
+    ...createDetectorsSlice(set, () => get()),
+    ...createPairsSlice(set, () => get()),
+
+    // FE-MASTER quote anchor slice (FE-0013..0015 · EMIT-02) — see
+    // quote-slices.ts: live snapshot, PairsSlice pattern.
+    ...createQuoteAnchorSlice(set, () => get()),
+
+    // FE-MASTER realtime slice (FE-0008 · §33) — see realtime-slices.ts:
+    // per-channel connection policy, written ONLY by ArbxRealtimeProvider,
+    // rendered by FE-0009.
+    ...createRealtimeSlice(set),
+
     // =========================================================================
     // Registry Slice
     // =========================================================================
@@ -328,12 +403,14 @@ function storeFactory(
       // stale routes lingered until displaced by 200 newer events — hours at
       // real feed rates. Called on every batched WS flush and every poll.
       // R8 fail-honest: an unparseable/missing detected_at keeps the card —
-      // we never silently drop data we cannot date.
+      // we never silently drop data we cannot date. (FE-0029: detected_at is
+      // now honestly null on malformed payloads instead of a fabricated now()
+      // that made such cards immortal with age 0.)
       pruneStale: (maxAgeMs: number) =>
         set((state) => {
           const cutoff = Date.now() - maxAgeMs;
           const next = state.opportunities.filter((o) => {
-            const t = Date.parse(o.detected_at);
+            const t = o.detected_at == null ? NaN : Date.parse(o.detected_at);
             return Number.isNaN(t) || t >= cutoff;
           });
           if (next.length === state.opportunities.length) return state;
@@ -404,3 +481,40 @@ export const useWallet = () =>
     isConnected: state.isConnected,
     chainId: state.chainId,
   }));
+
+// =============================================================================
+// FE-MASTER Runtime Selectors (FE-0004) — selector-only access, per the
+// store's performance rules. Object/array selectors must use useShallow at
+// the call site when consumers destructure multiple fields.
+// =============================================================================
+
+export const useUniverseKpis = () => useOmniStore((state) => state.universe);
+export const useLastResolve = () => useOmniStore((state) => state.lastResolve);
+export const useRouteTick = () => useOmniStore((state) => state.tick);
+export const useTickStatus = () => useOmniStore((state) => state.tickStatus);
+export const useTickError = () => useOmniStore((state) => state.tickError);
+export const useRuntimeVersions = () => useOmniStore((state) => state.versions);
+export const useLastRuntimeAck = () => useOmniStore((state) => state.lastAck);
+export const useRuntimeAckLog = () => useOmniStore((state) => state.ackLog);
+
+// FE-MASTER catalog selectors (FE-0004 tramo 2 — P5/P6/P7).
+export const useStrategyCatalog = () => useOmniStore((state) => state.strategyCatalog);
+export const useStrategyByMevId = () => useOmniStore((state) => state.strategyByMevId);
+export const useStrategyCatalogStatus = () => useOmniStore((state) => state.strategyCatalogStatus);
+export const useDetectorCatalog = () => useOmniStore((state) => state.detectorCatalog);
+export const useDetectorById = () => useOmniStore((state) => state.detectorById);
+export const useDetectorCatalogStatus = () => useOmniStore((state) => state.detectorCatalogStatus);
+export const usePairs = () => useOmniStore((state) => state.pairs);
+export const usePairsStatus = () => useOmniStore((state) => state.pairsStatus);
+export const usePairsError = () => useOmniStore((state) => state.pairsError);
+export const usePairsUpdatedAt = () => useOmniStore((state) => state.pairsUpdatedAt);
+
+// FE-MASTER quote anchor selectors (FE-0013..0015 · EMIT-02).
+export const useQuoteAnchor = () => useOmniStore((state) => state.quoteAnchor);
+export const useQuoteAnchorStatus = () => useOmniStore((state) => state.quoteAnchorStatus);
+export const useQuoteAnchorError = () => useOmniStore((state) => state.quoteAnchorError);
+export const useQuoteAnchorUpdatedAt = () => useOmniStore((state) => state.quoteAnchorUpdatedAt);
+
+// FE-MASTER realtime selectors (FE-0008 · §33) — FE-0009's posture bar.
+export const useRealtimeChannels = () => useOmniStore((state) => state.channels);
+export const useWsConnected = () => useOmniStore((state) => state.wsConnected);

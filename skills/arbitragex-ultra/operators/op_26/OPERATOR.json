@@ -1,0 +1,11 @@
+{
+  "id": 26,
+  "code": "op_26",
+  "name": "Flash Loan",
+  "canonical_role": "Flash-liquidity feasibility/cost.",
+  "enabled": true,
+  "engine_present": true,
+  "calibration_state": "UNCALIBRATED",
+  "formula": "x_{t+1} = x_t + tau_flash - flash-liquidity feasibility/costing",
+  "implementation_file": "backend/math-engine/src/operators/op_26_flash_loan.rs"
+}

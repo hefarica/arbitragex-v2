@@ -1,0 +1,42 @@
+{
+ "ok": true,
+ "services": {
+  "selector-api": {
+   "ok": true,
+   "status": 200
+  },
+  "sim-ctl": {
+   "ok": true,
+   "status": 200
+  },
+  "recon": {
+   "ok": true,
+   "status": 200
+  },
+  "relays-client": {
+   "ok": true,
+   "status": 200
+  },
+  "searcher-rs": {
+   "ok": true,
+   "status": 200
+  },
+  "math-engine": {
+   "ok": true,
+   "status": 200
+  },
+  "token-enricher": {
+   "ok": true,
+   "status": 200
+  }
+ },
+ "killswitch": {
+  "enabled": false,
+  "reason": "VER",
+  "triggered_by": "admin",
+  "updated_at": "2026-08-24T16:11:25.085Z"
+ },
+ "env": "production-like",
+ "version": "0.1.0",
+ "ts": "2026-08-25T01:33:14.241Z"
+}

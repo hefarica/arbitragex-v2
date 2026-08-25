@@ -153,7 +153,22 @@
   },
   "derived_at_counting": "counts below are derived from parsed rows, never hardcoded"
  },
- "count": 441,
+ "count": 461,
+ "workbook_2_quotebase": {
+  "source": "C:\\Users\\HFRC\\Downloads\\ArbitrageX_Dynamic_QuoteBase_Route_Manual_264.xlsx",
+  "ingested": "2026-08-23",
+  "total_sheets": 17,
+  "manifest": "docs/quotebase_ingestion_manifest.json",
+  "canonical_extracts": [
+   "docs/quotebase_config.json",
+   "docs/quotebase_strategy_hop_map.json",
+   "docs/quotebase_strategy_hop_expanded.json",
+   "docs/quotebase_detector_policy.json",
+   "docs/quotebase_research.json",
+   "docs/quotebase_extraction_checks.json"
+  ],
+  "note": "REQ-QB-* (462-441=21 objetos: 15 pasos + 6 grupos). Granularidad fila (264/1,436/60) = datos validados en extracts; el runtime los consume genéricamente (RULE 00)."
+ },
  "requirements": [
   {
    "id": "REQ-STRAT-MEV-01-001",
@@ -17276,6 +17291,146 @@
      }
     ]
    }
+  },
+  {
+   "id": "REQ-QB-001", "sheet": "QB:15_IMPLEMENTATION_CONTRACT", "origin": "step 1", "family": "quotebase",
+   "statement": "AllowedListParser: UI→symbols con config version, dedupe, límite",
+   "provenance": "CANONICAL_WORKBOOK",
+   "repo_anchors": [{"kind": "path", "target": "frontend/app/strategies/tabs/TokenAllowlistTab.tsx"}],
+   "verification": {"status": "VERIFIED", "evidence": [{"kind": "path", "target": "frontend/app/strategies/tabs/TokenAllowlistTab.tsx", "hit": true}]}
+  },
+  {
+   "id": "REQ-QB-002", "sheet": "QB:15_IMPLEMENTATION_CONTRACT", "origin": "step 2", "family": "quotebase",
+   "statement": "ChainResolver: symbol→address por chain; symbol NUNCA runtime key (prohibido binding symbol-only)",
+   "provenance": "CANONICAL_WORKBOOK",
+   "repo_anchors": [{"kind": "task_ref", "target": "ARBX-0018"}],
+   "verification": {"status": "PENDING", "evidence": [], "note": "runtime config sigue symbol-keyed (allowed_token_symbols) — clase CARTRIDGE-GATE-ADDR-01"}
+  },
+  {
+   "id": "REQ-QB-003", "sheet": "QB:15_IMPLEMENTATION_CONTRACT", "origin": "step 3", "family": "quotebase",
+   "statement": "DenseIdBuilder: TokenId denso 0..N−1 + allowed masks (XLS-QB-04)",
+   "provenance": "CANONICAL_WORKBOOK",
+   "repo_anchors": [{"kind": "glob", "target": "backend/searcher-rs/src/pair_index.rs"}],
+   "verification": {"status": "VERIFIED", "evidence": [{"kind": "glob", "target": "backend/searcher-rs/src/pair_index.rs", "hit": true}], "note": "capa densa coexiste con HashMap; integración hot-path = ARBX-0019"}
+  },
+  {
+   "id": "REQ-QB-004", "sheet": "QB:15_IMPLEMENTATION_CONTRACT", "origin": "step 4", "family": "quotebase",
+   "statement": "PairIndexBuilder: C(N,2) buckets, índice triangular O(1), inyectividad (validado diferencial §2 del gap doc)",
+   "provenance": "CANONICAL_WORKBOOK",
+   "repo_anchors": [{"kind": "glob", "target": "backend/searcher-rs/src/pair_index.rs"}],
+   "verification": {"status": "VERIFIED", "evidence": [{"kind": "path", "target": "docs/quotebase_extraction_checks.json", "hit": true}]}
+  },
+  {
+   "id": "REQ-QB-005", "sheet": "QB:15_IMPLEMENTATION_CONTRACT", "origin": "step 5", "family": "quotebase",
+   "statement": "Ingesta pool/action preservando pools paralelos (edge por pool)",
+   "provenance": "CANONICAL_WORKBOOK",
+   "repo_anchors": [{"kind": "path", "target": "backend/searcher-rs/src/route_discovery/graph_builder.rs"}],
+   "verification": {"status": "VERIFIED", "evidence": [{"kind": "path", "target": "backend/searcher-rs/src/route_discovery/graph_builder.rs", "hit": true}]}
+  },
+  {
+   "id": "REQ-QB-006", "sheet": "QB:15_IMPLEMENTATION_CONTRACT", "origin": "step 6", "family": "quotebase",
+   "statement": "Adjacency dense bitsets/CSR para N grande (hoja 09: 12 estructuras hot-path)",
+   "provenance": "CANONICAL_WORKBOOK",
+   "repo_anchors": [{"kind": "task_ref", "target": "ARBX-0020"}],
+   "verification": {"status": "PENDING", "evidence": [], "note": "HashMap<Address,Vec> semánticamente correcto hoy; denso = escala N≥64"}
+  },
+  {
+   "id": "REQ-QB-007", "sheet": "QB:15_IMPLEMENTATION_CONTRACT", "origin": "step 7", "family": "quotebase",
+   "statement": "EventUpdate → DirtyQueue (par/arista exacto; solo sucios re-disparan)",
+   "provenance": "CANONICAL_WORKBOOK",
+   "repo_anchors": [{"kind": "path", "target": "backend/searcher-rs/src/dirty_pairs.rs"}, {"kind": "task_ref", "target": "ARBX-0003"}],
+   "verification": {"status": "PENDING", "evidence": [{"kind": "path", "target": "backend/searcher-rs/src/dirty_pairs.rs", "hit": true}], "note": "módulo existe localmente (stack QB en árbol principal, sin merge por protocolo); wiring al reserve path pendiente"}
+  },
+  {
+   "id": "REQ-QB-008", "sheet": "QB:15_IMPLEMENTATION_CONTRACT", "origin": "step 8", "family": "quotebase",
+   "statement": "PairPrefilter: rates ejecutables por bucket con F_e log-alpha normalizado (señal=prefilter, no proof)",
+   "provenance": "CANONICAL_WORKBOOK",
+   "repo_anchors": [{"kind": "task_ref", "target": "ARBX-0024"}],
+   "verification": {"status": "PENDING", "evidence": []}
+  },
+  {
+   "id": "REQ-QB-009", "sheet": "QB:15_IMPLEMENTATION_CONTRACT", "origin": "step 9", "family": "quotebase",
+   "statement": "StrategyMask (detector∩surface∩hop): tabla 264×u8 estática + test O(1) antes de expandir",
+   "provenance": "CANONICAL_WORKBOOK",
+   "repo_anchors": [{"kind": "path", "target": "backend/searcher-rs/src/canonical_enums.rs"}],
+   "verification": {"status": "VERIFIED", "evidence": [{"kind": "path", "target": "backend/searcher-rs/src/canonical_enums.rs", "hit": true}], "note": "XLS-QB-02/03 (#459/#460 merged); dispatch honesto Status = ARBX-0021"}
+  },
+  {
+   "id": "REQ-QB-010", "sheet": "QB:15_IMPLEMENTATION_CONTRACT", "origin": "step 10", "family": "quotebase",
+   "statement": "RouteExpand por detector (DFS/beam/RICH/BF/k-shortest) hops 2–7",
+   "provenance": "CANONICAL_WORKBOOK",
+   "repo_anchors": [{"kind": "task_ref", "target": "ARBX-0006"}],
+   "verification": {"status": "PARTIAL", "evidence": [{"kind": "path", "target": "backend/searcher-rs/src/route_discovery/multi_hop_search.rs", "hit": true}], "note": "beam_k knob in (#460); wiring multihop-financing + hops 4-7 pendiente"}
+  },
+  {
+   "id": "REQ-QB-011", "sheet": "QB:15_IMPLEMENTATION_CONTRACT", "origin": "step 11", "family": "quotebase",
+   "statement": "ExactQuote: matemática entera por protocolo (CPMM..NFT adapters)",
+   "provenance": "CANONICAL_WORKBOOK",
+   "repo_anchors": [{"kind": "glob", "target": "backend/math-engine/src/operators/*.rs"}],
+   "verification": {"status": "VERIFIED", "evidence": [{"kind": "glob", "target": "backend/math-engine/src/operators/*.rs", "hit": true}]}
+  },
+  {
+   "id": "REQ-QB-012", "sheet": "QB:15_IMPLEMENTATION_CONTRACT", "origin": "step 12", "family": "quotebase",
+   "statement": "Sizing (Newton/Golden/convex/MPO) amount-aware",
+   "provenance": "CANONICAL_WORKBOOK",
+   "repo_anchors": [{"kind": "glob", "target": "backend/searcher-rs/src/**/size_optimizer*.rs"}],
+   "verification": {"status": "VERIFIED", "evidence": [{"kind": "glob", "target": "backend/searcher-rs/src/**/size_optimizer*.rs", "hit": true}], "note": "SizeOptimizer = motor económico vivo"}
+  },
+  {
+   "id": "REQ-QB-013", "sheet": "QB:15_IMPLEMENTATION_CONTRACT", "origin": "step 13", "family": "quotebase",
+   "statement": "NetGate: gas+flash+tip+fees+risk+freshness; Min_Net_bps del manual",
+   "provenance": "CANONICAL_WORKBOOK",
+   "repo_anchors": [{"kind": "path", "target": "backend/searcher-rs/src/canonical_knobs.rs"}],
+   "verification": {"status": "PARTIAL", "evidence": [{"kind": "path", "target": "backend/searcher-rs/src/canonical_knobs.rs", "hit": true}], "note": "min_net_bps knob in (#460); freshness gate = ARBX-0027"}
+  },
+  {
+   "id": "REQ-QB-014", "sheet": "QB:15_IMPLEMENTATION_CONTRACT", "origin": "step 14", "family": "quotebase",
+   "statement": "Simulation fork/relay FUERA del presupuesto <30ms",
+   "provenance": "CANONICAL_WORKBOOK",
+   "repo_anchors": [{"kind": "glob", "target": "backend/simulator-v2/src/**/*.rs"}],
+   "verification": {"status": "VERIFIED", "evidence": [{"kind": "glob", "target": "backend/simulator-v2/src/**/*.rs", "hit": true}]}
+  },
+  {
+   "id": "REQ-QB-015", "sheet": "QB:15_IMPLEMENTATION_CONTRACT", "origin": "step 15", "family": "quotebase",
+   "statement": "Telemetry p50/p95/p99 por etapa lat.* (decode/state/reprice/pair/expand/refine/gates/emit)",
+   "provenance": "CANONICAL_WORKBOOK",
+   "repo_anchors": [{"kind": "path", "target": "backend/searcher-rs/src/latency_budget.rs"}, {"kind": "task_ref", "target": "ARBX-0010"}],
+   "verification": {"status": "PENDING", "evidence": [{"kind": "path", "target": "backend/searcher-rs/src/latency_budget.rs", "hit": true}], "note": "módulo existe localmente (stack QB, sin merge por protocolo); wiring Instant + benchmark = QB-07b"}
+  },
+  {
+   "id": "REQ-QB-KNOBS", "sheet": "QB:01_CONFIG", "origin": "17 knobs", "family": "config",
+   "statement": "Grupo: 17 knobs paramétricos del manual con runtime binding (precedencia env>yaml>workbook)",
+   "provenance": "CANONICAL_WORKBOOK",
+   "repo_anchors": [{"kind": "path", "target": "docs/quotebase_config.json"}, {"kind": "path", "target": "backend/searcher-rs/src/canonical_knobs.rs"}],
+   "verification": {"status": "PARTIAL", "evidence": [{"kind": "path", "target": "backend/searcher-rs/src/canonical_knobs.rs", "hit": true}], "note": "en runtime: max_hops, min_hops, min_pool_liquidity_usd, beam_k, min_net_bps; faltan ~12 (Dirty_Seeds, 5×quote weights, Discovery_SLA_ms, max_freshness_s≈unificar ARBX-0027)"}
+  },
+  {
+   "id": "REQ-QB-ENUMS", "sheet": "QB:11_STRATEGY_HOP_MAP", "origin": "2 pares de enums", "family": "config",
+   "statement": "Grupo: GRAPH_MODELS ×10 + SURFACES ×10 (1:1) como enums single-source",
+   "provenance": "CANONICAL_WORKBOOK",
+   "repo_anchors": [{"kind": "path", "target": "backend/searcher-rs/src/canonical_enums.rs"}],
+   "verification": {"status": "VERIFIED", "evidence": [{"kind": "path", "target": "backend/searcher-rs/src/canonical_enums.rs", "hit": true}], "note": "XLS-QB-02 (#459 merged)"}
+  },
+  {
+   "id": "REQ-QB-HOPMAP", "sheet": "QB:11_STRATEGY_HOP_MAP", "origin": "264 filas", "family": "coverage",
+   "statement": "Grupo: matriz 264 estrategias × hops 2–7 (HopMask_u8 bit h−2) consumida por runtime",
+   "provenance": "CANONICAL_WORKBOOK",
+   "repo_anchors": [{"kind": "path", "target": "docs/quotebase_strategy_hop_map.json"}, {"kind": "path", "target": "backend/searcher-rs/src/canonical_enums.rs"}],
+   "verification": {"status": "VERIFIED", "evidence": [{"kind": "path", "target": "docs/quotebase_extraction_checks.json", "hit": true}], "note": "mask recomputada 264/264 exacto + tabla estática (#459/#460); suite completa = ARBX-0029"}
+  },
+  {
+   "id": "REQ-QB-COMBOS", "sheet": "QB:12_STRATEGY_HOP_EXPANDED", "origin": "1,436 combos", "family": "coverage",
+   "statement": "Grupo: 1,436 combinaciones válidas Strategy×Hop (biyección con mapa) ejercitadas por dispatch",
+   "provenance": "CANONICAL_WORKBOOK",
+   "repo_anchors": [{"kind": "path", "target": "docs/quotebase_strategy_hop_expanded.json"}],
+   "verification": {"status": "PARTIAL", "evidence": [{"kind": "path", "target": "docs/quotebase_extraction_checks.json", "hit": true}], "note": "biyección datos VERIFICADA; dispatch hop-aware in (#460); suite 1,436 = ARBX-0029"}
+  },
+  {
+   "id": "REQ-QB-DETECTORS", "sheet": "QB:13_DETECTOR_POLICY", "origin": "60 detectores", "family": "coverage",
+   "statement": "Grupo: 60 detectores con política (Graph_Policy, Hop_Use, Do_Not_Do, Hot_Seed) consumida por dispatch",
+   "provenance": "CANONICAL_WORKBOOK",
+   "repo_anchors": [{"kind": "path", "target": "docs/quotebase_detector_policy.json"}],
+   "verification": {"status": "PENDING", "evidence": [], "note": "datos extraídos; policy engine runtime = ARBX-0026"}
   }
  ]
 }

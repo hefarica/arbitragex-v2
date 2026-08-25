@@ -1,0 +1,158 @@
+{
+ "generated_at": "2026-08-25T01:33:17.851Z",
+ "source": "runtime_evidence",
+ "mode": "paper_only",
+ "completed_steps": 4,
+ "total_steps": 4,
+ "readiness_score": "4/4",
+ "all_ready": true,
+ "live_enabled": false,
+ "capital_exposure_usd": 0,
+ "steps": [
+  {
+   "step": 1,
+   "id": "topology",
+   "name": "Topology Vault",
+   "status": "PASS",
+   "ready": true,
+   "wss_active_count": 4,
+   "rpc_active_count": 5,
+   "snapshot_non_empty": true,
+   "reason": "4 active WSS + 5 active RPC provider(s) in topology vault (version 1786916896).",
+   "evidence": [
+    {
+     "label": "wss:drpc",
+     "detail": "eth.drpc.org (wss://...eth.drpc.org/****set)"
+    },
+    {
+     "label": "wss:publicnode",
+     "detail": "ethereum-rpc.publicnode.com (wss://...ethereum-rpc.publicnode.com/****set)"
+    },
+    {
+     "label": "wss:otro",
+     "detail": "0xrpc.io (wss://...0xrpc.io/****set)"
+    },
+    {
+     "label": "wss:otro-mainnet",
+     "detail": "mainnet.gateway.tenderly.co (wss://...mainnet.gateway.tenderly.co/****set)"
+    },
+    {
+     "label": "rpc:alchemy-mainnet",
+     "detail": "eth-mainnet.g.alchemy.com (https://...eth-mainnet.g.alchemy.com/****tjYp)"
+    },
+    {
+     "label": "rpc:drpc",
+     "detail": "eth.drpc.org (https://...eth.drpc.org/****set)"
+    },
+    {
+     "label": "rpc:publicnode",
+     "detail": "ethereum-rpc.publicnode.com (https://...ethereum-rpc.publicnode.com/****set)"
+    },
+    {
+     "label": "rpc:otro",
+     "detail": "0xrpc.io (https://...0xrpc.io/****set)"
+    },
+    {
+     "label": "rpc:otro-mainnet",
+     "detail": "cloudflare-eth.com (https://...cloudflare-eth.com/****nnet)"
+    }
+   ]
+  },
+  {
+   "step": 2,
+   "id": "credentials",
+   "name": "Credentials / Wallets",
+   "status": "PASS",
+   "ready": true,
+   "signer": "present",
+   "private_key": null,
+   "private_relay": null,
+   "redacted": true,
+   "reason": "Authorized signer/key present server-side (redacted). Credentials slot satisfied.",
+   "evidence": [
+    {
+     "label": "signer",
+     "detail": "present (redacted)"
+    },
+    {
+     "label": "private_key",
+     "detail": "absent"
+    },
+    {
+     "label": "private_relay",
+     "detail": "absent"
+    }
+   ]
+  },
+  {
+   "step": 3,
+   "id": "markets",
+   "name": "Market Topology",
+   "status": "PASS",
+   "ready": true,
+   "chains_count": 6,
+   "dexes_count": 23,
+   "pools_count": 620,
+   "tokens_count": 3718,
+   "reason": "Market topology registered: 6 chain(s), 23 dex(es), 620 pool(s), 3718 token(s).",
+   "evidence": [
+    {
+     "label": "chains",
+     "detail": "6"
+    },
+    {
+     "label": "dexes",
+     "detail": "23"
+    },
+    {
+     "label": "pools",
+     "detail": "620"
+    },
+    {
+     "label": "tokens",
+     "detail": "3718"
+    }
+   ]
+  },
+  {
+   "step": 4,
+   "id": "engines",
+   "name": "Resolution Engines",
+   "status": "PASS",
+   "ready": true,
+   "engines_active": [
+    "dex_arb",
+    "dex_arb_v2v2",
+    "flashloan_arb",
+    "liquidation",
+    "triangular"
+   ],
+   "paper_ready": true,
+   "shadow_ready": true,
+   "live_enabled": false,
+   "reason": "5 resolution engine(s) enabled: dex_arb, dex_arb_v2v2, flashloan_arb, liquidation, triangular. paper=true shadow=true, live disabled.",
+   "evidence": [
+    {
+     "label": "engine",
+     "detail": "dex_arb"
+    },
+    {
+     "label": "engine",
+     "detail": "dex_arb_v2v2"
+    },
+    {
+     "label": "engine",
+     "detail": "flashloan_arb"
+    },
+    {
+     "label": "engine",
+     "detail": "liquidation"
+    },
+    {
+     "label": "engine",
+     "detail": "triangular"
+    }
+   ]
+  }
+ ]
+}

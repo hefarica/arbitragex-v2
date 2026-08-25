@@ -3,8 +3,9 @@ import React, { useEffect, useState, useCallback, useRef } from "react";
 import { Zap, WifiOff, ShieldAlert, RefreshCw, Radio, EyeOff, Eye } from "lucide-react";
 import { sanitizeForDisplay } from "@/lib/omega-lexicon";
 import { toast } from "sonner";
-import { OpportunityDetailDialog, type OpportunityDetail } from "@/components/OpportunityDetailDialog";
+import { OpportunityDetailDialog } from "@/components/OpportunityDetailDialog";
 import { OpportunityTradeCard } from "@/components/OpportunityTradeCard";
+import { QuarantinedEventsAuditTrail } from "@/components/opportunities/QuarantinedEventsAuditTrail";
 
 // ─── Omni-Store Integration ───────────────────────────────────────────────────
 import { useOmniOpportunities } from "@/lib/store/useOmniOpportunities";
@@ -13,7 +14,8 @@ import { mapToOmniOpportunity, type OmniOpportunity } from "@/lib/store/types";
 import { getApiBaseUrl, getTradingConfig } from "@/lib/api-client";
 import type { StrategyRuntimeConfig } from "@/lib/schemas";
 
-// Re-export types for backward compatibility with OpportunityDetailDialog
+// Re-export store types for downstream consumers (FE-0034: the detail dialog
+// no longer needs the mirror — it imports OmniOpportunity from the store).
 export type {
   OmniOpportunity,
   TokenInfo,
@@ -85,7 +87,7 @@ export default function OpportunitiesClient({
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [now, setNow] = useState<number>(0);
   const [simLoading, setSimLoading] = useState<string | null>(null);
-  const [selectedOpp, setSelectedOpp] = useState<OpportunityDetail | null>(null);
+  const [selectedOpp, setSelectedOpp] = useState<OmniOpportunity | null>(null);
   const [lastRefresh, setLastRefresh] = useState<Date | null>(
     initialSnapshot.serverTime ? new Date(initialSnapshot.serverTime) : null
   );
@@ -198,7 +200,7 @@ export default function OpportunitiesClient({
   // Memoize callbacks so React.memo on OpportunityTradeCard isn't defeated
   // every time the parent re-renders (e.g. from the age ticker).
   const onInspect = useCallback((opp: OmniOpportunity) => {
-    setSelectedOpp(opp as unknown as OpportunityDetail);
+    setSelectedOpp(opp);
   }, []);
 
   const onExecute = useCallback(
@@ -291,7 +293,7 @@ export default function OpportunitiesClient({
 
   return (
     <div className={`p-8 min-h-screen transition-colors duration-500 text-foreground ${isError ? 'bg-destructive/5' : ''}`}>
-      <div className="flex justify-between items-center border-b border-border pb-4 mb-8">
+      <div className="flex flex-wrap justify-between items-center gap-4 border-b border-border pb-4 mb-8">
         <div>
           <h1 className={`text-4xl font-extrabold tracking-tight bg-clip-text text-transparent ${isError ? 'bg-gradient-to-r from-destructive to-destructive/70' : 'bg-gradient-to-r from-primary to-success'}`}>
             {sanitizeForDisplay("Live MEV Feed")}
@@ -438,12 +440,19 @@ export default function OpportunitiesClient({
             now={now}
             isMounted={isMounted}
             simLoading={simLoading === opp.id}
-              strategyConfig={strategyConfigs[opp.strategy_kind] ?? null}
+              strategyConfig={
+                opp.strategy_kind != null ? (strategyConfigs[opp.strategy_kind] ?? null) : null
+              }
               onExecute={onExecute}
               onInspect={onInspect}
             />
           ))}
       </div>
+
+      {/* FE-0032 (§31): Audit Trail — the quarantined rows of THIS snapshot in
+          the §31 columns (pure aggregation of the same store data, no second
+          fetch; §30 keeps them visible on the grid, this lists the details). */}
+      <QuarantinedEventsAuditTrail opportunities={opportunities} />
 
       {/* FE-10: Opportunity detail sheet — click any row to open */}
       <OpportunityDetailDialog

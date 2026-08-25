@@ -1,0 +1,22 @@
+{
+  "mev_id": "MEV-09-008",
+  "grupo": "9",
+  "estrategia": "Combinatorial-auction arbitrage",
+  "familia": "Intents, solvers, subastas y order flow",
+  "required_surface": "INTENT_AUCTION",
+  "backend_module": "intents_solver_engine",
+  "toggle_frontend": "strategy.09.008.enabled",
+  "min_legs": 3,
+  "max_legs": 16,
+  "legs_model": "N-leg din\u00e1mico",
+  "primary_operators": [
+    "op_19",
+    "op_24",
+    "op_29"
+  ],
+  "secondary_operators": [
+    "op_20",
+    "op_22",
+    "op_27"
+  ]
+}

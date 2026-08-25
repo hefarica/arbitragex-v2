@@ -1,0 +1,11 @@
+{
+  "id": 27,
+  "code": "op_27",
+  "name": "Path Ordering",
+  "canonical_role": "Route ordering/permutation optimization.",
+  "enabled": true,
+  "engine_present": true,
+  "calibration_state": "UNCALIBRATED",
+  "formula": "P_order = Sort(Path) - route ordering/permutation optimization",
+  "implementation_file": "backend/math-engine/src/operators/op_27_path_ordering.rs"
+}

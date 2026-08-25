@@ -45,10 +45,34 @@ export interface OutcomeChainRow {
   opportunities: number;
 }
 
+/** FE-0038 (§47): by-strategy grouping — cartridge_id is the strategy key the sink persists. */
+export interface OutcomeCartridgeRow {
+  cartridge_id: string;
+  n: number;
+  opportunities: number;
+}
+
+/** FE-0038 (§47): by-pair grouping — raw token addresses, verbatim. */
+export interface OutcomePairRow {
+  token_in: string;
+  token_out: string;
+  n: number;
+  opportunities: number;
+}
+
 export interface UseRouteDiscoveryOutcomesResult {
   totals: OutcomeTotals | null;
   byReason: OutcomeReasonRow[];
   byChain: OutcomeChainRow[];
+  byCartridge: OutcomeCartridgeRow[];
+  byPair: OutcomePairRow[];
+  /**
+   * FE-0038 §47: true when the response actually CARRIED the grouping keys.
+   * Distinguishes "served but zero rows in window" (false honesty about the
+   * window) from "api-server older than the FE-0038 deploy" — same []
+   * payload, different truth (R8).
+   */
+  groupingsServed: boolean;
   windowHours: number | null;
   status: OutcomesStatus;
   updatedAt: number | null;
@@ -64,6 +88,10 @@ type RawSummary = {
     totals?: Record<string, unknown> | null;
     by_reason?: unknown;
     by_chain?: unknown;
+    // FE-0038 §47 — absent on an api-server older than the grouping deploy:
+    // absence is a real state, parsed to [] (never a fabricated default row).
+    by_cartridge?: unknown;
+    by_pair?: unknown;
   } | null;
 } | null;
 
@@ -80,6 +108,9 @@ export function useRouteDiscoveryOutcomes(hours: number): UseRouteDiscoveryOutco
   const [totals, setTotals] = useState<OutcomeTotals | null>(null);
   const [byReason, setByReason] = useState<OutcomeReasonRow[]>([]);
   const [byChain, setByChain] = useState<OutcomeChainRow[]>([]);
+  const [byCartridge, setByCartridge] = useState<OutcomeCartridgeRow[]>([]);
+  const [byPair, setByPair] = useState<OutcomePairRow[]>([]);
+  const [groupingsServed, setGroupingsServed] = useState(false);
   const [windowHours, setWindowHours] = useState<number | null>(null);
   const [status, setStatus] = useState<OutcomesStatus>("CONNECTING");
   const [updatedAt, setUpdatedAt] = useState<number | null>(null);
@@ -152,6 +183,32 @@ export function useRouteDiscoveryOutcomes(hours: number): UseRouteDiscoveryOutco
         setUnavailableReason(null);
         setStatus("LIVE");
         setUpdatedAt(Date.now());
+        // FE-0038 §47 groupings — same tolerant parse as by_chain.
+        setGroupingsServed(d.by_cartridge !== undefined || d.by_pair !== undefined);
+        const rawCartridges = Array.isArray(d.by_cartridge)
+          ? (d.by_cartridge as Array<Record<string, unknown>>)
+          : [];
+        setByCartridge(
+          rawCartridges.map((r) => ({
+            cartridge_id:
+              typeof r["cartridge_id"] === "string" && r["cartridge_id"] !== ""
+                ? (r["cartridge_id"] as string)
+                : "(null)",
+            n: toNum(r["n"]) ?? 0,
+            opportunities: toNum(r["opportunities"]) ?? 0,
+          })),
+        );
+        const rawPairs = Array.isArray(d.by_pair)
+          ? (d.by_pair as Array<Record<string, unknown>>)
+          : [];
+        setByPair(
+          rawPairs.map((r) => ({
+            token_in: typeof r["token_in"] === "string" ? (r["token_in"] as string) : "—",
+            token_out: typeof r["token_out"] === "string" ? (r["token_out"] as string) : "—",
+            n: toNum(r["n"]) ?? 0,
+            opportunities: toNum(r["opportunities"]) ?? 0,
+          })),
+        );
       } else {
         setUnavailableReason(httpReason ?? "no_data");
         setStatus("STALE");
@@ -166,5 +223,16 @@ export function useRouteDiscoveryOutcomes(hours: number): UseRouteDiscoveryOutco
     };
   }, [hours]);
 
-  return { totals, byReason, byChain, windowHours, status, updatedAt, unavailableReason };
+  return {
+    totals,
+    byReason,
+    byChain,
+    byCartridge,
+    byPair,
+    groupingsServed,
+    windowHours,
+    status,
+    updatedAt,
+    unavailableReason,
+  };
 }

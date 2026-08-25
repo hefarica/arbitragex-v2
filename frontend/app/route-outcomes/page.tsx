@@ -3,6 +3,8 @@ import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
 import { RouteDiscoveryOutcomesPanel } from "@/features/route-discovery/RouteDiscoveryOutcomesPanel";
 import { ViableByHopsPanel } from "@/features/route-discovery/ViableByHopsPanel";
+// FE-0038 (§47): the §47 group-bys over the same outcomes sink.
+import { RouteOutcomesAnalyticsPanel } from "@/features/route-discovery/RouteOutcomesAnalyticsPanel";
 
 export const metadata = {
   title: "Route Outcomes — ArbitrageX",
@@ -51,6 +53,9 @@ export default function RouteOutcomesPage() {
         {/* XLS-DASH-01 — workbook 29_SUPER_DASHBOARD viable-KPI set (by hops /
             by kind / viability %) over REAL opportunities rows. */}
         <ViableByHopsPanel />
+        {/* FE-0038 (§47): by-strategy / by-pair analytics + honest gaps for the
+            dimensions the sink does not persist (hop / detector / DEX). */}
+        <RouteOutcomesAnalyticsPanel />
       </section>
     </main>
   );

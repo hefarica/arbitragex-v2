@@ -1,0 +1,22 @@
+{
+  "mev_id": "MEV-09-009",
+  "grupo": "9",
+  "estrategia": "Dutch-auction decay arbitrage",
+  "familia": "Intents, solvers, subastas y order flow",
+  "required_surface": "INTENT_AUCTION",
+  "backend_module": "intents_solver_engine",
+  "toggle_frontend": "strategy.09.009.enabled",
+  "min_legs": 2,
+  "max_legs": 12,
+  "legs_model": "Settlement multiorden",
+  "primary_operators": [
+    "op_21",
+    "op_23",
+    "op_24"
+  ],
+  "secondary_operators": [
+    "op_08",
+    "op_11",
+    "op_22"
+  ]
+}

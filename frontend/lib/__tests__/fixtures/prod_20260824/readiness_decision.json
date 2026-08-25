@@ -1,0 +1,26 @@
+{
+ "generated_at": "2026-08-25T01:33:17.465Z",
+ "go_a5": false,
+ "go_live": false,
+ "verdict": "NO_GO",
+ "phase": "P2_READINESS",
+ "capital_exposure_usd": 0,
+ "live_trading": false,
+ "private_relay": false,
+ "submit_enabled": false,
+ "paper_mode": true,
+ "reasons": [
+  "A.5 paper-shadow runtime has not executed",
+  "A.9 GO/NO-GO formal sign-off pending"
+ ],
+ "next_action": "Run paper-shadow continuously for ≥7 days post A.4 PASS.",
+ "blockers_ref": "/api/v1/readiness/blockers",
+ "required_for_go_live": [
+  "A.4 fork validation PASS",
+  "A.5 paper-shadow PASS",
+  "A.6 circuit breakers comprehensive PASS",
+  "A.7 private relay no-submit PASS",
+  "A.8 confidence scoring wire PASS",
+  "A.9 formal GO/NO-GO sign-off"
+ ]
+}

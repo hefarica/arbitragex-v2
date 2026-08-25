@@ -46,6 +46,7 @@ import {
   Clock,
   Info,
   Loader2,
+  MinusCircle,
   Play,
   TrendingUp,
   XCircle,
@@ -55,6 +56,8 @@ import { toast } from "sonner";
 import { TokenChip } from "@/components/TokenChip";
 import { ChainBadge } from "@/components/ChainBadge";
 import { StrategyBadge } from "@/components/StrategyBadge";
+import { QuarantineStrip } from "@/components/QuarantineStrip";
+import { OpportunitySummaryGrid } from "@/components/opportunities/OpportunitySummaryGrid";
 import { StatusPill } from "@/components/StatusPill";
 import {
   formatPctOrDash,
@@ -123,9 +126,19 @@ function OpportunityTradeCardImpl({
   const [evidence, setEvidence] = useState<SimEvidence | null>(null);
 
   // ── Detection time / age / vigency ─────────────────────────────────────────
-  const detectedTime = new Date(opp.detected_at).getTime();
-  const ageSecs = isMounted ? Math.max(0, Math.floor((now - detectedTime) / 1000)) : 0;
-  const isStale = ageSecs > STALE_SECS;
+  // FE-0029 (§28): detected_at is null on malformed payloads — the mapper no
+  // longer fabricates now(). An undated row claims neither freshness nor
+  // staleness (isStale null = "sin fecha").
+  const detectedTime =
+    opp.detected_at == null ? NaN : new Date(opp.detected_at).getTime();
+  const ageSecs =
+    opp.detected_at == null
+      ? null
+      : isMounted
+        ? Math.max(0, Math.floor((now - detectedTime) / 1000))
+        : 0;
+  const isStale: boolean | null =
+    opp.detected_at == null ? null : (ageSecs as number) > STALE_SECS;
 
   // ── Net priority: canonical spine → TS simulated → "—" ─────────────────────
   const gross = formatProfitUSD(opp.expected_profit_usd);
@@ -205,6 +218,10 @@ function OpportunityTradeCardImpl({
 
   return (
     <div
+      // FE-0051 (§76): the logical opportunity id rides the DOM root so the
+      // same entity is traceable across views (dialog/exchange/paper rows
+      // carry the same attribute; repo precedent: opp-row-${id} testid).
+      data-opp-id={opp.id}
       className="arbx-card-enter relative bg-card text-card-foreground border border-border rounded-2xl p-4 shadow-lg hover:shadow-xl hover:border-primary/40 transition-all overflow-hidden"
     >
       {/* ⓘ discreet Inspect affordance — top-right corner */}
@@ -220,6 +237,9 @@ function OpportunityTradeCardImpl({
       >
         <Info size={15} />
       </button>
+
+      {/* FE-0031 (§30): semantic violations render a QUARANTINED strip. */}
+      <QuarantineStrip violations={opp.semantic_violations} />
 
       {/* ── HEADER: chain · strategy · status · base token  |  ROI% ── */}
       <div className="flex items-start justify-between gap-2 mb-2.5 pr-7">
@@ -250,26 +270,43 @@ function OpportunityTradeCardImpl({
           <Clock size={11} />
           <span suppressHydrationWarning>
             {isMounted
-              ? new Date(opp.detected_at).toLocaleTimeString([], {
-                  hour12: false,
-                  hour: "2-digit",
-                  minute: "2-digit",
-                  second: "2-digit",
-                })
+              ? opp.detected_at == null
+                ? "—"
+                : new Date(opp.detected_at).toLocaleTimeString([], {
+                    hour12: false,
+                    hour: "2-digit",
+                    minute: "2-digit",
+                    second: "2-digit",
+                  })
               : "--:--:--"}
           </span>
           <span className="text-muted-foreground/60">·</span>
-          <span suppressHydrationWarning>{isMounted ? `${ageSecs}s` : "--"}</span>
+          <span suppressHydrationWarning>
+            {isMounted ? (ageSecs == null ? "—" : `${ageSecs}s`) : "--"}
+          </span>
         </div>
         <span
+          title={
+            isStale === null
+              ? "sin detected_at en el payload (§28) — no se afirma vigencia"
+              : undefined
+          }
           className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded border font-bold uppercase tracking-wide ${
-            isStale
-              ? "bg-destructive/10 text-destructive border-destructive/30"
-              : "bg-success/10 text-success border-success/30"
+            isStale === null
+              ? "bg-muted/60 text-muted-foreground border-border"
+              : isStale
+                ? "bg-destructive/10 text-destructive border-destructive/30"
+                : "bg-success/10 text-success border-success/30"
           }`}
         >
-          {isStale ? <AlertTriangle size={10} className="animate-pulse" /> : <CheckCircle2 size={10} />}
-          {isStale ? "stale" : "vigente"}
+          {isStale === null ? (
+            <MinusCircle size={10} />
+          ) : isStale ? (
+            <AlertTriangle size={10} className="animate-pulse" />
+          ) : (
+            <CheckCircle2 size={10} />
+          )}
+          {isStale === null ? "sin fecha" : isStale ? "stale" : "vigente"}
         </span>
       </div>
 
@@ -284,6 +321,13 @@ function OpportunityTradeCardImpl({
         <div className="min-w-0 flex-1">
           <TokenChip token_address={opp.token_out} chain_id={opp.chain_id_out ?? opp.chain_id} info={opp.token_out_info} />
         </div>
+      </div>
+
+      {/* ── FE-0033 (§36): canonical summary grid — ruta/strategy/detector/
+            hops/in/Gross/Net/bps/Risk/Sim/latencia, wire-grade only. The
+            FE-0034 detail dialog reuses this as the Overview spine. ── */}
+      <div className="mb-3">
+        <OpportunitySummaryGrid opp={opp} />
       </div>
 
       {/* ── EXECUTIVE RESULT: net yield + target verdict ── */}
@@ -462,8 +506,14 @@ export const OpportunityTradeCard = React.memo(
   ): boolean => {
     const p = prev.opp;
     const n = next.opp;
-    const agePrev = Math.floor((prev.now - new Date(p.detected_at).getTime()) / 1000);
-    const ageNext = Math.floor((next.now - new Date(n.detected_at).getTime()) / 1000);
+    // FE-0029 (§28): null detected_at → NaN age; Object.is(NaN, NaN) = true so
+    // two undated rows stay memo-equal instead of re-rendering forever.
+    const ageOf = (o: typeof p, now: number) =>
+      Math.floor(
+        (now - (o.detected_at == null ? NaN : new Date(o.detected_at).getTime())) / 1000,
+      );
+    const agePrev = ageOf(p, prev.now);
+    const ageNext = ageOf(n, next.now);
     return (
       p.id === n.id &&
       p.status === n.status &&
@@ -478,7 +528,7 @@ export const OpportunityTradeCard = React.memo(
       prev.strategyConfig === next.strategyConfig &&
       prev.onExecute === next.onExecute &&
       prev.onInspect === next.onInspect &&
-      agePrev === ageNext
+      Object.is(agePrev, ageNext)
     );
   },
 );

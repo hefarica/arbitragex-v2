@@ -383,7 +383,13 @@ impl SimEngine {
         for (i, e) in edges.iter().enumerate() {
             adjacency.entry(e.token_in).or_default().push(i);
         }
-        let graph = TokenGraph { edges, adjacency };
+        // ARBX-0019: dense view left unbuilt — `None` until build_dense; the
+        // HashMap fallback is the pinned-equivalent path for hand-built graphs.
+        let graph = TokenGraph {
+            edges,
+            adjacency,
+            dense: None,
+        };
 
         let base_tokens: Vec<Address> = p
             .base_tokens

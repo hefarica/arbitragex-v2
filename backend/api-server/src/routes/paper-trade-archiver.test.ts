@@ -5,9 +5,15 @@
  * populates `paper_trade_runs.execution_time_ms`. It must mirror relays-client
  * `detection_to_ledger_ms` (persistence.rs) exactly: elapsed ms, clock-skew
  * clamped to 0, i32 saturation for the INTEGER column.
+ *
+ * ARBX-R-0001: `archiverRejectionSkip` is the paper-side twin of relays-client
+ * `SubmitEngine::rejection_refusal` — the d9 6h JOIN showed 434/434
+ * paper_trade_runs rows were REJECTED opps (this archiver inserted them
+ * because it only gated on sim-profit presence). The predicate must treat
+ * ANY non-null rejection_reason as never-a-trade.
  */
 import { describe, it, expect } from "vitest";
-import { detectionToLedgerMs } from "./paper-trade-archiver.js";
+import { detectionToLedgerMs, archiverRejectionSkip } from "./paper-trade-archiver.js";
 
 const NOW = Date.parse("2026-08-23T12:00:00.000Z");
 
@@ -32,5 +38,19 @@ describe("detectionToLedgerMs (LATLED-01)", () => {
 
   it("defends NaN from unparseable timestamps to 0 (impossible post-zod, defended anyway)", () => {
     expect(detectionToLedgerMs("not-a-date", NOW)).toBe(0);
+  });
+});
+
+describe("archiverRejectionSkip (ARBX-R-0001)", () => {
+  it("a rejected opportunity is never a paper trade — reason returned for the skip log", () => {
+    // The exact rejection from the flood: SizeOptimizer verdict copied verbatim,
+    // never relabeled.
+    expect(archiverRejectionSkip({ rejection_reason: "NegativeNetProfit:gas_floor_breach" })).toBe(
+      "NegativeNetProfit:gas_floor_breach",
+    );
+  });
+
+  it("a viable opportunity (rejection_reason null) proceeds to the insert path", () => {
+    expect(archiverRejectionSkip({ rejection_reason: null })).toBe(null);
   });
 });

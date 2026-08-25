@@ -1,0 +1,24 @@
+{
+  "mev_id": "MEV-05-003",
+  "grupo": "5",
+  "estrategia": "CEX\u2013DEX triangular arbitrage",
+  "familia": "Arbitraje CEX\u2013DEX y mercados externos",
+  "required_surface": "CEX_DEX",
+  "backend_module": "cex_external_engine",
+  "toggle_frontend": "strategy.05.003.enabled",
+  "min_legs": 3,
+  "max_legs": 3,
+  "legs_model": "Fijo",
+  "primary_operators": [
+    "op_08",
+    "op_10",
+    "op_21",
+    "op_23"
+  ],
+  "secondary_operators": [
+    "op_11",
+    "op_13",
+    "op_16",
+    "op_22"
+  ]
+}

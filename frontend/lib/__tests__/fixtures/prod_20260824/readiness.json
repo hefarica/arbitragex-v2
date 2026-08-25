@@ -1,0 +1,229 @@
+{
+ "items": [
+  {
+   "id": "V-NH-1",
+   "group": "security_compliance",
+   "label": "No-hardcode doctrine: zero productive literals in repo",
+   "doctrine": "arbx-no-hardcode-doctrine",
+   "verified_at": "2026-08-25T01:33:16.193Z",
+   "status": "green",
+   "reason": "lint-no-hardcode.sh exited 0",
+   "evidence": {
+    "kind": "shell",
+    "ref": "automation/tools/lint-no-hardcode.sh"
+   }
+  },
+  {
+   "id": "V-DB-1",
+   "group": "security_compliance",
+   "label": "DB role passwords via psql vars (no SQL literals)",
+   "doctrine": "arbx-no-hardcode-doctrine",
+   "verified_at": "2026-08-25T01:33:16.193Z",
+   "status": "green",
+   "reason": "97 migrations scanned, 0 password literals",
+   "evidence": {
+    "kind": "shell",
+    "ref": "regex /\\bPASSWORD\\s+'[^']+'/i"
+   }
+  },
+  {
+   "id": "V-AT-1",
+   "group": "security_compliance",
+   "label": "Admin token via httpOnly cookie (no localStorage)",
+   "doctrine": "secrets.policy.md T1",
+   "verified_at": "2026-08-25T01:33:16.193Z",
+   "status": "green",
+   "reason": "/admin/session endpoint active (400) — httpOnly cookie session confirmed via endpoint probe",
+   "evidence": {
+    "kind": "endpoint",
+    "ref": "POST /admin/session → 400"
+   }
+  },
+  {
+   "id": "PR-1",
+   "group": "security_compliance",
+   "label": "CSP-Report-Only + HSTS + rate-limit edge admin session",
+   "verified_at": "2026-08-25T01:33:16.193Z",
+   "status": "green",
+   "reason": "CSP-Report-Only present (416 chars, frame-ancestors 'none' enforced) + HSTS (max-age=31536000; includeSubDomains)",
+   "evidence": {
+    "kind": "endpoint",
+    "ref": "HEAD http://frontend:5173/favicon.ico"
+   }
+  },
+  {
+   "id": "PR-2",
+   "group": "audit_trail",
+   "label": "Audit log: killswitch + auth events with tamper-evident DB",
+   "verified_at": "2026-08-25T01:33:16.193Z",
+   "status": "green",
+   "reason": "18 audit rows in last 7d",
+   "evidence": {
+    "kind": "db_query",
+    "ref": "SELECT COUNT(*) FROM audit_log WHERE created_at > NOW() - '7 days'"
+   }
+  },
+  {
+   "id": "MONITORING",
+   "group": "operations",
+   "label": "Prometheus + Grafana healthcheck reachable",
+   "verified_at": "2026-08-25T01:33:16.194Z",
+   "status": "green",
+   "reason": "Prometheus /-/healthy + Grafana /api/health both 2xx",
+   "evidence": {
+    "kind": "endpoint",
+    "ref": "http://prometheus:9090/-/healthy + http://grafana:3000/api/health"
+   }
+  },
+  {
+   "id": "RUNBOOK",
+   "group": "operations",
+   "label": "Operator runbooks (≥3 .md files in docs/runbooks/)",
+   "verified_at": "2026-08-25T01:33:16.194Z",
+   "status": "green",
+   "reason": "11 runbook files present",
+   "evidence": {
+    "kind": "file",
+    "ref": "docs/runbooks/"
+   }
+  },
+  {
+   "id": "G-RPC-1",
+   "group": "risk_doctrines",
+   "label": "RPC failover ≥3 providers + health scoring",
+   "doctrine": "arbx-rpc-failover-discipline",
+   "verified_at": "2026-08-25T01:33:16.194Z",
+   "status": "green",
+   "reason": "20 providers configured, 18 alive (Healthy/Degraded)",
+   "evidence": {
+    "kind": "endpoint",
+    "ref": "http://prometheus:9090/api/v1/query?query=count(arbx_rpc_provider_state)"
+   }
+  },
+  {
+   "id": "G-NET-1",
+   "group": "risk_doctrines",
+   "label": "Net-profit gate (gross−gas−slippage−relay−p_fail)",
+   "doctrine": "arbx-net-profit-gate",
+   "verified_at": "2026-08-25T01:33:16.194Z",
+   "status": "green",
+   "reason": "scanner.rs wires net_expected_profit_usd (live-mode gate) into opportunity payload; spine evaluator subtracts 8 cost components incl. relay_fee_usd",
+   "evidence": {
+    "kind": "file",
+    "ref": "backend/searcher-rs/src/scanner.rs + backend/math-engine/src/roi_engine.rs"
+   }
+  },
+  {
+   "id": "G-SIM-1",
+   "group": "risk_doctrines",
+   "label": "Simulation mandatory (revm or eth_call+stateOverride)",
+   "doctrine": "arbx-simulation-mandatory",
+   "verified_at": "2026-08-25T01:33:16.194Z",
+   "status": "green",
+   "reason": "sim-ctl alive, simulator-v2 ready, 60025 simulations in last 24h",
+   "evidence": {
+    "kind": "endpoint",
+    "ref": "http://sim-ctl:3003/health + arbx_simulation_total"
+   }
+  },
+  {
+   "id": "G-PEC-1",
+   "group": "risk_doctrines",
+   "label": "Pre-execute checklist (7 gates in series)",
+   "doctrine": "arbx-pre-execute-checklist",
+   "verified_at": "2026-08-25T01:33:16.195Z",
+   "status": "green",
+   "reason": "doctrine doc lists all 7 gates; submit_engine references the checklist",
+   "evidence": {
+    "kind": "file",
+    "ref": "docs/policies/pre-execute-checklist.md"
+   }
+  },
+  {
+   "id": "G-RIS-1",
+   "group": "risk_doctrines",
+   "label": "Risk limits + auto-kill on drawdown",
+   "doctrine": "arbx-risk-limits-enforcement",
+   "verified_at": "2026-08-25T01:33:16.195Z",
+   "status": "green",
+   "reason": "[risk] limits + drawdown trigger configured; kill-switch reachable via Redis; auto_trip_on_high_revert_rate=true",
+   "evidence": {
+    "kind": "config",
+    "ref": "configs/app.toml + arbx:killswitch:enabled"
+   }
+  },
+  {
+   "id": "G-TOK-1",
+   "group": "tokens_strategies",
+   "label": "Token safety screen (honeypot, tax, blacklist)",
+   "doctrine": "arbx-token-safety-screen",
+   "verified_at": "2026-08-25T01:33:16.195Z",
+   "status": "green",
+   "reason": "code (3 modules) + selector-api healthy + 1710 token_safety_cache rows",
+   "evidence": {
+    "kind": "endpoint",
+    "ref": "http://selector-api:3002/health"
+   }
+  },
+  {
+   "id": "G-PAP-1",
+   "group": "tokens_strategies",
+   "label": "Paper trading ≥7 days continuous + report",
+   "doctrine": "arbx-paper-trade-first",
+   "verified_at": "2026-08-25T01:33:16.195Z",
+   "status": "yellow",
+   "reason": "paper mode confidence is insufficient for green; 397193 detections in last 7d, last 0.0h ago · authority: inferred",
+   "evidence": {
+    "kind": "db_query",
+    "ref": "MIN(detected_at) FROM opportunities"
+   }
+  },
+  {
+   "id": "G-FL-1",
+   "group": "contracts",
+   "label": "Flash loan callbacks: 7 discipline rules + foundry forktest",
+   "doctrine": "arbx-flash-loan-discipline",
+   "verified_at": "2026-08-25T01:33:16.195Z",
+   "status": "green",
+   "reason": "FlashLoanExecutor.sol + 17 foundry .t.sol tests + 5 deploy scripts",
+   "evidence": {
+    "kind": "file",
+    "ref": "contracts/src/FlashLoanExecutor.sol + contracts/test/*.t.sol"
+   }
+  },
+  {
+   "id": "G-MEV-1",
+   "group": "operations",
+   "label": "MEV ethics evidence: no-sandwich/no-frontrun documented",
+   "doctrine": "arbx-mev-ethics-gate",
+   "verified_at": "2026-08-25T01:33:16.195Z",
+   "status": "green",
+   "reason": "policy doc names sandwich + frontrun + private-mempool vendor with structured bullets",
+   "evidence": {
+    "kind": "file",
+    "ref": "docs/policies/mev-ethics.md"
+   }
+  },
+  {
+   "id": "ALERTS",
+   "group": "operations",
+   "label": "Alert rules wired (rules.yml + Prometheus + Alertmanager)",
+   "verified_at": "2026-08-25T01:33:16.195Z",
+   "status": "green",
+   "reason": "24 alert rules loaded in Prometheus + Alertmanager status reachable",
+   "evidence": {
+    "kind": "endpoint",
+    "ref": "http://prometheus:9090/api/v1/rules + http://alertmanager:9093/api/v2/status"
+   }
+  }
+ ],
+ "summary": {
+  "green": 16,
+  "yellow": 1,
+  "red": 0,
+  "pending": 0,
+  "total": 17
+ },
+ "flip_blocked": true,
+ "generated_at": "2026-08-25T01:33:16.313Z"
+}

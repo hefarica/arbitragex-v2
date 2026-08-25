@@ -90,11 +90,13 @@ const app = express();
 // IMPORT DEFI ROUTER & WEBSOCKET
 // ==========================================
 import { mountDefi } from "./routes/defi.js";
-import { buildTradingConfigRouter, rehydrateTradingConfigMirror } from "./routes/trading-config.js";
+import { buildTradingConfigRouter, rehydrateTradingConfigMirror, tokenUniverseVersionKey } from "./routes/trading-config.js";
 import { buildCartridgeFiltersRouter } from "./routes/cartridge-filters.js";
 import { mountTokenIconRoutes } from "./routes/token-icon.js";
 import { buildOperationsRouter } from "./routes/operations.js";
 import { buildStrategyCatalogRouter } from "./routes/strategy-catalog.js";
+import quotebaseCatalogRouter from "./routes/quotebase-catalog.js";
+import { mountQuoteAnchor } from "./routes/quote-anchor.js";
 import { buildCredentialsRouter } from "./routes/credentials.js";
 import { rehydrateSvcCredMirror } from "./credentials/projection.js";
 import { mountOpportunitiesLive } from "./routes/opportunities-live.js";
@@ -102,6 +104,7 @@ import { mountPricesLive } from "./routes/prices-live.js";
 import { attachPriceRooms, subscribeToPriceUpdates } from "./prices-stream.js";
 import { mountDexes } from "./routes/dexes.js";
 import { mountPools } from "./routes/pools.js";
+import { mountPairs } from "./routes/pairs.js";
 import { mountStubs } from "./routes/stubs.js";
 import { buildServiceControlRouter } from "./routes/service-control.js";
 import { mountWallets } from "./routes/wallets.js";
@@ -532,6 +535,9 @@ const carnotStore = new CarnotStore();
 mountCarnotCycles(app, { store: carnotStore, logger });
 mountDexes(app, { pool, logger });
 mountPools(app, { pool, logger });
+// EMIT-06 (FE-MASTER P5 §13): effective pair universe — PG registry (the
+// same table the Rust side loads) + live reserves + undrained dirty set.
+mountPairs(app, { pool, redis, logger });
 mountWallets(app, { pool, logger });
 mountDefi(app, { pool, logger });
 mountStrategyRuntimeStatus(app, { pool, redis, logger });
@@ -745,6 +751,196 @@ app.get("/api/v1/scanner/heartbeat", async (req, res) => {
     res.status(503).json({ error: "redis_read_failed", detail: (e as Error).message });
   }
 });
+
+// EMIT-05 (FE-MASTER §18/§43-44): latest route-discovery tick summary — the
+// durable snapshot searcher-rs writes each tick alongside its pub/sub publish
+// (`arbx:route_discovery:tick:<chain_id>`, SET .. EX 60). Served FLAT: the
+// frontier Zod mirror (frontend/lib/apex/schemas/telemetry.ts) validates the
+// worker's tick_summary verbatim, so no wrapper object may be added here.
+// 404 when the key is absent → discovery loop down or recently restarted
+// (R8 fail-honest: the client renders a loading/error state, never a zeroed
+// funnel).
+app.get("/api/route-discovery/tick", async (req, res) => {
+  const chainId = Number(req.query["chain_id"] ?? 1);
+  if (!Number.isFinite(chainId) || chainId < 1) {
+    res.status(400).json({ error: "invalid_chain_id" });
+    return;
+  }
+  const key = `arbx:route_discovery:tick:${chainId}`;
+  try {
+    const raw = await redis.get(key);
+    if (raw == null) {
+      res.status(404).json({
+        error: "tick_not_available",
+        detail: `no snapshot at ${key} — route discovery may be down or recently restarted`,
+        chain_id: chainId,
+      });
+      return;
+    }
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(raw);
+    } catch (e) {
+      res.status(503).json({ error: "snapshot_parse_failed", detail: (e as Error).message });
+      return;
+    }
+    res.status(200).json(parsed);
+  } catch (e) {
+    logger.warn({ event: "route_discovery.tick.read_failed", err: (e as Error).message });
+    res.status(503).json({ error: "redis_read_failed", detail: (e as Error).message });
+  }
+});
+
+// EMIT-01 (FE-MASTER §4-§6): symbol → TokenKey resolution over the
+// pre-indexed universe snapshot the searcher publishes on each identity
+// rebuild (`arbx:token_universe:<chain_id>`, SET .. EX 35). The snapshot
+// carries the TW-002-normalized symbol → addresses index built by the REAL
+// Rust normalizer — this handler only does EXACT lookups, it never
+// re-implements matching. One row per REQUESTED symbol (echoed
+// `input_symbol`): address-form entries are their own identity (RESOLVED,
+// TW-002), symbol entries are NOT_FOUND (0 matches), RESOLVED (exactly 1)
+// or AMBIGUOUS (>1 — the UI blocks the save, §5). UNSUPPORTED is never
+// emitted in v1 (no cross-chain existence source yet — honest absence).
+// `decimals` / `pool_count` / `venue_count` / `liquidity_usd` are Layer-2
+// (scan discards meta; venue-per-pool needs PG by epoch): null, never
+// fabricated. `active_pools` rides the EMIT-05 tick snapshot when present.
+app.post("/api/admin/tokens/resolve", requireAdminToken(ARBX_ADMIN_TOKEN), async (req, res) => {
+  const body = (req.body ?? {}) as { chain_id?: unknown; symbols?: unknown };
+  const chainId = Number(body.chain_id);
+  if (!Number.isInteger(chainId) || chainId < 1) {
+    res.status(400).json({ error: "invalid_chain_id" });
+    return;
+  }
+  const symbols = body.symbols;
+  if (
+    !Array.isArray(symbols) ||
+    symbols.length < 1 ||
+    symbols.length > 200 ||
+    !symbols.every((s) => typeof s === "string" && s.trim().length >= 1)
+  ) {
+    res.status(400).json({ error: "invalid_symbols", min: 1, max: 200 });
+    return;
+  }
+  const key = `arbx:token_universe:${chainId}`;
+  try {
+    const raw = await redis.get(key);
+    if (raw == null) {
+      res.status(404).json({
+        error: "universe_not_available",
+        detail: `no snapshot at ${key} — searcher may be down or recently restarted`,
+        chain_id: chainId,
+      });
+      return;
+    }
+    let parsed: {
+      symbols?: Record<string, string[]>;
+      tokens?: Record<string, { symbol?: unknown; decimals?: unknown }>;
+      kpis?: { allowed_tokens?: number; possible_pairs?: number; directed_token_pairs?: number };
+    };
+    try {
+      parsed = JSON.parse(raw);
+    } catch (e) {
+      res.status(503).json({ error: "snapshot_parse_failed", detail: (e as Error).message });
+      return;
+    }
+    const symbolsIdx = parsed.symbols ?? {};
+    // EMIT-02 Layer-2: decimals ride the snapshot's display map since the
+    // scan keeps the TokenMeta field. Null = absent from the snapshot —
+    // honest, never a guessed 18.
+    const tokDecimals = (addr: string): number | null => {
+      const e = parsed.tokens?.[addr];
+      if (e && typeof e === "object" && typeof e.decimals === "number") {
+        return e.decimals;
+      }
+      return null;
+    };
+    // Address-form mirror of shared-rs `is_address_form` (0x + exactly 40
+    // ASCII hex, either prefix case; identity compare is lowercase).
+    const ADDR_RE = /^(0x|0X)[0-9a-fA-F]{40}$/;
+    const results = symbols.map((inputSymbol: string) => {
+      const t = inputSymbol.trim();
+      if (ADDR_RE.test(t)) {
+        // TW-002: an address entry IS its own TokenKey — no universe lookup.
+        const addrLower = t.toLowerCase();
+        return {
+          input_symbol: inputSymbol,
+          chain_id: chainId,
+          address: addrLower,
+          decimals: tokDecimals(addrLower),
+          pool_count: null,
+          venue_count: null,
+          liquidity_usd: null,
+          resolution_status: "RESOLVED" as const,
+        };
+      }
+      const matches = symbolsIdx[t.toUpperCase()] ?? [];
+      const status =
+        matches.length === 0 ? "NOT_FOUND" : matches.length === 1 ? "RESOLVED" : "AMBIGUOUS";
+      const resolvedAddr = status === "RESOLVED" ? matches[0] ?? null : null;
+      return {
+        input_symbol: inputSymbol,
+        chain_id: chainId,
+        address: resolvedAddr,
+        decimals: resolvedAddr !== null ? tokDecimals(resolvedAddr) : null,
+        pool_count: null,
+        venue_count: null,
+        liquidity_usd: null,
+        resolution_status: status,
+      };
+    });
+
+    // §6 KPIs: token/pair counts from the snapshot; active_pools from the
+    // EMIT-05 tick when one exists. venues/graph/universe versions are
+    // EMIT-04 / Layer-2 — null until their source exists (R8).
+    let activePools: number | null = null;
+    try {
+      const tickRaw = await redis.get(`arbx:route_discovery:tick:${chainId}`);
+      if (tickRaw != null) {
+        const tick = JSON.parse(tickRaw) as { pools_total?: unknown };
+        if (Number.isFinite(Number(tick.pools_total))) {
+          activePools = Number(tick.pools_total);
+        }
+      }
+    } catch {
+      // absent/unparsable tick stays null — honest absence, not an error
+    }
+    const k = parsed.kpis ?? {};
+    // EMIT-04: universe_version — same Redis counter the trading-config PUT
+    // bumps (tokenUniverseVersionKey). Absent = never changed = honest null.
+    // graph_version stays null until the graph builder actually versions its
+    // rebuilds (documented gap — never fabricated here).
+    let universeVersion: number | null = null;
+    try {
+      const v = await redis.get(tokenUniverseVersionKey(chainId));
+      const n = Number(v);
+      if (v !== null && Number.isSafeInteger(n) && n >= 0) universeVersion = n;
+    } catch {
+      // unreadable counter stays null — honest absence
+    }
+    res.status(200).json({
+      results,
+      universe: {
+        allowed_tokens: k.allowed_tokens ?? null,
+        possible_pairs: k.possible_pairs ?? null,
+        directed_token_pairs: k.directed_token_pairs ?? null,
+        active_pools: activePools,
+        active_venues: null,
+        graph_version: null,
+        universe_version: universeVersion,
+      },
+    });
+  } catch (e) {
+    logger.warn({ event: "tokens.resolve.read_failed", err: (e as Error).message });
+    res.status(503).json({ error: "redis_read_failed", detail: (e as Error).message });
+  }
+});
+
+// EMIT-02 Layer-2 + EMIT-03 (FE-MASTER §10, corrected by operator ruling):
+// GET /api/quote/anchor (flattened 8-key view over the searcher-published
+// snapshot) + POST /api/admin/quote/preview (deterministic re-ranking of the
+// SAME live rows, never a mutation). Routes + fail-honest contract live in
+// routes/quote-anchor.ts (pattern canonical-knobs).
+mountQuoteAnchor(app, { redis, logger, adminToken: ARBX_ADMIN_TOKEN });
 
 app.get("/api/v1/risk/alerts", async (req, res) => {
   const p = requireDbPool();
@@ -1331,15 +1527,9 @@ app.post("/admin/onboarding/1/complete", requireAdminToken(ARBX_ADMIN_TOKEN), as
 });
 
 // ── Trading Config (per-chain operator-tunable strategy parameters) ─────
-// Mounted late so it inherits express.json + admin token middleware semantics.
-app.use(buildTradingConfigRouter({
-  pool,
-  redis,
-  requireAdminToken,
-  adminToken: ARBX_ADMIN_TOKEN,
-  writeAudit,
-  logger,
-}));
+// Mounted AFTER `io` exists (below) so the EMIT-04 token_universe runtime_ack
+// broadcast has the WSS gateway. Still mounted late enough to inherit
+// express.json + admin token middleware semantics.
 
 // Boot re-hydration: PG is the source of truth for trading_config; the Redis
 // mirror (arbx:trading_config:<chain>) is written ONLY by the admin PUT, so a
@@ -1382,6 +1572,9 @@ app.use(buildOperationsRouter({
 
 // ── Strategy catalog (Sprint 2 — read-only universal MEV strategy library) ─
 app.use(buildStrategyCatalogRouter({ pool, logger }));
+
+// ── QuoteBase workbook catalogs (EMIT-07/08 — static-per-canon, generated) ─
+app.use("/api", quotebaseCatalogRouter);
 
 // ── Operator credentials (migration 057 — RPC, CEX, Flashbots, etc.) ────
 // Each credential has its own live validator; status only flips to "valid"
@@ -1500,6 +1693,18 @@ app.get("/api/v1/readiness", async (req, res) => {
 const PORT = Number(process.env["API_PORT"] ?? 8080);
 const httpServer = createServer(app);
 const io = setupWebSocketGateway(httpServer, carnotStore);
+
+// Trading Config router — EMIT-04: mounted here (after `io`) because the
+// token_universe runtime_ack POST-INSERT broadcast needs the WSS gateway.
+app.use(buildTradingConfigRouter({
+  pool,
+  redis,
+  requireAdminToken,
+  adminToken: ARBX_ADMIN_TOKEN,
+  writeAudit,
+  logger,
+  io,
+}));
 
 // G-PRICE-1 — snapshot+push price rooms (`subscribe:prices` → `prices:snapshot`
 // + `prices:update`). Additive `io.on('connection')` listener; the gateway's

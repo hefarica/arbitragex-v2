@@ -225,7 +225,9 @@ export function TradingConfigForm({
         return;
       }
       toast.success(
-        `Saved. ${r.data.subscribers_notified} searcher(s) notified — config takes effect within ~1s.`,
+        // FE-0016 drift fix: the PUT answers the dual-channel counts (the old
+        // `subscribers_notified` key failed safeParse on every real save).
+        `Saved. ${r.data.subscribers_trading_config} subscriber(s) on the canonical channel (+${r.data.subscribers_hot_reload} hot-reload).`,
       );
       router.refresh();
     } finally {

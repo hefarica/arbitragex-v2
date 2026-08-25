@@ -1,0 +1,11 @@
+{
+  "id": 6,
+  "code": "op_06",
+  "name": "Markov Chain",
+  "canonical_role": "Cross-domain/state transition regime.",
+  "enabled": true,
+  "engine_present": true,
+  "calibration_state": "UNCALIBRATED",
+  "formula": "P(X_{n+1}=j|X_n=i) = P_{ij} - state transition probabilities",
+  "implementation_file": "backend/math-engine/src/operators/op_06_markov_chain.rs"
+}

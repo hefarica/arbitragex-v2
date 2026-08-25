@@ -37,6 +37,7 @@ import {
 } from "lucide-react";
 
 import { DeployPipelineClient } from "./DeployPipelineClient";
+import { DeployLockBanner } from "./DeployLockBanner";
 import {
   ARTIFACTS,
   CHECKLIST,
@@ -125,6 +126,10 @@ export default function DeployPipelinePage() {
           `target: VPS Hetzner · GitHub Actions`,
         ]}
       />
+
+      {/* FE-0059 (§64): the REAL workflow state first — locked under the
+          operator protocol until the final gate; reasons + unlock conditions. */}
+      <DeployLockBanner />
 
       {/* Doctrine + objective */}
       <section className="mb-8 grid gap-4 lg:grid-cols-3">
@@ -243,8 +248,8 @@ export default function DeployPipelinePage() {
                   <div className="sm:col-span-4">
                     <p className="font-mono text-xs text-muted-foreground">{rc.artifact}</p>
                   </div>
-                  <div className="sm:col-span-3">
-                    <Badge variant="success" className="font-mono text-[10px]">
+                  <div className="min-w-0 sm:col-span-3">
+                    <Badge variant="success" className="whitespace-normal text-left font-mono text-[10px]">
                       <CheckIcon />
                       {rc.verification}
                     </Badge>
@@ -578,7 +583,7 @@ function CommandBlock({
   cmd: string;
 }) {
   return (
-    <div className="rounded-lg border bg-card/60 p-3">
+    <div className="min-w-0 rounded-lg border bg-card/60 p-3">
       <div className="mb-2 flex items-center gap-2">
         <Icon className="size-3.5 text-primary" />
         <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">

@@ -28,8 +28,10 @@ const mk = (over: Record<string, unknown>): OmniOpportunity =>
   });
 
 describe("applyExchangeFilters", () => {
+  // FE-0029 (§28): fixtures declare status explicitly — the mapper no longer
+  // fabricates "detected" for payloads that omit it.
   const opps = [
-    mk({ id: "1", strategy_kind: "dex_arb", chain_id: 1, net_expected_profit_usd: 5 }),
+    mk({ id: "1", strategy_kind: "dex_arb", chain_id: 1, net_expected_profit_usd: 5, status: "detected" }),
     mk({
       id: "2",
       strategy_kind: "mev_01_001_dex_dex_arbitrage",
@@ -37,7 +39,7 @@ describe("applyExchangeFilters", () => {
       net_expected_profit_usd: 1,
       status: "rejected",
     }),
-    mk({ id: "3", strategy_kind: "triangular", chain_id: 1, net_expected_profit_usd: 20 }),
+    mk({ id: "3", strategy_kind: "triangular", chain_id: 1, net_expected_profit_usd: 20, status: "detected" }),
   ];
 
   it("DEFAULT_FILTERS returns all (no narrowing)", () => {
@@ -54,6 +56,18 @@ describe("applyExchangeFilters", () => {
     expect(
       applyExchangeFilters(opps, { ...DEFAULT_FILTERS, viableOnly: true }),
     ).toHaveLength(2);
+  });
+
+  it("FE-0029 fail-safe: viableOnly cannot assert viability for an unstatused row", () => {
+    const unstatused = [mk({ id: "4", status: undefined })]; // malformed payload → status null
+    expect(unstatused[0]!.status).toBeNull();
+    expect(
+      applyExchangeFilters(unstatused, { ...DEFAULT_FILTERS, viableOnly: true }),
+    ).toHaveLength(0);
+    // But it stays visible without the viability assertion (honest, not hidden).
+    expect(
+      applyExchangeFilters(unstatused, DEFAULT_FILTERS),
+    ).toHaveLength(1);
   });
 
   it("chain filter narrows to one chain", () => {

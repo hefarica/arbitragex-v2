@@ -1,0 +1,8 @@
+{
+  "domain": "DeFi protocol architecture and new opportunity surfaces (2024-2026): AMM evolution (Uniswap v4, Balancer, Curve), hybrid/intent DEXs (Hyperliquid, CoW/UniswapX/Fusion, RFQ), lending (Aave V4, Morpho, Fluid), perps (dYdX v4, GMX v2), synthetic stablecoins (Ethena), restaking/LRT economics, and parallel-EVM/Move-VM chains.",
+  "research_date": "2026-08-19",
+  "findings_length": 17280,
+  "has_better_than_excel": true,
+  "has_new_strategies": true,
+  "has_gaps": true
+}
