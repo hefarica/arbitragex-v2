@@ -35,10 +35,10 @@ pub const EXEC_MODES: [&str; 3] = ["LIVE_MAINNET", "TESTNET", "PAPER_SHADOW"];
 /// Canonical financing-mode tokens (02_FINANCING — first-class modes).
 pub const FINANCING_MODES: [&str; 4] = ["OWN_CAPITAL", "AAVE_FL", "BALANCER_FL", "V2_FLASH_SWAP"];
 
-/// The 44 canonical knobs, field names exactly matching the workbook tokens
+/// The 49 canonical knobs, field names exactly matching the workbook tokens
 /// (snake_case), defaults exactly the `01_CONFIG` values: 42 from the ULTRA
-/// workbook + 2 from QUOTEBASE-264's `01_CONFIG` (`min_net_bps`, `beam_k` —
-/// XLS-QB-03).
+/// workbook + 7 from QUOTEBASE-264's `01_CONFIG` (`min_net_bps`, `beam_k`,
+/// and the five `quote_w_*` weights — XLS-QB-03/06).
 #[derive(Debug, Clone, PartialEq)]
 pub struct CanonicalKnobs {
     // ── Discovery ────────────────────────────────────────────────────────
@@ -66,6 +66,13 @@ pub struct CanonicalKnobs {
     pub beam_k: u16, // 4 (branches/node — Beam_K: top-K outgoing branches kept
     //                  per expansion; DFS beam consumption lands with the
     //                  dirty-pair queue, XLS-QB-05)
+    // ── QuoteScore weights (QUOTEBASE-264 01_CONFIG rows 15–19 — XLS-QB-06).
+    // Sum MUST be 1.0 (validate); consumed by quote_score::quote_score.
+    pub quote_w_prior: f64,          // 0.3 (Quote_w_Prior)
+    pub quote_w_liquidity: f64,      // 0.3 (Quote_w_Liquidity)
+    pub quote_w_venue_coverage: f64, // 0.2 (Quote_w_VenueCoverage)
+    pub quote_w_stability: f64,      // 0.1 (Quote_w_Stability)
+    pub quote_w_cross_dex: f64,      // 0.1 (Quote_w_CrossDex)
     // ── Runtime budgets ──────────────────────────────────────────────────
     pub emission_budget_routes_block: usize,  // 50_000
     pub candidate_budget_routes_block: usize, // 250_000
@@ -123,6 +130,11 @@ impl Default for CanonicalKnobs {
             slippage_factor: 0.06,
             min_net_bps: 5.0,
             beam_k: 4,
+            quote_w_prior: 0.3,
+            quote_w_liquidity: 0.3,
+            quote_w_venue_coverage: 0.2,
+            quote_w_stability: 0.1,
+            quote_w_cross_dex: 0.1,
             emission_budget_routes_block: 50_000,
             candidate_budget_routes_block: 250_000,
             block_cadence_s: 12,
@@ -219,6 +231,14 @@ impl CanonicalKnobs {
             slippage_factor: env_f64("ARBX_KNOB_SLIPPAGE_FACTOR", d.slippage_factor),
             min_net_bps: env_f64("ARBX_KNOB_MIN_NET_BPS", d.min_net_bps),
             beam_k: env_u64("ARBX_KNOB_BEAM_K", d.beam_k as u64) as u16,
+            quote_w_prior: env_f64("ARBX_KNOB_QUOTE_W_PRIOR", d.quote_w_prior),
+            quote_w_liquidity: env_f64("ARBX_KNOB_QUOTE_W_LIQUIDITY", d.quote_w_liquidity),
+            quote_w_venue_coverage: env_f64(
+                "ARBX_KNOB_QUOTE_W_VENUE_COVERAGE",
+                d.quote_w_venue_coverage,
+            ),
+            quote_w_stability: env_f64("ARBX_KNOB_QUOTE_W_STABILITY", d.quote_w_stability),
+            quote_w_cross_dex: env_f64("ARBX_KNOB_QUOTE_W_CROSS_DEX", d.quote_w_cross_dex),
             emission_budget_routes_block: env_u64(
                 "ARBX_KNOB_EMISSION_BUDGET_ROUTES_BLOCK",
                 d.emission_budget_routes_block as u64,
@@ -331,6 +351,24 @@ impl CanonicalKnobs {
         if !(1..=256).contains(&self.beam_k) {
             return Err(format!("beam_k {} outside 1..=256", self.beam_k));
         }
+        // QUOTEBASE-264 01_CONFIG rows 15–19 (XLS-QB-06): each weight finite
+        // in [0,1] and the five sum to 1.0.
+        let qw = [
+            self.quote_w_prior,
+            self.quote_w_liquidity,
+            self.quote_w_venue_coverage,
+            self.quote_w_stability,
+            self.quote_w_cross_dex,
+        ];
+        if qw.iter().any(|w| !w.is_finite() || *w < 0.0 || *w > 1.0) {
+            return Err("quote weights must each be finite in [0, 1]".to_string());
+        }
+        let qw_sum: f64 = qw.iter().sum();
+        if (qw_sum - 1.0).abs() > 1e-9 {
+            return Err(format!(
+                "quote weights must sum to 1.0 (got {qw_sum:.6} — 01_CONFIG rows 15–19)"
+            ));
+        }
         if self.emission_budget_routes_block == 0 || self.candidate_budget_routes_block == 0 {
             return Err("route budgets must be > 0".to_string());
         }
@@ -389,11 +427,11 @@ impl CanonicalKnobs {
     /// `GET /api/v1/config/canonical-knobs`). Values only — never secrets.
     ///
     /// Built with explicit `Map` inserts, NOT one `json!({...})` literal: a
-    /// single 44-key `json!` macro expansion exceeds the crate's default
+    /// single 50-key `json!` macro expansion exceeds the crate's default
     /// `recursion_limit` (rust-check CI failure) — the incremental build stays
     /// under it without a crate-wide attribute.
     pub fn to_json(&self) -> serde_json::Value {
-        let mut m = serde_json::Map::with_capacity(46);
+        let mut m = serde_json::Map::with_capacity(51);
         m.insert("max_hops".into(), json!(self.max_hops));
         m.insert("min_hops".into(), json!(self.min_hops));
         m.insert("selected_financing".into(), json!(self.selected_financing));
@@ -414,6 +452,14 @@ impl CanonicalKnobs {
         m.insert("slippage_factor".into(), json!(self.slippage_factor));
         m.insert("min_net_bps".into(), json!(self.min_net_bps));
         m.insert("beam_k".into(), json!(self.beam_k));
+        m.insert("quote_w_prior".into(), json!(self.quote_w_prior));
+        m.insert("quote_w_liquidity".into(), json!(self.quote_w_liquidity));
+        m.insert(
+            "quote_w_venue_coverage".into(),
+            json!(self.quote_w_venue_coverage),
+        );
+        m.insert("quote_w_stability".into(), json!(self.quote_w_stability));
+        m.insert("quote_w_cross_dex".into(), json!(self.quote_w_cross_dex));
         m.insert(
             "emission_budget_routes_block".into(),
             json!(self.emission_budget_routes_block),
@@ -523,6 +569,11 @@ mod tests {
         assert_eq!(k.slippage_factor, 0.06);
         assert_eq!(k.min_net_bps, 5.0); // QUOTEBASE-264 01_CONFIG Min_Net_bps
         assert_eq!(k.beam_k, 4); // QUOTEBASE-264 01_CONFIG Beam_K
+        assert_eq!(k.quote_w_prior, 0.3); // rows 15–19 (XLS-QB-06)
+        assert_eq!(k.quote_w_liquidity, 0.3);
+        assert_eq!(k.quote_w_venue_coverage, 0.2);
+        assert_eq!(k.quote_w_stability, 0.1);
+        assert_eq!(k.quote_w_cross_dex, 0.1);
         assert_eq!(k.emission_budget_routes_block, 50_000);
         assert_eq!(k.candidate_budget_routes_block, 250_000);
         assert_eq!(k.block_cadence_s, 12);
@@ -605,6 +656,15 @@ mod tests {
         assert!(k.validate().is_err(), "beam_k < 1");
         k.beam_k = 257;
         assert!(k.validate().is_err(), "beam_k > 256");
+
+        let mut k = CanonicalKnobs::default();
+        k.quote_w_prior = 0.5; // sum becomes 1.2
+        assert!(k.validate().is_err(), "quote weights must sum 1.0");
+
+        let mut k = CanonicalKnobs::default();
+        k.quote_w_stability = -0.1;
+        k.quote_w_cross_dex = 0.3; // sum still 1.0 but a weight is negative
+        assert!(k.validate().is_err(), "negative quote weight rejected");
     }
 
     /// Env overrides win over defaults (single test fn — `set_var` is
@@ -651,12 +711,12 @@ mod tests {
     }
 
     #[test]
-    fn snapshot_json_has_all_44_knobs_and_source() {
+    fn snapshot_json_has_all_49_knobs_and_source() {
         let j = CanonicalKnobs::default().to_json();
         let obj = j.as_object().expect("snapshot is an object");
-        // 44 knob fields (ULTRA 01_CONFIG ×42 + QUOTEBASE-264 01_CONFIG ×2,
-        // XLS-QB-03) + 1 source field.
-        assert_eq!(obj.len(), 45);
+        // 49 knob fields (ULTRA 01_CONFIG ×42 + QUOTEBASE-264 01_CONFIG ×7,
+        // XLS-QB-03/06) + 1 source field.
+        assert_eq!(obj.len(), 50);
         assert_eq!(
             obj["source"],
             "canonical_knobs.rs (01_CONFIG ULTRA workbook)"
@@ -664,6 +724,8 @@ mod tests {
         assert_eq!(obj["max_hops"], 7);
         assert_eq!(obj["min_net_bps"], 5.0);
         assert_eq!(obj["beam_k"], 4);
+        assert_eq!(obj["quote_w_prior"], 0.3);
+        assert_eq!(obj["quote_w_cross_dex"], 0.1);
         assert_eq!(obj["killswitch"], false);
     }
 }
