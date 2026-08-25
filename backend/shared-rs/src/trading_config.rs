@@ -183,6 +183,12 @@ pub struct TradingConfigState {
     pub capital_usd: f64,
     pub base_token_symbol: String,
     pub base_token_price_usd: f64,
+    /// Operator token allowlist. Entries may be SYMBOLS (legacy, ≤16 chars)
+    /// or EVM ADDRESSES in `0x`+40-hex form (ARBX-TW-002) — the address IS
+    /// the canonical identity (ARBX-0018) and gates directly with no universe
+    /// resolution; symbols keep the legacy resolution path. `token_allowed`
+    /// below stays the symbol-view (legacy callers); the address-keyed gate
+    /// is `TokenIdentityIndex::is_allowed_addr`.
     pub allowed_token_symbols: Vec<String>,
 
     /// Per-token USD prices, keyed by symbol (case-insensitive at lookup).

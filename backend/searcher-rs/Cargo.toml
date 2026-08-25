@@ -83,6 +83,13 @@ tokio = { version = "1", features = ["macros","rt-multi-thread","test-util"] }
 # unit tests). Production code path uses `reqwest` directly; wiremock spawns
 # a localhost server the worker treats as the configured base URL.
 wiremock = "0.6"
+# ARBX-0012 (XLS-QB / REQ-QB-015) bench matrix (`benches/amount_matrix.rs`,
+# custom harness): benches see only dev-deps (same lesson as simulator-v2
+# below), and these three are already workspace/lib dependencies — zero new
+# fetch, they only make the existing artifacts nameable from the bench crate.
+ethers = { workspace = true, features = ["abigen", "rustls"] }
+serde_json = { workspace = true }
+chrono = { workspace = true }
 # A.4 fork-validation integration test (`tests/multistep_fork.rs`, gated
 # `#[cfg(feature = "v2-simulator")]`) constructs a `simulator_v2::SimulatorV2`
 # directly to drive `execute_multistep_revm` against a real archive RPC.
@@ -91,3 +98,22 @@ wiremock = "0.6"
 # this does NOT change the shipped library's public API, and it's a harmless
 # build when the feature is off (the test simply isn't compiled).
 simulator-v2 = { path = "../simulator-v2" }
+
+# ARBX-0012: the N-bucket amount-sweep benchmark matrix (workbook 10_LATENCY
+# r9 "amount probe buckets" axis, sheet's own r21 mandate — "<30 ms NO puede
+# garantizarse por Excel. Debe demostrarse con benchmarks"). Custom harness
+# (no criterion dep): the percentile statistic IS the live telemetry kernel
+# (`latency_budget::nearest_rank`), so a bench p95 and a wire p95 are the
+# same number-shape. Run: `cargo bench --bench amount_matrix`.
+[[bench]]
+name = "amount_matrix"
+harness = false
+
+# ARBX-QB-07-006: the discovery-variables benchmark matrix (workbook
+# 10_LATENCY contract via quotebase_config.json — the workload whose p95 the
+# Discovery_SLA_ms gate of ARBX-QB-07-007 must judge). Same custom-harness
+# convention as amount_matrix (nearest_rank percentiles, one JSON line per
+# axis point). Run: `cargo bench --bench discovery_matrix`.
+[[bench]]
+name = "discovery_matrix"
+harness = false

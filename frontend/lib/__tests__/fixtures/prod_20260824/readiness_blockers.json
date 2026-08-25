@@ -1,0 +1,140 @@
+{
+ "generated_at": "2026-08-25T01:33:16.893Z",
+ "source": "runtime",
+ "overall_status": "blocked",
+ "blockers": [
+  {
+   "id": "readiness_g_pap_1",
+   "category": "readiness_check",
+   "severity": "high",
+   "status": "blocked",
+   "title": "Paper trading ≥7 days continuous + report",
+   "description": "paper mode confidence is insufficient for green; 397196 detections in last 7d, last 0.0h ago · authority: inferred",
+   "required_action": "Resolve readiness item G-PAP-1 (Paper trading ≥7 days continuous + report).",
+   "operator_required": true,
+   "can_auto_resolve": false,
+   "blocks": [
+    "LIVE"
+   ],
+   "evidence": {
+    "env_present": false,
+    "redacted_value": null,
+    "value_length": null,
+    "source": "readiness_report",
+    "readiness_id": "G-PAP-1",
+    "readiness_status": "yellow"
+   }
+  },
+  {
+   "id": "a5_paper_shadow_not_executed",
+   "category": "doctrinal_phase",
+   "severity": "critical",
+   "status": "blocked",
+   "title": "A.5 paper-shadow runtime has not executed",
+   "description": "Continuous paper-shadow accumulation (≥7 days, detection→sim→evidence) is the prerequisite to A.6 circuit-breakers calibration.",
+   "required_action": "After A.4 PASSES, run paper-shadow continuously and audit the daily ledger for revert rate, latency, sim error rate.",
+   "operator_required": true,
+   "can_auto_resolve": false,
+   "blocks": [
+    "A.5",
+    "LIVE"
+   ],
+   "evidence": {
+    "env_present": false,
+    "redacted_value": null,
+    "value_length": null,
+    "source": "doctrine"
+   }
+  },
+  {
+   "id": "a6_circuit_breakers_partial",
+   "category": "risk_circuit",
+   "severity": "high",
+   "status": "partial",
+   "title": "A.6 circuit breakers comprehensive — partial",
+   "description": "Doctrinal CBs required: DD 10/20/30/40 tiers, max revert rate, max gas burn, max latency, max SIM_ERROR, RPC health, route/token blacklists, executor health, confidence-scoring tie-in.",
+   "required_action": "Implement comprehensive CB suite gated by SystemGuardBanner + readiness; persist trips to risk_events table; emit Prometheus alerts.",
+   "operator_required": false,
+   "can_auto_resolve": false,
+   "blocks": [
+    "LIVE"
+   ],
+   "evidence": {
+    "env_present": false,
+    "redacted_value": null,
+    "value_length": null,
+    "source": "doctrine"
+   }
+  },
+  {
+   "id": "a7_private_relay_no_submit_pending",
+   "category": "doctrinal_phase",
+   "severity": "high",
+   "status": "pending",
+   "title": "A.7 private relay no-submit simulation not implemented",
+   "description": "Simulating the bundle path against Flashbots Protect / MEV-Blocker / Titan WITHOUT submitting is required before any go_live evaluation.",
+   "required_action": "Implement a paper-only no-submit relay client that builds + signs the bundle, validates relay acceptance shape, and discards.",
+   "operator_required": false,
+   "can_auto_resolve": false,
+   "blocks": [
+    "LIVE"
+   ],
+   "evidence": {
+    "env_present": false,
+    "redacted_value": null,
+    "value_length": null,
+    "source": "doctrine"
+   }
+  },
+  {
+   "id": "a8_confidence_scoring_not_wired",
+   "category": "doctrinal_phase",
+   "severity": "medium",
+   "status": "pending",
+   "title": "A.8 confidence scoring (Bayesian/VPIN) not wired",
+   "description": "Primitives exist in searcher-rs (kelly_sizing, bayesian_filter); they are NOT consumed by the orchestrator yet.",
+   "required_action": "Wire bayesian_filter::adverse_selection_score + kelly_sizing::compute_position_size into the scoring path; surface via /api/v1/sim/pipeline.",
+   "operator_required": false,
+   "can_auto_resolve": false,
+   "blocks": [
+    "LIVE"
+   ],
+   "evidence": {
+    "env_present": false,
+    "redacted_value": null,
+    "value_length": null,
+    "source": "doctrine"
+   }
+  },
+  {
+   "id": "a9_go_no_go_formal_pending",
+   "category": "audit_trail",
+   "severity": "critical",
+   "status": "pending",
+   "title": "A.9 GO/NO-GO formal sign-off pending",
+   "description": "Even when A.4–A.8 all PASS, a formal sign-off (operator + audit trail entry) is required before any flip to live. This phase has not started.",
+   "required_action": "After A.4–A.8 PASS, generate the formal GO/NO-GO ledger; require two-operator sign-off; persist to audit_logs.",
+   "operator_required": true,
+   "can_auto_resolve": false,
+   "blocks": [
+    "LIVE"
+   ],
+   "evidence": {
+    "env_present": false,
+    "redacted_value": null,
+    "value_length": null,
+    "source": "doctrine"
+   }
+  }
+ ],
+ "summary": {
+  "critical": 2,
+  "high": 3,
+  "medium": 1,
+  "low": 0,
+  "blocked_phases": [
+   "A.5",
+   "LIVE"
+  ]
+ }
+}

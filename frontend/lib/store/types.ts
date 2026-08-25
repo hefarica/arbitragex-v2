@@ -127,8 +127,22 @@ export interface RouteMetadataWire {
 }
 
 /**
+ * FE-0028 (§19 hop arithmetic): hop count FROM the persisted topology —
+ * `route_metadata.dex_adapters` carries one entry per leg, so its length IS
+ * the hop count. Null when there is no topology (legacy rows / detection
+ * failures) — absence is a state, never a zero (R8).
+ */
+export function deriveHopCount(rm: RouteMetadataWire | null): number | null {
+  if (!rm || rm.dex_adapters.length === 0) return null;
+  return rm.dex_adapters.length;
+}
+
+/**
  * A single resolved leg of the A→B cycle for UI rendering.
  * Honest: `pool` is "" when the scanner only knew the factory (R8).
+ * FE-0030 (§29): legs produced by the LEGACY synthetic fallback carry
+ * `synthetic: true` — renderers MUST surface the SYNTHETIC LEGACY VIEW marker
+ * and never present them as ROUTE VERIFIED or operational hops.
  */
 export interface RouteLeg {
   /** Hop index, 0-based. */
@@ -141,7 +155,12 @@ export interface RouteLeg {
   dex: string;
   /** Pool address for this leg. Honest "" when only the factory was known. */
   pool: string;
+  /** Present ONLY on legacy synthetic-fallback legs (FE-0030 §29). */
+  synthetic?: true;
 }
+
+/** §29 canonical marker string — one source of truth for every renderer. */
+export const SYNTHETIC_LEGACY_VIEW_LABEL = "SYNTHETIC LEGACY VIEW";
 
 // =============================================================================
 // OmniOpportunity — The Canonical ViewModel
@@ -155,11 +174,60 @@ export interface RouteLeg {
  */
 export interface OmniOpportunity {
   // === Core Identity ===
+  // FE-0029 (§28 fail-honest): the wire contract makes these MANDATORY
+  // (opportunities columns are NOT NULL on every serving path), so a null here
+  // means the payload was malformed/absent — the mapper NEVER papers over it
+  // with a semantic default. Old fabrications removed: missing→"dex_arb",
+  // missing→now(), missing→"detected", missing→chain 0, missing→"0" wei.
+  // Renderers show "—"/UNKNOWN; nothing pretends the row was a dex_arb
+  // detected right now on chain 0.
   id: string;
-  chain_id: number;
-  strategy_kind: StrategyKind;
-  detected_at: string;
+  chain_id: number | null;
+  strategy_kind: StrategyKind | null;
+  detected_at: string | null;
   trace_id: string;
+
+  // === Extended Identity (FE-0028 §26 §27 — NO parallel model) ===
+  // Extends OmniOpportunity in place. Two fields are REAL today; the rest are
+  // level-(b) nullable gaps the mapper pins to null until their wire exists —
+  // never fabricated (RULE 00 / R8).
+  /**
+   * Cartridge that detected this opportunity. ON THE WIRE today:
+   * `opportunities.cartridge_id` (api-server opportunities-live SELECT → row
+   * mapping). Null on legacy rows / non-cartridge detections.
+   */
+  cartridge_id: string | null;
+  /**
+   * Cycle length (§19 hop arithmetic) — DERIVED from the persisted topology
+   * (`route_metadata.dex_adapters.length` via `deriveHopCount`). Null when
+   * there is no route_metadata (legacy rows / detection failures).
+   */
+  hop_count: number | null;
+  // ── Level-(b) gaps: no emitido en el wire — añadir al mapper cuando el
+  //    backend lo persista/seleccione. null = "aún no servido", nunca un
+  //    placeholder inventado (R8).
+  /** Scanner route fingerprint (scanner.rs candidate_id) — not persisted/selected today. */
+  candidate_id: string | null;
+  /** Persistent route id — not on the opportunities wire today. */
+  route_id: string | null;
+  /** Pair id — not on the opportunities wire today. */
+  pair_id: string | null;
+  /** Detector id — not on the opportunities wire today. */
+  detector_id: string | null;
+  /** Quote/payout token address — not on the opportunities wire today. */
+  quote_token: string | null;
+  /** Quote graph/config/strategy versions — not on the opportunities wire today. */
+  quote_version: number | null;
+  graph_version: number | null;
+  config_version: number | null;
+  strategy_version: number | null;
+  /** Per-gate pass/fail detail from the risk/evidence gauntlet — not emitted today. */
+  gate_results: Record<string, unknown> | null;
+  /** Data-quality flags (stale feeds, partial reserves, …) — not emitted today. */
+  data_quality: Record<string, unknown> | null;
+  // NOTE: "economía completa" already lives on this type — expected/net/roi/
+  // risk below plus the full simulated_* block (cost breakdown, target,
+  // notes). FE-0028 adds identity, not a second economics model.
 
   // === Route Information ===
   dex_a: string;
@@ -167,7 +235,8 @@ export interface OmniOpportunity {
   pair_symbol: string | null;
   token_in: string;
   token_out: string;
-  amount_in_wei: string;
+  /** Wire-mandatory; null = malformed payload (§28) — never a fabricated "0". */
+  amount_in_wei: string | null;
 
   // === Token Metadata (UI-enriched) ===
   token_in_info: TokenInfo | null;
@@ -188,7 +257,8 @@ export interface OmniOpportunity {
   risk_score: number | null;
 
   // === Status ===
-  status: OpportunityStatus;
+  /** Wire-mandatory lifecycle; null = malformed payload (§28) — not "detected". */
+  status: OpportunityStatus | null;
   rejection_reason: string | null;
   paper_status: "paper_viable" | "paper_rejected" | null;
 
@@ -219,6 +289,13 @@ export interface OmniOpportunity {
   // === Confidence & Gas (UI display) ===
   confidence_score_bps: number | null;
   gas_used: number | null;
+
+  // === Semantic verdict (FE-0031 §30) ===
+  // Computed by the mapper via validateOpportunitySemantics(): the §30
+  // semantic violations found on this row. EMPTY = validated clean. Non-empty
+  // ⇒ the row renders QUARANTINED (marked, never hidden — §30 quarantine is a
+  // visible state, not deletion).
+  semantic_violations: SemanticViolation[];
 }
 
 // =============================================================================
@@ -233,13 +310,39 @@ export interface OmniOpportunity {
  * @returns A sanitized OmniOpportunity ready for the store
  */
 export function mapToOmniOpportunity(raw: Record<string, unknown>): OmniOpportunity {
-  return {
-    // Core Identity
+  // Parsed once here so hop_count can derive from the SAME topology object the
+  // ViewModel carries (FE-0028 §19).
+  const routeMetadata = parseRouteMetadata(raw.route_metadata);
+  const mapped: OmniOpportunity = {
+    // Core Identity — FE-0029 (§28): wire-mandatory fields map to null when
+    // the payload omits them. The old defaults (dex_arb / now() / detected /
+    // chain 0) fabricated a coherent-looking row out of a malformed one —
+    // worst case: a missing detected_at re-stamped NOW on every remap, so the
+    // TTL prune saw age 0 and the card lived forever.
     id: String(raw.id ?? ""),
-    chain_id: Number(raw.chain_id ?? 0),
-    strategy_kind: (raw.strategy_kind as StrategyKind) ?? "dex_arb",
-    detected_at: String(raw.detected_at ?? new Date().toISOString()),
+    chain_id: raw.chain_id != null ? Number(raw.chain_id) : null,
+    strategy_kind:
+      raw.strategy_kind != null ? (raw.strategy_kind as StrategyKind) : null,
+    detected_at: raw.detected_at != null ? String(raw.detected_at) : null,
     trace_id: String(raw.trace_id ?? ""),
+
+    // Extended Identity (FE-0028): cartridge_id is a real wire field
+    // (opportunities.cartridge_id — REST live query SELECTs it; WS payloads
+    // may omit it → null). hop_count derives from the parsed topology below.
+    // The level-(b) fields have NO wire today → pinned null, never fabricated.
+    cartridge_id: raw.cartridge_id != null ? String(raw.cartridge_id) : null,
+    hop_count: deriveHopCount(routeMetadata),
+    candidate_id: null,
+    route_id: null,
+    pair_id: null,
+    detector_id: null,
+    quote_token: null,
+    quote_version: null,
+    graph_version: null,
+    config_version: null,
+    strategy_version: null,
+    gate_results: null,
+    data_quality: null,
 
     // Route Information
     dex_a: String(raw.dex_a ?? ""),
@@ -247,7 +350,7 @@ export function mapToOmniOpportunity(raw: Record<string, unknown>): OmniOpportun
     pair_symbol: raw.pair_symbol != null ? String(raw.pair_symbol) : null,
     token_in: String(raw.token_in ?? ""),
     token_out: String(raw.token_out ?? ""),
-    amount_in_wei: String(raw.amount_in_wei ?? "0"),
+    amount_in_wei: raw.amount_in_wei != null ? String(raw.amount_in_wei) : null,
 
     // Token Metadata
     token_in_info: (raw.token_in_info as TokenInfo) ?? null,
@@ -263,8 +366,8 @@ export function mapToOmniOpportunity(raw: Record<string, unknown>): OmniOpportun
     roi_pct: raw.roi_pct != null ? Number(raw.roi_pct) : null,
     risk_score: raw.risk_score != null ? Number(raw.risk_score) : null,
 
-    // Status
-    status: (raw.status as OpportunityStatus) ?? "detected",
+    // Status — §28: absent status is null, never a fabricated "detected".
+    status: (raw.status as OpportunityStatus | undefined) ?? null,
     rejection_reason: raw.rejection_reason != null ? String(raw.rejection_reason) : null,
     paper_status: (raw.paper_status as "paper_viable" | "paper_rejected") ?? null,
 
@@ -285,7 +388,7 @@ export function mapToOmniOpportunity(raw: Record<string, unknown>): OmniOpportun
     // Multi-hop route topology (migration 099). Coerce the wire JSONB into the
     // typed shape; null when absent/empty (R8 fail-honest). Arrays default to []
     // so downstream renderers never hit `undefined`.
-    route_metadata: parseRouteMetadata(raw.route_metadata),
+    route_metadata: routeMetadata,
 
     // Simulation Results
     simulated_net_profit_usd:
@@ -310,7 +413,15 @@ export function mapToOmniOpportunity(raw: Record<string, unknown>): OmniOpportun
     confidence_score_bps:
       raw.confidence_score_bps != null ? Number(raw.confidence_score_bps) : null,
     gas_used: raw.gas_used != null ? Number(raw.gas_used) : null,
+
+    // §30 verdict — annotated below on the complete object.
+    semantic_violations: [],
   };
+  // FE-0031 (§30): compute AFTER the row is fully mapped — the validator
+  // audits the finished ViewModel, so every path (WS/polling/SSR) quarantines
+  // identically.
+  mapped.semantic_violations = validateOpportunitySemantics(mapped);
+  return mapped;
 }
 
 // =============================================================================
@@ -359,6 +470,11 @@ export function parseRouteMetadata(
  *      2-leg BUY→SELL cycle so the operator always sees the route shape even
  *      for legacy rows. Honest "—" dex labels when both are blank.
  *
+ * FE-0030 (§29): the fallback is LEGACY DISPLAY ONLY — its legs carry
+ * `synthetic: true` and renderers must show SYNTHETIC_LEGACY_VIEW_LABEL. It
+ * is NEVER a ROUTE VERIFIED claim and NEVER an operational HOPS=2: the wire's
+ * hop_count (deriveHopCount) stays null without persisted topology.
+ *
  * R8: returns an empty array only when there is genuinely no route to show.
  */
 export function deriveLegs(opp: OmniOpportunity): RouteLeg[] {
@@ -381,6 +497,8 @@ export function deriveLegs(opp: OmniOpportunity): RouteLeg[] {
   }
 
   // Fallback: synthetic 2-leg BUY→SELL cycle from the minimal Opportunity.
+  // §29: marked `synthetic` — legacy display only, never ROUTE VERIFIED nor
+  // operational HOPS=2.
   const dexA = opp.dex_a ?? "";
   const dexB = opp.dex_b ?? "";
   if (!dexA && !dexB) return [];
@@ -391,6 +509,7 @@ export function deriveLegs(opp: OmniOpportunity): RouteLeg[] {
       token_out: opp.token_out,
       dex: dexA,
       pool: "",
+      synthetic: true,
     },
     {
       index: 1,
@@ -398,7 +517,102 @@ export function deriveLegs(opp: OmniOpportunity): RouteLeg[] {
       token_out: opp.token_in,
       dex: dexB || dexA, // single-DEX 2-pool cycle
       pool: "",
+      synthetic: true,
     },
   ];
+}
+
+// =============================================================================
+// FE-0031 — Semantic validation (§30): QUARANTINED, never hidden
+// =============================================================================
+
+/** §30 violation vocabulary (closed — renderers list codes verbatim). */
+export type SemanticViolation =
+  /** No route identity at all: no route_metadata, no synthetic basis (§29). */
+  | "no_route_identity"
+  /** strategy_kind absent (malformed payload — FE-0029 maps it to null). */
+  | "missing_strategy_id"
+  /** Degenerate pair: token_in === token_out (the AGLD⇄AGLD case). */
+  | "degenerate_pair"
+  /** Topology hop arithmetic broken: tokens ≠ hops + 1. */
+  | "hop_incoherent"
+  /** Leg chain broken: doesn't link leg-to-leg / doesn't close the cycle. */
+  | "legs_incoherent"
+  /** No block context — a row the §30 contract expects block_number on. */
+  | "missing_block"
+  /** A profit field is present but not a finite number (NaN/Infinity). */
+  | "profit_not_numeric";
+
+/** §30 canonical quarantine marker — one source of truth for renderers. */
+export const QUARANTINED_LABEL = "QUARANTINED";
+
+/**
+ * Pure §30 semantic gate. Returns the violation list — EMPTY means validated
+ * clean. A non-empty list marks the row QUARANTINED for display (marked, not
+ * hidden).
+ *
+ * Fail-honest boundaries (RULE 00 / R8):
+ *   - Honest NULLS are NOT violations per se: null profit = not computed;
+ *     null route_metadata on a row that still carries dex_a/dex_b has a
+ *     §29 synthetic display basis. What quarantines is INCOHERENCE — a row
+ *     presenting itself as an opportunity while its semantics don't hold.
+ *   - Cross-chain rows (chain_id_out != null) do not close a same-chain
+ *     cycle — the closure check is single-chain only.
+ */
+export function validateOpportunitySemantics(opp: OmniOpportunity): SemanticViolation[] {
+  const v: SemanticViolation[] = [];
+
+  // route_id/strategy_id identity.
+  const legs = deriveLegs(opp);
+  if (opp.strategy_kind == null) v.push("missing_strategy_id");
+  if (opp.route_metadata == null && legs.length === 0) v.push("no_route_identity");
+
+  // Degenerate pair: a PERSISTED route leg that swaps a token for itself.
+  // Row-level token_in === token_out is NOT a violation — the row pair is
+  // first-leg-in / last-leg-out (searcher-rs cartridge_boot: "R8: token_in/out
+  // from intent legs"), so in === out is the DEFINITION of a closed cycle.
+  // Only a self-swap LEG (X→X inside the route) is a provable no-op. Synthetic
+  // §29 legs are display shape — not audited here.
+  const wireLegs = legs.filter((l) => !l.synthetic);
+  if (wireLegs.some((l) => l.token_in !== "" && l.token_in === l.token_out)) {
+    v.push("degenerate_pair");
+  }
+
+  // hop coherence + leg linkage over the PERSISTED topology (wire-grade only;
+  // synthetic §29 legs are display shape, not an operational route to audit).
+  const rm = opp.route_metadata;
+  if (rm != null) {
+    if (rm.token_addresses.length !== rm.dex_adapters.length + 1) v.push("hop_incoherent");
+    // Chain must link: token_addresses[i+1] is leg i's out — trivially true by
+    // construction, so the REAL linkage check is the cycle close on
+    // single-chain rows: last address === first address.
+    const singleChain = opp.chain_id_out == null;
+    if (
+      singleChain &&
+      rm.token_addresses.length >= 2 &&
+      rm.token_addresses[rm.token_addresses.length - 1] !== rm.token_addresses[0]
+    ) {
+      v.push("legs_incoherent");
+    }
+  }
+
+  // Block context (the wire SELECTs block_number — absent means the row never
+  // anchored itself to a block).
+  if (opp.block_number == null) v.push("missing_block");
+
+  // Profit numerics: PRESENT values must be finite. null = not computed (R8),
+  // never a violation.
+  const profits = [
+    opp.expected_profit_usd,
+    opp.net_expected_profit_usd,
+    opp.roi_pct,
+    opp.risk_score,
+    opp.simulated_net_profit_usd,
+    opp.simulated_amount_in_usd,
+    opp.simulated_roi_pct,
+  ];
+  if (profits.some((p) => p != null && !Number.isFinite(p))) v.push("profit_not_numeric");
+
+  return v;
 }
 

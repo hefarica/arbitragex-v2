@@ -15,9 +15,45 @@
 import { Router, type Request, type Response } from "express";
 import type { Pool } from "pg";
 import type { Redis } from "ioredis";
+import type { Server as IoServer } from "socket.io";
+import { createHash, randomUUID } from "node:crypto";
 import { z } from "zod";
+import { broadcastRuntimeAck, type RuntimeAckBroadcast } from "../websocket.js";
 
 export const TRADING_CONFIG_CHANNEL = "arbx:trading_config:changes";
+
+// EMIT-04 (FE-MASTER §4): token-universe version counter — bumped by the admin
+// PUT on every EFFECTIVE allowlist change (Redis INCR, monotonic per chain).
+// Read by GET /api/v1/trading-config and POST /api/admin/tokens/resolve; the
+// runtime_ack event emitted alongside carries resource="token_universe" so the
+// frontend (useRuntimeAckSocket) correlates the mutation with the new version.
+export const TOKEN_UNIVERSE_VERSION_PREFIX = "arbx:token_universe:version:";
+
+export const tokenUniverseVersionKey = (chainId: number): string =>
+  `${TOKEN_UNIVERSE_VERSION_PREFIX}${chainId}`;
+
+/**
+ * Canonical universe fingerprint (sha256 hex64) — SET semantics with TW-002
+ * form normalization (trim + lowercase identity for both symbols and address
+ * entries; the effective universe is what matters, not the declaration form):
+ *   - reorder-only edits hash EQUAL → no version bump, no ACK churn;
+ *   - `null` only for "no prior row" (first configuration ever).
+ * The hex64 form doubles as `config_hash_after` in the runtime_ack wire
+ * (RuntimeAckBroadcastSchema requires exactly that shape).
+ */
+export function universeFingerprint(
+  entries: readonly string[] | null | undefined,
+): string | null {
+  if (entries === null || entries === undefined) return null;
+  const norm = [
+    ...new Set(
+      entries
+        .map((s) => s.trim().toLowerCase())
+        .filter((s) => s.length > 0),
+    ),
+  ].sort();
+  return createHash("sha256").update(JSON.stringify(norm), "utf8").digest("hex");
+}
 
 /** Canal de compatibilidad para sed-core y otros suscriptores legacy.
  *  Publicación dual: tanto TRADING_CONFIG_CHANNEL como HOT_RELOAD_CHANNEL
@@ -103,7 +139,11 @@ const TradingConfigSchema = z
     capital_usd: z.number().nonnegative(),
     base_token_symbol: z.string().min(1).max(16),
     base_token_price_usd: z.number().positive(),
-    allowed_token_symbols: z.array(z.string().min(1).max(16)).max(64),
+    // ARBX-TW-002: entries may be symbols (≤16 chars, retro-compat UI) OR
+    // EVM addresses in `0x`+40-hex form (42 chars) — the canonical TokenKey
+    // identity (ARBX-0018). Address entries gate directly at runtime; symbol
+    // entries resolve through the chain universe as before.
+    allowed_token_symbols: z.array(z.string().min(1).max(42)).max(64),
 
     // BUG-2 fix (PriceOracle): per-token USD prices, operator-managed.
     token_prices_usd: z.record(z.string().min(1).max(16), z.number().positive()).default({}),
@@ -187,6 +227,11 @@ interface Deps {
     userAgent?: string | null,
   ) => Promise<void>;
   logger: { warn: (obj: object, msg?: string) => void; info: (obj: object, msg?: string) => void };
+  /** EMIT-04: optional so router-level tests keep compiling without a WSS
+   *  gateway — when absent the ack is still INSERTed (the frontend GET
+   *  /api/system/runtime-ack/:event_id fallback recovers it), only the live
+   *  broadcast is skipped, mirroring the POST-INSERT fail-honest shape. */
+  io?: IoServer;
 }
 
 interface DbRow {
@@ -466,7 +511,23 @@ export function buildTradingConfigRouter(deps: Deps): Router {
         res.status(200).json({ chain_id: chainId, configured: false });
         return;
       }
-      res.status(200).json({ chain_id: chainId, configured: true, ...rowToRedisState(q.rows[0]!) });
+      // EMIT-04: universe_version — Redis counter bumped by the admin PUT on
+      // every EFFECTIVE allowlist change. Absent key = the universe was never
+      // changed since deployment = honest null (never a fabricated 0).
+      let universeVersion: number | null = null;
+      try {
+        const v = await deps.redis.get(tokenUniverseVersionKey(chainId));
+        const n = Number(v);
+        if (v !== null && Number.isSafeInteger(n) && n >= 0) universeVersion = n;
+      } catch {
+        // absent/unreadable counter stays null — honest absence
+      }
+      res.status(200).json({
+        chain_id: chainId,
+        configured: true,
+        universe_version: universeVersion,
+        ...rowToRedisState(q.rows[0]!),
+      });
     } catch (e) {
       deps.logger.warn({ event: "trading_config.read_failed", err: (e as Error).message });
       res.status(503).json({ error: "query_failed", detail: (e as Error).message });
@@ -637,6 +698,95 @@ export function buildTradingConfigRouter(deps: Deps): Router {
           req.header("user-agent") ?? null,
         );
 
+        // EMIT-04 (FE-MASTER §4): the ONLY mutation that changes the effective
+        // token universe is an edit of allowed_token_symbols — every other
+        // knob in this upsert leaves the universe untouched (no bump, no ACK
+        // churn; set-semantics fingerprint makes reorder-only edits a no-op).
+        // On a real change: INCR the per-chain version counter, INSERT a
+        // runtime_ack row with the STABLE resource "token_universe" (the
+        // correlation key useRuntimeAckSocket consumers filter on, alongside
+        // the event_id bijection) and broadcast post-INSERT — same invariant
+        // I-2 as POST /api/system/runtime-ack. layer=persistence /
+        // status=applied is honest: the durable portion (PG row + Redis
+        // mirror + dual-channel publish) is fully confirmed above; the
+        // searcher's index rebuild rides its own ≤30s TTL cycle and never
+        // blocks this response.
+        const beforeFp = universeFingerprint(
+          (before as { allowed_token_symbols?: string[] } | null)?.allowed_token_symbols,
+        );
+        const afterFp = universeFingerprint(body.allowed_token_symbols);
+        let universeVersion: number | null = null;
+        let runtimeAckEventId: string | null = null;
+        if (beforeFp !== afterFp) {
+          universeVersion = await deps.redis.incr(tokenUniverseVersionKey(chainId));
+          runtimeAckEventId = randomUUID();
+          const ack: RuntimeAckBroadcast = {
+            event_id: runtimeAckEventId,
+            resource: "token_universe",
+            chain_id: chainId,
+            idempotency_key: `token_universe:${chainId}:v${universeVersion}`,
+            config_hash_before: beforeFp,
+            config_hash_after: afterFp as string,
+            worker_id: "api-server:trading-config",
+            layer: "persistence",
+            status: "applied",
+          };
+          try {
+            await deps.pool.query("BEGIN");
+            try {
+              // Same advisory-lock + ON CONFLICT dedup convention as the
+              // system-manifest POST (P1-1/P1-5): concurrent producers
+              // serialize per (resource, chain_id); a replayed event_id is a
+              // no-op INSERT that does not re-broadcast.
+              await deps.pool.query(
+                "SELECT pg_advisory_xact_lock(hashtext($1)::int)",
+                [`runtime_ack:token_universe:${chainId}`],
+              );
+              const ins = await deps.pool.query(
+                `INSERT INTO runtime_ack (
+                   event_id, resource, chain_id, idempotency_key,
+                   config_hash_before, config_hash_after,
+                   worker_id, layer, status
+                 ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+                 ON CONFLICT (event_id, layer) DO NOTHING
+                 RETURNING id`,
+                [
+                  ack.event_id,
+                  ack.resource,
+                  ack.chain_id,
+                  ack.idempotency_key,
+                  ack.config_hash_before,
+                  ack.config_hash_after,
+                  ack.worker_id,
+                  ack.layer,
+                  ack.status,
+                ],
+              );
+              await deps.pool.query("COMMIT");
+              if ((ins.rowCount ?? 0) > 0 && deps.io) {
+                broadcastRuntimeAck(deps.io, ack);
+              }
+            } catch (err) {
+              await deps.pool.query("ROLLBACK").catch(() => {});
+              throw err;
+            }
+          } catch (err) {
+            // The config itself is already durable — an ack failure never
+            // fails the PUT. The counter bump stands; the frontend correlates
+            // through universe_version on the next GET even without the WSS
+            // event (honest degradation, not a silent fabricate).
+            deps.logger.warn(
+              {
+                event: "trading_config.universe_ack_failed",
+                chain_id: chainId,
+                universe_version: universeVersion,
+                err: (err as Error).message,
+              },
+              "token_universe runtime_ack INSERT failed (config already persisted)",
+            );
+          }
+        }
+
         deps.logger.info(
           {
             event: "trading_config.upsert",
@@ -645,6 +795,8 @@ export function buildTradingConfigRouter(deps: Deps): Router {
             subscribers_trading_config: subs,
             subscribers_hot_reload: subsHotReload,
             channels: [TRADING_CONFIG_CHANNEL, HOT_RELOAD_CHANNEL],
+            universe_version: universeVersion,
+            universe_changed: universeVersion !== null,
           },
           "trading config persisted and broadcast",
         );
@@ -654,6 +806,8 @@ export function buildTradingConfigRouter(deps: Deps): Router {
           subscribers_trading_config: subs,
           subscribers_hot_reload: subsHotReload,
           channels: [TRADING_CONFIG_CHANNEL, HOT_RELOAD_CHANNEL],
+          universe_version: universeVersion,
+          runtime_ack_event_id: runtimeAckEventId,
           ...redisState,
         });
       } catch (e) {

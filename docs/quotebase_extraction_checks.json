@@ -1,8 +1,18 @@
 [
  {
-  "check": "01_CONFIG knobs == 18",
-  "pass": false,
-  "detail": "got 17"
+  "check": "01_CONFIG knobs == canonical_excel_count (derivado de la hoja, sin hardcode)",
+  "pass": true,
+  "detail": "actual=17 canonical=17"
+ },
+ {
+  "check": "01_CONFIG knobs sin parámetros duplicados",
+  "pass": true,
+  "detail": "duplicados: []"
+ },
+ {
+  "check": "01_CONFIG knobs sin parámetro-valor ausente",
+  "pass": true,
+  "detail": "filas con Parameter pero sin Value: []"
  },
  {
   "check": "11 hop_map strategies == 264",

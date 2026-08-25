@@ -85,7 +85,58 @@ mod patterns;
 mod persistence;
 mod publisher;
 mod reserves;
+// XLS-QB-05 / ARBX-0003: dirty-pool signal consumed by `workers::pool_sync_worker`
+// (this bin crate compiles the workers module tree, so it declares the module too).
+mod dirty_signal;
+// XLS-QB-05b/05c / ARBX-0003: consumer drain + pair→cycles inverted index
+// (drain lives in route_discovery_worker; declared here for the dual-tree).
+#[allow(dead_code)]
+mod cycle_index;
+#[allow(dead_code)]
+mod dirty_consumer;
+// XLS-QB / ARBX-0008: N-bucket amount sweep (pure surface; the motor side
+// lives in size_optimizer — declared here for the dual-tree).
+#[allow(dead_code)]
+mod amount_buckets;
+// XLS-QB-06b / ARBX-0024: F_e normalization + QuoteState — consumed by the
+// route-discovery prefilter (declared here for the dual-tree).
+#[allow(dead_code)]
+mod fe_normalization;
+// ARBX-0007: financing-mode route dimension (fees, per-mode eval, selection).
+mod financing;
+// ARBX-0009: sheet-07 Net_bps contract + deterministic ranking (QB 07).
+mod net_bps_ranking;
+// FE-MASTER EMIT-06b: pair alpha publish (dual-tree — the lib declares it for tests).
+#[allow(dead_code)]
+mod pair_alpha_runtime;
+// Gate completion 2026-08-24: shared source files (cycle_index, graph_builder,
+// route_discovery_worker, opportunity_emitter…) reference these via `crate::`
+// — the bin root must declare them too or the bin target fails E0432/E0433
+// while the lib stays green.
+#[allow(dead_code)]
+mod dirty_pairs;
+#[allow(dead_code)]
+mod hot_seed_mask;
+#[allow(dead_code)]
+mod latency_budget;
+#[allow(dead_code)]
+mod pair_index;
+#[allow(dead_code)]
+mod quote_anchor_runtime;
+#[allow(dead_code)]
+mod quote_anchor_signal;
+#[allow(dead_code)]
+mod quote_score;
+#[allow(dead_code)]
+mod required_data_gate;
 mod scanner;
+#[allow(dead_code)]
+mod signal_tier;
+// ARBX-0018: address-keyed token identity (bin crate compiles the same tree).
+mod token_identity;
+// FE-MASTER EMIT-01: universe snapshot writer used by `token_identity`
+// (dual-tree — the lib also declares it for tests).
+mod token_resolve_signal;
 // FASE OMEGA — cartridge runtime (Rhai). `cartridge` + `cartridge_loader` are API-heavy
 // and mostly exercised via lib/integration tests; the binary only drives them through
 // `cartridge_boot` (called from the scanner boot path), so allow dead_code on the two.
@@ -124,6 +175,18 @@ mod route_intent;
 // `admissible_hop_bounds`; the lookup helpers are exercised in lib tests.
 #[allow(dead_code)]
 mod strategy_hop_mask;
+// ARBX-0021: same dual-crate declaration as strategy_hop_mask —
+// route_discovery_worker references `crate::strategy_dispatch_status`
+// (Status dispatch) against each target's own module tree.
+#[allow(dead_code)]
+mod strategy_dispatch_status;
+// ARBX-TW-005: col Execution_Class annotation (29 classes).
+#[allow(dead_code)]
+mod strategy_execution_class;
+// ARBX-0026: sheet 13_DETECTOR_POLICY (60 detectors) — graph family, family
+// hop envelope, Do_Not_Do guard, hot-seed admission.
+#[allow(dead_code)]
+mod detector_policy;
 mod strategy_label;
 // Phase 7-8: orchestrator + engines — fully wired in Phase 14.
 // `engines` still has Phase-15 hooks (insert, from_mvp_cycles, etc.) unused

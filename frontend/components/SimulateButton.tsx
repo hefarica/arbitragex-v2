@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useId } from "react";
+import React, { useState, useId } from "react";
 import { PlayIcon, ChevronDownIcon, LoaderIcon, CheckCircleIcon, XCircleIcon } from "lucide-react";
 
 import { cn } from "@/lib/utils";

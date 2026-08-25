@@ -20,9 +20,11 @@
 
 use crate::amm_math::v3_spot_snapshot;
 use crate::impact_index::PoolRef;
+use crate::pair_index::{DenseIdBuilder, TokenKey};
 use crate::reserves::{
     get_reserves, get_token_meta, get_v3_slot0, ReservesEntry, TokenMeta, V3Slot0Entry,
 };
+use crate::route_discovery::dense_view::{DenseAdjacency, MembershipRows};
 use crate::route_discovery::types::{RouteDirection, RouteEdge};
 use crate::route_intent::ProtocolType;
 use ethers::types::Address;
@@ -80,6 +82,28 @@ pub struct RejectedEdge {
 pub struct TokenGraph {
     pub edges: Vec<RouteEdge>,
     pub adjacency: HashMap<Address, Vec<usize>>,
+    /// ARBX-0019: dense O(1) out-edge view (CSR + dense ids from
+    /// `pair_index::DenseIdBuilder`). `None` until [`TokenGraph::build_dense`]
+    /// runs — the HashMap `adjacency` stays the source of truth; this view
+    /// only accelerates reads (built FROM the same edge list, never mutated
+    /// independently).
+    pub dense: Option<DenseView>,
+}
+
+/// The dense view of a [`TokenGraph`] (ARBX-0019/0020): one shared dense id
+/// space over every token TOUCHED by an edge (`token_in` ∪ `token_out`, the
+/// `pair_index` contract — reusable by `PairBuckets` later), the CSR out-edge
+/// index, and — when the budget policy accepts N — per-token destination
+/// bitset rows for O(1) edge-membership.
+#[derive(Debug, Clone, Default)]
+pub struct DenseView {
+    builder: DenseIdBuilder,
+    id_of: HashMap<Address, u32>,
+    csr: DenseAdjacency,
+    /// ARBX-0020: `has_edge` rows (bitset) while
+    /// `dense_view::membership_bitset_fits(N)`; `None` for large/sparse N —
+    /// the CSR scan inside `dense_has_edge` is the fallback.
+    membership: Option<MembershipRows>,
 }
 
 impl TokenGraph {
@@ -94,6 +118,88 @@ impl TokenGraph {
     /// Distinct tokens that have at least one out-edge.
     pub fn tokens(&self) -> impl Iterator<Item = &Address> {
         self.adjacency.keys()
+    }
+
+    /// ARBX-0019/0020: (re)build the dense O(1) view from the CURRENT edge
+    /// list. Idempotent; `adjacency` is left untouched (source of truth until
+    /// the equivalence gate at WP-F). Ids assign in first-seen order over
+    /// every token touched by an edge (`token_in` ∪ `token_out` — sink tokens
+    /// get an id so `dense_has_edge` sees them) — deterministic regardless of
+    /// pool iteration order.
+    pub fn build_dense(&mut self, chain_id: u64) -> &mut Self {
+        let mut builder = DenseIdBuilder::new();
+        let mut id_of: HashMap<Address, u32> = HashMap::new();
+        let mut assign =
+            |addr: Address, builder: &mut DenseIdBuilder, id_of: &mut HashMap<Address, u32>| {
+                *id_of.entry(addr).or_insert_with(|| {
+                    builder.insert(
+                        TokenKey {
+                            chain_id,
+                            address: addr,
+                        },
+                        true,
+                    ) as u32
+                })
+            };
+        let mut sources = Vec::with_capacity(self.edges.len());
+        let mut dests = Vec::with_capacity(self.edges.len());
+        for e in &self.edges {
+            sources.push(assign(e.token_in, &mut builder, &mut id_of));
+            dests.push(assign(e.token_out, &mut builder, &mut id_of));
+        }
+        let csr = DenseAdjacency::from_edge_sources(builder.len(), &sources);
+        let membership = MembershipRows::build(builder.len(), &sources, &dests);
+        self.dense = Some(DenseView {
+            builder,
+            id_of,
+            csr,
+            membership,
+        });
+        self
+    }
+
+    /// ARBX-0019: O(1) out-edge indices for `token` from the dense view.
+    /// `None` when the view is absent or the token is unknown to the graph;
+    /// a KNOWN token with no out-edges (sink) yields an empty slice — the
+    /// same observable answer the HashMap path gives.
+    pub fn dense_out_indices(&self, token: &Address) -> Option<&[u32]> {
+        let view = self.dense.as_ref()?;
+        let id = *view.id_of.get(token)? as usize;
+        Some(view.csr.out_edge_indices(id))
+    }
+
+    /// ARBX-0020: O(1) edge-membership — `true` iff some edge runs
+    /// `from → to`. Bitset rows when the budget accepts N, CSR out-edge scan
+    /// when it does not (large/sparse fallback, workbook col G). `None` when
+    /// the dense view is absent OR either token is unknown to the graph —
+    /// the caller falls back to `adjacency` (same contract as
+    /// `dense_out_indices`; known tokens always get a definitive answer).
+    pub fn dense_has_edge(&self, from: &Address, to: &Address) -> Option<bool> {
+        let view = self.dense.as_ref()?;
+        let f = *view.id_of.get(from)?;
+        let t = view.id_of.get(to).copied()?;
+        match &view.membership {
+            Some(rows) => Some(rows.has_edge(f, t)),
+            None => Some(
+                view.csr
+                    .out_edge_indices(f as usize)
+                    .iter()
+                    .any(|&e| self.edges[e as usize].token_out == *to),
+            ),
+        }
+    }
+
+    /// Dense id of `token` in the shared `pair_index` id space (ARBX-0028
+    /// `PairBuckets` consumes the same ids). `None` without a view or for a
+    /// token no edge touches.
+    pub fn dense_token_id(&self, token: &Address) -> Option<usize> {
+        let view = self.dense.as_ref()?;
+        (*view.id_of.get(token)? as usize).into()
+    }
+
+    /// Size of the dense token universe (tokens touched by ≥1 edge).
+    pub fn dense_token_count(&self) -> usize {
+        self.dense.as_ref().map(|v| v.builder.len()).unwrap_or(0)
     }
 }
 
@@ -347,8 +453,17 @@ pub async fn build_graph(
         adjacency.entry(e.token_in).or_default().push(i);
     }
 
+    // ARBX-0019: dense O(1) view built from the SAME edge list — the
+    // HashMap above stays the source of truth (equivalence gate: WP-F).
+    let mut graph = TokenGraph {
+        edges,
+        adjacency,
+        dense: None,
+    };
+    graph.build_dense(chain_id);
+
     GraphBuildOutcome {
-        graph: TokenGraph { edges, adjacency },
+        graph,
         rejected,
         pools_total: pools.len(),
     }
@@ -834,10 +949,244 @@ mod tests {
         for (i, e) in edges.iter().enumerate() {
             adjacency.entry(e.token_in).or_default().push(i);
         }
-        let g = TokenGraph { edges, adjacency };
+        let g = TokenGraph {
+            edges,
+            adjacency,
+            dense: None,
+        };
         assert_eq!(g.out_edges(&addr(1)).count(), 1);
         assert_eq!(g.out_edges(&addr(2)).count(), 1);
         assert_eq!(g.out_edges(&addr(999)).count(), 0);
         assert_eq!(g.tokens().count(), 2);
+    }
+
+    // ── ARBX-0019: dense view equivalence + bench vs HashMap ─────────────
+
+    /// Deterministic synthetic-graph edge literal (shared by the ARBX-0019/0020
+    /// dense-view tests): V2, fee 30 bps, priced, zero freshness fields.
+    fn synth_edge(pool: u64, ti: u64, to: u64) -> RouteEdge {
+        RouteEdge {
+            chain_id: 1,
+            pool: Address::from_low_u64_be(pool),
+            token_in: Address::from_low_u64_be(ti),
+            token_out: Address::from_low_u64_be(to),
+            token0: Address::from_low_u64_be(ti),
+            token1: Address::from_low_u64_be(to),
+            protocol: crate::route_intent::ProtocolType::V2,
+            fee_bps: Some(30),
+            liquidity_hint: Some(1.0),
+            log_weight: Some(-0.003),
+            freshness_ts: 0,
+            blk: 0,
+            hot_token: false,
+            direction: RouteDirection::ZeroForOne,
+        }
+    }
+
+    /// Deterministic synthetic graph: `n` tokens, ~`deg` out-edges each
+    /// (workbook Avg_Active_Degree = 6), no rand dependency.
+    fn synth_graph(n: u64, deg: u64) -> TokenGraph {
+        let mut edges = Vec::new();
+        for t in 0..n {
+            for d in 0..deg {
+                let out = (t * 31 + d * 7 + 1) % n;
+                if out == t {
+                    continue; // no self-loops in the token graph
+                }
+                edges.push(synth_edge(t * deg + d + 1, t + 1, out + 1));
+            }
+        }
+        let mut adjacency: HashMap<Address, Vec<usize>> = HashMap::new();
+        for (i, e) in edges.iter().enumerate() {
+            adjacency.entry(e.token_in).or_default().push(i);
+        }
+        let mut g = TokenGraph {
+            edges,
+            adjacency,
+            dense: None,
+        };
+        g.build_dense(1);
+        g
+    }
+
+    /// The dense view agrees with the HashMap adjacency for EVERY token —
+    /// same edge indices, same order (the "equivalencia demostrada" AC:
+    /// pinned at data level here, full swap-over only at the final gate).
+    #[test]
+    fn dense_view_matches_hashmap_adjacency_exactly() {
+        let g = synth_graph(24, 6);
+        assert_eq!(g.dense_token_count(), g.adjacency.len());
+        for token in g.adjacency.keys() {
+            let hash_view: Vec<usize> = g.adjacency.get(token).cloned().unwrap_or_default();
+            let dense_view_ix: Vec<usize> = g
+                .dense_out_indices(token)
+                .map(|ix| ix.iter().map(|&i| i as usize).collect())
+                .unwrap_or_default();
+            assert_eq!(hash_view, dense_view_ix, "token {token:?}: views disagree");
+        }
+        // A token with no out-edges: None from the dense view, empty from
+        // the HashMap — callers treat both as "no out-edges".
+        assert!(g.dense_out_indices(&addr(9999)).is_none());
+        assert_eq!(g.out_edges(&addr(9999)).count(), 0);
+        // Dense ids are a bijection over adjacency keys (first-seen order).
+        let mut ids: Vec<usize> = g
+            .adjacency
+            .keys()
+            .filter_map(|t| g.dense_token_id(t))
+            .collect();
+        ids.sort_unstable();
+        ids.dedup();
+        assert_eq!(ids.len(), g.adjacency.len());
+        assert_eq!(ids.first().copied(), Some(0));
+        assert_eq!(ids.last().copied(), Some(g.adjacency.len() - 1));
+    }
+
+    /// Bench vs HashMap (AC "bench vs HashMap registrado"): measures both
+    /// out-edge resolution paths over the synthetic graph — the legacy
+    /// HashMap `get` and the dense CSR slice — and asserts they resolve the
+    /// SAME edges on every rep (the bench doubles as a differential). The
+    /// recorded numbers live in TEST_EVIDENCE/registry (std::time, no
+    /// criterion dep — Cero Dependencias Obesas).
+    #[test]
+    fn bench_dense_vs_hashmap_out_edges() {
+        for &(n, deg) in &[(24u64, 6u64), (512, 6), (2048, 6)] {
+            let g = synth_graph(n, deg);
+            let tokens: Vec<Address> = g.adjacency.keys().copied().collect();
+            let reps = 200u32;
+
+            // Warm both paths (allocator + caches).
+            for t in &tokens {
+                let _ = g.adjacency.get(t).map(|v| v.len());
+                let _ = g.dense_out_indices(t).map(|s| s.len());
+            }
+
+            let t0 = std::time::Instant::now();
+            let mut hm_total = 0usize;
+            for _ in 0..reps {
+                for t in &tokens {
+                    if let Some(ix) = g.adjacency.get(t) {
+                        hm_total += ix.len();
+                    }
+                }
+            }
+            let hm_ns = t0.elapsed().as_nanos() / (reps as u128 * tokens.len() as u128);
+
+            let t1 = std::time::Instant::now();
+            let mut dn_total = 0usize;
+            for _ in 0..reps {
+                for t in &tokens {
+                    if let Some(ix) = g.dense_out_indices(t) {
+                        dn_total += ix.len();
+                    }
+                }
+            }
+            let dn_ns = t1.elapsed().as_nanos() / (reps as u128 * tokens.len() as u128);
+
+            assert_eq!(
+                hm_total, dn_total,
+                "differential: both resolve the same edges"
+            );
+            println!(
+                "ARBX-0019-BENCH n={n} edges={} | hashmap {hm_ns} ns/lookup | dense {dn_ns} ns/lookup",
+                g.edges.len()
+            );
+        }
+    }
+
+    // ── ARBX-0020: bitset/CSR membership with large-N fallback ───────────
+
+    /// `dense_has_edge` == the HashMap adjacency ground truth for EVERY pair
+    /// (bitset path — n=24 is deep inside the budget).
+    #[test]
+    fn dense_has_edge_matches_hashmap_membership() {
+        let g = synth_graph(24, 6);
+        assert!(
+            g.dense.as_ref().unwrap().membership.is_some(),
+            "n=24 must take the bitset path"
+        );
+        for from in g.adjacency.keys() {
+            for to in g.adjacency.keys() {
+                let via_hash = g
+                    .adjacency
+                    .get(from)
+                    .map(|ix| ix.iter().any(|&i| g.edges[i].token_out == *to))
+                    .unwrap_or(false);
+                assert_eq!(
+                    g.dense_has_edge(from, to),
+                    Some(via_hash),
+                    "pair {from:?}->{to:?}: membership disagrees with source of truth"
+                );
+            }
+        }
+        // Unknown tokens answer None (caller falls back to `adjacency`,
+        // which also yields false — honest absence, no panic).
+        assert_eq!(g.dense_has_edge(&addr(9999), &addr(1)), None);
+        assert_eq!(g.dense_has_edge(&addr(1), &addr(9999)), None);
+    }
+
+    /// n=3000 exceeds the bitset budget (crossover 2880/2881) → the rows are
+    /// skipped and `dense_has_edge` answers via the CSR out-edge scan. Sampled
+    /// pairs (every 17th) keep the debug-profile runtime bounded.
+    #[test]
+    fn dense_has_edge_csr_fallback_for_large_n() {
+        let g = synth_graph(3000, 6);
+        assert!(
+            g.dense.as_ref().unwrap().membership.is_none(),
+            "n=3000 must trip the budget policy (CSR fallback)"
+        );
+        let tokens: Vec<Address> = g.adjacency.keys().copied().collect();
+        let mut checked = 0usize;
+        let mut hits = 0usize;
+        for from in &tokens {
+            for to in tokens.iter().step_by(17) {
+                let via_hash = g
+                    .adjacency
+                    .get(from)
+                    .map(|ix| ix.iter().any(|&k| g.edges[k].token_out == *to))
+                    .unwrap_or(false);
+                assert_eq!(
+                    g.dense_has_edge(from, to),
+                    Some(via_hash),
+                    "CSR fallback disagrees at pair {from:?}->{to:?}"
+                );
+                checked += 1;
+                hits += usize::from(via_hash);
+            }
+        }
+        assert!(checked > 5_000, "sample large enough to mean anything");
+        assert!(hits > 0, "sample must contain at least one true edge");
+    }
+
+    /// The dense universe covers SINK tokens (out-degree 0): they get an id,
+    /// an empty out-slice, and truthful membership answers.
+    #[test]
+    fn build_dense_universe_covers_sink_tokens() {
+        let edges = vec![
+            synth_edge(1, 0xA, 0xB),
+            synth_edge(2, 0xB, 0xC),
+            synth_edge(3, 0xA, 0xC),
+        ];
+        let mut adjacency: HashMap<Address, Vec<usize>> = HashMap::new();
+        for (i, e) in edges.iter().enumerate() {
+            adjacency.entry(e.token_in).or_default().push(i);
+        }
+        let mut g = TokenGraph {
+            edges,
+            adjacency,
+            dense: None,
+        };
+        g.build_dense(1);
+
+        assert_eq!(g.dense_token_count(), 3, "A, B, C — C is a sink");
+        let c = addr(0xC);
+        assert!(g.dense_token_id(&c).is_some(), "sink token has an id");
+        assert_eq!(
+            g.dense_out_indices(&c).map(<[u32]>::len),
+            Some(0),
+            "sink out-slice is empty (Some), not None"
+        );
+        assert_eq!(g.dense_has_edge(&addr(0xB), &c), Some(true));
+        assert_eq!(g.dense_has_edge(&c, &addr(0xA)), Some(false));
+        assert_eq!(g.dense_has_edge(&addr(0xA), &addr(0xB)), Some(true));
     }
 }

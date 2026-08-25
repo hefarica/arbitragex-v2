@@ -1,0 +1,22 @@
+{
+  "mev_id": "MEV-07-030",
+  "grupo": "7",
+  "estrategia": "Leverage-token rebalancing arbitrage",
+  "familia": "Derivados y volatilidad",
+  "required_surface": "DERIVATIVES",
+  "backend_module": "derivatives_engine",
+  "toggle_frontend": "strategy.07.030.enabled",
+  "min_legs": 2,
+  "max_legs": 6,
+  "legs_model": "Hedge/estructura",
+  "primary_operators": [
+    "op_08",
+    "op_21",
+    "op_23"
+  ],
+  "secondary_operators": [
+    "op_11",
+    "op_13",
+    "op_22"
+  ]
+}

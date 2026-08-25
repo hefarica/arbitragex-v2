@@ -1,0 +1,22 @@
+{
+  "mev_id": "MEV-11-005",
+  "grupo": "11",
+  "estrategia": "Exhaustive-outcome basket arbitrage",
+  "familia": "Prediction markets y mercados condicionales",
+  "required_surface": "PREDICTION",
+  "backend_module": "prediction_engine",
+  "toggle_frontend": "strategy.11.005.enabled",
+  "min_legs": 3,
+  "max_legs": 16,
+  "legs_model": "N-leg din\u00e1mico",
+  "primary_operators": [
+    "op_11",
+    "op_19",
+    "op_21"
+  ],
+  "secondary_operators": [
+    "op_08",
+    "op_14",
+    "op_22"
+  ]
+}

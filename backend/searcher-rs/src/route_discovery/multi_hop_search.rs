@@ -196,13 +196,20 @@ fn dfs_cycles(
     if path.len() >= max_hops {
         return;
     }
-    for e in graph.out_edges(&current) {
-        // Resolve this edge's index (out_edges yields refs; recover index via adjacency).
-        // We re-derive the index by pointer position to keep RouteEdge unmodified.
-        let idx = match graph.edges.iter().position(|x| std::ptr::eq(x, e)) {
-            Some(i) => i,
-            None => continue,
-        };
+    // ARBX-0019: dense O(1) view — indices come straight from the CSR slice
+    // (no hashing, and no O(E) `position(ptr::eq)` index recovery). Falls
+    // back to the HashMap path when the view is absent; both views are
+    // pinned equivalent by the graph_builder tests.
+    let out_indices: Vec<usize> = match graph.dense_out_indices(&current) {
+        Some(ix) => ix.iter().map(|&i| i as usize).collect(),
+        None => graph
+            .adjacency
+            .get(&current)
+            .map(|v| v.to_vec())
+            .unwrap_or_default(),
+    };
+    for idx in out_indices {
+        let e = &graph.edges[idx];
 
         // Skip immediate same-pool reuse.
         if pools.last() == Some(&e.pool) {
@@ -317,7 +324,11 @@ mod tests {
         for (i, e) in edges.iter().enumerate() {
             adjacency.entry(e.token_in).or_default().push(i);
         }
-        TokenGraph { edges, adjacency }
+        TokenGraph {
+            edges,
+            adjacency,
+            dense: None,
+        }
     }
 
     #[test]
@@ -360,6 +371,40 @@ mod tests {
                 .any(|c| c.hop_count == 2 && c.sum_log_weight < 0.0),
             "a 2-hop cross-pool cycle with negative sum must be found"
         );
+    }
+
+    /// ARBX-0019: the SAME walker run over the dense O(1) view must find the
+    /// SAME cycles as the HashMap fallback above (differential at the walker
+    /// level — existing tests exercise the fallback, this one the CSR path).
+    /// ARBX-0006 drift-fix: comparison is set-based (see inside).
+    #[test]
+    fn dense_view_finds_identical_cycles_as_hashmap_fallback() {
+        let edges = vec![
+            edge(0xA, 0xB, 1, Some(-0.02)),
+            edge(0xB, 0xA, 2, Some(-0.01)),
+            edge(0xB, 0xC, 3, Some(-0.02)),
+            edge(0xC, 0xA, 4, Some(-0.02)),
+        ];
+        let fallback = graph_from(edges.clone());
+        let mut dense = graph_from(edges);
+        dense.build_dense(1);
+        assert!(dense
+            .dense_out_indices(&Address::from_low_u64_be(0xB))
+            .is_some());
+
+        let r_hash = find_profitable_cycles(&fallback, 2, 7, 100);
+        let r_dense = find_profitable_cycles(&dense, 2, 7, 100);
+        assert_eq!(r_hash.capped, r_dense.capped);
+        assert_eq!(r_hash.cycles.len(), r_dense.cycles.len());
+        // The walker iterates start tokens in HashMap order, which differs
+        // BETWEEN the two graph instances (RandomState seeds) — emission
+        // order is not a stable contract. The differential contract is the
+        // SET of cycles: canonicalize by edge sequence, then compare.
+        let mut h = r_hash.cycles;
+        let mut d = r_dense.cycles;
+        h.sort_by_key(|c| c.edges.clone());
+        d.sort_by_key(|c| c.edges.clone());
+        assert_eq!(h, d, "identical cycle SET both views");
     }
 
     #[test]

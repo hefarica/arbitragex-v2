@@ -1,0 +1,512 @@
+{
+ "count": 3,
+ "window": "latest",
+ "viable_only": false,
+ "max_age_seconds": 300,
+ "items": [
+  {
+   "id": "39af9b8f-9e65-4d97-a4ab-d955d7d7875f",
+   "chain_id": 1,
+   "chain_base_token_symbol": "WETH",
+   "strategy_kind": "triangular",
+   "cartridge_id": null,
+   "dex_a": "uniswap-v2",
+   "dex_b": null,
+   "pair_symbol": "WETH(triangular)",
+   "token_in": "0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2",
+   "token_in_info": {
+    "symbol": "WETH",
+    "decimals": 18,
+    "logo_url": "https://raw.githubusercontent.com/trustwallet/assets/master/blockchains/ethereum/assets/0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2/logo.png",
+    "resolved_via": "onchain_full",
+    "verified": true,
+    "registry_symbol": "WETH",
+    "registry_name": "Wrapped Ether",
+    "verified_notes": [
+     "in-registry",
+     "via-uniswap"
+    ],
+    "validation": {
+     "status": "VERIFIED",
+     "score": 75,
+     "liquidity_usd": 277612947.39000005,
+     "volume_24h_usd": 327291037.89000005,
+     "pair_count": 16,
+     "primary_dex": "uniswap",
+     "registry_source": "uniswap",
+     "validated_at": "2026-08-25T01:03:16.036Z",
+     "reasons": [
+      {
+       "key": "onchain-unavailable",
+       "note": "skipped (TOKEN_VALIDATION_ONCHAIN_ENABLED=false to protect shared RPC bucket)",
+       "delta": 0
+      },
+      {
+       "key": "registry-verified",
+       "note": "in uniswap (canonical: Wrapped Ether)",
+       "delta": 30
+      },
+      {
+       "key": "liquidity-viable",
+       "note": "liquidity_usd=$277612947.39 ≥ $5000",
+       "delta": 25
+      },
+      {
+       "key": "volume-active",
+       "note": "volume_24h_usd=$327291037.89 ≥ $1000",
+       "delta": 10
+      },
+      {
+       "key": "multi-pair",
+       "note": "16 pairs indexed",
+       "delta": 5
+      },
+      {
+       "key": "healthy-vol-liq-ratio",
+       "note": "volume/liquidity = 1.2×",
+       "delta": 5
+      }
+     ]
+    }
+   },
+   "token_out": "0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2",
+   "token_out_info": {
+    "symbol": "WETH",
+    "decimals": 18,
+    "logo_url": "https://raw.githubusercontent.com/trustwallet/assets/master/blockchains/ethereum/assets/0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2/logo.png",
+    "resolved_via": "onchain_full",
+    "verified": true,
+    "registry_symbol": "WETH",
+    "registry_name": "Wrapped Ether",
+    "verified_notes": [
+     "in-registry",
+     "via-uniswap"
+    ],
+    "validation": {
+     "status": "VERIFIED",
+     "score": 75,
+     "liquidity_usd": 277612947.39000005,
+     "volume_24h_usd": 327291037.89000005,
+     "pair_count": 16,
+     "primary_dex": "uniswap",
+     "registry_source": "uniswap",
+     "validated_at": "2026-08-25T01:03:16.036Z",
+     "reasons": [
+      {
+       "key": "onchain-unavailable",
+       "note": "skipped (TOKEN_VALIDATION_ONCHAIN_ENABLED=false to protect shared RPC bucket)",
+       "delta": 0
+      },
+      {
+       "key": "registry-verified",
+       "note": "in uniswap (canonical: Wrapped Ether)",
+       "delta": 30
+      },
+      {
+       "key": "liquidity-viable",
+       "note": "liquidity_usd=$277612947.39 ≥ $5000",
+       "delta": 25
+      },
+      {
+       "key": "volume-active",
+       "note": "volume_24h_usd=$327291037.89 ≥ $1000",
+       "delta": 10
+      },
+      {
+       "key": "multi-pair",
+       "note": "16 pairs indexed",
+       "delta": 5
+      },
+      {
+       "key": "healthy-vol-liq-ratio",
+       "note": "volume/liquidity = 1.2×",
+       "delta": 5
+      }
+     ]
+    }
+   },
+   "leg_symbols": {
+    "0xdac17f958d2ee523a2206206994597c13d831ec7": "USDT",
+    "0x6b175474e89094c44da98b954eedeac495271d0f": "DAI"
+   },
+   "amount_in_wei": "0",
+   "expected_profit_usd": null,
+   "net_expected_profit_usd": null,
+   "roi_pct": null,
+   "risk_score": null,
+   "rejection_reason": "spot_product_le_one",
+   "paper_status": "paper_rejected",
+   "chains_used": [
+    1
+   ],
+   "dexes_used": [
+    "uniswap-v2"
+   ],
+   "block_number": null,
+   "status": "rejected",
+   "detected_at": "2026-08-25T01:33:06.174Z",
+   "trace_id": "6039b05c-7835-491d-a862-c58941ed75de",
+   "chain_id_out": null,
+   "bridge": null,
+   "bridge_fee_usd": null,
+   "route_metadata": {
+    "decimals": {
+     "map": {}
+    },
+    "dex_adapters": [
+     "uniswap-v2",
+     "uniswap-v2",
+     "uniswap-v2"
+    ],
+    "pool_addresses": [
+     "0x0d4a11d5eeaac28ec3f61d100daf4d40471f1852",
+     "0xb20bd5d04be54f870d5c0d3ca85d82b34b836405",
+     "0xa478c2975ab1ea89e8196811f51a7b7ade33eb11"
+    ],
+    "token_addresses": [
+     "0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2",
+     "0xdac17f958d2ee523a2206206994597c13d831ec7",
+     "0x6b175474e89094c44da98b954eedeac495271d0f",
+     "0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2"
+    ]
+   },
+   "simulated_net_profit_usd": null,
+   "simulated_amount_in_usd": null,
+   "simulated_roi_pct": null,
+   "simulated_cost_breakdown": null,
+   "simulated_target": null,
+   "simulated_at": null,
+   "simulated_notes": null
+  },
+  {
+   "id": "aac474ec-c0c2-4c15-b4bf-72fa26f51c16",
+   "chain_id": 1,
+   "chain_base_token_symbol": "WETH",
+   "strategy_kind": "triangular",
+   "cartridge_id": null,
+   "dex_a": "uniswap-v2",
+   "dex_b": null,
+   "pair_symbol": "WETH(triangular)",
+   "token_in": "0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2",
+   "token_in_info": {
+    "symbol": "WETH",
+    "decimals": 18,
+    "logo_url": "https://raw.githubusercontent.com/trustwallet/assets/master/blockchains/ethereum/assets/0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2/logo.png",
+    "resolved_via": "onchain_full",
+    "verified": true,
+    "registry_symbol": "WETH",
+    "registry_name": "Wrapped Ether",
+    "verified_notes": [
+     "in-registry",
+     "via-uniswap"
+    ],
+    "validation": {
+     "status": "VERIFIED",
+     "score": 75,
+     "liquidity_usd": 277612947.39000005,
+     "volume_24h_usd": 327291037.89000005,
+     "pair_count": 16,
+     "primary_dex": "uniswap",
+     "registry_source": "uniswap",
+     "validated_at": "2026-08-25T01:03:16.036Z",
+     "reasons": [
+      {
+       "key": "onchain-unavailable",
+       "note": "skipped (TOKEN_VALIDATION_ONCHAIN_ENABLED=false to protect shared RPC bucket)",
+       "delta": 0
+      },
+      {
+       "key": "registry-verified",
+       "note": "in uniswap (canonical: Wrapped Ether)",
+       "delta": 30
+      },
+      {
+       "key": "liquidity-viable",
+       "note": "liquidity_usd=$277612947.39 ≥ $5000",
+       "delta": 25
+      },
+      {
+       "key": "volume-active",
+       "note": "volume_24h_usd=$327291037.89 ≥ $1000",
+       "delta": 10
+      },
+      {
+       "key": "multi-pair",
+       "note": "16 pairs indexed",
+       "delta": 5
+      },
+      {
+       "key": "healthy-vol-liq-ratio",
+       "note": "volume/liquidity = 1.2×",
+       "delta": 5
+      }
+     ]
+    }
+   },
+   "token_out": "0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2",
+   "token_out_info": {
+    "symbol": "WETH",
+    "decimals": 18,
+    "logo_url": "https://raw.githubusercontent.com/trustwallet/assets/master/blockchains/ethereum/assets/0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2/logo.png",
+    "resolved_via": "onchain_full",
+    "verified": true,
+    "registry_symbol": "WETH",
+    "registry_name": "Wrapped Ether",
+    "verified_notes": [
+     "in-registry",
+     "via-uniswap"
+    ],
+    "validation": {
+     "status": "VERIFIED",
+     "score": 75,
+     "liquidity_usd": 277612947.39000005,
+     "volume_24h_usd": 327291037.89000005,
+     "pair_count": 16,
+     "primary_dex": "uniswap",
+     "registry_source": "uniswap",
+     "validated_at": "2026-08-25T01:03:16.036Z",
+     "reasons": [
+      {
+       "key": "onchain-unavailable",
+       "note": "skipped (TOKEN_VALIDATION_ONCHAIN_ENABLED=false to protect shared RPC bucket)",
+       "delta": 0
+      },
+      {
+       "key": "registry-verified",
+       "note": "in uniswap (canonical: Wrapped Ether)",
+       "delta": 30
+      },
+      {
+       "key": "liquidity-viable",
+       "note": "liquidity_usd=$277612947.39 ≥ $5000",
+       "delta": 25
+      },
+      {
+       "key": "volume-active",
+       "note": "volume_24h_usd=$327291037.89 ≥ $1000",
+       "delta": 10
+      },
+      {
+       "key": "multi-pair",
+       "note": "16 pairs indexed",
+       "delta": 5
+      },
+      {
+       "key": "healthy-vol-liq-ratio",
+       "note": "volume/liquidity = 1.2×",
+       "delta": 5
+      }
+     ]
+    }
+   },
+   "leg_symbols": {
+    "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48": "USDC",
+    "0xdac17f958d2ee523a2206206994597c13d831ec7": "USDT"
+   },
+   "amount_in_wei": "0",
+   "expected_profit_usd": null,
+   "net_expected_profit_usd": null,
+   "roi_pct": null,
+   "risk_score": null,
+   "rejection_reason": "spot_product_le_one",
+   "paper_status": "paper_rejected",
+   "chains_used": [
+    1
+   ],
+   "dexes_used": [
+    "uniswap-v2"
+   ],
+   "block_number": null,
+   "status": "rejected",
+   "detected_at": "2026-08-25T01:33:06.174Z",
+   "trace_id": "fe4299c3-a119-4b00-9bd1-f36066f07caa",
+   "chain_id_out": null,
+   "bridge": null,
+   "bridge_fee_usd": null,
+   "route_metadata": {
+    "decimals": {
+     "map": {}
+    },
+    "dex_adapters": [
+     "uniswap-v2",
+     "uniswap-v2",
+     "uniswap-v2"
+    ],
+    "pool_addresses": [
+     "0xb4e16d0168e52d35cacd2c6185b44281ec28c9dc",
+     "0x3041cbd36888becc7bbcbc0045e3b1f144466f5f",
+     "0x0d4a11d5eeaac28ec3f61d100daf4d40471f1852"
+    ],
+    "token_addresses": [
+     "0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2",
+     "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48",
+     "0xdac17f958d2ee523a2206206994597c13d831ec7",
+     "0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2"
+    ]
+   },
+   "simulated_net_profit_usd": null,
+   "simulated_amount_in_usd": null,
+   "simulated_roi_pct": null,
+   "simulated_cost_breakdown": null,
+   "simulated_target": null,
+   "simulated_at": null,
+   "simulated_notes": null
+  },
+  {
+   "id": "3aa327af-ba1d-4eac-a4e8-bb890a8ce484",
+   "chain_id": 1,
+   "chain_base_token_symbol": "WETH",
+   "strategy_kind": "dex_arb",
+   "cartridge_id": null,
+   "dex_a": "PancakeSwap V3",
+   "dex_b": "PancakeSwap V3",
+   "pair_symbol": "c02aaa…/dac17f…",
+   "token_in": "0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2",
+   "token_in_info": {
+    "symbol": "WETH",
+    "decimals": 18,
+    "logo_url": "https://raw.githubusercontent.com/trustwallet/assets/master/blockchains/ethereum/assets/0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2/logo.png",
+    "resolved_via": "onchain_full",
+    "verified": true,
+    "registry_symbol": "WETH",
+    "registry_name": "Wrapped Ether",
+    "verified_notes": [
+     "in-registry",
+     "via-uniswap"
+    ],
+    "validation": {
+     "status": "VERIFIED",
+     "score": 75,
+     "liquidity_usd": 277612947.39000005,
+     "volume_24h_usd": 327291037.89000005,
+     "pair_count": 16,
+     "primary_dex": "uniswap",
+     "registry_source": "uniswap",
+     "validated_at": "2026-08-25T01:03:16.036Z",
+     "reasons": [
+      {
+       "key": "onchain-unavailable",
+       "note": "skipped (TOKEN_VALIDATION_ONCHAIN_ENABLED=false to protect shared RPC bucket)",
+       "delta": 0
+      },
+      {
+       "key": "registry-verified",
+       "note": "in uniswap (canonical: Wrapped Ether)",
+       "delta": 30
+      },
+      {
+       "key": "liquidity-viable",
+       "note": "liquidity_usd=$277612947.39 ≥ $5000",
+       "delta": 25
+      },
+      {
+       "key": "volume-active",
+       "note": "volume_24h_usd=$327291037.89 ≥ $1000",
+       "delta": 10
+      },
+      {
+       "key": "multi-pair",
+       "note": "16 pairs indexed",
+       "delta": 5
+      },
+      {
+       "key": "healthy-vol-liq-ratio",
+       "note": "volume/liquidity = 1.2×",
+       "delta": 5
+      }
+     ]
+    }
+   },
+   "token_out": "0xdac17f958d2ee523a2206206994597c13d831ec7",
+   "token_out_info": {
+    "symbol": "USDT",
+    "decimals": 6,
+    "logo_url": "https://raw.githubusercontent.com/trustwallet/assets/master/blockchains/ethereum/assets/0xdAC17F958D2ee523a2206206994597C13D831ec7/logo.png",
+    "resolved_via": "onchain_full",
+    "verified": true,
+    "registry_symbol": "USDT",
+    "registry_name": "Tether USD",
+    "verified_notes": [
+     "in-registry",
+     "via-uniswap"
+    ],
+    "validation": {
+     "status": "VERIFIED",
+     "score": 30,
+     "liquidity_usd": null,
+     "volume_24h_usd": null,
+     "pair_count": 0,
+     "primary_dex": null,
+     "registry_source": "uniswap",
+     "validated_at": "2026-08-25T01:06:14.731Z",
+     "reasons": [
+      {
+       "key": "onchain-unavailable",
+       "note": "skipped (TOKEN_VALIDATION_ONCHAIN_ENABLED=false to protect shared RPC bucket)",
+       "delta": 0
+      },
+      {
+       "key": "registry-verified",
+       "note": "in uniswap (canonical: Tether USD)",
+       "delta": 30
+      },
+      {
+       "key": "no-dex-data",
+       "note": "DEX Screener has no pair indexed",
+       "delta": 0
+      }
+     ]
+    }
+   },
+   "leg_symbols": {
+    "0xdac17f958d2ee523a2206206994597c13d831ec7": "USDT"
+   },
+   "amount_in_wei": "1000000000000000000",
+   "expected_profit_usd": null,
+   "net_expected_profit_usd": null,
+   "roi_pct": null,
+   "risk_score": null,
+   "rejection_reason": "v3_quote_unavailable",
+   "paper_status": "paper_rejected",
+   "chains_used": [
+    1
+   ],
+   "dexes_used": [
+    "pancakeswap v3"
+   ],
+   "block_number": null,
+   "status": "rejected",
+   "detected_at": "2026-08-25T01:33:06.174Z",
+   "trace_id": "0ec10b3a-726e-4b8a-b955-3b9b6bccd777",
+   "chain_id_out": null,
+   "bridge": null,
+   "bridge_fee_usd": null,
+   "route_metadata": {
+    "decimals": {
+     "map": {}
+    },
+    "dex_adapters": [
+     "PancakeSwap V3",
+     "PancakeSwap V3"
+    ],
+    "pool_addresses": [
+     "0xacdb27b266142223e1e676841c1e809255fc6d07",
+     "0x6ca298d2983ab03aa1da7679389d955a4efee15c"
+    ],
+    "token_addresses": [
+     "0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2",
+     "0xdac17f958d2ee523a2206206994597c13d831ec7",
+     "0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2"
+    ]
+   },
+   "simulated_net_profit_usd": null,
+   "simulated_amount_in_usd": null,
+   "simulated_roi_pct": null,
+   "simulated_cost_breakdown": null,
+   "simulated_target": null,
+   "simulated_at": null,
+   "simulated_notes": null
+  }
+ ],
+ "ts": "2026-08-25T01:33:14.646Z"
+}

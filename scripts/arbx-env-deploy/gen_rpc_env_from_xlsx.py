@@ -51,6 +51,18 @@ PLACEHOLDER_MARKERS = ("<", ">", "${", "YOUR", "API_KEY", "apikey", "key=")
 # Alchemy keys (/v2/alch_...). Real keys start with 'alch_' and are >20 chars.
 # We keep the /v2/ skip ONLY when the segment after /v2/ looks like a placeholder.
 
+# ARBX-R-0003: providers VERIFIED DEAD on prod (MC-RPC-1 provider-breakdown
+# evidence, 2026-08-14 boot audit) and therefore EXCLUDED from every generated
+# list even though the workbook catalog still lists them. The Excel remains the
+# SSOT for what EXISTS; this denylist is the evidence-backed layer for what is
+# USABLE. Remove an entry here only with fresh contrary evidence (and update the
+# workbook in the same operator pass).
+DEAD_PROVIDERS = {
+    "llama": "Cloudflare challenge HTML instead of JSON-RPC (eth.llamarpc.com)",
+    "0xrpc": "404 — endpoint retired",
+    "1rpc": "403 Forbidden on boot eth_chainid",
+}
+
 
 def _is_placeholder_url(url: str) -> bool:
     """True when the URL has placeholder markers OR a /v2/<placeholder> segment."""
@@ -91,7 +103,7 @@ def main():
     ws = wb["RPC Providers"]
 
     acc = defaultdict(lambda: {"HTTP": OrderedDict(), "WS": OrderedDict()})
-    unknown_chains, skipped = set(), []
+    unknown_chains, skipped, dead_excluded = set(), [], []
     for r in ws.iter_rows(min_row=2, values_only=True):
         chain = r[0]
         proto = r[1]
@@ -109,6 +121,11 @@ def main():
             continue
         pkey = "WS" if "WS" in str(proto).upper() else "HTTP"
         tok = provmap.get(str(prov).strip()) or str(prov).strip().lower().replace(" ", "")
+        # ARBX-R-0003: dead-provider denylist (evidence in DEAD_PROVIDERS) —
+        # excluded from the generated list regardless of catalog presence.
+        if tok in DEAD_PROVIDERS:
+            dead_excluded.append(f"{chain} | {pkey} | {tok} | {DEAD_PROVIDERS[tok]}")
+            continue
         acc[cid][pkey].setdefault(tok, u)  # first occurrence wins (catalog order = priority)
     wb.close()
 
@@ -123,6 +140,13 @@ def main():
         "# AUTO-GENERATED from ArbitrageX_Unified_Config.xlsm (RPC Providers + _RED_lookup).\n"
         "# Excel = SSOT, one-way. Regenerate: python scripts/arbx-env-deploy/gen_rpc_env_from_xlsx.py\n"
         "# Do NOT hand-edit; edit the workbook catalog and regenerate.\n"
+        + (
+            "# ARBX-R-0003: dead providers excluded with evidence: "
+            + "; ".join(f"{k} ({v})" for k, v in DEAD_PROVIDERS.items())
+            + "\n"
+            if DEAD_PROVIDERS
+            else ""
+        )
     )
     with open(args.out, "w", encoding="utf-8", newline="\n") as f:
         f.write(header)
@@ -137,6 +161,10 @@ def main():
     if skipped:
         print(f"\n# Skipped {len(skipped)} key-requiring/placeholder URL(s) (use --include-keyed to force):")
         for s in skipped:
+            print(f"#   {s}")
+    if dead_excluded:
+        print(f"\n# ARBX-R-0003: EXCLUDED {len(dead_excluded)} dead-provider row(s) (see DEAD_PROVIDERS):")
+        for s in dead_excluded:
             print(f"#   {s}")
 
 

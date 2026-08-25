@@ -1,0 +1,11 @@
+{
+  "id": 19,
+  "code": "op_19",
+  "name": "Simplex",
+  "canonical_role": "LP/simplex allocation and batch/split routing.",
+  "enabled": true,
+  "engine_present": true,
+  "calibration_state": "UNCALIBRATED",
+  "formula": "min c^T*x s.t. Ax <= b - LP allocation and batch optimization",
+  "implementation_file": "backend/math-engine/src/operators/op_19_simplex.rs"
+}

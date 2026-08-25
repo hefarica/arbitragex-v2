@@ -1,0 +1,22 @@
+{
+  "mev_id": "MEV-04-013",
+  "grupo": "4",
+  "estrategia": "LP-token NAV arbitrage",
+  "familia": "Arbitrajes por equivalencia, paridad o redenci\u00f3n del activo",
+  "required_surface": "PARITY_REDEMPTION",
+  "backend_module": "parity_redemption_engine",
+  "toggle_frontend": "strategy.04.013.enabled",
+  "min_legs": 2,
+  "max_legs": 8,
+  "legs_model": "Ruta din\u00e1mica",
+  "primary_operators": [
+    "op_13",
+    "op_19",
+    "op_21"
+  ],
+  "secondary_operators": [
+    "op_08",
+    "op_11",
+    "op_22"
+  ]
+}

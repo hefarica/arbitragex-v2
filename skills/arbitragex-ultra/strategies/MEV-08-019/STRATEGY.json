@@ -1,0 +1,22 @@
+{
+  "mev_id": "MEV-08-019",
+  "grupo": "8",
+  "estrategia": "Dutch-auction liquidation arbitrage",
+  "familia": "Lending, cr\u00e9dito, liquidaciones y deuda",
+  "required_surface": "LENDING",
+  "backend_module": "credit_liquidation_engine",
+  "toggle_frontend": "strategy.08.019.enabled",
+  "min_legs": 1,
+  "max_legs": 4,
+  "legs_model": "Acci\u00f3n+unwind",
+  "primary_operators": [
+    "op_19",
+    "op_21",
+    "op_23"
+  ],
+  "secondary_operators": [
+    "op_08",
+    "op_11",
+    "op_22"
+  ]
+}

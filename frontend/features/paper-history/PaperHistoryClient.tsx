@@ -20,11 +20,14 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { DegradedBanner } from "@/components/DegradedBanner";
 import { SourceMeta } from "@/components/SourceMeta";
 import { fmtMoney, fmtTime } from "@/lib/formatters";
+import { deriveHopCount, type RouteMetadataWire } from "@/lib/store/types";
 
 const POLL_INTERVAL_MS = 15_000;
 
 // ─── Types ────────────────────────────────────────────────────────────────────
-interface PaperTradeRow {
+/** Wire row of GET /api/v1/paper/history. Exported for the honest-suite tests
+ *  (FE-0056 evidence-layer fixtures) — the shape IS the contract. */
+export interface PaperTradeRow {
   id: string;
   opportunity_id: string | null;
   route_hash: string | null;
@@ -43,6 +46,18 @@ interface PaperTradeRow {
   opp_dex_a?: string | null;
   opp_dex_b?: string | null;
   opp_amount_in_wei?: string | null;
+  // FE-0056 (§61) evidence layer — the columns the contracts DO carry today.
+  // Absent (null/undefined) = honest "—": purged source opportunity (JOIN to
+  // NULL), pre-column rows, or a genuinely accepted run (reason NULL). Never
+  // fabricated (RULE 00 / §28).
+  /** `reason` (mig 091) — the verbatim failure reason; NULL ⇒ run aceptada. */
+  failure_reason?: string | null;
+  /** `cartridge_id` (mig 102) — the per-strategy identity (MEV-XX-XXX). */
+  opp_cartridge_id?: string | null;
+  /** `route_metadata` (mig 099) — FE derives hop count from it (§26 single derivation). */
+  opp_route_metadata?: RouteMetadataWire | null;
+  /** Persisted `roi_pct` — net bps is a display unit conversion (×100), never recomputed. */
+  opp_roi_pct?: number | null;
 }
 
 interface PaperHistoryResponse {
@@ -126,19 +141,45 @@ function SummaryStrip({ summary }: { summary: PaperSummaryResponse }) {
 }
 
 // ─── Row ──────────────────────────────────────────────────────────────────────
+/** FE-0056 (§61): hop count from the persisted topology (§26 single derivation).
+ *  Null when no route_metadata (purged source / legacy row) → honest "—". */
+function fmtHop(row: PaperTradeRow): string {
+  const hops = deriveHopCount(row.opp_route_metadata ?? null);
+  return hops === null ? "—" : String(hops);
+}
+
+/** FE-0056 (§61): net bps as a DISPLAY unit conversion of the persisted roi_pct
+ *  (1 pct point = 100 bps). Never recomputed from USD figures — those aren't
+ *  persisted for opportunities (R8). Null roi_pct → honest "—". */
+function fmtNetBps(roiPct: number | null | undefined): string {
+  if (roiPct === null || roiPct === undefined || !Number.isFinite(roiPct)) return "—";
+  return `${(roiPct * 100).toFixed(1)}`;
+}
+
 function PaperTradeRowCard({ row }: { row: PaperTradeRow }) {
   const netProfit = row.sim_net_profit_usd ? parseFloat(row.sim_net_profit_usd) : null;
   const isProfit = netProfit !== null && netProfit > 0;
   return (
-    <tr className="border-b text-sm last:border-0">
+    // FE-0051 (§76): the source opportunity's logical id on the DOM root —
+    // nullable per the LEFT JOIN (purged source renders no attribute, R8).
+    <tr
+      className="border-b text-sm last:border-0"
+      {...(row.opportunity_id ? { "data-opp-id": row.opportunity_id } : {})}
+    >
       <td className="py-2 pr-3 font-mono text-xs text-muted-foreground">
         {row.created_at ? fmtTime(row.created_at) : "—"}
       </td>
       <td className="py-2 pr-3">
         <Badge variant="outline" className="text-xs capitalize">{row.strategy ?? "—"}</Badge>
       </td>
+      <td className="py-2 pr-3 font-mono text-xs text-muted-foreground" title={row.opp_cartridge_id ?? "cartridge_id NULL — oportunidad purgada o fila pre-mig-102 (R8)"}>
+        {row.opp_cartridge_id ?? "—"}
+      </td>
       <td className="py-2 pr-3 text-xs text-muted-foreground">
         {fmtRoute(row)}
+      </td>
+      <td className="py-2 pr-3 font-mono text-xs text-muted-foreground" title="hop = len(dex_adapters) del route_metadata persistido (§26)">
+        {fmtHop(row)}
       </td>
       <td className="py-2 pr-3 text-right font-mono text-xs">
         {fmtProfit(row.sim_expected_profit_usd)}
@@ -146,8 +187,20 @@ function PaperTradeRowCard({ row }: { row: PaperTradeRow }) {
       <td className="py-2 pr-3 text-right font-mono text-xs text-muted-foreground">
         {fmtProfit(row.sim_gas_cost_usd)}
       </td>
-      <td className={`py-2 text-right font-mono text-xs font-semibold ${isProfit ? "text-green-500" : "text-destructive"}`}>
+      <td className={`py-2 pr-3 text-right font-mono text-xs font-semibold ${isProfit ? "text-green-500" : "text-destructive"}`}>
         {fmtProfit(row.sim_net_profit_usd)}
+      </td>
+      <td
+        className="py-2 pr-3 text-right font-mono text-xs"
+        title="net bps = roi_pct persistido ×100 (conversión de unidad de display, no recomputo §79)"
+      >
+        {fmtNetBps(row.opp_roi_pct)}
+      </td>
+      <td
+        className="max-w-[16rem] truncate py-2 text-xs text-muted-foreground"
+        title={row.failure_reason ?? "reason NULL ⇒ run aceptada (no rechazada) — mig 091"}
+      >
+        {row.failure_reason ?? "—"}
       </td>
     </tr>
   );
@@ -254,10 +307,14 @@ export function PaperHistoryClient({ initialData }: Props): React.ReactElement {
               <tr className="border-b bg-muted/40 text-xs text-muted-foreground">
                 <th className="py-2 pr-3 text-left font-medium">Time</th>
                 <th className="py-2 pr-3 text-left font-medium">Strategy</th>
+                <th className="py-2 pr-3 text-left font-medium">Cartridge</th>
                 <th className="py-2 pr-3 text-left font-medium">Route</th>
+                <th className="py-2 pr-3 text-left font-medium">Hop</th>
                 <th className="py-2 pr-3 text-right font-medium">Sim Profit</th>
                 <th className="py-2 pr-3 text-right font-medium">Gas Cost</th>
-                <th className="py-2 text-right font-medium">Net Profit</th>
+                <th className="py-2 pr-3 text-right font-medium">Net Profit</th>
+                <th className="py-2 pr-3 text-right font-medium">Net bps</th>
+                <th className="py-2 text-left font-medium">Reason</th>
               </tr>
             </thead>
             <tbody>
@@ -271,6 +328,18 @@ export function PaperHistoryClient({ initialData }: Props): React.ReactElement {
       <p className="text-xs text-muted-foreground">
         Rows before 2026-08-16 lack gas/route capture (written before the ledger
         terminus populated those columns).
+      </p>
+      {/* FE-0056 (§61): declared evidence gaps — never fabricated (§28). */}
+      <p className="text-xs text-muted-foreground" data-testid="paper-history-evidence-gaps">
+        Evidence layer: Cartridge/Hop/Net bps provienen del JOIN a{" "}
+        <code>opportunities</code> (cartridge_id, route_metadata, roi_pct) y Reason
+        de la columna <code>reason</code> (mig 091); NULL = oportunidad purgada,
+        fila previa a la columna, o run aceptada. route_id, detector_id,
+        quote_version, graph_version y config_version <strong>no están persistidos
+        en ningún contrato</strong> (gap nivel-(b), declarado — no se muestran ni se
+        fabrican). Net bps = roi_pct persistido ×100 (conversión de unidad de
+        display, no recomputo §79); Hop = len(dex_adapters) de route_metadata
+        (derivación única §26).
       </p>
     </div>
   );

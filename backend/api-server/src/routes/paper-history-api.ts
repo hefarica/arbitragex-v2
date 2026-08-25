@@ -59,6 +59,14 @@ export function buildPaperHistoryRouter(pool: pg.Pool | null): Router {
       // `strategy`), select `route_hash`, and LEFT JOIN opportunities for route
       // context (`opp_*` columns). The FK may dangle for runs whose opportunity
       // was purged (>30d retention) — those JOIN to NULL and render honestly.
+      // FE-0056 (§61) evidence layer: surface the columns the contracts DO
+      // carry today — `reason` (mig 091, the failure reason; NULL = accepted),
+      // `cartridge_id` (mig 102, the strategy identity), `route_metadata`
+      // (mig 099, the FE derives hop count from it — single derivation, §26),
+      // and the persisted `roi_pct` (net bps = display unit conversion ×100,
+      // §79 — never recomputed here). route_id/detector_id/quote_version/
+      // graph_version/config_version are NOT persisted anywhere (nivel-(b))
+      // and are declared gaps client-side, never fabricated.
       const rows = await pool.query(
         `SELECT
            r.id,
@@ -68,6 +76,7 @@ export function buildPaperHistoryRouter(pool: pg.Pool | null): Router {
            (r.sim_expected_profit_usd - COALESCE(r.sim_gas_cost_usd, 0)) AS sim_net_profit_usd,
            r.strategy_kind AS strategy,
            r.route_hash,
+           r.reason       AS failure_reason,
            r.chain_id,
            r.created_at,
            o.pair_symbol   AS opp_pair_symbol,
@@ -75,7 +84,10 @@ export function buildPaperHistoryRouter(pool: pg.Pool | null): Router {
            o.token_out     AS opp_token_out,
            o.dex_a         AS opp_dex_a,
            o.dex_b         AS opp_dex_b,
-           o.amount_in_wei AS opp_amount_in_wei
+           o.amount_in_wei AS opp_amount_in_wei,
+           o.cartridge_id  AS opp_cartridge_id,
+           o.route_metadata AS opp_route_metadata,
+           o.roi_pct::float AS opp_roi_pct
          FROM paper_trade_runs r
          LEFT JOIN opportunities o ON o.id = r.opportunity_id
          ORDER BY r.created_at DESC

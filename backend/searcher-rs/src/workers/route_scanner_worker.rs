@@ -822,7 +822,13 @@ mod tests {
         for (i, e) in edges.iter().enumerate() {
             adjacency.entry(e.token_in).or_default().push(i);
         }
-        TokenGraph { edges, adjacency }
+        // ARBX-0019: `dense` starts unbuilt (None) — adjacency stays the
+        // source of truth; tests that need the view call build_dense.
+        TokenGraph {
+            edges,
+            adjacency,
+            dense: None,
+        }
     }
 
     // ── mode gate ────────────────────────────────────────────────────────────

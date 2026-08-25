@@ -5,6 +5,9 @@ import { FocusOnMount } from "@/components/focus-on-mount";
 import { PageHeader } from "@/components/page-header";
 import { TradingConfigForm } from "@/components/trading-config-form";
 import { getTradingConfig } from "@/lib/api-client";
+// FE-0041 (§54): this surface IS the SSOT for trading knobs — every save here
+// is a runtime mutation (putTradingConfig → Redis → searcher-rs hot-reload).
+import { ControlScopeBadge } from "@/components/ControlScopeBadge";
 
 // Server Component — pulls initial snapshot from edge, passes to client form.
 // Mounted Snapshot Pattern (R1): all non-deterministic state lives in the
@@ -47,6 +50,14 @@ export default async function TradingConfigPage() {
         lede="Capital, token allowlist, yield thresholds, gas strategy. searcher-rs reads these in ≤1s; the system stays idle for any chain without a row."
         showRefresh
       />
+
+      {/* FE-0041 (§54): the SSOT knobs surface — every control below mutates runtime. */}
+      <div className="mb-4 flex items-center gap-2">
+        <ControlScopeBadge kind="RUNTIME_MUTATION" />
+        <span className="text-xs text-muted-foreground">
+          SSOT de knobs de trading — todo control de esta página muta runtime vía putTradingConfig.
+        </span>
+      </div>
 
       {!initial.configured && (
         <Alert className="mb-6">

@@ -1,0 +1,22 @@
+{
+  "mev_id": "MEV-03-016",
+  "grupo": "3",
+  "estrategia": "Mint/burn state arbitrage",
+  "familia": "Arbitrajes disparados por transacciones o cambios de estado",
+  "required_surface": "DEX_STATE",
+  "backend_module": "state_event_engine",
+  "toggle_frontend": "strategy.03.016.enabled",
+  "min_legs": 2,
+  "max_legs": 8,
+  "legs_model": "Ruta din\u00e1mica",
+  "primary_operators": [
+    "op_05",
+    "op_08",
+    "op_21"
+  ],
+  "secondary_operators": [
+    "op_11",
+    "op_13",
+    "op_22"
+  ]
+}

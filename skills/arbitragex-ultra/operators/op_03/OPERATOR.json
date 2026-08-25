@@ -1,0 +1,11 @@
+{
+  "id": 3,
+  "code": "op_03",
+  "name": "Eigen",
+  "canonical_role": "Eigenstructure/regime structure.",
+  "enabled": true,
+  "engine_present": true,
+  "calibration_state": "UNCALIBRATED",
+  "formula": "Av = lambda*v - eigenstructure of correlation matrices",
+  "implementation_file": "backend/math-engine/src/operators/op_03_eigen.rs"
+}

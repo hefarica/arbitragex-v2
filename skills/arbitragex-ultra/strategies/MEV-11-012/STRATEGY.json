@@ -1,0 +1,21 @@
+{
+  "mev_id": "MEV-11-012",
+  "grupo": "11",
+  "estrategia": "Prediction AMM\u2013order-book arbitrage",
+  "familia": "Prediction markets y mercados condicionales",
+  "required_surface": "PREDICTION",
+  "backend_module": "prediction_engine",
+  "toggle_frontend": "strategy.11.012.enabled",
+  "min_legs": 2,
+  "max_legs": 12,
+  "legs_model": "Settlement multiorden",
+  "primary_operators": [
+    "op_08",
+    "op_19",
+    "op_21"
+  ],
+  "secondary_operators": [
+    "op_11",
+    "op_22"
+  ]
+}

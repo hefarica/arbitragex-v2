@@ -5,8 +5,13 @@
 //!     (operational debt flag for the operator to fix during onboarding fase 5).
 //!   - Active health checks every 15s via `eth_blockNumber`.
 //!   - Drift detection: a provider >2 blocks behind max for >60s → Degraded.
-//!   - Circuit breaker per provider: 5 errors / 60s → Open for 30s → Half-open → success → Healthy.
-//!   - Selection: best-of-Healthy by EWMA latency, fallback to Degraded if none Healthy, never Open.
+//!   - Circuit breaker per provider: 5 errors / 60s → Open (effective cooldown: 30s base,
+//!     120s floor when rate-limit-opened, doubling per reopen, cap 600s — ARBX-R-0003)
+//!     → Half-open → probe (real eth_call load-proof for rate-limit openings,
+//!     blockNumber otherwise) → success → Healthy.
+//!   - Selection: best-of-Healthy by EWMA latency (recently-rate-limited entries rank
+//!     behind clean ones for 60s — sticky penalty, ARBX-R-0003), fallback to Degraded
+//!     if none Healthy, never Open.
 //!   - No-hardcode: empty env → empty pool. Service must stay idle (no default URLs).
 //!   - Honest: PoolError::AllUnhealthy when no provider is selectable.
 //!
@@ -53,6 +58,52 @@ pub const EWMA_ALPHA_BPS: u64 = 3000; // 0.30 weight on new sample (in basis poi
 /// healthy providers; a wrong chain id remains a permanent, no-retry drop.
 pub const BOOT_PROBE_ATTEMPTS: u32 = 3;
 pub const BOOT_PROBE_RETRY_DELAY: Duration = Duration::from_millis(750);
+
+// ---------- ARBX-R-0003: rate-limit (429) policy ----------
+//
+// The 429-storm incident (64 rate-limit errors / 10 min on the quoter path)
+// had a structural cause beyond any single dead provider: the standard 30s
+// breaker cooldown lets a CHEAP `eth_blockNumber` health probe close the
+// circuit while the provider still 429s the `eth_call` load the quoter
+// actually issues — health-pass ≠ load-ok. The circuit then reopens under
+// the same load, in an open/close/reopen hammer loop. Three mitigations:
+// a rate-limit cooldown floor + exponential reopen backoff, a sticky pick
+// penalty, and a load-proof half-open probe (real eth_call).
+
+/// Cooldown floor while the breaker opened on a rate-limit-class failure.
+pub const RATE_LIMIT_MIN_COOLDOWN: Duration = Duration::from_secs(120);
+/// Backoff before `with_retry`'s second attempt when the first failed with
+/// a rate-limit-class error — respect the provider's backpressure instead
+/// of hitting the backup instantly from the same hot loop.
+pub const RATE_LIMIT_RETRY_BACKOFF: Duration = Duration::from_millis(500);
+/// A Healthy provider that rate-limited within this window is picked LAST
+/// among Healthy entries (sticky penalty — the selection weight of R-0003).
+pub const RATE_LIMIT_STICKY: Duration = Duration::from_secs(60);
+/// Cap of the exponential reopen backoff (`base × 2^(open_count−1)`).
+pub const REOPEN_BACKOFF_CAP: Duration = Duration::from_secs(600);
+
+/// Universal Multicall3 CREATE2 address — identical on every EVM chain where
+/// it is deployed. A protocol constant (same standing as the public chain
+/// IDs in the env generator), NOT operator config; the full ABI the repo
+/// already uses lives at `searcher-rs/src/amm_math.rs` (`aggregate3Call`).
+pub const MULTICALL3_ADDRESS: alloy::primitives::Address =
+    alloy::primitives::address!("0xcA11bde05977b3631167028862bE2a173976CA11");
+
+/// `aggregate3([])` — the FULL calldata encoding of an empty calls array:
+/// selector + head offset (0x20) + array length (0), 68 bytes. Selector-only
+/// would REVERT in the ABI decoder (out-of-bounds head read), turning every
+/// load probe into a failure and pinning rate-limited breakers open forever —
+/// the searcher-rs pin test exists to keep this byte-exact against the real
+/// `aggregate3Call` encoding. Cheap, but it travels the provider's full
+/// eth_call surface — exactly what a 429 rate-limits — which an
+/// `eth_blockNumber` probe never touches.
+pub const LOAD_PROBE_CALLDATA: &[u8] = &[
+    // aggregate3(Call3[]) selector
+    0x82, 0xad, 0x56, 0xcb, // head: offset of the dynamic `calls` argument (32)
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    32, // tail: Call3[] length = 0 (empty)
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+];
 
 // ---------- errors ----------
 
@@ -108,6 +159,18 @@ pub struct CircuitState {
     pub opened_at: Option<Instant>,
     pub half_open_pending: bool,
     pub drift_first_seen: Option<Instant>,
+    /// ARBX-R-0003: total openings over this process lifetime — the exponent
+    /// of the reopen backoff (`open_count − 1`). Deliberately NOT reset on a
+    /// successful close: a chronically rate-limited free provider does not
+    /// re-earn short cooldowns, and a healthy provider never opens, so it
+    /// pays nothing.
+    pub open_count: u32,
+    /// ARBX-R-0003: the OPENING failure was rate-limit class → extended
+    /// cooldown floor + the load-proof half-open probe.
+    pub opened_by_rate_limit: bool,
+    /// ARBX-R-0003: last rate-limit-class failure seen on this entry — drives
+    /// the `pick()` sticky penalty while recent.
+    pub last_rate_limit_at: Option<Instant>,
 }
 
 // ---------- HTTP entry ----------
@@ -307,10 +370,16 @@ impl HttpRpcPool {
     }
 
     /// Pick the best provider for a read operation, or return AllUnhealthy.
-    /// Selection rule: lowest EWMA latency among Healthy; if none Healthy, lowest
-    /// EWMA latency among Degraded; never Open.
+    /// Selection rule: lowest EWMA latency among Healthy — EXCEPT that a
+    /// Healthy entry still inside the rate-limit sticky window (R-0003)
+    /// sorts behind every clean Healthy entry (the selection weight: a
+    /// recently-429ing provider is only chosen when it is the only Healthy
+    /// option); if none Healthy, lowest EWMA latency among Degraded; never
+    /// Open.
     pub fn pick(&self) -> Result<Arc<HttpEntry>, PoolError> {
-        let mut best_healthy: Option<&Arc<HttpEntry>> = None;
+        let now = Instant::now();
+        let mut best_clean: Option<&Arc<HttpEntry>> = None;
+        let mut best_sticky: Option<&Arc<HttpEntry>> = None;
         let mut best_degraded: Option<&Arc<HttpEntry>> = None;
 
         for e in &self.entries {
@@ -318,11 +387,16 @@ impl HttpRpcPool {
                 ProviderState::Open => continue,
                 ProviderState::Healthy => {
                     let lat = e.snapshot_latency_ms();
-                    if best_healthy
-                        .map(|b| lat < b.snapshot_latency_ms() || b.snapshot_latency_ms() == 0)
-                        .unwrap_or(true)
-                    {
-                        best_healthy = Some(e);
+                    let better = |b: Option<&Arc<HttpEntry>>| {
+                        b.map(|b| lat < b.snapshot_latency_ms() || b.snapshot_latency_ms() == 0)
+                            .unwrap_or(true)
+                    };
+                    if is_rate_limit_sticky(e, now) {
+                        if better(best_sticky) {
+                            best_sticky = Some(e);
+                        }
+                    } else if better(best_clean) {
+                        best_clean = Some(e);
                     }
                 }
                 ProviderState::Degraded => {
@@ -337,7 +411,7 @@ impl HttpRpcPool {
             }
         }
 
-        match best_healthy.or(best_degraded) {
+        match best_clean.or(best_sticky).or(best_degraded) {
             Some(e) => Ok(Arc::clone(e)),
             None => Err(PoolError::AllUnhealthy(self.chain_id)),
         }
@@ -361,7 +435,15 @@ impl HttpRpcPool {
                 return Ok(v);
             }
             Err(e) => {
-                self.report_failure(&first, &format!("{e}")).await;
+                let msg = format!("{e}");
+                self.report_failure(&first, &msg).await;
+                // R-0003: a rate-limited provider is screaming backpressure —
+                // back off briefly before the backup attempt instead of
+                // firing it from the same hot instant.
+                let backoff = retry_backoff_for(&msg);
+                if !backoff.is_zero() {
+                    tokio::time::sleep(backoff).await;
+                }
             }
         }
 
@@ -421,8 +503,9 @@ impl HttpRpcPool {
 
     /// Mark a failed call: append failure to window, possibly trip the breaker.
     pub async fn report_failure(&self, entry: &Arc<HttpEntry>, cause: &str) {
+        let cause_class = classify_cause(cause);
         crate::metrics::RPC_PROVIDER_ERRORS_TOTAL
-            .with_label_values(&[entry.name.as_str(), "http", classify_cause(cause)])
+            .with_label_values(&[entry.name.as_str(), "http", cause_class])
             .inc();
         emit_rotation_needed_if_credential_error(entry, cause);
         let mut cb = entry.circuit.write().await;
@@ -430,18 +513,27 @@ impl HttpRpcPool {
         cb.failures_window
             .retain(|t| now.duration_since(*t) < CB_WINDOW);
         cb.failures_window.push(now);
+        // R-0003: a rate-limit-class failure leaves the sticky mark even
+        // before/without a trip — pick() deprioritizes the provider for the
+        // sticky window so the hot path stops hammering it.
+        if cause_class == "rate_limit" {
+            cb.last_rate_limit_at = Some(now);
+        }
 
         if cb.failures_window.len() >= CB_ERROR_LIMIT && cb.opened_at.is_none() {
             cb.opened_at = Some(now);
             cb.half_open_pending = false;
+            cb.open_count = cb.open_count.saturating_add(1);
+            cb.opened_by_rate_limit = cause_class == "rate_limit";
             entry.set_state(ProviderState::Open);
             warn!(
                 event = "rpc_pool.circuit_opened",
                 provider = %entry.name,
                 failures = cb.failures_window.len(),
                 window_secs = CB_WINDOW.as_secs(),
+                rate_limit = cb.opened_by_rate_limit,
                 "circuit breaker tripped — provider muted for {}s",
-                CB_OPEN_DURATION.as_secs()
+                effective_cooldown(&cb).as_secs()
             );
         } else {
             debug!(
@@ -465,11 +557,16 @@ impl HttpRpcPool {
                 ticker.tick().await;
                 let mut max_block: u64 = 0;
                 for e in &entries {
-                    // Cool-down rotation: Open → Half-open after CB_OPEN_DURATION.
+                    // Cool-down rotation: Open → Half-open after the EFFECTIVE
+                    // cooldown (R-0003: rate-limit openings floor at 120s and
+                    // reopens back off exponentially — the fixed 30s fed the
+                    // open/close/reopen hammer loop).
                     {
                         let mut cb = e.circuit.write().await;
                         if let Some(opened_at) = cb.opened_at {
-                            if opened_at.elapsed() >= CB_OPEN_DURATION && !cb.half_open_pending {
+                            if opened_at.elapsed() >= effective_cooldown(&cb)
+                                && !cb.half_open_pending
+                            {
                                 cb.half_open_pending = true;
                                 e.set_state(ProviderState::Degraded);
                                 info!(
@@ -481,17 +578,38 @@ impl HttpRpcPool {
                         }
                     }
 
-                    // Probe.
+                    // Probe. R-0003: a rate-limit-opened breaker reopens on a
+                    // LOAD proof — a real eth_call (Multicall3 aggregate3([]))
+                    // — because the 429-storm incident showed a cheap
+                    // blockNumber probe passing while eth_calls kept failing.
+                    // Every other state probes with blockNumber as before.
+                    let load_probe = {
+                        let cb = e.circuit.read().await;
+                        half_open_probe_is_load(&cb)
+                    };
                     let started = Instant::now();
-                    match tokio::time::timeout(HEALTH_CHECK_TIMEOUT, e.provider.get_block_number())
-                        .await
-                    {
+                    let probed = if load_probe {
+                        let tx = load_probe_transaction();
+                        tokio::time::timeout(HEALTH_CHECK_TIMEOUT, e.provider.call(tx))
+                            .await
+                            .map(|r| r.map(|_| None))
+                    } else {
+                        tokio::time::timeout(HEALTH_CHECK_TIMEOUT, e.provider.get_block_number())
+                            .await
+                            .map(|r| r.map(Some))
+                    };
+                    match probed {
                         Ok(Ok(bn)) => {
-                            let bn: u64 = bn;
-                            e.last_block.store(bn, Ordering::Relaxed);
-                            crate::metrics::RPC_PROVIDER_BLOCK_HEIGHT
-                                .with_label_values(&[e.name.as_str(), "http"])
-                                .set(bn as i64);
+                            if let Some(bn) = bn {
+                                let bn: u64 = bn;
+                                e.last_block.store(bn, Ordering::Relaxed);
+                                crate::metrics::RPC_PROVIDER_BLOCK_HEIGHT
+                                    .with_label_values(&[e.name.as_str(), "http"])
+                                    .set(bn as i64);
+                                if bn > max_block {
+                                    max_block = bn;
+                                }
+                            }
                             // For success, run through pool's report_success-like
                             // path inline (we don't have &self here; emulate).
                             let lat_ms = started.elapsed().as_millis().min(u64::MAX as u128) as u64;
@@ -508,7 +626,8 @@ impl HttpRpcPool {
                                 .with_label_values(&[e.name.as_str(), "http"])
                                 .observe(lat_ms as f64);
 
-                            // Half-open success → close circuit.
+                            // Half-open success → close circuit. A load-probe
+                            // success closes it too — that WAS the load proof.
                             let mut cb = e.circuit.write().await;
                             if cb.half_open_pending {
                                 cb.opened_at = None;
@@ -518,41 +637,64 @@ impl HttpRpcPool {
                                 info!(
                                     event = "rpc_pool.circuit_closed",
                                     provider = %e.name,
+                                    load_prove = load_probe,
                                     "half-open probe success → healthy"
                                 );
                             } else if e.snapshot_state() == ProviderState::Degraded {
                                 // Recovery from drift-only degradation handled below.
                             }
-
-                            if bn > max_block {
-                                max_block = bn;
-                            }
                         }
                         Ok(Err(err)) => {
                             let cause = format!("{err}");
+                            let cause_class = classify_cause(&cause);
                             emit_rotation_needed_if_credential_error(e, &cause);
                             crate::metrics::RPC_PROVIDER_ERRORS_TOTAL
-                                .with_label_values(&[
-                                    e.name.as_str(),
-                                    "http",
-                                    classify_cause(&cause),
-                                ])
+                                .with_label_values(&[e.name.as_str(), "http", cause_class])
                                 .inc();
                             let mut cb = e.circuit.write().await;
                             let now = Instant::now();
+                            // R-0003: rate-limit-class health failures carry the
+                            // sticky penalty too — the probe path sees the same
+                            // 429 the request path does.
+                            if cause_class == "rate_limit" {
+                                cb.last_rate_limit_at = Some(now);
+                            }
                             cb.failures_window
                                 .retain(|t| now.duration_since(*t) < CB_WINDOW);
                             cb.failures_window.push(now);
-                            if cb.failures_window.len() >= CB_ERROR_LIMIT && cb.opened_at.is_none()
+                            if cb.half_open_pending {
+                                // R-0003: a FAILED half-open probe re-opens the
+                                // breaker (classic half-open semantics) so a
+                                // provider still rate-limiting is not load-probed
+                                // every 15s; `open_count` stepping up doubles the
+                                // next cooldown.
+                                cb.half_open_pending = false;
+                                cb.opened_at = Some(now);
+                                cb.open_count = cb.open_count.saturating_add(1);
+                                cb.opened_by_rate_limit =
+                                    cb.opened_by_rate_limit || cause_class == "rate_limit";
+                                e.set_state(ProviderState::Open);
+                                warn!(
+                                    event = "rpc_pool.circuit_reopened",
+                                    provider = %e.name,
+                                    cooldown_secs = effective_cooldown(&cb).as_secs(),
+                                    "half-open probe failed → re-open with next backoff step"
+                                );
+                            } else if cb.failures_window.len() >= CB_ERROR_LIMIT
+                                && cb.opened_at.is_none()
                             {
                                 cb.opened_at = Some(now);
                                 cb.half_open_pending = false;
+                                cb.open_count = cb.open_count.saturating_add(1);
+                                cb.opened_by_rate_limit = cause_class == "rate_limit";
                                 e.set_state(ProviderState::Open);
                                 warn!(
                                     event = "rpc_pool.circuit_opened",
                                     provider = %e.name,
                                     failures = cb.failures_window.len(),
                                     cause = "health_check_failed",
+                                    rate_limit = cb.opened_by_rate_limit,
+                                    cooldown_secs = effective_cooldown(&cb).as_secs(),
                                     "circuit breaker tripped from health checks"
                                 );
                             }
@@ -788,11 +930,81 @@ fn push_uniquely_named(out: &mut Vec<(String, String)>, name: String, url: Strin
     out.push((format!("{name}-{i}"), url));
 }
 
+/// ARBX-R-0003: cooldown before the breaker may half-open. Base `CB_OPEN_DURATION`
+/// (30s); a rate-limit opening floors it at `RATE_LIMIT_MIN_COOLDOWN` (120s);
+/// each reopen doubles it (`open_count − 1` exponent), capped at
+/// `REOPEN_BACKOFF_CAP`. Exponential backoff against the open/close/reopen
+/// hammer loop of the 429-storm incident.
+pub fn effective_cooldown(cb: &CircuitState) -> Duration {
+    let base = if cb.opened_by_rate_limit {
+        RATE_LIMIT_MIN_COOLDOWN
+    } else {
+        CB_OPEN_DURATION
+    };
+    let exp = cb.open_count.saturating_sub(1).min(3);
+    let ms = base.as_millis() as u64;
+    let scaled = ms.saturating_mul(1u64 << exp);
+    Duration::from_millis(scaled.min(REOPEN_BACKOFF_CAP.as_millis() as u64))
+}
+
+/// ARBX-R-0003: `with_retry`'s inter-attempt backoff — a rate-limit-class
+/// first failure backs off before trying the backup; every other class
+/// retries immediately (the historical behavior).
+pub fn retry_backoff_for(cause: &str) -> Duration {
+    if classify_cause(cause) == "rate_limit" {
+        RATE_LIMIT_RETRY_BACKOFF
+    } else {
+        Duration::ZERO
+    }
+}
+
+/// ARBX-R-0003: does this (Healthy) entry still carry the recent
+/// rate-limit sticky penalty in `pick()`? `try_read` — `pick` is sync and a
+/// contended lock simply means "no penalty this pick" (the historical
+/// latency-only order), never a block.
+pub fn is_rate_limit_sticky(entry: &HttpEntry, now: Instant) -> bool {
+    entry
+        .circuit
+        .try_read()
+        .map(|cb| {
+            cb.last_rate_limit_at
+                .is_some_and(|t| now.duration_since(t) < RATE_LIMIT_STICKY)
+        })
+        .unwrap_or(false)
+}
+
+/// ARBX-R-0003: is this entry's pending half-open probe a LOAD probe? True
+/// only when the breaker opened on rate-limit — a cheap blockNumber probe
+/// proved nothing about eth_call capacity in the 429-storm incident
+/// (health-pass ≠ load-ok), so the reopening decision goes through a real
+/// eth_call instead. Callers hold the read lock already; the flag is plain
+/// data, so this stays a free function over `&CircuitState`.
+pub fn half_open_probe_is_load(cb: &CircuitState) -> bool {
+    cb.half_open_pending && cb.opened_by_rate_limit
+}
+
+/// ARBX-R-0003: the load-probe transaction — a read-only `eth_call` of
+/// `Multicall3.aggregate3([])` (`0x82ad56cb` + no args), the cheapest call
+/// that still exercises the provider's eth_call quota the same way the quoter
+/// path does. Multicall3 lives at the same CREATE2 address on every chain the
+/// pool serves (universal protocol constant, not config), so the probe needs
+/// no per-chain setup.
+fn load_probe_transaction() -> alloy::rpc::types::TransactionRequest {
+    alloy::rpc::types::TransactionRequest::default()
+        .to(MULTICALL3_ADDRESS)
+        .input(alloy::primitives::Bytes::from(LOAD_PROBE_CALLDATA).into())
+}
+
 fn classify_cause(msg: &str) -> &'static str {
     let m = msg.to_ascii_lowercase();
     if m.contains("timeout") || m.contains("timed out") {
         "timeout"
-    } else if m.contains("rate") {
+    } else if m.contains("rate") || m.contains("429") || m.contains("too many requests") {
+        // R-0003: the incident messages were `HTTP status client error
+        // (429 Too Many Requests)` — which contains NEITHER "rate" nor any
+        // other bucket marker, so real 429s used to classify as "other" and
+        // every rate-limit policy silently no-opped. Match the status code
+        // and the reason phrase explicitly.
         "rate_limit"
     } else if m.contains("connection") || m.contains("connect") {
         "connection"
@@ -1036,5 +1248,158 @@ mod tests {
         let e = pool.entries[0].clone();
         pool.report_success(&e, Duration::from_millis(123)).await;
         assert_eq!(e.snapshot_latency_ms(), 123);
+    }
+
+    // ---------- ARBX-R-0003: 429-storm mitigation ----------
+
+    /// `Instant` that is `secs` in the past, for expiry tests.
+    fn instant_ago(secs: u64) -> Instant {
+        Instant::now()
+            .checked_sub(Duration::from_secs(secs))
+            .expect("clock rewind within uptime")
+    }
+
+    #[test]
+    fn effective_cooldown_floors_and_backs_off_rate_limit_openings() {
+        // Plain opening: historical 30s.
+        let mut cb = CircuitState {
+            open_count: 1,
+            ..Default::default()
+        };
+        assert_eq!(effective_cooldown(&cb), CB_OPEN_DURATION);
+
+        // Rate-limit opening: floored at 120s even on the first trip.
+        cb.opened_by_rate_limit = true;
+        assert_eq!(effective_cooldown(&cb), RATE_LIMIT_MIN_COOLDOWN);
+
+        // Each reopen doubles: 240s, 480s, then capped at 600s (960 → cap).
+        cb.open_count = 2;
+        assert_eq!(effective_cooldown(&cb), Duration::from_secs(240));
+        cb.open_count = 3;
+        assert_eq!(effective_cooldown(&cb), Duration::from_secs(480));
+        cb.open_count = 4;
+        assert_eq!(effective_cooldown(&cb), REOPEN_BACKOFF_CAP);
+        cb.open_count = 99;
+        assert_eq!(effective_cooldown(&cb), REOPEN_BACKOFF_CAP);
+
+        // Non-rate-limit reopens also back off, just from the 30s base.
+        cb.opened_by_rate_limit = false;
+        cb.open_count = 2;
+        assert_eq!(effective_cooldown(&cb), Duration::from_secs(60));
+    }
+
+    #[test]
+    fn retry_backoff_only_for_rate_limit_class() {
+        assert_eq!(
+            retry_backoff_for("HTTP status client error (429 Too Many Requests)"),
+            RATE_LIMIT_RETRY_BACKOFF
+        );
+        assert_eq!(retry_backoff_for("request timed out"), Duration::ZERO);
+        assert_eq!(retry_backoff_for("connection reset"), Duration::ZERO);
+        assert_eq!(retry_backoff_for("boom"), Duration::ZERO);
+    }
+
+    #[test]
+    fn half_open_probe_is_load_only_for_rate_limit_half_open() {
+        let mut cb = CircuitState::default();
+        assert!(!half_open_probe_is_load(&cb));
+        cb.half_open_pending = true;
+        assert!(
+            !half_open_probe_is_load(&cb),
+            "non-RL half-open probes blockNumber"
+        );
+        cb.half_open_pending = false;
+        cb.opened_by_rate_limit = true;
+        assert!(
+            !half_open_probe_is_load(&cb),
+            "RL but not half-open has no probe yet"
+        );
+        cb.half_open_pending = true;
+        assert!(half_open_probe_is_load(&cb));
+    }
+
+    #[tokio::test]
+    async fn pick_demotes_recently_rate_limited_behind_clean() {
+        let pool = HttpRpcPool {
+            chain_id: 1,
+            entries: vec![dummy_entry("sticky-fast"), dummy_entry("clean-slow")],
+        };
+        // The sticky one is FASTER — the penalty must still lose to cleanliness.
+        pool.entries[0].latency_ms_ewma.store(10, Ordering::Relaxed);
+        pool.entries[1]
+            .latency_ms_ewma
+            .store(500, Ordering::Relaxed);
+        pool.entries[0].circuit.write().await.last_rate_limit_at = Some(Instant::now());
+        let picked = pool.pick().unwrap();
+        assert_eq!(picked.name, "clean-slow");
+    }
+
+    #[tokio::test]
+    async fn pick_all_sticky_falls_back_to_latency_order() {
+        // No thundering-herd cliff: when EVERY healthy entry is sticky, the
+        // tier demotes to none and selection degrades to the historical
+        // best-latency order — sticky only reorders, never excludes.
+        let pool = HttpRpcPool {
+            chain_id: 1,
+            entries: vec![dummy_entry("a"), dummy_entry("b")],
+        };
+        pool.entries[0]
+            .latency_ms_ewma
+            .store(200, Ordering::Relaxed);
+        pool.entries[1].latency_ms_ewma.store(50, Ordering::Relaxed);
+        for e in &pool.entries {
+            e.circuit.write().await.last_rate_limit_at = Some(Instant::now());
+        }
+        let picked = pool.pick().unwrap();
+        assert_eq!(picked.name, "b");
+    }
+
+    #[tokio::test]
+    async fn sticky_penalty_expires_after_window() {
+        let e = dummy_entry("a");
+        e.circuit.write().await.last_rate_limit_at =
+            Some(instant_ago(RATE_LIMIT_STICKY.as_secs() + 1));
+        assert!(!is_rate_limit_sticky(&e, Instant::now()));
+        e.circuit.write().await.last_rate_limit_at = Some(Instant::now());
+        assert!(is_rate_limit_sticky(&e, Instant::now()));
+    }
+
+    #[tokio::test]
+    async fn report_failure_rate_limit_sets_sticky_and_trip_flags() {
+        let pool = HttpRpcPool {
+            chain_id: 1,
+            entries: vec![dummy_entry("a")],
+        };
+        let e = pool.entries[0].clone();
+        for _ in 0..CB_ERROR_LIMIT {
+            pool.report_failure(&e, "HTTP status client error (429 Too Many Requests)")
+                .await;
+        }
+        assert_eq!(e.snapshot_state(), ProviderState::Open);
+        let cb = e.circuit.read().await;
+        assert!(cb.opened_by_rate_limit, "trip flags the rate-limit opening");
+        assert_eq!(cb.open_count, 1, "first trip = first cooldown step");
+        assert!(
+            cb.last_rate_limit_at.is_some(),
+            "sticky mark set on the request path"
+        );
+        // The very same cooldown that will gate the half-open rotation.
+        assert_eq!(effective_cooldown(&cb), RATE_LIMIT_MIN_COOLDOWN);
+        drop(cb);
+    }
+
+    #[tokio::test]
+    async fn report_failure_non_rate_limit_keeps_base_cooldown() {
+        let pool = HttpRpcPool {
+            chain_id: 1,
+            entries: vec![dummy_entry("a")],
+        };
+        let e = pool.entries[0].clone();
+        for _ in 0..CB_ERROR_LIMIT {
+            pool.report_failure(&e, "connection reset by peer").await;
+        }
+        let cb = e.circuit.read().await;
+        assert!(!cb.opened_by_rate_limit);
+        assert_eq!(effective_cooldown(&cb), CB_OPEN_DURATION);
     }
 }

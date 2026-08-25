@@ -96,6 +96,20 @@ export function detectionToLedgerMs(detectedAtIso: string, nowMs: number): numbe
   return Math.min(elapsed, 2_147_483_647); // i32 saturation — INTEGER column
 }
 
+/**
+ * ARBX-R-0001: shared predicate — a REJECTED opportunity is never a paper
+ * trade. Mirrors relays-client `SubmitEngine::rejection_refusal` (the
+ * first-statement executor gate): `rejection_reason: Some(_)` = rejected
+ * (parity with persistence `status_from_rejection_reason` → status
+ * 'rejected' in the opportunities table). Returns the reason so the skip
+ * log preserves it VERBATIM (never relabels), or null when the opportunity
+ * is viable and the archiver proceeds. Both writers of paper_trade_runs
+ * gate on this same predicate.
+ */
+export function archiverRejectionSkip(opp: Pick<Opportunity, "rejection_reason">): string | null {
+  return opp.rejection_reason ?? null;
+}
+
 export class PaperTradeArchiver {
   private redis: Redis | null = null;
   private running = false;
@@ -178,6 +192,27 @@ export class PaperTradeArchiver {
       opp = OpportunitySchema.parse(JSON.parse(json));
     } catch (err) {
       this.deps.logger.warn({ event: "paper_archiver.invalid_message", id, err: (err as Error).message });
+      await this.redis.xack(STREAM_IN, GROUP, id).catch(() => {});
+      return;
+    }
+
+    // ARBX-R-0001: a REJECTED opportunity is never a paper TRADE. The ledger
+    // records what the executor WOULD have traded; rejected rows already live
+    // in the opportunities table with their honest status + reason (R8 —
+    // nothing is lost, the panel stops mirroring the reject queue: the 6h
+    // JOIN showed 434/434 ledger rows were REJECTED opps). Same predicate as
+    // the Rust terminus (submit_engine.rs `rejection_refusal`) — both writers
+    // of paper_trade_runs gate identically. Skip + XACK.
+    const rejectionReason = archiverRejectionSkip(opp);
+    if (rejectionReason !== null) {
+      this.deps.logger.info(
+        {
+          event: "paper_archiver.skip_rejected",
+          opportunity_id: opp.id,
+          reason: rejectionReason,
+        },
+        "rejected opportunity — not a paper trade (R-0001)",
+      );
       await this.redis.xack(STREAM_IN, GROUP, id).catch(() => {});
       return;
     }

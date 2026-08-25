@@ -123,3 +123,16 @@ ArbitrageX_264_Cartridge_Math_Architecture*.xlsx
 credentials-manifest*.json
 cred-manifest*.json
 !scripts/credentials-manifest.example.json
+
+# 0016 (WP-F): exclusiones deliberadas del commit de integración
+# - scratchpad/: harnesses/evidencia viva local (política de checkpoints)
+# - .ai-work/: registro de coordinación del protocolo (local-only)
+# - .tmp-e2e/, ci-artifacts/: probes temporales de sesiones
+# - .next-*/: distDir aislados por instancia (hook NEXT_DIST_DIR, FE-0053)
+# - /exchange-settled.yml: dump aria de probe (evidencia puntual)
+scratchpad/
+.ai-work/
+.tmp-e2e/
+ci-artifacts/
+.next-*/
+/exchange-settled.yml

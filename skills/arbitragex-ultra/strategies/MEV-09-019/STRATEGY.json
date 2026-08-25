@@ -1,0 +1,19 @@
+{
+  "mev_id": "MEV-09-019",
+  "grupo": "9",
+  "estrategia": "Builder-integrated arbitrage",
+  "familia": "Intents, solvers, subastas y order flow",
+  "required_surface": "INTENT_AUCTION",
+  "backend_module": "intents_solver_engine",
+  "toggle_frontend": "strategy.09.019.enabled",
+  "min_legs": 2,
+  "max_legs": 12,
+  "legs_model": "Settlement multiorden",
+  "primary_operators": [
+    "op_10",
+    "op_11"
+  ],
+  "secondary_operators": [
+    "op_22"
+  ]
+}

@@ -1,0 +1,11 @@
+{
+  "id": 5,
+  "code": "op_05",
+  "name": "PDMP / jump process",
+  "canonical_role": "Jump/event regime evidence.",
+  "enabled": true,
+  "engine_present": true,
+  "calibration_state": "UNCALIBRATED",
+  "formula": "dX = mu*dt + sigma*dW + dJ - jump-diffusion regime detection",
+  "implementation_file": "backend/math-engine/src/operators/op_05_pdmp.rs"
+}
