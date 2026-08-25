@@ -33,7 +33,9 @@ import {
 
 export interface UseTokenIconArgs {
   address: string | null | undefined;
-  chainId: number | string;
+  /** FE-0029 (§28): null = payload had no chain — resolves NOTHING (NaN
+   *  short-circuits every isFinite guard), avatar fallback only. */
+  chainId: number | string | null;
   symbol?: string | null;
   /** When false, no resolution/network happens; returns a jazzicon fallback. */
   enabled?: boolean;
@@ -76,7 +78,7 @@ interface ApiIconResponse {
 export function useTokenIcon(args: UseTokenIconArgs): UseTokenIconResult {
   const { address, symbol } = args;
   const enabled = args.enabled !== false;
-  const chainId = Number(args.chainId);
+  const chainId = args.chainId == null ? NaN : Number(args.chainId);
   const addr = normalizeAddress(address);
 
   // Stable jazzicon seed: normalized address when valid, else the raw input or

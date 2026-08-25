@@ -15,6 +15,7 @@
 
 import type { z } from "zod";
 import * as S from "@/lib/schemas";
+import * as FE from "@/lib/apex/schemas";
 import {
   KpiPayloadSchema,
   SCurvePayloadSchema,
@@ -717,6 +718,104 @@ export function getOperationsVariance(chainId = 1): Promise<Result<VariancePaylo
 // down or recently restarted) — UI treats as "loading" state.
 export function getScannerHeartbeat(chainId = 1): Promise<Result<ScannerHeartbeatResponse>> {
   return getValidated(`/api/scanner/heartbeat?chain_id=${chainId}`, ScannerHeartbeatResponseSchema);
+}
+
+// ── FE-MASTER: token universe / quote-base / discovery telemetry ─────────
+// Wire contracts for ARBX-FE-EMIT-01..08 (backend tasks, owner d9). Until
+// each emission lands these fail honestly (HTTP 404 → Result error) — this
+// client NEVER fabricates data (§28 / RULE 00). Schemas live in
+// lib/apex/schemas (tokens.ts / quote.ts / telemetry.ts — flat tick mirror;
+// pairs.ts / strategies.ts / detectors.ts — P5-P7 catalogs, `{ entries }`).
+// No GET retry semantics change and no mutation replays: resolve/preview
+// are POSTs (mutations must not be replayed), tick/anchor are GETs.
+
+/** §5 resolve flow: parse→dedupe(backend)→resolve per chain→preview. */
+export function resolveTokens(
+  chainId: number,
+  symbols: string[],
+  adminToken: string,
+  actor: string,
+): Promise<Result<FE.TokenResolveResponse>> {
+  return postValidated(
+    "/api/admin/tokens/resolve",
+    { chain_id: chainId, symbols },
+    { "x-arbx-admin-token": adminToken, "x-arbx-actor": actor },
+    FE.TokenResolveResponseSchema,
+  );
+}
+
+/** §8 Current Quote Anchor (EMIT-02 Layer-2) — flattened view + §9 token table. */
+export function getQuoteAnchor(chainId: number): Promise<Result<FE.QuoteAnchorResponse>> {
+  return getValidated(`/api/quote/anchor?chain_id=${chainId}`, FE.QuoteAnchorResponseSchema);
+}
+
+/** §10 preview-before-apply — deterministic recompute, NEVER a mutation.
+ * Contract: QuotePreviewResponse (INVARIANT QB-TOPOLOGY-01 — graph_rebuild_required
+ * is a literal false at the type level; quote changes revaluate, never rebuild).
+ * Rewired to the co-landed envelope schema {impact(9), proposed_*}: parsing the
+ * bare 9-key impact against the 200 envelope would strict-fail. */
+export function previewQuoteWeights(
+  chainId: number,
+  weights: FE.QuoteWeights,
+  adminToken: string,
+  actor: string,
+): Promise<Result<FE.QuotePreviewResponse>> {
+  return postValidated(
+    "/api/admin/quote/preview",
+    { chain_id: chainId, weights },
+    { "x-arbx-admin-token": adminToken, "x-arbx-actor": actor },
+    FE.QuotePreviewResponseSchema,
+  );
+}
+
+/**
+ * §18/§43 funnel + latency surface (EMIT-05): the searcher's live
+ * tick_summary snapshot (dirty pools/pairs → hot seeds → routes → dispatch
+ * + lat.* stages with honest nulls). Absent key ⇒ 404 Result error (loading
+ * state), never a zeroed funnel.
+ */
+export function getRouteDiscoveryTick(
+  chainId = 1,
+): Promise<Result<FE.RouteDiscoveryTickSummary>> {
+  return getValidated(`/api/route-discovery/tick?chain_id=${chainId}`, FE.RouteDiscoveryTickSummarySchema);
+}
+
+/**
+ * §13 Pair Intelligence (EMIT-06): PairView[] of the effective universe —
+ * alpha r15 (forward/reverse independent), dirty bit, per-pool reserves.
+ * Until the emission lands this 404s honestly (§28); envelope `{ entries }`
+ * mirrors the catalog convention.
+ */
+export function getPairs(chainId: number): Promise<Result<FE.PairsResponse>> {
+  return getValidated(`/api/pairs?chain_id=${chainId}`, FE.PairsResponseSchema);
+}
+
+/**
+ * §21-§24 QuoteBase strategy catalog (EMIT-07): workbook rows served
+ * verbatim from the generated drift-checked table. Static-per-canon —
+ * cacheable; runtime enabled state lives in trading_config, not here.
+ */
+export function getStrategiesCatalog(): Promise<Result<FE.StrategyCatalogResponse>> {
+  return getValidated("/api/strategies/catalog", FE.StrategyCatalogResponseSchema);
+}
+
+/**
+ * §25 QuoteBase detector policy catalog (EMIT-08): 60 family rows.
+ * `frontend_config` = exact workbook phrases, display-only (amendment
+ * 2026-08-24 — knob VALUES live in runtime config, never in the catalog).
+ */
+export function getDetectorsCatalog(): Promise<Result<FE.DetectorCatalogResponse>> {
+  return getValidated("/api/detectors/catalog", FE.DetectorCatalogResponseSchema);
+}
+
+/**
+ * §15/§16 canonical knobs snapshot (FE-0061 / XLS-CANON-01): the searcher's
+ * boot-time knob resolution (env > deploy yaml > workbook), served via the
+ * edge proxies. 503 `knobs_not_published` until the searcher boots — honest
+ * absence, surfaced by the panel (RULE 00).
+ */
+export function getCanonicalKnobs(): Promise<Result<FE.CanonicalKnobsResponse>> {
+  return getValidated("/api/config/canonical-knobs", FE.CanonicalKnobsResponseSchema);
 }
 
 // ── Runtime Cartridges (searcher-rs loaded .rhai registry) ─────────────────

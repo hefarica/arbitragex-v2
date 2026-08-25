@@ -1,0 +1,8 @@
+{
+  "domain": "Quantitative finance mathematics applied to DeFi/MEV (state of the art 2024-2026): optimal execution in AMMs, LVR/adverse-selection theory, stochastic control (HJB/ergodic), auction/bidding game theory, multi-strategy Kelly allocation, on-chain microstructure and VPIN, ML in production searchers, on-chain stat-arb, EVT tail risk, and new 2025-2026 techniques.",
+  "research_date": "2026-08-19",
+  "findings_length": 26904,
+  "has_better_than_excel": true,
+  "has_new_strategies": true,
+  "has_gaps": true
+}

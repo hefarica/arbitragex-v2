@@ -1,0 +1,19 @@
+{
+  "mev_id": "MEV-04-031",
+  "grupo": "4",
+  "estrategia": "Points/pre-token arbitrage",
+  "familia": "Arbitrajes por equivalencia, paridad o redenci\u00f3n del activo",
+  "required_surface": "PARITY_REDEMPTION",
+  "backend_module": "parity_redemption_engine",
+  "toggle_frontend": "strategy.04.031.enabled",
+  "min_legs": 2,
+  "max_legs": 8,
+  "legs_model": "Ruta din\u00e1mica",
+  "primary_operators": [
+    "op_10",
+    "op_11"
+  ],
+  "secondary_operators": [
+    "op_22"
+  ]
+}

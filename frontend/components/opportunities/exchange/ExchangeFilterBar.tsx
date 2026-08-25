@@ -74,9 +74,13 @@ export function ExchangeFilterBar({
 
   // Families present in the live feed (base kinds + MEV-XX prefixes), unioned
   // with the canonical base 5 so the chips are stable even before data lands.
+  // FE-0029 (§28): a null strategy_kind (malformed payload) joins NO family —
+  // it must not mint taxonomy chips; it stays visible only under "all".
   const families = useMemo(() => {
     const set = new Set<string>(BASE_STRATEGIES as readonly string[]);
-    for (const o of opportunities) set.add(familyOf(o.strategy_kind));
+    for (const o of opportunities) {
+      if (o.strategy_kind != null) set.add(familyOf(o.strategy_kind));
+    }
     return Array.from(set).sort((a, b) => a.localeCompare(b));
   }, [opportunities]);
 
@@ -197,10 +201,16 @@ export function applyExchangeFilters(
   const allEnabled = filters.enabledFamilies.size === 0;
   const search = filters.search.trim().toLowerCase();
   return opportunities.filter((o) => {
-    if (!allEnabled && !filters.enabledFamilies.has(familyOf(o.strategy_kind))) return false;
+    // FE-0029 (§28): null strategy_kind belongs to no family, matches no text
+    // search — visible only when everything is enabled and unsearched.
+    if (!allEnabled && (o.strategy_kind == null || !filters.enabledFamilies.has(familyOf(o.strategy_kind))))
+      return false;
     if (filters.chainId !== "all" && o.chain_id !== filters.chainId) return false;
-    if (search && !o.strategy_kind.toLowerCase().includes(search)) return false;
-    if (filters.viableOnly && (o.status === "rejected" || o.status === "failed")) return false;
+    if (search && (o.strategy_kind == null || !o.strategy_kind.toLowerCase().includes(search)))
+      return false;
+    // Fail-safe: viableOnly cannot assert "not rejected" for an unstatused row.
+    if (filters.viableOnly && (o.status == null || o.status === "rejected" || o.status === "failed"))
+      return false;
     if (filters.minYieldUsd != null && Number.isFinite(filters.minYieldUsd)) {
       const net = o.net_expected_profit_usd ?? o.simulated_net_profit_usd ?? o.expected_profit_usd;
       if (net == null || net < filters.minYieldUsd) return false;

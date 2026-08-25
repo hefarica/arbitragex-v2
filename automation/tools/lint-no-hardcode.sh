@@ -135,6 +135,36 @@ done < <(run_grep "$SECRET_DEFAULT_RE" \
             "*.yml *.yaml *.sh" \
             "$SECRET_ALLOW")
 
+# ─── 4. Symbol-keyed token identity in financial paths (ARBX-TW-003) ──
+# Doctrine (ARBX-0018 / REQ-QB-002): the runtime identity of a token is
+# (chain_id, address); symbols are METADATA. No financial path may gate a
+# token by comparing symbol strings. This category flags the symbol-gate
+# idioms outside the canonical surface:
+#   - shared-rs/src/trading_config.rs     — `token_allowed` = the legacy
+#     symbol VIEW (documented; the address-keyed gate is
+#     `TokenIdentityIndex::is_allowed_addr`)
+#   - shared-rs/src/token_identity.rs     — the resolver itself
+#   - searcher-rs/src/token_identity.rs   — composition site (cache check)
+#   - shared-rs/src/price_oracle.rs       — price stack contract keys on
+#     symbols by design (metadata feed, not an identity gate)
+#   - prioritization-spine/src/config_aware.rs — the DOCUMENTED legacy
+#     fallback when no identity index is attached (ARBX-0018: None =
+#     symbol-compare for callers not yet migrated)
+#   - api-server/src/routes/trading-config.ts — operator input plane
+#   - tests / docs
+# Line-level grep (same fuzziness as categories 1-3): multi-line gate
+# idioms escape — the Rust regression anchors in token_identity.rs and
+# config_aware.rs tests pin the semantics; this net catches new sites.
+SYMBOL_KEY_RE='\.token_allowed\(|allowed_token_symbols[^;)]*\.(contains|includes)\(|allowed_token_symbols[^;)]*\.iter\(\)'
+SYMBOL_KEY_ALLOW='(^backend/shared-rs/src/(token_identity|trading_config|price_oracle)\.rs|^backend/searcher-rs/src/token_identity\.rs|backend/prioritization-spine/src/config_aware\.rs|^backend/api-server/src/routes/trading-config\.ts|#\[cfg\(test\)\]|tests?/|\.test\.(ts|js|tsx)|_test\.rs|^docs/|\.md:)'
+while IFS= read -r hit; do
+  [ -z "$hit" ] && continue
+  file="${hit%%:*}"; rest="${hit#*:}"; line="${rest%%:*}"; content="${rest#*:}"
+  report "symbol-key" "$file" "$line" "$content"
+done < <(run_grep "$SYMBOL_KEY_RE" \
+            "*.rs *.ts *.tsx" \
+            "$SYMBOL_KEY_ALLOW")
+
 # ─── summary ─────────────────────────────────────────────────────────
 if [ "$VIOLATIONS" -gt 0 ]; then
   printf '\n%s\n' "lint-no-hardcode: $VIOLATIONS violation(s). See docs/governance/NO-HARDCODE-DOCTRINE.md." >&2

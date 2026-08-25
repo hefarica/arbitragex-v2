@@ -1,0 +1,22 @@
+{
+  "mev_id": "MEV-01-026",
+  "grupo": "1",
+  "estrategia": "Parallel-route arbitrage",
+  "familia": "Arbitrajes spot DEX dentro de una misma cadena",
+  "required_surface": "DEX_AMM",
+  "backend_module": "route_graph_engine",
+  "toggle_frontend": "strategy.01.026.enabled",
+  "min_legs": 2,
+  "max_legs": 8,
+  "legs_model": "Ruta din\u00e1mica",
+  "primary_operators": [
+    "op_15",
+    "op_19",
+    "op_20"
+  ],
+  "secondary_operators": [
+    "op_21",
+    "op_22",
+    "op_27"
+  ]
+}

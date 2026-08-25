@@ -482,6 +482,23 @@ mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used)] // M11: test module — panics are acceptable
     use super::*;
 
+    /// ARBX-R-0003 cross-ABI pin: `rpc_failover`'s load-probe calldata (the
+    /// half-open eth_call that reopens rate-limited breakers) must be byte-equal
+    /// to THIS crate's `IMulticall3.aggregate3` encoding of an empty call list.
+    /// If either side drifts, the load probe would send calldata no contract
+    /// understands and every reopen decision silently changes meaning.
+    #[test]
+    fn r0003_load_probe_calldata_pins_multicall3_aggregate3_empty() {
+        use alloy::sol_types::SolCall;
+        let encoded = multicall3::aggregate3Call { calls: vec![] }.abi_encode();
+        assert_eq!(
+            encoded.as_slice(),
+            shared_rs::rpc_failover::LOAD_PROBE_CALLDATA,
+            "LOAD_PROBE_CALLDATA drifted from the amm_math multicall3 ABI — regenerate it from \
+             aggregate3Call {{ calls: vec![] }}.abi_encode()"
+        );
+    }
+
     /// UniswapV2Library reference: amount_in=1e18 (1 WETH), reserves=(3000e18 WETH, 6_000_000e6 USDC).
     /// Expected: roughly 1995 USDC (less than 2000 due to fee + slippage on 1/3000th of pool).
     /// Hand-computed: amount_in_with_fee = 9.97e21

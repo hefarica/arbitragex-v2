@@ -1,0 +1,15 @@
+# gitleaks: conserva TODAS las reglas por defecto (extend useDefault) y permite
+# únicamente secretos con forma de address ERC-20 pública (0x + exactamente 40 hex,
+# con o sin comillas envolventes). Evidencia: run 32815147308 / job 97701808284
+# (push 63473534, findings en e2e3b5d2) — 16 falsos positivos de generic-api-key
+# sobre token_in/token_out/opp_token_* con addresses canónicas (WETH/USDC/USDT)
+# en tests y fixtures de respuestas públicas de API.
+# El patrón es anclado: un private key (0x + 64 hex) NO matchea y sigue detectándose.
+# Jamás ampliar este allowlist a valores >40 hex — enmascararía claves reales.
+
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Addresses ERC-20 públicas (0x + 40 hex exactos) en tests/fixtures — no son secretos"
+regexes = ['^"?0x[0-9a-fA-F]{40}"?$']

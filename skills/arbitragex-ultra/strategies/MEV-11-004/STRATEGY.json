@@ -1,0 +1,21 @@
+{
+  "mev_id": "MEV-11-004",
+  "grupo": "11",
+  "estrategia": "Mutually-exclusive outcomes arbitrage",
+  "familia": "Prediction markets y mercados condicionales",
+  "required_surface": "PREDICTION",
+  "backend_module": "prediction_engine",
+  "toggle_frontend": "strategy.11.004.enabled",
+  "min_legs": 2,
+  "max_legs": 12,
+  "legs_model": "Settlement multiorden",
+  "primary_operators": [
+    "op_11",
+    "op_14",
+    "op_19"
+  ],
+  "secondary_operators": [
+    "op_13",
+    "op_22"
+  ]
+}

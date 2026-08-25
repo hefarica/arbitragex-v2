@@ -43,7 +43,7 @@ export default async function OpportunitiesByStrategyPage() {
     <>
       <PageHeader
         title="By Strategy"
-        lede="Convergence signals grouped by strategy kind — live view from the searcher-rs pipeline."
+        lede="Convergence signals grouped by strategy × canonical registry (§48) — a projection of the Exchange Feed (§49): same wire, same mapper, no second universe."
         showRefresh
       />
       <OpportunitiesByStrategyClient initialOpportunities={initialOpportunities} />

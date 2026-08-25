@@ -1,6 +1,9 @@
 import { XRayCard } from "@/components/XRayCard";
 import { StatCard } from "@/components/StatCard";
 import { GateSection } from "@/components/GateSection";
+// FE-0042: store-only aggregation island (client component inside this
+// server page — standard Next App Router island pattern).
+import { HomeStoreAggregationContainer } from "@/components/home/HomeStoreAggregation";
 import { getApiBaseUrl, getReadinessDecision } from "@/lib/api-client";
 import type { OpportunityRow } from "@/lib/schemas";
 
@@ -152,6 +155,14 @@ export default async function HomePage() {
           animate={avgRoi != null}
           suffix={avgRoi != null ? "%" : ""}
         />
+      </section>
+
+      {/* FE-0042 (§58 §59): Home aggregation FROM STORES ONLY — the client
+          island below fetches nothing and recomputes no business logic; it
+          tallies what ArbxRealtimeProvider (root layout) already hydrates.
+          Missing slices (EV, risk) render declared gaps, never inventions. */}
+      <section>
+        <HomeStoreAggregationContainer />
       </section>
 
       {/* Opportunities Section */}

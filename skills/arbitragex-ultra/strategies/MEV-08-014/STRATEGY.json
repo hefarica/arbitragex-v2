@@ -1,0 +1,24 @@
+{
+  "mev_id": "MEV-08-014",
+  "grupo": "8",
+  "estrategia": "Full-liquidation arbitrage",
+  "familia": "Lending, cr\u00e9dito, liquidaciones y deuda",
+  "required_surface": "LENDING",
+  "backend_module": "credit_liquidation_engine",
+  "toggle_frontend": "strategy.08.014.enabled",
+  "min_legs": 1,
+  "max_legs": 4,
+  "legs_model": "Acci\u00f3n+unwind",
+  "primary_operators": [
+    "op_08",
+    "op_16",
+    "op_21",
+    "op_26"
+  ],
+  "secondary_operators": [
+    "op_11",
+    "op_13",
+    "op_22",
+    "op_23"
+  ]
+}

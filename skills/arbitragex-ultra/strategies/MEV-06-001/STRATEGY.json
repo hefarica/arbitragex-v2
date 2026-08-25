@@ -1,0 +1,24 @@
+{
+  "mev_id": "MEV-06-001",
+  "grupo": "6",
+  "estrategia": "L1\u2013L1 arbitrage",
+  "familia": "Arbitrajes cross-chain y cross-domain",
+  "required_surface": "CROSS_CHAIN",
+  "backend_module": "cross_domain_engine",
+  "toggle_frontend": "strategy.06.001.enabled",
+  "min_legs": 2,
+  "max_legs": 16,
+  "legs_model": "N-domain din\u00e1mico",
+  "primary_operators": [
+    "op_06",
+    "op_07",
+    "op_16",
+    "op_23"
+  ],
+  "secondary_operators": [
+    "op_08",
+    "op_11",
+    "op_22",
+    "op_27"
+  ]
+}

@@ -86,6 +86,11 @@ const INTERNAL_API = process.env.INTERNAL_API_URL || "http://api-server:8080";
 const nextConfig = {
   reactStrictMode: true,
   poweredByHeader: false,
+  // FE-0053: two `next dev` instances on the same tree SHARE .next and evict
+  // each other's route manifests (parallel E2E stacks started 404ing routes
+  // mid-session). Set NEXT_DIST_DIR per instance (e.g. .next-3006) to
+  // isolate; unset (default .next) keeps single-server/prod/CI unchanged.
+  ...(process.env.NEXT_DIST_DIR ? { distDir: process.env.NEXT_DIST_DIR } : {}),
   // WS-POLL-1 (2026-08-20, live follow-up): Next's built-in trailing-slash
   // REDIRECT runs before rewrites — the engine.io client requests
   // `/socket.io/?EIO=4&transport=polling`, Next 308s it to `/socket.io`

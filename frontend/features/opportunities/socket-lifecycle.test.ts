@@ -159,3 +159,85 @@ describe("createOpportunitySocket — opportunity dispatch and dispose", () => {
     expect(fake.disconnect).toHaveBeenCalledTimes(1);
   });
 });
+
+// ─── FE-0047: reconnect, C4 auth triple, dispose off-pin ────────────────────
+
+describe("createOpportunitySocket — FE-0047 realtime contract", () => {
+  it("reconnect re-emits subscribe:opportunities and re-reports LIVE (STALE→LIVE again)", () => {
+    const fake = makeFakeSocket();
+    const onStatus = vi.fn();
+    createOpportunitySocket({
+      url: "http://x",
+      ioFactory: () => fake,
+      onStatus,
+      onOpportunity: vi.fn(),
+    });
+
+    // First session: connected, then the transport drops.
+    fake.trigger("connect");
+    fake.trigger("disconnect");
+    // socket.io reconnects the SAME socket instance → 'connect' fires again.
+    fake.trigger("connect");
+
+    // LIVE re-reported after the STALE dip…
+    expect(onStatus.mock.calls.filter(([s]) => s === "LIVE")).toHaveLength(2);
+    expect(onStatus.mock.calls.filter(([s]) => s === "STALE")).toHaveLength(1);
+    // …and the room subscription is RE-emitted (one per connect — a
+    // reconnect without re-subscribe silently stops delivering events).
+    expect(fake.emit).toHaveBeenCalledWith("subscribe:opportunities");
+    expect(
+      vi.mocked(fake.emit).mock.calls.filter((c) => c[0] === "subscribe:opportunities"),
+    ).toHaveLength(2);
+  });
+
+  it("C4: an admin token rides ALL THREE transport channels of the handshake", () => {
+    const fake = makeFakeSocket();
+    const ioFactory = vi.fn((_url: string, _opts: unknown) => fake);
+    createOpportunitySocket({
+      url: "http://x",
+      ioFactory,
+      authToken: "tok-123",
+      onStatus: vi.fn(),
+      onOpportunity: vi.fn(),
+    });
+
+    const opts = vi.mocked(ioFactory).mock.calls[0]![1] as Record<string, unknown>;
+    expect(opts["auth"]).toEqual({ token: "tok-123" });
+    expect(opts["query"]).toEqual({ token: "tok-123" });
+    expect(opts["extraHeaders"]).toEqual({ "x-arbx-admin-token": "tok-123" });
+  });
+
+  it("C4: NO auth channel is populated when no token is present (anonymous public room)", () => {
+    const fake = makeFakeSocket();
+    const ioFactory = vi.fn((_url: string, _opts: unknown) => fake);
+    createOpportunitySocket({
+      url: "http://x",
+      ioFactory,
+      onStatus: vi.fn(),
+      onOpportunity: vi.fn(),
+    });
+
+    const opts = vi.mocked(ioFactory).mock.calls[0]![1] as Record<string, unknown>;
+    expect(opts).not.toHaveProperty("auth");
+    expect(opts).not.toHaveProperty("query");
+    expect(opts).not.toHaveProperty("extraHeaders");
+  });
+
+  it("dispose() detaches ALL FOUR listeners (PERF 2026-08-10 off-pin)", () => {
+    const fake = makeFakeSocket();
+    const handle = createOpportunitySocket({
+      url: "http://x",
+      ioFactory: () => fake,
+      onStatus: vi.fn(),
+      onOpportunity: vi.fn(),
+    });
+
+    handle.dispose();
+
+    const offEvents = vi.mocked(fake.off).mock.calls.map((c) => c[0]);
+    expect(offEvents).toEqual(
+      expect.arrayContaining(["connect", "disconnect", "connect_error", "new_opportunity"]),
+    );
+    expect(offEvents).toHaveLength(4);
+  });
+});

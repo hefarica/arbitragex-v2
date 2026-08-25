@@ -65,7 +65,11 @@ fn routable_outcome() -> GraphBuildOutcome {
         adjacency.entry(e.token_in).or_default().push(i);
     }
     GraphBuildOutcome {
-        graph: TokenGraph { edges, adjacency },
+        graph: TokenGraph {
+            edges,
+            adjacency,
+            dense: None,
+        },
         rejected: vec![RejectedEdge {
             pool: addr(0x99),
             reason: "missing_reserves".to_string(),

@@ -1,0 +1,15 @@
+{
+ "window_hours": 24,
+ "totals": {
+  "total": 0,
+  "included": 0,
+  "reverted": 0,
+  "dropped": 0,
+  "avg_pnl_included_usd": null,
+  "avg_confirm_latency_ms": null
+ },
+ "revert_rate": null,
+ "top_strategies": [],
+ "critical_anomalies_24h": [],
+ "ts": "2026-08-25T01:33:15.415Z"
+}

@@ -22,6 +22,8 @@ import Link from 'next/link';
 import { OperatorGate } from '@/components/operator/OperatorGate';
 import { useRegistry } from '@/lib/registries/useRegistry';
 import { useOmniDrift } from '@/lib/drift/useOmniDrift';
+import { useActionState } from '@/lib/statemachine/useActionState';
+import { RegistryCoherenceStrip } from '@/components/registries/RegistryCoherenceStrip';
 import { getAdminChains } from '@/lib/api-client';
 import type { RegistryKey } from '@/lib/operator/types';
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
@@ -67,11 +69,6 @@ const REGISTRY_LABELS: Record<RegistryKey, string> = {
   relay: 'Relays',
   agent: 'Agent Registry',
 };
-
-interface RuntimeAck {
-  readonly state: string;
-  readonly layers: readonly string[];
-}
 
 /**
  * Adapter: mapea cada RegistryKey a su fetcher canónico. Hoy solo `chain`
@@ -139,7 +136,12 @@ export function RegistryPageClient({ registryKey, initialSnapshot }: Props): JSX
             ? 'AUTH_REQUIRED'
             : 'UNAVAILABLE';
 
-  const [runtimeAck] = useState<RuntimeAck | null>(null);
+  // FE-0040 (§56): the REAL action machine replaces the null stub that
+  // rendered "PENDING_RUNTIME_ACK" forever — a false runtime claim. Steady
+  // state is IDLE (honest: no mutation in flight); the machine arms
+  // useRuntimeAckSocket automatically when a future mutation parks it in
+  // WAITING_RUNTIME_ACK (the standard trio, wired).
+  const action = useActionState();
   const [selectedId, setSelectedId] = useState<string | null>(null);
   void selectedId;
 
@@ -232,14 +234,18 @@ export function RegistryPageClient({ registryKey, initialSnapshot }: Props): JSX
         <CardContent>
           <div className="text-sm text-muted-foreground mb-4">
             Runtime ack:{' '}
-            <span data-testid={`${registryKey}-runtime-ack`}>
-              {runtimeAck?.state ?? 'PENDING_RUNTIME_ACK'}
+            <span
+              data-testid={`${registryKey}-runtime-ack`}
+              title={
+                action.state.kind === 'IDLE'
+                  ? 'useActionState: sin mutación en vuelo (§56)'
+                  : 'useActionState: máquina de acción crítica en curso'
+              }
+            >
+              {action.state.kind}
+              {action.state.kind === 'WAITING_RUNTIME_ACK' &&
+                ` — socket runtime_ack en vivo (${action.state.event_id})`}
             </span>
-            {runtimeAck?.layers && (
-              <span className="ml-2">
-                Capas confirmadas: {runtimeAck.layers.join(' → ')}
-              </span>
-            )}
           </div>
 
           {error && (
@@ -330,20 +336,22 @@ export function RegistryPageClient({ registryKey, initialSnapshot }: Props): JSX
 
       <Card>
         <CardHeader>
-          <CardTitle>Drift Observations</CardTitle>
+          <CardTitle>Coherencia total — Drift</CardTitle>
         </CardHeader>
         <CardContent data-testid={`${registryKey}-drift-panel`}>
-          {observations.length === 0 ? (
-            <p className="text-sm text-muted-foreground">Sin drift detectado.</p>
-          ) : (
-            <ul className="text-sm space-y-1">
-              {observations.map((obs) => (
-                <li key={obs.id} className="font-mono">
-                  {obs.severity} — {obs.diff_count} diffs ({obs.layer_a} ↔ {obs.layer_b})
-                </li>
-              ))}
-            </ul>
-          )}
+          <RegistryCoherenceStrip
+            resource={registryKey}
+            observations={observations}
+            pollError={drift.error}
+            reason={drift.reason}
+            loading={drift.loading}
+            frontendRows={
+              hasData || initialSnapshot.status === 'OK' ? rows.length : null
+            }
+            frontendRefreshedAt={
+              drift.refreshedAt !== new Date(0).toISOString() ? drift.refreshedAt : null
+            }
+          />
         </CardContent>
       </Card>
 

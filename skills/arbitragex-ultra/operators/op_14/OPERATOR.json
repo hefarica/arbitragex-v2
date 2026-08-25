@@ -1,0 +1,11 @@
+{
+  "id": 14,
+  "code": "op_14",
+  "name": "KL divergence",
+  "canonical_role": "Distribution/logical divergence.",
+  "enabled": true,
+  "engine_present": true,
+  "calibration_state": "UNCALIBRATED",
+  "formula": "D_KL(P||Q) = Sum P*ln(P/Q) - distribution divergence",
+  "implementation_file": "backend/math-engine/src/operators/op_14_kl_divergence.rs"
+}

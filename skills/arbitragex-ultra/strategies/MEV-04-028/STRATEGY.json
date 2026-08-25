@@ -1,0 +1,22 @@
+{
+  "mev_id": "MEV-04-028",
+  "grupo": "4",
+  "estrategia": "PT\u2013YT parity arbitrage",
+  "familia": "Arbitrajes por equivalencia, paridad o redenci\u00f3n del activo",
+  "required_surface": "PARITY_REDEMPTION",
+  "backend_module": "parity_redemption_engine",
+  "toggle_frontend": "strategy.04.028.enabled",
+  "min_legs": 3,
+  "max_legs": 4,
+  "legs_model": "Paridad compuesta",
+  "primary_operators": [
+    "op_13",
+    "op_15",
+    "op_21"
+  ],
+  "secondary_operators": [
+    "op_08",
+    "op_16",
+    "op_22"
+  ]
+}
