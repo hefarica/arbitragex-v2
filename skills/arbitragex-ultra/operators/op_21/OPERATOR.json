@@ -1,0 +1,11 @@
+{
+  "id": 21,
+  "code": "op_21",
+  "name": "Newton-Raphson",
+  "canonical_role": "Root/break-even/invariant solve.",
+  "enabled": true,
+  "engine_present": true,
+  "calibration_state": "UNCALIBRATED",
+  "formula": "x_{n+1} = x_n - f(x_n)/f_prime(x_n) - root/break-even solving",
+  "implementation_file": "backend/math-engine/src/operators/op_21_newton.rs"
+}

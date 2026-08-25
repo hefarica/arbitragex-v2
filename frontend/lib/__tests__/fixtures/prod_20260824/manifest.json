@@ -1,0 +1,112 @@
+{
+ "recorded_from": "https://arbx.ape-tv.net",
+ "recorded_at": "2026-08-24T20:35Z",
+ "method": "GET verbatim (§77 read-only)",
+ "note": "prod corre la onda DESPLEGADA; los 6 endpoints apex FE.* (pairs, strategies/detectors catalog, quote/anchor, route-discovery/tick, canonical-knobs) estan 404 pre-deploy — sus fixtures reales se graban post-deploy en F-007 (§82). paper_history se consume SIN Zod (gap documentado FE-0045).",
+ "endpoints": [
+  {
+   "file": "status.json",
+   "url": "https://arbx.ape-tv.net/api/status",
+   "schema_module": "S",
+   "schema": "StatusResponseSchema",
+   "bytes": 476,
+   "sha256": "8933fd883714a20626558494dd3a0a611b2c4fa93226bd3f49d1c3f00721c9ba"
+  },
+  {
+   "file": "opportunities_live.json",
+   "url": "https://arbx.ape-tv.net/api/opportunities/live?limit=3",
+   "schema_module": "S",
+   "schema": "OpportunitiesLiveSchema",
+   "bytes": 10851,
+   "sha256": "47d0c3867ff1df54e87d356301593cab381de37582e7b5ae7ed1ffef63bb1079"
+  },
+  {
+   "file": "risk_alerts.json",
+   "url": "https://arbx.ape-tv.net/api/risk/alerts?hours=1",
+   "schema_module": "S",
+   "schema": "RiskAlertsResponseSchema",
+   "bytes": 7394,
+   "sha256": "021ba148d4effdf4c0f285e190789fc15e8086bd07e8432b41c88c860c215e10"
+  },
+  {
+   "file": "recon_summary.json",
+   "url": "https://arbx.ape-tv.net/api/recon/summary?hours=24",
+   "schema_module": "S",
+   "schema": "ReconSummarySchema",
+   "bytes": 235,
+   "sha256": "c2ee6d02664c7eff3861e9a38718d2186d31086ff45efbb5961e5df86dceb6f9"
+  },
+  {
+   "file": "config_current.json",
+   "url": "https://arbx.ape-tv.net/api/config/current",
+   "schema_module": "S",
+   "schema": "AppConfigViewSchema",
+   "bytes": 1916,
+   "sha256": "27cdc92de70610080c68d9b73e4fe39c3ced874fc2684e8843b7ac5035eb797b"
+  },
+  {
+   "file": "readiness.json",
+   "url": "https://arbx.ape-tv.net/api/readiness",
+   "schema_module": "S",
+   "schema": "ReadinessReportSchema",
+   "bytes": 6186,
+   "sha256": "aac72072116a3c0bab3cc078c57490ff49ab261c09eb910aca25d38da8ccdcb0"
+  },
+  {
+   "file": "readiness_blockers.json",
+   "url": "https://arbx.ape-tv.net/api/readiness/blockers",
+   "schema_module": "S",
+   "schema": "ReadinessBlockersResponseSchema",
+   "bytes": 3943,
+   "sha256": "955957d84d7fa6ca1b625ec863c7c3c827c5b561726219a570fb50ed7e4d14b8"
+  },
+  {
+   "file": "readiness_decision.json",
+   "url": "https://arbx.ape-tv.net/api/readiness/decision",
+   "schema_module": "S",
+   "schema": "ReadinessDecisionResponseSchema",
+   "bytes": 656,
+   "sha256": "80ee63a3e7c76a78e97657bb2651531e63b378e9e6c0db8d830206ab19efd271"
+  },
+  {
+   "file": "readiness_steps.json",
+   "url": "https://arbx.ape-tv.net/api/readiness/steps",
+   "schema_module": "S",
+   "schema": "ReadinessStepsResponseSchema",
+   "bytes": 2722,
+   "sha256": "7c193410b1816681fc461b9f029d5476b484d1b908f632df4041ea8e040448c9"
+  },
+  {
+   "file": "scanner_heartbeat.json",
+   "url": "https://arbx.ape-tv.net/api/scanner/heartbeat?chain_id=1",
+   "schema_module": "OPS",
+   "schema": "ScannerHeartbeatResponseSchema",
+   "bytes": 972,
+   "sha256": "f22891173c0794d93c3b5d5c1155b176f0cf817a4ef928a9c64f548a1241599d"
+  },
+  {
+   "file": "operations_kpi.json",
+   "url": "https://arbx.ape-tv.net/api/operations/kpi?chain_id=1",
+   "schema_module": "OPS",
+   "schema": "KpiPayloadSchema",
+   "bytes": 295,
+   "sha256": "be9f0a9dfb4b4af00fe7bc0d56fa82e2120d5d890a05bcbab3ff2706ede6b17c"
+  },
+  {
+   "file": "paper_mode_state.json",
+   "url": "https://arbx.ape-tv.net/api/paper-mode/state",
+   "schema_module": "S",
+   "schema": "PaperModeStateSchema",
+   "bytes": 308,
+   "sha256": "fc07f473050dbeae7481924b7459d29c29a31d3138ce96e21179dfaa049316ed"
+  },
+  {
+   "file": "paper_history.json",
+   "url": "https://arbx.ape-tv.net/api/paper/history?limit=2",
+   "schema_module": null,
+   "schema": null,
+   "bytes": 1230,
+   "sha256": "4642dd600f01f2398f640c50dfb8ddee958684fa08c8aa7355fbbd8bee8c22d6"
+  }
+ ]
+}

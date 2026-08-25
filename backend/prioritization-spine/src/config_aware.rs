@@ -39,6 +39,7 @@ use shared_rs::chains::block_time_s_for_chain;
 use shared_rs::price_oracle::{
     CascadePriceOracle, ConfigPriceOracle, PriceOracle, RedisCachedPriceOracle,
 };
+use shared_rs::token_identity::TokenIdentityIndex;
 use shared_rs::trading_config::TradingConfigState;
 use std::collections::HashMap;
 
@@ -298,6 +299,19 @@ pub struct ConfigAwareEvaluator<'a> {
     /// and `CostBreakdown.relay_fee_usd`. Callers pre-fetch async to keep
     /// `evaluate()` entirely sync on the hot path.
     pub estimated_relay_fee_usd: f64,
+
+    /// ARBX-0018 — address-keyed token identity for this chain. When `Some`,
+    /// `candidate.token_addresses` are treated as REAL ADDRESSES: the
+    /// allowlist gate binds `(chain_id, address)` (`TokenIdentityIndex::
+    /// is_allowed_addr`) and the symbol-keyed price stack / per-token caps
+    /// receive `symbol_for_addr(addr)` (raw address passthrough when the
+    /// universe doesn't know it — the miss stays honest downstream).
+    ///
+    /// `None` (default) keeps the LEGACY symbol-string binding for callers
+    /// not yet migrated (`config.token_allowed` on whatever strings the
+    /// caller put in `token_addresses`). Migration of remaining call sites
+    /// is ARBX-R-0002; the two modes never mix within one evaluation.
+    pub token_identity: Option<std::sync::Arc<TokenIdentityIndex>>,
 }
 
 impl<'a> ConfigAwareEvaluator<'a> {
@@ -315,6 +329,7 @@ impl<'a> ConfigAwareEvaluator<'a> {
             v3_slot0_snapshot: None,
             feedback_channel: None,
             estimated_relay_fee_usd: 0.0,
+            token_identity: None,
         }
     }
 
@@ -338,6 +353,7 @@ impl<'a> ConfigAwareEvaluator<'a> {
             v3_slot0_snapshot: None,
             feedback_channel: None,
             estimated_relay_fee_usd: 0.0,
+            token_identity: None,
         }
     }
 
@@ -362,6 +378,10 @@ impl<'a> ConfigAwareEvaluator<'a> {
             v3_slot0_snapshot: None,
             feedback_channel: None,
             estimated_relay_fee_usd: 0.0,
+            // ARBX-0018 (migration completion, 2026-08-24): secondary
+            // constructors can't receive an identity index — fail-honest
+            // `None`; injection stays exclusively via `with_token_identity`.
+            token_identity: None,
         }
     }
 
@@ -388,6 +408,8 @@ impl<'a> ConfigAwareEvaluator<'a> {
             v3_slot0_snapshot: None,
             feedback_channel: None,
             estimated_relay_fee_usd: 0.0,
+            // ARBX-0018: see with_p_fail — `None` + builder injection.
+            token_identity: None,
         }
     }
 
@@ -417,6 +439,8 @@ impl<'a> ConfigAwareEvaluator<'a> {
             v3_slot0_snapshot: None,
             feedback_channel: None,
             estimated_relay_fee_usd: 0.0,
+            // ARBX-0018: see with_p_fail — `None` + builder injection.
+            token_identity: None,
         }
     }
 
@@ -452,6 +476,8 @@ impl<'a> ConfigAwareEvaluator<'a> {
             v3_slot0_snapshot,
             feedback_channel: None,
             estimated_relay_fee_usd: 0.0,
+            // ARBX-0018: see with_p_fail — `None` + builder injection.
+            token_identity: None,
         }
     }
 
@@ -481,6 +507,21 @@ impl<'a> ConfigAwareEvaluator<'a> {
     /// For L2 chains (Arbitrum, Base, Optimism, Polygon): pass `0.0`.
     pub fn with_relay_fee(mut self, estimated_relay_fee_usd: f64) -> Self {
         self.estimated_relay_fee_usd = estimated_relay_fee_usd;
+        self
+    }
+
+    /// ARBX-0018 — attach the chain's address-keyed token identity index.
+    /// Switches the evaluator to identity mode: the allowlist gate binds
+    /// `(chain_id, address)`; symbols become metadata feeding the price
+    /// stack. The index must belong to the SAME chain passed to
+    /// `evaluate*` (one universe per chain — the caller composes both from
+    /// the same scan; asserting `idx.chain_id() == chain_id` here would be
+    /// redundant with the composition site's single source).
+    pub fn with_token_identity(
+        mut self,
+        index: Option<std::sync::Arc<TokenIdentityIndex>>,
+    ) -> Self {
+        self.token_identity = index;
         self
     }
 
@@ -549,11 +590,79 @@ impl<'a> ConfigAwareEvaluator<'a> {
         rpc_latency_ms: u64,
     ) -> ConfigGateOutcome {
         // 1. Token allowlist gate.
-        for tok in &candidate.token_addresses {
-            if !self.config.token_allowed(tok) {
-                return ConfigGateOutcome::TokenNotAllowed {
-                    token_symbol_or_addr: tok.clone(),
-                };
+        //
+        // ARBX-0018: when a `TokenIdentityIndex` is attached, runtime
+        // identity is `(chain_id, address)` — membership is checked
+        // address-keyed and the SYMBOL metadata feeds the downstream
+        // symbol-keyed price stack (oracle lookups + per-token caps below
+        // consume `token_in_id`/`token_out_id`, which resolve through the
+        // index in identity mode). A symbol STRING never passes the gate,
+        // even when it matches the operator's allowlist. Legacy callers
+        // (index = None) keep the symbol-string compare unchanged.
+        let token_in_id: String;
+        let token_out_id: String;
+        match &self.token_identity {
+            Some(idx) => {
+                for tok in &candidate.token_addresses {
+                    if !idx.is_allowed_addr(tok) {
+                        return ConfigGateOutcome::TokenNotAllowed {
+                            token_symbol_or_addr: tok.clone(),
+                        };
+                    }
+                }
+                // Symbol metadata for the price stack; raw address
+                // passthrough on unknown → downstream miss stays honest.
+                token_in_id = idx
+                    .symbol_for_addr(
+                        candidate
+                            .token_addresses
+                            .first()
+                            .map(String::as_str)
+                            .unwrap_or(""),
+                    )
+                    .map(str::to_string)
+                    .unwrap_or_else(|| {
+                        candidate
+                            .token_addresses
+                            .first()
+                            .cloned()
+                            .unwrap_or_default()
+                    });
+                token_out_id = idx
+                    .symbol_for_addr(
+                        candidate
+                            .token_addresses
+                            .get(1)
+                            .map(String::as_str)
+                            .unwrap_or(""),
+                    )
+                    .map(str::to_string)
+                    .unwrap_or_else(|| {
+                        candidate
+                            .token_addresses
+                            .get(1)
+                            .cloned()
+                            .unwrap_or_default()
+                    });
+            }
+            None => {
+                for tok in &candidate.token_addresses {
+                    if !self.config.token_allowed(tok) {
+                        return ConfigGateOutcome::TokenNotAllowed {
+                            token_symbol_or_addr: tok.clone(),
+                        };
+                    }
+                }
+                token_in_id = candidate
+                    .token_addresses
+                    .first()
+                    .cloned()
+                    .unwrap_or_default();
+                token_out_id = candidate
+                    .token_addresses
+                    .get(1)
+                    .cloned()
+                    .unwrap_or_default();
             }
         }
 
@@ -605,18 +714,10 @@ impl<'a> ConfigAwareEvaluator<'a> {
         let config_oracle = ConfigPriceOracle::new(self.config);
         let oracle: CascadePriceOracle =
             CascadePriceOracle::new(vec![Box::new(cache_oracle), Box::new(config_oracle)]);
-        let token_in_id = candidate
-            .token_addresses
-            .first()
-            .map(String::as_str)
-            .unwrap_or("");
-        let token_out_id = candidate
-            .token_addresses
-            .get(1)
-            .map(String::as_str)
-            .unwrap_or("");
-        let in_price_opt = oracle.price_usd(token_in_id);
-        let out_price_opt = oracle.price_usd(token_out_id);
+        // ARBX-0018: identity mode resolved these through the index above
+        // (addr → symbol metadata); legacy mode passes the raw entries.
+        let in_price_opt = oracle.price_usd(&token_in_id);
+        let out_price_opt = oracle.price_usd(&token_out_id);
         let unknown_price = in_price_opt.is_none() || out_price_opt.is_none();
 
         // When either side is unknown, force BOTH to zero so downstream
@@ -643,7 +744,7 @@ impl<'a> ConfigAwareEvaluator<'a> {
         // governs (backward compat).
         let effective_capital = self
             .config
-            .effective_capital_for(token_in_id, strategy_kind);
+            .effective_capital_for(&token_in_id, strategy_kind);
         let observed_amount_in_usd = candidate.amount_in * in_price;
         let amount_in_usd = observed_amount_in_usd.min(effective_capital);
         let cap_ratio = if observed_amount_in_usd > 0.0 {
@@ -1190,6 +1291,162 @@ mod tests {
             10,
         );
         assert!(matches!(out, ConfigGateOutcome::TokenNotAllowed { .. }));
+    }
+
+    // ---- ARBX-0018: identity mode (address binds, symbol = metadata) ----
+
+    fn identity_universe() -> Vec<(String, String)> {
+        vec![
+            ("0xaaaaweth".into(), "WETH".into()),
+            ("0xbbbbusdc".into(), "USDC".into()),
+        ]
+    }
+
+    fn identity_candidate(addrs: Vec<&str>) -> OpportunityCandidate {
+        OpportunityCandidate {
+            route_fingerprint: "test".into(),
+            pool_addresses: vec![],
+            token_addresses: addrs.into_iter().map(String::from).collect(),
+            dex_adapters: vec!["uniswap-v2".into()],
+            amount_in: 0.1,
+            expected_amount_out: 0.1001,
+            gross_profit: 0.0001,
+        }
+    }
+
+    #[test]
+    fn identity_mode_symbol_string_never_passes() {
+        // THE prohibition (ARBX-0018 regression): "WETH" is in the allowlist
+        // and resolves to an address — but the STRING is not a token. Under
+        // identity mode it must NOT pass, even though the legacy gate (no
+        // index attached, same config) would have let it through.
+        let c = cfg();
+        let idx = TokenIdentityIndex::resolve(1, &c.allowed_token_symbols, &identity_universe());
+        let candidate = identity_candidate(vec!["WETH", "0xbbbbusdc"]);
+        let out = ConfigAwareEvaluator::new(&c, signals())
+            .with_token_identity(Some(std::sync::Arc::new(idx)))
+            .evaluate(&candidate, "dex_arb_v2v2", 1, "rpc".into(), 10);
+        match out {
+            ConfigGateOutcome::TokenNotAllowed {
+                token_symbol_or_addr,
+            } => {
+                assert_eq!(token_symbol_or_addr, "WETH");
+            }
+            other => panic!("symbol string must be rejected, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn identity_mode_resolved_address_prices_via_symbol_metadata() {
+        // Address passes the gate AND the symbol-keyed price stack still
+        // works: the index maps 0xaaaaweth→"WETH" (base token, $2000) and
+        // 0xbbbbusdc→"USDC" (stablecoin, $1) so the evaluation proceeds past
+        // pricing into the economics gates. If symbol resolution were
+        // broken the raw address would miss the oracle and the rejection
+        // would be UnknownTokenPrice instead.
+        let c = cfg();
+        let idx = TokenIdentityIndex::resolve(1, &c.allowed_token_symbols, &identity_universe());
+        let candidate = identity_candidate(vec!["0xaaaaweth", "0xbbbbusdc"]);
+        let out = ConfigAwareEvaluator::new(&c, signals())
+            .with_token_identity(Some(std::sync::Arc::new(idx)))
+            .evaluate(&candidate, "dex_arb_v2v2", 1, "rpc".into(), 10);
+        match out {
+            ConfigGateOutcome::Evaluated { rejection, .. } => {
+                assert!(
+                    !matches!(rejection, Some(RejectReason::UnknownTokenPrice)),
+                    "symbol metadata must feed the oracle; got {:?}",
+                    rejection
+                );
+            }
+            other => panic!("resolved addresses must clear the gate, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn identity_mode_unknown_address_rejected_with_address() {
+        // Address not in the universe + non-empty operator allowlist →
+        // fail-closed, and the rejection carries the ADDRESS (the identity),
+        // not a symbol guess.
+        let c = cfg();
+        let idx = TokenIdentityIndex::resolve(1, &c.allowed_token_symbols, &identity_universe());
+        let candidate = identity_candidate(vec!["0xdeadbeef", "0xbbbbusdc"]);
+        let out = ConfigAwareEvaluator::new(&c, signals())
+            .with_token_identity(Some(std::sync::Arc::new(idx)))
+            .evaluate(&candidate, "dex_arb_v2v2", 1, "rpc".into(), 10);
+        match out {
+            ConfigGateOutcome::TokenNotAllowed {
+                token_symbol_or_addr,
+            } => {
+                assert_eq!(token_symbol_or_addr, "0xdeadbeef");
+            }
+            other => panic!("unknown address must fail closed, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn r0002_repro_usdc_1inch_addr_vs_symbol() {
+        // ARBX-R-0002 repro with the production addresses from the incident
+        // (112×1INCH + 6×USDC TokenNotAllowed rejections in 6h): the
+        // cartridge/orchestrator paths passed ADDRESSES into a symbol-keyed
+        // allowlist and every candidate died at the gate. Identity mode
+        // resolves the operator's symbols (USDC, 1INCH) to exactly these
+        // addresses and the gate passes. Legacy mode on the same input
+        // still fails — kept as the second half of the repro to document
+        // what was eliminated.
+        const USDC_MAINNET: &str = "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48";
+        const INCH_MAINNET: &str = "0x111111111117dc0aa78b770fa6a738034120c302";
+        const AGLD_MAINNET: &str = "0x32353a6c91143bfd6c7d363b546e62a9a2489a20";
+
+        let mut c = cfg();
+        c.allowed_token_symbols = vec!["USDC".into(), "1INCH".into()];
+        let universe = vec![
+            (USDC_MAINNET.to_string(), "USDC".into()),
+            (INCH_MAINNET.to_string(), "1INCH".into()),
+            (AGLD_MAINNET.to_string(), "AGLD".into()), // NOT in the allowlist
+        ];
+        let idx = TokenIdentityIndex::resolve(1, &c.allowed_token_symbols, &universe);
+        let candidate = identity_candidate(vec![USDC_MAINNET, INCH_MAINNET]);
+
+        // Identity mode: both legs clear the token gate (they reach the
+        // strategy gate, i.e. NOT TokenNotAllowed).
+        let out = ConfigAwareEvaluator::new(&c, signals())
+            .with_token_identity(Some(std::sync::Arc::new(idx)))
+            .evaluate(&candidate, "dex_arb_v2v2", 1, "rpc".into(), 10);
+        assert!(
+            !matches!(out, ConfigGateOutcome::TokenNotAllowed { .. }),
+            "identity mode must clear the production USDC/1INCH pair: {:?}",
+            out
+        );
+
+        // Legacy mode (no index), same address input: the eliminated bug.
+        let out_legacy = ConfigAwareEvaluator::new(&c, signals()).evaluate(
+            &candidate,
+            "dex_arb_v2v2",
+            1,
+            "rpc".into(),
+            10,
+        );
+        assert!(matches!(
+            out_legacy,
+            ConfigGateOutcome::TokenNotAllowed { .. }
+        ));
+
+        // AGLD stays OUTSIDE the operator allowlist → rejected under
+        // identity mode too (allowlist membership is the operator's call;
+        // the gate just binds it to the address now).
+        let agld_candidate = identity_candidate(vec![AGLD_MAINNET, USDC_MAINNET]);
+        let idx2 = TokenIdentityIndex::resolve(1, &c.allowed_token_symbols, &universe);
+        let out_agld = ConfigAwareEvaluator::new(&c, signals())
+            .with_token_identity(Some(std::sync::Arc::new(idx2)))
+            .evaluate(&agld_candidate, "dex_arb_v2v2", 1, "rpc".into(), 10);
+        match out_agld {
+            ConfigGateOutcome::TokenNotAllowed {
+                token_symbol_or_addr,
+            } => {
+                assert_eq!(token_symbol_or_addr, AGLD_MAINNET);
+            }
+            other => panic!("AGLD outside allowlist must be rejected: {:?}", other),
+        }
     }
 
     #[test]

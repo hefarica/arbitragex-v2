@@ -1,0 +1,11 @@
+{
+  "id": 10,
+  "code": "op_10",
+  "name": "Welford",
+  "canonical_role": "Online volatility/mean/variance.",
+  "enabled": true,
+  "engine_present": true,
+  "calibration_state": "UNCALIBRATED",
+  "formula": "M_k = M_{k-1} + (x_k - M_{k-1})/k - online volatility/mean",
+  "implementation_file": "backend/math-engine/src/operators/op_10_welford.rs"
+}

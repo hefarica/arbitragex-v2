@@ -26,7 +26,9 @@ import { useTokenIcon } from "@/lib/hooks/useTokenIcon";
 
 export interface TokenIconProps {
   address: string;
-  chainId: number | string;
+  /** FE-0029 (§28): null = no chain claim — no per-chain icon route, the
+   *  deterministic avatar layer remains. */
+  chainId: number | string | null;
   symbol?: string;
   /** Pixel size of the (square) icon. Default 24. */
   size?: number;

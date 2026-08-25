@@ -44,6 +44,7 @@ function makeOpp(over: Partial<Record<string, unknown>> = {}): OmniOpportunity {
     bridge: null,
     bridge_fee_usd: null,
     route_metadata: {},
+    semantic_violations: [],
     simulated_net_profit_usd: null,
     simulated_amount_in_usd: null,
     simulated_cost_breakdown: null,
@@ -160,6 +161,30 @@ describe("OpportunityExchangeCard — SSOT two states", () => {
     expect(html).toContain("Net Yield");
     expect(html).toContain("EXECUTE");
     expect(html).not.toContain("Detección — sin evaluar");
+    // FE-0030 (§29): persisted topology is ROUTE-grade — NO synthetic marker.
+    expect(html).not.toContain("SYNTHETIC LEGACY VIEW");
+    // and the LP-fees line carries the persisted leg count.
+    expect(html).toContain("LP fees (2 legs)");
+  });
+
+  // ── FE-0030 (§29): legacy rows render the synthetic view MARKED ───────────
+  it("legacy row (no route_metadata) renders SYNTHETIC LEGACY VIEW on the Ruta row", () => {
+    const opp = makeOpp({
+      status: "viable",
+      rejection_reason: null,
+      expected_profit_usd: 42.5,
+      net_expected_profit_usd: 18.2,
+      roi_pct: 1.7,
+      route_metadata: null, // legacy row → synthetic 2-leg fallback (mapper normalizes {} to null)
+      dex_a: "uniswap-v2",
+      dex_b: "sushiswap",
+    });
+    const html = renderToStaticMarkup(<OpportunityExchangeCard {...props(opp)} />);
+    expect(html).toContain("SYNTHETIC LEGACY VIEW");
+    // §29: never an operational per-leg count off a synthetic view.
+    expect(html).not.toContain("(2 legs)");
+    // the marker explains itself (title carries the §29 rationale).
+    expect(html).toContain("NO es ROUTE VERIFIED");
   });
 
   // ── F2 (audit §11 RC1): intermediate route legs show their currency code ──
@@ -243,5 +268,57 @@ describe("OpportunityExchangeCard — SSOT two states", () => {
     // "Contratos" row keeps showing raw addresses by design.)
     expect(html).toContain("<span>WETH</span>");
     expect(html).not.toContain(`<span>${shortAddr(A)}</span>`);
+  });
+
+  // FE-0031 (§30): a semantically-violating row is QUARANTINED in place —
+  // visible on BOTH faces, never hidden.
+  it("violations render the QUARANTINED strip on the DETECTION face", () => {
+    const html = renderToStaticMarkup(
+      <OpportunityExchangeCard
+        {...props(
+          makeOpp({ semantic_violations: ["missing_strategy_id", "missing_block"] }),
+        )}
+      />,
+    );
+    expect(html).toContain("QUARANTINED");
+    expect(html).toContain("missing_strategy_id · missing_block");
+    expect(html).toContain('role="alert"');
+  });
+
+  it("violations render the QUARANTINED strip on the EVALUATED face too", () => {
+    const rm = {
+      dex_adapters: ["uniswap_v2", "sushiswap"],
+      token_addresses: ["0xaaaa", "0xbbbb", "0xaaaa"],
+      pool_addresses: ["0xpool1", "0xpool2"],
+    };
+    const html = renderToStaticMarkup(
+      <OpportunityExchangeCard
+        {...props(
+          makeOpp({
+            status: "viable",
+            rejection_reason: null,
+            expected_profit_usd: 3.5,
+            route_metadata: rm,
+            semantic_violations: ["hop_incoherent"],
+          }),
+        )}
+      />,
+    );
+    expect(html).toContain("QUARANTINED");
+    expect(html).toContain("hop_incoherent");
+    // clean rows on the same face never carry the marker
+    const clean = renderToStaticMarkup(
+      <OpportunityExchangeCard
+        {...props(
+          makeOpp({
+            status: "viable",
+            rejection_reason: null,
+            expected_profit_usd: 3.5,
+            route_metadata: rm,
+          }),
+        )}
+      />,
+    );
+    expect(clean).not.toContain("QUARANTINED");
   });
 });

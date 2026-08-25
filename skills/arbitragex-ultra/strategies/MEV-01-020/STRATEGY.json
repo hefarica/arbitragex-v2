@@ -1,0 +1,24 @@
+{
+  "mev_id": "MEV-01-020",
+  "grupo": "1",
+  "estrategia": "Multi-DEX cyclic arbitrage",
+  "familia": "Arbitrajes spot DEX dentro de una misma cadena",
+  "required_surface": "DEX_AMM",
+  "backend_module": "route_graph_engine",
+  "toggle_frontend": "strategy.01.020.enabled",
+  "min_legs": 3,
+  "max_legs": 16,
+  "legs_model": "N-leg din\u00e1mico",
+  "primary_operators": [
+    "op_15",
+    "op_16",
+    "op_21",
+    "op_27"
+  ],
+  "secondary_operators": [
+    "op_01",
+    "op_22",
+    "op_26",
+    "op_30"
+  ]
+}

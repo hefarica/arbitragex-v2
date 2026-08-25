@@ -4,7 +4,7 @@ import { WifiOff, ShieldAlert, RefreshCw, ChevronDown } from "lucide-react";
 import { sanitizeForDisplay } from "@/lib/omega-lexicon";
 import { toast } from "sonner";
 import { getApiBaseUrl } from "@/lib/api-client";
-import { OpportunityDetailDialog, type OpportunityDetail } from "@/components/OpportunityDetailDialog";
+import { OpportunityDetailDialog } from "@/components/OpportunityDetailDialog";
 import { OpportunityExchangeCard } from "@/components/opportunities/exchange/OpportunityExchangeCard";
 import { PriceTicker } from "@/components/opportunities/exchange/PriceTicker";
 import {
@@ -75,7 +75,7 @@ export default function OpportunitiesExchangeClient({
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [now, setNow] = useState<number>(0);
   const [simLoading, setSimLoading] = useState<string | null>(null);
-  const [selectedOpp, setSelectedOpp] = useState<OpportunityDetail | null>(null);
+  const [selectedOpp, setSelectedOpp] = useState<OmniOpportunity | null>(null);
   const [lastRefresh, setLastRefresh] = useState<Date | null>(
     initialSnapshot.serverTime ? new Date(initialSnapshot.serverTime) : null,
   );
@@ -179,7 +179,7 @@ export default function OpportunitiesExchangeClient({
   }, [EDGE_URL]);
 
   const onInspect = useCallback((opp: OmniOpportunity) => {
-    setSelectedOpp(opp as unknown as OpportunityDetail);
+    setSelectedOpp(opp);
   }, []);
   const onExecute = useCallback(
     (opportunityId: string) => handleSimulate(opportunityId),
@@ -369,7 +369,9 @@ export default function OpportunitiesExchangeClient({
             now={now}
             isMounted={isMounted}
             simLoading={simLoading === opp.id}
-            strategyConfig={strategyConfigs[opp.strategy_kind] ?? null}
+            strategyConfig={
+              opp.strategy_kind != null ? (strategyConfigs[opp.strategy_kind] ?? null) : null
+            }
             modeLabel={modeLabel}
             onExecute={onExecute}
             onInspect={onInspect}

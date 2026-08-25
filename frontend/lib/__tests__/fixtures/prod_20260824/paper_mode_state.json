@@ -1,0 +1,22 @@
+{
+ "enabled": true,
+ "chain_id": 1,
+ "source": "env",
+ "confidence": "inferred",
+ "degraded": false,
+ "conflict": false,
+ "updated_at": "2026-08-25T01:33:19.086Z",
+ "reasons": [
+  "all chains report paper mode enabled"
+ ],
+ "chains": [
+  {
+   "chain_id": 1,
+   "enabled": true,
+   "source": "env",
+   "confidence": "inferred",
+   "conflict": false,
+   "updated_at": null
+  }
+ ]
+}

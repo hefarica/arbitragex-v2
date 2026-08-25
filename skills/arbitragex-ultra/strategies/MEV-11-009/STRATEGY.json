@@ -1,0 +1,19 @@
+{
+  "mev_id": "MEV-11-009",
+  "grupo": "11",
+  "estrategia": "Resolution-source arbitrage",
+  "familia": "Prediction markets y mercados condicionales",
+  "required_surface": "PREDICTION",
+  "backend_module": "prediction_engine",
+  "toggle_frontend": "strategy.11.009.enabled",
+  "min_legs": 2,
+  "max_legs": 12,
+  "legs_model": "Settlement multiorden",
+  "primary_operators": [
+    "op_10",
+    "op_11"
+  ],
+  "secondary_operators": [
+    "op_22"
+  ]
+}

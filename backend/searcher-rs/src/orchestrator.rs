@@ -825,11 +825,41 @@ impl Orchestrator {
             }
         }
 
+        // ── ARBX-0009 (two-phase): size + evaluate first, then emit the batch
+        // in sheet-07 Net_bps order. Phase 1 below is semantics-identical to
+        // the former inline emit loop (same logs, same sizing, same rejection
+        // construction) — only emission is deferred to Phase 2, where the
+        // batch is ordered best-Net_bps-first per workbook 07. Ranking never
+        // gates or drops: sized, net-negative and engine-rejected candidates
+        // are ALL still emitted (RULE 00 / R8; non-computable ranks last).
+        let route_key_of = |c: &StrategyCandidate| {
+            // GRANULAR identity (STRAT-IDENT audit): the engine label, never
+            // the collapsed `opportunity.strategy_kind` (~16 dex variants
+            // flatten to one class there); pools + intent hash make it stable,
+            // and the base-strategy marker keeps a flash-wrapped variant from
+            // tying its own-capital sibling.
+            format!(
+                "{}|{}|{}{}",
+                c.label.as_str(),
+                c.candidate.pool_addresses.join(","),
+                c.source_intent_hash,
+                c.base_strategy
+                    .map(|b| format!(":{}", b.as_str()))
+                    .unwrap_or_default(),
+            )
+        };
+        let mut sized_batch: Vec<(crate::net_bps_ranking::RankedRoute, StrategyCandidate)> =
+            Vec::new();
         for candidate in all_candidates {
             // Skip sizing for already-rejected candidates (engine rejection).
             if candidate.rejection_reason.is_some() {
-                self.process_candidate(candidate, cfg_snapshot.as_ref(), chain_id)
-                    .await?;
+                sized_batch.push((
+                    crate::net_bps_ranking::RankedRoute {
+                        route_key: route_key_of(&candidate),
+                        economics: crate::net_bps_ranking::RouteNetEconomics::not_computable(),
+                    },
+                    candidate,
+                ));
                 continue;
             }
 
@@ -886,7 +916,7 @@ impl Orchestrator {
                 optimal_amount_in = ?outcome.optimal_amount_in(),
             );
 
-            let final_candidate = match outcome {
+            let (final_candidate, net_economics) = match outcome {
                 OptimizeOutcome::Sized(sized) => {
                     // Unbox and update the candidate with optimal sizing data.
                     let s = *sized;
@@ -900,28 +930,71 @@ impl Orchestrator {
                     // an inconsistent audit trail (RULE 00 violation surface).
                     c.opportunity.expected_profit_usd = Some(s.gross_profit_usd);
                     c.opportunity.net_expected_profit_usd = Some(s.estimated_net_profit_usd);
-                    c
+                    // ARBX-0009: sheet-07 components from the kernel for the
+                    // batch's Net_bps ranking (None ⇒ not computable ⇒ last).
+                    (c, s.net_economics)
                 }
                 OptimizeOutcome::Rejected(reason) => {
                     // Route optimizer rejection to REJECTED_NO_PROFIT_TOTAL
                     // (not SIMULATION_FAILED_TOTAL — sizing is not simulation).
-                    let reason_str = reason.as_str().to_owned();
+                    // The Prometheus label stays the BARE reason (a suffixed
+                    // label would split the metric series mid-stream).
+                    let bare = reason.as_str();
                     REJECTED_NO_PROFIT_TOTAL
-                        .with_label_values(&[&chain_str, candidate.label.as_str(), &reason_str])
+                        .with_label_values(&[&chain_str, candidate.label.as_str(), bare])
                         .inc();
+                    // ARBX-0007: net-dependent rejections carry the financing
+                    // mode that was priced (label-scheme suffix, DB/UI only —
+                    // the rejection_reason string is plain text rendered
+                    // verbatim by the frontend). The discriminator is the same
+                    // one the kernel priced: a flash-backed base strategy.
+                    let rejection = if reason.is_net_dependent() {
+                        let mode = crate::financing::selected_mode(u8::from(
+                            candidate.base_strategy.is_some(),
+                        )
+                            as f64);
+                        format!("{bare}:{}", mode.as_str())
+                    } else {
+                        bare.to_owned()
+                    };
                     let mut c = candidate;
-                    c.rejection_reason = Some(reason_str);
+                    c.rejection_reason = Some(rejection);
                     // HARDENING: NO vaciar expected_profit_usd. Mantener el valor
                     // que el SizeOptimizer calculó (gross) para que la tarjeta lo
                     // muestre. El gate de net-positive es de EJECUCIÓN, no de
                     // detección. La tarjeta debe mostrar los números reales para
                     // que el operador vea POR QUÉ no es viable.
                     // c.opportunity.expected_profit_usd = None;  ← REMOVIDO
-                    c
+                    (c, None)
                 }
             };
+            sized_batch.push((
+                crate::net_bps_ranking::RankedRoute {
+                    route_key: route_key_of(&final_candidate),
+                    economics: net_economics
+                        .unwrap_or_else(crate::net_bps_ranking::RouteNetEconomics::not_computable),
+                },
+                final_candidate,
+            ));
+        }
 
-            self.process_candidate(final_candidate, cfg_snapshot.as_ref(), chain_id)
+        // Phase 2 (ARBX-0009): deterministic sheet-07 Net_bps ordering, then
+        // emit. One summary line per multi-candidate batch (R9 — per-item
+        // detail already logged at debug in Phase 1).
+        sized_batch.sort_by(|(a, _), (b, _)| crate::net_bps_ranking::net_bps_order(a, b));
+        if sized_batch.len() > 1 {
+            debug!(
+                event = "orchestrator.net_bps_ranked_batch",
+                chain_id,
+                batch = sized_batch.len(),
+                order = ?sized_batch
+                    .iter()
+                    .map(|(r, _)| (r.route_key.as_str(), r.economics.net_bps()))
+                    .collect::<Vec<_>>(),
+            );
+        }
+        for (_, candidate) in sized_batch {
+            self.process_candidate(candidate, cfg_snapshot.as_ref(), chain_id)
                 .await?;
         }
 
@@ -1074,8 +1147,17 @@ impl Orchestrator {
         };
 
         // Build the evaluator borrowing the owned config snapshot.
+        // ARBX-R-0002: attach the address-keyed token identity (same 30s
+        // cache as the scanner/cartridge paths) so the allowlist gate binds
+        // (chain_id, address) — engine candidates carry real addresses in
+        // `token_addresses`, and the legacy symbol-compare rejected them
+        // all (TokenNotAllowed:<addr> — the AGLD/1INCH flood).
         let signals = NetworkSignals::unknown(sc.opportunity.block_number.unwrap_or(0));
-        let ev = ConfigAwareEvaluator::with_cache(state, signals, price_snapshot);
+        let identity_idx =
+            crate::token_identity::index_for(&mut self.ctx.math_redis.clone(), chain_id, state)
+                .await;
+        let ev = ConfigAwareEvaluator::with_cache(state, signals, price_snapshot)
+            .with_token_identity(Some(identity_idx));
 
         // Run the spine gate.
         let spine_gate_outcome = ev.evaluate_with_route_plan(

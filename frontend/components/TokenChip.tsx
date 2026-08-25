@@ -86,9 +86,9 @@ export interface TokenInfo {
 export interface TokenChipProps {
   /** EVM address, 42-char hex. Used as DeterministicAvatar seed and shortAddr fallback. */
   token_address: string;
-  /** Chain id — reserved for future chain-icon enrichment. Currently unused in render
-   *  (chain identity surfaces via a sibling ChainBadge in the parent layout). */
-  chain_id: number;
+  /** Chain id — drives the per-chain icon route. FE-0029 (§28): null = payload
+   *  had no chain → icon resolution disabled, avatar fallback only. */
+  chain_id: number | null;
   /** Nullable per R8: enricher may not have resolved metadata yet. */
   info: TokenInfo | null;
 }

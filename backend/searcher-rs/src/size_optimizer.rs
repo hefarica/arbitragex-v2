@@ -125,6 +125,17 @@ impl OptimizeRejectReason {
             Self::V3QuoteUnavailable => "v3_quote_unavailable",
         }
     }
+
+    /// True when the rejection depends on a NET-derived value that already
+    /// includes the financing fee (ARBX-0007). Only these reasons carry the
+    /// priced financing mode in their rejection label suffix — attaching it
+    /// elsewhere would be noise (e.g. missing reserves has no mode context).
+    pub fn is_net_dependent(&self) -> bool {
+        matches!(
+            self,
+            Self::NonPositiveNetUsd | Self::GasFloorBreach | Self::KellyNegativeEdge
+        )
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -205,6 +216,10 @@ pub struct SizedCandidate {
     /// the card must show the numbers so the operator can see WHY it's not
     /// viable instead of seeing "—" everywhere.
     pub net_negative: bool,
+    /// ARBX-0009: sheet-07 cost components for Net_bps ranking. `Some` at every
+    /// sized site (all components in kernel scope); `None` in hand-built test
+    /// fixtures. R8: `None` = not computable, ranks last — never fabricated.
+    pub net_economics: Option<crate::net_bps_ranking::RouteNetEconomics>,
 }
 
 // ---------------------------------------------------------------------------
@@ -701,6 +716,26 @@ impl SizeOptimizer {
         let gas_cost = state.gas_cost_usd();
         let ops_overhead = state.ops_overhead_usd_per_attempt;
         let net_usd = gross_usd - gas_cost - ops_overhead;
+        // ARBX-0009: sheet-07 economics for Net_bps ranking. Triangulars run
+        // own capital (base_strategy None ⇒ borrow 0 ⇒ no flash fee), so the
+        // ranked NetProfit is identical to the recorded `net_usd` here; a
+        // flash-wrapped variant, should one ever route here, prices its fee
+        // with the same ARBX-0007 policy the kernel sites use.
+        let start_amount_usd = (clamped_to_i128(eval_result.amount_in_wei) as f64)
+            / 10f64.powi(decimals as i32)
+            * token_price_usd;
+        let borrow_usd = if candidate.base_strategy.is_some() {
+            start_amount_usd
+        } else {
+            0.0
+        };
+        let net_economics = Some(crate::net_bps_ranking::RouteNetEconomics::from_kernel(
+            start_amount_usd,
+            gross_usd,
+            gas_cost,
+            ops_overhead,
+            borrow_usd,
+        ));
 
         if net_usd <= 0.0 {
             debug!(
@@ -719,6 +754,7 @@ impl SizeOptimizer {
                 gross_profit_usd: gross_usd,
                 estimated_net_profit_usd: net_usd,
                 net_negative: true,
+                net_economics,
             }));
         }
 
@@ -733,6 +769,7 @@ impl SizeOptimizer {
             gross_profit_usd: gross_usd,
             estimated_net_profit_usd: net_usd,
             net_negative: false,
+            net_economics,
         }))
     }
 
@@ -882,17 +919,35 @@ impl SizeOptimizer {
             return OptimizeOutcome::Rejected(OptimizeRejectReason::NonPositiveGrossUsd);
         }
 
-        let flashloan_fee_usd = if candidate.base_strategy.is_some() {
-            let borrow_usd =
-                (clamped_to_i128(amount_in) as f64) / 10f64.powi(decimals as i32) * token_price_usd;
-            borrow_usd * 0.0005
+        let gas_cost = state.gas_cost_usd();
+        let ops_overhead = state.ops_overhead_usd_per_attempt;
+        // ARBX-0007: financing-mode route dimension. The flash-backed borrow
+        // (base_strategy set) is priced under every canonical mode; the
+        // selected mode preserves the legacy 5 bps math (fee term within
+        // 1 ulp; own capital pays no fee). Per-mode nets surface the
+        // born/died funnel in ONE debug line (R9).
+        let borrow_usd = if candidate.base_strategy.is_some() {
+            (clamped_to_i128(amount_in) as f64) / 10f64.powi(decimals as i32) * token_price_usd
         } else {
             0.0
         };
-
-        let gas_cost = state.gas_cost_usd();
-        let ops_overhead = state.ops_overhead_usd_per_attempt;
+        let financing_mode = crate::financing::selected_mode(borrow_usd);
+        let financing_evals =
+            crate::financing::evaluate_modes(gross_usd, gas_cost, ops_overhead, borrow_usd);
+        let flashloan_fee_usd = borrow_usd * financing_mode.fee_bps() / 10_000.0;
         let net_usd = gross_usd - gas_cost - ops_overhead - flashloan_fee_usd;
+        // ARBX-0009: sheet-07 economics — start = priced amount_in (the capital
+        // deployed; identical to borrow for flash routes, so the ranked
+        // NetProfit is the same figure the kernel's net_usd produced).
+        let start_amount_usd =
+            (clamped_to_i128(amount_in) as f64) / 10f64.powi(decimals as i32) * token_price_usd;
+        let net_economics = Some(crate::net_bps_ranking::RouteNetEconomics::from_kernel(
+            start_amount_usd,
+            gross_usd,
+            gas_cost,
+            ops_overhead,
+            borrow_usd,
+        ));
 
         if net_usd <= 0.0 {
             debug!(
@@ -902,6 +957,8 @@ impl SizeOptimizer {
                 gas_cost,
                 ops_overhead,
                 flashloan_fee_usd,
+                financing_mode = financing_mode.as_str(),
+                financing_nets = ?financing_evals,
                 net_usd,
             );
             // HARDENING: poblar el SizedCandidate con los valores calculados
@@ -916,6 +973,7 @@ impl SizeOptimizer {
                 gross_profit_usd: gross_usd,
                 estimated_net_profit_usd: net_usd,
                 net_negative: true,
+                net_economics,
             }));
         }
 
@@ -933,6 +991,8 @@ impl SizeOptimizer {
             amount_in = %amount_in,
             gross_usd,
             net_usd,
+            financing_mode = financing_mode.as_str(),
+            financing_nets = ?financing_evals,
         );
 
         OptimizeOutcome::Sized(Box::new(SizedCandidate {
@@ -941,6 +1001,7 @@ impl SizeOptimizer {
             gross_profit_usd: gross_usd,
             estimated_net_profit_usd: net_usd,
             net_negative: false,
+            net_economics,
         }))
     }
 
@@ -1112,17 +1173,31 @@ impl SizeOptimizer {
             return OptimizeOutcome::Rejected(OptimizeRejectReason::NonPositiveGrossUsd);
         }
 
-        let flashloan_fee_usd = if candidate.base_strategy.is_some() {
-            let borrow_usd =
-                (clamped_to_i128(amount_in) as f64) / 10f64.powi(decimals as i32) * token_price_usd;
-            borrow_usd * 0.0005
+        let gas_cost = state.gas_cost_usd();
+        let ops_overhead = state.ops_overhead_usd_per_attempt;
+        // ARBX-0007: financing-mode route dimension — identical policy to the
+        // V2 path above (selected mode = legacy 5 bps math; per-mode nets in
+        // one debug line).
+        let borrow_usd = if candidate.base_strategy.is_some() {
+            (clamped_to_i128(amount_in) as f64) / 10f64.powi(decimals as i32) * token_price_usd
         } else {
             0.0
         };
-
-        let gas_cost = state.gas_cost_usd();
-        let ops_overhead = state.ops_overhead_usd_per_attempt;
+        let financing_mode = crate::financing::selected_mode(borrow_usd);
+        let financing_evals =
+            crate::financing::evaluate_modes(gross_usd, gas_cost, ops_overhead, borrow_usd);
+        let flashloan_fee_usd = borrow_usd * financing_mode.fee_bps() / 10_000.0;
         let net_usd = gross_usd - gas_cost - ops_overhead - flashloan_fee_usd;
+        // ARBX-0009: sheet-07 economics — same construction as the V2 path.
+        let start_amount_usd =
+            (clamped_to_i128(amount_in) as f64) / 10f64.powi(decimals as i32) * token_price_usd;
+        let net_economics = Some(crate::net_bps_ranking::RouteNetEconomics::from_kernel(
+            start_amount_usd,
+            gross_usd,
+            gas_cost,
+            ops_overhead,
+            borrow_usd,
+        ));
         if net_usd <= 0.0 {
             debug!(
                 event = "size_optimizer.v3_negative_net",
@@ -1131,6 +1206,8 @@ impl SizeOptimizer {
                 gas_cost,
                 ops_overhead,
                 flashloan_fee_usd,
+                financing_mode = financing_mode.as_str(),
+                financing_nets = ?financing_evals,
                 net_usd,
             );
             // HARDENING: poblar el SizedCandidate con los valores calculados
@@ -1145,6 +1222,7 @@ impl SizeOptimizer {
                 gross_profit_usd: gross_usd,
                 estimated_net_profit_usd: net_usd,
                 net_negative: true,
+                net_economics,
             }));
         }
 
@@ -1162,6 +1240,8 @@ impl SizeOptimizer {
             amount_in = %amount_in,
             gross_usd,
             net_usd,
+            financing_mode = financing_mode.as_str(),
+            financing_nets = ?financing_evals,
         );
 
         OptimizeOutcome::Sized(Box::new(SizedCandidate {
@@ -1170,6 +1250,7 @@ impl SizeOptimizer {
             gross_profit_usd: gross_usd,
             estimated_net_profit_usd: net_usd,
             net_negative: false,
+            net_economics,
         }))
     }
 
@@ -1397,7 +1478,10 @@ impl SizeOptimizer {
 /// handled correctly (different fee_bps per leg).
 ///
 /// Returns `(x_star, profit_at_x_star_wei)` where profit is signed i128.
-fn golden_section_search_2leg(
+///
+/// `pub` (ARBX-0012): the benchmark matrix reuses THIS exact kernel — no
+/// bench-side twin, so bench ratios and motor answers cannot drift apart.
+pub fn golden_section_search_2leg(
     x_lo: U256,
     x_hi: U256,
     hop_reserves_a: &[(U256, U256)],
@@ -1486,6 +1570,42 @@ fn eval_2leg_profit(
     }
 
     clamped_to_i128(out_b).saturating_sub(clamped_to_i128(x))
+}
+
+/// ARBX-0008 (XLS-QB amount buckets): N-bucket sweep over the SAME 2-leg
+/// V2 curve `golden_section_search_2leg` maximizes. Takes the identical
+/// resolved inputs (oriented reserves, fee bps) and the kernel's own
+/// bracket semantics — `x_lo = 1 wei`, `x_hi = min(cap, reserve_in_a)` —
+/// so a bucket result and a golden-section result are answers about ONE
+/// curve, never two. The probe grid reuses `geom_probes` (log-spaced,
+/// envelope-validated N ∈ [8, 128]); the RUNNING V3 grid
+/// (`V3_BRACKET_POINTS`) is untouched. Each probe is evaluated through
+/// `eval_2leg_profit` verbatim — its conventions (early 0 on degenerate
+/// hops) are the motor's own and are recorded, not second-guessed.
+///
+/// Additive observation surface: the sizing DECISION keeps coming from
+/// `golden_section_search_2leg`. Consumers are the future amount-aware
+/// refine pass (lat.refine) and the ARBX-0012 benchmark matrix.
+pub fn bucket_sweep_2leg_curve(
+    n: usize,
+    x_lo: U256,
+    x_hi: U256,
+    hop_reserves_a: &[(U256, U256)],
+    hop_reserves_b: &[(U256, U256)],
+    fee_bps_a: u32,
+    fee_bps_b: u32,
+) -> Result<crate::amount_buckets::BucketSweep, String> {
+    let n = crate::amount_buckets::validate_amount_buckets(n)?;
+    let probes = geom_probes(x_lo, x_hi, n);
+    crate::amount_buckets::bucket_sweep_2leg(&probes, &mut |x| {
+        Some(eval_2leg_profit(
+            *x,
+            hop_reserves_a,
+            hop_reserves_b,
+            fee_bps_a,
+            fee_bps_b,
+        ))
+    })
 }
 
 // ---------------------------------------------------------------------------
@@ -1945,6 +2065,80 @@ mod tests {
             result.is_none(),
             "symmetric pools produce no profit — must return None"
         );
+    }
+
+    // ── ARBX-0008 (XLS-QB amount buckets): sweep over the SAME curve the
+    // golden-section kernel maximizes ──────────────────────────────────────
+    //
+    // Canonical vectors verified by an exact Python port of `eval_2leg_profit`
+    // + `geom_probes` (integer-faithful) on this fixture: golden p* =
+    // 2.845_290 WETH net; grid argmax ratios vs p* are N=8: 6.65%, N=16:
+    // 92.5%, N=22: 55.6%, N=32: 83.6%, N=64: 91.4%, N=128: 99.75%. The
+    // ratios are NOT monotone in N (geometric grids of different N are not
+    // nested) — the test therefore asserts structural bounds, never
+    // monotonicity. Ratio table itself is ARBX-0012 benchmark territory.
+    #[test]
+    fn bucket_sweep_2leg_curve_bounded_by_golden_and_envelope_enforced() {
+        // Same fixture shape as `profitable_route_returns_optimal_size`:
+        // pool A buys token_out deep, pool B sells it back higher.
+        let hop_a = vec![(unit(1000), unit(2_000_000))];
+        let hop_b = vec![(unit(1_000_000), unit(600))];
+        let x_lo = U256::from(1u64);
+        let x_hi = unit(1000);
+
+        // Self-derived reference: the kernel's own answer on the SAME
+        // bracket (no hardcoded profit literal — cross-platform proof).
+        let (_x_gs, p_gs) = golden_section_search_2leg(x_lo, x_hi, &hop_a, &hop_b, 30, 30, 25);
+        assert!(p_gs > 0, "fixture must be profitable, got {}", p_gs);
+
+        // Envelope: N outside [8, 128] fails fast.
+        assert!(bucket_sweep_2leg_curve(7, x_lo, x_hi, &hop_a, &hop_b, 30, 30).is_err());
+        assert!(bucket_sweep_2leg_curve(129, x_lo, x_hi, &hop_a, &hop_b, 30, 30).is_err());
+
+        for n in crate::amount_buckets::AMOUNT_BUCKETS_CANONICAL {
+            let sweep = bucket_sweep_2leg_curve(n, x_lo, x_hi, &hop_a, &hop_b, 30, 30)
+                .unwrap_or_else(|e| panic!("N={} must be admissible: {}", n, e));
+            assert_eq!(sweep.buckets, n);
+            assert_eq!(sweep.points.len(), n, "evaluator never returns None here");
+            let best = sweep.best.expect("profitable fixture: best must be Some");
+            assert!(best.net_wei > 0);
+            assert!(
+                best.net_wei <= p_gs,
+                "grid argmax (N={}) cannot exceed the continuous optimum",
+                n
+            );
+        }
+
+        // Refinement helps on this fixture (6.65% -> 99.75% of p*), with
+        // margins far beyond any ulp-level probe displacement.
+        let sweep_8 =
+            bucket_sweep_2leg_curve(8, x_lo, x_hi, &hop_a, &hop_b, 30, 30).expect("N=8 admissible");
+        let sweep_128 = bucket_sweep_2leg_curve(128, x_lo, x_hi, &hop_a, &hop_b, 30, 30)
+            .expect("N=128 admissible");
+        let best8 = sweep_8.best.expect("N=8 best");
+        let best128 = sweep_128.best.expect("N=128 best");
+        assert!(best8.net_wei < best128.net_wei);
+        assert!(
+            best128.net_wei * 1000 >= p_gs * 995,
+            "N=128 must reach >= 99.5% of the golden-section optimum"
+        );
+    }
+
+    #[test]
+    fn bucket_sweep_2leg_curve_symmetric_pools_yield_best_none() {
+        // Identical pools + equal fees: product rate < 1 everywhere, every
+        // computed net is negative — an honest sweep reports best: None
+        // (R8), never a fabricated zero point.
+        let hop = vec![(unit(1_000_000), unit(1_000_000))];
+        let sweep =
+            bucket_sweep_2leg_curve(22, U256::from(1u64), unit(1_000_000), &hop, &hop, 30, 30)
+                .expect("N=22 admissible");
+        assert_eq!(sweep.points.len(), 22);
+        assert!(
+            sweep.points.iter().all(|p| p.net_wei <= 0),
+            "symmetric fixture must be non-positive everywhere"
+        );
+        assert!(sweep.best.is_none(), "all-negative sweep: best None (R8)");
     }
 
     // ── Root 2C Phase 1: RouteQuoteProvider V2 byte-identical regression ─────
@@ -2685,6 +2879,7 @@ mod tests {
             gross_profit_usd: gross_usd,
             estimated_net_profit_usd: net_usd,
             net_negative: false,
+            net_economics: None, // ARBX-0009: hand-built fixture — no components.
         }
     }
 
@@ -2890,6 +3085,38 @@ mod tests {
             OptimizeRejectReason::V3QuoteUnavailable.as_str(),
             "v3_quote_unavailable"
         );
+    }
+
+    /// ARBX-0007: exactly the three net-derived gates (whose net includes the
+    /// financing fee) are net-dependent — they carry the mode suffix at the
+    /// orchestrator rejection site; every other reason must stay bare.
+    #[test]
+    fn net_dependent_reasons_are_exactly_the_net_gates() {
+        use OptimizeRejectReason as R;
+        for r in [
+            R::NonPositiveNetUsd,
+            R::GasFloorBreach,
+            R::KellyNegativeEdge,
+        ] {
+            assert!(r.is_net_dependent(), "{} must be net-dependent", r.as_str());
+        }
+        for r in [
+            R::NoConfig,
+            R::ZeroCapitalCap,
+            R::UnknownTokenPrice,
+            R::InvalidDecimals,
+            R::MissingRouteLegs,
+            R::MissingPoolAddress,
+            R::MissingReservesPoolA,
+            R::MissingReservesPoolB,
+            R::ZeroReserves,
+            R::NonPositiveProfit,
+            R::NonPositiveGrossUsd,
+            R::CapClampFailed,
+            R::V3QuoteUnavailable,
+        ] {
+            assert!(!r.is_net_dependent(), "{} must stay bare", r.as_str());
+        }
     }
 
     // ── V3 sizing ────────────────────────────────────────────────────────────

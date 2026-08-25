@@ -29,6 +29,7 @@ use alloy::rpc::types::{TransactionInput, TransactionRequest};
 use alloy::sol_types::SolCall;
 use ethers::types::{Address, H160, U256};
 use sqlx::PgPool;
+use std::collections::HashMap;
 use std::future::Future;
 use std::pin::Pin;
 use std::str::FromStr;
@@ -37,6 +38,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tokio::time::sleep;
 use tracing::{debug, info, warn};
 
+use crate::dirty_signal;
 use crate::reserves::{
     set_pool_index, set_pool_index_v3, set_reserves, set_token_meta, set_v3_slot0, ReservesEntry,
     TokenMeta, V3PoolInfo, V3Slot0Entry,
@@ -401,6 +403,12 @@ struct V3PoolRow {
 pub struct PoolSyncWorker {
     pub poll_interval: Duration,
     pub chain_id: u64,
+    /// XLS-QB-05 / ARBX-0003: last-written V2 reserves per pool (r0, r1) —
+    /// in-proc change detection so the cross-worker dirty signal fires ONLY
+    /// when the cached state actually moved (first observation counts).
+    last_v2: HashMap<String, (String, String)>,
+    /// Same for V3 pools: (sqrtPriceX96, liquidity).
+    last_v3: HashMap<String, (String, String)>,
 }
 
 impl PoolSyncWorker {
@@ -408,13 +416,15 @@ impl PoolSyncWorker {
         Self {
             poll_interval: Duration::from_millis(poll_interval_ms),
             chain_id,
+            last_v2: HashMap::new(),
+            last_v3: HashMap::new(),
         }
     }
 
     /// Bootstrap caches from DB then enter polling loop. Designed to run forever;
     /// returns only on unrecoverable errors.
     pub async fn run(
-        self,
+        mut self,
         rpc_pool: Arc<shared_rs::rpc_failover::HttpRpcPool>,
         db: PgPool,
         mut redis: redis::aio::ConnectionManager,
@@ -625,6 +635,18 @@ impl PoolSyncWorker {
 
             let mut ok_count = 0usize;
             let mut fail_count = 0usize;
+            // XLS-QB-05 / ARBX-0003: dirty-signal tick counters (R9: one
+            // summary line per tick, no per-pool logs). V3 counters live at
+            // tick level too so the TTL refresh below runs even when a chain
+            // has NO V3 pools (a SADD on an expired key recreates the set
+            // WITHOUT a TTL — the refresh must not depend on the V3 path).
+            let mut dirty_marked = 0usize;
+            let mut dirty_unchanged = 0usize;
+            let mut dirty_sadd_fail = 0usize;
+            let mut v3_dirty_marked = 0usize;
+            let mut v3_dirty_unchanged = 0usize;
+            let mut v3_dirty_sadd_fail = 0usize;
+            let dirty_key = dirty_signal::dirty_pools_key(self.chain_id);
 
             // FASE 3 — Redis write strategy (documented decision, semantics UNCHANGED):
             // We keep a per-pool `set_ex(... , 30s)` rather than collapsing the tick into a single
@@ -667,6 +689,38 @@ impl PoolSyncWorker {
                     blk: block_number,
                     ts: now_ts,
                 };
+
+                // XLS-QB-05 / ARBX-0003: fire the cross-worker dirty signal
+                // only when the decoded state CHANGED (first observation
+                // counts). Route discovery drains this set to seed the
+                // bounded dirty-pair expansion instead of a full rebuild.
+                let v2_prev = self
+                    .last_v2
+                    .get(&pool.address_lower)
+                    .map(|(a, b)| (a.as_str(), b.as_str()));
+                let dirty_v2 = dirty_signal::v2_changed(v2_prev, &entry.r0, &entry.r1);
+                self.last_v2.insert(
+                    pool.address_lower.clone(),
+                    (entry.r0.clone(), entry.r1.clone()),
+                );
+                if dirty_v2 {
+                    dirty_marked += 1;
+                    if let Err(e) = redis::cmd("SADD")
+                        .arg(&dirty_key)
+                        .arg(dirty_signal::normalize_member(&pool.address_lower))
+                        .query_async::<_, i64>(&mut redis)
+                        .await
+                    {
+                        dirty_sadd_fail += 1;
+                        debug!(
+                            event = "pool_sync.dirty_sadd_failed",
+                            pool = %pool.address_lower,
+                            error = %e
+                        );
+                    }
+                } else {
+                    dirty_unchanged += 1;
+                }
 
                 // Redis SET with TTL.
                 if let Err(e) = set_reserves(
@@ -716,6 +770,9 @@ impl PoolSyncWorker {
                 pools = pools.len(),
                 ok = ok_count,
                 failed = fail_count,
+                dirty_marked,
+                dirty_unchanged,
+                dirty_sadd_fail,
                 block = block_number,
                 latency_ms = elapsed_v2_ms as u64,
             );
@@ -764,6 +821,8 @@ impl PoolSyncWorker {
 
                 let mut v3_ok = 0usize;
                 let mut v3_fail = 0usize;
+                // XLS-QB-05 / ARBX-0003: V3 side of the dirty signal (counters
+                // declared at tick level — see the TTL-refresh note above).
 
                 // Results are interleaved: index 2i = slot0, index 2i+1 = liquidity.
                 for (i, pool) in v3_pools.iter().enumerate() {
@@ -874,6 +933,43 @@ impl PoolSyncWorker {
                         ts: now_ts,
                     };
 
+                    // XLS-QB-05 / ARBX-0003: same changed-only dirty marking
+                    // as the V2 path (sqrtPriceX96 + liquidity are the state).
+                    let v3_prev = self
+                        .last_v3
+                        .get(&pool.address_lower)
+                        .map(|(a, b)| (a.as_str(), b.as_str()));
+                    let dirty_v3 = dirty_signal::v3_changed(
+                        v3_prev,
+                        &slot0_entry.sqrt_price_x96,
+                        &slot0_entry.liquidity,
+                    );
+                    self.last_v3.insert(
+                        pool.address_lower.clone(),
+                        (
+                            slot0_entry.sqrt_price_x96.clone(),
+                            slot0_entry.liquidity.clone(),
+                        ),
+                    );
+                    if dirty_v3 {
+                        v3_dirty_marked += 1;
+                        if let Err(e) = redis::cmd("SADD")
+                            .arg(&dirty_key)
+                            .arg(dirty_signal::normalize_member(&pool.address_lower))
+                            .query_async::<_, i64>(&mut redis)
+                            .await
+                        {
+                            v3_dirty_sadd_fail += 1;
+                            debug!(
+                                event = "pool_sync.v3_dirty_sadd_failed",
+                                pool = %pool.address_lower,
+                                error = %e
+                            );
+                        }
+                    } else {
+                        v3_dirty_unchanged += 1;
+                    }
+
                     if let Err(e) = set_v3_slot0(
                         &mut redis,
                         self.chain_id,
@@ -901,8 +997,28 @@ impl PoolSyncWorker {
                     pools = v3_pools.len(),
                     ok = v3_ok,
                     failed = v3_fail,
+                    dirty_marked = v3_dirty_marked,
+                    dirty_unchanged = v3_dirty_unchanged,
+                    dirty_sadd_fail = v3_dirty_sadd_fail,
                     latency_ms = v3_elapsed_ms as u64,
                 );
+            }
+
+            // XLS-QB-05 / ARBX-0003: refresh the signal's TTL ONCE PER TICK
+            // (tick level — NOT inside the V3 block) when anything was
+            // marked. Without this, a SADD recreating an expired key would
+            // leave a TTL-less set that never expires. A dead worker stops
+            // refreshing and the set expires with the reserves caches
+            // (honest absence, never a stale-forever dirty set).
+            if dirty_marked + v3_dirty_marked > 0 {
+                if let Err(e) = redis::cmd("EXPIRE")
+                    .arg(&dirty_key)
+                    .arg(dirty_signal::DIRTY_TTL_SECS)
+                    .query_async::<_, i64>(&mut redis)
+                    .await
+                {
+                    debug!(event = "pool_sync.dirty_expire_failed", error = %e);
+                }
             }
 
             sleep(self.poll_interval).await;

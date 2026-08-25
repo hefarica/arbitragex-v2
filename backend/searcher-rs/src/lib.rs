@@ -1,6 +1,7 @@
 //! searcher-rs library facade.
 //!
 //! Exposes internal modules for integration tests and future orchestrator crates.
+//! hash-rotation 2026-08-24 (WP-V V-004): la metadata de la lib rota el disambiguador de TODOS los bins de test dependientes — workaround documentado AppControl 4551 (bloqueo por hash de binario). Contenido semántico inalterado.
 //! The binary entry point is `main.rs`.
 
 // Suppress the same lints as main.rs for consistency. Individual modules
@@ -17,22 +18,58 @@
 )]
 
 // Phase 1-3 modules re-exported so the library target compiles standalone.
+// XLS-QB / ARBX-0008: N-bucket amount sweep surface — pure bounds + sweep
+// types; the motor side lives in `size_optimizer::bucket_sweep_2leg_curve`
+// over the SAME curve the golden-section kernel maximizes.
 pub mod amm_math;
+pub mod amount_buckets;
 pub mod calldata;
 pub mod canonical_enums;
 pub mod canonical_knobs;
 pub mod chain_client;
 pub mod counters;
+// XLS-QB-05c / ARBX-0003: pair→cycles inverted index — the scoped re-evaluation
+// set `affected_cycles(dirty)` is linear in the dirty set, not the cycle universe.
+pub mod cycle_index;
 pub mod dedup;
 // QUOTEBASE-264 09_RUNTIME_STRUCTURES: DirtyPairs bitset + PoolToPair fan-out
 // + bounded HotSeedQueue (XLS-QB-05). Lib-only: the reserve-update hot path is
 // the future consumer of `DirtyPairEngine::on_pool_event`.
 pub mod dirty_pairs;
+// XLS-QB-05b / ARBX-0003: consumer side of the dirty-pool signal — one drain
+// per discovery tick replays `arbx:dirty_pools:<chain>` through the engine.
+pub mod dirty_consumer;
+// XLS-QB-05 / ARBX-0003: cross-worker dirty-pool signal (writer side lives in
+// `workers::pool_sync_worker`; consumer side drains it in route discovery).
+pub mod dirty_signal;
+// XLS-QB-06b / ARBX-0024 (REQ-QB-008): F_e normalization — fair rate r13,
+// normalized edge F_e r14, directed pair alpha r15, QuoteState r23 with the
+// r25 version keys. The route-discovery prefilter consumes it as a SIGNAL
+// (señal≠prueba); the exact net gate stays the only PASS authority.
+pub mod fe_normalization;
+// ARBX-0007: financing-mode route dimension — fee constants, per-mode
+// evaluation of a sized route, and the legacy-preserving selection policy.
+pub mod financing;
+// ARBX-0009: sheet-07 Net_bps contract + deterministic ranking (QB 07).
+pub mod net_bps_ranking;
+// ARBX-QB-07-006: canonical discovery-workload builders (bench + unit tests
+// share one source — the workload the Discovery_SLA gate judges).
+pub mod discovery_workload;
+// ARBX-0018: address-keyed token identity — per-chain TokenIdentityIndex
+// cache composing the token universe (reserves::scan_token_universe) with
+// the operator allowlist; the scanner attaches it to the spine evaluator.
+pub mod token_identity;
+// FE-MASTER EMIT-01 (ARBX-FE-EMIT-01): pre-indexed token-universe snapshot
+// (norm_symbol → addresses + §6 KPIs from the REAL pair_index functions)
+// published by `token_identity::index_for` on each rebuild — the Rust half
+// behind POST /api/admin/tokens/resolve.
+pub mod token_resolve_signal;
 // Phase 16: per-strategy Prometheus metrics for the orchestrator.
 pub mod impact_index;
 pub mod metrics;
 pub mod models;
 pub mod opportunity_emitter;
+pub mod pair_alpha_runtime;
 pub mod pair_index;
 pub mod patterns;
 pub mod persistence;
@@ -43,6 +80,11 @@ pub mod publisher;
 // QUOTEBASE-264 05_QUOTE_BASE: QuoteScore weighted form + workbook fixtures
 // (XLS-QB-06). Lib-only: consumers are the future dense-id quote-base layer.
 pub mod quote_score;
+// FE-MASTER EMIT-02/03 (ARBX-FE-EMIT-02/03): quote-anchor wire payloads —
+// the Rust half of `frontend/lib/apex/schemas/quote.ts` (exact field names;
+// absence is envelope-level, payloads are total-when-computed).
+pub mod quote_anchor_runtime;
+pub mod quote_anchor_signal;
 pub mod reserves;
 pub mod route_api;
 pub mod route_decoder;
@@ -53,6 +95,30 @@ pub mod scoring_pipeline;
 pub mod shared;
 pub mod source_supervisor;
 pub mod strategy_hop_mask;
+// ARBX-0021: workbook col Status dispatch table (79/174/8/3), same
+// generated+fixture pattern as strategy_hop_mask.
+pub mod strategy_dispatch_status;
+// ARBX-TW-005: workbook col Execution_Class (29 classes) — execution-
+// precondition annotation enriching the dispatch reasons.
+pub mod strategy_execution_class;
+// ARBX-0026: workbook sheet 13_DETECTOR_POLICY (60 detectors) — graph family,
+// family hop envelope, Do_Not_Do guard and hot-seed admission, consumed
+// generically via the hop map's Detector_ID link.
+pub mod detector_policy;
+// ARBX-DP-002: sheet 13 col Required_Data as a runtime gate — data-class
+// availability per detector BEFORE the math; honest NEEDS_DATA (R8), never
+// an approximation substitute (13_DETECTOR_POLICY prohibits "use approximate
+// price instead").
+pub mod required_data_gate;
+// ARBX-DP-003: sheet 13/11 col Execution_Class folded into the four emission
+// tiers SIGNAL/OBSERVATION/CANDIDATE/EXECUTABLE — distinct feed fields, with
+// the publish-seam gate keeping OBSERVE_ONLY and signal-tier strategies out
+// of the Opportunity{confidence} shape.
+pub mod signal_tier;
+// ARBX-DP-004: sheet 13 col Hot_Seed (5 patterns) as HotSeedClassifier →
+// DetectorMask — event kind → the detectors admissible to wake, so dispatch
+// never fans out 60 × 264 × pool × block.
+pub mod hot_seed_mask;
 pub mod strategy_label;
 // Task 2: HotPathEmitter for sub-100ms detection pipeline (Redis streams)
 pub mod hot_path_emitter;

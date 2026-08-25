@@ -1,0 +1,11 @@
+{
+  "id": 17,
+  "code": "op_17",
+  "name": "Pontryagin",
+  "canonical_role": "Constrained dynamic-control sizing.",
+  "enabled": true,
+  "engine_present": true,
+  "calibration_state": "UNCALIBRATED",
+  "formula": "H = L + lambda^T*f - constrained dynamic-control sizing",
+  "implementation_file": "backend/math-engine/src/operators/op_17_pontryagin.rs"
+}

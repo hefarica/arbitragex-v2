@@ -1,0 +1,21 @@
+{
+  "mev_id": "MEV-10-013",
+  "grupo": "10",
+  "estrategia": "NFT rental-rights arbitrage",
+  "familia": "NFT, juegos y activos no fungibles",
+  "required_surface": "NFT",
+  "backend_module": "nft_engine",
+  "toggle_frontend": "strategy.10.013.enabled",
+  "min_legs": 2,
+  "max_legs": 8,
+  "legs_model": "Ruta din\u00e1mica",
+  "primary_operators": [
+    "op_08",
+    "op_10",
+    "op_11"
+  ],
+  "secondary_operators": [
+    "op_13",
+    "op_22"
+  ]
+}

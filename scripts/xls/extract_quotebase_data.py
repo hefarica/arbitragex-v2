@@ -1,7 +1,7 @@
 """Extracción canónica de datos del workbook QUOTEBASE-264 + validación diferencial.
 
-Outputs (scratchpad/):
-- quotebase_config.json            18 knobs (01_CONFIG)
+Outputs (docs/, ubicación canónica — gen_hopmask_rs.py consume de ahí):
+- quotebase_config.json            knobs de 01_CONFIG (count DERIVADO del Excel, sin hardcode)
 - quotebase_strategy_hop_map.json  264 estrategias × 27 cols (11_STRATEGY_HOP_MAP)
 - quotebase_strategy_hop_expanded.json  1.436 combos × 18 cols (12_STRATEGY_HOP_EXPANDED)
 - quotebase_detector_policy.json   60 detectores (13_DETECTOR_POLICY)
@@ -23,7 +23,7 @@ SRC = Path(os.environ.get(
     "ARBX_QUOTEBASE_XLSX",
     r"C:\Users\HFRC\Downloads\ArbitrageX_Dynamic_QuoteBase_Route_Manual_264.xlsx",
 ))
-OUT = Path(__file__).parent
+OUT = Path(__file__).resolve().parents[2] / "docs"
 checks = []
 
 
@@ -50,20 +50,39 @@ def main():
     wb = openpyxl.load_workbook(SRC, data_only=True)
 
     # --- 01_CONFIG knobs ---
+    # Diferencial SIN hardcode: el count esperado se DERIVA del propio Excel canónico.
+    # Fila de parámetro = fila con Parameter O Value no-vacío en la región de datos (4..max_row).
+    # Si el workbook cambia de 17 a N knobs, el check sigue siendo válido (actual == canonical).
     ws = wb["01_CONFIG"]
     knobs = []
+    canonical_rows = 0
+    malformed_rows = []
     for r in range(4, ws.max_row + 1):
         p = ws.cell(row=r, column=1).value
-        if p and str(p).strip():
+        v = ws.cell(row=r, column=2).value
+        has_p = p is not None and str(p).strip() != ""
+        has_v = v is not None and str(v).strip() != ""
+        if has_p or has_v:
+            canonical_rows += 1
+        if has_p and not has_v:
+            malformed_rows.append(r)  # parámetro sin valor — visible, no silencioso
+        if has_p:
             knobs.append({
                 "parameter": str(p).strip(),
-                "value": ws.cell(row=r, column=2).value,
+                "value": v,
                 "unit": ws.cell(row=r, column=3).value,
                 "meaning": ws.cell(row=r, column=4).value,
                 "runtime_binding": ws.cell(row=r, column=5).value,
             })
     (OUT / "quotebase_config.json").write_text(json.dumps(knobs, indent=1, ensure_ascii=False), encoding="utf-8")
-    check("01_CONFIG knobs == 18", len(knobs) == 18, f"got {len(knobs)}")
+    check("01_CONFIG knobs == canonical_excel_count (derivado de la hoja, sin hardcode)",
+          len(knobs) == canonical_rows,
+          f"actual={len(knobs)} canonical={canonical_rows}")
+    from collections import Counter
+    dup = [k for k, n in Counter(x["parameter"] for x in knobs).items() if n > 1]
+    check("01_CONFIG knobs sin parámetros duplicados", not dup, f"duplicados: {dup}")
+    check("01_CONFIG knobs sin parámetro-valor ausente", not malformed_rows,
+          f"filas con Parameter pero sin Value: {malformed_rows}")
 
     # --- 11_STRATEGY_HOP_MAP (264) ---
     ws = wb["11_STRATEGY_HOP_MAP"]

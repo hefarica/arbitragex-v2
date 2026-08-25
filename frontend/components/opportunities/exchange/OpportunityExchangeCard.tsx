@@ -23,7 +23,13 @@ import React, { useState } from "react";
 import { Info, Loader2 } from "lucide-react";
 
 import { formatPctOrDash, formatProfitUSD, shortAddr } from "@/lib/format";
-import { deriveLegs, type OmniOpportunity, type TokenInfo } from "@/lib/store/types";
+import {
+  deriveLegs,
+  SYNTHETIC_LEGACY_VIEW_LABEL,
+  type OmniOpportunity,
+  type TokenInfo,
+} from "@/lib/store/types";
+import { QuarantineStrip } from "@/components/QuarantineStrip";
 import { familyOf } from "@/lib/strategy-kinds";
 import type { StrategyRuntimeConfig } from "@/lib/schemas";
 
@@ -46,7 +52,9 @@ const BASE_FAMILY_LABEL: Record<string, string> = {
   flashloan_arb: "FLASH CONVERGENCE",
 };
 
-function strategyFamilyLabel(kind: string): string {
+/** FE-0029 (§28): null = payload sin kind → "—", nunca una familia fingida. */
+function strategyFamilyLabel(kind: string | null): string {
+  if (kind == null) return "—";
   const base = BASE_FAMILY_LABEL[kind];
   if (base) return base;
   if (kind.startsWith("mev_") || kind.startsWith("cartridge_")) return familyOf(kind);
@@ -54,7 +62,8 @@ function strategyFamilyLabel(kind: string): string {
 }
 
 /** "mev_01_023_x_y" → "MEV-01-023" (compact showcase id, local transform). */
-function compactStrategyId(kind: string): string {
+function compactStrategyId(kind: string | null): string {
+  if (kind == null) return "—";
   const m = kind.match(/^mev_(\d{2})_(\d{3})_/);
   if (m) return `MEV-${m[1]}-${m[2]}`;
   return kind.toUpperCase();
@@ -199,9 +208,17 @@ function OpportunityExchangeCardImpl({
   }
 
   // ── Detection time / age / vigency ─────────────────────────────────────────
-  const detectedTime = new Date(opp.detected_at).getTime();
-  const ageSecs = isMounted ? Math.max(0, Math.floor((now - detectedTime) / 1000)) : 0;
-  const isStale = ageSecs > STALE_SECS;
+  // FE-0029 (§28): undated payload claims neither freshness nor staleness.
+  const detectedTime =
+    opp.detected_at == null ? NaN : new Date(opp.detected_at).getTime();
+  const ageSecs =
+    opp.detected_at == null
+      ? null
+      : isMounted
+        ? Math.max(0, Math.floor((now - detectedTime) / 1000))
+        : 0;
+  const isStale: boolean | null =
+    opp.detected_at == null ? null : (ageSecs as number) > STALE_SECS;
 
   // ── Net priority: canonical spine → TS simulated → "—" ─────────────────────
   const canonicalNet = opp.net_expected_profit_usd ?? null;
@@ -216,6 +233,9 @@ function OpportunityExchangeCardImpl({
   // ── Route legs (A→B cycle) ─────────────────────────────────────────────────
   const legs = deriveLegs(opp);
   const legCount = legs.length;
+  // FE-0030 (§29): legacy rows without persisted topology render a synthetic
+  // view — marked, and never a ROUTE VERIFIED / operational-hops claim.
+  const syntheticRoute = legs.some((l) => l.synthetic === true);
 
   // ── Capital / costs (real values only — RULE 00 / R8) ──────────────────────
   const tgt = opp.simulated_target;
@@ -298,7 +318,7 @@ function OpportunityExchangeCardImpl({
   } as React.CSSProperties;
 
   return (
-    <div style={cardStyle} className="demo eval">
+    <div style={cardStyle} className="demo eval" data-opp-id={opp.id}>
       {/* ⓘ discreet Inspect affordance — top-right corner */}
       <button
         type="button"
@@ -319,32 +339,40 @@ function OpportunityExchangeCardImpl({
         <img src={QUANTUMX_LOGO} alt="QuantumX" />
         <span>Evaluada</span>
         <span className="sep">·</span>
-        <span title={opp.strategy_kind}>{strategyFamilyLabel(opp.strategy_kind)}</span>
+        <span title={opp.strategy_kind ?? "sin strategy_kind en el payload (§28)"}>
+          {strategyFamilyLabel(opp.strategy_kind)}
+        </span>
         <span className="led-group">
-          {isStale ? <span className="led wait" /> : <span className="led on" />}
-          <span className={isStale ? "led-text-wait" : "led-text-live"}>
-            {isStale ? "STALE" : "LIVE"}
+          {isStale !== false ? <span className="led wait" /> : <span className="led on" />}
+          <span className={isStale !== false ? "led-text-wait" : "led-text-live"}>
+            {isStale == null ? "NO DATE" : isStale ? "STALE" : "LIVE"}
           </span>
         </span>
       </div>
 
+      {/* FE-0031 (§30): semantic violations render a QUARANTINED strip. */}
+      <QuarantineStrip violations={opp.semantic_violations} />
+
       {/* ── identity + detection ── */}
       <div className="kv">
-        <span>{opp.chain_base_token_symbol ?? String(opp.chain_id)}</span>
+        <span>{opp.chain_base_token_symbol ?? (opp.chain_id == null ? "—" : String(opp.chain_id))}</span>
         <span className="hi">{compactStrategyId(opp.strategy_kind)}</span>
       </div>
       <div className="kv">
         <span>Detección</span>
         <span className="v" suppressHydrationWarning>
           {isMounted
-            ? new Date(opp.detected_at).toLocaleTimeString([], {
-                hour12: false,
-                hour: "2-digit",
-                minute: "2-digit",
-                second: "2-digit",
-              })
+            ? opp.detected_at == null
+              ? "—"
+              : new Date(opp.detected_at).toLocaleTimeString([], {
+                  hour12: false,
+                  hour: "2-digit",
+                  minute: "2-digit",
+                  second: "2-digit",
+                })
             : "--:--:--"}{" "}
-          · {isMounted ? `${ageSecs}s` : "--"} · {isStale ? "stale" : "vigente"}
+          · {isMounted ? (ageSecs == null ? "—" : `${ageSecs}s`) : "--"} ·{" "}
+          {isStale == null ? "sin fecha" : isStale ? "stale" : "vigente"}
         </span>
       </div>
 
@@ -388,7 +416,7 @@ function OpportunityExchangeCardImpl({
         <span className="neg">{usdCost(cb?.gas_usd ?? null)}</span>
       </div>
       <div className="kv">
-        <span>LP fees{legCount > 0 ? ` (${legCount} legs)` : ""}</span>
+        <span>LP fees{legCount > 0 && !syntheticRoute ? ` (${legCount} legs)` : ""}</span>
         <span className="neg">{usdCost(cb?.lp_fees_usd ?? null)}</span>
       </div>
       <div className="kv">
@@ -434,7 +462,18 @@ function OpportunityExchangeCardImpl({
       {/* ── route + source ── */}
       <div className="kv">
         <span>Ruta</span>
-        <span className="v">{routeText}</span>
+        <span className="v">
+          {routeText}
+          {syntheticRoute && (
+            <span
+              className="text-[9px] font-bold uppercase tracking-wide text-muted-foreground"
+              title="Fila legacy sin topología persistida (route_metadata null): vista sintética A→B→A derivada de dex_a/dex_b — NO es ROUTE VERIFIED ni hops operacionales; hop_count del wire = null (§29/R8)."
+            >
+              {" "}
+              · {SYNTHETIC_LEGACY_VIEW_LABEL}
+            </span>
+          )}
+        </span>
       </div>
       <div className="kv">
         <span>Buy px / Sell px</span>
@@ -502,8 +541,14 @@ export const OpportunityExchangeCard = React.memo(
   (prev: OpportunityExchangeCardProps, next: OpportunityExchangeCardProps): boolean => {
     const p = prev.opp;
     const n = next.opp;
-    const agePrev = Math.floor((prev.now - new Date(p.detected_at).getTime()) / 1000);
-    const ageNext = Math.floor((next.now - new Date(n.detected_at).getTime()) / 1000);
+    // FE-0029 (§28): null detected_at → NaN age; Object.is keeps two undated
+    // rows memo-equal instead of re-rendering forever.
+    const ageOf = (o: typeof p, now: number) =>
+      Math.floor(
+        (now - (o.detected_at == null ? NaN : new Date(o.detected_at).getTime())) / 1000,
+      );
+    const agePrev = ageOf(p, prev.now);
+    const ageNext = ageOf(n, next.now);
     return (
       p.id === n.id &&
       p.status === n.status &&
@@ -529,7 +574,7 @@ export const OpportunityExchangeCard = React.memo(
       prev.strategyConfig === next.strategyConfig &&
       prev.onExecute === next.onExecute &&
       prev.onInspect === next.onInspect &&
-      agePrev === ageNext
+      Object.is(agePrev, ageNext)
     );
   },
 );
@@ -544,8 +589,15 @@ function DetectionDiagnosticCard({
   isMounted,
   onInspect,
 }: Pick<OpportunityExchangeCardProps, "opp" | "now" | "isMounted" | "onInspect">) {
-  const ageSecs = isMounted ? Math.max(0, Math.floor((now - new Date(opp.detected_at).getTime()) / 1000)) : 0;
-  const isStale = ageSecs > STALE_SECS;
+  // FE-0029 (§28): undated payload — no age, no vigencia claim.
+  const ageSecs =
+    opp.detected_at == null
+      ? null
+      : isMounted
+        ? Math.max(0, Math.floor((now - new Date(opp.detected_at).getTime()) / 1000))
+        : 0;
+  const isStale: boolean | null =
+    opp.detected_at == null ? null : (ageSecs as number) > STALE_SECS;
   const reason = opp.rejection_reason;
   const degeneratePair = opp.token_in === opp.token_out;
 
@@ -579,10 +631,13 @@ function DetectionDiagnosticCard({
         </span>
       </div>
 
+      {/* FE-0031 (§30): semantic violations render a QUARANTINED strip. */}
+      <QuarantineStrip violations={opp.semantic_violations} />
+
       {/* what IS real: cartridge identity, timestamp, age */}
       <div className="kv">
-        <span>{opp.chain_base_token_symbol ?? String(opp.chain_id)}</span>
-        <span className="hi" title={opp.strategy_kind}>
+        <span>{opp.chain_base_token_symbol ?? (opp.chain_id == null ? "—" : String(opp.chain_id))}</span>
+        <span className="hi" title={opp.strategy_kind ?? "sin strategy_kind en el payload (§28)"}>
           {compactStrategyId(opp.strategy_kind)}
         </span>
       </div>
@@ -590,14 +645,17 @@ function DetectionDiagnosticCard({
         <span>Detección</span>
         <span className="v" suppressHydrationWarning>
           {isMounted
-            ? new Date(opp.detected_at).toLocaleTimeString([], {
-                hour12: false,
-                hour: "2-digit",
-                minute: "2-digit",
-                second: "2-digit",
-              })
+            ? opp.detected_at == null
+              ? "—"
+              : new Date(opp.detected_at).toLocaleTimeString([], {
+                  hour12: false,
+                  hour: "2-digit",
+                  minute: "2-digit",
+                  second: "2-digit",
+                })
             : "--:--:--"}{" "}
-          · {isMounted ? `${ageSecs}s` : "--"} · {isStale ? "stale" : "vigente"}
+          · {isMounted ? (ageSecs == null ? "—" : `${ageSecs}s`) : "--"} ·{" "}
+          {isStale == null ? "sin fecha" : isStale ? "stale" : "vigente"}
         </span>
       </div>
 
@@ -615,7 +673,11 @@ function DetectionDiagnosticCard({
         <span>Estado</span>
         {/* R8: only claim REJECTED when a machine rejection actually exists. */}
         <span className="v val-warn">
-          {reason != null ? `${opp.status.toUpperCase()} → REJECTED` : opp.status.toUpperCase()}
+          {opp.status == null
+            ? "UNKNOWN"
+            : reason != null
+              ? `${opp.status.toUpperCase()} → REJECTED`
+              : opp.status.toUpperCase()}
         </span>
       </div>
 

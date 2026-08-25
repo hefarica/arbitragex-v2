@@ -112,6 +112,125 @@ pub fn quote_score(c: &QuoteComponents, w: &QuoteWeights) -> f64 {
         + w.cross_dex * c.cross_dex
 }
 
+// ---- XLS-QB-06 / ARBX-QB-06-004: QuoteVersion invalida caches ------------
+//
+// Sheet 09_RUNTIME_STRUCTURES r25 ("Version keys"): `quote_version` is the
+// invalidation key for everything derived from the QUOTE (numeraire)
+// choice. This block owns the SELECTION side: ranking tokens by
+// [`quote_score`] (05 r16: a dynamic score outranks any hardcoded
+// stablecoin list), tracking the selected quote, and bumping the version on
+// every actual change. Anchor-PRICE drift is a separate bump lane owned by
+// the F_e normalization state (fe_normalization.rs) — same key, different
+// trigger, one doctrine.
+
+/// The quote-selection state + its `quote_version` invalidation key.
+///
+/// Selecting the same token again is NOT a state transition (no bump —
+/// minimal churn, sheet 09 r25); any actual change bumps the version so
+/// every quote-derived cache goes stale.
+#[derive(Debug, Clone, PartialEq)]
+pub struct QuoteSelection<T> {
+    selected: Option<T>,
+    version: u64,
+}
+
+impl<T> Default for QuoteSelection<T> {
+    fn default() -> Self {
+        Self {
+            selected: None,
+            version: 0,
+        }
+    }
+}
+
+impl<T: PartialEq> QuoteSelection<T> {
+    /// Select the quote token; returns `true` when this was an actual CHANGE
+    /// (version bumped), `false` for a same-token re-select.
+    pub fn select(&mut self, token: T) -> bool {
+        if self.selected.as_ref() == Some(&token) {
+            return false;
+        }
+        self.selected = Some(token);
+        self.version = self.version.wrapping_add(1);
+        true
+    }
+
+    /// Current quote token (`None` before the first selection — honest).
+    pub fn selection(&self) -> Option<&T> {
+        self.selected.as_ref()
+    }
+
+    /// The `quote_version` key (09 r25) — bumps once per actual change.
+    pub fn quote_version(&self) -> u64 {
+        self.version
+    }
+}
+
+/// Pick the quote among `(token, QuoteScore)` candidates: the strict maximum
+/// score, FIRST token winning ties (stable across re-sorts). Non-finite
+/// scores are skipped (a NaN must never be selected by accident of ordering
+/// — fail-honest); `None` on empty or all-invalid input.
+pub fn select_quote<T: Copy>(scored: &[(T, f64)]) -> Option<T> {
+    let mut best: Option<(T, f64)> = None;
+    for &(t, s) in scored {
+        if !s.is_finite() {
+            continue;
+        }
+        match best {
+            Some((_, bs)) if s <= bs => {}
+            _ => best = Some((t, s)),
+        }
+    }
+    best.map(|(t, _)| t)
+}
+
+/// One quote-derived cached value tagged with the `quote_version` it was
+/// computed under (09 r25 doctrine). [`QuoteVersionedCell::get`] serves the
+/// value ONLY when the caller's current version matches — a selection change
+/// makes every cell stale without touching it, and stale is a MISS, never a
+/// wrong-numeraire hit.
+#[derive(Debug, Clone, PartialEq)]
+pub struct QuoteVersionedCell<V> {
+    version: u64,
+    value: Option<V>,
+}
+
+impl<V> Default for QuoteVersionedCell<V> {
+    fn default() -> Self {
+        Self {
+            version: 0,
+            value: None,
+        }
+    }
+}
+
+impl<V> QuoteVersionedCell<V> {
+    /// Store `value` as computed under `version`.
+    pub fn store(&mut self, value: V, version: u64) {
+        self.version = version;
+        self.value = Some(value);
+    }
+
+    /// Fresh lookup ONLY: the stored version must equal `current`. A version
+    /// mismatch in either direction is a miss (honest stale, recompute).
+    pub fn get(&self, current: u64) -> Option<&V> {
+        match &self.value {
+            Some(v) if self.version == current => Some(v),
+            _ => None,
+        }
+    }
+
+    /// Version the stored value was computed under (`None` when empty).
+    pub fn stored_version(&self) -> Option<u64> {
+        self.value.as_ref().map(|_| self.version)
+    }
+
+    /// Drop the value outright (explicit eviction).
+    pub fn invalidate(&mut self) {
+        self.value = None;
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -200,5 +319,206 @@ mod tests {
         assert!(w.validate().is_err(), "negative weight rejected");
 
         assert!(QuoteWeights::default().validate().is_ok());
+    }
+
+    // ---- ARBX-QB-06-004: QuoteVersion invalida caches -------------------
+
+    /// The four sheet-05 fixtures ranked: USDC (96) > WETH (91) > WBTC (75)
+    /// > LINK (55.5) — the dynamic score picks the quote (05 r16).
+    #[test]
+    fn select_quote_ranks_sheet05_fixtures() {
+        let ranked = [
+            ("LINK", 55.5),
+            ("WBTC", 75.0),
+            ("WETH", 91.0),
+            ("USDC", 96.0),
+        ];
+        assert_eq!(select_quote(&ranked), Some("USDC"));
+    }
+
+    /// Empty input or all-non-finite scores → `None` (no fabricated quote);
+    /// a NaN never wins by accident of ordering.
+    #[test]
+    fn select_quote_rejects_empty_and_non_finite() {
+        let empty: [(&str, f64); 0] = [];
+        assert_eq!(select_quote(&empty), None);
+        assert_eq!(select_quote(&[("a", f64::NAN), ("b", f64::INFINITY)]), None);
+        // Finite entries survive alongside invalid ones.
+        assert_eq!(select_quote(&[("a", f64::NAN), ("b", 40.0)]), Some("b"));
+    }
+
+    /// Ties keep the FIRST token — deterministic across re-sorts.
+    #[test]
+    fn select_quote_tie_first_wins() {
+        assert_eq!(select_quote(&[("x", 90.0), ("y", 90.0)]), Some("x"));
+    }
+
+    /// Version bumps once per ACTUAL change; a same-token re-select is not a
+    /// state transition (minimal churn, 09 r25).
+    #[test]
+    fn selection_bumps_version_on_change_only() {
+        let mut sel: QuoteSelection<&str> = QuoteSelection::default();
+        assert_eq!(sel.quote_version(), 0);
+        assert_eq!(sel.selection(), None);
+
+        assert!(sel.select("USDC")); // first selection = change
+        assert_eq!(sel.selection(), Some(&"USDC"));
+        assert_eq!(sel.quote_version(), 1);
+
+        assert!(!sel.select("USDC")); // re-select: no bump
+        assert_eq!(sel.quote_version(), 1);
+
+        assert!(sel.select("WETH")); // actual change
+        assert_eq!(sel.quote_version(), 2);
+        assert_eq!(sel.selection(), Some(&"WETH"));
+    }
+
+    /// A quote-derived cell serves ONLY under the version it was computed
+    /// with: a selection change makes it a MISS (never a wrong-numeraire
+    /// hit); recompute-then-store under the new version serves again.
+    #[test]
+    fn versioned_cell_is_stale_after_selection_change() {
+        let mut sel: QuoteSelection<&str> = QuoteSelection::default();
+        sel.select("USDC");
+        let v1 = sel.quote_version();
+
+        let mut cell: QuoteVersionedCell<f64> = QuoteVersionedCell::default();
+        assert_eq!(cell.get(v1), None, "empty cell is a miss");
+
+        cell.store(96.0, v1);
+        assert_eq!(cell.get(v1), Some(&96.0), "fresh under same version");
+        assert_eq!(cell.stored_version(), Some(v1));
+
+        sel.select("WETH"); // selection change bumps the key
+        let v2 = sel.quote_version();
+        assert_eq!(cell.get(v2), None, "stale after selection change");
+        assert_eq!(cell.get(v1), Some(&96.0), "old version still coherent");
+
+        cell.store(91.0, v2); // recomputed under the new quote
+        assert_eq!(cell.get(v2), Some(&91.0));
+        assert_eq!(cell.get(v1), None, "mismatch in either direction is a miss");
+
+        cell.invalidate();
+        assert_eq!(cell.get(v2), None);
+        assert_eq!(cell.stored_version(), None);
+    }
+
+    // ---- ARBX-QB-06-006: parametric sensitivity suite --------------------
+
+    /// USDC fixture helper for the sensitivity tests below.
+    fn usdc() -> QuoteComponents {
+        QuoteComponents {
+            prior: 100.0,
+            liquidity: 95.0,
+            venue_coverage: 90.0,
+            stability: 100.0,
+            cross_dex: 95.0,
+        }
+    }
+
+    /// Liquidity axis: a +δ on Liquidity moves the score by EXACTLY
+    /// w_liquidity·δ (the linear form, no hidden couplings).
+    #[test]
+    fn sensitivity_liquidity_axis_exact() {
+        let w = QuoteWeights::default();
+        let base = quote_score(&usdc(), &w);
+        let mut c = usdc();
+        c.liquidity += 4.0;
+        assert!((quote_score(&c, &w) - (base + w.liquidity * 4.0)).abs() < 1e-12);
+    }
+
+    /// Venue axis: same exactness for VenueCoverage (the sheet's "Venues"
+    /// column) — the two axes the operator watches most on quote health.
+    #[test]
+    fn sensitivity_venue_axis_exact() {
+        let w = QuoteWeights::default();
+        let base = quote_score(&usdc(), &w);
+        let mut c = usdc();
+        c.venue_coverage -= 10.0;
+        assert!((quote_score(&c, &w) - (base - w.venue_coverage * 10.0)).abs() < 1e-12);
+    }
+
+    /// Weight change: the same components under a different VALID weight set
+    /// rescore exactly — with (0.5, 0.5, 0, 0, 0) only Prior/Liquidity count,
+    /// so USDC (100,95) → 97.5 and WETH (85,100) → 92.5 (hand-computed from
+    /// the linear form); under the workbook defaults the same components
+    /// score 96.0 / 91.0. A weight change always recomputes, never reuses.
+    #[test]
+    fn weight_change_rescores_linear_form() {
+        let w = QuoteWeights {
+            prior: 0.5,
+            liquidity: 0.5,
+            venue_coverage: 0.0,
+            stability: 0.0,
+            cross_dex: 0.0,
+        };
+        assert!(w.validate().is_ok());
+        // USDC under the two-axis weights: 0.5·100 + 0.5·95 = 97.5.
+        assert!((quote_score(&usdc(), &w) - 97.5).abs() < 1e-12);
+        // WETH fixture (85,100,100,55,100) under the same weights: 92.5.
+        let weth = QuoteComponents {
+            prior: 85.0,
+            liquidity: 100.0,
+            venue_coverage: 100.0,
+            stability: 55.0,
+            cross_dex: 100.0,
+        };
+        assert!((quote_score(&weth, &w) - 92.5).abs() < 1e-12);
+        // Default weights gave 96.0 vs 91.0 (margin 5.0); two-axis margin is
+        // 5.0 as well here, but the SCORES moved — recomputation happened.
+        let wd = QuoteWeights::default();
+        assert!((quote_score(&usdc(), &wd) - 96.0).abs() < 1e-9);
+        assert!((quote_score(&weth, &wd) - 91.0).abs() < 1e-9);
+    }
+
+    /// Full quote-switch cycle: rank → select → cache under v1 → the ranking
+    /// changes (component drift on the incumbent) → select_quote flips the
+    /// winner → QuoteSelection bumps → the versioned cell goes MISS until
+    /// recomputed under the new quote. The whole 05↔09 r25 contract in one
+    /// flow.
+    #[test]
+    fn quote_switch_cycle_ranks_selects_invalidates() {
+        let w = QuoteWeights::default();
+        let mut usdc_c = usdc();
+        let weth_c = QuoteComponents {
+            prior: 85.0,
+            liquidity: 100.0,
+            venue_coverage: 100.0,
+            stability: 55.0,
+            cross_dex: 100.0,
+        };
+
+        // Round 1: USDC wins (96 > 91).
+        let ranked = [
+            ("USDC", quote_score(&usdc_c, &w)),
+            ("WETH", quote_score(&weth_c, &w)),
+        ];
+        let mut sel: QuoteSelection<&str> = QuoteSelection::default();
+        assert!(sel.select(select_quote(&ranked).expect("a winner")));
+        assert_eq!(sel.selection(), Some(&"USDC"));
+        let v1 = sel.quote_version();
+
+        // Cache an orientation-derived value under v1.
+        let mut orientation: QuoteVersionedCell<&str> = QuoteVersionedCell::default();
+        orientation.store("quote=USDC", v1);
+        assert_eq!(orientation.get(v1), Some(&"quote=USDC"));
+
+        // Round 2: USDC's liquidity collapses (−40) → 84 < 91 → WETH wins.
+        usdc_c.liquidity -= 40.0;
+        assert!((quote_score(&usdc_c, &w) - 84.0).abs() < 1e-9);
+        let ranked = [
+            ("USDC", quote_score(&usdc_c, &w)),
+            ("WETH", quote_score(&weth_c, &w)),
+        ];
+        let changed = sel.select(select_quote(&ranked).expect("a winner"));
+        assert!(changed, "actual selection change");
+        assert_eq!(sel.selection(), Some(&"WETH"));
+        assert_eq!(sel.quote_version(), v1 + 1);
+
+        // The cached orientation is stale under the new key — MISS, then
+        // recompute-and-store serves fresh.
+        assert_eq!(orientation.get(sel.quote_version()), None);
+        orientation.store("quote=WETH", sel.quote_version());
+        assert_eq!(orientation.get(sel.quote_version()), Some(&"quote=WETH"));
     }
 }

@@ -1041,6 +1041,21 @@ pub async fn active_evaluate_and_emit(
     // Snapshot config once for all candidates (same as orchestrator)
     let cfg_snapshot = cfg_provider.snapshot(chain_id).await;
 
+    // ARBX-R-0002: address-keyed token identity, built ONCE per intent and
+    // threaded into every candidate. Cartridges emit ADDRESSES in
+    // `candidate.token_addresses`; under the legacy symbol-compare every
+    // one failed the operator's symbol allowlist (TokenNotAllowed:<addr>
+    // 100% — the AGLD/1INCH flood, 112×1INCH + 6×USDC in 6h). Identity
+    // mode binds (chain_id, address); the 30s cache is shared with the
+    // scanner path (same composition site).
+    let identity_idx = match cfg_snapshot.as_ref() {
+        Some(state) => {
+            let mut redis_conn = runner.redis_connection().await;
+            Some(crate::token_identity::index_for(&mut redis_conn, chain_id, state).await)
+        }
+        None => None,
+    };
+
     // FIX (review V2 #9): fetch the live price snapshot ONCE per intent (not per
     // cartridge) and thread it into every candidate evaluation. Empty snapshot
     // degrades to the evaluator's ConfigPriceOracle fallback — never fabricated.
@@ -1409,6 +1424,7 @@ pub async fn active_evaluate_and_emit(
                     ctx_chain_id,
                     emitter.clone(),
                     price_snapshot.clone(),
+                    identity_idx.clone(),
                 )
                 .await
                 {
@@ -1455,6 +1471,7 @@ async fn process_cartridge_candidate(
     chain_id: u64,
     emitter: Arc<crate::opportunity_emitter::OpportunityEmitter>,
     price_snapshot: std::collections::HashMap<String, f64>,
+    identity: Option<std::sync::Arc<shared_rs::token_identity::TokenIdentityIndex>>,
 ) -> anyhow::Result<()> {
     use crate::strategy_label::StrategyLabel;
     use prioritization_spine::config_aware::{ConfigAwareEvaluator, NetworkSignals};
@@ -1488,7 +1505,10 @@ async fn process_cartridge_candidate(
     // from the caller (active_evaluate_and_emit), which fetches it once per intent
     // from Redis — see price_snapshot param (FIX review V2 #9).
     let signals = NetworkSignals::unknown(sc.opportunity.block_number.unwrap_or(0));
-    let ev = ConfigAwareEvaluator::with_cache(state, signals, price_snapshot);
+    // ARBX-R-0002: identity mode — the cartridge candidate's token_addresses
+    // are addresses; gate on them addr-keyed (see caller note).
+    let ev = ConfigAwareEvaluator::with_cache(state, signals, price_snapshot)
+        .with_token_identity(identity);
 
     let spine_gate_outcome = ev.evaluate_with_route_plan(
         &sc.candidate,

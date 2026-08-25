@@ -1967,13 +1967,13 @@ async fn decode_and_score_tx<'a>(
     // R8-correct — it means "uncomputed", not "zero".
     opportunity.expected_profit_usd = gross_profit_f64;
 
-    // The downstream gate (`ConfigAwareEvaluator`) checks
-    // `cfg.allowed_token_symbols` against entries in `candidate.token_addresses`.
-    // It compares STRINGS — so if we pass hex addresses while the operator's
-    // allowlist holds symbols ("WETH", "USDC", ...), every check fails. Pass the
-    // resolved symbol when the Redis token cache knew it, otherwise fall back to
-    // the hex address (which will still fail the allowlist gate, but explicitly
-    // — that's the correct semantics for an unknown token).
+    // ARBX-0018 — identity mode. `candidate.token_addresses` carries REAL
+    // ADDRESSES (ground truth from the decoded swap); the spine gate binds
+    // `(chain_id, address)` via the TokenIdentityIndex attached below, and
+    // the symbol-keyed price stack resolves its keys through the same index.
+    // The per-candidate symbol strings below feed ONLY this scanner's local
+    // USD math (cascade lookup a few lines up) — they are metadata, never a
+    // gate key. Legacy addr→symbol conversion for the allowlist is GONE.
     let token_in_for_gate = meta_in
         .as_ref()
         .map(|m| m.symbol.clone())
@@ -1989,7 +1989,7 @@ async fn decode_and_score_tx<'a>(
             opportunity.dex_a, opportunity.token_in, opportunity.token_out
         ),
         pool_addresses: vec![],
-        token_addresses: vec![token_in_for_gate.clone(), token_out_for_gate],
+        token_addresses: vec![token_in_lower.clone(), token_out_lower.clone()],
         dex_adapters: vec![opportunity.dex_a.clone()],
         amount_in: amount_in_f64,
         expected_amount_out: expected_amount_out_f64,
@@ -2096,7 +2096,13 @@ async fn decode_and_score_tx<'a>(
         (token_in_price, eth_price)
     };
 
-    let evaluator = ConfigAwareEvaluator::with_cache(&cfg, signals, snapshot_map);
+    // ARBX-0018: per-chain address-keyed identity index (30s cache; rebuilds
+    // when the operator allowlist drifts within a TTL window). Attached to
+    // the evaluator so the token gate binds addresses while symbols remain
+    // metadata for the price stack.
+    let identity_idx = crate::token_identity::index_for(&mut *redis, client.chain_id, &cfg).await;
+    let evaluator = ConfigAwareEvaluator::with_cache(&cfg, signals, snapshot_map)
+        .with_token_identity(Some(identity_idx));
 
     // 2026-05-11: Operator demanded the literal die. The strategy kind now
     // derives from the decoded swap's actual protocol type. V2 source →

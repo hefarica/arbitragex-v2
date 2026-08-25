@@ -7,6 +7,9 @@
  */
 "use client";
 
+// Classic-JSX runtime import for the vitest (esbuild) path — repo pattern
+// (PairIntelligencePanel.tsx, ByModeKpiStrip.tsx); Next/swc ignores it.
+import * as React from "react";
 import { useEffect, useState } from "react";
 import { AlertCircleIcon } from "lucide-react";
 
@@ -18,10 +21,28 @@ import type {
   SCurvePayload,
   ScannerHeartbeatResponse,
 } from "@/lib/operations-schemas";
+import type { CanonicalModeView } from "@/lib/apex/schemas/knobs";
+import type { LatencyStageRow } from "@/lib/apex/schemas";
 
+// ARBX-QB-07-008 (REQ-QB-015): the lat.* stage panel (p50/p95/headroom per
+// discovery stage, workbook 10_LATENCY). Same both-ways isolation as the
+// strip: a tick-fetch failure renders the honest absence, never blocks the
+// KPIs — and the panel stays visible in the KPI outage branches below.
+import { LatencyBudgetPanel } from "./components/LatencyBudgetPanel";
+// ARBX-0011 (REQ-DASH-BY-MODE): by-mode KPI scope strip — the mode is a
+// label over the ONE math pipeline (§34.1), fetched once at mount (boot
+// snapshot; the 30s poll below refreshes measurements, not the mode view).
+// R3 fix: isolation is BOTH ways — a knobs 503 never blocks the KPIs, and
+// KPI absence (error/loading early-returns) must not hide the strip: it is
+// doctrine labels, not KPI data, and an outage is exactly when the terminus
+// scope matters most.
+import { ByModeKpiStrip } from "./components/ByModeKpiStrip";
 import { KPICard } from "./components/KPICard";
 import { PipelineFunnelCard } from "./components/PipelineFunnelCard";
 import { SCurveChart } from "./components/SCurveChart";
+// FE-0038 (§46): the route-discovery funnel (Market Events → Reconciled) —
+// the §46 chain over tick + outcomes sink + recon, windows disclosed.
+import { RouteDiscoveryFunnelCard } from "./components/RouteDiscoveryFunnelCard";
 
 interface Props {
   initialKpi: KpiPayload | null;
@@ -29,6 +50,14 @@ interface Props {
   initialHeartbeat: ScannerHeartbeatResponse | null;
   initialHeartbeatError: string | null;
   initialError: string | null;
+  /** ARBX-0011: canonical mode view (boot snapshot — static, not polled). */
+  initialModeView: CanonicalModeView | null;
+  initialModeError: string | null;
+  /** ARBX-QB-07-008: lat.* boot snapshot (live overlay via useRouteTick). */
+  initialLatStages: LatencyStageRow[] | null;
+  initialLatPass: boolean | null;
+  initialLatCycles: number;
+  initialLatError: string | null;
 }
 
 const POLL_MS = 30_000;
@@ -39,6 +68,12 @@ export function OperationsClient({
   initialHeartbeat,
   initialHeartbeatError,
   initialError,
+  initialModeView,
+  initialModeError,
+  initialLatStages,
+  initialLatPass,
+  initialLatCycles,
+  initialLatError,
 }: Props) {
   const [kpi, setKpi] = useState<KpiPayload | null>(initialKpi);
   const [scurve, setScurve] = useState<SCurvePayload | null>(initialScurve);
@@ -78,21 +113,43 @@ export function OperationsClient({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // ARBX-0011 R3 fix: the strip renders in EVERY branch (see header note).
+  // QB-07-008: the latency panel gets the same both-ways treatment.
+  const modeStrip = (
+    <ByModeKpiStrip view={initialModeView} error={initialModeError} />
+  );
+  const latPanel = (
+    <LatencyBudgetPanel
+      initialStages={initialLatStages}
+      initialPassP95={initialLatPass}
+      initialCycles={initialLatCycles}
+      initialError={initialLatError}
+    />
+  );
+
   if (error && !kpi) {
     return (
-      <Alert variant="destructive">
-        <AlertCircleIcon />
-        <AlertTitle>convergence endpoint error</AlertTitle>
-        <AlertDescription className="font-mono text-xs">{error}</AlertDescription>
-      </Alert>
+      <>
+        {modeStrip}
+        {latPanel}
+        <Alert variant="destructive">
+          <AlertCircleIcon />
+          <AlertTitle>convergence endpoint error</AlertTitle>
+          <AlertDescription className="font-mono text-xs">{error}</AlertDescription>
+        </Alert>
+      </>
     );
   }
 
   if (!kpi) {
     return (
-      <Card>
-        <CardContent className="py-8 text-sm text-muted-foreground">Loading convergence metrics…</CardContent>
-      </Card>
+      <>
+        {modeStrip}
+        {latPanel}
+        <Card>
+          <CardContent className="py-8 text-sm text-muted-foreground">Loading convergence metrics…</CardContent>
+        </Card>
+      </>
     );
   }
 
@@ -101,6 +158,7 @@ export function OperationsClient({
 
   return (
     <>
+      {modeStrip}
       <div className="mb-6 grid gap-4 md:grid-cols-2 lg:grid-cols-4">
         <KPICard
           title="CPI · Capital Efficiency"
@@ -158,6 +216,14 @@ export function OperationsClient({
           fetchedAt={heartbeat?.fetched_at ?? null}
         />
       </div>
+      {/* FE-0038 (§46): the route-discovery half of the funnel — distinct from
+          the scanner (mempool) funnel above; wires and stages do not overlap. */}
+      <div className="mb-6">
+        <RouteDiscoveryFunnelCard />
+      </div>
+      {/* ARBX-QB-07-008: the lat.* budget panel rides beside the discovery
+          funnel — same wire (tick), same read-only posture. */}
+      <div className="mb-6">{latPanel}</div>
       {scurve && <SCurveChart data={scurve} />}
     </>
   );

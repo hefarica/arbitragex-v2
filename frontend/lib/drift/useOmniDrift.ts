@@ -18,6 +18,13 @@ export interface DriftSnapshot {
   byResource: Record<string, DriftObservation[]>;
   worstSeverity: "info" | "warn" | "error" | "critical" | "none";
   refreshedAt: string;
+  /**
+   * FE-0040 (R8): the backend answers `reason` when the drift list is empty
+   * for an honest structural cause (e.g. "drift_observations_table_absent").
+   * Null = the query genuinely answered. Without this field, "table absent"
+   * and "0 drift" were indistinguishable → false COHERENT downstream.
+   */
+  reason: string | null;
 }
 
 const SEVERITY_RANK: Record<DriftObservation["severity"], number> = {
@@ -30,6 +37,7 @@ export function useOmniDrift(pollMs = 5000): DriftSnapshot & { loading: boolean;
     byResource: {},
     worstSeverity: "none",
     refreshedAt: new Date(0).toISOString(),
+    reason: null,
   });
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -40,7 +48,7 @@ export function useOmniDrift(pollMs = 5000): DriftSnapshot & { loading: boolean;
       try {
         const r = await fetch("/api/system/drift", { cache: "no-store" });
         if (!r.ok) throw new Error(`HTTP ${r.status}`);
-        const body = (await r.json()) as { drift: DriftObservation[] };
+        const body = (await r.json()) as { drift: DriftObservation[]; reason?: string };
         if (cancelled) return;
         const byResource: Record<string, DriftObservation[]> = {};
         let worst: DriftSnapshot["worstSeverity"] = "none";
@@ -55,6 +63,7 @@ export function useOmniDrift(pollMs = 5000): DriftSnapshot & { loading: boolean;
           byResource,
           worstSeverity: worst,
           refreshedAt: new Date().toISOString(),
+          reason: body.reason ?? null,
         });
         setError(null);
       } catch (e) {

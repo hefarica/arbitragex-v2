@@ -12,6 +12,13 @@ import { SystemGuardBanner } from "@/components/SystemGuardBanner";
 import { Toaster } from "sonner";
 
 import { OpportunityTicker } from "@/components/OpportunityTicker";
+// FE-MASTER FE-0008: the ONE realtime connection policy owner (WS rooms +
+// REST snapshot cadence). Renders nothing; mounted once at the root.
+import { ArbxRealtimeProvider } from "@/components/providers/ArbxRealtimeProvider";
+// FE-MASTER FE-0009 (§34/§35): always-visible runtime posture strip — per-
+// channel connection states over the RealtimeSlice + killswitch/paper-mode
+// real values (both endpoints edge-routed). Slim, normal flow, above content.
+import { RuntimePostureBar } from "@/components/RuntimePostureBar";
 
 export const metadata = {
   title: "QuantumX — Control Plane",
@@ -110,6 +117,10 @@ export default async function RootLayout({ children }: { children: ReactNode }) 
               <main id="main" tabIndex={-1} className="min-w-0 flex-1 outline-none flex flex-col">
                 {/* SystemGuardBanner now inside main, limited by sidebar width */}
                 <SystemGuardBanner />
+                {/* FE-0009 (§34/§35): runtime posture — channel states + kill
+                    switch + paper mode. Reads the RealtimeSlice FE-0008 owns;
+                    posture GETs live in the bar's own useEffect (60s cadence). */}
+                <RuntimePostureBar />
                 {/*
                   2026-05-10: max-w-7xl (1280px) wasted ~340px on each side of a
                   1920px monitor when rendering data-dense tables (/opportunities,
@@ -126,6 +137,10 @@ export default async function RootLayout({ children }: { children: ReactNode }) 
             </div>
           </div>
         <OpportunityTicker />
+
+        {/* FE-0008 (§33): global realtime policy — WS route_discovery /
+            runtime_ack rooms + REST pairs/quote-anchor cadence. Null-render. */}
+        <ArbxRealtimeProvider />
 
         <Toaster richColors position="top-right" />
       </body>

@@ -22,6 +22,9 @@ import { getAdminToken } from "@/lib/admin-token";
 import { getApiBaseUrl, getWsBaseUrl } from "@/lib/api-client";
 import { useOmniStore } from "./omni-store";
 import { mapToOmniOpportunity, type OmniOpportunity } from "./types";
+// FE-0047: the MEM-RENDER-01 buffer as a pure seam (dedup/out-of-order are
+// §33 semantics — now testable without renderHook; behavior identical).
+import { createWsIngestBuffer, type WsIngestBuffer } from "./ws-ingest-buffer";
 
 // =============================================================================
 // Constants
@@ -85,7 +88,8 @@ export function useOmniOpportunities({
   const viableOnlyRef = useRef(viableOnly);
   const initializedRef = useRef(false);
   // MEM-RENDER-01: WS ingest buffer — upsert by id, flushed on WS_FLUSH_MS.
-  const pendingRef = useRef<Map<string, OmniOpportunity>>(new Map());
+  // (Same per-render-allocation parity as the old `useRef(new Map())`.)
+  const bufferRef = useRef<WsIngestBuffer>(createWsIngestBuffer());
 
   // Keep viableOnly ref in sync
   useEffect(() => {
@@ -171,11 +175,10 @@ export function useOmniOpportunities({
     // MEM-RENDER-01: flush the WS ingest buffer in ONE store update per
     // cadence. Collapses burst arrivals (measured up to ~2 events/s on prod)
     // into a single merge + a single vigency prune per second.
-    const pending = pendingRef.current;
+    const buffer = bufferRef.current;
     const flushPending = () => {
-      if (pending.size === 0) return;
-      const batch = Array.from(pending.values());
-      pending.clear();
+      const batch = buffer.flush();
+      if (batch.length === 0) return;
       setOpportunities(batch);
       pruneStale(OPP_TTL_MS);
     };
@@ -206,13 +209,13 @@ export function useOmniOpportunities({
         // MEM-RENDER-01: buffer the mapped row — the store is touched only by
         // flushPending (1 Hz), not per message.
         const mapped = mapToOmniOpportunity(opp as unknown as Record<string, unknown>);
-        pending.set(mapped.id, mapped);
+        buffer.upsert(mapped);
       },
     });
 
     return () => {
       clearInterval(flushTimer);
-      pending.clear();
+      buffer.clear();
       handle.dispose();
       if (pollingTimerRef.current !== null) {
         clearInterval(pollingTimerRef.current);

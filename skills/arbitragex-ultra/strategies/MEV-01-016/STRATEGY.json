@@ -1,0 +1,24 @@
+{
+  "mev_id": "MEV-01-016",
+  "grupo": "1",
+  "estrategia": "Triangular arbitrage",
+  "familia": "Arbitrajes spot DEX dentro de una misma cadena",
+  "required_surface": "DEX_AMM",
+  "backend_module": "route_graph_engine",
+  "toggle_frontend": "strategy.01.016.enabled",
+  "min_legs": 3,
+  "max_legs": 3,
+  "legs_model": "Fijo",
+  "primary_operators": [
+    "op_15",
+    "op_16",
+    "op_21",
+    "op_27"
+  ],
+  "secondary_operators": [
+    "op_01",
+    "op_22",
+    "op_26",
+    "op_30"
+  ]
+}

@@ -1,12 +1,14 @@
-//! Telemetry for route discovery — Redis PUBLISH to `arbx:route_discovery:telemetry`.
+//! Telemetry for route discovery — Redis PUBLISH to `arbx:route_discovery:telemetry`
+//! plus the durable tick snapshot (EMIT-05).
 //!
 //! Every payload carries `algorithm` (Phase 1 = `dfs_bounded`) so consumers can
-//! tell which finder produced a route. This is the **only** Redis write path of
-//! the route-discovery subsystem — it PUBLISHes to one channel and never touches
-//! `arbx:opps:detected` (that stream belongs to the native orchestrator).
+//! tell which finder produced a route. The subsystem's Redis footprint is
+//! exactly two paths — the pub/sub channel below and the tick-snapshot key
+//! ([`set_tick_snapshot`]) — and it never touches `arbx:opps:detected` (that
+//! stream belongs to the native orchestrator).
 //!
 //! The event builders are pure (`-> serde_json::Value`) so they unit-test
-//! without Redis; [`publish`] is the thin async sink.
+//! without Redis; [`publish`] and [`set_tick_snapshot`] are thin async sinks.
 
 use crate::route_discovery::canonicalizer::protocol_token;
 use crate::route_discovery::graph_builder::RejectedEdge;
@@ -161,6 +163,47 @@ pub async fn publish(redis: &mut ConnectionManager, payload: &Value) {
     }
 }
 
+/// Redis key holding the latest durable tick-summary snapshot for one chain
+/// (EMIT-05). The pub/sub channel above is ephemeral — only live subscribers
+/// ever see a tick; this key is the readable truth behind
+/// `GET /api/route-discovery/tick` (api-server, same chain_id scoping as the
+/// heartbeat key). Read by GET, written once per tick.
+pub const TICK_SNAPSHOT_KEY_PREFIX: &str = "arbx:route_discovery:tick:";
+
+/// Snapshot TTL: ~5 ticks at mainnet block cadence — long enough to ride a
+/// missed tick, short enough that a dead discovery loop EXPIRES into an
+/// honest 404 instead of serving a stale-forever funnel. The SET applies it
+/// atomically (single `SET k v EX ttl`), so there is no TTL-less window.
+pub const TICK_SNAPSHOT_TTL_SECS: u64 = 60;
+
+/// Full Redis key for a chain's latest tick-summary snapshot.
+pub fn tick_snapshot_key(chain_id: u64) -> String {
+    format!("{TICK_SNAPSHOT_KEY_PREFIX}{chain_id}")
+}
+
+/// Persist the latest tick summary as the durable snapshot (EMIT-05).
+/// Best-effort like [`publish`]: a Redis error is one warn line, never
+/// fatal — the observe-only loop keeps running (R8/R9).
+pub async fn set_tick_snapshot(redis: &mut ConnectionManager, chain_id: u64, payload: &Value) {
+    let json = match serde_json::to_string(payload) {
+        Ok(s) => s,
+        Err(e) => {
+            warn!(event = "route_discovery.tick_snapshot_serialize_failed", error = %e);
+            return;
+        }
+    };
+    let res: redis::RedisResult<()> = redis::cmd("SET")
+        .arg(tick_snapshot_key(chain_id))
+        .arg(&json)
+        .arg("EX")
+        .arg(TICK_SNAPSHOT_TTL_SECS)
+        .query_async(redis)
+        .await;
+    if let Err(e) = res {
+        warn!(event = "route_discovery.tick_snapshot_set_failed", error = %e);
+    }
+}
+
 #[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
@@ -200,6 +243,23 @@ mod tests {
             "arbx:route_discovery:telemetry"
         );
         assert!(!ROUTE_DISCOVERY_TELEMETRY_CHANNEL.contains("opps"));
+    }
+
+    // EMIT-05: the snapshot key is chain-scoped and lives in the GET-able
+    // keyspace, NEVER on the pub/sub channel name.
+    #[test]
+    fn tick_snapshot_key_is_chain_scoped() {
+        assert_eq!(tick_snapshot_key(1), "arbx:route_discovery:tick:1");
+        assert_eq!(
+            tick_snapshot_key(11155111),
+            "arbx:route_discovery:tick:11155111"
+        );
+    }
+
+    #[test]
+    fn tick_snapshot_key_is_not_the_pubsub_channel() {
+        assert_ne!(tick_snapshot_key(1), ROUTE_DISCOVERY_TELEMETRY_CHANNEL);
+        assert_eq!(TICK_SNAPSHOT_TTL_SECS, 60);
     }
 
     #[test]

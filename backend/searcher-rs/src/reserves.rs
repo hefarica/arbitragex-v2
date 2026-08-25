@@ -50,6 +50,19 @@ pub struct TokenMeta {
     pub is_stablecoin: bool,
 }
 
+/// One universe row from `scan_token_universe` — address-keyed identity plus
+/// the decimals carried by the token meta (EMIT-02 Layer-2: the resolve wire
+/// surfaces decimals per row instead of discarding it at scan time).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UniverseToken {
+    /// Lowercased hex address — identity.
+    pub address: String,
+    /// Declared display form (kept verbatim, first-wins like the resolver).
+    pub symbol: String,
+    /// From `TokenMeta` — meta rows always carry it (enricher writes u8).
+    pub decimals: u8,
+}
+
 /// V3 pool descriptor — address + fee tier. Stored under
 /// `arbx:pool_index_v3:<chain>:<sym0>:<sym1>` as `Vec<V3PoolInfo>`.
 /// Unlike V2 (which only needs an address; reserves are fetched separately),
@@ -288,6 +301,91 @@ pub async fn get_token_meta(
 ) -> redis::RedisResult<Option<TokenMeta>> {
     let raw: Option<String> = redis.get(key_token(chain_id, addr_lower)).await?;
     Ok(raw.and_then(|s| serde_json::from_str(&s).ok()))
+}
+
+/// ARBX-0018 — extract the address from a token-meta key
+/// (`arbx:tokens:<chain_id>:<addr>` → `<addr>`, lowercased). Pure —
+/// unit-testable without Redis. `None` for keys that don't match the
+/// expected shape (never fabricates an identity).
+pub fn addr_from_token_key(key: &str, chain_id: u64) -> Option<String> {
+    let prefix = format!("arbx:tokens:{}:", chain_id);
+    let addr = key.strip_prefix(&prefix)?;
+    if addr.is_empty() || addr.contains(':') {
+        return None;
+    }
+    Some(addr.to_ascii_lowercase())
+}
+
+/// ARBX-0018 — snapshot the chain's token universe for
+/// `TokenIdentityIndex::resolve`: SCAN `arbx:tokens:<chain_id>:*` +
+/// batched MGET → `Vec<UniverseToken>` (address, symbol AND decimals — the
+/// EMIT-01 universe snapshot surfaces decimals per row). Rows whose JSON
+/// fails to decode or whose symbol is blank are SKIPPED (R8 — a broken row
+/// is not a token). Bounded by `max_tokens` with an honest warn on
+/// truncation: the operator's universe is finite and 20k leaves two orders
+/// of magnitude of headroom over every observed chain.
+pub async fn scan_token_universe(
+    redis: &mut ConnectionManager,
+    chain_id: u64,
+    max_tokens: usize,
+) -> redis::RedisResult<Vec<UniverseToken>> {
+    let pattern = format!("arbx:tokens:{}:*", chain_id);
+    let mut cursor: u64 = 0;
+    let mut keys: Vec<String> = Vec::new();
+    loop {
+        let (next, batch): (u64, Vec<String>) = redis::cmd("SCAN")
+            .cursor_arg(cursor)
+            .arg("MATCH")
+            .arg(&pattern)
+            .arg("COUNT")
+            .arg(500)
+            .query_async(redis)
+            .await?;
+        keys.extend(batch);
+        if keys.len() > max_tokens {
+            keys.truncate(max_tokens);
+            tracing::warn!(
+                event = "token_universe.scan_truncated",
+                chain_id,
+                max_tokens,
+                "token universe exceeded scan bound; identity index covers a prefix only (R8 honest)"
+            );
+            break;
+        }
+        if next == 0 {
+            break;
+        }
+        cursor = next;
+    }
+
+    let mut out: Vec<UniverseToken> = Vec::with_capacity(keys.len());
+    for chunk in keys.chunks(100) {
+        let mut cmd = redis::cmd("MGET");
+        for k in chunk {
+            cmd.arg(k);
+        }
+        let vals: Vec<Option<String>> = cmd.query_async(redis).await?;
+        for (key, val) in chunk.iter().zip(vals) {
+            let Some(addr) = addr_from_token_key(key, chain_id) else {
+                continue;
+            };
+            let Some(raw) = val else {
+                continue;
+            };
+            let Ok(meta) = serde_json::from_str::<TokenMeta>(&raw) else {
+                continue;
+            };
+            if meta.symbol.trim().is_empty() {
+                continue;
+            }
+            out.push(UniverseToken {
+                address: addr,
+                symbol: meta.symbol,
+                decimals: meta.decimals,
+            });
+        }
+    }
+    Ok(out)
 }
 
 #[cfg(test)]

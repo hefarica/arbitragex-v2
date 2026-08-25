@@ -467,4 +467,285 @@ mod tests {
             assert_eq!(pair_index(i, j, 6), Some(k), "roundtrip");
         }
     }
+
+    /// QB-05-007 — replay de eventos REALES de mainnet. El fixture es una
+    /// grabación read-only (§77) de la ventana Redis del VPS (~80s, 40
+    /// muestras × 2s): `arbx:pool_reserves:1:*` / `arbx:v3_slot0:1:*` +
+    /// `pool_index*` para el mapeo par→pools (provenance completa dentro
+    /// del JSON). Valida la semántica de propagación contra churn real:
+    /// la inmensa mayoría de los refreshes NO mueven reservas (solo blk/ts
+    /// avanzan) y el motor debe suprimirlos exactamente como hace
+    /// `v2_changed`/`v3_changed`. Census esperado de la ventana grabada
+    /// (2026-08-24): 1576 eventos = 197 arrivals + 77 value-changes +
+    /// 1302 unchanged refreshes; 72 eventos en 9 pools sin pool_index.
+    mod qb05_007_replay {
+        use super::super::*;
+        use crate::dirty_signal::{v2_changed, v3_changed};
+        use std::collections::{HashMap, HashSet};
+
+        const FIXTURE: &str = include_str!("dirty_trace.fixture.json");
+
+        fn fixture() -> serde_json::Value {
+            serde_json::from_str(FIXTURE).expect("fixture parsea")
+        }
+
+        /// (pool_addr, [sym_a, sym_b]) — topología real del pool_index.
+        fn pools() -> Vec<(String, [String; 2])> {
+            fixture()["pools"]
+                .as_array()
+                .expect("pools array")
+                .iter()
+                .map(|p| {
+                    (
+                        p["addr"].as_str().expect("addr").to_string(),
+                        [
+                            p["pair"][0].as_str().expect("sym0").to_string(),
+                            p["pair"][1].as_str().expect("sym1").to_string(),
+                        ],
+                    )
+                })
+                .collect()
+        }
+
+        /// Evento real decodificado del fixture.
+        struct RealEvent {
+            pool: String,
+            is_v2: bool,
+            prev: Option<[String; 2]>,
+            next: [String; 2],
+            value_changed: bool,
+        }
+
+        fn events() -> Vec<RealEvent> {
+            fixture()["events"]
+                .as_array()
+                .expect("events array")
+                .iter()
+                .map(|e| RealEvent {
+                    pool: e["pool"].as_str().expect("pool").to_string(),
+                    is_v2: e["kind"].as_str().expect("kind") == "v2",
+                    prev: e["prev"].as_array().map(|p| {
+                        [
+                            p[0].as_str().expect("prev0").to_string(),
+                            p[1].as_str().expect("prev1").to_string(),
+                        ]
+                    }),
+                    next: [
+                        e["next"][0].as_str().expect("next0").to_string(),
+                        e["next"][1].as_str().expect("next1").to_string(),
+                    ],
+                    value_changed: e["value_changed"].as_bool().expect("value_changed"),
+                })
+                .collect()
+        }
+
+        /// Anti-stale: el census declarado en la provenance del fixture debe
+        /// ser EXACTAMENTE el recomputado desde los eventos (un hand-edit de
+        /// cualquiera de los dos lados rompe aquí).
+        #[test]
+        fn census_matches_provenance() {
+            let f = fixture();
+            let ev = events();
+            let arrivals = ev.iter().filter(|e| e.prev.is_none()).count();
+            let value_changes = ev
+                .iter()
+                .filter(|e| e.prev.is_some() && e.value_changed)
+                .count();
+            let unchanged = ev
+                .iter()
+                .filter(|e| e.prev.is_some() && !e.value_changed)
+                .count();
+            let c = &f["provenance"]["census"];
+            assert_eq!(c["events"].as_u64().unwrap() as usize, ev.len());
+            assert_eq!(c["arrivals"].as_u64().unwrap() as usize, arrivals);
+            assert_eq!(c["value_changes"].as_u64().unwrap() as usize, value_changes);
+            assert_eq!(
+                c["unchanged_refreshes"].as_u64().unwrap() as usize,
+                unchanged
+            );
+            // El fenómeno central del replay: la mayoría de refreshes no mueve
+            // valores (solo blk/ts del payload crudo avanzan).
+            assert!(
+                unchanged > value_changes,
+                "census real esperado: unchanged ({unchanged}) > value_changes ({value_changes})"
+            );
+        }
+
+        /// Los detectores de cambio acuerdan con el churn real: arrival y
+        /// value-change señalan; refresh sin cambio NO señala (1302/1379
+        /// suppressed — la semántica que evita re-evals inútiles).
+        #[test]
+        fn change_detectors_agree_with_real_churn() {
+            for ev in events() {
+                let RealEvent {
+                    pool,
+                    is_v2,
+                    prev,
+                    next,
+                    value_changed,
+                } = ev;
+                let prev_ref = prev.as_ref().map(|p| (p[0].as_str(), p[1].as_str()));
+                let changed = if is_v2 {
+                    match prev_ref {
+                        None => v2_changed(None, &next[0], &next[1]),
+                        Some((p0, p1)) => v2_changed(Some((p0, p1)), &next[0], &next[1]),
+                    }
+                } else {
+                    match prev_ref {
+                        None => v3_changed(None, &next[0], &next[1]),
+                        Some((p0, p1)) => v3_changed(Some((p0, p1)), &next[0], &next[1]),
+                    }
+                };
+                let expect = prev.is_none() || value_changed;
+                assert_eq!(
+                    changed, expect,
+                    "detector discrepa con el evento real {pool} (prev={prev:?})"
+                );
+                // Identical refresh (next contra next) nunca señala.
+                let identical = if is_v2 {
+                    v2_changed(Some((&next[0], &next[1])), &next[0], &next[1])
+                } else {
+                    v3_changed(Some((&next[0], &next[1])), &next[0], &next[1])
+                };
+                assert!(!identical, "refresh idéntico no puede señalar ({pool})");
+            }
+        }
+
+        /// Replay completo por el motor: topología real (pool_index), eventos
+        /// en orden temporal. Solo los pools que MOVIERON valores (o llegaron)
+        /// alimentan `on_pool_event`; los unchanged refreshes jamás se
+        /// encolan. Duplicados del mismo par → AlreadyDirty; dirty set ==
+        /// pares únicos tocados (≪ universo — jamás rebuild global); seeds
+        /// FIFO == dirty; eventos de pools sin pool_index quedan contados
+        /// (UnknownPool honesto, ya cubierto unit-level arriba).
+        #[test]
+        fn full_replay_marks_only_moved_pairs() {
+            let f = fixture();
+            let tokens: Vec<String> = f["tokens"]
+                .as_array()
+                .expect("tokens")
+                .iter()
+                .map(|t| t.as_str().expect("tok").to_string())
+                .collect();
+            let tid: HashMap<&str, usize> = tokens
+                .iter()
+                .enumerate()
+                .map(|(i, t)| (t.as_str(), i))
+                .collect();
+            let n = tokens.len();
+            let universe_pairs = n * (n - 1) / 2;
+
+            let reg = pools();
+            let pool_id: HashMap<&str, usize> = reg
+                .iter()
+                .enumerate()
+                .map(|(i, (addr, _))| (addr.as_str(), i))
+                .collect();
+
+            let mut engine = DirtyPairEngine::new(n, reg.len(), reg.len().max(1));
+            for (id, (_, [a, b])) in reg.iter().enumerate() {
+                engine
+                    .register_pool(id, tid[a.as_str()], tid[b.as_str()])
+                    .expect("par real del pool_index cabe en el universo");
+            }
+
+            let mut expected_pairs: HashSet<usize> = HashSet::new();
+            let mut seed_order: Vec<usize> = Vec::new();
+            let mut already_dirty_seen = 0usize;
+            let mut unmapped_feed = 0usize;
+            let mut unchanged_seen = 0usize;
+
+            for ev in events() {
+                let feeds = ev.prev.is_none() || ev.value_changed;
+                if !feeds {
+                    unchanged_seen += 1;
+                    continue;
+                }
+                let Some(&pid) = pool_id.get(ev.pool.as_str()) else {
+                    unmapped_feed += 1;
+                    continue; // UnknownPool honesto: contado, no descartado.
+                };
+                match engine.on_pool_event(pid) {
+                    PoolEventOutcome::Seeded { pair, .. } => {
+                        if expected_pairs.insert(pair) {
+                            seed_order.push(pair);
+                        }
+                    }
+                    PoolEventOutcome::AlreadyDirty { .. } => already_dirty_seen += 1,
+                    other => panic!("evento real no esperado: {other:?} ({})", ev.pool),
+                }
+            }
+
+            assert!(
+                unchanged_seen > 0,
+                "la ventana real contiene unchanged refreshes"
+            );
+            assert!(
+                unmapped_feed > 0,
+                "la ventana real contiene pools sin pool_index"
+            );
+            assert!(
+                already_dirty_seen > 0,
+                "la ventana real contiene re-marks dentro de la versión"
+            );
+            // Dirty set == pares únicos tocados, calculado INDEPENDIENTENTE.
+            assert_eq!(engine.dirty_count(), expected_pairs.len());
+            // Jamás rebuild global: solo los pares que movieron.
+            assert!(engine.dirty_count() < universe_pairs);
+            assert!(
+                engine.dirty_count() <= reg.len(),
+                "pares dirty ≤ pools registrados"
+            );
+            // Seeds FIFO == exactamente el orden de primera marca.
+            let drained: Vec<usize> = std::iter::from_fn(|| engine.pop_seed()).collect();
+            assert_eq!(drained, seed_order);
+            assert_eq!(engine.pop_seed(), None, "cola agotada");
+        }
+
+        /// Versión nueva re-habilita el mark: el mismo evento real re-alimenta
+        /// → Seeded otra vez (la ventana de 2s coalesce, el bloque siguiente
+        /// re-muerve el mismo par).
+        #[test]
+        fn state_version_reset_remarks_real_pair() {
+            let f = fixture();
+            let tokens: Vec<&str> = f["tokens"]
+                .as_array()
+                .expect("tokens")
+                .iter()
+                .map(|t| t.as_str().expect("tok"))
+                .collect();
+            let tid: HashMap<&str, usize> =
+                tokens.iter().enumerate().map(|(i, t)| (*t, i)).collect();
+            let reg = pools();
+            let first_moved = events()
+                .into_iter()
+                .find(|ev| {
+                    (ev.prev.is_none() || ev.value_changed)
+                        && reg.iter().any(|(a, _)| a == &ev.pool)
+                })
+                .expect("la ventana real tiene al menos un evento alimentable");
+            let pid = reg
+                .iter()
+                .position(|(a, _)| a == &first_moved.pool)
+                .expect("registrado");
+            let [a, b] = reg[pid].1.clone();
+            let mut engine = DirtyPairEngine::new(tokens.len(), reg.len(), reg.len().max(1));
+            engine
+                .register_pool(pid, tid[a.as_str()], tid[b.as_str()])
+                .expect("par real");
+            assert!(matches!(
+                engine.on_pool_event(pid),
+                PoolEventOutcome::Seeded { .. }
+            ));
+            assert!(matches!(
+                engine.on_pool_event(pid),
+                PoolEventOutcome::AlreadyDirty { .. }
+            ));
+            engine.begin_state_version();
+            assert!(
+                matches!(engine.on_pool_event(pid), PoolEventOutcome::Seeded { .. }),
+                "versión nueva re-marks el par que volvió a mover"
+            );
+        }
+    }
 }

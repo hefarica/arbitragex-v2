@@ -1,0 +1,18 @@
+{
+ "chain_id": 1,
+ "capital_deployed_usd": 1000,
+ "profit_realized_usd": 0,
+ "ops_completed": 0,
+ "ops_target_per_day": 100,
+ "elapsed_day_fraction": 0.06479923611111112,
+ "kpis": {
+  "cpi": 0,
+  "spi": 0,
+  "eac_usd": 0,
+  "etc_usd": 0,
+  "tcpi": 5,
+  "vac_usd": 5000,
+  "cv_usd": -323.99618055555555
+ },
+ "computed_at": "2026-08-25T01:33:18.654Z"
+}

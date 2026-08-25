@@ -115,7 +115,11 @@ fn topology_graph(pools: &[PoolRef]) -> TokenGraph {
         adjacency.entry(e.token_in).or_default().push(i);
     }
 
-    TokenGraph { edges, adjacency }
+    TokenGraph {
+        edges,
+        adjacency,
+        dense: None,
+    }
 }
 
 /// Convert one canonical `RouteCandidate` into its persistable row form.

@@ -1,0 +1,11 @@
+{
+  "id": 4,
+  "code": "op_04",
+  "name": "Von Neumann entropy",
+  "canonical_role": "Entropy/coherence evidence.",
+  "enabled": true,
+  "engine_present": true,
+  "calibration_state": "UNCALIBRATED",
+  "formula": "S(rho) = -Tr(rho ln rho) - entropy/coherence evidence",
+  "implementation_file": "backend/math-engine/src/operators/op_04_von_neumann.rs"
+}

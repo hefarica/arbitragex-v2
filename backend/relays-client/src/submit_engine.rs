@@ -72,6 +72,44 @@ pub struct SubmitEngine {
 
 impl SubmitEngine {
     pub async fn execute(&self, opp: &Opportunity) -> ExecutionResult {
+        // -----------------------------------------------------------------------
+        // ARBX-R-0001 — a REJECTED opportunity NEVER trades. First statement of
+        // the engine: covers the paper no-signer short-circuit, the checklist
+        // PaperModeActive branch, the post-checklist paper path AND the live
+        // broadcast path with ONE gate (mode-invariant, §34.1 — the terminus
+        // differs by mode, this refusal does not).
+        //
+        // `rejection_reason: Some(_)` is the single rejection signal — the same
+        // rule persistence::status_from_rejection_reason uses to derive
+        // status='rejected'. The executor REFUSES the row and NEVER relabels
+        // it (no status overwrite, no reason stripping) to make it tradable.
+        // Before this gate the paper paths recorded a paper_trade_run for
+        // whatever arrived — d9's 6h JOIN showed 434/434 ledger rows were
+        // REJECTED opportunities (gap 1.4ms–6.4s), so the "paper history"
+        // was a mirror of the reject queue, not of the viable market.
+        // -----------------------------------------------------------------------
+        if let Some(reason) = Self::rejection_refusal(opp) {
+            info!(
+                event = "executor.rejected_not_traded",
+                opp_id = %opp.id,
+                chain_id = opp.chain_id,
+                reason = %reason,
+                "opportunity is rejected — no paper_trade_run, no broadcast, no relabel (R-0001)"
+            );
+            return ExecutionResult {
+                opportunity_id: opp.id,
+                status: ExecutionStatus::NotSubmitted,
+                tx_hash: None,
+                relay_used: None,
+                block_included: None,
+                gas_used_wei: None,
+                actual_profit_usd: None,
+                error_message: Some(format!("rejected_not_traded:{}", reason)),
+                submitted_at: Utc::now(),
+                trace_id: opp.trace_id,
+            };
+        }
+
         // Hoisted here so it is in scope for both the pre-execute checklist
         // (PreExecuteContext.our_address) and the post-broadcast pending-tx
         // tracker (CODE-4: SET/DEL arbx:pending_tx:<addr>).
@@ -769,6 +807,21 @@ impl SubmitEngine {
     ///
     /// When `net_expected_profit_usd` is present it is always preferred over
     /// gross regardless of `paper_mode` — this is unchanged from H2.
+    /// ARBX-R-0001: refusal decision for REJECTED opportunities. Pure + total.
+    ///
+    /// `Some(reason)` → `execute()` refuses the opp at its FIRST statement:
+    /// no `paper_trade_run`, no checklist, no broadcast, and NO relabeling
+    /// (the row keeps its honest `rejection_reason`). `None` → the normal
+    /// pipeline proceeds.
+    ///
+    /// This mirrors `persistence::status_from_rejection_reason` on the
+    /// searcher side (`Some(_) → status='rejected'`) — same predicate, one
+    /// derivation point per side; a shared-rs consolidation is a noted
+    /// follow-up, not smuggled into this regression fix.
+    pub(crate) fn rejection_refusal(opp: &Opportunity) -> Option<&str> {
+        opp.rejection_reason.as_deref()
+    }
+
     pub(crate) fn resolve_profit_for_checklist(
         opp: &Opportunity,
         paper_mode: bool,
@@ -908,6 +961,36 @@ mod tests {
             detected_at: Utc::now(),
             trace_id: Uuid::new_v4(),
         }
+    }
+
+    /// ARBX-R-0001 repro: a REJECTED opportunity must be refused by the
+    /// executor — no paper_trade_run, no broadcast. Before the gate, the
+    /// paper paths recorded a run for EVERY opp that arrived: d9's 6h JOIN
+    /// showed 434/434 ledger rows were rejected opportunities. The refusal
+    /// decision is pure and total so this regression anchors at the exact
+    /// predicate `execute()` gates on (first statement).
+    #[test]
+    fn r0001_rejected_opportunity_is_refused() {
+        let mut opp = make_opp(Some(52.0), Some(7.0));
+        // The shape of the incident flood: a gate rejection with its reason.
+        opp.rejection_reason = Some("NegativeNetProfit:gas_floor_breach".into());
+        assert_eq!(
+            SubmitEngine::rejection_refusal(&opp),
+            Some("NegativeNetProfit:gas_floor_breach"),
+            "rejected opp must be refused with its honest reason"
+        );
+    }
+
+    /// ARBX-R-0001 counterpart: a viable opp (rejection_reason None) is NOT
+    /// refused — the gate must never over-block the viable market.
+    #[test]
+    fn r0001_viable_opportunity_is_not_refused() {
+        let opp = make_opp(Some(52.0), Some(7.0));
+        assert_eq!(
+            SubmitEngine::rejection_refusal(&opp),
+            None,
+            "viable opp (rejection_reason NULL) must reach the normal pipeline"
+        );
     }
 
     /// H2 regression: net field takes precedence over gross (both modes).

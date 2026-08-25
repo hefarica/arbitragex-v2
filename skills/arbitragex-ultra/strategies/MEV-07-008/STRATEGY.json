@@ -1,0 +1,23 @@
+{
+  "mev_id": "MEV-07-008",
+  "grupo": "7",
+  "estrategia": "Funding-rate arbitrage",
+  "familia": "Derivados y volatilidad",
+  "required_surface": "DERIVATIVES",
+  "backend_module": "derivatives_engine",
+  "toggle_frontend": "strategy.07.008.enabled",
+  "min_legs": 2,
+  "max_legs": 6,
+  "legs_model": "Hedge/estructura",
+  "primary_operators": [
+    "op_08",
+    "op_10",
+    "op_13"
+  ],
+  "secondary_operators": [
+    "op_11",
+    "op_16",
+    "op_22",
+    "op_23"
+  ]
+}

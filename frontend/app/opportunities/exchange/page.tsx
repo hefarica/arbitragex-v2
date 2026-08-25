@@ -2,6 +2,11 @@ import OpportunitiesExchangeClient, {
   type OpportunitiesSnapshot,
 } from "./OpportunitiesExchangeClient";
 import { getApiBaseUrl } from "@/lib/api-client";
+// FE-0051 (§76): map at the Server Component — same wire, same mapper as the
+// WS/polling paths (by-strategy precedent). The raw SSR rows used to bypass
+// mapToOmniOpportunity, so semantic_violations was undefined and the card
+// subtree crashed on first paint.
+import { mapToOmniOpportunity } from "@/lib/store/types";
 // SSOT "glass neon" design language (verbatim port of docs/atlas_264.html),
 // scoped under .atlas-scope — only this page loads it.
 import "./atlas-glass.css";
@@ -31,12 +36,13 @@ async function getInitialOpportunities(): Promise<OpportunitiesSnapshot> {
     }
 
     const data = await res.json();
+    const raw: unknown[] = Array.isArray(data?.items)
+      ? data.items
+      : Array.isArray(data)
+      ? data
+      : [];
     return {
-      opportunities: Array.isArray(data?.items)
-        ? data.items
-        : Array.isArray(data)
-        ? data
-        : [],
+      opportunities: raw.map(r => mapToOmniOpportunity(r as Record<string, unknown>)),
       serverTime: new Date().toISOString(),
       source: "server-snapshot",
     };

@@ -593,6 +593,9 @@ app.get("/api/executions/recent", (c) => proxy(c, "/api/v1/executions/recent", "
 app.get("/api/recon/summary",    (c) => proxy(c, "/api/v1/recon/summary",    "arbx:cache:recon", 10));
 app.get("/api/recon/timeseries", (c) => proxy(c, "/api/v1/recon/timeseries", "arbx:cache:recon-ts", 15));
 app.get("/api/config/current",   (c) => proxy(c, "/api/v1/config/current",   "arbx:cache:config", 30));
+// Canonical knobs (XLS-CANON-01): LIVE searcher boot snapshot with per-call
+// generated_at — short TTL so boot changes surface fast (validated vs overlay).
+app.get("/api/config/canonical-knobs", (c) => proxy(c, "/api/v1/config/canonical-knobs", "arbx:cache:canonical-knobs", 5));
 app.get("/api/readiness",        (c) => proxy(c, "/api/v1/readiness",        "arbx:cache:readiness", 15));
 
 // ── B-02: routes that existed in dev-local but were missing from the canonical
@@ -1210,6 +1213,47 @@ app.get("/api/strategy-catalog/active", async (c) => {
 
 // Runtime Status - Observability per strategy
 app.get("/api/strategies/runtime-status", (c) => proxy(c, "/api/v1/strategies/runtime-status", "arbx:cache:strategy-runtime-status", 5));
+
+// QuoteBase workbook catalogs (EMIT-07/08 — FE-MASTER P6/P7). Static-per-canon
+// tables from the api-server's generated module: same path both sides, no /v1.
+// Long TTL — the canon only changes on workbook re-ingestion + redeploy.
+app.get("/api/strategies/catalog", (c) => proxy(c, "/api/strategies/catalog", "arbx:cache:quotebase-strategies-catalog", 300));
+app.get("/api/detectors/catalog", (c) => proxy(c, "/api/detectors/catalog", "arbx:cache:quotebase-detectors-catalog", 300));
+
+// EMIT-02 Layer-2 (FE-MASTER P4): live quote-anchor view — pass-through, never
+// cached (the snapshot carries a 35s TTL; a dead searcher must surface as the
+// endpoint's honest 503, not a stale cached 200).
+app.get("/api/quote/anchor", (c) => proxyPassThrough(c, "/api/quote/anchor"));
+
+// EMIT-06 (FE-MASTER P5 §13): effective pair universe (PG registry + live
+// reserves + undrained dirty set). 5s TTL — reserves refresh ~30s and the
+// dirty SET re-fills per discovery tick; short TTL keeps the panel honest
+// without hammering the api-server.
+app.get("/api/pairs", (c) => proxy(c, "/api/pairs", "arbx:cache:pairs", 5));
+
+// EMIT-03: preview-before-apply for quote weights (admin, no mutation). The
+// admin token rides the caller's header and is forwarded verbatim — the
+// api-server enforces it; statuses (400/401/503) pass through untouched.
+app.post("/api/admin/quote/preview", async (c) => {
+  const headers: Record<string, string> = {
+    "x-arbx-edge-token": c.env.ARBX_EDGE_TOKEN,
+    "x-arbx-trace-id": (c as unknown as { traceId: string }).traceId,
+    "content-type": "application/json",
+    accept: "application/json",
+  };
+  const admin = c.req.header("x-arbx-admin-token");
+  if (admin) headers["x-arbx-admin-token"] = admin;
+  const upstream = await fetch(`${c.env.API_SERVER_URL}/api/admin/quote/preview`, {
+    method: "POST",
+    headers,
+    body: await c.req.text(),
+    cf: { cacheTtl: 0, cacheEverything: false },
+  });
+  return new Response(await upstream.text(), {
+    status: upstream.status,
+    headers: { "content-type": "application/json", "x-arbx-cache": "PASS" },
+  });
+});
 
 // Scanner heartbeat — last pipeline funnel snapshot persisted by
 // searcher-rs::workers::heartbeat_worker. Backend returns 404 (R8 fail-honest)

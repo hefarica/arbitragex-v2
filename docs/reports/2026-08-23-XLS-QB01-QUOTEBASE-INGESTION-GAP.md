@@ -106,6 +106,15 @@ Leyenda: ✅ PRESERVED (existe, evidencia) · 🟡 PARTIAL · ❌ GAP.
 
 ## 4. Plan incremental (PR-sized, P-∅: un PR = un ID) — ESTADO 2026-08-23
 
+> **⚠️ SECCIÓN ANULADA (operador, 2026-08-23 — corrección obligatoria de proceso).**
+> El enfoque "PR-sized / un PR por ID / branches-stack / merge en orden" de esta sección QUEDA ANULADO.
+> **XLS-QB-01..07 NO son PRs, NO son branches, NO son commits, NO son deploys**: son exclusivamente
+> **LOCAL WORK PACKAGES** dentro del único MASTER CHECKLIST (`.ai-work/TASK_REGISTRY.json`, 88 tareas
+> atómicas). Mientras exista UNA tarea implementable pendiente: COMMIT=FALSE, PUSH=FALSE, PR=FALSE,
+> MERGE=FALSE, DEPLOY=FALSE. Git aparece UNA sola vez, al final (WP-F), tras la validación integral.
+> El contenido de las tablas siguientes se conserva como **registro histórico de evidencia**
+> (qué módulos existen y con qué verificación), no como plan de entrega.
+
 | ID | Entregable | Scope mínimo verificable | Estado |
 |---|---|---|---|
 | **XLS-QB-01** (este) | Ingesta + extracción + gap analysis + JSONs canónicos a `docs/` | 17/18 checks diferenciales PASS | ✅ db031e43 |

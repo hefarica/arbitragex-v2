@@ -11,7 +11,9 @@ import { describe, it, expect } from "vitest";
 import {
   parseRouteMetadata,
   deriveLegs,
+  deriveHopCount,
   mapToOmniOpportunity,
+  SYNTHETIC_LEGACY_VIEW_LABEL,
 } from "@/lib/store/types";
 
 // Canonical mainnet tokens (protocol constants, RULE 00 exception).
@@ -107,5 +109,72 @@ describe("deriveLegs", () => {
       token_out: USDC,
     } as Record<string, unknown>);
     expect(deriveLegs(opp)).toEqual([]);
+  });
+});
+
+// ─── FE-0030 — §29 SYNTHETIC LEGACY VIEW marking ─────────────────────────────
+
+describe("deriveLegs — synthetic legacy marking (FE-0030 §29)", () => {
+  it("wire legs carry NO synthetic flag (persisted topology = ROUTE-grade)", () => {
+    const opp = mapToOmniOpportunity({
+      id: "a",
+      chain_id: 1,
+      strategy_kind: "triangular",
+      detected_at: "2026-08-11T00:00:00Z",
+      trace_id: "t",
+      dex_a: "uniswap-v2",
+      token_in: WETH,
+      token_out: WETH,
+      route_metadata: {
+        token_addresses: [WETH, USDC, DAI, WETH],
+        pool_addresses: ["0xp1", "0xp2", "0xp3"],
+        dex_adapters: ["uniswap_v2_router", "sushiswap", "uniswap_v2_router"],
+      },
+    } as Record<string, unknown>);
+    for (const leg of deriveLegs(opp)) {
+      expect(leg.synthetic).toBeUndefined();
+    }
+  });
+
+  it("synthetic fallback legs are marked synthetic: true (every leg)", () => {
+    const opp = mapToOmniOpportunity({
+      id: "b",
+      chain_id: 1,
+      strategy_kind: "dex_arb",
+      detected_at: "2026-08-11T00:00:00Z",
+      trace_id: "t",
+      dex_a: "uniswap-v2",
+      dex_b: "sushiswap",
+      token_in: WETH,
+      token_out: USDC,
+    } as Record<string, unknown>);
+    const legs = deriveLegs(opp);
+    expect(legs).toHaveLength(2);
+    for (const leg of legs) {
+      expect(leg.synthetic).toBe(true);
+    }
+  });
+
+  it("a synthetic view NEVER implies operational hops: hop_count stays null (§29)", () => {
+    const opp = mapToOmniOpportunity({
+      id: "b",
+      chain_id: 1,
+      strategy_kind: "dex_arb",
+      detected_at: "2026-08-11T00:00:00Z",
+      trace_id: "t",
+      dex_a: "uniswap-v2",
+      dex_b: "sushiswap",
+      token_in: WETH,
+      token_out: USDC,
+    } as Record<string, unknown>);
+    // 2 view legs, but the wire hop_count is null — the synthetic legs are
+    // display shape, not an operational HOPS=2 claim.
+    expect(deriveLegs(opp)).toHaveLength(2);
+    expect(opp.hop_count).toBeNull();
+    expect(deriveHopCount(opp.route_metadata)).toBeNull();
+  });
+
+  it("the §29 marker is the canonical exported string", () => {
+    expect(SYNTHETIC_LEGACY_VIEW_LABEL).toBe("SYNTHETIC LEGACY VIEW");
   });
 });

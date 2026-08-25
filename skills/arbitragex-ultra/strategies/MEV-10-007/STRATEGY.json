@@ -1,0 +1,21 @@
+{
+  "mev_id": "MEV-10-007",
+  "grupo": "10",
+  "estrategia": "NFT AMM\u2013NFT AMM arbitrage",
+  "familia": "NFT, juegos y activos no fungibles",
+  "required_surface": "NFT",
+  "backend_module": "nft_engine",
+  "toggle_frontend": "strategy.10.007.enabled",
+  "min_legs": 2,
+  "max_legs": 8,
+  "legs_model": "Ruta din\u00e1mica",
+  "primary_operators": [
+    "op_08",
+    "op_15",
+    "op_21"
+  ],
+  "secondary_operators": [
+    "op_10",
+    "op_22"
+  ]
+}

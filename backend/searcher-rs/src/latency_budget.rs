@@ -109,7 +109,11 @@ pub fn target_total_ms() -> u64 {
 
 /// Nearest-rank percentile over `samples` (sorted copy, 1-based rank
 /// `ceil(p/100 · n)`). `None` when there are no samples (not computed).
-fn nearest_rank(samples: &[u64], p: u64) -> Option<u64> {
+///
+/// `pub` (ARBX-0012): the ONE nearest-rank statistic — the bench matrix
+/// (`benches/amount_matrix.rs`) reuses this kernel so a benchmark p95 and
+/// a live-wire p95 are the same number-shape, never two definitions.
+pub fn nearest_rank(samples: &[u64], p: u64) -> Option<u64> {
     if samples.is_empty() || !(1..=100).contains(&p) {
         return None;
     }
@@ -201,9 +205,22 @@ impl LatencyLog {
         nearest_rank(&self.per_stage[stage.idx()], 50)
     }
 
+    /// `Actual_p90` for a stage (µs). `None` = no samples yet (R8).
+    /// FE-LAT-003 extension: p90/p99 are not workbook 10_LATENCY columns
+    /// (those pin p50/p95/headroom) — they ride the same nearest-rank kernel
+    /// for the frontend percentile row.
+    pub fn stage_p90_us(&self, stage: Stage) -> Option<u64> {
+        nearest_rank(&self.per_stage[stage.idx()], 90)
+    }
+
     /// `Actual_p95` for a stage (µs). `None` = no samples yet (R8).
     pub fn stage_p95_us(&self, stage: Stage) -> Option<u64> {
         nearest_rank(&self.per_stage[stage.idx()], 95)
+    }
+
+    /// `Actual_p99` for a stage (µs). `None` = no samples yet (R8).
+    pub fn stage_p99_us(&self, stage: Stage) -> Option<u64> {
+        nearest_rank(&self.per_stage[stage.idx()], 99)
     }
 
     /// `Headroom_p95` for a stage (µs, signed): target − actual p95.
@@ -218,9 +235,19 @@ impl LatencyLog {
         nearest_rank(&self.totals, 50)
     }
 
+    /// `Actual_p90_Total` (µs) over completed cycles. `None` if none.
+    pub fn total_p90_us(&self) -> Option<u64> {
+        nearest_rank(&self.totals, 90)
+    }
+
     /// `Actual_p95_Total` (µs) over completed cycles. `None` if none.
     pub fn total_p95_us(&self) -> Option<u64> {
         nearest_rank(&self.totals, 95)
+    }
+
+    /// `Actual_p99_Total` (µs) over completed cycles. `None` if none.
+    pub fn total_p99_us(&self) -> Option<u64> {
+        nearest_rank(&self.totals, 99)
     }
 
     /// `PASS_p95` (r18): total p95 ≤ `sla_ms`. `None` if no completed
@@ -248,7 +275,9 @@ impl LatencyLog {
                     StageSnapshot {
                         target_ms: s.target_ms(),
                         p50_us: self.stage_p50_us(s),
+                        p90_us: self.stage_p90_us(s),
                         p95_us: self.stage_p95_us(s),
+                        p99_us: self.stage_p99_us(s),
                         headroom_p95_us: self.stage_headroom_p95_us(s),
                     },
                 )
@@ -258,7 +287,9 @@ impl LatencyLog {
                 StageSnapshot {
                     target_ms: target_total_ms(),
                     p50_us: self.total_p50_us(),
+                    p90_us: self.total_p90_us(),
                     p95_us: self.total_p95_us(),
+                    p99_us: self.total_p99_us(),
                     headroom_p95_us: self
                         .total_p95_us()
                         .map(|p95| target_total_ms() as i64 * 1000 - p95 as i64),
@@ -268,14 +299,19 @@ impl LatencyLog {
     }
 }
 
-/// One stage's budget line (Actual columns of 10_LATENCY).
+/// One stage's budget line (Actual columns of 10_LATENCY + the FE-LAT-003
+/// p90/p99 percentile extension).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct StageSnapshot {
     pub target_ms: u64,
     /// `Actual_p50` (µs) — `None` = no samples.
     pub p50_us: Option<u64>,
+    /// `Actual_p90` (µs) — FE-LAT-003 extension, same nearest-rank kernel.
+    pub p90_us: Option<u64>,
     /// `Actual_p95` (µs) — `None` = no samples.
     pub p95_us: Option<u64>,
+    /// `Actual_p99` (µs) — FE-LAT-003 extension, same nearest-rank kernel.
+    pub p99_us: Option<u64>,
     /// `Headroom_p95` (µs, signed; negative = over budget) — `None` if p95
     /// is not computed.
     pub headroom_p95_us: Option<i64>,
@@ -306,7 +342,7 @@ mod tests {
         assert_eq!(target_total_ms(), 29);
         assert_eq!(
             target_total_ms(),
-            Stage::ALL.iter().map(|s| s.target_ms()).sum(),
+            Stage::ALL.iter().map(|s| s.target_ms()).sum::<u64>(),
             "total is always the derived sum"
         );
     }
@@ -428,11 +464,39 @@ mod tests {
         );
         for (_, s) in &snap {
             assert_eq!(s.p50_us, None, "empty log — nothing computed");
+            assert_eq!(s.p90_us, None);
             assert_eq!(s.p95_us, None);
+            assert_eq!(s.p99_us, None);
         }
         assert_eq!(
             snap[8].1.target_ms, 29,
             "lat.total carries the derived budget"
         );
+    }
+
+    /// FE-LAT-003: with samples on record the percentile quartet is
+    /// monotonic (nearest-rank guarantees p50 ≤ p90 ≤ p95 ≤ p99 over the
+    /// same sample set) and populated on EVERY row — the wire contract the
+    /// frontend LatencyStageRowSchema mirrors field-for-field.
+    #[test]
+    fn snapshot_percentile_quartet_monotonic_and_populated() {
+        let mut log = LatencyLog::with_window(16);
+        for i in 0..16u64 {
+            log.begin_cycle();
+            // Sample EVERY stage (a stage with no samples keeps null
+            // percentiles — that absence path is pinned by
+            // `snapshot_keys_and_absence` above).
+            for stage in Stage::ALL {
+                let _ = log.record(stage, 100 + i * 10 + stage.idx() as u64);
+            }
+            let _ = log.end_cycle();
+        }
+        for (_, s) in &log.snapshot() {
+            let (p50, p90, p95, p99) = (s.p50_us, s.p90_us, s.p95_us, s.p99_us);
+            let (p50, p90, p95, p99) = (p50.unwrap(), p90.unwrap(), p95.unwrap(), p99.unwrap());
+            assert!(p50 <= p90, "p50={p50} p90={p90}");
+            assert!(p90 <= p95, "p90={p90} p95={p95}");
+            assert!(p95 <= p99, "p95={p95} p99={p99}");
+        }
     }
 }

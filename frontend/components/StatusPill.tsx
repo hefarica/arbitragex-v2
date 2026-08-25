@@ -78,7 +78,8 @@ const STATUS_MAP: Record<OpportunityStatus, StatusMeta> = {
 };
 
 export interface StatusPillProps {
-  status: OpportunityStatus;
+  /** FE-0029 (§28): null = malformed payload → UNKNOWN, never "DETECTED". */
+  status: OpportunityStatus | null;
   /**
    * Surfaced in the `title` attribute when status="rejected".
    * React HTML-escapes this automatically — no manual sanitization needed.
@@ -87,6 +88,16 @@ export interface StatusPillProps {
 }
 
 export function StatusPill({ status, rejection_reason }: StatusPillProps) {
+  // FE-0029 (§28): absent status is an honest UNKNOWN — the mapper no longer
+  // fabricates "detected" for rows the wire never statused.
+  if (status == null) {
+    return (
+      <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-bold tracking-wide bg-muted/60 text-muted-foreground border border-border">
+        UNKNOWN
+      </span>
+    );
+  }
+
   const meta = STATUS_MAP[status];
 
   // Defensive fallback: unknown status string slipped past TypeScript at runtime.

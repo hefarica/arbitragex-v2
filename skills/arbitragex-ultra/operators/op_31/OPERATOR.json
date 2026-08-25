@@ -1,0 +1,11 @@
+{
+  "id": 31,
+  "code": "op_31",
+  "name": "DRL Agent",
+  "canonical_role": "Policy model only when trained/calibrated; otherwise unavailable.",
+  "enabled": true,
+  "engine_present": true,
+  "calibration_state": "UNCALIBRATED",
+  "formula": "grad J = E[grad log pi_theta(a|s) * A_t] - policy model (trained only)",
+  "implementation_file": "backend/math-engine/src/operators/op_31_drl_agent.rs"
+}
