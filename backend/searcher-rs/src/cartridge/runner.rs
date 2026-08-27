@@ -757,6 +757,140 @@ mod tests {
         );
     }
 
+    /// Compiles omega_strategy_pack.rhai with a bare engine and returns the AST.
+    /// The pack is a PURE evaluator (no host bindings on its dispatch paths), so a
+    /// bare `Engine::new()` both compiles AND evaluates it — no Redis, no stubs.
+    fn compile_omega_pack() -> (Engine, AST) {
+        let src = std::fs::read_to_string(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/cartridges/omega_strategy_pack.rhai"
+        ))
+        .expect("read omega_strategy_pack.rhai");
+        let engine = Engine::new();
+        let ast = engine
+            .compile(&src)
+            .expect("omega_strategy_pack.rhai must compile");
+        (engine, ast)
+    }
+
+    /// Helper: run `evaluate_opportunity(pool_data)` on the omega pack and return the result Map.
+    fn omega_eval(engine: &Engine, ast: &AST, pool_data: Map) -> Map {
+        let mut scope = Scope::new();
+        let res: Dynamic = engine
+            .call_fn(&mut scope, ast, "evaluate_opportunity", (pool_data,))
+            .expect("evaluate_opportunity must not error");
+        res.cast::<Map>()
+    }
+
+    #[test]
+    fn omega_strategy_pack_loads_and_validates() {
+        // Contract: compiles, satisfies the universal contract (3 required fns + arity),
+        // and init_strategy() returns the 4 required non-empty metadata keys.
+        let (engine, ast) = compile_omega_pack();
+        assert!(
+            validate_contract(&ast).is_ok(),
+            "omega_strategy_pack.rhai must satisfy the universal contract"
+        );
+
+        // init_strategy() metadata must pass validate_metadata (name/version/author/description).
+        let mut scope = Scope::new();
+        let meta: Dynamic = engine
+            .call_fn(&mut scope, &ast, "init_strategy", ())
+            .expect("init_strategy must not error");
+        let meta_map = meta.cast::<Map>();
+        assert!(
+            validate_metadata(&meta_map).is_ok(),
+            "init_strategy() metadata must satisfy the contract"
+        );
+        assert_eq!(
+            meta_map
+                .get("name")
+                .and_then(|v| v.clone().into_string().ok())
+                .as_deref(),
+            Some("omega_strategy_pack")
+        );
+    }
+
+    #[test]
+    fn omega_strategy_pack_evaluates() {
+        let (engine, ast) = compile_omega_pack();
+
+        // (a) spatial_cross_dex with a clear net>threshold → accept.
+        // gross = sell(120) - buy(100) = 20; no costs → net = 20 > default 0.50 floor.
+        let mut accept_pd = Map::new();
+        accept_pd.insert(
+            "strategy_kind".into(),
+            Dynamic::from("spatial_cross_dex".to_string()),
+        );
+        accept_pd.insert("buy_quote_usd".into(), Dynamic::from(100.0_f64));
+        accept_pd.insert("sell_quote_usd".into(), Dynamic::from(120.0_f64));
+        let accepted = omega_eval(&engine, &ast, accept_pd);
+        assert!(
+            accepted
+                .get("is_opportunity")
+                .and_then(|v| v.as_bool().ok())
+                .unwrap(),
+            "clear-spread spatial_cross_dex must be an opportunity"
+        );
+        assert_eq!(
+            accepted
+                .get("strategy_kind")
+                .and_then(|v| v.clone().into_string().ok())
+                .as_deref(),
+            Some("spatial_cross_dex")
+        );
+        assert!(
+            accepted
+                .get("estimated_profit")
+                .and_then(|v| v.as_float().ok())
+                .unwrap()
+                > 0.0,
+            "accepted opportunity must carry a positive net profit"
+        );
+
+        // (b) spatial_cross_dex MISSING the quotes → fail-honest reject with non-empty reason.
+        let mut missing_pd = Map::new();
+        missing_pd.insert(
+            "strategy_kind".into(),
+            Dynamic::from("spatial_cross_dex".to_string()),
+        );
+        let missing = omega_eval(&engine, &ast, missing_pd);
+        assert!(
+            !missing
+                .get("is_opportunity")
+                .and_then(|v| v.as_bool().ok())
+                .unwrap(),
+            "spatial_cross_dex without quotes must NOT be an opportunity"
+        );
+        let missing_reason = missing
+            .get("reason")
+            .and_then(|v| v.clone().into_string().ok())
+            .expect("fail-honest reject must carry a string reason");
+        assert!(
+            !missing_reason.trim().is_empty(),
+            "fail-honest reason must be non-empty, got {missing_reason:?}"
+        );
+
+        // (c) unknown strategy_kind → reason == "unsupported_strategy_kind".
+        let mut unknown_pd = Map::new();
+        unknown_pd.insert(
+            "strategy_kind".into(),
+            Dynamic::from("totally_made_up_kind".to_string()),
+        );
+        let unknown = omega_eval(&engine, &ast, unknown_pd);
+        assert!(!unknown
+            .get("is_opportunity")
+            .and_then(|v| v.as_bool().ok())
+            .unwrap());
+        assert_eq!(
+            unknown
+                .get("reason")
+                .and_then(|v| v.clone().into_string().ok())
+                .as_deref(),
+            Some("unsupported_strategy_kind")
+        );
+    }
+
     /// Evaluate dex_arb.rhai with STUBBED host bindings (no Redis). Returns the result map
     /// plus two tripwires: whether `log_quantum` fired and whether `get_pool_index` was reached.
     /// `slot0_present` controls get_v3_slot0; `pool_index_len` controls the alt-pool count.
