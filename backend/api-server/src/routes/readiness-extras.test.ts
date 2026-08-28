@@ -119,12 +119,16 @@ describe("doctrinalBlockers", () => {
   // gate_c_validation row a4_fork_validation_20260820T013304Z.log,
   // a4_state=A4_PASSED). See the readiness-extras.ts doctrinalBlockers
   // comment for the full evidence trail.
-  it("emits exactly 5 doctrinal phase blockers (A.5..A.9) — A.4 resolved 2026-08-20", () => {
+  //
+  // A.5 (a5_paper_shadow_not_executed) was resolved 2026-08-23 — 49 days of
+  // continuous ledger accumulation (591,753 rows) + operator decision on the
+  // total-accumulation reading. Full dossier:
+  // docs/reports/2026-08-23-A5-PAPER-SHADOW-AUDIT.md.
+  it("emits exactly 4 doctrinal phase blockers (A.6..A.9) — A.4 resolved 2026-08-20, A.5 resolved 2026-08-23", () => {
     const b = doctrinalBlockers();
-    expect(b.length).toBe(5);
+    expect(b.length).toBe(4);
     const ids = b.map((x) => x.id).sort();
     expect(ids).toEqual([
-      "a5_paper_shadow_not_executed",
       "a6_circuit_breakers_partial",
       "a7_private_relay_no_submit_pending",
       "a8_confidence_scoring_not_wired",
@@ -137,12 +141,9 @@ describe("doctrinalBlockers", () => {
     expect(b.find((x) => x.id === "a4_fork_real_not_executed")).toBeUndefined();
   });
 
-  it("A.5 blocks A.5 + LIVE (NOT A.4)", () => {
+  it("A.5 blocker is gone (resolved via 49d ledger accumulation + operator decision)", () => {
     const b = doctrinalBlockers();
-    const a5 = b.find((x) => x.id === "a5_paper_shadow_not_executed");
-    expect(a5!.blocks).toContain("A.5");
-    expect(a5!.blocks).toContain("LIVE");
-    expect(a5!.blocks).not.toContain("A.4");
+    expect(b.find((x) => x.id === "a5_paper_shadow_not_executed")).toBeUndefined();
   });
 
   it("A.9 is critical severity", () => {
