@@ -608,6 +608,135 @@ fn lat_record(log: &mut LatencyLog, stage: Stage, t: std::time::Instant) {
     }
 }
 
+/// ARBX-XLANG-01: the run loop's per-tick scan telemetry, as plain data.
+/// Exists so [`inject_scan_telemetry`] is unit-testable — the wire contract
+/// the frontend validates under `.strict()` must be provable in CI, not only
+/// observable in prod.
+pub(crate) struct ScanTelemetry {
+    pub adapter_cache_hit: usize,
+    pub adapter_backfill_ok: usize,
+    pub adapter_backfill_fail: usize,
+    pub adapter_budget_exhausted: usize,
+    pub drain_stats: crate::dirty_consumer::DrainStats,
+    pub drain_register_reject: usize,
+    pub dirty_seeds_now: usize,
+    pub adapter_scoped_skip: usize,
+    /// F_e prefilter knob — OFF emits NOTHING (dormant is dormant, R8).
+    pub fe_prefilter: bool,
+    pub fe_prefilter_pass: usize,
+    pub fe_prefilter_below_reference: usize,
+    pub fe_prefilter_uncomputed: usize,
+    pub fe_prefilter_map_fail: usize,
+    pub fe_anchor_applied: bool,
+    /// R9 dirty re-eval knob — OFF emits nothing.
+    pub dirty_reeval: bool,
+    pub scoped_reeval_cycles: usize,
+    pub scoped_reeval_routes: usize,
+    pub scoped_cycle_map_fail: usize,
+    pub sla_ms: f64,
+    pub lat_candidates_cap: usize,
+}
+
+/// ARBX-XLANG-01: inject the scan-conditions telemetry block into the tick
+/// summary (adapter counters, drain/dirty histogram, F_e prefilter, scoped
+/// re-eval, latency budget KPIs, per-candidate rows). Extracted verbatim from
+/// the run loop — its ONLY production caller — so the cross-language wire
+/// contract can be golden-tested: the committed fixtures under
+/// `frontend/lib/apex/schemas/__tests__/fixtures/route-discovery-tick/` are
+/// regenerated from THIS code path and parsed by the frontend Zod mirror
+/// (`RouteDiscoveryTickSummarySchema`, `.strict()` — an unknown or
+/// type-mismatched key rejects the WHOLE payload; that class of drift once
+/// left the telemetry room accepting nothing).
+fn inject_scan_telemetry(tick: &mut TickOutput, lat_log: &LatencyLog, s: &ScanTelemetry) {
+    // Adapter counters ride the tick summary (same injection pattern as
+    // the multi_hop_* fields).
+    tick.tick_summary["adapter_cache_hit"] = serde_json::json!(s.adapter_cache_hit);
+    tick.tick_summary["adapter_backfill_ok"] = serde_json::json!(s.adapter_backfill_ok);
+    tick.tick_summary["adapter_backfill_fail"] = serde_json::json!(s.adapter_backfill_fail);
+    tick.tick_summary["adapter_budget_exhausted"] = serde_json::json!(s.adapter_budget_exhausted);
+    // ARBX-0003 (XLS-QB-05b/05c/05-009): drain histogram + scoped
+    // re-evaluation telemetry — the R9 contract (per-item at debug!,
+    // counters here + the ONE info summary below).
+    tick.tick_summary["drain_drained"] = serde_json::json!(s.drain_stats.drained);
+    tick.tick_summary["drain_unknown_pool"] = serde_json::json!(s.drain_stats.unknown_pool);
+    tick.tick_summary["drain_invalid_pair"] = serde_json::json!(s.drain_stats.invalid_pair);
+    tick.tick_summary["drain_already_dirty"] = serde_json::json!(s.drain_stats.already_dirty);
+    tick.tick_summary["drain_seeded"] = serde_json::json!(s.drain_stats.seeded);
+    tick.tick_summary["drain_evicted"] = serde_json::json!(s.drain_stats.evicted);
+    tick.tick_summary["drain_register_reject"] = serde_json::json!(s.drain_register_reject);
+    tick.tick_summary["dirty_seeds"] = serde_json::json!(s.dirty_seeds_now);
+    tick.tick_summary["adapter_scoped_skip"] = serde_json::json!(s.adapter_scoped_skip);
+    // ARBX-0024 (REQ-QB-008): F_e prefilter histogram — knob ON only
+    // (OFF emits NOTHING: dormant is dormant). The regression contract
+    // "signal-no-reemplaza-netgate": below_reference routes were never
+    // proved unprofitable by the exact net gate — they were signaled
+    // out BEFORE the proof; PASS authority never moved.
+    if s.fe_prefilter {
+        tick.tick_summary["fe_prefilter_evaluated"] = serde_json::json!(
+            s.fe_prefilter_pass
+                + s.fe_prefilter_below_reference
+                + s.fe_prefilter_uncomputed
+                + s.fe_prefilter_map_fail
+        );
+        tick.tick_summary["fe_prefilter_pass"] = serde_json::json!(s.fe_prefilter_pass);
+        tick.tick_summary["fe_prefilter_below_reference"] =
+            serde_json::json!(s.fe_prefilter_below_reference);
+        tick.tick_summary["fe_prefilter_uncomputed"] = serde_json::json!(s.fe_prefilter_uncomputed);
+        tick.tick_summary["fe_prefilter_map_fail"] = serde_json::json!(s.fe_prefilter_map_fail);
+        // ARBX-0023: the numéraire the F_e state was filled in — true =
+        // the dynamic anchor chosen this tick; false = the stream's raw
+        // units (no scoreable anchor / unpriced anchor — fail-open, R8).
+        tick.tick_summary["fe_prefilter_anchor_dynamic"] = serde_json::json!(s.fe_anchor_applied);
+    }
+    if s.dirty_reeval {
+        tick.tick_summary["scoped_reeval"] = serde_json::json!(true);
+        tick.tick_summary["scoped_reeval_cycles"] = serde_json::json!(s.scoped_reeval_cycles);
+        tick.tick_summary["scoped_reeval_routes"] = serde_json::json!(s.scoped_reeval_routes);
+        tick.tick_summary["scoped_cycle_map_fail"] = serde_json::json!(s.scoped_cycle_map_fail);
+    }
+
+    // XLS-QB-07b (10_LATENCY): budget KPIs ride the tick summary — the
+    // `lat.*` Actual columns (windowed p50/p95 + signed headroom) and the
+    // PASS gate vs the canonical SLA knob. Honest absence: `null` = not
+    // computed (no samples yet), never a fabricated 0. The Emit row and
+    // `lat.total` lag one tick: this summary is serialized before this
+    // tick's publishes are timed.
+    let lat_rows: Vec<Value> = lat_log
+        .snapshot()
+        .iter()
+        .map(|(k, s)| {
+            serde_json::json!({
+                "key": k,
+                "target_ms": s.target_ms,
+                "p50_us": s.p50_us,
+                // FE-LAT-003: the frontend percentile row needs the full
+                // p50/p90/p95/p99 quartet (p90/p99 are NOT workbook
+                // 10_LATENCY columns — that sheet pins p50/p95/headroom;
+                // these ride the same nearest-rank kernel).
+                "p90_us": s.p90_us,
+                "p95_us": s.p95_us,
+                "p99_us": s.p99_us,
+                "headroom_p95_us": s.headroom_p95_us,
+            })
+        })
+        .collect();
+    tick.tick_summary["lat_stages"] = serde_json::json!(lat_rows);
+    tick.tick_summary["lat_pass_p95"] = serde_json::json!(lat_log.pass_p95(s.sla_ms));
+    tick.tick_summary["lat_cycles"] = serde_json::json!(lat_log.cycle_count());
+    // ARBX-FE-EMIT-09 (FE-0037 §45 unblocker): per-candidate rows + the
+    // once-per-tick honesty block, riding the SAME tick summary the FE
+    // already polls (useRouteTick / GET /api/route-discovery/tick) — no
+    // new endpoint, no new poll. Selection happens at the caller, after
+    // the adapter pass enriched `reprice_us`, so the top-K is over final
+    // totals.
+    let lat_cand_sel = lat_candidates::select_top_k(
+        std::mem::take(&mut tick.lat_candidate_samples),
+        s.lat_candidates_cap,
+    );
+    tick.tick_summary["lat_candidates"] = lat_candidates::rows_value(&lat_cand_sel);
+    tick.tick_summary["lat_candidates_meta"] = lat_candidates::meta_value(&lat_cand_sel);
+}
+
 /// The async loop: tick on an interval until `cancel` fires.
 #[allow(clippy::too_many_arguments)] // per-tick coordinator wiring
 async fn run_loop(
@@ -1353,118 +1482,40 @@ async fn run_loop(
             }
         }
 
-        // Adapter counters ride the tick summary (same injection pattern as
-        // the multi_hop_* fields).
-        tick.tick_summary["adapter_cache_hit"] = serde_json::json!(adapter_cache_hit);
-        tick.tick_summary["adapter_backfill_ok"] = serde_json::json!(adapter_backfill_ok);
-        tick.tick_summary["adapter_backfill_fail"] = serde_json::json!(adapter_backfill_fail);
-        tick.tick_summary["adapter_budget_exhausted"] = serde_json::json!(adapter_budget_exhausted);
-        // ARBX-0003 (XLS-QB-05b/05c/05-009): drain histogram + scoped
-        // re-evaluation telemetry — the R9 contract (per-item at debug!,
-        // counters here + the ONE info summary below).
+        // ARBX-XLANG-01: adapter counters + drain/F_e/scoped/lat telemetry
+        // live in `inject_scan_telemetry` (pure, golden-tested) — the wire
+        // contract the frontend validates verbatim must be provable in CI.
+        lat_record(&mut lat_log, Stage::Reprice, t_reprice);
         let dirty_seeds_now = drain_state
             .as_ref()
             .map(|(_, d)| d.dirty_seeds())
             .unwrap_or(0);
-        tick.tick_summary["drain_drained"] = serde_json::json!(drain_stats.drained);
-        tick.tick_summary["drain_unknown_pool"] = serde_json::json!(drain_stats.unknown_pool);
-        tick.tick_summary["drain_invalid_pair"] = serde_json::json!(drain_stats.invalid_pair);
-        tick.tick_summary["drain_already_dirty"] = serde_json::json!(drain_stats.already_dirty);
-        tick.tick_summary["drain_seeded"] = serde_json::json!(drain_stats.seeded);
-        tick.tick_summary["drain_evicted"] = serde_json::json!(drain_stats.evicted);
-        tick.tick_summary["drain_register_reject"] = serde_json::json!(drain_register_reject);
-        tick.tick_summary["dirty_seeds"] = serde_json::json!(dirty_seeds_now);
-        tick.tick_summary["adapter_scoped_skip"] = serde_json::json!(adapter_scoped_skip);
-        // ARBX-0024 (REQ-QB-008): F_e prefilter histogram — knob ON only
-        // (OFF emits NOTHING: dormant is dormant). The regression contract
-        // "signal-no-reemplaza-netgate": below_reference routes were never
-        // proved unprofitable by the exact net gate — they were signaled
-        // out BEFORE the proof; PASS authority never moved.
-        if fe_prefilter {
-            tick.tick_summary["fe_prefilter_evaluated"] = serde_json::json!(
-                fe_prefilter_pass
-                    + fe_prefilter_below_reference
-                    + fe_prefilter_uncomputed
-                    + fe_prefilter_map_fail
-            );
-            tick.tick_summary["fe_prefilter_pass"] = serde_json::json!(fe_prefilter_pass);
-            tick.tick_summary["fe_prefilter_below_reference"] =
-                serde_json::json!(fe_prefilter_below_reference);
-            tick.tick_summary["fe_prefilter_uncomputed"] =
-                serde_json::json!(fe_prefilter_uncomputed);
-            tick.tick_summary["fe_prefilter_map_fail"] = serde_json::json!(fe_prefilter_map_fail);
-            // ARBX-0023: the numéraire the F_e state was filled in — true =
-            // the dynamic anchor chosen this tick; false = the stream's raw
-            // units (no scoreable anchor / unpriced anchor — fail-open, R8).
-            tick.tick_summary["fe_prefilter_anchor_dynamic"] = serde_json::json!(fe_anchor_applied);
-        }
-        if dirty_reeval {
-            tick.tick_summary["scoped_reeval"] = serde_json::json!(true);
-            tick.tick_summary["scoped_reeval_cycles"] = serde_json::json!(scoped_reeval_cycles);
-            tick.tick_summary["scoped_reeval_routes"] = serde_json::json!(scoped_reeval_routes);
-            tick.tick_summary["scoped_cycle_map_fail"] = serde_json::json!(scoped_cycle_map_fail);
-        }
-        lat_record(&mut lat_log, Stage::Reprice, t_reprice);
-
-        // XLS-QB-07b (10_LATENCY): budget KPIs ride the tick summary — the
-        // `lat.*` Actual columns (windowed p50/p95 + signed headroom) and the
-        // PASS gate vs the canonical SLA knob. Honest absence: `null` = not
-        // computed (no samples yet), never a fabricated 0. The Emit row and
-        // `lat.total` lag one tick: this summary is serialized before this
-        // tick's publishes are timed.
-        //
-        // ARBX-0010 stage-anchor ledger (8 rows, 10_LATENCY):
-        // - decode/state/reprice/emit: Instants in this run_loop (QB-07b).
-        // - expand/gates: sink samples from evaluate_tick_phased (QB-07b);
-        //   Gates legitimately receives TWO samples per tick (annotation +
-        //   dispatch planning) — the recorder aggregates, it never averages
-        //   across different meanings.
-        // - pair (r7 direct inefficiency): LANDED — the 0010-pair delta
-        //   (DiscoveryTimings, 7b's finder side) is consumed in
-        //   evaluate_tick_phased above; Pair+Expand preserves the legacy
-        //   Expand total exactly (segment-between-emissions attribution,
-        //   l==2 ⇒ Pair; a tick with no 2-leg emissions records its
-        //   honest 0).
-        // - refine (r9 amount-aware refinement): DELIBERATELY unmeasured.
-        //   The amount-aware pass does not exist in this worker yet — it
-        //   arrives with ARBX-0008 (size_optimizer wiring), and lat.refine
-        //   stays `null` (not computed) until then. Timing the fire-and-
-        //   forget `tokio::spawn` handoff was explicitly REJECTED: it would
-        //   report dispatch latency as refinement — a dishonest number.
-        let lat_rows: Vec<Value> = lat_log
-            .snapshot()
-            .iter()
-            .map(|(k, s)| {
-                serde_json::json!({
-                    "key": k,
-                    "target_ms": s.target_ms,
-                    "p50_us": s.p50_us,
-                    // FE-LAT-003: the frontend percentile row needs the full
-                    // p50/p90/p95/p99 quartet (p90/p99 are NOT workbook
-                    // 10_LATENCY columns — that sheet pins p50/p95/headroom;
-                    // these ride the same nearest-rank kernel).
-                    "p90_us": s.p90_us,
-                    "p95_us": s.p95_us,
-                    "p99_us": s.p99_us,
-                    "headroom_p95_us": s.headroom_p95_us,
-                })
-            })
-            .collect();
-        tick.tick_summary["lat_stages"] = serde_json::json!(lat_rows);
-        tick.tick_summary["lat_pass_p95"] = serde_json::json!(lat_log.pass_p95(sla_ms));
-        tick.tick_summary["lat_cycles"] = serde_json::json!(lat_log.cycle_count());
-        // ARBX-FE-EMIT-09 (FE-0037 §45 unblocker): per-candidate rows + the
-        // once-per-tick honesty block, riding the SAME tick summary the FE
-        // already polls (useRouteTick / GET /api/route-discovery/tick) — no
-        // new endpoint, no new poll. Selection happens HERE, after the
-        // adapter pass enriched `reprice_us`, so the top-K is over final
-        // totals.
-        let lat_cand_sel = lat_candidates::select_top_k(
-            std::mem::take(&mut tick.lat_candidate_samples),
-            lat_candidates_cap,
+        inject_scan_telemetry(
+            &mut tick,
+            &lat_log,
+            &ScanTelemetry {
+                adapter_cache_hit,
+                adapter_backfill_ok,
+                adapter_backfill_fail,
+                adapter_budget_exhausted,
+                drain_stats,
+                drain_register_reject,
+                dirty_seeds_now,
+                adapter_scoped_skip,
+                fe_prefilter,
+                fe_prefilter_pass,
+                fe_prefilter_below_reference,
+                fe_prefilter_uncomputed,
+                fe_prefilter_map_fail,
+                fe_anchor_applied,
+                dirty_reeval,
+                scoped_reeval_cycles,
+                scoped_reeval_routes,
+                scoped_cycle_map_fail,
+                sla_ms,
+                lat_candidates_cap,
+            },
         );
-        tick.tick_summary["lat_candidates"] = lat_candidates::rows_value(&lat_cand_sel);
-        tick.tick_summary["lat_candidates_meta"] = lat_candidates::meta_value(&lat_cand_sel);
 
         let t_emit = Instant::now();
         for ev in &tick.events {
@@ -2217,5 +2268,134 @@ mod tests {
             "uncomputed",
             "R8: missing reference is not computable, never a fabricated drop"
         );
+    }
+    // ── ARBX-XLANG-01: cross-language wire-contract golden ────────────────
+    // The tick_summary JSON is validated VERBATIM by the frontend Zod mirror
+    // (`RouteDiscoveryTickSummarySchema`, `.strict()` — an unknown key or a
+    // type mismatch rejects the WHOLE payload; that drift class once left
+    // the telemetry room accepting nothing). These fixtures are the SINGLE
+    // source of truth both languages assert against:
+    //   - this test regenerates them from the REAL emission path
+    //     (evaluate_tick + inject_scan_telemetry, controlled inputs) and
+    //     asserts byte equality on every rerun;
+    //   - the vitest contract test parses the SAME committed files
+    //     (frontend/lib/apex/schemas/__tests__/contract-route-discovery-tick.test.ts).
+    // Any intentional wire change ⇒ regen ⇒ the Zod mirror must follow or
+    // CI fails on the frontend side. Regenerate with:
+    //   ARBX_REGEN_GOLDEN=1 cargo test -p searcher-rs xlang_golden
+    fn golden_fixture_dir() -> std::path::PathBuf {
+        // searcher-rs → backend → repo root → frontend tree.
+        std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../frontend/lib/apex/schemas/__tests__/fixtures/route-discovery-tick")
+    }
+
+    fn golden_lat_log() -> LatencyLog {
+        let mut log = LatencyLog::with_window(64);
+        log.begin_cycle();
+        for (stage, us) in [
+            (Stage::Decode, 1_100),
+            (Stage::State, 1_200),
+            (Stage::Reprice, 1_300),
+            (Stage::Pair, 1_400),
+            (Stage::Expand, 1_500),
+            (Stage::Refine, 1_600),
+            (Stage::Gates, 1_700),
+            (Stage::Emit, 1_800),
+        ] {
+            log.record(stage, us).expect("seed sample in-cycle");
+        }
+        log.end_cycle();
+        log
+    }
+
+    fn golden_tick_payload(policy_selected: bool, knobs_on: bool) -> Value {
+        let outcome = outcome_two_v2(); // carries 1 rejected pool → census key
+        let engine = StrategyApplicabilityEngine::default();
+        let mut finder = RouteFinderConfig::default();
+        if policy_selected {
+            // MEV-01-015: real workbook strategy (mask 1 → hop 2) so the
+            // do_not/family/policy keys carry their Some(..) wire shape.
+            finder.hop_mask_strategy_id = Some("MEV-01-015".to_string());
+        }
+        let mut tick = evaluate_tick(&outcome, 1, &engine, &finder, 200, false, 42, "shadow");
+        if knobs_on {
+            // One traversed candidate so lat_candidates carries a REAL row
+            // (route_kind from the closed Zod vocabulary, reprice present —
+            // total_us = Σ stages, the producer-coherence contract).
+            tick.lat_candidate_samples.push(
+                crate::route_discovery::lat_candidates::CandidateSample {
+                    route_hash: "0xdeadbeef".to_string(),
+                    route_kind: "v2v2".to_string(),
+                    hops: 2,
+                    gates_us: 900,
+                    reprice_us: Some(700),
+                },
+            );
+        }
+        let seeded_log = golden_lat_log();
+        let empty_log = LatencyLog::with_window(64); // no samples → honest nulls
+        let lat_log: &LatencyLog = if knobs_on { &seeded_log } else { &empty_log };
+        inject_scan_telemetry(
+            &mut tick,
+            lat_log,
+            &ScanTelemetry {
+                adapter_cache_hit: 3,
+                adapter_backfill_ok: 2,
+                adapter_backfill_fail: 1,
+                adapter_budget_exhausted: 0,
+                drain_stats: crate::dirty_consumer::DrainStats {
+                    drained: 11,
+                    unknown_pool: 1,
+                    invalid_pair: 2,
+                    already_dirty: 3,
+                    seeded: 4,
+                    evicted: 0,
+                },
+                drain_register_reject: 1,
+                dirty_seeds_now: 4,
+                adapter_scoped_skip: 5,
+                fe_prefilter: knobs_on,
+                fe_prefilter_pass: 7,
+                fe_prefilter_below_reference: 2,
+                fe_prefilter_uncomputed: 1,
+                fe_prefilter_map_fail: 0,
+                fe_anchor_applied: true,
+                dirty_reeval: knobs_on,
+                scoped_reeval_cycles: 3,
+                scoped_reeval_routes: 6,
+                scoped_cycle_map_fail: 1,
+                sla_ms: 29.0,
+                lat_candidates_cap: 10,
+            },
+        );
+        tick.tick_summary
+    }
+
+    fn assert_golden(name: &str, payload: &Value) {
+        let path = golden_fixture_dir().join(name);
+        let rendered = format!("{}\n", serde_json::to_string_pretty(payload).unwrap());
+        if std::env::var("ARBX_REGEN_GOLDEN").is_ok() {
+            std::fs::create_dir_all(golden_fixture_dir()).unwrap();
+            std::fs::write(&path, &rendered).unwrap();
+            return;
+        }
+        let committed = std::fs::read_to_string(&path)
+            .unwrap_or_else(|e| panic!("golden {name} missing ({e}) — run ARBX_REGEN_GOLDEN=1 cargo test -p searcher-rs xlang_golden"));
+        assert_eq!(
+            committed, rendered,
+            "tick wire contract drifted from committed golden {name} — if intentional, \
+             regenerate AND update the frontend Zod mirror + its contract test"
+        );
+    }
+
+    #[test]
+    fn xlang_golden_tick_contract() {
+        // Full-dress tick: policy selected, both knobs ON, latency samples
+        // and one per-candidate row — every conditional group present.
+        assert_golden("full.json", &golden_tick_payload(true, true));
+        // Dormant tick: default finder (policy-less → do_not null), knobs
+        // OFF (fe/scoped groups ABSENT — absence is a real backend state),
+        // empty latency log (honest nulls, lat_pass_p95 None).
+        assert_golden("knobs-off.json", &golden_tick_payload(false, false));
     }
 }
