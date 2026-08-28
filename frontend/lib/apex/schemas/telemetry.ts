@@ -195,8 +195,21 @@ export const FePrefilterTelemetrySchema = z.object({
   fe_prefilter_below_reference: z.number().int().min(0),
   fe_prefilter_uncomputed: z.number().int().min(0),
   fe_prefilter_map_fail: z.number().int().min(0),
+  /** ARBX-0023: true = dynamic anchor chosen this tick; false = raw units. */
+  fe_prefilter_anchor_dynamic: z.boolean(),
 }).strict();
 export type FePrefilterTelemetry = z.infer<typeof FePrefilterTelemetrySchema>;
+
+// ─── Graph rejection census (worker :560-567, non-empty rejects only) ────
+/**
+ * Per-reason census of pools that yielded no edges this tick (BTreeMap on the
+ * wire → string→count record). Absent when the graph accepted every pool.
+ */
+export const GraphRejectedReasonsSchema = z.record(
+  z.string().min(1),
+  z.number().int().min(0),
+);
+export type GraphRejectedReasons = z.infer<typeof GraphRejectedReasonsSchema>;
 
 // ─── Scoped re-evaluation (R9 re-eval, dirty_reeval only) ────────────────
 export const ScopedReevalTelemetrySchema = z.object({
@@ -217,7 +230,8 @@ export const HopBoundsSchema = z.tuple([
 export const MultiHopTelemetrySchema = z.object({
   multi_hop_profitable_cycles: z.number().int().min(0),
   multi_hop_v3_skipped: z.number().int().min(0),
-  multi_hop_capped: z.number().int().min(0),
+  /** Truncation FLAG (MultiHopResult.capped: bool) — parallel to routes_capped. */
+  multi_hop_capped: z.boolean(),
   multi_hop_noise_dropped: z.number().int().min(0),
   /** Selected strategy id when the StrategyMask gated the pass. */
   multi_hop_mask_strategy: z.string().nullable(),
@@ -234,7 +248,8 @@ export const MultiHopTelemetrySchema = z.object({
   multi_hop_family_hops: HopBoundsSchema.nullable(),
   multi_hop_hot_seed: z.string().nullable(),
   multi_hop_may_seed: z.boolean().nullable(),
-  multi_hop_do_not: z.string(),
+  /** Wire is `mh_policy.map(…)` — null when no policy gated the tick. */
+  multi_hop_do_not: z.string().nullable(),
   multi_hop_family_clamped: z.boolean(),
   multi_hop_family_skip_reason: z.string().nullable(),
 }).strict();
@@ -364,6 +379,7 @@ export const RouteDiscoveryTickSummarySchema = z
     ...FePrefilterTelemetrySchema.shape,
     ...ScopedReevalTelemetrySchema.shape,
     strategy_status_counts: StrategyStatusCountsSchema,
+    graph_rejected_reasons: GraphRejectedReasonsSchema,
     // DP-002/003/004 blocks — `required_data_gate` is Option on the wire
     // (null when no policy selected); `detector_mask` is always an object.
     required_data_gate: RequiredDataGateTelemetrySchema.nullable(),

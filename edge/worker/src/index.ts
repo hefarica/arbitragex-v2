@@ -618,6 +618,14 @@ app.get("/api/route-discovery/status", (c) => proxy(c, "/api/route-discovery/sta
 app.get("/api/route-discovery/latest", (c) => proxy(c, "/api/route-discovery/latest"));
 app.get("/api/route-discovery/metrics", (c) => proxy(c, "/api/route-discovery/metrics"));
 app.get("/api/route-discovery/routes", (c) => proxy(c, "/api/route-discovery/routes"));
+// EMIT-05 tick snapshot (api-server serves it FLAT — index.ts :763, no /v1/).
+// NO KV cache on purpose: the searcher SETs a fresh `arbx:route_discovery:tick:
+// <chain_id>` every tick (EX 60) and a cached copy would serve the previous
+// tick as if current. 404 passes through = honest absence (discovery down or
+// restarted), never a zeroed funnel. Closes the prod 404 the FE client hits
+// (api-client.ts :780) — dev-local :418 always had it; edge parity test had
+// catalogued the gap as "pending" instead of enforcing it.
+app.get("/api/route-discovery/tick", (c) => proxy(c, "/api/route-discovery/tick"));
 
 // Cartridges (/config/trading, /strategies/forge)
 app.get("/api/cartridges/runtime", (c) => proxy(c, "/api/cartridges/runtime"));

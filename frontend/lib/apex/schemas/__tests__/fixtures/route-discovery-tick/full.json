@@ -1,0 +1,194 @@
+{
+  "adapter_backfill_fail": 1,
+  "adapter_backfill_ok": 2,
+  "adapter_budget_exhausted": 0,
+  "adapter_cache_hit": 3,
+  "adapter_scoped_skip": 5,
+  "algorithm": "dfs_bounded",
+  "chain_id": 1,
+  "detector_mask": {
+    "admitted": 51,
+    "event": "pool_reserve_update",
+    "selected_admitted": true,
+    "total": 60
+  },
+  "dirty_seeds": 4,
+  "drain_already_dirty": 3,
+  "drain_drained": 11,
+  "drain_evicted": 0,
+  "drain_invalid_pair": 2,
+  "drain_register_reject": 1,
+  "drain_seeded": 4,
+  "drain_unknown_pool": 1,
+  "edges_built": 4,
+  "edges_rejected": 1,
+  "event": "route_discovery.tick",
+  "fe_prefilter_anchor_dynamic": true,
+  "fe_prefilter_below_reference": 2,
+  "fe_prefilter_evaluated": 10,
+  "fe_prefilter_map_fail": 0,
+  "fe_prefilter_pass": 7,
+  "fe_prefilter_uncomputed": 1,
+  "graph_rejected_reasons": {
+    "missing_reserves": 1
+  },
+  "lat_candidates": [
+    {
+      "hops": 2,
+      "route_hash": "0xdeadbeef",
+      "route_kind": "v2v2",
+      "stages": {
+        "gates_us": 900,
+        "reprice_us": 700
+      },
+      "total_us": 1600
+    }
+  ],
+  "lat_candidates_meta": {
+    "attribution": {
+      "gates": "measured",
+      "reprice": "measured-upper-bound"
+    },
+    "cap": 10,
+    "dropped": 0,
+    "sampled": 1,
+    "truncated": false
+  },
+  "lat_cycles": 1,
+  "lat_pass_p95": true,
+  "lat_stages": [
+    {
+      "headroom_p95_us": 900,
+      "key": "lat.decode",
+      "p50_us": 1100,
+      "p90_us": 1100,
+      "p95_us": 1100,
+      "p99_us": 1100,
+      "target_ms": 2
+    },
+    {
+      "headroom_p95_us": 1800,
+      "key": "lat.state",
+      "p50_us": 1200,
+      "p90_us": 1200,
+      "p95_us": 1200,
+      "p99_us": 1200,
+      "target_ms": 3
+    },
+    {
+      "headroom_p95_us": 2700,
+      "key": "lat.reprice",
+      "p50_us": 1300,
+      "p90_us": 1300,
+      "p95_us": 1300,
+      "p99_us": 1300,
+      "target_ms": 4
+    },
+    {
+      "headroom_p95_us": 1600,
+      "key": "lat.pair",
+      "p50_us": 1400,
+      "p90_us": 1400,
+      "p95_us": 1400,
+      "p99_us": 1400,
+      "target_ms": 3
+    },
+    {
+      "headroom_p95_us": 5500,
+      "key": "lat.expand",
+      "p50_us": 1500,
+      "p90_us": 1500,
+      "p95_us": 1500,
+      "p99_us": 1500,
+      "target_ms": 7
+    },
+    {
+      "headroom_p95_us": 3400,
+      "key": "lat.refine",
+      "p50_us": 1600,
+      "p90_us": 1600,
+      "p95_us": 1600,
+      "p99_us": 1600,
+      "target_ms": 5
+    },
+    {
+      "headroom_p95_us": 1300,
+      "key": "lat.gates",
+      "p50_us": 1700,
+      "p90_us": 1700,
+      "p95_us": 1700,
+      "p99_us": 1700,
+      "target_ms": 3
+    },
+    {
+      "headroom_p95_us": 200,
+      "key": "lat.emit",
+      "p50_us": 1800,
+      "p90_us": 1800,
+      "p95_us": 1800,
+      "p99_us": 1800,
+      "target_ms": 2
+    },
+    {
+      "headroom_p95_us": 17400,
+      "key": "lat.total",
+      "p50_us": 11600,
+      "p90_us": 11600,
+      "p95_us": 11600,
+      "p99_us": 11600,
+      "target_ms": 29
+    }
+  ],
+  "latency_ms": 42,
+  "mode": "shadow",
+  "multi_hop_capped": false,
+  "multi_hop_detector": "R_CLOSED_CYCLE",
+  "multi_hop_do_not": "Do not replace detector math with generic spot-price spread.",
+  "multi_hop_execution_class": "DETERMINISTIC_EXECUTABLE",
+  "multi_hop_family_clamped": false,
+  "multi_hop_family_hops": [
+    2,
+    7
+  ],
+  "multi_hop_family_skip_reason": null,
+  "multi_hop_graph_policy": "dirty pair/edge → closed-cycle/order route search",
+  "multi_hop_hops_effective": [
+    2,
+    2
+  ],
+  "multi_hop_hot_seed": "Spread/log-alpha/depth dislocation",
+  "multi_hop_mask_skip": false,
+  "multi_hop_mask_strategy": "MEV-01-015",
+  "multi_hop_may_seed": true,
+  "multi_hop_needs_class": null,
+  "multi_hop_noise_dropped": 0,
+  "multi_hop_profitable_cycles": 0,
+  "multi_hop_status": "route_ready",
+  "multi_hop_status_skip_reason": null,
+  "multi_hop_v3_skipped": 4,
+  "pools_total": 3,
+  "pools_truncated": false,
+  "required_data_gate": {
+    "detector": "R_CLOSED_CYCLE",
+    "reason": null,
+    "required_data": "Full ordered route legs; per-leg protocol adapter; reserves/slot0/ticks/bins; token decimals; pool fees; same-block state; gas; optional flash fee.",
+    "surface": "DEX_AMM",
+    "tier": "executable",
+    "verdict": "ready"
+  },
+  "routes_capped": false,
+  "routes_dispatched": 0,
+  "routes_dropped_for_cap": 0,
+  "routes_found": 2,
+  "scoped_cycle_map_fail": 1,
+  "scoped_reeval": true,
+  "scoped_reeval_cycles": 3,
+  "scoped_reeval_routes": 6,
+  "strategy_status_counts": {
+    "needs_route_data": 174,
+    "no_compatible_route": 3,
+    "observe_only": 8,
+    "route_ready": 79
+  },
+  "telemetry_emitted": 2
+}
