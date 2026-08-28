@@ -92,13 +92,6 @@ const ALLOWED_ASYMMETRIES: ReadonlyArray<{
   },
   // ── dev-local-only ──
   {
-    route: "GET /api/route-discovery/tick",
-    present: "dev-local",
-    reason:
-      "Redis SET..EX 60 tick-summary family (dev-local :418); worker parity " +
-      "pending.",
-  },
-  {
     route: "POST /api/admin/tokens/resolve",
     present: "dev-local",
     reason:
