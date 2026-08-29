@@ -119,13 +119,31 @@ export default function DeployPipelinePage() {
     <>
       <PageHeader
         title="Deploy Pipeline · OMEGA-102"
-        lede="Consola operativa de la entrega ejecutable CI/CD VPS. Runbook de 4 fases — contención, unblock CI, deploy productivo, branch protection final."
+        lede="Runbook histórico de la entrega ejecutable CI/CD VPS. Las 4 fases — contención, unblock CI, deploy productivo, branch protection final — ya se ejecutaron; esta página documenta cómo, no el estado vigente."
         meta={[
           `ticket: ${META.ticket}`,
           `base audit: ${META.baseAudit}`,
           `target: VPS Hetzner · GitHub Actions`,
         ]}
       />
+
+      {/* P1-05 (audit 2026-08-29): this console previously presented the
+          OMEGA-102 pre-state ("CI 100% rojo, branch protection sin checks")
+          as if it were the current operational state. Separate the two: the
+          banner below states the VERIFIED current state with its date; the
+          runbook body stays as history (P-∅: no rewriting the record). */}
+      <Alert variant="default" className="mb-8 border-info/40 bg-info/5">
+        <CircleAlertIcon className="text-info" />
+        <AlertTitle>Runbook histórico — el estado actual es otro</AlertTitle>
+        <AlertDescription>
+          Verificado 2026-08-29: <code>main</code> está protegido con required
+          checks (CI, E2E, CodeQL, Auto-Deploy VPS en verde) y el VPS sirve el
+          HEAD fusionado. El "objetivo declarado" y los contadores de esta
+          página describen el estado ANTERIOR que la entrega OMEGA-102 vino a
+          resolver — úsala como registro del runbook, no como estado operativo
+          vigente.
+        </AlertDescription>
+      </Alert>
 
       {/* FE-0059 (§64): the REAL workflow state first — locked under the
           operator protocol until the final gate; reasons + unlock conditions. */}

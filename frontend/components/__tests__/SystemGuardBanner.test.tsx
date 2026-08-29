@@ -4,7 +4,7 @@
  * Why static markup:
  *   - Same toolkit-alignment constraint as StatusPill.test.tsx: no jsdom.
  *   - SSR-only rendering shows the initial "loading" state plus the
- *     hardcoded guard tiles (Live OFF, Paper ON, $0, NO-GO, BLOCKED).
+ *     hardcoded guard tiles (Live OFF, Paper ON, $0, NO-GO).
  *     Those tiles are the structural barrier to live trading and MUST
  *     be present on every page render.
  *   - useEffect (fetch + interval) doesn't fire under renderToStaticMarkup,
@@ -15,7 +15,10 @@
  *   - Paper = ON                                       (1× ":ON" exact)
  *   - Capital = $0
  *   - GO live = NO-GO
- *   - A.4 fork + A.5 paper-shadow = BLOCKED            (2× "BLOCKED")
+ *   - A.4 fork + A.5 paper-shadow = NO DATA on SSR     (2× "NO DATA")
+ *     (audit 2026-08-29 P1-04: the tiles derive from /api/readiness/decision
+ *     after hydration; static render has NO data, so it must render the
+ *     honest unknown — never a fabricated BLOCKED, never a fabricated PASS)
  *   - Banner never claims Live=ON or GO=GO
  */
 import React from "react";
@@ -64,10 +67,18 @@ describe("SystemGuardBanner", () => {
     expect(html).toContain(">NO-GO</span>");
   });
 
-  it("renders A.4 + A.5 as BLOCKED", () => {
+  it("renders A.4 + A.5 as NO DATA on static SSR (no fabricated verdict)", () => {
     expect(html).toContain(">A.4 fork:</span>");
     expect(html).toContain(">A.5 paper-shadow:</span>");
-    expect(countOccurrences(">BLOCKED</span>")).toBe(2);
+    expect(countOccurrences(">NO DATA</span>")).toBe(2);
+  });
+
+  it("regression alarm: SSR never fabricates A.4/A.5 PASS or BLOCKED", () => {
+    // The verdict values only appear after the client fetches the decision
+    // endpoint. Static markup claiming either would be a hardcoded literal
+    // again (the exact P1-04 defect this banner shed on 2026-08-29).
+    expect(html).not.toContain(">PASS</span>");
+    expect(countOccurrences(">BLOCKED</span>")).toBe(0);
   });
 
   it("renders loading state on initial server render (no fetch fired)", () => {

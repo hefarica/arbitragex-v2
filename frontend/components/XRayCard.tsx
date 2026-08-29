@@ -3,15 +3,18 @@
 interface XRayCardProps {
   pair: string;
   yield: string;
-  confidence: number;
+  // R8 fail-honest (audit 2026-08-29 P1-02): null = not computed by the
+  // pipeline — renders "—", never a fabricated 0 (the old call sites passed
+  // literal 0 for TOKEN SAFETY / confidence, which read as "computed zero").
+  confidence: number | null;
   legs: number;
   ago: string;
   route: string;
   fees: string;
   tlsAmount: string;
   simVerdict: string;
-  safetyA: number;
-  safetyB: number;
+  safetyA: number | null;
+  safetyB: number | null;
 }
 
 export function XRayCard({
@@ -38,7 +41,13 @@ export function XRayCard({
         </div>
         <div className="flex gap-4 font-mono text-[10.5px] text-[var(--muted)] tracking-wide">
           <span>
-            <b className="text-[var(--foreground)]">{confidence}</b>% conf
+            {confidence != null ? (
+              <>
+                <b className="text-[var(--foreground)]">{confidence}</b>% conf
+              </>
+            ) : (
+              <span>— conf</span>
+            )}
           </span>
           <span>
             <b className="text-[var(--foreground)]">{legs}</b> legs
@@ -57,7 +66,15 @@ export function XRayCard({
           <XRayRow label="DECOHERENCIA" value={fees} bold />
           <XRayRow label="TLS AMOUNT" value={tlsAmount} bold />
           <XRayRow label="SIM VERDICT" value={`✓ ${simVerdict}`} ok />
-          <XRayRow label="TOKEN SAFETY" value={`A ${safetyA} · B ${safetyB}`} bold />
+          <XRayRow
+            label="TOKEN SAFETY"
+            value={
+              safetyA == null && safetyB == null
+                ? "— (no computado)"
+                : `A ${safetyA ?? "—"} · B ${safetyB ?? "—"}`
+            }
+            bold
+          />
         </div>
       </div>
     </article>

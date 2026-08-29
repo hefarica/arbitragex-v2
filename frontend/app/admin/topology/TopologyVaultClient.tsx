@@ -384,9 +384,28 @@ export function TopologyVaultClient({ initialSnapshot }: ClientProps) {
               </div>
             </div>
           ) : (
-            <p className="rounded-lg border border-dashed border-slate-300 p-4 text-sm text-slate-500">
-              Todavía no hay topología guardada en el vault. Aplica una mutación para inicializarlo.
-            </p>
+            <div className="rounded-lg border border-dashed border-slate-300 p-4 text-sm text-slate-500">
+              <p>
+                Todavía no hay topología guardada en el vault. Aplica una mutación para inicializarlo.
+              </p>
+              {/* P1-06 (audit 2026-08-29): coexisten DOS conceptos distintos y
+                  la UI no los explicaba. Este vault = CONFIGURED topology
+                  (fuentes RPC persistentes, inicializado por mutación
+                  operator-driven). NO es el runtime search graph — ese vive en
+                  el searcher (pools/edges activos del bloque) y se observa en
+                  /routes/discovery. Vault vacío ≠ sistema sin topología. */}
+              <p className="mt-2">
+                <span className="font-medium text-slate-700">Vacío aquí ≠ sin topología.</span>{" "}
+                Este vault persiste la topología <em>configurada</em> (fuentes RPC). La
+                topología <em>operacional</em> — pools/edges activos que el searcher usa para
+                descubrir rutas cada bloque — se observa en{" "}
+                <a href="/routes/discovery" className="font-medium underline">
+                  Route Discovery
+                </a>
+                . El objetivo de producto es que este vault se convierta en el SSOT de la
+                configurada (CONFIGURED → EFFECTIVE → ACTIVE GRAPH); hoy aún no lo es.
+              </p>
+            </div>
           )}
         </aside>
       </div>

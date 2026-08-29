@@ -28,6 +28,20 @@ export const StatusResponseSchema = z.object({
 export const PaperStatusSchema = z.enum(["paper_viable", "paper_rejected"]);
 export type PaperStatus = z.infer<typeof PaperStatusSchema>;
 
+// Token-enricher validation block (loose — see OpportunityRowSchema tail).
+// Declared before its consumer; only the fields the UI consumes are kept.
+const TokenValidationInfoSchema = z.object({
+  symbol: z.string().nullable().optional(),
+  verified: z.boolean().nullable().optional(),
+  validation: z
+    .object({
+      status: z.string().nullable().optional(),
+      score: z.number().nullable().optional(),
+    })
+    .nullable()
+    .optional(),
+});
+
 export const OpportunityRowSchema = z.object({
   id: z.string(),
   chain_id: z.number(),
@@ -98,6 +112,13 @@ export const OpportunityRowSchema = z.object({
   scoring_reason: z.string().nullable().optional(),
   scoring_version: z.string().nullable().optional(),
   scoring_input_hash: z.string().nullable().optional(),
+  // ─── Token validation (audit 2026-08-29 P1-02) ───
+  // The edge payload already carries token-enricher validation blocks
+  // (verified live 2026-08-29: token_in_info.validation.score=40 for an
+  // unverified token). Loose by design: only the fields the UI consumes are
+  // declared; Zod strips the rest (additive, wire-safe).
+  token_in_info: TokenValidationInfoSchema.nullable().optional(),
+  token_out_info: TokenValidationInfoSchema.nullable().optional(),
 });
 
 export const OpportunitiesLiveSchema = z.object({
@@ -815,6 +836,9 @@ export const ReadinessBlockersResponseSchema = z.object({
 
 export const ReadinessDecisionResponseSchema = z.object({
   generated_at: z.string(),
+  // Optional (rollout-safe): pre-go_a4 backends omit it; the UI treats
+  // undefined as "unknown" — never as blocked (audit 2026-08-29 P1-04).
+  go_a4: z.boolean().optional(),
   go_a5: z.boolean(),
   go_live: z.boolean(),
   verdict: z.string(),
