@@ -238,14 +238,14 @@ async fn simulate_handler(
                             "token_addresses empty in route_metadata",
                         );
                     }
-                    if let Err(missing) = inputs
-                        .route_metadata
-                        .decimals
-                        .validate_complete(token_addresses)
+                    if let Err(missing) =
+                        inputs.resolved_decimals.validate_complete(token_addresses)
                     {
                         return a3_candidate_incomplete(
                             opp_id,
-                            format!("missing decimals for {missing:?}"),
+                            format!(
+                                "missing decimals for {missing:?} (route_metadata empty by design + tokens table unresolved)"
+                            ),
                         );
                     }
                     if inputs.chain_id <= 0 {
@@ -268,8 +268,7 @@ async fn simulate_handler(
                     };
                     // validate_complete already guaranteed this entry; the
                     // match keeps the trading path defensive (no unwrap).
-                    let decimals_in = match inputs.route_metadata.decimals.get(&token_addresses[0])
-                    {
+                    let decimals_in = match inputs.resolved_decimals.get(&token_addresses[0]) {
                         Some(d) => d,
                         None => {
                             return a3_candidate_incomplete(
@@ -300,7 +299,7 @@ async fn simulate_handler(
                         // row — sourced honestly as 0.0 (R8, never fabricated).
                         expected_amount_out: 0.0,
                         gross_profit: 0.0,
-                        decimals: inputs.route_metadata.decimals.clone(),
+                        decimals: inputs.resolved_decimals.clone(),
                         block_number: req
                             .block_number
                             .or(inputs.block_number.filter(|b| *b >= 0).map(|b| b as u64)),
