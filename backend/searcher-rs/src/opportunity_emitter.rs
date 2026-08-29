@@ -307,7 +307,7 @@ impl OpportunityEmitter {
         // opportunity (RULE 00 transparency + invariant). HARD_GATE only records
         // an advisory flag for a future live execution layer — it does NOT skip
         // the publish below in this shadow build.
-        self.score_and_publish(opportunity).await;
+        self.score_and_publish(opportunity, "accepted", None).await;
 
         // ── PG write ──────────────────────────────────────────────────────
         // Thread the multi-hop route topology (when the caller has it) so the
@@ -392,6 +392,15 @@ impl OpportunityEmitter {
             return Ok(EmitOutcome::Published);
         }
 
+        // ── Gate C scoring (advisory, non-fatal) ──────────────────────────
+        // ARBX-RDY-02 / A.5: score the NEGATIVE class too — Bayesian prior
+        // calibration needs rejected observations (prod rejects ~100% of
+        // candidates; an accept-only feed starves `bayesian_priors` at zero
+        // observations). Identical semantics to the accepted path: advisory,
+        // never gates the PG write / publish below (RULE 00).
+        self.score_and_publish(opportunity, "rejected", Some(rejection_reason))
+            .await;
+
         // ── PG write ──────────────────────────────────────────────────────
         // Mutate a local copy so the caller's value is not modified.
         let mut rejected = opportunity.clone();
@@ -417,12 +426,23 @@ impl OpportunityEmitter {
     // Private helpers
     // -----------------------------------------------------------------------
 
-    /// Gate C: score the (fresh) paper opportunity and XADD the ConfidenceScore
-    /// to `arbx:scoring:scored` (non-fatal). ADVISORY ONLY — it never gates the
-    /// caller's emission: `opps:detected` always receives the opportunity (RULE
-    /// 00 + invariant). `HARD_GATE=true` only records an advisory flag for a
-    /// future live execution layer. A scoring/Redis error never breaks emission.
-    async fn score_and_publish(&self, opp: &Opportunity) {
+    /// Gate C: score EVERY paper opportunity — accepted AND rejected
+    /// (ARBX-RDY-02) — and XADD the ConfidenceScore to `arbx:scoring:scored`
+    /// (non-fatal). Prior calibration needs the negative class (A.5 doctrine):
+    /// prod rejects ~100% of candidates, so an accept-only scoring feed would
+    /// starve `bayesian_priors` at zero observations. `emission_outcome` labels
+    /// the emitting path (`"accepted"` / `"rejected"`); `rejection_reason` is
+    /// the verbatim reason on the rejected path, `None` on the accepted path.
+    /// ADVISORY ONLY — it never gates the caller's emission: `opps:detected`
+    /// always receives the opportunity (RULE 00 + invariant). `HARD_GATE=true`
+    /// only records an advisory flag for a future live execution layer. A
+    /// scoring/Redis error never breaks emission.
+    async fn score_and_publish(
+        &self,
+        opp: &Opportunity,
+        emission_outcome: &'static str,
+        rejection_reason: Option<&str>,
+    ) {
         if !self.scoring.enabled() {
             return;
         }
@@ -481,21 +501,14 @@ impl OpportunityEmitter {
         };
 
         // XADD the score (non-fatal) — twin of `publisher::publish`.
-        let record = serde_json::json!({
-            "opportunity_id": opp.id.to_string(),
-            "strategy_key": strategy_key,
-            "token_pair": opp.pair_symbol,
-            "posterior_prob": score.posterior_prob,
-            "kelly_fraction": score.kelly_fraction,
-            "recommended_usd": score.recommended_position_usd,
-            "net_profit_usd": net_profit_usd,
-            "bayesian_accepted": score.bayesian_accepted,
-            "prior_log_odds": score.prior_log_odds,
-            "chain_id": chain_id_i64,
-            "source_context": score.source_context,
-            "scoring_mode": "paper",
-            "evidence_vector": evidence_vector,
-        });
+        let record = build_score_record(
+            opp,
+            &strategy_key,
+            &score,
+            evidence_vector,
+            emission_outcome,
+            rejection_reason,
+        );
         match serde_json::to_string(&record) {
             Ok(json) => {
                 let mut redis = self.redis.clone();
@@ -597,6 +610,42 @@ impl OpportunityEmitter {
 /// an accepted row the operator cannot act on is a cosmetic acceptance).
 fn has_computed_economics(opp: &Opportunity) -> bool {
     opp.expected_profit_usd.is_some() || opp.net_expected_profit_usd.is_some()
+}
+
+/// Builds the Gate C scoring stream record XADDed to `arbx:scoring:scored`
+/// (ARBX-RDY-02). Pure — no I/O — so it is unit-testable without Redis/PG.
+/// `emission_outcome` labels the emitting path (`"accepted"` / `"rejected"`);
+/// `rejection_reason` is `None` on the accepted path (serialized as JSON null)
+/// and the verbatim reason on the rejected path (A.5 doctrine: prior
+/// calibration needs BOTH classes). Field set is the wire contract mirrored by
+/// the api-server `ScoredRecordSchema` — additive only.
+fn build_score_record(
+    opp: &Opportunity,
+    strategy_key: &str,
+    score: &crate::scoring_pipeline::ConfidenceScore,
+    evidence_vector: Option<serde_json::Value>,
+    emission_outcome: &'static str,
+    rejection_reason: Option<&str>,
+) -> serde_json::Value {
+    let net_profit_usd = opp.net_expected_profit_usd.or(opp.expected_profit_usd);
+    let chain_id_i64 = i64::try_from(opp.chain_id).unwrap_or(-1);
+    serde_json::json!({
+        "opportunity_id": opp.id.to_string(),
+        "strategy_key": strategy_key,
+        "token_pair": opp.pair_symbol,
+        "posterior_prob": score.posterior_prob,
+        "kelly_fraction": score.kelly_fraction,
+        "recommended_usd": score.recommended_position_usd,
+        "net_profit_usd": net_profit_usd,
+        "bayesian_accepted": score.bayesian_accepted,
+        "prior_log_odds": score.prior_log_odds,
+        "chain_id": chain_id_i64,
+        "source_context": score.source_context,
+        "scoring_mode": "paper",
+        "evidence_vector": evidence_vector,
+        "emission_outcome": emission_outcome,
+        "rejection_reason": rejection_reason,
+    })
 }
 
 /// `<dex_a>_<token_in>_<token_out>` — stable, lowercase, separator-delimited.
@@ -766,6 +815,57 @@ mod tests {
         let mut net_only = make_opp(Uuid::new_v4(), None, None);
         net_only.net_expected_profit_usd = Some(0.42);
         assert!(has_computed_economics(&net_only));
+    }
+
+    // ── build_score_record (ARBX-RDY-02) ────────────────────────────────────
+
+    fn flat_score() -> crate::scoring_pipeline::ConfidenceScore {
+        crate::scoring_pipeline::ConfidenceScore {
+            posterior_prob: 0.5,
+            kelly_fraction: 0.02,
+            recommended_position_usd: 100.0,
+            bayesian_accepted: true,
+            prior_log_odds: 0.0,
+            source_context: "flat_prior".to_owned(),
+        }
+    }
+
+    #[test]
+    fn score_record_accepted_variant_has_null_rejection_reason() {
+        let opp = make_opp(Uuid::new_v4(), Some(1.5), None);
+        let rec = build_score_record(&opp, "dex_arb", &flat_score(), None, "accepted", None);
+        assert_eq!(rec["emission_outcome"], "accepted");
+        assert!(rec["rejection_reason"].is_null());
+        // Pre-RDY-02 field set unchanged.
+        assert_eq!(rec["opportunity_id"], opp.id.to_string());
+        assert_eq!(rec["strategy_key"], "dex_arb");
+        assert_eq!(rec["token_pair"], "WETH/USDC");
+        assert_eq!(rec["net_profit_usd"], 1.5);
+        assert_eq!(rec["chain_id"], 1);
+        assert_eq!(rec["source_context"], "flat_prior");
+        assert_eq!(rec["scoring_mode"], "paper");
+        assert!(rec["evidence_vector"].is_null());
+    }
+
+    #[test]
+    fn score_record_rejected_variant_carries_verbatim_reason() {
+        // Rejected path signature: both profit fields None ⇒ net_profit_usd
+        // null (R8 — never coerced to a fabricated value).
+        let opp = make_opp(Uuid::new_v4(), None, None);
+        let rec = build_score_record(
+            &opp,
+            "MEV-01-001",
+            &flat_score(),
+            None,
+            "rejected",
+            Some("NegativeNetProfit:gas_floor_breach"),
+        );
+        assert_eq!(rec["emission_outcome"], "rejected");
+        assert_eq!(
+            rec["rejection_reason"],
+            "NegativeNetProfit:gas_floor_breach"
+        );
+        assert!(rec["net_profit_usd"].is_null());
     }
 
     // ── opportunity_emitter::tests::accepted_dedupe_hit_skips_io ────────────

@@ -116,7 +116,10 @@ import { mountReadinessSteps } from "./routes/readiness-steps.js";
 import { mountReadinessEvidence } from "./routes/readiness-evidence.js";
 import { mountAgentsStatus } from "./routes/agents-status.js";
 import { mountScoringStatus } from "./routes/scoring-status.js";
+// ARBX-RDY-06 (A.9): formal GO/NO-GO ledger machinery.
+import { mountGoNoGo, buildDefaultLedgerFacts } from "./routes/go-no-go.js";
 import { mountPaperShadowMetrics } from "./routes/paper-shadow-metrics.js";
+import { mountPaperShadowAudit } from "./routes/paper-shadow-audit.js";
 import { mountForkStatus } from "./routes/fork-status.js";
 import { mountRpcRegistry } from "./routes/rpc-registry.js";
 import { mountRpcBackend } from "./routes/rpc-backend.js";
@@ -589,6 +592,7 @@ mountAdminChains(app, {
 // instead of the 501 stubs. All fail-honest; paper-safe; zero capital.
 // See docs/superpowers/specs/2026-06-14-arbx-code-brechas-design.md
 mountPaperShadowMetrics(app, { pool, logger });
+mountPaperShadowAudit(app, { pool, logger });
 mountForkStatus(app, { logger });
 mountOpportunitySimulate(app, { logger });
 
@@ -634,6 +638,20 @@ mountPaperModeReconcile(app, {
   requireAdminToken,
   adminToken: ARBX_ADMIN_TOKEN,
   logger,
+});
+
+// ARBX-RDY-06 (A.9) — formal GO/NO-GO ledger: canonical facts document +
+// sha256 ledger_hash (persisted per generation to audit_log) + two-operator
+// sign-off registry (migration 110). Pure record-keeping: NEVER flips
+// anything live (§34.3 default-deny unchanged); go_live_eligible is a read
+// of recorded state only.
+mountGoNoGo(app, {
+  pool,
+  logger,
+  requireAdminToken,
+  adminToken: ARBX_ADMIN_TOKEN,
+  buildLedgerFacts: () =>
+    buildDefaultLedgerFacts({ pool, redis, enabledChainIds, logger }),
 });
 
 // RPC registry sync (Excel catalog → rpc_endpoints): public status + admin import/reload.
