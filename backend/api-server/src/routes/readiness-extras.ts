@@ -329,6 +329,19 @@ function doctrinalBlockers(): Blocker[] {
   // rejection at the spread gate; SIM_SUCCESS stays deferred to M5 testnet).
   // Enablers: PR #431 (EIP-3607 quote caller + scoped RUSTFLAGS for the
   // revm 1.3.0 ub-checks abort + 7702-safe EXECUTOR_1 doctrine note).
+  //
+  // A.8 (a8_confidence_scoring_not_wired) was RESOLVED 2026-08-29 and removed
+  // from this list: PR #470 (7a5967ce) wires the orchestrator's
+  // `score_and_publish` to consume `scoring_pipeline::ConfidenceScore`
+  // (bayesian_accepted + kelly_fraction) on EVERY paper opportunity — accepted
+  // AND rejected — XADD'ing to Redis stream `arbx:scoring:scored` with
+  // scored_opportunities rows carrying emission_outcome labels. Prod evidence
+  // (VPS, 2026-08-29): XLEN arbx:scoring:scored = 87; last-hour rows
+  // `rejected|87` (the negative class flows to the priors — the calibration
+  // loop is warm); two_signal calibration_signal scored_opportunities_total=90
+  // (GET /api/metrics/paper-shadow/daily-audit). Wire status surfaced at
+  // /api/v1/scoring/status (edge /api/scoring/status) instead of the older
+  // /api/v1/sim/pipeline path named in the original required_action.
   return [
     {
       id: "a5_paper_shadow_not_executed",
@@ -350,41 +363,26 @@ function doctrinalBlockers(): Blocker[] {
       category: "risk_circuit",
       severity: "high",
       status: "partial",
-      title: "A.6 circuit breakers comprehensive — partial",
+      title: "A.6 circuit breakers comprehensive — partial (Prometheus emission pending)",
       description:
-        "Doctrinal CBs required: DD 10/20/30/40 tiers, max revert rate, max gas burn, max latency, max SIM_ERROR, RPC health, route/token blacklists, executor health, confidence-scoring tie-in.",
+        "SHIPPED (PR #470, 7a5967ce): the 10 doctrinal CBs (DD 10/20/30/40 tiers, max revert rate, max gas burn, max latency, max SIM_ERROR, RPC health, route/token blacklists, executor health, confidence-scoring tie-in) compute in /api/v1/risk/circuit-breakers/status; DD tiers read the REAL paper ledger (prod verified 2026-08-29); kill_switch is live runtime state; unset ARBX_CB_* thresholds surface honestly as NOT_AVAILABLE. REMAINING: Prometheus alert emission from breaker state.",
       required_action:
-        "Implement comprehensive CB suite gated by SystemGuardBanner + readiness; persist trips to risk_events table; emit Prometheus alerts.",
+        "Emit Prometheus alerts for breaker state (alerts.rules.yml currently has no CB rule); operator may set ARBX_CB_* env thresholds on the VPS to move revert/gas breakers off NOT_AVAILABLE.",
       operator_required: false,
       can_auto_resolve: false,
       blocks: ["LIVE"],
       evidence: { env_present: false, redacted_value: null, value_length: null, source: "doctrine" },
     },
     {
-      id: "a7_private_relay_no_submit_pending",
+      id: "a7_private_relay_no_submit_partial",
       category: "doctrinal_phase",
       severity: "high",
-      status: "pending",
-      title: "A.7 private relay no-submit simulation not implemented",
+      status: "partial",
+      title: "A.7 private relay no-submit simulation — module shipped, runtime call-site pending",
       description:
-        "Simulating the bundle path against Flashbots Protect / MEV-Blocker / Titan WITHOUT submitting is required before any go_live evaluation.",
+        "SHIPPED (PR #470, 7a5967ce): relays-client `relay_no_submit_sim` builds + eth-signs the bundle locally, validates the acceptance shape against the 3 relay schemas (Flashbots Protect / MEV-Blocker / Titan wire shapes), and discards — zero network egress by construction (no HTTP client import on the path). REMAINING: the execution loop does not invoke it yet (no runtime call-site).",
       required_action:
-        "Implement a paper-only no-submit relay client that builds + signs the bundle, validates relay acceptance shape, and discards.",
-      operator_required: false,
-      can_auto_resolve: false,
-      blocks: ["LIVE"],
-      evidence: { env_present: false, redacted_value: null, value_length: null, source: "doctrine" },
-    },
-    {
-      id: "a8_confidence_scoring_not_wired",
-      category: "doctrinal_phase",
-      severity: "medium",
-      status: "pending",
-      title: "A.8 confidence scoring (Bayesian/VPIN) not wired",
-      description:
-        "Primitives exist in searcher-rs (kelly_sizing, bayesian_filter); they are NOT consumed by the orchestrator yet.",
-      required_action:
-        "Wire bayesian_filter::adverse_selection_score + kelly_sizing::compute_position_size into the scoring path; surface via /api/v1/sim/pipeline.",
+        "Wire validate_and_discard into the paper execution terminus so each simulated bundle runs the no-submit validation and logs relay_sim.no_submit.* events.",
       operator_required: false,
       can_auto_resolve: false,
       blocks: ["LIVE"],
