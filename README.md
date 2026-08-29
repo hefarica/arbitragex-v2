@@ -67,10 +67,11 @@ All 31 implemented with real formulas + fail-honest `None` (commit `7f47c5e2`, 1
 | Stage | Component | Status |
 |---|---|---|
 | 1 | Evidence primitives + schema + capture | ✅ |
-| 2a | Drift-tracker (Y-oracle) + sim-ctl/anvil | ✅ (flagged OFF) |
-| — | **Gap 1:** route_metadata per-worker | ❌ Blocks Y-labels |
-| — | **Gap 2:** ArbitrageExecutor deploy | ❌ Blocks B2c real-sim |
-| 2b | Offline LR calibration | ⏳ Needs Gaps 1+2 |
+| 2a | Drift-tracker (Y-oracle) + sim-ctl/anvil | ✅ (flagged OFF; `passed`-absent = PENDING with backoff, never a fabricated label) |
+| — | **Gap 1:** route_metadata per-worker | 🟡 cartridge path closed; `scanner.rs` legacy + `cex_dex_worker` remain |
+| — | **Gap 2:** ArbitrageExecutor deploy | ❌ Blocks B2c real-sim (and a real `passed` verdict — the root blocker for labels) |
+| 2b | Offline LR calibration (log-LR store writer) | ✅ shipped, flagged OFF — consolidates every 100 labels, hierarchical shrinkage κ=20 |
+| 2c | Priors cache + §IV posterior fold in emission | ✅ shipped — store consumer live; `calibration_applied` flips on first consolidation |
 
 ---
 
@@ -117,7 +118,7 @@ See [SOP.md](docs/SOP.md) + [HARDENING_AND_ROADMAP.md](docs/HARDENING_AND_ROADMA
 - **Zero-Mocks + Fail-Honest:** no fabricated data
 - **Audit trail:** partitioned, anonymized
 
-**Path to live:** gated by Crucible 72h ≥95% + institutional security + operator sign-off.
+**Path to live:** gated by the A.9 GO/NO-GO ledger (sha256 evidence + two-operator sign-off, migration 110) + institutional security + §34.3 (explicit operator authorization, never inferred from flags or chat). The nominal Crucible 72h/95% check in `admin-promote-mainnet.ts` is residual.
 
 ---
 
