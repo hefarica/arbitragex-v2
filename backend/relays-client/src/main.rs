@@ -24,6 +24,10 @@ mod persistence;
 mod relay_bloxroute;
 mod relay_catalog;
 mod relay_flashbots;
+// ARBX-RDY-05 (A.7): local no-submit bundle simulation — zero network egress.
+// Library fn + unit tests only; main.rs has no subcommand pattern, so wiring a
+// CLI entry is deferred.
+mod relay_no_submit_sim;
 mod relay_titan;
 mod signer;
 mod submit_engine;
