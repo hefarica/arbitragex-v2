@@ -408,19 +408,21 @@ const AGENT_DEFS: AgentDef[] = [
     id: "go-no-go-agent",
     name: "GO/NO-GO Agent",
     category: "decision",
-    // NEVER PASS for live until A.4-A.9 all PASS + A.9 formal sign-off.
-    // This is the structural barrier echoing SystemGuardBanner.
+    // NEVER PASS for live until every phase blocker clears + A.9 formal
+    // sign-off. This is the structural barrier echoing SystemGuardBanner.
     default_verdict: "NO_GO",
     default_status: "blocked",
     evidence: [
       "Live trading: NO_GO (structural — no submission path in this binary)",
-      "A.4 fork validation: BLOCKED (RPC + EXECUTOR + storage layouts missing)",
-      "A.5 paper-shadow: NO_GO (depends on A.4)",
-      "A.6/A.7/A.8/A.9: pending",
+      "A.4 fork validation: resolved 2026-08-20 (gate_c_validation)",
+      "A.5 paper-shadow: resolved 2026-08-29 (A5-STALL closure — kill-switch re-arm + alchemy fork + Redis AOF + G-PIPE-1; G-PAP-1 green explicit)",
+      "A.8 confidence scoring: resolved 2026-08-29 (ConfidenceScore wired, scored rows flowing)",
+      "A.6/A.7: partial (Prometheus emission / runtime call-site)",
+      "A.9: pending formal two-operator sign-off",
     ],
     source: "workspace_verified",
-    blocks: ["LIVE", "A.4", "A.5"],
-    next_action: "Resolve A.4 prerequisites, then run multistep_fork ignored test; await A.5+A.6+A.7+A.8 PASS; then operator sign-off A.9.",
+    blocks: ["LIVE"],
+    next_action: "Clear A.6 (Prometheus alert emission) and A.7 (relay no-submit call-site) partials; then operator two-operator sign-off A.9 via POST /admin/go-no-go/sign-off.",
     risk: "critical",
     operator_required: true,
   },
