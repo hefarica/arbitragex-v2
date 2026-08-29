@@ -374,6 +374,11 @@ app.get("/api/paper-mode/state", (req, res) => proxy("/api/paper-mode/state", re
 // A.6 comprehensive circuit breakers.
 app.get("/api/risk/circuit-breakers/status", (req, res) => proxy("/api/v1/risk/circuit-breakers/status", req, res));
 app.get("/api/risk/circuit-breakers/events", (req, res) => proxy("/api/v1/risk/circuit-breakers/events", req, res));
+// A.5/A.9 machinery (PR #470 follow-up) — parity with the canonical worker.
+// POST /admin/go-no-go/sign-off is admin-only — NEVER routed at the edge.
+app.get("/api/metrics/paper-shadow/daily-audit", (req, res) => proxy("/api/v1/metrics/paper-shadow/daily-audit", req, res));
+app.get("/api/go-no-go/ledger", (req, res) => proxy("/api/v1/go-no-go/ledger", req, res));
+app.get("/api/go-no-go/status", (req, res) => proxy("/api/v1/go-no-go/status", req, res));
 
 // Math-engine — the 31 topological operators (list/toggle/compute/matrix).
 // api-server mounts the math-engine proxy at /api/math/* (no /v1/ prefix).

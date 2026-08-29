@@ -119,15 +119,20 @@ describe("doctrinalBlockers", () => {
   // gate_c_validation row a4_fork_validation_20260820T013304Z.log,
   // a4_state=A4_PASSED). See the readiness-extras.ts doctrinalBlockers
   // comment for the full evidence trail.
-  it("emits exactly 5 doctrinal phase blockers (A.5..A.9) — A.4 resolved 2026-08-20", () => {
+  //
+  // A.8 (a8_confidence_scoring_not_wired) was resolved 2026-08-29 — removed
+  // after PR #470 wired score_and_publish to ConfidenceScore on every paper
+  // opportunity (prod: XLEN arbx:scoring:scored=87, last-hour rows rejected|87,
+  // scored_opportunities_total=90). A.7 flipped pending→partial the same date
+  // (module shipped in relays-client, runtime call-site pending).
+  it("emits exactly 4 doctrinal phase blockers (A.5/A.6/A.7/A.9) — A.4 resolved 2026-08-20, A.8 resolved 2026-08-29", () => {
     const b = doctrinalBlockers();
-    expect(b.length).toBe(5);
+    expect(b.length).toBe(4);
     const ids = b.map((x) => x.id).sort();
     expect(ids).toEqual([
       "a5_paper_shadow_not_executed",
       "a6_circuit_breakers_partial",
-      "a7_private_relay_no_submit_pending",
-      "a8_confidence_scoring_not_wired",
+      "a7_private_relay_no_submit_partial",
       "a9_go_no_go_formal_pending",
     ]);
   });
