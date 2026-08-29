@@ -300,20 +300,20 @@ const AGENT_DEFS: AgentDef[] = [
     id: "risk-circuit-agent",
     name: "Risk Circuit Agent",
     category: "risk",
-    // PARTIAL because A.6 comprehensive circuit breakers are not implemented:
-    // DD 10/20/30/40 tiers, max revert rate, max gas burn, max latency, max
-    // SIM_ERROR, RPC health, route/token blacklists, executor health,
-    // confidence-scoring tie-in. Until A.6 PASS, this agent BLOCKS live.
+    // PARTIAL because A.6 remains partial: the 10 doctrinal breakers ship and
+    // compute (PR #470) but Prometheus alert emission is not wired, and the
+    // ARBX_CB_* revert/gas thresholds are unset on the VPS (honest
+    // NOT_AVAILABLE). Until A.6 PASS, this agent BLOCKS live.
     default_verdict: "PARTIAL",
     default_status: "degraded",
     evidence: [
       "Basic kill-switch + readiness gate exist",
-      "A.8 (2026-05-13): Bayesian/Kelly/VPIN primitives exposed via /api/v1/scoring/status (scoring_pipeline_wired=false)",
-      "A.6 (2026-05-13): 10 comprehensive breakers exposed via /api/v1/risk/circuit-breakers/status (kill_switch real runtime; DD/revert/gas marked NOT_AVAILABLE until A.5 paper-shadow runs)",
+      "A.8 (2026-08-29, resolved): score_and_publish consumes ConfidenceScore (bayesian_accepted + kelly_fraction) on every paper opportunity — prod XLEN arbx:scoring:scored=87, last-hour rows rejected|87, scored_opportunities_total=90",
+      "A.6 (2026-08-29): 10 comprehensive breakers compute via /api/v1/risk/circuit-breakers/status (kill_switch real runtime; DD tiers read the REAL paper ledger — prod PASS 2026-08-29; revert/gas NOT_AVAILABLE until operator sets ARBX_CB_* envs)",
     ],
     source: "workspace_verified",
     blocks: ["LIVE"],
-    next_action: "Run A.5 paper-shadow to populate DD/revert/gas data sources; wire bayesian + kelly into scanner pipeline (A.8 hot-path).",
+    next_action: "Emit Prometheus alerts from breaker state (A.6 remaining); operator sets ARBX_CB_* thresholds on the VPS to move revert/gas off NOT_AVAILABLE.",
     risk: "high",
     operator_required: false,
   },

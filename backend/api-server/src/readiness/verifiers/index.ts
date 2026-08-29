@@ -16,10 +16,11 @@ import { verifyGTOK1 } from "./g-tok-1.js";
 import { verifyGPAP1 } from "./g-pap-1.js";
 import { verifyGFL1 } from "./g-fl-1.js";
 import { verifyGMEV1 } from "./g-mev-1.js";
+import { verifyGDISK1 } from "./g-disk-1.js";
 import { verifyAlerts } from "./alerts.js";
 
 /**
- * Run all 17 verifiers in parallel. Each does live work — there are no
+ * Run all 18 verifiers in parallel. Each does live work — there are no
  * sentinel "pending" items left after the audit re-run #2 (2026-05-10).
  *
  * Honesty contract: a verifier returns:
@@ -56,6 +57,7 @@ export async function verifyAll(deps: {
     verifyGPAP1({ pool: deps.pool, now }),
     verifyGFL1({ now }),
     verifyGMEV1({ now }),
+    verifyGDISK1({ now }),
     verifyAlerts({ now }),
   ]);
 
