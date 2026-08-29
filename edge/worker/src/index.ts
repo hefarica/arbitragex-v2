@@ -1306,6 +1306,15 @@ app.get("/api/rpc/status", (c) => proxy(c, "/api/v1/rpc/status", "arbx:cache:rpc
 app.get("/api/risk/circuit-breakers/status", (c) => proxy(c, "/api/v1/risk/circuit-breakers/status", "arbx:cache:cb-status", 15));
 app.get("/api/risk/circuit-breakers/events", (c) => proxy(c, "/api/v1/risk/circuit-breakers/events", "arbx:cache:cb-events", 30));
 
+// A.5/A.9 machinery (PR #470 follow-up). daily-audit reads the daily ledger +
+// scored-opportunity calibration counts (slow cadence, 30s TTL); go-no-go
+// status is RECORDED sign-off state (15s — matches CB cadence); ledger
+// GENERATES + persists on GET (idempotent against latest state, 30s TTL).
+// POST /admin/go-no-go/sign-off is admin-only — NEVER routed at the edge.
+app.get("/api/metrics/paper-shadow/daily-audit", (c) => proxy(c, "/api/v1/metrics/paper-shadow/daily-audit", "arbx:cache:paper-shadow-audit", 30));
+app.get("/api/go-no-go/ledger", (c) => proxy(c, "/api/v1/go-no-go/ledger", "arbx:cache:gonogo-ledger", 30));
+app.get("/api/go-no-go/status", (c) => proxy(c, "/api/v1/go-no-go/status", "arbx:cache:gonogo-status", 15));
+
 // FASE B Gate-C — route-discovery OUTCOMES analytics (read-only over the durable
 // Postgres `route_discovery_outcomes` table; shadow emitter's resolved outcomes +
 // Paso 9 `reason` column). Read-side of the passive sink: hit-rate series + reason
