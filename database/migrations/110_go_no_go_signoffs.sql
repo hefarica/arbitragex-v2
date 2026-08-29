@@ -42,7 +42,8 @@ CREATE TABLE IF NOT EXISTS go_no_go_signoffs (
 COMMENT ON TABLE go_no_go_signoffs IS
     'ARBX-RDY-06 (A.9) two-operator GO/NO-GO sign-off registry: one row per (ledger_hash, actor). Sign-offs always reference the current ledger generation (stale hashes rejected by the API). Records human decisions only — never enables live execution.';
 
-CREATE INDEX IF NOT EXISTS idx_go_no_go_signoffs_hash_time
-    ON go_no_go_signoffs (ledger_hash, signed_at ASC);
+-- Single line: the index-locks lint (FREEZE-01) extracts the target table
+-- from the `ON <table>` clause on the CREATE INDEX line itself.
+CREATE INDEX IF NOT EXISTS idx_go_no_go_signoffs_hash_time ON go_no_go_signoffs (ledger_hash, signed_at ASC);
 
 COMMIT;
