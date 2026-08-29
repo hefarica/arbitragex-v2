@@ -45,7 +45,7 @@ export interface ScoredOpportunitiesArchiverDeps {
  * (`opportunity_emitter::score_and_publish`). Only REAL computed fields — no
  * invention. `.passthrough()` is NOT used; unknown fields are dropped.
  */
-const ScoredRecordSchema = z.object({
+export const ScoredRecordSchema = z.object({
   opportunity_id: z.string().min(1),
   /** STRAT-IDENT-01: per-strategy identity (cartridge stem / engine kind). */
   strategy_key: z.string().min(1).nullable().optional(),
@@ -60,6 +60,14 @@ const ScoredRecordSchema = z.object({
   source_context: z.string().nullable().optional(),
   scoring_mode: z.string().default("paper"),
   evidence_vector: z.unknown().nullable().optional(),
+  /** ARBX-RDY-02: emitting-path label ("accepted" | "rejected"). */
+  emission_outcome: z.string().optional(),
+  /**
+   * ARBX-RDY-02: verbatim rejection reason on the rejected path; null on the
+   * accepted path. OPTIONAL for stream-backlog compat (pre-RDY-02 records were
+   * emitted only from the accept path).
+   */
+  rejection_reason: z.string().nullable().optional(),
 });
 type ScoredRecord = z.infer<typeof ScoredRecordSchema>;
 
@@ -149,12 +157,16 @@ export class ScoredOpportunitiesArchiver {
     try {
       // stream_id UNIQUE → idempotent at-least-once consume. strategy_key is
       // NULL for records emitted before STRAT-IDENT-01 (honest — no backfill).
+      // emission_outcome fallback 'accepted' mirrors the migration-109 column
+      // DEFAULT: every pre-RDY-02 record (incl. stream backlog) was emitted
+      // from the accept path only.
       await this.deps.pool.query(
         `INSERT INTO scored_opportunities
            (stream_id, opportunity_id, token_pair, posterior_prob, kelly_fraction,
             recommended_usd, net_profit_usd, bayesian_accepted, prior_log_odds,
-            chain_id, source_context, scoring_mode, evidence_vector, strategy_key)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+            chain_id, source_context, scoring_mode, evidence_vector, strategy_key,
+            emission_outcome, rejection_reason)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
          ON CONFLICT (stream_id) DO NOTHING`,
         [
           id,
@@ -171,6 +183,8 @@ export class ScoredOpportunitiesArchiver {
           rec.scoring_mode,
           rec.evidence_vector ? JSON.stringify(rec.evidence_vector) : null,
           rec.strategy_key ?? null,
+          rec.emission_outcome ?? "accepted",
+          rec.rejection_reason ?? null,
         ],
       );
       await this.redis.xack(STREAM_IN, GROUP, id);
