@@ -142,6 +142,6 @@ Forward-only and idempotent. Paper-only telemetry.
 
 | File                                    | Purpose                                                  |
 |-----------------------------------------|----------------------------------------------------------|
-| `111_paper_trade_runs_calibration_eligibility.sql` | S4 runbook (accepted 2026-08-29): `paper_trade_runs` gains `sim_fail_family` (S4-02 taxonomy structural\|economic\|market), `calibration_eligible` (FALSE = terminal structural failure — never a Stage 2b label, never retried), `sim_attempts` + `sim_last_attempt_at` (pending backoff 30s·2^min(n,7) for 501/parse-error attempts), plus a partial index for the drift-tracker pending scan. Writer: recon drift-tracker (Capa B). |
+| `111_paper_trade_runs_calibration_eligibility.sql` | S4 runbook (accepted 2026-08-29): `paper_trade_runs` gains `sim_fail_family` (S4-02 taxonomy structural\|economic\|market), `calibration_eligible` (FALSE = terminal structural failure — never a Stage 2b label, never retried), `sim_attempts` + `sim_last_attempt_at` (pending backoff 30s·2^min(n,7) for 501/parse-error attempts), plus a partial `CREATE INDEX CONCURRENTLY` (FREEZE-01 doctrine: populated live table) for the drift-tracker pending scan. Writer: recon drift-tracker (Capa B). |
 
 Forward-only and idempotent. Paper-only telemetry. Depends on: 051 (paper_trade_runs), 099 (route_metadata).

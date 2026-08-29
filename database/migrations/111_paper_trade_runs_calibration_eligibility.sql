@@ -41,7 +41,15 @@ ALTER TABLE paper_trade_runs
 
 -- Pending-scan index: the drift-tracker tick selects unresolved, still-eligible
 -- rows ordered by created_at. Partial index keeps it tiny as the table grows.
-CREATE INDEX IF NOT EXISTS idx_ptr_pending_calibration
+-- CONCURRENTLY per doctrine (lint-migration-index-locks, FREEZE-01 lesson):
+-- paper_trade_runs is a populated live table — a plain build would block
+-- INSERTs for the whole build. The runner applies files statement-by-statement
+-- (no single-transaction wrapper), so CONCURRENTLY is legal here; the 10min
+-- runner statement_timeout is ample for a partial build over the unresolved
+-- subset. If a CONCURRENT build ever fails midway it leaves an INVALID index:
+-- recovery is DROP INDEX CONCURRENTLY IF EXISTS idx_ptr_pending_calibration;
+-- followed by re-running this file (documented, not automated — same note as 105).
+CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_ptr_pending_calibration
   ON paper_trade_runs (created_at)
   WHERE actual_timestamp IS NULL AND calibration_eligible;
 
