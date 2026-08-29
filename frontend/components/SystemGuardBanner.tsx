@@ -30,24 +30,25 @@
 import * as React from "react";
 import { ShieldOff, ShieldAlert, RefreshCwIcon } from "lucide-react";
 
-import { getRuntimeStatus, getReadiness, getScannerHeartbeat } from "@/lib/api-client";
+import { getRuntimeStatus, getReadiness, getReadinessDecision, getScannerHeartbeat } from "@/lib/api-client";
 import { useSystemReadiness } from "@/hooks/useSystemReadiness";
 import { usePaperModeState } from "@/hooks/usePaperModeState";
 import { cn } from "@/lib/utils";
 
 type LoadState =
   | { kind: "loading" }
-  | { kind: "ok"; flipBlocked: boolean | null; engineLoaded: boolean | null; heartbeatFresh: boolean | null; postgres: string; redis: string; hbDetail: string | null }
+  | { kind: "ok"; flipBlocked: boolean | null; engineLoaded: boolean | null; heartbeatFresh: boolean | null; postgres: string; redis: string; hbDetail: string | null; a4: boolean | undefined; a5: boolean | undefined }
   | { kind: "error"; detail: string };
 
 const POLL_MS = 15_000;
 
 async function fetchAll(): Promise<LoadState> {
-  // Run all three in parallel — none blocks the others. allSettled so a single
+  // Run all four in parallel — none blocks the others. allSettled so a single
   // endpoint failure doesn't black out the banner; we degrade gracefully.
-  const [rs, rd, hb] = await Promise.allSettled([
+  const [rs, rd, dec, hb] = await Promise.allSettled([
     getRuntimeStatus(1),
     getReadiness(),
+    getReadinessDecision(),
     getScannerHeartbeat(1),
   ]);
 
@@ -57,6 +58,9 @@ async function fetchAll(): Promise<LoadState> {
   let redis = "unavailable";
   let heartbeatFresh: boolean | null = null;
   let hbDetail: string | null = null;
+  // undefined = decision endpoint unavailable (R8: unknown, not blocked).
+  let a4: boolean | undefined;
+  let a5: boolean | undefined;
 
   if (rs.status === "fulfilled" && rs.value.ok) {
     postgres = rs.value.data.source.postgres;
@@ -72,6 +76,14 @@ async function fetchAll(): Promise<LoadState> {
     flipBlocked = rd.value.data.flip_blocked;
   }
 
+  if (dec.status === "fulfilled" && dec.value.ok) {
+    // Audit 2026-08-29 P1-04: A.4/A.5 tiles derive from the decision SSOT
+    // instead of hardcoded "BLOCKED" literals (which kept rendering BLOCKED
+    // after the phases actually resolved).
+    a4 = dec.value.data.go_a4;
+    a5 = dec.value.data.go_a5;
+  }
+
   if (hb.status === "fulfilled" && hb.value.ok) {
     heartbeatFresh = true;
     hbDetail = null;
@@ -80,7 +92,7 @@ async function fetchAll(): Promise<LoadState> {
     hbDetail = hb.value.error.slice(0, 80);
   }
 
-  return { kind: "ok", flipBlocked, engineLoaded, heartbeatFresh, postgres, redis, hbDetail };
+  return { kind: "ok", flipBlocked, engineLoaded, heartbeatFresh, postgres, redis, hbDetail, a4, a5 };
 }
 
 export function SystemGuardBanner() {
@@ -122,15 +134,41 @@ export function SystemGuardBanner() {
   const paperConfidence = paper.data.confidence;
   const paperTone: "safe" | "danger" = paperEnabled && !paperConflict ? "safe" : "danger";
 
+  // A.4/A.5 tiles: derived from the decision SSOT when fetched. Before the
+  // first fetch (SSR/loading) or on fetch failure they render NO DATA —
+  // absence of information, never a fabricated BLOCKED (audit 2026-08-29).
+  const a4Value =
+    state.kind === "ok"
+      ? state.a4 === undefined
+        ? "NO DATA"
+        : state.a4
+          ? "PASS"
+          : "BLOCKED"
+      : "NO DATA";
+  const a5Value =
+    state.kind === "ok"
+      ? state.a5 === undefined
+        ? "NO DATA"
+        : state.a5
+          ? "PASS"
+          : "BLOCKED"
+      : "NO DATA";
+  const a4Tone: "safe" | "warning" =
+    state.kind === "ok" && state.a4 === true ? "safe" : "warning";
+  const a5Tone: "safe" | "warning" =
+    state.kind === "ok" && state.a5 === true ? "safe" : "warning";
+
   // Hardcoded structural facts (NOT fabricated metrics — these are
   // declarative statements of immutable code state):
   //   - liveOff = true: there is NO live submission path in this binary.
   //   - relayOff = true: relays-client is a no-op stub in paper mode.
   //   - submitOff / broadcastOff = true: no signer.send_transaction wired.
   //   - capital = "$0": Phase 4 verified signer_zero_balance.
-  //   - a4Blocked = true: fork validation requires RPC_HTTP_1 + EXECUTOR_1.
-  //   - a5Blocked = true: paper-shadow runtime not yet executed.
-  // These tiles will become dynamic in P2/P3 (BlockersPanel + GoNoGoPanel).
+  //   - goLive = NO-GO: requires the formal A.9 GO/NO-GO sign-off (§34.3).
+  // A.4/A.5 are NOT hardcoded anymore (audit 2026-08-29 P1-04): they derive
+  // from /api/readiness/decision — the same SSOT the readiness program flips.
+  // Three honest states: PASS (blocker cleared), BLOCKED, NO DATA (endpoint
+  // unavailable — unknown, never silently green).
   return (
     <div
       data-slot="system-guard-banner"
@@ -168,8 +206,8 @@ export function SystemGuardBanner() {
         <GuardTile label="Readiness" value={`${readiness.completedCount}/${readiness.totalCount}`} tone={readiness.allReady ? "safe" : "warning"} />
         <GuardTile label="LIVE lock" value={readiness.allReady ? "REVIEW" : "LOCKED"} tone={readiness.allReady ? "warning" : "danger"} />
         <GuardTile label="GO live" value="NO-GO" tone="danger" />
-        <GuardTile label="A.4 fork" value="BLOCKED" tone="warning" />
-        <GuardTile label="A.5 paper-shadow" value="BLOCKED" tone="warning" />
+        <GuardTile label="A.4 fork" value={a4Value} tone={a4Tone} />
+        <GuardTile label="A.5 paper-shadow" value={a5Value} tone={a5Tone} />
 
         <span className="ml-auto inline-flex items-center gap-2 text-[11px] text-muted-foreground">
           {renderRuntimeStatus(state)}

@@ -118,8 +118,15 @@ interface DecisionResponse {
   paper_mode: boolean;
   reasons: string[];
   next_action: string;
-  blockers_ref: "/api/v1/readiness/blockers";
+  // Public edge path (the edge fronts this service under /api/readiness/*;
+  // the /api/v1/... spelling 404s publicly — audit 2026-08-29 P1-04 follow-up).
+  blockers_ref: "/api/readiness/blockers";
   required_for_go_live: string[];
+  // Audit 2026-08-29 P1-04: SystemGuardBanner previously hardcoded
+  // "A.4 fork: BLOCKED" / "A.5 paper-shadow: BLOCKED" regardless of runtime
+  // truth. The decision endpoint is now the SSOT for both tiles: go_a4 is
+  // derived exactly like go_a5 (blocker absent ⇒ phase cleared).
+  go_a4: boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -591,6 +598,7 @@ export function mountReadinessExtras(
 
       const response: DecisionResponse = {
         generated_at: new Date().toISOString(),
+        go_a4: a4Blocker == null,
         go_a5: goA5,
         go_live: goLive,
         verdict: summary.critical > 0 ? "NO_GO" : "NO_GO",
@@ -604,7 +612,7 @@ export function mountReadinessExtras(
         paper_mode: paperMode,
         reasons,
         next_action: nextAction,
-        blockers_ref: "/api/v1/readiness/blockers",
+        blockers_ref: "/api/readiness/blockers",
         required_for_go_live: [
           "A.4 fork validation PASS",
           "A.5 paper-shadow PASS",

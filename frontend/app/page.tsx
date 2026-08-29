@@ -61,18 +61,28 @@ function toXRayProps(opp: OpportunityRow) {
     confidence:
       opp.confidence_score_bps != null
         ? Math.round(opp.confidence_score_bps / 100)
-        : 0,
+        : null,
     legs,
     ago: opp.detected_at,
-    route: `${opp.dex_a}${opp.dex_b ? ` → ${opp.dex_b}` : ""}`,
+    // P1-02 (audit 2026-08-29): the backend can emit dex_a:"unknown" with
+    // dex_b:null (venue not identified at emission). Rendering that as a
+    // route would dress a raw signal as a resolved route — show the honest
+    // "not identified" instead (R8).
+    route:
+      !opp.dex_a || opp.dex_a === "unknown"
+        ? "— venue sin identificar"
+        : `${opp.dex_a}${opp.dex_b ? ` → ${opp.dex_b}` : ""}`,
     fees:
       opp.roi_pct != null
         ? `convergence ${opp.roi_pct.toFixed(2)}%`
         : "—",
     tlsAmount: "—",
     simVerdict: opp.sim_classification ?? opp.simulation_status ?? "pendiente",
-    safetyA: 0,
-    safetyB: 0,
+    // P1-02 (audit 2026-08-29): TOKEN SAFETY derives from the token-enricher
+    // validation block when present; absent validation renders "—" (R8),
+    // never a literal 0 that reads as "computed and failed".
+    safetyA: opp.token_in_info?.validation?.score ?? null,
+    safetyB: opp.token_out_info?.validation?.score ?? null,
   };
 }
 
