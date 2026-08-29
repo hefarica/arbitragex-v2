@@ -15,6 +15,7 @@ mod consumer;
 mod drift_tracker;
 mod persistence;
 mod pnl_engine;
+mod stage2_calibration;
 mod variance;
 
 use axum::{
@@ -322,6 +323,9 @@ async fn main() -> anyhow::Result<()> {
                 let db_for_drift = db_for_aggregator.clone();
                 let redis_drift = redis_agg.clone();
                 let ks_drift = killswitch.clone();
+                // Clones for the Stage 2b calibration job (log-LR store writer).
+                let db_for_stage2 = db_for_aggregator.clone();
+                let ks_stage2 = killswitch.clone();
 
                 let cfg_agg = recon_cfg.clone();
                 tokio::spawn(async move {
@@ -354,6 +358,22 @@ async fn main() -> anyhow::Result<()> {
                     info!(event = "drift_tracker.spawned");
                 } else {
                     info!(event = "drift_tracker.dormant", mode = %drift_mode);
+                }
+
+                // Stage 2b: calibration job — consolidates the drift-tracker's
+                // Y-labels + archived evidence vectors into the per-operator
+                // log-LR store (`math_operator_calibration`) every N new labels
+                // (hierarchical shrinkage; the §IV motor's `calibrated`
+                // source_context). OFF by default.
+                let stage2_mode = std::env::var("ARBX_STAGE2_CALIBRATION_MODE").unwrap_or_default();
+                if stage2_mode == "on" {
+                    let stage2_cfg = stage2_calibration::Stage2Config::from_env();
+                    tokio::spawn(async move {
+                        stage2_calibration::run_periodic(db_for_stage2, ks_stage2, stage2_cfg)
+                            .await;
+                    });
+                } else {
+                    info!(event = "stage2_calibration.dormant", mode = %stage2_mode);
                 }
             } else {
                 warn!(

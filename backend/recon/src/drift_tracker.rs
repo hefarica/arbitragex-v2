@@ -16,6 +16,14 @@
 //!     `actual_amount_out_wei` + `actual_timestamp` are ALWAYS set on a passing
 //!     re-exec — the label-able signal is captured regardless.
 //!
+//! Pending ≠ dead (migration 111): a 200 response WITHOUT a verdict (`passed`
+//! absent — e.g. the A3 `simctl_lookup` stub pre-B2c) is a PENDING state, never
+//! a parse failure and never a fabricated label. Unresolved rows (pending,
+//! not-passed, error) are deferred onto an exponential backoff
+//! (`actual_next_attempt_at`) so a head of unresolvable rows cannot starve the
+//! batch — absence of a verdict is a fact about the simulator, not a signal
+//! about the row.
+//!
 //! Feature-flagged OFF by default (`ARBX_DRIFT_TRACKER_MODE`). The operator
 //! enables it once sim-ctl + the settled-block fork are confirmed working.
 
@@ -34,6 +42,10 @@ pub struct DriftConfig {
     /// Minimum age (seconds) before a row is eligible — ensures the settled
     /// block has been mined so sim-ctl can fork at `sim_block_number + 1`.
     pub settle_lead_secs: i64,
+    /// Backoff base (seconds) for deferred rows — first retry waits ~this long.
+    pub backoff_base_secs: u64,
+    /// Backoff cap (seconds): `base · 2^attempts`, saturated here.
+    pub backoff_max_secs: u64,
 }
 
 impl DriftConfig {
@@ -42,6 +54,8 @@ impl DriftConfig {
             interval_secs: env_or("ARBX_DRIFT_TRACKER_INTERVAL_SECS", 30),
             batch: env_or("ARBX_DRIFT_TRACKER_BATCH", 20) as i64,
             settle_lead_secs: env_or("ARBX_DRIFT_TRACKER_SETTLE_LEAD_SECS", 15) as i64,
+            backoff_base_secs: env_or("ARBX_DRIFT_TRACKER_BACKOFF_BASE_SECS", 30),
+            backoff_max_secs: env_or("ARBX_DRIFT_TRACKER_BACKOFF_MAX_SECS", 1800),
         }
     }
 }
@@ -94,6 +108,20 @@ pub async fn run_periodic(
     }
 }
 
+/// Outcome of one resolution attempt — drives counting + backoff deferral.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Attempt {
+    /// Label landed (`actual_*` set) — the only path that writes a Y.
+    Resolved,
+    /// 200 without a verdict (`passed` absent — A3 stub pre-B2c). PENDING:
+    /// the simulator has not spoken about this row; retry later, never label.
+    Pending,
+    /// Sim answered with an explicit non-pass verdict — honest negative skip.
+    NotPassed,
+    /// Transport / HTTP / parse error — unknown state, retry later.
+    Failed,
+}
+
 async fn tick(
     db: &PgPool,
     simctl_url: &str,
@@ -102,6 +130,10 @@ async fn tick(
     http: &reqwest::Client,
 ) -> anyhow::Result<()> {
     // 1. Fetch a batch of pending rows past the settle-lead, with a route.
+    //    Backoff filter (migration 111): rows deferred by a previous
+    //    unresolved attempt only re-enter the batch once their
+    //    `actual_next_attempt_at` has elapsed — otherwise a head of
+    //    unresolvable rows starves every newer row (ORDER BY created_at).
     let rows: Vec<PendingRun> = sqlx::query_as::<_, PendingRun>(
         r#"
         SELECT ptr.id, ptr.opportunity_id, ptr.chain_id, ptr.sim_block_number,
@@ -112,6 +144,8 @@ async fn tick(
           AND ptr.sim_block_number IS NOT NULL
           AND o.route_metadata IS NOT NULL
           AND o.route_metadata::text NOT IN ('', '{}')
+          AND (ptr.actual_next_attempt_at IS NULL
+               OR ptr.actual_next_attempt_at <= now())
           AND ptr.created_at < now() - ($1 * interval '1 second')
         ORDER BY ptr.created_at
         LIMIT $2
@@ -128,30 +162,66 @@ async fn tick(
     debug!(event = "drift_tracker.batch", n = rows.len());
 
     let mut resolved = 0u32;
+    let mut pending = 0u32;
     let mut failed = 0u32;
     for r in rows {
-        match resolve_one(db, simctl_url, redis, http, &r).await {
-            Ok(true) => resolved += 1,
-            Ok(false) => failed += 1, // sim failed/reverted — honest skip
+        let attempt = match resolve_one(db, simctl_url, redis, http, &r).await {
+            Ok(a) => a,
             Err(e) => {
-                failed += 1;
                 warn!(event = "drift_tracker.row_error", opp = %r.opportunity_id, error = %e);
+                Attempt::Failed
+            }
+        };
+        match attempt {
+            Attempt::Resolved => resolved += 1,
+            Attempt::Pending => pending += 1,
+            Attempt::NotPassed | Attempt::Failed => failed += 1,
+        }
+        // Re-enqueue with backoff (migration 111): every unresolved attempt
+        // spaces the row out exponentially so poison rows drain from the head
+        // of the batch instead of starving fresh rows forever.
+        if attempt != Attempt::Resolved {
+            if let Err(e) = defer_attempt(db, cfg, r.id).await {
+                warn!(event = "drift_tracker.defer_failed", run = %r.id, error = %e);
             }
         }
     }
-    info!(event = "drift_tracker.tick", resolved, failed);
+    info!(event = "drift_tracker.tick", resolved, pending, failed);
     Ok(())
 }
 
-/// Re-execute one row via sim-ctl. Returns Ok(true) if resolved (actual_* set),
-/// Ok(false) if the sim honestly did not pass (row left NULL).
+/// Defer one unresolved row onto the exponential backoff (migration 111).
+/// `base · 2^attempts` saturated at `max`; the exponent reads the PRE-increment
+/// attempt count, so the first failure retries after ~`base` seconds.
+/// Never touches a row that a concurrent resolver already labeled.
+async fn defer_attempt(db: &PgPool, cfg: &DriftConfig, run_id: uuid::Uuid) -> anyhow::Result<()> {
+    sqlx::query(
+        r#"
+        UPDATE paper_trade_runs
+        SET actual_attempt_count = actual_attempt_count + 1,
+            actual_next_attempt_at = now() + make_interval(secs => LEAST(
+                $1::double precision * power(2, actual_attempt_count::double precision),
+                $2::double precision))
+        WHERE id = $3 AND actual_timestamp IS NULL
+        "#,
+    )
+    .bind(cfg.backoff_base_secs as f64)
+    .bind(cfg.backoff_max_secs as f64)
+    .bind(run_id)
+    .execute(db)
+    .await?;
+    Ok(())
+}
+
+/// Re-execute one row via sim-ctl. `Resolved` ⇒ `actual_*` set (label landed);
+/// any other variant leaves the row NULL (honest) for a backed-off retry.
 async fn resolve_one(
     db: &PgPool,
     simctl_url: &str,
     redis: &mut Option<redis::aio::ConnectionManager>,
     http: &reqwest::Client,
     r: &PendingRun,
-) -> anyhow::Result<bool> {
+) -> anyhow::Result<Attempt> {
     let settled_block = r.sim_block_number + 1;
     let body = serde_json::json!({
         "opportunity_id": r.opportunity_id.to_string(),
@@ -168,29 +238,41 @@ async fn resolve_one(
         Ok(r) => r,
         Err(e) => {
             debug!(event = "drift_tracker.sim_unavailable", opp = %r.opportunity_id, error = %e);
-            return Ok(false); // sim-ctl unreachable — honest skip, retry next tick
+            return Ok(Attempt::Failed); // sim-ctl unreachable — retry with backoff
         }
     };
     let status = resp.status();
-    // 501 = sim-ctl up but fork/backend not configured — honest skip.
+    // 501 = sim-ctl up but fork/backend not configured — retry with backoff.
     if status == reqwest::StatusCode::NOT_IMPLEMENTED {
-        return Ok(false);
+        return Ok(Attempt::Failed);
     }
     if !status.is_success() {
         warn!(event = "drift_tracker.sim_http_error", opp = %r.opportunity_id, status = %status);
-        return Ok(false);
+        return Ok(Attempt::Failed);
     }
     let outcome: SimOutcome = match resp.json().await {
         Ok(o) => o,
         Err(e) => {
             warn!(event = "drift_tracker.sim_parse_error", opp = %r.opportunity_id, error = %e);
-            return Ok(false);
+            return Ok(Attempt::Failed);
         }
     };
-    // R8: only a PASSING re-exec yields a realized $Y$. Non-pass ⇒ NULL, skip.
-    if !outcome.passed {
-        debug!(event = "drift_tracker.sim_not_passed", opp = %r.opportunity_id, reason = ?outcome.fail_reason);
-        return Ok(false);
+    // Three-state verdict. `passed` ABSENT (200 without a verdict — the A3
+    // simctl_lookup stub pre-B2c) is PENDING, never a parse failure and never
+    // a label: the simulator has not spoken about this row. Ausencia ≠ valor
+    // por defecto favorable (misma lección que el Check-1 del kill-switch).
+    match outcome.passed {
+        Some(false) => {
+            // R8: only a PASSING re-exec yields a realized $Y$.
+            debug!(event = "drift_tracker.sim_not_passed", opp = %r.opportunity_id, reason = ?outcome.fail_reason);
+            return Ok(Attempt::NotPassed);
+        }
+        None => {
+            debug!(event = "drift_tracker.sim_pending_no_verdict", opp = %r.opportunity_id);
+            return Ok(Attempt::Pending);
+        }
+        // Some(true): the only path that continues to the label UPDATE below.
+        Some(true) => {}
     }
 
     // Raw realized amount out (token_in profit) from the re-exec.
@@ -255,7 +337,7 @@ async fn resolve_one(
     .bind(r.id)
     .execute(db)
     .await?;
-    Ok(true)
+    Ok(Attempt::Resolved)
 }
 
 /// Best-effort token USD price from the enricher's Redis hash.
@@ -286,7 +368,10 @@ fn compute_gas_cost_usd(o: &SimOutcome) -> Option<f64> {
 
 #[derive(serde::Deserialize, Debug)]
 struct SimOutcome {
-    passed: bool,
+    /// `None` = the sim answered 200 but carries no verdict (e.g. the A3
+    /// `simctl_lookup` stub pre-B2c returns `status: "route_metadata_fetched"`
+    /// with no `passed` field) — PENDING, never a parse failure, never a label.
+    passed: Option<bool>,
     fail_reason: Option<String>,
     gas_used_total: Option<i64>,
     gas_price_wei: Option<String>,

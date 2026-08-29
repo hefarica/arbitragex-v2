@@ -30,6 +30,7 @@
 use crate::counters::counters;
 use crate::dedup::OppDedup;
 use crate::persistence;
+use crate::priors_cache::{section_iv_fold, PriorsCache};
 use crate::publisher;
 use crate::scoring_pipeline::ScoringPipeline;
 use crate::strategy_label::StrategyLabel;
@@ -126,6 +127,11 @@ pub struct OpportunityEmitter {
     /// Gate C scoring pipeline (env-configured). Produces a ConfidenceScore per
     /// emitted paper opportunity; observe-only by default (no emission change).
     scoring: ScoringPipeline,
+    /// Stage 2c read side: the §IV per-operator log-LR slice mirrored from
+    /// `math_operator_calibration` (recon's stage2_calibration job writes it).
+    /// Feeds the §IV posterior fold in `score_and_publish`. `disabled()` when
+    /// PG is not configured — honest flat prior.
+    priors: PriorsCache,
 }
 
 impl OpportunityEmitter {
@@ -147,6 +153,7 @@ impl OpportunityEmitter {
             enabled = scoring.enabled(),
             hard_gate = scoring.hard_gate(),
         );
+        let priors = PriorsCache::spawn_opt(&pool);
         Self {
             pool,
             redis,
@@ -154,6 +161,7 @@ impl OpportunityEmitter {
             dry_run: false,
             recorded: Mutex::new(Vec::new()),
             scoring,
+            priors,
         }
     }
 
@@ -171,6 +179,8 @@ impl OpportunityEmitter {
             dry_run: true,
             recorded: Mutex::new(Vec::new()),
             scoring: ScoringPipeline::from_env(),
+            // No PG in dry-run (shadow) mode — the §IV fold stays honest-null.
+            priors: PriorsCache::disabled(),
         }
     }
 
@@ -457,9 +467,15 @@ impl OpportunityEmitter {
             .cartridge_id
             .clone()
             .unwrap_or_else(|| opp.strategy_kind.as_str().to_string());
-        // Flat prior: `bayesian_priors` is empty until the A.5 paper-shadow
-        // window; a priors cache feeds real PriorState in the A.5 follow-up.
-        // Passing None is the honest "wired but not calibrated" state.
+        // Beta-side prior stays None — HONEST, audited 2026-08-29:
+        // `bayesian_priors` has no writer AND is keyed `token_pair UNIQUE`
+        // (pre-STRAT-IDENT-01 schema) while `PriorState` is per-STRATEGY.
+        // Feeding pair-keyed priors would re-introduce the identity collapse
+        // STRAT-IDENT-01 fixed ("the pair stays as context in the record —
+        // never as the calibration bucket"). A `strategy_key` column + writer
+        // is the follow-up; until then None is the wired-but-not-calibrated
+        // truth. The §IV calibration surface (per-operator log-LR) IS live —
+        // see the fold below.
         let score = match self
             .scoring
             .evaluate_paper_opportunity(
@@ -500,6 +516,15 @@ impl OpportunityEmitter {
             json.as_deref().and_then(|s| serde_json::from_str(s).ok())
         };
 
+        // §IV fold (Stage 2c — the store consumer): apply the calibrated
+        // per-operator log-LR slice (mirrored by `PriorsCache` from
+        // `math_operator_calibration`) over this opportunity's captured
+        // evidence. posterior_log_odds = prior_log_odds + Σ_k (log_lr_k · e_k).
+        // Absent evidence or absent calibration ⇒ (None, false) — honest,
+        // non-blocking, never fabricated.
+        let calibration = self.priors.calibration();
+        let fold = section_iv_fold(score.prior_log_odds, &evidence_vector, &calibration);
+
         // XADD the score (non-fatal) — twin of `publisher::publish`.
         let record = build_score_record(
             opp,
@@ -508,6 +533,7 @@ impl OpportunityEmitter {
             evidence_vector,
             emission_outcome,
             rejection_reason,
+            fold,
         );
         match serde_json::to_string(&record) {
             Ok(json) => {
@@ -618,7 +644,9 @@ fn has_computed_economics(opp: &Opportunity) -> bool {
 /// `rejection_reason` is `None` on the accepted path (serialized as JSON null)
 /// and the verbatim reason on the rejected path (A.5 doctrine: prior
 /// calibration needs BOTH classes). Field set is the wire contract mirrored by
-/// the api-server `ScoredRecordSchema` — additive only.
+/// the api-server `ScoredRecordSchema` — additive only. The two §IV fields
+/// (Stage 2c) carry the calibrated posterior fold: `posterior_log_odds` is
+/// null when either side (evidence snapshot, calibration slice) is absent.
 fn build_score_record(
     opp: &Opportunity,
     strategy_key: &str,
@@ -626,6 +654,7 @@ fn build_score_record(
     evidence_vector: Option<serde_json::Value>,
     emission_outcome: &'static str,
     rejection_reason: Option<&str>,
+    fold: crate::priors_cache::SectionIvFold,
 ) -> serde_json::Value {
     let net_profit_usd = opp.net_expected_profit_usd.or(opp.expected_profit_usd);
     let chain_id_i64 = i64::try_from(opp.chain_id).unwrap_or(-1);
@@ -639,6 +668,8 @@ fn build_score_record(
         "net_profit_usd": net_profit_usd,
         "bayesian_accepted": score.bayesian_accepted,
         "prior_log_odds": score.prior_log_odds,
+        "posterior_log_odds": fold.posterior_log_odds,
+        "calibration_applied": fold.calibration_applied,
         "chain_id": chain_id_i64,
         "source_context": score.source_context,
         "scoring_mode": "paper",
@@ -833,7 +864,18 @@ mod tests {
     #[test]
     fn score_record_accepted_variant_has_null_rejection_reason() {
         let opp = make_opp(Uuid::new_v4(), Some(1.5), None);
-        let rec = build_score_record(&opp, "dex_arb", &flat_score(), None, "accepted", None);
+        let rec = build_score_record(
+            &opp,
+            "dex_arb",
+            &flat_score(),
+            None,
+            "accepted",
+            None,
+            crate::priors_cache::SectionIvFold {
+                posterior_log_odds: None,
+                calibration_applied: false,
+            },
+        );
         assert_eq!(rec["emission_outcome"], "accepted");
         assert!(rec["rejection_reason"].is_null());
         // Pre-RDY-02 field set unchanged.
@@ -845,6 +887,28 @@ mod tests {
         assert_eq!(rec["source_context"], "flat_prior");
         assert_eq!(rec["scoring_mode"], "paper");
         assert!(rec["evidence_vector"].is_null());
+        // Stage 2c: the §IV fold fields are present + honest when absent.
+        assert!(rec["posterior_log_odds"].is_null());
+        assert_eq!(rec["calibration_applied"], false);
+    }
+
+    #[test]
+    fn score_record_calibrated_fold_is_carried() {
+        let opp = make_opp(Uuid::new_v4(), Some(2.0), None);
+        let rec = build_score_record(
+            &opp,
+            "dex_arb",
+            &flat_score(),
+            None,
+            "accepted",
+            None,
+            crate::priors_cache::SectionIvFold {
+                posterior_log_odds: Some(0.9),
+                calibration_applied: true,
+            },
+        );
+        assert_eq!(rec["posterior_log_odds"], 0.9);
+        assert_eq!(rec["calibration_applied"], true);
     }
 
     #[test]
@@ -859,6 +923,10 @@ mod tests {
             None,
             "rejected",
             Some("NegativeNetProfit:gas_floor_breach"),
+            crate::priors_cache::SectionIvFold {
+                posterior_log_odds: None,
+                calibration_applied: false,
+            },
         );
         assert_eq!(rec["emission_outcome"], "rejected");
         assert_eq!(

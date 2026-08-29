@@ -56,6 +56,16 @@ export const ScoredRecordSchema = z.object({
   net_profit_usd: z.number().finite().nullable().optional(),
   bayesian_accepted: z.boolean(),
   prior_log_odds: z.number().finite().nullable().optional(),
+  /**
+   * §IV fold (Stage 2c): prior_log_odds + Σ (log_lr_k · e_k) from the
+   * calibrated per-operator store (`math_operator_calibration`, mirrored by the
+   * searcher's PriorsCache). null when either side (evidence snapshot,
+   * calibration slice) is absent. NOT persisted yet — no PG column; parsed to
+   * keep the Rust↔Zod wire contract explicit (XLANG-01).
+   */
+  posterior_log_odds: z.number().finite().nullable().optional(),
+  /** §IV: true when any |log_lr_k| > ε participated in the fold. Not persisted. */
+  calibration_applied: z.boolean().optional(),
   chain_id: z.number().int().nullable().optional(),
   source_context: z.string().nullable().optional(),
   scoring_mode: z.string().default("paper"),

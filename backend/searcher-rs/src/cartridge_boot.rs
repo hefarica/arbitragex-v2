@@ -1315,8 +1315,10 @@ pub async fn active_evaluate_and_emit(
                         );
                         let mut opp = opportunity.clone();
                         opp.rejection_reason = Some(reason.clone());
+                        // Gap 1: even unmapped-category rejections carry the route.
+                        let route = cartridge_route_metadata(&candidate, &route_plan);
                         if let Err(e) = emitter
-                            .emit_rejected(&opp, StrategyLabel::DexArbV2V2, &reason, None)
+                            .emit_rejected(&opp, StrategyLabel::DexArbV2V2, &reason, route.as_ref())
                             .await
                         {
                             warn!(
@@ -1400,8 +1402,14 @@ pub async fn active_evaluate_and_emit(
                             let mut opp = strategy_candidate.opportunity.clone();
                             opp.rejection_reason = Some(reason_str.clone());
                             opp.expected_profit_usd = None;
-                            if let Err(e) =
-                                emitter.emit_rejected(&opp, label, &reason_str, None).await
+                            // Gap 1: optimizer-rejected candidates carry the route too.
+                            let route = cartridge_route_metadata(
+                                &strategy_candidate.candidate,
+                                &strategy_candidate.route_plan,
+                            );
+                            if let Err(e) = emitter
+                                .emit_rejected(&opp, label, &reason_str, route.as_ref())
+                                .await
                             {
                                 warn!(
                                     event = "cartridge.emit_rejected_failed",
@@ -1462,6 +1470,47 @@ pub async fn active_evaluate_and_emit(
     );
 }
 
+/// Gap 1 (route_metadata per-worker): build the cartridge path's `RouteMetadata`
+/// for emission — the same merge the native orchestrator path uses
+/// (`orchestrator.rs` on_route_intent): construct from BOTH the spine candidate
+/// arrays and the cartridge `RoutePlan` legs, keep whichever yields the longer
+/// (more complete) token path, and backfill pools/dexes from the candidate when
+/// the plan source left them shorter than the token path implies.
+///
+/// The cartridge emission path previously passed `None` at every emit site, so
+/// cartridge rows persisted with `route_metadata = '{}'` and the drift-tracker
+/// Y-oracle (which requires `route_metadata != '{}'` in its SELECT) could never
+/// label them — the 264-cartridge majority of detection volume was invisible
+/// to calibration. `None` here still means "neither source is populated"
+/// (fail-honest) and the emitter then persists `'{}'` as before.
+fn cartridge_route_metadata(
+    candidate: &prioritization_spine::types::OpportunityCandidate,
+    plan: &prioritization_spine::route_plan::RoutePlan,
+) -> Option<shared_rs::candidates::RouteMetadata> {
+    let from_candidate = shared_rs::candidates::RouteMetadata {
+        pool_addresses: candidate.pool_addresses.clone(),
+        token_addresses: candidate.token_addresses.clone(),
+        dex_adapters: candidate.dex_adapters.clone(),
+        decimals: Default::default(),
+    };
+    let from_plan = crate::persistence::build_route_metadata_from_plan(plan);
+    // Prefer the source with the longer (more complete) token path.
+    let mut chosen = if from_plan.token_addresses.len() > from_candidate.token_addresses.len() {
+        from_plan
+    } else {
+        from_candidate
+    };
+    // Backfill pools/dexes from candidate if the chosen plan source left them
+    // shorter than the token path would imply.
+    if chosen.pool_addresses.len() < chosen.dex_adapters.len()
+        && candidate.pool_addresses.len() >= candidate.dex_adapters.len()
+    {
+        chosen.pool_addresses = candidate.pool_addresses.clone();
+        chosen.dex_adapters = candidate.dex_adapters.clone();
+    }
+    chosen.is_populated().then_some(chosen)
+}
+
 /// Process a cartridge-generated candidate through the full evaluation + emission pipeline.
 /// Mirrors `Orchestrator::process_candidate` but accessible from cartridge_boot context.
 /// `price_snapshot` is the live Redis price map fetched once per intent by the caller.
@@ -1480,11 +1529,19 @@ async fn process_cartridge_candidate(
     let label = sc.label;
     let label_str = label.as_str();
 
+    // Gap 1: thread the merged route into every emit below (accepted AND
+    // rejected) so cartridge rows persist with a populated route_metadata —
+    // the drift-tracker Y-oracle requires route_metadata != '{}'.
+    let route_metadata = cartridge_route_metadata(&sc.candidate, &sc.route_plan);
+    let route_ref = route_metadata.as_ref();
+
     // Engine-level rejection: emit rejected immediately
     if let Some(reason) = &sc.rejection_reason {
         let mut opp = sc.opportunity.clone();
         opp.rejection_reason = Some(reason.clone());
-        emitter.emit_rejected(&opp, label, reason, None).await?;
+        emitter
+            .emit_rejected(&opp, label, reason, route_ref)
+            .await?;
         return Ok(());
     }
 
@@ -1497,7 +1554,9 @@ async fn process_cartridge_candidate(
         let reason = "NoTradingConfig".to_string();
         let mut opp = sc.opportunity.clone();
         opp.rejection_reason = Some(reason.clone());
-        emitter.emit_rejected(&opp, label, &reason, None).await?;
+        emitter
+            .emit_rejected(&opp, label, &reason, route_ref)
+            .await?;
         return Ok(());
     };
 
@@ -1529,14 +1588,16 @@ async fn process_cartridge_candidate(
                     let reason = format!("{:?}", reject_reason);
                     let mut opp = sc.opportunity.clone();
                     opp.rejection_reason = Some(reason.clone());
-                    emitter.emit_rejected(&opp, label, &reason, None).await?;
+                    emitter
+                        .emit_rejected(&opp, label, &reason, route_ref)
+                        .await?;
                 }
                 None => {
                     // Accepted — outcome carries net profit and ROI
                     let mut opp = sc.opportunity.clone();
                     opp.net_expected_profit_usd = Some(outcome.net_profit_usd);
                     opp.roi_pct = Some(outcome.net_roi_pct);
-                    emitter.emit_accepted(&opp, label, None).await?;
+                    emitter.emit_accepted(&opp, label, route_ref).await?;
                 }
             }
         }
@@ -1546,13 +1607,17 @@ async fn process_cartridge_candidate(
             let reason = format!("TokenNotAllowed:{}", token_symbol_or_addr);
             let mut opp = sc.opportunity.clone();
             opp.rejection_reason = Some(reason.clone());
-            emitter.emit_rejected(&opp, label, &reason, None).await?;
+            emitter
+                .emit_rejected(&opp, label, &reason, route_ref)
+                .await?;
         }
         ConfigGateOutcome::StrategyDisabled { strategy_kind: sk } => {
             let reason = format!("StrategyDisabled:{}", sk);
             let mut opp = sc.opportunity.clone();
             opp.rejection_reason = Some(reason.clone());
-            emitter.emit_rejected(&opp, label, &reason, None).await?;
+            emitter
+                .emit_rejected(&opp, label, &reason, route_ref)
+                .await?;
         }
         ConfigGateOutcome::StrategyConfigGateBlocked {
             reason: reject_reason,
@@ -1560,7 +1625,9 @@ async fn process_cartridge_candidate(
             let reason = format!("StrategyConfigGateBlocked:{:?}", reject_reason);
             let mut opp = sc.opportunity.clone();
             opp.rejection_reason = Some(reason.clone());
-            emitter.emit_rejected(&opp, label, &reason, None).await?;
+            emitter
+                .emit_rejected(&opp, label, &reason, route_ref)
+                .await?;
         }
     }
 

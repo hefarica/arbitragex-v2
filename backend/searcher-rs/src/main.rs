@@ -83,6 +83,7 @@ mod topology_reload;
 mod metrics;
 mod patterns;
 mod persistence;
+mod priors_cache;
 mod publisher;
 mod reserves;
 // XLS-QB-05 / ARBX-0003: dirty-pool signal consumed by `workers::pool_sync_worker`

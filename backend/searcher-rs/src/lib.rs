@@ -77,6 +77,8 @@ pub mod persistence;
 pub mod pool_candidate;
 pub mod pool_discovery;
 pub mod pool_sources;
+// Stage 2c (§IV read side): per-operator log-LR cache + the posterior fold.
+pub mod priors_cache;
 pub mod publisher;
 // QUOTEBASE-264 05_QUOTE_BASE: QuoteScore weighted form + workbook fixtures
 // (XLS-QB-06). Lib-only: consumers are the future dense-id quote-base layer.
