@@ -25,6 +25,7 @@ pub mod pre_execute_checklist;
 pub mod price_oracle;
 pub mod risk_ledger;
 pub mod rpc_failover;
+pub mod sim_taxonomy;
 pub mod token_identity;
 pub mod tokens;
 pub mod trading_config;
