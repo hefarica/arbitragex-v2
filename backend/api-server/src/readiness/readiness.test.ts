@@ -555,21 +555,25 @@ describe("verifyGSIM1()", () => {
 });
 
 describe("verifyAll() integration", () => {
-  it("returns 18 items + summary; flip_blocked=true when any non-green", async () => {
+  it("returns 19 items + summary; flip_blocked=true when any non-green", async () => {
     // Audit re-run #2 (2026-05-10): all verifiers do real work; no pending
     // sentinels remain. 17 → 18 on 2026-08-29: G-DISK-1 (host disk usage,
     // ARBX-GDISK1) joined the gate after the 100%-disk incident crash-looped
-    // postgres for hours. With fetch stubbed and pool=null the network/DB
-    // layers fail soft to yellow, so we only assert shape + flip-blocked,
-    // not the precise mix of statuses.
+    // postgres for hours. 18 → 19 on 2026-08-29: G-PIPE-1 (consumer-group
+    // lag + kill-switch state) joined after A5-STALL — a 4-day silent
+    // selector halt invisible to every existing gate. With fetch stubbed and
+    // pool=null the network/DB layers fail soft to yellow, so we only assert
+    // shape + flip-blocked, not the precise mix of statuses.
     const origFetch = globalThis.fetch;
     globalThis.fetch = vi.fn(async () => { throw new Error("ECONNREFUSED"); }) as any;
     try {
       const report = await verifyAll({ pool: null, now: NOW });
-      expect(report.items.length).toBe(18);
-      expect(report.summary.total).toBe(18);
+      expect(report.items.length).toBe(19);
+      expect(report.summary.total).toBe(19);
       // G-DISK-1 (ARBX-GDISK1) is wired into the rollup.
       expect(report.items.some((i) => i.id === "G-DISK-1")).toBe(true);
+      // G-PIPE-1 (A5-STALL) is wired into the rollup.
+      expect(report.items.some((i) => i.id === "G-PIPE-1")).toBe(true);
       // No pending sentinels left — every gate is verified live.
       expect(report.summary.pending).toBe(0);
       expect(report.flip_blocked).toBe(true);

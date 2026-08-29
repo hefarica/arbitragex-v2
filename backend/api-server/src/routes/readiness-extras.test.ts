@@ -125,12 +125,18 @@ describe("doctrinalBlockers", () => {
   // opportunity (prod: XLEN arbx:scoring:scored=87, last-hour rows rejected|87,
   // scored_opportunities_total=90). A.7 flipped pending→partial the same date
   // (module shipped in relays-client, runtime call-site pending).
-  it("emits exactly 4 doctrinal phase blockers (A.5/A.6/A.7/A.9) — A.4 resolved 2026-08-20, A.8 resolved 2026-08-29", () => {
+  // A.5 (a5_paper_shadow_not_executed) was resolved 2026-08-29 — removed
+  // after the A5-STALL closure (kill-switch fail-closed default after Redis
+  // key loss + anvil fork 403s; fixed via canonical admin re-arm, alchemy
+  // fork URL, Redis AOF, halt logs, G-PIPE-1 gate; prod: selector consuming,
+  // validated flowing, G-PAP-1 green explicit). See the readiness-extras.ts
+  // comment above the array for the full evidence trail including the honest
+  // S4 follow-up (0 of 639,955 sims ever passed — probe token-funding gap).
+  it("emits exactly 3 doctrinal phase blockers (A.6/A.7/A.9) — A.4 resolved 2026-08-20, A.8+A.5 resolved 2026-08-29", () => {
     const b = doctrinalBlockers();
-    expect(b.length).toBe(4);
+    expect(b.length).toBe(3);
     const ids = b.map((x) => x.id).sort();
     expect(ids).toEqual([
-      "a5_paper_shadow_not_executed",
       "a6_circuit_breakers_partial",
       "a7_private_relay_no_submit_partial",
       "a9_go_no_go_formal_pending",
@@ -142,12 +148,9 @@ describe("doctrinalBlockers", () => {
     expect(b.find((x) => x.id === "a4_fork_real_not_executed")).toBeUndefined();
   });
 
-  it("A.5 blocks A.5 + LIVE (NOT A.4)", () => {
+  it("A.5 blocker is gone (resolved 2026-08-29 via A5-STALL closure)", () => {
     const b = doctrinalBlockers();
-    const a5 = b.find((x) => x.id === "a5_paper_shadow_not_executed");
-    expect(a5!.blocks).toContain("A.5");
-    expect(a5!.blocks).toContain("LIVE");
-    expect(a5!.blocks).not.toContain("A.4");
+    expect(b.find((x) => x.id === "a5_paper_shadow_not_executed")).toBeUndefined();
   });
 
   it("A.9 is critical severity", () => {

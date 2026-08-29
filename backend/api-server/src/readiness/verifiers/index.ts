@@ -17,10 +17,11 @@ import { verifyGPAP1 } from "./g-pap-1.js";
 import { verifyGFL1 } from "./g-fl-1.js";
 import { verifyGMEV1 } from "./g-mev-1.js";
 import { verifyGDISK1 } from "./g-disk-1.js";
+import { verifyGPIPE1 } from "./g-pipe-1.js";
 import { verifyAlerts } from "./alerts.js";
 
 /**
- * Run all 18 verifiers in parallel. Each does live work — there are no
+ * Run all 19 verifiers in parallel. Each does live work — there are no
  * sentinel "pending" items left after the audit re-run #2 (2026-05-10).
  *
  * Honesty contract: a verifier returns:
@@ -58,6 +59,10 @@ export async function verifyAll(deps: {
     verifyGFL1({ now }),
     verifyGMEV1({ now }),
     verifyGDISK1({ now }),
+    // G-PIPE-1 (2026-08-29, A5-STALL): consumer-group lag + kill-switch
+    // state — the 4-day silent selector halt was invisible to every
+    // existing gate because detection kept flowing downstream of the stall.
+    verifyGPIPE1({ now }),
     verifyAlerts({ now }),
   ]);
 

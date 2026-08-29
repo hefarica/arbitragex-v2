@@ -16,7 +16,7 @@ use shared_rs::killswitch::KillSwitchClient;
 use shared_rs::metrics::SIMULATIONS_TOTAL;
 use sqlx::postgres::PgPool;
 use std::time::Duration;
-use tracing::{debug, error, info, warn};
+use tracing::{error, info, warn};
 
 const STREAM_IN: &str = "arbx:opps:validated";
 const STREAM_OUT: &str = "arbx:opps:simulated";
@@ -35,11 +35,39 @@ impl Consumer {
     pub async fn run(mut self) -> Result<()> {
         self.ensure_group().await.ok();
         info!(event = "sim_consumer.started", stream = STREAM_IN, group = GROUP, consumer = %self.consumer_name);
+        // A5-STALL (2026-08-29): the kill-switch halt was 100% silent — 4 days
+        // of zero simulation consumption with zero logs. Transition + 10-min
+        // summary logs only (R9: no per-loop flooding).
+        let mut halt_started_at: Option<std::time::Instant> = None;
+        let mut halt_last_logged = std::time::Instant::now();
         loop {
             if self.killswitch.is_enabled().await {
-                debug!(event = "sim_consumer.paused_kill_switch");
+                match halt_started_at {
+                    None => {
+                        halt_started_at = Some(std::time::Instant::now());
+                        halt_last_logged = std::time::Instant::now();
+                        warn!(
+                            event = "sim_consumer.halted_kill_switch",
+                            detail = "kill-switch enabled (explicit arm or fail-closed default after Redis key loss) — simulation consumption paused"
+                        );
+                    }
+                    Some(start) if halt_last_logged.elapsed() >= Duration::from_secs(600) => {
+                        halt_last_logged = std::time::Instant::now();
+                        warn!(
+                            event = "sim_consumer.still_halted_kill_switch",
+                            halted_for_s = start.elapsed().as_secs()
+                        );
+                    }
+                    _ => {}
+                }
                 tokio::time::sleep(Duration::from_secs(5)).await;
                 continue;
+            }
+            if let Some(start) = halt_started_at.take() {
+                warn!(
+                    event = "sim_consumer.resumed_after_kill_switch",
+                    halted_for_s = start.elapsed().as_secs()
+                );
             }
             if let Err(e) = self.read_batch().await {
                 error!(event = "sim_consumer.read_batch_err", error = %e);
