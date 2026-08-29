@@ -50,12 +50,18 @@ services:
   redis:
     logging: *id001
     image: redis:7.2
+    # AOF ON (2026-08-29, A5-STALL): every container recreate wiped the
+    # control-plane keys (arbx:papermode:*, arbx:killswitch) because ALL
+    # persistence was disabled while redis_data was already mounted — the
+    # fail-closed kill-switch default then halted the whole detect→sim→
+    # execute chain silently for 4 days (paper runs froze 2026-08-25 12:07).
+    # appendonly rehydrates operator-declared state on recreate.
     command:
     - redis-server
     - --save
     - ''
     - --appendonly
-    - 'no'
+    - 'yes'
     ports:
     - 127.0.0.1:6379:6379
     volumes:

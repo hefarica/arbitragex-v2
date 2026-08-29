@@ -80,7 +80,9 @@ services:
 
   redis:
     image: redis:7.2
-    command: ["redis-server","--save","","--appendonly","no"]
+    # AOF ON (2026-08-29, A5-STALL): parity with prod — control-plane keys
+    # (arbx:papermode:*, arbx:killswitch) must survive container recreates.
+    command: ["redis-server","--save","","--appendonly","yes"]
     # SECURITY: loopback only. Same reasoning as postgres.
     ports: ["127.0.0.1:6379:6379"]
     volumes: [redis_data:/data]
