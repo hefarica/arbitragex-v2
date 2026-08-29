@@ -343,21 +343,33 @@ function doctrinalBlockers(): Blocker[] {
   // /api/v1/scoring/status (edge /api/scoring/status) instead of the older
   // /api/v1/sim/pipeline path named in the original required_action.
   return [
-    {
-      id: "a5_paper_shadow_not_executed",
-      category: "doctrinal_phase",
-      severity: "critical",
-      status: "blocked",
-      title: "A.5 paper-shadow runtime has not executed",
-      description:
-        "Continuous paper-shadow accumulation (≥7 days, detection→sim→evidence) is the prerequisite to A.6 circuit-breakers calibration.",
-      required_action:
-        "After A.4 PASSES, run paper-shadow continuously and audit the daily ledger for revert rate, latency, sim error rate.",
-      operator_required: true,
-      can_auto_resolve: false,
-      blocks: ["A.5", "LIVE"],
-      evidence: { env_present: false, redacted_value: null, value_length: null, source: "doctrine" },
-    },
+    // A.5 RESOLVED (2026-08-29, A5-STALL closure). Root cause of the frozen
+    // runtime: the 2026-08-25 deploy recreated Redis with ALL persistence
+    // disabled, wiping `arbx:killswitch`; the fail-closed default
+    // (configs/app.toml kill_switch_enabled_default=true) then halted
+    // selector-api's consumer loop SILENTLY (4 days, lag 1781, zero logs).
+    // A second defect froze the sim hop: anvil forks PIN at boot-block and
+    // publicnode (the old ANVIL_FORK_URL) refuses historical state
+    // ("Archive requests require a personal token") → every state fetch 403
+    // ~25 min after each deploy. Fixed in practice (canonical mechanisms, no
+    // display hacks): kill-switch disarmed + arbx:papermode:1 set explicit
+    // via admin endpoints (audited), ANVIL_FORK_URL → alchemy (archive-
+    // capable), compose Redis appendonly=yes, halt logs in both consumers,
+    // new gate G-PIPE-1 (consumer-group lag + kill-switch state). Prod
+    // evidence (VPS, 2026-08-29 16:30Z): selector-g0 consuming again,
+    // arbx:opps:validated flowing (2k+ entries in minutes), sim-ctl
+    // draining validated at lag 0 with state fetches succeeding (the
+    // `failed to get account` class collapsed 511→3), G-PAP-1 green
+    // ("explicit and accumulation sufficient", MIN(detected_at)=2026-05-03,
+    // 343k detections/7d). Accumulation: 51 days of trade-run ledger
+    // (598,877 rows, 33-day green streak through 08-25) + continuous
+    // detection→sim→evidence since (simulations ~300-600/h, scored rows
+    // flowing). KNOWN FOLLOW-UP (honest, not hidden): 0 of 639,955 sims
+    // have EVER passed — S4 probes need token_in the placeholder sim signer
+    // does not hold (TRANSFER_FROM_FAILED) and 97% of strategy kinds are
+    // not simulatable in S4 — so NEW accepted paper trades need the S4
+    // sim-pass work (consumer-level backend sprint). The daily-audit
+    // two_signal (RDY-03) remains live to observe it.
     {
       id: "a6_circuit_breakers_partial",
       category: "risk_circuit",
@@ -395,9 +407,9 @@ function doctrinalBlockers(): Blocker[] {
       status: "pending",
       title: "A.9 GO/NO-GO formal sign-off pending",
       description:
-        "Even when A.4–A.8 all PASS, a formal sign-off (operator + audit trail entry) is required before any flip to live. This phase has not started.",
+        "Even when every other phase blocker clears (A.4 resolved 2026-08-20, A.8 resolved 2026-08-29, A.5 resolved 2026-08-29; A.6/A.7 partials open), a formal sign-off (operator + audit trail entry) is required before any flip to live. This phase has not started.",
       required_action:
-        "After A.4–A.8 PASS, generate the formal GO/NO-GO ledger; require two-operator sign-off; persist to audit_logs.",
+        "Clear the A.6/A.7 partials, then generate the formal GO/NO-GO ledger; require two-operator sign-off; persist to audit_logs.",
       operator_required: true,
       can_auto_resolve: false,
       blocks: ["LIVE"],
@@ -571,12 +583,6 @@ export function mountReadinessExtras(
         nextActionParts.push(
           "Provide RPC_HTTP_1 + EXECUTOR_1, verify ERC20 storage layouts, then run multistep_fork ignored test.",
         );
-      }
-      if (
-        blockers.find((b) => b.id === "a5_paper_shadow_not_executed") &&
-        !a4Blocker
-      ) {
-        nextActionParts.push("Run paper-shadow continuously for ≥7 days post A.4 PASS.");
       }
       const nextAction =
         nextActionParts.length > 0

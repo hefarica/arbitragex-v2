@@ -46,6 +46,11 @@ export interface ConsumerDeps {
 export class StreamConsumer {
   private running = false;
   private stopPromise: Promise<void> | null = null;
+  // A5-STALL (2026-08-29): the kill-switch halt was 100% silent — 4 days of
+  // zero consumption with zero logs. Transition + 10-min summary logs only
+  // (R9: no per-loop flooding).
+  private haltStartedAt: number | null = null;
+  private haltLastLoggedAt = 0;
   constructor(private readonly deps: ConsumerDeps) {}
 
   async start(): Promise<void> {
@@ -76,10 +81,34 @@ export class StreamConsumer {
   private async runLoop(): Promise<void> {
     while (this.running) {
       try {
-        // Honor kill-switch — if ON, sleep and retry.
+        // Honor kill-switch — if ON, sleep and retry. Log the halt loudly
+        // (A5-STALL): a fail-closed default after Redis key loss previously
+        // paused consumption here with no observable trace.
         if (await this.deps.killSwitch.isEnabled()) {
+          const now = Date.now();
+          if (this.haltStartedAt === null) {
+            this.haltStartedAt = now;
+            this.haltLastLoggedAt = now;
+            this.deps.logger.warn({
+              event: "consumer.halted_kill_switch",
+              detail: "kill-switch enabled (explicit arm or fail-closed default after Redis key loss) — stream consumption paused",
+            });
+          } else if (now - this.haltLastLoggedAt >= 600_000) {
+            this.haltLastLoggedAt = now;
+            this.deps.logger.warn({
+              event: "consumer.still_halted_kill_switch",
+              halted_for_s: Math.round((now - this.haltStartedAt) / 1000),
+            });
+          }
           await sleep(5000);
           continue;
+        }
+        if (this.haltStartedAt !== null) {
+          this.deps.logger.warn({
+            event: "consumer.resumed_after_kill_switch",
+            halted_for_s: Math.round((Date.now() - this.haltStartedAt) / 1000),
+          });
+          this.haltStartedAt = null;
         }
 
         await this.deps.streamConsumerCb.execute(() => this.readBatch());
