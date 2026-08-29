@@ -135,3 +135,13 @@ pool; `GET /admin/readiness-evidence` is a read-only operator convenience.
 | `108_strategy_identity_scoring.sql`     | Re-keys the Gate-C calibration store per STRATEGY: `scored_opportunities.strategy_key` (nullable, no backfill — R8) + `bayesian_priors.strategy_key` with UNIQUE replacing the per-pair unique (table empty, no writer existed). Operator directive: each of the 264+ strategies declares its own applicable structures (primary/secondary operators) — scoring/calibration must accumulate per strategy, never per class (pair / router / family). |
 
 Forward-only and idempotent. Paper-only telemetry.
+
+---
+
+## S4-03 (simulation label no-contamination gate) — 2026-08-29
+
+| File                                    | Purpose                                                  |
+|-----------------------------------------|----------------------------------------------------------|
+| `111_paper_trade_runs_calibration_eligibility.sql` | S4 runbook (accepted 2026-08-29): `paper_trade_runs` gains `sim_fail_family` (S4-02 taxonomy structural\|economic\|market), `calibration_eligible` (FALSE = terminal structural failure — never a Stage 2b label, never retried), `sim_attempts` + `sim_last_attempt_at` (pending backoff 30s·2^min(n,7) for 501/parse-error attempts), plus a partial `CREATE INDEX CONCURRENTLY` (FREEZE-01 doctrine: populated live table) for the drift-tracker pending scan. Writer: recon drift-tracker (Capa B). |
+
+Forward-only and idempotent. Paper-only telemetry. Depends on: 051 (paper_trade_runs), 099 (route_metadata).

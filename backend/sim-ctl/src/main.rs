@@ -85,6 +85,13 @@ struct SimulateRequest {
     /// Forwarded by api-server from the URL path param `/api/v1/opportunities/:id`.
     #[serde(default)]
     opportunity_id: Option<uuid::Uuid>,
+    /// Optional block pin for deterministic replay (S4 PARCH-0). The
+    /// drift-tracker sends the SETTLED block (`sim_block_number + 1`) so the
+    /// Y-oracle measures at the block the opportunity would have landed in.
+    /// When provided, the A3 path builds a per-request `SimulatorV2` pinned
+    /// to this block (the shared handle memoizes one block forever).
+    #[serde(default)]
+    block_number: Option<u64>,
 }
 
 #[derive(Clone)]
@@ -154,74 +161,16 @@ async fn simulate_handler(
     };
 
     // G-SIM-1 PR-B2b Fase 1.2: if candidate is pre-enriched, use it directly.
-    // Otherwise, return 501 for the selected route_source until Fases 2-4 land.
+    // Otherwise, enrich via route_source (A3 simctl_lookup constructs the
+    // candidate itself — S4 PARCH-0).
     match req.candidate {
-        Some(candidate) => {
-            // G-SIM-1 B2c: REAL multi-step REVM simulation path.
-            // Requires: simulator handle (SIM_BACKEND=revm), RealSimEnvConfig
-            // (ARBITRAGE_EXECUTOR set), and Redis (gas_price_wei). Fail-honest
-            // 501 for any missing prerequisite.
-            let simulator = match &st.simulator {
-                Some(s) => s.clone(),
-                None => {
-                    let body = serde_json::json!({
-                        "error": "real_sim_unavailable",
-                        "detail": "SIM_BACKEND!=revm — real multi-step REVM path requires SIM_BACKEND=revm"
-                    });
-                    return (StatusCode::NOT_IMPLEMENTED, Json(body));
-                }
-            };
-            let env_config = match &st.real_sim_env {
-                Some(c) => c.clone(),
-                None => {
-                    let body = serde_json::json!({
-                        "error": "real_sim_env_missing",
-                        "detail": "ARBITRAGE_EXECUTOR env var required for real simulation"
-                    });
-                    return (StatusCode::NOT_IMPLEMENTED, Json(body));
-                }
-            };
-            let redis = match &st.redis {
-                Some(r) => r.clone(),
-                None => {
-                    let body = serde_json::json!({
-                        "error": "gas_price_unavailable",
-                        "detail": "REDIS_URL not configured — cannot read live gas_price_wei"
-                    });
-                    return (StatusCode::SERVICE_UNAVAILABLE, Json(body));
-                }
-            };
-
-            // Read live gas_price_wei from Redis (same key scheme as RevmBackend).
-            let gas_price_wei = match read_gas_price(&redis, candidate.chain_id).await {
-                Ok(g) => g,
-                Err(e) => {
-                    let body = serde_json::json!({
-                        "error": "gas_price_read_failed",
-                        "detail": e
-                    });
-                    return (StatusCode::SERVICE_UNAVAILABLE, Json(body));
-                }
-            };
-
-            // Dispatch the REAL multi-step REVM simulation.
-            let outcome =
-                sim_runner::run_real_simulation(candidate, simulator, &env_config, gas_price_wei)
-                    .await;
-
-            // Map SimulationOutcome → JSON response with wrapped_calldata.
-            let response = serde_json::json!({
-                "passed": outcome.passed,
-                "gas_used_total": outcome.gas_used_total,
-                "gas_price_wei": outcome.gas_price_wei.to_string(),
-                "simulated_profit_token_in": outcome.simulated_profit_token_in.to_string(),
-                "intermediate_amount_out": outcome.intermediate_amount_out.map(|v| v.to_string()),
-                "fail_reason": outcome.fail_reason,
-                "wrapped_calldata": outcome.wrapped_calldata.as_ref().map(|bytes| format!("0x{}", hex::encode(bytes))),
-            });
-            // Always 200: passed=false is an honest SimulationOutcome, not an HTTP error (R8).
-            (StatusCode::OK, Json(response))
-        }
+        Some(candidate) => match dispatch_b2c_real_sim(&st, candidate, req.block_number).await {
+            Ok(mut response) => {
+                response["route_source"] = serde_json::json!("pre_enriched");
+                (StatusCode::OK, Json(response))
+            }
+            Err(tuple) => tuple,
+        },
         None => {
             // No pre-enriched candidate: route_source determines the enrichment path.
             match req.route_source {
@@ -247,43 +196,132 @@ async fn simulate_handler(
                             return (StatusCode::SERVICE_UNAVAILABLE, Json(body));
                         }
                     };
-                    match route_lookup::fetch_route_metadata(pool, opp_id).await {
-                        Ok(Some(_route_metadata)) => {
-                            // TODO (B2c): construct OpportunityCandidate from
-                            // route_metadata + Opportunity fields, then wire
-                            // → sim-core encoder → execute_multistep_revm.
-                            // For now: return 200 with the fetched metadata to
-                            // prove the A3 path works end-to-end.
-                            let body = serde_json::json!({
-                                "route_source": "simctl_lookup",
-                                "opportunity_id": opp_id,
-                                "status": "route_metadata_fetched",
-                                "detail": "A3 lookup successful; candidate construction + simulation pending B2c"
-                            });
-                            (StatusCode::OK, Json(body))
-                        }
+                    // S4 PARCH-0: A3 constructs the OpportunityCandidate from the
+                    // opportunities row + route_metadata, then dispatches to the
+                    // REAL B2c multi-step REVM simulation. The old stub answered
+                    // `{"status":"route_metadata_fetched"}` with NO `passed`
+                    // field, so the drift-tracker could never parse a
+                    // SimOutcome out of it → Canal B produced 0 labels ever.
+                    let inputs = match route_lookup::fetch_candidate_inputs(pool, opp_id).await {
+                        Ok(Some(i)) => i,
                         Ok(None) => {
                             let body = serde_json::json!({
                                 "error": "route_metadata_not_found",
                                 "opportunity_id": opp_id,
                                 "detail": "opportunity has no route_metadata or does not exist"
                             });
-                            (StatusCode::NOT_FOUND, Json(body))
+                            return (StatusCode::NOT_FOUND, Json(body));
                         }
                         Err(e) => {
                             warn!(
                                 event = "sim.a3_pg_error",
                                 opportunity_id = %opp_id,
                                 error = %e,
-                                "A3 route lookup PG error"
+                                "A3 candidate-input lookup PG error"
                             );
                             let body = serde_json::json!({
                                 "error": "pg_error",
                                 "opportunity_id": opp_id,
                                 "detail": e.to_string()
                             });
-                            (StatusCode::INTERNAL_SERVER_ERROR, Json(body))
+                            return (StatusCode::INTERNAL_SERVER_ERROR, Json(body));
                         }
+                    };
+
+                    // Completeness gates → typed 422 `candidate_incomplete`
+                    // (S4-02 STRUCTURAL family: the row lacks what the encoder
+                    // needs; retrying will not change the row).
+                    let token_addresses = &inputs.route_metadata.token_addresses;
+                    if token_addresses.is_empty() {
+                        return a3_candidate_incomplete(
+                            opp_id,
+                            "token_addresses empty in route_metadata",
+                        );
+                    }
+                    if let Err(missing) = inputs
+                        .route_metadata
+                        .decimals
+                        .validate_complete(token_addresses)
+                    {
+                        return a3_candidate_incomplete(
+                            opp_id,
+                            format!("missing decimals for {missing:?}"),
+                        );
+                    }
+                    if inputs.chain_id <= 0 {
+                        return a3_candidate_incomplete(
+                            opp_id,
+                            format!("chain_id not a valid EVM chain: {}", inputs.chain_id),
+                        );
+                    }
+                    let amount_in_wei: u128 = match inputs.amount_in_wei.trim().parse() {
+                        Ok(w) if w > 0 => w,
+                        _ => {
+                            return a3_candidate_incomplete(
+                                opp_id,
+                                format!(
+                                    "amount_in_wei unparseable or zero: {:?}",
+                                    inputs.amount_in_wei
+                                ),
+                            );
+                        }
+                    };
+                    // validate_complete already guaranteed this entry; the
+                    // match keeps the trading path defensive (no unwrap).
+                    let decimals_in = match inputs.route_metadata.decimals.get(&token_addresses[0])
+                    {
+                        Some(d) => d,
+                        None => {
+                            return a3_candidate_incomplete(
+                                opp_id,
+                                format!("missing decimals for token_in {}", token_addresses[0]),
+                            );
+                        }
+                    };
+                    let amount_in = amount_in_wei as f64 / 10f64.powi(i32::from(decimals_in));
+                    if !amount_in.is_finite() || amount_in <= 0.0 {
+                        return a3_candidate_incomplete(
+                            opp_id,
+                            format!("amount_in non-finite or non-positive after wei conversion ({amount_in})"),
+                        );
+                    }
+
+                    let candidate = OpportunityCandidate {
+                        opportunity_id: opp_id,
+                        chain_id: inputs.chain_id as u64,
+                        token_addresses: token_addresses.clone(),
+                        pool_addresses: inputs.route_metadata.pool_addresses.clone(),
+                        dex_adapters: inputs.route_metadata.dex_adapters.clone(),
+                        amount_in,
+                        // The encoder consumes ONLY amount_in + topology +
+                        // decimals (build_round_trip_context_from_candidate);
+                        // expected_amount_out / gross_profit are carried
+                        // unused and are NOT persisted on the opportunities
+                        // row — sourced honestly as 0.0 (R8, never fabricated).
+                        expected_amount_out: 0.0,
+                        gross_profit: 0.0,
+                        decimals: inputs.route_metadata.decimals.clone(),
+                        block_number: req
+                            .block_number
+                            .or(inputs.block_number.filter(|b| *b >= 0).map(|b| b as u64)),
+                        // Deterministic A3 fingerprint. The executor's
+                        // routeHash is event-only (no registry validation),
+                        // and the searcher's engine-specific fingerprint is
+                        // NOT persisted — information loss documented. Same
+                        // convention as dex_engine.rs / variance_benchmark.
+                        route_fingerprint: format!(
+                            "{}_{}_{}",
+                            inputs.dex_a, inputs.token_in, inputs.token_out
+                        ),
+                    };
+
+                    match dispatch_b2c_real_sim(&st, candidate, req.block_number).await {
+                        Ok(mut response) => {
+                            response["route_source"] = serde_json::json!("simctl_lookup");
+                            response["opportunity_id"] = serde_json::json!(opp_id.to_string());
+                            (StatusCode::OK, Json(response))
+                        }
+                        Err(tuple) => tuple,
                     }
                 }
                 RouteSource::PgMetadata | RouteSource::SearcherApi => {
@@ -311,6 +349,116 @@ async fn simulate_handler(
             }
         }
     }
+}
+
+/// Typed 422 for an A3 row that cannot yield a complete candidate (S4 PARCH-0).
+///
+/// `candidate_incomplete` is a STRUCTURAL family reason (S4-02): the row
+/// itself lacks what the encoder needs — retrying will not change it, and the
+/// drift-tracker must never turn it into a calibration label.
+fn a3_candidate_incomplete(
+    opp_id: uuid::Uuid,
+    detail: impl std::fmt::Display,
+) -> (StatusCode, Json<serde_json::Value>) {
+    (
+        StatusCode::UNPROCESSABLE_ENTITY,
+        Json(serde_json::json!({
+            "error": "candidate_incomplete",
+            "opportunity_id": opp_id.to_string(),
+            "detail": detail.to_string()
+        })),
+    )
+}
+
+/// Shared B2c REAL multi-step REVM dispatch (G-SIM-1 B2c + S4 PARCH-0).
+///
+/// Serves both the pre-enriched path (`candidate=Some`) and the A3
+/// `simctl_lookup` path. Fail-honest typed 501/503 for missing prerequisites
+/// (backend/env/Redis/gas); a `passed=false` outcome is a 200, not an HTTP
+/// error (R8 — the simulation ran and the market rejected the route).
+///
+/// `block_override`: per-request block pin (the drift-tracker sends the
+/// SETTLED block so the Y-oracle measures at the block the opportunity would
+/// have landed in). The shared AppState simulator memoizes ONE block forever
+/// (OnceLock), so any pinned request gets a dedicated `SimulatorV2`
+/// instance — `sim_multistep` replays at `simulator.pinned_block()`, not at
+/// the candidate's block_number.
+async fn dispatch_b2c_real_sim(
+    st: &AppState,
+    candidate: OpportunityCandidate,
+    block_override: Option<u64>,
+) -> Result<serde_json::Value, (StatusCode, Json<serde_json::Value>)> {
+    let simulator = match &st.simulator {
+        Some(s) => s.clone(),
+        None => {
+            return Err((
+                StatusCode::NOT_IMPLEMENTED,
+                Json(serde_json::json!({
+                    "error": "real_sim_unavailable",
+                    "detail": "SIM_BACKEND!=revm — real multi-step REVM path requires SIM_BACKEND=revm"
+                })),
+            ));
+        }
+    };
+    let simulator = match block_override.or(candidate.block_number) {
+        Some(b) => {
+            Arc::new(simulator_v2::SimulatorV2::new(simulator.rpc_url.clone()).with_block(b))
+        }
+        None => simulator,
+    };
+    let env_config = match &st.real_sim_env {
+        Some(c) => c.clone(),
+        None => {
+            return Err((
+                StatusCode::NOT_IMPLEMENTED,
+                Json(serde_json::json!({
+                    "error": "real_sim_env_missing",
+                    "detail": "ARBITRAGE_EXECUTOR env var required for real simulation"
+                })),
+            ));
+        }
+    };
+    let redis = match &st.redis {
+        Some(r) => r.clone(),
+        None => {
+            return Err((
+                StatusCode::SERVICE_UNAVAILABLE,
+                Json(serde_json::json!({
+                    "error": "gas_price_unavailable",
+                    "detail": "REDIS_URL not configured — cannot read live gas_price_wei"
+                })),
+            ));
+        }
+    };
+
+    // Read live gas_price_wei from Redis (same key scheme as RevmBackend).
+    let gas_price_wei = match read_gas_price(&redis, candidate.chain_id).await {
+        Ok(g) => g,
+        Err(e) => {
+            return Err((
+                StatusCode::SERVICE_UNAVAILABLE,
+                Json(serde_json::json!({
+                    "error": "gas_price_read_failed",
+                    "detail": e
+                })),
+            ));
+        }
+    };
+
+    // Dispatch the REAL multi-step REVM simulation.
+    let outcome =
+        sim_runner::run_real_simulation(candidate, simulator, &env_config, gas_price_wei).await;
+
+    // Map SimulationOutcome → JSON response with wrapped_calldata.
+    Ok(serde_json::json!({
+        "passed": outcome.passed,
+        "gas_used_total": outcome.gas_used_total,
+        "gas_price_wei": outcome.gas_price_wei.to_string(),
+        "simulated_profit_token_in": outcome.simulated_profit_token_in.to_string(),
+        "intermediate_amount_out": outcome.intermediate_amount_out.map(|v| v.to_string()),
+        "fail_reason": outcome.fail_reason,
+        "wrapped_calldata": outcome.wrapped_calldata.as_ref().map(|bytes| format!("0x{}", hex::encode(bytes))),
+    }))
 }
 
 /// Read live gas_price_wei from Redis for the REAL sim path (G-SIM-1 B2c).
