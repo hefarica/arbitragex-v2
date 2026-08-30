@@ -1,13 +1,15 @@
 //! Redis Streams consumer for sim-ctl.
 //!
 //! Reads `arbx:opps:validated` published by selector-api (S3). For each opp:
-//!   1. simulate via sim_engine
+//!   1. simulate via the `SimulatorBackend` selected at boot by `SIM_BACKEND`
+//!      (SIMWIRE-01: previously hardcoded `SimEngine`/anvil — `SIM_BACKEND=revm`
+//!      only reached the HTTP /simulate endpoint, never this stream path)
 //!   2. persist simulation + update opp status
 //!   3. if passed → XADD arbx:opps:simulated (downstream for S5)
 //!   4. XACK only after persist.
 
 use crate::persistence::insert_simulation;
-use crate::sim_engine::SimEngine;
+use crate::simulator_backend::SimulatorBackend;
 use anyhow::{Context, Result};
 use redis::aio::ConnectionManager;
 use redis::AsyncCommands;
@@ -15,6 +17,7 @@ use shared_rs::contracts::Opportunity;
 use shared_rs::killswitch::KillSwitchClient;
 use shared_rs::metrics::SIMULATIONS_TOTAL;
 use sqlx::postgres::PgPool;
+use std::sync::Arc;
 use std::time::Duration;
 use tracing::{error, info, warn};
 
@@ -26,7 +29,7 @@ const STREAM_MAXLEN: usize = 10_000;
 pub struct Consumer {
     pub redis: ConnectionManager,
     pub pool: PgPool,
-    pub engine: SimEngine,
+    pub backend: Arc<dyn SimulatorBackend>,
     pub killswitch: KillSwitchClient,
     pub consumer_name: String,
 }
@@ -166,7 +169,18 @@ impl Consumer {
             }
         };
 
-        let sim = self.engine.simulate(&opportunity).await;
+        // SIMWIRE-01: dispatch through the boot-selected backend so
+        // `SIM_BACKEND=revm` reaches the stream path, not just HTTP.
+        // `SimulationError` is reserved for unrecoverable infra failures —
+        // record nothing fabricated and leave the message unacked for retry
+        // (same semantics as the persist-error path below).
+        let sim = match self.backend.simulate(&opportunity).await {
+            Ok(s) => s,
+            Err(e) => {
+                error!(event = "sim_consumer.backend_infra_err", id = %id, backend = %self.backend.name(), error = %e);
+                return Ok(());
+            }
+        };
 
         // G-SIM-1 layer-3 flow: count EVERY consumer-path simulation in the
         // shared Prometheus counter (declared semantics: "Simulations by
