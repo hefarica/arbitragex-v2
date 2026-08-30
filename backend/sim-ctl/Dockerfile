@@ -29,6 +29,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates
     && groupadd -r arbx && useradd -r -g arbx arbx
 WORKDIR /app
 COPY --from=builder /build/target/release/sim-ctl /usr/local/bin/sim-ctl
+# §IV blocker A2: forge bytecode artifacts for the boot-time ArbitrageExecutor
+# deploy to the anvil fork (src/executor_deploy.rs reads /app/contracts-artifacts).
+# Generated from contracts/ via `forge build` — do not hand-edit.
+COPY --from=builder /build/sim-ctl/contracts-artifacts /app/contracts-artifacts
 USER arbx
 ENV ARBX_CONFIG_PATH=/app/configs/app.toml
 EXPOSE 3003

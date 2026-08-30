@@ -738,9 +738,54 @@ async fn main() -> anyhow::Result<()> {
             None
         };
 
+    // §IV blocker A2 (vivid-grove): ensure the ArbitrageExecutor exists on the
+    // ephemeral anvil fork. The fork resets on container restart, so a static
+    // ARBITRAGE_EXECUTOR value cannot point at it — executor_deploy resolves
+    // the canonical create1 address at runtime (idempotent, fail-honest). An
+    // explicitly configured ARBITRAGE_EXECUTOR always wins (no deploy
+    // attempted); a deploy failure logs a warn and B2c keeps its typed 501.
+    let fork_executor: Option<Address> = match std::env::var("ARBITRAGE_EXECUTOR") {
+        Ok(v) if !v.is_empty() => {
+            info!(
+                event = "a2.executor_explicit",
+                "ARBITRAGE_EXECUTOR set — fork auto-deploy skipped"
+            );
+            None // explicit env value wins; from_env_with_executor reads it below
+        }
+        _ => match fork.as_ref() {
+            Some(fm) => {
+                match sim_ctl::executor_deploy::ensure_executor_on_fork(fm.provider.clone()).await {
+                    Ok(addr) => {
+                        info!(
+                            event = "a2.executor_ready",
+                            executor = ?addr,
+                            "ArbitrageExecutor live on anvil fork (runtime slot)"
+                        );
+                        Some(addr)
+                    }
+                    Err(e) => {
+                        warn!(
+                            event = "a2.executor_deploy_failed",
+                            error = %e,
+                            "continuing without fork executor — B2c stays 501 (fail-honest)"
+                        );
+                        None
+                    }
+                }
+            }
+            None => {
+                warn!(
+                    event = "a2.executor_no_fork",
+                    "no anvil fork at boot — executor auto-deploy skipped (B2c stays 501)"
+                );
+                None
+            }
+        },
+    };
+
     // real_sim_env: Option<RealSimEnvConfig> — best-effort load. None when
     // ARBITRAGE_EXECUTOR is unset (real-sim returns a typed 501 in that case).
-    let real_sim_env = match sim_runner::RealSimEnvConfig::from_env() {
+    let real_sim_env = match sim_runner::RealSimEnvConfig::from_env_with_executor(fork_executor) {
         Ok(c) => {
             info!(event = "b2c.env_loaded", "real-sim env config loaded");
             Some(c)

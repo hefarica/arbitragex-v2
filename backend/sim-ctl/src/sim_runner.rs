@@ -68,18 +68,29 @@ pub struct RealSimEnvConfig {
 }
 
 impl RealSimEnvConfig {
-    /// Load from env. Fails closed with a typed message on missing/invalid
-    /// mandatory fields (executor_address is mandatory; the rest have safe
-    /// defaults because they are not economic parameters).
-    pub fn from_env() -> Result<Self, String> {
-        let executor_address = std::env::var("ARBITRAGE_EXECUTOR")
-            .ok()
-            .filter(|s| !s.is_empty())
-            .ok_or_else(|| "ARBITRAGE_EXECUTOR env var required for real simulation".to_string())
-            .and_then(|s| {
-                s.parse::<Address>()
-                    .map_err(|e| format!("ARBITRAGE_EXECUTOR invalid address: {e}"))
-            })?;
+    /// Load from env, with the §IV blocker A2 runtime override.
+    ///
+    /// `deployed_executor` = `Some(addr)` when `crate::executor_deploy`
+    /// deployed the ArbitrageExecutor to the ephemeral anvil fork at boot —
+    /// it overrides the `ARBITRAGE_EXECUTOR` env lookup (the fork address
+    /// only exists at runtime; the env var is never mutated). `None` → env
+    /// semantics unchanged: executor_address is mandatory and a missing value
+    /// fails closed with a typed message (B2c returns its 501 upstream); the
+    /// rest have safe defaults because they are not economic parameters.
+    pub fn from_env_with_executor(deployed_executor: Option<Address>) -> Result<Self, String> {
+        let executor_address = match deployed_executor {
+            Some(addr) => addr,
+            None => std::env::var("ARBITRAGE_EXECUTOR")
+                .ok()
+                .filter(|s| !s.is_empty())
+                .ok_or_else(|| {
+                    "ARBITRAGE_EXECUTOR env var required for real simulation".to_string()
+                })
+                .and_then(|s| {
+                    s.parse::<Address>()
+                        .map_err(|e| format!("ARBITRAGE_EXECUTOR invalid address: {e}"))
+                })?,
+        };
 
         let gas_limit_per_step = std::env::var("SIM_GAS_LIMIT_PER_STEP")
             .ok()
@@ -276,11 +287,30 @@ mod tests {
     fn test_real_sim_env_config_missing_executor_fails() {
         // Clear the env var if present for this test.
         std::env::remove_var("ARBITRAGE_EXECUTOR");
-        let result = RealSimEnvConfig::from_env();
+        let result = RealSimEnvConfig::from_env_with_executor(None);
         assert!(result.is_err(), "missing ARBITRAGE_EXECUTOR must fail");
         assert!(
             result.unwrap_err().contains("ARBITRAGE_EXECUTOR"),
             "error must name the missing var"
+        );
+    }
+
+    /// §IV blocker A2: the fork-boot executor (deployed by executor_deploy at
+    /// sim-ctl boot) must override the env lookup — the ephemeral fork address
+    /// only exists at runtime and is never written back to the environment.
+    #[test]
+    fn test_real_sim_env_config_runtime_executor_overrides_env() {
+        std::env::remove_var("ARBITRAGE_EXECUTOR");
+        let canonical: Address = "0xe7f1725E7734CE288F8367e1Bb143E90bb3F0512"
+            .parse()
+            .expect("canonical proxy address must parse");
+        let cfg = RealSimEnvConfig::from_env_with_executor(Some(canonical))
+            .expect("runtime executor must satisfy the mandatory field");
+        assert_eq!(cfg.executor_address, canonical);
+        // Env stays authoritative when no runtime executor was deployed.
+        assert!(
+            RealSimEnvConfig::from_env_with_executor(None).is_err(),
+            "None must fall back to the (unset) env and fail closed"
         );
     }
 }
