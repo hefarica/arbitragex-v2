@@ -115,4 +115,78 @@ fn is_sim_capability_gap(fail_reason: &str) -> bool {
     fail_reason.starts_with("strategy_not_simulatable")
         || fail_reason.starts_with("anvil_fork_not_configured")
         || fail_reason.contains("_not_supported_in_s4")
+        // SIMWIRE-02 (P1 safety net): typed B2c/stream gaps. Absence of
+        // capability must NEVER become an opportunity-quality rejection —
+        // otherwise a flipped SIM_BACKEND=revm structurally drains the
+        // validated stream into permanent `rejected` rows. Families:
+        //   route_encoding_not_available  — legacy RevmBackend empty calldata
+        //   route_metadata_not_available  — row lacks route topology
+        //   real_sim_unavailable / real_sim_env_missing — B2c env incomplete
+        //   candidate_incomplete:*       — S4-02 STRUCTURAL: the row lacks
+        //                                   what the encoder needs; retry
+        //                                   cannot change the row
+        //   b2c_encode_failed:*          — router not in the encoder catalog
+        || fail_reason.starts_with("route_encoding_not_available")
+        || fail_reason.starts_with("route_metadata_not_available")
+        || fail_reason.starts_with("real_sim_unavailable")
+        || fail_reason.starts_with("real_sim_env_missing")
+        || fail_reason.starts_with("candidate_incomplete")
+        || fail_reason.starts_with("b2c_encode_failed")
+}
+
+#[cfg(test)]
+mod simwire02_classifier_tests {
+    use super::is_sim_capability_gap;
+
+    #[test]
+    fn legacy_gap_families_stay_gaps() {
+        for reason in [
+            "strategy_not_simulatable:mev_backrun",
+            "anvil_fork_not_configured",
+            "strategy_not_supported_in_s4",
+        ] {
+            assert!(is_sim_capability_gap(reason), "{reason} must stay a gap");
+        }
+    }
+
+    /// SIMWIRE-02 P1: the structural-drain guard. Every typed B2c/stream
+    /// gap must keep the opportunity NON-rejected (status stays
+    /// detected/validated, rejection_reason stays NULL).
+    #[test]
+    fn simwire02_typed_b2c_gaps_are_not_rejections() {
+        for reason in [
+            "route_encoding_not_available",
+            "route_metadata_not_available",
+            "real_sim_unavailable: SIM_BACKEND!=revm",
+            "real_sim_env_missing: ARBITRAGE_EXECUTOR env var required",
+            "candidate_incomplete:token_addresses_empty",
+            "candidate_incomplete:missing_decimals_[\"0xabc\"]",
+            "candidate_incomplete:amount_in_wei_unparseable",
+            "b2c_encode_failed:router_not_in_catalog",
+        ] {
+            assert!(
+                is_sim_capability_gap(reason),
+                "{reason} must classify as capability gap, not rejection"
+            );
+        }
+    }
+
+    /// The flip side: genuine opportunity-quality / market verdicts must
+    /// still reject — the gap set must not swallow economic truth.
+    #[test]
+    fn economic_and_market_verdicts_stay_rejections() {
+        for reason in [
+            "execution_reverted",
+            "multistep_call_halt:Revert",
+            "multistep_gross_spread_non_positive",
+            "stf",
+            "gas_floor_breach",
+            "net_zero_after_gas",
+        ] {
+            assert!(
+                !is_sim_capability_gap(reason),
+                "{reason} must stay a rejection, not a gap"
+            );
+        }
+    }
 }
