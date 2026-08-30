@@ -141,7 +141,7 @@ export function summarizeDecision(
 // a runtime timestamp would falsely imply these were re-verified on load.
 // ─────────────────────────────────────────────────────────────────────────
 
-const MILESTONES_LAST_UPDATED = "2026-06-14";
+const MILESTONES_LAST_UPDATED = "2026-08-29";
 
 const PRE_LIVE_PCT = 85;
 const PRE_LIVE_DETAIL =
@@ -149,11 +149,12 @@ const PRE_LIVE_DETAIL =
   "A.3.b PG decimals · A.3.c orchestrator · A.3.c.2 multistep · " +
   "A.3.c.3 SequenceContext · A.3.c.4 DatabaseRef · A.4 scaffold";
 
-const FULL_SYSTEM_PCT = 58; // post-P0 banner + post-P1 panels lift visibility
+const FULL_SYSTEM_PCT = 70; // AUDIT-2026-08-29: A.4 PASS + A.5 PASS (PR #473/#474, readiness decision go_a4/go_a5=true) + A.8 LIVE (#470/#471)
 const FULL_SYSTEM_DETAIL =
-  "Pre-live 85% + visibility (P0 banner + P1 panels). Remaining: A.4 fork " +
-  "real, A.5 paper-shadow, A.6 circuit breakers, A.7 private relay no-submit, " +
-  "A.8 confidence scoring, A.9 GO/NO-GO formal.";
+  "Pre-live 85% + visibility (P0 banner + P1 panels). A.4 fork PASS · " +
+  "A.5 paper-shadow PASS · A.8 confidence scoring LIVE. Remaining: A.6 circuit " +
+  "breakers envs, A.7 private relay call-site, A.9 GO/NO-GO formal sign-off " +
+  "(readiness decision: G-PIPE-1 + A.9).";
 
 const FE_AUDIT_PCT = 100;
 const FE_AUDIT_DETAIL =
@@ -366,8 +367,11 @@ export function ProgressRealCard() {
           <div className="grid grid-cols-2 gap-2 border-t pt-4 sm:grid-cols-3 lg:grid-cols-5">
             <RuntimeTile label="P0 banner" value="PASS" tone="success" />
             <RuntimeTile label="P1 progress + evidence" value="IN PROGRESS" tone="info" />
-            <RuntimeTile label="A.4 fork" value="BLOCKED" tone="warning" />
-            <RuntimeTile label="A.5 paper-shadow" value="NO-GO" tone="warning" />
+            {/* AUDIT-2026-08-29: hand-edited per this card's doctrine (values move
+                on milestone commits). Verifier source: /api/readiness/decision
+                go_a4/go_a5 — the SystemGuardBanner renders these live. */}
+            <RuntimeTile label="A.4 fork" value="PASS" tone="success" />
+            <RuntimeTile label="A.5 paper-shadow" value="PASS" tone="success" />
             <RuntimeTile label="Capital exposure" value="$0" tone="success" />
           </div>
         </section>
