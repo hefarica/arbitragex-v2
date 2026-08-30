@@ -107,6 +107,7 @@ interface BlockersResponse {
 
 interface DecisionResponse {
   generated_at: string;
+  go_a4: boolean;
   go_a5: boolean;
   go_live: boolean;
   verdict: "NO_GO" | "GO";
@@ -567,7 +568,11 @@ export function mountReadinessExtras(
       const summary = summarize(blockers);
 
       const a4Blocker = blockers.find((b) => b.id === "a4_fork_real_not_executed");
-      const goA5 = a4Blocker == null && summary.blocked_phases.indexOf("A.5") === -1;
+      // AUDIT-2026-08-29 P0 (deployment coherence): go_a4 exposed explicitly
+      // so the DApp banner renders the verifier verdict instead of a
+      // hardcoded "BLOCKED" that contradicts runtime evidence.
+      const goA4 = a4Blocker == null;
+      const goA5 = goA4 && summary.blocked_phases.indexOf("A.5") === -1;
       // go_live is structurally false in this phase. There is no submission
       // code path; the doctrine requires A.9 formal sign-off; SystemGuardBanner
       // also enforces this client-side. Three layers of NO.
@@ -591,6 +596,7 @@ export function mountReadinessExtras(
 
       const response: DecisionResponse = {
         generated_at: new Date().toISOString(),
+        go_a4: goA4,
         go_a5: goA5,
         go_live: goLive,
         verdict: summary.critical > 0 ? "NO_GO" : "NO_GO",

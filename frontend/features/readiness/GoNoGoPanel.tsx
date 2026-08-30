@@ -124,6 +124,12 @@ function VerdictTile({ data }: { data: ReadinessDecisionResponse }) {
     ) : (
       <Badge variant="destructive" className="font-mono">NO-GO</Badge>
     );
+  const goA4Badge =
+    data.go_a4 ? (
+      <Badge variant="info" className="font-mono">GO</Badge>
+    ) : (
+      <Badge variant="destructive" className="font-mono">NO-GO</Badge>
+    );
   const goA5Badge =
     data.go_a5 ? (
       <Badge variant="info" className="font-mono">GO</Badge>
@@ -134,6 +140,10 @@ function VerdictTile({ data }: { data: ReadinessDecisionResponse }) {
   return (
     <div className="space-y-3">
       <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+        <div className="rounded-md border bg-muted/30 p-3">
+          <div className="text-[10px] uppercase tracking-wider text-muted-foreground">A.4 fork validation</div>
+          <div className="mt-1 flex items-center gap-2">{goA4Badge}</div>
+        </div>
         <div className="rounded-md border bg-muted/30 p-3">
           <div className="text-[10px] uppercase tracking-wider text-muted-foreground">A.5 paper-shadow</div>
           <div className="mt-1 flex items-center gap-2">{goA5Badge}</div>
@@ -208,6 +218,7 @@ function DecisionDetailDialog({ data }: { data: ReadinessDecisionResponse }) {
 
         <div className="space-y-3">
           <div className="grid grid-cols-2 gap-2 text-xs sm:grid-cols-4">
+            <DetailKV k="go_a4" v={String(data.go_a4)} />
             <DetailKV k="go_a5" v={String(data.go_a5)} />
             <DetailKV k="go_live" v={String(data.go_live)} />
             <DetailKV k="paper_mode" v={String(data.paper_mode)} />

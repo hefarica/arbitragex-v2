@@ -4,7 +4,7 @@
  * Why static markup:
  *   - Same toolkit-alignment constraint as StatusPill.test.tsx: no jsdom.
  *   - SSR-only rendering shows the initial "loading" state plus the
- *     hardcoded guard tiles (Live OFF, Paper ON, $0, NO-GO, BLOCKED).
+ *     hardcoded guard tiles (Live OFF, Paper ON, $0, NO-GO).
  *     Those tiles are the structural barrier to live trading and MUST
  *     be present on every page render.
  *   - useEffect (fetch + interval) doesn't fire under renderToStaticMarkup,
@@ -15,7 +15,9 @@
  *   - Paper = ON                                       (1× ":ON" exact)
  *   - Capital = $0
  *   - GO live = NO-GO
- *   - A.4 fork + A.5 paper-shadow = BLOCKED            (2× "BLOCKED")
+ *   - A.4 fork + A.5 paper-shadow = "…" on static render (verdict arrives
+ *     from the readiness decision endpoint via useEffect — AUDIT-2026-08-29
+ *     P0: UI = RuntimeVerifierStatus, no hardcoded BLOCKED/PASS)
  *   - Banner never claims Live=ON or GO=GO
  */
 import React from "react";
@@ -64,10 +66,15 @@ describe("SystemGuardBanner", () => {
     expect(html).toContain(">NO-GO</span>");
   });
 
-  it("renders A.4 + A.5 as BLOCKED", () => {
+  it("renders A.4 + A.5 as pending (…) on static render — verdict is runtime data", () => {
     expect(html).toContain(">A.4 fork:</span>");
     expect(html).toContain(">A.5 paper-shadow:</span>");
-    expect(countOccurrences(">BLOCKED</span>")).toBe(2);
+    // AUDIT-2026-08-29 P0: verdicts come from the readiness decision endpoint
+    // (useEffect); static render must show neither BLOCKED nor PASS.
+    expect(html.match(/>A\.4 fork:<\/span><span class="font-semibold">([^<]*)</)?.[1]).toBe("…");
+    expect(html.match(/>A\.5 paper-shadow:<\/span><span class="font-semibold">([^<]*)</)?.[1]).toBe("…");
+    expect(countOccurrences(">BLOCKED</span>")).toBe(0);
+    expect(countOccurrences(">PASS</span>")).toBe(0);
   });
 
   it("renders loading state on initial server render (no fetch fired)", () => {
