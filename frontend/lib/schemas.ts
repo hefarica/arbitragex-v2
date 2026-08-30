@@ -815,6 +815,7 @@ export const ReadinessBlockersResponseSchema = z.object({
 
 export const ReadinessDecisionResponseSchema = z.object({
   generated_at: z.string(),
+  go_a4: z.boolean(),
   go_a5: z.boolean(),
   go_live: z.boolean(),
   verdict: z.string(),

@@ -39,7 +39,7 @@ describe("ProgressRealCard", () => {
 
   it("renders full-system percentage (mid-range, never 100%)", () => {
     expect(html).toMatch(/Full system to live-minimum/i);
-    expect(html).toContain("58%");
+    expect(html).toContain("70%");
   });
 
   it("renders frontend audit = 100%", () => {
@@ -58,14 +58,19 @@ describe("ProgressRealCard", () => {
     expect(html).toContain("Live trading: OFF");
   });
 
-  it("asserts A.4 fork = BLOCKED", () => {
+  it("asserts A.4 fork = PASS (hand-edited per milestone doctrine, AUDIT-2026-08-29)", () => {
     expect(html).toMatch(/A\.4 fork/i);
-    expect(html).toContain("BLOCKED");
+    expect(html).toContain("PASS");
+    expect(html).not.toContain("BLOCKED");
   });
 
-  it("asserts A.5 paper-shadow = NO-GO", () => {
+  it("asserts A.5 paper-shadow = PASS (readiness decision go_a5=true)", () => {
     expect(html).toMatch(/A\.5 paper-shadow/i);
-    expect(html).toContain("NO-GO");
+    // Tile-scoped assertion: the milestone tile value is PASS — never a NO-GO
+    // verdict. ("NO-GO" legitimately appears in the A.9 "GO/NO-GO" phase name
+    // in FULL_SYSTEM_DETAIL, so a global not.toContain would be wrong.)
+    expect(html).toMatch(/A\.5 paper-shadow<\/div><div[^>]*>PASS</);
+    expect(html).not.toMatch(/A\.5 paper-shadow<\/div><div[^>]*>NO-GO/);
   });
 
   it("asserts Capital exposure = $0", () => {
@@ -84,7 +89,7 @@ describe("ProgressRealCard", () => {
     // The four bars are hand-edited constants — the UI must say so and show
     // when they were last touched (git date of the most recent constant edit).
     expect(html).toMatch(/manual/i);
-    expect(html).toContain("2026-06-14");
+    expect(html).toContain("2026-08-29");
   });
 
   it("renders a live readiness aggregate row sourced from /api/readiness", () => {
