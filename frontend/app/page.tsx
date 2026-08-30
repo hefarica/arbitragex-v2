@@ -58,10 +58,13 @@ function toXRayProps(opp: OpportunityRow) {
         : gross != null
           ? `${gross >= 0 ? "+" : ""}${(opp.roi_pct ?? 0).toFixed(2)}%`
           : "—",
+    // AUDIT-2026-08-29 (R8): unscored ≠ 0%. null (A.8 scorer hasn't scored
+    // this opportunity) propagates as null — the card renders "— unscored",
+    // never a fabricated "0% conf".
     confidence:
       opp.confidence_score_bps != null
         ? Math.round(opp.confidence_score_bps / 100)
-        : 0,
+        : null,
     legs,
     ago: opp.detected_at,
     route: `${opp.dex_a}${opp.dex_b ? ` → ${opp.dex_b}` : ""}`,
@@ -172,8 +175,13 @@ export default async function HomePage() {
             / opportunities · live
           </span>
           <h2 className="text-[22px] font-semibold tracking-[-0.02em]">
-            Asimetrías Topológicas activas
+            Asimetrías Topológicas detectadas
           </h2>
+          {/* AUDIT-2026-08-29: this feed is raw DETECTION (candidates pre-gate),
+              not curated "active" arbitrage — the qualifier below says so. */}
+          <span className="font-mono text-[10px] tracking-wide text-[var(--muted)]">
+            candidatas pre-gate · observación
+          </span>
         </div>
 
         {opportunities.length === 0 ? (
