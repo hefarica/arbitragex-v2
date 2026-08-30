@@ -376,6 +376,20 @@ pub static SIM_STREAM_CLAIM_FAILURES: Lazy<IntCounter> = Lazy::new(|| {
     c
 });
 
+/// SIMWIRE-02b: stale PEL entries dead-lettered because their payload can
+/// never complete (opportunity row purged / malformed). Watch this alongside
+/// `arbx_sim_stream_pending_count` during the staged activation: it should
+/// spike ONCE when the pre-existing ghosts drain, then stay flat.
+pub static SIM_STREAM_GHOST_ACKED: Lazy<IntCounter> = Lazy::new(|| {
+    let c = IntCounter::new(
+        "arbx_sim_stream_ghost_acked",
+        "Stale PEL entries terminally ACKed as ghosts (opportunity_row_missing / malformed_payload)",
+    )
+    .expect("metric");
+    REGISTRY.register(Box::new(c.clone())).expect("register");
+    c
+});
+
 /// Record a bundle inclusion event.
 ///
 /// `profitable` is `true` when the opportunity carried a positive
@@ -426,6 +440,7 @@ pub fn init_metrics() {
     let _ = &*SIM_STREAM_OLDEST_PENDING_MS;
     let _ = &*SIM_STREAM_CLAIMED_COUNT;
     let _ = &*SIM_STREAM_CLAIM_FAILURES;
+    let _ = &*SIM_STREAM_GHOST_ACKED;
     SERVICE_UP.set(1);
 }
 

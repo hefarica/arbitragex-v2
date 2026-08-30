@@ -32,7 +32,7 @@ use redis::AsyncCommands;
 use shared_rs::contracts::{Opportunity, SimulationResult, SimulatorKind};
 use shared_rs::killswitch::KillSwitchClient;
 use shared_rs::metrics::{
-    SIMULATIONS_TOTAL, SIM_STREAM_CLAIMED_COUNT, SIM_STREAM_CLAIM_FAILURES,
+    SIMULATIONS_TOTAL, SIM_STREAM_CLAIMED_COUNT, SIM_STREAM_CLAIM_FAILURES, SIM_STREAM_GHOST_ACKED,
     SIM_STREAM_OLDEST_PENDING_MS, SIM_STREAM_PENDING_COUNT,
 };
 use sqlx::postgres::PgPool;
@@ -299,6 +299,21 @@ impl Consumer {
             }
             for (id, fields) in entries {
                 SIM_STREAM_CLAIMED_COUNT.inc();
+                // SIMWIRE-02b: a stale entry whose opportunities row is gone
+                // (retention purge) can NEVER satisfy the simulations→
+                // opportunities FK — every reprocess fails at insert and
+                // re-queues forever. ACK it (terminal dead-letter) with a
+                // loud, honest warning instead of spinning the loop.
+                if let Some(reason) = self.ghost_reason(&fields).await {
+                    SIM_STREAM_GHOST_ACKED.inc();
+                    warn!(event = "sim_consumer.ghost_entry_acked", id = %id, reason,
+                          "stale PEL entry dropped: its payload can never complete");
+                    let _: redis::RedisResult<()> = self
+                        .redis
+                        .xack::<_, _, &str, ()>(STREAM_IN, GROUP, &[id.as_str()])
+                        .await;
+                    continue;
+                }
                 info!(event = "sim_consumer.pel_claimed", id = %id, "stale PEL entry reclaimed for reprocessing");
                 if let Err(e) = self.process_message(id.clone(), fields).await {
                     error!(event = "sim_consumer.recovered_process_err", id = %id, error = %e);
@@ -308,6 +323,40 @@ impl Consumer {
                 return;
             }
             cursor = next_cursor;
+        }
+    }
+
+    /// SIMWIRE-02b ghost check (recovery path ONLY — a fresh `>` entry
+    /// cannot be a ghost: its opportunities row was just inserted upstream).
+    /// Returns `Some(reason)` when this entry can never complete:
+    /// - `malformed_payload`: the `json` field carries no usable id.
+    /// - `opportunity_row_missing`: the opportunities row was purged while
+    ///   the entry sat in the PEL; the simulations FK fails every persist.
+    ///
+    /// A DB error here degrades to `None` (not a ghost) so transient outages
+    /// keep the honest retry path — only a confirmed missing row dead-letters.
+    async fn ghost_reason(&self, kv: &[redis::Value]) -> Option<&'static str> {
+        let payload = match extract_field(kv, "json") {
+            Some(p) => p,
+            None => return Some("malformed_payload"),
+        };
+        let parsed_id: Option<uuid::Uuid> = serde_json::from_str::<serde_json::Value>(&payload)
+            .ok()
+            .and_then(|v| v.get("id").and_then(|i| i.as_str()).map(str::to_owned))
+            .and_then(|s| uuid::Uuid::parse_str(&s).ok());
+        let Some(opp_id) = parsed_id else {
+            return Some("malformed_payload");
+        };
+        let exists: Option<i32> = sqlx::query_scalar("SELECT 1 FROM opportunities WHERE id = $1")
+            .bind(opp_id)
+            .fetch_optional(&self.pool)
+            .await
+            .ok()
+            .flatten();
+        if exists.is_some() {
+            None
+        } else {
+            Some("opportunity_row_missing")
         }
     }
 
