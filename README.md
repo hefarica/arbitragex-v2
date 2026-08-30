@@ -1,6 +1,8 @@
 # ArbitrageX v2 — Quantum Topological Yield Engine
 
-> **Status:** PAPER / SHADOW (capital $0, broadcast disabled) · **~78% complete** · [Hardening + Roadmap](docs/HARDENING_AND_ROADMAP.md)
+> **Status:** PAPER / SHADOW (capital $0, broadcast disabled) · pre-live honesty **85%** · full-system **70%** to live-minimum (doctrinal milestones, hand-edited 2026-08-29) · [Hardening + Roadmap](docs/HARDENING_AND_ROADMAP.md)
+>
+> **Readiness (verifier SSOT):** A.4 fork **PASS** · A.5 paper-shadow **PASS** (closure #473; A.4 fork-validation lineage #431) · A.8 confidence scoring **LIVE** (#470/#471) · remaining: A.6 circuit-breaker envs, A.7 private-relay call-site, A.9 formal sign-off. The DApp banner renders `go_a4`/`go_a5` live from `/api/readiness/decision` (#477) — UI = RuntimeVerifierStatus, never a hardcoded snapshot. `/status` reports the exact deploy SHA + workflow run (#478).
 
 A real-time arbitrage detection + paper-shadow simulation system for EVM DEXs. It detects price asymmetries across liquidity venues, simulates execution on REVM/Anvil forks (zero capital), and scores opportunities via a 31-operator mathematical evidence pipeline.
 
@@ -67,10 +69,10 @@ All 31 implemented with real formulas + fail-honest `None` (commit `7f47c5e2`, 1
 | Stage | Component | Status |
 |---|---|---|
 | 1 | Evidence primitives + schema + capture | ✅ |
-| 2a | Drift-tracker (Y-oracle) + sim-ctl/anvil | ✅ (flagged OFF) |
-| — | **Gap 1:** route_metadata per-worker | ❌ Blocks Y-labels |
-| — | **Gap 2:** ArbitrageExecutor deploy | ❌ Blocks B2c real-sim |
-| 2b | Offline LR calibration | ⏳ Needs Gaps 1+2 |
+| 2a | Drift-tracker (Y-oracle) + sim-ctl/anvil | ✅ armed — env-gated (`SIM_BACKEND=revm` pending operator) |
+| — | ~~Gap 1: route_metadata per-worker~~ | ✅ closed for the sim/labels path (#474: A3 `simctl_lookup` enrichment; decimals via `tokens` + `route_metadata` overlay). Residual: some `emit_rejected` sites still omit route |
+| — | ~~Gap 2: ArbitrageExecutor deploy~~ | superseded — B2c real-sim is in-process REVM (#475); dispatch is live and answers typed `501 real_sim_unavailable` until the env flip |
+| 2b | Offline LR calibration | ⏳ armed end-to-end — awaiting first real labels (env flip → 501→pass → Y-labels → log-LR) |
 
 ---
 
