@@ -229,6 +229,16 @@ app.get("/status", async (_req, res) => {
     killswitch: ks,
     env: cfg.system.env,
     version: VERSION,
+    // AUDIT-2026-08-29 P0-1 (deployment coherence): the exact commit the
+    // deploy workflow anchored + verified on the VPS (G4 deploy-veraz) before
+    // building this stack. All services deploy from the same anchored
+    // checkout. R8 fail-honest: 'unknown' = the container was created without
+    // the workflow exports (manual `up`) — reported verbatim, never fabricated.
+    deploy: {
+      sha: process.env.ARBX_DEPLOY_SHA ?? "unknown",
+      id: process.env.ARBX_DEPLOY_ID ?? "unknown",
+      at: process.env.ARBX_DEPLOYED_AT ?? "unknown",
+    },
     ts: new Date().toISOString(),
   });
 });
