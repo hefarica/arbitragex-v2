@@ -1,9 +1,13 @@
 "use client";
 
+import * as React from "react";
+
 interface XRayCardProps {
   pair: string;
   yield: string;
-  confidence: number;
+  /** A.8 confidence 0-100, or null when the scorer hasn't scored this
+   * opportunity (R8: null = not computed — rendered as "—", never 0%). */
+  confidence: number | null;
   legs: number;
   ago: string;
   route: string;
@@ -38,7 +42,10 @@ export function XRayCard({
         </div>
         <div className="flex gap-4 font-mono text-[10.5px] text-[var(--muted)] tracking-wide">
           <span>
-            <b className="text-[var(--foreground)]">{confidence}</b>% conf
+            <b className="text-[var(--foreground)]">
+              {confidence ?? "—"}
+            </b>
+            {confidence != null ? "% conf" : " conf (unscored)"}
           </span>
           <span>
             <b className="text-[var(--foreground)]">{legs}</b> legs
@@ -56,7 +63,14 @@ export function XRayCard({
           <XRayRow label="ROUTE" value={route} bold />
           <XRayRow label="DECOHERENCIA" value={fees} bold />
           <XRayRow label="TLS AMOUNT" value={tlsAmount} bold />
-          <XRayRow label="SIM VERDICT" value={`✓ ${simVerdict}`} ok />
+          {/* AUDIT-2026-08-29: the ✓ glyph is a claim — only render it for
+              success-family verdicts. "pendiente"/reverted/halted show the
+              verbatim verdict without a green checkmark (R8). */}
+          <XRayRow
+            label="SIM VERDICT"
+            value={isSuccessVerdict(simVerdict) ? `✓ ${simVerdict}` : simVerdict}
+            ok={isSuccessVerdict(simVerdict)}
+          />
           <XRayRow label="TOKEN SAFETY" value={`A ${safetyA} · B ${safetyB}`} bold />
         </div>
       </div>
@@ -69,6 +83,14 @@ interface XRayRowProps {
   value: string;
   bold?: boolean;
   ok?: boolean;
+}
+
+/** True only for success-family verdicts. Anything else — "pendiente",
+ * "reverted", "halted", "SIM_REVERT", null-derived defaults — keeps the
+ * verbatim text WITHOUT a ✓: a checkmark is an earned claim (R8). */
+function isSuccessVerdict(verdict: string): boolean {
+  const v = verdict.toLowerCase();
+  return v === "success" || v === "sim_success" || v === "included";
 }
 
 function XRayRow({ label, value, bold, ok }: XRayRowProps) {
