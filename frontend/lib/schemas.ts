@@ -20,6 +20,17 @@ export const StatusResponseSchema = z.object({
   killswitch: KillSwitchStateSchema.nullable(),
   env: z.string(),
   version: z.string(),
+  // AUDIT-2026-08-29 P0-1 (deployment coherence): the commit + run the deploy
+  // workflow anchored this stack to. Optional: an api-server build older than
+  // this field omits it (deploy-skew window) — the UI then reports
+  // "not reported" instead of failing the whole /status payload (R8).
+  deploy: z
+    .object({
+      sha: z.string(),
+      id: z.string(),
+      at: z.string(),
+    })
+    .optional(),
   ts: z.string(),
 });
 
