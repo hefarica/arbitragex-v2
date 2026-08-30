@@ -340,6 +340,14 @@ services:
     environment:
       ARBX_CONFIG_PATH: /app/configs/app.toml
       REDIS_URL: redis://redis:6379
+      # AUDIT-2026-08-29 P0-1 (deployment coherence): the commit + run this
+      # stack was deployed from. Runtime env (NOT a build arg): the container
+      # is force-recreated each deploy, so no image-cache invalidation and no
+      # RULE 03 re-bake trap. 'unknown' = manual `up` without the workflow
+      # exports — surfaced verbatim by /status, never fabricated.
+      ARBX_DEPLOY_SHA: ${ARBX_DEPLOY_SHA:-unknown}
+      ARBX_DEPLOY_ID: ${ARBX_DEPLOY_ID:-unknown}
+      ARBX_DEPLOYED_AT: ${ARBX_DEPLOYED_AT:-unknown}
       ARBX_ADMIN_TOKEN: ${ARBX_ADMIN_TOKEN:?ARBX_ADMIN_TOKEN required}
       DATABASE_URL: ${DATABASE_URL:?DATABASE_URL required}
       API_PORT: '8080'
