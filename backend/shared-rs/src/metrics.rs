@@ -2,7 +2,9 @@
 
 use axum::{body::Body, http::StatusCode, response::Response};
 use once_cell::sync::Lazy;
-use prometheus::{Encoder, HistogramVec, IntCounterVec, IntGauge, Registry, TextEncoder};
+use prometheus::{
+    Encoder, HistogramVec, IntCounter, IntCounterVec, IntGauge, Registry, TextEncoder,
+};
 
 pub static REGISTRY: Lazy<Registry> = Lazy::new(Registry::new);
 
@@ -323,6 +325,57 @@ pub static GAS_PRICE_TS_SECONDS: Lazy<prometheus::IntGauge> = Lazy::new(|| {
     g
 });
 
+// ---- SIMWIRE-02: stream consumer PEL health (pending-entries-list) ----
+//
+// The sim-ctl consumer leaves entries UNACKED on transient infra errors; the
+// entries live in the group's PEL until XAUTOCLAIM recovers them. These four
+// metrics make that recovery observable:
+//   arbx_sim_stream_pending_count      — entries currently in the PEL (XPENDING)
+//   arbx_sim_stream_oldest_pending_ms  — idle time of the oldest PEL entry;
+//                                        growth without claims = stuck entries
+//   arbx_sim_stream_claimed_count      — entries reclaimed via XAUTOCLAIM
+//   arbx_sim_stream_claim_failures     — XPENDING/XAUTOCLAIM command errors
+
+pub static SIM_STREAM_PENDING_COUNT: Lazy<IntGauge> = Lazy::new(|| {
+    let g = IntGauge::new(
+        "arbx_sim_stream_pending_count",
+        "Entries in the sim-ctl consumer group PEL (unacked, awaiting XAUTOCLAIM recovery)",
+    )
+    .expect("metric");
+    REGISTRY.register(Box::new(g.clone())).expect("register");
+    g
+});
+
+pub static SIM_STREAM_OLDEST_PENDING_MS: Lazy<IntGauge> = Lazy::new(|| {
+    let g = IntGauge::new(
+        "arbx_sim_stream_oldest_pending_ms",
+        "Idle time in ms of the oldest pending (unacked) entry in the sim-ctl consumer group PEL",
+    )
+    .expect("metric");
+    REGISTRY.register(Box::new(g.clone())).expect("register");
+    g
+});
+
+pub static SIM_STREAM_CLAIMED_COUNT: Lazy<IntCounter> = Lazy::new(|| {
+    let c = IntCounter::new(
+        "arbx_sim_stream_claimed_count",
+        "Entries reclaimed from the PEL via XAUTOCLAIM by the sim-ctl consumer",
+    )
+    .expect("metric");
+    REGISTRY.register(Box::new(c.clone())).expect("register");
+    c
+});
+
+pub static SIM_STREAM_CLAIM_FAILURES: Lazy<IntCounter> = Lazy::new(|| {
+    let c = IntCounter::new(
+        "arbx_sim_stream_claim_failures",
+        "XPENDING/XAUTOCLAIM command failures during sim-ctl PEL observation/recovery",
+    )
+    .expect("metric");
+    REGISTRY.register(Box::new(c.clone())).expect("register");
+    c
+});
+
 /// Record a bundle inclusion event.
 ///
 /// `profitable` is `true` when the opportunity carried a positive
@@ -369,6 +422,10 @@ pub fn init_metrics() {
     let _ = &*GAS_PRICE_TS_SECONDS;
     let _ = &*CREDENTIAL_ROTATION_TOTAL;
     let _ = &*CREDENTIAL_ALL_FAILED_TOTAL;
+    let _ = &*SIM_STREAM_PENDING_COUNT;
+    let _ = &*SIM_STREAM_OLDEST_PENDING_MS;
+    let _ = &*SIM_STREAM_CLAIMED_COUNT;
+    let _ = &*SIM_STREAM_CLAIM_FAILURES;
     SERVICE_UP.set(1);
 }
 

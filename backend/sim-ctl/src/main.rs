@@ -37,7 +37,7 @@ use shared_rs::{
     metrics::init_metrics,
 };
 use std::{net::SocketAddr, str::FromStr, sync::Arc, time::Duration};
-use tracing::{info, warn};
+use tracing::{error, info, warn};
 
 use crate::anvil_backend::AnvilBackend;
 use crate::consumer::Consumer;
@@ -825,6 +825,26 @@ async fn main() -> anyhow::Result<()> {
         real_sim_env,
         redis: redis_handle,
     });
+    // SIMWIRE-02: Canal B's stream source is the route-aware B2c REAL
+    // pipeline. Built only when the FULL B2c env is present at boot
+    // (SIM_BACKEND=revm => simulator over REVM_RPC_URL + real_sim_env over
+    // ARBITRAGE_EXECUTOR + Redis handle for live gas). When Some, the
+    // consumer simulates via route_lookup::fetch_candidate_inputs ->
+    // run_real_simulation (the SAME encoder the searcher uses).
+    let b2c_ctx = match (&state.simulator, &state.real_sim_env, &state.redis) {
+        (Some(sim), Some(env), Some(redis)) => Some(consumer::B2cCtx {
+            simulator: sim.clone(),
+            env: env.clone(),
+            gas_redis: redis.clone(),
+        }),
+        _ => None,
+    };
+    if b2c_ctx.is_some() {
+        info!(
+            event = "sim.b2c_ctx_ready",
+            "stream consumer will use the route-aware B2c REAL pipeline"
+        );
+    }
 
     // HTTP server
     let port: u16 = std::env::var("SIM_PORT")
@@ -850,9 +870,20 @@ async fn main() -> anyhow::Result<()> {
           "sim-ctl listening");
 
     // Spawn consumer if a simulator is actually available AND DB + Redis.
-    // SIMWIRE-01: anvil needs a live fork; the REVM backend runs in-process
-    // (LazyDb over REVM_RPC_URL) and must not be gated on ANVIL_URL.
-    let backend_available = fork.is_some() || backend.name() != "anvil";
+    // SIMWIRE-02 drain-guard: `SIM_BACKEND=revm` with an INCOMPLETE B2c env
+    // (missing REVM_RPC_URL / ARBITRAGE_EXECUTOR / REDIS_URL) must NOT spawn
+    // the consumer on the legacy RevmBackend — it answers
+    // `route_encoding_not_available` with EMPTY calldata for every entry,
+    // which would structurally drain the validated stream into permanent
+    // rejections. Fail loud, consume nothing.
+    let backend_available = fork.is_some() || b2c_ctx.is_some();
+    if !backend_available && backend.name() != "anvil" {
+        error!(
+            event = "sim_consumer.refused_drain_guard",
+            backend = backend.name(),
+            "SIM_BACKEND=revm selected but B2c env incomplete (need REVM_RPC_URL + ARBITRAGE_EXECUTOR + REDIS_URL). Consumer NOT spawned — refusing to drain the validated stream into the legacy empty-calldata backend"
+        );
+    }
     if backend_available {
         if let (Ok(db_url), Ok(redis_url)) =
             (std::env::var("DATABASE_URL"), std::env::var("REDIS_URL"))
@@ -875,6 +906,9 @@ async fn main() -> anyhow::Result<()> {
                 // SIMWIRE-01: the stream path drives the SAME backend the
                 // HTTP /simulate endpoint uses (SIM_BACKEND-selected).
                 backend,
+                // SIMWIRE-02: when Some, process_message takes the
+                // route-aware B2c REAL pipeline instead of `backend`.
+                b2c: b2c_ctx,
                 killswitch,
                 consumer_name: std::env::var("HOSTNAME").unwrap_or_else(|_| "sim-1".into()),
             };
