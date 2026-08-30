@@ -11,6 +11,7 @@ import { AlertCircleIcon } from "lucide-react";
 
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { SystemKpiGrid } from "@/features/status/SystemKpiGrid";
+import { DeploymentCard } from "@/features/status/DeploymentCard";
 import { ServicesTable } from "@/features/status/ServicesTable";
 import { ServiceControlPanel } from "@/components/ServiceControlPanel";
 import { getStatus } from "@/lib/api-client";
@@ -66,6 +67,9 @@ export function StatusClient({ initialStatus }: Props) {
       )}
 
       <SystemKpiGrid status={status} />
+
+      {/* AUDIT-2026-08-29 P0-1: WHAT SHA IS PRODUCTION RUNNING? */}
+      <DeploymentCard status={status} />
 
       <h2>Services</h2>
       <ServicesTable services={status.services} />

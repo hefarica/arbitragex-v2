@@ -108,6 +108,9 @@ jobs:
           # Prefer explicit secret; fall back to the canonical VPS path used by deploy.yml.
           DEPLOY_PATH: ${{ secrets.VPS_DEPLOY_PATH }}
           TARGET_SHA: ${{ github.sha }}
+          # AUDIT-2026-08-29 P0-1 (deployment coherence): stamp the stack with
+          # the run id so /status can answer "which deploy is prod running?".
+          DEPLOY_RUN_ID: ${{ github.run_id }}
         run: |
           set -euo pipefail
           if [ -z "${VPS_HOST:-}" ] || [ -z "${VPS_USER:-}" ]; then
@@ -127,7 +130,7 @@ jobs:
             -o BatchMode=yes \
             -o StrictHostKeyChecking=yes \
             "$VPS_USER@$VPS_HOST" \
-            "export DEPLOY_PATH=$(printf %q "$REMOTE_PATH"); export TARGET_SHA=$(printf %q "$TARGET_SHA"); bash -s" <<'EOF'
+            "export DEPLOY_PATH=$(printf %q "$REMOTE_PATH"); export TARGET_SHA=$(printf %q "$TARGET_SHA"); export DEPLOY_RUN_ID=$(printf %q "$DEPLOY_RUN_ID"); bash -s" <<'EOF'
           set -euo pipefail
 
           echo "[0/9] Entering deploy path: ${DEPLOY_PATH}"
@@ -139,6 +142,18 @@ jobs:
 
           COMPOSE_FILE="docker/compose.prod.yml"
           ENV_FILE=".env"
+
+          # AUDIT-2026-08-29 P0-1 (deployment coherence): stamp the stack with
+          # the exact commit + run the deploy anchors to. Compose interpolates
+          # these from the SHELL env into the api-server container
+          # (environment:) — `--env-file` alone does NOT export them. The
+          # container is force-recreated each deploy, so the stamp is always
+          # the current deploy's identity. R8: without these exports (manual
+          # `up`) the api-server reports 'unknown' — honest, never fabricated.
+          export ARBX_DEPLOY_SHA="$TARGET_SHA"
+          export ARBX_DEPLOY_ID="$DEPLOY_RUN_ID"
+          export ARBX_DEPLOYED_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          echo "deploy identity: sha=${ARBX_DEPLOY_SHA} run=${ARBX_DEPLOY_ID} at=${ARBX_DEPLOYED_AT}"
 
           echo "[1/9] Ensuring env file exists (never overwrite a real .env)..."
           if [ ! -f "$ENV_FILE" ]; then
