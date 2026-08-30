@@ -787,11 +787,27 @@ async fn main() -> anyhow::Result<()> {
     // consumer simulates via route_lookup::fetch_candidate_inputs ->
     // run_real_simulation (the SAME encoder the searcher uses).
     let b2c_ctx = match (&state.simulator, &state.real_sim_env, &state.redis) {
-        (Some(sim), Some(env), Some(redis)) => Some(consumer::B2cCtx {
-            simulator: sim.clone(),
-            env: env.clone(),
-            gas_redis: redis.clone(),
-        }),
+        (Some(sim), Some(env), Some(redis)) if sim_ctl::flashloan_executor_boot_ready() => {
+            Some(consumer::B2cCtx {
+                simulator: sim.clone(),
+                env: env.clone(),
+                gas_redis: redis.clone(),
+            })
+        }
+        // SIMWIRE-02c P1-3: SIM_BACKEND=revm with the rest of B2c present but
+        // FLASHLOAN_EXECUTOR_1 unresolvable (missing/invalid/zero — fail-closed
+        // in shared_rs::chains) withholds the context: step 0 of
+        // execute_multistep_revm needs the executor, so every entry would end
+        // in `multistep_flashloan_executor_unresolved`. Withheld context ⇒
+        // drain guard refuses the spawn below.
+        (Some(_), _, _) => {
+            warn!(
+                event = "sim.b2c_ctx_incomplete",
+                executor_ready = sim_ctl::flashloan_executor_boot_ready(),
+                "SIM_BACKEND=revm but the B2c env is incomplete (ARBITRAGE_EXECUTOR / REDIS_URL / FLASHLOAN_EXECUTOR_1 — executor_ready=false means the latter) — B2c context withheld; consumer spawn will be refused"
+            );
+            None
+        }
         _ => None,
     };
     if b2c_ctx.is_some() {
@@ -825,18 +841,23 @@ async fn main() -> anyhow::Result<()> {
           "sim-ctl listening");
 
     // Spawn consumer if a simulator is actually available AND DB + Redis.
-    // SIMWIRE-02 drain-guard: `SIM_BACKEND=revm` with an INCOMPLETE B2c env
-    // (missing REVM_RPC_URL / ARBITRAGE_EXECUTOR / REDIS_URL) must NOT spawn
-    // the consumer on the legacy RevmBackend — it answers
-    // `route_encoding_not_available` with EMPTY calldata for every entry,
-    // which would structurally drain the validated stream into permanent
-    // rejections. Fail loud, consume nothing.
-    let backend_available = fork.is_some() || b2c_ctx.is_some();
+    // SIMWIRE-02c P1-2 drain-guard: authorization is PER-BACKEND, never
+    // `fork || b2c`. ANVIL_URL is always set in prod compose, so fork.is_some()
+    // is ~always true — under the old OR, `SIM_BACKEND=revm` with an
+    // INCOMPLETE B2c env (missing REVM_RPC_URL / ARBITRAGE_EXECUTOR /
+    // REDIS_URL / FLASHLOAN_EXECUTOR_1) would spawn the consumer on the
+    // legacy RevmBackend — empty calldata by construction, a structural
+    // drain of the validated stream into permanent rejections. Correct
+    // rule: REVM selected → b2c_ctx MUST exist; ANVIL selected → fork MUST
+    // exist. Fail loud, consume nothing.
+    let sim_backend_sel = std::env::var("SIM_BACKEND").unwrap_or_default();
+    let backend_available =
+        sim_ctl::backend_available_for(&sim_backend_sel, fork.is_some(), b2c_ctx.is_some());
     if !backend_available && backend.name() != "anvil" {
         error!(
             event = "sim_consumer.refused_drain_guard",
             backend = backend.name(),
-            "SIM_BACKEND=revm selected but B2c env incomplete (need REVM_RPC_URL + ARBITRAGE_EXECUTOR + REDIS_URL). Consumer NOT spawned — refusing to drain the validated stream into the legacy empty-calldata backend"
+            "SIM_BACKEND=revm selected but B2c env incomplete (need REVM_RPC_URL + ARBITRAGE_EXECUTOR + REDIS_URL + FLASHLOAN_EXECUTOR_1). Consumer NOT spawned — refusing to drain the validated stream into the legacy empty-calldata backend"
         );
     }
     if backend_available {

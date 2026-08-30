@@ -7,7 +7,12 @@ use sqlx::postgres::PgPool;
 use sqlx::types::BigDecimal;
 use std::str::FromStr;
 
-pub async fn insert_simulation(pool: &PgPool, r: &SimulationResult) -> Result<()> {
+/// Insert one simulation attempt. Returns `true` when a NEW row landed, or
+/// `false` when the `(opportunity_id, simulator='revm')` row already existed
+/// (SIMWIRE-02c redelivery idempotency: XAUTOCLAIM redelivers an entry whose
+/// final XACK failed after persist+XADD succeeded — the caller must skip the
+/// downstream XADD so the opportunity is published exactly once).
+pub async fn insert_simulation(pool: &PgPool, r: &SimulationResult) -> Result<bool> {
     let sim_str = simulator_str(&r.simulator);
     let gas_est: Option<BigDecimal> = r
         .gas_estimate_wei
@@ -20,13 +25,14 @@ pub async fn insert_simulation(pool: &PgPool, r: &SimulationResult) -> Result<()
 
     let mut tx = pool.begin().await.context("begin tx")?;
 
-    sqlx::query(
+    let inserted = sqlx::query(
         r#"
         INSERT INTO simulations (
             opportunity_id, simulator, gas_estimate_wei, gas_price_wei,
             slippage_pct, revert_risk_pct, simulated_profit_usd,
             passed, fail_reason, trace_id, simulated_at
         ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
+        ON CONFLICT (opportunity_id) WHERE simulator = 'revm' DO NOTHING
         "#,
     )
     .bind(r.opportunity_id)
@@ -43,6 +49,16 @@ pub async fn insert_simulation(pool: &PgPool, r: &SimulationResult) -> Result<()
     .execute(&mut *tx)
     .await
     .context("insert simulation")?;
+
+    if inserted.rows_affected() == 0 {
+        // Prior delivery already persisted this revm verdict (and published
+        // it — only the final XACK failed). Skip the status update too: the
+        // row already carries the state transition.
+        tx.commit()
+            .await
+            .context("commit tx (duplicate redelivery)")?;
+        return Ok(false);
+    }
 
     // Advance opportunity state. 'simulated' if passed, else 'rejected' —
     // UNLESS the failure is a sim-capability gap (unsupported strategy/chain,
@@ -66,7 +82,7 @@ pub async fn insert_simulation(pool: &PgPool, r: &SimulationResult) -> Result<()
         tx.commit()
             .await
             .context("commit tx (sim capability gap)")?;
-        return Ok(());
+        return Ok(true);
     }
 
     let next_status = if r.passed { "simulated" } else { "rejected" };
@@ -93,7 +109,7 @@ pub async fn insert_simulation(pool: &PgPool, r: &SimulationResult) -> Result<()
     .context("update opportunity status")?;
 
     tx.commit().await.context("commit tx")?;
-    Ok(())
+    Ok(true)
 }
 
 fn simulator_str(k: &SimulatorKind) -> &'static str {
@@ -132,6 +148,27 @@ fn is_sim_capability_gap(fail_reason: &str) -> bool {
         || fail_reason.starts_with("real_sim_env_missing")
         || fail_reason.starts_with("candidate_incomplete")
         || fail_reason.starts_with("b2c_encode_failed")
+        // SIMWIRE-02c P1: harness/config failures are NOT market verdicts.
+        // These are DETERMINISTIC given the pinned block+calldata (retrying
+        // cannot change them), so they persist as typed non-rejecting gap
+        // rows instead of either rejecting the opportunity or spinning the
+        // PEL forever. The NON-deterministic infra failures (RPC state
+        // fetch, runtime join) stay transient in the consumer (PEL).
+        //   multistep_flashloan_executor_unresolved — env config gap (A3 path)
+        //   multistep_call_infra:*        — REVM harness: transact_infra /
+        //                                   evm_db_missing / storage_override
+        //   multistep_apply_storage_failed / multistep_empty_calldata
+        //   *_halted / *_decode_failed / amounts_out_empty_array — view-call
+        //                                   frame/decode faults (harness-level)
+        || fail_reason.starts_with("multistep_flashloan_executor_unresolved")
+        || fail_reason.starts_with("multistep_call_infra")
+        || fail_reason.starts_with("multistep_apply_storage_failed")
+        || fail_reason.starts_with("multistep_empty_calldata")
+        || fail_reason.contains("balance_read_halted")
+        || fail_reason.contains("amounts_out_halted")
+        || fail_reason.contains("balance_decode_failed")
+        || fail_reason.contains("amounts_out_decode_failed")
+        || fail_reason.contains("amounts_out_empty_array")
 }
 
 #[cfg(test)]
@@ -186,6 +223,48 @@ mod simwire02_classifier_tests {
             assert!(
                 !is_sim_capability_gap(reason),
                 "{reason} must stay a rejection, not a gap"
+            );
+        }
+    }
+
+    /// SIMWIRE-02c P1: deterministic harness/config failures are NOT market
+    /// verdicts — they must persist as typed non-rejecting gaps (visible in
+    /// the simulations row) instead of rejecting the opportunity.
+    #[test]
+    fn simwire02c_harness_failures_are_gaps_not_rejections() {
+        for reason in [
+            "multistep_flashloan_executor_unresolved:Missing { chain_id: 1 }",
+            "multistep_call_infra:transact_infra:db commit failed",
+            "multistep_call_infra:evm_db_missing",
+            "multistep_apply_storage_failed:storage_override_failed",
+            "multistep_empty_calldata",
+            "multistep_read_balance_failed:balance_of:balance_read_halted",
+            "multistep_forward_quote_failed:amounts_out_halted",
+            "multistep_read_balance_failed:balance_of:balance_decode_failed",
+            "multistep_forward_quote_failed:amounts_out_decode_failed",
+            "multistep_forward_quote_failed:amounts_out_empty_array",
+        ] {
+            assert!(
+                is_sim_capability_gap(reason),
+                "{reason} must classify as harness gap, not market rejection"
+            );
+        }
+    }
+
+    /// SIMWIRE-02c P1: chain-state verdicts at the pinned block are market
+    /// truth — halts of COMMITTED calls and view reverts on the forked state
+    /// must keep rejecting (retry at the same block gives the same answer).
+    #[test]
+    fn simwire02c_chain_state_verdicts_stay_rejections() {
+        for reason in [
+            "multistep_call_revert:TransferHelper: INSUFFICIENT_OUTPUT",
+            "multistep_forward_quote_failed:amounts_out_reverted",
+            "multistep_forward_quote_failed:zero_intermediate",
+            "multistep_read_balance_failed:balance_of:balance_read_reverted",
+        ] {
+            assert!(
+                !is_sim_capability_gap(reason),
+                "{reason} is a chain-state verdict — must stay a rejection"
             );
         }
     }

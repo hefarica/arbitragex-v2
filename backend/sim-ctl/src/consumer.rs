@@ -304,14 +304,25 @@ impl Consumer {
                 // opportunities FK — every reprocess fails at insert and
                 // re-queues forever. ACK it (terminal dead-letter) with a
                 // loud, honest warning instead of spinning the loop.
+                // SIMWIRE-02c P1: the ghost metric + log fire ONLY after
+                // Redis CONFIRMS the XACK — a failed ACK leaves the entry
+                // in the PEL uncounted (the count means "dead-lettered",
+                // not "attempted").
                 if let Some(reason) = self.ghost_reason(&fields).await {
-                    SIM_STREAM_GHOST_ACKED.inc();
-                    warn!(event = "sim_consumer.ghost_entry_acked", id = %id, reason,
-                          "stale PEL entry dropped: its payload can never complete");
-                    let _: redis::RedisResult<()> = self
-                        .redis
-                        .xack::<_, _, &str, ()>(STREAM_IN, GROUP, &[id.as_str()])
-                        .await;
+                    let ack: redis::RedisResult<()> =
+                        self.redis.xack(STREAM_IN, GROUP, &[id.as_str()]).await;
+                    match ack {
+                        Ok(()) => {
+                            SIM_STREAM_GHOST_ACKED.inc();
+                            warn!(event = "sim_consumer.ghost_entry_acked", id = %id, reason,
+                                  "stale PEL entry dead-lettered: its payload can never complete");
+                        }
+                        Err(e) => {
+                            error!(event = "sim_consumer.ghost_ack_failed", id = %id, reason,
+                                   error = %e,
+                                   "XACK failed — entry stays in the PEL; not counted as ghost_acked");
+                        }
+                    }
                     continue;
                 }
                 info!(event = "sim_consumer.pel_claimed", id = %id, "stale PEL entry reclaimed for reprocessing");
@@ -347,16 +358,21 @@ impl Consumer {
         let Some(opp_id) = parsed_id else {
             return Some("malformed_payload");
         };
-        let exists: Option<i32> = sqlx::query_scalar("SELECT 1 FROM opportunities WHERE id = $1")
-            .bind(opp_id)
-            .fetch_optional(&self.pool)
-            .await
-            .ok()
-            .flatten();
-        if exists.is_some() {
-            None
-        } else {
-            Some("opportunity_row_missing")
+        let lookup: Result<Option<i32>, sqlx::Error> =
+            sqlx::query_scalar("SELECT 1 FROM opportunities WHERE id = $1")
+                .bind(opp_id)
+                .fetch_optional(&self.pool)
+                .await;
+        // SIMWIRE-02c P1-1: a DB error during the check is NOT a ghost —
+        // dead-lettering on an outage would ACK entries whose opportunity
+        // rows are alive. Loud warn + honest PEL retry instead.
+        if let Err(e) = &lookup {
+            warn!(event = "sim_consumer.ghost_check_db_err", id = %opp_id, error = %e,
+                  "ghost check query failed — treating as NOT ghost; entry stays in the PEL");
+        }
+        match ghost_verdict(lookup) {
+            GhostVerdict::NotGhost => None,
+            GhostVerdict::RowMissing => Some("opportunity_row_missing"),
         }
     }
 
@@ -421,12 +437,26 @@ impl Consumer {
         };
 
         // Persist; if it fails, do NOT ack — retry on next iteration.
-        if let Err(e) = insert_simulation(&self.pool, &sim).await {
-            error!(event = "sim_consumer.persist_err", id=%id, error=%e);
-            return Ok(());
+        // SIMWIRE-02c P1-5: `insert_simulation` returns Ok(false) when this
+        // (opportunity_id, simulator='revm') verdict was already persisted
+        // by a PRIOR delivery whose final XACK failed (XAUTOCLAIM
+        // redelivery). The verdict row is authoritative; skip the
+        // downstream XADD too — republishing would double-count the
+        // opportunity downstream (double paper-trade). The XACK below still
+        // runs: this delivery's job is done, the entry must leave the PEL.
+        let inserted_fresh = match insert_simulation(&self.pool, &sim).await {
+            Ok(fresh) => fresh,
+            Err(e) => {
+                error!(event = "sim_consumer.persist_err", id=%id, error=%e);
+                return Ok(());
+            }
+        };
+        if !inserted_fresh {
+            info!(event = "sim_consumer.redelivery_dedup", id=%id,
+                  "revm verdict already persisted by a prior delivery — skipping duplicate publish");
         }
 
-        if sim.passed {
+        if sim.passed && inserted_fresh {
             let payload = serde_json::to_string(&opportunity).unwrap_or_default();
             let _: redis::RedisResult<String> = redis::cmd("XADD")
                 .arg(STREAM_OUT)
@@ -487,10 +517,11 @@ impl Consumer {
             ));
         }
         if let Err(missing) = inputs.resolved_decimals.validate_complete(token_addresses) {
-            return Ok(counted_gap(
-                opp.id,
-                &format!("candidate_incomplete:missing_decimals_{missing:?}"),
-            ));
+            // SIMWIRE-02c P1-7: missing decimals are HEALABLE — the
+            // token-enricher backfills tokens.decimals asynchronously, so a
+            // later redelivery CAN complete this candidate. Transient Err
+            // (PEL retry), never a terminal persisted gap.
+            return Err(format!("candidate_decimals_pending:{missing:?}"));
         }
         if inputs.chain_id <= 0 {
             return Ok(counted_gap(
@@ -508,16 +539,14 @@ impl Consumer {
             }
         };
         // validate_complete already guaranteed this entry; the match keeps
-        // the trading path defensive (no unwrap).
+        // the trading path defensive (no unwrap). Same P1-7 semantics as
+        // validate_complete above: healable by the enricher → PEL retry.
         let decimals_in = match inputs.resolved_decimals.get(&token_addresses[0]) {
             Some(d) => d,
             None => {
-                return Ok(counted_gap(
-                    opp.id,
-                    &format!(
-                        "candidate_incomplete:missing_decimals_token_in_{}",
-                        token_addresses[0]
-                    ),
+                return Err(format!(
+                    "candidate_decimals_pending:token_in_{}",
+                    token_addresses[0]
                 ));
             }
         };
@@ -545,15 +574,32 @@ impl Consumer {
             route_fingerprint: format!("{}_{}_{}", inputs.dex_a, inputs.token_in, inputs.token_out),
         };
 
-        // 4) Live gas price — transient: a missing/zero gas oracle must
+        // 4) FlashLoanExecutor readiness (SIMWIRE-02c P1-3, fail-closed):
+        //    `execute_multistep_revm` resolves FLASHLOAN_EXECUTOR_<chain_id>
+        //    at step 0; with the env var absent EVERY simulation would fail
+        //    with `multistep_flashloan_executor_unresolved` — an operator
+        //    env config gap, not a market verdict. Refuse as TRANSIENT
+        //    (PEL): the operator setting the env var heals this entry via
+        //    XAUTOCLAIM redelivery. Boot (`flashloan_executor_boot_ready`)
+        //    warns about the same gap before the consumer even starts.
+        if let Err(e) = shared_rs::chains::resolve_flashloan_executor_address(candidate.chain_id) {
+            return Err(format!("flashloan_executor_unresolved: {e}"));
+        }
+
+        // 5) Live gas price — transient: a missing/zero gas oracle must
         //    retry via the PEL, never become a rejection.
         let gas_price_wei = crate::read_gas_price(&b2c.gas_redis, candidate.chain_id).await?;
 
-        // 5) REAL multi-step REVM simulation (same encoder as the searcher).
-        let outcome =
-            run_real_simulation(candidate, b2c.simulator.clone(), &b2c.env, gas_price_wei).await;
+        // 6) Block-pinned replay (SIMWIRE-02c P1-4): pin the simulator to
+        //    the candidate's detection block — same determinism as the A3
+        //    HTTP path — so the LazyDb inside execute_multistep_revm reads
+        //    detection-time state, not `latest`.
+        let pinned_sim = simulator_for_candidate(&b2c.simulator, candidate.block_number);
 
-        // 6) REVM state-fetch infra failures are TRANSIENT — a dead/slow RPC
+        // 7) REAL multi-step REVM simulation (same encoder as the searcher).
+        let outcome = run_real_simulation(candidate, pinned_sim, &b2c.env, gas_price_wei).await;
+
+        // 8) REVM state-fetch infra failures are TRANSIENT — a dead/slow RPC
         //    must not drain the stream into rejections.
         if !outcome.passed {
             if let Some(fr) = outcome.fail_reason.as_deref() {
@@ -565,7 +611,7 @@ impl Consumer {
             }
         }
 
-        // 7) Translate → SimulationResult. PRICES-FREE by design: net-USD is
+        // 9) Translate → SimulationResult. PRICES-FREE by design: net-USD is
         //    computed downstream from prices; `simulated_profit_usd` stays
         //    None (R8: None = not computed, never fabricated).
         Ok(SimulationResult {
@@ -660,6 +706,46 @@ fn parse_entry_array(entries: &redis::Value) -> Vec<(String, Vec<redis::Value>)>
         }
     }
     out
+}
+
+/// SIMWIRE-02c P1-1: pure ghost classification, testable without a DB.
+///
+/// The `.ok().flatten()` conflation this replaces treated a PG ERROR the
+/// same as a confirmed-missing row — an outage dead-lettered entries whose
+/// opportunities rows were alive (XACK + drop on an infrastructure fault).
+/// Fail-honest split (R8):
+/// - `Ok(Some(_))` → row confirmed alive → NOT a ghost.
+/// - `Ok(None)` → row CONFIRMED missing (retention purge) → ghost: the simulations FK can never satisfy, PEL retry is futile, dead-letter is correct.
+/// - `Err(_)` → unknown → NOT a ghost: the entry keeps its honest PEL-retry path; a transient outage must never silently drop live work.
+#[derive(Debug, PartialEq, Eq)]
+pub enum GhostVerdict {
+    NotGhost,
+    RowMissing,
+}
+
+pub fn ghost_verdict(lookup: Result<Option<i32>, sqlx::Error>) -> GhostVerdict {
+    match lookup {
+        Ok(Some(_)) | Err(_) => GhostVerdict::NotGhost,
+        Ok(None) => GhostVerdict::RowMissing,
+    }
+}
+
+/// SIMWIRE-02c P1-4: deterministic replay pinning. The consumer's shared
+/// simulator carries whatever pin boot gave it (typically none — `latest`);
+/// the candidate carries the block the searcher actually detected on. Mirror
+/// the A3 HTTP path (main.rs): when the candidate names a block, build a
+/// cheap dedicated simulator pinned to THAT block, so the LazyDb built inside
+/// `execute_multistep_revm` resolves state at detection time instead of
+/// `latest`. `SimulatorV2::new` is cheap (LazyDb is created per execute
+/// call); the shared simulator is reused untouched when no pin applies.
+pub fn simulator_for_candidate(
+    shared: &Arc<simulator_v2::SimulatorV2>,
+    block: Option<u64>,
+) -> Arc<simulator_v2::SimulatorV2> {
+    match block {
+        Some(b) => Arc::new(simulator_v2::SimulatorV2::new(shared.rpc_url.clone()).with_block(b)),
+        None => Arc::clone(shared),
+    }
 }
 
 /// Parse a Redis array of entry IDs (XAUTOCLAIM's third reply element).
@@ -763,5 +849,54 @@ mod simwire02_parse_tests {
             redis::Value::Nil,
         ]);
         assert!(parse_entry_array(&entries).is_empty());
+    }
+}
+
+#[cfg(test)]
+mod simwire02c_tests {
+    use super::{ghost_verdict, simulator_for_candidate, GhostVerdict};
+    use std::sync::Arc;
+
+    /// P1-1 matrix, first row: a DB ERROR must never classify as ghost —
+    /// the row may exist, and an outage dead-lettering live entries is the
+    /// exact `.ok().flatten()` defect this patch closes.
+    #[test]
+    fn db_down_is_not_a_ghost() {
+        let db_err = sqlx::Error::Io(std::io::Error::other("connection refused"));
+        assert_eq!(ghost_verdict(Err(db_err)), GhostVerdict::NotGhost);
+    }
+
+    /// Only a CONFIRMED missing row (Ok(None)) is a ghost: the simulations
+    /// FK can never satisfy, so PEL retry is futile and dead-letter is right.
+    #[test]
+    fn confirmed_missing_row_is_the_only_ghost() {
+        assert_eq!(ghost_verdict(Ok(None)), GhostVerdict::RowMissing);
+    }
+
+    #[test]
+    fn existing_row_is_not_a_ghost() {
+        assert_eq!(ghost_verdict(Ok(Some(1))), GhostVerdict::NotGhost);
+    }
+
+    /// P1-4: when the candidate names a detection block, the replay
+    /// simulator must be pinned to THAT block — not the shared boot pin
+    /// (typically none → `latest`).
+    #[test]
+    fn replay_is_pinned_to_the_candidate_block() {
+        let shared = Arc::new(simulator_v2::SimulatorV2::new("http://127.0.0.1:8545"));
+        assert_eq!(shared.pinned_block(), None, "precondition: shared unpinned");
+        let pinned = simulator_for_candidate(&shared, Some(21_000_042));
+        assert_eq!(pinned.pinned_block(), Some(21_000_042));
+        // The shared simulator is never mutated by the pin decision:
+        assert_eq!(shared.pinned_block(), None);
+    }
+
+    /// P1-4 fallback: no candidate block → reuse the shared simulator as-is
+    /// (same allocation, no throwaway clone with different semantics).
+    #[test]
+    fn unpinned_candidate_reuses_shared_simulator() {
+        let shared = Arc::new(simulator_v2::SimulatorV2::new("http://127.0.0.1:8545"));
+        let out = simulator_for_candidate(&shared, None);
+        assert!(Arc::ptr_eq(&out, &shared));
     }
 }

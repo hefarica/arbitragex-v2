@@ -145,3 +145,14 @@ Forward-only and idempotent. Paper-only telemetry.
 | `111_paper_trade_runs_calibration_eligibility.sql` | S4 runbook (accepted 2026-08-29): `paper_trade_runs` gains `sim_fail_family` (S4-02 taxonomy structural\|economic\|market), `calibration_eligible` (FALSE = terminal structural failure — never a Stage 2b label, never retried), `sim_attempts` + `sim_last_attempt_at` (pending backoff 30s·2^min(n,7) for 501/parse-error attempts), plus a partial `CREATE INDEX CONCURRENTLY` (FREEZE-01 doctrine: populated live table) for the drift-tracker pending scan. Writer: recon drift-tracker (Capa B). |
 
 Forward-only and idempotent. Paper-only telemetry. Depends on: 051 (paper_trade_runs), 099 (route_metadata).
+
+---
+
+## SIMWIRE-02b/02c (sim-ctl stream consumer hardening) — 2026-08-30
+
+| File                                    | Purpose                                                  |
+|-----------------------------------------|----------------------------------------------------------|
+| `112_simulations_simulator_revm.sql`    | SIMWIRE-02b: `simulations.simulator` CHECK extended with `'revm'` (the 004 CHECK predates simulator-v2; without it every route-aware insert fails). SIMWIRE-02c P1-8: DROP+ADD wrapped in an explicit transaction — no constraint-less window under psql autocommit. Content edit post-merge is safe: the runner records by filename, VPS already skipped, fresh DBs get the atomic version. |
+| `113_simulations_revm_idempotency.sql`  | SIMWIRE-02c P1-5: partial UNIQUE index `(opportunity_id) WHERE simulator='revm'` — XAUTOCLAIM redelivery of an entry whose final XACK failed after persist+XADD must not double-publish. Powers `insert_simulation`'s `ON CONFLICT … DO NOTHING` → `Ok(false)` → caller skips the downstream XADD (exactly-once). Partial on purpose: legacy anvil multi-attempt history stays untouched. |
+
+Forward-only and idempotent. Paper-only telemetry. Depends on: 004 (simulations CHECK), 112 ('revm' allowed).
