@@ -817,7 +817,7 @@ async fn main() -> anyhow::Result<()> {
         };
 
     let state = Arc::new(AppState {
-        backend,
+        backend: backend.clone(),
         engine: engine.clone(),
         env: cfg.system.env.clone(),
         db_pool,
@@ -849,8 +849,11 @@ async fn main() -> anyhow::Result<()> {
           fork_ready = fork.is_some(),
           "sim-ctl listening");
 
-    // Spawn consumer if we have fork AND DB + Redis.
-    if fork.is_some() {
+    // Spawn consumer if a simulator is actually available AND DB + Redis.
+    // SIMWIRE-01: anvil needs a live fork; the REVM backend runs in-process
+    // (LazyDb over REVM_RPC_URL) and must not be gated on ANVIL_URL.
+    let backend_available = fork.is_some() || backend.name() != "anvil";
+    if backend_available {
         if let (Ok(db_url), Ok(redis_url)) =
             (std::env::var("DATABASE_URL"), std::env::var("REDIS_URL"))
         {
@@ -869,12 +872,9 @@ async fn main() -> anyhow::Result<()> {
             let consumer = Consumer {
                 redis: redis_conn,
                 pool,
-                engine: SimEngine {
-                    fork,
-                    signer_from: signer,
-                    timeout: sim_timeout,
-                    max_slippage_for_pass_pct: max_slippage,
-                },
+                // SIMWIRE-01: the stream path drives the SAME backend the
+                // HTTP /simulate endpoint uses (SIM_BACKEND-selected).
+                backend,
                 killswitch,
                 consumer_name: std::env::var("HOSTNAME").unwrap_or_else(|_| "sim-1".into()),
             };
