@@ -25,7 +25,7 @@ use std::sync::Arc;
 
 use ethers::types::{Address, H256, U256};
 use rmcp::{
-    handler::server::{router::tool::ToolRouter, tool::Parameters, wrapper::Json},
+    handler::server::{router::tool::ToolRouter, wrapper::Json, wrapper::Parameters},
     tool, tool_handler, tool_router,
     transport::stdio,
     ServerHandler, ServiceExt,
