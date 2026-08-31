@@ -5,10 +5,13 @@ const NOW = new Date("2026-08-29T16:00:00.000Z");
 
 function fakeRedis(opts: {
   killswitch?: string | null;
-  selectorGroup?: { entriesRead?: number | null; lag?: number | null } | "missing";
-  simGroup?: { entriesRead?: number | null; lag?: number | null } | "missing";
+  selectorGroup?: { entriesRead?: number | null; lag?: number | null; lastDeliveredId?: string | null } | "missing";
+  simGroup?: { entriesRead?: number | null; lag?: number | null; lastDeliveredId?: string | null } | "missing";
   detectedLen?: number;
   validatedLen?: number;
+  /** Entries physically present after last-delivered-id (the deliverable backlog). */
+  selectorBacklog?: number;
+  simBacklog?: number;
 }): PipeRedisDeps {
   return {
     get: async (key: string) => {
@@ -24,7 +27,15 @@ function fakeRedis(opts: {
       const flat: unknown[] = ["name", key === "arbx:opps:detected" ? "selector-g0" : "sim-ctl-g0"];
       if (group.entriesRead !== undefined) flat.push("entries-read", group.entriesRead);
       if (group.lag !== undefined) flat.push("lag", group.lag);
+      if (group.lastDeliveredId !== undefined) flat.push("last-delivered-id", group.lastDeliveredId);
       return [flat];
+    },
+    xrange: async (key: string, _start: string, _end: string, count: number) => {
+      const backlog =
+        key === "arbx:opps:detected" ? (opts.selectorBacklog ?? 0) : (opts.simBacklog ?? 0);
+      const n = Math.min(backlog, count);
+      // Only the LENGTH matters to the verifier; ids need not be realistic.
+      return Array.from({ length: n }, (_, i) => [`${1700000000000 + i}-0`, []]);
     },
   };
 }
@@ -60,8 +71,10 @@ describe("G-PIPE-1 (paper pipeline stream flow)", () => {
       }),
     });
     expect(item.status).toBe("green");
-    expect(item.reason).toContain("selector lag 0");
-    expect(item.reason).toContain("sim-ctl lag 12");
+    // G-PIPE-1b contract: the reason labels each backlog with its measurement
+    // mode — these fakes omit last-delivered-id, so the legacy raw-lag path ran.
+    expect(item.reason).toContain("selector 0 (raw-lag)");
+    expect(item.reason).toContain("sim-ctl 12 (raw-lag)");
   });
 
   it("red when kill-switch key explicitly enabled (halt by design)", async () => {
@@ -182,5 +195,84 @@ describe("G-PIPE-1 (paper pipeline stream flow)", () => {
     });
     expect(item.status).toBe("green");
     expect(item.reason).toContain("unparseable");
+  });
+});
+
+// ── G-PIPE-1b — ghost-lag regression (workbook 2026-08-30, fix 2026-08-31) ──
+//
+// The 2026-08-29 killswitch-wipe + stream recreation left the server-side lag
+// counter permanently inflated: entries-added − entries-read includes wiped
+// entries the consumer can NEVER read. The gate must use the DELIVERABLE
+// backlog (entries present after last-delivered-id), not the raw counter.
+
+describe("G-PIPE-1b deliverable backlog (ghost-lag fix)", () => {
+  it("green when server lag is ghost-inflated but deliverable backlog is 0", async () => {
+    const item = await verifyGPIPE1({
+      now: () => NOW,
+      redis: fakeRedis({
+        selectorGroup: { lag: 1781, lastDeliveredId: "1700-0" }, // A5-STALL-sized ghost
+        simGroup: { lag: 0, lastDeliveredId: "1700-0" },
+        selectorBacklog: 0,
+        simBacklog: 0,
+      }),
+    });
+    expect(item.status).toBe("green");
+    expect(item.reason).toContain("selector 0 (deliverable)");
+    expect(item.reason).toContain("phantom");
+  });
+
+  it("red when the deliverable backlog is real, regardless of server lag", async () => {
+    const item = await verifyGPIPE1({
+      now: () => NOW,
+      redis: fakeRedis({
+        selectorGroup: { lag: 50, lastDeliveredId: "1700-0" }, // server counter LOW
+        simGroup: { lag: 0, lastDeliveredId: "1700-0" },
+        selectorBacklog: 500, // but 500 real entries waiting — A5-STALL shape
+      }),
+    });
+    expect(item.status).toBe("red");
+    expect(item.reason).toContain("selector consumer stalled");
+  });
+
+  it("reports the exact deliverable count below threshold", async () => {
+    const item = await verifyGPIPE1({
+      now: () => NOW,
+      redis: fakeRedis({
+        selectorGroup: { lag: 3, lastDeliveredId: "1700-0" },
+        simGroup: { lag: 1, lastDeliveredId: "1700-0" },
+        selectorBacklog: 7,
+        simBacklog: 0,
+      }),
+    });
+    expect(item.status).toBe("green");
+    expect(item.reason).toContain("selector 7 (deliverable)");
+  });
+
+  it("XRANGE failure falls back to raw server lag without crashing", async () => {
+    const base = fakeRedis({
+      selectorGroup: { lag: 600, lastDeliveredId: "1700-0" },
+      simGroup: { lag: 0, lastDeliveredId: "1700-0" },
+    });
+    const broken: typeof base = {
+      ...base,
+      xrange: async () => {
+        throw new Error("XRANGE denied");
+      },
+    };
+    const item = await verifyGPIPE1({ now: () => NOW, redis: broken });
+    expect(item.status).toBe("red"); // raw-lag fallback preserves the stall signal
+    expect(item.reason).toContain("raw");
+  });
+
+  it("missing last-delivered-id keeps the legacy raw-lag gate (older Redis)", async () => {
+    const item = await verifyGPIPE1({
+      now: () => NOW,
+      redis: fakeRedis({
+        selectorGroup: { lag: 700 }, // no lastDeliveredId → fallback path
+        simGroup: { lag: 0 },
+      }),
+    });
+    expect(item.status).toBe("red");
+    expect(item.reason).toContain("700");
   });
 });
