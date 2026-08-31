@@ -15,6 +15,7 @@
 
 import { Hono } from "hono";
 import { deleteCookie, getCookie, setCookie } from "hono/cookie";
+import { secureHeaders } from "hono/secure-headers";
 
 type Env = {
   ARBX_ENV: string;
@@ -234,6 +235,22 @@ function isHttpsRequest(c: import("hono").Context<{ Bindings: Env }>): boolean {
     return true;
   }
 }
+
+// F-13 (Holy Grail re-audit): the public /api surface emitted NO security headers
+// (frontend nginx set them only on `/`). Explicit values, no reliance on library
+// defaults: HSTS/csp/nosniff/DENY parity with the frontend header set; the JSON
+// API loads no subresources, so the CSP is a closed default-src 'none'.
+app.use("*", secureHeaders({
+  strictTransportSecurity: "max-age=31536000; includeSubDomains",
+  xContentTypeOptions: "nosniff",
+  xFrameOptions: "DENY",
+  referrerPolicy: "no-referrer",
+  permissionsPolicy: { camera: [], microphone: [], geolocation: [] },
+  contentSecurityPolicy: {
+    defaultSrc: ["'none'"],
+    frameAncestors: ["'none'"],
+  },
+}));
 
 app.use("*", async (c, next) => {
   const startMs = Date.now();
