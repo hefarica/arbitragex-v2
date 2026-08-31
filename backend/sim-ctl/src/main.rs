@@ -99,8 +99,10 @@ struct AppState {
     /// HTTP /simulate handler uses the backend trait so either Anvil or REVM
     /// can serve the endpoint without changing the handler code.
     backend: Arc<dyn SimulatorBackend>,
-    /// Consumer still uses SimEngine directly (Anvil-only path) until a
-    /// consumer-level backend abstraction lands in a follow-up sprint.
+    /// SimEngine handle for HTTP handler internals only (anvil fork gate in
+    /// /simulate, fork_status_handler, metrics signer). The STREAM CONSUMER
+    /// dispatches through the boot-selected `SimulatorBackend` (SIMWIRE-01,
+    /// #481) — it never uses this field.
     engine: Arc<SimEngine>,
     env: String,
     /// G-SIM-1 PR-B2b Fase 4 (A3): optional PG pool for autonomous route
