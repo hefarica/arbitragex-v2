@@ -8,15 +8,28 @@
 -- with 503 query_failed on every PR run).
 --
 -- Idempotent: no-op where the column already exists (prod).
-ALTER TABLE opportunities ADD COLUMN IF NOT EXISTS cartridge_id TEXT;
-
--- Index for cartridge-scoped dashboard queries (CONCURRENTLY per doctrine
--- lint-migration-index-locks — cannot run inside a DO/transaction block, so
--- plain statement with IF NOT EXISTS for idempotency).
--- NOTE: non-CONCURRENT deliberately (pre-doctrine <105): the integration
--- harness applies this via node-pg simple-query multi-statement = implicit
--- transaction, where CONCURRENTLY is illegal (SQLSTATE 25001). Safe: fresh
--- boot = empty table (instant); prod re-apply = index exists (skip). Future
--- indexes on populated tables: CONCURRENTLY (lint enforces >=105).
-CREATE INDEX IF NOT EXISTS idx_opportunities_cartridge_id
-  ON opportunities (cartridge_id);
+--
+-- RERUN-LOCK-SAFETY (GEN-CI-FAIL 2026-08-30): opportunities is written
+-- continuously by the searcher; bare ALTER TABLE ... IF NOT EXISTS and
+-- CREATE INDEX IF NOT EXISTS take writer-conflicting table locks before the
+-- existence checks and starve under the runner's lock_timeout=10s.
+-- Catalog-guarded no-op path takes no table lock
+-- (lint-migration-rerun-lock-safety.sh). When the guard fires on a POPULATED
+-- table with the index genuinely missing, prefer a dedicated CONCURRENTLY
+-- fixer (105 pattern) over relaxing this guard.
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema = 'public' AND table_name = 'opportunities'
+      AND column_name = 'cartridge_id'
+  ) THEN
+    EXECUTE 'ALTER TABLE opportunities ADD COLUMN cartridge_id TEXT';
+  END IF;
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_indexes
+    WHERE schemaname = 'public' AND indexname = 'idx_opportunities_cartridge_id'
+  ) THEN
+    EXECUTE 'CREATE INDEX idx_opportunities_cartridge_id ON opportunities (cartridge_id)';
+  END IF;
+END $$;

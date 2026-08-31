@@ -9,5 +9,17 @@
 -- Canonical strategy_kinds are validated at the application layer (the canonical
 -- TS enum + the Rust cartridge registry). The 5 base families remain valid.
 --
--- Idempotent: safe to re-run.
-ALTER TABLE opportunities DROP CONSTRAINT IF EXISTS opportunities_strategy_kind_check;
+-- RERUN-LOCK-SAFETY (GEN-CI-FAIL 2026-08-30): DROP CONSTRAINT is an ALTER TABLE
+-- subcommand — AccessExclusiveLock on the hot opportunities table on every
+-- re-run even when the constraint is already gone. Catalog-guarded no-op path
+-- takes no table lock (lint-migration-rerun-lock-safety.sh).
+DO $$
+BEGIN
+  IF EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conname = 'opportunities_strategy_kind_check'
+      AND conrelid = 'public.opportunities'::regclass
+  ) THEN
+    EXECUTE 'ALTER TABLE opportunities DROP CONSTRAINT opportunities_strategy_kind_check';
+  END IF;
+END $$;

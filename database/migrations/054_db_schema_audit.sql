@@ -190,9 +190,18 @@ END $$;
 -- Valid status values from migration 003 CHECK constraint:
 --   'detected','validated','simulated','scored','executing',
 --   'executed','reconciled','rejected','failed'
-CREATE INDEX IF NOT EXISTS idx_opportunities_detected_chain_status
-    ON opportunities(detected_at DESC, chain_id, status)
-    WHERE status IN ('detected', 'validated', 'simulated');
+-- RERUN-LOCK-SAFETY (GEN-CI-FAIL 2026-08-30): catalog-guarded so the no-op
+-- re-run takes no table lock on the hot opportunities table
+-- (lint-migration-rerun-lock-safety.sh).
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_indexes
+    WHERE schemaname = 'public' AND indexname = 'idx_opportunities_detected_chain_status'
+  ) THEN
+    EXECUTE 'CREATE INDEX idx_opportunities_detected_chain_status ON opportunities(detected_at DESC, chain_id, status) WHERE status IN (''detected'', ''validated'', ''simulated'')';
+  END IF;
+END $$;
 
 -- 4b. executions: status + time queries for reconciliation and monitoring.
 -- Hot pattern: WHERE status = $1 ORDER BY submitted_at DESC LIMIT $n

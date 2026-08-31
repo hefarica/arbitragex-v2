@@ -24,12 +24,29 @@
 --     persist '{}' rather than failing the INSERT (R8 fail-honest).
 --   * GIN index on route_metadata->'pool_addresses' for future "find all
 --     opportunities using pool X" queries (cross-opportunity analytics).
+--
+-- RERUN-LOCK-SAFETY (GEN-CI-FAIL 2026-08-30): opportunities is written
+-- continuously by the searcher; bare ALTER TABLE ... IF NOT EXISTS and
+-- CREATE INDEX IF NOT EXISTS take writer-conflicting table locks before the
+-- existence checks. Catalog-guarded no-op path takes no table lock
+-- (lint-migration-rerun-lock-safety.sh).
 
-ALTER TABLE opportunities
-    ADD COLUMN IF NOT EXISTS route_metadata JSONB NOT NULL DEFAULT '{}'::jsonb;
-
-CREATE INDEX IF NOT EXISTS idx_opportunities_route_pools
-    ON opportunities USING GIN ((route_metadata->'pool_addresses') jsonb_path_ops);
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema = 'public' AND table_name = 'opportunities'
+      AND column_name = 'route_metadata'
+  ) THEN
+    EXECUTE 'ALTER TABLE opportunities ADD COLUMN route_metadata JSONB NOT NULL DEFAULT ''{}''::jsonb';
+  END IF;
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_indexes
+    WHERE schemaname = 'public' AND indexname = 'idx_opportunities_route_pools'
+  ) THEN
+    EXECUTE 'CREATE INDEX idx_opportunities_route_pools ON opportunities USING GIN ((route_metadata->''pool_addresses'') jsonb_path_ops)';
+  END IF;
+END $$;
 
 COMMENT ON COLUMN opportunities.route_metadata IS
     'G-SIM-1 B2b: complete route topology {pool_addresses[], token_addresses[], dex_adapters[], decimals{}} for sim-ctl OpportunityCandidate reconstruction. Empty {} for legacy rows or detection-time failures.';
