@@ -300,7 +300,7 @@ export const R8_LIMITS: R8Limit[] = [
   },
   {
     topic: "TEE attestation",
-    detail: "Asume signer en SGX/SEV-SNP real — stub si VPS sin TEE hardware",
+    detail: "Asume signer en SGX/SEV-SNP real — en VPS sin hardware TEE el stage no es ejecutable y se declara como limitación (fail-honest; no existe implementación sustituta)",
   },
   {
     topic: "Blue/green",
