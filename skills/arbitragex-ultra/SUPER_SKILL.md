@@ -76,7 +76,7 @@ Dado un MEV_ID, la skill puede responder:
 
 ## Consultas que esta skill puede responder
 
-1. "¿Qué operadores usa MEV-05-042?" → buscar en knowledge_graph.jsonl
+1. "¿Qué operadores usa MEV-06-018?" → buscar en knowledge_graph.jsonl
 2. "¿Qué estrategias usan op_16 (Kelly)?" → reverse lookup en matriz
 3. "¿Qué rutas sobreviven si deshabilito Aave?" → funnel:born/died por mode
 4. "¿Cuál es el sizing óptimo para un 2-pool WETH/USDC?" → fórmula cuadrática cerrada
