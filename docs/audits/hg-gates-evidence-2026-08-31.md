@@ -132,6 +132,26 @@ gaps fixed with discriminated live evidence (worker `notFound` JSON vs api-serve
 `/config` 401 = AUTH-GATE legitimate. Verified: edge tsc, frontend tsc, vitest
 105/105, api-server tests 20/20.
 
+## CUR-001..012 — positive re-proof status (NOT_REDETECTED ≠ RESOLVED)
+
+Re-proofs executed against current HEAD (`git ls-tree 0ad819a0…` and `origin/main`
+— the productive page set is IDENTICAL at both):
+
+| ID | Re-proof evidence (this loop) | Verdict |
+|---|---|---|
+| CUR-001 | Exact set arithmetic: legacy 56-row contract = **45 real routes + 1 name-drift (`/admin/sign-in` vs repo `/admin/signin`) + 10 `RECONCILE_47..56` placeholders** (contract declares itself incomplete). Repo = **57 productive pages** = 45 contract-matched + **12 newer surfaces** (monitor, live-testnet, onboarding×5+root, operator/presets, translator, readiness, omega-s5/registry/[entity], admin/signin). Drift is contract-internal, NOT a repo defect; zero missing/extra files vs SSOT. | **RESOLVED (contract is the stale side)** |
+| CUR-002 | Stale `AppState.engine` doc-comment in sim-ctl (claimed consumer Anvil-only) — consumer has dispatched via `SimulatorBackend` since SIMWIRE-01 #481. Comment fixed in PR #500. | **RESOLVED (#500)** |
+| CUR-003 | `live_exec_policy.rs` re-read at HEAD: `MainnetRefused` at 4 return sites; module doc "chain_id == 1 rejected UNCONDITIONALLY". | **RE-PROVEN (BLOCKER-BY-DESIGN, protected)** |
+| CUR-004 | Superseded by the F-15 measurement above: p95 measured 829.4 ms — the claim "<30 ms" is now DISPROVEN by instrument, not merely unproven. | **CONFIRMED(measured) — perf backlog, no longer an evidence gap** |
+| CUR-005 | PairBuckets consumer-parity E2E — not re-proven this loop (needs instrumented E2E run). | **OPEN (F-08 class)** |
+| CUR-006 | QuoteScore live completeness/hot-mutation ACK — not re-proven this loop. | **OPEN (F-09/F-10 class)** |
+| CUR-007 | Per-mutation runtime ACK — not re-proven this loop. | **OPEN (F-10 class)** |
+| CUR-008 | Full classified ledger delivered (PR #497): 2 264 raw → 1 278 DOC_NARRATIVE / 282 DATA_FILE / 236 CODE_COMMENT / 133 UI_HTML_ATTRIBUTE / 97 BACKUP_DEAD_CODE / **75 PRODUCTION_CODE (0 defects after cluster review)** / 62 TEST_ONLY / 51 CONFIG_SCRIPT / 48 GENERATED_ARTIFACT. | **RESOLVED (#497)** |
+| CUR-009 | 310 env names — sensitivity classification outstanding (workbook 53_ENV_INVENTORY lists them; ownership/secret tiers not yet tabulated). | **OPEN (partial: §33 policy already mandates ${VAR} placeholders; no literal secrets in tracked files — gitleaks CI gate green)** |
+| CUR-010 | Redis durability proven live (F-14 above: AOF ok/everysec/no stalls/forks 7.6 ms/rejected 0). Per-resource TTL/consumer table for the 207 `arbx:*` keys outstanding. | **PARTIAL (durability ✅, per-key policy OPEN)** |
+| CUR-011 | 584 static route signatures — mount-prefix normalization outstanding (edge route table now partially enumerated by DAPP-SURFACE work). | **OPEN (LOW)** |
+| CUR-012 | Grep over tracked cert/docs surfaces: ZERO promissory claims; the only "guaranteed profit" hits are `ANTI_PATTERNS_FROM_DEMOS.md` rows that CONDEMN such claims (plus stale worktree copies). | **RESOLVED (doctrine holds — no cert criterion promises profit)** |
+
 ## PROTECTED TRUTHS — no-regression statement (F-18 / F-22 / F-24)
 
 Diff scope of this remediation (#493–#498) touches NO execution-path, signer,
