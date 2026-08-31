@@ -40,18 +40,38 @@ CREATE TABLE IF NOT EXISTS paper_trade_runs (
     created_at              TIMESTAMPTZ     NOT NULL DEFAULT NOW()
 );
 
+-- RERUN-LOCK-SAFETY (GEN-CI-FAIL 2026-08-30): paper_trade_runs is written
+-- continuously by the paper archiver; bare CREATE INDEX IF NOT EXISTS takes
+-- ShareLock before the existence check and starves under the runner's
+-- lock_timeout=10s. Catalog-guarded no-op path takes no table lock
+-- (lint-migration-rerun-lock-safety.sh). Plain (non-CONCURRENT) build inside
+-- the guard is legal here: this file runs in one transaction and the EXECUTE
+-- path only fires on a fresh table.
+--
 -- Primary access pattern: look up all paper runs for an opportunity.
-CREATE INDEX IF NOT EXISTS idx_paper_trade_runs_opportunity
-    ON paper_trade_runs(opportunity_id);
-
 -- Secondary access pattern: aggregate drift metrics by strategy + chain over time.
-CREATE INDEX IF NOT EXISTS idx_paper_trade_runs_strategy_chain
-    ON paper_trade_runs(strategy_kind, chain_id, created_at DESC);
-
 -- Diagnostic: count pending drift computations (actual_timestamp IS NULL).
-CREATE INDEX IF NOT EXISTS idx_paper_trade_runs_pending_drift
-    ON paper_trade_runs(created_at DESC)
-    WHERE actual_timestamp IS NULL;
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_indexes
+    WHERE schemaname = 'public' AND indexname = 'idx_paper_trade_runs_opportunity'
+  ) THEN
+    EXECUTE 'CREATE INDEX idx_paper_trade_runs_opportunity ON paper_trade_runs(opportunity_id)';
+  END IF;
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_indexes
+    WHERE schemaname = 'public' AND indexname = 'idx_paper_trade_runs_strategy_chain'
+  ) THEN
+    EXECUTE 'CREATE INDEX idx_paper_trade_runs_strategy_chain ON paper_trade_runs(strategy_kind, chain_id, created_at DESC)';
+  END IF;
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_indexes
+    WHERE schemaname = 'public' AND indexname = 'idx_paper_trade_runs_pending_drift'
+  ) THEN
+    EXECUTE 'CREATE INDEX idx_paper_trade_runs_pending_drift ON paper_trade_runs(created_at DESC) WHERE actual_timestamp IS NULL';
+  END IF;
+END $$;
 
 DO $$
 DECLARE

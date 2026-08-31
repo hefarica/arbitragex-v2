@@ -17,15 +17,12 @@ impl DexPotentialAdapter {
 
 #[async_trait]
 impl PotentialField for DexPotentialAdapter {
-    async fn sample(&self, token_in: &str, token_out: &str) -> Option<PotentialGradient> {
+    async fn sample(&self, _token_in: &str, _token_out: &str) -> Option<PotentialGradient> {
         // TODO(scaffold): wire to DexEngine quote path
-        Some(PotentialGradient {
-            token_in: token_in.to_string(),
-            token_out: token_out.to_string(),
-            potential_delta_usd: 0.0,
-            venue_in: "uniswap_v3".to_string(),
-            venue_out: "uniswap_v3".to_string(),
-        })
+        // R8 (STATIC-DEBT 2026-08-31): a fabricated Some(0.0) claims "computed
+        // and exactly zero" — a lie while unwired. None = not computed. The
+        // sibling adapters (liquidation_potential) already did this correctly.
+        None
     }
 
     async fn reconcile(&self, _cycle: &PermittedCycle) {

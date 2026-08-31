@@ -921,6 +921,9 @@ export const AgentStatusRowSchema = z.object({
   status: z.string(),
   evidence: z.array(z.string()),
   last_run_at: z.string().nullable(),
+  // DAPP-SURFACE-FAIL: ledger provenance. Optional so snapshots served by an
+  // older backend (pre verified_at) still parse; absent renders as "—".
+  verified_at: z.string().nullable().optional(),
   source: z.string(),
   blocks: z.array(z.string()),
   next_action: z.string().nullable(),

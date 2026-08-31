@@ -365,11 +365,14 @@ pub fn build_cartridge_pool_data(
     m
 }
 
-// ── FASE B — Shadow outcome emitter (gated off by default, NO-ACTIVE) ─────────
+// ── FASE B — Route-discovery outcome emitter (gated off by default, NO-ACTIVE) ─
 //
-// Persists each resolved `CartridgeEvalResult` from `shadow_evaluate_intent` to a
-// NEW, SEPARATE Redis stream so the ≥2-week hit-rate dataset can accrue. This is
-// the dry-run→stream link the paper-trade archiver header documents.
+// Persists each resolved `CartridgeEvalResult` from `shadow_evaluate_intent` AND
+// `active_evaluate_and_emit` to a NEW, SEPARATE Redis stream so the ≥2-week
+// hit-rate dataset can accrue. This is the dry-run→stream link the paper-trade
+// archiver header documents. Telemetry is mode-invariant (§34.1): both call
+// sites use this same emitter — only the downstream terminus differs by mode.
+// (BUG-003/RD-06/ARBX-0024: the Active call-site was missing until 2026-08-31.)
 //   - Stream: `arbx:route_discovery:outcomes` (NEVER `arbx:opps:detected`).
 //   - Gate: `ARBX_ROUTE_DISCOVERY_OUTCOMES` ∈ {shadow,on,1,true}; default off.
 //   - Zero-Mocks: only emits with a REAL eval result in hand; nothing fabricated.
@@ -1082,6 +1085,24 @@ pub async fn active_evaluate_and_emit(
     for (cartridge_id, category, declared_primary_ops, declared_secondary_ops) in pertinent {
         match runner.evaluate(&cartridge_id, pool_data.clone()).await {
             Ok(eval_result) => {
+                // BUG-003/RD-06/ARBX-0024 (2026-08-31): telemetry is hot-path
+                // MODE-INVARIANT (§34.1) — the route-discovery outcomes dataset
+                // must accrue in Active exactly as in Shadow; only the execution
+                // terminus differs. This path previously consumed the resolved
+                // result and never persisted an outcome row, so
+                // XLEN arbx:route_discovery:outcomes stayed 0 while cartridges
+                // ran Active (the S4 calibration labels starve). Same gate
+                // (ARBX_ROUTE_DISCOVERY_OUTCOMES), same stream, fire-and-forget.
+                emit_shadow_outcome(
+                    &runner,
+                    chain_id,
+                    &cartridge_id,
+                    &intent,
+                    &eval_result,
+                    reserves_source.is_some(),
+                )
+                .await;
+
                 if !eval_result.is_opportunity {
                     debug!(
                         event = "cartridge.active_eval_negative",

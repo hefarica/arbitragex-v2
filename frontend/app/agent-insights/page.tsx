@@ -44,7 +44,7 @@ export default async function AgentInsightsPage() {
       <>
         <PageHeader
           title="Agent Insights"
-          lede="17 ArbitrageX agent-team verdicts — workspace-verified audit ledger."
+          lede="ArbitrageX agent-team verdicts — dated workspace-verified audit ledger."
           showRefresh
         />
         <FocusOnMount>
@@ -67,7 +67,7 @@ export default async function AgentInsightsPage() {
     <>
       <PageHeader
         title="Agent Insights"
-        lede="17 ArbitrageX agent-team verdicts — workspace-verified audit ledger. Observe-only."
+        lede="ArbitrageX agent-team verdicts — dated workspace-verified audit ledger. Observe-only."
         showRefresh
       />
       <AgentInsightsClient initialData={initialData} />
