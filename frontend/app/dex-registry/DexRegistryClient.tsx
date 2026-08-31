@@ -316,6 +316,7 @@ export default function DexRegistryClient({ initialSnapshot }: Props) {
                       type="button"
                       disabled={toggling === d.id}
                       onClick={(e) => handleToggle(d, e)}
+                      aria-label={`${d.is_active ? "Disable" : "Enable"} ${d.name}`}
                       className="flex items-center justify-center mx-auto text-muted-foreground hover:text-foreground transition-colors disabled:opacity-40"
                     >
                       {d.is_active ? <ToggleRight className="size-5 text-success" /> : <ToggleLeft className="size-5" />}
