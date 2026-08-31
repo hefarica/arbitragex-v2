@@ -9,12 +9,14 @@
  * Safety: observe-only. No capital, no execution, no broadcast.
  * Zero-Mocks: all data from /api/agents/status; no fabricated defaults.
  */
+import * as React from "react"; // SSR-test classic JSX runtime (house convention, see RuntimePostureBar)
 import { useEffect, useState } from "react";
 import { AlertCircleIcon, BotIcon, CheckCircle2Icon, XCircleIcon, AlertTriangleIcon, ClockIcon, HelpCircleIcon } from "lucide-react";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { LocalTime } from "@/components/LocalTime";
+import { fmtDateTime } from "@/lib/formatters";
 
 const POLL_INTERVAL_MS = 30_000;
 
@@ -30,6 +32,7 @@ interface AgentRow {
   status: AgentStatus;
   evidence: string[];
   last_run_at: string | null;
+  verified_at?: string | null;
   source: string;
   blocks: string[];
   next_action: string | null;
@@ -106,6 +109,15 @@ function AgentCard({ agent }: { agent: AgentRow }) {
         {agent.operator_required && (
           <Badge variant="outline" className="text-xs">Operator action required</Badge>
         )}
+        {/* DAPP-SURFACE-FAIL: provenance — a verdict without a date is a claim.
+            Ledger date + (honest) runtime re-verify state, never implied freshness.
+            fmtDateTime (deterministic UTC) per LocalTime's own doctrine: ledger
+            surfaces prefer plain UTC, not the viewer-locale convenience. */}
+        <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 border-t border-border/40 pt-1.5 font-mono text-[10px] text-muted-foreground/80">
+          <span>ledger verified: {agent.verified_at ?? "—"}</span>
+          <span aria-hidden="true">·</span>
+          <span>runtime re-verify: {agent.last_run_at ? fmtDateTime(agent.last_run_at) : "not executed"}</span>
+        </div>
       </CardContent>
     </Card>
   );

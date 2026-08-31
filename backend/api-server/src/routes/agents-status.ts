@@ -5,7 +5,10 @@
  *
  * Source honesty contract:
  *   - "workspace_verified": the verdict reflects the operator's last
- *     in-session audit (P0+P1+P2 phases). These are NOT runtime probes;
+ *     in-session audit (P0+P1+P2 phases) AS OF `verified_at`. The date is
+ *     git-derived (the commit that last touched the def's evidence) — May-era
+ *     evidence strings are the ledger's historical record, honestly dated,
+ *     never presented as fresh. These are NOT runtime probes;
  *     they're the persistent ledger of the most recent agent-team
  *     pass-through. A future runtime agent runner will replace these
  *     with source="runtime" — the schema is forward-compat.
@@ -55,6 +58,7 @@ interface AgentStatusRow {
   status: AgentStatus;
   evidence: string[];
   last_run_at: string | null;
+  verified_at: string | null;
   source: AgentSource;
   blocks: BlockedPhase[];
   next_action: string | null;
@@ -95,6 +99,8 @@ interface AgentDef {
   default_status: AgentStatus;
   evidence: string[];
   source: AgentSource;
+  /** Date (YYYY-MM-DD) the ledger verdict was last workspace-verified. null = unknown (R8). */
+  verified_at: string | null;
   blocks: BlockedPhase[];
   next_action: string | null;
   risk: RiskLevel;
@@ -113,6 +119,7 @@ const AGENT_DEFS: AgentDef[] = [
       "Working tree clean at last verification (HEAD pushed to origin + github)",
     ],
     source: "workspace_verified",
+    verified_at: "2026-05-13",
     blocks: [],
     next_action: null,
     risk: "low",
@@ -129,6 +136,7 @@ const AGENT_DEFS: AgentDef[] = [
       "13 services preserved untouched (postgres, redis, searcher-rs, sim-ctl, recon, etc.)",
     ],
     source: "workspace_verified",
+    verified_at: "2026-05-13",
     blocks: [],
     next_action: null,
     risk: "low",
@@ -145,6 +153,7 @@ const AGENT_DEFS: AgentDef[] = [
       "Not applied, not deleted; awaiting operator decision",
     ],
     source: "workspace_verified",
+    verified_at: "2026-05-13",
     blocks: [],
     next_action: "Operator must decide: keep as stash, branch off, or commit to main.",
     risk: "low",
@@ -163,6 +172,7 @@ const AGENT_DEFS: AgentDef[] = [
       "P0/P1/P2 panels all live",
     ],
     source: "workspace_verified",
+    verified_at: "2026-05-13",
     blocks: [],
     next_action: null,
     risk: "low",
@@ -179,6 +189,7 @@ const AGENT_DEFS: AgentDef[] = [
       "Route mounted via standard mountX(app, deps) pattern",
     ],
     source: "workspace_verified",
+    verified_at: "2026-05-13",
     blocks: [],
     next_action: null,
     risk: "low",
@@ -195,6 +206,7 @@ const AGENT_DEFS: AgentDef[] = [
       "20/20 unit tests pin redaction + doctrine + summarisation",
     ],
     source: "workspace_verified",
+    verified_at: "2026-05-13",
     blocks: [],
     next_action: null,
     risk: "low",
@@ -211,6 +223,7 @@ const AGENT_DEFS: AgentDef[] = [
       "capital_exposure_usd hardcoded literal 0",
     ],
     source: "workspace_verified",
+    verified_at: "2026-05-13",
     blocks: [],
     next_action: null,
     risk: "low",
@@ -227,6 +240,7 @@ const AGENT_DEFS: AgentDef[] = [
       "Scanner heartbeat proxy verified live (HTTP 200)",
     ],
     source: "workspace_verified",
+    verified_at: "2026-05-13",
     blocks: [],
     next_action: null,
     risk: "low",
@@ -243,6 +257,7 @@ const AGENT_DEFS: AgentDef[] = [
       "4/4 SSR tests assert R8 fail-honest contract",
     ],
     source: "workspace_verified",
+    verified_at: "2026-05-13",
     blocks: [],
     next_action: null,
     risk: "low",
@@ -259,6 +274,7 @@ const AGENT_DEFS: AgentDef[] = [
       "6/6 SSR tests confirm NO live-enable button anywhere in markup",
     ],
     source: "workspace_verified",
+    verified_at: "2026-05-13",
     blocks: [],
     next_action: null,
     risk: "low",
@@ -275,6 +291,7 @@ const AGENT_DEFS: AgentDef[] = [
       "Zod schemas .passthrough() forward-compat; null distinguished from 0",
     ],
     source: "workspace_verified",
+    verified_at: "2026-05-13",
     blocks: [],
     next_action: null,
     risk: "low",
@@ -291,6 +308,7 @@ const AGENT_DEFS: AgentDef[] = [
       "Admin cookie httpOnly + Secure + SameSite=Strict",
     ],
     source: "workspace_verified",
+    verified_at: "2026-05-13",
     blocks: [],
     next_action: null,
     risk: "low",
@@ -312,6 +330,7 @@ const AGENT_DEFS: AgentDef[] = [
       "A.6 (2026-08-29): 10 comprehensive breakers compute via /api/v1/risk/circuit-breakers/status (kill_switch real runtime; DD tiers read the REAL paper ledger — prod PASS 2026-08-29; revert/gas NOT_AVAILABLE until operator sets ARBX_CB_* envs)",
     ],
     source: "workspace_verified",
+    verified_at: "2026-08-29",
     blocks: ["LIVE"],
     next_action: "Emit Prometheus alerts from breaker state (A.6 remaining); operator sets ARBX_CB_* thresholds on the VPS to move revert/gas off NOT_AVAILABLE.",
     risk: "high",
@@ -331,6 +350,7 @@ const AGENT_DEFS: AgentDef[] = [
       "F4: primary_chain fail-honest — empty enabled_chains aborts boot instead of silent fallback to chain 1",
     ],
     source: "workspace_verified",
+    verified_at: "2026-05-13",
     blocks: [],
     next_action: null,
     risk: "low",
@@ -351,6 +371,7 @@ const AGENT_DEFS: AgentDef[] = [
       "scanner::dispatch_orchestrator_and_classify does NOT emit ConfidenceScore",
     ],
     source: "workspace_verified",
+    verified_at: "2026-05-13",
     blocks: ["LIVE"],
     next_action: "Future commit: wire bayesian + kelly into scanner hot path; persist ConfidenceScore on every paper opportunity; calibrate posterior priors from paper-shadow run.",
     risk: "medium",
@@ -367,6 +388,7 @@ const AGENT_DEFS: AgentDef[] = [
       "Backend: no PASS-fabrication, no unsafe in simulator-v2 or searcher-rs",
     ],
     source: "workspace_verified",
+    verified_at: "2026-05-13",
     blocks: [],
     next_action: null,
     risk: "low",
@@ -383,6 +405,7 @@ const AGENT_DEFS: AgentDef[] = [
       "/live-readiness HTTP 200 with P0/P1/P2 strings visible",
     ],
     source: "workspace_verified",
+    verified_at: "2026-05-13",
     blocks: [],
     next_action: null,
     risk: "low",
@@ -399,6 +422,7 @@ const AGENT_DEFS: AgentDef[] = [
       "useEffect+allSettled; no reconnect storm; no render loops",
     ],
     source: "workspace_verified",
+    verified_at: "2026-05-13",
     blocks: [],
     next_action: null,
     risk: "low",
@@ -421,6 +445,7 @@ const AGENT_DEFS: AgentDef[] = [
       "A.9: pending formal two-operator sign-off",
     ],
     source: "workspace_verified",
+    verified_at: "2026-08-29",
     blocks: ["LIVE"],
     next_action: "Clear A.6 (Prometheus alert emission) and A.7 (relay no-submit call-site) partials; then operator two-operator sign-off A.9 via POST /admin/go-no-go/sign-off.",
     risk: "critical",
@@ -434,7 +459,7 @@ const AGENT_DEFS: AgentDef[] = [
 
 function runtimeOverlay(
   def: AgentDef,
-  ctx: { readinessOk: boolean; readinessFailDetail: string | null },
+  ctx: { readinessOk: boolean; readinessFailDetail: string | null; probeRanAt?: string | null },
 ): AgentStatusRow {
   let verdict: AgentVerdict = def.default_verdict;
   let status: AgentStatus = def.default_status;
@@ -444,12 +469,21 @@ function runtimeOverlay(
   // backend-contract-agent + blockers-api-agent + decision-api-agent all
   // depend on verifyAll(). If verifyAll fails we demote them to BLOCKED
   // so the operator sees the real failure surface.
+  // DAPP-SURFACE-FAIL (2026-08-31): last_run_at is only honest when a runtime
+  // re-verification actually executed. verifyAll() runs on every request for
+  // the three backend agents below — they get the probe timestamp. Static
+  // ledger agents keep null = "not re-verified at runtime" (R8), and the UI
+  // renders that state explicitly instead of implying freshness.
   const dependsOnVerify = ["backend-contract-agent", "blockers-api-agent", "decision-api-agent"];
-  if (dependsOnVerify.includes(def.id) && !ctx.readinessOk) {
-    verdict = "BLOCKED";
-    status = "blocked";
-    source = "runtime";
-    evidence.push(`Runtime: verifyAll failed (${ctx.readinessFailDetail ?? "unknown"})`);
+  let last_run_at: string | null = null;
+  if (dependsOnVerify.includes(def.id)) {
+    last_run_at = ctx.probeRanAt ?? null;
+    if (!ctx.readinessOk) {
+      verdict = "BLOCKED";
+      status = "blocked";
+      source = "runtime";
+      evidence.push(`Runtime: verifyAll failed (${ctx.readinessFailDetail ?? "unknown"})`);
+    }
   }
 
   return {
@@ -459,7 +493,8 @@ function runtimeOverlay(
     verdict,
     status,
     evidence,
-    last_run_at: null, // No persistent run ledger yet; future agent runner will set.
+    last_run_at,
+    verified_at: def.verified_at,
     source,
     blocks: def.blocks,
     next_action: def.next_action,
@@ -511,6 +546,7 @@ export function mountAgentsStatus(
   app.get("/api/v1/agents/status", async (_req: Request, res: Response) => {
     let readinessOk = true;
     let readinessFailDetail: string | null = null;
+    const probeRanAt = new Date().toISOString(); // real timestamp of THIS verifyAll execution
     try {
       await verifyAll({ pool: deps.pool });
     } catch (e) {
@@ -524,7 +560,7 @@ export function mountAgentsStatus(
 
     try {
       const agents = AGENT_DEFS.map((def) =>
-        runtimeOverlay(def, { readinessOk, readinessFailDetail }),
+        runtimeOverlay(def, { readinessOk, readinessFailDetail, probeRanAt }),
       );
       const summary = summarize(agents);
       const response: AgentsStatusResponse = {

@@ -137,3 +137,59 @@ describe("regression: no secret leakage in defaults", () => {
     expect(all).not.toMatch(/0x[a-f0-9]{40}/i); // No deployed contract addresses
   });
 });
+
+// ── DAPP-SURFACE-FAIL regression (2026-08-31): dated ledger provenance ──────
+// The workbook flagged /agent-insights Business truth FAIL: May-era evidence
+// strings were served as current verdicts with last_run_at=null and no date.
+// The fix dates every ledger entry (git-derived) and only stamps last_run_at
+// when a runtime probe actually executed.
+
+describe("DAPP-SURFACE-FAIL: verified_at ledger provenance", () => {
+  it("every agent def carries an ISO-date verified_at (YYYY-MM-DD)", () => {
+    for (const a of AGENT_DEFS) {
+      expect(a.verified_at).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+    }
+  });
+
+  it("the two 2026-08-29 re-verified defs carry that date (de-stale pins)", () => {
+    const risk = AGENT_DEFS.find((x) => x.id === "risk-circuit-agent")!;
+    const gonogo = AGENT_DEFS.find((x) => x.id === "go-no-go-agent")!;
+    expect(risk.verified_at).toBe("2026-08-29"); // 20c93917
+    expect(gonogo.verified_at).toBe("2026-08-29"); // 640fc7db
+  });
+
+  it("untouched ledger entries honestly keep the 2026-05-13 audit date", () => {
+    const stale = AGENT_DEFS.filter((x) => x.verified_at === "2026-05-13");
+    expect(stale.length).toBe(17);
+  });
+});
+
+describe("DAPP-SURFACE-FAIL: last_run_at honesty", () => {
+  it("verifyAll-dependent agents get the probe timestamp when the probe ran", () => {
+    const def = AGENT_DEFS.find((x) => x.id === "blockers-api-agent")!;
+    const row = runtimeOverlay(def, {
+      readinessOk: true,
+      readinessFailDetail: null,
+      probeRanAt: "2026-08-31T00:00:00.000Z",
+    });
+    expect(row.last_run_at).toBe("2026-08-31T00:00:00.000Z");
+    expect(row.verified_at).toBe(def.verified_at);
+  });
+
+  it("verifyAll-dependent agents keep last_run_at=null when no probe timestamp is supplied", () => {
+    const def = AGENT_DEFS.find((x) => x.id === "blockers-api-agent")!;
+    const row = runtimeOverlay(def, { readinessOk: true, readinessFailDetail: null });
+    expect(row.last_run_at).toBeNull();
+  });
+
+  it("static ledger agents never claim a runtime run", () => {
+    const def = AGENT_DEFS.find((x) => x.id === "repo-forensics-agent")!;
+    const row = runtimeOverlay(def, {
+      readinessOk: true,
+      readinessFailDetail: null,
+      probeRanAt: "2026-08-31T00:00:00.000Z",
+    });
+    expect(row.last_run_at).toBeNull();
+    expect(row.source).toBe("workspace_verified");
+  });
+});
