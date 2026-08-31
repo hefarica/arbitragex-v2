@@ -148,9 +148,10 @@ export function StrategyForgeForm() {
         </div>
 
         <div className="space-y-1.5">
-          <Label>Cartridge source (.rhai)</Label>
+          <Label htmlFor="forge-source">Cartridge source (.rhai)</Label>
           <Dropzone accept={["rhai"]} value={uploaded} onChange={onUpload} />
           <textarea
+            id="forge-source"
             value={source}
             onChange={(e) => setSource(e.target.value)}
             spellCheck={false}

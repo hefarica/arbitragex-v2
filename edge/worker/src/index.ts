@@ -634,9 +634,21 @@ app.get("/api/cartridges/telemetry/latest", (c) => proxy(c, "/api/cartridges/tel
 
 // Worker health, metrics, onboarding
 app.get("/api/metrics/defi", (c) => proxy(c, "/api/metrics"));
-app.get("/api/onboarding/status", (c) => proxy(c, "/api/onboarding/status"));
+// Onboarding upstream is versioned on the api-server side (index.ts mounts
+// /api/v1/onboarding/status); the public surface stays unversioned.
+app.get("/api/onboarding/status", (c) => proxy(c, "/api/v1/onboarding/status"));
 app.get("/api/sed/status", (c) => proxy(c, "/api/sed/status"));
 app.get("/api/health", (c) => proxy(c, "/api/health"));
+
+// Operator identity (/omega-s5/*). Auth-dependent (L8 pubkey identity resolved
+// from the session upstream) — cookie-forwarding, NEVER cached, upstream status
+// (401 BLOCKED / 200) forwarded verbatim.
+app.get("/api/operator/me", (c) => walletProxy(c, "/api/operator/me", "GET"));
+
+// Live-testnet SSE telemetry (/live-testnet). Public, read-only, non-secret
+// (api-server live-testnet.ts). Streamed pass-through — no buffering, no KV
+// cache, so the text/event-stream body flushes incrementally.
+app.get("/api/live-testnet/events", (c) => proxyPassThrough(c, "/api/live-testnet/events"));
 
 // Wallets
 app.get("/api/v1/wallets", (c) => proxy(c, "/api/v1/wallets"));

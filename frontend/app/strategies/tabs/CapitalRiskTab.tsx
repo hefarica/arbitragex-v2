@@ -196,9 +196,12 @@ function Field({
   // Controlled value: use empty string when no data so the browser renders
   // the placeholder instead of a synthetic zero (R8).
   const controlled = value == null ? "" : value;
+  // Programmatic label↔input link (a11y): every knob input needs an accessible
+  // name derived from its visible label, not just adjacent visual text.
+  const fieldId = `capital-risk-${label.toLowerCase().replace(/[^a-z0-9]+/g, "-")}`;
   return (
     <div className="grid gap-1.5">
-      <Label className="text-xs text-muted-foreground" title={tooltip}>
+      <Label className="text-xs text-muted-foreground" title={tooltip} htmlFor={fieldId}>
         {label}
         {tooltip && (
           <span className="ml-1 text-muted-foreground cursor-help" title={tooltip}>
@@ -207,6 +210,7 @@ function Field({
         )}
       </Label>
       <Input
+        id={fieldId}
         type="number"
         value={controlled}
         step={step}
