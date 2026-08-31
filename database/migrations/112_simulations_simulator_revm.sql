@@ -11,11 +11,27 @@
 -- the two statements (any concurrent insert could land a simulator value
 -- outside both the old and the new CHECK). Atomic swap instead.
 --
--- Idempotent: DROP IF EXISTS + re-ADD (re-running replaces the constraint
--- with the identical definition).
+-- RERUN-LOCK-SAFETY (GEN-CI-FAIL 2026-08-30): the runner has NO applied-state
+-- ledger — every file re-runs on every deploy, so the DROP-then-ADD cycle
+-- took AccessExclusiveLock on the now-hot simulations table (sim-ctl writes
+-- continuously post-SIMWIRE-02c) even when the CHECK already allowed 'revm'.
+-- The definition-check below skips the swap entirely in the steady state:
+-- no table lock on the no-op path (lint-migration-rerun-lock-safety.sh).
+-- If the definition ever needs to change again, ship a NEW migration
+-- (forward-only), do not edit the CHECK list here.
 BEGIN;
-ALTER TABLE simulations DROP CONSTRAINT IF EXISTS simulations_simulator_check;
-ALTER TABLE simulations
-  ADD CONSTRAINT simulations_simulator_check
-  CHECK (simulator IN ('anvil','tenderly','hardhat','not_implemented','revm'));
+DO $$
+BEGIN
+  IF EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conname = 'simulations_simulator_check'
+      AND conrelid = 'public.simulations'::regclass
+      AND pg_get_constraintdef(oid) LIKE '%revm%'
+  ) THEN
+    RAISE NOTICE '112: simulations_simulator_check already allows revm — no-op';
+  ELSE
+    EXECUTE 'ALTER TABLE simulations DROP CONSTRAINT IF EXISTS simulations_simulator_check';
+    EXECUTE 'ALTER TABLE simulations ADD CONSTRAINT simulations_simulator_check CHECK (simulator IN (''anvil'',''tenderly'',''hardhat'',''not_implemented'',''revm''))';
+  END IF;
+END $$;
 COMMIT;

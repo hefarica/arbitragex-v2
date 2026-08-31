@@ -140,6 +140,24 @@ jobs:
           fi
           cd "$DEPLOY_PATH"
 
+          # DEPLOY-WATCHDOG-RACE gate (GEN-CI-FAIL attempts 1+3, 2026-08-31):
+          # the minute cron watchdog (arbx-watchdog.sh) restores the stack when
+          # it sees < 24 containers — during this deploy's --force-recreate the
+          # count is transiently low, so its next tick fired a CONCURRENT
+          # `docker compose up` and both processes raced the same containers
+          # ("Error response from daemon: No such container: …"; run
+          # 33328955302 attempts 1 and 3 both died this way mid-[7/9]).
+          # This flock serializes workflow deploy vs watchdog vs manual
+          # scripts/deploy.sh. Held for the whole script lifetime (fd 9).
+          DEPLOY_LOCK="/tmp/arbx-deploy.lock"
+          touch "$DEPLOY_LOCK" && chmod 666 "$DEPLOY_LOCK" 2>/dev/null || true
+          exec 9>"$DEPLOY_LOCK"
+          if ! flock -w 600 9; then
+            echo "::error::another deploy holds ${DEPLOY_LOCK} for >10min — aborting to avoid a concurrent compose race"
+            exit 1
+          fi
+          echo "deploy lock acquired: ${DEPLOY_LOCK} (fd 9, held for script lifetime)"
+
           COMPOSE_FILE="docker/compose.prod.yml"
           ENV_FILE=".env"
 

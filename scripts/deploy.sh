@@ -48,6 +48,20 @@ echo "Timestamp: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
 echo "Compose file: $COMPOSE_FILE"
 echo "Args: $*"
 
+# ── DEPLOY-WATCHDOG-RACE gate (GEN-CI-FAIL attempts 1+3, 2026-08-31) ──────────
+# Same flock the deploy workflow and the minute cron watchdog use. Without it
+# a manual deploy racing the workflow (or the watchdog firing mid-recreate)
+# produces "Error response from daemon: No such container: …". Wait up to
+# 10min for a concurrent deploy, then fail loud — never race.
+DEPLOY_LOCK="/tmp/arbx-deploy.lock"
+touch "$DEPLOY_LOCK" && chmod 666 "$DEPLOY_LOCK" 2>/dev/null || true
+exec 9>"$DEPLOY_LOCK"
+if ! flock -w 600 9; then
+    echo "ERROR: another deploy holds ${DEPLOY_LOCK} for >10min — refusing to race it" >&2
+    exit 1
+fi
+echo "deploy lock acquired: ${DEPLOY_LOCK} (fd 9, held for script lifetime)"
+
 # Export .env vars for compose ${} interpolation
 # shellcheck disable=SC2046
 export $(grep -v '^#' .env | grep -v '^$' | xargs)

@@ -15,7 +15,7 @@ alloy-sol-types = "1.6"
 alloy-provider = { version = "1.0", features = ["ws"] }
 alloy-rpc-types = "1.0"
 tokio = { version = "1", features = ["full"] }
-sqlx = { version = "0.7", features = ["postgres","runtime-tokio-rustls","chrono","macros","migrate"] }
+sqlx = { version = "0.8", features = ["postgres","runtime-tokio-rustls","chrono","macros","migrate"] }
 redis = { version = "0.25", features = ["tokio-comp","streams"] }
 reqwest = { version = "0.11", features = ["rustls-tls","json"], default-features = false }
 serde = { version = "1", features = ["derive"] }
