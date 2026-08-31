@@ -32,12 +32,42 @@
 -- (resolved), actual_profit_usd = 0 (exactly zero — the realized yield of a
 -- rejected execution), sim_fail_family records why.
 
-ALTER TABLE paper_trade_runs
-  ADD COLUMN IF NOT EXISTS sim_fail_family TEXT
-    CHECK (sim_fail_family IN ('structural', 'economic', 'market')),
-  ADD COLUMN IF NOT EXISTS calibration_eligible BOOLEAN NOT NULL DEFAULT TRUE,
-  ADD COLUMN IF NOT EXISTS sim_attempts INTEGER NOT NULL DEFAULT 0,
-  ADD COLUMN IF NOT EXISTS sim_last_attempt_at TIMESTAMPTZ;
+-- RERUN-LOCK-SAFETY (GEN-CI-FAIL 2026-08-30): paper_trade_runs is written
+-- continuously by the paper archiver; bare ALTER TABLE ... IF NOT EXISTS takes
+-- AccessExclusiveLock before the existence checks and starves under the
+-- runner's lock_timeout=10s. Catalog-guarded no-op path takes no table lock
+-- (lint-migration-rerun-lock-safety.sh).
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema = 'public' AND table_name = 'paper_trade_runs'
+      AND column_name = 'sim_fail_family'
+  ) THEN
+    EXECUTE 'ALTER TABLE paper_trade_runs ADD COLUMN sim_fail_family TEXT CHECK (sim_fail_family IN (''structural'', ''economic'', ''market''))';
+  END IF;
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema = 'public' AND table_name = 'paper_trade_runs'
+      AND column_name = 'calibration_eligible'
+  ) THEN
+    EXECUTE 'ALTER TABLE paper_trade_runs ADD COLUMN calibration_eligible BOOLEAN NOT NULL DEFAULT TRUE';
+  END IF;
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema = 'public' AND table_name = 'paper_trade_runs'
+      AND column_name = 'sim_attempts'
+  ) THEN
+    EXECUTE 'ALTER TABLE paper_trade_runs ADD COLUMN sim_attempts INTEGER NOT NULL DEFAULT 0';
+  END IF;
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema = 'public' AND table_name = 'paper_trade_runs'
+      AND column_name = 'sim_last_attempt_at'
+  ) THEN
+    EXECUTE 'ALTER TABLE paper_trade_runs ADD COLUMN sim_last_attempt_at TIMESTAMPTZ';
+  END IF;
+END $$;
 
 -- Pending-scan index: the drift-tracker tick selects unresolved, still-eligible
 -- rows ordered by created_at. Partial index keeps it tiny as the table grows.

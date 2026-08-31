@@ -5,6 +5,15 @@
 # Docker daemon crash, failed deploy, etc.), this script brings it back up.
 # Idempotent: if everything is healthy, it does nothing (zero cost).
 #
+# DEPLOY-WATCHDOG-RACE gate (GEN-CI-FAIL attempts 1+3, 2026-08-31): the
+# watchdog used to fire a CONCURRENT `docker compose up` while the deploy
+# workflow's --force-recreate transiently dropped the container count below
+# 24 — both processes then raced the same containers and the deploy died
+# with "Error response from daemon: No such container: …". The watchdog now
+# takes the SAME flock the deploy holds (/tmp/arbx-deploy.lock) and DEFERS
+# (exit 0) while a deploy owns it. The stack is mid-recreation by the deploy
+# itself in that window — "restoring" it concurrently is exactly the bug.
+#
 # Install (one-time):
 #   sudo cp scripts/vps/stack-watchdog.sh /usr/local/bin/arbx-watchdog.sh
 #   sudo chmod +x /usr/local/bin/arbx-watchdog.sh
@@ -14,47 +23,41 @@
 
 set -euo pipefail
 
-COMPOSE_DIR="/opt/arbitragex-v2"
-COMPOSE_FILE="docker/compose.prod.yml"
-ENV_FILE=".env"
-EXPECTED_SERVICES=24
-MIN_CRITICAL=4  # postgres, redis, api-server, edge — if any missing → restore
+cd /opt/arbitragex-v2
+TS=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+EXPECTED=24
 
-cd "$COMPOSE_DIR"
-
-# Count running containers
-RUNNING=$(docker ps --format '{{.Names}}' 2>/dev/null | grep -c arbitragex || echo "0")
-
-# Quick check: if full stack is up, exit immediately (zero cost)
-if [ "$RUNNING" -ge "$EXPECTED_SERVICES" ]; then
+# ── DEPLOY LOCK: defer while a deploy owns the stack mutation window ──
+DEPLOY_LOCK="/tmp/arbx-deploy.lock"
+touch "$DEPLOY_LOCK" && chmod 666 "$DEPLOY_LOCK" 2>/dev/null || true
+exec 9>"$DEPLOY_LOCK"
+if ! flock -n 9; then
+  echo "[$TS] WATCHDOG: deploy lock held (${DEPLOY_LOCK}) — deferring; deploy owns the stack mutation window"
   exit 0
 fi
 
-# Something is down — diagnose + restore
-TIMESTAMP=$(date -u +%Y-%m-%dT%H:%M:%SZ)
-echo "[$TIMESTAMP] WATCHDOG: only $RUNNING/$EXPECTED_SERVICES containers running — restoring..."
+# ── LAYER 1: detect crash-looping containers (status: Restarting) ──
+RESTARTING=$(docker ps --format '{{.Names}} {{.Status}}' 2>/dev/null | grep arbitragex | grep -i 'Restarting' | awk '{print $1}' || true)
+if [ -n "$RESTARTING" ]; then
+  for svc in $RESTARTING; do
+    # Map container name → compose service name: arbitragex-v2-selector-api-1 → selector-api
+    SERVICE=$(echo "$svc" | sed 's/^arbitragex-v2-//' | sed 's/-[0-9]*$//')
+    echo "[$TS] WATCHDOG: $svc is CRASH-LOOPING — force-recreating service: $SERVICE"
+    docker compose --env-file .env -f docker/compose.prod.yml up -d --force-recreate "$SERVICE" 2>&1 | tail -1
+  done
+  sleep 5
+fi
 
-# Check which critical services are missing
-for svc in postgres redis api-server edge; do
-  if ! docker ps --format '{{.Names}}' 2>/dev/null | grep -q "arbitragex-v2-${svc}-1"; then
-    echo "[$TIMESTAMP] WATCHDOG: $svc is DOWN"
-  fi
-done
-
-# RESTORE: bring up everything (idempotent — running containers are untouched)
-docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" up -d \
+# ── LAYER 2: detect missing containers (count < 24) ──
+RUNNING=$(docker ps --format '{{.Names}}' 2>/dev/null | grep -c arbitragex || echo "0")
+if [ "$RUNNING" -ge "$EXPECTED" ]; then exit 0; fi
+echo "[$TS] WATCHDOG: $RUNNING/$EXPECTED running — restoring full stack..."
+docker compose --env-file .env -f docker/compose.prod.yml up -d \
   postgres redis anvil socket-proxy \
   searcher-rs sim-ctl relays-client recon selector-api math-engine \
   api-server edge frontend \
   token-enricher prometheus loki promtail grafana alertmanager minio vault \
-  thanos-sidecar thanos-store thanos-query \
-  2>&1 | tail -5
-
-# Verify
+  thanos-sidecar thanos-store thanos-query 2>&1 | tail -3
 sleep 5
-NEW_RUNNING=$(docker ps --format '{{.Names}}' 2>/dev/null | grep -c arbitragex || echo "0")
-echo "[$TIMESTAMP] WATCHDOG: restore complete — $NEW_RUNNING/$EXPECTED_SERVICES containers now running"
-
-if [ "$NEW_RUNNING" -lt "$MIN_CRITICAL" ]; then
-  echo "[$TIMESTAMP] WATCHDOG: CRITICAL — still below $MIN_CRITICAL after restore. Manual intervention required."
-fi
+NEW=$(docker ps --format '{{.Names}}' 2>/dev/null | grep -c arbitragex || echo "0")
+echo "[$TS] WATCHDOG: restore done — $NEW/$EXPECTED running"

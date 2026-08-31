@@ -10,13 +10,34 @@
 
 BEGIN;
 
-ALTER TABLE paper_trade_runs ADD COLUMN IF NOT EXISTS reason     TEXT;
-ALTER TABLE paper_trade_runs ADD COLUMN IF NOT EXISTS route_hash TEXT;
-
--- Access pattern: aggregate paper runs by route fingerprint.
-CREATE INDEX IF NOT EXISTS idx_paper_trade_runs_route_hash
-    ON paper_trade_runs(route_hash)
-    WHERE route_hash IS NOT NULL;
+-- RERUN-LOCK-SAFETY (GEN-CI-FAIL 2026-08-30): paper_trade_runs is written
+-- continuously by the paper archiver; bare ALTER TABLE ... IF NOT EXISTS and
+-- CREATE INDEX IF NOT EXISTS take writer-conflicting table locks before the
+-- existence checks. Catalog-guarded no-op path takes no table lock
+-- (lint-migration-rerun-lock-safety.sh).
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema = 'public' AND table_name = 'paper_trade_runs'
+      AND column_name = 'reason'
+  ) THEN
+    EXECUTE 'ALTER TABLE paper_trade_runs ADD COLUMN reason TEXT';
+  END IF;
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema = 'public' AND table_name = 'paper_trade_runs'
+      AND column_name = 'route_hash'
+  ) THEN
+    EXECUTE 'ALTER TABLE paper_trade_runs ADD COLUMN route_hash TEXT';
+  END IF;
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_indexes
+    WHERE schemaname = 'public' AND indexname = 'idx_paper_trade_runs_route_hash'
+  ) THEN
+    EXECUTE 'CREATE INDEX idx_paper_trade_runs_route_hash ON paper_trade_runs(route_hash) WHERE route_hash IS NOT NULL';
+  END IF;
+END $$;
 
 DO $$
 BEGIN

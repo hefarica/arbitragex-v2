@@ -8,9 +8,18 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
-DROP TRIGGER IF EXISTS trg_notify_opportunity ON opportunities;
-
-CREATE TRIGGER trg_notify_opportunity
-AFTER INSERT ON opportunities
-FOR EACH ROW
-EXECUTE FUNCTION notify_new_opportunity();
+-- RERUN-LOCK-SAFETY (GEN-CI-FAIL 2026-08-30): DROP/CREATE TRIGGER take
+-- ShareRowExclusive on the hot opportunities table on every re-run even when
+-- the trigger already exists. Catalog-guarded no-op path takes no table lock
+-- (lint-migration-rerun-lock-safety.sh). Trigger definition changes ship as a
+-- NEW migration (forward-only doctrine), so the name-guard is sufficient.
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_trigger
+    WHERE tgname = 'trg_notify_opportunity'
+      AND tgrelid = 'public.opportunities'::regclass
+  ) THEN
+    EXECUTE 'CREATE TRIGGER trg_notify_opportunity AFTER INSERT ON opportunities FOR EACH ROW EXECUTE FUNCTION notify_new_opportunity()';
+  END IF;
+END $$;

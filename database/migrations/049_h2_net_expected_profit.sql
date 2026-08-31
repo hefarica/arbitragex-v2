@@ -14,8 +14,20 @@
 
 BEGIN;
 
-ALTER TABLE opportunities
-    ADD COLUMN IF NOT EXISTS net_expected_profit_usd NUMERIC(18, 6) NULL;
+-- RERUN-LOCK-SAFETY (GEN-CI-FAIL 2026-08-30): ALTER TABLE takes
+-- AccessExclusiveLock on the hot opportunities table before the IF NOT
+-- EXISTS check. Catalog-guarded no-op path takes no table lock
+-- (lint-migration-rerun-lock-safety.sh).
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema = 'public' AND table_name = 'opportunities'
+      AND column_name = 'net_expected_profit_usd'
+  ) THEN
+    EXECUTE 'ALTER TABLE opportunities ADD COLUMN net_expected_profit_usd NUMERIC(18, 6) NULL';
+  END IF;
+END $$;
 
 -- No backfill: pre-existing rows retain NULL (R8 fail-honest).
 -- New rows will have the column populated by the spine evaluator path.

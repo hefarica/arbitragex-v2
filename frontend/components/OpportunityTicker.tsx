@@ -12,6 +12,21 @@ interface TickerItem {
   ago: string;
 }
 
+/**
+ * DAPP-SURFACE-FAIL (a11y): the ticker renders inside the root layout and its
+ * error state used to dump the raw upstream error — including full Cloudflare
+ * 502 JSON bodies — into an aria-labeled region. Bound it: keep the status
+ * code / first meaningful token, collapse JSON, cap the length. The full error
+ * remains available via the page's own error surfaces; the ticker is a
+ * decorative marquee, its job is to say "feed unavailable", not to echo payloads.
+ */
+export function summarizeTickerError(err: string): string {
+  const status = err.match(/HTTP (\d{3})/)?.[1];
+  const head = (err.split("\n")[0] ?? err).replace(/\s+/g, " ").trim();
+  const concise = status ? `edge HTTP ${status}` : head;
+  return concise.length > 120 ? `${concise.slice(0, 117)}…` : concise;
+}
+
 function formatAgo(detectedAt: string): string {
   const detected = new Date(detectedAt).getTime();
   const now = Date.now();
@@ -77,7 +92,7 @@ export function OpportunityTicker() {
 
   if (!mounted) {
     return (
-      <div className="ticker" aria-label="Live opportunity feed">
+      <div className="ticker" role="status" aria-label="Live opportunity feed">
         <div className="ticker-track">
           <span className="ticker-item">Loading opportunities...</span>
         </div>
@@ -87,7 +102,7 @@ export function OpportunityTicker() {
 
   if (loading) {
     return (
-      <div className="ticker" aria-label="Live opportunity feed">
+      <div className="ticker" role="status" aria-label="Live opportunity feed">
         <div className="ticker-track">
           <span className="ticker-item">Loading opportunities...</span>
         </div>
@@ -97,10 +112,12 @@ export function OpportunityTicker() {
 
   if (error || items.length === 0) {
     return (
-      <div className="ticker" aria-label="Live opportunity feed">
+      <div className="ticker" role="status" aria-label="Live opportunity feed">
         <div className="ticker-track">
           <span className="ticker-item">
-            {error ? `Observation: ${error}` : "No topological convergence detected — waiting for market topology..."}
+            {error
+              ? `Opportunity feed unavailable — ${summarizeTickerError(error)} (retrying every 30s)`
+              : "No topological convergence detected — waiting for market topology..."}
           </span>
         </div>
       </div>
@@ -109,10 +126,16 @@ export function OpportunityTicker() {
 
   // Duplicate items for seamless loop
   const displayItems = [...items, ...items];
+  const latest = items[0]; // non-empty in this branch, but tsc cannot narrow it
 
   return (
-    <div className="ticker" aria-label="Live opportunity feed">
-      <div className="ticker-track">
+    <div className="ticker">
+      <span className="sr-only">
+        {latest
+          ? `Live opportunity feed: ${items.length} recent opportunities — latest ${latest.pair} ${latest.from} to ${latest.to} ${latest.yield >= 0 ? "+" : ""}${latest.yield.toFixed(2)}%.`
+          : "Live opportunity feed."}
+      </span>
+      <div className="ticker-track" aria-hidden="true">
         {displayItems.map((item, idx) => {
           const isPositive = item.yield >= 0;
           return (

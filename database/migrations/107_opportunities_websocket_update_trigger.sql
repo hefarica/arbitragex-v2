@@ -21,6 +21,12 @@
 -- (the INSERT trigger in migration 025 has run this shape in prod without
 -- incident). If a future column ever pushes rows past the cap, trim the payload
 -- here — do NOT widen it silently.
+--
+-- RERUN-LOCK-SAFETY (GEN-CI-FAIL 2026-08-30): DROP/CREATE TRIGGER take
+-- ShareRowExclusive on the hot opportunities table on every re-run even when
+-- the trigger already exists. Catalog-guarded no-op path takes no table lock
+-- (lint-migration-rerun-lock-safety.sh). Trigger definition changes ship as a
+-- NEW migration (forward-only doctrine), so the name-guard is sufficient.
 
 CREATE OR REPLACE FUNCTION notify_updated_opportunity() RETURNS trigger AS $$
 BEGIN
@@ -29,10 +35,13 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
-DROP TRIGGER IF EXISTS trg_notify_opportunity_update ON opportunities;
-
-CREATE TRIGGER trg_notify_opportunity_update
-AFTER UPDATE ON opportunities
-FOR EACH ROW
-WHEN (OLD.* IS DISTINCT FROM NEW.*)
-EXECUTE FUNCTION notify_updated_opportunity();
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_trigger
+    WHERE tgname = 'trg_notify_opportunity_update'
+      AND tgrelid = 'public.opportunities'::regclass
+  ) THEN
+    EXECUTE 'CREATE TRIGGER trg_notify_opportunity_update AFTER UPDATE ON opportunities FOR EACH ROW WHEN (OLD.* IS DISTINCT FROM NEW.*) EXECUTE FUNCTION notify_updated_opportunity()';
+  END IF;
+END $$;

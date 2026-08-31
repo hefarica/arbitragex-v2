@@ -9,6 +9,7 @@ export interface PipeRedisDeps {
   get: (key: string) => Promise<string | null>;
   xlen: (key: string) => Promise<number>;
   xinfo: (kind: "GROUPS", key: string, group?: string) => Promise<unknown>;
+  xrange: (key: string, start: string, end: string, count: number) => Promise<unknown[]>;
 }
 
 const KILLSWITCH_KEY = "arbx:killswitch";
@@ -16,6 +17,7 @@ const KILLSWITCH_KEY = "arbx:killswitch";
 interface GroupInfo {
   entriesRead: number | null; // null when Redis omits it (older server)
   lag: number | null; // null when Redis omits it (older server)
+  lastDeliveredId: string | null; // null when Redis omits it — raw-lag fallback applies
 }
 
 /**
@@ -44,6 +46,39 @@ interface GroupInfo {
  * a missing group (consumer never created / exotic state) → yellow naming
  * it — never a fabricated lag, never a crash of verifyAll.
  */
+/**
+ * G-PIPE-1b — deliverable backlog (ghost-lag fix, 2026-08-31).
+ *
+ * The server-reported group `lag` (entries-added − entries-read) counts entries
+ * that were wiped/trimmed before delivery — after the 2026-08-29 killswitch-wipe
+ * + stream recreation (16:28:45Z) those phantom entries can NEVER be read, so
+ * the raw counter stayed permanently elevated and G-PIPE-1 read red forever
+ * while the consumer was fully caught up. The REAL signal is the backlog of
+ * entries physically PRESENT in the stream after the group's last-delivered-id:
+ * deliverable work the consumer can actually consume. Counted with a
+ * threshold-bounded XRANGE (exclusive start `(<last-delivered-id>`) — at most
+ * lagMax ids are fetched, so the check is bounded regardless of stream size.
+ * Returns null when the server omits last-delivered-id (older Redis) — caller
+ * falls back to the raw-lag heuristic.
+ */
+async function deliverableBacklog(
+  client: PipeRedisDeps,
+  stream: string,
+  group: GroupInfo,
+  lagMax: number,
+): Promise<{ count: number; exact: boolean } | null> {
+  if (group.lastDeliveredId === null) return null;
+  try {
+    const entries = await client.xrange(stream, `(${group.lastDeliveredId}`, "+", lagMax);
+    if (!Array.isArray(entries)) return null;
+    // < lagMax returned → that IS the backlog (exact); == lagMax → at/above
+    // threshold, which is all the gate needs (bounded read, no full scan).
+    return { count: entries.length, exact: entries.length < lagMax };
+  } catch {
+    return null; // XRANGE unavailable → raw-lag fallback (defensive, R8)
+  }
+}
+
 export async function verifyGPIPE1(opts?: {
   now?: () => Date;
   redis?: PipeRedisDeps;
@@ -98,6 +133,10 @@ export async function verifyGPIPE1(opts?: {
       get: (key: string) => r.get(key),
       xlen: (key: string) => r.xlen(key),
       xinfo: (kind: "GROUPS", key: string) => r.xinfo(kind, key),
+      // Typed overload: xrange(key, start, end, "COUNT", n) — the 4-arg
+      // numeric form collides with the callback overload.
+      xrange: (key: string, start: string, end: string, count: number) =>
+        r.xrange(key, start, end, "COUNT", count),
     };
   }
 
@@ -144,49 +183,72 @@ export async function verifyGPIPE1(opts?: {
       };
     }
 
-    // Prefer the server-reported lag; fall back to entries-added − entries-read.
+    // G-PIPE-1b: gate on the DELIVERABLE backlog (entries present after the
+    // group's last-delivered-id). The server lag is kept as context only —
+    // it permanently includes wiped/trimmed phantom entries (2026-08-31 fix).
     const [detLen, valLen] = await Promise.all([
       client.xlen("arbx:opps:detected").catch(() => 0),
       client.xlen("arbx:opps:validated").catch(() => 0),
     ]);
+    const [selectorBacklog, simBacklog] = await Promise.all([
+      deliverableBacklog(client, "arbx:opps:detected", selector!, lagMax),
+      deliverableBacklog(client, "arbx:opps:validated", simctl!, lagMax),
+    ]);
+
+    // Fallback (older Redis / XRANGE unavailable): raw server lag, else
+    // entries-added − entries-read heuristic — the pre-1b behavior.
     const selectorLag = selector!.lag ?? (selector!.entriesRead !== null ? detLen - selector!.entriesRead : null);
     const simLag = simctl!.lag ?? (simctl!.entriesRead !== null ? valLen - simctl!.entriesRead : null);
 
-    if (selectorLag === null || simLag === null) {
+    if (selectorBacklog === null && selectorLag === null) {
       return {
         ...base,
         status: "yellow",
         reason:
-          "consumer group info lacks lag/entries-read (older Redis) — pipeline lag not computable",
-        evidence: { kind: "endpoint", ref: "XINFO GROUPS lag/entries-read" },
+          "consumer group info lacks last-delivered-id/lag/entries-read (older Redis) — pipeline backlog not computable",
+        evidence: { kind: "endpoint", ref: "XINFO GROUPS last-delivered-id/lag" },
       };
     }
+    if (simBacklog === null && simLag === null) {
+      return {
+        ...base,
+        status: "yellow",
+        reason:
+          "consumer group info lacks last-delivered-id/lag/entries-read (older Redis) — pipeline backlog not computable",
+        evidence: { kind: "endpoint", ref: "XINFO GROUPS last-delivered-id/lag" },
+      };
+    }
+
+    const selectorEffective = selectorBacklog?.count ?? selectorLag!;
+    const simEffective = simBacklog?.count ?? simLag!;
+    const selectorMode = selectorBacklog !== null ? "deliverable" : "raw-lag";
+    const simMode = simBacklog !== null ? "deliverable" : "raw-lag";
 
     const evidence = {
       kind: "endpoint" as const,
-      ref: `XINFO GROUPS selector-g0=${selectorLag} sim-ctl-g0=${simLag} (killswitch ${killswitchDetail})`,
+      ref: `backlog(selector)=${selectorEffective}/${selectorMode} backlog(sim-ctl)=${simEffective}/${simMode} server-lag=${selectorLag ?? "?"}/${simLag ?? "?"} (killswitch ${killswitchDetail})`,
     };
 
-    if (selectorLag >= lagMax) {
+    if (selectorEffective >= lagMax) {
       return {
         ...base,
         status: "red",
-        reason: `selector consumer stalled: ${selectorLag} entries behind on arbx:opps:detected (≥${lagMax}) — 2026-08-29 A5-STALL signature`,
+        reason: `selector consumer stalled: ${selectorEffective} entries behind on arbx:opps:detected (${selectorMode}, ≥${lagMax}) — 2026-08-29 A5-STALL signature`,
         evidence,
       };
     }
-    if (simLag >= lagMax) {
+    if (simEffective >= lagMax) {
       return {
         ...base,
         status: "red",
-        reason: `sim-ctl consumer stalled: ${simLag} entries behind on arbx:opps:validated (≥${lagMax})`,
+        reason: `sim-ctl consumer stalled: ${simEffective} entries behind on arbx:opps:validated (${simMode}, ≥${lagMax})`,
         evidence,
       };
     }
     return {
       ...base,
       status: "green",
-      reason: `streams flowing: selector lag ${selectorLag}, sim-ctl lag ${simLag} (below ${lagMax}) · kill-switch: ${killswitchDetail}`,
+      reason: `streams flowing: backlog selector ${selectorEffective} (${selectorMode}), sim-ctl ${simEffective} (${simMode}) — below ${lagMax}; server-lag ${selectorLag ?? "?"}/${simLag ?? "?"} may include wiped phantom entries · kill-switch: ${killswitchDetail}`,
       evidence,
     };
   } catch (e) {
@@ -212,9 +274,11 @@ function findGroup(reply: unknown, name: string): GroupInfo | null {
     if (map.get("name") === name) {
       const er = map.get("entries-read");
       const lag = map.get("lag");
+      const ldi = map.get("last-delivered-id");
       return {
         entriesRead: er === undefined || er === null ? null : Number(er),
         lag: lag === undefined || lag === null ? null : Number(lag),
+        lastDeliveredId: ldi === undefined || ldi === null ? null : String(ldi),
       };
     }
   }

@@ -2,10 +2,20 @@
 
 Single source of truth for the **operational status** of each `*.sql` file
 under `database/migrations/`. The bash driver `run_migrations.sh` iterates
-files in lexicographic order and applies any whose checksum is absent from
-`schema_migrations`. This document explains the **non-obvious** parts of
-that history: gaps, intentional duplicates, type conventions, and the
-forward-only doctrine.
+files in lexicographic order and re-applies **every** file on every deploy
+deliberately (no applied-state ledger — re-running everything is what lets
+the deploy gate heal repo↔DB drift, e.g. the manually-applied 102 that the
+pipeline had never run). Idempotency is therefore the migration author's
+responsibility, and per `lint-migration-rerun-lock-safety.sh` so is
+**rerun-lock-safety**: on tables with continuous live writers
+(`opportunities`, `simulations`, `paper_trade_runs`) the no-op path of any
+`CREATE INDEX` / `ALTER TABLE` / `DROP|CREATE TRIGGER` must be catalog-guarded
+(`DO $$ IF NOT EXISTS(<catalog read>) THEN EXECUTE '...'`) because PostgreSQL
+acquires the table lock **before** the `IF NOT EXISTS` check — an unguarded
+no-op starves against the runner's FREEZE-01 `lock_timeout=10s` and aborts
+the deploy (observed 2026-08-30, ac08da8b attempt 2). This document explains
+the **non-obvious** parts of that history: gaps, intentional duplicates,
+type conventions, and the forward-only doctrine.
 
 > **Forward-only doctrine.** No migration is ever renumbered or renamed
 > once applied. If a mistake is shipped, a new forward migration with the
@@ -156,3 +166,31 @@ Forward-only and idempotent. Paper-only telemetry. Depends on: 051 (paper_trade_
 | `113_simulations_revm_idempotency.sql`  | SIMWIRE-02c P1-5: partial UNIQUE index `(opportunity_id) WHERE simulator='revm'` — XAUTOCLAIM redelivery of an entry whose final XACK failed after persist+XADD must not double-publish. Powers `insert_simulation`'s `ON CONFLICT … DO NOTHING` → `Ok(false)` → caller skips the downstream XADD (exactly-once). Partial on purpose: legacy anvil multi-attempt history stays untouched. `CREATE UNIQUE INDEX CONCURRENTLY` per FREEZE-01 doctrine (simulations is a populated live table; partial predicate matches zero pre-flip rows so the build is near-instant). |
 
 Forward-only and idempotent. Paper-only telemetry. Depends on: 004 (simulations CHECK), 112 ('revm' allowed).
+
+---
+
+## GEN-CI-FAIL rerun-lock-safety retrofit — 2026-08-30
+
+The deploy of `ac08da8b` (SIMWIRE-02c) aborted at the [4/9] MIGRATION GATE:
+`CREATE INDEX IF NOT EXISTS idx_opp_status_time` on the live `opportunities`
+table was cancelled by `lock_timeout` (10s) while the index already existed in
+prod — PostgreSQL requests the table ShareLock **before** the `IF NOT EXISTS`
+catalog check, so the runner's every-deploy re-run raced continuous searcher
+INSERTs and lost. The same latent shape existed in every pre-retrofit
+migration touching a hot table: bare `CREATE INDEX IF NOT EXISTS` (ShareLock),
+`ALTER TABLE ... IF NOT EXISTS` / `DROP CONSTRAINT IF EXISTS`
+(AccessExclusiveLock), `DROP|CREATE TRIGGER` (ShareRowExclusiveLock).
+
+**Retrofit (content edits — safe under the ledger-less runner because the new
+content is idempotent AND lock-free on the no-op path):** files `003`, `004`,
+`025`, `033`, `049`, `051`, `054 §4a`, `091`, `099`, `100`, `102`, `103`,
+`107`, `111`, `112` converted to catalog-guarded `DO $$ ... EXECUTE` blocks.
+Fresh DBs get identical end-state; prod re-runs take no table lock.
+
+**Doctrine going forward:** on hot tables, a genuinely-missing index on a
+*populated* table is rebuilt by a dedicated `CREATE INDEX CONCURRENTLY` fixer
+(the `105` pattern) — never by relaxing the guard or the runner's
+`lock_timeout`. Enforced in CI by
+`automation/tools/lint-migration-rerun-lock-safety.sh` (selftest via
+`--selftest`); `ALTER TABLE <hot> SET|RESET (reloptions)` stays exempt
+(ShareUpdateExclusiveLock does not conflict with writers).
