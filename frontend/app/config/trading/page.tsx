@@ -55,7 +55,7 @@ export default async function TradingConfigPage() {
       <div className="mb-4 flex items-center gap-2">
         <ControlScopeBadge kind="RUNTIME_MUTATION" />
         <span className="text-xs text-muted-foreground">
-          SSOT de knobs de trading — todo control de esta página muta runtime vía putTradingConfig.
+          SSOT de knobs de trading — cada control de esta página muta runtime vía putTradingConfig.
         </span>
       </div>
 

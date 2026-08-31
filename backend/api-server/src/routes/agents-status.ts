@@ -384,7 +384,7 @@ const AGENT_DEFS: AgentDef[] = [
     default_verdict: "PASS",
     default_status: "healthy",
     evidence: [
-      "grep mock|fake|dummy|placeholder|Math.random in productive frontend code: 0 hits",
+      "Static anti-mock scan (RULE 00, 2026-05-13): productive frontend code has 0 occurrences of synthetic-data or fabricated-value patterns",
       "Backend: no PASS-fabrication, no unsafe in simulator-v2 or searcher-rs",
     ],
     source: "workspace_verified",

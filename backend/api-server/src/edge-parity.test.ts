@@ -90,6 +90,23 @@ const ALLOWED_ASYMMETRIES: ReadonlyArray<{
     reason:
       "Read-side DEX active flag (worker :610); same split as GET :id above.",
   },
+  {
+    route: "GET /api/live-testnet/events",
+    present: "worker",
+    reason:
+      "DAPP-SURFACE remediation 2026-08-31 (PR #495) — public SSE stream " +
+      "proxyPassThrough (api-server /api/live-testnet/events, X-Accel-Buffering: " +
+      "no). Worker-only by design: dev-local SSE parity pending.",
+  },
+  {
+    route: "GET /api/operator/me",
+    present: "worker",
+    reason:
+      "DAPP-SURFACE remediation 2026-08-31 (PR #495) — cookie-forwarding " +
+      "walletProxy (never cached): the worker translates the httpOnly operator " +
+      "session cookie to the upstream identity, the same session model as the " +
+      "adminProxy split below. dev-local parity pending.",
+  },
   // ── dev-local-only ──
   {
     route: "POST /api/admin/tokens/resolve",
