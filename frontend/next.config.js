@@ -46,7 +46,11 @@ const csp = () => {
     // GitHub raw (tokens.logo_url in PG) and CoinGecko asset CDNs (token-icons
     // Redis cache). Hosts sourced from live PG/Redis inventory, NOT wildcarded
     // to https: — tight allowlist only.
-    "img-src 'self' data: blob: https://raw.githubusercontent.com https://assets.coingecko.com https://coin-images.coingecko.com",
+    // CSP-IMG-01 (2026-09-01): + cdn.dexscreener.com — pool enumeration via the
+    // DexScreener source persists its CDN logo URLs into tokens.logo_url, and
+    // TokenChip renders them with a plain <img> (no next/image → no
+    // remotePatterns entry needed; observed as a Report-Only violation).
+    "img-src 'self' data: blob: https://raw.githubusercontent.com https://assets.coingecko.com https://coin-images.coingecko.com https://cdn.dexscreener.com",
     "font-src 'self' data:",
     // Parameterized connect-src: only declared endpoints, no hardcoded localhost.
     `connect-src ${connectSrc}`,
