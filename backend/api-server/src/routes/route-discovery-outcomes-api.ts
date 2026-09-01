@@ -31,49 +31,83 @@ export function buildRouteDiscoveryOutcomesRouter(pool: pg.Pool | null): Router 
     return Number.isFinite(n) ? Math.min(Math.max(n, lo), hi) : def;
   };
 
+  // RDO-SUMMARY-HANG (2026-08-31): each aggregation runs inside its own
+  // short-lived transaction with a 15s statement timeout, and the five
+  // groupings execute in PARALLEL. At diagnosis the table held 26M rows / 12 GB
+  // growing ~1.36M rows/h with NO leading ts_ms index: every 8s FE poll fired
+  // five sequential full seq-scans, stacked up to 18 concurrent aggregations,
+  // hung the edge proxy past nginx's 60s read timeout, and held AccessShare
+  // locks that aborted the deploy migration gate (run 435, 092 lock-timeout).
+  // With this bound a heavy window either completes within one query budget or
+  // fails honest (503 query_failed via `failed()`) — never stacks, never
+  // starves the pool, never blocks ALTER TABLE.
+  const RDO_STATEMENT_TIMEOUT_MS = 15_000;
+
+  const timedQuery = (sql: string, params: unknown[]) => {
+    const run = async (): Promise<pg.QueryResult> => {
+      // pool is non-null — the route guards `if (!pool)` before reaching here.
+      const client = await (pool as pg.Pool).connect();
+      try {
+        await client.query("BEGIN");
+        await client.query(`SET LOCAL statement_timeout = ${RDO_STATEMENT_TIMEOUT_MS}`);
+        const r = await client.query(sql, params);
+        await client.query("COMMIT");
+        return r;
+      } catch (e) {
+        await client.query("ROLLBACK").catch(() => {});
+        throw e;
+      } finally {
+        client.release();
+      }
+    };
+    return run();
+  };
+
   // Aggregate hit-rate / reason / coverage over a time window (default 24h, max 14d).
   router.get("/api/v1/route-discovery-outcomes/summary", async (req: Request, res: Response) => {
     if (!pool) return unavailable(res, "db_unavailable");
     const hours = clampInt(req.query.hours, 24, 1, 336);
     const since = Date.now() - hours * 3600 * 1000;
     try {
-      const totals = await pool.query(
-        `SELECT count(*)::bigint AS total,
-                count(*) FILTER (WHERE is_opportunity)::bigint AS opportunities,
-                count(*) FILTER (WHERE had_reserves)::bigint AS with_reserves,
-                count(*) FILTER (WHERE estimated_profit > 0)::bigint AS profit_gt0,
-                count(DISTINCT chain_id)::int AS chains,
-                count(DISTINCT cartridge_id)::int AS cartridges
-         FROM route_discovery_outcomes WHERE ts_ms >= $1`,
-        [since],
-      );
-      const byReason = await pool.query(
-        `SELECT COALESCE(NULLIF(reason, ''), '(null)') AS reason, count(*)::bigint AS n
-         FROM route_discovery_outcomes WHERE ts_ms >= $1 GROUP BY 1 ORDER BY 2 DESC LIMIT 25`,
-        [since],
-      );
-      const byChain = await pool.query(
-        `SELECT chain_id, count(*)::bigint AS n,
-                count(*) FILTER (WHERE is_opportunity)::bigint AS opportunities
-         FROM route_discovery_outcomes WHERE ts_ms >= $1 GROUP BY 1 ORDER BY 2 DESC LIMIT 25`,
-        [since],
-      );
-      // FE-0038 (§47): by-strategy (cartridge_id) and by-pair groupings over the
-      // SAME window — the dimensions the sink already persists. hop / detector /
-      // DEX are NOT columns of this table; the FE renders them as honest gaps
-      // (nivel-(b)) rather than this route inventing joins.
-      const byCartridge = await pool.query(
-        `SELECT COALESCE(NULLIF(cartridge_id, ''), '(null)') AS cartridge_id, count(*)::bigint AS n,
-                count(*) FILTER (WHERE is_opportunity)::bigint AS opportunities
-         FROM route_discovery_outcomes WHERE ts_ms >= $1 GROUP BY 1 ORDER BY 2 DESC LIMIT 25`,
-        [since],
-      );
-      const byPair = await pool.query(
-        `SELECT token_in, token_out, count(*)::bigint AS n,
-                count(*) FILTER (WHERE is_opportunity)::bigint AS opportunities
-         FROM route_discovery_outcomes WHERE ts_ms >= $1 GROUP BY 1, 2 ORDER BY 3 DESC LIMIT 25`,
-        [since],
-      );
+      const [totals, byReason, byChain, byCartridge, byPair] = await Promise.all([
+        timedQuery(
+          `SELECT count(*)::bigint AS total,
+                  count(*) FILTER (WHERE is_opportunity)::bigint AS opportunities,
+                  count(*) FILTER (WHERE had_reserves)::bigint AS with_reserves,
+                  count(*) FILTER (WHERE estimated_profit > 0)::bigint AS profit_gt0,
+                  count(DISTINCT chain_id)::int AS chains,
+                  count(DISTINCT cartridge_id)::int AS cartridges
+           FROM route_discovery_outcomes WHERE ts_ms >= $1`,
+          [since],
+        ),
+        timedQuery(
+          `SELECT COALESCE(NULLIF(reason, ''), '(null)') AS reason, count(*)::bigint AS n
+           FROM route_discovery_outcomes WHERE ts_ms >= $1 GROUP BY 1 ORDER BY 2 DESC LIMIT 25`,
+          [since],
+        ),
+        timedQuery(
+          `SELECT chain_id, count(*)::bigint AS n,
+                  count(*) FILTER (WHERE is_opportunity)::bigint AS opportunities
+           FROM route_discovery_outcomes WHERE ts_ms >= $1 GROUP BY 1 ORDER BY 2 DESC LIMIT 25`,
+          [since],
+        ),
+        // FE-0038 (§47): by-strategy (cartridge_id) and by-pair groupings over the
+        // SAME window — the dimensions the sink already persists. hop / detector /
+        // DEX are NOT columns of this table; the FE renders them as honest gaps
+        // (nivel-(b)) rather than this route inventing joins.
+        timedQuery(
+          `SELECT COALESCE(NULLIF(cartridge_id, ''), '(null)') AS cartridge_id, count(*)::bigint AS n,
+                  count(*) FILTER (WHERE is_opportunity)::bigint AS opportunities
+           FROM route_discovery_outcomes WHERE ts_ms >= $1 GROUP BY 1 ORDER BY 2 DESC LIMIT 25`,
+          [since],
+        ),
+        timedQuery(
+          `SELECT token_in, token_out, count(*)::bigint AS n,
+                  count(*) FILTER (WHERE is_opportunity)::bigint AS opportunities
+           FROM route_discovery_outcomes WHERE ts_ms >= $1 GROUP BY 1, 2 ORDER BY 3 DESC LIMIT 25`,
+          [since],
+        ),
+      ]);
       res.json({
         ok: true,
         source: "postgres",
