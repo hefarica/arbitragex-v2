@@ -273,6 +273,7 @@ export function DexesTab({ config, onSaved, adminToken, actor }: Props) {
                   <div key={dex.id} className="flex items-center gap-4 px-4 py-3 hover:bg-muted/30 transition-colors group">
                     <input
                       type="checkbox"
+                      aria-label={`Select ${dex.name}`}
                       checked={isSelected}
                       onChange={() => toggleDex(dex.id)}
                       className="h-4 w-4 rounded border-border text-primary focus:ring-primary/50"
