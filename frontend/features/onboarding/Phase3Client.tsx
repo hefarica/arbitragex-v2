@@ -5,6 +5,7 @@
  */
 "use client";
 
+import * as React from "react"; // SSR-test classic JSX runtime (house convention, see RuntimePostureBar)
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { AlertCircleIcon, ArrowLeftIcon, CheckCircle2Icon } from "lucide-react";
@@ -143,19 +144,26 @@ export function Phase3Client({ initialSnapshot }: Props) {
         </CardHeader>
         <CardContent className="flex flex-col gap-4 max-w-xl">
           <div className="flex gap-4">
-            {SIM_PROVIDERS.map((p) => (
-              <label key={p} className="flex items-center gap-2 cursor-pointer text-sm">
-                <input
-                  type="radio"
-                  name="sim_provider"
-                  value={p}
-                  checked={simProvider === p}
-                  onChange={() => setSimProvider(p)}
-                  className="accent-primary"
-                />
-                <code>{p}</code>
-              </label>
-            ))}
+            {/* DAPP-SURFACE (2026-09-01): explicit htmlFor/id — a wrapping
+                <label> alone leaves the radio unnamed to the accessible-name
+                predicate (no id → label[for] can't resolve). */}
+            {SIM_PROVIDERS.map((p) => {
+              const radioId = `sim_provider_${p}`;
+              return (
+                <label key={p} htmlFor={radioId} className="flex items-center gap-2 cursor-pointer text-sm">
+                  <input
+                    id={radioId}
+                    type="radio"
+                    name="sim_provider"
+                    value={p}
+                    checked={simProvider === p}
+                    onChange={() => setSimProvider(p)}
+                    className="accent-primary"
+                  />
+                  <code>{p}</code>
+                </label>
+              );
+            })}
           </div>
           <div className="flex flex-col gap-1.5">
             <Label htmlFor="sim_endpoint" className="text-xs text-muted-foreground">

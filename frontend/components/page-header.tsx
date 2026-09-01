@@ -1,3 +1,4 @@
+import * as React from "react"; // SSR-test classic JSX runtime (house convention)
 import type { ReactNode } from "react";
 
 import { RefreshButton } from "@/components/refresh-button";
