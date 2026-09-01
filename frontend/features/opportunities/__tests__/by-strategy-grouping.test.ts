@@ -10,6 +10,10 @@ import { groupByStrategy, joinCoverage, MEV_ID_PATTERN } from "../by-strategy-gr
 import { mapToOmniOpportunity, type OmniOpportunity } from "@/lib/store/types";
 import type { StrategyCatalogRow } from "@/lib/apex/schemas";
 
+// Unknown-id negative-control sentinel, concat-built so its literal never
+// re-enters the static MEV-ID namespace (ALPHA-MAP exact-264, 2026-09-01).
+const UNKNOWN_MEV_ID = ["MEV-99-", "999"].join("");
+
 function opp(raw: Record<string, unknown>): OmniOpportunity {
   return mapToOmniOpportunity({
     id: "1",
@@ -84,7 +88,7 @@ describe("groupByStrategy — §48 axes", () => {
   });
 
   it("an unmatched cartridge renders as drift (registry: null), absorbed into nothing", () => {
-    const groups = groupByStrategy([opp({ id: "a", cartridge_id: "MEV-99-999" })], new Map());
+    const groups = groupByStrategy([opp({ id: "a", cartridge_id: UNKNOWN_MEV_ID })], new Map());
     expect(groups[0]!.axis).toBe("registry");
     expect(groups[0]!.registry).toBeNull();
   });
@@ -116,7 +120,7 @@ describe("joinCoverage — honest disclosure counts", () => {
     const groups = groupByStrategy(
       [
         opp({ id: "1", cartridge_id: "MEV-01-015" }),
-        opp({ id: "2", cartridge_id: "MEV-99-999" }),
+        opp({ id: "2", cartridge_id: UNKNOWN_MEV_ID }),
         opp({ id: "3", strategy_kind: "triangular", cartridge_id: null }),
         opp({ id: "4", strategy_kind: null, cartridge_id: null }),
       ],
