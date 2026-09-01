@@ -11,6 +11,10 @@
  *   (c) invalid name (regex fail) → 400
  *   (d) flag on + proxy ok → 200 + audit row
  *   (e) proxy error → 502, no audit row
+ *   (f) healthy proxy, daemon 404 → 404 container_not_found
+ *   (g) SERVICE-CTRL-01: proxy itself erroring (list 502 + inspect 502, the
+ *       production DOCKER_GID drift) → 502 control_plane_error, NEVER a 404
+ *   (h) proxy unreachable (network throw) → 502 control_plane_error
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import express, { type Express, type RequestHandler } from "express";
@@ -184,5 +188,44 @@ describe("service control plane", () => {
       .set("x-arbx-admin-token", ADMIN_TOKEN);
     expect(res.status).toBe(404);
     expect(res.body.error).toBe("container_not_found");
+    expect(res.body.compose_project).toBe("arbitragex-v2");
+  });
+
+  it("(g) proxy itself erroring (list 502 + inspect 502 = the DOCKER_GID drift) → 502 control_plane_error, NOT a false 404", async () => {
+    process.env["ARBX_SERVICE_CONTROL"] = "on";
+    // SERVICE-CTRL-01 production evidence (2026-09-01): socket-proxy alive but
+    // its daemon call fails → {ok:false, status:502} on both resolution passes.
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({
+        ok: false,
+        status: 502,
+        json: async () => ({ error: "upstream_error" }),
+      }),
+    );
+    const res = await request(buildApp())
+      .post("/api/v1/admin/services/searcher-rs/start")
+      .set("x-arbx-admin-token", ADMIN_TOKEN);
+    expect(res.status).toBe(502);
+    expect(res.body.error).toBe("control_plane_error");
+    expect(res.body.detail).toContain("inspect HTTP 502");
+    expect(writeAudit).not.toHaveBeenCalled();
+  });
+
+  it("(h) proxy unreachable (network throw) → 502 control_plane_error with detail", async () => {
+    process.env["ARBX_SERVICE_CONTROL"] = "on";
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockRejectedValue(new TypeError("fetch failed: connect EACCES")),
+    );
+    // searcher-rs is in this harness's allowlist (beforeEach); recon is not —
+    // the point here is the proxy path, not the allowlist gate.
+    const res = await request(buildApp())
+      .post("/api/v1/admin/services/searcher-rs/start")
+      .set("x-arbx-admin-token", ADMIN_TOKEN);
+    expect(res.status).toBe(502);
+    expect(res.body.error).toBe("control_plane_error");
+    expect(res.body.detail).toContain("socket-proxy unreachable");
+    expect(writeAudit).not.toHaveBeenCalled();
   });
 });

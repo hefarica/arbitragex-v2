@@ -80,7 +80,14 @@ const server = http.createServer((req, res) => {
     upstream.destroy();
     deny(res, 504, 'upstream_timeout');
   });
-  upstream.on('error', () => {
+  upstream.on('error', (err) => {
+    // SERVICE-CTRL-01 (2026-09-01): a DOCKER_GID drift surfaced only as a bare
+    // 502 upstream_error — log the OS error code (EACCES vs ECONNREFUSED vs
+    // ENOENT) so docker logs pinpoint socket permissions vs stale socket. The
+    // HTTP body keeps the stable 'upstream_error' contract for api-server.
+    console.error(
+      JSON.stringify({ msg: 'socket_proxy_upstream_error', code: err.code ?? null, err: err.message }),
+    );
     deny(res, 502, 'upstream_error');
   });
 
