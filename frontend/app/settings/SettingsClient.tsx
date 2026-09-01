@@ -31,14 +31,11 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
+// DAPP-SURFACE (2026-09-01B): native select replaces Radix Select here — the
+// Radix hidden form proxy is unlabeled at SSR/pre-hydration (see
+// ThemeOverrideSelect). Radix Select stays for form-less surfaces.
+import { ThemeOverrideSelect } from "@/components/settings/ThemeOverrideSelect";
 import { Separator } from "@/components/ui/separator";
 
 import { useUserPrefs, DEFAULT_PREFS, type UserPrefs } from "@/lib/user-prefs";
@@ -231,25 +228,11 @@ export function SettingsClient() {
             <Label htmlFor="theme_override">
               Theme override
             </Label>
-            <Select
+            <ThemeOverrideSelect
               disabled={disabled}
               value={form.theme_override}
-              onValueChange={(v: string) =>
-                setForm((f) => ({
-                  ...f,
-                  theme_override: v as UserPrefs["theme_override"],
-                }))
-              }
-            >
-              <SelectTrigger id="theme_override" className="max-w-xs">
-                <SelectValue placeholder="System default" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="system">System (follow OS / arbx_theme)</SelectItem>
-                <SelectItem value="dark">Dark</SelectItem>
-                <SelectItem value="light">Light</SelectItem>
-              </SelectContent>
-            </Select>
+              onChange={(v) => setForm((f) => ({ ...f, theme_override: v }))}
+            />
             <p className="text-xs text-muted-foreground">
               &ldquo;System&rdquo; defers to the theme toggle in the header (persisted as{" "}
               <code className="font-mono text-[11px]">arbx_theme</code> in localStorage).
