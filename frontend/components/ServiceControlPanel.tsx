@@ -5,11 +5,19 @@
  *
  * Per-service start/stop controls dispatched to the edge.
  *
- * R8 (Fail-Honest): If the api-server endpoint returns 404 (route missing) or
- * 501 (admin-gated stub, control-plane not wired) the component surfaces an
- * actionable toast rather than silently swallowing the error. The backend
- * endpoint (POST /api/v1/admin/services/:name/stop|start) is not yet
- * implemented; that gap is honest and visible to the operator.
+ * SERVICE-CTRL-01 (2026-09-01): the endpoint POST /api/v1/admin/services/:name/
+ * {start,stop} IS implemented (edge proxy → api-server → socket-proxy → docker).
+ * Errors are TYPED JSON, and this panel must translate them truthfully instead
+ * of guessing from the status code — the previous "every 404 = endpoint not
+ * implemented" message masked a real production fault (socket-proxy DOCKER_GID
+ * drift surfaced as 404 container_not_found while all six services were
+ * healthy). Error contract:
+ *   401 missing_admin_token / unauthorized   → admin session (re-sign-in)
+ *   400 invalid_action                       → edge rejected the action param
+ *   400 service_not_controllable             → name outside the allowlist
+ *   404 container_not_found                  → proxy healthy, no such container
+ *   501 not_implemented                      → ARBX_SERVICE_CONTROL flag off
+ *   502 control_plane_error                  → socket-proxy/daemon failure
  *
  * R1 (Mounted Snapshot Pattern): No localStorage / window access outside
  * useEffect. Component is pure client — imported only by Client Components.
@@ -52,6 +60,53 @@ type PendingKey = `${ServiceName}:${ControlAction}`;
 
 // ─── API helper ──────────────────────────────────────────────────────────────
 
+/** Error body contract of the edge + api-server service-control routes. */
+interface ServiceControlApiError {
+  error?: string;
+  service?: string;
+  message?: string;
+  detail?: string;
+  compose_project?: string;
+  /** api-server 401 shape. */
+  source?: string;
+  /** edge 400 invalid_action shape. */
+  valid_actions?: string[];
+}
+
+/**
+ * Translate a failed service-control response into an actionable, truthful
+ * message. Exported for unit tests (SERVICE-CTRL-01 regression guard).
+ */
+export function describeControlFailure(
+  status: number,
+  body: ServiceControlApiError | null,
+): string {
+  const code = body?.error ?? null;
+  switch (`${status}:${code ?? ""}`) {
+    case "401:missing_admin_token":
+    case "401:unauthorized":
+      return "Admin session missing or expired — sign in again at /admin/signin. " +
+        "The admin token lives in the httpOnly arbx_admin_session cookie; this UI never reads it.";
+    case "400:invalid_action":
+      return "Invalid action — the edge only accepts start|stop.";
+    case "400:service_not_controllable":
+      return `${body?.service ?? "service"} is not in the control allowlist (ARBX_SERVICE_CONTROL_ALLOWLIST on api-server).`;
+    case "404:container_not_found":
+      return `Control plane is healthy but no container matched ${body?.service ?? "this service"} ` +
+        `(compose project "${body?.compose_project ?? "?"}") — check the service is deployed and its ` +
+        `com.docker.compose.service/project labels (or COMPOSE_PROJECT_NAME) match.`;
+    case "501:not_implemented":
+      return "Service control is disabled: set ARBX_SERVICE_CONTROL=on in api-server's environment (off is the shadow-safe default).";
+    case "502:control_plane_error":
+      return `Control plane (socket-proxy) failed${body?.detail ? `: ${body.detail}` : ""} — ` +
+        "check socket-proxy logs and DOCKER_GID (host docker group gid) in the VPS .env.";
+    default: {
+      const raw = body ? JSON.stringify(body).slice(0, 200) : "";
+      return `HTTP ${status}${raw ? `: ${raw}` : " (non-JSON error body)"}`;
+    }
+  }
+}
+
 async function dispatchServiceControl(
   edgeUrl: string,
   service: ServiceName,
@@ -67,26 +122,11 @@ async function dispatchServiceControl(
     },
   );
 
-  if (res.status === 404) {
-    throw new Error(
-      `endpoint not yet implemented (backend Sprint TBD) — POST /api/v1/admin/services/${service}/${action} → 404`,
-    );
-  }
-  if (res.status === 501) {
-    // The api-server mounts this as an admin-gated 501 stub by design: the
-    // control plane (docker socket vs systemd unit vs k8s) is an operator
-    // strategy decision that is not yet wired. Surface an actionable runbook
-    // hint instead of the raw stub JSON body (R8 fail-honest, not silent).
-    throw new Error(
-      `Service control plane not wired (HTTP 501). ${service} ${action} must be performed ` +
-        `on the host via the deploy runbook (docker compose / systemd). This button activates ` +
-        `once POST /api/v1/admin/services/:name/${action} replaces the stub.`,
-    );
-  }
-  if (!res.ok) {
-    const text = await res.text().catch(() => "");
-    throw new Error(`HTTP ${res.status}${text ? `: ${text.slice(0, 200)}` : ""}`);
-  }
+  if (res.ok) return;
+  // Typed JSON contract (see header) — parse before judging; a bare status
+  // code cannot distinguish container_not_found from a broken proxy.
+  const body = (await res.json().catch(() => null)) as ServiceControlApiError | null;
+  throw new Error(describeControlFailure(res.status, body));
 }
 
 // ─── Component ────────────────────────────────────────────────────────────────
@@ -156,8 +196,9 @@ export function ServiceControlPanel({ liveStatus = {}, onAfterControl }: Service
           Start/stop managed ArbX services via the edge control plane. Actions are
           admin-gated, allowlist-restricted, and audit-logged.{" "}
           <span className="text-warning font-medium">
-            Requires <code>ARBX_SERVICE_CONTROL=on</code> — returns 501 while the
-            flag is off, 404 if the edge route is absent.
+            Requires an admin session and <code>ARBX_SERVICE_CONTROL=on</code> —
+            501 = flag off, 404 = container not resolvable, 502 = control plane
+            (socket-proxy) failure.
           </span>
         </p>
       </CardHeader>
