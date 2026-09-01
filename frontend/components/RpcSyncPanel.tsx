@@ -207,7 +207,17 @@ export function RpcSyncPanel() {
             <UploadCloud size={14} className={busy === "import" ? "animate-pulse" : ""} />
             Importar catálogo RPC
           </button>
-          <input ref={fileRef} type="file" accept=".csv,text/csv" onChange={onFile} className="hidden" />
+          {/* DAPP-SURFACE (2026-09-01): the file input is triggered via the
+              visible button above; it still needs its own accessible name
+              (hidden ≠ aria-hidden — the census counts it). */}
+          <input
+            ref={fileRef}
+            type="file"
+            accept=".csv,text/csv"
+            aria-label="Importar catálogo RPC desde CSV"
+            onChange={onFile}
+            className="hidden"
+          />
         </div>
       </div>
 

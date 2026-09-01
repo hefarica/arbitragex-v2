@@ -204,10 +204,14 @@ export function Dropzone({
           error && "border-[#ff4444] bg-[#1a0a0a]/30"
         )}
       >
+        {/* DAPP-SURFACE (2026-09-01): the hidden file input is triggered via
+            the visible drop area, but it still needs its own accessible name
+            (hidden ≠ aria-hidden — the census counts it). */}
         <input
           ref={inputRef}
           type="file"
           accept={accept.map((t) => `.${t}`).join(",")}
+          aria-label={`Upload strategy script file (${accept.map((t) => `.${t}`).join(", ")})`}
           onChange={handleInputChange}
           disabled={disabled}
           className="hidden"

@@ -403,22 +403,29 @@ export function TradingConfigForm({
         </CardHeader>
         <CardContent className="grid gap-4">
           <div className="grid gap-2">
-            {GAS_STRATEGIES.map((s) => (
-              <label key={s.value} className="flex items-start gap-3 cursor-pointer">
-                <input
-                  type="radio"
-                  name="gas_strategy"
-                  value={s.value}
-                  checked={form.gas_price_strategy === s.value}
-                  onChange={() => setForm({ ...form, gas_price_strategy: s.value })}
-                  className="mt-1"
-                />
-                <div>
-                  <div className="text-sm font-medium">{s.label}</div>
-                  <div className="text-xs text-muted-foreground">{s.help}</div>
-                </div>
-              </label>
-            ))}
+            {/* DAPP-SURFACE (2026-09-01): explicit htmlFor/id — a wrapping
+                <label> alone leaves the radio unnamed to the accessible-name
+                predicate (no id → label[for] can't resolve). */}
+            {GAS_STRATEGIES.map((s) => {
+              const radioId = `gas_strategy_${s.value}`;
+              return (
+                <label key={s.value} htmlFor={radioId} className="flex items-start gap-3 cursor-pointer">
+                  <input
+                    id={radioId}
+                    type="radio"
+                    name="gas_strategy"
+                    value={s.value}
+                    checked={form.gas_price_strategy === s.value}
+                    onChange={() => setForm({ ...form, gas_price_strategy: s.value })}
+                    className="mt-1"
+                  />
+                  <div>
+                    <div className="text-sm font-medium">{s.label}</div>
+                    <div className="text-xs text-muted-foreground">{s.help}</div>
+                  </div>
+                </label>
+              );
+            })}
           </div>
           {form.gas_price_strategy === "fixed" && (
             <div>
@@ -499,9 +506,14 @@ export function TradingConfigForm({
               const isDefensive = s.ethical_constraint === "defensive_only";
               const isLive = s.lifecycle_status === "live";
               const disabled = isDefensive || !isLive;
+              // DAPP-SURFACE (2026-09-01): explicit htmlFor/id per checkbox —
+              // the wrapping <label> alone does not satisfy the accessible-name
+              // predicate (input has no id and no innerText).
+              const cbId = `strategy_${s.kind}`;
               return (
                 <label
                   key={s.kind}
+                  htmlFor={cbId}
                   className={`flex items-center gap-2 ${disabled ? "cursor-not-allowed opacity-60" : "cursor-pointer"}`}
                   title={
                     isDefensive
@@ -512,6 +524,7 @@ export function TradingConfigForm({
                   }
                 >
                   <input
+                    id={cbId}
                     type="checkbox"
                     checked={isDefensive ? true : checked}
                     disabled={disabled}
