@@ -8,9 +8,10 @@
 // no id), and hidden file inputs count too (hidden ≠ aria-hidden).
 //
 // These tests pin the markup contract for the statically-renderable pieces.
-// The Radix Switch BubbleInput mirror and the catalog checkboxes (fetch-gated)
-// are verified on the live deploy re-probe — renderToStaticMarkup runs no
-// effects and the form renders null until mounted.
+// The Radix Switch BubbleInput mirror was replaced (2026-09-01B) by a
+// self-contained Switch that renders no proxy input at all; the catalog
+// checkboxes (fetch-gated) are still verified on the live deploy re-probe —
+// renderToStaticMarkup runs no effects and the form renders null until mounted.
 import React from "react";
 import { describe, it, expect } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
@@ -18,6 +19,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { Phase3Client } from "@/features/onboarding/Phase3Client";
 import { Dropzone } from "@/components/ui/dropzone";
 import { Switch } from "@/components/ui/switch";
+import { ThemeOverrideSelect } from "@/components/settings/ThemeOverrideSelect";
 import type { OnboardingStatus } from "@/lib/schemas";
 
 const status: OnboardingStatus = {
@@ -68,9 +70,56 @@ describe("Dropzone — hidden file input (was a /strategies/forge hit)", () => {
   });
 });
 
-describe("Switch — aria-label passthrough (the effect mirrors it onto Radix's hidden form proxy)", () => {
+describe("Switch — self-contained (2026-09-01B): no proxy input at any instant", () => {
   it("forwards aria-label to the root button", () => {
     const html = renderToStaticMarkup(<Switch aria-label="Compact density" />);
     expect(html).toContain('aria-label="Compact density"');
+  });
+
+  it("renders a real button[role=switch][type=button] and ZERO input elements — even inside a form", () => {
+    // Radix's BubbleInput proxy (aria-hidden checkbox, no accessible name,
+    // rendered by default at SSR) is what the surface census counted as the
+    // unlabeled control on /settings and /config/trading. This fork must
+    // never emit ANY <input>.
+    const html = renderToStaticMarkup(
+      <form onSubmit={() => undefined}>
+        <label htmlFor="enabled">Enabled</label>
+        <Switch id="enabled" checked onCheckedChange={() => undefined} />
+      </form>
+    );
+    expect(html).toContain('role="switch"');
+    expect(html).toContain('type="button"');
+    expect(html).toContain('aria-checked="true"');
+    expect(html).not.toContain("<input");
+    expect(html).not.toContain("<select");
+  });
+
+  it("labels by id + label[for] without aria-label (trading-config 'enabled' pattern)", () => {
+    const html = renderToStaticMarkup(
+      <>
+        <label htmlFor="sw1">Atomic execution</label>
+        <Switch id="sw1" />
+      </>
+    );
+    expect(html).toContain('id="sw1"');
+    expect(html).toContain('role="switch"');
+    expect(html).not.toContain("<input");
+  });
+});
+
+describe("ThemeOverrideSelect — native select labeled at SSR", () => {
+  it("renders <option> children and id at SSR (innerText non-empty at every instant)", () => {
+    // Regression for the /settings Radix hidden native-select proxy that had
+    // no accessible name during SSR/pre-hydration.
+    const html = renderToStaticMarkup(
+      <>
+        <label htmlFor="theme_override">Theme override</label>
+        <ThemeOverrideSelect value="system" onChange={() => undefined} />
+      </>
+    );
+    expect(html).toContain('id="theme_override"');
+    expect(html).toContain('<option value="system"');
+    expect(html).toContain('<option value="dark"');
+    expect(html).not.toContain("aria-hidden");
   });
 });
