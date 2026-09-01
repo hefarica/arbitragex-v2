@@ -199,7 +199,14 @@ def cmd_runtime(url: str, out: Path | None):
         out = out if out.is_absolute() else (ROOT / out)
         out.parent.mkdir(parents=True, exist_ok=True)
         out.write_text(text + "\n", encoding="utf-8")
-        print(f"written: {out.relative_to(ROOT)}")
+        # --out may legitimately point outside the repo (manual evidence runs);
+        # never let the success path crash (and lie via exit code) on a
+        # cosmetic relative_to. R8: report exactly where the file landed.
+        try:
+            shown = out.relative_to(ROOT)
+        except ValueError:
+            shown = out
+        print(f"written: {shown}")
     return 0 if ok else 1
 
 
