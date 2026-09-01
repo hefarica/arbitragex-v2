@@ -58,5 +58,19 @@ describe("next.config CSP (CSP-IMG-1 regression guard)", () => {
     expect(imgSrc).toContain("https://raw.githubusercontent.com");
     expect(imgSrc).toContain("https://assets.coingecko.com");
     expect(imgSrc).toContain("https://coin-images.coingecko.com");
+    // CSP-IMG-01 (2026-09-01): DexScreener pool enumeration persists its CDN
+    // logo URLs into tokens.logo_url — observed as a live Report-Only violation.
+    expect(imgSrc).toContain("https://cdn.dexscreener.com");
+  });
+
+  it("img-src stays a tight allowlist — never a generic https: wildcard (CSP-IMG-01)", async () => {
+    const headers = await nextConfig.headers();
+    const all = headers[0].headers as Array<{ key: string; value: string }>;
+    const csp = all.find((h) => h.key === "content-security-policy-report-only")?.value ?? "";
+    const imgSrc = csp.split(";").find((d) => d.trim().startsWith("img-src")) ?? "";
+    const sources = imgSrc.trim().split(/\s+/);
+    expect(sources).not.toContain("https:");
+    expect(sources).not.toContain("*");
+    expect(csp.startsWith("default-src 'self'")).toBe(true);
   });
 });
