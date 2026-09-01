@@ -1,0 +1,33 @@
+{
+  "url": "https://arbx.ape-tv.net",
+  "source": "searcher_registry",
+  "cartridges_total": 271,
+  "canonical_present": 264,
+  "canonical_missing": [],
+  "extra_mev_pattern": [],
+  "legacy_slugs": {
+    "backrun": [
+      "backrun"
+    ],
+    "dex_arb": [
+      "dex_arb"
+    ],
+    "funding_rate_arbitrage": [
+      "funding_rate_arbitrage"
+    ],
+    "liquidation": [
+      "liquidation"
+    ],
+    "mean_reversion_arbitrage": [
+      "mean_reversion_arbitrage"
+    ],
+    "omega_strategy_pack": [
+      "omega_strategy_pack"
+    ],
+    "triangular_arb": [
+      "triangular_arb"
+    ]
+  },
+  "unexpected_legacy": [],
+  "verdict": "PASS"
+}
