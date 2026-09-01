@@ -68,7 +68,7 @@ docs/coverage_manifest.json                                 ← Coverage verific
 
 ## Consultas que puedes responder
 
-- "¿Qué operadores usa MEV-05-042?" → knowledge_graph.jsonl
+- "¿Qué operadores usa MEV-06-018?" → knowledge_graph.jsonl
 - "¿Qué estrategias usan Kelly?" → reverse lookup en matriz
 - "¿Qué rutas sobreviven sin flash loans?" → funnel born/died por mode
 - "¿Sizing óptimo para 2-pool WETH/USDC?" → fórmula cuadrática cerrada
