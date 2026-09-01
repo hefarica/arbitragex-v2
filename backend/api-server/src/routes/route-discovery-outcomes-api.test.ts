@@ -39,10 +39,18 @@ function stubPool(overrides: Record<string, pg.QueryResult> = {}): pg.Pool {
     ],
   ];
   return {
-    query: async (sql: string) => {
-      for (const [frag, res] of canned) if (sql.includes(frag)) return overrides[frag] ?? res;
-      return overrides["*"] ?? answer([]);
-    },
+    // RDO-SUMMARY-HANG: the route checks out one client per aggregate
+    // (BEGIN + SET LOCAL statement_timeout + query + COMMIT), so the stub
+    // exposes connect() the same way pg.Pool does.
+    connect: async () => ({
+      query: async (sql: string) => {
+        if (sql === "BEGIN" || sql.startsWith("SET LOCAL") || sql === "COMMIT") return answer([]);
+        if (sql === "ROLLBACK") return answer([]);
+        for (const [frag, res] of canned) if (sql.includes(frag)) return overrides[frag] ?? res;
+        return overrides["*"] ?? answer([]);
+      },
+      release: () => {},
+    }),
   } as unknown as pg.Pool;
 }
 
@@ -97,13 +105,37 @@ describe("route-discovery-outcomes summary — FE-0038 §47 groupings", () => {
 
   it("query failure → 503 query_failed with the error message", async () => {
     const failing = {
-      query: async () => {
-        throw new Error("relation does not exist");
-      },
+      connect: async () => ({
+        query: async (sql: string) => {
+          if (sql === "ROLLBACK") return { rows: [], rowCount: 0 };
+          throw new Error("relation does not exist");
+        },
+        release: () => {},
+      }),
     } as unknown as pg.Pool;
     const res = await request(appFor(failing)).get("/api/v1/route-discovery-outcomes/summary");
     expect(res.status).toBe(503);
     expect(res.body).toMatchObject({ ok: false, reason: "query_failed" });
     expect(res.body.error).toContain("relation does not exist");
+  });
+
+  // RDO-SUMMARY-HANG: a window too heavy to aggregate inside the per-statement
+  // budget must surface as the SAME honest 503 — never a hang, never a stacked
+  // aggregation, never a fabricated zero.
+  it("statement timeout → honest 503 query_failed (Postgres cancel wording)", async () => {
+    const slow = {
+      connect: async () => ({
+        query: async (sql: string) => {
+          if (sql === "BEGIN" || sql.startsWith("SET LOCAL")) return { rows: [], rowCount: 0 };
+          if (sql === "ROLLBACK") return { rows: [], rowCount: 0 };
+          throw new Error("canceling statement due to statement timeout");
+        },
+        release: () => {},
+      }),
+    } as unknown as pg.Pool;
+    const res = await request(appFor(slow)).get("/api/v1/route-discovery-outcomes/summary?hours=336");
+    expect(res.status).toBe(503);
+    expect(res.body).toMatchObject({ ok: false, reason: "query_failed" });
+    expect(res.body.error).toContain("statement timeout");
   });
 });

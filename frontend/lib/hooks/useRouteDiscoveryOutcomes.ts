@@ -20,8 +20,13 @@
 import { useEffect, useState } from "react";
 import { getApiBaseUrl } from "@/lib/api-client";
 
-const POLL_MS = 8000;
-const FETCH_TIMEOUT_MS = 9000;
+// RDO-SUMMARY-HANG (2026-08-31): this is aggregate analytics over the durable
+// outcomes table (not a live tick wire), and the upstream aggregation over a
+// 26M+ row window costs seconds — an 8s poll re-fired it before the previous
+// call finished. 60s matches the analytics cadence; the edge serves a 15s
+// cached copy in between.
+const POLL_MS = 60000;
+const FETCH_TIMEOUT_MS = 65000;
 
 export type OutcomesStatus = "CONNECTING" | "LIVE" | "STALE";
 
