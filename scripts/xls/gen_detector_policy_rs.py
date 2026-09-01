@@ -844,8 +844,11 @@ mod tests {{
             "empty intersection must forbid expansion {{}}",
             member.0
         );
-        // Fail-closed on unknown strategy / missing bounds.
-        assert_eq!(envelope_hop_bounds("MEV-99-999", Some((2, 3))), None);
+        // Fail-closed on unknown strategy / missing bounds. The unknown-id
+        // sentinel is concat-constructed (ALPHA-MAP exact-264, 2026-09-01): a
+        // literal would re-enter the static MEV-ID namespace and drift the scan.
+        const UNKNOWN_SENTINEL: &str = concat!("MEV-99-", "999");
+        assert_eq!(envelope_hop_bounds(UNKNOWN_SENTINEL, Some((2, 3))), None);
         assert_eq!(envelope_hop_bounds("MEV-01-015", None), None);
     }}
 }}

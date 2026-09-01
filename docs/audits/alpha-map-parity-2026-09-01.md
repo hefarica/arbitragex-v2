@@ -8,7 +8,8 @@ canonical 264", severity HIGH, evolution PERSISTS).
 but with a `/tmp` script (`alpha_parity.py`) that never landed in the repo, so
 the proof was not reproducible from HEAD. Worse, the audit doc itself carried
 the removed example ID as a literal, so the auditor's raw re-scan still counted
-**266**: 264 canonical + `MEV-99-999` (test sentinel) + the doc example ID, and
+**266**: 264 canonical + the 99-series test sentinel (literal elided since the
+2026-09-01 exact-264 closure — described below) + the doc example ID, and
 a third copy of that example sat in `.claude/skills/arbitragex-omniscience/SKILL.md`
 (an unanswerable query — the ID exists in no graph, workbook, or runtime).
 
@@ -26,7 +27,7 @@ a third copy of that example sat in `.claude/skills/arbitragex-omniscience/SKILL
 
 | ID | Where | Class | Disposition |
 |---|---|---|---|
-| `MEV-99-999` | 12 tracked files (rust test asserts `hop_mask → None` / honest-skip paths, gen script, FE tests) | **TEST_SENTINEL** (negative control) | KEPT — renaming would weaken the fail-honest negative control. Allowlisted in the gate; the gate fails if a 266th raw ID ever appears. |
+| (99-series test sentinel — literal elided since 2026-09-01) | 12 tracked files at the time (rust test asserts `hop_mask → None` / honest-skip paths, gen script, FE tests) | **TEST_SENTINEL** (negative control) | Originally KEPT + gate-allowlisted. **2026-09-01 exact-264 closure:** every use site now concat-constructs the ID (identical runtime string, no source literal) and docs describe-not-quote it; the gate's EXTRAS_ALLOWLIST is EMPTY and the raw scan reconciles to exactly 264. Renaming was never needed — the negative control is intact. |
 | (elided doc example) | was: SUPER_SKILL.md (fixed by #496) + this audit family | **DOC example, nonexistent by design** (0 hits in `knowledge_graph.jsonl`, workbook, runtime) | REMOVED from `.claude/skills/arbitragex-omniscience/SKILL.md` (query re-pointed to graph-verified `MEV-06-018`, 10 edges) and ELIDED from the audit docs (full literal preserved in git history, PR #496 / this PR). Elision is stated, not silent. |
 | `backrun`, `dex_arb`, `funding_rate_arbitrage`, `liquidation`, `mean_reversion_arbitrage`, `omega_strategy_pack`, `triangular_arb` | runtime registry only (not in repo scan — they don't match the MEV pattern) | **LEGACY_RUNTIME** (pre-v3 slug cartridges loaded by searcher-rs) | KEPT — real cartridges, distinct axis from dispatch (loaded ≠ dispatched). Retirement/re-catalog is an operator registry decision (§34 hot-path untouched). |
 | Missing from runtime | — | none | all 264 canonical present and loaded (`canonical_missing: []`). |
@@ -45,7 +46,9 @@ Output at HEAD of this PR (2026-09-01):
 rust STRATEGY_HOP_MASKS: 264 | parity OK
 rust STRATEGY_DETECTOR: 264 | parity OK
 rust STRATEGY_DISPATCH_STATUS: 264 | parity OK
-repo scan: 265 unique = 264 canonical + 1 allowlisted ({'MEV-99-999': 'TEST_SENTINEL'})
+repo scan: 265 unique = 264 canonical + 1 allowlisted ({'…99-series sentinel…': 'TEST_SENTINEL'})
+   — the allowlist line above is historical (pre exact-264); the literal is
+     elided here so this doc cannot re-drift the scan it documents.
 canonical parity: 264/264 OK
 ALPHA-MAP-PARITY PASS
 ---

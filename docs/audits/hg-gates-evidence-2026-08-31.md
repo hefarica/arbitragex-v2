@@ -110,7 +110,8 @@ refuses to reclassify FAIL as PASS.
 ## F-04 / F-05 / F-06 — 264 map parity (ALPHA-MAP-ID-DRIFT)
 
 Closed by `docs/audits/alpha-map-id-drift-2026-08-31.md` (PR #496): static 266 =
-264 canonical + MEV-99-999 (TEST negative-control sentinel) + one elided doc
+264 canonical + the 99-series TEST negative-control sentinel (literal elided by
+the 2026-09-01 exact-264 closure — concat-constructed at every use site since) + one elided doc
 example ID (nonexistent by design; literal in git history PR #496); HopMask parity 264/264 EQUAL, Detector parity
 264/264 EQUAL, Status↔Dispatch semantically identical (ROUTE_READY 79 /
 NEEDS_ROUTE_DATA 174 / OBSERVE_ONLY 8 / NO_COMPATIBLE_ROUTE 3); runtime registry

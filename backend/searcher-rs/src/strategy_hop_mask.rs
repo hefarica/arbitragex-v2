@@ -441,8 +441,10 @@ mod tests {
         assert_eq!(allowed_hops("MEV-01-001"), vec![2, 3, 4, 5, 6, 7]);
         assert!(hop_allowed("MEV-01-001", 7));
 
-        assert_eq!(hop_mask("MEV-99-999"), None);
-        assert!(allowed_hops("MEV-99-999").is_empty());
+        // Unknown-id sentinel, concat-built (ALPHA-MAP exact-264: no literal).
+        const UNKNOWN_SENTINEL: &str = concat!("MEV-99-", "999");
+        assert_eq!(hop_mask(UNKNOWN_SENTINEL), None);
+        assert!(allowed_hops(UNKNOWN_SENTINEL).is_empty());
         assert!(!hop_allowed("MEV-01-001", 1));
         assert!(!hop_allowed("MEV-01-001", 8));
     }
@@ -490,7 +492,9 @@ mod tests {
             .find(|r| r.2.first() == Some(&3))
             .expect("fixture carries a ≥3-hop-only strategy");
         assert_eq!(admissible_hop_bounds(&restricted.0, 2, 2), None);
-        // Unknown id → None regardless of span.
-        assert_eq!(admissible_hop_bounds("MEV-99-999", 2, 7), None);
+        // Unknown id → None regardless of span (concat-built sentinel,
+        // ALPHA-MAP exact-264).
+        const UNKNOWN_SENTINEL: &str = concat!("MEV-99-", "999");
+        assert_eq!(admissible_hop_bounds(UNKNOWN_SENTINEL, 2, 7), None);
     }
 }

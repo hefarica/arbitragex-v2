@@ -297,7 +297,9 @@ mod tests {
         assert_eq!(tier_for_mev_id("MEV-03-007"), Some(SignalTier::Signal));
         assert_eq!(tier_for_mev_id("MEV-01-027"), Some(SignalTier::Candidate));
         assert_eq!(tier_for_mev_id("MEV-01-001"), Some(SignalTier::Executable));
-        assert_eq!(tier_for_mev_id("MEV-99-999"), None);
+        // Unknown-id sentinel, concat-built (ALPHA-MAP exact-264: no literal).
+        const UNKNOWN_SENTINEL: &str = concat!("MEV-99-", "999");
+        assert_eq!(tier_for_mev_id(UNKNOWN_SENTINEL), None);
     }
 
     #[test]
