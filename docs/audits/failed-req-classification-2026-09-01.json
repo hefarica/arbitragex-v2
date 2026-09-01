@@ -1,0 +1,214 @@
+{
+ "base": "https://arbx.ape-tv.net",
+ "surfaces": {
+  "/": {
+   "EXPECTED_RSC_CANCEL": 10
+  },
+  "/status": {
+   "EXPECTED_RSC_CANCEL": 12
+  },
+  "/opportunities": {
+   "EXPECTED_RSC_CANCEL": 12
+  },
+  "/opportunities/exchange": {
+   "EXPECTED_RSC_CANCEL": 20
+  },
+  "/opportunities/by-strategy": {
+   "EXPECTED_RSC_CANCEL": 20
+  },
+  "/executions": {
+   "EXPECTED_RSC_CANCEL": 18
+  },
+  "/paper/history": {
+   "EXPECTED_RSC_CANCEL": 35
+  },
+  "/recon": {
+   "EXPECTED_RSC_CANCEL": 24
+  },
+  "/operations": {
+   "EXPECTED_RSC_CANCEL": 63
+  },
+  "/wallets": {
+   "EXPECTED_NAVIGATION_ABORT": 10,
+   "EXPECTED_RSC_CANCEL": 80
+  },
+  "/strategies": {
+   "EXPECTED_RSC_CANCEL": 121
+  },
+  "/pools": {},
+  "/risk": {
+   "EXPECTED_RATE_LIMIT": 14,
+   "EXPECTED_RSC_CANCEL": 8
+  },
+  "/chains": {
+   "EXPECTED_RATE_LIMIT": 28,
+   "EXPECTED_RSC_CANCEL": 16
+  },
+  "/dex-registry": {
+   "EXPECTED_RATE_LIMIT": 45,
+   "EXPECTED_RSC_CANCEL": 30
+  },
+  "/settings": {
+   "EXPECTED_RATE_LIMIT": 112,
+   "EXPECTED_RSC_CANCEL": 24
+  },
+  "/settings/credentials": {
+   "EXPECTED_RATE_LIMIT": 77,
+   "EXPECTED_RSC_CANCEL": 10
+  },
+  "/config": {
+   "EXPECTED_RATE_LIMIT": 102,
+   "EXPECTED_RSC_CANCEL": 12
+  },
+  "/config/trading": {
+   "EXPECTED_RATE_LIMIT": 105,
+   "EXPECTED_RSC_CANCEL": 21
+  },
+  "/admin/chains": {
+   "EXPECTED_RSC_CANCEL": 40
+  },
+  "/admin/signin": {
+   "EXPECTED_RSC_CANCEL": 54
+  },
+  "/admin/topology": {
+   "EXPECTED_RSC_CANCEL": 130
+  },
+  "/agent-insights": {
+   "EXPECTED_RSC_CANCEL": 66
+  },
+  "/apex/allocator": {
+   "EXPECTED_RSC_CANCEL": 96
+  },
+  "/audit-logs": {
+   "EXPECTED_RSC_CANCEL": 9
+  },
+  "/deploy-pipeline": {
+   "EXPECTED_RSC_CANCEL": 22
+  },
+  "/killswitch": {
+   "EXPECTED_RSC_CANCEL": 18
+  },
+  "/live-readiness": {
+   "EXPECTED_RSC_CANCEL": 20,
+   "EXPECTED_RATE_LIMIT": 24
+  },
+  "/live-testnet": {
+   "EXPECTED_RATE_LIMIT": 75,
+   "EXPECTED_RSC_CANCEL": 35
+  },
+  "/monitor": {
+   "EXPECTED_RATE_LIMIT": 240,
+   "EXPECTED_RSC_CANCEL": 12
+  },
+  "/omega-s5/adapters": {
+   "EXPECTED_RATE_LIMIT": 98,
+   "EXPECTED_RSC_CANCEL": 105
+  },
+  "/omega-s5/core": {
+   "EXPECTED_RATE_LIMIT": 228,
+   "EXPECTED_RSC_CANCEL": 80
+  },
+  "/omega-s5/crucible": {
+   "EXPECTED_RATE_LIMIT": 126,
+   "EXPECTED_RSC_CANCEL": 72
+  },
+  "/omega-s5/drift": {
+   "EXPECTED_RATE_LIMIT": 212,
+   "EXPECTED_RSC_CANCEL": 110
+  },
+  "/omega-s5/factory": {
+   "EXPECTED_RATE_LIMIT": 154,
+   "EXPECTED_RSC_CANCEL": 88
+  },
+  "/omega-s5/operator": {
+   "EXPECTED_RATE_LIMIT": 192,
+   "EXPECTED_RSC_CANCEL": 84
+  },
+  "/omega-s5/registry": {
+   "EXPECTED_RSC_CANCEL": 38,
+   "EXPECTED_RATE_LIMIT": 85
+  },
+  "/omega-s5/registry/0x0000000000000000000000000000000000000001": {
+   "ACTUAL_FAILURE_404": 2,
+   "EXPECTED_RSC_CANCEL": 10
+  },
+  "/omega-s5/wallets": {
+   "EXPECTED_RSC_CANCEL": 30
+  },
+  "/onboarding": {
+   "EXPECTED_RSC_CANCEL": 32
+  },
+  "/onboarding/1-init": {
+   "EXPECTED_RSC_CANCEL": 25
+  },
+  "/onboarding/2-connect": {},
+  "/onboarding/3-advanced": {
+   "EXPECTED_RSC_CANCEL": 119,
+   "EXPECTED_NAVIGATION_ABORT": 7
+  },
+  "/onboarding/4-testing": {
+   "EXPECTED_RSC_CANCEL": 88
+  },
+  "/onboarding/5-production": {
+   "EXPECTED_RSC_CANCEL": 81
+  },
+  "/operator": {
+   "EXPECTED_RATE_LIMIT": 142,
+   "EXPECTED_RSC_CANCEL": 110
+  },
+  "/operator/presets": {
+   "EXPECTED_RATE_LIMIT": 299,
+   "EXPECTED_RSC_CANCEL": 22
+  },
+  "/operator/self-test": {
+   "EXPECTED_RATE_LIMIT": 228,
+   "EXPECTED_RSC_CANCEL": 132
+  },
+  "/readiness": {
+   "EXPECTED_RATE_LIMIT": 121,
+   "EXPECTED_RSC_CANCEL": 8
+  },
+  "/route-outcomes": {
+   "EXPECTED_RATE_LIMIT": 32,
+   "EXPECTED_RSC_CANCEL": 14
+  },
+  "/routes/discovery": {
+   "EXPECTED_RATE_LIMIT": 111,
+   "EXPECTED_RSC_CANCEL": 27
+  },
+  "/rpcs": {
+   "EXPECTED_RATE_LIMIT": 84,
+   "EXPECTED_RSC_CANCEL": 44
+  },
+  "/sed": {
+   "EXPECTED_RATE_LIMIT": 341,
+   "EXPECTED_RSC_CANCEL": 35
+  },
+  "/strategies/forge": {
+   "EXPECTED_RATE_LIMIT": 66,
+   "EXPECTED_RSC_CANCEL": 42
+  },
+  "/translator": {
+   "EXPECTED_RSC_CANCEL": 70
+  },
+  "/wallet": {
+   "EXPECTED_RSC_CANCEL": 48,
+   "EXPECTED_AUTH": 8,
+   "EXPECTED_NAVIGATION_ABORT": 8,
+   "ACTUAL_FAILURE_HTTP_400": 8
+  },
+  "/worker-health": {
+   "EXPECTED_RSC_CANCEL": 45
+  }
+ },
+ "totals": {
+  "EXPECTED_RATE_LIMIT": 3341,
+  "EXPECTED_RSC_CANCEL": 2597,
+  "EXPECTED_NAVIGATION_ABORT": 25,
+  "EXPECTED_AUTH": 8,
+  "ACTUAL_FAILURE_HTTP_400": 8,
+  "ACTUAL_FAILURE_404": 2
+ },
+ "total_failed": 5981,
+ "unexplained_total": 10
+}
