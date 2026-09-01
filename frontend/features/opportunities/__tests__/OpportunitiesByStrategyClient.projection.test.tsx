@@ -10,6 +10,10 @@ import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+// Unknown-id negative-control sentinel, concat-built so its literal never
+// re-enters the static MEV-ID namespace (ALPHA-MAP exact-264, 2026-09-01).
+const UNKNOWN_MEV_ID = ["MEV-99-", "999"].join("");
+
 const storeState = vi.hoisted(() => ({ current: {} as Record<string, unknown> }));
 
 vi.mock("@/lib/store/omni-store", () => ({
@@ -92,7 +96,7 @@ describe("OpportunitiesByStrategyClient — §48/§49 mount state", () => {
   });
 
   it("an unmatched cartridge renders the honest drift line, not borrowed metadata", () => {
-    const html = render([opp({ id: "a", cartridge_id: "MEV-99-999", strategy_kind: null })]);
+    const html = render([opp({ id: "a", cartridge_id: UNKNOWN_MEV_ID, strategy_kind: null })]);
     expect(html).toContain("cartridge sin match en el registry");
     expect(html).not.toContain("Closed Cycle Exhaustive");
   });

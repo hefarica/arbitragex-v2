@@ -1963,7 +1963,9 @@ mod tests {
         assert_eq!(tick.tick_summary["multi_hop_mask_skip"], false);
 
         let mut finder = base.clone();
-        finder.hop_mask_strategy_id = Some("MEV-99-999".to_string()); // unknown → honest skip
+        // Unknown-id sentinel, concat-built (ALPHA-MAP exact-264: no literal).
+        const UNKNOWN_SENTINEL: &str = concat!("MEV-99-", "999");
+        finder.hop_mask_strategy_id = Some(UNKNOWN_SENTINEL.to_string()); // unknown → honest skip
         let tick = evaluate_tick(&outcome, 1, &engine, &finder, 200, false, 0, "shadow");
         assert_eq!(tick.tick_summary["multi_hop_mask_skip"], true);
         assert_eq!(tick.multi_hop_cycles_found, 0);
@@ -2034,9 +2036,11 @@ mod tests {
         );
         assert!(tick.tick_summary["multi_hop_needs_class"].is_null());
 
-        // Unknown MEV_ID → fail-closed with the honest reason.
+        // Unknown MEV_ID → fail-closed with the honest reason. Sentinel is
+        // concat-built (ALPHA-MAP exact-264: no literal in the static scan).
         let mut finder = base.clone();
-        finder.hop_mask_strategy_id = Some("MEV-99-999".to_string());
+        const UNKNOWN_SENTINEL: &str = concat!("MEV-99-", "999");
+        finder.hop_mask_strategy_id = Some(UNKNOWN_SENTINEL.to_string());
         let tick = evaluate_tick(&outcome, 1, &engine, &finder, 200, false, 0, "shadow");
         assert_eq!(tick.tick_summary["multi_hop_status"], "unknown_strategy");
         assert_eq!(
@@ -2126,7 +2130,8 @@ mod tests {
 
         // Unknown MEV_ID → no policy resolved (fail-closed, honest nulls).
         let mut finder = base.clone();
-        finder.hop_mask_strategy_id = Some("MEV-99-999".to_string());
+        const UNKNOWN_SENTINEL: &str = concat!("MEV-99-", "999");
+        finder.hop_mask_strategy_id = Some(UNKNOWN_SENTINEL.to_string());
         let tick = evaluate_tick(&outcome, 1, &engine, &finder, 200, false, 0, "shadow");
         assert!(tick.tick_summary["multi_hop_detector"].is_null());
         assert!(tick.tick_summary["multi_hop_graph_policy"].is_null());

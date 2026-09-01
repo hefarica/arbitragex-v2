@@ -139,12 +139,14 @@ jobs:
         run: bash automation/tools/lint-migration-index-locks.sh
 
       - name: alpha-map-parity (ALPHA-MAP-ID-DRIFT — 264 canonical invariant)
-        # The raw repo MEV-ID scan must reconcile EXACTLY: 264 canonical (the
-        # quotebase SSOT the Rust generators consume) + the classified
-        # MEV-99-999 test sentinel, and each generated Rust table must equal
-        # the canonical set. The 2026-08-31 parity proof was a /tmp script
-        # that never landed — not reproducible, so the finding PERSISTED.
-        # Runtime export + diff: run locally with --runtime <dapp-url>.
+        # The raw repo MEV-ID scan must reconcile to EXACTLY 264 canonical (the
+        # quotebase SSOT the Rust generators consume) and each generated Rust
+        # table must equal the canonical set. Since the 2026-09-01 exact-264
+        # closure the 99-series test sentinel is concat-constructed at every
+        # use site (no source literal) and the gate's extras allowlist is
+        # EMPTY — any extra raw ID fails the gate. The 2026-08-31 parity proof
+        # was a /tmp script that never landed — not reproducible, so the
+        # finding PERSISTED. Runtime export + diff: --runtime <dapp-url>.
         run: python3 automation/tools/alpha-map-parity.py
 
       - name: gate-active-outcome-emitter (BUG-003/RD-06/ARBX-0024)

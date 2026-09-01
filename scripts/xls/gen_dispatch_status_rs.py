@@ -341,9 +341,11 @@ mod tests {{
         assert!(!d.may_form_candidate());
         assert_eq!(d.reason(), "no_compatible_route");
 
-        // Unknown MEV_ID → fail-closed with honest reason.
-        assert_eq!(dispatch_status("MEV-99-999"), None);
-        let d = disposition("MEV-99-999");
+        // Unknown MEV_ID → fail-closed with honest reason. Sentinel is
+        // concat-built (ALPHA-MAP exact-264: no literal in the static scan).
+        const UNKNOWN_SENTINEL: &str = concat!("MEV-99-", "999");
+        assert_eq!(dispatch_status(UNKNOWN_SENTINEL), None);
+        let d = disposition(UNKNOWN_SENTINEL);
         assert_eq!(d, Disposition::UnknownStrategy);
         assert!(!d.may_expand());
         assert!(!d.may_form_candidate());

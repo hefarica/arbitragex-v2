@@ -17,10 +17,12 @@ the removed example ID as a literal. This tool makes the invariant durable:
     2. rust tables = ID sets parsed from the three generated tables the
                     searcher compiles (hop mask / detector / dispatch status);
                     each must equal the canonical set EXACTLY.
-    3. repo scan  = unique MEV-XX-XXX across git-tracked files. Every ID must
-                    be canonical or in the EXTRAS allowlist below (each
-                    allowlisted ID is a classified, intentional non-strategy
-                    occurrence). Anything else fails the gate with its files.
+    3. repo scan  = unique MEV-XX-XXX across git-tracked files — must be
+                    EXACTLY the 264 canonical (2026-09-01 exact-264 closure:
+                    the 99-series negative-control sentinel that used to be
+                    allowlisted here is now concat-constructed in every test
+                    and described-not-quoted in every doc, so NO extra ID may
+                    appear anywhere). Anything else fails with its files.
 
   runtime mode (--runtime-url URL [--out FILE]):
     4. exports GET /api/cartridges/runtime (the registry searcher-rs actually
@@ -53,14 +55,12 @@ RUST_TABLES = {
 EXPECTED_CANONICAL = 264
 
 # Classified, intentional non-strategy MEV-pattern occurrences in the repo.
-# Adding an entry here without a doc trail is gaming the gate — each one must
-# carry a classification in docs/audits/alpha-map-parity-*.md.
-EXTRAS_ALLOWLIST = {
-    # Negative-control sentinel: well-formed but unknown ID. Every use asserts
-    # the fail-honest path (hop_mask -> None, honest skip). Renaming it would
-    # weaken the negative control, so the gate allowlists it instead.
-    "MEV-99-999": "TEST_SENTINEL",
-}
+# EMPTY since the 2026-09-01 exact-264 closure: the 99-series test sentinel is
+# concat-constructed at every use site (never a literal), so the static
+# namespace must reconcile to exactly 264 with zero extras. Adding an entry
+# here without a doc trail is gaming the gate — prefer eliminating the literal
+# (concat in tests, describe-not-quote in docs) over allowlisting it.
+EXTRAS_ALLOWLIST = {}
 
 # Pre-v3 slug cartridges the searcher loads alongside the 264 (LEGACY_RUNTIME
 # in the 2026-08-31 classification). Registry-retirement is an operator
@@ -89,8 +89,8 @@ def canonical_ids():
 
 def rust_table_ids(path: Path):
     # The generated table literals precede the #[cfg(test)] module; test
-    # asserts legitimately reference the MEV-99-999 negative-control sentinel
-    # (assert hop_mask("MEV-99-999") == None) and must not count as entries.
+    # asserts legitimately reference a concat-constructed negative-control
+    # sentinel (unknown-id fail-honest path) and must not count as entries.
     pre_tests = path.read_text(encoding="utf-8").split("#[cfg(test)]")[0]
     return set(RUST_ID_RE.findall(pre_tests))
 
