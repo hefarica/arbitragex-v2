@@ -45,10 +45,18 @@ interface Deps {
 
 const NAME_RE = /^[a-z0-9-]+$/;
 
-interface ContainerRef {
-  id: string;
-  state: string;
-}
+/**
+ * Resolution outcome. SERVICE-CTRL-01 (2026-09-01): production returned
+ * 404 container_not_found for six healthy services because the socket-proxy
+ * could not reach the docker daemon (DOCKER_GID drift) — the old code conflated
+ * "proxy unreachable/errored" with "container genuinely absent" and the UI then
+ * told the operator the endpoint was "not implemented". R8 fail-honest: only a
+ * healthy proxy answering 404 may claim not_found; any proxy failure is 502.
+ */
+type Resolution =
+  | { kind: "container"; id: string; state: string }
+  | { kind: "not_found" }
+  | { kind: "proxy_error"; detail: string };
 
 export function buildServiceControlRouter(deps: Deps): Router {
   const { requireAdminToken, adminToken, writeAudit, reqUA, logger } = deps;
@@ -66,8 +74,11 @@ export function buildServiceControlRouter(deps: Deps): Router {
   );
 
   /** Resolve a compose service → container via the label filter (robust to
-   * project-name changes); fall back to the deterministic <project>-<svc>-1 name. */
-  async function resolveContainer(name: string): Promise<ContainerRef | null> {
+   * project-name changes); fall back to the deterministic <project>-<svc>-1 name.
+   * A 404 from the daemon is the ONLY evidence of not_found — every other
+   * failure (network throw, proxy 4xx/5xx) is reported as proxy_error so the
+   * caller surfaces 502 control_plane_error instead of a false 404. */
+  async function resolveContainer(name: string): Promise<Resolution> {
     const filters = encodeURIComponent(
       JSON.stringify({
         label: [
@@ -76,20 +87,40 @@ export function buildServiceControlRouter(deps: Deps): Router {
         ],
       }),
     );
+    // Pass 1: label filter.
     try {
       const r = await fetch(`${proxy}/containers/json?all=true&filters=${filters}`);
       if (r.ok) {
-        const arr = (await r.json()) as Array<{ Id: string; State: string }>;
-        if (arr.length > 0 && arr[0]) return { id: arr[0].Id, state: arr[0].State };
+        const arr = (await r.json().catch(() => null)) as Array<{ Id: string; State: string }> | null;
+        if (Array.isArray(arr) && arr.length > 0 && arr[0]) {
+          return { kind: "container", id: arr[0].Id, state: arr[0].State };
+        }
+        // 200 + empty list: healthy proxy, no labeled match → try the name fallback.
       }
+      // Non-ok list (proxy refused / daemon error): the inspect below decides
+      // whether the proxy is alive (404 → not_found) or broken (→ proxy_error).
     } catch {
-      // fall through to deterministic-name inspect
+      // Network-level failure on the list call — same arbitration via inspect.
     }
+    // Pass 2: deterministic <project>-<svc>-1 inspect.
     const fallback = `${composeProject}-${name}-1`;
-    const ir = await fetch(`${proxy}/containers/${fallback}/json`);
-    if (!ir.ok) return null;
-    const j = (await ir.json()) as { Id: string; State?: { Status?: string } };
-    return { id: j.Id, state: j.State?.Status ?? "unknown" };
+    let inspectStatus: number | null = null;
+    try {
+      const ir = await fetch(`${proxy}/containers/${fallback}/json`);
+      inspectStatus = ir.status;
+      if (ir.ok) {
+        const j = (await ir.json().catch(() => null)) as { Id?: string; State?: { Status?: string } } | null;
+        if (j?.Id) return { kind: "container", id: j.Id, state: j.State?.Status ?? "unknown" };
+        return { kind: "proxy_error", detail: "socket-proxy inspect response had no container id" };
+      }
+    } catch (e) {
+      return { kind: "proxy_error", detail: `socket-proxy unreachable: ${(e as Error).message}` };
+    }
+    if (inspectStatus === 404) return { kind: "not_found" };
+    return {
+      kind: "proxy_error",
+      detail: `socket-proxy list+inspect failed (inspect HTTP ${inspectStatus ?? "n/a"})`,
+    };
   }
 
   const handle = (action: "start" | "stop") =>
@@ -116,8 +147,18 @@ export function buildServiceControlRouter(deps: Deps): Router {
 
       try {
         const target = await resolveContainer(name);
-        if (!target) {
-          res.status(404).json({ error: "container_not_found", service: name });
+        if (target.kind === "proxy_error") {
+          logger.error(
+            { event: "service_control.resolve_proxy_error", service: name, action, detail: target.detail },
+            "socket-proxy resolution failed",
+          );
+          res.status(502).json({ error: "control_plane_error", service: name, detail: target.detail });
+          return;
+        }
+        if (target.kind === "not_found") {
+          // compose_project in the body lets the operator diff it against the
+          // container labels without shell access (SERVICE-CTRL-01 diagnosis).
+          res.status(404).json({ error: "container_not_found", service: name, compose_project: composeProject });
           return;
         }
 
