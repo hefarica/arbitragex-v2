@@ -19,6 +19,16 @@
  * Routes:
  *   POST /api/v1/admin/services/:name/start
  *   POST /api/v1/admin/services/:name/stop
+ *   GET  /api/v1/admin/services/readiness   (READ-ONLY evidence report)
+ *
+ * DAPP-SVCCTRL-READINESS (2026-09-02, workbook 20260902_152349Z): the audit
+ * could not prove the service-control surface was actually wired end to end
+ * without mutating containers. The readiness route gives the evaluator that
+ * proof read-only: admin-token gated, NEVER gated by the ARBX_SERVICE_CONTROL
+ * flag (that flag gates MUTATION — the report includes its state as a field),
+ * never mutates, never audits, never fabricates. It probes the socket-proxy
+ * with an allowed GET and resolves every allowlisted service to its container
+ * state, reusing the same resolver the start/stop handlers use.
  */
 import { Router, type Request, type Response } from "express";
 
@@ -205,5 +215,55 @@ export function buildServiceControlRouter(deps: Deps): Router {
   const router = Router();
   router.post("/api/v1/admin/services/:name/start", requireAdminToken(adminToken), handle("start"));
   router.post("/api/v1/admin/services/:name/stop", requireAdminToken(adminToken), handle("stop"));
+
+  // GET /api/v1/admin/services/readiness — DAPP-SVCCTRL-READINESS evidence
+  // report (see header). Read-only: the ONLY side effects are GETs to the
+  // least-privilege socket-proxy. Mounted BEFORE any :name route could match
+  // (Express dispatches by method+path, and no POST route shadows a GET).
+  router.get("/api/v1/admin/services/readiness", requireAdminToken(adminToken), async (_req, res) => {
+    const controlEnabled = process.env["ARBX_SERVICE_CONTROL"] === "on";
+
+    // Probe: the same list call the resolver uses. ANY HTTP answer proves the
+    // proxy is reachable (even 403 would mean the proxy spoke); only a network
+    // throw is "unreachable" — SERVICE-CTRL-01 taught us to separate the two.
+    let proxyReachable = false;
+    let proxyStatus: number | null = null;
+    let proxyDetail: string | null = null;
+    try {
+      const pr = await fetch(`${proxy}/containers/json?limit=1`);
+      proxyStatus = pr.status;
+      proxyReachable = true;
+    } catch (e) {
+      proxyDetail = (e as Error).message;
+    }
+
+    const services = [];
+    for (const name of [...allowlist].sort()) {
+      const r = await resolveContainer(name);
+      services.push({
+        name,
+        allowed: true,
+        resolution: r.kind,
+        ...(r.kind === "container" ? { id: r.id, state: r.state } : {}),
+        ...(r.kind === "proxy_error" ? { detail: r.detail } : {}),
+      });
+    }
+
+    res.json({
+      ok: true,
+      kind: "service_control_readiness",
+      read_only: true,
+      control_enabled: controlEnabled,
+      proxy: { url: proxy, reachable: proxyReachable, status: proxyStatus, detail: proxyDetail },
+      compose_project: composeProject,
+      allowlist: [...allowlist].sort(),
+      services,
+      // writeAudit is injected (wired) — readiness itself never writes an
+      // audit row: it observes, it does not act.
+      audit: { writer: "wired" },
+      deploy: { sha: process.env["ARBX_DEPLOY_SHA"] ?? "unknown" },
+      ts: new Date().toISOString(),
+    });
+  });
   return router;
 }
