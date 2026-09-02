@@ -262,7 +262,7 @@ export function SettingsClient() {
       </Card>
 
       {/* Actions */}
-      <div className="flex items-center gap-3">
+      <div className="flex flex-wrap items-center gap-3">
         <Button type="submit" disabled={disabled} className="gap-2">
           <SaveIcon size={15} />
           Save preferences
