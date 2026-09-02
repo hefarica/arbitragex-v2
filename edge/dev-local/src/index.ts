@@ -1234,6 +1234,15 @@ app.post("/api/v1/admin/services/:name/:action", (req, res) => {
   void adminProxy(`/api/v1/admin/services/${name}/${action}`, req, res, "POST");
 });
 
+// GET /api/v1/admin/services/readiness — DAPP-SVCCTRL-READINESS (2026-09-02):
+// read-only evidence report (proxy reachability + per-service resolution).
+// Admin-token gated via adminProxy; the api-server never mutates on this
+// route. Mirrors the Hono worker (edge/worker/src/index.ts) — ARBX-V-014
+// parity: declared in BOTH proxies, no allowlist entry needed.
+app.get("/api/v1/admin/services/readiness", (req, res) => {
+  void adminProxy("/api/v1/admin/services/readiness", req, res, "GET");
+});
+
 app.use((req, res, next) => {
   // /api and /socket.io are owned by the explicit routes above (or 404 if an
   // unknown /api path) — never fall through to the frontend. /_next/* MUST fall
