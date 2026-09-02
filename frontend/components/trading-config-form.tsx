@@ -535,7 +535,7 @@ export function TradingConfigForm({
                       setForm({ ...form, enabled_strategies: next });
                     }}
                   />
-                  <span className="text-sm font-mono">{s.kind}</span>
+                  <span className="text-sm font-mono break-all">{s.kind}</span>
                 </label>
               );
             })}

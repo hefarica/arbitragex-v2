@@ -92,7 +92,7 @@ function ServiceIndicator({ service }: { service: ServiceState }) {
   const StatusIcon = config.icon;
 
   return (
-    <div className="flex items-center justify-between rounded-lg border p-3 transition-colors hover:bg-muted/50">
+    <div className="flex flex-wrap items-center justify-between gap-x-3 rounded-lg border p-3 transition-colors hover:bg-muted/50">
       <div className="flex items-center gap-3">
         <div className={`flex size-9 items-center justify-center rounded-md bg-muted ${config.color}`}>
           <Icon className="size-4" />
