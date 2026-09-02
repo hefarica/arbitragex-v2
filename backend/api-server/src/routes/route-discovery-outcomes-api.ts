@@ -244,12 +244,16 @@ export function buildRouteDiscoveryOutcomesRouter(pool: pg.Pool | null): Router 
            (SELECT count(DISTINCT k)::int FROM (
               SELECT key AS k FROM route_discovery_outcome_rollup_5m
               WHERE dim = 'chain' AND bucket_ms >= $1 AND bucket_ms <= $2
-              UNION SELECT chain_id::text FROM route_discovery_outcomes WHERE ts_ms >= $3
+              UNION SELECT chain_id::text FROM route_discovery_outcomes
+                WHERE ts_ms >= $3 AND ts_ms < $4
+              UNION SELECT chain_id::text FROM route_discovery_outcomes WHERE ts_ms >= $5
             ) c) AS chains,
            (SELECT count(DISTINCT k)::int FROM (
               SELECT key AS k FROM route_discovery_outcome_rollup_5m
               WHERE dim = 'cartridge' AND bucket_ms >= $1 AND bucket_ms <= $2
-              UNION SELECT COALESCE(NULLIF(cartridge_id, ''), '(null)') FROM route_discovery_outcomes WHERE ts_ms >= $3
+              UNION SELECT COALESCE(NULLIF(cartridge_id, ''), '(null)') FROM route_discovery_outcomes
+                WHERE ts_ms >= $3 AND ts_ms < $4
+              UNION SELECT COALESCE(NULLIF(cartridge_id, ''), '(null)') FROM route_discovery_outcomes WHERE ts_ms >= $5
             ) x) AS cartridges
     FROM merged`;
 
