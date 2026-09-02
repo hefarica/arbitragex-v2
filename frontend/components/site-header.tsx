@@ -112,7 +112,7 @@ export function SiteHeader({ paperMode = true }: { paperMode?: boolean } = {}) {
           {/* Kill-Switch Badge */}
           <Badge
             variant="outline"
-            className="hidden sm:inline-flex items-center gap-1.5 px-2.5 py-1 h-7 text-[11px] font-medium tracking-wide border-[oklch(0.55_0.15_250)] bg-[color-mix(in_oklab,oklch(0.55_0.15_250)_15%,transparent)] text-[oklch(0.75_0.12_250)] hover:bg-[color-mix(in_oklab,oklch(0.55_0.15_250)_20%,transparent)]"
+            className="hidden md:inline-flex items-center gap-1.5 px-2.5 py-1 h-7 text-[11px] font-medium tracking-wide border-[oklch(0.55_0.15_250)] bg-[color-mix(in_oklab,oklch(0.55_0.15_250)_15%,transparent)] text-[oklch(0.75_0.12_250)] hover:bg-[color-mix(in_oklab,oklch(0.55_0.15_250)_20%,transparent)]"
           >
             <span className="size-1.5 rounded-full bg-[oklch(0.65_0.13_250)]" aria-hidden />
             KILL-SWITCH &lt;10MS

@@ -123,3 +123,23 @@ describe("ThemeOverrideSelect — native select labeled at SSR", () => {
     expect(html).not.toContain("aria-hidden");
   });
 });
+
+// DAPP-A11Y (2026-09-02, workbook 20260902_152349Z): the auditor counted
+// unlabeled=1 on /monitor — the icon-only reconnect <Button> that renders in
+// SSR whenever the Socket.IO stream starts disconnected (initial state), then
+// disappears once connected. That instant is exactly what a load-time census
+// sees. Pin the accessible name so the census passes at EVERY lifecycle
+// instant, not just the settled one.
+import { MetricsStream } from "@/app/monitor/components/MetricsStream";
+
+describe("MetricsStream — reconnect icon button (the /monitor unlabeled=1)", () => {
+  const html = renderToStaticMarkup(<MetricsStream />);
+
+  it("disconnected initial state renders the reconnect control at all (SSR census sees it)", () => {
+    expect(html).toContain("Reconectar stream de métricas");
+  });
+
+  it("the icon-only button carries an explicit accessible name", () => {
+    expect(html).toMatch(/<button[^>]*aria-label="Reconectar stream de métricas"[^>]*>/);
+  });
+});

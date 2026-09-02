@@ -1,5 +1,6 @@
 "use client";
 
+import * as React from "react"; // SSR-test classic JSX runtime (house convention, see ThemeOverrideSelect)
 import { useEffect, useState } from "react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -267,7 +268,13 @@ export function MetricsStream() {
               {config.label}
             </Badge>
             {!isConnected && (
-              <Button variant="ghost" size="icon" className="size-6" onClick={reconnect}>
+              <Button
+                variant="ghost"
+                size="icon"
+                aria-label="Reconectar stream de métricas"
+                className="size-6"
+                onClick={reconnect}
+              >
                 <RefreshCwIcon className="size-3" />
               </Button>
             )}
