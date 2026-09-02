@@ -131,7 +131,7 @@ export default async function ReadinessPage() {
             <Card key={b.id}>
               <CardHeader className="pb-3">
                 <CardTitle className="flex items-center justify-between text-base gap-2">
-                  <span className="truncate" title={b.title}>
+                  <span className="min-w-0 flex-1 truncate" title={b.title}>
                     {b.title}
                   </span>
                   <Badge variant={severityVariant(b.severity)}>{b.severity}</Badge>
