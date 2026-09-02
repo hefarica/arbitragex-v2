@@ -229,3 +229,99 @@ describe("service control plane", () => {
     expect(writeAudit).not.toHaveBeenCalled();
   });
 });
+
+describe("service control readiness — DAPP-SVCCTRL-READINESS (read-only evidence)", () => {
+  it("(r1) without admin token → 401 (auth gate first, always)", async () => {
+    const res = await request(buildApp()).get("/api/v1/admin/services/readiness");
+    expect(res.status).toBe(401);
+  });
+
+  it("(r2) flag OFF → still 200 with control_enabled:false — the report observes the flag, it is not gated by it", async () => {
+    process.env["ARBX_SERVICE_CONTROL"] = "off";
+    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new TypeError("fetch failed")));
+    const res = await request(buildApp())
+      .get("/api/v1/admin/services/readiness")
+      .set("x-arbx-admin-token", ADMIN_TOKEN);
+    expect(res.status).toBe(200);
+    expect(res.body.read_only).toBe(true);
+    expect(res.body.control_enabled).toBe(false);
+  });
+
+  it("(r3) healthy proxy → full evidence report: flag, proxy, allowlist, per-service state, audit, deploy sha — zero audit rows", async () => {
+    process.env["ARBX_SERVICE_CONTROL"] = "on";
+    // Probe (containers/json?limit=1) + one label-list per allowlisted service,
+    // each answering a running container — the happy path end to end.
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({
+        ok: true,
+        status: 200,
+        json: async () => [{ Id: "abc123", State: "running" }],
+      }),
+    );
+    const res = await request(buildApp())
+      .get("/api/v1/admin/services/readiness")
+      .set("x-arbx-admin-token", ADMIN_TOKEN);
+    expect(res.status).toBe(200);
+    expect(res.body.kind).toBe("service_control_readiness");
+    expect(res.body.read_only).toBe(true);
+    expect(res.body.control_enabled).toBe(true);
+    expect(res.body.proxy).toMatchObject({ reachable: true, status: 200 });
+    expect(res.body.proxy.url).toBe("http://socket-proxy:2375");
+    expect(res.body.compose_project).toBe("arbitragex-v2");
+    expect(res.body.allowlist).toEqual(["searcher-rs", "sim-ctl", "token-enricher"]);
+    expect(res.body.services).toHaveLength(3);
+    for (const svc of res.body.services) {
+      expect(svc).toMatchObject({ allowed: true, resolution: "container", state: "running" });
+    }
+    expect(res.body.audit).toEqual({ writer: "wired" });
+    expect(res.body.deploy.sha).toBe("unknown"); // R8: no ARBX_DEPLOY_SHA in this harness
+    expect(typeof res.body.ts).toBe("string");
+    // Read-only proof: resolving N services wrote NO audit rows.
+    expect(writeAudit).not.toHaveBeenCalled();
+  });
+
+  it("(r4) proxy unreachable → 200 honest report: reachable:false + every service proxy_error (never fabricated running)", async () => {
+    process.env["ARBX_SERVICE_CONTROL"] = "on";
+    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new TypeError("connect EACCES")));
+    const res = await request(buildApp())
+      .get("/api/v1/admin/services/readiness")
+      .set("x-arbx-admin-token", ADMIN_TOKEN);
+    expect(res.status).toBe(200);
+    expect(res.body.proxy.reachable).toBe(false);
+    expect(res.body.proxy.detail).toContain("EACCES");
+    expect(res.body.services).toHaveLength(3);
+    for (const svc of res.body.services) {
+      expect(svc.resolution).toBe("proxy_error");
+      expect(svc.state).toBeUndefined();
+    }
+  });
+
+  it("(r5) mixed resolution: healthy proxy, one container genuinely absent → not_found reported verbatim", async () => {
+    process.env["ARBX_SERVICE_CONTROL"] = "on";
+    // Probe answers; per-service label lists: empty for sim-ctl (then its
+    // deterministic-name inspect 404s = genuinely absent), one running
+    // container for the other two.
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((url: string) => {
+        if (url.includes("/containers/") && url.endsWith("/json")) {
+          return Promise.resolve({ ok: false, status: 404, json: async () => null });
+        }
+        const filters = decodeURIComponent(url.split("filters=")[1] ?? "");
+        if (filters.includes("sim-ctl")) {
+          return Promise.resolve({ ok: true, status: 200, json: async () => [] });
+        }
+        return Promise.resolve({ ok: true, status: 200, json: async () => [{ Id: "id1", State: "running" }] });
+      }),
+    );
+    const res = await request(buildApp())
+      .get("/api/v1/admin/services/readiness")
+      .set("x-arbx-admin-token", ADMIN_TOKEN);
+    expect(res.status).toBe(200);
+    const byName = Object.fromEntries(res.body.services.map((s: { name: string }) => [s.name, s]));
+    expect(byName["searcher-rs"].resolution).toBe("container");
+    expect(byName["sim-ctl"].resolution).toBe("not_found");
+    expect(byName["token-enricher"].resolution).toBe("container");
+  });
+});

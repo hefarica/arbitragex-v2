@@ -1489,6 +1489,14 @@ app.post("/api/v1/admin/services/:name/:action", async (c) => {
   return c.body(text, upstream.status as 200 | 400 | 401 | 403 | 404 | 500 | 501 | 502);
 });
 
+// GET /api/v1/admin/services/readiness — DAPP-SVCCTRL-READINESS (2026-09-02):
+// read-only evidence report of the service-control plane (flag state, proxy
+// reachability, allowlist, per-service resolution). Admin-token gated upstream;
+// the evaluator can verify the wiring WITHOUT mutating any container. Plain
+// adminProxy passthrough — no edge-side logic to drift from the api-server.
+app.get("/api/v1/admin/services/readiness", (c) =>
+  adminProxy(c, "/api/v1/admin/services/readiness"));
+
 // ── B-02: admin POST routes (cartridge control, RPC import/reload, credentials,
 // onboarding complete, paper-mode toggle). All require admin token (cookie or header)
 // — mirrors the adminProxy pattern used by /admin/audit above. ────────────────
