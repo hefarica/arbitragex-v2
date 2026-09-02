@@ -7,6 +7,13 @@
 // Postgres. RULE 00: rows pass through untouched (the '(null)' folding for
 // empty cartridge_id is SQL-side NULLIF/COALESCE; the stub returns exactly
 // what the DB would).
+//
+// RDO-SUMMARY-503: the summary now reads the 5-minute rollup for complete
+// buckets + raw for the two window edges. The stub keys on the same stable
+// SQL markers (dim = '<dim>' / sum(total) / AS missing / the maintenance
+// INSERT), and rows come back keyed as the merge query returns them
+// ({key, n, opportunities}) — the route's rename/split is part of the
+// contract under test.
 import { describe, expect, it } from "vitest";
 import express, { type Request, type Response } from "express";
 import request from "supertest";
@@ -14,24 +21,26 @@ import type pg from "pg";
 
 import { buildRouteDiscoveryOutcomesRouter } from "./route-discovery-outcomes-api.js";
 
-/** One canned answer per aggregate the summary runs, keyed by SQL fragment. */
+/** One canned answer per query the summary runs, keyed by SQL fragment. */
 function stubPool(overrides: Record<string, pg.QueryResult> = {}): pg.Pool {
   const answer = (rows: Record<string, unknown>[]): pg.QueryResult =>
     ({ rows, rowCount: rows.length }) as pg.QueryResult;
   const canned: Array<[string, pg.QueryResult]> = [
-    ["count(*)::bigint AS total", answer([{ total: "1200", opportunities: "3" }])],
-    ["AS reason, count(*)", answer([{ reason: "v3_sizing_pending", n: "700" }])],
-    ["chain_id, count(*)", answer([{ chain_id: 1, n: "1200", opportunities: "3" }])],
+    // Rollup maintenance INSERT (idempotent top-up) — no rows back.
+    ["INSERT INTO route_discovery_outcome_rollup_5m", answer([])],
+    // Coverage check over the window's complete buckets.
+    ["AS missing", answer([{ missing: 0, oldest_missing: "0" }])],
+    // Totals merge (rollup ∪ raw head ∪ raw tail).
+    ["sum(total)::bigint AS total", answer([{ total: "1200", opportunities: "3" }])],
+    // Groupings — merge rows are {key, n, opportunities}; the route renames.
+    ["dim = 'reason'", answer([{ key: "v3_sizing_pending", n: "700", opportunities: "2" }])],
+    ["dim = 'chain'", answer([{ key: "1", n: "1200", opportunities: "3" }])],
+    ["dim = 'cartridge'", answer([{ key: "MEV-01-015", n: "400", opportunities: "1" }])],
     [
-      "AS cartridge_id, count(*)",
-      answer([{ cartridge_id: "MEV-01-015", n: "400", opportunities: "1" }]),
-    ],
-    [
-      "token_in, token_out, count(*)",
+      "dim = 'pair'",
       answer([
         {
-          token_in: "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2",
-          token_out: "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
+          key: "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2|0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
           n: "250",
           opportunities: "1",
         },
@@ -61,15 +70,15 @@ function appFor(pool: pg.Pool | null) {
 }
 
 describe("route-discovery-outcomes summary — FE-0038 §47 groupings", () => {
-  it("serves totals + the five groupings verbatim (rows pass through untouched)", async () => {
+  it("serves totals + the five groupings verbatim (merge rows renamed, pairs split)", async () => {
     const res = await request(appFor(stubPool())).get("/api/v1/route-discovery-outcomes/summary?hours=24");
     expect(res.status).toBe(200);
     expect(res.body.ok).toBe(true);
     expect(res.body.source).toBe("postgres");
     expect(res.body.window_hours).toBe(24);
     expect(res.body.data.totals).toEqual({ total: "1200", opportunities: "3" });
-    expect(res.body.data.by_reason).toEqual([{ reason: "v3_sizing_pending", n: "700" }]);
-    expect(res.body.data.by_chain).toEqual([{ chain_id: 1, n: "1200", opportunities: "3" }]);
+    expect(res.body.data.by_reason).toEqual([{ reason: "v3_sizing_pending", n: "700", opportunities: "2" }]);
+    expect(res.body.data.by_chain).toEqual([{ chain_id: "1", n: "1200", opportunities: "3" }]);
     expect(res.body.data.by_cartridge).toEqual([
       { cartridge_id: "MEV-01-015", n: "400", opportunities: "1" },
     ]);
@@ -81,6 +90,9 @@ describe("route-discovery-outcomes summary — FE-0038 §47 groupings", () => {
         opportunities: "1",
       },
     ]);
+    // Rollup provenance metadata (diagnosable, never fabricated counts).
+    expect(res.body.rollup.bucket_ms).toBe(300000);
+    expect(res.body.rollup.served_buckets).toBeGreaterThan(0);
   });
 
   it("clamps the window to [1, 336] hours", async () => {
@@ -91,7 +103,7 @@ describe("route-discovery-outcomes summary — FE-0038 §47 groupings", () => {
 
   it("empty groupings come back as empty arrays — an honest zero-row window, not a fabrication", async () => {
     const res = await request(
-      appFor(stubPool({ "AS cartridge_id, count(*)": { rows: [], rowCount: 0 } as pg.QueryResult })),
+      appFor(stubPool({ "dim = 'cartridge'": { rows: [], rowCount: 0 } as pg.QueryResult })),
     ).get("/api/v1/route-discovery-outcomes/summary");
     expect(res.body.data.by_cartridge).toEqual([]);
     expect(res.body.data.by_pair.length).toBe(1); // the other grouping is intact
@@ -137,5 +149,58 @@ describe("route-discovery-outcomes summary — FE-0038 §47 groupings", () => {
     expect(res.status).toBe(503);
     expect(res.body).toMatchObject({ ok: false, reason: "query_failed" });
     expect(res.body.error).toContain("statement timeout");
+  });
+
+  // RDO-SUMMARY-503: a window the rollup does not yet cover must NOT be served
+  // undercounted — same honest 503 family, with recovery detail (the top-up
+  // converges across polls and the next request succeeds).
+  it("rollup coverage gap → honest 503 rollup_backfilling with recovery detail", async () => {
+    const res = await request(
+      appFor(
+        stubPool({
+          "AS missing": { rows: [{ missing: 7, oldest_missing: "1756800000000" }], rowCount: 1 } as pg.QueryResult,
+        }),
+      ),
+    ).get("/api/v1/route-discovery-outcomes/summary?hours=24");
+    expect(res.status).toBe(503);
+    expect(res.body).toMatchObject({
+      ok: false,
+      reason: "rollup_backfilling",
+      source: "postgres",
+      data: null,
+    });
+    expect(res.body.detail.missing_buckets).toBe(7);
+    expect(res.body.detail.oldest_missing_ms).toBe("1756800000000");
+    expect(res.body.detail.buckets_per_request).toBe(24);
+    expect(res.body.detail.retry_after_s).toBe(30);
+  });
+
+  // The maintenance INSERT is idempotent by contract — concurrent pollers may
+  // run it simultaneously; ON CONFLICT DO NOTHING keeps that a no-op instead
+  // of a 23505 surfaced as query_failed.
+  it("maintenance INSERT carries ON CONFLICT DO NOTHING (concurrent-poller idempotence)", async () => {
+    const seen: string[] = [];
+    const recording = {
+      connect: async () => ({
+        query: async (sql: string) => {
+          if (sql === "BEGIN" || sql.startsWith("SET LOCAL") || sql === "COMMIT" || sql === "ROLLBACK")
+            return { rows: [], rowCount: 0 };
+          seen.push(sql);
+          if (sql.includes("AS missing")) return { rows: [{ missing: 0, oldest_missing: "0" }], rowCount: 1 };
+          if (sql.includes("sum(total)::bigint AS total"))
+            return { rows: [{ total: "0", opportunities: "0" }], rowCount: 1 };
+          if (sql.includes("dim = '")) return { rows: [], rowCount: 0 };
+          return { rows: [], rowCount: 0 };
+        },
+        release: () => {},
+      }),
+    } as unknown as pg.Pool;
+    const res = await request(appFor(recording)).get("/api/v1/route-discovery-outcomes/summary");
+    expect(res.status).toBe(200);
+    const insert = seen.find((s) => s.includes("INSERT INTO route_discovery_outcome_rollup_5m"));
+    expect(insert).toBeDefined();
+    expect(insert).toMatch(/ON CONFLICT DO NOTHING/);
+    // And the top-up only ever targets COMPLETE buckets (below the current one).
+    expect(insert).toMatch(/floor\(extract\(epoch FROM now\(\)\) \* 1000\)::bigint\s*\/ 300000 \* 300000 - 300000/);
   });
 });
