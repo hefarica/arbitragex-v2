@@ -203,4 +203,40 @@ describe("route-discovery-outcomes summary — FE-0038 §47 groupings", () => {
     // And the top-up only ever targets COMPLETE buckets (below the current one).
     expect(insert).toMatch(/floor\(extract\(epoch FROM now\(\)\) \* 1000\)::bigint\s*\/ 300000 \* 300000 - 300000/);
   });
+
+  it("RDO-SUMMARY-503 runtime closure: chains/cartridges distinct reads ONLY the head/tail edges — never a full-window raw scan (count DISTINCT over ~68M rows blows the 15s statement timeout -> 503 query_failed)", async () => {
+    // Production evidence 2026-09-02 (ddcacff7, 82.6M-row table): the two
+    // count(DISTINCT) subqueries scanned `ts_ms >= $3` (= since = window
+    // start) on the RAW table. The rollup serves the middle of the window;
+    // raw must only ever read [since, firstAligned) and [tailFrom, now) —
+    // the exact ranges rawh/rawt use. Pin every raw $3 reference to be
+    // upper-bounded by $4 so this can never regress to a full-window scan.
+    const seen: string[] = [];
+    const recording = {
+      connect: async () => ({
+        query: async (sql: string) => {
+          if (sql === "BEGIN" || sql.startsWith("SET LOCAL") || sql === "COMMIT" || sql === "ROLLBACK")
+            return { rows: [], rowCount: 0 };
+          seen.push(sql);
+          if (sql.includes("AS missing")) return { rows: [{ missing: 0, oldest_missing: "0" }], rowCount: 1 };
+          if (sql.includes("sum(total)::bigint AS total"))
+            return { rows: [{ total: "0", opportunities: "0" }], rowCount: 1 };
+          if (sql.includes("dim = '")) return { rows: [], rowCount: 0 };
+          return { rows: [], rowCount: 0 };
+        },
+        release: () => {},
+      }),
+    } as unknown as pg.Pool;
+    const res = await request(appFor(recording)).get("/api/v1/route-discovery-outcomes/summary?hours=24");
+    expect(res.status).toBe(200);
+    const totals = seen.find((s) => s.includes("sum(total)::bigint AS total"));
+    expect(totals).toBeDefined();
+    // rawh + chains + cartridges: 3 edge reads [$3, $4), every one bounded.
+    const occurrences = totals!.split("ts_ms >= $3").length - 1;
+    expect(occurrences).toBeGreaterThanOrEqual(3);
+    const unbounded = totals!.split("ts_ms >= $3").slice(1).filter((frag) => !frag.startsWith(" AND ts_ms < $4"));
+    expect(unbounded, "raw scan of `ts_ms >= $3` without the $4 upper bound = full-window scan (the timeout)").toEqual([]);
+    // Tail edges present for both dims ([$5, now) reads).
+    expect(totals!.match(/route_discovery_outcomes WHERE ts_ms >= \$5/g)?.length).toBeGreaterThanOrEqual(3);
+  });
 });
