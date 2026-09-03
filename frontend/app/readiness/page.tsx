@@ -130,7 +130,12 @@ export default async function ReadinessPage() {
           {blockers.map((b) => (
             <Card key={b.id}>
               <CardHeader className="pb-3">
-                <CardTitle className="flex items-center justify-between text-base gap-2">
+                {/* 48_SURFACE_CERT /readiness overflow layer 3: CardTitle is the grid ITEM of CardHeader's
+                    implicit auto track — its default min-width:auto keeps the track at the nowrap span's
+                    max-content (~660px) and overflows every viewport. min-w-0 on the item releases the track;
+                    the inner span (min-w-0 flex-1 truncate, PR #514) then truncates. Empirical ablation:
+                    hdrSW 660 -> 225. */}
+                <CardTitle className="min-w-0 flex items-center justify-between text-base gap-2">
                   <span className="min-w-0 flex-1 truncate" title={b.title}>
                     {b.title}
                   </span>
