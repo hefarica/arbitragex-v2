@@ -15,6 +15,7 @@
 import React from "react";
 import { describe, it, expect } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
+import fs from "node:fs";
 
 import { Phase3Client } from "@/features/onboarding/Phase3Client";
 import { Dropzone } from "@/components/ui/dropzone";
@@ -141,5 +142,22 @@ describe("MetricsStream — reconnect icon button (the /monitor unlabeled=1)", (
 
   it("the icon-only button carries an explicit accessible name", () => {
     expect(html).toMatch(/<button[^>]*aria-label="Reconectar stream de métricas"[^>]*>/);
+  });
+});
+
+// ── 48_SURFACE_CERT Responsive overflow closures (2026-09-02, post-deploy sweep) ──
+describe("Alert grid tracks + Strategies tabs wrap (the /readiness + /strategies overflow)", () => {
+  const read = (f: string) => fs.readFileSync(f, "utf8");
+
+  it("ui/alert.tsx uses minmax(0,1fr) tracks — a bare 1fr is minmax(auto,1fr) whose min-content blows out on unbreakable titles", () => {
+    const src = read("components/ui/alert.tsx");
+    expect(src).toContain("grid-cols-[calc(var(--spacing)*4)_minmax(0,1fr)]");
+    expect(src).toContain("grid-cols-[0_minmax(0,1fr)]");
+    expect(src).not.toContain("_1fr]");
+  });
+
+  it("StrategiesClient TabsList wraps — 11 triggers at w-fit overflow every viewport < ~1280px", () => {
+    const src = read("app/strategies/StrategiesClient.tsx");
+    expect(src).toMatch(/<TabsList className="h-auto flex-wrap justify-start">/);
   });
 });
