@@ -14,7 +14,7 @@
   },
   "dependencies": {
     "@arbx/shared": "*",
-    "express": "^4.19.2",
+    "express": "^5.2.1",
     "http-proxy-middleware": "^3.0.5",
     "ioredis": "^5.11.1",
     "msgpack-lite": "^0.1.26"

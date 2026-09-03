@@ -15,7 +15,7 @@
   },
   "dependencies": {
     "@arbx/shared": "*",
-    "express": "^4.19.2",
+    "express": "^5.2.1",
     "ioredis": "^5.3.2",
     "pg": "^8.23.0",
     "pino": "^9.0.0",
