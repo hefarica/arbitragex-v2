@@ -160,4 +160,9 @@ describe("Alert grid tracks + Strategies tabs wrap (the /readiness + /strategies
     const src = read("app/strategies/StrategiesClient.tsx");
     expect(src).toMatch(/<TabsList className="h-auto flex-wrap justify-start">/);
   });
+
+  it("readiness CardTitle is min-w-0 — the grid ITEM (not the span) holds CardHeader's implicit auto track at the nowrap span's max-content", () => {
+    const src = read("app/readiness/page.tsx");
+    expect(src).toContain('<CardTitle className="min-w-0 flex items-center justify-between text-base gap-2">');
+  });
 });
