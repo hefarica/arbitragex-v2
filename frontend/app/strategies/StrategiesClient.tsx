@@ -82,7 +82,9 @@ export function StrategiesClient({ initialConfig, initialCatalog, initialError }
 
   return (
     <Tabs defaultValue="capital-risk" className="w-full">
-      <TabsList>
+      {/* 48_SURFACE_CERT Responsive: 11 triggers overflow w-fit at <1280px —
+          wrap instead of overflowing (TabsList primitive untouched). */}
+      <TabsList className="h-auto flex-wrap justify-start">
         <TabsTrigger value="capital-risk">Capital &amp; Entropy</TabsTrigger>
         <TabsTrigger value="catalog">Engine Catalog</TabsTrigger>
         <TabsTrigger value="runtime">Runtime Cartridges</TabsTrigger>
