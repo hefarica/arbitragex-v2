@@ -53,8 +53,11 @@ psql_q() {  # psql_q <sql> → stdout; rc != 0 en error
 }
 
 psql_batch() {  # ejecuta un batch con timeouts acotados; stderr visible para el caller
+  # SIN -q: quiet suprime los command tags ("DELETE n" / "INSERT 0 n") y el
+  # caller los usa para contar filas — con -q la primera corrida real reportó
+  # deleted=0 tras borrar un batch entero sin contarlo (fail-honest violado).
   docker exec -i "$PG_CONTAINER" psql -U postgres -d arbitragex -X \
-    -v ON_ERROR_STOP=1 -qAt \
+    -v ON_ERROR_STOP=1 -At \
     -c "SET lock_timeout='$BATCH_LOCK_TIMEOUT'; SET statement_timeout='$BATCH_STMT_TIMEOUT'; $1" 2>&1
 }
 
