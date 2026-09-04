@@ -28,6 +28,16 @@ ARCHIVES_DIR="${ARBX_RETENTION_ARCHIVE_DIR:-/opt/arbitragex-v2/archives}"
 DO_ARCHIVE="${ARBX_RETENTION_ARCHIVE:-0}"   # 1 = COPY→zstd antes de borrar (ver RETENTION_POLICY.md)
 BACKFILL_BUDGET_S="${ARBX_RDO_BACKFILL_BUDGET_S:-900}"
 TABLE_BUDGET_S="${ARBX_TABLE_BUDGET_S:-1200}"
+# 2026-09-04 incidente (13:36Z): la primera corrida purgó 53.8M filas RDO a
+# ~85K/s y el WAL acumulado (~16GB antes de que los checkpoints automáticos
+# reciclaran) llenó / al 100% → postgres crash-loop "postmaster.pid: No space
+# left on device". Dos mitigaciones:
+#   CHECKPOINT_EVERY: cada N batches se fuerza CHECKPOINT → el WAL se recicla
+#     al ritmo del purge y el pico queda acotado a ~1GB.
+#   MAX_ROWS_PER_TABLE: tope de filas por corrida/tabla — un backlog gigante
+#     se dosifica en días en vez de una sola ráfaga.
+CHECKPOINT_EVERY="${ARBX_RETENTION_CHECKPOINT_EVERY:-20}"
+MAX_ROWS_PER_TABLE="${ARBX_RETENTION_MAX_ROWS:-20000000}"
 BATCH_LOCK_TIMEOUT="5s"                     # FREEZE-01: nunca esperar más tras un lock
 BATCH_STMT_TIMEOUT="300s"                   # un batch acotado, no un mega-DELETE
 VACUUM="${ARBX_RETENTION_VACUUM:-1}"
@@ -53,8 +63,11 @@ psql_q() {  # psql_q <sql> → stdout; rc != 0 en error
 }
 
 psql_batch() {  # ejecuta un batch con timeouts acotados; stderr visible para el caller
+  # SIN -q: quiet suprime los command tags ("DELETE n" / "INSERT 0 n") y el
+  # caller los usa para contar filas — con -q la primera corrida real reportó
+  # deleted=0 tras borrar un batch entero sin contarlo (fail-honest violado).
   docker exec -i "$PG_CONTAINER" psql -U postgres -d arbitragex -X \
-    -v ON_ERROR_STOP=1 -qAt \
+    -v ON_ERROR_STOP=1 -At \
     -c "SET lock_timeout='$BATCH_LOCK_TIMEOUT'; SET statement_timeout='$BATCH_STMT_TIMEOUT'; $1" 2>&1
 }
 
@@ -225,7 +238,15 @@ for spec in "${TABLES[@]}"; do
   # Guard: índice con la columna de corte en posición leading — acepta
   # "(col)", "(col, ...)" y "(col DESC)". replace(...) quita las comillas de
   # pg_indexes para columnas tipo "timestamp".
-  if ! psql_q "SELECT 1 FROM pg_indexes WHERE tablename='$tbl' AND replace(indexdef, chr(34), '') ~ '\\(${col}[ ,)]' LIMIT 1" | grep -q 1; then
+  # rc!=0 = la query NO corrió (BD en recovery/caída) → db_error, NO un falso
+  # "missing_index" (el summary del incidente 13:36Z diagnosticó mal 6 tablas).
+  idxout=$(psql_q "SELECT 1 FROM pg_indexes WHERE tablename='$tbl' AND replace(indexdef, chr(34), '') ~ '\\(${col}[ ,)]' LIMIT 1")
+  if [ $? -ne 0 ]; then
+    summary+=("$tbl:SKIP_db_unreachable")
+    log "retention.skip table=$tbl reason=db_unreachable (psql failed — check postgres)"
+    continue
+  fi
+  if [ -z "$idxout" ]; then
     summary+=("$tbl:SKIP_missing_index")
     log "retention.skip table=$tbl reason=missing_index_on_$col (no seqscan purge — ver migración 116)"
     continue
@@ -281,6 +302,7 @@ for spec in "${TABLES[@]}"; do
   fi
 
   deleted=0
+  batches_since_ckpt=0
   while :; do
     out=$(psql_batch "
       WITH victim AS (SELECT ctid FROM $tbl WHERE $col < $cutoff LIMIT $batch)
@@ -298,7 +320,18 @@ for spec in "${TABLES[@]}"; do
     fi
     n=$(printf '%s' "$out" | grep -oE 'DELETE [0-9]+' | grep -oE '[0-9]+$') || n=0
     deleted=$((deleted + n))
+    batches_since_ckpt=$((batches_since_ckpt + 1))
     [ "$n" -lt "$batch" ] && break
+    # Pacing WAL (incidente 2026-09-04 13:36Z): CHECKPOINT periódico para que
+    # los segments se reciclen al ritmo del purge en vez de acumularse.
+    if [ $((batches_since_ckpt % CHECKPOINT_EVERY)) -eq 0 ]; then
+      docker exec -i "$PG_CONTAINER" psql -U postgres -d arbitragex -X -qAt \
+        -c "SET statement_timeout='600s'; CHECKPOINT" >/dev/null 2>&1 || true
+    fi
+    if [ "$deleted" -ge "$MAX_ROWS_PER_TABLE" ]; then
+      reason="daily_row_cap_${MAX_ROWS_PER_TABLE}_resume_tomorrow"
+      break
+    fi
     if [ $((SECONDS - t0)) -gt "$TABLE_BUDGET_S" ]; then
       reason="table_budget_exceeded_resume_tomorrow"
       break
