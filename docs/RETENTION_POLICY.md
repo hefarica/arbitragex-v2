@@ -1,9 +1,14 @@
 # Política de Retención de Datos — ARBX-RETENTION-01 (2026-09-04)
 
-> Estado: **ACTIVA**. Ejecutor: `scripts/pg_retention.sh` (cron VPS `17 4 * * *`,
-> log `/var/log/arbx-pg-retention.log`). Doctrina de ejecución: FREEZE-01
-> (`docs/incidents/2026-08-17-PIPELINE-FREEZE-PURGE-LOCKS.md`) — batched,
-> `lock_timeout=5s`, `statement_timeout` acotado por batch, skip ≠ error.
+> Estado: **ACTIVA y EJECUTADA**. Ejecutor: `scripts/pg_retention.sh` (cron VPS
+> `17 4 * * *`, log `/var/log/arbx-pg-retention.log`). Doctrina de ejecución:
+> FREEZE-01 (`docs/incidents/2026-08-17-PIPELINE-FREEZE-PURGE-LOCKS.md`) — batched,
+> `lock_timeout=5s`, `statement_timeout` acotado por batch, skip ≠ error —
+> MÁS **WAL-pacing**: `CHECKPOINT` cada 20 batches (ver abajo).
+>
+> **Resultado de la compactación inicial (2026-09-04):** PG 92.5GB → **32GB**,
+> `route_discovery_outcomes` 75GB → **15GB** (30.9M filas = 1d), disco VPS `/`
+> 136GB usados (94%) → **69GB usados (48%)**. ~66GB devueltos al SO.
 
 ## Principio
 
@@ -106,27 +111,40 @@ ssh arbx 'rm -rf /opt/arbitragex-v2/archives/<tabla>/'
 - **risk/sims 90d**: ventanas de auditoría estadística; los agregados ya viven
   en rollups/ledger.
 
+## WAL-pacing (lección del incidente 2026-09-04 13:36Z)
+
+Un DELETE batched "exitoso" puede llenar el disco por sí solo: cada DELETE
+genera WAL y los checkpoints automáticos no reciclan a tiempo bajo ráfaga.
+El primer purge (53.8M filas en 10.5min) acumuló ~16GB de WAL → disco 100% →
+PG crash-loop + AOF de Redis corrupto por el mismo disk-full. Regla:
+
+- `CHECKPOINT` cada **20 batches** (~2M filas) → pico WAL ~1.5GB.
+- Cap por run: `MAX_ROWS_PER_TABLE=20M` (env `ARBX_RETENTION_MAX_ROWS`).
+- Monitorear `df -h /` Y el tamaño de `pg_wal` durante purgas masivas.
+- `psql -q` NUNCA en loops count-based: suprime los command tags (`DELETE n`).
+
+Rescate (si ya ocurrió): `docker builder prune -f` libera para que PG complete
+recovery solo; AOF redis con `redis-check-aof --fix` (trunca cola ilegible).
+
 ## Recuperación de espacio (por qué no basta el DELETE)
 
-El DELETE batched marca espacio **reutilizable dentro de PG** (los 92.5GB del
-volumen no encogen solos). Para DEVOLVER espacio al SO del VPS se ejecutó una
-vez, como runbook manual (no en el cron):
+El DELETE batched marca espacio **reutilizable dentro de PG** (el volumen no
+encoge solo). Para DEVOLVER espacio al SO se usaron dos runbooks manuales
+(committed al repo, ejecutados una vez el 2026-09-04):
 
-```sql
--- rebuild de route_discovery_outcomes (una vez, 2026-09-04, ~34GB al SO):
-BEGIN;  -- con lock_timeout=5s
-SET LOCAL lock_timeout='5s';
-CREATE TABLE route_discovery_outcomes_new (LIKE route_discovery_outcomes INCLUDING ALL);
--- catch-up del rango vivo (2d):
-INSERT INTO route_discovery_outcomes_new SELECT * FROM route_discovery_outcomes WHERE ts_ms >= <cutoff>;
-DROP TABLE route_discovery_outcomes;
-ALTER TABLE route_discovery_outcomes_new RENAME TO route_discovery_outcomes;
-COMMIT;
--- re-crear índice CONCURRENTLY si alguno quedó marcado inválido
-```
+- **`scripts/rdo_emergency_compact.sh`** (el usado): guard rollup-completo →
+  purge batched (cutoff 1d) con CHECKPOINT cada 20 batches →
+  `VACUUM (FULL, ANALYZE)` standalone. Resultado: 75GB → 15GB, ~66GB al SO.
+  Gotchas: VACUUM FULL no puede correr en bloque transaccional (un `-c`
+  multi-statement crea txn implícita — usar `-c` standalone con
+  `-e PGOPTIONS='-c lock_timeout=30s -c statement_timeout=1800s'`) y necesita
+  libre ≥ tamaño de la tabla reescrita CON la vieja viva (~17GB para este caso).
+- **`scripts/rdo_table_swap.sh`** (alternativa si hay ~45GB libres):
+  `LIKE INCLUDING ALL` + catch-up por trozos + swap atómico single-txn (AEL)
+  + `ALTER SEQUENCE ... OWNED BY NONE` para no perder nextval.
 
-Estado esperado post-política: PG steady ≈ 55-60GB (vs 92.5GB), RDO plano en
-~32GB (2d), Loki acotado a 15d, build cache purgado semanal.
+Estado post-política (verificado 2026-09-04): PG **32GB** (vs 92.5GB), RDO
+plano en ~15GB/1-2d, Loki acotado a 15d, build cache purgado semanal.
 
 ## Next step estructural (cuando el crecimiento lo pida)
 
@@ -140,3 +158,11 @@ purge batched + rebuild ocasional es suficiente.
 17 4 * * * /opt/arbitragex-v2/scripts/pg_retention.sh >> /var/log/arbx-pg-retention.log 2>&1
 23 5 * * 0 docker builder prune -f >> /var/log/arbx-builder-prune.log 2>&1
 ```
+
+> Historial: existía además una entrada legacy `/etc/cron.d/arbx-retention`
+> (hourly, `/usr/local/bin/arbx-pg-retention.sh`: DELETE single-statement sin
+> batching ni timeouts — anti-doctrina FREEZE-01) dejada por un fix antiguo
+> del "76GB bloat". **DESACTIVADA 2026-09-04** (copia
+> `arbx-retention.disabled-2026-09-04`, línea comentada). El purge v3 diario
+> la reemplaza: su ventana 2d ⊃ la del legacy 7d, por lo que su DELETE ya
+> nunca encontraba filas — solo riesgo, cero beneficio.
