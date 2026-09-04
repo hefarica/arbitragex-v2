@@ -107,6 +107,7 @@ import { mountPools } from "./routes/pools.js";
 import { mountPairs } from "./routes/pairs.js";
 import { mountStubs } from "./routes/stubs.js";
 import { buildServiceControlRouter } from "./routes/service-control.js";
+import { buildArchiveControlRouter } from "./routes/archive-control.js";
 import { mountWallets } from "./routes/wallets.js";
 import { CarnotStore } from "./services/carnotStore.js";
 import { mountCarnotCycles } from "./routes/carnot-cycles.js";
@@ -621,6 +622,20 @@ app.use(
     adminToken: ARBX_ADMIN_TOKEN,
     writeAudit,
     reqUA,
+    logger,
+  }),
+);
+
+// Archive control plane (DAPP-ARCHIVE-UI-01): cold-tier export surface for
+// ARBX-RETENTION-01 — capacity (statfs), manual export (keyset → CSV → gzip
+// into the ../archives bind mount), and the DB-backed auto-archive toggle
+// the nightly cron reads. Admin-gated + audit-logged; fail-closed disk floor.
+app.use(
+  buildArchiveControlRouter({
+    pool,
+    requireAdminToken,
+    adminToken: ARBX_ADMIN_TOKEN,
+    writeAudit,
     logger,
   }),
 );

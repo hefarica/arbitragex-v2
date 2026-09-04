@@ -84,6 +84,29 @@ rsync -avz arbx:/opt/arbitragex-v2/archives/ ./arbx-archives/
 ssh arbx 'rm -rf /opt/arbitragex-v2/archives/<tabla>/'
 ```
 
+## Panel DApp (DAPP-ARCHIVE-UI-01, 2026-09-04)
+
+El archivo está instrumentado en `/operations` (panel "Archivo Frío ·
+retención de datos"), admin-gated vía la sesión httpOnly V-AT-1 (edge
+traduce cookie → `x-arbx-admin-token` upstream):
+
+- **Capacidad**: `fs.statfs` del bind mount `../archives:/app/archives` —
+  bytes libres/totales y % usado, barra roja ≥90%. Fuente: sistema de
+  archivos del host (real, no fabricada).
+- **Filas > ventana** por tabla: el mismo predicado de corte que el cron;
+  `—` = no computado (count timeout), nunca 0 falso (R8).
+- **Export manual** (`.csv.gz`): `POST /api/admin/archive/export` — keyset
+  pagination (ORDER BY id, páginas de 50K) desde api-server → CSV → gzip al
+  MISMO árbol `/opt/arbitragex-v2/archives/<tabla>/`. Single-flight (409 si
+  ya hay uno corriendo) y piso fail-closed de 3GB libres (507 si no).
+- **Modo automático**: toggle `POST /api/admin/archive/auto` que persiste en
+  `retention_settings.archive_auto` (migración 117); el cron nocturno lo lee
+  y PREVALECE sobre el default off (`ARBX_RETENTION_ARCHIVE=1` sigue siendo
+  override manual). Audit-logged (`archive.auto`, `archive.export`).
+
+El panel NO sustituye el rsync: los archivos quedan en el VPS hasta que el
+operador los mueva (procedimiento arriba).
+
 ## RCA — por qué existía el problema (evidencia)
 
 1. **`pg_retention.sh` v1 falló todos los días desde 2026-08-18**

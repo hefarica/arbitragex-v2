@@ -390,6 +390,12 @@ services:
     - type: bind
       source: /var/lib/arbx
       target: /var/lib/arbx
+    # DAPP-ARCHIVE-UI-01: cold-tier export dir shared with the nightly cron —
+    # api-server's manual export (/api/admin/archive/export) and the host-side
+    # zstd archive (pg_retention.sh) write the SAME tree; rsync sees one dir.
+    - type: bind
+      source: ../archives
+      target: /app/archives
     # READ-ONLY repo mount for the 17 live-readiness verifiers (REPO_ROOT default /repo).
     # #155 added this as a SECOND `volumes:` key on this service — a duplicate mapping
     # key that PyYAML tolerates (takes the last) but docker compose's parser rejects,
