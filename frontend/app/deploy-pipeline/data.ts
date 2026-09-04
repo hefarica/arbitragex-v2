@@ -416,77 +416,112 @@ export const META = {
     "llevar arbitragex-v2 del estado actual (CI 100% rojo, repo PUBLIC, branch protection sin status checks) a producción operativa en VPS via GitHub Actions",
 };
 
-// ─── FE-0059 (§64): DEPLOY LOCKED — the UI reflects the REAL workflow ─────────
+// ─── FE-0059 (§64) → DAPP-DEPLOYLOCK-TRUTH (2026-09-04): the deploy console ──
+// reflects the REAL workflow state. The 2026-08-23 PROTOCOLO ABSOLUTO ran its
+// terminal WP-F gate on 2026-08-25 (checklist FIRMAZO §17 → UN commit e2e3b5d2
+// → PR #464 squash-merged → main cfafa012, CI 30/30 → deploy verificado 24/24,
+// ARBX-0017), and since 2026-08-29 the operative protocol is the operator's
+// PR-per-anomaly flow (#470..#518, each merge under 14 required checks +
+// reviews). A banner that still says "DEPLOY LOCKED desde 2026-08-23" misstates
+// that reality — RULE 00 applies to stale state as much as to missing state.
 //
-// Grounding (RULE 00 — nothing fabricated): the operator's PROTOCOLO ABSOLUTO
-// (2026-08-23) holds COMMITS=0 / PUSHES=0 / DEPLOYS=0 until the master
-// checklist is 100% + full validation (WP-F final gate). `locked: true` IS the
-// current workflow state, not synthesized telemetry.
-//
-// Per-reason LIVE status is nivel-(b): no runtime endpoint exposes registry/CI
-// state to the FE today. The reasons therefore state their UNLOCK CONDITION
-// (verifiable against the canonical local sources), never a live PASS/FAIL —
-// that would be a fabricated status. When a status endpoint exists, this
-// banner consumes it.
+// Grounding (nothing fabricated): every per-reason status below is STATIC,
+// DATED evidence verifiable against git history, the GitHub API, and live
+// probes — gathered 2026-09-04. Per-reason LIVE status remains nivel-(b): no
+// runtime endpoint exposes registry/CI state to the FE, so no live claim is
+// rendered. When a status endpoint exists, this banner consumes it.
+export type LockReasonStatus = "satisfied" | "superseded" | "operator-pending";
+
 export interface DeployLockReason {
   id: string;
   label: string;
   unlock_condition: string;
   source: string;
+  status: LockReasonStatus;
+  status_evidence: string;
+  status_date: string;
 }
 
 export interface DeployLock {
-  locked: true;
+  locked: false;
   protocol: string;
   since: string;
-  effect: string;
+  resolved_at: string;
+  current_flow: string;
   live_status: string;
   reasons: DeployLockReason[];
 }
 
 export const DEPLOY_LOCK: DeployLock = {
-  locked: true,
-  protocol: "PROTOCOLO ABSOLUTO del operador — commit/push/branch/PR/deploy = 0 hasta checklist 100% + validación integral",
+  locked: false,
+  protocol:
+    "PROTOCOLO ABSOLUTO del operador (2026-08-23) — commit/push/branch/PR/deploy = 0 hasta checklist 100% + validación integral",
   since: "2026-08-23",
-  effect: "UN commit → push → CI → deploy al final (gate WP-F), luego L4 vs arbx.ape-tv.net",
+  resolved_at: "2026-08-25",
+  current_flow:
+    "Desde 2026-08-29: flujo PR-per-anomalía del operador (#470..#518) — cada merge bajo 14 required checks + reviews, deploy veraz y L4 por PR.",
   live_status:
-    "nivel-(b): sin endpoint runtime de registry/CI — el estado vivo por razón NO se muestra ni se fabrica (RULE 00)",
+    "nivel-(b): sin endpoint runtime de registry/CI — los estados por razón son evidencia estática fechada (verificable contra git/API GitHub/probes), NO estado vivo ni fabricado (RULE 00)",
   reasons: [
     {
       id: "checklist",
       label: "Checklist maestro incompleto",
       unlock_condition: "100% de las tareas implementables CLOSED/verificadas (XLS-QB 88 + FE-MASTER + WP-R)",
       source: ".ai-work/TASK_REGISTRY.json (fuente canónica local)",
+      status: "satisfied",
+      status_evidence:
+        "FIRMAZO §17 2026-08-25 (ARBX-0015). Censo registry 2026-09-04: 194 filas → 193 CLOSED/CLOSED-VERIFIED/LOCALLY_VERIFIED + 1 BLOCKED_OPERATOR (ARBX-E1-01 = decisión D10); 0 PENDING/IN_PROGRESS.",
+      status_date: "2026-09-04",
     },
     {
       id: "tests",
       label: "Validación integral local pendiente",
       unlock_condition: "suite completa + typecheck verde sobre el árbol final (no por-tarea)",
       source: "§78 matriz de aceptación del gate final",
+      status: "satisfied",
+      status_evidence:
+        "Árbol final 5074bb4e: FE tsc --noEmit 0 errores + vitest 1016/1016 (115 archivos); api-server vitest 659/659 (54 archivos); Rust vía CI (AppControl local, R8): head #518 28/28, SHA final 40/40.",
+      status_date: "2026-09-04",
     },
     {
       id: "review",
       label: "Revisión cruzada pendiente",
       unlock_condition: "0 filas PENDING/IN_PROGRESS en el registry (R3/R6 cerrados en ambas lanes)",
       source: ".ai-work/TEAM_BOARD.md (vista derivada)",
+      status: "satisfied",
+      status_evidence:
+        "Censo registry 2026-09-04: 0 filas PENDING/IN_PROGRESS; verificación cruzada R3/R6 documentada (cont.89–128); TEAM_BOARD regenerado desde el registry (SSOT).",
+      status_date: "2026-09-04",
     },
     {
       id: "regression",
       label: "Gates de regresión sin verificación post-deploy",
       unlock_condition: "ARBX-R-0001..0004 + G-Gates §37 verdes en L4 post-deploy (probe vivo, no local)",
       source: "docs/governance/HARDENING_ANTI_REGRESION.md",
+      status: "satisfied",
+      status_evidence:
+        "L4 vivo: VPS HEAD == 5074bb4e (deploy veraz); /api/gates/status paper_mode PASSED (capital expuesto 0); /api/status 7/7 servicios; XLEN arbx:opps:detected 10.002; PG MAX(detected_at) fresco; ARBX_TRADE_MODE=paper; operator/me y svcctrl admin = 401 honestos.",
+      status_date: "2026-09-04",
     },
     {
       id: "ci",
       label: "CI no puede correr bajo el protocolo",
       unlock_condition: "el ÚNICO commit del gate final dispara los 14 required checks — nada antes",
       source: ".github/workflows (branch protection 14 checks)",
+      status: "superseded",
+      status_evidence:
+        "La premisa quedó superada por el flujo PR: branch protection viva = 14 required contexts (strict + enforce_admins + reviews); cada PR #470..#518 los disparó — head #518: 28/28 incl. CodeQL; SHA final: 40/40.",
+      status_date: "2026-09-04",
     },
     {
       id: "operator",
       label: "Autorización operador del gate final",
       unlock_condition: "aprobación explícita WP-F + KNOWN_GOOD_REVISION (gate ARBX-R-0004 en scripts/deploy.sh)",
       source: "scripts/deploy.sh (gates veraces) + directiva operador",
+      status: "operator-pending",
+      status_evidence:
+        "WP-F 2026-08-25 aprobado por el operador vía merge #464 (deploy verificado, ARBX-0017). Pendiente operador: decisión D10 wiring de identidad backend (síntoma FE ya resuelto por #512) y flips SIM_BACKEND (S4 labels). Toda autorización de gate final sigue siendo operador-only.",
+      status_date: "2026-09-04",
     },
   ],
 };
