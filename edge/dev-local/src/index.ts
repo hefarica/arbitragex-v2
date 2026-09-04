@@ -631,6 +631,18 @@ app.get("/api/admin/topology/snapshot", (req, res) => {
 app.post("/api/admin/topology/mutations", (req, res) => {
   adminProxy("/api/admin/topology/mutations", req, res, "POST");
 });
+// DAPP-ARCHIVE-UI-01: cold-tier archive control (ARBX-RETENTION-01). Status
+// (statfs capacity + files + auto mode), manual export trigger, auto toggle.
+// Admin-gated upstream; adminProxy translates the httpOnly session cookie.
+app.get("/api/admin/archive/status", (req, res) => {
+  adminProxy("/api/admin/archive/status", req, res, "GET");
+});
+app.post("/api/admin/archive/export", (req, res) => {
+  adminProxy("/api/admin/archive/export", req, res, "POST");
+});
+app.post("/api/admin/archive/auto", (req, res) => {
+  adminProxy("/api/admin/archive/auto", req, res, "POST");
+});
 // EMIT-01 (FE-MASTER §4-§6): symbol → TokenKey resolution over the
 // searcher's pre-indexed universe snapshot. Admin-gated (V-AT-1 token
 // translation in adminProxy); x-arbx-actor rides through. api-server serves

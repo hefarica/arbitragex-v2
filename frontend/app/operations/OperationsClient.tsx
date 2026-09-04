@@ -43,6 +43,7 @@ import { SCurveChart } from "./components/SCurveChart";
 // FE-0038 (§46): the route-discovery funnel (Market Events → Reconciled) —
 // the §46 chain over tick + outcomes sink + recon, windows disclosed.
 import { RouteDiscoveryFunnelCard } from "./components/RouteDiscoveryFunnelCard";
+import { ArchivePanel } from "./components/ArchivePanel";
 
 interface Props {
   initialKpi: KpiPayload | null;
@@ -224,6 +225,12 @@ export function OperationsClient({
       {/* ARBX-QB-07-008: the lat.* budget panel rides beside the discovery
           funnel — same wire (tick), same read-only posture. */}
       <div className="mb-6">{latPanel}</div>
+      {/* DAPP-ARCHIVE-UI-01: cold-tier archive control — capacity of the
+          archives mount, manual export trigger, auto mode toggle. Admin-gated
+          upstream; renders an honest "no session" error when not logged in. */}
+      <div className="mb-6">
+        <ArchivePanel />
+      </div>
       {scurve && <SCurveChart data={scurve} />}
     </>
   );
