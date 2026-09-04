@@ -26,6 +26,14 @@ DRY_RUN=0
 PG_CONTAINER="${PG_CONTAINER:-arbitragex-v2-postgres-1}"
 ARCHIVES_DIR="${ARBX_RETENTION_ARCHIVE_DIR:-/opt/arbitragex-v2/archives}"
 DO_ARCHIVE="${ARBX_RETENTION_ARCHIVE:-0}"   # 1 = COPY→zstd antes de borrar (ver RETENTION_POLICY.md)
+# DAPP-ARCHIVE-UI-01: el toggle del operador (UI /operations → /api/admin/archive/auto)
+# persiste en retention_settings.archive_auto y PREVALECE sobre el default 0 de
+# arriba. El env ARBX_RETENTION_ARCHIVE=1 sigue siendo un override manual válido.
+AUTO_DB="$(docker exec "$PG_CONTAINER" psql -U postgres -d arbitragex -At -c \
+  "SELECT COALESCE(value->>'enabled','') FROM retention_settings WHERE key='archive_auto'" 2>/dev/null | tr -d '[:space:]' || true)"
+if [ "$DO_ARCHIVE" != "1" ] && [ "$AUTO_DB" = "true" ]; then
+  DO_ARCHIVE=1
+fi
 BACKFILL_BUDGET_S="${ARBX_RDO_BACKFILL_BUDGET_S:-900}"
 TABLE_BUDGET_S="${ARBX_TABLE_BUDGET_S:-1200}"
 # 2026-09-04 incidente (13:36Z): la primera corrida purgó 53.8M filas RDO a

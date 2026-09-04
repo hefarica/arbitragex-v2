@@ -13,7 +13,7 @@
  *    with a truncated diagnostic instead of rendering broken UI.
  */
 
-import type { z } from "zod";
+import { z } from "zod";
 import * as S from "@/lib/schemas";
 import * as FE from "@/lib/apex/schemas";
 import {
@@ -906,4 +906,127 @@ export function getPaperModeState(chainId?: number): Promise<Result<S.PaperModeS
     ? `/api/paper-mode/state?chain_id=${chainId}`
     : `/api/paper-mode/state`;
   return getValidated(path, S.PaperModeStateSchema);
+}
+
+// ─────── DAPP-ARCHIVE-UI-01: cold-tier archive control (ARBX-RETENTION-01) ───────
+//
+// Operator surface for the retention policy's archive leg: live capacity of
+// the archives mount, per-table rows beyond the retention window, manual
+// export trigger, and the automatic mode toggle (nightly cron archives each
+// range BEFORE purging). Auth: the V-AT-1 httpOnly admin-session cookie
+// travels with credentials:"include"; the edge translates it upstream.
+
+export interface ArchiveFileDto {
+  table: string;
+  name: string;
+  bytes: number;
+  modified_at: string;
+}
+
+export interface ArchiveStatus {
+  ok: boolean;
+  kind: "archive_status";
+  archive_dir: string;
+  disk: { total_bytes: number; free_bytes: number; used_pct: number } | { error: string };
+  auto_mode: { enabled: boolean; source: string; updated_at: string | null; effect: string };
+  export_running: { table: string; started_at: string } | null;
+  tables: Array<{ table: string; window_days: number; rows_beyond_window: number | null }>;
+  archives: { files: ArchiveFileDto[]; total_bytes: number } | { error: string; files: never[]; total_bytes: number };
+  min_free_bytes: number;
+  ts: string;
+}
+
+const ArchiveStatusSchema: z.ZodType<ArchiveStatus> = z
+  .object({
+    ok: z.literal(true),
+    kind: z.literal("archive_status"),
+    archive_dir: z.string(),
+    disk: z.union([
+      z.object({ total_bytes: z.number(), free_bytes: z.number(), used_pct: z.number() }),
+      z.object({ error: z.string() }),
+    ]),
+    auto_mode: z.object({
+      enabled: z.boolean(),
+      source: z.string(),
+      updated_at: z.string().nullable(),
+      effect: z.string(),
+    }),
+    export_running: z
+      .object({ table: z.string(), started_at: z.string() })
+      .nullable(),
+    tables: z.array(
+      z.object({
+        table: z.string(),
+        window_days: z.number(),
+        rows_beyond_window: z.number().nullable(),
+      }),
+    ),
+    archives: z.union([
+      z.object({
+        files: z.array(
+          z.object({
+            table: z.string(),
+            name: z.string(),
+            bytes: z.number(),
+            modified_at: z.string(),
+          }),
+        ),
+        total_bytes: z.number(),
+      }),
+      z.object({ error: z.string(), files: z.never().array(), total_bytes: z.number() }),
+    ]),
+    min_free_bytes: z.number(),
+    ts: z.string(),
+  })
+  .passthrough();
+
+export function fetchArchiveStatus(): Promise<Result<ArchiveStatus>> {
+  // No retries: 401 (no admin session) must surface immediately, not backoff.
+  return getValidated("/api/admin/archive/status", ArchiveStatusSchema, { retries: 0 });
+}
+
+export async function postArchiveAuto(
+  enabled: boolean,
+): Promise<{ ok: true; enabled: boolean } | { ok: false; error: string }> {
+  try {
+    const r = await fetchWithTimeout(
+      `${getApiBaseUrl()}/api/admin/archive/auto`,
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ enabled }),
+      },
+      DEFAULT_TIMEOUT_MS,
+    );
+    if (!r.ok) return { ok: false, error: `HTTP ${r.status}: ${(await r.text()).slice(0, MAX_ERROR_PREVIEW)}` };
+    const parsed = (await r.json().catch(() => null)) as { enabled?: boolean } | null;
+    if (typeof parsed?.enabled !== "boolean") return { ok: false, error: "edge response shape invalid" };
+    return { ok: true, enabled: parsed.enabled };
+  } catch (e) {
+    return { ok: false, error: (e as Error).message };
+  }
+}
+
+export async function postArchiveExport(
+  table: string,
+): Promise<{ ok: true; table: string } | { ok: false; error: string }> {
+  try {
+    const r = await fetchWithTimeout(
+      `${getApiBaseUrl()}/api/admin/archive/export`,
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ table }),
+      },
+      DEFAULT_TIMEOUT_MS,
+    );
+    if (!r.ok && r.status !== 202) {
+      return { ok: false, error: `HTTP ${r.status}: ${(await r.text()).slice(0, MAX_ERROR_PREVIEW)}` };
+    }
+    return { ok: true, table };
+  } catch (e) {
+    return { ok: false, error: (e as Error).message };
+  }
 }

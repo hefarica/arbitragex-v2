@@ -290,6 +290,10 @@ services:
       # Production deployments without this mount return status='yellow' with
       # explicit reason — honesty doctrine, no false greens.
       - ..:/repo:ro
+      # DAPP-ARCHIVE-UI-01 (parity with compose.prod.yml): cold-tier export dir
+      # shared with the nightly cron — manual UI export and host zstd archive
+      # write the SAME tree.
+      - ../archives:/app/archives
     depends_on:
       redis: { condition: service_healthy }
       # R6: api-server mounts system-manifest (config-hashes / runtime-ack) ONLY if

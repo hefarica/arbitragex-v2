@@ -1388,6 +1388,14 @@ app.post("/api/admin/topology/mutations", async (c) => {
   return c.body(t, upstream.status as 200 | 400 | 401 | 503);
 });
 
+// DAPP-ARCHIVE-UI-01: cold-tier archive control (ARBX-RETENTION-01) — parity
+// with edge/dev-local. Status (statfs capacity + files + auto mode), manual
+// export trigger, auto toggle. Admin-gated upstream via adminProxy (cookie
+// translation). No cache: status reflects live disk state.
+app.get("/api/admin/archive/status", (c) => adminProxy(c, "/api/admin/archive/status"));
+app.post("/api/admin/archive/export", (c) => adminProxy(c, "/api/admin/archive/export"));
+app.post("/api/admin/archive/auto", (c) => adminProxy(c, "/api/admin/archive/auto"));
+
 // B1 — Chains Admin CRUD. Admin-token gated; edge forwards header.
 // GET list/single use short cache (5s) since runtime chain state changes
 // infrequently. POST/PUT/DELETE/probe are pass-through (mutations).
