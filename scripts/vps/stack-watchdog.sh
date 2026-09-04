@@ -14,6 +14,14 @@
 # (exit 0) while a deploy owns it. The stack is mid-recreation by the deploy
 # itself in that window — "restoring" it concurrently is exactly the bug.
 #
+# ARBX-QUOTA-BACKOFF-01 (2026-09-04): si el crash de un contenedor es cuota
+# RPC agotada (Alchemy 429 "Monthly capacity limit exceeded"), el
+# force-recreate NO revive un endpoint sin cuota: cada intento quema más CU
+# contra la cuota muerta Y resetea el backoff exponencial natural de docker
+# (el recreate loop por minuto fue el amplificador que agotó la cuota
+# mensual). Con el fallo detectado en los últimos logs, se omite el recreate
+# 1 hora (marker file) y docker retiene su propio backoff.
+#
 # Install (one-time):
 #   sudo cp scripts/vps/stack-watchdog.sh /usr/local/bin/arbx-watchdog.sh
 #   sudo chmod +x /usr/local/bin/arbx-watchdog.sh
@@ -42,6 +50,17 @@ if [ -n "$RESTARTING" ]; then
   for svc in $RESTARTING; do
     # Map container name → compose service name: arbitragex-v2-selector-api-1 → selector-api
     SERVICE=$(echo "$svc" | sed 's/^arbitragex-v2-//' | sed 's/-[0-9]*$//')
+    # ARBX-QUOTA-BACKOFF-01: quota-dead upstream → recreate only burns more CU.
+    if docker logs --tail 5 "$svc" 2>&1 | grep -qiE 'monthly capacity limit exceeded|quota.*exceed|429 too many'; then
+      MARKER="/tmp/arbx-wd-quota-$SERVICE"
+      AGE=$(( $(date +%s) - $(stat -c %Y "$MARKER" 2>/dev/null || echo 0) ))
+      if [ "$AGE" -gt 3600 ]; then
+        echo "[$TS] WATCHDOG: $svc crash por CUOTA RPC agotada (429) — recreate omitido 1h (no quemar cuota; docker retiene su backoff)"
+        touch "$MARKER"
+      fi
+      continue
+    fi
+    rm -f "/tmp/arbx-wd-quota-$SERVICE" 2>/dev/null || true
     echo "[$TS] WATCHDOG: $svc is CRASH-LOOPING — force-recreating service: $SERVICE"
     docker compose --env-file .env -f docker/compose.prod.yml up -d --force-recreate "$SERVICE" 2>&1 | tail -1
   done
