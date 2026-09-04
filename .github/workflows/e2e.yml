@@ -14,7 +14,16 @@ permissions:
 jobs:
   playwright:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    # E2E-TIMEOUT-BUDGET (2026-09-04): 20min no longer fits the LEGITIMATE
+    # workload on slow runners — run 33844860547 job 100934435544 ran 20m41s
+    # with real progress (smoke OK, hotpath OK, full-suite mid-flight) and the
+    # job-level timeout cancelled it: killed the post-merge e2e of a1f9a105
+    # (deploy chain: integration-tests OK -> e2e cancelled -> Auto-Deploy
+    # failure) and PR #521's head. Not a hang: CI-FLAKE-PLAYWRIGHT-APT bounded
+    # apt to ~6min LOUD back in 2026-08-19; what consumes the budget now is
+    # compose-up + the full suite itself. 35min = ~70% headroom over the
+    # observed 20m41s while keeping a real cap (well under GitHub's 360).
+    timeout-minutes: 35
     # G-CI-2 (2026-08-19, operator directive): e2e "Set up job" fails
     # intermittently on PR runners (infra, not code — passes 3× consecutively
     # on main). Non-blocking for PRs so transient runner issues don't kill
