@@ -71,6 +71,18 @@ mod tests {
     use super::*;
     use ethers::signers::LocalWallet;
 
+    /// INTEG-SIGNER-ENV-RACE (2026-09-04): from_env_empty_returns_none and
+    /// from_env_invalid_key_returns_err both mutate the SAME process-global
+    /// env var (FLASHBOTS_SIGNER_KEY) and cargo runs them in parallel. When
+    /// the empty-test's remove_var interleaves between the invalid-test's
+    /// set_var and its from_env call, the invalid test sees an EMPTY env and
+    /// gets Ok(None) instead of Err — a scheduling-dependent failure that
+    /// broke the integration-tests -> e2e -> auto-deploy chain on a1f9a105
+    /// with byte-identical code that had passed on the PR head. All
+    /// env-mutating tests in this module must hold this mutex for their
+    /// full save/mutate/restore window.
+    static ENV_MUTEX: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
     // Ephemeral test key (deterministic, well-known test vector). MUST NEVER
     // be reused for any real account. Anvil test account #0 well-known
     // private key.
@@ -96,6 +108,9 @@ mod tests {
     /// shape with no signer present.
     #[test]
     fn from_env_empty_returns_none() {
+        // INTEG-SIGNER-ENV-RACE: hold the env mutex for the whole
+        // save/mutate/restore window (see ENV_MUTEX above).
+        let _env_guard = ENV_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
         // Save+clear FLASHBOTS_SIGNER_KEY for the duration of the test.
         let prev = std::env::var("FLASHBOTS_SIGNER_KEY").ok();
         std::env::remove_var("FLASHBOTS_SIGNER_KEY");
@@ -110,6 +125,9 @@ mod tests {
     /// than crashing the boot path. RULE 8 (no silent errors).
     #[test]
     fn from_env_invalid_key_returns_err() {
+        // INTEG-SIGNER-ENV-RACE: hold the env mutex for the whole
+        // save/mutate/restore window (see ENV_MUTEX above).
+        let _env_guard = ENV_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
         let prev = std::env::var("FLASHBOTS_SIGNER_KEY").ok();
         std::env::set_var("FLASHBOTS_SIGNER_KEY", "0xNOT_A_REAL_KEY_AT_ALL");
         let res = Signer::from_env(1);
