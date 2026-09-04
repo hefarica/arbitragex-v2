@@ -29,5 +29,13 @@ schema_config:
 ruler:
   alertmanager_url: http://alertmanager:9093
 
+# ARBX-RETENTION-01: antes sin compactor/retention, Loki crecía infinito
+# (6.87GB al 2026-09-04 sin techo). 360h = 15 días — ver docs/RETENTION_POLICY.md
+compactor:
+  working_directory: /loki/compactor
+  retention_enabled: true
+limits_config:
+  retention_period: 360h
+
 analytics:
   reporting_enabled: false
