@@ -266,8 +266,24 @@ for spec in "${TABLES[@]}"; do
     cutoff="now() - interval '$days days'"
   fi
 
+  # RETENTION-FK-01 (2026-09-05): opportunities es padre de 3 FKs ON DELETE
+  # SET NULL sobre columnas NOT NULL (paper_trade_runs, risk_events,
+  # opportunity_observations) — borrar un padre con hijos vivos aborta la
+  # transacción y hace rollback del lote completo (evidencia: cron 04:17 del
+  # 09-05 con opportunities:deleted=3900000:error SET NULL y MIN(detected_at)
+  # congelado en 2026-07-04). Guard: solo víctimas SIN hijos; las referenciadas
+  # esperan la ventana (90d) del propio hijo. Los índices de soporte ya existen
+  # (idx_paper_trade_runs_opportunity, idx_risk_events_opportunity_id,
+  # idx_opportunity_observations_opportunity_id) → NOT EXISTS indexado.
+  fk_guard=""
+  if [ "$tbl" = "opportunities" ]; then
+    fk_guard="AND NOT EXISTS (SELECT 1 FROM paper_trade_runs p WHERE p.opportunity_id = o.id)
+              AND NOT EXISTS (SELECT 1 FROM risk_events r WHERE r.opportunity_id = o.id)
+              AND NOT EXISTS (SELECT 1 FROM opportunity_observations x WHERE x.opportunity_id = o.id)"
+  fi
+
   if [ "$DRY_RUN" = "1" ]; then
-    n=$(psql_q "SELECT count(*) FROM (SELECT 1 FROM $tbl WHERE $col < $cutoff LIMIT 100001) s")
+    n=$(psql_q "SELECT count(*) FROM (SELECT 1 FROM $tbl o WHERE o.$col < $cutoff $fk_guard LIMIT 100001) s")
     summary+=("$tbl:dryrun_older_${days}d=${n}")
     log "retention.dry-run table=$tbl window=${days}d eligible=${n}"
     continue
@@ -282,7 +298,7 @@ for spec in "${TABLES[@]}"; do
     else
       mkdir -p "$ARCHIVES_DIR/$tbl"
       if docker exec -i "$PG_CONTAINER" psql -U postgres -d arbitragex -X -qAt \
-          -c "COPY (SELECT * FROM $tbl WHERE $col < $cutoff) TO STDOUT" \
+          -c "COPY (SELECT * FROM $tbl o WHERE o.$col < $cutoff $fk_guard) TO STDOUT" \
           | zstd -q -T0 -o "$arch" 2>/dev/null; then
         log "retention.archive table=$tbl file=$arch bytes=$(stat -c%s "$arch" 2>/dev/null || echo '?')"
       else
@@ -313,7 +329,7 @@ for spec in "${TABLES[@]}"; do
   batches_since_ckpt=0
   while :; do
     out=$(psql_batch "
-      WITH victim AS (SELECT ctid FROM $tbl WHERE $col < $cutoff LIMIT $batch)
+      WITH victim AS (SELECT ctid FROM $tbl o WHERE o.$col < $cutoff $fk_guard LIMIT $batch)
       DELETE FROM $tbl t USING victim v WHERE t.ctid = v.ctid")
     rc=$?
     if [ $rc -ne 0 ]; then
