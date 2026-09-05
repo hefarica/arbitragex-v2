@@ -339,6 +339,28 @@ elif docker logs arbitragex-v2-relays-client-1 2>&1 | tail -n 5000 | grep -q 're
 fi
 
 # ---------------------------------------------------------------------------
+# 8c. L0 — nginx canonical drift (NGINX-CONF-DRIFT-01)
+# El archivo vivo debe ser byte-exacto al canónico versionado; un enabled
+# divergido rompe RULE 02 (/socket.io/ via edge) o mete limit_req mal keyeado
+# tras Cloudflare. Fail-honest: divergencia = FAIL, no warning.
+# ---------------------------------------------------------------------------
+log "--- L0: nginx canonical drift ---"
+NGINX_CANON="config/nginx/arbitragex.conf"
+NGINX_LIVE="/etc/nginx/sites-enabled/arbitragex"
+if [ -f "$NGINX_CANON" ] && [ -e "$NGINX_LIVE" ]; then
+  if diff -q "$NGINX_LIVE" "$NGINX_CANON" >/dev/null 2>&1; then
+    ok "nginx live == repo canonical (${NGINX_LIVE})"
+    observation "L0" "nginx_canonical_match" "info"
+  else
+    fail "nginx DRIFT: ${NGINX_LIVE} != ${NGINX_CANON} — correr scripts/vps/install-nginx-canonical.sh"
+    observation "L0" "nginx_canonical_drift" "critical"
+  fi
+elif [ -f "$NGINX_CANON" ]; then
+  warn "nginx live ausente (${NGINX_LIVE}) — entry point caído o instalado en otra ruta"
+  observation "L0" "nginx_live_missing" "warning"
+fi
+
+# ---------------------------------------------------------------------------
 # 9. Final verdict
 # ---------------------------------------------------------------------------
 log "=== VERIFICATION COMPLETE ==="
