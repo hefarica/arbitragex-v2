@@ -621,26 +621,30 @@ export async function probeSignals(ctx: ProbeCtx): Promise<SelfTestBlock> {
         operator_action: "Apply the pending database migrations on this environment.",
       });
     }
+    // 2026-09-05 (SELFTEST-SIGNALS-01): COUNT(*) over the raw table became a
+    // full-index scan of the whole retention window (41.5M rows in prod) —
+    // >4s, permanently over PROBE_TIMEOUT_MS, so the block read FAILING while
+    // the table was perfectly fresh. MAX(ts_ms) IS NULL ⇔ 0 rows, so the same
+    // three-branch semantics hold on a 0.2ms index-only backward scan
+    // (idx_rdo_ts, migration 114). The exact total is no longer shown — an
+    // on-demand full count is exactly the cost the probe must not pay (R8).
     const r = await withTimeout(
-      ctx.pool.query(
-        "SELECT COUNT(*)::int AS total, MAX(ts_ms)::bigint AS last_ts FROM route_discovery_outcomes",
-      ),
+      ctx.pool.query("SELECT MAX(ts_ms)::bigint AS last_ts FROM route_discovery_outcomes"),
       PROBE_TIMEOUT_MS,
-      "signals_count",
+      "signals_last_ts",
     );
-    const total = Number(r.rows[0]?.total ?? 0);
     const lastTs = r.rows[0]?.last_ts != null ? Number(r.rows[0].last_ts) : null;
     const dayAgo = ctx.now().getTime() - 24 * 60 * 60 * 1000;
-    if (total > 0 && lastTs !== null && lastTs > dayAgo) {
+    if (lastTs !== null && lastTs > dayAgo) {
       return block("signals", link, ctx, {
         status: "VERIFIED",
-        evidence: `route_discovery_outcomes total ${total} · latest within the last 24h`,
+        evidence: "route_discovery_outcomes rows present · latest within the last 24h",
       });
     }
-    if (total > 0) {
+    if (lastTs !== null) {
       return block("signals", link, ctx, {
         status: "HONEST_EMPTY",
-        evidence: `route_discovery_outcomes total ${total} but none in the last 24h — shadow emitter quiet or stalled`,
+        evidence: "route_discovery_outcomes rows present but none in the last 24h — shadow emitter quiet or stalled",
       });
     }
     return block("signals", link, ctx, {
