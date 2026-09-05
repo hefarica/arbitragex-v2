@@ -314,6 +314,73 @@ describe("selftest aggregator — fail-honest, never crash", () => {
     expect(byBlock("credentials").status).toBe("MISSING");
   });
 
+  // ── SELFTEST-SIGNALS-01 (2026-09-05): the probe must never COUNT(*) the raw
+  // table — at prod scale (41.5M rows / 2d retention window) a full count is a
+  // 41M-entry index scan that permanently exceeds PROBE_TIMEOUT_MS, leaving the
+  // block FAILING while the data was perfectly fresh. Recency is served by the
+  // index-only backward MAX(ts_ms) (idx_rdo_ts, migration 114, 0.2ms measured).
+  it("signals probe never COUNT(*)s route_discovery_outcomes and VERIFIES on fresh MAX", async () => {
+    const pool = {
+      query: vi.fn(async (text: string) => {
+        if (text.includes("to_regclass")) return { rows: [{ ok: true }] };
+        if (text.includes("FROM route_discovery_outcomes")) {
+          if (text.includes("COUNT(*)")) {
+            throw new Error("forbidden full COUNT(*) on route_discovery_outcomes (4s+ at prod scale)");
+          }
+          return { rows: [{ last_ts: String(Date.now() - 60_000) }] };
+        }
+        if (text.includes("FROM opportunities") && text.includes("MIN")) {
+          return { rows: [{ first: new Date(Date.now() - 10 * 86_400_000).toISOString() }] };
+        }
+        return { rows: [{ total: 1, recent: 1, n: 1 }] };
+      }),
+    } as unknown as pg.Pool;
+    const app = appWith({ pool, redis: fakeRedisOk(), fetchImpl: fetchOk, readiness: readinessOk });
+    const res = await request(app).get("/api/operator/selftest");
+    expect(res.status).toBe(200);
+    const signals = res.body.blocks.find((b: { block: string }) => b.block === "signals");
+    expect(signals.status).toBe("VERIFIED");
+    expect(signals.evidence).toContain("latest within the last 24h");
+  });
+
+  it("signals MAX NULL ⇔ 0 rows → HONEST_EMPTY, never a fabricated total", async () => {
+    const pool = {
+      query: vi.fn(async (text: string) => {
+        if (text.includes("to_regclass")) return { rows: [{ ok: true }] };
+        if (text.includes("FROM route_discovery_outcomes")) return { rows: [{ last_ts: null }] };
+        if (text.includes("FROM opportunities") && text.includes("MIN")) {
+          return { rows: [{ first: new Date(Date.now() - 10 * 86_400_000).toISOString() }] };
+        }
+        return { rows: [{ total: 1, recent: 1, n: 1 }] };
+      }),
+    } as unknown as pg.Pool;
+    const app = appWith({ pool, redis: fakeRedisOk(), fetchImpl: fetchOk, readiness: readinessOk });
+    const res = await request(app).get("/api/operator/selftest");
+    const signals = res.body.blocks.find((b: { block: string }) => b.block === "signals");
+    expect(signals.status).toBe("HONEST_EMPTY");
+    expect(signals.evidence).toContain("holds 0 rows");
+  });
+
+  it("signals rows present but older than 24h → HONEST_EMPTY (stalled emitter)", async () => {
+    const pool = {
+      query: vi.fn(async (text: string) => {
+        if (text.includes("to_regclass")) return { rows: [{ ok: true }] };
+        if (text.includes("FROM route_discovery_outcomes")) {
+          return { rows: [{ last_ts: String(Date.now() - 25 * 3_600_000) }] };
+        }
+        if (text.includes("FROM opportunities") && text.includes("MIN")) {
+          return { rows: [{ first: new Date(Date.now() - 10 * 86_400_000).toISOString() }] };
+        }
+        return { rows: [{ total: 1, recent: 1, n: 1 }] };
+      }),
+    } as unknown as pg.Pool;
+    const app = appWith({ pool, redis: fakeRedisOk(), fetchImpl: fetchOk, readiness: readinessOk });
+    const res = await request(app).get("/api/operator/selftest");
+    const signals = res.body.blocks.find((b: { block: string }) => b.block === "signals");
+    expect(signals.status).toBe("HONEST_EMPTY");
+    expect(signals.evidence).toContain("none in the last 24h");
+  });
+
   it("paper window <7d → BLOCKED_REQUIRES_TIME_WINDOW with days_remaining", async () => {
     const pool = {
       query: vi.fn(async (text: string) => {
