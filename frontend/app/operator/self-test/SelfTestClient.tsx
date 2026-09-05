@@ -117,7 +117,7 @@ const BLOCK_LABEL: Record<string, string> = {
   simulation: "Simulation runtime",
   signals: "Signals (route outcomes)",
   paper: "Paper window (≥7d)",
-  live_readiness: "Live readiness gate (17 items)",
+  live_readiness: "Live readiness gate",
 };
 
 function statusVariant(status: string): BadgeVariant {
