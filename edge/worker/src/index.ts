@@ -48,7 +48,20 @@ const app = new Hono<{ Bindings: Env }>();
 // the lockout window is long (15 min) — a race adding 1 extra fail does not
 // meaningfully change the security posture.
 
-const RL_GENERAL_MAX = 120;       // 120 req/min/IP, public read endpoints
+// EDGE-429-BROWSER-01 (2026-09-05): 120/min hardcoded starved the dashboard's
+// own fan-out (~16 polled endpoints per page × tabs) → self-inflicted 429
+// storms on every /api/* call. EDGE_RATE_LIMIT_PER_MIN (prod .env = 600) was
+// read only by the dev-local variant — a silent no-op here. Wire it in with the
+// same floor the dev-local limiter uses: env can only RAISE the limit.
+// typeof-guard keeps real Cloudflare isolates (no `process`) on the default.
+const RL_GENERAL_MAX = Math.max(
+  120,
+  parseInt(
+    (typeof process !== "undefined" ? process.env?.["EDGE_RATE_LIMIT_PER_MIN"] : undefined) ??
+      "120",
+    10,
+  ) || 120,
+); // floor 120 req/min/IP, public read endpoints
 const RL_GENERAL_WINDOW_S = 60;
 const RL_ADMIN_MAX = 5;           // 5 admin-session attempts/min/IP
 const RL_ADMIN_WINDOW_S = 60;
@@ -271,7 +284,18 @@ app.use("*", async (c, next) => {
   c.header("x-arbx-trace-id", traceId);
   (c as unknown as { traceId: string }).traceId = traceId;
 
-  const ip = c.req.header("cf-connecting-ip") ?? "anon";
+  // EDGE-429-BROWSER-01: requests reaching this edge via nginx (docker network
+  // or direct-IP access, no Cloudflare) carried no cf-connecting-ip → EVERY
+  // visitor shared the single "anon" bucket and one browser's polling fan-out
+  // 429'd everyone. nginx forwards the client chain in X-Forwarded-For
+  // ($proxy_add_x_forwarded_for), so fall back to its first hop before "anon".
+  // Spoof surface unchanged: anyone able to set X-Forwarded-For directly could
+  // already set cf-connecting-ip the same way (nginx passes both verbatim);
+  // internal SSR traffic is exempted by x-arbx-edge-token below, not by IP.
+  const ip =
+    c.req.header("cf-connecting-ip") ??
+    c.req.header("x-forwarded-for")?.split(",")[0]?.trim() ??
+    "anon";
 
   // ASN-based filter. The previous version read `cf-ipasn` which is NOT a
   // Cloudflare header — `request.cf.asn` is the canonical source (CF Workers
