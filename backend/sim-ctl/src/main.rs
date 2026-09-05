@@ -861,6 +861,16 @@ async fn main() -> anyhow::Result<()> {
             backend = backend.name(),
             "SIM_BACKEND=revm selected but B2c env incomplete (need REVM_RPC_URL + ARBITRAGE_EXECUTOR + REDIS_URL + FLASHLOAN_EXECUTOR_1). Consumer NOT spawned — refusing to drain the validated stream into the legacy empty-calldata backend"
         );
+    } else if !backend_available {
+        // SIMCTL-NOSPAWN-SILENT-01 (2026-09-05): the anvil path with the fork
+        // down at boot used to fall through here SILENTLY — no consumer, no
+        // log, and the spawn is boot-once, so the stall persisted for days
+        // (G-PIPE-1 was the only visible symptom). State the refusal out loud;
+        // the operator action is a sim-ctl restart once the fork is healthy.
+        warn!(
+            event = "sim_consumer.not_spawned",
+            reason = "anvil fork unavailable at boot (SIM_BACKEND=anvil, fork=None) — consumer NOT spawned; G-PIPE-1 will read red until sim-ctl is restarted with a healthy fork"
+        );
     }
     if backend_available {
         if let (Ok(db_url), Ok(redis_url)) =
