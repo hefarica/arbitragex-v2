@@ -763,6 +763,9 @@ fn build_flashloan_route_metadata(
             "uniswap_v2_router".to_string(),
         ],
         decimals: Default::default(),
+        leg_amounts_in: None,
+        leg_amounts_out: None,
+        leg_zero_for_one: None,
     }
 }
 

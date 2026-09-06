@@ -444,6 +444,9 @@ pub fn build_liquidation_route_metadata(
         token_addresses: vec![token_in_slot.to_string(), token_out_slot.to_string()],
         dex_adapters: vec!["aave_v3_pool".to_string()],
         decimals: Default::default(),
+        leg_amounts_in: None,
+        leg_amounts_out: None,
+        leg_zero_for_one: None,
     }
 }
 
