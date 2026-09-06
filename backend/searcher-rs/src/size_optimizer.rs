@@ -1144,9 +1144,9 @@ impl SizeOptimizer {
         }
 
         let mut best: Option<(U256, U256, U256, i128)> = None; // (amount_in, out_a, out_b, profit_wei)
-                                                         // Per-V3-leg pricing telemetry (R8): `priced` = the quoter answered at
-                                                         // least once (value may be 0); `leg1_reached` = leg 1 was quoted at all
-                                                         // (only happens when leg 0 yields a non-zero mid-amount).
+                                                               // Per-V3-leg pricing telemetry (R8): `priced` = the quoter answered at
+                                                               // least once (value may be 0); `leg1_reached` = leg 1 was quoted at all
+                                                               // (only happens when leg 0 yields a non-zero mid-amount).
         let mut leg0_priced = false;
         let mut leg1_priced = false;
         let mut leg1_reached = false;

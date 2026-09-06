@@ -1459,8 +1459,9 @@ pub async fn active_evaluate_and_emit(
                             let mut opp = strategy_candidate.opportunity.clone();
                             opp.rejection_reason = Some(reason_str.clone());
                             opp.expected_profit_usd = None;
-                            if let Err(e) =
-                                emitter.emit_rejected(&opp, label, &reason_str, route_ref).await
+                            if let Err(e) = emitter
+                                .emit_rejected(&opp, label, &reason_str, route_ref)
+                                .await
                             {
                                 warn!(
                                     event = "cartridge.emit_rejected_failed",
@@ -1583,7 +1584,9 @@ async fn process_cartridge_candidate(
     if let Some(reason) = &sc.rejection_reason {
         let mut opp = sc.opportunity.clone();
         opp.rejection_reason = Some(reason.clone());
-        emitter.emit_rejected(&opp, label, reason, route_ref).await?;
+        emitter
+            .emit_rejected(&opp, label, reason, route_ref)
+            .await?;
         return Ok(());
     }
 
@@ -1596,7 +1599,9 @@ async fn process_cartridge_candidate(
         let reason = "NoTradingConfig".to_string();
         let mut opp = sc.opportunity.clone();
         opp.rejection_reason = Some(reason.clone());
-        emitter.emit_rejected(&opp, label, &reason, route_ref).await?;
+        emitter
+            .emit_rejected(&opp, label, &reason, route_ref)
+            .await?;
         return Ok(());
     };
 
@@ -1628,7 +1633,9 @@ async fn process_cartridge_candidate(
                     let reason = format!("{:?}", reject_reason);
                     let mut opp = sc.opportunity.clone();
                     opp.rejection_reason = Some(reason.clone());
-                    emitter.emit_rejected(&opp, label, &reason, route_ref).await?;
+                    emitter
+                        .emit_rejected(&opp, label, &reason, route_ref)
+                        .await?;
                 }
                 None => {
                     // Accepted — outcome carries net profit and ROI
@@ -1645,13 +1652,17 @@ async fn process_cartridge_candidate(
             let reason = format!("TokenNotAllowed:{}", token_symbol_or_addr);
             let mut opp = sc.opportunity.clone();
             opp.rejection_reason = Some(reason.clone());
-            emitter.emit_rejected(&opp, label, &reason, route_ref).await?;
+            emitter
+                .emit_rejected(&opp, label, &reason, route_ref)
+                .await?;
         }
         ConfigGateOutcome::StrategyDisabled { strategy_kind: sk } => {
             let reason = format!("StrategyDisabled:{}", sk);
             let mut opp = sc.opportunity.clone();
             opp.rejection_reason = Some(reason.clone());
-            emitter.emit_rejected(&opp, label, &reason, route_ref).await?;
+            emitter
+                .emit_rejected(&opp, label, &reason, route_ref)
+                .await?;
         }
         ConfigGateOutcome::StrategyConfigGateBlocked {
             reason: reject_reason,
@@ -1659,7 +1670,9 @@ async fn process_cartridge_candidate(
             let reason = format!("StrategyConfigGateBlocked:{:?}", reject_reason);
             let mut opp = sc.opportunity.clone();
             opp.rejection_reason = Some(reason.clone());
-            emitter.emit_rejected(&opp, label, &reason, route_ref).await?;
+            emitter
+                .emit_rejected(&opp, label, &reason, route_ref)
+                .await?;
         }
     }
 

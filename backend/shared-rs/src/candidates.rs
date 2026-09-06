@@ -200,11 +200,7 @@ impl RouteMetadata {
     /// missing links). `leg_zero_for_one` is derived from ascending token
     /// order per leg — the Uniswap V2/V3 token0/token1 convention, a
     /// deployment fact, not pool state.
-    pub fn attach_leg_ledger(
-        &mut self,
-        amounts_in: &[String],
-        amounts_out: &[String],
-    ) -> bool {
+    pub fn attach_leg_ledger(&mut self, amounts_in: &[String], amounts_out: &[String]) -> bool {
         let hops = self.dex_adapters.len();
         if amounts_in.len() != hops || amounts_out.len() != hops {
             return false;
