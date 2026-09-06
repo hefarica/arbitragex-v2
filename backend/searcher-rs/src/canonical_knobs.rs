@@ -69,8 +69,14 @@ pub struct CanonicalKnobs {
     //                       evaluation-layer net gate, amount-aware exact net
     //                       stays the truth — G-ECON doctrine, this is the floor)
     pub beam_k: u16, // 4 (branches/node — Beam_K: top-K outgoing branches kept
-    //                  per expansion; DFS beam consumption lands with the
-    //                  dirty-pair queue, XLS-QB-05)
+    //                  per expansion; DECLARED-ONLY: 0 hot-path consumers —
+    //                  the dirty-pair scoped re-eval (XLS-QB-05b) scopes
+    //                  WHICH routes re-price, not how many branches the DFS
+    //                  expands. The effective expansion bound today is
+    //                  max_pools_per_pair (unique_route_finder) + max_depth
+    //                  + max_routes_per_tick; wiring beam_k into the DFS
+    //                  would change the route-set (route-discovery is
+    //                  §37 Level-1 frozen) and needs its own gated PR)
     pub dirty_reeval_enabled: bool, // false (Dirty_ReEval_Enabled — gates the
     //                                  scoped re-evaluation seeded by the
     //                                  dirty-pair engine; OFF = the drain
