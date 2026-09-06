@@ -144,6 +144,29 @@ pub struct RouteMetadata {
     /// Token decimals: lowercased address → decimals (uint8).
     /// Every token in `token_addresses` should have an entry.
     pub decimals: DecimalsMap,
+
+    /// Per-leg INPUT amounts as exact wei decimal strings (HOPS-LEDGER-04).
+    /// Length = hops, parallel to `dex_adapters`. Present ONLY when the sizing
+    /// kernel computed the full chain (`OptimizeOutcome::Sized`) — None on
+    /// pre-reprice rows, unprofitable rejects, and all legacy rows (R8: absent
+    /// = not computed, never a repeated intent amount dressed as a ledger).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub leg_amounts_in: Option<Vec<String>>,
+
+    /// Per-leg OUTPUT amounts as exact wei decimal strings (HOPS-LEDGER-04).
+    /// `leg_amounts_out[i]` is what hop i yields in `token_addresses[i+1]`.
+    /// Present iff `leg_amounts_in` is present (all-or-nothing — a half ledger
+    /// would fabricate the missing links; the kernels guarantee
+    /// out[i] == in[i+1] on the sized chain).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub leg_amounts_out: Option<Vec<String>>,
+
+    /// Swap orientation per leg (HOPS-LEDGER-04): true = token0 → token1 where
+    /// token0 is the lower address (the Uniswap V2/V3 ascending-sort
+    /// convention — a deployment fact, derivable without pool state). Length =
+    /// hops; present iff the amount arrays are present.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub leg_zero_for_one: Option<Vec<bool>>,
 }
 
 impl RouteMetadata {
@@ -154,6 +177,9 @@ impl RouteMetadata {
             token_addresses: Vec::new(),
             dex_adapters: Vec::new(),
             decimals: DecimalsMap::new(),
+            leg_amounts_in: None,
+            leg_amounts_out: None,
+            leg_zero_for_one: None,
         }
     }
 
@@ -163,6 +189,43 @@ impl RouteMetadata {
         !self.pool_addresses.is_empty()
             && !self.token_addresses.is_empty()
             && !self.dex_adapters.is_empty()
+    }
+
+    /// Attach the sizing kernel's per-leg ledger (HOPS-LEDGER-04).
+    ///
+    /// `amounts_in`/`amounts_out` are the EXACT wei strings computed at the
+    /// final sized amount. All-or-nothing: both arrays must be present and
+    /// aligned with `dex_adapters` (len == hops), otherwise nothing is
+    /// attached and `false` is returned (a partial ledger would fabricate the
+    /// missing links). `leg_zero_for_one` is derived from ascending token
+    /// order per leg — the Uniswap V2/V3 token0/token1 convention, a
+    /// deployment fact, not pool state.
+    pub fn attach_leg_ledger(
+        &mut self,
+        amounts_in: &[String],
+        amounts_out: &[String],
+    ) -> bool {
+        let hops = self.dex_adapters.len();
+        if amounts_in.len() != hops || amounts_out.len() != hops {
+            return false;
+        }
+        let zero_for_one = (0..hops)
+            .map(|i| {
+                // token_in < token_out (ascending) ⇒ input IS token0 ⇒ 0→1.
+                self.token_addresses
+                    .get(i)
+                    .map(|t| t.as_str())
+                    .zip(self.token_addresses.get(i + 1).map(|t| t.as_str()))
+                    // Defensive lowercase compare: a checksummed (mixed-case)
+                    // address would otherwise sort above lowercase hex.
+                    .map(|(tin, tout)| tin.to_ascii_lowercase() < tout.to_ascii_lowercase())
+                    .unwrap_or(false)
+            })
+            .collect::<Vec<_>>();
+        self.leg_amounts_in = Some(amounts_in.to_vec());
+        self.leg_amounts_out = Some(amounts_out.to_vec());
+        self.leg_zero_for_one = Some(zero_for_one);
+        true
     }
 
     /// Validate route topology consistency:
@@ -261,6 +324,9 @@ mod tests {
             token_addresses: vec!["0xtokenIn".into(), "0xtokenOut".into()],
             dex_adapters: vec!["uniswap_v2_router".into()],
             decimals: DecimalsMap::new(),
+            leg_amounts_in: None,
+            leg_amounts_out: None,
+            leg_zero_for_one: None,
         };
         assert!(rm.is_populated());
     }
@@ -277,6 +343,9 @@ mod tests {
             token_addresses: vec!["0xtokenIn".into(), "0xtokenMid".into(), "0xtokenOut".into()],
             dex_adapters: vec!["uniswap_v2_router".into(), "sushiswap".into()],
             decimals,
+            leg_amounts_in: None,
+            leg_amounts_out: None,
+            leg_zero_for_one: None,
         };
         assert!(
             rm.validate().is_ok(),
@@ -291,6 +360,9 @@ mod tests {
             token_addresses: vec!["0xtokenIn".into(), "0xtokenOut".into()],
             dex_adapters: vec!["router1".into(), "router2".into()],
             decimals: DecimalsMap::new(),
+            leg_amounts_in: None,
+            leg_amounts_out: None,
+            leg_zero_for_one: None,
         };
         let err = rm.validate().unwrap_err();
         assert!(
@@ -307,6 +379,9 @@ mod tests {
             token_addresses: vec!["0xtokenIn".into(), "0xtokenOut".into()],
             dex_adapters: vec!["uniswap_v2_router".into()],
             decimals: DecimalsMap::new(),
+            leg_amounts_in: None,
+            leg_amounts_out: None,
+            leg_zero_for_one: None,
         };
         let err = rm.validate().unwrap_err();
         assert!(
@@ -327,6 +402,9 @@ mod tests {
             token_addresses: vec!["0xtokenIn".into(), "0xtokenOut".into()],
             dex_adapters: vec!["uniswap_v2_router".into()],
             decimals,
+            leg_amounts_in: None,
+            leg_amounts_out: None,
+            leg_zero_for_one: None,
         };
 
         let json = serde_json::to_string(&rm).expect("serialize");
@@ -336,5 +414,88 @@ mod tests {
         assert_eq!(deserialized.token_addresses, rm.token_addresses);
         assert_eq!(deserialized.dex_adapters, rm.dex_adapters);
         assert!(deserialized.is_populated());
+    }
+
+    // HOPS-LEDGER-04 — wire-compat contract for the optional per-leg arrays.
+    #[test]
+    fn test_route_metadata_none_serializes_without_ledger_keys() {
+        // None rows must be BYTE-compatible with pre-HOPS-LEDGER-04 rows so
+        // old consumers see identical JSON (skip_serializing_if).
+        let rm = RouteMetadata {
+            pool_addresses: vec!["0xpool1".into()],
+            token_addresses: vec!["0xtokenIn".into(), "0xtokenOut".into()],
+            dex_adapters: vec!["uniswap_v2_router".into()],
+            decimals: DecimalsMap::new(),
+            leg_amounts_in: None,
+            leg_amounts_out: None,
+            leg_zero_for_one: None,
+        };
+        let json = serde_json::to_string(&rm).expect("serialize");
+        assert!(!json.contains("leg_amounts_in"));
+        assert!(!json.contains("leg_amounts_out"));
+        assert!(!json.contains("leg_zero_for_one"));
+    }
+
+    #[test]
+    fn test_route_metadata_old_json_without_ledger_deserializes() {
+        // Rows persisted BEFORE this change carry no ledger keys — the struct
+        // must deserialize them untouched (serde default).
+        let old_json = r#"{
+            "pool_addresses": ["0xpool1"],
+            "token_addresses": ["0xtokenIn", "0xtokenOut"],
+            "dex_adapters": ["uniswap_v2_router"],
+            "decimals": {"map": {}}
+        }"#;
+        let rm: RouteMetadata = serde_json::from_str(old_json).expect("old json deserializes");
+        assert!(rm.leg_amounts_in.is_none());
+        assert!(rm.leg_amounts_out.is_none());
+        assert!(rm.leg_zero_for_one.is_none());
+        assert!(rm.is_populated());
+    }
+
+    #[test]
+    fn test_attach_leg_ledger_roundtrip_and_zero_for_one() {
+        let mut rm = RouteMetadata {
+            pool_addresses: vec!["0xpool1".into(), "0xpool2".into()],
+            // Ascending order matters: 0xB < 0xC ⇒ leg0 0→1 true; leg1 C→B ⇒ false.
+            token_addresses: vec!["0xB".into(), "0xC".into(), "0xB".into()],
+            dex_adapters: vec!["uni".into(), "sushi".into()],
+            decimals: DecimalsMap::new(),
+            leg_amounts_in: None,
+            leg_amounts_out: None,
+            leg_zero_for_one: None,
+        };
+        assert!(rm.attach_leg_ledger(
+            &["1000".to_string(), "995".to_string()],
+            &["995".to_string(), "1010".to_string()]
+        ));
+        assert_eq!(rm.leg_amounts_in.as_deref().unwrap(), &["1000", "995"]);
+        assert_eq!(rm.leg_amounts_out.as_deref().unwrap(), &["995", "1010"]);
+        assert_eq!(rm.leg_zero_for_one.as_deref().unwrap(), &[true, false]);
+
+        // Round-trip preserves the arrays as exact strings.
+        let json = serde_json::to_string(&rm).expect("serialize");
+        let back: RouteMetadata = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(back.leg_amounts_in, rm.leg_amounts_in);
+        assert_eq!(back.leg_amounts_out, rm.leg_amounts_out);
+        assert_eq!(back.leg_zero_for_one, rm.leg_zero_for_one);
+    }
+
+    #[test]
+    fn test_attach_leg_ledger_all_or_nothing() {
+        let mut rm = RouteMetadata {
+            pool_addresses: vec!["0xpool1".into(), "0xpool2".into()],
+            token_addresses: vec!["0xA".into(), "0xB".into(), "0xA".into()],
+            dex_adapters: vec!["uni".into(), "sushi".into()],
+            decimals: DecimalsMap::new(),
+            leg_amounts_in: None,
+            leg_amounts_out: None,
+            leg_zero_for_one: None,
+        };
+        // Length mismatch (1 vs 2 hops) ⇒ nothing attached, no partial ledger.
+        assert!(!rm.attach_leg_ledger(&["1000".to_string()], &["995".to_string()]));
+        assert!(rm.leg_amounts_in.is_none());
+        assert!(rm.leg_amounts_out.is_none());
+        assert!(rm.leg_zero_for_one.is_none());
     }
 }

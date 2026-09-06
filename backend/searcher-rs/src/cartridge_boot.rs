@@ -1294,7 +1294,12 @@ pub async fn active_evaluate_and_emit(
                                 token_in: format!("{:#x}", leg.token_in),
                                 token_out: format!("{:#x}", leg.token_out),
                                 fee_bps: leg.fee_bps,
-                                amount_in: Some(intent.amount_in.as_u128() as f64),
+                                // HOPS-LEDGER-04: the f64 cast of raw wei loses
+                                // precision above 2^53 and no reader consumes
+                                // these leg-level fields (verified) — honest
+                                // None beats a lossy figure. The real per-leg
+                                // wei rides RouteMetadata.leg_amounts_*.
+                                amount_in: None,
                                 amount_out: None,
                                 tvl_usd: None,
                                 volume_24h_usd: None,
@@ -1398,7 +1403,7 @@ pub async fn active_evaluate_and_emit(
                 // (NonPositiveNetUsd / GasFloorBreach). Mirror the native path
                 // (orchestrator.rs on_route_intent ~773-841): size first, then gate.
                 let chain_str = chain_id.to_string();
-                let strategy_candidate = {
+                let (strategy_candidate, sized_leg_ledger) = {
                     let outcome = match size_optimizer
                         .optimize_with_reason(
                             strategy_candidate.clone(),
@@ -1432,7 +1437,17 @@ pub async fn active_evaluate_and_emit(
                             c.opportunity.expected_profit_usd = Some(s.gross_profit_usd);
                             c.opportunity.net_expected_profit_usd =
                                 Some(s.estimated_net_profit_usd);
-                            c
+                            // HOPS-LEDGER-04: thread the kernel's exact per-leg
+                            // wei through to persistence — attached there onto
+                            // the plan-built RouteMetadata. Some only when BOTH
+                            // arrays exist (all-or-nothing, R8).
+                            let legs = match (s.leg_amounts_in, s.leg_amounts_out) {
+                                (Some(amounts_in), Some(amounts_out)) => {
+                                    Some((amounts_in, amounts_out))
+                                }
+                                _ => None,
+                            };
+                            (c, legs)
                         }
                         OptimizeOutcome::Rejected(reason) => {
                             let reason_str = reason.as_str().to_owned();
@@ -1464,6 +1479,7 @@ pub async fn active_evaluate_and_emit(
                 // snapshot threaded from the per-intent fetch above — FIX #9).
                 if let Err(e) = process_cartridge_candidate(
                     strategy_candidate,
+                    sized_leg_ledger,
                     cfg_snapshot.as_ref(),
                     ctx_chain_id,
                     emitter.clone(),
@@ -1511,6 +1527,13 @@ pub async fn active_evaluate_and_emit(
 /// `price_snapshot` is the live Redis price map fetched once per intent by the caller.
 async fn process_cartridge_candidate(
     sc: crate::engines::StrategyCandidate,
+    // HOPS-LEDGER-04: exact per-leg wei (in, out) computed by the sizing
+    // kernel, aligned with route_plan legs. `None` when sizing didn't run or
+    // the kernel has no per-leg math (triangular). Attached onto the
+    // plan-built metadata below so every emit — accepted AND rejected —
+    // persists the ledger (RULE 00: the operator must see it on ~100% of
+    // live rows, which are rejections).
+    sized_leg_ledger: Option<(Vec<String>, Vec<String>)>,
     cfg: Option<&shared_rs::trading_config::TradingConfigState>,
     chain_id: u64,
     emitter: Arc<crate::opportunity_emitter::OpportunityEmitter>,
@@ -1533,7 +1556,21 @@ async fn process_cartridge_candidate(
     // flattened token pairs are NOT a valid source (structural gate), only the
     // plan legs are.
     let route_metadata = {
-        let rm = crate::persistence::build_route_metadata_from_plan(&sc.route_plan);
+        let mut rm = crate::persistence::build_route_metadata_from_plan(&sc.route_plan);
+        // HOPS-LEDGER-04: attach the kernel's per-leg ledger when present.
+        // attach_leg_ledger is all-or-nothing: on a length mismatch against
+        // the plan hops nothing is attached — never a partial ledger (R8).
+        if let Some((amounts_in, amounts_out)) = sized_leg_ledger {
+            if !rm.attach_leg_ledger(&amounts_in, &amounts_out) {
+                debug!(
+                    event = "cartridge.leg_ledger_attach_mismatch",
+                    hops = rm.dex_adapters.len(),
+                    amounts_in_len = amounts_in.len(),
+                    amounts_out_len = amounts_out.len(),
+                    "leg ledger length mismatch vs plan hops — ledger omitted (R8)"
+                );
+            }
+        }
         if rm.is_populated() {
             Some(rm)
         } else {

@@ -8,12 +8,15 @@
  * Sheet shell stays in OpportunityDetailDialog; this body is R1-testable via
  * renderToStaticMarkup.
  *
- * Seven §37 tabs, each honest to its wire source (§28/§29 discipline):
+ * Eight §37 tabs, each honest to its wire source (§28/§29 discipline):
  *   Overview    headline rows + the §36 summary grid (FE-0033 spine — one
  *               summary, no parallel rendering of the same fields)
  *   Route       §38 edges from the PERSISTED topology (token path / dex /
  *               pool per leg; §29 fallback rendered marked); per-leg
- *               economics are declared gaps — not persisted by the scanner
+ *               economics beyond amounts are declared gaps — see Ledger
+ *   Ledger      HOPS-LEDGER-04: exact per-leg wei (in/out/direction) from the
+ *               sizing kernel + the closed-cycle delta on the closing leg;
+ *               absent honestly on non-Sized rows (R8)
  *   Economics   Gross = expected_profit_usd, Net = net_expected_profit_usd
  *               (fixes the legacy mislabel that showed gross as "Net Yield");
  *               §39 waterfall renders EVERY cost line of the simulated block
@@ -37,6 +40,7 @@ import { OpportunitySummaryGrid } from "@/components/opportunities/OpportunitySu
 import { LatencyCandidatesPanel } from "@/components/opportunities/LatencyCandidatesPanel";
 import {
   deriveLegs,
+  deriveLegLedger,
   SYNTHETIC_LEGACY_VIEW_LABEL,
   type OmniOpportunity,
 } from "@/lib/store/types";
@@ -48,6 +52,7 @@ import type {
 const DETAIL_TABS = [
   "overview",
   "route",
+  "ledger",
   "economics",
   "simulation",
   "gates",
@@ -78,6 +83,35 @@ function usd4(v: number): string {
 /** 8 + … + 6 elision; full address lives in the cell title (§38). */
 function shortAddr(a: string): string {
   return a.length <= 16 ? a : `${a.slice(0, 8)}…${a.slice(-6)}`;
+}
+
+/**
+ * HOPS-LEDGER-04: exact wei → human token units. BigInt-only — no Number
+ * (precision dies above 2^53) and no Intl (R1: locale nondeterminism in a
+ * pure render). Integer grouping by hand; frac capped at 8 chars with "…"
+ * (the exact wei always lives in the cell title). Null on non-numeric input
+ * or unknown decimals — the caller then shows the raw wei (R8).
+ */
+function weiToHuman(wei: string, decimals: number | undefined): string | null {
+  if (decimals == null || !Number.isInteger(decimals) || decimals < 0) return null;
+  const neg = wei.startsWith("-");
+  const digits = neg ? wei.slice(1) : wei;
+  if (!/^\d+$/.test(digits)) return null;
+  const d = decimals; // decimals map values are uint8 on the Rust side
+  let body: string;
+  if (digits.length <= d) {
+    body = `0.${"0".repeat(d - digits.length)}${digits}`;
+  } else {
+    const int = digits.slice(0, digits.length - d).replace(/\B(?=(\d{3})+(?=$))/g, ",");
+    const frac = digits.slice(digits.length - d);
+    body = frac.length > 0 ? `${int}.${frac}` : int;
+  }
+  // Display cap: 8 frac chars — the exact wei rides the title attr.
+  const [ipRaw, fp] = body.split(".");
+  const ip = ipRaw ?? "";
+  const frac = fp != null && fp.length > 8 ? `${fp.slice(0, 8)}…` : fp;
+  const shown = frac != null ? `${ip}.${frac}` : ip;
+  return neg ? `-${shown}` : shown;
 }
 
 /**
@@ -133,6 +167,9 @@ export function OpportunityDetailTabs({
   const legs = deriveLegs(opp);
   const hasSynthetic = legs.some((l) => l.synthetic === true);
   const target = opp.simulated_target;
+  // HOPS-LEDGER-04: null = no honest ledger (not-Sized / triangular / absent).
+  const rm = opp.route_metadata;
+  const ledger = deriveLegLedger(opp);
 
   return (
     <Tabs defaultValue={defaultTab} className="w-full">
@@ -214,10 +251,109 @@ export function OpportunityDetailTabs({
           </p>
         )}
         <p className="mt-2 text-xs italic text-muted-foreground/70">
-          Per-leg economics (amounts / rate / fee / liquidity / impact / gas / state
-          age): no emitidos en el wire persistido (nivel-(b)) — viven en memoria
-          del scanner; la columna existe para el día que se emitan.
+          Per-leg economics: los MONTOS exactos por hop ya se emiten para filas
+          Sized — tab Ledger (HOPS-LEDGER-04). Rate / fee / liquidity / impact /
+          gas / state age: no emitidos en el wire persistido (nivel-(b)) — viven
+          en memoria del scanner.
         </p>
+      </TabsContent>
+
+      {/* ── Ledger (HOPS-LEDGER-04): exact per-leg wei from the sizing kernel.
+          All-or-nothing wire: present ONLY on Sized rows whose kernel computed
+          leg outputs (2-leg V2/V3); the triangular kernel exposes only the
+          final cycle amount → honest absence here (R8). Δ ciclo is the
+          closed-cycle delta (final out − initial in, opening-token wei) on the
+          closing leg alone — intermediate hops carry no delta because wei of
+          different tokens don't subtract. ── */}
+      <TabsContent value="ledger" className="mt-2">
+        {ledger != null && rm != null ? (
+          <div className="overflow-x-auto">
+            <table className="mt-2 w-full text-xs font-mono">
+              <thead>
+                <tr className="border-b border-border text-left text-muted-foreground">
+                  <th className="py-1.5 pr-2 font-medium uppercase tracking-wide">Hop</th>
+                  <th
+                    className="py-1.5 pr-2 font-medium uppercase tracking-wide"
+                    title="zero_for_one — convención token0<token1 (hecho de deployment)"
+                  >
+                    Dir
+                  </th>
+                  <th className="py-1.5 pr-2 font-medium uppercase tracking-wide">In (wei)</th>
+                  <th className="py-1.5 pr-2 font-medium uppercase tracking-wide">Out (wei)</th>
+                  <th className="py-1.5 font-medium uppercase tracking-wide">Δ ciclo</th>
+                </tr>
+              </thead>
+              <tbody>
+                {ledger.map((e) => {
+                  const tokIn = rm.token_addresses[e.index] ?? "";
+                  const tokOut = rm.token_addresses[e.index + 1] ?? "";
+                  const openDecimals = rm.decimals?.[rm.token_addresses[0] ?? ""];
+                  const humanIn = weiToHuman(e.amount_in_wei, rm.decimals?.[tokIn]);
+                  const humanOut = weiToHuman(e.amount_out_wei, rm.decimals?.[tokOut]);
+                  const delta = e.cycle_delta_wei;
+                  return (
+                    <tr key={e.index} className="border-b border-border/50 align-top">
+                      <td className="py-1.5 pr-2 whitespace-nowrap">
+                        {e.index + 1}/{ledger.length}
+                      </td>
+                      <td
+                        className="py-1.5 pr-2 whitespace-nowrap"
+                        title={`zero_for_one=${e.zero_for_one}`}
+                      >
+                        {e.zero_for_one ? "0→1" : "1→0"}
+                      </td>
+                      <td
+                        className="py-1.5 pr-2 break-all"
+                        title={`${tokIn} · in_wei=${e.amount_in_wei}`}
+                      >
+                        {humanIn ?? (
+                          <span className="text-muted-foreground">{e.amount_in_wei}</span>
+                        )}
+                      </td>
+                      <td
+                        className="py-1.5 pr-2 break-all"
+                        title={`${tokOut} · out_wei=${e.amount_out_wei}`}
+                      >
+                        {humanOut ?? (
+                          <span className="text-muted-foreground">{e.amount_out_wei}</span>
+                        )}
+                      </td>
+                      <td
+                        className="py-1.5 break-all"
+                        title={delta != null ? `cycle_delta_wei=${delta}` : undefined}
+                      >
+                        {delta != null ? (
+                          <span
+                            className={
+                              delta.startsWith("-") ? "text-destructive" : "text-success"
+                            }
+                          >
+                            {delta.startsWith("-") ? "" : "+"}
+                            {weiToHuman(delta, openDecimals) ?? delta}
+                          </span>
+                        ) : (
+                          <span className="text-muted-foreground/50 italic">—</span>
+                        )}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+            <p className="mt-2 text-[11px] italic text-muted-foreground/70">
+              Montos EXACTOS en wei del kernel de sizing (filas Sized); el título
+              de cada celda lleva el wei completo. Δ ciclo = out final − in
+              inicial en wei del token base — sólo el hop de cierre del ciclo.
+            </p>
+          </div>
+        ) : (
+          <p className="mt-2 text-xs italic text-muted-foreground/70">
+            Sin ledger por-leg persistido — los montos exactos por hop se emiten
+            sólo cuando el kernel de sizing los computó (filas Sized, kernels
+            2-leg V2/V3); el kernel triangular expone sólo el monto final del
+            ciclo (R8: ausencia = no computado, jamás cero).
+          </p>
+        )}
       </TabsContent>
 
       {/* ── Economics: Gross vs Net from their canonical wire fields ── */}

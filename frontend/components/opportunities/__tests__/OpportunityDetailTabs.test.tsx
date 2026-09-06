@@ -1,6 +1,6 @@
 // frontend/components/opportunities/__tests__/OpportunityDetailTabs.test.tsx
 //
-// FE-0034 (§37) — the tabbed detail body: seven tabs, each honest to its
+// FE-0034 (§37) — the tabbed detail body: eight tabs, each honest to its
 // wire source. Fixtures go through the real mapper (semantic_violations
 // computed, never hand-set). Radix Tabs only mounts the ACTIVE tab, so each
 // assertion mounts the component with the tab it needs via defaultTab.
@@ -30,6 +30,16 @@ const rm2hop = {
   dex_adapters: ["uniswap-v2", "sushiswap"],
   token_addresses: ["0xa", "0xb", "0xa"],
   pool_addresses: ["0xpool1", "0xpool2"],
+};
+
+// HOPS-LEDGER-04: the same 2-hop topology WITH the sizing kernel's per-leg
+// wei (Sized row — the only shape that carries a ledger).
+const rm2hopLedger = {
+  ...rm2hop,
+  leg_amounts_in: ["1000000000000000000", "990000000000000000"],
+  leg_amounts_out: ["990000000000000000", "1010000000000000000"],
+  leg_zero_for_one: [true, false],
+  decimals: { "0xa": 18, "0xb": 18 },
 };
 
 const rich = () =>
@@ -86,11 +96,12 @@ function tab(opp: ReturnType<typeof rich>, tabName: string): string {
 }
 
 describe("OpportunityDetailTabs (§37)", () => {
-  it("renders the seven §37 tab triggers", () => {
+  it("renders the eight §37 tab triggers (ledger included — HOPS-LEDGER-04)", () => {
     const html = tab(rich(), "overview");
     for (const t of [
       "overview",
       "route",
+      "ledger",
       "economics",
       "simulation",
       "gates",
@@ -117,9 +128,36 @@ describe("OpportunityDetailTabs (§37)", () => {
     expect(withRm).toContain("0xa → 0xb");
     expect(withRm).toContain("0xpool1");
     expect(withRm).not.toContain("SYNTHETIC LEGACY VIEW");
-    // the §38 gap set is disclosed, not papered over
-    expect(withRm).toContain("amounts / rate / fee / liquidity / impact / gas / state");
+    // the §38 gap set is disclosed, not papered over — amounts now point at
+    // the Ledger tab (HOPS-LEDGER-04), the rest stay declared gaps
+    expect(withRm).toContain("tab Ledger (HOPS-LEDGER-04)");
+    expect(withRm).toContain("Rate / fee / liquidity / impact / gas / state age");
     expect(withRm).toContain("nivel-(b)");
+  });
+
+  it("Ledger HOPS-LEDGER-04: exact per-leg wei table + closed-cycle delta (Sized row)", () => {
+    const html = tab(
+      mapToOmniOpportunity(wire({ route_metadata: rm2hopLedger })),
+      "ledger",
+    );
+    expect(html).toContain("Δ ciclo");
+    expect(html).toContain("0→1");
+    expect(html).toContain("1→0");
+    // human units from the decimals map (BigInt path, no Intl — R1 safe)
+    expect(html).toContain("0.99"); // leg0 out / leg1 in @18d
+    expect(html).toContain("1.01"); // leg1 out @18d
+    expect(html).toContain("+0.01"); // closing delta = +10e15 wei @18d
+    // the exact wei rides the cell title (full fidelity)
+    expect(html).toContain("in_wei=1000000000000000000");
+    expect(html).toContain("out_wei=1010000000000000000");
+  });
+
+  it("Ledger: absent arrays → honest gap paragraph, never fabricated amounts", () => {
+    // rich()'s topology has NO leg arrays (not-Sized shape) → R8 absence.
+    const html = tab(rich(), "ledger");
+    expect(html).toContain("Sin ledger por-leg persistido");
+    expect(html).toContain("(R8: ausencia = no computado, jamás cero)");
+    expect(html).not.toContain("0→1");
   });
 
   it("Route §29: legacy fallback legs render marked — never ROUTE VERIFIED", () => {

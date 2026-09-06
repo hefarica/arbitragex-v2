@@ -220,6 +220,15 @@ pub struct SizedCandidate {
     /// sized site (all components in kernel scope); `None` in hand-built test
     /// fixtures. R8: `None` = not computable, ranks last — never fabricated.
     pub net_economics: Option<crate::net_bps_ranking::RouteNetEconomics>,
+    /// HOPS-LEDGER-04: exact per-leg wei amounts at `optimal_amount_in`,
+    /// aligned with route_plan legs — `leg_amounts_in[i]` enters leg i,
+    /// `leg_amounts_out[i]` leaves it (leg 1's input IS leg 0's output).
+    /// `Some` only where the kernel computed real leg outputs (V2/V3 2-leg
+    /// kernels); `None` = per-leg not computed (triangular kernel exposes only
+    /// the final cycle amount; hand-built fixtures) — R8, never fabricated.
+    /// Exact wei strings, NOT f64 (precision loss above 2^53).
+    pub leg_amounts_in: Option<Vec<String>>,
+    pub leg_amounts_out: Option<Vec<String>>,
 }
 
 // ---------------------------------------------------------------------------
@@ -755,6 +764,10 @@ impl SizeOptimizer {
                 estimated_net_profit_usd: net_usd,
                 net_negative: true,
                 net_economics,
+                // HOPS-LEDGER-04: triangular kernel exposes only the final
+                // cycle amount — per-leg wei honestly absent (R8).
+                leg_amounts_in: None,
+                leg_amounts_out: None,
             }));
         }
 
@@ -770,6 +783,10 @@ impl SizeOptimizer {
             estimated_net_profit_usd: net_usd,
             net_negative: false,
             net_economics,
+            // HOPS-LEDGER-04: triangular kernel exposes only the final
+            // cycle amount — per-leg wei honestly absent (R8).
+            leg_amounts_in: None,
+            leg_amounts_out: None,
         }))
     }
 
@@ -912,6 +929,12 @@ impl SizeOptimizer {
             return OptimizeOutcome::Rejected(OptimizeRejectReason::NonPositiveProfit);
         }
 
+        // HOPS-LEDGER-04: exact per-leg wei at the reported (clamped) size —
+        // the same values the profit math above consumed. Leg 1's input IS
+        // leg 0's output, so the arrays chain an honest ledger.
+        let leg_amounts_in = Some(vec![amount_in.to_string(), out_a.to_string()]);
+        let leg_amounts_out = Some(vec![out_a.to_string(), out_b.to_string()]);
+
         let profit_token_units = (profit_at_clamped as f64) / 10f64.powi(decimals as i32);
         let gross_usd = profit_token_units * token_price_usd;
 
@@ -974,6 +997,8 @@ impl SizeOptimizer {
                 estimated_net_profit_usd: net_usd,
                 net_negative: true,
                 net_economics,
+                leg_amounts_in,
+                leg_amounts_out,
             }));
         }
 
@@ -1002,6 +1027,8 @@ impl SizeOptimizer {
             estimated_net_profit_usd: net_usd,
             net_negative: false,
             net_economics,
+            leg_amounts_in,
+            leg_amounts_out,
         }))
     }
 
@@ -1105,7 +1132,7 @@ impl SizeOptimizer {
             return OptimizeOutcome::Rejected(OptimizeRejectReason::NonPositiveProfit);
         }
 
-        let mut best: Option<(U256, U256, i128)> = None; // (amount_in, out_b, profit_wei)
+        let mut best: Option<(U256, U256, U256, i128)> = None; // (amount_in, out_a, out_b, profit_wei)
                                                          // Per-V3-leg pricing telemetry (R8): `priced` = the quoter answered at
                                                          // least once (value may be 0); `leg1_reached` = leg 1 was quoted at all
                                                          // (only happens when leg 0 yields a non-zero mid-amount).
@@ -1143,13 +1170,13 @@ impl SizeOptimizer {
             }
 
             let profit = clamped_to_i128(out_b).saturating_sub(clamped_to_i128(x));
-            if best.as_ref().is_none_or(|(_, _, bp)| profit > *bp) {
-                best = Some((x, out_b, profit));
+            if best.as_ref().is_none_or(|(_, _, _, bp)| profit > *bp) {
+                best = Some((x, out_a, out_b, profit));
             }
         }
 
-        let (amount_in, _out_b, profit_wei) = match best {
-            Some(b) if b.2 > 0 => b,
+        let (amount_in, out_a, out_b, profit_wei) = match best {
+            Some(b) if b.3 > 0 => b,
             _ => {
                 // No positive-profit probe. R8: a V3 leg that was quoted but the
                 // provider NEVER answered (absent / all RPC failures) is
@@ -1172,6 +1199,11 @@ impl SizeOptimizer {
         if gross_usd <= 0.0 {
             return OptimizeOutcome::Rejected(OptimizeRejectReason::NonPositiveGrossUsd);
         }
+
+        // HOPS-LEDGER-04: exact per-leg wei at the chosen grid point — the
+        // same QuoterV2-quoted values the profit above consumed.
+        let leg_amounts_in = Some(vec![amount_in.to_string(), out_a.to_string()]);
+        let leg_amounts_out = Some(vec![out_a.to_string(), out_b.to_string()]);
 
         let gas_cost = state.gas_cost_usd();
         let ops_overhead = state.ops_overhead_usd_per_attempt;
@@ -1223,6 +1255,8 @@ impl SizeOptimizer {
                 estimated_net_profit_usd: net_usd,
                 net_negative: true,
                 net_economics,
+                leg_amounts_in,
+                leg_amounts_out,
             }));
         }
 
@@ -1251,6 +1285,8 @@ impl SizeOptimizer {
             estimated_net_profit_usd: net_usd,
             net_negative: false,
             net_economics,
+            leg_amounts_in,
+            leg_amounts_out,
         }))
     }
 
@@ -2880,6 +2916,8 @@ mod tests {
             estimated_net_profit_usd: net_usd,
             net_negative: false,
             net_economics: None, // ARBX-0009: hand-built fixture — no components.
+            leg_amounts_in: None, // HOPS-LEDGER-04: fixture — no kernel leg math.
+            leg_amounts_out: None,
         }
     }
 

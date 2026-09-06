@@ -573,6 +573,12 @@ fn build_triangular_route_metadata(
         ],
         dex_adapters,
         decimals: Default::default(),
+        // Triangular kernel only exposes the final cycle amount — per-leg wei
+        // is not computed at this layer, so the ledger stays honestly absent
+        // (R8) until the sizing kernel surfaces per-leg amounts.
+        leg_amounts_in: None,
+        leg_amounts_out: None,
+        leg_zero_for_one: None,
     }
 }
 

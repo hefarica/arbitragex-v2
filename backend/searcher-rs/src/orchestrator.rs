@@ -1036,6 +1036,11 @@ impl Orchestrator {
                 token_addresses: c.token_addresses.clone(),
                 dex_adapters: c.dex_adapters.clone(),
                 decimals: Default::default(),
+                // Raw candidate carries no sizing amounts — the ledger, when
+                // present, rides the plan-built metadata (HOPS-LEDGER-04).
+                leg_amounts_in: None,
+                leg_amounts_out: None,
+                leg_zero_for_one: None,
             };
             let from_plan = crate::persistence::build_route_metadata_from_plan(&sc.route_plan);
             // Prefer the source with the longer (more complete) token path.

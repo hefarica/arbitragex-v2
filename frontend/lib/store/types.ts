@@ -118,12 +118,24 @@ export interface SimulatedTarget {
  *   - `pool_addresses`    length = hops     (pool per leg; may contain "" when
  *                                           only the factory was known at scan)
  *   - `decimals`          address → uint8   (may be partial/empty)
+ *
+ * HOPS-LEDGER-04 — the per-leg ledger is OPTIONAL and all-or-nothing (mirrors
+ * `attach_leg_ledger` in shared-rs): present ONLY on rows the sizing kernel
+ * computed leg outputs for (Sized 2-leg V2/V3). Absent = not computed (R8) —
+ * never interpret absence as zero, and NEVER attach amounts to §29 synthetic
+ * legs:
+ *   - `leg_amounts_in`    length = hops     (exact wei entering leg i)
+ *   - `leg_amounts_out`   length = hops     (exact wei leaving leg i)
+ *   - `leg_zero_for_one`  length = hops     (Uniswap token0→token1 convention)
  */
 export interface RouteMetadataWire {
   token_addresses: string[];
   pool_addresses: string[];
   dex_adapters: string[];
   decimals?: Record<string, number>;
+  leg_amounts_in?: string[];
+  leg_amounts_out?: string[];
+  leg_zero_for_one?: boolean[];
 }
 
 /**
@@ -453,11 +465,31 @@ export function parseRouteMetadata(
     obj.decimals != null && typeof obj.decimals === "object"
       ? (obj.decimals as Record<string, number>)
       : undefined;
+  // HOPS-LEDGER-04: project the optional per-leg ledger arrays. Undefined
+  // (NOT empty) when absent — absence is the R8 state "not computed".
+  const legAmountsIn = Array.isArray(obj.leg_amounts_in)
+    ? (obj.leg_amounts_in as unknown[]).filter(
+        (s): s is string => typeof s === "string",
+      )
+    : undefined;
+  const legAmountsOut = Array.isArray(obj.leg_amounts_out)
+    ? (obj.leg_amounts_out as unknown[]).filter(
+        (s): s is string => typeof s === "string",
+      )
+    : undefined;
+  const legZeroForOne = Array.isArray(obj.leg_zero_for_one)
+    ? (obj.leg_zero_for_one as unknown[]).filter(
+        (b): b is boolean => typeof b === "boolean",
+    )
+    : undefined;
   return {
     token_addresses: tokenAddresses,
     dex_adapters: dexAdapters,
     pool_addresses: poolAddresses,
     decimals,
+    leg_amounts_in: legAmountsIn,
+    leg_amounts_out: legAmountsOut,
+    leg_zero_for_one: legZeroForOne,
   };
 }
 
@@ -520,6 +552,87 @@ export function deriveLegs(opp: OmniOpportunity): RouteLeg[] {
       synthetic: true,
     },
   ];
+}
+
+// =============================================================================
+// HOPS-LEDGER-04 — per-leg wei ledger (sized rows only)
+// =============================================================================
+
+/**
+ * One leg of the per-hop ledger: what enters, what leaves, which direction —
+ * all in EXACT wei strings (BigInt domain, never f64).
+ *
+ * `cycle_delta_wei` is present ONLY on the closing leg of a closed cycle
+ * (final out − initial in, both in the opening token's wei): the hop-by-hop
+ * running gain/loss the operator asked for. Null elsewhere — a delta between
+ * different tokens' wei is meaningless (R8), and a partial ledger is worse
+ * than none.
+ */
+export interface LegLedgerEntry {
+  /** Hop index, 0-based — aligns with deriveLegs/RouteLeg.index. */
+  index: number;
+  /** Exact wei entering this leg (of token_addresses[index]). */
+  amount_in_wei: string;
+  /** Exact wei leaving this leg (of token_addresses[index+1]). */
+  amount_out_wei: string;
+  /** Uniswap token0→token1 swap direction (deployment fact, not pool state). */
+  zero_for_one: boolean;
+  /** Closed-cycle delta in opening-token wei — closing leg only, else null. */
+  cycle_delta_wei: string | null;
+}
+
+/**
+ * Derives the per-leg ledger from the persisted topology. Returns null when
+ * there is no honest ledger: no route_metadata, any ledger array absent
+ * (not-Sized rows, triangular kernel — R8 "not computed"), or lengths that
+ * don't align with the persisted hops (all-or-nothing, mirroring the Rust
+ * `attach_leg_ledger` gate).
+ *
+ * NEVER called on §29 synthetic legs — the fallback legs fabricate no amounts
+ * by construction, and this function only reads `route_metadata`.
+ */
+export function deriveLegLedger(opp: OmniOpportunity): LegLedgerEntry[] | null {
+  const rm = opp.route_metadata;
+  if (!rm) return null;
+  const hops = rm.dex_adapters.length;
+  if (hops === 0) return null;
+  const { leg_amounts_in: amountsIn, leg_amounts_out: amountsOut, leg_zero_for_one: zeroForOne } = rm;
+  if (
+    !amountsIn ||
+    !amountsOut ||
+    !zeroForOne ||
+    amountsIn.length !== hops ||
+    amountsOut.length !== hops ||
+    zeroForOne.length !== hops
+  ) {
+    return null;
+  }
+  const entries: LegLedgerEntry[] = amountsIn.map((amount_in_wei, i) => ({
+    index: i,
+    amount_in_wei,
+    amount_out_wei: amountsOut[i] ?? "",
+    zero_for_one: zeroForOne[i] ?? false,
+    cycle_delta_wei: null,
+  }));
+  // Closing-leg delta: only when the topology closes the cycle back to the
+  // opening token. BigInt-exact; a non-numeric payload leaves it null (R8 —
+  // never fabricate a figure from garbage).
+  const tokens = rm.token_addresses;
+  if (tokens.length === hops + 1 && tokens[0] && tokens[0] === tokens[hops]) {
+    const initialIn = entries[0]?.amount_in_wei;
+    const closing = entries[hops - 1];
+    const finalOut = closing?.amount_out_wei;
+    if (initialIn && finalOut && closing) {
+      try {
+        closing.cycle_delta_wei = (
+          BigInt(finalOut) - BigInt(initialIn)
+        ).toString();
+      } catch {
+        // leave null — not computed
+      }
+    }
+  }
+  return entries;
 }
 
 // =============================================================================
