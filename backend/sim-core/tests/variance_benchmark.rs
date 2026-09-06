@@ -105,8 +105,9 @@ struct Histogram {
 }
 
 /// route_metadata carries display names; the encoder accepts semantic labels
-/// (`parse_dex_kind`: "uniswap-v2" | "sushi"). V3 legs are honestly
-/// unsupported by the A.3.a encoder (needs per-leg fee tier) → None.
+/// (`parse_dex_kind` normalizes spelling variants — see sim_encoder tests).
+/// V3 legs are honestly unsupported by the A.3.a encoder (needs per-leg fee
+/// tier) → None.
 fn adapter_to_semantic(label: &str) -> Option<&'static str> {
     match label.trim() {
         "UniswapV2" | "uniswap-v2" | "uniswapv2" => Some("uniswap-v2"),
