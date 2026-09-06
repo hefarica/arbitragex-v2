@@ -680,6 +680,14 @@ app.get("/api/operations/variance", (req, res) => {
   const chain = typeof req.query["chain_id"] === "string" ? req.query["chain_id"] : "1";
   proxy(`/api/v1/operations/variance?chain_id=${encodeURIComponent(chain)}`, req, res);
 });
+// Rejection breakdown (REJECT-BREAKDOWN-EXPORT-01) — public grouped read of
+// rejection_reason families: the operator's one-by-one remediation surface
+// (families + share + avg gross/net + token flood with resolved symbols).
+// Query string forwards verbatim (hours, chain_id).
+app.get("/api/rejections/breakdown", (req, res) => {
+  const qs = new URL(req.url, "http://x").search || "";
+  proxy(`/api/v1/rejections/breakdown${qs}`, req, res);
+});
 // Strategy catalog (Sprint 2 — universal MEV strategy library, read-only).
 app.get("/api/strategy-catalog", (req, res) => proxy("/api/v1/strategy-catalog", req, res));
 app.get("/api/strategy-catalog/active", (req, res) => {

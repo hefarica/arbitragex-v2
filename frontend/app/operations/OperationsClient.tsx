@@ -44,6 +44,7 @@ import { SCurveChart } from "./components/SCurveChart";
 // the §46 chain over tick + outcomes sink + recon, windows disclosed.
 import { RouteDiscoveryFunnelCard } from "./components/RouteDiscoveryFunnelCard";
 import { ArchivePanel } from "./components/ArchivePanel";
+import { RejectionBreakdownPanel } from "./components/RejectionBreakdownPanel";
 
 interface Props {
   initialKpi: KpiPayload | null;
@@ -230,6 +231,12 @@ export function OperationsClient({
           upstream; renders an honest "no session" error when not logged in. */}
       <div className="mb-6">
         <ArchivePanel />
+      </div>
+      {/* REJECT-BREAKDOWN-EXPORT-01: grouped rejection_reason families — the
+          operator's one-by-one remediation surface + CSV download. Public
+          read (same exposure as /api/v1/opportunities/live). */}
+      <div className="mb-6">
+        <RejectionBreakdownPanel />
       </div>
       {scurve && <SCurveChart data={scurve} />}
     </>
