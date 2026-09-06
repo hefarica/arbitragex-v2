@@ -336,6 +336,22 @@ export function getReadinessDecision() {
   return getValidated("/api/readiness/decision", S.ReadinessDecisionResponseSchema);
 }
 
+// A.9 formal sign-off status — RECORDED sign-off rows for the current ledger
+// generation (quorum = 2 distinct operators). Read-only: the sign-off POST
+// (/admin/go-no-go/sign-off) is admin-token gated and never routed at the
+// edge, so no UI path can write a signature.
+export function getGoNoGoStatus() {
+  return getValidated("/api/go-no-go/status", S.GoNoGoStatusResponseSchema);
+}
+
+// A.9 ledger regeneration — GET, not POST: the endpoint rebuilds the facts,
+// hashes them (sha256), persists the generation to audit_log, and
+// deduplicates identical facts (identical facts → deduplicated: true), so a
+// polled/regenerated GET never floods the audit trail.
+export function regenerateGoNoGoLedger() {
+  return getValidated("/api/go-no-go/ledger", S.GoNoGoLedgerResponseSchema);
+}
+
 // Readiness steps — server-side 4-step "Live Readiness" stepper (Topology /
 // Credentials / Market Topology / Resolution Engines). The N/4 count is derived
 // from real backend evidence (vault providers, credential presence, registry
