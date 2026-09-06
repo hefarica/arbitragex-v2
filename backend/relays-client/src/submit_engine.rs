@@ -9,6 +9,7 @@ use crate::multi_relay::MultiRelayClient;
 use crate::nonce_manager::NonceManager;
 use crate::persistence::insert_paper_trade_run;
 use crate::relay_flashbots::FlashbotsClient;
+use crate::relay_no_submit_sim::{self, NoSubmitReport};
 use crate::signer::Signer;
 use crate::tracker::{wait_for_inclusion, InclusionOutcome};
 use chrono::Utc;
@@ -476,6 +477,32 @@ impl SubmitEngine {
             paper_mode = paper,
         );
 
+        // 4.5 A.7 private-relay no-submit validation (zero network egress).
+        //
+        // Every bundle that exists in scope is shape-validated locally against
+        // the three doctrine relay wire-schemas (flashbots / mev-blocker /
+        // titan) and the payload copy is discarded immediately — relay_no_submit_sim
+        // imports no I/O, which IS the zero-egress proof. Strictly BEFORE the
+        // paper short-circuit (5), eth_callBundle (5.5) and broadcast (6), so
+        // no network touch can precede the local validation. The module logs
+        // `relay_sim.no_submit.validated` (info, one per run) + `.detail`
+        // (debug) itself; this arm only adds the drop decision.
+        let no_submit_report = relay_no_submit_sim::validate_and_discard(
+            relay_no_submit_sim::SimBundleParams::from_signed_bundle(&bundle),
+        );
+        match Self::classify_no_submit(&no_submit_report, paper) {
+            NoSubmitDecision::LogOnly => {}
+            NoSubmitDecision::DropAllSchemasRejected => {
+                warn!(
+                    event = "relay_sim.no_submit.drop",
+                    opp_id = %opp.id,
+                    summary = %no_submit_report.summary(),
+                    "bundle rejected by ALL relay wire-schemas — dropping before any egress"
+                );
+                return Self::dropped(opp, "relay_no_submit_all_schemas_rejected");
+            }
+        }
+
         // 5. Paper mode short-circuit.
         if paper {
             let relay_names = self
@@ -910,6 +937,28 @@ impl SubmitEngine {
             },
         }
     }
+
+    /// Pure classifier for the A.7 no-submit relay-shape validation (step 4.5).
+    ///
+    /// - `LogOnly`                → paper mode, or at least one doctrine relay
+    ///   schema accepts the wire-shape: the report is informational (already
+    ///   logged by `relay_no_submit_sim`) and the flow continues.
+    /// - `DropAllSchemasRejected` → non-paper AND all three relay schemas
+    ///   rejected the bundle wire-shape: fail-closed BEFORE any egress —
+    ///   broadcasting a bundle no doctrine relay would accept is guaranteed
+    ///   wasted gas (same posture as the BE-05 abort arm below).
+    ///
+    /// Paper mode is deliberately `LogOnly` even on total rejection: the paper
+    /// terminus must keep recording runs with its existing semantics
+    /// (`paper_mode.skip_submit` + the paper_trade_runs insert); the
+    /// shape-rejection detail rides in the `relay_sim.no_submit.*` events.
+    fn classify_no_submit(report: &NoSubmitReport, paper: bool) -> NoSubmitDecision {
+        if !paper && report.accepted_count() == 0 {
+            NoSubmitDecision::DropAllSchemasRejected
+        } else {
+            NoSubmitDecision::LogOnly
+        }
+    }
 }
 
 /// Three-way decision for the BE-05 `eth_callBundle` re-simulation step.
@@ -930,6 +979,18 @@ enum CallBundleDecision {
     /// Re-sim endpoint itself failed — drop the bundle fail-closed (do NOT
     /// broadcast un-re-simulated). OMEGA PHOENIX §4C#3.
     Abort { reason: String },
+}
+
+/// Two-way decision for the A.7 no-submit relay-shape validation (step 4.5).
+///
+/// See [`SubmitEngine::classify_no_submit`] for the semantics.
+#[derive(Debug, PartialEq, Eq)]
+enum NoSubmitDecision {
+    /// Report is informational — flow continues (paper mode, or ≥1 accept).
+    LogOnly,
+    /// Non-paper + all three relay schemas rejected the wire-shape — drop the
+    /// bundle before any egress (fail-closed).
+    DropAllSchemasRejected,
 }
 
 #[cfg(test)]
@@ -1283,6 +1344,58 @@ mod tests {
                 );
             }
             other => panic!("BE-05 endpoint error must Abort, got {other:?}"),
+        }
+    }
+
+    // ── A.7 no-submit classifier (step 4.5) ──────────────────────────────────
+
+    /// Synthetic report: first `accepts` relays accept the shape, the rest
+    /// reject it (verdict order: flashbots, mev_blocker, titan).
+    fn no_submit_report(accepts: usize) -> NoSubmitReport {
+        use crate::relay_no_submit_sim::RelayVerdict;
+        let verdict = |accept: bool| {
+            if accept {
+                RelayVerdict::AcceptedShape
+            } else {
+                RelayVerdict::RejectedShape("synthetic shape mismatch".into())
+            }
+        };
+        NoSubmitReport {
+            flashbots: verdict(accepts >= 1),
+            mev_blocker: verdict(accepts >= 2),
+            titan: verdict(accepts >= 3),
+        }
+    }
+
+    #[test]
+    fn a7_all_schemas_rejected_drops_only_in_non_paper() {
+        let rejected = no_submit_report(0);
+        assert_eq!(rejected.accepted_count(), 0);
+        assert_eq!(
+            SubmitEngine::classify_no_submit(&rejected, false),
+            NoSubmitDecision::DropAllSchemasRejected,
+            "non-paper + 0/3 accepts must fail-closed BEFORE any egress"
+        );
+    }
+
+    #[test]
+    fn a7_paper_mode_is_log_only_even_when_all_schemas_reject() {
+        assert_eq!(
+            SubmitEngine::classify_no_submit(&no_submit_report(0), true),
+            NoSubmitDecision::LogOnly,
+            "paper terminus keeps recording runs with existing semantics; \
+             shape-rejection detail rides in relay_sim.no_submit.* events"
+        );
+    }
+
+    #[test]
+    fn a7_partial_acceptance_is_log_only() {
+        for accepts in 1..=3 {
+            assert_eq!(
+                SubmitEngine::classify_no_submit(&no_submit_report(accepts), false),
+                NoSubmitDecision::LogOnly,
+                "≥1 accepting relay schema must never drop ({accepts}/3 accepts)"
+            );
         }
     }
 }
