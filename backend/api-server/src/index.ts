@@ -108,6 +108,7 @@ import { mountPairs } from "./routes/pairs.js";
 import { mountStubs } from "./routes/stubs.js";
 import { buildServiceControlRouter } from "./routes/service-control.js";
 import { buildArchiveControlRouter } from "./routes/archive-control.js";
+import { buildRejectionBreakdownRouter } from "./routes/rejection-breakdown.js";
 import { mountWallets } from "./routes/wallets.js";
 import { CarnotStore } from "./services/carnotStore.js";
 import { mountCarnotCycles } from "./routes/carnot-cycles.js";
@@ -1612,6 +1613,10 @@ app.use(buildOperationsRouter({
   adminToken: ARBX_ADMIN_TOKEN,
   logger,
 }));
+
+// ── Rejection breakdown (REJECT-BREAKDOWN-EXPORT-01 — public grouped read;
+// operator's one-by-one remediation surface for rejection_reason families) ──
+app.use(buildRejectionBreakdownRouter({ pool, logger }));
 
 // ── Strategy catalog (Sprint 2 — read-only universal MEV strategy library) ─
 app.use(buildStrategyCatalogRouter({ pool, logger }));

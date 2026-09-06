@@ -985,6 +985,67 @@ export function fetchArchiveStatus(): Promise<Result<ArchiveStatus>> {
   return getValidated("/api/admin/archive/status", ArchiveStatusSchema, { retries: 0 });
 }
 
+// ── Rejection breakdown (REJECT-BREAKDOWN-EXPORT-01) ─────────────────────────
+export interface RejectionFamilyDto {
+  family: string;
+  count: number;
+  share_pct_of_rejected: number;
+  avg_gross_usd: number | null;
+  avg_net_usd: number | null;
+  top_raw: Array<{ reason: string; count: number }>;
+}
+
+export interface RejectionBreakdown {
+  ok: boolean;
+  kind: "rejection_breakdown";
+  window_hours: number;
+  chain_id: number | null;
+  generated_at: string;
+  total_rows: number;
+  rejected_rows: number;
+  /** R8: true when the raw-group GROUP BY hit its 500 bound — family counts
+   * and token_flood cover the TOP raw groups only; rejected_rows is exact. */
+  raw_groups_truncated: boolean;
+  families: RejectionFamilyDto[];
+  token_flood: Array<{ address: string; symbol: string | null; count: number }>;
+}
+
+const RejectionBreakdownSchema: z.ZodType<RejectionBreakdown> = z
+  .object({
+    ok: z.literal(true),
+    kind: z.literal("rejection_breakdown"),
+    window_hours: z.number(),
+    chain_id: z.number().nullable(),
+    generated_at: z.string(),
+    total_rows: z.number(),
+    rejected_rows: z.number(),
+    raw_groups_truncated: z.boolean(),
+    families: z.array(
+      z.object({
+        family: z.string(),
+        count: z.number(),
+        share_pct_of_rejected: z.number(),
+        avg_gross_usd: z.number().nullable(),
+        avg_net_usd: z.number().nullable(),
+        top_raw: z.array(z.object({ reason: z.string(), count: z.number() })),
+      }),
+    ),
+    token_flood: z.array(
+      z.object({
+        address: z.string(),
+        symbol: z.string().nullable(),
+        count: z.number(),
+      }),
+    ),
+  })
+  .passthrough();
+
+export function fetchRejectionBreakdown(hours: number): Promise<Result<RejectionBreakdown>> {
+  return getValidated(`/api/rejections/breakdown?hours=${hours}`, RejectionBreakdownSchema, {
+    retries: 0,
+  });
+}
+
 export async function postArchiveAuto(
   enabled: boolean,
 ): Promise<{ ok: true; enabled: boolean } | { ok: false; error: string }> {

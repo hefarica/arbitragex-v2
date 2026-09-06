@@ -1244,6 +1244,20 @@ app.get("/api/operations/variance", async (c) => {
   return c.body(text, upstream.status as 200 | 400 | 500 | 503);
 });
 
+// REJECT-BREAKDOWN-EXPORT-01: grouped rejection_reason breakdown pass-through
+// (api-server /api/v1/rejections/breakdown). No KV cache — a fresh aggregate
+// is the point (public read, less sensitive than /api/v1/opportunities/live).
+app.get("/api/rejections/breakdown", async (c) => {
+  const qs = new URL(c.req.url).search;
+  const upstream = await fetch(`${c.env.API_SERVER_URL}/api/v1/rejections/breakdown${qs}`, {
+    method: "GET",
+    headers: { "accept": "application/json", "x-arbx-edge-token": c.env.ARBX_EDGE_TOKEN },
+  });
+  const text = await upstream.text();
+  c.header("content-type", upstream.headers.get("content-type") ?? "application/json");
+  return c.body(text, upstream.status as 200 | 400 | 500 | 503);
+});
+
 // Phase 2 route-finder: DEX catalog + pool catalog (30s TTL — they change rarely).
 app.get("/api/dexes", (c) => proxy(c, "/api/v1/dexes", "arbx:cache:dexes", 30));
 // FASE 1 (R6-02): /api/pools — reshape the route-finder {count, items}
