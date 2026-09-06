@@ -209,16 +209,17 @@ function OpportunityTradeCardImpl({
   // 3-hop triangular rendered as 2 generic rows. Legs come from
   // route_metadata when present, else the §29 synthetic fallback (marked).
   // Symbols resolve with the exchange card's priority (F2/§11 RC1):
-  // pair-info → server-hydrated leg_symbols (lowercased key) → shortAddr.
+  // pair-info (symbol → registry_symbol, matching the card's tokenSymbol
+  // chain) → server-hydrated leg_symbols (lowercased key) → shortAddr.
   const legs = deriveLegs(opp);
   const legSym = (addr: string): string => {
     const lc = addr.toLowerCase();
     if (lc === opp.token_in.toLowerCase()) {
-      const s = opp.token_in_info?.symbol;
+      const s = opp.token_in_info?.symbol ?? opp.token_in_info?.registry_symbol;
       if (s) return s;
     }
     if (lc === opp.token_out.toLowerCase()) {
-      const s = opp.token_out_info?.symbol;
+      const s = opp.token_out_info?.symbol ?? opp.token_out_info?.registry_symbol;
       if (s) return s;
     }
     return opp.leg_symbols?.[lc] ?? shortAddr(addr);
