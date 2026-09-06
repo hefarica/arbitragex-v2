@@ -95,6 +95,7 @@ import {
 } from "./admin-session-limits.js";
 import { emitAuditEvent, tokenFingerprint } from "./audit-emit.js";
 import { parseCookies as parseCookiesShared, resolveAdminToken } from "./admin-token-resolver.js";
+import { classifyRateLimit, createRateLimiter } from "./rate-limit.js";
 import { createProxyMiddleware } from "http-proxy-middleware";
 
 const SERVICE = "edge-dev-local";
@@ -121,18 +122,17 @@ const MAX_HITS = Math.max(
   120,
   parseInt(process.env["EDGE_RATE_LIMIT_PER_MIN"] ?? ((process.env["CI"] || process.env["ARBX_E2E"]) ? "5000" : "120"), 10) || 120,
 );
-const rl = new Map<string, { count: number; windowStart: number }>();
-function hit(ip: string): { ok: boolean; remaining: number } {
-  const now = Date.now();
-  const cur = rl.get(ip);
-  if (!cur || now - cur.windowStart > WINDOW_MS) {
-    rl.set(ip, { count: 1, windowStart: now });
-    return { ok: true, remaining: MAX_HITS - 1 };
-  }
-  cur.count++;
-  if (cur.count > MAX_HITS) return { ok: false, remaining: 0 };
-  return { ok: true, remaining: MAX_HITS - cur.count };
-}
+// EDGE-AUDIT-BUCKET-01 (NR-0000): the auditor's separate bounded bucket.
+// Fail-closed: EDGE_AUDIT_TOKEN unset/empty ⇒ x-arbx-audit-token is ignored
+// and behavior is identical to the pre-2026-09-06 limiter. The audit max can
+// only be ≥ the public max (Math.max floor) — an operator misconfigure cannot
+// make the auditor's bucket tighter than the public one by accident.
+const EDGE_AUDIT_TOKEN = process.env["EDGE_AUDIT_TOKEN"] ?? "";
+const AUDIT_MAX_HITS = Math.max(
+  MAX_HITS,
+  parseInt(process.env["EDGE_AUDIT_RATE_LIMIT_PER_MIN"] ?? "3000", 10) || 3000,
+);
+const rateLimiter = createRateLimiter({ publicMax: MAX_HITS, auditMax: AUDIT_MAX_HITS });
 
 const startedAt = new Date();
 const app = express();
@@ -163,7 +163,9 @@ app.use((req, res, next) => {
     if (allowedOrigins.has(origin)) {
       res.setHeader("access-control-allow-origin", origin);
       res.setHeader("access-control-allow-credentials", "true");
-      res.setHeader("access-control-allow-headers", "content-type, x-arbx-admin-token, x-arbx-trace-id, x-arbx-actor");
+      // EDGE-AUDIT-BUCKET-01: x-arbx-audit-token must be preflight-allowed so
+      // browser-originated audit fetches (CDP setExtraHTTPHeaders) can carry it.
+      res.setHeader("access-control-allow-headers", "content-type, x-arbx-admin-token, x-arbx-trace-id, x-arbx-actor, x-arbx-audit-token");
       res.setHeader("access-control-allow-methods", "GET, POST, PUT, DELETE, OPTIONS");
     }
   }
@@ -175,10 +177,25 @@ app.use(traceIdMiddleware());
 app.use(createHttpLogger(SERVICE));
 app.use(metricsMiddleware(SERVICE));
 app.use((req, res, next) => {
+  // EDGE-AUDIT-BUCKET-01 — classified rate limiting (see ./rate-limit.ts):
+  //   exempt = internal SSR (x-arbx-edge-token; parity with the CF Worker's
+  //            SEC-1 exemption the frontend already sends) — no bucket consumed.
+  //   audit  = Holy Grail sweep (x-arbx-audit-token === EDGE_AUDIT_TOKEN) on
+  //            its OWN bounded bucket, never a bypass.
+  //   public = unchanged per-IP bucket.
   const ip = (req.headers["x-forwarded-for"] as string | undefined)?.split(",")[0]?.trim() ?? req.socket.remoteAddress ?? "unknown";
-  const { ok, remaining } = hit(ip);
-  res.setHeader("x-ratelimit-remaining", String(remaining));
-  if (!ok) {
+  const klass = classifyRateLimit(req.headers, {
+    edgeToken: ARBX_EDGE_TOKEN,
+    auditToken: EDGE_AUDIT_TOKEN,
+  });
+  const d = rateLimiter.check(klass, ip);
+  if (d.remaining === null) {
+    res.setHeader("x-ratelimit-remaining", "exempt");
+    next();
+    return;
+  }
+  res.setHeader("x-ratelimit-remaining", String(d.remaining));
+  if (!d.ok) {
     res.status(429).json({ error: "rate_limited" });
     return;
   }
