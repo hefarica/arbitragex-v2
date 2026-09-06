@@ -171,6 +171,9 @@ mod tests {
             token_addresses: vec!["0xtokenIn".into(), "0xtokenOut".into()],
             dex_adapters: vec!["uniswap_v2_router".into()],
             decimals: shared_rs::candidates::DecimalsMap::new(),
+            leg_amounts_in: None,
+            leg_amounts_out: None,
+            leg_zero_for_one: None,
         };
         assert!(rm.is_populated());
     }

@@ -12,6 +12,7 @@ import {
   parseRouteMetadata,
   deriveLegs,
   deriveHopCount,
+  deriveLegLedger,
   mapToOmniOpportunity,
   SYNTHETIC_LEGACY_VIEW_LABEL,
 } from "@/lib/store/types";
@@ -48,6 +49,143 @@ describe("parseRouteMetadata", () => {
     expect(rm!.token_addresses).toEqual([WETH, USDC, DAI, WETH]);
     expect(rm!.dex_adapters).toHaveLength(3);
     expect(rm!.pool_addresses).toHaveLength(3);
+  });
+
+  // ─── HOPS-LEDGER-04: the optional per-leg wei arrays ───
+  it("projects the leg ledger arrays when present; undefined (NOT []) when absent (R8)", () => {
+    const withLedger = parseRouteMetadata({
+      token_addresses: [WETH, USDC, WETH],
+      pool_addresses: ["0xp1", "0xp2"],
+      dex_adapters: ["uniswap_v2_router", "sushiswap"],
+      leg_amounts_in: ["1000", "990"],
+      leg_amounts_out: ["990", "1010"],
+      leg_zero_for_one: [true, false],
+    });
+    expect(withLedger!.leg_amounts_in).toEqual(["1000", "990"]);
+    expect(withLedger!.leg_amounts_out).toEqual(["990", "1010"]);
+    expect(withLedger!.leg_zero_for_one).toEqual([true, false]);
+
+    const withoutLedger = parseRouteMetadata({
+      token_addresses: [WETH, USDC, WETH],
+      pool_addresses: ["0xp1", "0xp2"],
+      dex_adapters: ["uniswap_v2_router", "sushiswap"],
+    });
+    // Absence is the STATE "not computed" — never an empty array (R8).
+    expect(withoutLedger!.leg_amounts_in).toBeUndefined();
+    expect(withoutLedger!.leg_amounts_out).toBeUndefined();
+    expect(withoutLedger!.leg_zero_for_one).toBeUndefined();
+  });
+
+  it("filters non-string/non-boolean junk out of the ledger arrays (type-gate)", () => {
+    const rm = parseRouteMetadata({
+      token_addresses: [WETH, USDC, WETH],
+      pool_addresses: ["0xp1", "0xp2"],
+      dex_adapters: ["uniswap_v2_router", "sushiswap"],
+      leg_amounts_in: ["1000", 42, null],
+      leg_amounts_out: ["990", "1010"],
+      leg_zero_for_one: [true, "yes"],
+    });
+    expect(rm!.leg_amounts_in).toEqual(["1000"]);
+    expect(rm!.leg_amounts_out).toEqual(["990", "1010"]);
+    expect(rm!.leg_zero_for_one).toEqual([true]);
+  });
+
+  it("unwraps the REAL DecimalsMap wire shape {\"map\":{…}} (flat tolerated, junk dropped)", () => {
+    // The Rust side serializes DecimalsMap as a newtype — {"map": {...}} is
+    // what actually arrives on the wire (see prod fixtures). A flat record is
+    // tolerated for legacy/tests; non-number values drop, never coerce.
+    const nested = parseRouteMetadata({
+      token_addresses: [WETH, USDC, WETH],
+      pool_addresses: ["0xp1", "0xp2"],
+      dex_adapters: ["uniswap_v2_router", "sushiswap"],
+      decimals: { map: { [WETH]: 18, [USDC]: "6" } },
+    });
+    expect(nested!.decimals).toEqual({ [WETH]: 18 });
+
+    const flat = parseRouteMetadata({
+      token_addresses: [WETH, USDC, WETH],
+      pool_addresses: ["0xp1", "0xp2"],
+      dex_adapters: ["uniswap_v2_router", "sushiswap"],
+      decimals: { [WETH]: 18 },
+    });
+    expect(flat!.decimals).toEqual({ [WETH]: 18 });
+  });
+});
+
+// ─── HOPS-LEDGER-04 — per-leg wei ledger derivation ──────────────────────────
+
+describe("deriveLegLedger (HOPS-LEDGER-04)", () => {
+  const sizedWire = {
+    id: "led",
+    chain_id: 1,
+    strategy_kind: "dex_arb",
+    detected_at: "2026-08-11T00:00:00Z",
+    trace_id: "t",
+    dex_a: "uniswap-v2",
+    dex_b: "sushiswap",
+    token_in: WETH,
+    token_out: WETH,
+    route_metadata: {
+      token_addresses: [WETH, USDC, WETH],
+      pool_addresses: ["0xp1", "0xp2"],
+      dex_adapters: ["uniswap_v2_router", "sushiswap"],
+      leg_amounts_in: ["1000000000000000000", "990000000000000000"],
+      leg_amounts_out: ["990000000000000000", "1010000000000000000"],
+      leg_zero_for_one: [true, false],
+    },
+  } as Record<string, unknown>;
+
+  it("chains legs (leg1 in === leg0 out); delta ONLY on the closing leg", () => {
+    const opp = mapToOmniOpportunity(sizedWire);
+    const ledger = deriveLegLedger(opp);
+    expect(ledger).not.toBeNull();
+    expect(ledger).toHaveLength(2);
+    const [l0, l1] = ledger!;
+    expect(l0!.amount_in_wei).toBe("1000000000000000000");
+    expect(l0!.amount_out_wei).toBe("990000000000000000");
+    expect(l0!.cycle_delta_wei).toBeNull(); // intermediate hop: no delta (R8)
+    expect(l1!.amount_in_wei).toBe(l0!.amount_out_wei); // the ledger chains
+    expect(l1!.zero_for_one).toBe(false);
+    // closed cycle (WETH→USDC→WETH): final − initial = +10e15 wei, exact
+    expect(l1!.cycle_delta_wei).toBe("10000000000000000");
+  });
+
+  it("negative closed-cycle delta keeps its sign (loss cycle)", () => {
+    const rm = sizedWire.route_metadata as Record<string, unknown>;
+    const losing = {
+      ...rm,
+      leg_amounts_out: ["990000000000000000", "900000000000000000"],
+    };
+    const opp = mapToOmniOpportunity({ ...sizedWire, route_metadata: losing });
+    const ledger = deriveLegLedger(opp);
+    expect(ledger![1]!.cycle_delta_wei).toBe("-100000000000000000");
+  });
+
+  it("returns null when any ledger array is absent (not-Sized / triangular — R8)", () => {
+    const rm = { ...(sizedWire.route_metadata as Record<string, unknown>) };
+    delete rm.leg_amounts_in;
+    const opp = mapToOmniOpportunity({ ...sizedWire, route_metadata: rm });
+    expect(deriveLegLedger(opp)).toBeNull();
+  });
+
+  it("returns null on length mismatch vs hops (all-or-nothing, mirrors Rust attach)", () => {
+    const mismatched = {
+      ...(sizedWire.route_metadata as Record<string, unknown>),
+      leg_zero_for_one: [true], // 1 entry vs 2 hops
+    };
+    const opp = mapToOmniOpportunity({ ...sizedWire, route_metadata: mismatched });
+    expect(deriveLegLedger(opp)).toBeNull();
+  });
+
+  it("no cycle delta when the topology doesn't close (A→B→C)", () => {
+    const open = {
+      ...(sizedWire.route_metadata as Record<string, unknown>),
+      token_addresses: [WETH, USDC, DAI],
+    };
+    const opp = mapToOmniOpportunity({ ...sizedWire, route_metadata: open });
+    const ledger = deriveLegLedger(opp);
+    expect(ledger).not.toBeNull();
+    expect(ledger!.every((e) => e.cycle_delta_wei === null)).toBe(true);
   });
 });
 
