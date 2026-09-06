@@ -370,7 +370,10 @@ pub fn parse_dex_kind(label: &str) -> Result<RouterKind, SimEncoderError> {
         .collect();
     match normalized.as_str() {
         "uniswapv2" => Ok(RouterKind::UniswapV2),
-        "sushi" | "sushiswap" => Ok(RouterKind::Sushi),
+        // "sushiv2" covers the canonical display vocabulary
+        // (canonical_enums::DEXES spells "Sushi V2"); "sushiswap" the
+        // cartridge feed; "sushi" the original scanner fixtures.
+        "sushi" | "sushiswap" | "sushiv2" => Ok(RouterKind::Sushi),
         _ => Err(SimEncoderError::UnsupportedDexKind {
             dex_kind: label.to_string(),
         }),
@@ -615,9 +618,12 @@ mod tests {
         assert_eq!(parse_dex_kind("uniswap-v2"), Ok(RouterKind::UniswapV2));
         assert_eq!(parse_dex_kind("uniswapv2"), Ok(RouterKind::UniswapV2));
         assert_eq!(parse_dex_kind("UniswapV2"), Ok(RouterKind::UniswapV2));
+        assert_eq!(parse_dex_kind("Uniswap V2"), Ok(RouterKind::UniswapV2));
         assert_eq!(parse_dex_kind("sushi"), Ok(RouterKind::Sushi));
         assert_eq!(parse_dex_kind("sushiswap"), Ok(RouterKind::Sushi));
         assert_eq!(parse_dex_kind("SushiSwap"), Ok(RouterKind::Sushi));
+        // Canonical display vocabulary (canonical_enums::DEXES).
+        assert_eq!(parse_dex_kind("Sushi V2"), Ok(RouterKind::Sushi));
         assert_eq!(parse_dex_kind(" Sushi_Swap "), Ok(RouterKind::Sushi));
     }
 
