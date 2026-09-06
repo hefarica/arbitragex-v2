@@ -350,4 +350,53 @@ mod fidelity_tests {
         assert!(rm.pool_addresses[0].is_empty());
         assert!(!rm.pool_addresses[1].is_empty());
     }
+
+    // HOPS-EMIT-01: the cartridge path (cartridge_boot.rs) now persists the
+    // topology from the plan legs on EVERY emit — accepted AND rejected. This
+    // locks the contract that makes that safe: the cartridge-shape plan (legs
+    // from intent, optional pool/dex hints → "" / "unknown" fallbacks) yields a
+    // closed traversal that PASSES the insert_opportunity_with_route structural
+    // gate, while the flattened per-leg-pair token_addresses the cartridge
+    // `OpportunityCandidate` carries ([A,B,B,C,C,A]) would FAIL it — the reason
+    // the plan is the only valid source on that path.
+    #[test]
+    fn build_from_plan_cartridge_shape_passes_structural_gate() {
+        let p = plan(vec![
+            leg("0xA", "0xB", Some("0xp1"), "uniswap_v2_router"),
+            leg("0xB", "0xC", None, "unknown"),
+            leg("0xC", "0xA", Some("0xp3"), "sushiswap"),
+        ]);
+        let rm = build_route_metadata_from_plan(&p);
+        assert_eq!(rm.token_addresses, vec!["0xA", "0xB", "0xC", "0xA"]);
+        let hops = rm.dex_adapters.len();
+        assert_eq!(hops, 3);
+        // Hint-less middle leg → honest empty pool (the cartridge legs carry
+        // factory_address empty like every other producer — a zero-address
+        // sentinel would persist as a fake pool via the factory fallback).
+        assert!(rm.pool_addresses[1].is_empty());
+        // insert_opportunity_with_route gate: tokens == hops+1, pools <= hops.
+        assert_eq!(rm.token_addresses.len(), hops + 1);
+        assert!(rm.pool_addresses.len() <= hops);
+        assert!(rm.is_populated());
+
+        // Contrast: the cartridge candidate's flattened per-leg pairs.
+        let candidate_flattened = RouteMetadata {
+            pool_addresses: vec!["0xp1".to_string(), "0xp3".to_string()],
+            token_addresses: vec![
+                "0xA".to_string(),
+                "0xB".to_string(),
+                "0xB".to_string(),
+                "0xC".to_string(),
+                "0xC".to_string(),
+                "0xA".to_string(),
+            ],
+            dex_adapters: vec!["uniswap_v2_router".to_string(), "sushiswap".to_string()],
+            decimals: DecimalsMap::new(),
+        };
+        assert_ne!(
+            candidate_flattened.token_addresses.len(),
+            candidate_flattened.dex_adapters.len() + 1,
+            "flattened candidate path must FAIL the structural gate — documents why the plan legs are the source"
+        );
+    }
 }
