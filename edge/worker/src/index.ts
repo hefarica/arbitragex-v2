@@ -30,6 +30,12 @@ type Env = {
   /** Comma-separated ASN deny-list (optional). Empty by default; populate
    *  via env binding when known-abuse ASNs are identified from telemetry. */
   SYBIL_ASN_DENYLIST?: string;
+  /** EDGE-AUDIT-BUCKET-01: shared secret for the Holy Grail audit sweep's
+   *  SEPARATE bounded bucket (x-arbx-audit-token). Unset ⇒ header ignored,
+   *  behavior identical to today (fail-closed). */
+  EDGE_AUDIT_TOKEN?: string;
+  /** EDGE-AUDIT-BUCKET-01: the auditor bucket's own limit (floor = public). */
+  EDGE_AUDIT_RATE_LIMIT_PER_MIN?: string;
 };
 
 const app = new Hono<{ Bindings: Env }>();
@@ -63,6 +69,19 @@ const RL_GENERAL_MAX = Math.max(
   ) || 120,
 ); // floor 120 req/min/IP, public read endpoints
 const RL_GENERAL_WINDOW_S = 60;
+// EDGE-AUDIT-BUCKET-01 (NR-0000): the audit sweep gets its OWN bounded bucket
+// on a separate keyspace (rl_audit:*) — never an unbounded bypass. Fail-closed:
+// without EDGE_AUDIT_TOKEN the header is ignored. The audit max can only be ≥
+// the public max (operator misconfigure cannot tighten it below the public one).
+const RL_AUDIT_MAX = Math.max(
+  RL_GENERAL_MAX,
+  parseInt(
+    (typeof process !== "undefined"
+      ? process.env?.["EDGE_AUDIT_RATE_LIMIT_PER_MIN"]
+      : undefined) ?? "3000",
+    10,
+  ) || 3000,
+);
 const RL_ADMIN_MAX = 5;           // 5 admin-session attempts/min/IP
 const RL_ADMIN_WINDOW_S = 60;
 
@@ -271,7 +290,9 @@ app.use("*", async (c, next) => {
   const allowed = c.env.ALLOWED_ORIGINS === "*" ? "*" :
     c.env.ALLOWED_ORIGINS.split(",").map(s => s.trim()).includes(origin) ? origin : "";
   c.header("access-control-allow-origin", allowed);
-  c.header("access-control-allow-headers", "content-type,authorization,x-arbx-trace-id,x-arbx-admin-token,x-arbx-actor");
+  // EDGE-AUDIT-BUCKET-01: x-arbx-audit-token must be preflight-allowed so
+  // browser-originated audit fetches (CDP setExtraHTTPHeaders) can carry it.
+  c.header("access-control-allow-headers", "content-type,authorization,x-arbx-trace-id,x-arbx-admin-token,x-arbx-actor,x-arbx-audit-token");
   // V-AT-1: must echo allow-credentials so the browser sends arbx_admin_session
   // cookie on cross-origin admin calls. Allowed origin is already restricted
   // (no "*"), so credentialed CORS is safe.
@@ -354,9 +375,28 @@ app.use("*", async (c, next) => {
   if (isInternalSsr) {
     c.header("x-ratelimit-remaining", "exempt");
   } else {
-    const rl = await checkRl(c.env, ip, RL_GENERAL_MAX, RL_GENERAL_WINDOW_S, "rl");
-    c.header("x-ratelimit-remaining", String(rl.remaining));
-    if (!rl.ok) return c.json({ error: "rate_limited" }, 429);
+    // EDGE-AUDIT-BUCKET-01: valid audit token ⇒ separate bounded bucket
+    // (rl_audit keyspace), NOT the public per-IP one, NOT a bypass.
+    const auditSecret =
+      (typeof process !== "undefined" ? process.env?.["EDGE_AUDIT_TOKEN"] : undefined) ??
+      c.env.EDGE_AUDIT_TOKEN;
+    const auditToken = c.req.header("x-arbx-audit-token");
+    const isAuditor = !!auditSecret && !!auditToken && auditToken === auditSecret;
+    if (isAuditor) {
+      const rl = await checkRl(
+        c.env,
+        `audit:${ip}`,
+        RL_AUDIT_MAX,
+        RL_GENERAL_WINDOW_S,
+        "rl_audit",
+      );
+      c.header("x-ratelimit-remaining", String(rl.remaining));
+      if (!rl.ok) return c.json({ error: "rate_limited" }, 429);
+    } else {
+      const rl = await checkRl(c.env, ip, RL_GENERAL_MAX, RL_GENERAL_WINDOW_S, "rl");
+      c.header("x-ratelimit-remaining", String(rl.remaining));
+      if (!rl.ok) return c.json({ error: "rate_limited" }, 429);
+    }
   }
 
   await next();
