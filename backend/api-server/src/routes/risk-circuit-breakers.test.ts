@@ -29,6 +29,7 @@
  */
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { __forTesting } from "./risk-circuit-breakers.js";
+import { metricsText } from "@arbx/shared";
 
 const {
   makeDrawdownBreaker,
@@ -50,6 +51,8 @@ const {
   DD_MIN_SPAN_HOURS,
   persistBreakerTrips,
   resetTripEpisodeState,
+  emitBreakerMetrics,
+  CB_STATE_METRIC,
 } = __forTesting;
 
 const SAVED_ENV = { ...process.env };
@@ -559,6 +562,74 @@ describe("persistBreakerTrips", () => {
   it("null pool is a no-op", async () => {
     const logger = { warn: () => {} };
     await expect(persistBreakerTrips({ pool: null, logger }, [trippedBreakerRow()], 1)).resolves.toBeUndefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// A.6 Prometheus emission — arbx_risk_cb_* (A6-CBPROM-01).
+// ---------------------------------------------------------------------------
+
+describe("A.6 Prometheus emission (arbx_risk_cb_*)", () => {
+  it("maps every wire state to the documented gauge value (7 states, no collisions)", () => {
+    const values = Object.values(CB_STATE_METRIC);
+    expect(values.length).toBe(7);
+    expect(new Set(values).size).toBe(7);
+    expect(CB_STATE_METRIC.PASS).toBe(0);
+    expect(CB_STATE_METRIC.WARN).toBe(1);
+    expect(CB_STATE_METRIC.PAUSED).toBe(2);
+    expect(CB_STATE_METRIC.KILLED).toBe(3);
+    expect(CB_STATE_METRIC.BLOCKED).toBe(4);
+    expect(CB_STATE_METRIC.NOT_AVAILABLE).toBe(5);
+    expect(CB_STATE_METRIC.UNKNOWN).toBe(6);
+  });
+
+  it("emitBreakerMetrics sets arbx_risk_cb_state for the 10 breakers + last-eval unixtime", async () => {
+    const breakers = buildAllBreakers(baseCtx);
+    const at = new Date("2026-05-13T00:00:00Z");
+    emitBreakerMetrics(breakers, at);
+    // Assert on the Prometheus exposition format itself — the exact lines the
+    // scraper sees on api-server /metrics.
+    const { body } = await metricsText();
+    const stateLines = body
+      .split("\n")
+      .filter((l) => l.startsWith("arbx_risk_cb_state{"))
+      .map((l) => /name="([a-z_]+)"} (\d+)$/.exec(l));
+    expect(stateLines.every(Boolean)).toBe(true);
+    const byName = new Map(stateLines.map((m) => [m![1]!, Number(m![2])]));
+    expect([...byName.keys()].sort()).toEqual([...BREAKER_IDS].sort());
+    // baseCtx honest expectations: executor env missing → BLOCKED; kill-switch
+    // disarmed → PASS; DD without ledger → NOT_AVAILABLE (never fabricated).
+    expect(byName.get("executor_breaker")).toBe(CB_STATE_METRIC.BLOCKED);
+    expect(byName.get("global_kill_switch")).toBe(CB_STATE_METRIC.PASS);
+    expect(byName.get("drawdown_breaker")).toBe(CB_STATE_METRIC.NOT_AVAILABLE);
+    expect(body).toContain(
+      `arbx_risk_cb_last_eval_unixtime ${Math.floor(at.getTime() / 1000)}`,
+    );
+  });
+
+  it("trip episodes increment arbx_risk_cb_trips_total exactly once per NEW episode", async () => {
+    const series = 'arbx_risk_cb_trips_total{name="revert_rate_breaker",state="PAUSED"}';
+    const readTrips = async (): Promise<number> => {
+      const { body } = await metricsText();
+      const line = body.split("\n").find((l) => l.startsWith(series));
+      return line ? Number(line.slice(series.length).trim()) : 0;
+    };
+    const before = await readTrips();
+    const logger = { warn: () => {} };
+
+    // First evaluation of a tripped breaker → new episode → +1.
+    const { pool } = makeFakePool({ latestState: null });
+    await persistBreakerTrips({ pool, logger }, [trippedBreakerRow()], 1);
+    expect(await readTrips()).toBe(before + 1);
+
+    // Same episode re-polled → no additional trip counted (dedupe contract).
+    await persistBreakerTrips({ pool, logger }, [trippedBreakerRow()], 1);
+    expect(await readTrips()).toBe(before + 1);
+
+    // Cold start seeded from risk_events with the same state → episode continues.
+    const { pool: seededPool } = makeFakePool({ latestState: "PAUSED" });
+    await persistBreakerTrips({ pool: seededPool, logger }, [trippedBreakerRow()], 1);
+    expect(await readTrips()).toBe(before + 1);
   });
 });
 

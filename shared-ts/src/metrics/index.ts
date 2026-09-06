@@ -150,6 +150,40 @@ export const runtimeAckBroadcastLatencyMs = new Histogram({
   registers: [registry],
 });
 
+// ─────────── A.6: doctrinal risk circuit-breaker emission ───────────
+// Emitted by api-server's risk-circuit-breakers route so Prometheus can alert
+// on breaker trips without anyone polling the status endpoint. Deliberately a
+// SEPARATE family from arbx_cb_state above: that gauge carries the selector-api
+// Sprint-3 infra breakers with a 0/1/2 (closed/half_open/open) vocabulary,
+// while the risk suite uses the richer PASS/WARN/PAUSED/KILLED/BLOCKED/
+// NOT_AVAILABLE/UNKNOWN vocabulary (mapping lives in the emitting route).
+export const riskCbStateGauge = new Gauge({
+  name: "arbx_risk_cb_state",
+  help: "Doctrinal risk circuit-breaker state (0=PASS,1=WARN,2=PAUSED,3=KILLED,4=BLOCKED,5=NOT_AVAILABLE,6=UNKNOWN)",
+  labelNames: ["name"] as const,
+  registers: [registry],
+});
+
+export const riskCbTripsTotal = new Counter({
+  name: "arbx_risk_cb_trips_total",
+  help: "Risk circuit-breaker trip episodes (transition into KILLED/PAUSED) by breaker + state",
+  labelNames: ["name", "state"] as const,
+  registers: [registry],
+});
+
+export const riskCbLastEvalUnixtime = new Gauge({
+  name: "arbx_risk_cb_last_eval_unixtime",
+  help: "Unix time of the last full risk circuit-breaker evaluation (all breakers re-emitted)",
+  registers: [registry],
+});
+
+export const riskCbEvalFailuresTotal = new Counter({
+  name: "arbx_risk_cb_eval_failures_total",
+  help: "Risk circuit-breaker evaluation failures by stage (collect/build/emit)",
+  labelNames: ["stage"] as const,
+  registers: [registry],
+});
+
 export function initMetrics(serviceName: string) {
   serviceUp.labels(serviceName).set(1);
 }

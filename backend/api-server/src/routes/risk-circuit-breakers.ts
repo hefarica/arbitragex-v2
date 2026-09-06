@@ -45,7 +45,13 @@
 
 import type { Application, Request, Response } from "express";
 import type pg from "pg";
-import { KillSwitchClient } from "@arbx/shared";
+import {
+  KillSwitchClient,
+  riskCbEvalFailuresTotal,
+  riskCbLastEvalUnixtime,
+  riskCbStateGauge,
+  riskCbTripsTotal,
+} from "@arbx/shared";
 
 import { verifyAll } from "../readiness/verifiers/index.js";
 import type { ReadinessReport } from "../readiness/types.js";
@@ -1249,6 +1255,33 @@ function buildAllBreakers(ctx: EvalCtx): CircuitBreaker[] {
 }
 
 // ---------------------------------------------------------------------------
+// A.6 Prometheus emission — the evaluated breaker state leaves the process on
+// the shared registry (scraped at /metrics) so alerts.rules.yml (group
+// `circuit_breakers`) can fire without anyone polling the status endpoint.
+// ---------------------------------------------------------------------------
+
+/** Wire-state → gauge value. Mirrors the help string on arbx_risk_cb_state. */
+const CB_STATE_METRIC: Record<BreakerState, number> = {
+  PASS: 0,
+  WARN: 1,
+  PAUSED: 2,
+  KILLED: 3,
+  BLOCKED: 4,
+  NOT_AVAILABLE: 5,
+  UNKNOWN: 6,
+};
+
+function emitBreakerMetrics(breakers: CircuitBreaker[], now: Date): void {
+  for (const b of breakers) {
+    riskCbStateGauge.labels(b.id).set(CB_STATE_METRIC[b.state]);
+  }
+  riskCbLastEvalUnixtime.set(Math.floor(now.getTime() / 1000));
+}
+
+/** Cadence of the background evaluation loop started by mountRiskCircuitBreakers. */
+const CB_EMIT_INTERVAL_MS = 60_000;
+
+// ---------------------------------------------------------------------------
 // Trip persistence → risk_events (best-effort, deduplicated per episode).
 //
 // Shape mirrors the recon / selector-api inserts (migration 009 + 060):
@@ -1306,6 +1339,9 @@ async function persistBreakerTrips(
         tripEpisodeState.set(b.id, b.state);
         continue; // same episode — already persisted, do not insert again
       }
+      // New trip episode: count it — the trip happened even if the insert below
+      // fails (the counter and the risk_events row share the episode contract).
+      riskCbTripsTotal.labels(b.id, b.state).inc();
       await deps.pool.query(
         `INSERT INTO risk_events (event_type, severity, source_service, payload, chain_id)
          VALUES ($1, $2, 'api-server', $3::jsonb, $4)`,
@@ -1363,6 +1399,8 @@ export const __forTesting = {
   DD_MIN_SPAN_HOURS,
   persistBreakerTrips,
   resetTripEpisodeState,
+  emitBreakerMetrics,
+  CB_STATE_METRIC,
   VERSION,
 };
 
@@ -1382,6 +1420,7 @@ export function mountRiskCircuitBreakers(
     try {
       const ctx = await collectCtx({ pool: deps.pool, killSwitch: deps.killSwitch });
       const breakers = buildAllBreakers(ctx);
+      emitBreakerMetrics(breakers, new Date(ctx.now));
       const summary = summarize(breakers);
       const overallState = overall(breakers);
       // Best-effort trip persistence — internal failures are logged, never surfaced as 5xx.
@@ -1469,4 +1508,26 @@ export function mountRiskCircuitBreakers(
       res.status(200).json(response);
     }
   });
+
+  // A.6 periodic emission: evaluate on a fixed cadence so the gauges exist
+  // (and trips persist to risk_events) even when nobody polls the status
+  // endpoint. First run fires immediately at boot so /metrics is populated
+  // from the start; the timer is unref'd so it never keeps the process alive
+  // on shutdown. Failures increment arbx_risk_cb_eval_failures_total and are
+  // logged — they never crash the service (R8: an evaluation failure is
+  // reported, never silently skipped or fabricated as a state).
+  const emitTick = async (): Promise<void> => {
+    try {
+      const ctx = await collectCtx({ pool: deps.pool, killSwitch: deps.killSwitch });
+      const breakers = buildAllBreakers(ctx);
+      emitBreakerMetrics(breakers, new Date(ctx.now));
+      await persistBreakerTrips(deps, breakers, ctx.chainId);
+    } catch (e) {
+      riskCbEvalFailuresTotal.labels("periodic").inc();
+      deps.logger.warn({ event: "circuit_breakers.periodic_emit_failed", err: (e as Error).message });
+    }
+  };
+  void emitTick();
+  const emitTimer = setInterval(() => void emitTick(), CB_EMIT_INTERVAL_MS);
+  emitTimer.unref?.();
 }
