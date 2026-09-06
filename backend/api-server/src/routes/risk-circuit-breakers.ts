@@ -1339,9 +1339,18 @@ async function persistBreakerTrips(
         tripEpisodeState.set(b.id, b.state);
         continue; // same episode — already persisted, do not insert again
       }
-      // New trip episode: count it — the trip happened even if the insert below
-      // fails (the counter and the risk_events row share the episode contract).
+      // New trip episode: count EXACTLY once. The episode map is set BEFORE the
+      // INSERT await (REVIEW-FIX, adversarial): setting it only on insert
+      // success meant a persistently failing INSERT re-classified the same
+      // physical episode as new on every 60s tick, inflating
+      // arbx_risk_cb_trips_total +1/min (~1440/day) for one trip — contradicting
+      // the help text "trip episodes". Node is single-threaded, so the
+      // synchronous set() also closes the concurrent status-poll/periodic-tick
+      // double-count window. Known residual (accepted): if the INSERT fails the
+      // durable risk_events row is lost for this process lifetime (warn below),
+      // and a process restart re-counts a still-tripped breaker once.
       riskCbTripsTotal.labels(b.id, b.state).inc();
+      tripEpisodeState.set(b.id, b.state);
       await deps.pool.query(
         `INSERT INTO risk_events (event_type, severity, source_service, payload, chain_id)
          VALUES ($1, $2, 'api-server', $3::jsonb, $4)`,
@@ -1362,7 +1371,6 @@ async function persistBreakerTrips(
           chainId,
         ],
       );
-      tripEpisodeState.set(b.id, b.state);
     } catch (e) {
       // Best-effort by contract: log and keep serving the status response.
       deps.logger.warn({ event: "circuit_breakers.trip_persist_failed", breaker: b.id, err: (e as Error).message });

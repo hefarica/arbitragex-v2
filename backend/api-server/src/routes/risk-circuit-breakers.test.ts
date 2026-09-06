@@ -631,6 +631,32 @@ describe("A.6 Prometheus emission (arbx_risk_cb_*)", () => {
     await persistBreakerTrips({ pool: seededPool, logger }, [trippedBreakerRow()], 1);
     expect(await readTrips()).toBe(before + 1);
   });
+
+  it("REVIEW-FIX: persistently failing INSERT counts the episode exactly ONCE (no +1 per tick)", async () => {
+    const series = 'arbx_risk_cb_trips_total{name="revert_rate_breaker",state="PAUSED"}';
+    const readTrips = async (): Promise<number> => {
+      const { body } = await metricsText();
+      const line = body.split("\n").find((l) => l.startsWith(series));
+      return line ? Number(line.slice(series.length).trim()) : 0;
+    };
+    const before = await readTrips();
+    const logger = { warn: () => {} };
+
+    // INSERT persistently fails (disk full / constraint drift — this VPS has
+    // had both). The trip still happened → counted ONCE. Previously the
+    // episode map was only set on insert success, so every 60s tick
+    // re-classified the same physical episode as new → +1/min inflation
+    // (~1440/day) for one real trip, contradicting the help text.
+    const { pool: failPool } = makeFakePool({ latestState: null, failInserts: true });
+    await persistBreakerTrips({ pool: failPool, logger }, [trippedBreakerRow()], 1);
+    expect(await readTrips()).toBe(before + 1);
+
+    // The next 3 periodic ticks with the insert still failing → still ONE.
+    await persistBreakerTrips({ pool: failPool, logger }, [trippedBreakerRow()], 1);
+    await persistBreakerTrips({ pool: failPool, logger }, [trippedBreakerRow()], 1);
+    await persistBreakerTrips({ pool: failPool, logger }, [trippedBreakerRow()], 1);
+    expect(await readTrips()).toBe(before + 1);
+  });
 });
 
 // ---------------------------------------------------------------------------

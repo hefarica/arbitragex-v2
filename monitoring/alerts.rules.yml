@@ -321,13 +321,20 @@ groups:
       # ── Hard risk stops: KILLED(3) / BLOCKED(4) / UNKNOWN(6) ─────────────────
       # Page immediately: these states gate LIVE by doctrine (kill_switch,
       # hard_pause, blocked routes/tokens, or the breaker could not be evaluated).
+      # REVIEW-FIX (adversarial, 2 dimensions + 4/4 skeptics): the enum is NOT
+      # severity-ordered — NOT_AVAILABLE(5) sorts ABOVE KILLED(3) — so `>= 3`
+      # would page critical 24/7 on the system's honest steady state (unset
+      # ARBX_CB_*/ARBX_RISK_* env → 5), and via alertmanager inhibit_rules
+      # (critical suppresses warning per service) it would silence EvalStale,
+      # HighHTTP5xxRate and every other api-server warning. Enumerate the three
+      # hard states exactly; state 5 has its own dedicated delayed rule below.
       - alert: RiskCircuitBreakerHardDown
-        expr: arbx_risk_cb_state >= 3
+        expr: arbx_risk_cb_state == 3 or arbx_risk_cb_state == 4 or arbx_risk_cb_state == 6
         labels:
           severity: critical
           platform: arbitragex
         annotations:
-          summary: "Risk breaker {{ $labels.name }} hard-down (state >= 3: KILLED/BLOCKED/UNKNOWN)"
+          summary: "Risk breaker {{ $labels.name }} hard-down (KILLED/BLOCKED/UNKNOWN)"
           description: "Doctrinal risk circuit breaker {{ $labels.name }} reports a hard state. Check /api/v1/risk/circuit-breakers/status for evidence and required_action; trips are persisted in risk_events."
 
       # ── PAUSED(2): tiered pause (e.g. drawdown tier crossed) ──────────────────
