@@ -1281,8 +1281,14 @@ pub async fn active_evaluate_and_emit(
                                     .clone()
                                     .unwrap_or_else(|| "unknown".to_string()),
                                 protocol_type: format!("{:?}", leg.protocol_type),
-                                factory_address: "0x0000000000000000000000000000000000000000"
-                                    .to_string(), // Unknown at cartridge layer
+                                // Unknown at cartridge layer — empty like every
+                                // other producer (scanner.rs/dex_engine.rs). The
+                                // zero address is a sentinel (RULE 02) and
+                                // build_route_metadata_from_plan's factory
+                                // fallback would persist it as a fake pool on
+                                // mempool-decoded rows (pool_hint is never set
+                                // by the decoder — HOPS-EMIT-01 review note).
+                                factory_address: String::new(),
                                 pool_id: None,
                                 pool_address: leg.pool_hint.map(|p| format!("{:#x}", p)),
                                 token_in: format!("{:#x}", leg.token_in),
@@ -1300,6 +1306,23 @@ pub async fn active_evaluate_and_emit(
                     estimated_slippage_pct: None,
                     price_impact_pct: None,
                 };
+
+                // HOPS-EMIT-01: resolve the route topology ONCE for every emit
+                // below — accepted AND rejected. The plan legs carry the true
+                // traversal path ([A,B,C,A]); `candidate.token_addresses` above
+                // flattens per-leg pairs ([A,B,B,C,C,A]) and would fail the
+                // persistence structural gate (token_addresses.len() == hops+1),
+                // so the PLAN is the only valid source on this path. No legs →
+                // None → '{}' (R8: same as before, never a fabricated topology).
+                let route_metadata = {
+                    let rm = crate::persistence::build_route_metadata_from_plan(&route_plan);
+                    if rm.is_populated() {
+                        Some(rm)
+                    } else {
+                        None
+                    }
+                };
+                let route_ref = route_metadata.as_ref();
 
                 // Map the cartridge category to its canonical StrategyLabel so the
                 // downstream evaluator (config_aware.rs) branches on the TRUE strategy
@@ -1337,7 +1360,7 @@ pub async fn active_evaluate_and_emit(
                         let mut opp = opportunity.clone();
                         opp.rejection_reason = Some(reason.clone());
                         if let Err(e) = emitter
-                            .emit_rejected(&opp, StrategyLabel::DexArbV2V2, &reason, None)
+                            .emit_rejected(&opp, StrategyLabel::DexArbV2V2, &reason, route_ref)
                             .await
                         {
                             warn!(
@@ -1422,7 +1445,7 @@ pub async fn active_evaluate_and_emit(
                             opp.rejection_reason = Some(reason_str.clone());
                             opp.expected_profit_usd = None;
                             if let Err(e) =
-                                emitter.emit_rejected(&opp, label, &reason_str, None).await
+                                emitter.emit_rejected(&opp, label, &reason_str, route_ref).await
                             {
                                 warn!(
                                     event = "cartridge.emit_rejected_failed",
@@ -1501,11 +1524,29 @@ async fn process_cartridge_candidate(
     let label = sc.label;
     let label_str = label.as_str();
 
+    // HOPS-EMIT-01 (same rationale as active_evaluate_and_emit): every emit
+    // below — engine rejection, NoTradingConfig, spine gate verdicts, and the
+    // accepted arm — persists the topology built from the plan legs, so
+    // rejected cartridge rows keep their visible route (RULE 00: ~100% of live
+    // rows are rejections; a route on accepted-only emissions would leave the
+    // dashboard blind exactly where the operator looks). sc.candidate's
+    // flattened token pairs are NOT a valid source (structural gate), only the
+    // plan legs are.
+    let route_metadata = {
+        let rm = crate::persistence::build_route_metadata_from_plan(&sc.route_plan);
+        if rm.is_populated() {
+            Some(rm)
+        } else {
+            None
+        }
+    };
+    let route_ref = route_metadata.as_ref();
+
     // Engine-level rejection: emit rejected immediately
     if let Some(reason) = &sc.rejection_reason {
         let mut opp = sc.opportunity.clone();
         opp.rejection_reason = Some(reason.clone());
-        emitter.emit_rejected(&opp, label, reason, None).await?;
+        emitter.emit_rejected(&opp, label, reason, route_ref).await?;
         return Ok(());
     }
 
@@ -1518,7 +1559,7 @@ async fn process_cartridge_candidate(
         let reason = "NoTradingConfig".to_string();
         let mut opp = sc.opportunity.clone();
         opp.rejection_reason = Some(reason.clone());
-        emitter.emit_rejected(&opp, label, &reason, None).await?;
+        emitter.emit_rejected(&opp, label, &reason, route_ref).await?;
         return Ok(());
     };
 
@@ -1550,14 +1591,14 @@ async fn process_cartridge_candidate(
                     let reason = format!("{:?}", reject_reason);
                     let mut opp = sc.opportunity.clone();
                     opp.rejection_reason = Some(reason.clone());
-                    emitter.emit_rejected(&opp, label, &reason, None).await?;
+                    emitter.emit_rejected(&opp, label, &reason, route_ref).await?;
                 }
                 None => {
                     // Accepted — outcome carries net profit and ROI
                     let mut opp = sc.opportunity.clone();
                     opp.net_expected_profit_usd = Some(outcome.net_profit_usd);
                     opp.roi_pct = Some(outcome.net_roi_pct);
-                    emitter.emit_accepted(&opp, label, None).await?;
+                    emitter.emit_accepted(&opp, label, route_ref).await?;
                 }
             }
         }
@@ -1567,13 +1608,13 @@ async fn process_cartridge_candidate(
             let reason = format!("TokenNotAllowed:{}", token_symbol_or_addr);
             let mut opp = sc.opportunity.clone();
             opp.rejection_reason = Some(reason.clone());
-            emitter.emit_rejected(&opp, label, &reason, None).await?;
+            emitter.emit_rejected(&opp, label, &reason, route_ref).await?;
         }
         ConfigGateOutcome::StrategyDisabled { strategy_kind: sk } => {
             let reason = format!("StrategyDisabled:{}", sk);
             let mut opp = sc.opportunity.clone();
             opp.rejection_reason = Some(reason.clone());
-            emitter.emit_rejected(&opp, label, &reason, None).await?;
+            emitter.emit_rejected(&opp, label, &reason, route_ref).await?;
         }
         ConfigGateOutcome::StrategyConfigGateBlocked {
             reason: reject_reason,
@@ -1581,7 +1622,7 @@ async fn process_cartridge_candidate(
             let reason = format!("StrategyConfigGateBlocked:{:?}", reject_reason);
             let mut opp = sc.opportunity.clone();
             opp.rejection_reason = Some(reason.clone());
-            emitter.emit_rejected(&opp, label, &reason, None).await?;
+            emitter.emit_rejected(&opp, label, &reason, route_ref).await?;
         }
     }
 
