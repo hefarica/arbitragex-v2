@@ -225,8 +225,9 @@ pub struct SizedCandidate {
     /// `leg_amounts_out[i]` leaves it (leg 1's input IS leg 0's output).
     /// `Some` only where the kernel computed real leg outputs (V2/V3 2-leg
     /// kernels); `None` = per-leg not computed (triangular kernel exposes only
-    /// the final cycle amount; hand-built fixtures) — R8, never fabricated.
-    /// Exact wei strings, NOT f64 (precision loss above 2^53).
+    /// the final cycle amount; Kelly rebinds the size and per-leg cannot be
+    /// re-quoted without another RPC pass; hand-built fixtures) — R8, never
+    /// fabricated. Exact wei strings, NOT f64 (precision loss above 2^53).
     pub leg_amounts_in: Option<Vec<String>>,
     pub leg_amounts_out: Option<Vec<String>>,
 }
@@ -615,6 +616,12 @@ impl SizeOptimizer {
             sized.gross_profit_usd = new_gross;
             sized.estimated_net_profit_usd = new_net;
             sized.net_negative = true;
+            // HOPS-LEDGER-04: the per-leg ledger was computed at the KERNEL
+            // size, not the Kelly-capped size — re-quoting per leg is another
+            // RPC round, so the honest state is absent (R8), never a stale
+            // chain that contradicts the rescaled figures above.
+            sized.leg_amounts_in = None;
+            sized.leg_amounts_out = None;
             return OptimizeOutcome::Sized(Box::new(sized));
         }
         // Re-check gas floor on the scaled profit. A Kelly cap that drives
@@ -627,6 +634,10 @@ impl SizeOptimizer {
         sized.optimal_amount_in = kelly_cap_wei;
         sized.gross_profit_usd = new_gross;
         sized.estimated_net_profit_usd = new_net;
+        // HOPS-LEDGER-04: same rationale as the net_negative bind arm above —
+        // ledger computed at the kernel size, not the Kelly-capped size.
+        sized.leg_amounts_in = None;
+        sized.leg_amounts_out = None;
         OptimizeOutcome::Sized(Box::new(sized))
     }
 

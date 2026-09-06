@@ -209,6 +209,11 @@ impl RouteMetadata {
         if amounts_in.len() != hops || amounts_out.len() != hops {
             return false;
         }
+        // A malformed token path cannot yield honest swap orientations —
+        // refuse rather than fabricate `false` directions (R8).
+        if self.token_addresses.len() != hops + 1 {
+            return false;
+        }
         let zero_for_one = (0..hops)
             .map(|i| {
                 // token_in < token_out (ascending) ⇒ input IS token0 ⇒ 0→1.
@@ -494,6 +499,32 @@ mod tests {
         };
         // Length mismatch (1 vs 2 hops) ⇒ nothing attached, no partial ledger.
         assert!(!rm.attach_leg_ledger(&["1000".to_string()], &["995".to_string()]));
+        assert!(rm.leg_amounts_in.is_none());
+        assert!(rm.leg_amounts_out.is_none());
+        assert!(rm.leg_zero_for_one.is_none());
+    }
+
+    // HOPS-LEDGER-04 review minor-1: a malformed token path (tokens ≠ hops+1)
+    // must REFUSE the attach — deriving orientations from a broken path would
+    // fabricate `false` directions on the legs lacking a pair (R8).
+    #[test]
+    fn test_attach_leg_ledger_refuses_malformed_token_path() {
+        let mut rm = RouteMetadata {
+            pool_addresses: vec!["0xpool1".into(), "0xpool2".into()],
+            // 3 tokens for 2 hops is coherent, but use 2 (malformed): leg 1
+            // has no out-token pair.
+            token_addresses: vec!["0xA".into(), "0xB".into()],
+            dex_adapters: vec!["uni".into(), "sushi".into()],
+            decimals: DecimalsMap::new(),
+            leg_amounts_in: None,
+            leg_amounts_out: None,
+            leg_zero_for_one: None,
+        };
+        // Amounts ARE correctly aligned (2 vs 2 hops) — the token path is not.
+        assert!(!rm.attach_leg_ledger(
+            &["1000".to_string(), "995".to_string()],
+            &["995".to_string(), "1010".to_string()]
+        ));
         assert!(rm.leg_amounts_in.is_none());
         assert!(rm.leg_amounts_out.is_none());
         assert!(rm.leg_zero_for_one.is_none());

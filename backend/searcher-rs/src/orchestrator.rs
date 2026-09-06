@@ -848,8 +848,14 @@ impl Orchestrator {
                     .unwrap_or_default(),
             )
         };
-        let mut sized_batch: Vec<(crate::net_bps_ranking::RankedRoute, StrategyCandidate)> =
-            Vec::new();
+        // HOPS-LEDGER-04: per-leg wei (in, out) from the sizing kernel,
+        // threaded alongside the candidate to process_candidate.
+        type SizedBatchEntry = (
+            crate::net_bps_ranking::RankedRoute,
+            StrategyCandidate,
+            Option<(Vec<String>, Vec<String>)>,
+        );
+        let mut sized_batch: Vec<SizedBatchEntry> = Vec::new();
         for candidate in all_candidates {
             // Skip sizing for already-rejected candidates (engine rejection).
             if candidate.rejection_reason.is_some() {
@@ -859,6 +865,9 @@ impl Orchestrator {
                         economics: crate::net_bps_ranking::RouteNetEconomics::not_computable(),
                     },
                     candidate,
+                    // HOPS-LEDGER-04: engine-rejected rows never reached the
+                    // sizing kernel — no per-leg wei exists (R8 absence).
+                    None,
                 ));
                 continue;
             }
@@ -916,7 +925,7 @@ impl Orchestrator {
                 optimal_amount_in = ?outcome.optimal_amount_in(),
             );
 
-            let (final_candidate, net_economics) = match outcome {
+            let (final_candidate, net_economics, leg_ledger) = match outcome {
                 OptimizeOutcome::Sized(sized) => {
                     // Unbox and update the candidate with optimal sizing data.
                     let s = *sized;
@@ -932,7 +941,15 @@ impl Orchestrator {
                     c.opportunity.net_expected_profit_usd = Some(s.estimated_net_profit_usd);
                     // ARBX-0009: sheet-07 components from the kernel for the
                     // batch's Net_bps ranking (None ⇒ not computable ⇒ last).
-                    (c, s.net_economics)
+                    // HOPS-LEDGER-04: thread the kernel's exact per-leg wei to
+                    // process_candidate — attached there onto the chosen
+                    // RouteMetadata (None when the kernel had no per-leg math
+                    // or Kelly rebound the size).
+                    let legs = match (s.leg_amounts_in, s.leg_amounts_out) {
+                        (Some(amounts_in), Some(amounts_out)) => Some((amounts_in, amounts_out)),
+                        _ => None,
+                    };
+                    (c, s.net_economics, legs)
                 }
                 OptimizeOutcome::Rejected(reason) => {
                     // Route optimizer rejection to REJECTED_NO_PROFIT_TOTAL
@@ -965,7 +982,7 @@ impl Orchestrator {
                     // detección. La tarjeta debe mostrar los números reales para
                     // que el operador vea POR QUÉ no es viable.
                     // c.opportunity.expected_profit_usd = None;  ← REMOVIDO
-                    (c, None)
+                    (c, None, None)
                 }
             };
             sized_batch.push((
@@ -975,13 +992,14 @@ impl Orchestrator {
                         .unwrap_or_else(crate::net_bps_ranking::RouteNetEconomics::not_computable),
                 },
                 final_candidate,
+                leg_ledger,
             ));
         }
 
         // Phase 2 (ARBX-0009): deterministic sheet-07 Net_bps ordering, then
         // emit. One summary line per multi-candidate batch (R9 — per-item
         // detail already logged at debug in Phase 1).
-        sized_batch.sort_by(|(a, _), (b, _)| crate::net_bps_ranking::net_bps_order(a, b));
+        sized_batch.sort_by(|(a, _, _), (b, _, _)| crate::net_bps_ranking::net_bps_order(a, b));
         if sized_batch.len() > 1 {
             debug!(
                 event = "orchestrator.net_bps_ranked_batch",
@@ -989,12 +1007,12 @@ impl Orchestrator {
                 batch = sized_batch.len(),
                 order = ?sized_batch
                     .iter()
-                    .map(|(r, _)| (r.route_key.as_str(), r.economics.net_bps()))
+                    .map(|(r, _, _)| (r.route_key.as_str(), r.economics.net_bps()))
                     .collect::<Vec<_>>(),
             );
         }
-        for (_, candidate) in sized_batch {
-            self.process_candidate(candidate, cfg_snapshot.as_ref(), chain_id)
+        for (_, candidate, leg_ledger) in sized_batch {
+            self.process_candidate(candidate, leg_ledger, cfg_snapshot.as_ref(), chain_id)
                 .await?;
         }
 
@@ -1013,6 +1031,11 @@ impl Orchestrator {
     async fn process_candidate(
         &self,
         sc: StrategyCandidate,
+        // HOPS-LEDGER-04: exact per-leg wei (in, out) from the sizing kernel,
+        // aligned with route_plan legs. `None` when sizing didn't run, the
+        // kernel has no per-leg math, or Kelly rebound the size. Attached onto
+        // the chosen metadata below so every emit persists it (RULE 00).
+        leg_ledger: Option<(Vec<String>, Vec<String>)>,
         cfg: Option<&TradingConfigState>,
         chain_id: u64,
     ) -> anyhow::Result<()> {
@@ -1057,6 +1080,21 @@ impl Orchestrator {
             {
                 chosen.pool_addresses = c.pool_addresses.clone();
                 chosen.dex_adapters = c.dex_adapters.clone();
+            }
+            // HOPS-LEDGER-04: attach the kernel's per-leg ledger AFTER the
+            // source merge — attach_leg_ledger is all-or-nothing, so a
+            // backfill that changed the hop count refuses the attach (never
+            // a partial/misaligned ledger — R8).
+            if let Some((amounts_in, amounts_out)) = leg_ledger {
+                if !chosen.attach_leg_ledger(&amounts_in, &amounts_out) {
+                    debug!(
+                        event = "orchestrator.leg_ledger_attach_mismatch",
+                        hops = chosen.dex_adapters.len(),
+                        amounts_in_len = amounts_in.len(),
+                        amounts_out_len = amounts_out.len(),
+                        "leg ledger length mismatch vs chosen topology — ledger omitted (R8)"
+                    );
+                }
             }
             if chosen.is_populated() {
                 Some(chosen)
