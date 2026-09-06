@@ -947,7 +947,8 @@ async fn run_loop(
         // re-price through the adapter; the rest are skipped with a
         // counted reason (R8 — scoped-out is a decision, never a silent
         // drop). CycleIndex build failure ⇒ fail-OPEN to full service
-        // with a warn (never a partial scope).
+        // with a warn (never a partial scope). Scope computation lives
+        // in `scoped_route_hashes` below (pure, unit-tested).
         let mut scoped_hashes: Option<std::collections::HashSet<String>> = None;
         let mut scoped_reeval_cycles = 0usize;
         let mut scoped_reeval_routes = 0usize;
@@ -959,30 +960,11 @@ async fn run_loop(
                     seeds.push(pair);
                 }
                 if !seeds.is_empty() {
-                    let mut cycles: Vec<Vec<usize>> = Vec::new();
-                    let mut hash_by_cycle: Vec<String> = Vec::new();
-                    for c in tick
-                        .routes
-                        .iter()
-                        .filter(|c| c.route_kind == RouteKind::Triangular)
-                    {
-                        if let Some(cyc) = dense_cycle(chain_id, &c.tokens, builder) {
-                            hash_by_cycle.push(c.route_hash.clone());
-                            cycles.push(cyc);
-                        }
-                    }
-                    match CycleIndex::build(builder.len(), cycles) {
-                        Ok(ix) => {
-                            let affected = ix.affected_cycles(seeds.iter().copied());
-                            let set: std::collections::HashSet<String> = hash_by_cycle
-                                .iter()
-                                .enumerate()
-                                .filter(|(ci, _)| affected.contains(ci))
-                                .map(|(_, h)| h.clone())
-                                .collect();
-                            scoped_reeval_cycles = affected.len();
-                            scoped_reeval_routes = set.len();
-                            scoped_hashes = Some(set);
+                    match scoped_route_hashes(&tick.routes, &seeds, builder, chain_id) {
+                        Ok(scope) => {
+                            scoped_reeval_cycles = scope.cycles_affected;
+                            scoped_reeval_routes = scope.hashes.len();
+                            scoped_hashes = Some(scope.hashes);
                         }
                         Err(e) => {
                             scoped_cycle_map_fail = 1;
@@ -1610,6 +1592,57 @@ fn dense_cycle(chain_id: u64, tokens: &[Address], ids: &DenseIdBuilder) -> Optio
         .collect()
 }
 
+/// ARBX-0003 scoped re-eval outcome (see the `dirty_reeval` block in the
+/// tick loop above).
+#[derive(Debug)]
+struct ScopedReeval {
+    /// `route_hash`es of cycles containing at least one dirty pair — the
+    /// ONLY routes the adapter re-prices when the knob is ON.
+    hashes: std::collections::HashSet<String>,
+    /// Affected cycle count (telemetry: `scoped_reeval_cycles`).
+    cycles_affected: usize,
+}
+
+/// Pure scope computation for the ARBX-0003 scoped re-evaluation: given
+/// the dirty seeds drained this tick and THIS tick's routes, the set of
+/// triangular route_hashes that must re-price through the adapter.
+///
+/// Non-triangular routes never enter the index. A route whose tokens are
+/// outside the epoch's dense-id universe (`dense_cycle` → `None`,
+/// topology drift) is excluded from the index without failing the build —
+/// the pre-existing behaviour. `Err` (degenerate CycleIndex input) means
+/// the caller must fail OPEN to full service: never a partial scope.
+fn scoped_route_hashes(
+    routes: &[RouteCandidate],
+    seeds: &[usize],
+    ids: &DenseIdBuilder,
+    chain_id: u64,
+) -> Result<ScopedReeval, String> {
+    let mut cycles: Vec<Vec<usize>> = Vec::new();
+    let mut hash_by_cycle: Vec<String> = Vec::new();
+    for c in routes
+        .iter()
+        .filter(|c| c.route_kind == RouteKind::Triangular)
+    {
+        if let Some(cyc) = dense_cycle(chain_id, &c.tokens, ids) {
+            hash_by_cycle.push(c.route_hash.clone());
+            cycles.push(cyc);
+        }
+    }
+    let ix = CycleIndex::build(ids.len(), cycles)?;
+    let affected = ix.affected_cycles(seeds.iter().copied());
+    let hashes: std::collections::HashSet<String> = hash_by_cycle
+        .iter()
+        .enumerate()
+        .filter(|(ci, _)| affected.contains(ci))
+        .map(|(_, h)| h.clone())
+        .collect();
+    Ok(ScopedReeval {
+        hashes,
+        cycles_affected: affected.len(),
+    })
+}
+
 /// ARBX-0024: per-leg fee-inclusive rates keyed by (src,dst) dense ids for
 /// one candidate cycle. Legs run `tokens[i] → tokens[(i+1) % n]` over
 /// `pools[i]`; a pool with no computable `log_weight` (or a ragged pools
@@ -2175,6 +2208,134 @@ mod tests {
         assert!(dense_cycle(1, &[a1, a2, drift], &ids).is_none());
         // Not a cycle (2 nodes) ⇒ None.
         assert!(dense_cycle(1, &[a1, a2], &ids).is_none());
+    }
+
+    // ── ARBX-0003: scoped_route_hashes (G7-SCOPEDREEVAL-01) ────────────────
+    //
+    // The `dirty_reeval` tick block delegates its scope computation to a
+    // pure fn so the composition (seeds × CycleIndex × dense ids) is
+    // unit-testable without a live drain. These tests pin the exact
+    // pre-extraction behaviour: dirty pair ⇒ only its cycles scoped,
+    // drift/non-triangular excluded (not failed), empty seeds ⇒ empty
+    // scope, degenerate cycle ⇒ Err (caller fails OPEN).
+
+    fn tri_candidate(hash: &str, tokens: Vec<Address>) -> RouteCandidate {
+        RouteCandidate {
+            chain_id: 1,
+            route_hash: hash.to_string(),
+            route_kind: RouteKind::Triangular,
+            tokens,
+            pools: vec![addr(0x10), addr(0x20), addr(0x30)],
+            protocols: vec![ProtocolType::V2, ProtocolType::V2, ProtocolType::V2],
+            fee_tiers: vec![Some(30), Some(30), Some(30)],
+            directions: vec![
+                RouteDirection::ZeroForOne,
+                RouteDirection::ZeroForOne,
+                RouteDirection::OneForZero,
+            ],
+            hops: 3,
+            applicable_strategies: vec![],
+            rejected_strategies: vec![],
+            mode: "shadow".to_string(),
+        }
+    }
+
+    #[test]
+    fn scoped_route_hashes_scopes_to_cycles_touching_dirty_pairs() {
+        let mut ids = DenseIdBuilder::new();
+        for n in [1u64, 2, 3, 4] {
+            ids.insert(
+                TokenKey {
+                    chain_id: 1,
+                    address: addr(n),
+                },
+                true,
+            );
+        }
+        // C1=(a1,a2,a3) and C2=(a1,a2,a4) share pair (a1,a2);
+        // C3=(a2,a3,a4) does not contain it.
+        let routes = vec![
+            tri_candidate("0xc1", vec![addr(1), addr(2), addr(3)]),
+            tri_candidate("0xc2", vec![addr(1), addr(2), addr(4)]),
+            tri_candidate("0xc3", vec![addr(2), addr(3), addr(4)]),
+        ];
+        // Dense ids: a1→0, a2→1, a3→2, a4→3. Dirty pair (0,1) ⇒ C1+C2.
+        let seed = crate::pair_index::pair_index(0, 1, 4).expect("pair in range");
+        let scope = scoped_route_hashes(&routes, &[seed], &ids, 1).unwrap();
+        assert_eq!(
+            scope.hashes,
+            ["0xc1".to_string(), "0xc2".to_string()]
+                .into_iter()
+                .collect()
+        );
+        assert_eq!(scope.cycles_affected, 2);
+        // Dirty pair (2,3) = (a3,a4) ⇒ only C3.
+        let seed = crate::pair_index::pair_index(2, 3, 4).expect("pair in range");
+        let scope = scoped_route_hashes(&routes, &[seed], &ids, 1).unwrap();
+        assert_eq!(scope.hashes, ["0xc3".to_string()].into_iter().collect());
+        assert_eq!(scope.cycles_affected, 1);
+    }
+
+    #[test]
+    fn scoped_route_hashes_excludes_non_triangular_and_drift_routes() {
+        let mut ids = DenseIdBuilder::new();
+        for n in [1u64, 2, 3] {
+            ids.insert(
+                TokenKey {
+                    chain_id: 1,
+                    address: addr(n),
+                },
+                true,
+            );
+        }
+        let mut non_tri = tri_candidate("0xv2v3", vec![addr(1), addr(2), addr(3)]);
+        non_tri.route_kind = RouteKind::V2V3; // never indexed
+                                              // a4 never registered this epoch (topology drift): excluded, not failed.
+        let drift = tri_candidate("0xdrift", vec![addr(1), addr(2), addr(4)]);
+        let tri = tri_candidate("0xtri", vec![addr(1), addr(2), addr(3)]);
+        let routes = vec![non_tri, drift, tri];
+        let seed = crate::pair_index::pair_index(0, 1, 3).expect("pair in range");
+        let scope = scoped_route_hashes(&routes, &[seed], &ids, 1).unwrap();
+        assert_eq!(scope.hashes, ["0xtri".to_string()].into_iter().collect());
+    }
+
+    #[test]
+    fn scoped_route_hashes_empty_seeds_yield_empty_scope() {
+        let mut ids = DenseIdBuilder::new();
+        for n in [1u64, 2, 3] {
+            ids.insert(
+                TokenKey {
+                    chain_id: 1,
+                    address: addr(n),
+                },
+                true,
+            );
+        }
+        let routes = vec![tri_candidate("0xtri", vec![addr(1), addr(2), addr(3)])];
+        let scope = scoped_route_hashes(&routes, &[], &ids, 1).unwrap();
+        assert!(scope.hashes.is_empty());
+        assert_eq!(scope.cycles_affected, 0);
+    }
+
+    #[test]
+    fn scoped_route_hashes_degenerate_cycle_errors_for_fail_open() {
+        let mut ids = DenseIdBuilder::new();
+        for n in [1u64, 2] {
+            ids.insert(
+                TokenKey {
+                    chain_id: 1,
+                    address: addr(n),
+                },
+                true,
+            );
+        }
+        // [a1,a2,a1]: 3 nodes, all registered, but a1 repeats — CycleIndex
+        // rejects the WHOLE build (self-crossing loop) ⇒ Err ⇒ the tick
+        // fails OPEN to full service (scoped_cycle_map_fail=1).
+        let degenerate = tri_candidate("0xdeg", vec![addr(1), addr(2), addr(1)]);
+        let seed = crate::pair_index::pair_index(0, 1, 2).expect("pair in range");
+        let err = scoped_route_hashes(&[degenerate], &[seed], &ids, 1).unwrap_err();
+        assert!(err.contains("repeats"), "unexpected error: {err}");
     }
 
     #[test]
