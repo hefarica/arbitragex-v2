@@ -1,8 +1,16 @@
 # H2 (FREEZE-01) — synthetic-series behaviour test for the PIPELINE_SILENCE alert.
 #
-# Run from the repo root (rule_files paths resolve against the CWD):
+# Run from the repo root:
 #   promtool test rules monitoring/tests/pipeline_silence_test.yml
 # CI: .github/workflows/monitoring-config.yml ("Unit-test alert rules" step).
+#
+# MON-UTEST-PATH-01: promtool (verified 2.55.1, the CI-pinned version)
+# resolves `rule_files` against the TEST FILE'S directory, NOT the CWD —
+# the previous `monitoring/alerts.rules.yml` entry resolved to
+# monitoring/tests/monitoring/alerts.rules.yml (nonexistent), so the unit
+# test loaded ZERO rules and failed on every CI run since its introduction
+# (workflow runs 42-53, 2026-08-17 → 2026-09-06). `../alerts.rules.yml`
+# resolves correctly: ../ from monitoring/tests/ = monitoring/.
 #
 # promtool's unit-test timeline starts at unix t=0, so `time()` at eval_time T
 # equals T in seconds. A gauge series frozen at 0 therefore makes the expr
@@ -12,7 +20,9 @@
 # by backend/searcher-rs/src/metrics.rs::pipeline_silence_gauge_name_pinned.
 
 rule_files:
-  - monitoring/alerts.rules.yml
+  # Relative to THIS file's directory (monitoring/tests/), not the CWD —
+  # see MON-UTEST-PATH-01 note above.
+  - ../alerts.rules.yml
 
 evaluation_interval: 1m
 
