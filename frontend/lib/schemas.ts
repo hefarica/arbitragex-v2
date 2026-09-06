@@ -849,6 +849,61 @@ export type ReadinessBlocker = z.infer<typeof ReadinessBlockerSchema>;
 export type ReadinessBlockersResponse = z.infer<typeof ReadinessBlockersResponseSchema>;
 export type ReadinessDecisionResponse = z.infer<typeof ReadinessDecisionResponseSchema>;
 
+// ─────── A.9 formal sign-off (go/no-go ledger) ───────
+// Mirrors backend/api-server/src/routes/go-no-go.ts (GET /api/v1/go-no-go/status,
+// edge-proxied at /api/go-no-go/status). Read-only family by construction:
+// POST /admin/go-no-go/sign-off is admin-token gated and NEVER routed at the
+// edge — no schema here can carry a write.
+export const GoNoGoSignOffSchema = z.object({
+  actor: z.string(),
+  decision: z.enum(["GO", "NO_GO"]),
+  signed_at: z.string().nullable(),
+});
+
+export const GoNoGoStatusResponseSchema = z.object({
+  // null = no ledger generation persisted yet (state: "no_ledger").
+  ledger_hash: z.string().nullable(),
+  // The no_ledger variant omits generated_at entirely; when present it is
+  // isoOrNull output, so both `.nullable()` and `.optional()` are required.
+  generated_at: z.string().nullable().optional(),
+  sign_offs: z.array(GoNoGoSignOffSchema),
+  state: z.enum([
+    "awaiting_first",
+    "awaiting_second",
+    "signed_go",
+    "signed_no_go",
+    "conflicted",
+    "no_ledger",
+  ]),
+  go_live_eligible: z.boolean(),
+  ledger_summary: z
+    .object({
+      unresolved_blockers: z.number().nullable(),
+      paper_safe: z.boolean().nullable(),
+    })
+    .nullable()
+    .optional(),
+});
+
+// Ledger regeneration response (GET /api/v1/go-no-go/ledger). The full `facts`
+// document is deliberately NOT modeled — this card only needs identity +
+// summary + dedup flag; the facts payload stays untyped pass-through (never
+// rendered, so no unvalidated surface).
+export const GoNoGoLedgerResponseSchema = z.object({
+  schema_version: z.number(),
+  ledger_hash: z.string(),
+  generated_at: z.string().nullable(),
+  deduplicated: z.boolean(),
+  summary: z.object({
+    unresolved_blockers: z.number().nullable(),
+    paper_safe: z.boolean().nullable(),
+  }),
+});
+
+export type GoNoGoSignOff = z.infer<typeof GoNoGoSignOffSchema>;
+export type GoNoGoStatusResponse = z.infer<typeof GoNoGoStatusResponseSchema>;
+export type GoNoGoLedgerResponse = z.infer<typeof GoNoGoLedgerResponseSchema>;
+
 // ─────── Readiness Steps (server-side 4-step "Live Readiness" stepper) ───────
 // Mirrors backend/api-server/src/routes/readiness-steps.ts. The N/4 count is now
 // derived SERVER-SIDE from real evidence (topology vault / credentials presence /
