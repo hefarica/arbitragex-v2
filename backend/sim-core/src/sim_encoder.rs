@@ -355,12 +355,24 @@ pub fn convert_amount_to_wei(amount_in: f64, decimals: u8) -> Result<U256, SimEn
 /// per-leg fee tier (not carried in `OpportunityCandidate`); Curve / Balancer
 /// have no encoder in `prioritization_spine::swap_encoder` yet. Every other
 /// label rejects with `UnsupportedDexKind`.
+///
+/// The match is spelling-proof: producers emit the same DEX under different
+/// spellings — scanner fixtures use kebab ("uniswap-v2", "sushi") while
+/// cartridge `dex_adapters` carry PascalCase ("UniswapV2", "SushiSwap").
+/// Labels normalize to lowercase alphanumerics (same approach as
+/// `tx_builder::find_router_by_name`), so casing/spacing never rejects an
+/// encodable route. The error keeps the ORIGINAL label for observability.
 pub fn parse_dex_kind(label: &str) -> Result<RouterKind, SimEncoderError> {
-    match label {
-        "uniswap-v2" => Ok(RouterKind::UniswapV2),
-        "sushi" => Ok(RouterKind::Sushi),
-        other => Err(SimEncoderError::UnsupportedDexKind {
-            dex_kind: other.to_string(),
+    let normalized: String = label
+        .chars()
+        .filter(|c| !matches!(c, '-' | '_' | ' '))
+        .flat_map(|c| c.to_lowercase())
+        .collect();
+    match normalized.as_str() {
+        "uniswapv2" => Ok(RouterKind::UniswapV2),
+        "sushi" | "sushiswap" => Ok(RouterKind::Sushi),
+        _ => Err(SimEncoderError::UnsupportedDexKind {
+            dex_kind: label.to_string(),
         }),
     }
 }
@@ -589,6 +601,56 @@ mod tests {
         .unwrap_err();
         assert!(matches!(err, SimEncoderError::UnsupportedDexKind { .. }));
         assert_eq!(err.reason_tag(), "unsupported_dex_kind");
+    }
+
+    // ── Test 2b — parse_dex_kind is spelling-proof across producers ─────────
+    //
+    // SIMENCODER-LABEL-NORM-01: cartridge dex_adapters arrive PascalCase
+    // ("UniswapV2", "SushiSwap") while the encoder only matched kebab, so
+    // every encodable 2-leg candidate died as b2c_encode_failed even after
+    // the B2C consumer (#484) routed it here. Same DEX, different spelling.
+
+    #[test]
+    fn parse_dex_kind_accepts_pascalcase_and_spelling_variants() {
+        assert_eq!(parse_dex_kind("uniswap-v2"), Ok(RouterKind::UniswapV2));
+        assert_eq!(parse_dex_kind("uniswapv2"), Ok(RouterKind::UniswapV2));
+        assert_eq!(parse_dex_kind("UniswapV2"), Ok(RouterKind::UniswapV2));
+        assert_eq!(parse_dex_kind("sushi"), Ok(RouterKind::Sushi));
+        assert_eq!(parse_dex_kind("sushiswap"), Ok(RouterKind::Sushi));
+        assert_eq!(parse_dex_kind("SushiSwap"), Ok(RouterKind::Sushi));
+        assert_eq!(parse_dex_kind(" Sushi_Swap "), Ok(RouterKind::Sushi));
+    }
+
+    #[test]
+    fn parse_dex_kind_fails_closed_with_original_label() {
+        for unsupported in ["uniswap-v3", "UniswapV3", "PancakeSwapV3", "curve", ""] {
+            let err = parse_dex_kind(unsupported).unwrap_err();
+            match err {
+                SimEncoderError::UnsupportedDexKind { dex_kind } => {
+                    // Original label preserved for observability.
+                    assert_eq!(dex_kind, unsupported);
+                }
+                other => panic!("expected UnsupportedDexKind, got {other:?}"),
+            }
+        }
+    }
+
+    // ── Test 2c — real feed shape (PascalCase adapters) builds context ──────
+
+    #[test]
+    fn pascalcase_feed_candidate_builds_round_trip_context() {
+        let mut c = valid_candidate_v2();
+        c.dex_adapters = vec!["UniswapV2".into(), "SushiSwap".into()];
+        let ctx = build_round_trip_context_from_candidate(
+            &c,
+            1,
+            dummy_executor(),
+            &provider_with_weth_18(),
+            &valid_config(),
+        )
+        .unwrap();
+        assert_eq!(ctx.token_in, addr(WETH));
+        assert_eq!(ctx.token_out, addr(USDC));
     }
 
     // ── Test 3 — Multihop (3 legs) rejected as unsupported shape ────────────
