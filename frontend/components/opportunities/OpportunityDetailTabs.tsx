@@ -93,7 +93,11 @@ function shortAddr(a: string): string {
  * or unknown decimals — the caller then shows the raw wei (R8).
  */
 function weiToHuman(wei: string, decimals: number | undefined): string | null {
-  if (decimals == null || !Number.isInteger(decimals) || decimals < 0) return null;
+  // Cap at uint256's max meaningful decimals (78) — a corrupt/hostile map
+  // value in the millions would RangeError String.repeat and crash the Sheet.
+  if (decimals == null || !Number.isInteger(decimals) || decimals < 0 || decimals > 78) {
+    return null;
+  }
   const neg = wei.startsWith("-");
   const digits = neg ? wei.slice(1) : wei;
   if (!/^\d+$/.test(digits)) return null;

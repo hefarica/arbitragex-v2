@@ -89,6 +89,27 @@ describe("parseRouteMetadata", () => {
     expect(rm!.leg_amounts_out).toEqual(["990", "1010"]);
     expect(rm!.leg_zero_for_one).toEqual([true]);
   });
+
+  it("unwraps the REAL DecimalsMap wire shape {\"map\":{…}} (flat tolerated, junk dropped)", () => {
+    // The Rust side serializes DecimalsMap as a newtype — {"map": {...}} is
+    // what actually arrives on the wire (see prod fixtures). A flat record is
+    // tolerated for legacy/tests; non-number values drop, never coerce.
+    const nested = parseRouteMetadata({
+      token_addresses: [WETH, USDC, WETH],
+      pool_addresses: ["0xp1", "0xp2"],
+      dex_adapters: ["uniswap_v2_router", "sushiswap"],
+      decimals: { map: { [WETH]: 18, [USDC]: "6" } },
+    });
+    expect(nested!.decimals).toEqual({ [WETH]: 18 });
+
+    const flat = parseRouteMetadata({
+      token_addresses: [WETH, USDC, WETH],
+      pool_addresses: ["0xp1", "0xp2"],
+      dex_adapters: ["uniswap_v2_router", "sushiswap"],
+      decimals: { [WETH]: 18 },
+    });
+    expect(flat!.decimals).toEqual({ [WETH]: 18 });
+  });
 });
 
 // ─── HOPS-LEDGER-04 — per-leg wei ledger derivation ──────────────────────────

@@ -461,10 +461,22 @@ export function parseRouteMetadata(
     : [];
   // Require at least one hop + a closing token to be meaningful.
   if (dexAdapters.length === 0 || tokenAddresses.length < 2) return null;
-  const decimals =
-    obj.decimals != null && typeof obj.decimals === "object"
-      ? (obj.decimals as Record<string, number>)
-      : undefined;
+  // decimals — Rust serializes DecimalsMap as a newtype: {"map": {...}} (the
+  // REAL wire shape; see shared-rs candidates.rs). Accept it AND a flat record
+  // (legacy/tests); non-number values are dropped, never coerced.
+  let decimals: Record<string, number> | undefined;
+  if (obj.decimals != null && typeof obj.decimals === "object") {
+    const raw = obj.decimals as Record<string, unknown>;
+    const src =
+      raw.map != null && typeof raw.map === "object"
+        ? (raw.map as Record<string, unknown>)
+        : raw;
+    const out: Record<string, number> = {};
+    for (const [k, v] of Object.entries(src)) {
+      if (typeof v === "number") out[k] = v;
+    }
+    decimals = out;
+  }
   // HOPS-LEDGER-04: project the optional per-leg ledger arrays. Undefined
   // (NOT empty) when absent — absence is the R8 state "not computed".
   const legAmountsIn = Array.isArray(obj.leg_amounts_in)

@@ -33,13 +33,15 @@ const rm2hop = {
 };
 
 // HOPS-LEDGER-04: the same 2-hop topology WITH the sizing kernel's per-leg
-// wei (Sized row — the only shape that carries a ledger).
+// wei (Sized row — the only shape that carries a ledger). `decimals` uses the
+// REAL wire shape — Rust serializes DecimalsMap as {"map": {...}} (newtype),
+// NOT a flat record.
 const rm2hopLedger = {
   ...rm2hop,
   leg_amounts_in: ["1000000000000000000", "990000000000000000"],
   leg_amounts_out: ["990000000000000000", "1010000000000000000"],
   leg_zero_for_one: [true, false],
-  decimals: { "0xa": 18, "0xb": 18 },
+  decimals: { map: { "0xa": 18, "0xb": 18 } },
 };
 
 const rich = () =>
