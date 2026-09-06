@@ -62,8 +62,13 @@ import { StatusPill } from "@/components/StatusPill";
 import {
   formatPctOrDash,
   formatProfitUSD,
+  shortAddr,
 } from "@/lib/format";
-import type { OmniOpportunity } from "@/lib/store/types";
+import {
+  deriveLegs,
+  SYNTHETIC_LEGACY_VIEW_LABEL,
+  type OmniOpportunity,
+} from "@/lib/store/types";
 import type { StrategyRuntimeConfig } from "@/lib/schemas";
 
 // ─── Tone → token-based class map ────────────────────────────────────────────
@@ -198,6 +203,28 @@ function OpportunityTradeCardImpl({
     (acc, [, v]) => (v == null ? acc : (acc ?? 0) + v),
     null,
   );
+
+  // ── HOPS-CARD-03: ladder legs from the PERSISTED topology (deriveLegs) ─────
+  // The old hardcoded "Buy A / Buy B" 2-row ladder hid every N-leg route — a
+  // 3-hop triangular rendered as 2 generic rows. Legs come from
+  // route_metadata when present, else the §29 synthetic fallback (marked).
+  // Symbols resolve with the exchange card's priority (F2/§11 RC1):
+  // pair-info (symbol → registry_symbol, matching the card's tokenSymbol
+  // chain) → server-hydrated leg_symbols (lowercased key) → shortAddr.
+  const legs = deriveLegs(opp);
+  const legSym = (addr: string): string => {
+    const lc = addr.toLowerCase();
+    if (lc === opp.token_in.toLowerCase()) {
+      const s = opp.token_in_info?.symbol ?? opp.token_in_info?.registry_symbol;
+      if (s) return s;
+    }
+    if (lc === opp.token_out.toLowerCase()) {
+      const s = opp.token_out_info?.symbol ?? opp.token_out_info?.registry_symbol;
+      if (s) return s;
+    }
+    return opp.leg_symbols?.[lc] ?? shortAddr(addr);
+  };
+  const hasSyntheticLegs = legs.some((l) => l.synthetic === true);
 
   const handleExecute = async (e: React.MouseEvent) => {
     e.stopPropagation();
@@ -383,18 +410,29 @@ function OpportunityTradeCardImpl({
             label={`Flash loan in (TLS)${opp.chain_base_token_symbol ? ` · ${opp.chain_base_token_symbol}` : ""}`}
             value={capitalInUsd}
           />
-          <LedgerRow
-            label={`Buy A · ${opp.dex_a || "—"}`}
-            value={capitalInUsd}
-            muted
-            hint="swap leg 1"
-          />
-          <LedgerRow
-            label={`Buy B · ${opp.dex_b ?? "single-DEX"}`}
-            value={null}
-            muted
-            hint={opp.dex_b ? "swap leg 2" : "1-leg route"}
-          />
+          {legs.length > 0 ? (
+            legs.map((l) => (
+              <LedgerRow
+                key={l.index}
+                label={`Hop ${l.index + 1}/${legs.length} · ${legSym(l.token_in)}→${legSym(l.token_out)}`}
+                value={null}
+                muted
+                hint={`${l.dex || "—"}${l.synthetic ? " · syn" : ""}`}
+              />
+            ))
+          ) : (
+            <LedgerRow
+              label="Hops"
+              value={null}
+              muted
+              hint="sin topología persistida (§38)"
+            />
+          )}
+          {hasSyntheticLegs && (
+            <div className="pt-0.5 text-[9px] uppercase tracking-wide text-muted-foreground/70">
+              {SYNTHETIC_LEGACY_VIEW_LABEL} — fallback §29, no ROUTE VERIFIED
+            </div>
+          )}
           <LedgerRow
             up
             label="Gross out (AMM spread)"
@@ -514,6 +552,12 @@ export const OpportunityTradeCard = React.memo(
       );
     const agePrev = ageOf(p, prev.now);
     const ageNext = ageOf(n, next.now);
+    // HOPS-CARD-03: the ladder now renders route_metadata/leg_symbols (and the
+    // §29 fallback keys off dex_a/dex_b), so a batch that only changes the
+    // topology MUST re-render — same sameJson discipline the exchange card's
+    // comparator already applies (serialized content, small objects).
+    const sameJson = (a: unknown, b: unknown): boolean =>
+      a === b || JSON.stringify(a) === JSON.stringify(b);
     return (
       p.id === n.id &&
       p.status === n.status &&
@@ -521,8 +565,14 @@ export const OpportunityTradeCard = React.memo(
       p.net_expected_profit_usd === n.net_expected_profit_usd &&
       p.roi_pct === n.roi_pct &&
       p.detected_at === n.detected_at &&
+      sameJson(p.route_metadata, n.route_metadata) &&
+      sameJson(p.leg_symbols, n.leg_symbols) &&
+      p.dex_a === n.dex_a &&
+      p.dex_b === n.dex_b &&
       p.token_in_info?.logo_url === n.token_in_info?.logo_url &&
       p.token_out_info?.logo_url === n.token_out_info?.logo_url &&
+      p.token_in_info?.symbol === n.token_in_info?.symbol &&
+      p.token_out_info?.symbol === n.token_out_info?.symbol &&
       prev.isMounted === next.isMounted &&
       prev.simLoading === next.simLoading &&
       prev.strategyConfig === next.strategyConfig &&
