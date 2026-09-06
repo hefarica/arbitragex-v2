@@ -33,9 +33,10 @@
 //! a signature. No env/secret key is read anywhere in this module; tests use
 //! arbitrary well-formed 0x-hex strings, so no key fixture is needed at all.
 //!
-//! Wiring note: `main.rs` has no CLI subcommand pattern — this is exposed as
-//! a library function and unit-tested here; wiring a CLI entry is deferred.
-#![allow(dead_code)] // exercised by unit tests; no binary caller yet (CLI wiring deferred)
+//! Wiring note: invoked at runtime by `submit_engine` step 4.5 (A.7): every
+//! bundle that reaches the paper short-circuit / re-sim / broadcast region is
+//! shape-validated here first, strictly before any network egress.
+#![allow(dead_code)] // wire-shape fields kept for documentation (e.g. max_timestamp: tolerated, not vouched) may be write-only
 
 use crate::bundle_builder::SignedBundle;
 use tracing::{debug, info};
