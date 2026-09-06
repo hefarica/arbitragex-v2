@@ -59,8 +59,9 @@ jobs:
       - name: Unit-test alert rules (synthetic series)
         # H2 (FREEZE-01): `check rules` only validates syntax; this replays
         # PIPELINE_SILENCE against synthetic gauge series (frozen vs healthy
-        # cadence) to pin the threshold behaviour. Run from repo root — the
-        # rule_files paths inside the test file resolve against the CWD.
+        # cadence) to pin the threshold behaviour. promtool (2.55.1) resolves
+        # rule_files against the TEST FILE'S directory — the test file uses
+        # ../alerts.rules.yml accordingly (MON-UTEST-PATH-01).
         run: promtool test rules monitoring/tests/pipeline_silence_test.yml
 
       - name: Check prometheus.yml (dev)
