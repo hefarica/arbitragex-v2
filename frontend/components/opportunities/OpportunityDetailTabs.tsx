@@ -175,6 +175,23 @@ export function OpportunityDetailTabs({
   const rm = opp.route_metadata;
   const ledger = deriveLegLedger(opp);
 
+  // HOPS-SYM-02: leg token symbols at the same priority as the exchange card
+  // (F2/§11 RC1) — pair info first (symbol → registry_symbol, matching the
+  // card's tokenSymbol chain), then the server-hydrated leg_symbols map
+  // (keyed by lowercased address), then the honest shortAddr fallback (R8).
+  const legSym = (addr: string): string => {
+    const lc = addr.toLowerCase();
+    if (lc === opp.token_in.toLowerCase()) {
+      const s = opp.token_in_info?.symbol ?? opp.token_in_info?.registry_symbol;
+      if (s) return s;
+    }
+    if (lc === opp.token_out.toLowerCase()) {
+      const s = opp.token_out_info?.symbol ?? opp.token_out_info?.registry_symbol;
+      if (s) return s;
+    }
+    return opp.leg_symbols?.[lc] ?? shortAddr(addr);
+  };
+
   return (
     <Tabs defaultValue={defaultTab} className="w-full">
       <TabsList className="flex-wrap h-auto max-w-full">
@@ -232,7 +249,7 @@ export function OpportunityDetailTabs({
                     )}
                   </td>
                   <td className="py-1.5 pr-2" title={`${l.token_in} → ${l.token_out}`}>
-                    {shortAddr(l.token_in)} → {shortAddr(l.token_out)}
+                    {legSym(l.token_in)} → {legSym(l.token_out)}
                   </td>
                   <td className="py-1.5 pr-2">{l.dex || "—"}</td>
                   <td className="py-1.5" title={l.pool || undefined}>

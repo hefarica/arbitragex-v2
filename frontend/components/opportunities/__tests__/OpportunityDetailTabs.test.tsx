@@ -173,6 +173,56 @@ describe("OpportunityDetailTabs (§37)", () => {
     expect(html).toContain(">Hops</span>");
   });
 
+  // HOPS-SYM-02: the Token path column resolves symbols with the exchange
+  // card's priority — pair info → server-hydrated leg_symbols (keyed by
+  // lowercased address) → honest shortAddr fallback (R8). Full addresses
+  // stay in the cell title (§38 elision).
+  it("Route HOPS-SYM-02: legs render symbols (pair-info → leg_symbols), not raw addresses", () => {
+    const A = "0x" + "a".repeat(40);
+    const B = "0x" + "b".repeat(40);
+    const C = "0x" + "c".repeat(40);
+    const info = { symbol: "WETH", decimals: 18, logo_url: null, resolved_via: "onchain_full" };
+    const opp = mapToOmniOpportunity(
+      wire({
+        token_in: A,
+        token_out: A,
+        token_in_info: info,
+        token_out_info: info,
+        leg_symbols: { [B.toLowerCase()]: "USDC", [C.toLowerCase()]: "PEPE" },
+        route_metadata: {
+          dex_adapters: ["uniswap-v2", "sushiswap", "uniswap-v2"],
+          token_addresses: [A, B, C, A],
+          pool_addresses: ["0xpool1", "0xpool2", "0xpool3"],
+        },
+      }),
+    );
+    const html = tab(opp, "route");
+    expect(html).toContain("WETH → USDC");
+    expect(html).toContain("USDC → PEPE");
+    expect(html).toContain("PEPE → WETH");
+    // no raw full addresses in the visible cells — only in the title tooltip
+    expect(html).not.toContain(`>${A.slice(0, 8)}…`);
+  });
+
+  it("Route HOPS-SYM-02: absent leg_symbols keeps the honest shortAddr fallback (R8)", () => {
+    const A = "0x" + "a".repeat(40);
+    const B = "0x" + "b".repeat(40);
+    const opp = mapToOmniOpportunity(
+      wire({
+        token_in: A,
+        token_out: A,
+        // no token_in_info, no leg_symbols → shortAddr for every token
+        route_metadata: {
+          dex_adapters: ["uniswap-v2", "uniswap-v2"],
+          token_addresses: [A, B, A],
+          pool_addresses: ["0xpool1", "0xpool2"],
+        },
+      }),
+    );
+    const html = tab(opp, "route");
+    expect(html).toContain(`${A.slice(0, 8)}…${A.slice(-6)} → ${B.slice(0, 8)}…${B.slice(-6)}`);
+  });
+
   it("Economics: Gross and Net from their canonical fields (legacy mislabel fixed)", () => {
     const html = tab(rich(), "economics");
     expect(html).toContain("Gross (USD)");

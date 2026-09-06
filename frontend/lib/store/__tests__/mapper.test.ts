@@ -63,4 +63,25 @@ describe("mapToOmniOpportunity — R8 fail-honest + route_metadata", () => {
     } as Record<string, unknown>);
     expect(o.route_metadata).toBeNull();
   });
+
+  // HOPS-SYM-02 (RC2): the mapper previously dropped the server-hydrated
+  // intermediate-leg symbols — the wire field existed but never reached a
+  // component. Pass-through is verbatim; absent/null stays null (R8).
+  it("passes leg_symbols through verbatim; absent/null stays null", () => {
+    const base = {
+      id: "ls",
+      chain_id: 1,
+      strategy_kind: "triangular",
+      detected_at: "2026-08-11T00:00:00Z",
+      trace_id: "t",
+      dex_a: "uniswap-v2",
+      dex_b: null,
+      token_in: "0xa",
+      token_out: "0xa",
+    } as Record<string, unknown>;
+    const map = { "0xb": "USDC", "0xc": "PEPE" };
+    expect(mapToOmniOpportunity({ ...base, leg_symbols: map }).leg_symbols).toEqual(map);
+    expect(mapToOmniOpportunity({ ...base }).leg_symbols).toBeNull();
+    expect(mapToOmniOpportunity({ ...base, leg_symbols: null }).leg_symbols).toBeNull();
+  });
 });

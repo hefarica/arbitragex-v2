@@ -369,6 +369,13 @@ export function mapToOmniOpportunity(raw: Record<string, unknown>): OmniOpportun
     token_out_info: (raw.token_out_info as TokenInfo) ?? null,
     chain_base_token_symbol:
       raw.chain_base_token_symbol != null ? String(raw.chain_base_token_symbol) : null,
+    // HOPS-SYM-02 (RC2): the server-hydrated intermediate-leg symbols were
+    // silently discarded here — the wire field exists (api-server hydrates it
+    // from the tokens table + on-demand eth_call; the interface has declared
+    // it since F2) but it never reached any component. Pass through verbatim:
+    // absent/null stays null and renderers keep their honest shortAddr
+    // fallback (R8).
+    leg_symbols: (raw.leg_symbols as Record<string, string> | null) ?? null,
 
     // Profit Metrics
     expected_profit_usd:
