@@ -255,6 +255,12 @@ pub fn build_route_metadata_from_plan(plan: &RoutePlan) -> RouteMetadata {
         // decimals intentionally empty — resolved separately by the scanner's
         // TokenDecimalsProvider in a follow-up. See doc comment above.
         decimals: DecimalsMap::new(),
+        // Per-leg ledger (HOPS-LEDGER-04) stays None here: the plan carries no
+        // sizing amounts. The caller attaches them post-sizing via
+        // `attach_leg_ledger` when the SizeOptimizer produced per-leg wei.
+        leg_amounts_in: None,
+        leg_amounts_out: None,
+        leg_zero_for_one: None,
     }
 }
 
@@ -335,6 +341,45 @@ mod fidelity_tests {
         assert!(rm.is_populated());
     }
 
+    // HOPS-LEDGER-04: the builder NEVER fabricates per-leg amounts (the plan
+    // carries none) and attach_leg_ledger lands exactly when the kernel-
+    // supplied arrays align with the plan hops — the persistence contract the
+    // cartridge path relies on.
+    #[test]
+    fn build_from_plan_has_no_leg_ledger_and_attach_aligns_with_hops() {
+        let p = plan(vec![
+            leg("0xA", "0xB", Some("0xp1"), "uniswap_v2_router"),
+            leg("0xB", "0xA", Some("0xp2"), "sushiswap"),
+        ]);
+        let mut rm = build_route_metadata_from_plan(&p);
+        assert!(rm.leg_amounts_in.is_none());
+        assert!(rm.leg_amounts_out.is_none());
+        assert!(rm.leg_zero_for_one.is_none());
+
+        // Aligned arrays attach; zero_for_one derives from ascending token
+        // order (0xA < 0xB ⇒ leg0 true; 0xB > 0xA ⇒ leg1 false).
+        assert!(rm.attach_leg_ledger(
+            &["1000".to_string(), "990".to_string()],
+            &["990".to_string(), "1010".to_string()]
+        ));
+        assert_eq!(
+            rm.leg_amounts_in.as_deref(),
+            Some(&["1000".to_string(), "990".to_string()][..])
+        );
+        assert_eq!(rm.leg_zero_for_one.as_deref(), Some(&[true, false][..]));
+
+        // Mismatched lengths attach nothing (all-or-nothing) — a 3-array
+        // against a 2-hop plan must not leave a partial ledger.
+        let mut rm2 = build_route_metadata_from_plan(&p);
+        assert!(!rm2.attach_leg_ledger(
+            &["1".to_string(), "2".to_string(), "3".to_string()],
+            &["1".to_string(), "2".to_string(), "3".to_string()]
+        ));
+        assert!(rm2.leg_amounts_in.is_none());
+        assert!(rm2.leg_amounts_out.is_none());
+        assert!(rm2.leg_zero_for_one.is_none());
+    }
+
     #[test]
     fn build_from_plan_keeps_pool_entry_empty_when_leg_lacks_pool() {
         // A leg with neither pool_address nor factory → pool entry is an empty
@@ -392,6 +437,9 @@ mod fidelity_tests {
             ],
             dex_adapters: vec!["uniswap_v2_router".to_string(), "sushiswap".to_string()],
             decimals: DecimalsMap::new(),
+            leg_amounts_in: None,
+            leg_amounts_out: None,
+            leg_zero_for_one: None,
         };
         assert_ne!(
             candidate_flattened.token_addresses.len(),
