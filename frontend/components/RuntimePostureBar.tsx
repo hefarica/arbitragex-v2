@@ -89,6 +89,49 @@ export function projectChannel(
   return "LIVE";
 }
 
+/**
+ * WO-08 (informe /goal §5) — R8 honest aggregate for the "socket" chip. The
+ * chip used to read `wsConnected` alone, so the bar showed a green LIVE
+ * socket while its own subsystem chips honestly read CONNECTING. LIVE now
+ * requires the shared connection up AND every subsystem connected: LIVE, or
+ * POLLING on a REST-native surface (pairs/anchor — their normal snapshot
+ * cadence). Any subsystem connecting/disconnected/stale/degraded/error
+ * demotes the chip to that worst real state, naming each one — never a
+ * green socket over grey channels. Precedence mirrors projectChannel:
+ * disconnected > error > connecting > stale > degraded.
+ */
+export function socketChipProps(
+  wsConnected: boolean,
+  channels: Record<RealtimeChannelId, RealtimeChannelState>,
+): { state: ConnectionState; detail: string | null } {
+  if (!wsConnected) {
+    return {
+      state: "DISCONNECTED",
+      detail: "the single socket.io connection is down",
+    };
+  }
+  const precedence: readonly ConnectionState[] = [
+    "DISCONNECTED",
+    "ERROR",
+    "CONNECTING",
+    "STALE",
+    "DEGRADED",
+  ];
+  let worst: ConnectionState | null = null;
+  const demoted: string[] = [];
+  for (const id of REALTIME_CHANNELS) {
+    const token = projectChannel(id, channels[id]);
+    // LIVE, and POLLING on a REST-native surface, are the connected states.
+    if (token === "LIVE" || token === "POLLING") continue;
+    demoted.push(`${id}=${token}`);
+    if (worst === null || precedence.indexOf(token) < precedence.indexOf(worst)) {
+      worst = token;
+    }
+  }
+  if (worst === null) return { state: "LIVE", detail: null };
+  return { state: worst, detail: demoted.join(", ") };
+}
+
 type Tone = { icon: LucideIcon; chip: string; text: string };
 
 const ok = (): Tone => ({
@@ -377,10 +420,7 @@ export function RuntimePostureBar() {
         title="the single socket.io connection shared by every WS channel"
       >
         <span className="text-muted-foreground/80">socket</span>
-        <ConnectionStateChip
-          state={wsConnected ? "LIVE" : "DISCONNECTED"}
-          detail={wsConnected ? null : "the single socket.io connection is down"}
-        />
+        <ConnectionStateChip {...socketChipProps(wsConnected, channels)} />
       </span>
       {REALTIME_CHANNELS.map((id) => {
         const ch = channels[id];
