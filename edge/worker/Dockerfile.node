@@ -1,3 +1,8 @@
+# WO-13 (2026-09-06): CANONICAL production edge entrypoint (compose.prod.yml
+# `edge` service). Builds the Hono worker (@arbx/edge-worker — byte-identical
+# to the Cloudflare deploy) and serves it under Node via @hono/node-server
+# (CMD dist/node-server.js). NOT "dev-local": the Express DEV-ONLY shim lives
+# at edge/dev-local/Dockerfile and is wired only in compose.dev.yml.
 FROM node:20-bookworm-slim AS builder
 WORKDIR /build
 COPY package.json ./

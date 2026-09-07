@@ -194,3 +194,42 @@ Fresh DBs get identical end-state; prod re-runs take no table lock.
 `automation/tools/lint-migration-rerun-lock-safety.sh` (selftest via
 `--selftest`); `ALTER TABLE <hot> SET|RESET (reloptions)` stays exempt
 (ShareUpdateExclusiveLock does not conflict with writers).
+
+---
+
+## `120_service_credentials_envelope_encryption.sql` — WO-03 (2026-09-06)
+
+(Numbered 120, not 119, per the orchestrator's collision ruling —
+`GOAL-WORKORDERS.md:11`: 119 is reserved for the WO-04 trading-config
+lp_fee migration whose TS half already cites its CHECK.)
+
+Envelope encryption (pgcrypto) for `service_credentials.secret_value`, closing
+the plaintext gap left by migration 057 (whose "058 will add encryption"
+comment pointed at a migration that shipped as `token_validations` instead).
+
+**Keyless-by-default structure + dual backfill paths:**
+
+- Columns `secret_ciphertext BYTEA` / `secret_salt BYTEA` /
+  `secret_key_version SMALLINT` / `secret_hint TEXT`, all catalog-guarded
+  (rerun-lock-safe no-ops; table is cold — not in the lint hot-table list).
+- **Path A (optional):** SQL backfill that activates ONLY when the runner
+  injects `-v arbx_credentials_master_key=…` (proposed one-line extension in
+  `audits/omniscience-integration-2026-09-06/WO-03-DESIGN.md` §7 — NOT yet in
+  `run_migrations.sh`). The file self-defaults the psql var to `''` so an
+  unextended runner can never hit an unbound `:'var'` abort. rowCount and
+  decrypt-roundtrip are verified with `\gset` + `\if` + `SELECT 1/0` (any
+  mismatch fails the deploy under `ON_ERROR_STOP`).
+- **Path B (guaranteed):** the api-server boot sweep
+  (`backend/api-server/src/credentials/crypto.ts::backfillCredentialEncryption`)
+  converts + verifies + scrubs rows with per-phase rowCount guards, even when
+  the runner never passes the key. Master key lives only in
+  `ARBX_CREDENTIALS_MASTER_KEY[_FILE]` (+`_PREV`/`_KEY_VERSION` rotation
+  window) — never in the repo, never in SQL literals.
+
+**No single-source CHECK constraint on purpose:** the verified scrub sequence
+(encrypt → verify → scrub plaintext) requires a transient both-set state; the
+invariant is code-enforced and asserted at every boot (design D5).
+
+**Deploy note:** shipping 120 + code WITHOUT provisioning the key is a zero-
+behavior-change deploy (legacy plaintext mode, warned at boot). Provisioning
+the key activates envelope writes + the boot conversion on next restart.

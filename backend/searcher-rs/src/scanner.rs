@@ -1498,6 +1498,12 @@ async fn decode_and_score_tx<'a>(
         return Ok(());
     }
 
+    // WO-10 (2026-09-06): tx-on-hand instant — origin of the scanner-side
+    // latency spans (the `decode_route`/`decode_calldata` decode cuts and the
+    // `decode_to_publish_legacy` span observed at the legacy publish sites
+    // below). Monotonic; zero alloc; R9-silent (no per-item logs).
+    let wo10_tx_start = std::time::Instant::now();
+
     let hash = tx.hash;
     let to = match tx.to {
         Some(a) => a,
@@ -1514,6 +1520,8 @@ async fn decode_and_score_tx<'a>(
     // event-driven orchestrator. In `Shadow` mode the orchestrator is in
     // dry-run (logs only); in `V2` mode it is the sole emit path.
     if let Some(orch) = orchestrator {
+        // WO-10 (2026-09-06): V2 decode span — the production decode path.
+        let wo10_decode_start = std::time::Instant::now();
         let intents = match route_decoder::decode_to_route_intents(
             &tx,
             router,
@@ -1536,6 +1544,7 @@ async fn decode_and_score_tx<'a>(
                 vec![]
             }
         };
+        publisher::STAGE_DECODE_ROUTE.observe(wo10_decode_start.elapsed().as_secs_f64());
 
         // ── TASK 1 log #1: v2.route_decoder.done ─────────────────────────
         // Emitted once after decode, summarising all intents for this tx.
@@ -1582,9 +1591,13 @@ async fn decode_and_score_tx<'a>(
     // All code below is the original `decode_and_score_tx` body, unchanged.
     // Scanner integration spec §4: "BEFORE" block untouched until V2 ships.
 
+    // WO-10 (2026-09-06): legacy decode span (observed on both the Ok and the
+    // Err arm — the decode duration is real even when decode fails).
+    let wo10_decode_start = std::time::Instant::now();
     let decoded = match calldata::decode(&tx.input, router.kind) {
         Ok(d) => d,
         Err(reason) => {
+            publisher::STAGE_DECODE_CALLDATA.observe(wo10_decode_start.elapsed().as_secs_f64());
             debug!(
                 event = "scanner.decode_failed",
                 reason = reason.as_str(),
@@ -1593,6 +1606,7 @@ async fn decode_and_score_tx<'a>(
             return Ok(());
         }
     };
+    publisher::STAGE_DECODE_CALLDATA.observe(wo10_decode_start.elapsed().as_secs_f64());
     if router.kind == RouterKind::Unknown {
         return Ok(());
     }
@@ -2027,6 +2041,7 @@ async fn decode_and_score_tx<'a>(
             }
         }
         publisher::publish(redis, &opportunity).await?;
+        publisher::STAGE_DECODE_TO_PUBLISH_LEGACY.observe(wo10_tx_start.elapsed().as_secs_f64());
         OPPORTUNITIES_TOTAL
             .with_label_values(&[
                 &opportunity.chain_id.to_string(),
@@ -2224,6 +2239,8 @@ async fn decode_and_score_tx<'a>(
                 }
             }
             publisher::publish(redis, &opportunity).await?;
+            publisher::STAGE_DECODE_TO_PUBLISH_LEGACY
+                .observe(wo10_tx_start.elapsed().as_secs_f64());
             OPPORTUNITIES_TOTAL
                 .with_label_values(&[
                     &opportunity.chain_id.to_string(),
@@ -2267,6 +2284,8 @@ async fn decode_and_score_tx<'a>(
                 }
             }
             publisher::publish(redis, &opportunity).await?;
+            publisher::STAGE_DECODE_TO_PUBLISH_LEGACY
+                .observe(wo10_tx_start.elapsed().as_secs_f64());
             OPPORTUNITIES_TOTAL
                 .with_label_values(&[
                     &opportunity.chain_id.to_string(),
@@ -2315,6 +2334,8 @@ async fn decode_and_score_tx<'a>(
                 }
             }
             publisher::publish(redis, &opportunity).await?;
+            publisher::STAGE_DECODE_TO_PUBLISH_LEGACY
+                .observe(wo10_tx_start.elapsed().as_secs_f64());
             OPPORTUNITIES_TOTAL
                 .with_label_values(&[
                     &opportunity.chain_id.to_string(),
@@ -2381,7 +2402,9 @@ async fn decode_and_score_tx<'a>(
     // the tokio worker would park the event loop. The producer validates the EXACT
     // wrapped-flash entrypoint that gets broadcast and carries its validated bytes
     // in `wrapped_calldata` — broadcast verbatim, real byte-parity.
-    let (fail_closed_reason, trace_hash_sentinel, sim_status_str, validated_plan) =
+    // WO-02 (2026-09-06): 5th element — the REVM-verdict record for the
+    // arbx:hot:simulated stream (None when no REVM sim ran for this candidate).
+    let (fail_closed_reason, trace_hash_sentinel, sim_status_str, validated_plan, hot_sim) =
         if let (EncoderGateOutcome::EncoderOk(ctx), Some(simulator_arc)) =
             (&gate_outcome, simulator_v2.cloned())
         {
@@ -2401,6 +2424,7 @@ async fn decode_and_score_tx<'a>(
                 fcr.to_string(),
                 ths.to_string(),
                 "SIM_DISABLED_FAIL_CLOSED".to_string(),
+                None,
                 None,
             )
         };
@@ -2616,6 +2640,27 @@ async fn decode_and_score_tx<'a>(
         }
     }
     publisher::publish(redis, &opportunity).await?;
+    publisher::STAGE_DECODE_TO_PUBLISH_LEGACY.observe(wo10_tx_start.elapsed().as_secs_f64());
+
+    // WO-02 (2026-09-06): XADD the REVM simulation verdict to
+    // arbx:hot:simulated — ONLY when a wrapped-flash REVM sim actually ran
+    // (post-simulation stage — N3/CROSS constraint: never the raw detection
+    // flood) and ONLY after the canonical arbx:opps:detected publish, so
+    // every stream entry references a published (and normally PG-persisted)
+    // opportunity — the api-server PaperExecutor joins on opportunities.id.
+    // FAIL-SOFT: the canonical path above already succeeded; a hot-stream
+    // Redis error is logged (observable, R8) and never fails the pipeline.
+    if let Some(sim) = hot_sim {
+        let emitter = searcher_rs::hot_path_emitter::HotPathEmitter::new(redis.clone());
+        if let Err(e) = emitter.emit_simulated(&opportunity, &sim).await {
+            warn!(
+                event = "hot_path.simulated_emit_failed",
+                opp_id = %opportunity.id,
+                error = %e,
+                "fail-soft: arbx:hot:simulated XADD failed; canonical publish already succeeded"
+            );
+        }
+    }
 
     OPPORTUNITIES_TOTAL
         .with_label_values(&[
@@ -2860,8 +2905,9 @@ fn bump_encoder_gate_counter(outcome: &EncoderGateOutcome) {
 
 /// Dispatch the WRAPPED FLASH REVM sim (`sim_multistep::execute_multistep_revm`)
 /// on a blocking tokio thread, classify the returned `SimulationOutcome`, and
-/// produce the (fail_closed_reason, trace_hash_sentinel, simulation_status)
-/// triple consumed by the hot path.
+/// produce the (fail_closed_reason, trace_hash_sentinel, sim_status_str,
+/// validated_plan, hot_sim_record) 5-tuple consumed by the hot path
+/// (WO-02 (2026-09-06): the 5th element feeds `arbx:hot:simulated`).
 ///
 /// This is the PRODUCER: it validates the EXACT wrapped-flash entrypoint that the
 /// broadcast path sends (`requestFlashLoan` 0x5107d61e wrapping
@@ -2880,9 +2926,13 @@ fn bump_encoder_gate_counter(outcome: &EncoderGateOutcome) {
 /// On false the simulation_status stays SIM_DISABLED_FAIL_CLOSED and the
 /// fail_reason's tag prefix routes to the right A.3.c counter.
 ///
-/// Returns `(fail_closed_reason, trace_hash_sentinel, sim_status_str, validated_plan)`.
-/// The 4th element is `Some(ValidatedPlan)` ONLY on `SIM_SUCCESS` and `None` on
-/// every fail-closed / early-return path. It carries the EXACT validated inputs
+/// Returns `(fail_closed_reason, trace_hash_sentinel, sim_status_str, validated_plan,
+/// hot_sim_record)` consumed by the hot path. The 4th element is
+/// `Some(ValidatedPlan)` ONLY on `SIM_SUCCESS` and `None` on
+/// every fail-closed / early-return path. The 5th element is `Some(SimulationResult)`
+/// ONLY on paths where the REVM sim actually ran, with the verdict VERBATIM
+/// (WO-02 (2026-09-06): producer of the `arbx:hot:simulated` stream). The
+/// validated_plan carries the EXACT validated inputs
 /// (`ctx`, `route_hash`, `min_profit_wei`, `executor_address`) PLUS the
 /// sim-validated `wrapped_calldata` — the exact bytes the broadcast path sends
 /// VERBATIM (real byte-parity, not a re-encode). The caller persists them under
@@ -2911,6 +2961,7 @@ async fn dispatch_orchestrator_and_classify(
     String,
     String,
     Option<prioritization_spine::ValidatedPlan>,
+    Option<searcher_rs::hot_path_emitter::SimulationResult>,
 ) {
     use std::sync::atomic::Ordering::Relaxed;
     let c = counters();
@@ -2927,6 +2978,7 @@ async fn dispatch_orchestrator_and_classify(
                 "missing_executor".to_string(),
                 "fail_closed:missing_executor".to_string(),
                 "SIM_DISABLED_FAIL_CLOSED".to_string(),
+                None,
                 None,
             );
         }
@@ -2995,9 +3047,15 @@ async fn dispatch_orchestrator_and_classify(
                 "fail_closed:spawn_blocking_failed".to_string(),
                 "SIM_DISABLED_FAIL_CLOSED".to_string(),
                 None,
+                None,
             );
         }
     };
+
+    // WO-02 (2026-09-06): capture the REVM verdict ONCE, verbatim, for the
+    // arbx:hot:simulated stream. Every return BELOW this point ran a real
+    // REVM sim → Some(...); the pre-REVM returns above stay None.
+    let hot_sim = hot_sim_record(&outcome);
 
     // Phase OMEGA scoring — wire the Bayesian posterior gate + Kelly sizing per
     // opportunity (observe-only: produce + log a ConfidenceScore; does NOT gate
@@ -3036,6 +3094,7 @@ async fn dispatch_orchestrator_and_classify(
                     "fail_closed:wrapped_calldata_missing".to_string(),
                     "SIM_DISABLED_FAIL_CLOSED".to_string(),
                     None,
+                    Some(hot_sim.clone()),
                 );
             }
         };
@@ -3094,6 +3153,7 @@ async fn dispatch_orchestrator_and_classify(
                 sentinel.to_string(),
                 "SIM_DISABLED_FAIL_CLOSED".to_string(),
                 None,
+                Some(hot_sim.clone()),
             );
         }
 
@@ -3115,6 +3175,7 @@ async fn dispatch_orchestrator_and_classify(
             "orchestrator_success".to_string(),
             "SIM_SUCCESS".to_string(),
             Some(validated_plan),
+            Some(hot_sim.clone()),
         );
     }
 
@@ -3147,7 +3208,24 @@ async fn dispatch_orchestrator_and_classify(
         "fail_closed:orchestrator_rejected".to_string(),
         "SIM_DISABLED_FAIL_CLOSED".to_string(),
         None,
+        Some(hot_sim.clone()),
     )
+}
+
+/// WO-02 (2026-09-06): pure mapping REVM SimulationOutcome → the
+/// arbx:hot:simulated wire record. Verbatim verdict + stringified U256
+/// economics (R8: no truncation, no re-classification). Pure so it is
+/// unit-testable without Redis (the XADD lives in hot_path_emitter).
+#[cfg(feature = "v2-simulator")]
+fn hot_sim_record(
+    outcome: &prioritization_spine::round_trip_executor::SimulationOutcome,
+) -> searcher_rs::hot_path_emitter::SimulationResult {
+    searcher_rs::hot_path_emitter::SimulationResult {
+        passed: outcome.passed,
+        net_profit_wei: outcome.simulated_profit_token_in.to_string(),
+        gas_used: outcome.gas_used_total,
+        gas_price_wei: outcome.gas_price_wei.to_string(),
+    }
 }
 
 #[cfg(test)]
@@ -3245,5 +3323,36 @@ mod tests {
         let bad: &str = "0xNOT_AN_ADDRESS";
         let parsed: Result<Address, _> = Address::from_str(bad);
         assert!(parsed.is_err(), "parser must reject malformed address");
+    }
+
+    // ── WO-02 (2026-09-06): hot-stream record maps the REVM outcome verbatim (R8) ──
+    #[cfg(feature = "v2-simulator")]
+    #[test]
+    fn hot_sim_record_maps_outcome_verbatim() {
+        use prioritization_spine::round_trip_executor::SimulationOutcome;
+
+        // Failed outcome (SimulationOutcome::failed): zeroed economics — the
+        // honest "sim did not complete" record, never fabricated numbers.
+        let failed = SimulationOutcome::failed("revm_reverted:revert");
+        let r = hot_sim_record(&failed);
+        assert!(!r.passed);
+        assert_eq!(r.net_profit_wei, "0");
+        assert_eq!(r.gas_price_wei, "0");
+        assert_eq!(r.gas_used, 0);
+
+        // Passed outcome with a U256 profit EXCEEDING u128 — the string field
+        // must preserve full precision (the pre-WO-02 u128 field truncated).
+        let mut passed = SimulationOutcome::failed("unused");
+        passed.passed = true;
+        passed.simulated_profit_token_in =
+            ethers::types::U256::from(2u32) * ethers::types::U256::from(u128::MAX);
+        passed.gas_used_total = 424_242;
+        let r2 = hot_sim_record(&passed);
+        assert!(r2.passed);
+        assert_eq!(
+            r2.net_profit_wei,
+            passed.simulated_profit_token_in.to_string()
+        );
+        assert_eq!(r2.gas_used, 424_242);
     }
 }

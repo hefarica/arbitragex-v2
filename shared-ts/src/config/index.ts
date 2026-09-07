@@ -102,6 +102,10 @@ export const AppConfigSchema = z.object({
     max_value_eth: z.number().nonnegative().optional().default(1.0),
     flashbots_submit_timeout_ms: z.number().int().min(100).optional().default(5000),
     priority_fee_increment_pct: z.number().nonnegative().optional().default(10),
+    // WO-04 (2026-09-06): EIP-1559 priority tip (gwei) for bundle_builder
+    // broadcasts. Mirrors shared-rs ExecutionCfg::priority_fee_gwei (serde
+    // default 2.0) and configs/schemas/app.schema.json.
+    priority_fee_gwei: z.number().nonnegative().optional().default(2.0),
   }).strict(),
   observability: z.object({
     prometheus_enabled: z.boolean(),

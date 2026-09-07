@@ -15,18 +15,30 @@
 //! - Latency: All ops are async non-blocking, clone-on-call pattern
 //! - Observer-only: NEVER accesses capital keys, pure emitter logic
 
-use redis::aio::MultiplexedConnection;
+// WO-02 (2026-09-06): MultiplexedConnection → ConnectionManager — the handle
+// type the scanner pipeline already threads (`publisher::publish` takes
+// `&mut ConnectionManager`); the emitter must consume the same type.
+use redis::aio::ConnectionManager;
 use shared_rs::contracts::Opportunity;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 /// Simulation outcome passed from the REVM orchestrator.
 /// Mirrored from `prioritization_spine::round_trip_executor::SimulationOutcome`
 /// to avoid deep trait coupling in the emitter boundary.
+///
+/// WO-02 (2026-09-06): `net_profit_wei`/`gas_price_wei` are decimal STRINGS
+/// because the source `simulated_profit_token_in`/`gas_price_wei` are `U256`;
+/// a `u128` field would truncate on overflow and a coerced value violates R8.
+/// The wire contract was stringified anyway (XADD net_profit_wei.to_string()).
+/// NOTE: `net_profit_wei` carries the REVM-verdict GROSS token_in delta
+/// (`simulated_profit_token_in`); the net-of-gas decision belongs to
+/// downstream consumers (paper-executor net gate / `net_usd_viable`).
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct SimulationResult {
     pub passed: bool,
-    pub net_profit_wei: u128,
+    pub net_profit_wei: String,
     pub gas_used: u64,
+    pub gas_price_wei: String,
 }
 
 /// Hot-path emitter for sub-100ms detection pipeline.
@@ -35,12 +47,13 @@ pub struct SimulationResult {
 /// recommended pattern for shared-state emitters.
 #[derive(Clone)]
 pub struct HotPathEmitter {
-    redis: MultiplexedConnection,
+    redis: ConnectionManager,
 }
 
 impl HotPathEmitter {
-    /// Creates a new emitter from an existing Redis multiplexed connection.
-    pub fn new(redis: MultiplexedConnection) -> Self {
+    /// Creates a new emitter from an existing Redis connection manager
+    /// (the handle type the scanner pipeline already threads).
+    pub fn new(redis: ConnectionManager) -> Self {
         Self { redis }
     }
 
@@ -103,17 +116,29 @@ impl HotPathEmitter {
 
     /// Emits a simulation result to `arbx:hot:simulated` stream.
     ///
+    /// WO-02 (2026-09-06): takes the full `Opportunity` so the XADD carries
+    /// the fields BOTH consumers require — `OpportunityHotStreamer`
+    /// (api-server websocket.ts → room `opportunities`, event
+    /// `opportunity:validated`) and the dormant `PaperExecutor`
+    /// (api-server paper/executor.ts), whose `parseSimulatedOpportunity`
+    /// drops entries without `id`+`status` and skips (`skip_incomplete`)
+    /// entries without `opportunity_id`+`chain_id`+`strategy_kind`.
+    ///
     /// Stream fields:
-    ///   - `id`: Opportunity UUID
-    ///   - `status`: "passed" or "failed"
-    ///   - ``net_profit_wei`: Stringified u128 (canonical for precision)
-    ///   - `gas_used`: Gas consumed in simulation
+    ///   - `id`: Opportunity UUID (stream-message correlation)
+    ///   - `opportunity_id`: same UUID — PaperExecutor FK into opportunities.id
+    ///   - `status`: "passed" | "failed" — REVM verdict, VERBATIM (R8: the
+    ///     emitter never re-classifies; downstream gates apply their own)
+    ///   - `net_profit_wei`: decimal string (see SimulationResult)
+    ///   - `gas_used`: gas consumed by the REVM round trip
+    ///   - `gas_price_wei`: decimal string (gas price the simulator used)
+    ///   - `chain_id`, `strategy_kind`, `token_pair`: correlation fields
     ///   - `timestamp_ms`: Unix timestamp millis
     ///
     /// On `passed=true`, also stores full result at `arbx:hot:sim:{id}` with 300s TTL.
     pub async fn emit_simulated(
         &self,
-        id: &str,
+        opp: &Opportunity,
         result: &SimulationResult,
     ) -> Result<(), redis::RedisError> {
         let timestamp_ms = SystemTime::now()
@@ -122,6 +147,7 @@ impl HotPathEmitter {
             .as_millis() as u64;
 
         let status = if result.passed { "passed" } else { "failed" };
+        let id = opp.id.to_string();
 
         // XADD arbx:hot:simulated with approximate maxlen ~5k
         let _: () = redis::cmd("XADD")
@@ -131,13 +157,23 @@ impl HotPathEmitter {
             .arg(5000)
             .arg("*")
             .arg("id")
-            .arg(id)
+            .arg(&id)
             .arg("status")
             .arg(status)
             .arg("net_profit_wei")
-            .arg(result.net_profit_wei.to_string())
+            .arg(&result.net_profit_wei)
             .arg("gas_used")
             .arg(result.gas_used)
+            .arg("gas_price_wei")
+            .arg(&result.gas_price_wei)
+            .arg("opportunity_id")
+            .arg(&id)
+            .arg("chain_id")
+            .arg(opp.chain_id)
+            .arg("strategy_kind")
+            .arg(opp.strategy_kind.as_str())
+            .arg("token_pair")
+            .arg(&opp.pair_symbol)
             .arg("timestamp_ms")
             .arg(timestamp_ms)
             .query_async(&mut self.redis.clone())

@@ -10,9 +10,16 @@
  *     ones, never throws, and logs the summary.
  *   - A Redis failure is logged + returns false — the admin write path never
  *     breaks (PG stays the source of truth).
+ *
+ * WO-03 (2026-09-06): envelope rows (migration 120) are DECRYPTED before
+ * mirroring, and a ciphertext row without a master key rethrows
+ * CredentialsKeyRequiredError — the documented boot fail-fast (RULE 02) that
+ * replaces the old "never throws" contract for that one case.
  */
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, afterEach } from "vitest";
 import type { Pool } from "pg";
+
+import { resetMasterKeyCacheForTests } from "./crypto.js";
 
 import {
   mirrorCredential,
@@ -120,5 +127,86 @@ describe("rehydrateSvcCredMirror (boot)", () => {
     expect(logger.warn.length).toBe(before + 1);
     expect(logger.warn.at(-1)!.event).toBe("credentials.projection_rehydrate_skipped");
     expect(redis.store.size).toBe(0);
+  });
+});
+
+describe("rehydrateSvcCredMirror — WO-03 (2026-09-06) envelope rows", () => {
+  // Same synthetic vector as crypto.test.ts — never real material.
+  const TEST_MASTER = "unit-test-master-key-32-chars-ok!!";
+
+  /** SQL-aware scripted pool (static fakePool above cannot vary by query). */
+  function scriptedPool(
+    respond: (sql: string) => { rows: unknown[]; rowCount?: number },
+  ): Pool {
+    return {
+      query: async (sql: string) => respond(sql),
+    } as unknown as Pool;
+  }
+
+  const ENVELOPE_ROW = {
+    provider: "coingecko_pro",
+    scope: "global",
+    secret_value: null,
+    secret_ciphertext: Buffer.from("envelope-ct"),
+    secret_salt: Buffer.alloc(16, 5),
+    secret_key_version: 1,
+    metadata: {},
+    status: "valid",
+    updated_at: new Date(),
+    updated_by: "admin",
+  };
+
+  afterEach(() => {
+    delete process.env["ARBX_CREDENTIALS_MASTER_KEY"];
+    resetMasterKeyCacheForTests();
+  });
+
+  it("DECRYPTS envelope rows before mirroring (raw secret by contract)", async () => {
+    process.env["ARBX_CREDENTIALS_MASTER_KEY"] = TEST_MASTER;
+    resetMasterKeyCacheForTests();
+    const redis = new FakeRedis();
+    const pool = scriptedPool((sql) => {
+      if (sql.includes("SELECT id, provider, scope, secret_value")) return { rows: [] }; // backfill: nothing pending/both-set
+      if (sql.includes("count(*)")) return { rows: [{ n: "0" }] }; // invariant assert
+      if (sql.includes("pgp_sym_decrypt")) return { rows: [{ pt: "CG-decrypted-plain" }] };
+      return { rows: [ENVELOPE_ROW] }; // rehydrate SELECT
+    });
+    await rehydrateSvcCredMirror({ pool, redis: redis as never, logger: trackLogger });
+    const mirrored = JSON.parse(redis.store.get(svcCredKey("coingecko_pro", "global"))!) as {
+      secret_value: string;
+    };
+    expect(mirrored.secret_value).toBe("CG-decrypted-plain");
+    expect(redis.publishes).toHaveLength(1);
+  });
+
+  it("RETHROWS CredentialsKeyRequiredError for ciphertext rows without a master key (boot fail-fast, RULE 02)", async () => {
+    resetMasterKeyCacheForTests(); // no key configured
+    const redis = new FakeRedis();
+    const pool = scriptedPool((sql) => {
+      if (sql.includes("count(*)")) return { rows: [{ n: "0" }] }; // backfill sees a stale 0 — the rehydrate path must still fail
+      return { rows: [ENVELOPE_ROW] };
+    });
+    await expect(
+      rehydrateSvcCredMirror({ pool, redis: redis as never, logger: trackLogger }),
+    ).rejects.toThrowError(/ARBX_CREDENTIALS_MASTER_KEY/);
+    expect(logger.warn.at(-1)!.event).toBe("credentials.projection_rehydrate_blocked");
+    expect(redis.store.size).toBe(0); // nothing mirrored — never serve a partial projection
+  });
+
+  it("skips incomplete envelope rows without fabricating a secret (R8)", async () => {
+    process.env["ARBX_CREDENTIALS_MASTER_KEY"] = TEST_MASTER;
+    resetMasterKeyCacheForTests();
+    const redis = new FakeRedis();
+    const incomplete = { ...ENVELOPE_ROW, secret_salt: null };
+    const pool = scriptedPool((sql) => {
+      if (sql.includes("SELECT id, provider, scope, secret_value")) return { rows: [] };
+      if (sql.includes("count(*)")) return { rows: [{ n: "0" }] };
+      return { rows: [incomplete] };
+    });
+    await rehydrateSvcCredMirror({ pool, redis: redis as never, logger: trackLogger });
+    expect(redis.store.size).toBe(0);
+    const summary = logger.info.at(-1)!;
+    expect(summary.event).toBe("credentials.projection_rehydrated");
+    expect(summary.mirrored).toBe(0);
   });
 });

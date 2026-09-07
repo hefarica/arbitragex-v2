@@ -1,5 +1,13 @@
 /**
- * Node entry for the canonical edge/worker Hono app — POC for B-02.
+ * Node entry for the canonical edge/worker Hono app.
+ *
+ * WO-13 (2026-09-06): this is the PRODUCTION edge entrypoint, not a POC.
+ * B-02 closed with PR #321 (commit 60f3f702, 2026-08-11): compose.prod.yml
+ * `edge` builds edge/worker/Dockerfile.node whose CMD runs this file's build
+ * (dist/node-server.js). Verified live on the VPS 2026-09-06T23:45Z: container
+ * CMD == ["node","/app/edge/worker/dist/node-server.js"] + boot log
+ * `edge-worker.node.listen` (emitted only here). The Express dev-local variant
+ * (edge/dev-local/, used by compose.dev.yml) is DEV-ONLY and separate.
  *
  * The worker source (./index.ts) is byte-identical to the Cloudflare deploy;
  * this file only adapts the runtime: it builds the worker `Env` from

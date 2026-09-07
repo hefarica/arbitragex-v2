@@ -290,6 +290,13 @@ impl OpportunityEmitter {
             return Ok(EmitOutcome::Published);
         }
 
+        // WO-10 (2026-09-06): emit-boundary span origin — entry of the REAL
+        // I/O path (dedup → Gate-C scoring → PG insert → Redis XADD). Dry-run
+        // and reclassification returns above are deliberately OUTSIDE the
+        // span (no I/O, no double count when emit_accepted reclassifies into
+        // emit_rejected). Monotonic Instant; observe is zero-alloc; R9-silent.
+        let wo10_emit_start = std::time::Instant::now();
+
         // ── Dedup check ───────────────────────────────────────────────────
         let route_hash = build_route_hash(opportunity);
         let is_fresh = self
@@ -318,6 +325,13 @@ impl OpportunityEmitter {
         // ── Redis publish ─────────────────────────────────────────────────
         let mut redis = self.redis.clone();
         publisher::publish(&mut redis, opportunity).await?;
+        // WO-10 (2026-09-06): two cuts of the same completed emission:
+        // (a) monotonic emit-boundary span (real-I/O entry → XADD complete);
+        // (b) wall-clock construction→publish span from the `detected_at`
+        //     stamp (covers gates + SizeOptimizer upstream of this fn; R8
+        //     guard against clock steps inside the helper).
+        publisher::STAGE_EMIT_BOUNDARY.observe(wo10_emit_start.elapsed().as_secs_f64());
+        publisher::observe_construction_to_publish(opportunity.detected_at, chrono::Utc::now());
 
         // ── Metrics ───────────────────────────────────────────────────────
         let chain_str = opportunity.chain_id.to_string();
@@ -392,6 +406,10 @@ impl OpportunityEmitter {
             return Ok(EmitOutcome::Published);
         }
 
+        // WO-10 (2026-09-06): emit-boundary span origin — real I/O starts at
+        // Gate-C scoring below (dry-run return above stays outside the span).
+        let wo10_emit_start = std::time::Instant::now();
+
         // ── Gate C scoring (advisory, non-fatal) ──────────────────────────
         // ARBX-RDY-02 / A.5: score the NEGATIVE class too — Bayesian prior
         // calibration needs rejected observations (prod rejects ~100% of
@@ -411,6 +429,12 @@ impl OpportunityEmitter {
         // ── Redis publish ─────────────────────────────────────────────────
         let mut redis = self.redis.clone();
         publisher::publish(&mut redis, &rejected).await?;
+        // WO-10 (2026-09-06): same two cuts as the accepted path. The rejected
+        // clone preserves `detected_at` verbatim — the construction→publish
+        // wall-clock span reflects the FULL evaluation this row survived
+        // (cartridge gates + SizeOptimizer) before its honest rejection (R8).
+        publisher::STAGE_EMIT_BOUNDARY.observe(wo10_emit_start.elapsed().as_secs_f64());
+        publisher::observe_construction_to_publish(rejected.detected_at, chrono::Utc::now());
 
         // ── Metrics ───────────────────────────────────────────────────────
         let chain_str = rejected.chain_id.to_string();

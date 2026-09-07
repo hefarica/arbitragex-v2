@@ -33,6 +33,56 @@ export interface WebSocketClientOptions {
 }
 
 /**
+ * WO-01 (2026-09-06): adapta el payload del evento `new_opportunity` al shape
+ * `HotOpportunityEvent` que consumen los callbacks `onDetected`.
+ *
+ * Contrato del server (backend/api-server/src/websocket.ts:339
+ * `broadcastOpportunity` ← index.ts:1847-1863 LISTEN `opportunities_channel`
+ * ← trigger PG `trg_notify_opportunity` AFTER INSERT, payload =
+ * `row_to_json(NEW)`): una fila completa de la tabla `opportunities` (escritor
+ * canónico: backend/searcher-rs/src/persistence.rs). Campos relevantes:
+ *   id (uuid string) · chain_id (number) · strategy_kind (string) ·
+ *   detected_at (ISO 8601 string) · status ('detected'|…|'rejected'|'failed')
+ *   · expected_profit_usd / net_expected_profit_usd (USD, number|null).
+ *
+ * RULE 00 / R8 fail-honest — solo se mapean campos con correspondencia 1:1
+ * veraz; NUNCA se fabrican valores:
+ *   - `status` del row PG ('detected' etc.) NO pertenece al union
+ *     "passed" | "failed" del hot stream → se omite.
+ *   - `net_profit_wei` / `gas_used` no existen en el row PG (el row trae USD,
+ *     no wei) → se omiten.
+ *   - `detected_at` ISO se convierte a `detected_at_ms` (epoch ms string); si
+ *     no es parseable se omite el campo, jamás se emite "NaN".
+ *
+ * @returns null cuando el payload no es objeto o carece de `id` uuid string
+ *          (payload corrupto → se descarta, R8).
+ */
+export function adaptNewOpportunityToHotEvent(
+  payload: unknown,
+): HotOpportunityEvent | null {
+  if (typeof payload !== "object" || payload === null) return null;
+  const row = payload as Record<string, unknown>;
+  if (typeof row.id !== "string" || row.id.length === 0) return null;
+
+  const event: HotOpportunityEvent = { id: row.id };
+  if (typeof row.chain_id === "number") {
+    event.chain_id = String(row.chain_id);
+  } else if (typeof row.chain_id === "string") {
+    event.chain_id = row.chain_id;
+  }
+  if (typeof row.strategy_kind === "string") {
+    event.strategy_kind = row.strategy_kind;
+  }
+  if (typeof row.detected_at === "string") {
+    const ms = Date.parse(row.detected_at);
+    if (!Number.isNaN(ms)) {
+      event.detected_at_ms = String(ms);
+    }
+  }
+  return event;
+}
+
+/**
  * Cliente WebSocket para recibir oportunidades hot path en tiempo real.
  * Conecta al namespace /ws/hot-opportunities y se suscribe al room 'opportunities'.
  *
@@ -95,6 +145,19 @@ export class HotOpportunityWebSocket {
 
     this.socket.on("opportunity:validated", (data: HotOpportunityEvent) => {
       this.onValidatedCallbacks.forEach((cb) => cb(data));
+    });
+
+    // WO-01 (2026-09-06): el api-server emite el broadcast insignia
+    // `new_opportunity` (PostgreSQL LISTEN opportunities_channel →
+    // broadcastOpportunity) al MISMO room `opportunities`; este cliente antes
+    // no lo escuchaba — el broadcast llegaba a nadie. Listener ADITIVO:
+    // despacha al mismo flujo que `opportunity:detected` con el payload PG
+    // adaptado (adaptNewOpportunityToHotEvent); payload corrupto se descarta
+    // (R8 fail-honest). Los listeners existentes quedan intactos.
+    this.socket.on("new_opportunity", (data: unknown) => {
+      const adapted = adaptNewOpportunityToHotEvent(data);
+      if (adapted === null) return;
+      this.onDetectedCallbacks.forEach((cb) => cb(adapted));
     });
 
     this.socket.on("error", (err: { code: string; room?: string }) => {

@@ -7,13 +7,18 @@
  */
 
 import { describe, expect, it } from "vitest";
+import type { Redis } from "ioredis";
 import {
   forwardSimulate,
   inverseSize,
   resolveTarget,
   type SimulatorRow,
 } from "./computeSimulatedNet.js";
-import type { TradingConfigSnapshot } from "./tradingConfigSnapshot.js";
+import {
+  getTradingConfigForChain,
+  _clearSnapshotCacheForTests,
+  type TradingConfigSnapshot,
+} from "./tradingConfigSnapshot.js";
 
 // ── Fixtures ────────────────────────────────────────────────────────────────
 
@@ -30,6 +35,7 @@ function baseCfg(): TradingConfigSnapshot {
     max_slippage_pct: 0.005,         // 0.5%
     failure_risk_buffer_pct: 0.001,  // 0.1%
     flashloan_fee_pct: 0.0009,       // 9bps Aave V3-ish
+    lp_fee_default_pct: 0.003,       // WO-04 (2026-09-06): V2 30bps tier default
 
     capital_cost_rate_annual_pct: 0,
     ops_overhead_usd_per_attempt: 0.01,
@@ -146,6 +152,78 @@ describe("forwardSimulate", () => {
     expect(r.cost_breakdown.copied_buffer_usd).toBeCloseTo(100 * 0.1, 5);
     // Notes should mention it.
     expect(r.notes.some((n) => n.includes("p-copied-max"))).toBe(true);
+  });
+});
+
+// ── WO-04 (2026-09-06): lp_fee_default_pct parameterization ────────────────
+//
+// The 30 bps LP-fee literal (was LP_FEE_FRACTION_DEFAULT = 0.003 at
+// computeSimulatedNet.ts:139) is now the trading_config knob
+// `lp_fee_default_pct` (migration 119; PUT admin zod + snapshot default).
+// Case 1 pins the FIRST-DEPLOY INVARIANT: a Redis blob persisted BEFORE
+// migration 119 (field absent) parses to 0.003 → behavior byte-identical to
+// the hardcoded era. Case 2 proves the knob actually turns the math.
+
+describe("WO-04 (2026-09-06): lp_fee_default_pct", () => {
+  it("Case 1 — first-deploy invariant: blob without the field ⇒ 0.003, note lp-fee=30bps-proxy", async () => {
+    _clearSnapshotCacheForTests();
+    // Hand-built config blob exactly as a pre-migration-119 PUT would have
+    // persisted it — deliberately WITHOUT lp_fee_default_pct.
+    const blob = JSON.stringify({
+      capital_usd: 100_000,
+      base_token_symbol: "WETH",
+      base_token_price_usd: 2350,
+      token_prices_usd: { WETH: 2350 },
+      gas_estimate_units: 250_000,
+      gas_price_strategy: "fixed",
+      fixed_gas_price_gwei: 0.3,
+      max_slippage_pct: 0.005,
+      failure_risk_buffer_pct: 0.001,
+      flashloan_fee_pct: 0.0009,
+      capital_cost_rate_annual_pct: 0,
+      ops_overhead_usd_per_attempt: 0.01,
+      p_copied_max: 0,
+    });
+    // Redis client double at the infrastructure boundary — the DATA is the
+    // hand-built blob above (fixture, not a mock of results under test).
+    const stubRedis = { get: async (_key: string) => blob } as unknown as Redis;
+    const snapshot = await getTradingConfigForChain(stubRedis, 1);
+    expect(snapshot).not.toBeNull();
+    // Doctrinal default from parseSnapshot — mirrors the Rust serde default.
+    expect(snapshot!.lp_fee_default_pct).toBe(0.003);
+
+    const r = forwardSimulate(baseRow(), snapshot!)!;
+    // 1 WETH = $2350 amount_in ⇒ lp_fees = 2350 × 0.003 = $7.05 (unchanged).
+    expect(r.cost_breakdown.lp_fees_usd).toBeCloseTo(7.05, 5);
+    // Exact note string of the hardcoded era (Math.round(0.003 * 10_000) === 30).
+    expect(r.notes).toContain("lp-fee=30bps-proxy");
+  });
+
+  it("Case 2 — override 0.001 (10 bps): lp fees + dynamic note + varCostRate reflect the knob", () => {
+    const cfg = baseCfg();
+    cfg.lp_fee_default_pct = 0.001;
+    const r = forwardSimulate(baseRow(), cfg)!;
+    expect(r.cost_breakdown.lp_fees_usd).toBeCloseTo(2350 * 0.001, 5); // $2.35
+    expect(r.notes).toContain("lp-fee=10bps-proxy");
+    expect(r.notes).not.toContain("lp-fee=30bps-proxy");
+
+    // varCostRateFromCfg is private — observe its delta through inverseSize:
+    // varCostRate 0.0099 → 0.0079 ⇒ netPerUsd rises ⇒ the amount required to
+    // reach a $50 net floor DROPS (default ≈ $1661, override ≈ $1557).
+    const defCfg = baseCfg();
+    const defInv = inverseSize(
+      baseRow(), defCfg,
+      { net_usd: 50, roi_pct: null, source: "strategy_config" },
+      forwardSimulate(baseRow(), defCfg)!,
+    )!;
+    const ovrInv = inverseSize(
+      baseRow(), cfg,
+      { net_usd: 50, roi_pct: null, source: "strategy_config" },
+      r,
+    )!;
+    expect(ovrInv.required_amount_in_usd).toBeLessThan(defInv.required_amount_in_usd);
+    expect(ovrInv.required_amount_in_usd).toBeGreaterThan(1500);
+    expect(ovrInv.required_amount_in_usd).toBeLessThan(1650);
   });
 });
 

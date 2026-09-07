@@ -147,6 +147,17 @@ const nextConfig = {
       { key: "referrer-policy", value: "no-referrer" },
       { key: "permissions-policy", value: "camera=(), microphone=(), geolocation=()" },
       { key: "content-security-policy-report-only", value: csp() },
+      // WO-09 (2026-09-06): P0-6 fase 1 — CSP ENFORCING idéntica, gated OFF.
+      // Duplica la política report-only byte a byte como header enforcing cuando
+      // ARBX_CSP_ENFORCE === "true" (contrato exact-string, fail-closed). Mismo
+      // patrón build-arg que SEC-3/ARBX_TLS_ENABLED: headers() se evalúa durante
+      // `next build` (Dockerfile:12-17), NO en runtime del contenedor — el flip
+      // exige rebuild (RULE 03). NUNCA habilitar a ciegas: ventana de deploy
+      // quieta (P0-5) + smoke e2e post-deploy, AMBOS operador. Abort/rollback y
+      // monitoreo NEL: audits/omniscience-integration-2026-09-06/WO-09-DESIGN.md §2.
+      ...(process.env.ARBX_CSP_ENFORCE === "true"
+        ? [{ key: "content-security-policy", value: csp() }]
+        : []),
     ];
     // SEC-3: HSTS enabled when TLS is configured. 1y, includeSubDomains, NO preload
     // (audit recommendation — preload is irrevocable for ≥1y, defer until TLS is stable).

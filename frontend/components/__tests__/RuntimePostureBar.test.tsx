@@ -25,6 +25,7 @@ import {
   killswitchPosture,
   paperPosture,
   projectChannel,
+  socketChipProps,
   type ConnectionState,
 } from "../RuntimePostureBar";
 import { REALTIME_CHANNELS, type RealtimeChannelState } from "@/lib/store/realtime-slices";
@@ -110,6 +111,72 @@ describe("projectChannel — RealtimeChannelState → §34 token", () => {
     expect(projectChannel("routes", ch({ status: "disconnected", lastError: "x" }))).toBe("DISCONNECTED");
     expect(projectChannel("routes", ch({ status: "stale", lastError: "x" }))).toBe("ERROR");
     expect(projectChannel("routes", ch({ status: "connecting", lastError: "x" }))).toBe("ERROR");
+  });
+});
+
+// ─── socketChipProps — WO-08 R8 honest aggregate for the "socket" chip ───────
+//
+// The socket chip must never read LIVE while a subsystem chip reads
+// CONNECTING/DISCONNECTED: LIVE requires the shared connection up AND every
+// subsystem connected (LIVE, or POLLING on a REST-native surface — its
+// normal cadence). Any demoted subsystem collapses the chip to that worst
+// real state, naming each one in the detail.
+
+describe("socketChipProps — LIVE only with EVERY subsystem connected (WO-08, R8)", () => {
+  const allConnected = (): Record<string, RealtimeChannelState> => ({
+    routes: ch({ transport: "ws", status: "live", lastMessageAt: "2026-08-24T00:00:00Z" }),
+    runtime_ack: ch({ transport: "ws", status: "live", lastMessageAt: "2026-08-24T00:00:00Z" }),
+    pairs: ch({ transport: "rest", status: "live", lastMessageAt: "2026-08-24T00:00:00Z" }),
+    quote_anchor: ch({ transport: "rest", status: "live", lastMessageAt: "2026-08-24T00:00:00Z" }),
+  });
+
+  it("socket transport down ⇒ DISCONNECTED even if channels claim live (precondition)", () => {
+    expect(socketChipProps(false, allConnected())).toEqual({
+      state: "DISCONNECTED",
+      detail: "the single socket.io connection is down",
+    });
+  });
+
+  it("socket up + every subsystem connected ⇒ LIVE, no detail", () => {
+    expect(socketChipProps(true, allConnected())).toEqual({ state: "LIVE", detail: null });
+  });
+
+  it("POLLING on a REST-native surface is a connected state (does not demote)", () => {
+    const channels = allConnected();
+    channels.pairs = ch({ transport: "rest", status: "polling", lastMessageAt: "2026-08-24T00:00:00Z" });
+    channels.quote_anchor = ch({ transport: "rest", status: "polling", lastMessageAt: "2026-08-24T00:00:00Z" });
+    expect(socketChipProps(true, channels)).toEqual({ state: "LIVE", detail: null });
+  });
+
+  it("socket up + subsystems still CONNECTING ⇒ CONNECTING naming them (never LIVE)", () => {
+    const channels = allConnected();
+    channels.pairs = ch({ status: "connecting" }); // lastMessageAt null — real boot state
+    channels.quote_anchor = ch({ status: "connecting" });
+    expect(socketChipProps(true, channels)).toEqual({
+      state: "CONNECTING",
+      detail: "pairs=CONNECTING, quote_anchor=CONNECTING",
+    });
+  });
+
+  it("a DISCONNECTED subsystem beats CONNECTING (worst-first precedence)", () => {
+    const channels = allConnected();
+    channels.runtime_ack = ch({ transport: "rest", status: "disconnected" });
+    channels.pairs = ch({ status: "connecting" });
+    expect(socketChipProps(true, channels).state).toBe("DISCONNECTED");
+  });
+
+  it("DEGRADED / STALE / ERROR subsystem tokens demote the aggregate to themselves", () => {
+    const degraded = allConnected();
+    degraded.routes = ch({ transport: "rest", status: "polling", lastMessageAt: "2026-08-24T00:00:00Z" });
+    expect(socketChipProps(true, degraded).state).toBe("DEGRADED");
+
+    const stale = allConnected();
+    stale.routes = ch({ transport: "ws", status: "stale", lastMessageAt: "2026-08-24T00:00:00Z" });
+    expect(socketChipProps(true, stale).state).toBe("STALE");
+
+    const errored = allConnected();
+    errored.routes = ch({ transport: "ws", status: "live", lastError: "schema_reject: x" });
+    expect(socketChipProps(true, errored).state).toBe("ERROR");
   });
 });
 
@@ -246,6 +313,28 @@ describe("RuntimePostureBar — initial render (R1)", () => {
     expect(html).toContain(">ERROR<");
     expect(html).toContain("schema_reject: tick.funnel");
     store.channels.routes = blank();
+  });
+
+  it("WO-08: socket chip aggregates subsystems — no LIVE socket over CONNECTING channels", () => {
+    // Real production state observed by informe /goal §5: socket.io transport
+    // up while pairs/quote_anchor never left `connecting`. The socket chip must
+    // show the degraded truth and name the subsystems in its title.
+    store.wsConnected = true;
+    store.channels.routes = ch({ transport: "ws", status: "live" });
+    store.channels.runtime_ack = ch({ transport: "ws", status: "live" });
+    const html = renderToStaticMarkup(React.createElement(RuntimePostureBar));
+    expect(html).toContain("pairs=CONNECTING, quote_anchor=CONNECTING");
+
+    // All subsystems connected → socket chip back to LIVE (detail null).
+    store.channels.pairs = ch({ transport: "rest", status: "live", lastMessageAt: "2026-08-24T00:00:00Z" });
+    store.channels.quote_anchor = ch({ transport: "rest", status: "live", lastMessageAt: "2026-08-24T00:00:00Z" });
+    const healthy = renderToStaticMarkup(React.createElement(RuntimePostureBar));
+    expect(healthy).not.toContain("not connected");
+    expect(healthy.match(/>LIVE</g)?.length).toBe(REALTIME_CHANNELS.length + 1); // socket + 4 channels
+
+    // restore the shared mutable mock for the tests that follow
+    store.wsConnected = false;
+    for (const id of REALTIME_CHANNELS) store.channels[id] = blank();
   });
 
   it("two renders of the same state are byte-identical (no clock, no random)", () => {
