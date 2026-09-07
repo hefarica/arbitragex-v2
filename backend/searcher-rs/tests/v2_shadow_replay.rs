@@ -133,7 +133,13 @@ async fn build_orchestrator_with_emitter(
         CHAIN_ID,
         dummy_conn.clone(),
     )));
-    let liq_engine = Arc::new(LiquidationEngine::new(liq_indexer, CHAIN_ID));
+    let liq_engine = Arc::new(LiquidationEngine::new(
+        liq_indexer,
+        CHAIN_ID,
+        // WO-04 (2026-09-06): pin the canonical default (always 30.0, no env
+        // dependence) so shadow-replay tests stay deterministic.
+        searcher_rs::workers::liquidation_worker::DEFAULT_GAS_COST_USD,
+    ));
 
     let opp_dedup = Arc::new(OppDedup::new(256));
     let emitter = Arc::new(OpportunityEmitter::new_dry_run(

@@ -33,7 +33,8 @@
 //!   5. Profit estimation:
 //!      - `debt_to_repay_usd = min(totalDebtBase × CLOSE_FACTOR_PCT, OPERATOR_CAP_USD)`.
 //!      - `gross_profit_usd  = debt_to_repay_usd × (bonus_bps / 10_000)`.
-//!      - `net_profit_usd    = gross_profit_usd − GAS_COST_USD`.
+//!      - `net_profit_usd    = gross_profit_usd − GAS_COST_USD` (operator
+//!        knob `LIQUIDATION_GAS_COST_USD`, default `DEFAULT_GAS_COST_USD`).
 //!      - For MVP we use a fixed `DEFAULT_LIQUIDATION_BONUS_BPS = 500` (5%);
 //!        per-asset on-chain bonus discovery is queued for a future task
 //!        (`getReserveConfigurationData(asset).currentLiquidationBonus`).
@@ -140,11 +141,36 @@ const DEFAULT_LIQUIDATION_BONUS_BPS: u32 = 500;
 /// in a follow-up; for now this is the structural floor.
 const OPERATOR_CAP_USD: f64 = 250_000.0;
 
-/// Fixed gas cost estimate (USD) for one liquidation call. A real Aave V3
+/// Default gas cost estimate (USD) for one liquidation call. A real Aave V3
 /// liquidation consumes ~300k gas; at 20 gwei × $2400/ETH that's ~$15. The
 /// 30 estimate adds a safety margin. The spine evaluator will recompute at
 /// real-time gas prices downstream; this guard is a pre-screen only.
-const GAS_COST_USD: f64 = 30.0;
+/// Operator override: env `LIQUIDATION_GAS_COST_USD` (resolved once at boot —
+/// see `resolve_gas_cost_usd`; same pattern as LIQUIDATION_WORKER_INTERVAL_SECS).
+// WO-04 (2026-09-06)
+pub const DEFAULT_GAS_COST_USD: f64 = 30.0;
+
+/// Resolve the operator gas-cost knob once at boot. Non-finite or negative
+/// values fall back to the default WITH a warn (R8: a silently-ignored knob is
+/// an operational lie; a negative gas cost would inflate net Topological Yield).
+pub fn resolve_gas_cost_usd() -> f64 {
+    let raw = match std::env::var("LIQUIDATION_GAS_COST_USD") {
+        Ok(v) => v,
+        Err(_) => return DEFAULT_GAS_COST_USD,
+    };
+    match raw.parse::<f64>() {
+        Ok(v) if v.is_finite() && v >= 0.0 => v,
+        _ => {
+            warn!(
+                event = "liquidation.gas_cost_usd_invalid",
+                raw = %raw,
+                fallback = DEFAULT_GAS_COST_USD,
+                "LIQUIDATION_GAS_COST_USD is not a finite non-negative number — using default"
+            );
+            DEFAULT_GAS_COST_USD
+        }
+    }
+}
 
 /// Worker-level sanity bound: max ratio of `gross_profit_usd` to
 /// `debt_to_repay_usd`. Real Aave V3 bonuses cap at ~10% (e.g. WBTC, some
@@ -690,14 +716,18 @@ pub struct LiquidationWorker {
     pub period: Duration,
     pub chain_id: u64,
     pub rpc_pool: Option<Arc<HttpRpcPool>>,
+    /// Operator gas-cost pre-screen (USD) — env `LIQUIDATION_GAS_COST_USD`,
+    /// default `DEFAULT_GAS_COST_USD` (30.0). WO-04 (2026-09-06).
+    pub gas_cost_usd: f64,
 }
 
 impl LiquidationWorker {
-    pub fn new(interval_secs: u64, chain_id: u64) -> Self {
+    pub fn new(interval_secs: u64, chain_id: u64, gas_cost_usd: f64) -> Self {
         Self {
             period: Duration::from_secs(interval_secs.max(1)),
             chain_id,
             rpc_pool: None,
+            gas_cost_usd,
         }
     }
 
@@ -730,7 +760,7 @@ impl LiquidationWorker {
             close_factor_pct = CLOSE_FACTOR_PCT,
             default_bonus_bps = DEFAULT_LIQUIDATION_BONUS_BPS,
             operator_cap_usd = OPERATOR_CAP_USD,
-            gas_cost_usd = GAS_COST_USD,
+            gas_cost_usd = self.gas_cost_usd,
             sanity_mult_of_debt = LIQUIDATION_PROFIT_SANITY_MULT_OF_DEBT,
             min_profit_usd_fallback = fallback_min,
             stats_log_every_n_ticks = STATS_LOG_EVERY_N_TICKS,
@@ -951,7 +981,7 @@ impl LiquidationWorker {
                 let estimate = match estimate_liquidation_profit(
                     total_debt_usd,
                     bonus_bps,
-                    GAS_COST_USD,
+                    self.gas_cost_usd,
                     OPERATOR_CAP_USD,
                 ) {
                     Some(e) => e,
@@ -1040,7 +1070,7 @@ impl LiquidationWorker {
                     amount_in_wei: amount_in_str,
                     expected_profit_usd: Some(estimate.net_profit_usd),
                     // H2 landmine fix: liquidation worker already computes
-                    // net_profit_usd = gross - GAS_COST_USD internally.
+                    // net_profit_usd = gross - gas_cost_usd internally.
                     // Mirror it to net_expected_profit_usd so submit_engine
                     // Check 7 gates on NET, not gross.
                     net_expected_profit_usd: Some(estimate.net_profit_usd),

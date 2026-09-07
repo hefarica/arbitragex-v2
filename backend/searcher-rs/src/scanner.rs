@@ -443,7 +443,13 @@ async fn build_orchestrator(
         chain_id,
         redis.clone(),
     )));
-    let liq_engine = Arc::new(LiquidationEngine::new(liq_indexer, chain_id));
+    // WO-04 (2026-09-06): engine gas-cost pre-screen threaded from boot via the
+    // same knob as the legacy worker (`LIQUIDATION_GAS_COST_USD`, default 30.0).
+    let liq_engine = Arc::new(LiquidationEngine::new(
+        liq_indexer,
+        chain_id,
+        crate::workers::liquidation_worker::resolve_gas_cost_usd(),
+    ));
 
     // Detection + recording are UNIFIED across all modes (paper/testnet/mainnet):
     // every mode writes detected opportunities to PG + `arbx:opps:detected` so the
@@ -3347,6 +3353,10 @@ mod tests {
         passed.simulated_profit_token_in =
             ethers::types::U256::from(2u32) * ethers::types::U256::from(u128::MAX);
         passed.gas_used_total = 424_242;
+        // WO-02 (2026-09-06), cross G5: exercise a NON-zero gas price through
+        // the U256→String stringify — the failed case above only proves the
+        // zeroed "0". 25 gwei + 1 wei also pins the last decimal digit.
+        passed.gas_price_wei = ethers::types::U256::from(25_000_000_001u64);
         let r2 = hot_sim_record(&passed);
         assert!(r2.passed);
         assert_eq!(
@@ -3354,5 +3364,8 @@ mod tests {
             passed.simulated_profit_token_in.to_string()
         );
         assert_eq!(r2.gas_used, 424_242);
+        // WO-02 (2026-09-06), cross G5: literal pins the verbatim decimal wire
+        // format (not a re-derivation via to_string() on the source).
+        assert_eq!(r2.gas_price_wei, "25000000001");
     }
 }
