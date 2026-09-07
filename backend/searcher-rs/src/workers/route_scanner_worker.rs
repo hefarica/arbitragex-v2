@@ -72,6 +72,12 @@ pub const DEFAULT_MAX_HOPS: usize = 7;
 /// aggregate `route_scanner.done` summary always carries the full counts.
 pub const DEFAULT_MAX_CYCLE_EVENTS: usize = 50;
 
+/// HOPS-LIVE-01: default per-block cap for the CANONICAL dispatch leg
+/// (`ARBX_ROUTE_SCANNER_CANONICAL_PER_BLOCK`). Deliberately conservative:
+/// 25 full engine evaluations per ~12s block ≈ 2/s worst case, an order of
+/// magnitude under the mempool intent rate the orchestrator already absorbs.
+pub const DEFAULT_CANONICAL_PER_BLOCK: usize = 25;
+
 /// Canonical mainnet anchor tokens (lowercase hex). Override for other chains
 /// or universes via `ARBX_ROUTE_SCANNER_ANCHORS` (CSV) — these defaults are
 /// the RU-3 spec set.
@@ -209,6 +215,16 @@ pub struct ScannerConfig {
     pub anchors: HashSet<Address>,
     pub graph: GraphBuildConfig,
     pub max_cycle_events: usize,
+    /// HOPS-LIVE-01 (2026-09-07, aprobado por operador): per-block cap of
+    /// cycles ALSO dispatched through the orchestrator's CANONICAL evaluation
+    /// (`on_route_intent` → engines → sizing → emit) so real multihop
+    /// information reaches the feed in every mode (§34.1 mode-invariant
+    /// detection). Cartridge-eval dispatch below continues unchanged for its
+    /// own telemetry. 0 disables the canonical leg (RU-3 original behavior).
+    /// Volume guard: full engine evaluation per intent is far more expensive
+    /// than a cartridge shadow eval — the cap defaults low and the
+    /// most-negative `sum_log_weight` cycles (best graph yield) go first.
+    pub canonical_per_block: usize,
 }
 
 impl ScannerConfig {
@@ -234,6 +250,10 @@ impl ScannerConfig {
             max_cycle_events: env_usize(
                 "ARBX_ROUTE_SCANNER_MAX_CYCLE_EVENTS",
                 DEFAULT_MAX_CYCLE_EVENTS,
+            ),
+            canonical_per_block: env_usize(
+                "ARBX_ROUTE_SCANNER_CANONICAL_PER_BLOCK",
+                DEFAULT_CANONICAL_PER_BLOCK,
             ),
         }
     }
@@ -524,9 +544,31 @@ async fn scan_block(
     // spawn_cartridge_eval acts only in cartridge Active mode — else the
     // cartridge runner's observe-only shadow_evaluate_intent; with neither, the
     // cycle is telemetry-only). Shadow-forced cycles are NEVER dispatched.
+    //
+    // HOPS-LIVE-01 (2026-09-07): the top-K most profitable cycles ALSO enter
+    // the orchestrator's CANONICAL pipeline (`on_route_intent` → engines →
+    // sizing → emitter) so real multihop information reaches the feed in every
+    // mode (§34.1 mode-invariant detection; the shadow-sink-only behavior was
+    // the operator-reported "built but never wired" gap). K =
+    // cfg.canonical_per_block (volume guard, 0 = off).
+    let canonical_budget = if orchestrator.is_some() {
+        cfg.canonical_per_block
+    } else {
+        0
+    };
+    let mut canonical_order: Vec<usize> = (0..scan.dispatchable.len()).collect();
+    canonical_order.sort_by(|&a, &b| {
+        scan.dispatchable[a]
+            .sum_log_weight
+            .partial_cmp(&scan.dispatchable[b].sum_log_weight)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
+    let canonical_set: std::collections::HashSet<usize> =
+        canonical_order.into_iter().take(canonical_budget).collect();
+    let mut canonical_dispatched = 0usize;
     let mut dispatched = 0usize;
     let mut cycle_events = 0usize;
-    for cycle in &scan.dispatchable {
+    for (cycle_idx, cycle) in scan.dispatchable.iter().enumerate() {
         let Some(intent) = cycle_to_intent(&graph, chain_id, block_number, cycle) else {
             debug!(
                 event = "route_scanner.cycle_malformed",
@@ -547,6 +589,24 @@ async fn scan_block(
             "profitable cycle admitted + emitted as RouteIntent"
         );
         if let Some(orch) = orchestrator {
+            // HOPS-LIVE-01: canonical full evaluation for the top-K cycles —
+            // errors are logged (R8), never panic the scan loop.
+            if canonical_set.contains(&cycle_idx) {
+                let orch = orch.clone();
+                let ih = intent.tx_hash;
+                let canonical_intent = intent.clone();
+                tokio::spawn(async move {
+                    if let Err(e) = orch.on_route_intent(canonical_intent).await {
+                        warn!(
+                            event = "route_scanner.canonical_eval_failed",
+                            tx_hash = %ih,
+                            error = %e,
+                            "canonical on_route_intent failed for a profitable cycle (R8 honest)"
+                        );
+                    }
+                });
+                canonical_dispatched += 1;
+            }
             orch.spawn_cartridge_eval(intent);
         } else if let Some(r) = runner {
             tokio::spawn(shadow_evaluate_intent(r.clone(), intent, chain_id));
@@ -581,6 +641,17 @@ async fn scan_block(
     }
 
     let elapsed_ms = t0.elapsed().as_millis() as u64;
+    // HOPS-LIVE-01 (R9): one aggregated line for the canonical leg.
+    if canonical_budget > 0 {
+        info!(
+            event = "route_scanner.canonical_dispatch",
+            chain_id,
+            block_number,
+            budget = canonical_budget,
+            dispatched = canonical_dispatched,
+            "top-K profitable cycles entered the canonical orchestrator pipeline"
+        );
+    }
     let done = done_event(
         chain_id,
         block_number,
