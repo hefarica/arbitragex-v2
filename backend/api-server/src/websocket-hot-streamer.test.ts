@@ -42,7 +42,15 @@ function makeFakeRedis(opts: FakeRedisOptions) {
         },
         xinfo: async (...args: unknown[]) => {
             calls.push({ cmd: "xinfo", args });
-            return (opts.consumers?.() ?? []).map((c) => ({ ...c }));
+            // WO-15 hotfix (2026-09-07): mirror the REAL ioredis reply shape for
+            // XINFO CONSUMERS — raw arrays of key/value pairs, NOT objects.
+            // The original spy returned {name,pending,idle} objects, which hid a
+            // production no-op: property access on the raw arrays yielded
+            // undefined and the purge skipped every consumer silently (caught by
+            // post-deploy L4). Every test below now exercises the real shape.
+            return (opts.consumers?.() ?? []).map(
+                (c) => ["name", c.name, "pending", c.pending, "idle", c.idle, "inactive", -1],
+            );
         },
         xautoclaim: async (...args: unknown[]) => {
             calls.push({ cmd: "xautoclaim", args });

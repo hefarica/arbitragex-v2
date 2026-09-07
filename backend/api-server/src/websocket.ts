@@ -996,17 +996,32 @@ export class OpportunityHotStreamer {
 
     private async purgeIdleConsumers(): Promise<void> {
         for (const stream of HOT_STREAMS) {
-            let consumers: Array<{ name?: unknown; pending?: unknown; idle?: unknown }> = [];
+            let consumers: unknown[] = [];
             try {
                 consumers = await (this.redis as any).xinfo('CONSUMERS', stream, HOT_OPPORTUNITIES_GROUP);
             } catch (e) {
                 this.logger.warn(`[HotStreamer] XINFO CONSUMERS failed for ${stream}: ${(e as Error).message}`);
                 continue;
             }
+            // WO-15 hotfix (2026-09-07): ioredis returns XINFO CONSUMERS as RAW
+            // ARRAYS of key/value pairs ([["name","c1","pending",0,...],...]),
+            // not objects — property access silently skipped every consumer and
+            // the sweep no-opped in production (caught by post-deploy L4: orphan
+            // idle >4 days survived 7 min of sweeps with zero purge logs).
+            // Normalize both shapes (raw array pairs and object) before use.
+            const normalizeConsumer = (c: unknown): { name?: unknown; pending?: unknown; idle?: unknown } => {
+                if (Array.isArray(c)) {
+                    const rec: Record<string, unknown> = {};
+                    for (let i = 0; i + 1 < c.length; i += 2) rec[String(c[i])] = c[i + 1];
+                    return rec as { name?: unknown; pending?: unknown; idle?: unknown };
+                }
+                return (c ?? {}) as { name?: unknown; pending?: unknown; idle?: unknown };
+            };
             let purged = 0;
             let reclaimed = 0;
             let discardedPending = 0;
-            for (const c of consumers) {
+            for (const raw of consumers) {
+                const c = normalizeConsumer(raw);
                 const name = String(c?.name ?? '');
                 const pending = Number(c?.pending ?? 0);
                 const idle = Number(c?.idle ?? 0);
