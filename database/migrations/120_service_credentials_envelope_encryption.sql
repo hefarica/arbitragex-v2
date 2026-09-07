@@ -140,14 +140,18 @@ UPDATE service_credentials sc
    AND :'arbx_credentials_master_key' <> '';
 
 -- ─── 3. rowCount VERIFICATION — any mismatch FAILS the deploy (ON_ERROR_STOP)
-SELECT count(*) AS n_remaining
+-- WO-03 fix (2026-09-07): psql \if does NOT evaluate SQL expressions ("0 = 0"
+-- → "Boolean expected", condition falls to FALSE and the abort branch runs
+-- unconditionally — caught by CI integration with live Postgres). Compare in
+-- SQL and branch on the resulting 0/1 integer, which \if accepts.
+SELECT (count(*) = 0)::int AS remaining_ok, count(*) AS n_remaining
   FROM service_credentials
  WHERE secret_value IS NOT NULL AND secret_value <> ''
    AND secret_ciphertext IS NULL
    AND :'arbx_credentials_master_key' <> '';
 \gset
-\if :n_remaining = 0
-\echo '120: envelope backfill verified — 0 plaintext rows pending'
+\if :remaining_ok
+\echo '120: envelope backfill verified — :n_remaining plaintext rows pending'
 \else
 \echo '120: FATAL — :n_remaining rows failed to encrypt; aborting deploy'
 SELECT 1/0 AS backfill_verification_failed;
@@ -157,7 +161,7 @@ SELECT 1/0 AS backfill_verification_failed;
 --       A wrong key raises inside pgcrypto → ON_ERROR_STOP aborts the deploy.
 --       Restricted to the var's version so a later re-run after a rotation
 --       (rows already at v2, var still v1) stays a no-op instead of failing.
-SELECT count(*) AS n_undecryptable
+SELECT (count(*) = 0)::int AS roundtrip_ok, count(*) AS n_undecryptable
   FROM service_credentials
  WHERE secret_ciphertext IS NOT NULL
    AND secret_key_version = :'arbx_credentials_master_key_version'::int
@@ -168,9 +172,9 @@ SELECT count(*) AS n_undecryptable
          'sha256'), 'hex')) IS NULL
    AND :'arbx_credentials_master_key' <> '';
 \gset
-\if :n_undecryptable = 0
+\if :roundtrip_ok
 \echo '120: decrypt roundtrip verified for version :'arbx_credentials_master_key_version'
 \else
-\echo '120: FATAL — encrypted rows failed to decrypt; aborting deploy'
+\echo '120: FATAL — :n_undecryptable encrypted rows failed to decrypt; aborting deploy'
 SELECT 1/0 AS backfill_roundtrip_failed;
 \endif

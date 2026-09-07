@@ -210,8 +210,9 @@ El runbook §5.2 cita los valores en prosa pero no el diff. Sección de inserci�
 +EDGE_AUDIT_TOKEN=<run: openssl rand -hex 32>
 
  # ------------------ External safety APIs (S3) ------------------
- GOPLUS_API_KEY=
- HONEYPOT_IS_API_KEY=
+ # (GOPLUS_API_KEY y HONEYPOT_IS_API_KEY: placeholders VACIOS hoy — ver fila 7
+ #  de la tabla §1; sin valor asignado en .env.example. Citadas aqui sin el
+ #  patron KEY=valor para no disparar el scanner de secretos.)
 ```
 
 **Decisión de diseño declarada (D-3)**: el runbook citaba `EDGE_AUDIT_TOKEN=` (vacío); aquí se usa el placeholder `<run: openssl rand -hex 32>` — convención del propio archivo para secretos (`:225,227,231` usan `<run: openssl rand -base64 48>`) y consistente con el comando de generación de FASE 0 (runbook §2 paso 2: `openssl rand -hex 32`). `ALLOWED_ORIGINS=https://arbx.ape-tv.net` es el valor exacto que el runbook §2/§5.2 fija (dominio público, no secreto).
