@@ -142,6 +142,13 @@ pub struct OrchestratorContext {
     /// operator values per strategy) so the api-server can serve them to the
     /// dashboard in real time. Cheap multiplexed clone.
     pub math_redis: redis::aio::ConnectionManager,
+    // WO-16 EXCISED (orquestador, 2026-09-07): un fixer del Loop aterrizó a
+    // medias el companion §5.4 de WO-02 (hot-sim stage del V2 live leg) con
+    // paths `crate::scanner::…` imposibles desde la lib (scanner es módulo
+    // del bin) y un método del emitter jamás definido — el árbol quedó sin
+    // compilar. El companion queda DISEÑADO en WO-02-DESIGN §5.4 para un PR
+    // futuro aprobado por el operador (requiere mover los tipos compartidos
+    // a la lib + `emit_hot_simulated` en el emitter).
     /// SED Bridge — connects to sed-core math pipeline (paper-shadow only).
     /// When `Some`, feeds gas observations and enriches candidates with
     /// stochastic convergence metrics. When `None`, orchestrator runs
@@ -1439,17 +1446,22 @@ impl Orchestrator {
                                 .inc();
                         }
                     }
+                    // WO-16 call-site excised (see struct-field tombstone; §5.4).
                 }
             }
         }
 
         Ok(())
     }
+
+    // WO-16 hot_sim_stage_post_publish excised (see struct-field tombstone; §5.4).
 }
 
 // ---------------------------------------------------------------------------
 // Utilities
 // ---------------------------------------------------------------------------
+
+// WO-16 resolve_hot_gate_inputs excised (see struct-field tombstone; §5.4).
 
 /// Returns a static string label for a `DetectionSource`.
 ///

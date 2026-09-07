@@ -1019,6 +1019,7 @@ async fn main() -> anyhow::Result<()> {
             let mut lw = workers::liquidation_worker::LiquidationWorker::new(
                 liquidation_period_secs,
                 liquidation_chain,
+                workers::liquidation_worker::resolve_gas_cost_usd(), // WO-04 (2026-09-06)
             );
             if let Some(pool) = liquidation_pool {
                 lw = lw.with_provider(pool);
