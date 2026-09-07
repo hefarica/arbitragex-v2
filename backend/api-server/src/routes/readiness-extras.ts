@@ -371,36 +371,36 @@ function doctrinalBlockers(): Blocker[] {
     // not simulatable in S4 — so NEW accepted paper trades need the S4
     // sim-pass work (consumer-level backend sprint). The daily-audit
     // two_signal (RDY-03) remains live to observe it.
-    {
-      id: "a6_circuit_breakers_partial",
-      category: "risk_circuit",
-      severity: "high",
-      status: "partial",
-      title: "A.6 circuit breakers comprehensive — partial (Prometheus emission pending)",
-      description:
-        "SHIPPED (PR #470, 7a5967ce): the 10 doctrinal CBs (DD 10/20/30/40 tiers, max revert rate, max gas burn, max latency, max SIM_ERROR, RPC health, route/token blacklists, executor health, confidence-scoring tie-in) compute in /api/v1/risk/circuit-breakers/status; DD tiers read the REAL paper ledger (prod verified 2026-08-29); kill_switch is live runtime state; unset ARBX_CB_* thresholds surface honestly as NOT_AVAILABLE. REMAINING: Prometheus alert emission from breaker state.",
-      required_action:
-        "Emit Prometheus alerts for breaker state (alerts.rules.yml currently has no CB rule); operator may set ARBX_CB_* env thresholds on the VPS to move revert/gas breakers off NOT_AVAILABLE.",
-      operator_required: false,
-      can_auto_resolve: false,
-      blocks: ["LIVE"],
-      evidence: { env_present: false, redacted_value: null, value_length: null, source: "doctrine" },
-    },
-    {
-      id: "a7_private_relay_no_submit_partial",
-      category: "doctrinal_phase",
-      severity: "high",
-      status: "partial",
-      title: "A.7 private relay no-submit simulation — module shipped, runtime call-site pending",
-      description:
-        "SHIPPED (PR #470, 7a5967ce): relays-client `relay_no_submit_sim` builds + eth-signs the bundle locally, validates the acceptance shape against the 3 relay schemas (Flashbots Protect / MEV-Blocker / Titan wire shapes), and discards — zero network egress by construction (no HTTP client import on the path). REMAINING: the execution loop does not invoke it yet (no runtime call-site).",
-      required_action:
-        "Wire validate_and_discard into the paper execution terminus so each simulated bundle runs the no-submit validation and logs relay_sim.no_submit.* events.",
-      operator_required: false,
-      can_auto_resolve: false,
-      blocks: ["LIVE"],
-      evidence: { env_present: false, redacted_value: null, value_length: null, source: "doctrine" },
-    },
+    //
+    // A.6 (a6_circuit_breakers_partial) was resolved 2026-09-07 — removed
+    // after PR #542 (A6-CBPROM-01, merged f73d1a92) + #548 (job-scope L4 fix,
+    // merged a60de001): the 10 doctrinal breakers now emit arbx_risk_cb_state/
+    // trips/last_eval/eval_failures on api-server's /metrics (60s loop, boot
+    // first-tick), the `circuit_breakers` alert group (HardDown critical
+    // enumerating exactly {KILLED,BLOCKED,UNKNOWN} so honest NOT_AVAILABLE(5)
+    // never pages, Paused critical, Warn 5m, NotConfigured 10m, EvalStale 5m —
+    // all scoped {job="api-server"}) is loaded in prod Prometheus, and
+    // behaviour is pinned by monitoring/tests/risk_cb_test.yml (promtool,
+    // 4 cases). L4 prod 2026-09-07: 10 series live, HardDown NOT firing with
+    // revert/gas breakers honestly at 5, loop freshness ~49s. Operator follow-
+    // up (optional, does NOT block): set ARBX_CB_MAX_REVERT_RATE /
+    // ARBX_CB_MAX_GAS_BURN_USD / ARBX_RISK_NAV_USD on the VPS to activate the
+    // NOT_AVAILABLE breakers (RiskCircuitBreakerNotConfigured warns until
+    // then — by design).
+    //
+    // A.7 (a7_private_relay_no_submit_partial) was resolved 2026-09-07 —
+    // removed after PR #543 (A7-RELAYSIM-CALLSITE-01, merged d4d3ff63):
+    // submit_engine step 4.5 invokes relay_no_submit_sim::validate_and_discard
+    // on EVERY built bundle, strictly before any egress (paper short-circuit,
+    // eth_callBundle, broadcast) and after the M1 assert_broadcast_allowed
+    // barrier (untouched). Pure classifier: paper=LogOnly (zero behavior
+    // delta, paper-ledger semantics preserved); non-paper 0/3 relay schemas =
+    // drop fail-closed (relay_no_submit_all_schemas_rejected) — BE-05
+    // posture. 77/77 tests; module remains zero-egress by construction (no
+    // HTTP client import on the path). Note: the old entry overclaimed
+    // "eth-signs the bundle locally" — the module is UNSIGNED/shape-only by
+    // design (documented in relay_no_submit_sim.rs); this removal also
+    // retires that overclaim.
     {
       id: "a9_go_no_go_formal_pending",
       category: "audit_trail",
@@ -408,9 +408,9 @@ function doctrinalBlockers(): Blocker[] {
       status: "pending",
       title: "A.9 GO/NO-GO formal sign-off pending",
       description:
-        "Even when every other phase blocker clears (A.4 resolved 2026-08-20, A.8 resolved 2026-08-29, A.5 resolved 2026-08-29; A.6/A.7 partials open), a formal sign-off (operator + audit trail entry) is required before any flip to live. This phase has not started.",
+        "Even when every other phase blocker clears (A.4 resolved 2026-08-20, A.8 resolved 2026-08-29, A.5 resolved 2026-08-29, A.6/A.7 resolved 2026-09-07), a formal sign-off (operator + audit trail entry) is required before any flip to live. This phase has not started.",
       required_action:
-        "Clear the A.6/A.7 partials, then generate the formal GO/NO-GO ledger; require two-operator sign-off; persist to audit_logs.",
+        "Generate the formal GO/NO-GO ledger (GET /api/v1/go-no-go/ledger, self-deduplicating); require two-operator sign-off via POST /admin/go-no-go/sign-off; quorum-2 enforced by UNIQUE(ledger_hash, actor). Visibility surface: /live-readiness A.9 formal sign-off panel with the curl runbook.",
       operator_required: true,
       can_auto_resolve: false,
       blocks: ["LIVE"],

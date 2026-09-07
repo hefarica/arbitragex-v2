@@ -132,15 +132,31 @@ describe("doctrinalBlockers", () => {
   // validated flowing, G-PAP-1 green explicit). See the readiness-extras.ts
   // comment above the array for the full evidence trail including the honest
   // S4 follow-up (0 of 639,955 sims ever passed — probe token-funding gap).
-  it("emits exactly 3 doctrinal phase blockers (A.6/A.7/A.9) — A.4 resolved 2026-08-20, A.8+A.5 resolved 2026-08-29", () => {
+  //
+  // A.6 (a6_circuit_breakers_partial) was resolved 2026-09-07 — removed after
+  // PR #542 (arbx_risk_cb_* emission + circuit_breakers alert group) + PR #548
+  // (job-scope L4 fix). L4 prod: 10 series live, HardDown NOT firing with
+  // breakers honestly at NOT_AVAILABLE(5), loop freshness ~49s, group loaded
+  // in Prometheus, behaviour pinned by monitoring/tests/risk_cb_test.yml.
+  // A.7 (a7_private_relay_no_submit_partial) was resolved 2026-09-07 — removed
+  // after PR #543 wired relay_no_submit_sim into submit_engine step 4.5
+  // (pre-egress; paper=LogOnly, non-paper 0/3=drop fail-closed; 77/77 tests;
+  // M1 barrier untouched).
+  it("emits exactly 1 doctrinal phase blocker (A.9) — A.4 resolved 2026-08-20, A.8+A.5 2026-08-29, A.6+A.7 2026-09-07", () => {
     const b = doctrinalBlockers();
-    expect(b.length).toBe(3);
+    expect(b.length).toBe(1);
     const ids = b.map((x) => x.id).sort();
-    expect(ids).toEqual([
-      "a6_circuit_breakers_partial",
-      "a7_private_relay_no_submit_partial",
-      "a9_go_no_go_formal_pending",
-    ]);
+    expect(ids).toEqual(["a9_go_no_go_formal_pending"]);
+  });
+
+  it("A.6 blocker is gone (resolved 2026-09-07 via A6-CBPROM-01 + L4 job-scope fix)", () => {
+    const b = doctrinalBlockers();
+    expect(b.find((x) => x.id === "a6_circuit_breakers_partial")).toBeUndefined();
+  });
+
+  it("A.7 blocker is gone (resolved 2026-09-07 via A7-RELAYSIM-CALLSITE-01)", () => {
+    const b = doctrinalBlockers();
+    expect(b.find((x) => x.id === "a7_private_relay_no_submit_partial")).toBeUndefined();
   });
 
   it("A.4 blocker is gone (resolved via gate_c_validation evidence)", () => {
