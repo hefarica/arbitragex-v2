@@ -171,6 +171,11 @@ const TradingConfigSchema = z
     max_slippage_pct: z.number().min(0).max(50),
     failure_risk_buffer_pct: z.number().min(0).default(0.001),
     flashloan_fee_pct: z.number().min(0).default(0.0009),
+    // WO-04 (2026-09-06, migration 119): LP-fee proxy default for the live
+    // simulation (computeSimulatedNet) when a route's per-leg fee tiers are
+    // unknown to the api-server hot path. Bounds match the DB CHECK exactly
+    // (0 ≤ v ≤ 0.5) — invalid input fails fast with 400 here, not in the sim.
+    lp_fee_default_pct: z.number().min(0.0).max(0.5).default(0.003),
 
     enabled_strategies: z.array(z.string().min(1).max(64)).max(32).default([]),
 
@@ -259,6 +264,8 @@ interface DbRow {
   max_slippage_pct: string;
   failure_risk_buffer_pct: string;
   flashloan_fee_pct: string;
+  // WO-04 (2026-09-06): NUMERIC(6,4) NOT NULL DEFAULT 0.0030 (migration 119).
+  lp_fee_default_pct: string;
   enabled_strategies: string[];
   enabled_dex_ids: string[] | null;
   // Migration 056 — JSONB returned as already-parsed object by node-postgres.
@@ -368,6 +375,7 @@ function rowToRedisState(row: DbRow): Record<string, unknown> {
     max_slippage_pct: Number(row.max_slippage_pct),
     failure_risk_buffer_pct: Number(row.failure_risk_buffer_pct),
     flashloan_fee_pct: Number(row.flashloan_fee_pct),
+    lp_fee_default_pct: Number(row.lp_fee_default_pct), // WO-04 (2026-09-06)
     enabled_strategies: row.enabled_strategies,
     enabled_dex_ids: row.enabled_dex_ids ?? null,
     // Migration 056 + 2026-05-10 hotfix — normalise every entry so legacy
@@ -423,6 +431,7 @@ export async function rehydrateTradingConfigMirror(deps: {
               min_landing_probability, min_liquidity_confidence, max_token_risk_score,
               gas_price_strategy, fixed_gas_price_gwei, gas_estimate_units,
               max_slippage_pct, failure_risk_buffer_pct, flashloan_fee_pct,
+              lp_fee_default_pct,
               enabled_strategies, enabled_dex_ids, strategy_configs,
               capital_cost_rate_annual_pct, ops_overhead_usd_per_attempt,
               spread_sanity_mult, p_copied_volume_threshold_usd, p_copied_max,
@@ -498,6 +507,7 @@ export function buildTradingConfigRouter(deps: Deps): Router {
                 min_landing_probability, min_liquidity_confidence, max_token_risk_score,
                 gas_price_strategy, fixed_gas_price_gwei, gas_estimate_units,
                 max_slippage_pct, failure_risk_buffer_pct, flashloan_fee_pct,
+                lp_fee_default_pct,
                 enabled_strategies, enabled_dex_ids, strategy_configs,
                 capital_cost_rate_annual_pct, ops_overhead_usd_per_attempt,
                 spread_sanity_mult, p_copied_volume_threshold_usd, p_copied_max,
@@ -574,14 +584,15 @@ export function buildTradingConfigRouter(deps: Deps): Router {
               min_landing_probability, min_liquidity_confidence, max_token_risk_score,
               gas_price_strategy, fixed_gas_price_gwei, gas_estimate_units,
               max_slippage_pct, failure_risk_buffer_pct, flashloan_fee_pct,
+              lp_fee_default_pct,
               enabled_strategies, enabled_dex_ids, strategy_configs, enabled, updated_by,
               capital_cost_rate_annual_pct, ops_overhead_usd_per_attempt,
               spread_sanity_mult, p_copied_volume_threshold_usd, p_copied_max
             )
             VALUES (
               $1,$2,$3,$4,$5,$6::jsonb,$7,$8::jsonb,$9::jsonb,$10,$11,
-              $12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24::uuid[],$25::jsonb,$26,$27,
-              $28,$29,$30,$31,$32
+              $12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25::uuid[],$26::jsonb,$27,$28,
+              $29,$30,$31,$32,$33
             )
             ON CONFLICT (chain_id) DO UPDATE SET
               capital_usd = EXCLUDED.capital_usd,
@@ -605,6 +616,7 @@ export function buildTradingConfigRouter(deps: Deps): Router {
               max_slippage_pct = EXCLUDED.max_slippage_pct,
               failure_risk_buffer_pct = EXCLUDED.failure_risk_buffer_pct,
               flashloan_fee_pct = EXCLUDED.flashloan_fee_pct,
+              lp_fee_default_pct = EXCLUDED.lp_fee_default_pct,
               enabled_strategies = EXCLUDED.enabled_strategies,
               enabled_dex_ids = EXCLUDED.enabled_dex_ids,
               strategy_configs = EXCLUDED.strategy_configs,
@@ -625,6 +637,7 @@ export function buildTradingConfigRouter(deps: Deps): Router {
                       min_landing_probability, min_liquidity_confidence, max_token_risk_score,
                       gas_price_strategy, fixed_gas_price_gwei, gas_estimate_units,
                       max_slippage_pct, failure_risk_buffer_pct, flashloan_fee_pct,
+                      lp_fee_default_pct,
                       enabled_strategies, enabled_dex_ids, strategy_configs,
                       capital_cost_rate_annual_pct, ops_overhead_usd_per_attempt,
                       spread_sanity_mult, p_copied_volume_threshold_usd, p_copied_max,
@@ -653,6 +666,7 @@ export function buildTradingConfigRouter(deps: Deps): Router {
             body.max_slippage_pct,
             body.failure_risk_buffer_pct,
             body.flashloan_fee_pct,
+            body.lp_fee_default_pct, // WO-04 (2026-09-06) → $23
             body.enabled_strategies,
             body.enabled_dex_ids ?? null,
             // Migration 056 — JSONB stringified for $25::jsonb cast.
@@ -837,6 +851,7 @@ export function buildTradingConfigRouter(deps: Deps): Router {
                   min_landing_probability, min_liquidity_confidence, max_token_risk_score,
                   gas_price_strategy, fixed_gas_price_gwei, gas_estimate_units,
                   max_slippage_pct, failure_risk_buffer_pct, flashloan_fee_pct,
+                  lp_fee_default_pct,
                   enabled_strategies, enabled_dex_ids, strategy_configs,
                   capital_cost_rate_annual_pct, ops_overhead_usd_per_attempt,
                   spread_sanity_mult, p_copied_volume_threshold_usd, p_copied_max,

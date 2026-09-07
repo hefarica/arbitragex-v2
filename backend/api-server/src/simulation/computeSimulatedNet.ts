@@ -135,8 +135,10 @@ export interface InverseSizingResult {
 
 // ── Constants ──────────────────────────────────────────────────────────────
 
-/** Default V2 LP fee in fraction (30 bps). */
-const LP_FEE_FRACTION_DEFAULT = 0.003;
+// WO-04 (2026-09-06): LP_FEE_FRACTION_DEFAULT (0.003) removed — the doctrinal
+// default now lives in ONE place per side: `tradingConfigSnapshot.parseSnapshot`
+// (num fallback 0.003) and the admin PUT zod (`.default(0.003)`), mirroring the
+// Rust serde default. The simulator consumes `cfg.lp_fee_default_pct`.
 /** Approximate Ethereum block time in seconds (used by capital-cost calc). */
 const BLOCK_TIME_SECONDS = 12;
 /** Seconds per year. */
@@ -236,8 +238,15 @@ export function forwardSimulate(
   const gas_usd = gasCostUsd(cfg);
   // Component 2: LP fees — default 30bps V2 tier when route legs unknown.
   // The api-server doesn't have per-leg fee tiers; this is a first-order proxy.
-  const lp_fees_usd = amountInUsdVal * LP_FEE_FRACTION_DEFAULT;
-  if (lp_fees_usd > 0) notes.push("lp-fee=30bps-proxy");
+  // WO-04 (2026-09-06): operator-governed default via trading_config
+  // `lp_fee_default_pct` (migration 119; absent ⇒ 0.003 = V2 30 bps tier —
+  // first-deploy invariant: identical behavior, now declarative). Per
+  // ROUTES_CROWN_JEWEL rule 4, on-chain per-leg tiers remain the truth;
+  // this knob governs only the declared proxy (R8 "-proxy" note below).
+  const lp_fees_usd = amountInUsdVal * cfg.lp_fee_default_pct;
+  if (lp_fees_usd > 0) {
+    notes.push(`lp-fee=${Math.round(cfg.lp_fee_default_pct * 10_000)}bps-proxy`);
+  }
 
   // Component 3: slippage — use max_slippage_pct against amount_in_usd
   // (we don't have effective amount_out separately; this matches the
@@ -371,7 +380,7 @@ function varCostRateFromCfg(cfg: TradingConfigSnapshot): number {
     cfg.flashloan_fee_pct +
     cfg.max_slippage_pct +
     cfg.failure_risk_buffer_pct +
-    LP_FEE_FRACTION_DEFAULT +
+    cfg.lp_fee_default_pct + // WO-04 (2026-09-06)
     (cfg.capital_cost_rate_annual_pct / 100) * (BLOCK_TIME_SECONDS / SECONDS_PER_YEAR)
   );
 }
