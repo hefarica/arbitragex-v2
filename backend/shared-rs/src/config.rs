@@ -135,6 +135,14 @@ pub struct ExecutionCfg {
     pub flashbots_submit_timeout_ms: u64,
     #[serde(default = "default_priority_fee_inc")]
     pub priority_fee_increment_pct: f64,
+    /// EIP-1559 `max_priority_fee_per_gas` (gwei) for the broadcast tx built
+    /// by `relays-client::bundle_builder::build_and_sign`. NOT a pool fee —
+    /// gas/tip is a gas-market parameter (ROUTES_CROWN_JEWEL rule 4 governs
+    /// pool fees, not EIP-1559 tips). Default `2.0` gwei = the value
+    /// hardcoded at bundle_builder.rs:171 until 2026-09-06 (WO-04).
+    /// Operator tunes via `configs/app.toml` `[execution]`.
+    #[serde(default = "default_priority_fee_gwei")]
+    pub priority_fee_gwei: f64,
 }
 fn default_paper_mode() -> bool {
     true
@@ -153,6 +161,10 @@ fn default_submit_timeout() -> u64 {
 }
 fn default_priority_fee_inc() -> f64 {
     10.0
+}
+// WO-04 (2026-09-06): serde default for ExecutionCfg::priority_fee_gwei.
+fn default_priority_fee_gwei() -> f64 {
+    2.0
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

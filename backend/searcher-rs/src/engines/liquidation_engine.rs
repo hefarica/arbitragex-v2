@@ -40,7 +40,7 @@ use crate::metrics::POSITIONS_WATCHLIST_EMPTY_TOTAL;
 use crate::route_intent::RouteIntent;
 use crate::strategy_label::StrategyLabel;
 use crate::workers::liquidation_worker::{
-    estimate_liquidation_profit, liquidation_bonus_bps_for_asset,
+    estimate_liquidation_profit, liquidation_bonus_bps_for_asset, DEFAULT_GAS_COST_USD,
 };
 use chrono::Utc;
 use ethers::types::H256;
@@ -52,12 +52,6 @@ use std::sync::Arc;
 use tokio::sync::Mutex;
 use tracing::{debug, warn};
 use uuid::Uuid;
-
-/// Gas cost estimate (USD) for one liquidation call. Must match the value in
-/// `liquidation_worker::GAS_COST_USD` (30.0 USD) — kept private there by
-/// convention, mirrored here so the engine can use it without modifying the
-/// worker. Both constants guard the same math invariant.
-const GAS_COST_USD: f64 = 30.0;
 
 // ---------------------------------------------------------------------------
 // LiquidationEngine
@@ -74,12 +68,24 @@ const GAS_COST_USD: f64 = 30.0;
 pub struct LiquidationEngine {
     pub indexer: Arc<Mutex<LendingPositionIndexer>>,
     pub chain_id: u64,
+    /// Operator gas-cost pre-screen (USD) — threaded from boot via
+    /// `liquidation_worker::resolve_gas_cost_usd()` (WO-04 (2026-09-06)).
+    /// Replaces the private mirrored constant (drift hazard) removed above.
+    pub gas_cost_usd: f64,
 }
 
 impl LiquidationEngine {
     /// Constructs a new `LiquidationEngine`.
-    pub fn new(indexer: Arc<Mutex<LendingPositionIndexer>>, chain_id: u64) -> Self {
-        Self { indexer, chain_id }
+    pub fn new(
+        indexer: Arc<Mutex<LendingPositionIndexer>>,
+        chain_id: u64,
+        gas_cost_usd: f64,
+    ) -> Self {
+        Self {
+            indexer,
+            chain_id,
+            gas_cost_usd,
+        }
     }
 
     // -----------------------------------------------------------------------
@@ -226,7 +232,7 @@ impl LiquidationEngine {
         let estimate = match estimate_liquidation_profit(
             position.total_debt_usd,
             bonus_bps,
-            GAS_COST_USD,
+            self.gas_cost_usd,
             // operator_cap_usd: use 250_000 (same as legacy worker) until
             // per-chain config wiring lands (Phase 15+).
             250_000.0,
@@ -517,7 +523,7 @@ mod tests {
         let est = estimate_liquidation_profit(
             pos.total_debt_usd,
             500, // 5% bonus
-            GAS_COST_USD,
+            DEFAULT_GAS_COST_USD,
             250_000.0,
         )
         .expect("estimate must succeed for valid debt");
@@ -537,8 +543,9 @@ mod tests {
         let pos = make_position(addr(3), 0.90, 10.0);
         assert!(pos.health_factor < 1.0);
 
-        let est = estimate_liquidation_profit(pos.total_debt_usd, 500, GAS_COST_USD, 250_000.0)
-            .expect("estimate must succeed");
+        let est =
+            estimate_liquidation_profit(pos.total_debt_usd, 500, DEFAULT_GAS_COST_USD, 250_000.0)
+                .expect("estimate must succeed");
 
         assert!(
             est.net_profit_usd <= 0.0,
@@ -581,7 +588,7 @@ mod tests {
     /// the engine must return Ok(None) — no panic, no fabrication.
     #[test]
     fn estimate_none_on_zero_debt() {
-        let result = estimate_liquidation_profit(0.0, 500, GAS_COST_USD, 250_000.0);
+        let result = estimate_liquidation_profit(0.0, 500, DEFAULT_GAS_COST_USD, 250_000.0);
         assert!(
             result.is_none(),
             "estimate must return None for zero debt (R8 fail-honest)"

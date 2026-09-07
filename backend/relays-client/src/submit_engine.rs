@@ -443,6 +443,7 @@ impl SubmitEngine {
             nonce.as_ref(),
             self.cfg.execution.max_value_eth,
             self.cfg.execution.target_block_offset,
+            self.cfg.execution.priority_fee_gwei, // WO-04 (2026-09-06)
         )
         .await
         {
@@ -464,6 +465,9 @@ impl SubmitEngine {
                 };
             }
             Err(e) => {
+                // WO-05 (2026-09-06)
+                self.resync_nonce(opp.chain_id, signer.address, "build_error_post_nonce")
+                    .await;
                 return Self::not_submitted(opp, &format!("build_error: {e}"));
             }
         };
@@ -505,6 +509,9 @@ impl SubmitEngine {
 
         // 5. Paper mode short-circuit.
         if paper {
+            // WO-05 (2026-09-06)
+            self.resync_nonce(opp.chain_id, signer.address, "paper_short_circuit")
+                .await;
             let relay_names = self
                 .multi_relay
                 .as_ref()
@@ -646,6 +653,9 @@ impl SubmitEngine {
                     }
                 }
                 CallBundleDecision::Abort { reason } => {
+                    // WO-05 (2026-09-06)
+                    self.resync_nonce(opp.chain_id, signer.address, "callbundle_abort")
+                        .await;
                     // BE-05 fail-CLOSED: re-sim endpoint itself failed (Flashbots
                     // outage, transient HTTP/RPC error). DROP the bundle instead
                     // of broadcasting un-re-simulated — previously this was
@@ -676,6 +686,9 @@ impl SubmitEngine {
         let submitted_at = Utc::now();
 
         if !broadcast_result.any_success() {
+            // WO-05 (2026-09-06)
+            self.resync_nonce(opp.chain_id, signer.address, "all_relays_failed")
+                .await;
             // All relays rejected or timed out — log each failure and drop.
             for (name, reason) in &broadcast_result.failures {
                 warn!(
@@ -801,18 +814,23 @@ impl SubmitEngine {
                 submitted_at,
                 trace_id: opp.trace_id,
             },
-            InclusionOutcome::Dropped => ExecutionResult {
-                opportunity_id: opp.id,
-                status: ExecutionStatus::Dropped,
-                tx_hash: Some(format!("0x{:x}", bundle.tx_hash)),
-                relay_used: Some(relay_used),
-                block_included: None,
-                gas_used_wei: None,
-                actual_profit_usd: None,
-                error_message: Some("inclusion_timeout".into()),
-                submitted_at,
-                trace_id: opp.trace_id,
-            },
+            InclusionOutcome::Dropped => {
+                // WO-05 (2026-09-06)
+                self.resync_nonce(opp.chain_id, signer.address, "inclusion_timeout")
+                    .await;
+                ExecutionResult {
+                    opportunity_id: opp.id,
+                    status: ExecutionStatus::Dropped,
+                    tx_hash: Some(format!("0x{:x}", bundle.tx_hash)),
+                    relay_used: Some(relay_used),
+                    block_included: None,
+                    gas_used_wei: None,
+                    actual_profit_usd: None,
+                    error_message: Some("inclusion_timeout".into()),
+                    submitted_at,
+                    trace_id: opp.trace_id,
+                }
+            }
         }
     }
 
@@ -902,6 +920,35 @@ impl SubmitEngine {
             error_message: Some(reason.to_string()),
             submitted_at: Utc::now(),
             trace_id: opp.trace_id,
+        }
+    }
+
+    // WO-05 (2026-09-06)
+    /// Re-sync the local nonce counter after a nonce consumed from it did NOT
+    /// land on-chain (orphan nonce — bundle dropped, rejected, timed out, or
+    /// paper short-circuited after signing). Without this every subsequent
+    /// bundle signs a too-high nonce and is never included: a silent terminus
+    /// stall until process restart. Fail-soft (R8): if the re-fetch fails the
+    /// warn makes it visible and the next desync event retries — this never
+    /// fabricates a nonce, it re-reads the on-chain pending count.
+    async fn resync_nonce(&self, chain_id: u64, addr: ethers::types::Address, cause: &str) {
+        if let Some(nm) = self.nonce.as_ref() {
+            match nm.refresh(chain_id, addr).await {
+                Ok(n) => info!(
+                    event = "nonce.resynced",
+                    chain_id,
+                    nonce = n,
+                    cause,
+                    "nonce cache re-synced from eth_getTransactionCount"
+                ),
+                Err(e) => warn!(
+                    event = "nonce.resync_failed",
+                    chain_id,
+                    cause,
+                    error = %e,
+                    "nonce refresh failed; local counter stays stale until next desync event"
+                ),
+            }
         }
     }
 

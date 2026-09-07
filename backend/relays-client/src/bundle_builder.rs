@@ -94,6 +94,10 @@ pub struct SignedBundle {
 /// `provider` is the alloy 1.0 HTTP provider (used for `get_block` to read the
 /// current base fee AND `estimate_gas` on the built tx). The signing path
 /// remains ethers (signer.wallet).
+// WO-04 (2026-09-06): 8th param `priority_fee_gwei` — same ExecutionCfg-threading
+// pattern as max_value_eth / target_block_offset (see repo precedent in
+// cartridge_boot.rs / evidence.rs).
+#[allow(clippy::too_many_arguments)]
 pub async fn build_and_sign(
     opp: &Opportunity,
     plan: &ValidatedPlan,
@@ -102,6 +106,7 @@ pub async fn build_and_sign(
     nonce_mgr: &NonceManager,
     max_value_eth: f64,
     target_block_offset: u64,
+    priority_fee_gwei: f64, // WO-04 (2026-09-06)
 ) -> Result<SignedBundle, BuildError> {
     // M1 (2026-06-28): physical broadcast barrier — default-deny + testnet-only.
     // MUST remain the FIRST statement: no address resolution, encoding, or
@@ -152,7 +157,8 @@ pub async fn build_and_sign(
         .await
         .map_err(|e| BuildError::Provider(e.to_string()))?;
 
-    // Fee estimation. For S5 we use simple "latest base fee + 2 gwei priority".
+    // Fee estimation. "Latest base fee + operator-configured priority tip"
+    // (configs/app.toml [execution] priority_fee_gwei, default 2 gwei — WO-04).
     //
     // Alloy 1.0: `get_block(BlockId)` requires a `BlockId` wrapper around
     // `BlockNumberOrTag`. `Block.header.base_fee_per_gas` is `Option<u64>` in
@@ -168,7 +174,8 @@ pub async fn build_and_sign(
         .base_fee_per_gas
         .unwrap_or(30_000_000_000u64); // 30 gwei fallback
     let base_fee = U256::from(base_fee_u64);
-    let priority_fee = U256::from(2_000_000_000u64); // 2 gwei default
+    // gwei → wei (float→int cast saturates; schema bounds v >= 0 — WO-04 (2026-09-06)).
+    let priority_fee = U256::from((priority_fee_gwei * 1e9).round() as u64);
     let max_fee = base_fee * 2 + priority_fee;
 
     let target_block = latest_block.header.number + target_block_offset;

@@ -335,6 +335,7 @@ mod tests {
             spread_sanity_mult: 3.0,
             p_copied_volume_threshold_usd: 1_000_000.0,
             p_copied_max: 0.5,
+            lp_fee_default_pct: 0.003, // WO-04 (2026-09-06)
             kelly_multiplier: 0.5,
             kelly_max_per_trade_fraction: 1.0,
             kelly_gas_safety_multiplier: 1.0,

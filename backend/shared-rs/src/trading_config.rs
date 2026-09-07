@@ -357,6 +357,18 @@ pub struct TradingConfigState {
     #[serde(default = "default_p_copied_max")]
     pub p_copied_max: f64,
 
+    /// Default LP-fee fraction applied by the api-server live simulation
+    /// (component 2) when a route's per-leg fee tiers are unknown to the
+    /// hot path. Canonical value 0.003 = the V2 30 bps tier hardcoded at
+    /// computeSimulatedNet.ts:139 until 2026-09-06 (WO-04). NOT a pool-fee
+    /// source of truth: per ROUTES_CROWN_JEWEL rule 4, on-chain per-leg
+    /// tiers are the truth — this is the operator-governed proxy default
+    /// (rows carry the "-proxy" note, R8). Backed by migration 119 column
+    /// `trading_config.lp_fee_default_pct` (CHECK 0–0.5). `serde(default)`
+    /// keeps legacy Redis configs valid (schema-drift precedent: enabled_dex_ids).
+    #[serde(default = "default_lp_fee_default_pct")]
+    pub lp_fee_default_pct: f64,
+
     // ── Kelly criterion post-optimization cap (size_optimizer fix-2) ────
     /// Fractional-Kelly defensive scaling multiplier ∈ (0, 1]. Top-1% HFT
     /// firms never run full Kelly because estimation error in `win_prob`
@@ -407,6 +419,12 @@ fn default_p_copied_volume_threshold_usd() -> f64 {
 /// Provides the serde default for `p_copied_max` (50%).
 fn default_p_copied_max() -> f64 {
     0.5
+}
+
+/// V2 30 bps canonical LP tier as fraction — the api-server proxy default.
+// WO-04 (2026-09-06)
+fn default_lp_fee_default_pct() -> f64 {
+    0.003
 }
 
 /// Quarter-Kelly default — institutional baseline (Thorp 1969, MacLean et al.
@@ -754,6 +772,7 @@ mod tests {
             spread_sanity_mult: 3.0,
             p_copied_volume_threshold_usd: 1_000_000.0,
             p_copied_max: 0.5,
+            lp_fee_default_pct: 0.003, // WO-04 (2026-09-06)
             kelly_multiplier: 0.5,
             kelly_max_per_trade_fraction: 1.0,
             kelly_gas_safety_multiplier: 1.0,
