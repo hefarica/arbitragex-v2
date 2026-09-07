@@ -304,3 +304,82 @@ groups:
         annotations:
           summary: "paper_mode is FALSE — live on-chain execution is enabled"
           description: "Verify this flip was intentional and runbook OPS-9 was followed. If unintentional, re-enable ARBX_PAPER_TRADE=true immediately. TODO: emit arbx_paper_mode_active from searcher-rs / api-server."
+
+  # ═══════════════════════════════════════════════════════════════════════════
+  # A.6 doctrinal risk circuit-breakers (A6-CBPROM-01)
+  # Emitted by api-server (risk-circuit-breakers route) on its /metrics:
+  #   arbx_risk_cb_state{name}   0=PASS 1=WARN 2=PAUSED 3=KILLED 4=BLOCKED
+  #                             5=NOT_AVAILABLE 6=UNKNOWN
+  #   arbx_risk_cb_trips_total{name,state} — new trip episodes (KILLED/PAUSED)
+  #   arbx_risk_cb_last_eval_unixtime      — freshness of the evaluation loop
+  # Separate family from arbx_cb_state (selector-api Sprint-3 infra breakers,
+  # closed/half_open/open vocabulary).
+  # ═══════════════════════════════════════════════════════════════════════════
+  - name: circuit_breakers
+    interval: 30s
+    rules:
+      # ── Hard risk stops: KILLED(3) / BLOCKED(4) / UNKNOWN(6) ─────────────────
+      # Page immediately: these states gate LIVE by doctrine (kill_switch,
+      # hard_pause, blocked routes/tokens, or the breaker could not be evaluated).
+      # REVIEW-FIX (adversarial, 2 dimensions + 4/4 skeptics): the enum is NOT
+      # severity-ordered — NOT_AVAILABLE(5) sorts ABOVE KILLED(3) — so `>= 3`
+      # would page critical 24/7 on the system's honest steady state (unset
+      # ARBX_CB_*/ARBX_RISK_* env → 5), and via alertmanager inhibit_rules
+      # (critical suppresses warning per service) it would silence EvalStale,
+      # HighHTTP5xxRate and every other api-server warning. Enumerate the three
+      # hard states exactly; state 5 has its own dedicated delayed rule below.
+      - alert: RiskCircuitBreakerHardDown
+        expr: arbx_risk_cb_state == 3 or arbx_risk_cb_state == 4 or arbx_risk_cb_state == 6
+        labels:
+          severity: critical
+          platform: arbitragex
+        annotations:
+          summary: "Risk breaker {{ $labels.name }} hard-down (KILLED/BLOCKED/UNKNOWN)"
+          description: "Doctrinal risk circuit breaker {{ $labels.name }} reports a hard state. Check /api/v1/risk/circuit-breakers/status for evidence and required_action; trips are persisted in risk_events."
+
+      # ── PAUSED(2): tiered pause (e.g. drawdown tier crossed) ──────────────────
+      - alert: RiskCircuitBreakerPaused
+        expr: arbx_risk_cb_state == 2
+        labels:
+          severity: critical
+          platform: arbitragex
+        annotations:
+          summary: "Risk breaker {{ $labels.name }} PAUSED"
+          description: "Breaker {{ $labels.name }} crossed a pause threshold (e.g. drawdown tier 10/20/30/40). Investigate the paper ledger evidence via /api/v1/risk/circuit-breakers/status before it escalates to KILLED."
+
+      # ── WARN(1): approaching threshold — sustained warning ────────────────────
+      - alert: RiskCircuitBreakerWarn
+        expr: arbx_risk_cb_state == 1
+        for: 5m
+        labels:
+          severity: warning
+          platform: arbitragex
+        annotations:
+          summary: "Risk breaker {{ $labels.name }} in WARN for >5m"
+          description: "Breaker {{ $labels.name }} is approaching its threshold. Review current_value vs threshold on /api/v1/risk/circuit-breakers/status."
+
+      # ── NOT_AVAILABLE(5): evaluator honest about missing config/evidence ──────
+      # Fires only when sustained — tells the operator which ARBX_CB_*/ARBX_RISK_*
+      # env thresholds remain unset (revert-rate/gas breakers stay unevaluated).
+      - alert: RiskCircuitBreakerNotConfigured
+        expr: arbx_risk_cb_state == 5
+        for: 10m
+        labels:
+          severity: warning
+          platform: arbitragex
+        annotations:
+          summary: "Risk breaker {{ $labels.name }} NOT_AVAILABLE for >10m"
+          description: "Breaker {{ $labels.name }} cannot evaluate: missing operator thresholds (ARBX_CB_MAX_REVERT_RATE / ARBX_CB_MAX_GAS_BURN_USD / ARBX_RISK_*) or insufficient paper_trade_runs evidence. Set the env thresholds on the VPS to activate it."
+
+      # ── Evaluation loop stale — the emission itself stopped ───────────────────
+      # Mirrors the PIPELINE_SILENCE idiom: freshness gauge older than 5 minutes
+      # means the 60s background evaluation loop died or is failing.
+      - alert: RiskCircuitBreakerEvalStale
+        expr: time() - arbx_risk_cb_last_eval_unixtime > 300
+        for: 1m
+        labels:
+          severity: warning
+          platform: arbitragex
+        annotations:
+          summary: "Risk circuit-breaker evaluation stale (>5m since last eval)"
+          description: "api-server's breaker evaluation loop has not emitted arbx_risk_cb_last_eval_unixtime in >5 minutes. Check docker logs api-server for circuit_breakers.periodic_emit_failed and arbx_risk_cb_eval_failures_total."
