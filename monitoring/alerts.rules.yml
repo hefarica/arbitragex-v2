@@ -318,6 +318,13 @@ groups:
   - name: circuit_breakers
     interval: 30s
     rules:
+      # JOB-SCOPE (A6-CBPROM-01-L4): every selector below is scoped to
+      # {job="api-server"} because the metric family lives in shared-ts —
+      # selector-api (and any future @arbx/shared importer with a /metrics
+      # endpoint) re-exports these gauges at 0/absent, and a zero-valued
+      # arbx_risk_cb_last_eval_unixtime makes EvalStale fire forever
+      # (time() - 0 > 300). Verified live: job selector-api exported the
+      # zero series on the VPS within minutes of the A.6 deploy.
       # ── Hard risk stops: KILLED(3) / BLOCKED(4) / UNKNOWN(6) ─────────────────
       # Page immediately: these states gate LIVE by doctrine (kill_switch,
       # hard_pause, blocked routes/tokens, or the breaker could not be evaluated).
@@ -329,7 +336,7 @@ groups:
       # HighHTTP5xxRate and every other api-server warning. Enumerate the three
       # hard states exactly; state 5 has its own dedicated delayed rule below.
       - alert: RiskCircuitBreakerHardDown
-        expr: arbx_risk_cb_state == 3 or arbx_risk_cb_state == 4 or arbx_risk_cb_state == 6
+        expr: arbx_risk_cb_state{job="api-server"} == 3 or arbx_risk_cb_state{job="api-server"} == 4 or arbx_risk_cb_state{job="api-server"} == 6
         labels:
           severity: critical
           platform: arbitragex
@@ -339,7 +346,7 @@ groups:
 
       # ── PAUSED(2): tiered pause (e.g. drawdown tier crossed) ──────────────────
       - alert: RiskCircuitBreakerPaused
-        expr: arbx_risk_cb_state == 2
+        expr: arbx_risk_cb_state{job="api-server"} == 2
         labels:
           severity: critical
           platform: arbitragex
@@ -349,7 +356,7 @@ groups:
 
       # ── WARN(1): approaching threshold — sustained warning ────────────────────
       - alert: RiskCircuitBreakerWarn
-        expr: arbx_risk_cb_state == 1
+        expr: arbx_risk_cb_state{job="api-server"} == 1
         for: 5m
         labels:
           severity: warning
@@ -362,7 +369,7 @@ groups:
       # Fires only when sustained — tells the operator which ARBX_CB_*/ARBX_RISK_*
       # env thresholds remain unset (revert-rate/gas breakers stay unevaluated).
       - alert: RiskCircuitBreakerNotConfigured
-        expr: arbx_risk_cb_state == 5
+        expr: arbx_risk_cb_state{job="api-server"} == 5
         for: 10m
         labels:
           severity: warning
@@ -375,7 +382,7 @@ groups:
       # Mirrors the PIPELINE_SILENCE idiom: freshness gauge older than 5 minutes
       # means the 60s background evaluation loop died or is failing.
       - alert: RiskCircuitBreakerEvalStale
-        expr: time() - arbx_risk_cb_last_eval_unixtime > 300
+        expr: time() - arbx_risk_cb_last_eval_unixtime{job="api-server"} > 300
         for: 1m
         labels:
           severity: warning

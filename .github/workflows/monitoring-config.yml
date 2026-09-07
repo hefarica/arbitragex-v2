@@ -57,12 +57,15 @@ jobs:
         run: promtool check rules monitoring/alerts.rules.yml
 
       - name: Unit-test alert rules (synthetic series)
-        # H2 (FREEZE-01): `check rules` only validates syntax; this replays
-        # PIPELINE_SILENCE against synthetic gauge series (frozen vs healthy
-        # cadence) to pin the threshold behaviour. promtool (2.55.1) resolves
-        # rule_files against the TEST FILE'S directory — the test file uses
-        # ../alerts.rules.yml accordingly (MON-UTEST-PATH-01).
-        run: promtool test rules monitoring/tests/pipeline_silence_test.yml
+        # H2 (FREEZE-01): `check rules` only validates syntax; these replay
+        # PIPELINE_SILENCE and the circuit_breakers group against synthetic
+        # gauge series to pin threshold + job-scope behaviour. promtool
+        # (2.55.1) resolves rule_files against the TEST FILE'S directory —
+        # the test files use ../alerts.rules.yml accordingly
+        # (MON-UTEST-PATH-01, A6-CBPROM-01-L4).
+        run: |
+          promtool test rules monitoring/tests/pipeline_silence_test.yml
+          promtool test rules monitoring/tests/risk_cb_test.yml
 
       - name: Check prometheus.yml (dev)
         run: promtool check config monitoring/prometheus/prometheus.yml
