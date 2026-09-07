@@ -403,6 +403,10 @@ services:
     # untouched). Single key now; :ro — the container can never write the repo; same
     # .env already injected via env_file → no new secret exposure.
     - ..:/repo:ro
+  # WO-13 (2026-09-06): canonical edge = Hono worker under Node. Dockerfile.node
+  # builds @arbx/edge-worker (byte-identical to the Cloudflare deploy) and runs
+  # dist/node-server.js (@hono/node-server + RedisKV shim on REDIS_URL). The
+  # Express dev-local shim (edge/dev-local/) is DEV-ONLY — compose.dev.yml only.
   edge:
     logging: *id001
     build:
