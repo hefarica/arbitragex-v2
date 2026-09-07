@@ -1,0 +1,101 @@
+# A6-CBPROM-01-L4 — synthetic-series behaviour tests for the circuit_breakers
+# alert group.
+#
+# Run from the repo root:
+#   promtool test rules monitoring/tests/risk_cb_test.yml
+# CI: .github/workflows/monitoring-config.yml ("Unit-test alert rules" step).
+#
+# rule_files resolve against THIS file's directory (promtool 2.55.1 —
+# MON-UTEST-PATH-01), hence ../alerts.rules.yml.
+#
+# Pinned behaviours (each pins a defect that actually shipped or fired live):
+#   Case 1 — NOT_AVAILABLE(5) must NOT page HardDown critical (the `>= 3`
+#            review bug: enum is not severity-ordered) and its own delayed
+#            warning fires at 10m.
+#   Case 2 — a true KILLED(3) pages critical immediately.
+#   Case 3 — EvalStale is job-scoped: selector-api re-exports the shared-ts
+#            gauge at 0 (live-verified on the VPS) — that series must NOT
+#            fire while api-server's loop is healthy.
+#   Case 4 — EvalStale DOES fire when api-server's evaluation loop really dies.
+
+rule_files:
+  - ../alerts.rules.yml
+
+evaluation_interval: 1m
+
+tests:
+  # ── Case 1: honest steady state (env unset → 5) ────────────────────────────
+  - interval: 1m
+    input_series:
+      - series: 'arbx_risk_cb_state{job="api-server",name="revert_rate_breaker"}'
+        values: '5x20'
+    alert_rule_test:
+      - eval_time: 5m
+        alertname: RiskCircuitBreakerHardDown
+        exp_alerts: []
+      - eval_time: 15m
+        # Regression pin: 5 >= 3 is TRUE numerically — the rule must still
+        # not fire because the expr enumerates exactly {3,4,6}.
+        alertname: RiskCircuitBreakerHardDown
+        exp_alerts: []
+      - eval_time: 15m
+        alertname: RiskCircuitBreakerNotConfigured
+        exp_alerts:
+          - exp_labels:
+              alertname: RiskCircuitBreakerNotConfigured
+              job: api-server
+              name: revert_rate_breaker
+              severity: warning
+              platform: arbitragex
+            exp_annotations:
+              summary: "Risk breaker revert_rate_breaker NOT_AVAILABLE for >10m"
+              description: "Breaker revert_rate_breaker cannot evaluate: missing operator thresholds (ARBX_CB_MAX_REVERT_RATE / ARBX_CB_MAX_GAS_BURN_USD / ARBX_RISK_*) or insufficient paper_trade_runs evidence. Set the env thresholds on the VPS to activate it."
+
+  # ── Case 2: true hard state (KILLED=3) pages critical ──────────────────────
+  - interval: 1m
+    input_series:
+      - series: 'arbx_risk_cb_state{job="api-server",name="global_kill_switch"}'
+        values: '3x10'
+    alert_rule_test:
+      - eval_time: 5m
+        alertname: RiskCircuitBreakerHardDown
+        exp_alerts:
+          - exp_labels:
+              alertname: RiskCircuitBreakerHardDown
+              job: api-server
+              name: global_kill_switch
+              severity: critical
+              platform: arbitragex
+            exp_annotations:
+              summary: "Risk breaker global_kill_switch hard-down (KILLED/BLOCKED/UNKNOWN)"
+              description: "Doctrinal risk circuit breaker global_kill_switch reports a hard state. Check /api/v1/risk/circuit-breakers/status for evidence and required_action; trips are persisted in risk_events."
+
+  # ── Case 3: EvalStale ignores non-api-server re-exports of the family ──────
+  - interval: 1m
+    input_series:
+      - series: 'arbx_risk_cb_last_eval_unixtime{job="api-server"}'
+        values: '0+60x20'
+      - series: 'arbx_risk_cb_last_eval_unixtime{job="selector-api"}'
+        values: '0x20'
+    alert_rule_test:
+      - eval_time: 15m
+        alertname: RiskCircuitBreakerEvalStale
+        exp_alerts: []
+
+  # ── Case 4: EvalStale fires when the api-server loop really dies ───────────
+  - interval: 1m
+    input_series:
+      - series: 'arbx_risk_cb_last_eval_unixtime{job="api-server"}'
+        values: '0x20'
+    alert_rule_test:
+      - eval_time: 15m
+        alertname: RiskCircuitBreakerEvalStale
+        exp_alerts:
+          - exp_labels:
+              alertname: RiskCircuitBreakerEvalStale
+              job: api-server
+              severity: warning
+              platform: arbitragex
+            exp_annotations:
+              summary: "Risk circuit-breaker evaluation stale (>5m since last eval)"
+              description: "api-server's breaker evaluation loop has not emitted arbx_risk_cb_last_eval_unixtime in >5 minutes. Check docker logs api-server for circuit_breakers.periodic_emit_failed and arbx_risk_cb_eval_failures_total."
