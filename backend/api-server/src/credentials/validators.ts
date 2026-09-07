@@ -10,6 +10,13 @@
  *   - WS probes: 4s connect to close.
  *
  * Every probe is read-only on the remote side (no writes, no orders).
+ *
+ * WO-03 (2026-09-06) — envelope-encryption contract: validators receive the
+ * PLAINTEXT secret only. Decryption of at-rest envelopes (pgcrypto, migration
+ * 120) happens upstream in credentials/store.ts before any call; a ciphertext
+ * never reaches this module as a string, so no storage awareness (and no
+ * decrypt logic) belongs here. Audited zero-diff touchpoint — see
+ * audits/omniscience-integration-2026-09-06/WO-03-DESIGN.md §4.4.
  */
 
 import { ethers } from "ethers";

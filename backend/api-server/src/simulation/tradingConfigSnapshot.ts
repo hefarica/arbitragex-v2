@@ -46,6 +46,12 @@ export interface TradingConfigSnapshot {
   max_slippage_pct: number;
   failure_risk_buffer_pct: number;
   flashloan_fee_pct: number;
+  /**
+   * WO-04 (2026-09-06): LP-fee proxy default (fraction) applied by
+   * `computeSimulatedNet` when a route's per-leg fee tiers are unknown.
+   * Mirrors the Rust serde default (0.003 = V2 30 bps tier).
+   */
+  lp_fee_default_pct: number;
 
   // ── Cost-component scalars (Sprint A + B + C + C2) ──────────────────────
   capital_cost_rate_annual_pct: number;
@@ -165,6 +171,9 @@ function parseSnapshot(raw: string): TradingConfigSnapshot | null {
     max_slippage_pct: num(o["max_slippage_pct"], 0.005),
     failure_risk_buffer_pct: num(o["failure_risk_buffer_pct"], 0.001),
     flashloan_fee_pct: num(o["flashloan_fee_pct"], 0.0009),
+    // WO-04 (2026-09-06): absent in pre-migration-119 Redis blobs ⇒ 0.003
+    // (first-deploy invariant — same value the Rust serde default emits).
+    lp_fee_default_pct: num(o["lp_fee_default_pct"], 0.003),
 
     capital_cost_rate_annual_pct: num(o["capital_cost_rate_annual_pct"], 0),
     ops_overhead_usd_per_attempt: num(o["ops_overhead_usd_per_attempt"], 0.01),

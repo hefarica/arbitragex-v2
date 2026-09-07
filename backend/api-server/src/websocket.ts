@@ -10,6 +10,114 @@ import type { CarnotStore } from './services/carnotStore.js';
 import { registerCarnotWebSocket } from './websocket-carnot.js';
 
 // ---------------------------------------------------------------------------
+// WO-10 (2026-09-06) — detection→WS-broadcast latency (informe §6.11 / MN-006)
+// ---------------------------------------------------------------------------
+//
+// The `new_opportunity` leg is measured HERE because this module is the
+// broadcast terminus: origin = `opportunities.detected_at` (stamped by the
+// searcher at Opportunity construction, fanned out via the PG
+// `trg_notify_opportunity` trigger → LISTEN → broadcastOpportunity), terminus
+// = the Socket.IO emit into the `opportunities` room. The Rust-side cuts
+// (decode / construction→publish / emit / XADD) land in the searcher's LIVE
+// Prometheus exporter as `arbx_pipeline_latency_seconds{stage}` (registered
+// from backend/searcher-rs/src/publisher.rs into shared_rs::metrics::REGISTRY
+// — no new channel).
+//
+// Prometheus landing for THIS leg is a 5-line histogram addition in
+// shared-ts/src/metrics/index.ts (twin of runtimeAckBroadcastLatencyMs, L146)
+// — deliberately NOT applied by WO-10 because api-server has NO direct
+// prom-client dependency (backend/api-server/package.json: only @arbx/shared),
+// so every metric object it observes must be DEFINED in shared-ts — and
+// shared-ts/src/metrics/index.ts is outside the WO-10 file claim (importing
+// pre-existing shared metrics works — see runtimeAckBroadcastLatencyMs above;
+// creating a new one is the part that needs the shared-ts edit). Prometheus
+// already scrapes api-server:8080/metrics (monitoring/prometheus/
+// prometheus.prod.yml:50-52), so once that histogram lands it is live with
+// zero further wiring. Until then the honest aggregate surface for this leg is
+// the 60s window summary log below.
+//
+// R8: a payload without a parseable `detected_at` (or a negative elapsed from
+// a clock step) is COUNTED as skipped in the window summary — never
+// fabricated, never silently dropped.
+//
+// NO-MEDIR (WO-10-DESIGN §5): cross-container clock skew. Producer
+// (searcher-rs) and consumer (api-server) share the VPS host kernel clock, so
+// skew is ~0 by construction; this leg is still ms-precision and is NEVER
+// compared across hosts. Window bias: a fleet recreate resets the in-process
+// window — a summary inside the first 60s after a recreate covers a partial
+// window (declared here, not hidden).
+
+/** WO-10: pure percentile stats over a sample window (exported for tests). */
+export function wo10PercentileStats(
+    samples: ArrayLike<number>,
+): { count: number; p50: number; p95: number; p99: number; max: number } {
+    if (samples.length === 0) return { count: 0, p50: 0, p95: 0, p99: 0, max: 0 };
+    const sorted = Float64Array.from(samples).sort(); // typed-array sort is numeric
+    const at = (q: number): number =>
+        sorted[Math.min(sorted.length - 1, Math.floor(q * (sorted.length - 1)))]!;
+    return {
+        count: sorted.length,
+        p50: at(0.5),
+        p95: at(0.95),
+        p99: at(0.99),
+        max: sorted[sorted.length - 1]!,
+    };
+}
+
+const WO10_WINDOW_MS = 60_000;
+const WO10_RING_SIZE = 8192;
+
+/** WO-10: bounded ring window — O(1) record, ONE aggregate log per 60s (R9). */
+class Wo10LatencyWindow {
+    private ring = new Float64Array(WO10_RING_SIZE);
+    private n = 0;
+    private skipped = 0;
+    private lastSummaryAt = 0;
+
+    /** `ms === null` → skipped (R8 count), never fabricated. */
+    observe(ms: number | null, nowMs: number, source: string): void {
+        if (this.lastSummaryAt === 0) {
+            // First observation anchors the window — avoids an instant
+            // (near-empty) summary right after boot / a fleet recreate.
+            this.lastSummaryAt = nowMs;
+        }
+        if (ms === null || !Number.isFinite(ms) || ms < 0) {
+            this.skipped += 1;
+        } else {
+            this.ring[this.n % WO10_RING_SIZE] = ms;
+            this.n += 1;
+        }
+        if (nowMs - this.lastSummaryAt >= WO10_WINDOW_MS) {
+            this.summarize(source);
+            this.lastSummaryAt = nowMs;
+        }
+    }
+
+    private summarize(source: string): void {
+        const window = this.n <= WO10_RING_SIZE ? this.ring.subarray(0, this.n) : this.ring;
+        const s = wo10PercentileStats(window);
+        // R9: ONE aggregate line per window — per-item logging is forbidden.
+        console.log(
+            `[WO10-BroadcastLatency] source=${source} window_ms=${WO10_WINDOW_MS} ` +
+                `n=${s.count} skipped=${this.skipped} ` +
+                `p50_ms=${s.p50.toFixed(1)} p95_ms=${s.p95.toFixed(1)} ` +
+                `p99_ms=${s.p99.toFixed(1)} max_ms=${s.max.toFixed(1)}`,
+        );
+        this.n = 0;
+        this.skipped = 0;
+    }
+}
+
+const wo10NewOppWindow = new Wo10LatencyWindow();
+const wo10HotWindow = new Wo10LatencyWindow();
+
+/** WO-10: E2E ms from a producer wall-clock stamp, or null (R8 skip). */
+function wo10E2eMsFromStamp(stampMs: number, nowMs: number): number | null {
+    const d = nowMs - stampMs;
+    return Number.isFinite(d) && d >= 0 ? d : null;
+}
+
+// ---------------------------------------------------------------------------
 // Tipos públicos
 // ---------------------------------------------------------------------------
 
@@ -338,6 +446,20 @@ export function setupWebSocketGateway(server: HttpServer, carnotStore?: CarnotSt
 // Simulador de emisión de oportunidades
 export function broadcastOpportunity(io: Server, opp: any) {
     io.to('opportunities').emit('new_opportunity', opp);
+    // WO-10 (2026-09-06): E2E detección→broadcast — origin
+    // `opportunities.detected_at` (PG row_to_json via NOTIFY), terminus the
+    // emit above (observed after it so the span includes the broadcast call).
+    // Payload is NOT mutated (RULE 00: the wire contract stays byte-identical).
+    // R8: unparseable/absent stamp or negative elapsed → skipped (counted in
+    // the 60s window summary), never fabricated.
+    const detectedRaw = (opp as { detected_at?: unknown } | null | undefined)?.detected_at;
+    const nowMs = Date.now();
+    let e2eMs: number | null = null;
+    if (typeof detectedRaw === 'string' && detectedRaw.length > 0) {
+        const t = Date.parse(detectedRaw);
+        if (Number.isFinite(t)) e2eMs = wo10E2eMsFromStamp(t, nowMs);
+    }
+    wo10NewOppWindow.observe(e2eMs, nowMs, 'new_opportunity');
 }
 
 // ---------------------------------------------------------------------------
@@ -679,10 +801,33 @@ const ROUTE_DISCOVERY_TELEMETRY_CHANNEL = 'arbx:route_discovery:telemetry';
 const HOT_OPPORTUNITIES_GROUP = 'ws-emitter-g0';
 const HOT_DETECTED_STREAM = 'arbx:hot:detected';
 const HOT_SIMULATED_STREAM = 'arbx:hot:simulated';
+// WO-15 (2026-09-06) — both hot streams share one consumer group; helpers below
+// iterate them so shutdown-deregistration and idle-purges can never drift to
+// cover only one stream again.
+const HOT_STREAMS = [HOT_DETECTED_STREAM, HOT_SIMULATED_STREAM] as const;
+
+const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
+
+// WO-15 (2026-09-06) — consumer-group hygiene knobs (D-9 leak: every boot
+// registers `ws-emitter-<pid>-<ts>` and nothing ever deregisters it; 62 orphans
+// measured 2026-09-06). Operator-tunable via env with documented defaults
+// (no-hardcode doctrine): sweep every 15 min, purge consumers idle > 30 min.
+// Idle-based purge is replica-safe: a consumer of another LIVE api-server
+// instance resets its idle on every XREADGROUP (<1s) and is never touched.
+function envPositiveInt(name: string, def: number): number {
+    const v = Number.parseInt(process.env[name] ?? '', 10);
+    return Number.isFinite(v) && v > 0 ? v : def;
+}
+const CONSUMER_PURGE_INTERVAL_MS = envPositiveInt('ARBX_WS_CONSUMER_PURGE_INTERVAL_MS', 15 * 60_000);
+const CONSUMER_PURGE_IDLE_MS = envPositiveInt('ARBX_WS_CONSUMER_PURGE_IDLE_MS', 30 * 60_000);
 
 export interface HotOpportunityStreamerOptions {
     io: Server;
     redisUrl: string;
+    // WO-15 (2026-09-06): injectable client so unit tests can verify the
+    // shutdown-deregistration and idle-purge invariants without a live Redis.
+    // Production (index.ts) always passes only redisUrl.
+    redisClient?: Redis;
     // H4 fix: the injected logger is pino (index.ts), which exposes .info()/
     // .warn()/.error() — NOT .log(). Declaring .log() here masked the runtime
     // TypeError that silently killed the hot streamer on boot.
@@ -708,10 +853,24 @@ export class OpportunityHotStreamer {
     private running = false;
     private consumerName: string;
     private pollTimer: ReturnType<typeof setTimeout> | null = null;
+    // WO-15 (2026-09-06): poll-loop promises so stop() can wait for in-flight
+    // XREADGROUPs to settle before deregistering the consumer.
+    private loopPromises: Promise<void>[] | null = null;
+    // WO-15 (2026-09-06): canceller for the maintenance loop's long sleep, so
+    // stop() wakes it immediately instead of leaving a pending timer behind.
+    private wakeMaintenance: (() => void) | null = null;
+
+    private sleepInterruptible(ms: number): Promise<void> {
+        return new Promise<void>((resolve) => {
+            const timer = setTimeout(() => { this.wakeMaintenance = null; resolve(); }, ms);
+            this.wakeMaintenance = () => { clearTimeout(timer); this.wakeMaintenance = null; resolve(); };
+        });
+    }
 
     constructor(opts: HotOpportunityStreamerOptions) {
         this.io = opts.io;
-        this.redis = new Redis(opts.redisUrl, {
+        // WO-15 (2026-09-06): injected client (tests) or the production conn.
+        this.redis = opts.redisClient ?? new Redis(opts.redisUrl, {
             lazyConnect: false,
             maxRetriesPerRequest: 3,
             retryStrategy: (times: number) => Math.min(times * 50, 2000),
@@ -743,8 +902,13 @@ export class OpportunityHotStreamer {
         this.logger.info('[HotStreamer] Starting poll loops');
 
         // Start polling loops (non-blocking)
-        this.pollLoop(HOT_DETECTED_STREAM, 'opportunity:detected');
-        this.pollLoop(HOT_SIMULATED_STREAM, 'opportunity:validated');
+        this.loopPromises = [
+            this.pollLoop(HOT_DETECTED_STREAM, 'opportunity:detected'),
+            this.pollLoop(HOT_SIMULATED_STREAM, 'opportunity:validated'),
+        ];
+        // WO-15 (2026-09-06): periodic idle-consumer hygiene sweep — covers the
+        // leaks SIGKILL/OOM leave behind (those never reach stop()).
+        void this.maintenanceLoop();
     }
 
     private async pollLoop(stream: string, eventName: string): Promise<void> {
@@ -759,18 +923,21 @@ export class OpportunityHotStreamer {
                 ) as [string, [string, string[]][]][] | null;
 
                 if (results) {
+                    const ackIds: string[] = [];
                     for (const [, messages] of results) {
                         for (const [id, fields] of messages) {
                             const data = this.parseFields(fields);
                             // Emit to all clients in 'opportunities' room
-                            const start = process.hrtime.bigint();
-                            this.io.to('opportunities').emit(eventName, { ...data, _stream_id: id });
-                            const elapsedNs = process.hrtime.bigint() - start;
-                            const elapsedMs = Number(elapsedNs) / 1_000_000;
-                            if (elapsedMs > 5) {
-                                this.logger.warn(`[HotStreamer] Slow emit: ${elapsedMs.toFixed(2)}ms > 5ms target`);
-                            }
+                            this.emitEntry(eventName, id, data);
+                            ackIds.push(id);
                         }
+                    }
+                    // WO-15 (2026-09-06): acknowledge what was already
+                    // broadcast (fire-and-forget, at-least-once semantics).
+                    // Without XACK every read entry sits in this consumer's
+                    // PEL forever, which is what made DELCONSUMER unsafe.
+                    if (ackIds.length > 0) {
+                        await this.redis.xack(stream, HOT_OPPORTUNITIES_GROUP, ...ackIds).catch(() => {});
                     }
                 }
             } catch (e) {
@@ -778,6 +945,126 @@ export class OpportunityHotStreamer {
                 await new Promise(r => setTimeout(r, 1000));
             }
         }
+    }
+
+    private emitEntry(eventName: string, id: string, data: Record<string, string>): void {
+        const start = process.hrtime.bigint();
+        this.io.to('opportunities').emit(eventName, { ...data, _stream_id: id });
+        const elapsedNs = process.hrtime.bigint() - start;
+        const elapsedMs = Number(elapsedNs) / 1_000_000;
+        if (elapsedMs > 5) {
+            this.logger.warn(`[HotStreamer] Slow emit: ${elapsedMs.toFixed(2)}ms > 5ms target`);
+        }
+        // WO-10 (2026-09-06): E2E for the hot legs — producer stamps
+        // `detected_at_ms` (arbx:hot:detected) / `timestamp_ms`
+        // (arbx:hot:simulated) in unix ms. R8: absent/unparseable stamp or
+        // negative elapsed → skipped (counted in the 60s window summary),
+        // never fabricated.
+        const wo10NowMs = Date.now();
+        const wo10StampRaw = data['detected_at_ms'] ?? data['timestamp_ms'];
+        let wo10E2e: number | null = null;
+        if (typeof wo10StampRaw === 'string' && wo10StampRaw !== '') {
+            const t = Number(wo10StampRaw);
+            if (Number.isFinite(t) && t > 0) {
+                wo10E2e = wo10E2eMsFromStamp(t, wo10NowMs);
+            }
+        }
+        wo10HotWindow.observe(wo10E2e, wo10NowMs, eventName);
+    }
+
+    private streamEventName(stream: string): string {
+        return stream === HOT_DETECTED_STREAM ? 'opportunity:detected' : 'opportunity:validated';
+    }
+
+    // WO-15 (2026-09-06) — periodic sweep that deregisters orphaned consumers
+    // (idle > CONSUMER_PURGE_IDLE_MS) of our group on both hot streams. Runs on
+    // a short first delay after boot (cleans the predecessor's backlog without
+    // waiting a full interval), then every CONSUMER_PURGE_INTERVAL_MS.
+    private async maintenanceLoop(): Promise<void> {
+        let waitMs = 60_000;
+        while (this.running) {
+            await this.sleepInterruptible(waitMs);
+            waitMs = CONSUMER_PURGE_INTERVAL_MS;
+            if (!this.running) break;
+            try {
+                await this.purgeIdleConsumers();
+            } catch (e) {
+                this.logger.warn(`[HotStreamer] Consumer purge sweep failed: ${(e as Error).message}`);
+            }
+        }
+    }
+
+    private async purgeIdleConsumers(): Promise<void> {
+        for (const stream of HOT_STREAMS) {
+            let consumers: Array<{ name?: unknown; pending?: unknown; idle?: unknown }> = [];
+            try {
+                consumers = await (this.redis as any).xinfo('CONSUMERS', stream, HOT_OPPORTUNITIES_GROUP);
+            } catch (e) {
+                this.logger.warn(`[HotStreamer] XINFO CONSUMERS failed for ${stream}: ${(e as Error).message}`);
+                continue;
+            }
+            let purged = 0;
+            let reclaimed = 0;
+            let discardedPending = 0;
+            for (const c of consumers) {
+                const name = String(c?.name ?? '');
+                const pending = Number(c?.pending ?? 0);
+                const idle = Number(c?.idle ?? 0);
+                if (!name || name === this.consumerName) continue; // self
+                if (idle < CONSUMER_PURGE_IDLE_MS) continue; // live peer or recent predecessor
+                // WO-15 zero-loss invariant: pending entries of the orphan are
+                // XAUTOCLAIMed to THIS live consumer FIRST (re-broadcast + XACK,
+                // at-least-once by design); only then is the consumer removed.
+                // DELCONSUMER alone would drop its PEL entries from the group —
+                // never re-delivered to anyone.
+                if (pending > 0) {
+                    reclaimed += await this.claimPendingEntries(stream);
+                }
+                try {
+                    const removed = Number(await this.redis.xgroup('DELCONSUMER', stream, HOT_OPPORTUNITIES_GROUP, name));
+                    if (removed > 0) {
+                        discardedPending += removed;
+                        this.logger.warn(
+                            `[HotStreamer] DELCONSUMER ${name}@${stream} discarded ${removed} pending entries`,
+                        );
+                    }
+                    purged++;
+                } catch (e) {
+                    this.logger.warn(`[HotStreamer] DELCONSUMER failed for ${name}@${stream}: ${(e as Error).message}`);
+                }
+            }
+            // R9: one aggregated summary per sweep — never per-consumer logs.
+            if (purged > 0 || reclaimed > 0) {
+                this.logger.info(
+                    `[HotStreamer] group hygiene ${stream}: purged=${purged} reclaimed=${reclaimed} discarded_pending=${discardedPending}`,
+                );
+            }
+        }
+    }
+
+    private async claimPendingEntries(stream: string): Promise<number> {
+        let cursor = '0-0';
+        let iterations = 0;
+        let claimedCount = 0;
+        do {
+            const res = await (this.redis as any).xautoclaim(
+                stream, HOT_OPPORTUNITIES_GROUP, this.consumerName,
+                CONSUMER_PURGE_IDLE_MS, cursor, 'COUNT', 100,
+            ) as [string, [string, string[]][]] | null;
+            cursor = res?.[0] ?? '0-0';
+            for (const [id, fields] of res?.[1] ?? []) {
+                this.emitEntry(this.streamEventName(stream), id, this.parseFields(fields));
+                await this.redis.xack(stream, HOT_OPPORTUNITIES_GROUP, id).catch(() => {});
+                claimedCount++;
+            }
+            iterations++;
+            // Safety cap: 100 iterations × COUNT 100 = 10_000 entries per sweep;
+            // if the cursor is still open the next sweep resumes from scratch.
+        } while (cursor !== '0-0' && iterations < 100 && this.running);
+        if (cursor !== '0-0') {
+            this.logger.warn(`[HotStreamer] XAUTOCLAIM cursor still open for ${stream} (resumes next sweep)`);
+        }
+        return claimedCount;
     }
 
     private parseFields(fields: string[]): Record<string, string> {
@@ -793,6 +1080,35 @@ export class OpportunityHotStreamer {
         if (this.pollTimer) {
             clearTimeout(this.pollTimer);
             this.pollTimer = null;
+        }
+        // WO-15 (2026-09-06): wake the maintenance sweep's sleep immediately —
+        // it re-checks `running` and exits without leaving a pending timer.
+        this.wakeMaintenance?.();
+        // WO-15 (2026-09-06): wait for in-flight XREADGROUPs to settle BEFORE
+        // deregistering — an XREADGROUP that lands after DELCONSUMER would
+        // silently re-create the consumer (XREADGROUP auto-creates consumers),
+        // and the leak would survive the graceful shutdown. Bounded to 3s so the
+        // api-server drain window (5s, index.ts shutdown) is never exceeded.
+        if (this.loopPromises) {
+            const bounded = this.sleepInterruptible(3_000);
+            await Promise.race([Promise.allSettled(this.loopPromises), bounded]);
+            this.wakeMaintenance?.(); // clear the 3s bound timer if unused
+        }
+        // WO-15 (2026-09-06): deregister this boot's consumer from both groups
+        // in graceful shutdown (index.ts:2013 already invokes stop() on
+        // SIGINT/SIGTERM — D-9 leak: 62 orphans measured 2026-09-06). Zero-loss
+        // invariant: our own PEL is empty (XACK after every emit), so
+        // DELCONSUMER discards nothing. Best-effort on purpose — SIGKILL/OOM
+        // never reach this path; the periodic idle-purge sweep covers those.
+        for (const stream of HOT_STREAMS) {
+            try {
+                const removed = Number(await this.redis.xgroup(
+                    'DELCONSUMER', stream, HOT_OPPORTUNITIES_GROUP, this.consumerName,
+                ));
+                this.logger.info(`[HotStreamer] deregistered consumer from ${stream} (pending discarded: ${removed})`);
+            } catch (e) {
+                this.logger.warn(`[HotStreamer] DELCONSUMER failed for ${stream}: ${(e as Error).message}`);
+            }
         }
         await this.redis.quit();
     }
