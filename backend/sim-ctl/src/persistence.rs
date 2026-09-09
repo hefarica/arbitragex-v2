@@ -129,6 +129,10 @@ fn simulator_str(k: &SimulatorKind) -> &'static str {
 /// `not_implemented` outcomes produced in `sim_engine.rs`.
 fn is_sim_capability_gap(fail_reason: &str) -> bool {
     fail_reason.starts_with("strategy_not_simulatable")
+        // BR-00 (2026-09-07): cyclic-route structural gap (single-hop S4
+        // probe cannot represent a closed route) -- same non-rejecting
+        // semantics as the kind gap above.
+        || fail_reason.starts_with("strategy_cyclic_route_not_simulatable")
         || fail_reason.starts_with("anvil_fork_not_configured")
         || fail_reason.contains("_not_supported_in_s4")
         // SIMWIRE-02 (P1 safety net): typed B2c/stream gaps. Absence of
@@ -169,6 +173,9 @@ fn is_sim_capability_gap(fail_reason: &str) -> bool {
         || fail_reason.contains("balance_decode_failed")
         || fail_reason.contains("amounts_out_decode_failed")
         || fail_reason.contains("amounts_out_empty_array")
+        // BR-00 (2026-09-07): the anvil harness could not decode its OWN
+        // probe output -- absence of measurement, never a market verdict (R8).
+        || fail_reason == "output_undecodable"
 }
 
 #[cfg(test)]
@@ -183,6 +190,23 @@ mod simwire02_classifier_tests {
             "strategy_not_supported_in_s4",
         ] {
             assert!(is_sim_capability_gap(reason), "{reason} must stay a gap");
+        }
+    }
+
+    /// BR-00 (2026-09-07): the two new structural-gap families plus the
+    /// undecodable-output harness gap must classify as gaps (opportunity NOT
+    /// rejected) -- the simulator shape limits are not market verdicts.
+    #[test]
+    fn br00_structural_gap_families_are_gaps() {
+        for reason in [
+            "strategy_not_simulatable_in_s4:liquidation",
+            "strategy_not_simulatable_in_s4:liquidation_snipe",
+            "strategy_cyclic_route_not_simulatable_in_s4:triangular",
+            "strategy_cyclic_route_not_simulatable_in_s4:flashloan_arb",
+            "strategy_cyclic_route_not_simulatable_in_s4:mev_01_016_triangular_arbitrage",
+            "output_undecodable",
+        ] {
+            assert!(is_sim_capability_gap(reason), "{reason} must be a gap");
         }
     }
 
