@@ -20,6 +20,9 @@
  *       - go_a5 is false until A.4 fork real PASSES.
  *       - capital_exposure_usd = 0 (paper-only).
  *       - verdict = "NO_GO" whenever any critical blocker is present.
+ *       - next_action is composed from the LIVE blockers (highest severity
+ *         first, A.9 sign-off last) — it never claims "all blockers cleared"
+ *         while the same response lists blockers (WO H-1, 2026-09-07).
  *
  * R8 fail-honest contract:
  *   - Missing env var → blocker with status="missing", env_present=false.
@@ -519,6 +522,51 @@ function overallStatus(summary: BlockersResponse["summary"]): BlockersResponse["
 }
 
 // ---------------------------------------------------------------------------
+// next_action composition — WO H-1 (2026-09-07)
+// ---------------------------------------------------------------------------
+// BROWSE-Auditor-R8 §3 H-1: the string used to be built from the A.4 blocker
+// ONLY, so once A.4 resolved (2026-08-20) it fell to the "All known blockers
+// cleared at this layer" default while the SAME response listed live
+// blockers (G-PIPE-1 critical, G-DISK-1 high, A.9 pending) — prose asserting
+// more than its source (R8 violation). Now every part is derived strictly
+// from `blockers` (fail-honest, RULE 00): the specific A.4 runbook when A.4
+// is present, then the highest-severity live blockers (stable within a
+// severity: env → readiness → doctrinal insertion order), with the terminal
+// A.9 sign-off last. The "all cleared" default survives ONLY for the truly
+// empty list, where it is factually true.
+
+const SEVERITY_RANK: Record<BlockerSeverity, number> = {
+  critical: 0,
+  high: 1,
+  medium: 2,
+  low: 3,
+};
+const NEXT_ACTION_MAX_BLOCKERS = 3;
+const A4_ID = "a4_fork_real_not_executed";
+const A9_ID = "a9_go_no_go_formal_pending";
+const A4_NEXT_ACTION =
+  "Provide RPC_HTTP_1 + EXECUTOR_1, verify ERC20 storage layouts, then run multistep_fork ignored test.";
+const A9_NEXT_ACTION = "Await A.9 formal GO/NO-GO sign-off.";
+const NO_BLOCKERS_NEXT_ACTION =
+  "All known blockers cleared at this layer; await A.9 formal GO/NO-GO sign-off.";
+
+function composeNextAction(blockers: Blocker[]): string {
+  const a4 = blockers.find((b) => b.id === A4_ID);
+  const a9 = blockers.find((b) => b.id === A9_ID);
+  const parts: string[] = [];
+  if (a4) parts.push(A4_NEXT_ACTION);
+  const topBlockers = blockers
+    .filter((b) => b !== a4 && b !== a9)
+    .sort((x, y) => SEVERITY_RANK[x.severity] - SEVERITY_RANK[y.severity])
+    .slice(0, NEXT_ACTION_MAX_BLOCKERS);
+  for (const b of topBlockers) {
+    parts.push(`${b.id} [${b.severity}] ${b.required_action}`);
+  }
+  if (a9) parts.push(A9_NEXT_ACTION);
+  return parts.length > 0 ? parts.join(" Then: ") : NO_BLOCKERS_NEXT_ACTION;
+}
+
+// ---------------------------------------------------------------------------
 // Route mounting
 // ---------------------------------------------------------------------------
 
@@ -534,6 +582,7 @@ export const __forTesting = {
   readinessItemsToBlockers,
   summarize,
   overallStatus,
+  composeNextAction, // WO H-1 (2026-09-07)
 };
 
 export function mountReadinessExtras(
@@ -583,16 +632,10 @@ export function mountReadinessExtras(
         .map((b) => b.title)
         .slice(0, 8);
 
-      const nextActionParts: string[] = [];
-      if (a4Blocker) {
-        nextActionParts.push(
-          "Provide RPC_HTTP_1 + EXECUTOR_1, verify ERC20 storage layouts, then run multistep_fork ignored test.",
-        );
-      }
-      const nextAction =
-        nextActionParts.length > 0
-          ? nextActionParts.join(" Then: ")
-          : "All known blockers cleared at this layer; await A.9 formal GO/NO-GO sign-off.";
+      // WO H-1 (2026-09-07): derive next_action from the LIVE blockers
+      // (highest severity first, A.9 sign-off terminal) — never claim
+      // "all blockers cleared" while this same response lists them.
+      const nextAction = composeNextAction(blockers);
 
       const response: DecisionResponse = {
         generated_at: new Date().toISOString(),

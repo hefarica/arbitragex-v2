@@ -450,4 +450,73 @@ mod tests {
             }
         }
     }
+
+    // ── HP-03 (2026-09-08): integracion registry del op_32 (NSGA-II) ────────
+    #[test]
+    fn registry_dispatches_op_32_multi_objective() {
+        let registry = OperatorRegistry::new();
+        let mut features = HashMap::new();
+        features.insert("fee_bps".to_string(), 30.0);
+        features.insert("mo_weight_yield".to_string(), 0.5);
+        features.insert("mo_weight_risk".to_string(), 0.3);
+        features.insert("mo_weight_latency".to_string(), 0.2);
+        let state = MarketState {
+            price_matrix: vec![vec![1.01], vec![1.01], vec![1.01]],
+            liquidity_reserves: vec![
+                (1_000_000.0, 1_010_000.0),
+                (2_000_000.0, 2_008_000.0),
+                (500_000.0, 507_500.0),
+            ],
+            gas_price_gwei: 20.0,
+            block_timestamp: 1_700_000_000,
+            block_number: 18_000_000,
+            features,
+        };
+        let out = registry.dispatch(32, &state);
+        assert!(out.is_some(), "operator 32 must be registered");
+        let o = out.unwrap();
+        assert_eq!(o.operator_id, 32);
+        // Fail-honest: computado ⇒ escalar finito (Topological Yield neto).
+        let v = o.scalar_value.expect("op_32 computes on 3-pool edge state");
+        assert!(v.is_finite(), "scalar finite: {v}");
+        assert_eq!(o.metadata.get("computed"), Some(&1.0));
+        assert!(o.matrix_result.is_some(), "frente de Pareto presente");
+    }
+
+    // HP-03 (2026-09-08) — smoke 1..=32: el contrato fail-honest se extiende al
+    // nuevo operador sobre el mismo estado rico (NO modifica el smoke 1..=31).
+    #[test]
+    fn all_32_operators_dispatch_and_are_fail_honest() {
+        let registry = OperatorRegistry::new();
+        let mut features = HashMap::new();
+        features.insert("mempool_arrivals_per_block".to_string(), 0.5);
+        features.insert("block_time_sec".to_string(), 12.0);
+        features.insert("block_time_variance_sec2".to_string(), 4.0);
+        features.insert("fee_bps".to_string(), 30.0);
+        let rich = MarketState {
+            price_matrix: vec![
+                vec![100.0, 200.0, 50.0],
+                vec![101.0, 202.0, 49.0],
+                vec![102.0, 204.0, 51.0],
+                vec![103.0, 206.0, 48.0],
+                vec![104.0, 208.0, 52.0],
+                vec![105.0, 210.0, 50.0],
+                vec![106.0, 212.0, 51.0],
+            ],
+            liquidity_reserves: vec![(1_000_000.0, 1_050_000.0), (500_000.0, 500_000.0)],
+            gas_price_gwei: 20.0,
+            block_timestamp: 1_700_000_000,
+            block_number: 18_000_000,
+            features,
+        };
+        for id in 1u8..=32u8 {
+            let out = registry.dispatch(id, &rich);
+            assert!(out.is_some(), "operator {id} must be registered + dispatch");
+            let o = out.unwrap();
+            assert_eq!(o.operator_id, id, "dispatch id mismatch for {id}");
+            if let Some(v) = o.scalar_value {
+                assert!(v.is_finite(), "operator {id} scalar must be finite: {v}");
+            }
+        }
+    }
 }

@@ -1,8 +1,10 @@
-//! Canonical knobs — the 53 live-configuration surface: the ULTRA workbook's
+//! Canonical knobs — the 55 live-configuration surface: the ULTRA workbook's
 //! 42 (sheet `01_CONFIG`, "CONFIGURACIÓN VIVA — knobs que cambian el SET de
 //! rutas" — XLS-CANON-01) + 11 from QUOTEBASE-264 `01_CONFIG` (XLS-QB-03/05b/
 //! 06/07 + 06_EDGE_MATH — min_net_bps, beam_k, quote_w_×5, discovery_sla_ms,
-//! dirty_reeval_enabled, max_state_age_blocks, fe_prefilter_enabled).
+//! dirty_reeval_enabled, max_state_age_blocks, fe_prefilter_enabled) + 2
+//! reserves-coherence knobs from BR-02 (2026-09-07:
+//! reserves_freshness_budget_s, reserves_backfill_on_discovery).
 //!
 //! ## Authority & precedence (anti-regression §37)
 //! Every knob resolves as **explicit operator env > deploy YAML (where an
@@ -37,12 +39,13 @@ pub const EXEC_MODES: [&str; 3] = ["LIVE_MAINNET", "TESTNET", "PAPER_SHADOW"];
 /// Canonical financing-mode tokens (02_FINANCING — first-class modes).
 pub const FINANCING_MODES: [&str; 4] = ["OWN_CAPITAL", "AAVE_FL", "BALANCER_FL", "V2_FLASH_SWAP"];
 
-/// The 53 canonical knobs, field names exactly matching the workbook tokens
+/// The 55 canonical knobs, field names exactly matching the workbook tokens
 /// (snake_case), defaults exactly the `01_CONFIG` values: 42 from the ULTRA
 /// workbook + 11 from QUOTEBASE-264's `01_CONFIG` (`min_net_bps`, `beam_k`,
 /// the five `quote_w_*` weights, `discovery_sla_ms`,
 /// `dirty_reeval_enabled`, `max_state_age_blocks`, and
-/// `fe_prefilter_enabled` — XLS-QB-03/05b/06/07 + ARBX-0027/0024).
+/// `fe_prefilter_enabled` — XLS-QB-03/05b/06/07 + ARBX-0027/0024) + 2
+/// reserves-coherence knobs (BR-02 2026-09-07).
 #[derive(Debug, Clone, PartialEq)]
 pub struct CanonicalKnobs {
     // ── Discovery ────────────────────────────────────────────────────────
@@ -109,6 +112,27 @@ pub struct CanonicalKnobs {
     pub block_cadence_s: u64,                 // 12
     pub cpu_op_budget_block: u64,             // 200_000_000
     pub estimated_cycles: u64,                // 100_000
+    // ── Reserves coherence (BR-02 2026-09-07) ────────────────────────────
+    /// The ONE declared freshness budget for pool reserves, shared by the
+    /// graph layer (`GraphBuildConfig.max_age_secs` — the age at which an
+    /// edge's reserves are declared `stale_reserves`) and the discovery
+    /// backfill TTL (how long a just-observed on-chain snapshot may serve
+    /// before it must be re-observed). Default 60 s mirrors the evaluation
+    /// layer's canonical reserve lag (triangular MAX_RESERVE_LAG_BLOCKS = 5
+    /// blocks × block_cadence_s = 12 s): graph and sizing declare staleness
+    /// at the SAME age — ROUTES_CROWN_JEWEL "two layers, one reality".
+    /// DEPLOYED NOTE: the PoolSyncWorker writer's 30 s const TTL stays the
+    /// effective expiry for its own working set; this knob governs the
+    /// READ-side budget + discovery backfill. Aligning the writer TTL is a
+    /// separate owner's change (see audits/cerebro-2026-09-07/BR-02-APPLY.md
+    /// §residual).
+    pub reserves_freshness_budget_s: u64, // 60 (seconds)
+    /// Declarative gate for backfill-at-discovery (BR-02): ON = the discovery
+    /// path publishes just-observed V2 reserves / V3 slot0 to Redis at t=0,
+    /// killing the discovery→sync reload race (~reload_every ticks ≈ 12 min
+    /// at the deployed cadence); OFF = pre-BR-02 behavior (in-proc cache
+    /// only) for surgical operator rollback.
+    pub reserves_backfill_on_discovery: bool, // true
     // ── Control (declarative only — see module docs §34) ────────────────
     pub execution_mode: String, // PAPER_SHADOW
     // ── Route kinds ──────────────────────────────────────────────────────
@@ -174,6 +198,9 @@ impl Default for CanonicalKnobs {
             block_cadence_s: 12,
             cpu_op_budget_block: 200_000_000,
             estimated_cycles: 100_000,
+            // BR-02 (2026-09-07) — reserves coherence defaults.
+            reserves_freshness_budget_s: 60,
+            reserves_backfill_on_discovery: true,
             execution_mode: "PAPER_SHADOW".to_string(),
             enable_2v2: true,
             enable_v2v3: true,
@@ -294,6 +321,15 @@ impl CanonicalKnobs {
             block_cadence_s: env_u64("ARBX_KNOB_BLOCK_CADENCE_S", d.block_cadence_s),
             cpu_op_budget_block: env_u64("ARBX_KNOB_CPU_OP_BUDGET_BLOCK", d.cpu_op_budget_block),
             estimated_cycles: env_u64("ARBX_KNOB_ESTIMATED_CYCLES", d.estimated_cycles),
+            // BR-02 (2026-09-07) — reserves coherence knobs.
+            reserves_freshness_budget_s: env_u64(
+                "ARBX_KNOB_RESERVES_FRESHNESS_BUDGET_S",
+                d.reserves_freshness_budget_s,
+            ),
+            reserves_backfill_on_discovery: env_bool(
+                "ARBX_KNOB_RESERVES_BACKFILL_ON_DISCOVERY",
+                d.reserves_backfill_on_discovery,
+            ),
             execution_mode: env_str("ARBX_KNOB_EXECUTION_MODE", &d.execution_mode),
             enable_2v2: env_bool("ARBX_KNOB_ENABLE_2V2", d.enable_2v2),
             enable_v2v3: env_bool("ARBX_KNOB_ENABLE_V2V3", d.enable_v2v3),
@@ -427,6 +463,23 @@ impl CanonicalKnobs {
         if self.block_cadence_s == 0 || self.cpu_op_budget_block == 0 {
             return Err("block_cadence_s / cpu_op_budget_block must be > 0".to_string());
         }
+        // BR-02 (2026-09-07) — reserves coherence: the budget must be a sane
+        // positive bound (600 s ≈ the PoolSyncWorker reload horizon order of
+        // magnitude; anything beyond serves fabricatable-age state) and must
+        // cover at least ONE block cadence — a shorter budget declares every
+        // observation stale the instant it is written.
+        if !(1..=600).contains(&self.reserves_freshness_budget_s) {
+            return Err(format!(
+                "reserves_freshness_budget_s {} outside 1..=600",
+                self.reserves_freshness_budget_s
+            ));
+        }
+        if self.reserves_freshness_budget_s < self.block_cadence_s {
+            return Err(format!(
+                "reserves_freshness_budget_s {} < block_cadence_s {} — a budget shorter than one cadence stales every observation at write time",
+                self.reserves_freshness_budget_s, self.block_cadence_s
+            ));
+        }
         // QUOTEBASE-264 01_CONFIG r14 (ARBX-0027): the block freshness budget
         // must be a sane positive bound — 0 would stale-out every observation,
         // an absurd value would disable the canonical unit entirely.
@@ -489,7 +542,7 @@ impl CanonicalKnobs {
     /// `recursion_limit` (rust-check CI failure) — the incremental build stays
     /// under it without a crate-wide attribute.
     pub fn to_json(&self) -> serde_json::Value {
-        let mut m = serde_json::Map::with_capacity(54);
+        let mut m = serde_json::Map::with_capacity(56);
         m.insert("max_hops".into(), json!(self.max_hops));
         m.insert("min_hops".into(), json!(self.min_hops));
         m.insert("selected_financing".into(), json!(self.selected_financing));
@@ -545,6 +598,15 @@ impl CanonicalKnobs {
             json!(self.cpu_op_budget_block),
         );
         m.insert("estimated_cycles".into(), json!(self.estimated_cycles));
+        // BR-02 (2026-09-07) — reserves coherence knobs.
+        m.insert(
+            "reserves_freshness_budget_s".into(),
+            json!(self.reserves_freshness_budget_s),
+        );
+        m.insert(
+            "reserves_backfill_on_discovery".into(),
+            json!(self.reserves_backfill_on_discovery),
+        );
         m.insert("execution_mode".into(), json!(self.execution_mode));
         m.insert("enable_2v2".into(), json!(self.enable_2v2));
         m.insert("enable_v2v3".into(), json!(self.enable_v2v3));
@@ -783,6 +845,11 @@ mod tests {
         assert_eq!(k.block_cadence_s, 12);
         assert_eq!(k.cpu_op_budget_block, 200_000_000);
         assert_eq!(k.estimated_cycles, 100_000);
+        // BR-02 (2026-09-07) — reserves coherence defaults: budget 60 s
+        // (= 5 blocks × 12 s cadence, the evaluation layer's reserve lag),
+        // backfill ON.
+        assert_eq!(k.reserves_freshness_budget_s, 60);
+        assert!(k.reserves_backfill_on_discovery);
         assert_eq!(k.execution_mode, "PAPER_SHADOW");
         assert!(k.enable_2v2);
         assert!(k.enable_v2v3);
@@ -873,6 +940,19 @@ mod tests {
         let mut k = CanonicalKnobs::default();
         k.discovery_sla_ms = 0.0;
         assert!(k.validate().is_err(), "discovery_sla_ms must be > 0");
+
+        // BR-02 (2026-09-07) — reserves coherence invariants.
+        let mut k = CanonicalKnobs::default();
+        k.reserves_freshness_budget_s = 0;
+        assert!(k.validate().is_err(), "reserves budget must be > 0");
+        k.reserves_freshness_budget_s = 601;
+        assert!(k.validate().is_err(), "reserves budget outside 1..=600");
+        let mut k = CanonicalKnobs::default();
+        k.reserves_freshness_budget_s = k.block_cadence_s - 1; // 11 < 12
+        assert!(
+            k.validate().is_err(),
+            "reserves budget shorter than one cadence stales everything at write time"
+        );
     }
 
     /// Env overrides win over defaults (single test fn — `set_var` is
@@ -889,6 +969,8 @@ mod tests {
             "ARBX_KNOB_MIN_NET_BPS",
             "ARBX_KNOB_DIRTY_REEVAL_ENABLED",
             "ARBX_KNOB_FE_PREFILTER_ENABLED",
+            "ARBX_KNOB_RESERVES_FRESHNESS_BUDGET_S",
+            "ARBX_KNOB_RESERVES_BACKFILL_ON_DISCOVERY",
         ];
         let saved: Vec<Option<String>> = keys.iter().map(|k| std::env::var(k).ok()).collect();
         std::env::set_var("ARBX_KNOB_MAX_HOPS", "5");
@@ -899,6 +981,9 @@ mod tests {
         std::env::set_var("ARBX_KNOB_MIN_NET_BPS", "8.5");
         std::env::set_var("ARBX_KNOB_DIRTY_REEVAL_ENABLED", "true");
         std::env::set_var("ARBX_KNOB_FE_PREFILTER_ENABLED", "true");
+        // BR-02 (2026-09-07) — reserves coherence overrides.
+        std::env::set_var("ARBX_KNOB_RESERVES_FRESHNESS_BUDGET_S", "90");
+        std::env::set_var("ARBX_KNOB_RESERVES_BACKFILL_ON_DISCOVERY", "false");
         let k = CanonicalKnobs::from_env();
         assert_eq!(k.max_hops, 5);
         assert_eq!(k.max_gas_usd, 77.5);
@@ -913,6 +998,12 @@ mod tests {
         assert!(
             k.fe_prefilter_enabled,
             "explicit operator override flips the F_e prefilter gate (ARBX-0024)"
+        );
+        // BR-02 (2026-09-07) — reserves coherence overrides.
+        assert_eq!(k.reserves_freshness_budget_s, 90);
+        assert!(
+            !k.reserves_backfill_on_discovery,
+            "explicit operator override disables backfill-at-discovery (surgical rollback)"
         );
         assert!(
             k.validate().is_ok(),
@@ -931,13 +1022,13 @@ mod tests {
     }
 
     #[test]
-    fn snapshot_json_has_all_53_knobs_and_source() {
+    fn snapshot_json_has_all_55_knobs_and_source() {
         let j = CanonicalKnobs::default().to_json();
         let obj = j.as_object().expect("snapshot is an object");
-        // 53 knob fields (ULTRA 01_CONFIG ×42 + QUOTEBASE-264 01_CONFIG ×11,
+        // 55 knob fields (ULTRA 01_CONFIG ×42 + QUOTEBASE-264 01_CONFIG ×11,
         // XLS-QB-03/05b/06/07 + ARBX-0027 max_state_age_blocks + ARBX-0024
-        // fe_prefilter_enabled) + 1 source field.
-        assert_eq!(obj.len(), 54);
+        // fe_prefilter_enabled + BR-02 reserves coherence ×2) + 1 source field.
+        assert_eq!(obj.len(), 56);
         assert_eq!(
             obj["source"],
             "canonical_knobs.rs (01_CONFIG ULTRA workbook)"
@@ -957,6 +1048,9 @@ mod tests {
         assert_eq!(obj["quote_w_cross_dex"], 0.1);
         assert_eq!(obj["discovery_sla_ms"], 30.0);
         assert_eq!(obj["max_state_age_blocks"], 2, "r14 (ARBX-0027)");
+        // BR-02 (2026-09-07) — reserves coherence snapshot entries.
+        assert_eq!(obj["reserves_freshness_budget_s"], 60);
+        assert_eq!(obj["reserves_backfill_on_discovery"], true);
         assert_eq!(obj["killswitch"], false);
     }
 

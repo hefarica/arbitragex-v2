@@ -49,9 +49,38 @@ pub fn decode_symbol_result(returndata: &[u8]) -> Result<String> {
     if returndata.is_empty() {
         anyhow::bail!("empty returndata for symbol()");
     }
-    let decoded =
-        IERC20::symbolCall::abi_decode_returns(returndata).context("decode symbol() returndata")?;
-    Ok(decoded)
+    if let Ok(decoded) = IERC20::symbolCall::abi_decode_returns(returndata) {
+        return Ok(decoded);
+    }
+    // BR-03 (2026-09-07): pre-standard EIP-20 tokens (MKR, REP, and other
+    // 2015-2017 era contracts) return a raw right-padded bytes32 word from
+    // symbol() instead of an ABI string. The string-only decode above left
+    // those tokens symbol=None → permanently meta-less in the registry →
+    // permanently unpriceable (every price tier keys the hash field by
+    // symbol). Fall back to reading the word directly; fail-honest (R8) on
+    // anything that is not printable ASCII — no invented symbols.
+    if returndata.len() == 32 {
+        if let Some(symbol) = symbol_from_bytes32_word(returndata) {
+            return Ok(symbol);
+        }
+    }
+    anyhow::bail!("decode symbol() returndata")
+}
+
+/// BR-03 (2026-09-07): decode a right-padded bytes32 `symbol()` word. Returns
+/// `None` unless every significant byte is printable ASCII (0x21..=0x7E) —
+/// garbage words stay undecoded rather than fabricating a symbol (RULE 00).
+fn symbol_from_bytes32_word(word: &[u8]) -> Option<String> {
+    debug_assert_eq!(word.len(), 32);
+    let end = word.iter().rposition(|&b| b != 0).map_or(0, |i| i + 1);
+    let trimmed = &word[..end];
+    if trimmed.is_empty() {
+        return None;
+    }
+    if !trimmed.iter().all(|&b| (0x21..=0x7e).contains(&b)) {
+        return None;
+    }
+    std::str::from_utf8(trimmed).ok().map(|s| s.to_string())
 }
 
 pub fn decode_decimals_result(returndata: &[u8]) -> Result<u8> {

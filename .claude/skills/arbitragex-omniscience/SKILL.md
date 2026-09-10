@@ -5,6 +5,26 @@ description: ARBITRAGEX DAPP OMNISCIENCE — La super-skill que integra 264 estr
 
 # ARBITRAGEX DAPP OMNISCIENCE
 
+## §0 — APLICACIÓN INSTANTÁNEA + AUTOAPRENDIZAJE (orden del operador 2026-09-07: "desde el primer 1s, en cualquier workspace, y que aprenda de sí misma")
+
+**Se ejecuta SIEMPRE, ANTES que cualquier otra sección, en toda invocación:**
+
+1. **LEER `LEARNINGS.md`** (junto a este SKILL.md) — es la experiencia acumulada de TODAS las
+   misiones de TODOS los agentes anteriores. El que ignora el ledger repite errores ya pagados.
+   Si el archivo no existe (primer uso en un workspace nuevo), continuar y crearlo al cierre.
+2. **Aplicar la doctrina v1.3 de gang desde el primer despacho** (ver §9): conocimiento total
+   inyectado en cada charter + sincronía de mesa redonda (todos observan a todos, citan a sus
+   pares, refutan con nombre) + circuit-breaker anti-rate-limit + tope de agentes del operador.
+3. **AL CIERRE de toda misión gang**: destilar las lecciones nuevas (lo generalizable, 1-3
+   líneas por lección, etiquetadas [GEN]/[ARBX]/[CCR]) y **ANEXARLAS a LEARNINGS.md** — con
+   fecha y misión de origen. El orquestador es responsable de este cierre; ningún aprendizaje
+   muere en el scrollback. Todos aprenden de todos, para siempre.
+4. **Portabilidad**: esta skill vive espejada en `~/.claude/skills/arbitragex-omniscience/`
+   (global, invocable desde CUALQUIER workspace) y en el proyecto. Los paths del canon (§1)
+   aplican dentro del repo ArbitrageX; en otros workspaces la METODOLOGÍA (gang, verificación
+   por capas, ledger, breaker) aplica íntegra y el canon se sustituye por el conocimiento
+   local del workspace en cuestión.
+
 ## Cómo activar el conocimiento completo
 
 Cuando el operador hace cualquier pregunta relacionada con estrategias, rutas, operadores,

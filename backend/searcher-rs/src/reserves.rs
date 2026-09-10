@@ -10,12 +10,19 @@
 //!                                                          sym0 < sym1 lexicographically in pool_index*
 //!
 //! TTLs:
-//!   pool_reserves : 30s (re-set every 5s by PoolSyncWorker; readers tolerate up to 10s lag)
+//!   pool_reserves : 30s writer TTL (PoolSyncWorker re-sets every tick — the
+//!                   deployed tick is 12s, `POOL_SYNC_INTERVAL_MS`, NOT the
+//!                   "every 5s" this header used to claim; two failed ticks
+//!                   expire a key). BR-02 (2026-09-07): the discovery path
+//!                   ALSO writes this key at t=0 (backfill-at-discovery) with
+//!                   the canonical `reserves_freshness_budget_s` knob TTL.
 //!   pool_index    : no expiry (operator-managed via SQL); refreshed at PoolSyncWorker boot
 //!   pool_index_v3 : no expiry (operator-managed via SQL); refreshed at PoolSyncWorker boot
 //!   tokens        : no expiry (rarely changes; refreshed at PoolSyncWorker boot)
 //!   v3_quote      : 5s (aligned with PoolSyncWorker tick — same staleness window as V2 reserves)
-//!   v3_slot0      : 30s (re-set every tick by PoolSyncWorker; matches V2 reserves TTL)
+//!   v3_slot0      : 30s writer TTL (re-set every tick by PoolSyncWorker; matches V2 reserves
+//!                   TTL). BR-02 (2026-09-07): discovery ALSO backfills this
+//!                   key with just-observed on-chain slot0 (same knob TTL).
 //!
 //! Doctrine: every Redis read returns Option (cache miss is normal at boot, scanner
 //! tolerates None by leaving gross_profit=0 and emitting `event=scanner.no_reserves_yet`).
