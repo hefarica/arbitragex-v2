@@ -116,3 +116,10 @@ fi
 docker compose --env-file .env -f "$COMPOSE_FILE" "$@"
 
 echo "=== Deploy complete ($COMPOSE_FILE) ==="
+
+# -- ARBX-DISK-GUARD-01 (2026-09-10): purge post-deploy -------------------------
+# Un deploy completo deposita ~20GB de buildkit cache (capacidad por deploy, no
+# por tiempo -- diagnostico audits/retention-02-2026-09-10). El guard horario
+# (scripts/disk_guard.sh, cron :13) puede quedar hasta 1h atras del deposito:
+# este purge aplica el mismo umbral apenas termina el deploy. No-fatal.
+docker builder prune -af --min-free-space 20GB || echo "WARN: builder prune post-deploy fallo (no fatal -- ver disk_guard.sh)"
