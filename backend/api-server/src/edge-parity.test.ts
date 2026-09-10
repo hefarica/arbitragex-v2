@@ -107,25 +107,6 @@ const ALLOWED_ASYMMETRIES: ReadonlyArray<{
       "session cookie to the upstream identity, the same session model as the " +
       "adminProxy split below. dev-local parity pending.",
   },
-  // CB-02 (2026-09-07) — Control Board runtime control plane (GET census /
-  // PUT operator-approved runtime-config, audit-first upstream). Shipped on
-  // the canonical worker via adminProxy (cookie translation, never cached);
-  // dev-local parity pending.
-  {
-    route: "GET /api/v1/control-board",
-    present: "worker",
-    reason:
-      "CB-02 (2026-09-07) — Control Board census read (adminProxy, never " +
-      "cached). Shipped on the canonical worker; dev-local parity pending.",
-  },
-  {
-    route: "PUT /api/v1/control-board",
-    present: "worker",
-    reason:
-      "CB-02 (2026-09-07) — Control Board operator toggle (adminProxy; " +
-      "api-server writes audit_logs first, then Redis runtime-config). " +
-      "Shipped on the canonical worker; dev-local parity pending.",
-  },
   // ── dev-local-only ──
   {
     route: "POST /api/admin/tokens/resolve",
