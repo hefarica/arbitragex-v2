@@ -40,8 +40,32 @@ impl SimEngine {
         // Build probe.
         let probe = match build_probe(opp, self.signer_from) {
             Ok(p) => p,
-            Err(BuildError::UnsupportedStrategy(_)) => {
-                return Self::not_implemented(id, trace_id, "strategy_not_simulatable_in_s4");
+            // BR-00 (2026-09-07): D-SIM-01 -- the reason now names the EXACT
+            // kind it refused (base kind or cartridge stem, never collapsed).
+            // Closes the BR-00-VERIFY 2.3 observability gap: a stray
+            // ":dex_arb" suffix on one of these rows is now visible evidence
+            // of upstream kind drift instead of an undiagnosable aggregate.
+            Err(BuildError::UnsupportedStrategy(kind)) => {
+                return Self::not_implemented(
+                    id,
+                    trace_id,
+                    &format!("strategy_not_simulatable_in_s4:{}", kind.as_str()),
+                );
+            }
+            // BR-00 (2026-09-07): cyclic routes are a DISTINCT structural gap --
+            // the single-hop probe cannot represent a closed route -- so they
+            // carry their own reason family, also per-kind. Both families are
+            // classified as capability gaps (persistence.rs): a simulator
+            // shape limit is never a market verdict on the opportunity.
+            Err(BuildError::CyclicRouteNotRepresentable(kind)) => {
+                return Self::not_implemented(
+                    id,
+                    trace_id,
+                    &format!(
+                        "strategy_cyclic_route_not_simulatable_in_s4:{}",
+                        kind.as_str()
+                    ),
+                );
             }
             Err(BuildError::UnsupportedChain(c)) => {
                 return Self::not_implemented(
@@ -94,7 +118,10 @@ impl SimEngine {
         };
 
         // Decode output → slippage vs opp.expected.
-        let actual_out = decode_amount_out(&output, opp);
+        // BR-00 (2026-09-07): decode by ABI shape (the probe tx shape is
+        // chosen by the router, never by the strategy kind) -- every
+        // structurally-built probe decodes identically.
+        let actual_out = decode_amount_out(&output);
         let slippage_pct = compute_slippage(opp, actual_out);
 
         let passed = slippage_pct.is_some_and(|s| s <= self.max_slippage_for_pass_pct);
@@ -110,6 +137,12 @@ impl SimEngine {
             simulator: SimulatorKind::Anvil,
             fail_reason: if passed {
                 None
+            } else if slippage_pct.is_none() {
+                // BR-00 (2026-09-07): R8 fail-honest -- an undecodable probe
+                // output is NOT a slippage verdict; the old code folded it
+                // into "slippage_too_high", claiming a measurement that never
+                // happened. Classified as a capability gap in persistence.rs.
+                Some("output_undecodable".into())
             } else {
                 Some("slippage_too_high".into())
             },
@@ -154,25 +187,28 @@ impl SimEngine {
 /// Attempts to decode an amountOut from eth_call return bytes. For V2 router,
 /// the return is uint[] with one element per hop; last element is the final out.
 /// For V3 exactInputSingle, return is a single uint256 = amountOut.
-fn decode_amount_out(output: &Bytes, opp: &Opportunity) -> Option<U256> {
-    match opp.strategy_kind.as_str() {
-        "dex_arb" => {
-            if let Ok(toks) = abi_decode(&[ParamType::Uint(256)], output) {
-                if let Some(t) = toks.first() {
-                    return t.clone().into_uint();
-                }
-            }
-            if let Ok(toks) =
-                abi_decode(&[ParamType::Array(Box::new(ParamType::Uint(256)))], output)
-            {
-                if let Some(arr) = toks.first().and_then(|t| t.clone().into_array()) {
-                    return arr.last().and_then(|t| t.clone().into_uint());
-                }
-            }
-            None
+// BR-00 (2026-09-07): decode by ABI SHAPE, not by kind string -- the probe tx
+// shape is chosen by the ROUTER (V2 => uint[], V3 => uint256), never by the
+// strategy kind, so every structurally-built probe decodes the same way
+// regardless of kind or cartridge stem.
+// Array shape goes FIRST: a uint[] head word is the 32-byte data offset, so
+// decoding it as a bare uint256 "succeeds" with the constant 32 -- the old
+// uint256-first order (pre-existing, kind-gated to dex_arb) misread every V2
+// probe return as amountOut=32. A bare uint256 (V3) can only decode as an
+// array when its value is exactly 32 AND more words follow, so the fallback
+// order is unambiguous in both directions.
+fn decode_amount_out(output: &Bytes) -> Option<U256> {
+    if let Ok(toks) = abi_decode(&[ParamType::Array(Box::new(ParamType::Uint(256)))], output) {
+        if let Some(arr) = toks.first().and_then(|t| t.clone().into_array()) {
+            return arr.last().and_then(|t| t.clone().into_uint());
         }
-        _ => None,
     }
+    if let Ok(toks) = abi_decode(&[ParamType::Uint(256)], output) {
+        if let Some(t) = toks.first() {
+            return t.clone().into_uint();
+        }
+    }
+    None
 }
 
 /// Rough slippage: |expected_profit_proxy - realized_out| / expected_profit_proxy * 100.
@@ -205,4 +241,38 @@ fn extract_revert_reason(e: &ethers::providers::ProviderError) -> String {
         }
     }
     format!("rpc_error: {}", &s[..s.len().min(200)])
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used)]
+mod br00_decode_tests {
+    use super::*;
+    use ethers::abi::{encode as abi_encode, Token};
+
+    /// V3 exactInputSingle returns a bare uint256 amountOut.
+    #[test]
+    fn decode_v3_uint256_shape() {
+        let out = Bytes::from(abi_encode(&[Token::Uint(U256::from(123_456u64))]));
+        assert_eq!(decode_amount_out(&out), Some(U256::from(123_456u64)));
+    }
+
+    /// V2 swapExactTokensForTokens returns uint[] amounts -- the LAST element
+    /// is the final out (single-hop probes return a 1-element array).
+    #[test]
+    fn decode_v2_array_shape_takes_last() {
+        let arr = Token::Array(vec![
+            Token::Uint(U256::from(1u64)),
+            Token::Uint(U256::from(2u64)),
+        ]);
+        let out = Bytes::from(abi_encode(&[arr]));
+        assert_eq!(decode_amount_out(&out), Some(U256::from(2u64)));
+    }
+
+    /// Garbage / empty output returns None -- fail-closed, never a
+    /// fabricated amountOut (R8: None = not computed).
+    #[test]
+    fn decode_garbage_returns_none() {
+        assert_eq!(decode_amount_out(&Bytes::from(vec![0xde, 0xad])), None);
+        assert_eq!(decode_amount_out(&Bytes::default()), None);
+    }
 }
