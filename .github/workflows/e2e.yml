@@ -24,12 +24,6 @@ jobs:
     # compose-up + the full suite itself. 35min = ~70% headroom over the
     # observed 20m41s while keeping a real cap (well under GitHub's 360).
     timeout-minutes: 35
-    # G-CI-2 (2026-08-19, operator directive): e2e "Set up job" fails
-    # intermittently on PR runners (infra, not code — passes 3× consecutively
-    # on main). Non-blocking for PRs so transient runner issues don't kill
-    # valid PRs; STILL BLOCKING for main pushes (the real gate).
-    # Remove continue-on-error once GitHub stabilizes the runner.
-    continue-on-error: ${{ github.event_name == 'pull_request' }}
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
       - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
@@ -208,7 +202,7 @@ jobs:
           ARBX_API_URL: http://localhost:8080
           ARBX_ASSUME_NO_RPC: "1"
           ARBX_E2E: "1"
-        run: npm run test:hotpath || echo "Hot path tests skipped — VALIDATION_PENDING_INFRASTRUCTURE"
+        run: npm run test:hotpath
 
       - name: Run full suite (may skip killswitch if no admin token)
         working-directory: tests/e2e
@@ -245,6 +239,9 @@ jobs:
           export DATABASE_URL=postgres://postgres:postgres@localhost:5432/arbitragex
           unset NEXT_PUBLIC_EDGE_URL NEXT_PUBLIC_WS_URL || true
           npm test
+          # Regression for the confirmed state/confirmation selector collision.
+          # Same real CI stack and admin token; retries cannot hide instability.
+          npx playwright test killswitch.spec.ts --repeat-each=3 --retries=0
 
       - name: Dump service logs on failure
         if: failure()
