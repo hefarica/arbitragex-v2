@@ -12,6 +12,12 @@ const ADMIN_TOKEN = process.env["ARBX_ADMIN_TOKEN"];
 const testMaybe = ADMIN_TOKEN ? test : test.skip;
 
 testMaybe("kill-switch arms and disarms, /status reflects within seconds", async ({ page }) => {
+  let sessionRequests = 0;
+  page.on("request", (request) => {
+    if (request.method() === "POST" && new URL(request.url()).pathname === "/admin/session") {
+      sessionRequests += 1;
+    }
+  });
   await page.goto("/killswitch");
   const heading = page.locator("h1");
   const hasHeading = await heading.count().catch(() => 0);
@@ -43,15 +49,18 @@ testMaybe("kill-switch arms and disarms, /status reflects within seconds", async
   await page.goto("/status");
   await expect(page.getByText("ARMED", { exact: true })).toBeVisible({ timeout: 10_000 });
 
-  // Disarm.
+  // Reuse the real httpOnly session established when arming. Re-entering the
+  // token starts another login and exhausts the real 5/min/IP security limit.
   await page.goto("/killswitch");
-  await page.getByLabel(/admin token/i).fill(ADMIN_TOKEN!);
+  await expect(page.getByLabel(/admin token/i)).toHaveValue("");
   await page.getByLabel(/reason/i).fill("e2e: disarm from test");
   await page.getByRole("button", { name: /^disable$/i }).click();
 
   await expect(page.locator('[data-slot="alert-title"]').filter({
     hasText: /^DISABLED — executions permitted$/,
   })).toBeVisible({ timeout: 10_000 });
+
+  expect(sessionRequests).toBe(1);
 
   // Status page also reflects disarm.
   await page.goto("/status");

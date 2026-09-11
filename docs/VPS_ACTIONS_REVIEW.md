@@ -40,3 +40,5 @@ No se ha modificado main ni desplegado producción desde esta revisión. No se h
 Los workflows manuales heredados de recuperación/deploy distintos de autodeploy y cartuchos siguen disponibles. No se ha certificado su equivalencia con el gate nuevo. El migrador heredado aún reproduce otras migraciones: la corrección acota el incidente 103, no constituye una migración completa a un ledger con checksums. Un bloqueo persistente al añadir columnas nuevas requiere revisar las sesiones identificadas, no eliminar el gate ni cancelar sesiones arbitrariamente.
 
 Las validaciones CI no demuestran que el VPS ya ejecute la versión nueva. La promoción requiere el deploy y sus comprobaciones posteriores. El self-heal heredado no es un rollback transaccional de imágenes/base de datos.
+
+Segunda ejecución: la suite E2E completa pasó con 133 pruebas aprobadas y 26 skips; las repeticiones sin reintentos detectaron 429 de /admin/session. El test abría dos sesiones por recorrido y excedía el límite real de 5/min/IP. Se corrige para reutilizar la cookie httpOnly al desarmar y exigir exactamente un login por recorrido. No se cambia ni se relaja el rate limit.
