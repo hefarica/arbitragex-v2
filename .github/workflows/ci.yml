@@ -64,7 +64,7 @@ jobs:
         run: cargo clippy --workspace --locked -- -D warnings
         working-directory: backend
       - name: cargo test --lib (workspace)
-        run: cargo test --workspace --locked --lib
+        run: cargo test --workspace --locked --lib --bin relays-client
         working-directory: backend
 
   lint-and-test-frontend:
