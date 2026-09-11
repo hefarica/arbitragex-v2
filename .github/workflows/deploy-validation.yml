@@ -32,6 +32,11 @@ jobs:
         run: python3 -m unittest discover -s scripts/ci -p 'test_deploy_gates.py' -v
       - name: Verify evidence artifact identity and ordering
         run: python3 -m unittest discover -s scripts/ci -p 'test_evidence_artifacts.py' -v
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: '20'
+      - name: Verify polymorphic evidence delivery and readback
+        run: python3 -m unittest discover -s scripts/ci -p 'test_evidence_delivery.py' -v
       - name: Production migration shell syntax
         run: bash -n database/run_migrations.sh
       - name: Migration lock and rollback regressions (real PostgreSQL 15)

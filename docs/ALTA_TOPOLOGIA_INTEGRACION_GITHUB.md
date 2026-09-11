@@ -58,6 +58,38 @@ Los gates Rust incluyen también `--bin relays-client` para ejecutar las pruebas
 admisión y contabilidad que el comando heredado `--lib` dejaba fuera. La ejecución
 local completa aprobó 1.940 tests, con cuatro integraciones externas ignoradas.
 
+## Envío adaptable a la topología vigente
+
+La acción compartida `post-readiness-evidence` usa transportes intercambiables:
+
+1. URL HTTPS configurada y, opcionalmente, una lista de alternativas en
+   `ARBX_READINESS_EVIDENCE_URLS` (variable de Actions, array JSON de URLs completas).
+2. SSH al VPS: consulta el servicio API del proyecto Compose y los puertos
+   publicados de sus contenedores en ejecución. No supone que sean el 8080.
+3. Direcciones de red de esos mismos contenedores, descubiertas mediante Docker.
+4. Ejecución de un cliente Node dentro del contenedor API, cuando no hay un puerto
+   publicado accesible desde el host. Usa el puerto y token activos del contenedor.
+
+Cada transporte comprueba el contrato GET del registro antes de escribir y vuelve
+a leer la evidencia después del POST. Una respuesta HTTP satisfactoria sin datos
+persistidos no cuenta como entrega. Los reintentos leen primero; si el POST anterior
+se guardó pero se perdió su respuesta, no vuelven a insertar esa misma evidencia.
+Esto evita duplicados confirmables por lectura, sin prometer atomicidad entre dos
+productores concurrentes: el registro existente no ofrece una clave de idempotencia.
+
+Las rutas se obtienen de configuración explícita o del servicio Compose elegido;
+no se escanean puertos ni se siguen redirecciones con credenciales. Para los
+artefactos vinculados a SHA, el contenedor debe declarar ese mismo SHA desplegado.
+El informe enumera códigos por transporte sin tokens, direcciones internas ni
+respuestas completas. Si ninguna ruta funciona, la acción falla y conserva el
+payload como artefacto `readiness-undelivered-*`. No puede entregar si todos los
+destinos están caídos o ninguna credencial vigente está disponible.
+
+Se prueban con sockets HTTP reales el fallback, autenticación, confirmación de
+persistencia, pérdida de respuesta y el cliente Node usado dentro del contenedor.
+La selección de puertos y contenedores se comprueba con metadatos de topologías
+variables. La verificación final del transporte Docker/SSH requiere el VPS real.
+
 ## Límites de la evidencia
 
 Los resultados locales y de CI no acreditan ingresos, todos los 264 ejecutores,

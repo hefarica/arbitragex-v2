@@ -422,6 +422,7 @@ jobs:
         with:
           payload_file: readiness-evidence/readiness-evidence-unit-tests/evidence-payload.json
           evidence_url: ${{ secrets.ARBX_READINESS_EVIDENCE_URL }}
+          evidence_urls: ${{ vars.ARBX_READINESS_EVIDENCE_URLS || '[]' }}
           admin_token: ${{ secrets.ARBX_ADMIN_TOKEN }}
           ssh_key: ${{ secrets.VPS_SSH_KEY }}
           ssh_host: ${{ secrets.VPS_SSH_HOST }}
@@ -435,6 +436,7 @@ jobs:
         with:
           payload_file: readiness-evidence/readiness-evidence-dep-tree/evidence-payload.json
           evidence_url: ${{ secrets.ARBX_READINESS_EVIDENCE_URL }}
+          evidence_urls: ${{ vars.ARBX_READINESS_EVIDENCE_URLS || '[]' }}
           admin_token: ${{ secrets.ARBX_ADMIN_TOKEN }}
           ssh_key: ${{ secrets.VPS_SSH_KEY }}
           ssh_host: ${{ secrets.VPS_SSH_HOST }}
