@@ -195,6 +195,7 @@ impl ConfigProvider {
 /// Main orchestrator. Constructed once per chain and shared across tasks via `Arc`.
 pub struct Orchestrator {
     ctx: OrchestratorContext,
+    risk_ranker: crate::live_risk_ranker::LiveRiskRanker,
 }
 
 impl Orchestrator {
@@ -224,7 +225,10 @@ impl Orchestrator {
                 "off"
             }
         );
-        Self { ctx }
+        Self {
+            ctx,
+            risk_ranker: Default::default(),
+        }
     }
 
     // -----------------------------------------------------------------------
@@ -1007,6 +1011,30 @@ impl Orchestrator {
         // emit. One summary line per multi-candidate batch (R9 — per-item
         // detail already logged at debug in Phase 1).
         sized_batch.sort_by(|(a, _, _), (b, _, _)| crate::net_bps_ranking::net_bps_order(a, b));
+        let risk_ranking = self.risk_ranker.rank(
+            &mut sized_batch,
+            chain_id,
+            &self.ctx.math_redis,
+            |(ranked, candidate, _)| {
+                if candidate.rejection_reason.is_some() || ranked.economics.net_bps().is_none() {
+                    return None;
+                }
+                Some(crate::live_risk_ranker::RankingInput {
+                    strategy_kind: candidate.opportunity.strategy_kind.as_str().to_owned(),
+                    token_in: candidate.opportunity.token_in.clone(),
+                    principal_usd: ranked.economics.start_amount_usd,
+                    expected_profit_usd: ranked.economics.net_profit_usd(),
+                })
+            },
+        );
+        debug!(
+            event = "orchestrator.empirical_nsga2",
+            chain_id,
+            considered = risk_ranking.considered,
+            with_history = risk_ranking.with_history,
+            reordered = risk_ranking.reordered,
+            source = "finalized_receipt_cohort"
+        );
         if sized_batch.len() > 1 {
             debug!(
                 event = "orchestrator.net_bps_ranked_batch",
@@ -1418,7 +1446,7 @@ impl Orchestrator {
                     let emit_outcome = self
                         .ctx
                         .emitter
-                        .emit_accepted(&opp, label, route_ref)
+                        .emit_accepted_with_plan(&opp, label, route_ref, &sc.route_plan)
                         .await?;
                     match emit_outcome {
                         EmitOutcome::Published
@@ -1428,6 +1456,7 @@ impl Orchestrator {
                                 .with_label_values(&[&chain_str, label_str])
                                 .inc();
                         }
+                        EmitOutcome::Rejected => {}
                         EmitOutcome::Deduped => {
                             debug!(
                                 event = "v2.emitter.deduped",

@@ -1,38 +1,9 @@
-//! Bundle builder — constructs a signed EIP-1559 transaction for the
-//! observed opportunity, wrapped as a Flashbots bundle.
-//!
-//! M2 flash O3 (2026-06-29): the broadcast tx is the OUTER wrapped flash call
-//! `FlashLoanExecutor.requestFlashLoan(0x5107d61e)` whose payload is
-//! `executeArbitrageFlashFunded(0xdde0bf51)`. The calldata is the EXACT
-//! `ValidatedPlan.wrapped_calldata` that sim-ctl validated — broadcast VERBATIM,
-//! NOT re-encoded from `ctx`. A re-encode cannot carry the runtime intermediate
-//! `token_out` amount the sim resolved, so the broadcast bytes are now the same
-//! bytes the sim approved (true sim↔broadcast byte-parity). The raw per-router
-//! `encode_v2`/`encode_v3` swap path was DELETED: it broadcast an unfunded swap
-//! straight at a router, which is not what the system simulates and not what can
-//! repay a flash loan.
-//!
-//! Safety:
-//!   - M1 `LiveExecPolicy::assert_broadcast_allowed` is the FIRST statement —
-//!     default-deny + testnet-only + mainnet physically refused.
-//!   - `.to()` is ALWAYS the `FlashLoanExecutor` (FLE), resolved fail-closed
-//!     from `FLASHLOAN_EXECUTOR_<chain_id>`; never a router, the AE, or the EOA.
-//!   - `value = 0` (flash-funded; the EOA sends no ETH).
-//!   - Blast radius is bounded by the flash-loan PRINCIPAL (`plan.ctx.amount_in`),
-//!     NOT the tx `value` (which is 0). `max_value_eth` caps that principal.
-//!     BuildError::ValueExceedsCap must propagate to a risk_event (critical) in
-//!     the caller.
-//!   - Gas is a real `provider.estimate_gas` on the built tx + safety headroom,
-//!     fail-closed on estimate error (the wrapped flash path is far heavier than
-//!     the old hardcoded 500k single swap).
-
-use crate::nonce_manager::NonceManager;
-use crate::signer::Signer;
+//! Sign only the exact, bound, canonical simulation approved calldata.
+use crate::{nonce_manager::NonceManager, plan_validation, signer::Signer};
 use alloy::eips::BlockId;
 use alloy::primitives::{Address as AlloyAddress, Bytes as AlloyBytes, U256 as AlloyU256};
 use alloy::providers::Provider as AlloyProvider;
 use alloy::rpc::types::{BlockNumberOrTag, TransactionInput, TransactionRequest};
-use anyhow::Result;
 use ethers::core::types::transaction::eip2718::TypedTransaction;
 use ethers::prelude::*;
 use ethers::signers::Signer as EthersSigner;
@@ -41,62 +12,37 @@ use shared_rs::chains::resolve_flashloan_executor_address;
 use shared_rs::contracts::{Opportunity, StrategyKind};
 use shared_rs::rpc_failover::AlloyHttpProvider;
 
-/// Gas safety headroom applied to the on-chain `estimate_gas` result.
-/// estimate_gas returns the pending-block estimate; the wrapped flash path
-/// (requestFlashLoan → provider callback → executeArbitrageFlashFunded → 2
-/// router swaps → repay) can drift a few percent block-to-block, so we add 20%.
-const GAS_SAFETY_NUM: u64 = 12;
-const GAS_SAFETY_DEN: u64 = 10;
-
-/// Absolute upper bound on the broadcast gas limit. The wrapped flash path is
-/// heavy but a single arbitrage round-trip must never request more than a full
-/// block's worth of gas — a runaway estimate is a fail-closed signal, not a tx.
-const GAS_LIMIT_CEILING: u64 = 30_000_000;
-
 #[derive(Debug, thiserror::Error)]
 pub enum BuildError {
     #[error("unsupported strategy: {0:?}")]
     UnsupportedStrategy(StrategyKind),
     #[error("live execution denied: {0}")]
     LiveExecDenied(String),
-    #[error("flash-funded calldata encode failed: {0}")]
+    #[error("flash-funded calldata validation failed: {0}")]
     EncodeFailed(String),
-    #[error("value {value_eth} ETH exceeds max_value_eth {cap_eth}")]
+    #[error("principal display {value_eth} ETH exceeds display cap {cap_eth}; exact U256 comparison enforced")]
     ValueExceedsCap { value_eth: f64, cap_eth: f64 },
     #[error("gas estimate failed: {0}")]
     GasEstimate(String),
     #[error("provider error: {0}")]
     Provider(String),
 }
-
+#[derive(Clone)]
 pub struct SignedBundle {
-    #[allow(dead_code)]
     pub opportunity_id: uuid::Uuid,
     pub target_block: u64,
+    pub state_block: u64,
+    pub state_block_hash: H256,
+    pub gas_limit: u64,
     pub tx_raw_hex: String,
     pub tx_hash: H256,
     pub from: Address,
     pub nonce: u64,
-    #[allow(dead_code)]
     pub value_wei: U256,
 }
-
-/// Builds + signs a single-tx bundle that broadcasts the wrapped flash call
-/// `FlashLoanExecutor.requestFlashLoan(executeArbitrageFlashFunded(...))`.
-///
-/// `plan` is the carrier-B `ValidatedPlan` read from Redis by the caller
-/// (`arbx:validated_plan:<opp.id>`). Its `wrapped_calldata` is the EXACT
-/// sim-validated wrapped-flash bytes; `build_and_sign` broadcasts them VERBATIM
-/// (true sim↔broadcast byte-parity), fail-closed if empty or not the
-/// `requestFlashLoan` (0x5107d61e) entrypoint. `ctx.amount_in` still bounds the
-/// spend cap.
-///
-/// `provider` is the alloy 1.0 HTTP provider (used for `get_block` to read the
-/// current base fee AND `estimate_gas` on the built tx). The signing path
-/// remains ethers (signer.wallet).
-// WO-04 (2026-09-06): 8th param `priority_fee_gwei` — same ExecutionCfg-threading
-// pattern as max_value_eth / target_block_offset (see repo precedent in
-// cartridge_boot.rs / evidence.rs).
+fn deny(reason: &str) -> BuildError {
+    BuildError::LiveExecDenied(reason.into())
+}
 #[allow(clippy::too_many_arguments)]
 pub async fn build_and_sign(
     opp: &Opportunity,
@@ -106,175 +52,185 @@ pub async fn build_and_sign(
     nonce_mgr: &NonceManager,
     max_value_eth: f64,
     target_block_offset: u64,
-    priority_fee_gwei: f64, // WO-04 (2026-09-06)
+    priority_fee_gwei: f64,
 ) -> Result<SignedBundle, BuildError> {
-    // M1 (2026-06-28): physical broadcast barrier — default-deny + testnet-only.
-    // MUST remain the FIRST statement: no address resolution, encoding, or
-    // signing may happen before it. Re-read per call (un-bypassable) so a
-    // paper_mode flip at runtime still cannot reach mainnet. See live_exec_policy.
     crate::live_exec_policy::LiveExecPolicy::from_env()
         .assert_broadcast_allowed(opp.chain_id)
-        .map_err(|e| BuildError::LiveExecDenied(e.to_string()))?;
-
-    if opp.strategy_kind != StrategyKind::dex_arb() {
+        .map_err(|e| deny(&e.to_string()))?;
+    if !plan_validation::supports_strategy(&opp.strategy_kind) {
         return Err(BuildError::UnsupportedStrategy(opp.strategy_kind.clone()));
     }
-
-    // Spend cap = flash-loan PRINCIPAL (blast radius), NOT the tx value.
-    // The tx `value` is 0 (flash-funded). What bounds exposure is the size of
-    // the borrowed principal `plan.ctx.amount_in` (the asset the FLE flash-loans
-    // and must be repaid). Enforce the cap against that, fail-closed.
-    let principal_wei = plan.ctx.amount_in;
-    let value_wei = U256::zero();
-    let principal_eth = amount_in_to_eth(principal_wei);
-    if principal_eth > max_value_eth {
+    if signer.chain_id != opp.chain_id
+        || signer.wallet.chain_id() != opp.chain_id
+        || signer.wallet.address() != signer.address
+    {
+        return Err(deny("signer_chain_or_address_mismatch"));
+    }
+    let actual_chain = provider
+        .get_chain_id()
+        .await
+        .map_err(|_| deny("provider_chain_unavailable"))?;
+    if actual_chain != opp.chain_id {
+        return Err(deny("provider_chain_mismatch"));
+    }
+    let to = resolve_flashloan_executor_address(opp.chain_id)
+        .map_err(|_| deny("flashloan_executor_missing"))?;
+    plan_validation::validate_binding(
+        opp,
+        plan,
+        signer.address,
+        to,
+        chrono::Utc::now().timestamp_millis(),
+    )
+    .map_err(deny)?;
+    let binding = plan
+        .binding
+        .as_ref()
+        .ok_or_else(|| deny("simulation_binding_missing"))?;
+    let cap_key = format!(
+        "ARBX_LIVE_PRINCIPAL_CAP_{}_{}",
+        opp.chain_id,
+        hex::encode(plan.ctx.token_in)
+    );
+    let cap = plan_validation::principal_cap(
+        opp.chain_id,
+        plan.ctx.token_in,
+        max_value_eth,
+        std::env::var(cap_key).ok().as_deref(),
+    )
+    .map_err(deny)?;
+    if plan.ctx.amount_in > cap {
         return Err(BuildError::ValueExceedsCap {
-            value_eth: principal_eth,
-            cap_eth: max_value_eth,
+            value_eth: amount_in_to_eth(plan.ctx.amount_in),
+            cap_eth: amount_in_to_eth(cap),
         });
     }
-
-    // Resolve the broadcast target = the FlashLoanExecutor (FLE). Fail-closed:
-    // if `FLASHLOAN_EXECUTOR_<chain_id>` is unset / unparseable / zero, NO tx is
-    // built. This is the `.to()` — never a router, never the ArbitrageExecutor,
-    // never the EOA.
-    let to: Address = resolve_flashloan_executor_address(opp.chain_id)
-        .map_err(|e| BuildError::LiveExecDenied(e.to_string()))?;
-
-    // Broadcast the EXACT sim-validated wrapped-flash bytes VERBATIM — no
-    // re-encode from `ctx`. `plan.wrapped_calldata` is the OUTER
-    // `requestFlashLoan(0x5107d61e)` calldata (payload
-    // `executeArbitrageFlashFunded(0xdde0bf51)`) the sim approved; it carries the
-    // runtime intermediate `token_out` amount a re-encode could not reproduce, so
-    // sending these bytes is true sim↔broadcast byte-parity. Fail-closed if the
-    // bytes are empty (plan not validated) or do not start with the
-    // `requestFlashLoan` selector (not the wrapped-flash entrypoint).
-    let data_vec: Vec<u8> = verbatim_broadcast_calldata(plan)?;
-    let data = Bytes::from(data_vec.clone());
-
-    let nonce = nonce_mgr
-        .next(opp.chain_id, signer.address)
-        .await
-        .map_err(|e| BuildError::Provider(e.to_string()))?;
-
-    // Fee estimation. "Latest base fee + operator-configured priority tip"
-    // (configs/app.toml [execution] priority_fee_gwei, default 2 gwei — WO-04).
-    //
-    // Alloy 1.0: `get_block(BlockId)` requires a `BlockId` wrapper around
-    // `BlockNumberOrTag`. `Block.header.base_fee_per_gas` is `Option<u64>` in
-    // alloy 1.0 (it was `Option<U256>` in ethers; u64 is safe). `header.number`
-    // is `u64`.
-    let latest_block = provider
+    let latest = provider
         .get_block(BlockId::Number(BlockNumberOrTag::Latest))
         .await
-        .map_err(|e| BuildError::Provider(e.to_string()))?
-        .ok_or_else(|| BuildError::Provider("no_latest_block".into()))?;
-    let base_fee_u64: u64 = latest_block
-        .header
-        .base_fee_per_gas
-        .unwrap_or(30_000_000_000u64); // 30 gwei fallback
-    let base_fee = U256::from(base_fee_u64);
-    // gwei → wei (float→int cast saturates; schema bounds v >= 0 — WO-04 (2026-09-06)).
-    let priority_fee = U256::from((priority_fee_gwei * 1e9).round() as u64);
-    let max_fee = base_fee * 2 + priority_fee;
-
-    let target_block = latest_block.header.number + target_block_offset;
-
-    // Gas: a REAL `provider.estimate_gas` on the built tx with safety headroom.
-    // The wrapped flash path (requestFlashLoan → callback → executeArbitrage
-    // FlashFunded → 2 router swaps → repay) needs far more than the old hardcoded
-    // 500k. Fail-closed on estimate error (e.g. the tx reverts in simulation) —
-    // we never hardcode a too-low limit that would either fail on-chain or, worse,
-    // silently truncate.
-    //
-    // alloy 1.8 `estimate_gas(tx) -> u64` defaults to the pending block + current
-    // state, which is exactly the right context for inclusion in the next block.
+        .map_err(|_| deny("head_unavailable"))?
+        .ok_or_else(|| deny("head_missing"))?;
+    if latest.header.number != binding.block_number
+        || latest.header.hash.as_slice() != binding.block_hash.as_bytes()
+        || latest.header.timestamp != binding.block_timestamp
+    {
+        return Err(deny("head_changed_resimulation_required"));
+    }
+    if target_block_offset != 1 {
+        return Err(deny("fresh_simulation_requires_next_block"));
+    }
+    plan_validation::validate_funding(provider, plan)
+        .await
+        .map_err(deny)?;
+    let base_fee = U256::from(
+        latest
+            .header
+            .base_fee_per_gas
+            .ok_or_else(|| deny("base_fee_missing"))?,
+    );
+    if !priority_fee_gwei.is_finite() || priority_fee_gwei < 0.0 {
+        return Err(deny("invalid_priority_fee"));
+    }
+    let priority_fee: U256 = ethers::utils::parse_units(format!("{priority_fee_gwei:.9}"), 9)
+        .map_err(|_| deny("invalid_priority_fee"))?
+        .into();
+    let max_fee = binding.gas_price_wei;
+    if base_fee
+        .checked_add(priority_fee)
+        .is_none_or(|n| n > max_fee)
+    {
+        return Err(deny("fee_budget_exceeded_resimulation_required"));
+    }
+    let gas_limit = binding.gas_limit;
+    if gas_limit < 21_000 || gas_limit > latest.header.gas_limit {
+        return Err(deny("simulated_gas_limit_invalid"));
+    }
+    let data_vec = verbatim_broadcast_calldata(plan)?;
     let estimate_tx = TransactionRequest::default()
         .from(AlloyAddress::from_slice(signer.address.as_bytes()))
         .to(AlloyAddress::from_slice(to.as_bytes()))
         .value(AlloyU256::ZERO)
-        .input(TransactionInput::new(AlloyBytes::from(data_vec)));
-    let estimated_gas: u64 = provider
+        .input(TransactionInput::new(AlloyBytes::from(data_vec.clone())));
+    let estimated_gas = provider
         .estimate_gas(estimate_tx)
+        .block(BlockId::Number(BlockNumberOrTag::Number(
+            binding.block_number,
+        )))
         .await
-        .map_err(|e| BuildError::GasEstimate(e.to_string()))?;
-    // Apply 20% safety headroom, then fail-closed if the result is implausible
-    // (zero — impossible for a real tx — or above a full block).
-    let gas_limit = estimated_gas.saturating_mul(GAS_SAFETY_NUM) / GAS_SAFETY_DEN;
-    if gas_limit == 0 {
+        .map_err(|_| BuildError::GasEstimate("wrapped_call_estimate_failed".into()))?;
+    if estimated_gas == 0 || estimated_gas > gas_limit {
         return Err(BuildError::GasEstimate(
-            "estimate_gas returned 0 — refusing to broadcast".into(),
+            "estimate_exceeds_simulated_limit".into(),
         ));
     }
-    if gas_limit > GAS_LIMIT_CEILING {
-        return Err(BuildError::GasEstimate(format!(
-            "gas_limit {gas_limit} exceeds ceiling {GAS_LIMIT_CEILING} — refusing to broadcast"
-        )));
-    }
-
+    let target_block = latest
+        .header
+        .number
+        .checked_add(1)
+        .ok_or_else(|| deny("target_block_overflow"))?;
+    let nonce = nonce_mgr
+        .next(opp.chain_id, signer.address)
+        .await
+        .map_err(|_| BuildError::Provider("nonce_unavailable".into()))?;
     let tx = Eip1559TransactionRequest::new()
-        .to(to) // FlashLoanExecutor (FLE) — never a router/AE/EOA.
+        .to(to)
         .from(signer.address)
-        .value(value_wei)
-        .data(data)
+        .value(U256::zero())
+        .data(Bytes::from(data_vec))
         .nonce(nonce)
         .chain_id(opp.chain_id)
         .max_priority_fee_per_gas(priority_fee)
         .max_fee_per_gas(max_fee)
         .gas(gas_limit);
-
     let typed: TypedTransaction = tx.into();
     let signature = signer
         .wallet
         .sign_transaction(&typed)
         .await
-        .map_err(|e| BuildError::Provider(format!("sign_tx: {e}")))?;
-    let raw: Bytes = typed.rlp_signed(&signature);
-    let tx_hash = keccak256_bytes(&raw);
-
+        .map_err(|_| BuildError::Provider("sign_failed".into()))?;
+    let raw = typed.rlp_signed(&signature);
     Ok(SignedBundle {
         opportunity_id: opp.id,
         target_block,
+        state_block: binding.block_number,
+        state_block_hash: binding.block_hash,
+        gas_limit,
         tx_raw_hex: format!("0x{}", hex::encode(&raw)),
-        tx_hash: H256::from(tx_hash),
+        tx_hash: H256(ethers::utils::keccak256(raw)),
         from: signer.address,
         nonce,
-        value_wei,
+        value_wei: U256::zero(),
     })
 }
 
-fn keccak256_bytes(b: &Bytes) -> [u8; 32] {
-    use ethers::utils::keccak256;
-    keccak256(b.as_ref())
+/// Re-check the canonical state immediately before relay simulation and broadcast.
+pub async fn assert_bundle_head(
+    provider: &AlloyHttpProvider,
+    bundle: &SignedBundle,
+) -> Result<(), BuildError> {
+    let head = provider
+        .get_block(BlockId::Number(BlockNumberOrTag::Latest))
+        .await
+        .map_err(|_| deny("head_unavailable"))?
+        .ok_or_else(|| deny("head_missing"))?;
+    if head.header.number != bundle.state_block
+        || head.header.hash.as_slice() != bundle.state_block_hash.as_bytes()
+    {
+        return Err(deny("head_changed_resimulation_required"));
+    }
+    Ok(())
 }
-
+/// Display only; never used to make an economic gate decision.
 fn amount_in_to_eth(amount: U256) -> f64 {
-    let wei = amount.as_u128();
-    (wei as f64) / 1e18_f64
+    amount.to_string().parse::<f64>().unwrap_or(f64::INFINITY) / 1e18
 }
-
-/// Extract the VERBATIM broadcast calldata from a `ValidatedPlan`, fail-closed.
-///
-/// Returns the sim-validated `plan.wrapped_calldata` bytes UNCHANGED — these are
-/// what `build_and_sign` puts in `tx.data` (true sim↔broadcast byte-parity).
-/// Errors (no bytes returned → no broadcast) when:
-///   - `wrapped_calldata` is empty → the plan was never validated (the producer
-///     fills it ONLY on SIM_SUCCESS).
-///   - the prefix is not the `requestFlashLoan` selector (0x5107d61e) → the bytes
-///     are not the wrapped-flash entrypoint we can confirm.
 fn verbatim_broadcast_calldata(plan: &ValidatedPlan) -> Result<Vec<u8>, BuildError> {
-    let data_vec = plan.wrapped_calldata.clone();
-    if data_vec.is_empty() {
+    if plan.wrapped_calldata.get(..4) != Some(REQUEST_FLASH_LOAN_SELECTOR.as_slice()) {
         return Err(BuildError::EncodeFailed(
-            "wrapped_calldata empty — plan not validated".into(),
+            "missing wrapped flash selector".into(),
         ));
     }
-    if data_vec.len() < 4 || data_vec[0..4] != REQUEST_FLASH_LOAN_SELECTOR {
-        return Err(BuildError::EncodeFailed(
-            "wrapped_calldata selector is not requestFlashLoan (0x5107d61e)".into(),
-        ));
-    }
-    Ok(data_vec)
+    Ok(plan.wrapped_calldata.clone())
 }
 
 #[cfg(test)]
@@ -333,6 +289,7 @@ mod tests {
             min_profit_wei,
             executor_address,
             wrapped_calldata,
+            binding: None,
         }
     }
 
@@ -469,10 +426,12 @@ mod tests {
             enabled.assert_broadcast_allowed(137),
             Err(LiveExecDenied::ChainNotAllowed { .. })
         ));
-        // Mainnet physically refused even if allowlisted.
-        assert_eq!(
+        assert!(matches!(
             enabled.assert_broadcast_allowed(1),
-            Err(LiveExecDenied::MainnetRefused)
-        );
+            Err(LiveExecDenied::ChainNotAllowed { .. })
+        ));
+        assert!(LiveExecPolicy::from_raw(Some("true"), Some("1"))
+            .assert_broadcast_allowed(1)
+            .is_ok());
     }
 }

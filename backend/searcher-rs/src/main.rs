@@ -98,6 +98,7 @@ mod dirty_consumer;
 // lives in size_optimizer — declared here for the dual-tree).
 #[allow(dead_code)]
 mod amount_buckets;
+mod batch_quote;
 // XLS-QB-06b / ARBX-0024: F_e normalization + QuoteState — consumed by the
 // route-discovery prefilter (declared here for the dual-tree).
 #[allow(dead_code)]
@@ -105,6 +106,7 @@ mod fe_normalization;
 // ARBX-0007: financing-mode route dimension (fees, per-mode eval, selection).
 mod financing;
 // ARBX-0009: sheet-07 Net_bps contract + deterministic ranking (QB 07).
+mod live_risk_ranker;
 mod net_bps_ranking;
 // FE-MASTER EMIT-06b: pair alpha publish (dual-tree — the lib declares it for tests).
 #[allow(dead_code)]
@@ -1244,3 +1246,5 @@ mod tests {
         std::env::remove_var("ARBX_ENABLE_LEGACY_TRIANGULAR_WORKER");
     }
 }
+
+mod candidate_simulation;

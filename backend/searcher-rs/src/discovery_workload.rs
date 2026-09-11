@@ -34,7 +34,7 @@ use crate::dirty_pairs::{DirtyPairSet, HotSeedQueue};
 use crate::net_bps_ranking::{rank_by_net_bps, RankedRoute, RouteNetEconomics};
 use crate::pair_index::{pair_count, pair_index, pair_unindex};
 use crate::route_discovery::graph_builder::TokenGraph;
-use crate::route_discovery::multi_hop_search::find_profitable_cycles;
+use crate::route_discovery::multi_hop_search::{find_profitable_cycles_with_limits, SearchLimits};
 use crate::route_discovery::types::{RouteDirection, RouteEdge};
 use crate::route_discovery::unique_route_finder::{find_routes, RouteFinderConfig};
 use crate::route_intent::ProtocolType;
@@ -143,12 +143,14 @@ pub fn build_graph(n: usize, degree: usize) -> SyntheticGraph {
         }
     }
     let n_pools = pool_counter as usize;
+    let mut graph = TokenGraph {
+        edges,
+        adjacency,
+        dense: None,
+    };
+    graph.build_dense(1);
     SyntheticGraph {
-        graph: TokenGraph {
-            edges,
-            adjacency,
-            dense: None, // find_routes/multi_hop_search read `adjacency` (the production path)
-        },
+        graph,
         n_pairs: pairs.len(),
         n_pools,
         avg_parallel: n_pools as f64 / pairs.len().max(1) as f64,
@@ -214,6 +216,11 @@ pub struct PassAudit {
     /// Curve evaluations performed by the refine stage (RULE 00: counted
     /// from the sweeps' own `points.len()`, never assumed from N).
     pub quotes: usize,
+    pub discovery_edge_visits: usize,
+    pub multi_hop_edge_visits: usize,
+    pub discovery_work_limited: bool,
+    pub multi_hop_work_limited: bool,
+    pub multi_hop_capped: bool,
 }
 
 pub struct Fixture {
@@ -298,13 +305,28 @@ pub fn run_pass(
     // bounds; an empty intersection skips the pass (0 cycles, ~0 ns).
     let t = Instant::now();
     let mh = black_box(match bounds {
-        Some((lo, hi)) => find_profitable_cycles(graph, lo as usize, hi as usize, MAX_ROUTES),
+        Some((lo, hi)) => find_profitable_cycles_with_limits(
+            graph,
+            lo as usize,
+            hi as usize,
+            MAX_ROUTES,
+            SearchLimits {
+                hop_mask: cfg
+                    .hop_mask_strategy_id
+                    .as_deref()
+                    .and_then(crate::strategy_hop_mask::hop_mask)
+                    .unwrap_or(0b11_1111),
+                deduplicate_rotations: true, // mirrors the analysis-only worker pass
+                ..Default::default()
+            },
+        ),
         None => crate::route_discovery::multi_hop_search::MultiHopResult {
             cycles: Vec::new(),
             capped: false,
             dropped_for_cap: 0,
             v3_skipped: 0,
             noise_dropped: 0,
+            ..Default::default()
         },
     });
     let multihop_ns = u64::try_from(t.elapsed().as_nanos()).unwrap_or(u64::MAX);
@@ -367,11 +389,16 @@ pub fn run_pass(
         },
         PassAudit {
             routes: outcome.routes.len(),
-            capped: outcome.capped,
+            capped: outcome.capped || mh.capped,
             pools_truncated: outcome.pools_truncated,
             cycles: mh.cycles.len(),
             finalists,
             quotes,
+            discovery_edge_visits: outcome.edge_visits,
+            multi_hop_edge_visits: mh.edge_visits,
+            discovery_work_limited: outcome.work_limited,
+            multi_hop_work_limited: mh.work_limited,
+            multi_hop_capped: mh.capped,
         },
         best_nets,
     )

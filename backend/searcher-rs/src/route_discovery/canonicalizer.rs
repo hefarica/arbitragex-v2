@@ -137,22 +137,31 @@ pub fn canonicalize(
         return None;
     }
 
-    // Canonicalize over the FULL rotation orbit: render all `n` left-rotations
-    // of the joint (tokens,pools,protocols,fees,directions) tuple and pick the
-    // byte-lexicographic minimum. This is invariant over the entire orbit
-    // regardless of which start token discovery fed in (do NOT weaken this to a
-    // start-token-only heuristic — that would break cross-start dedup).
-    let mut best_k = 0usize;
-    let mut best_input = render(chain_id, tokens, pools, protocols, fee_tiers, directions);
-    for k in 1..n {
-        let candidate = render(
+    // The first differing bytes of two rotations are their first token's
+    // fixed-width lowercase hex address. A rotation starting at a larger
+    // address therefore cannot be the full byte-lexicographic minimum.
+    // Compare ALL rotations tied on the smallest token using the complete
+    // rendered tuple: repeated tokens still require pools/protocols/fees/dirs
+    // to break ties. This preserves the historical full-orbit hash exactly.
+    let smallest = tokens.iter().min()?;
+    let mut candidates = tokens
+        .iter()
+        .enumerate()
+        .filter_map(|(k, token)| (token == smallest).then_some(k));
+    let render_at = |k| {
+        render(
             chain_id,
             &rotate(tokens, k),
             &rotate(pools, k),
             &rotate(protocols, k),
             &rotate(fee_tiers, k),
             &rotate(directions, k),
-        );
+        )
+    };
+    let mut best_k = candidates.next()?;
+    let mut best_input = render_at(best_k);
+    for k in candidates {
+        let candidate = render_at(k);
         if candidate < best_input {
             best_input = candidate;
             best_k = k;
@@ -320,5 +329,87 @@ mod tests {
             &[RouteDirection::ZeroForOne],
         )
         .is_none());
+    }
+
+    #[test]
+    fn filtered_rotations_match_historical_full_orbit() {
+        // Historical algorithm is the reference: enumerate every rendered
+        // rotation. Include repeated token minima and ties decided by the
+        // other fields, plus byte-boundary addresses (0xff < 0x100).
+        let addresses = [0, 1, 0xf, 0x10, 0xff, 0x100, u64::MAX];
+        let protocols = [
+            ProtocolType::V2,
+            ProtocolType::V3,
+            ProtocolType::Curve,
+            ProtocolType::Balancer,
+            ProtocolType::Unknown,
+        ];
+        let mut seed = 0xabc123_u64;
+        let mut next = || {
+            seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1);
+            seed >> 32
+        };
+        for n in 2..=7 {
+            for case in 0..128 {
+                let tokens: Vec<_> = (0..n)
+                    .map(|_| {
+                        addr(if case % 8 == 0 {
+                            1
+                        } else {
+                            addresses[next() as usize % addresses.len()]
+                        })
+                    })
+                    .collect();
+                let pools: Vec<_> = (0..n).map(|_| addr(next() % 8)).collect();
+                let protos: Vec<_> = (0..n)
+                    .map(|_| protocols[next() as usize % protocols.len()])
+                    .collect();
+                let fees: Vec<_> = (0..n)
+                    .map(|_| match next() % 3 {
+                        0 => None,
+                        1 => Some(30),
+                        _ => Some(500),
+                    })
+                    .collect();
+                let dirs: Vec<_> = (0..n)
+                    .map(|_| {
+                        if next() % 2 == 0 {
+                            RouteDirection::ZeroForOne
+                        } else {
+                            RouteDirection::OneForZero
+                        }
+                    })
+                    .collect();
+                let (k, input) = (0..n)
+                    .map(|k| {
+                        (
+                            k,
+                            render(
+                                1,
+                                &rotate(&tokens, k),
+                                &rotate(&pools, k),
+                                &rotate(&protos, k),
+                                &rotate(&fees, k),
+                                &rotate(&dirs, k),
+                            ),
+                        )
+                    })
+                    .min_by(|a, b| a.1.cmp(&b.1))
+                    .unwrap();
+                let actual = canonicalize(1, &tokens, &pools, &protos, &fees, &dirs).unwrap();
+                assert_eq!(
+                    actual,
+                    Canonical {
+                        route_hash: hash_input(&input),
+                        tokens: rotate(&tokens, k),
+                        pools: rotate(&pools, k),
+                        protocols: rotate(&protos, k),
+                        fee_tiers: rotate(&fees, k),
+                        directions: rotate(&dirs, k),
+                    },
+                    "n={n}, case={case}"
+                );
+            }
+        }
     }
 }

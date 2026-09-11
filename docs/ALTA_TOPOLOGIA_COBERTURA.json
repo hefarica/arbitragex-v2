@@ -1,0 +1,4271 @@
+{
+  "audit_date": "2026-09-11",
+  "scope": "Revisión estática del ZIP recibido; no acredita ejecución de producción ni métricas de mercado. Cambios de esta entrega requieren su validación separada.",
+  "canonical_ids_preserved": true,
+  "canonical_strategy_count": 264,
+  "original_registered_operator_count": 31,
+  "dispatch_counts": {
+    "ROUTE_READY": 79,
+    "NO_COMPATIBLE_ROUTE": 3,
+    "OBSERVE_ONLY": 8,
+    "NEEDS_ROUTE_DATA": 174
+  },
+  "families": [
+    {
+      "family_id": "MEV-01",
+      "count": 36,
+      "dispatch_counts": {
+        "ROUTE_READY": 36
+      },
+      "canonical_module": "route_graph_engine",
+      "required_surface": "DEX_AMM",
+      "detectors": {
+        "R_CLOSED_CYCLE": 25,
+        "R_ORDERBOOK": 4,
+        "R_DIRECT_INDIRECT": 2,
+        "R_SPLIT": 2,
+        "R_BASKET_NAV": 2,
+        "R_COW": 1
+      }
+    },
+    {
+      "family_id": "MEV-02",
+      "count": 17,
+      "dispatch_counts": {
+        "ROUTE_READY": 16,
+        "NO_COMPATIBLE_ROUTE": 1
+      },
+      "canonical_module": "amm_curve_engine",
+      "required_surface": "DEX_AMM",
+      "detectors": {
+        "CF_CPMM": 1,
+        "CF_CONSTANT_SUM": 1,
+        "CF_STABLESWAP": 1,
+        "CF_WEIGHTED": 1,
+        "CF_CLAMM": 1,
+        "CF_LB": 1,
+        "CF_PMM": 1,
+        "CF_DYNAMIC": 4,
+        "CF_BOND": 1,
+        "CF_VAMM": 1,
+        "CF_TWAMM": 1,
+        "CF_BATCH": 2,
+        "CF_CROSSINV": 1
+      }
+    },
+    {
+      "family_id": "MEV-03",
+      "count": 31,
+      "dispatch_counts": {
+        "ROUTE_READY": 27,
+        "NO_COMPATIBLE_ROUTE": 2,
+        "OBSERVE_ONLY": 2
+      },
+      "canonical_module": "state_event_engine",
+      "required_surface": "DEX_STATE",
+      "detectors": {
+        "E_POST": 6,
+        "E_LATENCY": 4,
+        "E_ORACLE": 2,
+        "E_STATE": 15,
+        "E_AUCTION": 2,
+        "OBSERVE": 2
+      }
+    },
+    {
+      "family_id": "MEV-04",
+      "count": 31,
+      "dispatch_counts": {
+        "NEEDS_ROUTE_DATA": 30,
+        "OBSERVE_ONLY": 1
+      },
+      "canonical_module": "parity_redemption_engine",
+      "required_surface": "PARITY_REDEMPTION",
+      "detectors": {
+        "P_PEG": 7,
+        "P_WRAP": 5,
+        "P_4626": 3,
+        "P_NAV": 5,
+        "P_LST": 4,
+        "P_YIELD": 3,
+        "P_PTYT": 3,
+        "OBSERVE": 1
+      }
+    },
+    {
+      "family_id": "MEV-05",
+      "count": 14,
+      "dispatch_counts": {
+        "NEEDS_ROUTE_DATA": 14
+      },
+      "canonical_module": "cex_external_engine",
+      "required_surface": "CEX_DEX",
+      "detectors": {
+        "C_CEXDEX": 10,
+        "C_CEXDERIV": 2,
+        "E_LATENCY": 2
+      }
+    },
+    {
+      "family_id": "MEV-06",
+      "count": 30,
+      "dispatch_counts": {
+        "NEEDS_ROUTE_DATA": 30
+      },
+      "canonical_module": "cross_domain_engine",
+      "required_surface": "CROSS_CHAIN",
+      "detectors": {
+        "X_PREPOS": 12,
+        "X_BRIDGE": 16,
+        "X_ORACLE": 2
+      }
+    },
+    {
+      "family_id": "MEV-07",
+      "count": 30,
+      "dispatch_counts": {
+        "NEEDS_ROUTE_DATA": 30
+      },
+      "canonical_module": "derivatives_engine",
+      "required_surface": "DERIVATIVES",
+      "detectors": {
+        "D_BASIS": 13,
+        "D_FUNDING": 2,
+        "D_OPTIONS_PARITY": 4,
+        "D_OPTIONS_SURFACE": 6,
+        "D_SETTLE": 5
+      }
+    },
+    {
+      "family_id": "MEV-08",
+      "count": 25,
+      "dispatch_counts": {
+        "NEEDS_ROUTE_DATA": 25
+      },
+      "canonical_module": "credit_liquidation_engine",
+      "required_surface": "LENDING",
+      "detectors": {
+        "L_RATE": 8,
+        "L_COLLATERAL": 5,
+        "L_LOOP": 1,
+        "L_LIQ": 7,
+        "L_AUCTION": 4
+      }
+    },
+    {
+      "family_id": "MEV-09",
+      "count": 20,
+      "dispatch_counts": {
+        "NEEDS_ROUTE_DATA": 18,
+        "OBSERVE_ONLY": 2
+      },
+      "canonical_module": "intents_solver_engine",
+      "required_surface": "INTENT_AUCTION",
+      "detectors": {
+        "I_ROUTE": 9,
+        "I_BATCH": 4,
+        "I_DUTCH": 1,
+        "I_ORDERFLOW": 4,
+        "OBSERVE": 2
+      }
+    },
+    {
+      "family_id": "MEV-10",
+      "count": 18,
+      "dispatch_counts": {
+        "NEEDS_ROUTE_DATA": 18
+      },
+      "canonical_module": "nft_engine",
+      "required_surface": "NFT",
+      "detectors": {
+        "N_IDENTICAL": 6,
+        "N_FLOOR": 5,
+        "N_AMM": 2,
+        "N_REDEEM": 4,
+        "N_LIQ": 1
+      }
+    },
+    {
+      "family_id": "MEV-11",
+      "count": 12,
+      "dispatch_counts": {
+        "NEEDS_ROUTE_DATA": 9,
+        "OBSERVE_ONLY": 3
+      },
+      "canonical_module": "prediction_engine",
+      "required_surface": "PREDICTION",
+      "detectors": {
+        "M_COMPLETE": 3,
+        "M_CROSS": 1,
+        "M_LOGIC": 4,
+        "OBSERVE": 3,
+        "M_AMM": 1
+      }
+    }
+  ],
+  "operator_mapping": [
+    {
+      "prompt_id": 1,
+      "prompt_concept": "Gradient Descent",
+      "canonical_id_same_number": 1,
+      "canonical_concept_same_number": "SVD",
+      "closest_canonical_id": 20,
+      "relation": "conflicto",
+      "source": "backend/math-engine/src/operators/op_01_svd.rs",
+      "audit_note": "Op20 es descenso sobre retornos; no es sizing de una ruta.",
+      "runtime_e2e_verified": false
+    },
+    {
+      "prompt_id": 2,
+      "prompt_concept": "SGD",
+      "canonical_id_same_number": 2,
+      "canonical_concept_same_number": "PCA",
+      "closest_canonical_id": null,
+      "relation": "conflicto",
+      "source": "backend/math-engine/src/operators/op_02_pca.rs",
+      "audit_note": "No se encontró un operador canónico SGD con este ID.",
+      "runtime_e2e_verified": false
+    },
+    {
+      "prompt_id": 3,
+      "prompt_concept": "Coordinate Ascent",
+      "canonical_id_same_number": 3,
+      "canonical_concept_same_number": "Eigen decomposition",
+      "closest_canonical_id": null,
+      "relation": "conflicto",
+      "source": "backend/math-engine/src/operators/op_03_eigen.rs",
+      "audit_note": "No es ascenso por coordenadas.",
+      "runtime_e2e_verified": false
+    },
+    {
+      "prompt_id": 4,
+      "prompt_concept": "Bayesian Optimization",
+      "canonical_id_same_number": 4,
+      "canonical_concept_same_number": "Von Neumann entropy",
+      "closest_canonical_id": null,
+      "relation": "conflicto",
+      "source": "backend/math-engine/src/operators/op_04_von_neumann.rs",
+      "audit_note": "Op11 Bayes no implica optimización bayesiana de adquisición.",
+      "runtime_e2e_verified": false
+    },
+    {
+      "prompt_id": 5,
+      "prompt_concept": "PDMP",
+      "canonical_id_same_number": 5,
+      "canonical_concept_same_number": "PDMP",
+      "closest_canonical_id": 5,
+      "relation": "mismo_concepto",
+      "source": "backend/math-engine/src/operators/op_05_pdmp.rs",
+      "audit_note": "Evaluador disponible; no acredita un modelo calibrado ni P&L.",
+      "runtime_e2e_verified": false
+    },
+    {
+      "prompt_id": 6,
+      "prompt_concept": "Markov Chain",
+      "canonical_id_same_number": 6,
+      "canonical_concept_same_number": "Markov Chain",
+      "closest_canonical_id": 6,
+      "relation": "mismo_concepto",
+      "source": "backend/math-engine/src/operators/op_06_markov_chain.rs",
+      "audit_note": "Requiere validar el significado temporal de sus observaciones.",
+      "runtime_e2e_verified": false
+    },
+    {
+      "prompt_id": 7,
+      "prompt_concept": "HMM",
+      "canonical_id_same_number": 7,
+      "canonical_concept_same_number": "HMM",
+      "closest_canonical_id": 7,
+      "relation": "mismo_concepto",
+      "source": "backend/math-engine/src/operators/op_07_hmm.rs",
+      "audit_note": "Presencia del evaluador no acredita calibración de producción.",
+      "runtime_e2e_verified": false
+    },
+    {
+      "prompt_id": 8,
+      "prompt_concept": "Kalman Filter",
+      "canonical_id_same_number": 8,
+      "canonical_concept_same_number": "Kalman Filter",
+      "closest_canonical_id": 8,
+      "relation": "mismo_concepto",
+      "source": "backend/math-engine/src/operators/op_08_kalman.rs",
+      "audit_note": "Presente en el registro de operadores.",
+      "runtime_e2e_verified": false
+    },
+    {
+      "prompt_id": 9,
+      "prompt_concept": "Maximum Likelihood",
+      "canonical_id_same_number": 9,
+      "canonical_concept_same_number": "Lévy processes",
+      "closest_canonical_id": 12,
+      "relation": "conflicto",
+      "source": "backend/math-engine/src/operators/op_09_levy.rs",
+      "audit_note": "Máxima verosimilitud corresponde al Op12 canónico.",
+      "runtime_e2e_verified": false
+    },
+    {
+      "prompt_id": 10,
+      "prompt_concept": "Welford",
+      "canonical_id_same_number": 10,
+      "canonical_concept_same_number": "Welford",
+      "closest_canonical_id": 10,
+      "relation": "mismo_concepto",
+      "source": "backend/math-engine/src/operators/op_10_welford.rs",
+      "audit_note": "Presente en el registro de operadores.",
+      "runtime_e2e_verified": false
+    },
+    {
+      "prompt_id": 11,
+      "prompt_concept": "Bayesian Inference",
+      "canonical_id_same_number": 11,
+      "canonical_concept_same_number": "Bayesian Inference",
+      "closest_canonical_id": 11,
+      "relation": "mismo_concepto",
+      "source": "backend/math-engine/src/operators/op_11_bayes.rs",
+      "audit_note": "Presente en el registro de operadores.",
+      "runtime_e2e_verified": false
+    },
+    {
+      "prompt_id": 12,
+      "prompt_concept": "BFS",
+      "canonical_id_same_number": 12,
+      "canonical_concept_same_number": "Maximum Likelihood",
+      "closest_canonical_id": null,
+      "relation": "conflicto",
+      "source": "backend/math-engine/src/operators/op_12_mle.rs",
+      "audit_note": "Búsqueda de rutas vive en route_discovery; no renombrar Op12.",
+      "runtime_e2e_verified": false
+    },
+    {
+      "prompt_id": 13,
+      "prompt_concept": "Regression",
+      "canonical_id_same_number": 13,
+      "canonical_concept_same_number": "Regression",
+      "closest_canonical_id": 13,
+      "relation": "mismo_concepto",
+      "source": "backend/math-engine/src/operators/op_13_regression.rs",
+      "audit_note": "Presente en el registro de operadores.",
+      "runtime_e2e_verified": false
+    },
+    {
+      "prompt_id": 14,
+      "prompt_concept": "KL Divergence",
+      "canonical_id_same_number": 14,
+      "canonical_concept_same_number": "KL Divergence",
+      "closest_canonical_id": 14,
+      "relation": "mismo_concepto",
+      "source": "backend/math-engine/src/operators/op_14_kl_divergence.rs",
+      "audit_note": "Presente en el registro de operadores.",
+      "runtime_e2e_verified": false
+    },
+    {
+      "prompt_id": 15,
+      "prompt_concept": "Golden Section",
+      "canonical_id_same_number": 15,
+      "canonical_concept_same_number": "Golden Section",
+      "closest_canonical_id": 15,
+      "relation": "mismo_concepto_alcance_distinto",
+      "source": "backend/math-engine/src/operators/op_15_golden_section.rs",
+      "audit_note": "Optimiza una curva CPMM primaria; no compone por sí solo Q_R completo.",
+      "runtime_e2e_verified": false
+    },
+    {
+      "prompt_id": 16,
+      "prompt_concept": "Kelly Criterion",
+      "canonical_id_same_number": 16,
+      "canonical_concept_same_number": "Kelly Criterion",
+      "closest_canonical_id": 16,
+      "relation": "mismo_concepto",
+      "source": "backend/math-engine/src/operators/op_16_kelly.rs",
+      "audit_note": "Necesita probabilidades y pérdidas verificables para sizing económico.",
+      "runtime_e2e_verified": false
+    },
+    {
+      "prompt_id": 17,
+      "prompt_concept": "Pontryagin",
+      "canonical_id_same_number": 17,
+      "canonical_concept_same_number": "Pontryagin",
+      "closest_canonical_id": 17,
+      "relation": "mismo_concepto",
+      "source": "backend/math-engine/src/operators/op_17_pontryagin.rs",
+      "audit_note": "Presente en el registro de operadores.",
+      "runtime_e2e_verified": false
+    },
+    {
+      "prompt_id": 18,
+      "prompt_concept": "Monte Carlo",
+      "canonical_id_same_number": 18,
+      "canonical_concept_same_number": "Lagrangian",
+      "closest_canonical_id": 22,
+      "relation": "conflicto",
+      "source": "backend/math-engine/src/operators/op_18_lagrangian.rs",
+      "audit_note": "Monte Carlo corresponde al Op22 canónico.",
+      "runtime_e2e_verified": false
+    },
+    {
+      "prompt_id": 19,
+      "prompt_concept": "Simplex",
+      "canonical_id_same_number": 19,
+      "canonical_concept_same_number": "Simplex",
+      "closest_canonical_id": 19,
+      "relation": "mismo_concepto",
+      "source": "backend/math-engine/src/operators/op_19_simplex.rs",
+      "audit_note": "Presente en el registro de operadores.",
+      "runtime_e2e_verified": false
+    },
+    {
+      "prompt_id": 20,
+      "prompt_concept": "Gradient Descent with momentum",
+      "canonical_id_same_number": 20,
+      "canonical_concept_same_number": "Gradient Descent",
+      "closest_canonical_id": 20,
+      "relation": "mismo_concepto_alcance_distinto",
+      "source": "backend/math-engine/src/operators/op_20_gradient_descent.rs",
+      "audit_note": "Ajusta un escalar a la media de retornos, sin momentum ni profit_fn de ruta.",
+      "runtime_e2e_verified": false
+    },
+    {
+      "prompt_id": 21,
+      "prompt_concept": "Newton-Raphson",
+      "canonical_id_same_number": 21,
+      "canonical_concept_same_number": "Newton-Raphson",
+      "closest_canonical_id": 21,
+      "relation": "mismo_concepto",
+      "source": "backend/math-engine/src/operators/op_21_newton.rs",
+      "audit_note": "Presente en el registro de operadores; sizing debe mantener bracket y unidades.",
+      "runtime_e2e_verified": false
+    },
+    {
+      "prompt_id": 22,
+      "prompt_concept": "MCMC",
+      "canonical_id_same_number": 22,
+      "canonical_concept_same_number": "Monte Carlo GBM",
+      "closest_canonical_id": null,
+      "relation": "conflicto",
+      "source": "backend/math-engine/src/operators/op_22_monte_carlo.rs",
+      "audit_note": "Simulación GBM; no algoritmo MCMC. Usa filas de venues como serie: revisar eje temporal.",
+      "runtime_e2e_verified": false
+    },
+    {
+      "prompt_id": 23,
+      "prompt_concept": "Queueing Theory",
+      "canonical_id_same_number": 23,
+      "canonical_concept_same_number": "Queueing Theory",
+      "closest_canonical_id": 23,
+      "relation": "mismo_concepto",
+      "source": "backend/math-engine/src/operators/op_23_queueing.rs",
+      "audit_note": "Presente en el registro de operadores.",
+      "runtime_e2e_verified": false
+    },
+    {
+      "prompt_id": 24,
+      "prompt_concept": "Nash Equilibrium",
+      "canonical_id_same_number": 24,
+      "canonical_concept_same_number": "Nash Equilibrium",
+      "closest_canonical_id": 24,
+      "relation": "mismo_concepto",
+      "source": "backend/math-engine/src/operators/op_24_nash.rs",
+      "audit_note": "Presente en el registro de operadores.",
+      "runtime_e2e_verified": false
+    },
+    {
+      "prompt_id": 25,
+      "prompt_concept": "Bundle Reconstruction",
+      "canonical_id_same_number": 25,
+      "canonical_concept_same_number": "Bundle Reconstruction",
+      "closest_canonical_id": 25,
+      "relation": "mismo_concepto",
+      "source": "backend/math-engine/src/operators/op_25_bundle_recon.rs",
+      "audit_note": "Evidencia matemática; envío real vive en relays-client.",
+      "runtime_e2e_verified": false
+    },
+    {
+      "prompt_id": 26,
+      "prompt_concept": "Flash Loans",
+      "canonical_id_same_number": 26,
+      "canonical_concept_same_number": "Flash Loan",
+      "closest_canonical_id": 26,
+      "relation": "mismo_concepto",
+      "source": "backend/math-engine/src/operators/op_26_flash_loan.rs",
+      "audit_note": "El operador no sustituye adaptador, liquidez disponible ni callback Solidity.",
+      "runtime_e2e_verified": false
+    },
+    {
+      "prompt_id": 27,
+      "prompt_concept": "Path Ordering",
+      "canonical_id_same_number": 27,
+      "canonical_concept_same_number": "Path Ordering",
+      "closest_canonical_id": 27,
+      "relation": "mismo_concepto_alcance_distinto",
+      "source": "backend/math-engine/src/operators/op_27_path_ordering.rs",
+      "audit_note": "Selecciona min/max de precio entre venues; no ordena rutas por profit/riesgo/latencia.",
+      "runtime_e2e_verified": false
+    },
+    {
+      "prompt_id": 28,
+      "prompt_concept": "Shapley Value",
+      "canonical_id_same_number": 28,
+      "canonical_concept_same_number": "JIT Liquidity",
+      "closest_canonical_id": 29,
+      "relation": "conflicto",
+      "source": "backend/math-engine/src/operators/op_28_jit_liquidity.rs",
+      "audit_note": "Shapley corresponde al Op29 canónico.",
+      "runtime_e2e_verified": false
+    },
+    {
+      "prompt_id": 29,
+      "prompt_concept": "Cooperative Games",
+      "canonical_id_same_number": 29,
+      "canonical_concept_same_number": "Shapley Value",
+      "closest_canonical_id": 29,
+      "relation": "mismo_dominio_no_equivalencia",
+      "source": "backend/math-engine/src/operators/op_29_shapley.rs",
+      "audit_note": "Shapley cubre asignación cooperativa específica; no toda teoría de juegos cooperativos.",
+      "runtime_e2e_verified": false
+    },
+    {
+      "prompt_id": 30,
+      "prompt_concept": "Jump Processes",
+      "canonical_id_same_number": 30,
+      "canonical_concept_same_number": "GNN Encoder",
+      "closest_canonical_id": 9,
+      "relation": "conflicto",
+      "source": "backend/math-engine/src/operators/op_30_gnn_encoder.rs",
+      "audit_note": "Saltos/Lévy corresponden a Op09; GNN usa agregación determinista sin pesos aprendidos en esta implementación.",
+      "runtime_e2e_verified": false
+    },
+    {
+      "prompt_id": 31,
+      "prompt_concept": "Survival Analysis",
+      "canonical_id_same_number": 31,
+      "canonical_concept_same_number": "DRL Agent",
+      "closest_canonical_id": null,
+      "relation": "conflicto",
+      "source": "backend/math-engine/src/operators/op_31_drl_agent.rs",
+      "audit_note": "DRL no entrenado: labeled_trajectories_available siempre 0; evaluate devuelve None.",
+      "runtime_e2e_verified": false
+    },
+    {
+      "prompt_id": 32,
+      "prompt_concept": "NSGA-II",
+      "canonical_id_same_number": null,
+      "canonical_concept_same_number": "NSGA-II: incorporación en curso",
+      "closest_canonical_id": 32,
+      "relation": "nuevo_en_esta_entrega",
+      "source": "backend/math-engine/src/operators/op_32_nsga2/mod.rs",
+      "audit_note": "Ausente del registro original 1–31. Su validación se informa por separado al cierre de la implementación.",
+      "runtime_e2e_verified": false
+    }
+  ],
+  "strategies": [
+    {
+      "mev_id": "MEV-01-001",
+      "family_id": "MEV-01",
+      "name": "DEX–DEX arbitrage",
+      "detector_id": "R_CLOSED_CYCLE",
+      "required_surface": "DEX_AMM",
+      "canonical_module": "route_graph_engine",
+      "execution_class": "DETERMINISTIC_EXECUTABLE",
+      "dispatch_status": "ROUTE_READY",
+      "cartridge_files": [
+        "backend/searcher-rs/cartridges/strategies/mev_01_001_dex_dex_arbitrage.rhai"
+      ],
+      "live_verified": false
+    },
+    {
+      "mev_id": "MEV-01-002",
+      "family_id": "MEV-01",
+      "name": "Cross-pool arbitrage",
+      "detector_id": "R_CLOSED_CYCLE",
+      "required_surface": "DEX_AMM",
+      "canonical_module": "route_graph_engine",
+      "execution_class": "DETERMINISTIC_EXECUTABLE",
+      "dispatch_status": "ROUTE_READY",
+      "cartridge_files": [
+        "backend/searcher-rs/cartridges/strategies/mev_01_002_cross_pool_arbitrage.rhai"
+      ],
+      "live_verified": false
+    },
+    {
+      "mev_id": "MEV-01-003",
+      "family_id": "MEV-01",
+      "name": "Cross-protocol arbitrage",
+      "detector_id": "R_CLOSED_CYCLE",
+      "required_surface": "DEX_AMM",
+      "canonical_module": "route_graph_engine",
+      "execution_class": "DETERMINISTIC_EXECUTABLE",
+      "dispatch_status": "ROUTE_READY",
+      "cartridge_files": [
+        "backend/searcher-rs/cartridges/strategies/mev_01_003_cross_protocol_arbitrage.rhai"
+      ],
+      "live_verified": false
+    },
+    {
+      "mev_id": "MEV-01-004",
+      "family_id": "MEV-01",
+      "name": "Cross-version arbitrage",
+      "detector_id": "R_CLOSED_CYCLE",
+      "required_surface": "DEX_AMM",
+      "canonical_module": "route_graph_engine",
+      "execution_class": "DETERMINISTIC_EXECUTABLE",
+      "dispatch_status": "ROUTE_READY",
+      "cartridge_files": [
+        "backend/searcher-rs/cartridges/strategies/mev_01_004_cross_version_arbitrage.rhai"
+      ],
+      "live_verified": false
+    },
+    {
+      "mev_id": "MEV-01-005",
+      "family_id": "MEV-01",
+      "name": "Cross-fork arbitrage",
+      "detector_id": "R_CLOSED_CYCLE",
+      "required_surface": "DEX_AMM",
+      "canonical_module": "route_graph_engine",
+      "execution_class": "DETERMINISTIC_EXECUTABLE",
+      "dispatch_status": "ROUTE_READY",
+      "cartridge_files": [
+        "backend/searcher-rs/cartridges/strategies/mev_01_005_cross_fork_arbitrage.rhai"
+      ],
+      "live_verified": false
+    },
+    {
+      "mev_id": "MEV-01-006",
+      "family_id": "MEV-01",
+      "name": "Cross-fee-tier arbitrage",
+      "detector_id": "R_CLOSED_CYCLE",
+      "required_surface": "DEX_AMM",
+      "canonical_module": "route_graph_engine",
+      "execution_class": "DETERMINISTIC_EXECUTABLE",
+      "dispatch_status": "ROUTE_READY",
+      "cartridge_files": [
+        "backend/searcher-rs/cartridges/strategies/mev_01_006_cross_fee_tier_arbitrage.rhai"
+      ],
+      "live_verified": false
+    },
+    {
+      "mev_id": "MEV-01-007",
+      "family_id": "MEV-01",
+      "name": "Cross-liquidity-tier arbitrage",
+      "detector_id": "R_CLOSED_CYCLE",
+      "required_surface": "DEX_AMM",
+      "canonical_module": "route_graph_engine",
+      "execution_class": "DETERMINISTIC_EXECUTABLE",
+      "dispatch_status": "ROUTE_READY",
+      "cartridge_files": [
+        "backend/searcher-rs/cartridges/strategies/mev_01_007_cross_liquidity_tier_arbitrage.rhai"
+      ],
+      "live_verified": false
+    },
+    {
+      "mev_id": "MEV-01-008",
+      "family_id": "MEV-01",
+      "name": "AMM–AMM arbitrage",
+      "detector_id": "R_CLOSED_CYCLE",
+      "required_surface": "DEX_AMM",
+      "canonical_module": "route_graph_engine",
+      "execution_class": "DETERMINISTIC_EXECUTABLE",
+      "dispatch_status": "ROUTE_READY",
+      "cartridge_files": [
+        "backend/searcher-rs/cartridges/strategies/mev_01_008_amm_amm_arbitrage.rhai"
+      ],
+      "live_verified": false
+    },
+    {
+      "mev_id": "MEV-01-009",
+      "family_id": "MEV-01",
+      "name": "AMM–CLOB arbitrage",
+      "detector_id": "R_ORDERBOOK",
+      "required_surface": "DEX_AMM",
+      "canonical_module": "route_graph_engine",
+      "execution_class": "EXTERNAL_DATA_REQUIRED",
+      "dispatch_status": "ROUTE_READY",
+      "cartridge_files": [
+        "backend/searcher-rs/cartridges/strategies/mev_01_009_amm_clob_arbitrage.rhai"
+      ],
+      "live_verified": false
+    },
+    {
+      "mev_id": "MEV-01-010",
+      "family_id": "MEV-01",
+      "name": "CLOB–CLOB arbitrage",
+      "detector_id": "R_ORDERBOOK",
+      "required_surface": "DEX_AMM",
+      "canonical_module": "route_graph_engine",
+      "execution_class": "EXTERNAL_DATA_REQUIRED",
+      "dispatch_status": "ROUTE_READY",
+      "cartridge_files": [
+        "backend/searcher-rs/cartridges/strategies/mev_01_010_clob_clob_arbitrage.rhai"
+      ],
+      "live_verified": false
+    },
+    {
+      "mev_id": "MEV-01-011",
+      "family_id": "MEV-01",
+      "name": "AMM–RFQ arbitrage",
+      "detector_id": "R_ORDERBOOK",
+      "required_surface": "DEX_AMM",
+      "canonical_module": "route_graph_engine",
+      "execution_class": "EXTERNAL_DATA_REQUIRED",
+      "dispatch_status": "ROUTE_READY",
+      "cartridge_files": [
+        "backend/searcher-rs/cartridges/strategies/mev_01_011_amm_rfq_arbitrage.rhai"
+      ],
+      "live_verified": false
+    },
+    {
+      "mev_id": "MEV-01-012",
+      "family_id": "MEV-01",
+      "name": "RFQ–RFQ arbitrage",
+      "detector_id": "R_ORDERBOOK",
+      "required_surface": "DEX_AMM",
+      "canonical_module": "route_graph_engine",
+      "execution_class": "EXTERNAL_DATA_REQUIRED",
+      "dispatch_status": "ROUTE_READY",
+      "cartridge_files": [
+        "backend/searcher-rs/cartridges/strategies/mev_01_012_rfq_rfq_arbitrage.rhai"
+      ],
+      "live_verified": false
+    },
+    {
+      "mev_id": "MEV-01-013",
+      "family_id": "MEV-01",
+      "name": "Aggregator–DEX arbitrage",
+      "detector_id": "R_CLOSED_CYCLE",
+      "required_surface": "DEX_AMM",
+      "canonical_module": "route_graph_engine",
+      "execution_class": "DETERMINISTIC_EXECUTABLE",
+      "dispatch_status": "ROUTE_READY",
+      "cartridge_files": [
+        "backend/searcher-rs/cartridges/strategies/mev_01_013_aggregator_dex_arbitrage.rhai"
+      ],
+      "live_verified": false
+    },
+    {
+      "mev_id": "MEV-01-014",
+      "family_id": "MEV-01",
+      "name": "Router–pool arbitrage",
+      "detector_id": "R_CLOSED_CYCLE",
+      "required_surface": "DEX_AMM",
+      "canonical_module": "route_graph_engine",
+      "execution_class": "DETERMINISTIC_EXECUTABLE",
+      "dispatch_status": "ROUTE_READY",
+      "cartridge_files": [
+        "backend/searcher-rs/cartridges/strategies/mev_01_014_router_pool_arbitrage.rhai"
+      ],
+      "live_verified": false
+    },
+    {
+      "mev_id": "MEV-01-015",
+      "family_id": "MEV-01",
+      "name": "Two-leg arbitrage",
+      "detector_id": "R_CLOSED_CYCLE",
+      "required_surface": "DEX_AMM",
+      "canonical_module": "route_graph_engine",
+      "execution_class": "DETERMINISTIC_EXECUTABLE",
+      "dispatch_status": "ROUTE_READY",
+      "cartridge_files": [
+        "backend/searcher-rs/cartridges/strategies/mev_01_015_two_leg_arbitrage.rhai"
+      ],
+      "live_verified": false
+    },
+    {
+      "mev_id": "MEV-01-016",
+      "family_id": "MEV-01",
+      "name": "Triangular arbitrage",
+      "detector_id": "R_CLOSED_CYCLE",
+      "required_surface": "DEX_AMM",
+      "canonical_module": "route_graph_engine",
+      "execution_class": "DETERMINISTIC_EXECUTABLE",
+      "dispatch_status": "ROUTE_READY",
+      "cartridge_files": [
+        "backend/searcher-rs/cartridges/strategies/mev_01_016_triangular_arbitrage.rhai"
+      ],
+      "live_verified": false
+    },
+    {
+      "mev_id": "MEV-01-017",
+      "family_id": "MEV-01",
+      "name": "Quadrangular arbitrage",
+      "detector_id": "R_CLOSED_CYCLE",
+      "required_surface": "DEX_AMM",
+      "canonical_module": "route_graph_engine",
+      "execution_class": "DETERMINISTIC_EXECUTABLE",
+      "dispatch_status": "ROUTE_READY",
+      "cartridge_files": [
+        "backend/searcher-rs/cartridges/strategies/mev_01_017_quadrangular_arbitrage.rhai"
+      ],
+      "live_verified": false
+    },
+    {
+      "mev_id": "MEV-01-018",
+      "family_id": "MEV-01",
+      "name": "N-leg cyclic arbitrage",
+      "detector_id": "R_CLOSED_CYCLE",
+      "required_surface": "DEX_AMM",
+      "canonical_module": "route_graph_engine",
+      "execution_class": "DETERMINISTIC_EXECUTABLE",
+      "dispatch_status": "ROUTE_READY",
+      "cartridge_files": [
+        "backend/searcher-rs/cartridges/strategies/mev_01_018_n_leg_cyclic_arbitrage.rhai"
+      ],
+      "live_verified": false
+    },
+    {
+      "mev_id": "MEV-01-019",
+      "family_id": "MEV-01",
+      "name": "Multi-hop arbitrage",
+      "detector_id": "R_CLOSED_CYCLE",
+      "required_surface": "DEX_AMM",
+      "canonical_module": "route_graph_engine",
+      "execution_class": "DETERMINISTIC_EXECUTABLE",
+      "dispatch_status": "ROUTE_READY",
+      "cartridge_files": [
+        "backend/searcher-rs/cartridges/strategies/mev_01_019_multi_hop_arbitrage.rhai"
+      ],
+      "live_verified": false
+    },
+    {
+      "mev_id": "MEV-01-020",
+      "family_id": "MEV-01",
+      "name": "Multi-DEX cyclic arbitrage",
+      "detector_id": "R_CLOSED_CYCLE",
+      "required_surface": "DEX_AMM",
+      "canonical_module": "route_graph_engine",
+      "execution_class": "DETERMINISTIC_EXECUTABLE",
+      "dispatch_status": "ROUTE_READY",
+      "cartridge_files": [
+        "backend/searcher-rs/cartridges/strategies/mev_01_020_multi_dex_cyclic_arbitrage.rhai"
+      ],
+      "live_verified": false
+    },
+    {
+      "mev_id": "MEV-01-021",
+      "family_id": "MEV-01",
+      "name": "Intra-DEX cyclic arbitrage",
+      "detector_id": "R_CLOSED_CYCLE",
+      "required_surface": "DEX_AMM",
+      "canonical_module": "route_graph_engine",
+      "execution_class": "DETERMINISTIC_EXECUTABLE",
+      "dispatch_status": "ROUTE_READY",
+      "cartridge_files": [
+        "backend/searcher-rs/cartridges/strategies/mev_01_021_intra_dex_cyclic_arbitrage.rhai"
+      ],
+      "live_verified": false
+    },
+    {
+      "mev_id": "MEV-01-022",
+      "family_id": "MEV-01",
+      "name": "Non-cyclic inventory arbitrage",
+      "detector_id": "R_CLOSED_CYCLE",
+      "required_surface": "DEX_AMM",
+      "canonical_module": "route_graph_engine",
+      "execution_class": "DETERMINISTIC_EXECUTABLE",
+      "dispatch_status": "ROUTE_READY",
+      "cartridge_files": [
+        "backend/searcher-rs/cartridges/strategies/mev_01_022_non_cyclic_inventory_arbitrage.rhai"
+      ],
+      "live_verified": false
+    },
+    {
+      "mev_id": "MEV-01-023",
+      "family_id": "MEV-01",
+      "name": "Path inconsistency arbitrage",
+      "detector_id": "R_DIRECT_INDIRECT",
+      "required_surface": "DEX_AMM",
+      "canonical_module": "route_graph_engine",
+      "execution_class": "DETERMINISTIC_EXECUTABLE",
+      "dispatch_status": "ROUTE_READY",
+      "cartridge_files": [
+        "backend/searcher-rs/cartridges/strategies/mev_01_023_path_inconsistency_arbitrage.rhai"
+      ],
+      "live_verified": false
+    },
+    {
+      "mev_id": "MEV-01-024",
+      "family_id": "MEV-01",
+      "name": "Direct-vs-indirect-route arbitrage",
+      "detector_id": "R_DIRECT_INDIRECT",
+      "required_surface": "DEX_AMM",
+      "canonical_module": "route_graph_engine",
+      "execution_class": "DETERMINISTIC_EXECUTABLE",
+      "dispatch_status": "ROUTE_READY",
+      "cartridge_files": [
+        "backend/searcher-rs/cartridges/strategies/mev_01_024_direct_vs_indirect_route_arbitrage.rhai"
+      ],
+      "live_verified": false
+    },
+    {
+      "mev_id": "MEV-01-025",
+      "family_id": "MEV-01",
+      "name": "Split-route arbitrage",
+      "detector_id": "R_SPLIT",
+      "required_surface": "DEX_AMM",
+      "canonical_module": "route_graph_engine",
+      "execution_class": "DETERMINISTIC_EXECUTABLE",
+      "dispatch_status": "ROUTE_READY",
+      "cartridge_files": [
+        "backend/searcher-rs/cartridges/strategies/mev_01_025_split_route_arbitrage.rhai"
+      ],
+      "live_verified": false
+    },
+    {
+      "mev_id": "MEV-01-026",
+      "family_id": "MEV-01",
+      "name": "Parallel-route arbitrage",
+      "detector_id": "R_SPLIT",
+      "required_surface": "DEX_AMM",
+      "canonical_module": "route_graph_engine",
+      "execution_class": "DETERMINISTIC_EXECUTABLE",
+      "dispatch_status": "ROUTE_READY",
+      "cartridge_files": [
+        "backend/searcher-rs/cartridges/strategies/mev_01_026_parallel_route_arbitrage.rhai"
+      ],
+      "live_verified": false
+    },
+    {
+      "mev_id": "MEV-01-027",
+      "family_id": "MEV-01",
+      "name": "Basket arbitrage",
+      "detector_id": "R_BASKET_NAV",
+      "required_surface": "DEX_AMM",
+      "canonical_module": "route_graph_engine",
+      "execution_class": "DETERMINISTIC_IF_REDEEMABLE",
+      "dispatch_status": "ROUTE_READY",
+      "cartridge_files": [
+        "backend/searcher-rs/cartridges/strategies/mev_01_027_basket_arbitrage.rhai"
+      ],
+      "live_verified": false
+    },
+    {
+      "mev_id": "MEV-01-028",
+      "family_id": "MEV-01",
+      "name": "Index arbitrage",
+      "detector_id": "R_BASKET_NAV",
+      "required_surface": "DEX_AMM",
+      "canonical_module": "route_graph_engine",
+      "execution_class": "DETERMINISTIC_IF_REDEEMABLE",
+      "dispatch_status": "ROUTE_READY",
+      "cartridge_files": [
+        "backend/searcher-rs/cartridges/strategies/mev_01_028_index_arbitrage.rhai"
+      ],
+      "live_verified": false
+    },
+    {
+      "mev_id": "MEV-01-029",
+      "family_id": "MEV-01",
+      "name": "Ring arbitrage",
+      "detector_id": "R_CLOSED_CYCLE",
+      "required_surface": "DEX_AMM",
+      "canonical_module": "route_graph_engine",
+      "execution_class": "DETERMINISTIC_EXECUTABLE",
+      "dispatch_status": "ROUTE_READY",
+      "cartridge_files": [
+        "backend/searcher-rs/cartridges/strategies/mev_01_029_ring_arbitrage.rhai"
+      ],
+      "live_verified": false
+    },
+    {
+      "mev_id": "MEV-01-030",
+      "family_id": "MEV-01",
+      "name": "Coincidence-of-Wants arbitrage",
+      "detector_id": "R_COW",
+      "required_surface": "DEX_AMM",
+      "canonical_module": "route_graph_engine",
+      "execution_class": "DETERMINISTIC_SETTLEMENT",
+      "dispatch_status": "ROUTE_READY",
+      "cartridge_files": [
+        "backend/searcher-rs/cartridges/strategies/mev_01_030_coincidence_of_wants_arbitrage.rhai"
+      ],
+      "live_verified": false
+    },
+    {
+      "mev_id": "MEV-01-031",
+      "family_id": "MEV-01",
+      "name": "Exact-in/exact-out arbitrage",
+      "detector_id": "R_CLOSED_CYCLE",
+      "required_surface": "DEX_AMM",
+      "canonical_module": "route_graph_engine",
+      "execution_class": "DETERMINISTIC_EXECUTABLE",
+      "dispatch_status": "ROUTE_READY",
+      "cartridge_files": [
+        "backend/searcher-rs/cartridges/strategies/mev_01_031_exact_in_exact_out_arbitrage.rhai"
+      ],
+      "live_verified": false
+    },
+    {
+      "mev_id": "MEV-01-032",
+      "family_id": "MEV-01",
+      "name": "Fee-adjusted arbitrage",
+      "detector_id": "R_CLOSED_CYCLE",
+      "required_surface": "DEX_AMM",
+      "canonical_module": "route_graph_engine",
+      "execution_class": "DETERMINISTIC_EXECUTABLE",
+      "dispatch_status": "ROUTE_READY",
+      "cartridge_files": [
+        "backend/searcher-rs/cartridges/strategies/mev_01_032_fee_adjusted_arbitrage.rhai"
+      ],
+      "live_verified": false
+    },
+    {
+      "mev_id": "MEV-01-033",
+      "family_id": "MEV-01",
+      "name": "Gas-adjusted arbitrage",
+      "detector_id": "R_CLOSED_CYCLE",
+      "required_surface": "DEX_AMM",
+      "canonical_module": "route_graph_engine",
+      "execution_class": "DETERMINISTIC_EXECUTABLE",
+      "dispatch_status": "ROUTE_READY",
+      "cartridge_files": [
+        "backend/searcher-rs/cartridges/strategies/mev_01_033_gas_adjusted_arbitrage.rhai"
+      ],
+      "live_verified": false
+    },
+    {
+      "mev_id": "MEV-01-034",
+      "family_id": "MEV-01",
+      "name": "Rebate arbitrage",
+      "detector_id": "R_CLOSED_CYCLE",
+      "required_surface": "DEX_AMM",
+      "canonical_module": "route_graph_engine",
+      "execution_class": "DETERMINISTIC_EXECUTABLE",
+      "dispatch_status": "ROUTE_READY",
+      "cartridge_files": [
+        "backend/searcher-rs/cartridges/strategies/mev_01_034_rebate_arbitrage.rhai"
+      ],
+      "live_verified": false
+    },
+    {
+      "mev_id": "MEV-01-035",
+      "family_id": "MEV-01",
+      "name": "Dynamic-fee arbitrage",
+      "detector_id": "R_CLOSED_CYCLE",
+      "required_surface": "DEX_AMM",
+      "canonical_module": "route_graph_engine",
+      "execution_class": "DETERMINISTIC_EXECUTABLE",
+      "dispatch_status": "ROUTE_READY",
+      "cartridge_files": [
+        "backend/searcher-rs/cartridges/strategies/mev_01_035_dynamic_fee_arbitrage.rhai"
+      ],
+      "live_verified": false
+    },
+    {
+      "mev_id": "MEV-01-036",
+      "family_id": "MEV-01",
+      "name": "Hook arbitrage",
+      "detector_id": "R_CLOSED_CYCLE",
+      "required_surface": "DEX_AMM",
+      "canonical_module": "route_graph_engine",
+      "execution_class": "DETERMINISTIC_EXECUTABLE",
+      "dispatch_status": "ROUTE_READY",
+      "cartridge_files": [
+        "backend/searcher-rs/cartridges/strategies/mev_01_036_hook_arbitrage.rhai"
+      ],
+      "live_verified": false
+    },
+    {
+      "mev_id": "MEV-02-001",
+      "family_id": "MEV-02",
+      "name": "Constant-product arbitrage",
+      "detector_id": "CF_CPMM",
+      "required_surface": "DEX_AMM",
+      "canonical_module": "amm_curve_engine",
+      "execution_class": "DETERMINISTIC_EXECUTABLE",
+      "dispatch_status": "ROUTE_READY",
+      "cartridge_files": [
+        "backend/searcher-rs/cartridges/strategies/mev_02_001_constant_product_arbitrage.rhai"
+      ],
+      "live_verified": false
+    },
+    {
+      "mev_id": "MEV-02-002",
+      "family_id": "MEV-02",
+      "name": "Constant-sum arbitrage",
+      "detector_id": "CF_CONSTANT_SUM",
+      "required_surface": "DEX_AMM",
+      "canonical_module": "amm_curve_engine",
+      "execution_class": "DETERMINISTIC_EXECUTABLE",
+      "dispatch_status": "ROUTE_READY",
+      "cartridge_files": [
+        "backend/searcher-rs/cartridges/strategies/mev_02_002_constant_sum_arbitrage.rhai"
+      ],
+      "live_verified": false
+    },
+    {
+      "mev_id": "MEV-02-003",
+      "family_id": "MEV-02",
+      "name": "StableSwap arbitrage",
+      "detector_id": "CF_STABLESWAP",
+      "required_surface": "DEX_AMM",
+      "canonical_module": "amm_curve_engine",
+      "execution_class": "DETERMINISTIC_EXECUTABLE",
+      "dispatch_status": "ROUTE_READY",
+      "cartridge_files": [
+        "backend/searcher-rs/cartridges/strategies/mev_02_003_stableswap_arbitrage.rhai"
+      ],
+      "live_verified": false
+    },
+    {
+      "mev_id": "MEV-02-004",
+      "family_id": "MEV-02",
+      "name": "Weighted-pool arbitrage",
+      "detector_id": "CF_WEIGHTED",
+      "required_surface": "DEX_AMM",
+      "canonical_module": "amm_curve_engine",
+      "execution_class": "DETERMINISTIC_EXECUTABLE",
+      "dispatch_status": "ROUTE_READY",
+      "cartridge_files": [
+        "backend/searcher-rs/cartridges/strategies/mev_02_004_weighted_pool_arbitrage.rhai"
+      ],
+      "live_verified": false
+    },
+    {
+      "mev_id": "MEV-02-005",
+      "family_id": "MEV-02",
+      "name": "Concentrated-liquidity arbitrage",
+      "detector_id": "CF_CLAMM",
+      "required_surface": "DEX_AMM",
+      "canonical_module": "amm_curve_engine",
+      "execution_class": "DETERMINISTIC_EXECUTABLE",
+      "dispatch_status": "ROUTE_READY",
+      "cartridge_files": [
+        "backend/searcher-rs/cartridges/strategies/mev_02_005_concentrated_liquidity_arbitrage.rhai"
+      ],
+      "live_verified": false
+    },
+    {
+      "mev_id": "MEV-02-006",
+      "family_id": "MEV-02",
+      "name": "Liquidity-bin arbitrage",
+      "detector_id": "CF_LB",
+      "required_surface": "DEX_AMM",
+      "canonical_module": "amm_curve_engine",
+      "execution_class": "DETERMINISTIC_EXECUTABLE",
+      "dispatch_status": "ROUTE_READY",
+      "cartridge_files": [
+        "backend/searcher-rs/cartridges/strategies/mev_02_006_liquidity_bin_arbitrage.rhai"
+      ],
+      "live_verified": false
+    },
+    {
+      "mev_id": "MEV-02-007",
+      "family_id": "MEV-02",
+      "name": "Proactive Market Maker arbitrage",
+      "detector_id": "CF_PMM",
+      "required_surface": "DEX_AMM",
+      "canonical_module": "amm_curve_engine",
+      "execution_class": "DETERMINISTIC_WITH_ORACLE",
+      "dispatch_status": "ROUTE_READY",
+      "cartridge_files": [
+        "backend/searcher-rs/cartridges/strategies/mev_02_007_proactive_market_maker_arbitrage.rhai"
+      ],
+      "live_verified": false
+    },
+    {
+      "mev_id": "MEV-02-008",
+      "family_id": "MEV-02",
+      "name": "Dynamic-liquidity arbitrage",
+      "detector_id": "CF_DYNAMIC",
+      "required_surface": "DEX_AMM",
+      "canonical_module": "amm_curve_engine",
+      "execution_class": "DETERMINISTIC_IF_ADAPTER",
+      "dispatch_status": "ROUTE_READY",
+      "cartridge_files": [
+        "backend/searcher-rs/cartridges/strategies/mev_02_008_dynamic_liquidity_arbitrage.rhai"
+      ],
+      "live_verified": false
+    },
+    {
+      "mev_id": "MEV-02-009",
+      "family_id": "MEV-02",
+      "name": "Dynamic-weight arbitrage",
+      "detector_id": "CF_DYNAMIC",
+      "required_surface": "DEX_AMM",
+      "canonical_module": "amm_curve_engine",
+      "execution_class": "DETERMINISTIC_IF_ADAPTER",
+      "dispatch_status": "ROUTE_READY",
+      "cartridge_files": [
+        "backend/searcher-rs/cartridges/strategies/mev_02_009_dynamic_weight_arbitrage.rhai"
+      ],
+      "live_verified": false
+    },
+    {
+      "mev_id": "MEV-02-010",
+      "family_id": "MEV-02",
+      "name": "Bonding-curve arbitrage",
+      "detector_id": "CF_BOND",
+      "required_surface": "DEX_AMM",
+      "canonical_module": "amm_curve_engine",
+      "execution_class": "DETERMINISTIC_EXECUTABLE",
+      "dispatch_status": "ROUTE_READY",
+      "cartridge_files": [
+        "backend/searcher-rs/cartridges/strategies/mev_02_010_bonding_curve_arbitrage.rhai"
+      ],
+      "live_verified": false
+    },
+    {
+      "mev_id": "MEV-02-011",
+      "family_id": "MEV-02",
+      "name": "Oracle-priced AMM arbitrage",
+      "detector_id": "CF_DYNAMIC",
+      "required_surface": "DEX_AMM",
+      "canonical_module": "amm_curve_engine",
+      "execution_class": "DETERMINISTIC_IF_ADAPTER",
+      "dispatch_status": "NO_COMPATIBLE_ROUTE",
+      "cartridge_files": [
+        "backend/searcher-rs/cartridges/strategies/mev_02_011_oracle_priced_amm_arbitrage.rhai"
+      ],
+      "live_verified": false
+    },
+    {
+      "mev_id": "MEV-02-012",
+      "family_id": "MEV-02",
+      "name": "Virtual-AMM arbitrage",
+      "detector_id": "CF_VAMM",
+      "required_surface": "DEX_AMM",
+      "canonical_module": "amm_curve_engine",
+      "execution_class": "DETERMINISTIC_WITH_DERIVATIVE_STATE",
+      "dispatch_status": "ROUTE_READY",
+      "cartridge_files": [
+        "backend/searcher-rs/cartridges/strategies/mev_02_012_virtual_amm_arbitrage.rhai"
+      ],
+      "live_verified": false
+    },
+    {
+      "mev_id": "MEV-02-013",
+      "family_id": "MEV-02",
+      "name": "Hybrid AMM/CLOB arbitrage",
+      "detector_id": "CF_DYNAMIC",
+      "required_surface": "DEX_AMM",
+      "canonical_module": "amm_curve_engine",
+      "execution_class": "DETERMINISTIC_IF_ADAPTER",
+      "dispatch_status": "ROUTE_READY",
+      "cartridge_files": [
+        "backend/searcher-rs/cartridges/strategies/mev_02_013_hybrid_amm_clob_arbitrage.rhai"
+      ],
+      "live_verified": false
+    },
+    {
+      "mev_id": "MEV-02-014",
+      "family_id": "MEV-02",
+      "name": "TWAMM arbitrage",
+      "detector_id": "CF_TWAMM",
+      "required_surface": "DEX_AMM",
+      "canonical_module": "amm_curve_engine",
+      "execution_class": "DETERMINISTIC_POST_STATE",
+      "dispatch_status": "ROUTE_READY",
+      "cartridge_files": [
+        "backend/searcher-rs/cartridges/strategies/mev_02_014_twamm_arbitrage.rhai"
+      ],
+      "live_verified": false
+    },
+    {
+      "mev_id": "MEV-02-015",
+      "family_id": "MEV-02",
+      "name": "Batch-AMM arbitrage",
+      "detector_id": "CF_BATCH",
+      "required_surface": "DEX_AMM",
+      "canonical_module": "amm_curve_engine",
+      "execution_class": "DETERMINISTIC_SETTLEMENT",
+      "dispatch_status": "ROUTE_READY",
+      "cartridge_files": [
+        "backend/searcher-rs/cartridges/strategies/mev_02_015_batch_amm_arbitrage.rhai"
+      ],
+      "live_verified": false
+    },
+    {
+      "mev_id": "MEV-02-016",
+      "family_id": "MEV-02",
+      "name": "Auction-managed AMM arbitrage",
+      "detector_id": "CF_BATCH",
+      "required_surface": "DEX_AMM",
+      "canonical_module": "amm_curve_engine",
+      "execution_class": "DETERMINISTIC_SETTLEMENT",
+      "dispatch_status": "ROUTE_READY",
+      "cartridge_files": [
+        "backend/searcher-rs/cartridges/strategies/mev_02_016_auction_managed_amm_arbitrage.rhai"
+      ],
+      "live_verified": false
+    },
+    {
+      "mev_id": "MEV-02-017",
+      "family_id": "MEV-02",
+      "name": "Cross-invariant arbitrage",
+      "detector_id": "CF_CROSSINV",
+      "required_surface": "DEX_AMM",
+      "canonical_module": "amm_curve_engine",
+      "execution_class": "DETERMINISTIC_EXECUTABLE",
+      "dispatch_status": "ROUTE_READY",
+      "cartridge_files": [
+        "backend/searcher-rs/cartridges/strategies/mev_02_017_cross_invariant_arbitrage.rhai"
+      ],
+      "live_verified": false
+    },
+    {
+      "mev_id": "MEV-03-001",
+      "family_id": "MEV-03",
+      "name": "Swap backrun arbitrage",
+      "detector_id": "E_POST",
+      "required_surface": "DEX_STATE",
+      "canonical_module": "state_event_engine",
+      "execution_class": "DETERMINISTIC_POST_STATE",
+      "dispatch_status": "ROUTE_READY",
+      "cartridge_files": [
+        "backend/searcher-rs/cartridges/strategies/mev_03_001_swap_backrun_arbitrage.rhai"
+      ],
+      "live_verified": false
+    },
+    {
+      "mev_id": "MEV-03-002",
+      "family_id": "MEV-03",
+      "name": "Multi-swap backrun",
+      "detector_id": "E_POST",
+      "required_surface": "DEX_STATE",
+      "canonical_module": "state_event_engine",
+      "execution_class": "DETERMINISTIC_POST_STATE",
+      "dispatch_status": "ROUTE_READY",
+      "cartridge_files": [
+        "backend/searcher-rs/cartridges/strategies/mev_03_002_multi_swap_backrun.rhai"
+      ],
+      "live_verified": false
+    },
+    {
+      "mev_id": "MEV-03-003",
+      "family_id": "MEV-03",
+      "name": "Cross-pool ripple arbitrage",
+      "detector_id": "E_POST",
+      "required_surface": "DEX_STATE",
+      "canonical_module": "state_event_engine",
+      "execution_class": "DETERMINISTIC_POST_STATE",
+      "dispatch_status": "ROUTE_READY",
+      "cartridge_files": [
+        "backend/searcher-rs/cartridges/strategies/mev_03_003_cross_pool_ripple_arbitrage.rhai"
+      ],
+      "live_verified": false
+    },
+    {
+      "mev_id": "MEV-03-004",
+      "family_id": "MEV-03",
+      "name": "Top-of-block arbitrage",
+      "detector_id": "E_POST",
+      "required_surface": "DEX_STATE",
+      "canonical_module": "state_event_engine",
+      "execution_class": "DETERMINISTIC_POST_STATE",
+      "dispatch_status": "ROUTE_READY",
+      "cartridge_files": [
+        "backend/searcher-rs/cartridges/strategies/mev_03_004_top_of_block_arbitrage.rhai"
+      ],
+      "live_verified": false
+    },
+    {
+      "mev_id": "MEV-03-005",
+      "family_id": "MEV-03",
+      "name": "End-of-block arbitrage",
+      "detector_id": "E_POST",
+      "required_surface": "DEX_STATE",
+      "canonical_module": "state_event_engine",
+      "execution_class": "DETERMINISTIC_POST_STATE",
+      "dispatch_status": "ROUTE_READY",
+      "cartridge_files": [
+        "backend/searcher-rs/cartridges/strategies/mev_03_005_end_of_block_arbitrage.rhai"
+      ],
+      "live_verified": false
+    },
+    {
+      "mev_id": "MEV-03-006",
+      "family_id": "MEV-03",
+      "name": "Inter-block arbitrage",
+      "detector_id": "E_POST",
+      "required_surface": "DEX_STATE",
+      "canonical_module": "state_event_engine",
+      "execution_class": "DETERMINISTIC_POST_STATE",
+      "dispatch_status": "ROUTE_READY",
+      "cartridge_files": [
+        "backend/searcher-rs/cartridges/strategies/mev_03_006_inter_block_arbitrage.rhai"
+      ],
+      "live_verified": false
+    },
+    {
+      "mev_id": "MEV-03-007",
+      "family_id": "MEV-03",
+      "name": "Stale-price arbitrage",
+      "detector_id": "E_LATENCY",
+      "required_surface": "DEX_STATE",
+      "canonical_module": "state_event_engine",
+      "execution_class": "LATENCY_SENSITIVE",
+      "dispatch_status": "ROUTE_READY",
+      "cartridge_files": [
+        "backend/searcher-rs/cartridges/strategies/mev_03_007_stale_price_arbitrage.rhai"
+      ],
+      "live_verified": false
+    },
+    {
+      "mev_id": "MEV-03-008",
+      "family_id": "MEV-03",
+      "name": "Latency arbitrage",
+      "detector_id": "E_LATENCY",
+      "required_surface": "DEX_STATE",
+      "canonical_module": "state_event_engine",
+      "execution_class": "LATENCY_SENSITIVE",
+      "dispatch_status": "ROUTE_READY",
+      "cartridge_files": [
+        "backend/searcher-rs/cartridges/strategies/mev_03_008_latency_arbitrage.rhai"
+      ],
+      "live_verified": false
+    },
+    {
+      "mev_id": "MEV-03-009",
+      "family_id": "MEV-03",
+      "name": "Oracle-update arbitrage",
+      "detector_id": "E_ORACLE",
+      "required_surface": "DEX_STATE",
+      "canonical_module": "state_event_engine",
+      "execution_class": "DETERMINISTIC_POST_ORACLE",
+      "dispatch_status": "NO_COMPATIBLE_ROUTE",
+      "cartridge_files": [
+        "backend/searcher-rs/cartridges/strategies/mev_03_009_oracle_update_arbitrage.rhai"
+      ],
+      "live_verified": false
+    },
+    {
+      "mev_id": "MEV-03-010",
+      "family_id": "MEV-03",
+      "name": "OEV — Oracle Extractable Value",
+      "detector_id": "E_ORACLE",
+      "required_surface": "DEX_STATE",
+      "canonical_module": "state_event_engine",
+      "execution_class": "DETERMINISTIC_POST_ORACLE",
+      "dispatch_status": "NO_COMPATIBLE_ROUTE",
+      "cartridge_files": [
+        "backend/searcher-rs/cartridges/strategies/mev_03_010_oev_oracle_extractable_value.rhai"
+      ],
+      "live_verified": false
+    },
+    {
+      "mev_id": "MEV-03-011",
+      "family_id": "MEV-03",
+      "name": "Rebase arbitrage",
+      "detector_id": "E_STATE",
+      "required_surface": "DEX_STATE",
+      "canonical_module": "state_event_engine",
+      "execution_class": "DETERMINISTIC_POST_STATE",
+      "dispatch_status": "ROUTE_READY",
+      "cartridge_files": [
+        "backend/searcher-rs/cartridges/strategies/mev_03_011_rebase_arbitrage.rhai"
+      ],
+      "live_verified": false
+    },
+    {
+      "mev_id": "MEV-03-012",
+      "family_id": "MEV-03",
+      "name": "Interest-index update arbitrage",
+      "detector_id": "E_STATE",
+      "required_surface": "DEX_STATE",
+      "canonical_module": "state_event_engine",
+      "execution_class": "DETERMINISTIC_POST_STATE",
+      "dispatch_status": "ROUTE_READY",
+      "cartridge_files": [
+        "backend/searcher-rs/cartridges/strategies/mev_03_012_interest_index_update_arbitrage.rhai"
+      ],
+      "live_verified": false
+    },
+    {
+      "mev_id": "MEV-03-013",
+      "family_id": "MEV-03",
+      "name": "Funding-update arbitrage",
+      "detector_id": "E_STATE",
+      "required_surface": "DEX_STATE",
+      "canonical_module": "state_event_engine",
+      "execution_class": "DETERMINISTIC_POST_STATE",
+      "dispatch_status": "ROUTE_READY",
+      "cartridge_files": [
+        "backend/searcher-rs/cartridges/strategies/mev_03_013_funding_update_arbitrage.rhai"
+      ],
+      "live_verified": false
+    },
+    {
+      "mev_id": "MEV-03-014",
+      "family_id": "MEV-03",
+      "name": "Epoch-rollover arbitrage",
+      "detector_id": "E_STATE",
+      "required_surface": "DEX_STATE",
+      "canonical_module": "state_event_engine",
+      "execution_class": "DETERMINISTIC_POST_STATE",
+      "dispatch_status": "ROUTE_READY",
+      "cartridge_files": [
+        "backend/searcher-rs/cartridges/strategies/mev_03_014_epoch_rollover_arbitrage.rhai"
+      ],
+      "live_verified": false
+    },
+    {
+      "mev_id": "MEV-03-015",
+      "family_id": "MEV-03",
+      "name": "Settlement arbitrage",
+      "detector_id": "E_STATE",
+      "required_surface": "DEX_STATE",
+      "canonical_module": "state_event_engine",
+      "execution_class": "DETERMINISTIC_POST_STATE",
+      "dispatch_status": "ROUTE_READY",
+      "cartridge_files": [
+        "backend/searcher-rs/cartridges/strategies/mev_03_015_settlement_arbitrage.rhai"
+      ],
+      "live_verified": false
+    },
+    {
+      "mev_id": "MEV-03-016",
+      "family_id": "MEV-03",
+      "name": "Mint/burn state arbitrage",
+      "detector_id": "E_STATE",
+      "required_surface": "DEX_STATE",
+      "canonical_module": "state_event_engine",
+      "execution_class": "DETERMINISTIC_POST_STATE",
+      "dispatch_status": "ROUTE_READY",
+      "cartridge_files": [
+        "backend/searcher-rs/cartridges/strategies/mev_03_016_mint_burn_state_arbitrage.rhai"
+      ],
+      "live_verified": false
+    },
+    {
+      "mev_id": "MEV-03-017",
+      "family_id": "MEV-03",
+      "name": "Redemption-state arbitrage",
+      "detector_id": "E_STATE",
+      "required_surface": "DEX_STATE",
+      "canonical_module": "state_event_engine",
+      "execution_class": "DETERMINISTIC_POST_STATE",
+      "dispatch_status": "ROUTE_READY",
+      "cartridge_files": [
+        "backend/searcher-rs/cartridges/strategies/mev_03_017_redemption_state_arbitrage.rhai"
+      ],
+      "live_verified": false
+    },
+    {
+      "mev_id": "MEV-03-018",
+      "family_id": "MEV-03",
+      "name": "Liquidity-add arbitrage",
+      "detector_id": "E_STATE",
+      "required_surface": "DEX_STATE",
+      "canonical_module": "state_event_engine",
+      "execution_class": "DETERMINISTIC_POST_STATE",
+      "dispatch_status": "ROUTE_READY",
+      "cartridge_files": [
+        "backend/searcher-rs/cartridges/strategies/mev_03_018_liquidity_add_arbitrage.rhai"
+      ],
+      "live_verified": false
+    },
+    {
+      "mev_id": "MEV-03-019",
+      "family_id": "MEV-03",
+      "name": "Liquidity-removal arbitrage",
+      "detector_id": "E_STATE",
+      "required_surface": "DEX_STATE",
+      "canonical_module": "state_event_engine",
+      "execution_class": "DETERMINISTIC_POST_STATE",
+      "dispatch_status": "ROUTE_READY",
+      "cartridge_files": [
+        "backend/searcher-rs/cartridges/strategies/mev_03_019_liquidity_removal_arbitrage.rhai"
+      ],
+      "live_verified": false
+    },
+    {
+      "mev_id": "MEV-03-020",
+      "family_id": "MEV-03",
+      "name": "Pool-initialization arbitrage",
+      "detector_id": "E_STATE",
+      "required_surface": "DEX_STATE",
+      "canonical_module": "state_event_engine",
+      "execution_class": "DETERMINISTIC_POST_STATE",
+      "dispatch_status": "ROUTE_READY",
+      "cartridge_files": [
+        "backend/searcher-rs/cartridges/strategies/mev_03_020_pool_initialization_arbitrage.rhai"
+      ],
+      "live_verified": false
+    },
+    {
+      "mev_id": "MEV-03-021",
+      "family_id": "MEV-03",
+      "name": "Migration arbitrage",
+      "detector_id": "E_STATE",
+      "required_surface": "DEX_STATE",
+      "canonical_module": "state_event_engine",
+      "execution_class": "DETERMINISTIC_POST_STATE",
+      "dispatch_status": "ROUTE_READY",
+      "cartridge_files": [
+        "backend/searcher-rs/cartridges/strategies/mev_03_021_migration_arbitrage.rhai"
+      ],
+      "live_verified": false
+    },
+    {
+      "mev_id": "MEV-03-022",
+      "family_id": "MEV-03",
+      "name": "Fee-switch arbitrage",
+      "detector_id": "E_STATE",
+      "required_surface": "DEX_STATE",
+      "canonical_module": "state_event_engine",
+      "execution_class": "DETERMINISTIC_POST_STATE",
+      "dispatch_status": "ROUTE_READY",
+      "cartridge_files": [
+        "backend/searcher-rs/cartridges/strategies/mev_03_022_fee_switch_arbitrage.rhai"
+      ],
+      "live_verified": false
+    },
+    {
+      "mev_id": "MEV-03-023",
+      "family_id": "MEV-03",
+      "name": "Parameter-update arbitrage",
+      "detector_id": "E_STATE",
+      "required_surface": "DEX_STATE",
+      "canonical_module": "state_event_engine",
+      "execution_class": "DETERMINISTIC_POST_STATE",
+      "dispatch_status": "ROUTE_READY",
+      "cartridge_files": [
+        "backend/searcher-rs/cartridges/strategies/mev_03_023_parameter_update_arbitrage.rhai"
+      ],
+      "live_verified": false
+    },
+    {
+      "mev_id": "MEV-03-024",
+      "family_id": "MEV-03",
+      "name": "Governance-execution arbitrage",
+      "detector_id": "E_STATE",
+      "required_surface": "DEX_STATE",
+      "canonical_module": "state_event_engine",
+      "execution_class": "DETERMINISTIC_POST_STATE",
+      "dispatch_status": "ROUTE_READY",
+      "cartridge_files": [
+        "backend/searcher-rs/cartridges/strategies/mev_03_024_governance_execution_arbitrage.rhai"
+      ],
+      "live_verified": false
+    },
+    {
+      "mev_id": "MEV-03-025",
+      "family_id": "MEV-03",
+      "name": "Keeper-triggered arbitrage",
+      "detector_id": "E_AUCTION",
+      "required_surface": "DEX_STATE",
+      "canonical_module": "state_event_engine",
+      "execution_class": "DETERMINISTIC_AUCTION",
+      "dispatch_status": "ROUTE_READY",
+      "cartridge_files": [
+        "backend/searcher-rs/cartridges/strategies/mev_03_025_keeper_triggered_arbitrage.rhai"
+      ],
+      "live_verified": false
+    },
+    {
+      "mev_id": "MEV-03-026",
+      "family_id": "MEV-03",
+      "name": "Auction-clearing arbitrage",
+      "detector_id": "E_AUCTION",
+      "required_surface": "DEX_STATE",
+      "canonical_module": "state_event_engine",
+      "execution_class": "DETERMINISTIC_AUCTION",
+      "dispatch_status": "ROUTE_READY",
+      "cartridge_files": [
+        "backend/searcher-rs/cartridges/strategies/mev_03_026_auction_clearing_arbitrage.rhai"
+      ],
+      "live_verified": false
+    },
+    {
+      "mev_id": "MEV-03-027",
+      "family_id": "MEV-03",
+      "name": "Block-time arbitrage",
+      "detector_id": "E_LATENCY",
+      "required_surface": "DEX_STATE",
+      "canonical_module": "state_event_engine",
+      "execution_class": "LATENCY_SENSITIVE",
+      "dispatch_status": "ROUTE_READY",
+      "cartridge_files": [
+        "backend/searcher-rs/cartridges/strategies/mev_03_027_block_time_arbitrage.rhai"
+      ],
+      "live_verified": false
+    },
+    {
+      "mev_id": "MEV-03-028",
+      "family_id": "MEV-03",
+      "name": "Sequencer-latency arbitrage",
+      "detector_id": "E_LATENCY",
+      "required_surface": "DEX_STATE",
+      "canonical_module": "state_event_engine",
+      "execution_class": "LATENCY_SENSITIVE",
+      "dispatch_status": "ROUTE_READY",
+      "cartridge_files": [
+        "backend/searcher-rs/cartridges/strategies/mev_03_028_sequencer_latency_arbitrage.rhai"
+      ],
+      "live_verified": false
+    },
+    {
+      "mev_id": "MEV-03-029",
+      "family_id": "MEV-03",
+      "name": "Spam arbitrage",
+      "detector_id": "OBSERVE",
+      "required_surface": "DEX_STATE",
+      "canonical_module": "state_event_engine",
+      "execution_class": "OBSERVE_ONLY",
+      "dispatch_status": "OBSERVE_ONLY",
+      "cartridge_files": [
+        "backend/searcher-rs/cartridges/strategies/mev_03_029_spam_arbitrage.rhai"
+      ],
+      "live_verified": false
+    },
+    {
+      "mev_id": "MEV-03-030",
+      "family_id": "MEV-03",
+      "name": "Reorg/time-bandit arbitrage",
+      "detector_id": "OBSERVE",
+      "required_surface": "DEX_STATE",
+      "canonical_module": "state_event_engine",
+      "execution_class": "OBSERVE_ONLY",
+      "dispatch_status": "OBSERVE_ONLY",
+      "cartridge_files": [
+        "backend/searcher-rs/cartridges/strategies/mev_03_030_reorg_time_bandit_arbitrage.rhai"
+      ],
+      "live_verified": false
+    },
+    {
+      "mev_id": "MEV-03-031",
+      "family_id": "MEV-03",
+      "name": "Fork-state arbitrage",
+      "detector_id": "E_STATE",
+      "required_surface": "DEX_STATE",
+      "canonical_module": "state_event_engine",
+      "execution_class": "DETERMINISTIC_POST_STATE",
+      "dispatch_status": "ROUTE_READY",
+      "cartridge_files": [
+        "backend/searcher-rs/cartridges/strategies/mev_03_031_fork_state_arbitrage.rhai"
+      ],
+      "live_verified": false
+    },
+    {
+      "mev_id": "MEV-04-001",
+      "family_id": "MEV-04",
+      "name": "Stablecoin peg arbitrage",
+      "detector_id": "P_PEG",
+      "required_surface": "PARITY_REDEMPTION",
+      "canonical_module": "parity_redemption_engine",
+      "execution_class": "DETERMINISTIC_IF_REDEEMABLE",
+      "dispatch_status": "NEEDS_ROUTE_DATA",
+      "cartridge_files": [
+        "backend/searcher-rs/cartridges/strategies/mev_04_001_stablecoin_peg_arbitrage.rhai"
+      ],
+      "live_verified": false
+    },
+    {
+      "mev_id": "MEV-04-002",
+      "family_id": "MEV-04",
+      "name": "Cross-stablecoin arbitrage",
+      "detector_id": "P_PEG",
+      "required_surface": "PARITY_REDEMPTION",
+      "canonical_module": "parity_redemption_engine",
+      "execution_class": "DETERMINISTIC_IF_REDEEMABLE",
+      "dispatch_status": "NEEDS_ROUTE_DATA",
+      "cartridge_files": [
+        "backend/searcher-rs/cartridges/strategies/mev_04_002_cross_stablecoin_arbitrage.rhai"
+      ],
+      "live_verified": false
+    },
+    {
+      "mev_id": "MEV-04-003",
+      "family_id": "MEV-04",
+      "name": "Algorithmic-stablecoin arbitrage",
+      "detector_id": "P_PEG",
+      "required_surface": "PARITY_REDEMPTION",
+      "canonical_module": "parity_redemption_engine",
+      "execution_class": "DETERMINISTIC_IF_REDEEMABLE",
+      "dispatch_status": "NEEDS_ROUTE_DATA",
+      "cartridge_files": [
+        "backend/searcher-rs/cartridges/strategies/mev_04_003_algorithmic_stablecoin_arbitrage.rhai"
+      ],
+      "live_verified": false
+    },
+    {
+      "mev_id": "MEV-04-004",
+      "family_id": "MEV-04",
+      "name": "Collateralized-stablecoin arbitrage",
+      "detector_id": "P_PEG",
+      "required_surface": "PARITY_REDEMPTION",
+      "canonical_module": "parity_redemption_engine",
+      "execution_class": "DETERMINISTIC_IF_REDEEMABLE",
+      "dispatch_status": "NEEDS_ROUTE_DATA",
+      "cartridge_files": [
+        "backend/searcher-rs/cartridges/strategies/mev_04_004_collateralized_stablecoin_arbitrage.rhai"
+      ],
+      "live_verified": false
+    },
+    {
+      "mev_id": "MEV-04-005",
+      "family_id": "MEV-04",
+      "name": "Mint–redeem stablecoin arbitrage",
+      "detector_id": "P_PEG",
+      "required_surface": "PARITY_REDEMPTION",
+      "canonical_module": "parity_redemption_engine",
+      "execution_class": "DETERMINISTIC_IF_REDEEMABLE",
+      "dispatch_status": "NEEDS_ROUTE_DATA",
+      "cartridge_files": [
+        "backend/searcher-rs/cartridges/strategies/mev_04_005_mint_redeem_stablecoin_arbitrage.rhai"
+      ],
+      "live_verified": false
+    },
+    {
+      "mev_id": "MEV-04-006",
+      "family_id": "MEV-04",
+      "name": "Native–wrapped arbitrage",
+      "detector_id": "P_WRAP",
+      "required_surface": "PARITY_REDEMPTION",
+      "canonical_module": "parity_redemption_engine",
+      "execution_class": "DETERMINISTIC_IF_CONVERTIBLE",
+      "dispatch_status": "NEEDS_ROUTE_DATA",
+      "cartridge_files": [
+        "backend/searcher-rs/cartridges/strategies/mev_04_006_native_wrapped_arbitrage.rhai"
+      ],
+      "live_verified": false
+    },
+    {
+      "mev_id": "MEV-04-007",
+      "family_id": "MEV-04",
+      "name": "Canonical–bridged token arbitrage",
+      "detector_id": "P_WRAP",
+      "required_surface": "PARITY_REDEMPTION",
+      "canonical_module": "parity_redemption_engine",
+      "execution_class": "DETERMINISTIC_IF_CONVERTIBLE",
+      "dispatch_status": "NEEDS_ROUTE_DATA",
+      "cartridge_files": [
+        "backend/searcher-rs/cartridges/strategies/mev_04_007_canonical_bridged_token_arbitrage.rhai"
+      ],
+      "live_verified": false
+    },
+    {
+      "mev_id": "MEV-04-008",
+      "family_id": "MEV-04",
+      "name": "Cross-wrapper arbitrage",
+      "detector_id": "P_WRAP",
+      "required_surface": "PARITY_REDEMPTION",
+      "canonical_module": "parity_redemption_engine",
+      "execution_class": "DETERMINISTIC_IF_CONVERTIBLE",
+      "dispatch_status": "NEEDS_ROUTE_DATA",
+      "cartridge_files": [
+        "backend/searcher-rs/cartridges/strategies/mev_04_008_cross_wrapper_arbitrage.rhai"
+      ],
+      "live_verified": false
+    },
+    {
+      "mev_id": "MEV-04-009",
+      "family_id": "MEV-04",
+      "name": "Synthetic–underlying arbitrage",
+      "detector_id": "P_WRAP",
+      "required_surface": "PARITY_REDEMPTION",
+      "canonical_module": "parity_redemption_engine",
+      "execution_class": "DETERMINISTIC_IF_CONVERTIBLE",
+      "dispatch_status": "NEEDS_ROUTE_DATA",
+      "cartridge_files": [
+        "backend/searcher-rs/cartridges/strategies/mev_04_009_synthetic_underlying_arbitrage.rhai"
+      ],
+      "live_verified": false
+    },
+    {
+      "mev_id": "MEV-04-010",
+      "family_id": "MEV-04",
+      "name": "Receipt-token arbitrage",
+      "detector_id": "P_4626",
+      "required_surface": "PARITY_REDEMPTION",
+      "canonical_module": "parity_redemption_engine",
+      "execution_class": "DETERMINISTIC_IF_REDEEMABLE",
+      "dispatch_status": "NEEDS_ROUTE_DATA",
+      "cartridge_files": [
+        "backend/searcher-rs/cartridges/strategies/mev_04_010_receipt_token_arbitrage.rhai"
+      ],
+      "live_verified": false
+    },
+    {
+      "mev_id": "MEV-04-011",
+      "family_id": "MEV-04",
+      "name": "ERC-4626 share-price arbitrage",
+      "detector_id": "P_4626",
+      "required_surface": "PARITY_REDEMPTION",
+      "canonical_module": "parity_redemption_engine",
+      "execution_class": "DETERMINISTIC_IF_REDEEMABLE",
+      "dispatch_status": "NEEDS_ROUTE_DATA",
+      "cartridge_files": [
+        "backend/searcher-rs/cartridges/strategies/mev_04_011_erc_4626_share_price_arbitrage.rhai"
+      ],
+      "live_verified": false
+    },
+    {
+      "mev_id": "MEV-04-012",
+      "family_id": "MEV-04",
+      "name": "Vault share–underlying arbitrage",
+      "detector_id": "P_4626",
+      "required_surface": "PARITY_REDEMPTION",
+      "canonical_module": "parity_redemption_engine",
+      "execution_class": "DETERMINISTIC_IF_REDEEMABLE",
+      "dispatch_status": "NEEDS_ROUTE_DATA",
+      "cartridge_files": [
+        "backend/searcher-rs/cartridges/strategies/mev_04_012_vault_share_underlying_arbitrage.rhai"
+      ],
+      "live_verified": false
+    },
+    {
+      "mev_id": "MEV-04-013",
+      "family_id": "MEV-04",
+      "name": "LP-token NAV arbitrage",
+      "detector_id": "P_NAV",
+      "required_surface": "PARITY_REDEMPTION",
+      "canonical_module": "parity_redemption_engine",
+      "execution_class": "DETERMINISTIC_IF_REDEEMABLE",
+      "dispatch_status": "NEEDS_ROUTE_DATA",
+      "cartridge_files": [
+        "backend/searcher-rs/cartridges/strategies/mev_04_013_lp_token_nav_arbitrage.rhai"
+      ],
+      "live_verified": false
+    },
+    {
+      "mev_id": "MEV-04-014",
+      "family_id": "MEV-04",
+      "name": "Index token–basket arbitrage",
+      "detector_id": "P_NAV",
+      "required_surface": "PARITY_REDEMPTION",
+      "canonical_module": "parity_redemption_engine",
+      "execution_class": "DETERMINISTIC_IF_REDEEMABLE",
+      "dispatch_status": "NEEDS_ROUTE_DATA",
+      "cartridge_files": [
+        "backend/searcher-rs/cartridges/strategies/mev_04_014_index_token_basket_arbitrage.rhai"
+      ],
+      "live_verified": false
+    },
+    {
+      "mev_id": "MEV-04-015",
+      "family_id": "MEV-04",
+      "name": "ETF-like token arbitrage",
+      "detector_id": "P_NAV",
+      "required_surface": "PARITY_REDEMPTION",
+      "canonical_module": "parity_redemption_engine",
+      "execution_class": "DETERMINISTIC_IF_REDEEMABLE",
+      "dispatch_status": "NEEDS_ROUTE_DATA",
+      "cartridge_files": [
+        "backend/searcher-rs/cartridges/strategies/mev_04_015_etf_like_token_arbitrage.rhai"
+      ],
+      "live_verified": false
+    },
+    {
+      "mev_id": "MEV-04-016",
+      "family_id": "MEV-04",
+      "name": "RWA–NAV arbitrage",
+      "detector_id": "P_NAV",
+      "required_surface": "PARITY_REDEMPTION",
+      "canonical_module": "parity_redemption_engine",
+      "execution_class": "DETERMINISTIC_IF_REDEEMABLE",
+      "dispatch_status": "NEEDS_ROUTE_DATA",
+      "cartridge_files": [
+        "backend/searcher-rs/cartridges/strategies/mev_04_016_rwa_nav_arbitrage.rhai"
+      ],
+      "live_verified": false
+    },
+    {
+      "mev_id": "MEV-04-017",
+      "family_id": "MEV-04",
+      "name": "Rebasing-token arbitrage",
+      "detector_id": "P_PEG",
+      "required_surface": "PARITY_REDEMPTION",
+      "canonical_module": "parity_redemption_engine",
+      "execution_class": "DETERMINISTIC_IF_REDEEMABLE",
+      "dispatch_status": "NEEDS_ROUTE_DATA",
+      "cartridge_files": [
+        "backend/searcher-rs/cartridges/strategies/mev_04_017_rebasing_token_arbitrage.rhai"
+      ],
+      "live_verified": false
+    },
+    {
+      "mev_id": "MEV-04-018",
+      "family_id": "MEV-04",
+      "name": "Fee-on-transfer token arbitrage",
+      "detector_id": "P_PEG",
+      "required_surface": "PARITY_REDEMPTION",
+      "canonical_module": "parity_redemption_engine",
+      "execution_class": "DETERMINISTIC_IF_REDEEMABLE",
+      "dispatch_status": "NEEDS_ROUTE_DATA",
+      "cartridge_files": [
+        "backend/searcher-rs/cartridges/strategies/mev_04_018_fee_on_transfer_token_arbitrage.rhai"
+      ],
+      "live_verified": false
+    },
+    {
+      "mev_id": "MEV-04-019",
+      "family_id": "MEV-04",
+      "name": "Liquid-staking-token arbitrage",
+      "detector_id": "P_LST",
+      "required_surface": "PARITY_REDEMPTION",
+      "canonical_module": "parity_redemption_engine",
+      "execution_class": "SETTLEMENT_DELAY_SENSITIVE",
+      "dispatch_status": "NEEDS_ROUTE_DATA",
+      "cartridge_files": [
+        "backend/searcher-rs/cartridges/strategies/mev_04_019_liquid_staking_token_arbitrage.rhai"
+      ],
+      "live_verified": false
+    },
+    {
+      "mev_id": "MEV-04-020",
+      "family_id": "MEV-04",
+      "name": "LST redemption arbitrage",
+      "detector_id": "P_LST",
+      "required_surface": "PARITY_REDEMPTION",
+      "canonical_module": "parity_redemption_engine",
+      "execution_class": "SETTLEMENT_DELAY_SENSITIVE",
+      "dispatch_status": "NEEDS_ROUTE_DATA",
+      "cartridge_files": [
+        "backend/searcher-rs/cartridges/strategies/mev_04_020_lst_redemption_arbitrage.rhai"
+      ],
+      "live_verified": false
+    },
+    {
+      "mev_id": "MEV-04-021",
+      "family_id": "MEV-04",
+      "name": "Liquid-restaking-token arbitrage",
+      "detector_id": "P_LST",
+      "required_surface": "PARITY_REDEMPTION",
+      "canonical_module": "parity_redemption_engine",
+      "execution_class": "SETTLEMENT_DELAY_SENSITIVE",
+      "dispatch_status": "NEEDS_ROUTE_DATA",
+      "cartridge_files": [
+        "backend/searcher-rs/cartridges/strategies/mev_04_021_liquid_restaking_token_arbitrage.rhai"
+      ],
+      "live_verified": false
+    },
+    {
+      "mev_id": "MEV-04-022",
+      "family_id": "MEV-04",
+      "name": "Cross-LST arbitrage",
+      "detector_id": "P_LST",
+      "required_surface": "PARITY_REDEMPTION",
+      "canonical_module": "parity_redemption_engine",
+      "execution_class": "SETTLEMENT_DELAY_SENSITIVE",
+      "dispatch_status": "NEEDS_ROUTE_DATA",
+      "cartridge_files": [
+        "backend/searcher-rs/cartridges/strategies/mev_04_022_cross_lst_arbitrage.rhai"
+      ],
+      "live_verified": false
+    },
+    {
+      "mev_id": "MEV-04-023",
+      "family_id": "MEV-04",
+      "name": "Governance-wrapper arbitrage",
+      "detector_id": "P_WRAP",
+      "required_surface": "PARITY_REDEMPTION",
+      "canonical_module": "parity_redemption_engine",
+      "execution_class": "DETERMINISTIC_IF_CONVERTIBLE",
+      "dispatch_status": "NEEDS_ROUTE_DATA",
+      "cartridge_files": [
+        "backend/searcher-rs/cartridges/strategies/mev_04_023_governance_wrapper_arbitrage.rhai"
+      ],
+      "live_verified": false
+    },
+    {
+      "mev_id": "MEV-04-024",
+      "family_id": "MEV-04",
+      "name": "Vote-escrow derivative arbitrage",
+      "detector_id": "P_YIELD",
+      "required_surface": "PARITY_REDEMPTION",
+      "canonical_module": "parity_redemption_engine",
+      "execution_class": "DETERMINISTIC_IF_SETTLEABLE",
+      "dispatch_status": "NEEDS_ROUTE_DATA",
+      "cartridge_files": [
+        "backend/searcher-rs/cartridges/strategies/mev_04_024_vote_escrow_derivative_arbitrage.rhai"
+      ],
+      "live_verified": false
+    },
+    {
+      "mev_id": "MEV-04-025",
+      "family_id": "MEV-04",
+      "name": "Tokenized-position arbitrage",
+      "detector_id": "P_NAV",
+      "required_surface": "PARITY_REDEMPTION",
+      "canonical_module": "parity_redemption_engine",
+      "execution_class": "DETERMINISTIC_IF_REDEEMABLE",
+      "dispatch_status": "NEEDS_ROUTE_DATA",
+      "cartridge_files": [
+        "backend/searcher-rs/cartridges/strategies/mev_04_025_tokenized_position_arbitrage.rhai"
+      ],
+      "live_verified": false
+    },
+    {
+      "mev_id": "MEV-04-026",
+      "family_id": "MEV-04",
+      "name": "Principal-token arbitrage",
+      "detector_id": "P_PTYT",
+      "required_surface": "PARITY_REDEMPTION",
+      "canonical_module": "parity_redemption_engine",
+      "execution_class": "DETERMINISTIC_IF_REDEEMABLE",
+      "dispatch_status": "NEEDS_ROUTE_DATA",
+      "cartridge_files": [
+        "backend/searcher-rs/cartridges/strategies/mev_04_026_principal_token_arbitrage.rhai"
+      ],
+      "live_verified": false
+    },
+    {
+      "mev_id": "MEV-04-027",
+      "family_id": "MEV-04",
+      "name": "Yield-token arbitrage",
+      "detector_id": "P_PTYT",
+      "required_surface": "PARITY_REDEMPTION",
+      "canonical_module": "parity_redemption_engine",
+      "execution_class": "DETERMINISTIC_IF_REDEEMABLE",
+      "dispatch_status": "NEEDS_ROUTE_DATA",
+      "cartridge_files": [
+        "backend/searcher-rs/cartridges/strategies/mev_04_027_yield_token_arbitrage.rhai"
+      ],
+      "live_verified": false
+    },
+    {
+      "mev_id": "MEV-04-028",
+      "family_id": "MEV-04",
+      "name": "PT–YT parity arbitrage",
+      "detector_id": "P_PTYT",
+      "required_surface": "PARITY_REDEMPTION",
+      "canonical_module": "parity_redemption_engine",
+      "execution_class": "DETERMINISTIC_IF_REDEEMABLE",
+      "dispatch_status": "NEEDS_ROUTE_DATA",
+      "cartridge_files": [
+        "backend/searcher-rs/cartridges/strategies/mev_04_028_pt_yt_parity_arbitrage.rhai"
+      ],
+      "live_verified": false
+    },
+    {
+      "mev_id": "MEV-04-029",
+      "family_id": "MEV-04",
+      "name": "Cross-maturity yield arbitrage",
+      "detector_id": "P_YIELD",
+      "required_surface": "PARITY_REDEMPTION",
+      "canonical_module": "parity_redemption_engine",
+      "execution_class": "DETERMINISTIC_IF_SETTLEABLE",
+      "dispatch_status": "NEEDS_ROUTE_DATA",
+      "cartridge_files": [
+        "backend/searcher-rs/cartridges/strategies/mev_04_029_cross_maturity_yield_arbitrage.rhai"
+      ],
+      "live_verified": false
+    },
+    {
+      "mev_id": "MEV-04-030",
+      "family_id": "MEV-04",
+      "name": "Fixed-yield/floating-yield arbitrage",
+      "detector_id": "P_YIELD",
+      "required_surface": "PARITY_REDEMPTION",
+      "canonical_module": "parity_redemption_engine",
+      "execution_class": "DETERMINISTIC_IF_SETTLEABLE",
+      "dispatch_status": "NEEDS_ROUTE_DATA",
+      "cartridge_files": [
+        "backend/searcher-rs/cartridges/strategies/mev_04_030_fixed_yield_floating_yield_arbitrage.rhai"
+      ],
+      "live_verified": false
+    },
+    {
+      "mev_id": "MEV-04-031",
+      "family_id": "MEV-04",
+      "name": "Points/pre-token arbitrage",
+      "detector_id": "OBSERVE",
+      "required_surface": "PARITY_REDEMPTION",
+      "canonical_module": "parity_redemption_engine",
+      "execution_class": "OBSERVE_ONLY",
+      "dispatch_status": "OBSERVE_ONLY",
+      "cartridge_files": [
+        "backend/searcher-rs/cartridges/strategies/mev_04_031_points_pre_token_arbitrage.rhai"
+      ],
+      "live_verified": false
+    },
+    {
+      "mev_id": "MEV-05-001",
+      "family_id": "MEV-05",
+      "name": "CEX–DEX spot arbitrage",
+      "detector_id": "C_CEXDEX",
+      "required_surface": "CEX_DEX",
+      "canonical_module": "cex_external_engine",
+      "execution_class": "EXTERNAL_DATA_REQUIRED",
+      "dispatch_status": "NEEDS_ROUTE_DATA",
+      "cartridge_files": [
+        "backend/searcher-rs/cartridges/strategies/mev_05_001_cex_dex_spot_arbitrage.rhai"
+      ],
+      "live_verified": false
+    },
+    {
+      "mev_id": "MEV-05-002",
+      "family_id": "MEV-05",
+      "name": "DEX–CEX spot arbitrage",
+      "detector_id": "C_CEXDEX",
+      "required_surface": "CEX_DEX",
+      "canonical_module": "cex_external_engine",
+      "execution_class": "EXTERNAL_DATA_REQUIRED",
+      "dispatch_status": "NEEDS_ROUTE_DATA",
+      "cartridge_files": [
+        "backend/searcher-rs/cartridges/strategies/mev_05_002_dex_cex_spot_arbitrage.rhai"
+      ],
+      "live_verified": false
+    },
+    {
+      "mev_id": "MEV-05-003",
+      "family_id": "MEV-05",
+      "name": "CEX–DEX triangular arbitrage",
+      "detector_id": "C_CEXDEX",
+      "required_surface": "CEX_DEX",
+      "canonical_module": "cex_external_engine",
+      "execution_class": "EXTERNAL_DATA_REQUIRED",
+      "dispatch_status": "NEEDS_ROUTE_DATA",
+      "cartridge_files": [
+        "backend/searcher-rs/cartridges/strategies/mev_05_003_cex_dex_triangular_arbitrage.rhai"
+      ],
+      "live_verified": false
+    },
+    {
+      "mev_id": "MEV-05-004",
+      "family_id": "MEV-05",
+      "name": "CEX–multi-DEX arbitrage",
+      "detector_id": "C_CEXDEX",
+      "required_surface": "CEX_DEX",
+      "canonical_module": "cex_external_engine",
+      "execution_class": "EXTERNAL_DATA_REQUIRED",
+      "dispatch_status": "NEEDS_ROUTE_DATA",
+      "cartridge_files": [
+        "backend/searcher-rs/cartridges/strategies/mev_05_004_cex_multi_dex_arbitrage.rhai"
+      ],
+      "live_verified": false
+    },
+    {
+      "mev_id": "MEV-05-005",
+      "family_id": "MEV-05",
+      "name": "Multi-CEX–DEX arbitrage",
+      "detector_id": "C_CEXDEX",
+      "required_surface": "CEX_DEX",
+      "canonical_module": "cex_external_engine",
+      "execution_class": "EXTERNAL_DATA_REQUIRED",
+      "dispatch_status": "NEEDS_ROUTE_DATA",
+      "cartridge_files": [
+        "backend/searcher-rs/cartridges/strategies/mev_05_005_multi_cex_dex_arbitrage.rhai"
+      ],
+      "live_verified": false
+    },
+    {
+      "mev_id": "MEV-05-006",
+      "family_id": "MEV-05",
+      "name": "CEX order-book–AMM arbitrage",
+      "detector_id": "C_CEXDEX",
+      "required_surface": "CEX_DEX",
+      "canonical_module": "cex_external_engine",
+      "execution_class": "EXTERNAL_DATA_REQUIRED",
+      "dispatch_status": "NEEDS_ROUTE_DATA",
+      "cartridge_files": [
+        "backend/searcher-rs/cartridges/strategies/mev_05_006_cex_order_book_amm_arbitrage.rhai"
+      ],
+      "live_verified": false
+    },
+    {
+      "mev_id": "MEV-05-007",
+      "family_id": "MEV-05",
+      "name": "CEX futures–DEX spot arbitrage",
+      "detector_id": "C_CEXDERIV",
+      "required_surface": "CEX_DEX",
+      "canonical_module": "cex_external_engine",
+      "execution_class": "EXTERNAL_DATA_REQUIRED",
+      "dispatch_status": "NEEDS_ROUTE_DATA",
+      "cartridge_files": [
+        "backend/searcher-rs/cartridges/strategies/mev_05_007_cex_futures_dex_spot_arbitrage.rhai"
+      ],
+      "live_verified": false
+    },
+    {
+      "mev_id": "MEV-05-008",
+      "family_id": "MEV-05",
+      "name": "CEX perpetual–DEX spot arbitrage",
+      "detector_id": "C_CEXDERIV",
+      "required_surface": "CEX_DEX",
+      "canonical_module": "cex_external_engine",
+      "execution_class": "EXTERNAL_DATA_REQUIRED",
+      "dispatch_status": "NEEDS_ROUTE_DATA",
+      "cartridge_files": [
+        "backend/searcher-rs/cartridges/strategies/mev_05_008_cex_perpetual_dex_spot_arbitrage.rhai"
+      ],
+      "live_verified": false
+    },
+    {
+      "mev_id": "MEV-05-009",
+      "family_id": "MEV-05",
+      "name": "CEX price-lead latency arbitrage",
+      "detector_id": "E_LATENCY",
+      "required_surface": "CEX_DEX",
+      "canonical_module": "cex_external_engine",
+      "execution_class": "LATENCY_SENSITIVE",
+      "dispatch_status": "NEEDS_ROUTE_DATA",
+      "cartridge_files": [
+        "backend/searcher-rs/cartridges/strategies/mev_05_009_cex_price_lead_latency_arbitrage.rhai"
+      ],
+      "live_verified": false
+    },
+    {
+      "mev_id": "MEV-05-010",
+      "family_id": "MEV-05",
+      "name": "DEX price-lead arbitrage",
+      "detector_id": "E_LATENCY",
+      "required_surface": "CEX_DEX",
+      "canonical_module": "cex_external_engine",
+      "execution_class": "LATENCY_SENSITIVE",
+      "dispatch_status": "NEEDS_ROUTE_DATA",
+      "cartridge_files": [
+        "backend/searcher-rs/cartridges/strategies/mev_05_010_dex_price_lead_arbitrage.rhai"
+      ],
+      "live_verified": false
+    },
+    {
+      "mev_id": "MEV-05-011",
+      "family_id": "MEV-05",
+      "name": "OTC–DEX arbitrage",
+      "detector_id": "C_CEXDEX",
+      "required_surface": "CEX_DEX",
+      "canonical_module": "cex_external_engine",
+      "execution_class": "EXTERNAL_DATA_REQUIRED",
+      "dispatch_status": "NEEDS_ROUTE_DATA",
+      "cartridge_files": [
+        "backend/searcher-rs/cartridges/strategies/mev_05_011_otc_dex_arbitrage.rhai"
+      ],
+      "live_verified": false
+    },
+    {
+      "mev_id": "MEV-05-012",
+      "family_id": "MEV-05",
+      "name": "Market-maker inventory–DEX arbitrage",
+      "detector_id": "C_CEXDEX",
+      "required_surface": "CEX_DEX",
+      "canonical_module": "cex_external_engine",
+      "execution_class": "EXTERNAL_DATA_REQUIRED",
+      "dispatch_status": "NEEDS_ROUTE_DATA",
+      "cartridge_files": [
+        "backend/searcher-rs/cartridges/strategies/mev_05_012_market_maker_inventory_dex_arbitrage.rhai"
+      ],
+      "live_verified": false
+    },
+    {
+      "mev_id": "MEV-05-013",
+      "family_id": "MEV-05",
+      "name": "Cross-custodian arbitrage",
+      "detector_id": "C_CEXDEX",
+      "required_surface": "CEX_DEX",
+      "canonical_module": "cex_external_engine",
+      "execution_class": "EXTERNAL_DATA_REQUIRED",
+      "dispatch_status": "NEEDS_ROUTE_DATA",
+      "cartridge_files": [
+        "backend/searcher-rs/cartridges/strategies/mev_05_013_cross_custodian_arbitrage.rhai"
+      ],
+      "live_verified": false
+    },
+    {
+      "mev_id": "MEV-05-014",
+      "family_id": "MEV-05",
+      "name": "Fiat–stablecoin–DEX arbitrage",
+      "detector_id": "C_CEXDEX",
+      "required_surface": "CEX_DEX",
+      "canonical_module": "cex_external_engine",
+      "execution_class": "EXTERNAL_DATA_REQUIRED",
+      "dispatch_status": "NEEDS_ROUTE_DATA",
+      "cartridge_files": [
+        "backend/searcher-rs/cartridges/strategies/mev_05_014_fiat_stablecoin_dex_arbitrage.rhai"
+      ],
+      "live_verified": false
+    },
+    {
+      "mev_id": "MEV-06-001",
+      "family_id": "MEV-06",
+      "name": "L1–L1 arbitrage",
+      "detector_id": "X_PREPOS",
+      "required_surface": "CROSS_CHAIN",
+      "canonical_module": "cross_domain_engine",
+      "execution_class": "NONATOMIC_INVENTORY_REQUIRED",
+      "dispatch_status": "NEEDS_ROUTE_DATA",
+      "cartridge_files": [
+        "backend/searcher-rs/cartridges/strategies/mev_06_001_l1_l1_arbitrage.rhai"
+      ],
+      "live_verified": false
+    },
+    {
+      "mev_id": "MEV-06-002",
+      "family_id": "MEV-06",
+      "name": "L1–L2 arbitrage",
+      "detector_id": "X_PREPOS",
+      "required_surface": "CROSS_CHAIN",
+      "canonical_module": "cross_domain_engine",
+      "execution_class": "NONATOMIC_INVENTORY_REQUIRED",
+      "dispatch_status": "NEEDS_ROUTE_DATA",
+      "cartridge_files": [
+        "backend/searcher-rs/cartridges/strategies/mev_06_002_l1_l2_arbitrage.rhai"
+      ],
+      "live_verified": false
+    },
+    {
+      "mev_id": "MEV-06-003",
+      "family_id": "MEV-06",
+      "name": "L2–L1 arbitrage",
+      "detector_id": "X_PREPOS",
+      "required_surface": "CROSS_CHAIN",
+      "canonical_module": "cross_domain_engine",
+      "execution_class": "NONATOMIC_INVENTORY_REQUIRED",
+      "dispatch_status": "NEEDS_ROUTE_DATA",
+      "cartridge_files": [
+        "backend/searcher-rs/cartridges/strategies/mev_06_003_l2_l1_arbitrage.rhai"
+      ],
+      "live_verified": false
+    },
+    {
+      "mev_id": "MEV-06-004",
+      "family_id": "MEV-06",
+      "name": "L2–L2 cross-rollup arbitrage",
+      "detector_id": "X_PREPOS",
+      "required_surface": "CROSS_CHAIN",
+      "canonical_module": "cross_domain_engine",
+      "execution_class": "NONATOMIC_INVENTORY_REQUIRED",
+      "dispatch_status": "NEEDS_ROUTE_DATA",
+      "cartridge_files": [
+        "backend/searcher-rs/cartridges/strategies/mev_06_004_l2_l2_cross_rollup_arbitrage.rhai"
+      ],
+      "live_verified": false
+    },
+    {
+      "mev_id": "MEV-06-005",
+      "family_id": "MEV-06",
+      "name": "Rollup–sidechain arbitrage",
+      "detector_id": "X_PREPOS",
+      "required_surface": "CROSS_CHAIN",
+      "canonical_module": "cross_domain_engine",
+      "execution_class": "NONATOMIC_INVENTORY_REQUIRED",
+      "dispatch_status": "NEEDS_ROUTE_DATA",
+      "cartridge_files": [
+        "backend/searcher-rs/cartridges/strategies/mev_06_005_rollup_sidechain_arbitrage.rhai"
+      ],
+      "live_verified": false
+    },
+    {
+      "mev_id": "MEV-06-006",
+      "family_id": "MEV-06",
+      "name": "Sidechain–sidechain arbitrage",
+      "detector_id": "X_PREPOS",
+      "required_surface": "CROSS_CHAIN",
+      "canonical_module": "cross_domain_engine",
+      "execution_class": "NONATOMIC_INVENTORY_REQUIRED",
+      "dispatch_status": "NEEDS_ROUTE_DATA",
+      "cartridge_files": [
+        "backend/searcher-rs/cartridges/strategies/mev_06_006_sidechain_sidechain_arbitrage.rhai"
+      ],
+      "live_verified": false
+    },
+    {
+      "mev_id": "MEV-06-007",
+      "family_id": "MEV-06",
+      "name": "Appchain arbitrage",
+      "detector_id": "X_PREPOS",
+      "required_surface": "CROSS_CHAIN",
+      "canonical_module": "cross_domain_engine",
+      "execution_class": "NONATOMIC_INVENTORY_REQUIRED",
+      "dispatch_status": "NEEDS_ROUTE_DATA",
+      "cartridge_files": [
+        "backend/searcher-rs/cartridges/strategies/mev_06_007_appchain_arbitrage.rhai"
+      ],
+      "live_verified": false
+    },
+    {
+      "mev_id": "MEV-06-008",
+      "family_id": "MEV-06",
+      "name": "Cross-VM arbitrage",
+      "detector_id": "X_BRIDGE",
+      "required_surface": "CROSS_CHAIN",
+      "canonical_module": "cross_domain_engine",
+      "execution_class": "NONATOMIC_BRIDGE_REQUIRED",
+      "dispatch_status": "NEEDS_ROUTE_DATA",
+      "cartridge_files": [
+        "backend/searcher-rs/cartridges/strategies/mev_06_008_cross_vm_arbitrage.rhai"
+      ],
+      "live_verified": false
+    },
+    {
+      "mev_id": "MEV-06-009",
+      "family_id": "MEV-06",
+      "name": "Cross-consensus arbitrage",
+      "detector_id": "X_BRIDGE",
+      "required_surface": "CROSS_CHAIN",
+      "canonical_module": "cross_domain_engine",
+      "execution_class": "NONATOMIC_BRIDGE_REQUIRED",
+      "dispatch_status": "NEEDS_ROUTE_DATA",
+      "cartridge_files": [
+        "backend/searcher-rs/cartridges/strategies/mev_06_009_cross_consensus_arbitrage.rhai"
+      ],
+      "live_verified": false
+    },
+    {
+      "mev_id": "MEV-06-010",
+      "family_id": "MEV-06",
+      "name": "Cross-domain DEX–DEX arbitrage",
+      "detector_id": "X_PREPOS",
+      "required_surface": "CROSS_CHAIN",
+      "canonical_module": "cross_domain_engine",
+      "execution_class": "NONATOMIC_INVENTORY_REQUIRED",
+      "dispatch_status": "NEEDS_ROUTE_DATA",
+      "cartridge_files": [
+        "backend/searcher-rs/cartridges/strategies/mev_06_010_cross_domain_dex_dex_arbitrage.rhai"
+      ],
+      "live_verified": false
+    },
+    {
+      "mev_id": "MEV-06-011",
+      "family_id": "MEV-06",
+      "name": "Cross-domain triangular arbitrage",
+      "detector_id": "X_PREPOS",
+      "required_surface": "CROSS_CHAIN",
+      "canonical_module": "cross_domain_engine",
+      "execution_class": "NONATOMIC_INVENTORY_REQUIRED",
+      "dispatch_status": "NEEDS_ROUTE_DATA",
+      "cartridge_files": [
+        "backend/searcher-rs/cartridges/strategies/mev_06_011_cross_domain_triangular_arbitrage.rhai"
+      ],
+      "live_verified": false
+    },
+    {
+      "mev_id": "MEV-06-012",
+      "family_id": "MEV-06",
+      "name": "Cross-chain cyclic arbitrage",
+      "detector_id": "X_BRIDGE",
+      "required_surface": "CROSS_CHAIN",
+      "canonical_module": "cross_domain_engine",
+      "execution_class": "NONATOMIC_BRIDGE_REQUIRED",
+      "dispatch_status": "NEEDS_ROUTE_DATA",
+      "cartridge_files": [
+        "backend/searcher-rs/cartridges/strategies/mev_06_012_cross_chain_cyclic_arbitrage.rhai"
+      ],
+      "live_verified": false
+    },
+    {
+      "mev_id": "MEV-06-013",
+      "family_id": "MEV-06",
+      "name": "Multi-chain N-leg arbitrage",
+      "detector_id": "X_BRIDGE",
+      "required_surface": "CROSS_CHAIN",
+      "canonical_module": "cross_domain_engine",
+      "execution_class": "NONATOMIC_BRIDGE_REQUIRED",
+      "dispatch_status": "NEEDS_ROUTE_DATA",
+      "cartridge_files": [
+        "backend/searcher-rs/cartridges/strategies/mev_06_013_multi_chain_n_leg_arbitrage.rhai"
+      ],
+      "live_verified": false
+    },
+    {
+      "mev_id": "MEV-06-014",
+      "family_id": "MEV-06",
+      "name": "Canonical bridge arbitrage",
+      "detector_id": "X_BRIDGE",
+      "required_surface": "CROSS_CHAIN",
+      "canonical_module": "cross_domain_engine",
+      "execution_class": "NONATOMIC_BRIDGE_REQUIRED",
+      "dispatch_status": "NEEDS_ROUTE_DATA",
+      "cartridge_files": [
+        "backend/searcher-rs/cartridges/strategies/mev_06_014_canonical_bridge_arbitrage.rhai"
+      ],
+      "live_verified": false
+    },
+    {
+      "mev_id": "MEV-06-015",
+      "family_id": "MEV-06",
+      "name": "Fast-bridge arbitrage",
+      "detector_id": "X_BRIDGE",
+      "required_surface": "CROSS_CHAIN",
+      "canonical_module": "cross_domain_engine",
+      "execution_class": "NONATOMIC_BRIDGE_REQUIRED",
+      "dispatch_status": "NEEDS_ROUTE_DATA",
+      "cartridge_files": [
+        "backend/searcher-rs/cartridges/strategies/mev_06_015_fast_bridge_arbitrage.rhai"
+      ],
+      "live_verified": false
+    },
+    {
+      "mev_id": "MEV-06-016",
+      "family_id": "MEV-06",
+      "name": "Bridge-rate arbitrage",
+      "detector_id": "X_BRIDGE",
+      "required_surface": "CROSS_CHAIN",
+      "canonical_module": "cross_domain_engine",
+      "execution_class": "NONATOMIC_BRIDGE_REQUIRED",
+      "dispatch_status": "NEEDS_ROUTE_DATA",
+      "cartridge_files": [
+        "backend/searcher-rs/cartridges/strategies/mev_06_016_bridge_rate_arbitrage.rhai"
+      ],
+      "live_verified": false
+    },
+    {
+      "mev_id": "MEV-06-017",
+      "family_id": "MEV-06",
+      "name": "Bridge-liquidity arbitrage",
+      "detector_id": "X_BRIDGE",
+      "required_surface": "CROSS_CHAIN",
+      "canonical_module": "cross_domain_engine",
+      "execution_class": "NONATOMIC_BRIDGE_REQUIRED",
+      "dispatch_status": "NEEDS_ROUTE_DATA",
+      "cartridge_files": [
+        "backend/searcher-rs/cartridges/strategies/mev_06_017_bridge_liquidity_arbitrage.rhai"
+      ],
+      "live_verified": false
+    },
+    {
+      "mev_id": "MEV-06-018",
+      "family_id": "MEV-06",
+      "name": "Bridge-rebalancing arbitrage",
+      "detector_id": "X_BRIDGE",
+      "required_surface": "CROSS_CHAIN",
+      "canonical_module": "cross_domain_engine",
+      "execution_class": "NONATOMIC_BRIDGE_REQUIRED",
+      "dispatch_status": "NEEDS_ROUTE_DATA",
+      "cartridge_files": [
+        "backend/searcher-rs/cartridges/strategies/mev_06_018_bridge_rebalancing_arbitrage.rhai"
+      ],
+      "live_verified": false
+    },
+    {
+      "mev_id": "MEV-06-019",
+      "family_id": "MEV-06",
+      "name": "Canonical-vs-fast-bridge arbitrage",
+      "detector_id": "X_BRIDGE",
+      "required_surface": "CROSS_CHAIN",
+      "canonical_module": "cross_domain_engine",
+      "execution_class": "NONATOMIC_BRIDGE_REQUIRED",
+      "dispatch_status": "NEEDS_ROUTE_DATA",
+      "cartridge_files": [
+        "backend/searcher-rs/cartridges/strategies/mev_06_019_canonical_vs_fast_bridge_arbitrage.rhai"
+      ],
+      "live_verified": false
+    },
+    {
+      "mev_id": "MEV-06-020",
+      "family_id": "MEV-06",
+      "name": "Wrapped-representation arbitrage",
+      "detector_id": "X_BRIDGE",
+      "required_surface": "CROSS_CHAIN",
+      "canonical_module": "cross_domain_engine",
+      "execution_class": "NONATOMIC_BRIDGE_REQUIRED",
+      "dispatch_status": "NEEDS_ROUTE_DATA",
+      "cartridge_files": [
+        "backend/searcher-rs/cartridges/strategies/mev_06_020_wrapped_representation_arbitrage.rhai"
+      ],
+      "live_verified": false
+    },
+    {
+      "mev_id": "MEV-06-021",
+      "family_id": "MEV-06",
+      "name": "Message-latency arbitrage",
+      "detector_id": "X_BRIDGE",
+      "required_surface": "CROSS_CHAIN",
+      "canonical_module": "cross_domain_engine",
+      "execution_class": "NONATOMIC_BRIDGE_REQUIRED",
+      "dispatch_status": "NEEDS_ROUTE_DATA",
+      "cartridge_files": [
+        "backend/searcher-rs/cartridges/strategies/mev_06_021_message_latency_arbitrage.rhai"
+      ],
+      "live_verified": false
+    },
+    {
+      "mev_id": "MEV-06-022",
+      "family_id": "MEV-06",
+      "name": "Finality-delay arbitrage",
+      "detector_id": "X_BRIDGE",
+      "required_surface": "CROSS_CHAIN",
+      "canonical_module": "cross_domain_engine",
+      "execution_class": "NONATOMIC_BRIDGE_REQUIRED",
+      "dispatch_status": "NEEDS_ROUTE_DATA",
+      "cartridge_files": [
+        "backend/searcher-rs/cartridges/strategies/mev_06_022_finality_delay_arbitrage.rhai"
+      ],
+      "live_verified": false
+    },
+    {
+      "mev_id": "MEV-06-023",
+      "family_id": "MEV-06",
+      "name": "Pre-positioned inventory arbitrage",
+      "detector_id": "X_PREPOS",
+      "required_surface": "CROSS_CHAIN",
+      "canonical_module": "cross_domain_engine",
+      "execution_class": "NONATOMIC_INVENTORY_REQUIRED",
+      "dispatch_status": "NEEDS_ROUTE_DATA",
+      "cartridge_files": [
+        "backend/searcher-rs/cartridges/strategies/mev_06_023_pre_positioned_inventory_arbitrage.rhai"
+      ],
+      "live_verified": false
+    },
+    {
+      "mev_id": "MEV-06-024",
+      "family_id": "MEV-06",
+      "name": "Bridge-in-the-loop arbitrage",
+      "detector_id": "X_BRIDGE",
+      "required_surface": "CROSS_CHAIN",
+      "canonical_module": "cross_domain_engine",
+      "execution_class": "NONATOMIC_BRIDGE_REQUIRED",
+      "dispatch_status": "NEEDS_ROUTE_DATA",
+      "cartridge_files": [
+        "backend/searcher-rs/cartridges/strategies/mev_06_024_bridge_in_the_loop_arbitrage.rhai"
+      ],
+      "live_verified": false
+    },
+    {
+      "mev_id": "MEV-06-025",
+      "family_id": "MEV-06",
+      "name": "Cross-chain intent arbitrage",
+      "detector_id": "X_BRIDGE",
+      "required_surface": "CROSS_CHAIN",
+      "canonical_module": "cross_domain_engine",
+      "execution_class": "NONATOMIC_BRIDGE_REQUIRED",
+      "dispatch_status": "NEEDS_ROUTE_DATA",
+      "cartridge_files": [
+        "backend/searcher-rs/cartridges/strategies/mev_06_025_cross_chain_intent_arbitrage.rhai"
+      ],
+      "live_verified": false
+    },
+    {
+      "mev_id": "MEV-06-026",
+      "family_id": "MEV-06",
+      "name": "Cross-chain solver arbitrage",
+      "detector_id": "X_BRIDGE",
+      "required_surface": "CROSS_CHAIN",
+      "canonical_module": "cross_domain_engine",
+      "execution_class": "NONATOMIC_BRIDGE_REQUIRED",
+      "dispatch_status": "NEEDS_ROUTE_DATA",
+      "cartridge_files": [
+        "backend/searcher-rs/cartridges/strategies/mev_06_026_cross_chain_solver_arbitrage.rhai"
+      ],
+      "live_verified": false
+    },
+    {
+      "mev_id": "MEV-06-027",
+      "family_id": "MEV-06",
+      "name": "Shared-sequencer arbitrage",
+      "detector_id": "X_PREPOS",
+      "required_surface": "CROSS_CHAIN",
+      "canonical_module": "cross_domain_engine",
+      "execution_class": "NONATOMIC_INVENTORY_REQUIRED",
+      "dispatch_status": "NEEDS_ROUTE_DATA",
+      "cartridge_files": [
+        "backend/searcher-rs/cartridges/strategies/mev_06_027_shared_sequencer_arbitrage.rhai"
+      ],
+      "live_verified": false
+    },
+    {
+      "mev_id": "MEV-06-028",
+      "family_id": "MEV-06",
+      "name": "Sequencer–builder cross-domain arbitrage",
+      "detector_id": "X_PREPOS",
+      "required_surface": "CROSS_CHAIN",
+      "canonical_module": "cross_domain_engine",
+      "execution_class": "NONATOMIC_INVENTORY_REQUIRED",
+      "dispatch_status": "NEEDS_ROUTE_DATA",
+      "cartridge_files": [
+        "backend/searcher-rs/cartridges/strategies/mev_06_028_sequencer_builder_cross_domain_arbitrage.rhai"
+      ],
+      "live_verified": false
+    },
+    {
+      "mev_id": "MEV-06-029",
+      "family_id": "MEV-06",
+      "name": "Cross-domain oracle arbitrage",
+      "detector_id": "X_ORACLE",
+      "required_surface": "CROSS_CHAIN",
+      "canonical_module": "cross_domain_engine",
+      "execution_class": "EXTERNAL_SETTLEMENT_REQUIRED",
+      "dispatch_status": "NEEDS_ROUTE_DATA",
+      "cartridge_files": [
+        "backend/searcher-rs/cartridges/strategies/mev_06_029_cross_domain_oracle_arbitrage.rhai"
+      ],
+      "live_verified": false
+    },
+    {
+      "mev_id": "MEV-06-030",
+      "family_id": "MEV-06",
+      "name": "Cross-chain liquidation arbitrage",
+      "detector_id": "X_ORACLE",
+      "required_surface": "CROSS_CHAIN",
+      "canonical_module": "cross_domain_engine",
+      "execution_class": "EXTERNAL_SETTLEMENT_REQUIRED",
+      "dispatch_status": "NEEDS_ROUTE_DATA",
+      "cartridge_files": [
+        "backend/searcher-rs/cartridges/strategies/mev_06_030_cross_chain_liquidation_arbitrage.rhai"
+      ],
+      "live_verified": false
+    },
+    {
+      "mev_id": "MEV-07-001",
+      "family_id": "MEV-07",
+      "name": "Spot–perpetual arbitrage",
+      "detector_id": "D_BASIS",
+      "required_surface": "DERIVATIVES",
+      "canonical_module": "derivatives_engine",
+      "execution_class": "DERIVATIVE_DATA_REQUIRED",
+      "dispatch_status": "NEEDS_ROUTE_DATA",
+      "cartridge_files": [
+        "backend/searcher-rs/cartridges/strategies/mev_07_001_spot_perpetual_arbitrage.rhai"
+      ],
+      "live_verified": false
+    },
+    {
+      "mev_id": "MEV-07-002",
+      "family_id": "MEV-07",
+      "name": "Perpetual–perpetual arbitrage",
+      "detector_id": "D_BASIS",
+      "required_surface": "DERIVATIVES",
+      "canonical_module": "derivatives_engine",
+      "execution_class": "DERIVATIVE_DATA_REQUIRED",
+      "dispatch_status": "NEEDS_ROUTE_DATA",
+      "cartridge_files": [
+        "backend/searcher-rs/cartridges/strategies/mev_07_002_perpetual_perpetual_arbitrage.rhai"
+      ],
+      "live_verified": false
+    },
+    {
+      "mev_id": "MEV-07-003",
+      "family_id": "MEV-07",
+      "name": "Spot–future arbitrage",
+      "detector_id": "D_BASIS",
+      "required_surface": "DERIVATIVES",
+      "canonical_module": "derivatives_engine",
+      "execution_class": "DERIVATIVE_DATA_REQUIRED",
+      "dispatch_status": "NEEDS_ROUTE_DATA",
+      "cartridge_files": [
+        "backend/searcher-rs/cartridges/strategies/mev_07_003_spot_future_arbitrage.rhai"
+      ],
+      "live_verified": false
+    },
+    {
+      "mev_id": "MEV-07-004",
+      "family_id": "MEV-07",
+      "name": "Future–future arbitrage",
+      "detector_id": "D_BASIS",
+      "required_surface": "DERIVATIVES",
+      "canonical_module": "derivatives_engine",
+      "execution_class": "DERIVATIVE_DATA_REQUIRED",
+      "dispatch_status": "NEEDS_ROUTE_DATA",
+      "cartridge_files": [
+        "backend/searcher-rs/cartridges/strategies/mev_07_004_future_future_arbitrage.rhai"
+      ],
+      "live_verified": false
+    },
+    {
+      "mev_id": "MEV-07-005",
+      "family_id": "MEV-07",
+      "name": "Cash-and-carry arbitrage",
+      "detector_id": "D_BASIS",
+      "required_surface": "DERIVATIVES",
+      "canonical_module": "derivatives_engine",
+      "execution_class": "DERIVATIVE_DATA_REQUIRED",
+      "dispatch_status": "NEEDS_ROUTE_DATA",
+      "cartridge_files": [
+        "backend/searcher-rs/cartridges/strategies/mev_07_005_cash_and_carry_arbitrage.rhai"
+      ],
+      "live_verified": false
+    },
+    {
+      "mev_id": "MEV-07-006",
+      "family_id": "MEV-07",
+      "name": "Reverse cash-and-carry arbitrage",
+      "detector_id": "D_BASIS",
+      "required_surface": "DERIVATIVES",
+      "canonical_module": "derivatives_engine",
+      "execution_class": "DERIVATIVE_DATA_REQUIRED",
+      "dispatch_status": "NEEDS_ROUTE_DATA",
+      "cartridge_files": [
+        "backend/searcher-rs/cartridges/strategies/mev_07_006_reverse_cash_and_carry_arbitrage.rhai"
+      ],
+      "live_verified": false
+    },
+    {
+      "mev_id": "MEV-07-007",
+      "family_id": "MEV-07",
+      "name": "Basis arbitrage",
+      "detector_id": "D_BASIS",
+      "required_surface": "DERIVATIVES",
+      "canonical_module": "derivatives_engine",
+      "execution_class": "DERIVATIVE_DATA_REQUIRED",
+      "dispatch_status": "NEEDS_ROUTE_DATA",
+      "cartridge_files": [
+        "backend/searcher-rs/cartridges/strategies/mev_07_007_basis_arbitrage.rhai"
+      ],
+      "live_verified": false
+    },
+    {
+      "mev_id": "MEV-07-008",
+      "family_id": "MEV-07",
+      "name": "Funding-rate arbitrage",
+      "detector_id": "D_FUNDING",
+      "required_surface": "DERIVATIVES",
+      "canonical_module": "derivatives_engine",
+      "execution_class": "DERIVATIVE_DATA_REQUIRED",
+      "dispatch_status": "NEEDS_ROUTE_DATA",
+      "cartridge_files": [
+        "backend/searcher-rs/cartridges/strategies/mev_07_008_funding_rate_arbitrage.rhai"
+      ],
+      "live_verified": false
+    },
+    {
+      "mev_id": "MEV-07-009",
+      "family_id": "MEV-07",
+      "name": "Cross-exchange funding arbitrage",
+      "detector_id": "D_FUNDING",
+      "required_surface": "DERIVATIVES",
+      "canonical_module": "derivatives_engine",
+      "execution_class": "DERIVATIVE_DATA_REQUIRED",
+      "dispatch_status": "NEEDS_ROUTE_DATA",
+      "cartridge_files": [
+        "backend/searcher-rs/cartridges/strategies/mev_07_009_cross_exchange_funding_arbitrage.rhai"
+      ],
+      "live_verified": false
+    },
+    {
+      "mev_id": "MEV-07-010",
+      "family_id": "MEV-07",
+      "name": "Calendar-spread arbitrage",
+      "detector_id": "D_BASIS",
+      "required_surface": "DERIVATIVES",
+      "canonical_module": "derivatives_engine",
+      "execution_class": "DERIVATIVE_DATA_REQUIRED",
+      "dispatch_status": "NEEDS_ROUTE_DATA",
+      "cartridge_files": [
+        "backend/searcher-rs/cartridges/strategies/mev_07_010_calendar_spread_arbitrage.rhai"
+      ],
+      "live_verified": false
+    },
+    {
+      "mev_id": "MEV-07-011",
+      "family_id": "MEV-07",
+      "name": "Cross-maturity futures arbitrage",
+      "detector_id": "D_BASIS",
+      "required_surface": "DERIVATIVES",
+      "canonical_module": "derivatives_engine",
+      "execution_class": "DERIVATIVE_DATA_REQUIRED",
+      "dispatch_status": "NEEDS_ROUTE_DATA",
+      "cartridge_files": [
+        "backend/searcher-rs/cartridges/strategies/mev_07_011_cross_maturity_futures_arbitrage.rhai"
+      ],
+      "live_verified": false
+    },
+    {
+      "mev_id": "MEV-07-012",
+      "family_id": "MEV-07",
+      "name": "Index-price arbitrage",
+      "detector_id": "D_BASIS",
+      "required_surface": "DERIVATIVES",
+      "canonical_module": "derivatives_engine",
+      "execution_class": "DERIVATIVE_DATA_REQUIRED",
+      "dispatch_status": "NEEDS_ROUTE_DATA",
+      "cartridge_files": [
+        "backend/searcher-rs/cartridges/strategies/mev_07_012_index_price_arbitrage.rhai"
+      ],
+      "live_verified": false
+    },
+    {
+      "mev_id": "MEV-07-013",
+      "family_id": "MEV-07",
+      "name": "Mark-price arbitrage",
+      "detector_id": "D_BASIS",
+      "required_surface": "DERIVATIVES",
+      "canonical_module": "derivatives_engine",
+      "execution_class": "DERIVATIVE_DATA_REQUIRED",
+      "dispatch_status": "NEEDS_ROUTE_DATA",
+      "cartridge_files": [
+        "backend/searcher-rs/cartridges/strategies/mev_07_013_mark_price_arbitrage.rhai"
+      ],
+      "live_verified": false
+    },
+    {
+      "mev_id": "MEV-07-014",
+      "family_id": "MEV-07",
+      "name": "Oracle–perpetual arbitrage",
+      "detector_id": "D_BASIS",
+      "required_surface": "DERIVATIVES",
+      "canonical_module": "derivatives_engine",
+      "execution_class": "DERIVATIVE_DATA_REQUIRED",
+      "dispatch_status": "NEEDS_ROUTE_DATA",
+      "cartridge_files": [
+        "backend/searcher-rs/cartridges/strategies/mev_07_014_oracle_perpetual_arbitrage.rhai"
+      ],
+      "live_verified": false
+    },
+    {
+      "mev_id": "MEV-07-015",
+      "family_id": "MEV-07",
+      "name": "vAMM–spot arbitrage",
+      "detector_id": "D_BASIS",
+      "required_surface": "DERIVATIVES",
+      "canonical_module": "derivatives_engine",
+      "execution_class": "DERIVATIVE_DATA_REQUIRED",
+      "dispatch_status": "NEEDS_ROUTE_DATA",
+      "cartridge_files": [
+        "backend/searcher-rs/cartridges/strategies/mev_07_015_vamm_spot_arbitrage.rhai"
+      ],
+      "live_verified": false
+    },
+    {
+      "mev_id": "MEV-07-016",
+      "family_id": "MEV-07",
+      "name": "Options put–call parity arbitrage",
+      "detector_id": "D_OPTIONS_PARITY",
+      "required_surface": "DERIVATIVES",
+      "canonical_module": "derivatives_engine",
+      "execution_class": "DERIVATIVE_DATA_REQUIRED",
+      "dispatch_status": "NEEDS_ROUTE_DATA",
+      "cartridge_files": [
+        "backend/searcher-rs/cartridges/strategies/mev_07_016_options_put_call_parity_arbitrage.rhai"
+      ],
+      "live_verified": false
+    },
+    {
+      "mev_id": "MEV-07-017",
+      "family_id": "MEV-07",
+      "name": "Conversion arbitrage",
+      "detector_id": "D_OPTIONS_PARITY",
+      "required_surface": "DERIVATIVES",
+      "canonical_module": "derivatives_engine",
+      "execution_class": "DERIVATIVE_DATA_REQUIRED",
+      "dispatch_status": "NEEDS_ROUTE_DATA",
+      "cartridge_files": [
+        "backend/searcher-rs/cartridges/strategies/mev_07_017_conversion_arbitrage.rhai"
+      ],
+      "live_verified": false
+    },
+    {
+      "mev_id": "MEV-07-018",
+      "family_id": "MEV-07",
+      "name": "Reversal arbitrage",
+      "detector_id": "D_OPTIONS_PARITY",
+      "required_surface": "DERIVATIVES",
+      "canonical_module": "derivatives_engine",
+      "execution_class": "DERIVATIVE_DATA_REQUIRED",
+      "dispatch_status": "NEEDS_ROUTE_DATA",
+      "cartridge_files": [
+        "backend/searcher-rs/cartridges/strategies/mev_07_018_reversal_arbitrage.rhai"
+      ],
+      "live_verified": false
+    },
+    {
+      "mev_id": "MEV-07-019",
+      "family_id": "MEV-07",
+      "name": "Box-spread arbitrage",
+      "detector_id": "D_OPTIONS_PARITY",
+      "required_surface": "DERIVATIVES",
+      "canonical_module": "derivatives_engine",
+      "execution_class": "DERIVATIVE_DATA_REQUIRED",
+      "dispatch_status": "NEEDS_ROUTE_DATA",
+      "cartridge_files": [
+        "backend/searcher-rs/cartridges/strategies/mev_07_019_box_spread_arbitrage.rhai"
+      ],
+      "live_verified": false
+    },
+    {
+      "mev_id": "MEV-07-020",
+      "family_id": "MEV-07",
+      "name": "Cross-strike arbitrage",
+      "detector_id": "D_OPTIONS_SURFACE",
+      "required_surface": "DERIVATIVES",
+      "canonical_module": "derivatives_engine",
+      "execution_class": "DERIVATIVE_DATA_REQUIRED",
+      "dispatch_status": "NEEDS_ROUTE_DATA",
+      "cartridge_files": [
+        "backend/searcher-rs/cartridges/strategies/mev_07_020_cross_strike_arbitrage.rhai"
+      ],
+      "live_verified": false
+    },
+    {
+      "mev_id": "MEV-07-021",
+      "family_id": "MEV-07",
+      "name": "Cross-expiry options arbitrage",
+      "detector_id": "D_OPTIONS_SURFACE",
+      "required_surface": "DERIVATIVES",
+      "canonical_module": "derivatives_engine",
+      "execution_class": "DERIVATIVE_DATA_REQUIRED",
+      "dispatch_status": "NEEDS_ROUTE_DATA",
+      "cartridge_files": [
+        "backend/searcher-rs/cartridges/strategies/mev_07_021_cross_expiry_options_arbitrage.rhai"
+      ],
+      "live_verified": false
+    },
+    {
+      "mev_id": "MEV-07-022",
+      "family_id": "MEV-07",
+      "name": "Options AMM–order-book arbitrage",
+      "detector_id": "D_OPTIONS_SURFACE",
+      "required_surface": "DERIVATIVES",
+      "canonical_module": "derivatives_engine",
+      "execution_class": "DERIVATIVE_DATA_REQUIRED",
+      "dispatch_status": "NEEDS_ROUTE_DATA",
+      "cartridge_files": [
+        "backend/searcher-rs/cartridges/strategies/mev_07_022_options_amm_order_book_arbitrage.rhai"
+      ],
+      "live_verified": false
+    },
+    {
+      "mev_id": "MEV-07-023",
+      "family_id": "MEV-07",
+      "name": "Cross-venue implied-volatility arbitrage",
+      "detector_id": "D_OPTIONS_SURFACE",
+      "required_surface": "DERIVATIVES",
+      "canonical_module": "derivatives_engine",
+      "execution_class": "DERIVATIVE_DATA_REQUIRED",
+      "dispatch_status": "NEEDS_ROUTE_DATA",
+      "cartridge_files": [
+        "backend/searcher-rs/cartridges/strategies/mev_07_023_cross_venue_implied_volatility_arbitrage.rhai"
+      ],
+      "live_verified": false
+    },
+    {
+      "mev_id": "MEV-07-024",
+      "family_id": "MEV-07",
+      "name": "Volatility-surface inconsistency arbitrage",
+      "detector_id": "D_OPTIONS_SURFACE",
+      "required_surface": "DERIVATIVES",
+      "canonical_module": "derivatives_engine",
+      "execution_class": "DERIVATIVE_DATA_REQUIRED",
+      "dispatch_status": "NEEDS_ROUTE_DATA",
+      "cartridge_files": [
+        "backend/searcher-rs/cartridges/strategies/mev_07_024_volatility_surface_inconsistency_arbitrage.rhai"
+      ],
+      "live_verified": false
+    },
+    {
+      "mev_id": "MEV-07-025",
+      "family_id": "MEV-07",
+      "name": "Delta-hedged options arbitrage",
+      "detector_id": "D_OPTIONS_SURFACE",
+      "required_surface": "DERIVATIVES",
+      "canonical_module": "derivatives_engine",
+      "execution_class": "DERIVATIVE_DATA_REQUIRED",
+      "dispatch_status": "NEEDS_ROUTE_DATA",
+      "cartridge_files": [
+        "backend/searcher-rs/cartridges/strategies/mev_07_025_delta_hedged_options_arbitrage.rhai"
+      ],
+      "live_verified": false
+    },
+    {
+      "mev_id": "MEV-07-026",
+      "family_id": "MEV-07",
+      "name": "Settlement-price arbitrage",
+      "detector_id": "D_SETTLE",
+      "required_surface": "DERIVATIVES",
+      "canonical_module": "derivatives_engine",
+      "execution_class": "DERIVATIVE_DATA_REQUIRED",
+      "dispatch_status": "NEEDS_ROUTE_DATA",
+      "cartridge_files": [
+        "backend/searcher-rs/cartridges/strategies/mev_07_026_settlement_price_arbitrage.rhai"
+      ],
+      "live_verified": false
+    },
+    {
+      "mev_id": "MEV-07-027",
+      "family_id": "MEV-07",
+      "name": "Expiry arbitrage",
+      "detector_id": "D_SETTLE",
+      "required_surface": "DERIVATIVES",
+      "canonical_module": "derivatives_engine",
+      "execution_class": "DERIVATIVE_DATA_REQUIRED",
+      "dispatch_status": "NEEDS_ROUTE_DATA",
+      "cartridge_files": [
+        "backend/searcher-rs/cartridges/strategies/mev_07_027_expiry_arbitrage.rhai"
+      ],
+      "live_verified": false
+    },
+    {
+      "mev_id": "MEV-07-028",
+      "family_id": "MEV-07",
+      "name": "Derivative-liquidation arbitrage",
+      "detector_id": "D_SETTLE",
+      "required_surface": "DERIVATIVES",
+      "canonical_module": "derivatives_engine",
+      "execution_class": "DERIVATIVE_DATA_REQUIRED",
+      "dispatch_status": "NEEDS_ROUTE_DATA",
+      "cartridge_files": [
+        "backend/searcher-rs/cartridges/strategies/mev_07_028_derivative_liquidation_arbitrage.rhai"
+      ],
+      "live_verified": false
+    },
+    {
+      "mev_id": "MEV-07-029",
+      "family_id": "MEV-07",
+      "name": "Structured-product parity arbitrage",
+      "detector_id": "D_SETTLE",
+      "required_surface": "DERIVATIVES",
+      "canonical_module": "derivatives_engine",
+      "execution_class": "DERIVATIVE_DATA_REQUIRED",
+      "dispatch_status": "NEEDS_ROUTE_DATA",
+      "cartridge_files": [
+        "backend/searcher-rs/cartridges/strategies/mev_07_029_structured_product_parity_arbitrage.rhai"
+      ],
+      "live_verified": false
+    },
+    {
+      "mev_id": "MEV-07-030",
+      "family_id": "MEV-07",
+      "name": "Leverage-token rebalancing arbitrage",
+      "detector_id": "D_SETTLE",
+      "required_surface": "DERIVATIVES",
+      "canonical_module": "derivatives_engine",
+      "execution_class": "DERIVATIVE_DATA_REQUIRED",
+      "dispatch_status": "NEEDS_ROUTE_DATA",
+      "cartridge_files": [
+        "backend/searcher-rs/cartridges/strategies/mev_07_030_leverage_token_rebalancing_arbitrage.rhai"
+      ],
+      "live_verified": false
+    },
+    {
+      "mev_id": "MEV-08-001",
+      "family_id": "MEV-08",
+      "name": "Borrow-rate arbitrage",
+      "detector_id": "L_RATE",
+      "required_surface": "LENDING",
+      "canonical_module": "credit_liquidation_engine",
+      "execution_class": "DETERMINISTIC_IF_POSITIONS",
+      "dispatch_status": "NEEDS_ROUTE_DATA",
+      "cartridge_files": [
+        "backend/searcher-rs/cartridges/strategies/mev_08_001_borrow_rate_arbitrage.rhai"
+      ],
+      "live_verified": false
+    },
+    {
+      "mev_id": "MEV-08-002",
+      "family_id": "MEV-08",
+      "name": "Supply-rate arbitrage",
+      "detector_id": "L_RATE",
+      "required_surface": "LENDING",
+      "canonical_module": "credit_liquidation_engine",
+      "execution_class": "DETERMINISTIC_IF_POSITIONS",
+      "dispatch_status": "NEEDS_ROUTE_DATA",
+      "cartridge_files": [
+        "backend/searcher-rs/cartridges/strategies/mev_08_002_supply_rate_arbitrage.rhai"
+      ],
+      "live_verified": false
+    },
+    {
+      "mev_id": "MEV-08-003",
+      "family_id": "MEV-08",
+      "name": "Cross-lending-protocol arbitrage",
+      "detector_id": "L_RATE",
+      "required_surface": "LENDING",
+      "canonical_module": "credit_liquidation_engine",
+      "execution_class": "DETERMINISTIC_IF_POSITIONS",
+      "dispatch_status": "NEEDS_ROUTE_DATA",
+      "cartridge_files": [
+        "backend/searcher-rs/cartridges/strategies/mev_08_003_cross_lending_protocol_arbitrage.rhai"
+      ],
+      "live_verified": false
+    },
+    {
+      "mev_id": "MEV-08-004",
+      "family_id": "MEV-08",
+      "name": "Fixed-rate/floating-rate arbitrage",
+      "detector_id": "L_RATE",
+      "required_surface": "LENDING",
+      "canonical_module": "credit_liquidation_engine",
+      "execution_class": "DETERMINISTIC_IF_POSITIONS",
+      "dispatch_status": "NEEDS_ROUTE_DATA",
+      "cartridge_files": [
+        "backend/searcher-rs/cartridges/strategies/mev_08_004_fixed_rate_floating_rate_arbitrage.rhai"
+      ],
+      "live_verified": false
+    },
+    {
+      "mev_id": "MEV-08-005",
+      "family_id": "MEV-08",
+      "name": "Refinancing arbitrage",
+      "detector_id": "L_RATE",
+      "required_surface": "LENDING",
+      "canonical_module": "credit_liquidation_engine",
+      "execution_class": "DETERMINISTIC_IF_POSITIONS",
+      "dispatch_status": "NEEDS_ROUTE_DATA",
+      "cartridge_files": [
+        "backend/searcher-rs/cartridges/strategies/mev_08_005_refinancing_arbitrage.rhai"
+      ],
+      "live_verified": false
+    },
+    {
+      "mev_id": "MEV-08-006",
+      "family_id": "MEV-08",
+      "name": "Collateral-price arbitrage",
+      "detector_id": "L_COLLATERAL",
+      "required_surface": "LENDING",
+      "canonical_module": "credit_liquidation_engine",
+      "execution_class": "DETERMINISTIC_IF_REDEEMABLE",
+      "dispatch_status": "NEEDS_ROUTE_DATA",
+      "cartridge_files": [
+        "backend/searcher-rs/cartridges/strategies/mev_08_006_collateral_price_arbitrage.rhai"
+      ],
+      "live_verified": false
+    },
+    {
+      "mev_id": "MEV-08-007",
+      "family_id": "MEV-08",
+      "name": "Collateral-wrapper arbitrage",
+      "detector_id": "L_COLLATERAL",
+      "required_surface": "LENDING",
+      "canonical_module": "credit_liquidation_engine",
+      "execution_class": "DETERMINISTIC_IF_REDEEMABLE",
+      "dispatch_status": "NEEDS_ROUTE_DATA",
+      "cartridge_files": [
+        "backend/searcher-rs/cartridges/strategies/mev_08_007_collateral_wrapper_arbitrage.rhai"
+      ],
+      "live_verified": false
+    },
+    {
+      "mev_id": "MEV-08-008",
+      "family_id": "MEV-08",
+      "name": "Debt-token arbitrage",
+      "detector_id": "L_COLLATERAL",
+      "required_surface": "LENDING",
+      "canonical_module": "credit_liquidation_engine",
+      "execution_class": "DETERMINISTIC_IF_REDEEMABLE",
+      "dispatch_status": "NEEDS_ROUTE_DATA",
+      "cartridge_files": [
+        "backend/searcher-rs/cartridges/strategies/mev_08_008_debt_token_arbitrage.rhai"
+      ],
+      "live_verified": false
+    },
+    {
+      "mev_id": "MEV-08-009",
+      "family_id": "MEV-08",
+      "name": "Flash-loan rate arbitrage",
+      "detector_id": "L_RATE",
+      "required_surface": "LENDING",
+      "canonical_module": "credit_liquidation_engine",
+      "execution_class": "DETERMINISTIC_IF_POSITIONS",
+      "dispatch_status": "NEEDS_ROUTE_DATA",
+      "cartridge_files": [
+        "backend/searcher-rs/cartridges/strategies/mev_08_009_flash_loan_rate_arbitrage.rhai"
+      ],
+      "live_verified": false
+    },
+    {
+      "mev_id": "MEV-08-010",
+      "family_id": "MEV-08",
+      "name": "Credit-delegation arbitrage",
+      "detector_id": "L_RATE",
+      "required_surface": "LENDING",
+      "canonical_module": "credit_liquidation_engine",
+      "execution_class": "DETERMINISTIC_IF_POSITIONS",
+      "dispatch_status": "NEEDS_ROUTE_DATA",
+      "cartridge_files": [
+        "backend/searcher-rs/cartridges/strategies/mev_08_010_credit_delegation_arbitrage.rhai"
+      ],
+      "live_verified": false
+    },
+    {
+      "mev_id": "MEV-08-011",
+      "family_id": "MEV-08",
+      "name": "Leverage-loop arbitrage",
+      "detector_id": "L_LOOP",
+      "required_surface": "LENDING",
+      "canonical_module": "credit_liquidation_engine",
+      "execution_class": "DETERMINISTIC_POSITION_STRATEGY",
+      "dispatch_status": "NEEDS_ROUTE_DATA",
+      "cartridge_files": [
+        "backend/searcher-rs/cartridges/strategies/mev_08_011_leverage_loop_arbitrage.rhai"
+      ],
+      "live_verified": false
+    },
+    {
+      "mev_id": "MEV-08-012",
+      "family_id": "MEV-08",
+      "name": "Liquidation discount arbitrage",
+      "detector_id": "L_LIQ",
+      "required_surface": "LENDING",
+      "canonical_module": "credit_liquidation_engine",
+      "execution_class": "DETERMINISTIC_LIQUIDATION",
+      "dispatch_status": "NEEDS_ROUTE_DATA",
+      "cartridge_files": [
+        "backend/searcher-rs/cartridges/strategies/mev_08_012_liquidation_discount_arbitrage.rhai"
+      ],
+      "live_verified": false
+    },
+    {
+      "mev_id": "MEV-08-013",
+      "family_id": "MEV-08",
+      "name": "Partial-liquidation arbitrage",
+      "detector_id": "L_LIQ",
+      "required_surface": "LENDING",
+      "canonical_module": "credit_liquidation_engine",
+      "execution_class": "DETERMINISTIC_LIQUIDATION",
+      "dispatch_status": "NEEDS_ROUTE_DATA",
+      "cartridge_files": [
+        "backend/searcher-rs/cartridges/strategies/mev_08_013_partial_liquidation_arbitrage.rhai"
+      ],
+      "live_verified": false
+    },
+    {
+      "mev_id": "MEV-08-014",
+      "family_id": "MEV-08",
+      "name": "Full-liquidation arbitrage",
+      "detector_id": "L_LIQ",
+      "required_surface": "LENDING",
+      "canonical_module": "credit_liquidation_engine",
+      "execution_class": "DETERMINISTIC_LIQUIDATION",
+      "dispatch_status": "NEEDS_ROUTE_DATA",
+      "cartridge_files": [
+        "backend/searcher-rs/cartridges/strategies/mev_08_014_full_liquidation_arbitrage.rhai"
+      ],
+      "live_verified": false
+    },
+    {
+      "mev_id": "MEV-08-015",
+      "family_id": "MEV-08",
+      "name": "Cross-protocol liquidation arbitrage",
+      "detector_id": "L_LIQ",
+      "required_surface": "LENDING",
+      "canonical_module": "credit_liquidation_engine",
+      "execution_class": "DETERMINISTIC_LIQUIDATION",
+      "dispatch_status": "NEEDS_ROUTE_DATA",
+      "cartridge_files": [
+        "backend/searcher-rs/cartridges/strategies/mev_08_015_cross_protocol_liquidation_arbitrage.rhai"
+      ],
+      "live_verified": false
+    },
+    {
+      "mev_id": "MEV-08-016",
+      "family_id": "MEV-08",
+      "name": "Cross-chain liquidation arbitrage",
+      "detector_id": "L_LIQ",
+      "required_surface": "LENDING",
+      "canonical_module": "credit_liquidation_engine",
+      "execution_class": "DETERMINISTIC_LIQUIDATION",
+      "dispatch_status": "NEEDS_ROUTE_DATA",
+      "cartridge_files": [
+        "backend/searcher-rs/cartridges/strategies/mev_08_016_cross_chain_liquidation_arbitrage.rhai"
+      ],
+      "live_verified": false
+    },
+    {
+      "mev_id": "MEV-08-017",
+      "family_id": "MEV-08",
+      "name": "Oracle-update liquidation backrun",
+      "detector_id": "L_LIQ",
+      "required_surface": "LENDING",
+      "canonical_module": "credit_liquidation_engine",
+      "execution_class": "DETERMINISTIC_LIQUIDATION",
+      "dispatch_status": "NEEDS_ROUTE_DATA",
+      "cartridge_files": [
+        "backend/searcher-rs/cartridges/strategies/mev_08_017_oracle_update_liquidation_backrun.rhai"
+      ],
+      "live_verified": false
+    },
+    {
+      "mev_id": "MEV-08-018",
+      "family_id": "MEV-08",
+      "name": "Liquidation-auction arbitrage",
+      "detector_id": "L_AUCTION",
+      "required_surface": "LENDING",
+      "canonical_module": "credit_liquidation_engine",
+      "execution_class": "DETERMINISTIC_AUCTION",
+      "dispatch_status": "NEEDS_ROUTE_DATA",
+      "cartridge_files": [
+        "backend/searcher-rs/cartridges/strategies/mev_08_018_liquidation_auction_arbitrage.rhai"
+      ],
+      "live_verified": false
+    },
+    {
+      "mev_id": "MEV-08-019",
+      "family_id": "MEV-08",
+      "name": "Dutch-auction liquidation arbitrage",
+      "detector_id": "L_AUCTION",
+      "required_surface": "LENDING",
+      "canonical_module": "credit_liquidation_engine",
+      "execution_class": "DETERMINISTIC_AUCTION",
+      "dispatch_status": "NEEDS_ROUTE_DATA",
+      "cartridge_files": [
+        "backend/searcher-rs/cartridges/strategies/mev_08_019_dutch_auction_liquidation_arbitrage.rhai"
+      ],
+      "live_verified": false
+    },
+    {
+      "mev_id": "MEV-08-020",
+      "family_id": "MEV-08",
+      "name": "Bad-debt auction arbitrage",
+      "detector_id": "L_AUCTION",
+      "required_surface": "LENDING",
+      "canonical_module": "credit_liquidation_engine",
+      "execution_class": "DETERMINISTIC_AUCTION",
+      "dispatch_status": "NEEDS_ROUTE_DATA",
+      "cartridge_files": [
+        "backend/searcher-rs/cartridges/strategies/mev_08_020_bad_debt_auction_arbitrage.rhai"
+      ],
+      "live_verified": false
+    },
+    {
+      "mev_id": "MEV-08-021",
+      "family_id": "MEV-08",
+      "name": "Recapitalization auction arbitrage",
+      "detector_id": "L_AUCTION",
+      "required_surface": "LENDING",
+      "canonical_module": "credit_liquidation_engine",
+      "execution_class": "DETERMINISTIC_AUCTION",
+      "dispatch_status": "NEEDS_ROUTE_DATA",
+      "cartridge_files": [
+        "backend/searcher-rs/cartridges/strategies/mev_08_021_recapitalization_auction_arbitrage.rhai"
+      ],
+      "live_verified": false
+    },
+    {
+      "mev_id": "MEV-08-022",
+      "family_id": "MEV-08",
+      "name": "Collateral redemption arbitrage",
+      "detector_id": "L_COLLATERAL",
+      "required_surface": "LENDING",
+      "canonical_module": "credit_liquidation_engine",
+      "execution_class": "DETERMINISTIC_IF_REDEEMABLE",
+      "dispatch_status": "NEEDS_ROUTE_DATA",
+      "cartridge_files": [
+        "backend/searcher-rs/cartridges/strategies/mev_08_022_collateral_redemption_arbitrage.rhai"
+      ],
+      "live_verified": false
+    },
+    {
+      "mev_id": "MEV-08-023",
+      "family_id": "MEV-08",
+      "name": "Debt-repayment arbitrage",
+      "detector_id": "L_COLLATERAL",
+      "required_surface": "LENDING",
+      "canonical_module": "credit_liquidation_engine",
+      "execution_class": "DETERMINISTIC_IF_REDEEMABLE",
+      "dispatch_status": "NEEDS_ROUTE_DATA",
+      "cartridge_files": [
+        "backend/searcher-rs/cartridges/strategies/mev_08_023_debt_repayment_arbitrage.rhai"
+      ],
+      "live_verified": false
+    },
+    {
+      "mev_id": "MEV-08-024",
+      "family_id": "MEV-08",
+      "name": "Underwater-position takeover arbitrage",
+      "detector_id": "L_LIQ",
+      "required_surface": "LENDING",
+      "canonical_module": "credit_liquidation_engine",
+      "execution_class": "DETERMINISTIC_LIQUIDATION",
+      "dispatch_status": "NEEDS_ROUTE_DATA",
+      "cartridge_files": [
+        "backend/searcher-rs/cartridges/strategies/mev_08_024_underwater_position_takeover_arbitrage.rhai"
+      ],
+      "live_verified": false
+    },
+    {
+      "mev_id": "MEV-08-025",
+      "family_id": "MEV-08",
+      "name": "Interest-accrual timing arbitrage",
+      "detector_id": "L_RATE",
+      "required_surface": "LENDING",
+      "canonical_module": "credit_liquidation_engine",
+      "execution_class": "DETERMINISTIC_IF_POSITIONS",
+      "dispatch_status": "NEEDS_ROUTE_DATA",
+      "cartridge_files": [
+        "backend/searcher-rs/cartridges/strategies/mev_08_025_interest_accrual_timing_arbitrage.rhai"
+      ],
+      "live_verified": false
+    },
+    {
+      "mev_id": "MEV-09-001",
+      "family_id": "MEV-09",
+      "name": "Solver arbitrage",
+      "detector_id": "I_ROUTE",
+      "required_surface": "INTENT_AUCTION",
+      "canonical_module": "intents_solver_engine",
+      "execution_class": "DETERMINISTIC_SETTLEMENT",
+      "dispatch_status": "NEEDS_ROUTE_DATA",
+      "cartridge_files": [
+        "backend/searcher-rs/cartridges/strategies/mev_09_001_solver_arbitrage.rhai"
+      ],
+      "live_verified": false
+    },
+    {
+      "mev_id": "MEV-09-002",
+      "family_id": "MEV-09",
+      "name": "Intent-to-AMM arbitrage",
+      "detector_id": "I_ROUTE",
+      "required_surface": "INTENT_AUCTION",
+      "canonical_module": "intents_solver_engine",
+      "execution_class": "DETERMINISTIC_SETTLEMENT",
+      "dispatch_status": "NEEDS_ROUTE_DATA",
+      "cartridge_files": [
+        "backend/searcher-rs/cartridges/strategies/mev_09_002_intent_to_amm_arbitrage.rhai"
+      ],
+      "live_verified": false
+    },
+    {
+      "mev_id": "MEV-09-003",
+      "family_id": "MEV-09",
+      "name": "Intent-to-CLOB arbitrage",
+      "detector_id": "I_ROUTE",
+      "required_surface": "INTENT_AUCTION",
+      "canonical_module": "intents_solver_engine",
+      "execution_class": "DETERMINISTIC_SETTLEMENT",
+      "dispatch_status": "NEEDS_ROUTE_DATA",
+      "cartridge_files": [
+        "backend/searcher-rs/cartridges/strategies/mev_09_003_intent_to_clob_arbitrage.rhai"
+      ],
+      "live_verified": false
+    },
+    {
+      "mev_id": "MEV-09-004",
+      "family_id": "MEV-09",
+      "name": "Intent-to-RFQ arbitrage",
+      "detector_id": "I_ROUTE",
+      "required_surface": "INTENT_AUCTION",
+      "canonical_module": "intents_solver_engine",
+      "execution_class": "DETERMINISTIC_SETTLEMENT",
+      "dispatch_status": "NEEDS_ROUTE_DATA",
+      "cartridge_files": [
+        "backend/searcher-rs/cartridges/strategies/mev_09_004_intent_to_rfq_arbitrage.rhai"
+      ],
+      "live_verified": false
+    },
+    {
+      "mev_id": "MEV-09-005",
+      "family_id": "MEV-09",
+      "name": "Cross-intent netting arbitrage",
+      "detector_id": "I_BATCH",
+      "required_surface": "INTENT_AUCTION",
+      "canonical_module": "intents_solver_engine",
+      "execution_class": "DETERMINISTIC_SETTLEMENT",
+      "dispatch_status": "NEEDS_ROUTE_DATA",
+      "cartridge_files": [
+        "backend/searcher-rs/cartridges/strategies/mev_09_005_cross_intent_netting_arbitrage.rhai"
+      ],
+      "live_verified": false
+    },
+    {
+      "mev_id": "MEV-09-006",
+      "family_id": "MEV-09",
+      "name": "Coincidence-of-Wants settlement",
+      "detector_id": "I_BATCH",
+      "required_surface": "INTENT_AUCTION",
+      "canonical_module": "intents_solver_engine",
+      "execution_class": "DETERMINISTIC_SETTLEMENT",
+      "dispatch_status": "NEEDS_ROUTE_DATA",
+      "cartridge_files": [
+        "backend/searcher-rs/cartridges/strategies/mev_09_006_coincidence_of_wants_settlement.rhai"
+      ],
+      "live_verified": false
+    },
+    {
+      "mev_id": "MEV-09-007",
+      "family_id": "MEV-09",
+      "name": "Batch-auction arbitrage",
+      "detector_id": "I_BATCH",
+      "required_surface": "INTENT_AUCTION",
+      "canonical_module": "intents_solver_engine",
+      "execution_class": "DETERMINISTIC_SETTLEMENT",
+      "dispatch_status": "NEEDS_ROUTE_DATA",
+      "cartridge_files": [
+        "backend/searcher-rs/cartridges/strategies/mev_09_007_batch_auction_arbitrage.rhai"
+      ],
+      "live_verified": false
+    },
+    {
+      "mev_id": "MEV-09-008",
+      "family_id": "MEV-09",
+      "name": "Combinatorial-auction arbitrage",
+      "detector_id": "I_BATCH",
+      "required_surface": "INTENT_AUCTION",
+      "canonical_module": "intents_solver_engine",
+      "execution_class": "DETERMINISTIC_SETTLEMENT",
+      "dispatch_status": "NEEDS_ROUTE_DATA",
+      "cartridge_files": [
+        "backend/searcher-rs/cartridges/strategies/mev_09_008_combinatorial_auction_arbitrage.rhai"
+      ],
+      "live_verified": false
+    },
+    {
+      "mev_id": "MEV-09-009",
+      "family_id": "MEV-09",
+      "name": "Dutch-auction decay arbitrage",
+      "detector_id": "I_DUTCH",
+      "required_surface": "INTENT_AUCTION",
+      "canonical_module": "intents_solver_engine",
+      "execution_class": "DETERMINISTIC_AUCTION",
+      "dispatch_status": "NEEDS_ROUTE_DATA",
+      "cartridge_files": [
+        "backend/searcher-rs/cartridges/strategies/mev_09_009_dutch_auction_decay_arbitrage.rhai"
+      ],
+      "live_verified": false
+    },
+    {
+      "mev_id": "MEV-09-010",
+      "family_id": "MEV-09",
+      "name": "Exclusive-order-flow arbitrage",
+      "detector_id": "I_ORDERFLOW",
+      "required_surface": "INTENT_AUCTION",
+      "canonical_module": "intents_solver_engine",
+      "execution_class": "AUTHORIZED_FLOW_ONLY",
+      "dispatch_status": "NEEDS_ROUTE_DATA",
+      "cartridge_files": [
+        "backend/searcher-rs/cartridges/strategies/mev_09_010_exclusive_order_flow_arbitrage.rhai"
+      ],
+      "live_verified": false
+    },
+    {
+      "mev_id": "MEV-09-011",
+      "family_id": "MEV-09",
+      "name": "Order-flow-auction arbitrage",
+      "detector_id": "I_ORDERFLOW",
+      "required_surface": "INTENT_AUCTION",
+      "canonical_module": "intents_solver_engine",
+      "execution_class": "AUTHORIZED_FLOW_ONLY",
+      "dispatch_status": "NEEDS_ROUTE_DATA",
+      "cartridge_files": [
+        "backend/searcher-rs/cartridges/strategies/mev_09_011_order_flow_auction_arbitrage.rhai"
+      ],
+      "live_verified": false
+    },
+    {
+      "mev_id": "MEV-09-012",
+      "family_id": "MEV-09",
+      "name": "Surplus-capture arbitrage",
+      "detector_id": "I_ROUTE",
+      "required_surface": "INTENT_AUCTION",
+      "canonical_module": "intents_solver_engine",
+      "execution_class": "DETERMINISTIC_SETTLEMENT",
+      "dispatch_status": "NEEDS_ROUTE_DATA",
+      "cartridge_files": [
+        "backend/searcher-rs/cartridges/strategies/mev_09_012_surplus_capture_arbitrage.rhai"
+      ],
+      "live_verified": false
+    },
+    {
+      "mev_id": "MEV-09-013",
+      "family_id": "MEV-09",
+      "name": "Price-improvement arbitrage",
+      "detector_id": "I_ROUTE",
+      "required_surface": "INTENT_AUCTION",
+      "canonical_module": "intents_solver_engine",
+      "execution_class": "DETERMINISTIC_SETTLEMENT",
+      "dispatch_status": "NEEDS_ROUTE_DATA",
+      "cartridge_files": [
+        "backend/searcher-rs/cartridges/strategies/mev_09_013_price_improvement_arbitrage.rhai"
+      ],
+      "live_verified": false
+    },
+    {
+      "mev_id": "MEV-09-014",
+      "family_id": "MEV-09",
+      "name": "Internalization arbitrage",
+      "detector_id": "I_ROUTE",
+      "required_surface": "INTENT_AUCTION",
+      "canonical_module": "intents_solver_engine",
+      "execution_class": "DETERMINISTIC_SETTLEMENT",
+      "dispatch_status": "NEEDS_ROUTE_DATA",
+      "cartridge_files": [
+        "backend/searcher-rs/cartridges/strategies/mev_09_014_internalization_arbitrage.rhai"
+      ],
+      "live_verified": false
+    },
+    {
+      "mev_id": "MEV-09-015",
+      "family_id": "MEV-09",
+      "name": "Solver-routing arbitrage",
+      "detector_id": "I_ROUTE",
+      "required_surface": "INTENT_AUCTION",
+      "canonical_module": "intents_solver_engine",
+      "execution_class": "DETERMINISTIC_SETTLEMENT",
+      "dispatch_status": "NEEDS_ROUTE_DATA",
+      "cartridge_files": [
+        "backend/searcher-rs/cartridges/strategies/mev_09_015_solver_routing_arbitrage.rhai"
+      ],
+      "live_verified": false
+    },
+    {
+      "mev_id": "MEV-09-016",
+      "family_id": "MEV-09",
+      "name": "Solver–solver latency arbitrage",
+      "detector_id": "I_ROUTE",
+      "required_surface": "INTENT_AUCTION",
+      "canonical_module": "intents_solver_engine",
+      "execution_class": "DETERMINISTIC_SETTLEMENT",
+      "dispatch_status": "NEEDS_ROUTE_DATA",
+      "cartridge_files": [
+        "backend/searcher-rs/cartridges/strategies/mev_09_016_solver_solver_latency_arbitrage.rhai"
+      ],
+      "live_verified": false
+    },
+    {
+      "mev_id": "MEV-09-017",
+      "family_id": "MEV-09",
+      "name": "Private-order-flow backrun",
+      "detector_id": "I_ORDERFLOW",
+      "required_surface": "INTENT_AUCTION",
+      "canonical_module": "intents_solver_engine",
+      "execution_class": "AUTHORIZED_FLOW_ONLY",
+      "dispatch_status": "NEEDS_ROUTE_DATA",
+      "cartridge_files": [
+        "backend/searcher-rs/cartridges/strategies/mev_09_017_private_order_flow_backrun.rhai"
+      ],
+      "live_verified": false
+    },
+    {
+      "mev_id": "MEV-09-018",
+      "family_id": "MEV-09",
+      "name": "MEV-Share backrun arbitrage",
+      "detector_id": "I_ORDERFLOW",
+      "required_surface": "INTENT_AUCTION",
+      "canonical_module": "intents_solver_engine",
+      "execution_class": "AUTHORIZED_FLOW_ONLY",
+      "dispatch_status": "NEEDS_ROUTE_DATA",
+      "cartridge_files": [
+        "backend/searcher-rs/cartridges/strategies/mev_09_018_mev_share_backrun_arbitrage.rhai"
+      ],
+      "live_verified": false
+    },
+    {
+      "mev_id": "MEV-09-019",
+      "family_id": "MEV-09",
+      "name": "Builder-integrated arbitrage",
+      "detector_id": "OBSERVE",
+      "required_surface": "INTENT_AUCTION",
+      "canonical_module": "intents_solver_engine",
+      "execution_class": "OBSERVE_ONLY",
+      "dispatch_status": "OBSERVE_ONLY",
+      "cartridge_files": [
+        "backend/searcher-rs/cartridges/strategies/mev_09_019_builder_integrated_arbitrage.rhai"
+      ],
+      "live_verified": false
+    },
+    {
+      "mev_id": "MEV-09-020",
+      "family_id": "MEV-09",
+      "name": "Searcher–builder vertically integrated arbitrage",
+      "detector_id": "OBSERVE",
+      "required_surface": "INTENT_AUCTION",
+      "canonical_module": "intents_solver_engine",
+      "execution_class": "OBSERVE_ONLY",
+      "dispatch_status": "OBSERVE_ONLY",
+      "cartridge_files": [
+        "backend/searcher-rs/cartridges/strategies/mev_09_020_searcher_builder_vertically_integrated_arbitrage.rhai"
+      ],
+      "live_verified": false
+    },
+    {
+      "mev_id": "MEV-10-001",
+      "family_id": "MEV-10",
+      "name": "Cross-marketplace NFT arbitrage",
+      "detector_id": "N_IDENTICAL",
+      "required_surface": "NFT",
+      "canonical_module": "nft_engine",
+      "execution_class": "DETERMINISTIC_IF_FIRM_BID",
+      "dispatch_status": "NEEDS_ROUTE_DATA",
+      "cartridge_files": [
+        "backend/searcher-rs/cartridges/strategies/mev_10_001_cross_marketplace_nft_arbitrage.rhai"
+      ],
+      "live_verified": false
+    },
+    {
+      "mev_id": "MEV-10-002",
+      "family_id": "MEV-10",
+      "name": "Floor-price arbitrage",
+      "detector_id": "N_FLOOR",
+      "required_surface": "NFT",
+      "canonical_module": "nft_engine",
+      "execution_class": "SIGNAL_UNLESS_FIRM_EXIT",
+      "dispatch_status": "NEEDS_ROUTE_DATA",
+      "cartridge_files": [
+        "backend/searcher-rs/cartridges/strategies/mev_10_002_floor_price_arbitrage.rhai"
+      ],
+      "live_verified": false
+    },
+    {
+      "mev_id": "MEV-10-003",
+      "family_id": "MEV-10",
+      "name": "Trait-floor arbitrage",
+      "detector_id": "N_FLOOR",
+      "required_surface": "NFT",
+      "canonical_module": "nft_engine",
+      "execution_class": "SIGNAL_UNLESS_FIRM_EXIT",
+      "dispatch_status": "NEEDS_ROUTE_DATA",
+      "cartridge_files": [
+        "backend/searcher-rs/cartridges/strategies/mev_10_003_trait_floor_arbitrage.rhai"
+      ],
+      "live_verified": false
+    },
+    {
+      "mev_id": "MEV-10-004",
+      "family_id": "MEV-10",
+      "name": "Collection basket arbitrage",
+      "detector_id": "N_FLOOR",
+      "required_surface": "NFT",
+      "canonical_module": "nft_engine",
+      "execution_class": "SIGNAL_UNLESS_FIRM_EXIT",
+      "dispatch_status": "NEEDS_ROUTE_DATA",
+      "cartridge_files": [
+        "backend/searcher-rs/cartridges/strategies/mev_10_004_collection_basket_arbitrage.rhai"
+      ],
+      "live_verified": false
+    },
+    {
+      "mev_id": "MEV-10-005",
+      "family_id": "MEV-10",
+      "name": "Bid–ask NFT arbitrage",
+      "detector_id": "N_IDENTICAL",
+      "required_surface": "NFT",
+      "canonical_module": "nft_engine",
+      "execution_class": "DETERMINISTIC_IF_FIRM_BID",
+      "dispatch_status": "NEEDS_ROUTE_DATA",
+      "cartridge_files": [
+        "backend/searcher-rs/cartridges/strategies/mev_10_005_bid_ask_nft_arbitrage.rhai"
+      ],
+      "live_verified": false
+    },
+    {
+      "mev_id": "MEV-10-006",
+      "family_id": "MEV-10",
+      "name": "AMM–marketplace NFT arbitrage",
+      "detector_id": "N_AMM",
+      "required_surface": "NFT",
+      "canonical_module": "nft_engine",
+      "execution_class": "DETERMINISTIC_IF_FIRM_EXIT",
+      "dispatch_status": "NEEDS_ROUTE_DATA",
+      "cartridge_files": [
+        "backend/searcher-rs/cartridges/strategies/mev_10_006_amm_marketplace_nft_arbitrage.rhai"
+      ],
+      "live_verified": false
+    },
+    {
+      "mev_id": "MEV-10-007",
+      "family_id": "MEV-10",
+      "name": "NFT AMM–NFT AMM arbitrage",
+      "detector_id": "N_AMM",
+      "required_surface": "NFT",
+      "canonical_module": "nft_engine",
+      "execution_class": "DETERMINISTIC_IF_FIRM_EXIT",
+      "dispatch_status": "NEEDS_ROUTE_DATA",
+      "cartridge_files": [
+        "backend/searcher-rs/cartridges/strategies/mev_10_007_nft_amm_nft_amm_arbitrage.rhai"
+      ],
+      "live_verified": false
+    },
+    {
+      "mev_id": "MEV-10-008",
+      "family_id": "MEV-10",
+      "name": "Mint-to-secondary-market arbitrage",
+      "detector_id": "N_IDENTICAL",
+      "required_surface": "NFT",
+      "canonical_module": "nft_engine",
+      "execution_class": "DETERMINISTIC_IF_FIRM_BID",
+      "dispatch_status": "NEEDS_ROUTE_DATA",
+      "cartridge_files": [
+        "backend/searcher-rs/cartridges/strategies/mev_10_008_mint_to_secondary_market_arbitrage.rhai"
+      ],
+      "live_verified": false
+    },
+    {
+      "mev_id": "MEV-10-009",
+      "family_id": "MEV-10",
+      "name": "Underpriced-listing arbitrage",
+      "detector_id": "N_FLOOR",
+      "required_surface": "NFT",
+      "canonical_module": "nft_engine",
+      "execution_class": "SIGNAL_UNLESS_FIRM_EXIT",
+      "dispatch_status": "NEEDS_ROUTE_DATA",
+      "cartridge_files": [
+        "backend/searcher-rs/cartridges/strategies/mev_10_009_underpriced_listing_arbitrage.rhai"
+      ],
+      "live_verified": false
+    },
+    {
+      "mev_id": "MEV-10-010",
+      "family_id": "MEV-10",
+      "name": "NFT fractionalization arbitrage",
+      "detector_id": "N_REDEEM",
+      "required_surface": "NFT",
+      "canonical_module": "nft_engine",
+      "execution_class": "DETERMINISTIC_IF_REDEEMABLE",
+      "dispatch_status": "NEEDS_ROUTE_DATA",
+      "cartridge_files": [
+        "backend/searcher-rs/cartridges/strategies/mev_10_010_nft_fractionalization_arbitrage.rhai"
+      ],
+      "live_verified": false
+    },
+    {
+      "mev_id": "MEV-10-011",
+      "family_id": "MEV-10",
+      "name": "Fractional-token redemption arbitrage",
+      "detector_id": "N_REDEEM",
+      "required_surface": "NFT",
+      "canonical_module": "nft_engine",
+      "execution_class": "DETERMINISTIC_IF_REDEEMABLE",
+      "dispatch_status": "NEEDS_ROUTE_DATA",
+      "cartridge_files": [
+        "backend/searcher-rs/cartridges/strategies/mev_10_011_fractional_token_redemption_arbitrage.rhai"
+      ],
+      "live_verified": false
+    },
+    {
+      "mev_id": "MEV-10-012",
+      "family_id": "MEV-10",
+      "name": "NFT-backed-loan liquidation arbitrage",
+      "detector_id": "N_LIQ",
+      "required_surface": "NFT",
+      "canonical_module": "nft_engine",
+      "execution_class": "DETERMINISTIC_IF_FIRM_BID",
+      "dispatch_status": "NEEDS_ROUTE_DATA",
+      "cartridge_files": [
+        "backend/searcher-rs/cartridges/strategies/mev_10_012_nft_backed_loan_liquidation_arbitrage.rhai"
+      ],
+      "live_verified": false
+    },
+    {
+      "mev_id": "MEV-10-013",
+      "family_id": "MEV-10",
+      "name": "NFT rental-rights arbitrage",
+      "detector_id": "N_FLOOR",
+      "required_surface": "NFT",
+      "canonical_module": "nft_engine",
+      "execution_class": "SIGNAL_UNLESS_FIRM_EXIT",
+      "dispatch_status": "NEEDS_ROUTE_DATA",
+      "cartridge_files": [
+        "backend/searcher-rs/cartridges/strategies/mev_10_013_nft_rental_rights_arbitrage.rhai"
+      ],
+      "live_verified": false
+    },
+    {
+      "mev_id": "MEV-10-014",
+      "family_id": "MEV-10",
+      "name": "Gaming-asset marketplace arbitrage",
+      "detector_id": "N_IDENTICAL",
+      "required_surface": "NFT",
+      "canonical_module": "nft_engine",
+      "execution_class": "DETERMINISTIC_IF_FIRM_BID",
+      "dispatch_status": "NEEDS_ROUTE_DATA",
+      "cartridge_files": [
+        "backend/searcher-rs/cartridges/strategies/mev_10_014_gaming_asset_marketplace_arbitrage.rhai"
+      ],
+      "live_verified": false
+    },
+    {
+      "mev_id": "MEV-10-015",
+      "family_id": "MEV-10",
+      "name": "Cross-chain NFT arbitrage",
+      "detector_id": "N_IDENTICAL",
+      "required_surface": "NFT",
+      "canonical_module": "nft_engine",
+      "execution_class": "DETERMINISTIC_IF_FIRM_BID",
+      "dispatch_status": "NEEDS_ROUTE_DATA",
+      "cartridge_files": [
+        "backend/searcher-rs/cartridges/strategies/mev_10_015_cross_chain_nft_arbitrage.rhai"
+      ],
+      "live_verified": false
+    },
+    {
+      "mev_id": "MEV-10-016",
+      "family_id": "MEV-10",
+      "name": "Royalty-adjusted marketplace arbitrage",
+      "detector_id": "N_IDENTICAL",
+      "required_surface": "NFT",
+      "canonical_module": "nft_engine",
+      "execution_class": "DETERMINISTIC_IF_FIRM_BID",
+      "dispatch_status": "NEEDS_ROUTE_DATA",
+      "cartridge_files": [
+        "backend/searcher-rs/cartridges/strategies/mev_10_016_royalty_adjusted_marketplace_arbitrage.rhai"
+      ],
+      "live_verified": false
+    },
+    {
+      "mev_id": "MEV-10-017",
+      "family_id": "MEV-10",
+      "name": "Bundle/unbundle NFT arbitrage",
+      "detector_id": "N_REDEEM",
+      "required_surface": "NFT",
+      "canonical_module": "nft_engine",
+      "execution_class": "DETERMINISTIC_IF_REDEEMABLE",
+      "dispatch_status": "NEEDS_ROUTE_DATA",
+      "cartridge_files": [
+        "backend/searcher-rs/cartridges/strategies/mev_10_017_bundle_unbundle_nft_arbitrage.rhai"
+      ],
+      "live_verified": false
+    },
+    {
+      "mev_id": "MEV-10-018",
+      "family_id": "MEV-10",
+      "name": "Redeemable-NFT arbitrage",
+      "detector_id": "N_REDEEM",
+      "required_surface": "NFT",
+      "canonical_module": "nft_engine",
+      "execution_class": "DETERMINISTIC_IF_REDEEMABLE",
+      "dispatch_status": "NEEDS_ROUTE_DATA",
+      "cartridge_files": [
+        "backend/searcher-rs/cartridges/strategies/mev_10_018_redeemable_nft_arbitrage.rhai"
+      ],
+      "live_verified": false
+    },
+    {
+      "mev_id": "MEV-11-001",
+      "family_id": "MEV-11",
+      "name": "Binary complement arbitrage",
+      "detector_id": "M_COMPLETE",
+      "required_surface": "PREDICTION",
+      "canonical_module": "prediction_engine",
+      "execution_class": "DETERMINISTIC_IF_COMPLETE_SET",
+      "dispatch_status": "NEEDS_ROUTE_DATA",
+      "cartridge_files": [
+        "backend/searcher-rs/cartridges/strategies/mev_11_001_binary_complement_arbitrage.rhai"
+      ],
+      "live_verified": false
+    },
+    {
+      "mev_id": "MEV-11-002",
+      "family_id": "MEV-11",
+      "name": "Complete-set arbitrage",
+      "detector_id": "M_COMPLETE",
+      "required_surface": "PREDICTION",
+      "canonical_module": "prediction_engine",
+      "execution_class": "DETERMINISTIC_IF_COMPLETE_SET",
+      "dispatch_status": "NEEDS_ROUTE_DATA",
+      "cartridge_files": [
+        "backend/searcher-rs/cartridges/strategies/mev_11_002_complete_set_arbitrage.rhai"
+      ],
+      "live_verified": false
+    },
+    {
+      "mev_id": "MEV-11-003",
+      "family_id": "MEV-11",
+      "name": "Cross-platform prediction arbitrage",
+      "detector_id": "M_CROSS",
+      "required_surface": "PREDICTION",
+      "canonical_module": "prediction_engine",
+      "execution_class": "EXTERNAL_DATA_REQUIRED",
+      "dispatch_status": "NEEDS_ROUTE_DATA",
+      "cartridge_files": [
+        "backend/searcher-rs/cartridges/strategies/mev_11_003_cross_platform_prediction_arbitrage.rhai"
+      ],
+      "live_verified": false
+    },
+    {
+      "mev_id": "MEV-11-004",
+      "family_id": "MEV-11",
+      "name": "Mutually-exclusive outcomes arbitrage",
+      "detector_id": "M_LOGIC",
+      "required_surface": "PREDICTION",
+      "canonical_module": "prediction_engine",
+      "execution_class": "DETERMINISTIC_IF_PAYOFF_MODEL",
+      "dispatch_status": "NEEDS_ROUTE_DATA",
+      "cartridge_files": [
+        "backend/searcher-rs/cartridges/strategies/mev_11_004_mutually_exclusive_outcomes_arbitrage.rhai"
+      ],
+      "live_verified": false
+    },
+    {
+      "mev_id": "MEV-11-005",
+      "family_id": "MEV-11",
+      "name": "Exhaustive-outcome basket arbitrage",
+      "detector_id": "M_COMPLETE",
+      "required_surface": "PREDICTION",
+      "canonical_module": "prediction_engine",
+      "execution_class": "DETERMINISTIC_IF_COMPLETE_SET",
+      "dispatch_status": "NEEDS_ROUTE_DATA",
+      "cartridge_files": [
+        "backend/searcher-rs/cartridges/strategies/mev_11_005_exhaustive_outcome_basket_arbitrage.rhai"
+      ],
+      "live_verified": false
+    },
+    {
+      "mev_id": "MEV-11-006",
+      "family_id": "MEV-11",
+      "name": "Conditional-token arbitrage",
+      "detector_id": "M_LOGIC",
+      "required_surface": "PREDICTION",
+      "canonical_module": "prediction_engine",
+      "execution_class": "DETERMINISTIC_IF_PAYOFF_MODEL",
+      "dispatch_status": "NEEDS_ROUTE_DATA",
+      "cartridge_files": [
+        "backend/searcher-rs/cartridges/strategies/mev_11_006_conditional_token_arbitrage.rhai"
+      ],
+      "live_verified": false
+    },
+    {
+      "mev_id": "MEV-11-007",
+      "family_id": "MEV-11",
+      "name": "Nested-market logical arbitrage",
+      "detector_id": "M_LOGIC",
+      "required_surface": "PREDICTION",
+      "canonical_module": "prediction_engine",
+      "execution_class": "DETERMINISTIC_IF_PAYOFF_MODEL",
+      "dispatch_status": "NEEDS_ROUTE_DATA",
+      "cartridge_files": [
+        "backend/searcher-rs/cartridges/strategies/mev_11_007_nested_market_logical_arbitrage.rhai"
+      ],
+      "live_verified": false
+    },
+    {
+      "mev_id": "MEV-11-008",
+      "family_id": "MEV-11",
+      "name": "Correlated-event arbitrage",
+      "detector_id": "M_LOGIC",
+      "required_surface": "PREDICTION",
+      "canonical_module": "prediction_engine",
+      "execution_class": "DETERMINISTIC_IF_PAYOFF_MODEL",
+      "dispatch_status": "NEEDS_ROUTE_DATA",
+      "cartridge_files": [
+        "backend/searcher-rs/cartridges/strategies/mev_11_008_correlated_event_arbitrage.rhai"
+      ],
+      "live_verified": false
+    },
+    {
+      "mev_id": "MEV-11-009",
+      "family_id": "MEV-11",
+      "name": "Resolution-source arbitrage",
+      "detector_id": "OBSERVE",
+      "required_surface": "PREDICTION",
+      "canonical_module": "prediction_engine",
+      "execution_class": "OBSERVE_ONLY",
+      "dispatch_status": "OBSERVE_ONLY",
+      "cartridge_files": [
+        "backend/searcher-rs/cartridges/strategies/mev_11_009_resolution_source_arbitrage.rhai"
+      ],
+      "live_verified": false
+    },
+    {
+      "mev_id": "MEV-11-010",
+      "family_id": "MEV-11",
+      "name": "Oracle-resolution timing arbitrage",
+      "detector_id": "OBSERVE",
+      "required_surface": "PREDICTION",
+      "canonical_module": "prediction_engine",
+      "execution_class": "OBSERVE_ONLY",
+      "dispatch_status": "OBSERVE_ONLY",
+      "cartridge_files": [
+        "backend/searcher-rs/cartridges/strategies/mev_11_010_oracle_resolution_timing_arbitrage.rhai"
+      ],
+      "live_verified": false
+    },
+    {
+      "mev_id": "MEV-11-011",
+      "family_id": "MEV-11",
+      "name": "Pre-resolution settlement arbitrage",
+      "detector_id": "OBSERVE",
+      "required_surface": "PREDICTION",
+      "canonical_module": "prediction_engine",
+      "execution_class": "OBSERVE_ONLY",
+      "dispatch_status": "OBSERVE_ONLY",
+      "cartridge_files": [
+        "backend/searcher-rs/cartridges/strategies/mev_11_011_pre_resolution_settlement_arbitrage.rhai"
+      ],
+      "live_verified": false
+    },
+    {
+      "mev_id": "MEV-11-012",
+      "family_id": "MEV-11",
+      "name": "Prediction AMM–order-book arbitrage",
+      "detector_id": "M_AMM",
+      "required_surface": "PREDICTION",
+      "canonical_module": "prediction_engine",
+      "execution_class": "DETERMINISTIC_IF_MATCHED_CLAIM",
+      "dispatch_status": "NEEDS_ROUTE_DATA",
+      "cartridge_files": [
+        "backend/searcher-rs/cartridges/strategies/mev_11_012_prediction_amm_order_book_arbitrage.rhai"
+      ],
+      "live_verified": false
+    }
+  ],
+  "source_sha256": {
+    "artifacts/strategy_registry.json": "ca5fc9edfc46e653f86a3f8898998b836d945eecfac5fbe4b8610aa8ea4f87d0",
+    "backend/searcher-rs/src/strategy_dispatch_status.rs": "cd848a35e243599e7c8e879c0644e85fe24348e2202a13f75627762432b716b6",
+    "backend/searcher-rs/src/strategy_dispatch_status.fixture.json": "62c64ba9aca51e02eacf232afa25f5a26230084f1b20ef73b71bbbf9208c75af"
+  },
+  "verification": {
+    "unique_strategy_ids": 264,
+    "family_counts_match_prompt": true,
+    "cartridge_id_set_equals_registry": true,
+    "rust_dispatch_equals_fixture": true,
+    "full_workspace_build_run_by_this_audit": false,
+    "onchain_execution_verified": false
+  }
+}

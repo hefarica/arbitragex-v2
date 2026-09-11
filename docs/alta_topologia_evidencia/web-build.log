@@ -1,0 +1,177 @@
+npm warn Unknown env config "http-proxy". This will stop working in the next major version of npm.
+
+> arbitragex-v2-workspace@0.1.0 build
+> npm run build:all
+
+npm warn Unknown env config "http-proxy". This will stop working in the next major version of npm.
+
+> arbitragex-v2-workspace@0.1.0 build:all
+> npm run build --workspaces --if-present
+
+npm warn Unknown env config "http-proxy". This will stop working in the next major version of npm.
+
+> @arbx/shared@0.1.0 build
+> tsc -p tsconfig.json && node scripts/copy-tokenlists.mjs
+
+tokenlists: copied snapshots to /workspace/scratch/e38757127d8c/arbitragex-v2/shared-ts/dist/tokenlists/data
+
+> @arbx/selector-api@0.1.0 build
+> tsc -p tsconfig.json
+
+
+> @arbx/api-server@0.1.0 build
+> tsc -p tsconfig.json
+
+
+> @arbx/edge-worker@0.1.0 build
+> tsc -p tsconfig.build.json
+
+
+> @arbx/edge-dev-local@0.1.0 build
+> tsc -p tsconfig.json
+
+
+> @arbx/frontend@0.1.0 build
+> next build
+
+  ▲ Next.js 14.2.35
+
+   Creating an optimized production build ...
+ ⚠ Compiled with warnings
+
+./node_modules/@metamask/sdk/dist/browser/es/metamask-sdk.js
+Module not found: Can't resolve '@react-native-async-storage/async-storage' in '/workspace/scratch/e38757127d8c/arbitragex-v2/frontend/node_modules/@metamask/sdk/dist/browser/es'
+
+Import trace for requested module:
+./node_modules/@metamask/sdk/dist/browser/es/metamask-sdk.js
+./node_modules/wagmi/node_modules/@wagmi/connectors/dist/esm/metaMask.js
+./node_modules/wagmi/node_modules/@wagmi/connectors/dist/esm/exports/index.js
+./node_modules/wagmi/dist/esm/exports/connectors.js
+./node_modules/@rainbow-me/rainbowkit/dist/index.js
+./components/wallet/ConnectWalletButton.tsx
+
+./node_modules/pino/lib/tools.js
+Module not found: Can't resolve 'pino-pretty' in '/workspace/scratch/e38757127d8c/arbitragex-v2/frontend/node_modules/pino/lib'
+
+Import trace for requested module:
+./node_modules/pino/lib/tools.js
+./node_modules/pino/pino.js
+./node_modules/@walletconnect/logger/dist/index.es.js
+./node_modules/@walletconnect/universal-provider/dist/index.es.js
+./node_modules/@walletconnect/ethereum-provider/dist/index.es.js
+./node_modules/wagmi/node_modules/@wagmi/connectors/dist/esm/walletConnect.js
+./node_modules/wagmi/node_modules/@wagmi/connectors/dist/esm/exports/index.js
+./node_modules/wagmi/dist/esm/exports/connectors.js
+./node_modules/@rainbow-me/rainbowkit/dist/index.js
+./components/wallet/ConnectWalletButton.tsx
+
+ ⚠ Compiled with warnings
+
+./node_modules/@metamask/sdk/dist/browser/es/metamask-sdk.js
+Module not found: Can't resolve '@react-native-async-storage/async-storage' in '/workspace/scratch/e38757127d8c/arbitragex-v2/frontend/node_modules/@metamask/sdk/dist/browser/es'
+
+Import trace for requested module:
+./node_modules/@metamask/sdk/dist/browser/es/metamask-sdk.js
+./node_modules/wagmi/node_modules/@wagmi/connectors/dist/esm/metaMask.js
+./node_modules/wagmi/node_modules/@wagmi/connectors/dist/esm/exports/index.js
+./node_modules/wagmi/dist/esm/exports/connectors.js
+./node_modules/@rainbow-me/rainbowkit/dist/index.js
+./components/wallet/ConnectWalletButton.tsx
+
+ ✓ Compiled successfully
+   Linting and checking validity of types ...
+
+./app/monitor/components/ServiceStatus.tsx
+207:6  Warning: React Hook useEffect has a missing dependency: 'checkHealth'. Either include it or remove the dependency array.  react-hooks/exhaustive-deps
+
+./components/TokenChip.tsx
+311:13  Warning: Using `<img>` could result in slower LCP and higher bandwidth. Consider using `<Image />` from `next/image` to automatically optimize images. This may incur additional usage or cost from your provider. See: https://nextjs.org/docs/messages/no-img-element  @next/next/no-img-element
+
+./components/ui/TokenIcon.tsx
+83:15  Warning: Using `<img>` could result in slower LCP and higher bandwidth. Consider using `<Image />` from `next/image` to automatically optimize images. This may incur additional usage or cost from your provider. See: https://nextjs.org/docs/messages/no-img-element  @next/next/no-img-element
+
+./lib/hooks/useContracts.ts
+99:6  Warning: React Hook useEffect has a missing dependency: 'fetchData'. Either include it or remove the dependency array.  react-hooks/exhaustive-deps
+
+./lib/useWebSocket.ts
+195:6  Warning: React Hook useCallback has a missing dependency: 'protocols'. Either include it or remove the dependency array.  react-hooks/exhaustive-deps
+
+info  - Need to disable some ESLint rules? Learn more here: https://nextjs.org/docs/basic-features/eslint#disabling-rules
+   Collecting page data ...
+   Generating static pages (0/60) ...
+   Generating static pages (15/60) 
+   Generating static pages (30/60) 
+   Generating static pages (45/60) 
+ ✓ Generating static pages (60/60)
+   Finalizing page optimization ...
+   Collecting build traces ...
+
+Route (app)                              Size     First Load JS
+┌ ƒ /                                    3.58 kB         138 kB
+├ ○ /_not-found                          184 B          90.2 kB
+├ ƒ /admin/chains                        10.6 kB         147 kB
+├ ○ /admin/signin                        3.84 kB         131 kB
+├ ƒ /admin/topology                      10.1 kB         148 kB
+├ ƒ /agent-insights                      5.43 kB         105 kB
+├ ƒ /apex/allocator                      2.67 kB         112 kB
+├ ƒ /audit-logs                          6.61 kB         168 kB
+├ ○ /chains                              3.57 kB         158 kB
+├ ƒ /config                              5.6 kB          183 kB
+├ ƒ /config/trading                      10.3 kB         156 kB
+├ ○ /deploy-pipeline                     6.22 kB         106 kB
+├ ƒ /dex-registry                        12.1 kB         172 kB
+├ ƒ /executions                          3.7 kB          149 kB
+├ ○ /icon.svg                            0 B                0 B
+├ ○ /killswitch                          7.58 kB         135 kB
+├ ○ /live-readiness                      20.7 kB         183 kB
+├ ○ /live-testnet                        659 B          90.7 kB
+├ ƒ /monitor                             9.64 kB         150 kB
+├ ○ /omega-s5/adapters                   1.72 kB         119 kB
+├ ○ /omega-s5/core                       1.97 kB         120 kB
+├ ○ /omega-s5/crucible                   1.83 kB         119 kB
+├ ○ /omega-s5/drift                      1.48 kB        91.5 kB
+├ ○ /omega-s5/factory                    1.78 kB         119 kB
+├ ○ /omega-s5/operator                   1.77 kB         119 kB
+├ ○ /omega-s5/registry                   720 B          99.5 kB
+├ ƒ /omega-s5/registry/[entity]          9.05 kB         158 kB
+├ ○ /omega-s5/wallets                    1.72 kB         119 kB
+├ ƒ /onboarding                          2.13 kB         111 kB
+├ ○ /onboarding/1-init                   2.86 kB         144 kB
+├ ƒ /onboarding/2-connect                2.98 kB         144 kB
+├ ƒ /onboarding/3-advanced               2.58 kB         144 kB
+├ ƒ /onboarding/4-testing                2.48 kB         144 kB
+├ ƒ /onboarding/5-production             3.03 kB         145 kB
+├ ƒ /operations                          16.4 kB         262 kB
+├ ○ /operator                            184 B          90.2 kB
+├ ○ /operator/presets                    5.98 kB         106 kB
+├ ƒ /operator/self-test                  6.04 kB         142 kB
+├ ƒ /opportunities                       11.5 kB         208 kB
+├ ƒ /opportunities/by-strategy           6.46 kB         153 kB
+├ ƒ /opportunities/exchange              10.9 kB         204 kB
+├ ƒ /paper/history                       7.71 kB         116 kB
+├ ○ /pools                               3.72 kB         158 kB
+├ ƒ /readiness                           2.23 kB         102 kB
+├ ƒ /recon                               14.1 kB         297 kB
+├ ƒ /risk                                1.68 kB         160 kB
+├ ○ /route-outcomes                      11.1 kB         139 kB
+├ ƒ /routes/discovery                    9.17 kB         153 kB
+├ ○ /rpcs                                6.51 kB         161 kB
+├ ○ /sed                                 5.58 kB         146 kB
+├ ○ /settings                            6.39 kB         116 kB
+├ ƒ /settings/credentials                7.36 kB         136 kB
+├ ƒ /status                              7.62 kB         190 kB
+├ ƒ /strategies                          36.1 kB         237 kB
+├ ○ /strategies/forge                    16.1 kB         170 kB
+├ ○ /translator                          1.43 kB        91.4 kB
+├ ƒ /wallet                              225 kB          592 kB
+├ ƒ /wallets                             9.07 kB         153 kB
+└ ○ /worker-health                       2.01 kB         156 kB
++ First Load JS shared by all            90 kB
+  ├ chunks/2364-ba6c6e63a991c0ff.js      31.9 kB
+  ├ chunks/618f8807-4ddb5c51275745b9.js  53.6 kB
+  └ other shared chunks (total)          4.49 kB
+
+
+○  (Static)   prerendered as static content
+ƒ  (Dynamic)  server-rendered on demand
+

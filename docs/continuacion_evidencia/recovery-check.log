@@ -1,0 +1,8 @@
+    Checking simulator-v2 v0.1.0 (/workspace/scratch/e38757127d8c/arbitragex-v2/backend/simulator-v2)
+    Checking sed-core v1.1.0 (/workspace/scratch/e38757127d8c/arbitragex-v2/backend/sed-core)
+    Checking sim-core v0.1.0 (/workspace/scratch/e38757127d8c/arbitragex-v2/backend/sim-core)
+    Checking searcher-rs v0.1.0 (/workspace/scratch/e38757127d8c/arbitragex-v2/backend/searcher-rs)
+    Checking sim-ctl v0.1.0 (/workspace/scratch/e38757127d8c/arbitragex-v2/backend/sim-ctl)
+    Checking relays-client v0.1.0 (/workspace/scratch/e38757127d8c/arbitragex-v2/backend/relays-client)
+    Checking mcp-sim-engine v0.1.0 (/workspace/scratch/e38757127d8c/arbitragex-v2/backend/mcp-sim-engine)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 19.78s

@@ -1,0 +1,236 @@
+{
+  "generated_utc": "2026-09-11T04:27:59.478213+00:00",
+  "source_archive_sha256": "5f57b8205b606432268a2723dfd873c5d475db4856ab34fc9bfa729bd63aa139",
+  "scope": "Core topology and NSGA-II implementation; external runtime and production targets not certified.",
+  "original_files_preserved": 7430,
+  "changes": [
+    {
+      "path": "backend/math-engine/src/api.rs",
+      "status": "modified",
+      "bytes": 16754,
+      "sha256": "27584d7846d51ad3744cebd8d042a41826e237ca533e1dd3db756a6f7d0da0c0"
+    },
+    {
+      "path": "backend/math-engine/src/lib.rs",
+      "status": "modified",
+      "bytes": 1285,
+      "sha256": "2afcddb6451811a345bfa33ac2c8e67c080fd0ba59bfcabfaed569b3362c082c"
+    },
+    {
+      "path": "backend/math-engine/src/main.rs",
+      "status": "modified",
+      "bytes": 2036,
+      "sha256": "a33a6c6a23a520284e9bac86a7ad6f2aaa697df0cc9d05aadbb8ee31506d04fc"
+    },
+    {
+      "path": "backend/math-engine/src/operators/mod.rs",
+      "status": "modified",
+      "bytes": 7664,
+      "sha256": "648b82eaa31f99af47d26527fd3c685aa7e86765b638834803bd535fcde0c44e"
+    },
+    {
+      "path": "backend/math-engine/src/operators/op_32_nsga2/core.rs",
+      "status": "added",
+      "bytes": 27743,
+      "sha256": "69144084cc830f491d5cb7749b6a781c00828472f69226e2a9b65f8ad8287cf1"
+    },
+    {
+      "path": "backend/math-engine/src/operators/op_32_nsga2/mod.rs",
+      "status": "added",
+      "bytes": 10156,
+      "sha256": "1b134659713ef1ac93d6d2b0547f00e88d53d1c88664365ea95645be3adffbe5"
+    },
+    {
+      "path": "backend/searcher-rs/benches/discovery_matrix.rs",
+      "status": "modified",
+      "bytes": 18788,
+      "sha256": "bdee2114cfad2a655551865932ad244106c31a43af1187f414364dd8d2bef7dd"
+    },
+    {
+      "path": "backend/searcher-rs/src/batch_quote.rs",
+      "status": "added",
+      "bytes": 18705,
+      "sha256": "ef7e6be1e486e8921adfc82eaf90b2741662b796ab8d4d5e566e2009662ec5cc"
+    },
+    {
+      "path": "backend/searcher-rs/src/discovery_workload.rs",
+      "status": "modified",
+      "bytes": 31293,
+      "sha256": "ccda7e242957629aadb15bd53ed699e4b3f08cc39c864e651cc7d52b14398bfa"
+    },
+    {
+      "path": "backend/searcher-rs/src/lib.rs",
+      "status": "modified",
+      "bytes": 12396,
+      "sha256": "2f09fb1105b9aba806f4885a32093f914ca9ac07b0fe97c3e51847ea409fb82c"
+    },
+    {
+      "path": "backend/searcher-rs/src/main.rs",
+      "status": "modified",
+      "bytes": 57306,
+      "sha256": "232cb17a732478b113677051c680d3f88d72bc267506d476691bfb0af6f6ce56"
+    },
+    {
+      "path": "backend/searcher-rs/src/pair_index.rs",
+      "status": "modified",
+      "bytes": 31768,
+      "sha256": "cda085bff4efdacb2e7a47e04b97cecd95a407c06aa54b2777a215f344f41b38"
+    },
+    {
+      "path": "backend/searcher-rs/src/route_discovery/canonicalizer.rs",
+      "status": "modified",
+      "bytes": 15285,
+      "sha256": "b71d236ca11a1bb3bbbc2c265f1bd50858c01be8fbfde62b79a7e1eb1a69453c"
+    },
+    {
+      "path": "backend/searcher-rs/src/route_discovery/dense_view.rs",
+      "status": "modified",
+      "bytes": 17400,
+      "sha256": "5cdf817274a664b50cae107d11f593f8359dd8497cf1db63b6800704af31fdef"
+    },
+    {
+      "path": "backend/searcher-rs/src/route_discovery/graph_builder.rs",
+      "status": "modified",
+      "bytes": 47879,
+      "sha256": "c2882abab5f3a9fea2b11580529e25abd853da8a3bca317a8a9ff9bc08a4b2a7"
+    },
+    {
+      "path": "backend/searcher-rs/src/route_discovery/multi_hop_search.rs",
+      "status": "modified",
+      "bytes": 24538,
+      "sha256": "31737109a03f43e3709c00b9a0fc84b7c213835b5f27c16999bbf60befb61ede"
+    },
+    {
+      "path": "backend/searcher-rs/src/route_discovery/route_discovery_worker.rs",
+      "status": "modified",
+      "bytes": 119993,
+      "sha256": "4e8e838afd48c1f9de020b1384669df3669e641812deaa1301cb05c0a9faa353"
+    },
+    {
+      "path": "backend/searcher-rs/src/route_discovery/unique_route_finder.rs",
+      "status": "modified",
+      "bytes": 39924,
+      "sha256": "099ee4832ce4cc4eb41440ce0379cb51949b651515e02db70ebec48fe1c116b6"
+    },
+    {
+      "path": "docs/ALTA_TOPOLOGIA_COBERTURA.json",
+      "status": "added",
+      "bytes": 150191,
+      "sha256": "b48e9d593b92ba153b90dec4dad2c7550450c94e8d8592183fe2e1957443246c"
+    },
+    {
+      "path": "docs/ALTA_TOPOLOGIA_COBERTURA.md",
+      "status": "added",
+      "bytes": 19540,
+      "sha256": "c24cdf5603e3188b0335929aa4537a39d3cb7b6c96a4274f868f43cdcb995100"
+    },
+    {
+      "path": "docs/ALTA_TOPOLOGIA_IMPLEMENTACION.md",
+      "status": "added",
+      "bytes": 11804,
+      "sha256": "909dd6497c35243ff94d4a29480a295ac29a5f32e9f8b58061d3405cc0583f67"
+    },
+    {
+      "path": "docs/ALTA_TOPOLOGIA_VALIDACION.json",
+      "status": "added",
+      "bytes": 9799,
+      "sha256": "3bf22cf3bc28669f55154f42931b4e71ff03c600b67382d5c6cd68082d4da77e"
+    },
+    {
+      "path": "docs/alta_topologia_evidencia/discovery-dev.jsonl",
+      "status": "added",
+      "bytes": 29157,
+      "sha256": "db9c7130b4a5cebb7080f43be47e47e7c465b2d45ae87449e7e9c9dc92745909"
+    },
+    {
+      "path": "docs/alta_topologia_evidencia/discovery-release-before-optimization.jsonl",
+      "status": "added",
+      "bytes": 28786,
+      "sha256": "75fa9f23c0c13e83bacc1da0977bc7ca525e3bde4b65affd005c3998ecd29a19"
+    },
+    {
+      "path": "docs/alta_topologia_evidencia/discovery-release-before-optimization.log",
+      "status": "added",
+      "bytes": 21911,
+      "sha256": "5042bbac60b92633c848e1d11d606f2b9c31cd44e1f7773b6357896ddc30a2b7"
+    },
+    {
+      "path": "docs/alta_topologia_evidencia/discovery-release.jsonl",
+      "status": "added",
+      "bytes": 28639,
+      "sha256": "963b32c3b0b6c2f0b3fc7039ebb136dbd7b735f03dae1faa18c7ccfaf4d905ef"
+    },
+    {
+      "path": "docs/alta_topologia_evidencia/discovery-release.log",
+      "status": "added",
+      "bytes": 4452,
+      "sha256": "51900f63c1f7da9d3cf50ea99c032b7f88a4333f01e41ad4b40f1c3347c79d08"
+    },
+    {
+      "path": "docs/alta_topologia_evidencia/discovery-workload-tests.log",
+      "status": "added",
+      "bytes": 1104,
+      "sha256": "e03be23582b6921db119f8e056bd2cb67df7e7ad2f022803509447f953d901d3"
+    },
+    {
+      "path": "docs/alta_topologia_evidencia/frontend-contract-tests.log",
+      "status": "added",
+      "bytes": 938,
+      "sha256": "68ea1e73c76b7868598a9f89c2ebd7ace7c0918fc3c2966f380ce3cf85d7b465"
+    },
+    {
+      "path": "docs/alta_topologia_evidencia/math-tests.log",
+      "status": "added",
+      "bytes": 20465,
+      "sha256": "27e56d916eaf899794d72b4ba52bdd26aad859c581c34a79e2e8bde0a208aaab"
+    },
+    {
+      "path": "docs/alta_topologia_evidencia/searcher-tests.log",
+      "status": "added",
+      "bytes": 94038,
+      "sha256": "76ecf8cd6d377c02be3666a125bb8f5d89e7b6f130d767599f6e8f8ecdb7b65a"
+    },
+    {
+      "path": "docs/alta_topologia_evidencia/typecheck.log",
+      "status": "added",
+      "bytes": 857,
+      "sha256": "3fbf6d37ace7259ce6c2b0277e5c6fb37d8854a75affe8ae4660dabe290f5d8f"
+    },
+    {
+      "path": "docs/alta_topologia_evidencia/web-build.log",
+      "status": "added",
+      "bytes": 9102,
+      "sha256": "4a7b7cc94837c5564c8e50dc8a4649a06519894a2f4ba225c0b08337bae4848d"
+    },
+    {
+      "path": "docs/alta_topologia_evidencia/workspace-check.log",
+      "status": "added",
+      "bytes": 279,
+      "sha256": "6c2e0dfb77db4fd626a617261ccf88cf59e8f20d56a15f1ec52213badd57ee57"
+    },
+    {
+      "path": "frontend/lib/apex/schemas/__tests__/contract-route-discovery-tick.test.ts",
+      "status": "modified",
+      "bytes": 4977,
+      "sha256": "bf353afc1ae7345843a9366d330f8a479fd480f8d21a253a024ed12f2fe225f9"
+    },
+    {
+      "path": "frontend/lib/apex/schemas/__tests__/fixtures/route-discovery-tick/full.json",
+      "status": "modified",
+      "bytes": 4844,
+      "sha256": "6c991d2c4851b68573f5cffc918952fad5003d62628db202a0a171ba9ea52429"
+    },
+    {
+      "path": "frontend/lib/apex/schemas/__tests__/fixtures/route-discovery-tick/knobs-off.json",
+      "status": "modified",
+      "bytes": 3831,
+      "sha256": "9210100450a2b173c282725689359d6a8bdd725e32a7a0f5ab2d569344f70731"
+    },
+    {
+      "path": "frontend/lib/apex/schemas/telemetry.ts",
+      "status": "modified",
+      "bytes": 17502,
+      "sha256": "a01128cc26a60182d118201192a5c4d4d477f88bd2167e6ca719f198095e3b41"
+    }
+  ]
+}

@@ -212,6 +212,58 @@ impl SequenceContext {
         }
     }
 
+    /// Build from a canonical header using the chain's supported fork schedule.
+    pub fn new_verified(lazy_db: LazyDb) -> Result<Self, SequenceError> {
+        let snapshot = lazy_db
+            .snapshot()
+            .ok_or_else(|| SequenceError::TransactInfra("verified_snapshot_required".into()))?;
+        let (block, spec) = crate::verified_environment::environment(snapshot)
+            .map_err(|e| SequenceError::TransactInfra(e.into()))?;
+        let chain_id = snapshot.chain_id;
+        let evm = Context::mainnet()
+            .with_db(CacheDB::new(lazy_db))
+            .with_block(block)
+            .modify_cfg_chained(|cfg| {
+                cfg.chain_id = chain_id;
+                cfg.set_spec_and_mainnet_gas_params(spec);
+            })
+            .build_mainnet();
+        Ok(Self {
+            evm,
+            reads: HashMap::new(),
+            gas_used_total: 0,
+            hasher: Sha256::new(),
+            successful_calls: 0,
+        })
+    }
+
+    pub fn assert_canonical(&self) -> Result<(), SequenceError> {
+        self.evm
+            .db()
+            .db
+            .assert_canonical()
+            .map_err(|e| SequenceError::TransactInfra(e.to_string()))
+    }
+
+    /// Read-only calls use zero gas price without modifying the execution header
+    /// or committed state. Restore validation before any real transaction.
+    fn view(&mut self, mut tx: TxEnv) -> Result<ExecutionResult, SequenceError> {
+        tx.nonce = self
+            .evm
+            .db_mut()
+            .load_account(tx.caller)
+            .map_err(|e| SequenceError::TransactInfra(e.to_string()))?
+            .info
+            .nonce;
+        let previous = self.evm.ctx.cfg.disable_base_fee;
+        self.evm.ctx.cfg.disable_base_fee = true;
+        let result = self.evm.transact(tx);
+        self.evm.ctx.cfg.disable_base_fee = previous;
+        result
+            .map(|r| r.result)
+            .map_err(|e| SequenceError::TransactInfra(e.to_string()))
+    }
+
     /// Apply a paper-only storage override to the CacheDB. Returns an
     /// error if the EVM database handle is unexpectedly missing or if
     /// the underlying CacheDB rejects the insertion (only happens when
@@ -234,7 +286,16 @@ impl SequenceContext {
     /// so subsequent steps see the post-state. Returns the outcome —
     /// the orchestrator inspects it and decides whether to continue.
     pub fn call(&mut self, call: SequenceCall) -> Result<CallOutcome, SequenceError> {
+        let nonce = self
+            .evm
+            .db_mut()
+            .load_account(call.from)
+            .map_err(|e| SequenceError::TransactInfra(e.to_string()))?
+            .info
+            .nonce;
         let tx = TxEnv {
+            nonce,
+            chain_id: Some(self.evm.ctx.cfg.chain_id),
             caller: call.from,
             kind: TransactTo::Call(call.to),
             data: Bytes::copy_from_slice(&call.calldata),
@@ -324,7 +385,7 @@ impl SequenceContext {
         // (caller: router, fixed to Address::ZERO in PR #431). Use a
         // code-less view caller here when the FLE becomes a contract.
         let tx = TxEnv {
-            caller: account,
+            caller: Address::ZERO,
             kind: TransactTo::Call(token),
             data: Bytes::copy_from_slice(&calldata),
             value: U256::ZERO,
@@ -333,15 +394,12 @@ impl SequenceContext {
             ..TxEnv::default()
         };
 
-        let result = self
-            .evm
-            .transact(tx)
-            .map_err(|e| SequenceError::TransactInfra(format!("{e}")))?;
+        let result = self.view(tx)?;
 
-        let amount = match result.result {
+        let amount = match result {
             ExecutionResult::Success { output, .. } => {
                 let bytes = output.into_data();
-                if bytes.len() < 32 {
+                if bytes.len() != 32 {
                     return Err(SequenceError::BalanceDecodeFailed { len: bytes.len() });
                 }
                 U256::from_be_slice(&bytes[..32])
@@ -405,12 +463,9 @@ impl SequenceContext {
             ..TxEnv::default()
         };
 
-        let result = self
-            .evm
-            .transact(tx)
-            .map_err(|e| SequenceError::TransactInfra(format!("{e}")))?;
+        let result = self.view(tx)?;
 
-        let amount = match result.result {
+        let amount = match result {
             ExecutionResult::Success { output, .. } => {
                 let bytes = output.into_data();
                 decode_amounts_out_last(&bytes)?
@@ -596,6 +651,84 @@ mod tests {
     fn sequence_context_constructs_from_lazy_db() {
         let lazy = lazy_offline();
         let _ctx = SequenceContext::new(lazy, 1, 100);
+    }
+
+    #[test]
+    fn execution_uses_and_increments_real_account_nonce() {
+        let lazy = lazy_offline();
+        let caller = Address::from([0xa1; 20]);
+        let target = Address::from([0xb1; 20]);
+        for address in [caller, target, Address::ZERO] {
+            seed_account(
+                &lazy,
+                address,
+                AccountInfo {
+                    balance: U256::from(1_000_000u64),
+                    nonce: if address == caller { 9 } else { 0 },
+                    code_hash: KECCAK_EMPTY,
+                    code: Some(Bytecode::new()),
+                    ..Default::default()
+                },
+            );
+        }
+        let mut ctx = SequenceContext::new(lazy, 1, 100);
+        for _ in 0..2 {
+            let result = ctx
+                .call(SequenceCall {
+                    from: caller,
+                    to: target,
+                    calldata: vec![],
+                    value_wei: 0,
+                    gas_price_wei: 1,
+                    gas_limit: 50000,
+                    label: "nonce_regression",
+                })
+                .unwrap();
+            assert!(result.is_success());
+        }
+        assert_eq!(
+            ctx.evm.db_mut().load_account(caller).unwrap().info.nonce,
+            11
+        );
+        assert_eq!(ctx.finalize().successful_calls, 2);
+    }
+
+    #[test]
+    fn contract_balance_view_does_not_relax_execution_validation() {
+        let lazy = lazy_offline();
+        let token = Address::from([0xb2; 20]);
+        let holder = Address::from([0xc2; 20]);
+        for address in [Address::ZERO, holder] {
+            seed_account(
+                &lazy,
+                address,
+                AccountInfo {
+                    code_hash: KECCAK_EMPTY,
+                    code: Some(Bytecode::new()),
+                    ..Default::default()
+                },
+            );
+        }
+        let code = Bytecode::new_raw(Bytes::from(vec![
+            0x60, 42, 0x60, 0, 0x52, 0x60, 32, 0x60, 0, 0xf3,
+        ]));
+        seed_account(
+            &lazy,
+            token,
+            AccountInfo {
+                code_hash: code.hash_slow(),
+                code: Some(code),
+                ..Default::default()
+            },
+        );
+        let mut ctx = SequenceContext::new(lazy, 1, 100);
+        ctx.evm.ctx.block.basefee = 10;
+        assert_eq!(
+            ctx.read_balance(token, holder, "contract_balance").unwrap(),
+            U256::from(42)
+        );
+        assert!(!ctx.evm.ctx.cfg.disable_base_fee);
+        assert_eq!(ctx.finalize().successful_calls, 0);
     }
 
     /// `apply_storage` succeeds without touching the chain when the

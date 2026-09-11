@@ -1,7 +1,7 @@
 //! ArbitrageX Math-Physics Engine
 //!
 //! Doctrina de Aislamiento Topologico:
-//! - 31 operadores matematicos, cada uno en su propio archivo
+//! - 32 operadores matematicos, cada uno en su propio archivo
 //! - Acoplamiento exclusivo via trait TopologicalOperator
 //! - 264 vectores estrategicos MEV
 //! - Matriz de proyeccion 264x31

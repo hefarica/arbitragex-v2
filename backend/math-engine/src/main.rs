@@ -1,4 +1,4 @@
-//! math-engine binary — serves the 31 topological operators over HTTP.
+//! math-engine binary — serves the 32 topological operators over HTTP.
 //!
 //! The REST surface (operators list/toggle, compute, 264×31 matrix projection)
 //! is implemented in `api.rs` behind the `api` feature; this binary only wires
@@ -35,7 +35,7 @@ async fn main() -> anyhow::Result<()> {
         .map_err(|e| anyhow::anyhow!("failed to bind math-engine listener on {addr}: {e}"))?;
     info!(
         event = "service.boot",
-        port, "math-engine listening (31 operators)"
+        port, "math-engine listening (32 operators)"
     );
     axum::serve(listener, app)
         .await

@@ -42,6 +42,11 @@ describe('ARBX-XLANG-01 · route-discovery tick wire contract (Rust-emitted gold
     const parsed = RouteDiscoveryTickSummarySchema.parse(loadFixture('full.json'));
     // Regression pins for the four keys that once killed every payload.
     expect(parsed.multi_hop_capped).toBeTypeOf('boolean');
+    expect(parsed.multi_hop_work_limited).toBeTypeOf('boolean');
+    expect(parsed.multi_hop_time_limited).toBeTypeOf('boolean');
+    expect(parsed.multi_hop_invalid_weights).toBeTypeOf('number');
+    expect(parsed.discovery_work_limited).toBeTypeOf('boolean');
+    expect(parsed.discovery_edge_visits).toBeGreaterThanOrEqual(0);
     expect(parsed.multi_hop_do_not).toBeTypeOf('string');
     expect(parsed.fe_prefilter_anchor_dynamic).toBeTypeOf('boolean');
     // Census: non-empty string→count record (slugs belong to the Rust
@@ -76,5 +81,19 @@ describe('ARBX-XLANG-01 · route-discovery tick wire contract (Rust-emitted gold
     const tampered = { ...full, __future_rust_key__: 1 };
     const result = RouteDiscoveryTickSummarySchema.safeParse(tampered);
     expect(result.success).toBe(false);
+  });
+
+  it('rejects invalid budget counters and accepts the earlier wire without them', () => {
+    const full = loadFixture('full.json') as Record<string, unknown>;
+    for (const bad of [{ multi_hop_work_limited: 1 }, { discovery_edge_visits: -1 },
+      { multi_hop_invalid_weights: 0.5 }, { multi_hop_time_limited: 'false' }]) {
+      expect(RouteDiscoveryTickSummarySchema.safeParse({ ...full, ...bad }).success).toBe(false);
+    }
+    const older = { ...full };
+    for (const key of ['discovery_edge_visits', 'discovery_work_limited', 'multi_hop_edge_visits',
+      'multi_hop_invalid_weights', 'multi_hop_work_limited', 'multi_hop_time_limited',
+      'multi_hop_duplicate_cycles']) delete older[key];
+    const parsed = RouteDiscoveryTickSummarySchema.parse(older);
+    expect(parsed.multi_hop_edge_visits).toBeUndefined();
   });
 });

@@ -151,6 +151,7 @@ impl DenseIdBuilder {
 /// Parallel pools on the same unordered pair share ONE bucket; every pushed
 /// edge is preserved (bijection edge↔bucket entry), so a dense rebuild can
 /// never drop a pool.
+#[derive(Debug, Clone)]
 pub struct PairBuckets<T> {
     n: usize,
     buckets: Vec<Vec<(usize, usize, T)>>,

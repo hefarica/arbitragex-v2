@@ -11,6 +11,7 @@ shared-rs = { workspace = true }
 prioritization-spine = { workspace = true }
 ethers = { workspace = true }
 thiserror = { workspace = true }
+anyhow = { workspace = true }
 tracing = { workspace = true }
 # Arbitrary-precision f64 → U256 wei conversion used by sim_encoder (PR-B2a).
 bigdecimal = { workspace = true }

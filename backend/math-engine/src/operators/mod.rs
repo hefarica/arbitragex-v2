@@ -1,12 +1,12 @@
-//! FUSILE: math-physics-engine/operators — 31 Espacios de Hilbert Aislados
+//! FUSILE: math-physics-engine/operators — 32 Espacios de Hilbert Aislados
 //!
 //! Doctrina de Aislamiento Topológico:
 //! - Cada operador existe en su propio archivo .rs
 //! - Acoplamiento exclusivo vía trait TopologicalOperator
-//! - Añadir op_32 → crear archivo + registrar en registry.rs
+//! - Añadir operador → crear archivo + registrar en OperatorRegistry
 //! - El despachador (lib.rs) no requiere modificación
 
-// Declaraciones de los 31 operadores
+// Declaraciones de los 32 operadores; se preservan los IDs históricos 1–31.
 pub mod op_01_svd;
 pub mod op_02_pca;
 pub mod op_03_eigen;
@@ -38,12 +38,16 @@ pub mod op_28_jit_liquidity;
 pub mod op_29_shapley;
 pub mod op_30_gnn_encoder;
 pub mod op_31_drl_agent;
+pub mod op_32_nsga2;
 
 #[cfg(test)]
 mod real_ops_tests;
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+
+/// Number of registered operators; strategy projection dimensions are separate.
+pub const OPERATOR_COUNT: u8 = 32;
 
 /// Estado de mercado normalizado — input universal para todos los operadores
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -84,7 +88,7 @@ pub struct OperatorOutput {
 /// Invariante: el despachador solo conoce esta interfaz.
 /// La implementación interna es opaca.
 pub trait TopologicalOperator: Send + Sync {
-    /// ID único del operador (1-31)
+    /// ID único del operador (1-32)
     fn id(&self) -> u8;
 
     /// Nombre humano del operador
@@ -157,6 +161,7 @@ impl OperatorRegistry {
             29 => Box::new(crate::operators::op_29_shapley::ShapleyOperator::new()),
             30 => Box::new(crate::operators::op_30_gnn_encoder::GnnEncoderOperator::new()),
             31 => Box::new(crate::operators::op_31_drl_agent::DrlAgentOperator::new()),
+            32 => Box::new(crate::operators::op_32_nsga2::Nsga2Operator::new()),
         }
     }
 

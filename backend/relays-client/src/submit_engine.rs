@@ -145,6 +145,39 @@ impl SubmitEngine {
         // fallback chain internally with PaperModeSource attribution).
         let paper_dynamic = self.paper_mode.is_enabled_for_chain(opp.chain_id).await;
         let paper = paper_dynamic || paper_env;
+        if !paper && (self.pg.is_none() || self.flashbots_for_callbundle.is_none()) {
+            return Self::dropped(opp, "live_requires_database_and_private_simulator");
+        }
+
+        let live_admission = if !paper {
+            let prepare = async {
+                let signer = self
+                    .signer
+                    .as_ref()
+                    .ok_or_else(|| anyhow::anyhow!("signer_missing"))?;
+                let raw: Option<String> = self
+                    .redis
+                    .clone()
+                    .get(format!("arbx:validated_plan:{}", opp.id))
+                    .await?;
+                let original: ValidatedPlan = serde_json::from_str(
+                    raw.as_deref()
+                        .ok_or_else(|| anyhow::anyhow!("analysis_plan_required"))?,
+                )?;
+                let plan =
+                    crate::execution_admission::refresh(opp, &original, signer.address).await?;
+                let economics =
+                    crate::execution_admission::economics(opp, &plan, &self.redis).await?;
+                Ok::<_, anyhow::Error>((plan, economics))
+            }
+            .await;
+            match prepare {
+                Ok(a) => Some(a),
+                Err(e) => return Self::dropped(opp, &e.to_string()),
+            }
+        } else {
+            None
+        };
 
         // Paper-only sink without a capital signer (Slice 1 / SSH-CI/CD paper path).
         // The checklist branch below also returns PaperModeActive → paper_trade_runs,
@@ -197,8 +230,16 @@ impl SubmitEngine {
             // route_tokens: the two tokens in the trade. Stored as lowercase
             // hex in the tokens table (added by migration 021). We normalise
             // to lowercase here so check 8 finds the rows reliably.
-            let route_tokens: Vec<String> =
-                vec![opp.token_in.to_lowercase(), opp.token_out.to_lowercase()];
+            let route_tokens: Vec<String> = if let Some((plan, _)) = &live_admission {
+                plan.ctx
+                    .forward_path
+                    .iter()
+                    .chain(&plan.ctx.backward_path)
+                    .map(|a| format!("{a:#x}"))
+                    .collect()
+            } else {
+                vec![opp.token_in.to_lowercase(), opp.token_out.to_lowercase()]
+            };
 
             // route_factories (Package #6 — was hollow `Vec::new()`):
             // Opportunity carries dex_a/dex_b as exchange NAMES (e.g.
@@ -254,7 +295,10 @@ impl SubmitEngine {
             // real slippage value lands on Opportunity (future Sprint), prefer
             // it over this conservative proxy.
             let max_slippage_pct = load_max_slippage_pct(pg_pool, opp.chain_id).await;
-            let expected_slippage_pct = conservative_slippage_estimate(max_slippage_pct);
+            let expected_slippage_pct = live_admission
+                .as_ref()
+                .map(|(_, e)| e.slippage_pct)
+                .unwrap_or_else(|| conservative_slippage_estimate(max_slippage_pct));
 
             let mut ctx = PreExecuteContext {
                 chain_id: opp.chain_id,
@@ -263,11 +307,14 @@ impl SubmitEngine {
                 // C1 fix (2026-05-10): use resolve_profit_for_checklist which
                 // in live mode rejects gross-only rows (NetProfitUnknown).
                 // In paper mode the gross fallback is permitted with a warn log.
-                expected_profit_usd: profit_for_checklist,
+                expected_profit_usd: live_admission
+                    .as_ref()
+                    .map(|(_, e)| e.net + e.gas)
+                    .unwrap_or(profit_for_checklist),
                 // estimated_gas_usd is 0.0 because expected_profit_usd now carries NET
                 // profit (gas already deducted by spine). Setting it to non-zero would
                 // double-deduct gas and incorrectly block valid opportunities.
-                estimated_gas_usd: 0.0,
+                estimated_gas_usd: live_admission.as_ref().map(|(_, e)| e.gas).unwrap_or(0.0),
                 expected_slippage_pct,
                 our_address: &our_address,
                 pg: pg_pool,
@@ -392,7 +439,9 @@ impl SubmitEngine {
         // reason + a structured warn. The producer side is intentionally
         // fail-SOFT (a Redis hiccup there just skips persist); this read being
         // fail-CLOSED is the asymmetry that makes "broadcast ⇒ validated" hold.
-        let validated_plan: ValidatedPlan = {
+        let validated_plan: ValidatedPlan = if let Some((plan, _)) = live_admission {
+            plan
+        } else {
             let plan_key = format!("arbx:validated_plan:{}", opp.id);
             let mut redis_conn = self.redis.clone();
             let raw: Option<String> = match redis_conn.get::<_, Option<String>>(&plan_key).await {
@@ -563,6 +612,12 @@ impl SubmitEngine {
         // bundle is dropped rather than broadcast un-re-simulated — see the
         // `Err(e)` arm below. The on-chain inclusion check (step 7) remains the
         // canonical gate for bundles that DO pass re-sim.
+        if let Err(e) = crate::bundle_builder::assert_bundle_head(provider.as_ref(), &bundle).await
+        {
+            self.resync_nonce(opp.chain_id, signer.address, "head_changed")
+                .await;
+            return Self::dropped(opp, &e.to_string());
+        }
         if let Some(ref flashbots) = self.flashbots_for_callbundle {
             let target_block = bundle.target_block;
             let sim_result = flashbots
@@ -583,6 +638,26 @@ impl SubmitEngine {
                     return Self::dropped(opp, &reason);
                 }
                 CallBundleDecision::Proceed { sim } => {
+                    if sim.tx_results.len() != 1
+                        || sim.total_gas_used == 0
+                        || sim.total_gas_used
+                            > validated_plan
+                                .binding
+                                .as_ref()
+                                .map(|b| b.gas_used)
+                                .unwrap_or(0)
+                        || sim.tx_results[0].gas_used != sim.total_gas_used
+                        || sim.tx_results[0]
+                            .tx_hash
+                            .parse::<ethers::types::H256>()
+                            .ok()
+                            != Some(bundle.tx_hash)
+                    {
+                        self.resync_nonce(opp.chain_id, signer.address, "private_sim_identity")
+                            .await;
+                        return Self::dropped(opp, "private_simulation_identity_or_gas_mismatch");
+                    }
+
                     info!(
                         event = "be05.callbundle_passed",
                         opp_id = %opp.id,
@@ -670,6 +745,13 @@ impl SubmitEngine {
                     return Self::dropped(opp, &reason);
                 }
             }
+        }
+
+        if let Err(e) = crate::bundle_builder::assert_bundle_head(provider.as_ref(), &bundle).await
+        {
+            self.resync_nonce(opp.chain_id, signer.address, "head_changed_after_sim")
+                .await;
+            return Self::dropped(opp, &e.to_string());
         }
 
         // 6. Multi-relay broadcast (BE-06).
@@ -771,22 +853,20 @@ impl SubmitEngine {
 
         match outcome {
             InclusionOutcome::Included { block, gas_used } => {
-                // N7 (audit 2026-05-10): emit arbx_bundle_included_* counters so
-                // the BundleSnipedRateHigh alert in alerts.rules.yml can fire.
-                //
-                // Profitable proxy: net_expected_profit_usd > 0, falling back to
-                // expected_profit_usd > 0. Both fields originate from the spine
-                // evaluator. Until Sprint 6 recon writes realized profit back via
-                // trace reconciliation, this is the best available signal.
-                // False negatives (expected positive but actually sniped) are
-                // acceptable — the alert catches the aggregate ratio, not
-                // individual bundles.
-                let profitable = opp
-                    .net_expected_profit_usd
-                    .or(opp.expected_profit_usd)
-                    .map(|p| p > 0.0)
-                    .unwrap_or(false);
-                shared_rs::metrics::record_inclusion(opp.chain_id, &relay_used, profitable);
+                let actual_profit_usd = crate::settlement_accounting::reconcile_and_publish(
+                    opp,
+                    &validated_plan,
+                    bundle.tx_hash,
+                    &self.redis,
+                )
+                .await;
+                if let Some(profit) = actual_profit_usd {
+                    shared_rs::metrics::record_inclusion(opp.chain_id, &relay_used, profit > 0.0);
+                } else {
+                    shared_rs::metrics::BUNDLE_INCLUDED_TOTAL
+                        .with_label_values(&[&opp.chain_id.to_string(), &relay_used])
+                        .inc();
+                }
 
                 ExecutionResult {
                     opportunity_id: opp.id,
@@ -796,24 +876,33 @@ impl SubmitEngine {
                     block_included: Some(block),
                     // gas_used is u64 (alloy 1.0 receipt.gas_used type).
                     gas_used_wei: Some(gas_used.to_string()),
-                    actual_profit_usd: None, // S6 computes this from traces
+                    actual_profit_usd,
                     error_message: None,
                     submitted_at,
                     trace_id: opp.trace_id,
                 }
             }
-            InclusionOutcome::Reverted { block } => ExecutionResult {
-                opportunity_id: opp.id,
-                status: ExecutionStatus::Reverted,
-                tx_hash: Some(format!("0x{:x}", bundle.tx_hash)),
-                relay_used: Some(relay_used),
-                block_included: Some(block),
-                gas_used_wei: None,
-                actual_profit_usd: None,
-                error_message: Some("on_chain_revert".into()),
-                submitted_at,
-                trace_id: opp.trace_id,
-            },
+            InclusionOutcome::Reverted { block } => {
+                let actual_profit_usd = crate::settlement_accounting::reconcile_and_publish(
+                    opp,
+                    &validated_plan,
+                    bundle.tx_hash,
+                    &self.redis,
+                )
+                .await;
+                ExecutionResult {
+                    opportunity_id: opp.id,
+                    status: ExecutionStatus::Reverted,
+                    tx_hash: Some(format!("0x{:x}", bundle.tx_hash)),
+                    relay_used: Some(relay_used),
+                    block_included: Some(block),
+                    gas_used_wei: None,
+                    actual_profit_usd,
+                    error_message: Some("on_chain_revert".into()),
+                    submitted_at,
+                    trace_id: opp.trace_id,
+                }
+            }
             InclusionOutcome::Dropped => {
                 // WO-05 (2026-09-06)
                 self.resync_nonce(opp.chain_id, signer.address, "inclusion_timeout")

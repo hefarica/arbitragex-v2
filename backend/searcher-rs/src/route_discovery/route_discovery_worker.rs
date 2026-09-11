@@ -445,18 +445,31 @@ pub fn evaluate_tick_phased(
             ),
         };
     let mh = match mh_bounds {
-        Some((lo, hi)) => crate::route_discovery::multi_hop_search::find_profitable_cycles(
-            &outcome.graph,
-            lo as usize,
-            hi as usize,
-            finder.max_routes_per_tick,
-        ),
+        Some((lo, hi)) => {
+            crate::route_discovery::multi_hop_search::find_profitable_cycles_with_limits(
+                &outcome.graph,
+                lo as usize,
+                hi as usize,
+                finder.max_routes_per_tick,
+                crate::route_discovery::multi_hop_search::SearchLimits {
+                    deduplicate_rotations: true, // this pass only emits analysis telemetry
+                    hop_mask: finder
+                        .hop_mask_strategy_id
+                        .as_deref()
+                        .and_then(crate::strategy_hop_mask::hop_mask)
+                        .unwrap_or(0b11_1111),
+                    max_duration: capture.then(|| Duration::from_millis(Stage::Expand.target_ms())),
+                    ..Default::default()
+                },
+            )
+        }
         None => crate::route_discovery::multi_hop_search::MultiHopResult {
             cycles: Vec::new(),
             capped: false,
             dropped_for_cap: 0,
             v3_skipped: 0,
             noise_dropped: 0,
+            ..Default::default()
         },
     };
     let multi_hop_cycles_found = mh.cycles.len();
@@ -480,11 +493,18 @@ pub fn evaluate_tick_phased(
         mode,
     );
     // Inject the multi-hop signal without changing tick_event's signature.
+    tick_summary["discovery_edge_visits"] = serde_json::json!(found.edge_visits);
+    tick_summary["discovery_work_limited"] = serde_json::json!(found.work_limited);
     tick_summary["multi_hop_profitable_cycles"] = serde_json::json!(multi_hop_cycles_found);
     tick_summary["multi_hop_v3_skipped"] = serde_json::json!(mh.v3_skipped);
     tick_summary["multi_hop_capped"] = serde_json::json!(mh.capped);
     // PR-ROUTE-06: surface the noise-floor prune so it never dies in silence (R8).
     tick_summary["multi_hop_noise_dropped"] = serde_json::json!(mh.noise_dropped);
+    tick_summary["multi_hop_invalid_weights"] = serde_json::json!(mh.invalid_weights);
+    tick_summary["multi_hop_edge_visits"] = serde_json::json!(mh.edge_visits);
+    tick_summary["multi_hop_work_limited"] = serde_json::json!(mh.work_limited);
+    tick_summary["multi_hop_time_limited"] = serde_json::json!(mh.time_limited);
+    tick_summary["multi_hop_duplicate_cycles"] = serde_json::json!(mh.duplicate_cycles);
     // XLS-QB-03: make the StrategyMask hop bounds observable — which strategy
     // gated the pass, the effective span, and an honest skip reason when the
     // mask∩knobs intersection is empty (0 cycles MUST be explainable).
@@ -2041,8 +2061,7 @@ mod tests {
         // The multihop finder only counts weighted edges (`None` ⇒ v3_skipped,
         // R8) and `outcome_two_v2` builds `log_weight: None` — attach real
         // weights here so the expansion has something to enumerate. Asymmetric
-        // (one profitable direction), and the finder emits one cycle PER START
-        // TOKEN (no cross-start dedupe): the profitable pair lands twice.
+        // (one profitable direction); rotations now share one cycle identity.
         let mut outcome = outcome_two_v2();
         for e in outcome.graph.edges.iter_mut() {
             e.log_weight = Some(if e.pool == addr(0x10) && e.token_in == addr(1) {
@@ -2060,8 +2079,9 @@ mod tests {
         assert!(tick.tick_summary["multi_hop_status_skip_reason"].is_null());
         assert_eq!(tick.tick_summary["multi_hop_mask_skip"], false);
         // The two-V2-pool fixture's single profitable pair (1→2 via 0x10,
-        // 2→1 via 0x20), enumerated once per start token.
-        assert_eq!(tick.multi_hop_cycles_found, 2);
+        // 2→1 via 0x20), with its other rotation deduplicated.
+        assert_eq!(tick.multi_hop_cycles_found, 1);
+        assert_eq!(tick.tick_summary["multi_hop_duplicate_cycles"], 1);
         // TW-005: class is annotated; needs_class stays null (not a skip).
         assert_eq!(
             tick.tick_summary["multi_hop_execution_class"],
