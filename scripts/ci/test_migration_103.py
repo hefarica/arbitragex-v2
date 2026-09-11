@@ -56,7 +56,7 @@ class MigrationTests(unittest.TestCase):
 
     def hold_writer(self):
         holder = subprocess.Popen(self.command, stdin=subprocess.PIPE,
-                                  stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True)
+                                  stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, text=True)
         holder.stdin.write("BEGIN; LOCK TABLE scored_opportunities IN ROW EXCLUSIVE MODE; SELECT pg_sleep(4); COMMIT;\n")
         holder.stdin.close()
         deadline = time.monotonic() + 3

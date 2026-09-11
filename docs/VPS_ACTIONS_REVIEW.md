@@ -27,7 +27,9 @@ Los logs también muestran `numeric field overflow` en escrituras de opportuniti
 
 8 pruebas de selección de gates aprobadas localmente. YAML de workflows y sintaxis Bash del autodeploy/migrador comprobadas. El nuevo workflow ejecuta cuatro pruebas sobre PostgreSQL 15 real: instalación/parcial, tipos incorrectos con rollback, replay bajo escritor concurrente y bloqueo real cuando faltan columnas.
 
-La validación completa de build, typecheck, Rust, contratos y E2E se ejecuta en la PR mediante los workflows existentes. Sus resultados deben consultarse antes de fusionar.
+Primera ejecución de PR #559: build/typecheck/Rust/contratos e integración aprobados; las cuatro regresiones de PostgreSQL 15 también pasaron. E2E terminó en verde, pero el log reveló una colisión de selector en killswitch.spec.ts (estado DISABLED y confirmación disabled). Se corrigió con selección exacta del título/valor de estado; se retiró el catch que convertía un fallo de armado en skip. Se añaden tres repeticiones del round-trip sin reintentos sobre el mismo stack real de CI. La PR vuelve a validar el commit corregido antes de fusionar.
+
+E2E mantiene exclusiones explícitas de pruebas live o infraestructura ausente; un workflow success no certifica esas rutas excluidas.
 
 ## Alcance y pendientes
 
