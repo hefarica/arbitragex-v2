@@ -41,7 +41,7 @@ run_file() {
   local RW_PW="${ARBX_RW_PW:-arbx_rw_dev_only}"
   local RO_PW="${ARBX_RO_PW:-arbx_ro_dev_only}"
   docker exec -i -e PGOPTIONS="$MIG_LOCK_OPTS" "$CONTAINER" psql -U "$PGUSER" -d "$PGDB" \
-    -v ON_ERROR_STOP=1 \
+    -v ON_ERROR_STOP=1 -v VERBOSITY=verbose \
     -v arbx_migrator_pw="$MIG_PW" \
     -v arbx_rw_pw="$RW_PW" \
     -v arbx_ro_pw="$RO_PW" \
@@ -71,10 +71,30 @@ fi
 
 APPLIED=0
 SKIPPED=0
+# Unique restricted logs prevent concurrent runs from overwriting each other's
+# diagnostics. Never retry arbitrary non-transactional or data migrations.
+LOG_DIR=$(mktemp -d)
+trap 'rm -rf "$LOG_DIR"' EXIT
 for f in "${FILES[@]}"; do
   # Each migration is wrapped so a failure aborts the whole deploy (fail-fast).
   # Idempotency is the migration author's responsibility (IF NOT EXISTS).
-  if run_file "$f" >/tmp/mig_"$f".log 2>&1; then
+  attempts=1
+  if [ "$f" = "103_math_evidence_scoring.sql" ]; then
+    attempts=3 # Entire file is transactional; lock failures roll back all DDL.
+  fi
+  succeeded=0
+  for ((attempt=1; attempt<=attempts; attempt++)); do
+    if run_file "$f" >"$LOG_DIR/$f.log" 2>&1; then
+      succeeded=1
+      break
+    fi
+    if ! grep -Eq 'ERROR:  (55P03|40P01):' "$LOG_DIR/$f.log" || [ "$attempt" -eq "$attempts" ]; then
+      break
+    fi
+    echo "  -> RETRY $f (transient lock, attempt $attempt/$attempts)"
+    sleep "$((attempt * 2))"
+  done
+  if [ "$succeeded" -eq 1 ]; then
     echo "  -> OK   $f"
     APPLIED=$((APPLIED + 1))
   else
@@ -82,7 +102,14 @@ for f in "${FILES[@]}"; do
     # means a non-idempotent migration OR a genuine schema error — either way
     # the deploy MUST abort to avoid code/DB desync.
     echo "  -> FAIL $f"
-    cat /tmp/mig_"$f".log
+    cat "$LOG_DIR/$f.log"
+    # Metadata only: no SQL text, credentials or client addresses in CI logs.
+    run_sql "SELECT pid, state, wait_event_type, wait_event,
+                    age(clock_timestamp(), xact_start) AS transaction_age,
+                    pg_blocking_pids(pid) AS blocked_by
+               FROM pg_stat_activity
+              WHERE datname = current_database() AND pid <> pg_backend_pid()
+              ORDER BY xact_start NULLS LAST LIMIT 20;" || true
     exit 1
   fi
 done

@@ -1,0 +1,18 @@
+[
+  "ci.yml",
+  "unit-tests.yml",
+  "typescript.yml",
+  "integration-tests.yml",
+  "e2e.yml",
+  "security.yml",
+  "codeql.yml",
+  "docker-build.yml",
+  "dockerfile-audit.yml",
+  "semiotic.yml",
+  "wallet-security.yml",
+  "opportunities-fidelity-gate.yml",
+  "no-hardcode.yml",
+  "omega8-m3-grep-gates.yml",
+  "omega8-pii-gates.yml",
+  "deploy-validation.yml"
+]

@@ -1,0 +1,38 @@
+name: Deployment regression gates
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  deployment-regression:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: migration_regression
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+        with:
+          persist-credentials: false
+      - name: Gate selection regressions
+        run: python3 -m unittest discover -s scripts/ci -p 'test_deploy_gates.py' -v
+      - name: Production migration shell syntax
+        run: bash -n database/run_migrations.sh
+      - name: Migration lock and rollback regressions (real PostgreSQL 15)
+        env:
+          PG_TEST_CONTAINER: ${{ job.services.postgres.id }}
+        run: python3 -m unittest discover -s scripts/ci -p 'test_migration_103.py' -v

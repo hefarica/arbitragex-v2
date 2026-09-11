@@ -1,9 +1,7 @@
 name: Auto-Deploy VPS (Post-E2E)
 
-# E2E-FIRST con polling interno:
-# - Se dispara en cada push a main
-# - Espera activamente a que el e2e del mismo SHA complete con success
-# - Solo entonces ejecuta el deploy real al VPS
+# Every deploy, including manual dispatch, requires same-SHA main-push gates.
+# A missing, failed, stale or cancelled validation never authorizes deployment.
 on:
   push:
     branches: [main]
@@ -13,80 +11,37 @@ on:
       reason:
         description: "Motivo del deploy manual"
         required: false
-        default: "Manual deploy override"
+        default: "Manual deployment after all gates"
 
 permissions:
   contents: read
   actions: read
 
 concurrency:
-  group: auto-deploy-vps-${{ github.ref }}
+  group: production-vps
   cancel-in-progress: false
 
 jobs:
-  wait-for-e2e:
-    name: Wait for e2e success
+  wait-for-gates:
+    name: Wait for all deployment gates
     runs-on: ubuntu-latest
-    timeout-minutes: 40
-    outputs:
-      e2e_success: ${{ steps.poll.outputs.e2e_success }}
-
+    timeout-minutes: 65
     steps:
-      - name: Poll e2e status for this SHA
-        id: poll
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+        with:
+          persist-credentials: false
+      - name: Verify same-SHA main-push gates
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          TARGET_SHA="${{ github.sha }}"
-          MAX_WAIT_MINUTES=35
-          SLEEP_SECONDS=30
-          MAX_ITERATIONS=$((MAX_WAIT_MINUTES * 60 / SLEEP_SECONDS))
-
-          echo "Waiting for e2e success on SHA $TARGET_SHA"
-
-          for i in $(seq 1 $MAX_ITERATIONS); do
-            RUNS=$(gh run list --repo ${{ github.repository }} --workflow e2e --limit 30 --json databaseId,status,conclusion,headSha --jq '.[] | select(.headSha == "'"$TARGET_SHA"'")')
-
-            if [ -n "$RUNS" ]; then
-              STATUS=$(echo "$RUNS" | jq -r '.status' | head -1)
-              CONCLUSION=$(echo "$RUNS" | jq -r '.conclusion' | head -1)
-              RUN_ID=$(echo "$RUNS" | jq -r '.databaseId' | head -1)
-
-              echo "[$i/$MAX_ITERATIONS] e2e run $RUN_ID status=$STATUS conclusion=${CONCLUSION:-pending}"
-
-              if [ "$STATUS" = "completed" ] && [ "$CONCLUSION" = "success" ]; then
-                echo "e2e_success=true" >> "$GITHUB_OUTPUT"
-                exit 0
-              fi
-
-              if [ "$STATUS" = "completed" ] && [ "$CONCLUSION" != "success" ]; then
-                echo "e2e failed with conclusion=$CONCLUSION"
-                echo "e2e_success=false" >> "$GITHUB_OUTPUT"
-                # G4 HARDENING (2026-08-18): exit 0 + skipped deploy = the workflow
-                # reports GREEN while nothing deployed — the exact silent-stale
-                # incident (VPS stuck 2 deploys behind on a "success"). FAIL RED
-                # instead; manual workflow_dispatch remains the override path.
-                echo "::error::e2e failed for $TARGET_SHA — deploy will NOT run silently-green. Re-run e2e or use workflow_dispatch."
-                exit 1
-              fi
-            else
-              echo "[$i/$MAX_ITERATIONS] e2e run not found yet for SHA $TARGET_SHA"
-            fi
-
-            sleep $SLEEP_SECONDS
-          done
-
-          echo "Timed out waiting for e2e"
-          echo "e2e_success=false" >> "$GITHUB_OUTPUT"
-          echo "::error::Timed out waiting for e2e on $TARGET_SHA — deploy skipped LOUDLY (was silently green)."
-          exit 1
+          TARGET_SHA: ${{ github.sha }}
+        run: python3 scripts/ci/wait_deploy_gates.py
 
   deploy-to-vps:
     name: Deploy to VPS
     runs-on: ubuntu-latest
-    needs: wait-for-e2e
-    if: ${{ needs.wait-for-e2e.outputs.e2e_success == 'true' || github.event_name == 'workflow_dispatch' }}
-    timeout-minutes: 45
+    needs: wait-for-gates
+    if: ${{ github.ref == 'refs/heads/main' }}
+    timeout-minutes: 120
 
     steps:
       - name: Checkout repository
@@ -94,17 +49,32 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Recheck gates immediately before SSH
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TARGET_SHA: ${{ github.sha }}
+        run: python3 scripts/ci/wait_deploy_gates.py --timeout 0
+
       - name: Setup SSH
+        env:
+          VPS_KEY: ${{ secrets.VPS_SSH_KEY }}
+          VPS_HOST: ${{ secrets.VPS_SSH_HOST }}
+          VPS_PORT: ${{ secrets.VPS_PORT || '22' }}
         run: |
-          mkdir -p ~/.ssh
-          echo "${{ secrets.VPS_SSH_KEY }}" > ~/.ssh/deploy_key
-          chmod 600 ~/.ssh/deploy_key
-          ssh-keyscan -H ${{ secrets.VPS_SSH_HOST }} >> ~/.ssh/known_hosts 2>/dev/null
+          set -euo pipefail
+          test -n "$VPS_KEY" && test -n "$VPS_HOST"
+          [[ "$VPS_PORT" =~ ^[0-9]+$ ]] && (( VPS_PORT > 0 && VPS_PORT < 65536 ))
+          install -m 700 -d ~/.ssh
+          umask 077
+          printf '%s\n' "$VPS_KEY" > ~/.ssh/deploy_key
+          ssh-keyscan -T 10 -p "$VPS_PORT" -H "$VPS_HOST" > ~/.ssh/known_hosts
+          test -s ~/.ssh/known_hosts
 
       - name: Deploy to VPS via SSH
         env:
           VPS_HOST: ${{ secrets.VPS_SSH_HOST }}
           VPS_USER: ${{ secrets.VPS_SSH_USER }}
+          VPS_PORT: ${{ secrets.VPS_PORT || '22' }}
           # Prefer explicit secret; fall back to the canonical VPS path used by deploy.yml.
           DEPLOY_PATH: ${{ secrets.VPS_DEPLOY_PATH }}
           TARGET_SHA: ${{ github.sha }}
@@ -126,7 +96,8 @@ jobs:
           # DEPLOY_PATH/TARGET_SHA in the ssh remote command prefix — the previous
           # revision referenced $DEPLOY_PATH inside <<'EOF' where it was always empty,
           # producing: open /***/docker/compose.prod.yml: no such file or directory.
-          ssh -i ~/.ssh/deploy_key \
+          ssh -i ~/.ssh/deploy_key -p "$VPS_PORT" \
+            -o ConnectTimeout=15 -o ServerAliveInterval=15 -o ServerAliveCountMax=4 \
             -o BatchMode=yes \
             -o StrictHostKeyChecking=yes \
             "$VPS_USER@$VPS_HOST" \
@@ -175,13 +146,8 @@ jobs:
 
           echo "[1/9] Ensuring env file exists (never overwrite a real .env)..."
           if [ ! -f "$ENV_FILE" ]; then
-            if [ -f ".env.example" ]; then
-              echo "Creating .env from .env.example"
-              cp .env.example "$ENV_FILE"
-            else
-              echo "ERROR: no .env and no .env.example at $DEPLOY_PATH"
-              exit 1
-            fi
+            echo "::error::Production .env missing; configure actual deployment values first"
+            exit 1
           fi
 
           echo "[2/9] Fetching + anchoring to target SHA (BEFORE compose ops)..."
@@ -189,10 +155,14 @@ jobs:
           # Prefer `github` remote if present (origin may be a stale VPS bare mirror).
           if git remote get-url github >/dev/null 2>&1; then
             git fetch github main --prune
-            git reset --hard "github/main"
+            REMOTE_REF="github/main"
           else
             git fetch origin main --prune
-            git reset --hard origin/main
+            REMOTE_REF="origin/main"
+          fi
+          if [ "$(git rev-parse "$REMOTE_REF")" != "$TARGET_SHA" ]; then
+            echo "::error::Target superseded; refusing to roll production back to an older push"
+            exit 1
           fi
           # G4 HARDENING (deploy-veraz, 2026-08-18): the pin to TARGET_SHA is now
           # MANDATORY, not best-effort. The old soft `if` silently SKIPPED the pin
@@ -325,16 +295,11 @@ jobs:
           trap deploy_self_heal EXIT
 
           echo "[6/9] Building core + hot-path services (sequential — lower peak disk/RAM)..."
-          # Full --no-cache of the entire stack OOMs/fills the 150GB disk (was 82% full).
-          # Build the operator-facing plane + the REAL data hot-path so the pipeline
-          # (searcher → redis → postgres → api → dashboard) flows end-to-end (R7).
-          # The hot-path was previously NEVER deployed, leaving the dashboard empty.
-          # Rust images (searcher-rs, sim-ctl, relays-client) are heavy — build them
-          # explicitly; they are capital-$0 (paper/shadow, BROADCAST stays disabled).
-          docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" build \
-            api-server edge frontend \
-            searcher-rs sim-ctl relays-client recon selector-api anvil math-engine \
-            token-enricher socket-proxy
+          # RULE 03: no-cache, explicit environment, one service build at a time.
+          for service in api-server edge frontend searcher-rs sim-ctl relays-client \
+                         recon selector-api anvil math-engine token-enricher socket-proxy; do
+            docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" build --no-cache "$service"
+          done
 
           echo "[7/9] Starting stack (infra + hot-path + operator plane + observability + minio/vault)..."
           # Thanos is started separately at [7c] AFTER the arbx-metrics bucket

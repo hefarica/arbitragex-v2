@@ -32,6 +32,7 @@ on:
 
 permissions:
   contents: read
+  actions: read
   checks: write
   pull-requests: write
 
@@ -239,16 +240,23 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 45
     needs: [test-cartridges, validate-deployment-scripts]
-    # Only deploy if explicitly requested or on main branch push
-    if: |
-      (github.event_name == 'workflow_dispatch' && github.event.inputs.deploy_to_vps == 'true') ||
-      (github.event_name == 'push' && github.ref == 'refs/heads/main')
+    # Main pushes are deployed once by auto-deploy-vps after the shared gates.
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.deploy_to_vps == 'true' && github.ref == 'refs/heads/main' }}
+    concurrency:
+      group: production-vps
+      cancel-in-progress: false
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v6
         with:
           fetch-depth: 1
+
+      - name: Require same-SHA deployment gates
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TARGET_SHA: ${{ github.sha }}
+        run: python3 scripts/ci/wait_deploy_gates.py --timeout 0
 
       - name: Verify VPS secrets
         run: |
