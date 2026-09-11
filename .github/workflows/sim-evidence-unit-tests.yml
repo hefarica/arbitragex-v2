@@ -3,8 +3,8 @@ name: G-SIM-1 Evidence — simulator-v2 unit tests + dep tree
 # G-SIM-1 FASE 4 (operator directive 2026-08-16): automated evidence
 # producers for the readiness_evidence registry.
 #
-#   job unit-tests → POST item_key "unit_tests"  (checklist item 1)
-#   job dep-tree   → POST item_key "dep_tree"    (checklist item 5)
+#   job unit-tests → artifact item_key "unit_tests"  (checklist item 1)
+#   job dep-tree   → artifact item_key "dep_tree"    (checklist item 5)
 #
 # This closes the F0 gap where CI only ran `cargo test --workspace --lib`:
 # here we run the FULL simulator-v2 package (lib + tests/ integration).
@@ -13,10 +13,10 @@ name: G-SIM-1 Evidence — simulator-v2 unit tests + dep tree
 #   POST <ARBX_READINESS_EVIDENCE_URL>  with header x-arbx-admin-token
 #   {gate_id, item_key, status: evidenced|failed, evidence_ref, detail, verified_by}
 #
-# Secrets-missing contract: if ARBX_READINESS_EVIDENCE_URL or ARBX_ADMIN_TOKEN
-# is absent, DO NOT fail the job — emit a ::warning:: annotation and skip the
-# POST. The cargo test step still gates: on pull_request it blocks this check
-# run; on push to main it turns main red (post-merge safety net).
+# CI must not depend on the running production API. Payloads are mandatory
+# artifacts of this run; auto-deploy publishes the exact main-SHA evidence only
+# after it has recovered the API and verified the deployed commit. Tests gate
+# both PR and main; missing artifacts fail instead of losing the evidence.
 # HONESTY (RULE 00): dep_tree posts status "failed" while duplicate
 # alloy-primitives/revm versions resolve — never fake a clean tree.
 
@@ -86,6 +86,7 @@ jobs:
         env:
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
           TEST_OUTCOME: ${{ steps.test.outcome }}
+          SOURCE_SHA: ${{ github.sha }}
         run: |
           if [ "${TEST_OUTCOME}" = "success" ]; then
             STATUS="evidenced"
@@ -97,6 +98,7 @@ jobs:
               '{suite: "cargo test -p simulator-v2 --locked", failing_tail: $tail}')
           fi
 
+          DETAIL=$(jq --arg sha "$SOURCE_SHA" '. + {source_sha: $sha}' <<< "$DETAIL")
           jq -n \
             --arg gate_id "G-SIM-1" \
             --arg item_key "unit_tests" \
@@ -108,20 +110,18 @@ jobs:
               evidence_ref: $evidence_ref, detail: $detail,
               verified_by: $verified_by}' > evidence-payload.json
 
-      - name: POST unit_tests evidence → readiness_evidence registry
+      - name: Preserve unit_tests evidence
         if: always() && steps.test.outcome != 'skipped' && steps.test.outcome != 'cancelled'
-        uses: ./.github/actions/post-readiness-evidence
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
-          # The record step runs with working-directory: backend — the payload
-          # lands there; composite-action steps run from the repo root.
-          payload_file: backend/evidence-payload.json
-          evidence_url: ${{ secrets.ARBX_READINESS_EVIDENCE_URL }}
-          admin_token: ${{ secrets.ARBX_ADMIN_TOKEN }}
-          ssh_key: ${{ secrets.VPS_SSH_KEY }}
-          ssh_host: ${{ secrets.VPS_SSH_HOST }}
-          ssh_port: ${{ secrets.VPS_SSH_PORT }}
-          ssh_user: ${{ secrets.VPS_SSH_USER }}
-          deploy_path: ${{ secrets.VPS_DEPLOY_PATH }}
+          name: readiness-evidence-unit-tests
+          path: backend/evidence-payload.json
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Require evidenced unit_tests
+        if: always() && steps.test.outcome != 'skipped' && steps.test.outcome != 'cancelled'
+        run: jq -e '.status == "evidenced"' evidence-payload.json
 
   dep-tree:
     name: cargo tree -d (alloy-primitives / revm dedup) → item dep_tree
@@ -178,6 +178,7 @@ jobs:
         env:
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
           TREE_OUTCOME: ${{ steps.deptree.outcome }}
+          SOURCE_SHA: ${{ github.sha }}
         run: |
           # Same distinct-version criterion as the deptree step above: the
           # same version can appear once per feature-set; only >1 distinct
@@ -205,6 +206,7 @@ jobs:
               '{command: "cargo tree -d --locked", error_tail: $tail}')
           fi
 
+          DETAIL=$(jq --arg sha "$SOURCE_SHA" '. + {source_sha: $sha}' <<< "$DETAIL")
           jq -n \
             --arg gate_id "G-SIM-1" \
             --arg item_key "dep_tree" \
@@ -216,15 +218,15 @@ jobs:
               evidence_ref: $evidence_ref, detail: $detail,
               verified_by: $verified_by}' > evidence-payload.json
 
-      - name: POST dep_tree evidence → readiness_evidence registry
+      - name: Preserve dep_tree evidence
         if: always() && steps.deptree.outcome != 'skipped' && steps.deptree.outcome != 'cancelled'
-        uses: ./.github/actions/post-readiness-evidence
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
-          payload_file: backend/evidence-payload.json
-          evidence_url: ${{ secrets.ARBX_READINESS_EVIDENCE_URL }}
-          admin_token: ${{ secrets.ARBX_ADMIN_TOKEN }}
-          ssh_key: ${{ secrets.VPS_SSH_KEY }}
-          ssh_host: ${{ secrets.VPS_SSH_HOST }}
-          ssh_port: ${{ secrets.VPS_SSH_PORT }}
-          ssh_user: ${{ secrets.VPS_SSH_USER }}
-          deploy_path: ${{ secrets.VPS_DEPLOY_PATH }}
+          name: readiness-evidence-dep-tree
+          path: backend/evidence-payload.json
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Require evidenced dep_tree
+        if: always() && steps.deptree.outcome != 'skipped' && steps.deptree.outcome != 'cancelled'
+        run: jq -e '.status == "evidenced"' evidence-payload.json

@@ -44,6 +44,20 @@ como pruebas de integración productiva aprobadas.
 La reutilización emplea `workflow_call` y `jobs.<id>.uses`, según la
 [documentación de GitHub](https://docs.github.com/en/actions/how-tos/reuse-automations/reuse-workflows).
 
+En la PR, el run de simulador `34601918255` aprobó tests y árbol de dependencias,
+pero falló al publicar resultados porque la API productiva no respondía en el
+puerto 8080. Esa dependencia impedía desplegar una recuperación de la propia API.
+Ahora CI conserva los dos payloads como artefactos obligatorios, con SHA y run de
+origen; el autodeploy los valida y publica después de comprobar la salud del VPS.
+Los tests fallidos, artefactos ausentes o evidencia de otro SHA siguen fallando.
+Un fallo de publicación después del despliegue también deja el workflow en rojo.
+Las PR no publican resultados en el registro productivo. Cuatro regresiones Python
+comprueban identidad, origen y rechazo de intentos obsoletos o fallidos.
+
+Los gates Rust incluyen también `--bin relays-client` para ejecutar las pruebas de
+admisión y contabilidad que el comando heredado `--lib` dejaba fuera. La ejecución
+local completa aprobó 1.940 tests, con cuatro integraciones externas ignoradas.
+
 ## Límites de la evidencia
 
 Los resultados locales y de CI no acreditan ingresos, todos los 264 ejecutores,
