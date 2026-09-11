@@ -204,3 +204,4 @@ impl WorkerOrchestrator {
         }
     }
 }
+pub mod chainlink_subscriber;
