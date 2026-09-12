@@ -62,7 +62,10 @@ pub fn decode_symbol_result(returndata: &[u8]) -> Result<String> {
 
 fn symbol_from_bytes32_word(word: &[u8]) -> Result<String> {
     anyhow::ensure!(word.len() == 32, "legacy symbol() must be one bytes32 word");
-    let end = word.iter().position(|byte| *byte == 0).unwrap_or(word.len());
+    let end = word
+        .iter()
+        .position(|byte| *byte == 0)
+        .unwrap_or(word.len());
     anyhow::ensure!(end > 0, "empty legacy symbol()");
     anyhow::ensure!(
         word[end..].iter().all(|byte| *byte == 0),
