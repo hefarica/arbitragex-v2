@@ -1,12 +1,13 @@
-//! FUSILE: math-physics-engine/operators — 31 Espacios de Hilbert Aislados
+//! FUSILE: math-physics-engine/operators — 32 Espacios de Hilbert Aislados
 //!
 //! Doctrina de Aislamiento Topológico:
 //! - Cada operador existe en su propio archivo .rs
 //! - Acoplamiento exclusivo vía trait TopologicalOperator
-//! - Añadir op_32 → crear archivo + registrar en registry.rs
+//! - Añadir op_XX → crear archivo + registrar en el registry (mod.rs) — así se
+//!   añadió op_32 // HP-03 (2026-09-08)
 //! - El despachador (lib.rs) no requiere modificación
 
-// Declaraciones de los 31 operadores
+// Declaraciones de los 32 operadores
 pub mod op_01_svd;
 pub mod op_02_pca;
 pub mod op_03_eigen;
@@ -38,6 +39,8 @@ pub mod op_28_jit_liquidity;
 pub mod op_29_shapley;
 pub mod op_30_gnn_encoder;
 pub mod op_31_drl_agent;
+// HP-03 (2026-09-08) — operador 32: NSGA-II multi-objetivo (yield/riesgo/latencia)
+pub mod op_32_multi_objective;
 
 #[cfg(test)]
 mod real_ops_tests;
@@ -157,6 +160,8 @@ impl OperatorRegistry {
             29 => Box::new(crate::operators::op_29_shapley::ShapleyOperator::new()),
             30 => Box::new(crate::operators::op_30_gnn_encoder::GnnEncoderOperator::new()),
             31 => Box::new(crate::operators::op_31_drl_agent::DrlAgentOperator::new()),
+            // HP-03 (2026-09-08) — op_32 multi-objetivo (NSGA-II)
+            32 => Box::new(crate::operators::op_32_multi_objective::MultiObjectiveOperator::new()),
         }
     }
 

@@ -1,8 +1,13 @@
 //! Tx builder — Opportunity -> probe transaction parameters.
 //!
-//! S4 scope: `dex_arb` with UniV2 or UniV3 routers on chain_id=1 only. Anything
-//! else returns `BuildError::UnsupportedStrategy` (handled as 'not_implemented'
-//! sim result, NEVER as pass).
+//! S4 scope: single-hop UniV2/UniV3 swap probes on chain_id=1. BR-00
+//! (2026-09-07): admission is decided by ROUTE STRUCTURE -- two distinct
+//! tokens plus a catalog V2/V3 router on dex_a -- NOT by string equality
+//! with "dex_arb": every kind or cartridge stem whose payload has that
+//! shape builds the same probe (the kind is never collapsed or rewritten).
+//! Only non-swap topologies and cyclic routes are refused
+//! (`UnsupportedStrategy` / `CyclicRouteNotRepresentable`, handled as
+//! 'not_implemented' sim results, NEVER as pass).
 
 use ethers::abi::{encode, Token};
 use ethers::types::{Address, Bytes, U256};
@@ -14,6 +19,12 @@ use std::time::{SystemTime, UNIX_EPOCH};
 pub enum BuildError {
     #[error("unsupported strategy for S4 simulator: {0:?}")]
     UnsupportedStrategy(StrategyKind),
+    // BR-00 (2026-09-07): closed route (token_in == token_out) -- cannot be
+    // expressed as the single swap hop this builder encodes.
+    #[error(
+        "cyclic route not representable as a single S4 swap hop (token_in == token_out): {0:?}"
+    )]
+    CyclicRouteNotRepresentable(StrategyKind),
     #[error("chain {0} not supported in S4 (only mainnet)")]
     UnsupportedChain(u64),
     #[error("router not in catalog for chain={chain} dex={dex}")]
@@ -42,11 +53,31 @@ pub fn build_probe(opp: &Opportunity, signer_from: Address) -> Result<ProbeTx, B
     if opp.chain_id != 1 {
         return Err(BuildError::UnsupportedChain(opp.chain_id));
     }
-    if opp.strategy_kind != StrategyKind::dex_arb() {
+    // BR-00 (2026-09-07): D-SIM-01 -- simulability is decided by ROUTE
+    // STRUCTURE, not by string equality with "dex_arb". The S4 probe is a
+    // single V2/V3 swap (token_in -> token_out on dex_a router); ANY kind
+    // whose payload has that shape gets the same probe -- including exact
+    // cartridge stems (mev_01_001_dex_dex_arbitrage etc.), each a canonical
+    // strategy_kind in its own right (shared-rs contracts.rs) that is NEVER
+    // collapsed into a base family (operator directive 2026-09-07). Only
+    // kinds whose execution topology is not a DEX swap at all are refused at
+    // the kind level, with the kind carried in the error.
+    if is_non_swap_strategy_kind(opp.strategy_kind.as_str()) {
         return Err(BuildError::UnsupportedStrategy(opp.strategy_kind.clone()));
     }
     let token_in = parse_addr(&opp.token_in)?;
     let token_out = parse_addr(&opp.token_out)?;
+    // BR-00 (2026-09-07): cyclic routes (token_in == token_out -- triangular
+    // cycles, flashloan borrows, closed cartridge routes) cannot be expressed
+    // as the single swap hop encoded here, and the Opportunity payload
+    // carries no intermediate hops to rebuild the real path. Refuse with a
+    // typed error instead of encoding a degenerate [X, X] swap that can only
+    // ever revert on the fork.
+    if token_in == token_out {
+        return Err(BuildError::CyclicRouteNotRepresentable(
+            opp.strategy_kind.clone(),
+        ));
+    }
     let amount_in = U256::from_dec_str(&opp.amount_in_wei)
         .map_err(|_| BuildError::InvalidAmount(opp.amount_in_wei.clone()))?;
     if amount_in.is_zero() {
@@ -84,6 +115,22 @@ pub fn build_probe(opp: &Opportunity, signer_from: Address) -> Result<ProbeTx, B
         data,
         gas_cap: DEFAULT_GAS_CAP,
     })
+}
+
+/// BR-00 (2026-09-07): kinds whose EXECUTION topology is not a DEX swap
+/// route, verified against their emitting workers -- they can never be
+/// expressed by this builder regardless of payload shape:
+/// - `liquidation` / `liquidation_snipe`: repay-debt + seize-collateral
+///   calls against an Aave V3 pool (liquidation_worker.rs emits
+///   dex_a = "aave-v3:<pool>" and amount in Aave base units) -- not a router
+///   swap. Refusing by kind yields the specific per-kind reason instead of
+///   a misleading "router not in catalog" build error.
+///
+/// Case-insensitive on purpose: producers have emitted PascalCase drift
+/// before (2026-08-18 router-catalog anomaly -- same drift class).
+fn is_non_swap_strategy_kind(kind: &str) -> bool {
+    let k = kind.trim();
+    k.eq_ignore_ascii_case("liquidation") || k.eq_ignore_ascii_case("liquidation_snipe")
 }
 
 /// Search router catalog by human-readable `dex_a` name (e.g. "uniswap-v2").
@@ -272,21 +319,82 @@ mod tests {
         assert_eq!(tx.data.as_ref()[0..4], [0x41, 0x4b, 0xf3, 0x89]);
     }
 
+    /// BR-00 (2026-09-07): cyclic-route fixture -- token_out == token_in,
+    /// the exact shape the triangular/flashloan workers emit.
+    fn opp_cyclic(kind: StrategyKind, chain_id: u64, dex_a: &str) -> Opportunity {
+        let mut o = opp(kind, chain_id, dex_a);
+        o.token_out = o.token_in.clone();
+        o
+    }
+
+    // BR-00 (2026-09-07): non-swap topologies are the ONLY kind-level
+    // refusals left -- refused with the kind carried in the error.
     #[test]
-    fn non_dex_arb_rejected() {
+    fn non_swap_kinds_rejected() {
+        let signer: Address = [0; 20].into();
+        for kind in ["liquidation", "Liquidation", "liquidation_snipe"] {
+            let o = opp(StrategyKind::cartridge(kind), 1, "uniswap-v2");
+            assert!(
+                matches!(
+                    build_probe(&o, signer),
+                    Err(BuildError::UnsupportedStrategy(_))
+                ),
+                "kind {kind} must be refused as non-swap"
+            );
+        }
+    }
+
+    // BR-00 (2026-09-07): cyclic routes get their OWN typed error (they are
+    // structurally unprovable as a single hop, not "unsupported kinds").
+    #[test]
+    fn cyclic_routes_rejected_with_typed_error() {
         let signer: Address = [0; 20].into();
         for kind in [
             StrategyKind::triangular(),
-            StrategyKind::backrun(),
-            StrategyKind::liquidation(),
             StrategyKind::flashloan_arb(),
+            StrategyKind::cartridge("mev_01_016_triangular_arbitrage"),
         ] {
-            let o = opp(kind.clone(), 1, "uniswap-v2");
+            let o = opp_cyclic(kind, 1, "uniswap-v2");
             assert!(matches!(
                 build_probe(&o, signer),
-                Err(BuildError::UnsupportedStrategy(_))
+                Err(BuildError::CyclicRouteNotRepresentable(_))
             ));
         }
+    }
+
+    // BR-00 (2026-09-07): D-SIM-01 regression -- cartridge stems and
+    // re-labelings whose payload is a real two-token hop build the SAME
+    // probe dex_arb gets; the kind is admitted, never rewritten.
+    #[test]
+    fn cartridge_stems_and_relabels_build_probes() {
+        let signer: Address = [0xab; 20].into();
+        for kind in [
+            "dex_arb",
+            "backrun",
+            "mev_01_001_dex_dex_arbitrage",
+            "mev_02_005_concentrated_liquidity_arbitrage",
+            "mev_04_001_stablecoin_peg_arbitrage",
+            "mev_01_019_multi_hop_arbitrage",
+        ] {
+            let o = opp(StrategyKind::cartridge(kind), 1, "uniswap-v2");
+            let tx =
+                build_probe(&o, signer).unwrap_or_else(|e| panic!("kind {kind} must build: {e}"));
+            assert_eq!(tx.data.as_ref()[0..4], [0x38, 0xed, 0x17, 0x39]);
+        }
+    }
+
+    // BR-00 (2026-09-07): a kind NOT in any list still builds when the route
+    // is structurally sound -- the decision is the payload, never a name
+    // registry (and never a panic on unknown input).
+    #[test]
+    fn unknown_open_route_kind_builds() {
+        let signer: Address = [0; 20].into();
+        let o = opp(
+            StrategyKind::cartridge("mev_99_001_brand_new_kind"),
+            1,
+            "uniswap-v2",
+        );
+        assert!(build_probe(&o, signer).is_ok());
     }
 
     #[test]

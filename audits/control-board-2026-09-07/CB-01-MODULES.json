@@ -1,0 +1,962 @@
+{
+  "census_meta": {
+    "wo": "CB-01",
+    "kind": "censo",
+    "merge_record": {
+      "note": "MERGE FINAL 2026-09-07T13:55Z por rust-topology-engineer (claim-owner CB-01). Base: censo ecc:rust-reviewer (CB-01-VERIFY, 34 módulos — adoptado íntegro con 3 correcciones y 11 módulos restaurados). Correcciones aplicadas sobre la base del par: (1) tab values español→inglés canónico de ControlBoardLed.tsx:401-408 (deteccion→detection, evaluacion→evaluation, terminus→execution, seguridad→security) — el componente agrupa por ESOS 6 valores exactos y mandaba TODO a 'Sin clasificar'; (2) control_key de claves con dialecto JSON/SET (kill_switch, trading_config_gate, aave_watchlist) → null: el PUT aplicado de CB-02 escribe 'true'/'false' (control-board.ts:530) y corrompería el JSON (killswitch → fail-closed halt, killswitch.rs:72-77); (3) ARBX_CSP_ENFORCE SÍ existe como consumidor (next.config.js:150-160, WO-09 2026-09-06, exact-string 'true', build-time) — refutación con evidencia a CB-01-VERIFY; el hallazgo VÁLIDO del par (no cableado al deploy: sin build arg en compose.dev.yml:337-348 NI compose.prod.yml:443-449, ausente de .env) se conserva como built-not-wired de capa deploy. Confirmaciones del claim-owner sobre el par: pool_enum default OFF (solo 'shadow' exacto spawnea, pool_enumeration_worker.rs:186-205 — CB-05 §1 decía 'default shadow': refutado); config_reload_omni NO declarado como módulo (lib.rs:195 declara config_reload, no _omni → ni compila); ARBX_MACRO_MEV_THRESHOLD=1,1/EPSILON=0,01 con coma CONFIRMADO por segunda lectura (f64 parse falla → defaults del workbook, gates/mod.rs:139-144).",
+      "restored_modules": "11 switches con evidencia propia del claim-owner que la base del par omitió: route_discovery_outcomes, rd_outcome_sink, paper_executor, paper_auto_reconcile, drift_tracker, edge_rate_limit, alertmanager_webhook, token_safety_floor, v3_arb_cartridge, tls_hsts, simulator_v2_dispatch (refinamiento ARBX_USE_SIMULATOR_V2: inert en searcher main.rs:465 let _ =, REAL consumidor en sim-ctl capabilities.rs:13,103)."
+    },
+    "generated_at": "2026-09-07T13:55:00Z",
+    "agents": "ecc:rust-reviewer (CB-01-VERIFY, base 12:46Z..13:40Z) + rust-topology-engineer (claim-owner, 13:20Z..13:55Z merge)",
+    "deployed_sha": "e65040f124e7405bd98755fed570696d681a948a",
+    "deployed_sha_subject": "Merge pull request #555 from hefarica/feat/hops-live-01",
+    "local_tree": "feat/hops-live-01 @ 27aca289 (padre exacto del deploy; diff CERO en todos los archivos censados)",
+    "verification_window": "2026-09-07T12:46Z..13:55Z via ssh arbx SOLO LECTURA (ambos agentes)",
+    "fleet_drift_event": "La flota completa fue recreada 2026-09-07T13:20:06Z (deploy de main e65040f1, PR #555) DURANTE el censo; las observaciones boot-log citan ese boot. .env mtime 12:12:58Z (flip RU-3 de CB-05) — sin cambios tras el deploy.",
+    "compose_file_running": "/opt/arbitragex-v2/docker/compose.prod.yml (label com.docker.compose.project.config_files). OJO mesa: CLAUDE.md R3 y CB-05 §5 citan compose.dev.yml — discrepancia documentada.",
+    "schema_contract": "modules[] usa los campos del contrato Zod ControlBoardModuleSchema de frontend/components/ControlBoardLed.tsx:43-68 (id,name,description,module_class,control_key,declared_on,verified_on,verified_source,verified_at,updated_at,last_reason,last_actor,telemetry_href) Y de CensusModuleSchema de backend/api-server/src/routes/control-board.ts:112-134 (subset: sin updated_at/last_*). Campos extra por módulo (tab, evidence, seed, built_not_wired) son extensión de censo: zod strip-by-default los tolera. CB-02 sirve {generated_at, modules:[...campos core...]}.",
+    "tabs_canonical": {
+      "detection": "Detección/Discovery — VALOR EXACTO de ControlBoardLed.tsx CONTROL_BOARD_TAB_VALUES",
+      "evaluation": "Evaluación/Matemática",
+      "execution": "Ejecución/Terminus — C-locked §34.3 (nota candado en el board)",
+      "infra": "Infra/Observabilidad",
+      "security": "Seguridad",
+      "frontend": "Frontend — build-time RULE 03"
+    },
+    "class_definitions": {
+      "A": "runtime-pollable — el worker polla una clave Redis (toggle live sin restart)",
+      "B": "boot-time env — leído una vez al arrancar; cambiar exige .env + recreate/rebuild",
+      "C": "operator-gated §34.3 — LOCKED sin toggle; capital/broadcast/live-flip"
+    },
+    "projections": {
+      "kill_switch_inversion": "id=kill_switch: verified_on = !(arbx:killswitch.enabled). LED verde = detección ACTIVA (kill-switch disarmado). CB-02/CB-03 DEBEN aplicar esta misma proyección; el toggle del board JAMÁS escribe arbx:killswitch directo (dialecto JSON — usar endpoint existente /admin/killswitch).",
+      "shadow_on": "route_discovery_radar y pool_enumeration: declared_on/verified_on=true significa 'procesando en modo shadow/observación' (route_discovery NO tiene modo activo por diseño del sistema de tipos — route_discovery/mod.rs:50-52)."
+    },
+    "honest_declarations": [
+      "ARBX_CSP_ENFORCE: consumidor EXISTE en frontend/next.config.js:150-160 (WO-09, exact-string 'true', fail-closed, evaluado en next build). PERO: ausente de .env VPS y SIN build arg en compose.dev.yml NI compose.prod.yml (frontend args = NEXT_PUBLIC_EDGE_URL/NEXT_PUBLIC_WS_URL/NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID/ARBX_TLS_ENABLED) → el flag NO puede llegar al builder en el deploy actual: built-not-wired de capa deploy. Además existe el switch manual de código next.config.js:19-26 (comentario 'Switch to Content-Security-Policy once clean ≥7d'). Estado runtime enforcing = OFF por construcción (probe HTTP no gastado).",
+      "Claves .env SIN consumidor (ruido RULE 00, excluidas del board): ARBX_GATE_THRESHOLD_ENERGY=10 (0 consumidores repo), ARBX_MIN_PRICE_LIQUIDITY_USD (solo passthrough compose.prod.yml:611). ARBX_USE_SIMULATOR_V2: inert en searcher (main.rs:462-465 let _ = 'no runtime flip yet') PERO con consumidor REAL en sim-ctl (capabilities.rs:13,103 — dispatch gate leído a request time): se lista como módulo simulator_v2_dispatch.",
+      "ARBX_MACRO_MEV_THRESHOLD=1,1 / ARBX_MACRO_MEV_EPSILON=0,01 (CONFIRMADO segunda lectura 13:5xZ): coma decimal ES → parse f64 falla → defaults del workbook efectivos (gates/mod.rs:139-144 .ok().and_then(parse)). El operador debe reescribir con punto si quiere esos valores.",
+      "Boot-log verifications: el boot 13:20:06Z es reciente y sus líneas visibles al sondar 13:23-13:55Z; ventanas anteriores rotadas (R9).",
+      "trading_config: SOLO existe arbx:trading_config:1. Las cadenas 10/42161/8453/137 NO tienen clave → searcher las trata como IDLE (trading_config.rs:17-20) — sin fila Redis no hay detección económica en esas cadenas."
+    ]
+  },
+  "modules": [
+    {
+      "id": "orchestrator_mode",
+      "name": "Orchestrator Mode (v1/v2/shadow/off)",
+      "description": "Modo del scanner por cadena: v2 = event-driven orchestrator; v1 = path legacy; off = sin detección. Default v1 (fail-safe).",
+      "module_class": "B",
+      "control_key": "env:ARBX_ORCHESTRATOR_MODE",
+      "declared_on": true,
+      "verified_on": true,
+      "verified_source": "log:worker_orchestrator.boot + env container",
+      "verified_at": "2026-09-07T13:26:00Z",
+      "updated_at": null,
+      "last_reason": null,
+      "last_actor": null,
+      "telemetry_href": "/operations",
+      "tab": "detection",
+      "evidence": {
+        "parse": "backend/searcher-rs/src/scanner.rs:164-178 (OrchestratorMode::from_env, default V1)",
+        "vps": ".env ARBX_ORCHESTRATOR_MODE=v2 + container env; boot worker_orchestrator.rpc_pool_ready providers=5 @13:20:17Z (claim-owner) + worker_orchestrator.boot @13:20:17Z (base)"
+      }
+    },
+    {
+      "id": "cartridge_mode",
+      "name": "Cartridge Runtime (off/shadow/active)",
+      "description": "264 cartuchos Rhai: shadow = telemetría; active = hot-path (hoy active se comporta como shadow — reservado). Default off.",
+      "module_class": "B",
+      "control_key": "env:ARBX_CARTRIDGE_MODE",
+      "declared_on": true,
+      "verified_on": true,
+      "verified_source": "log:cartridge.loaded + scanner.cartridge_mode mode=active",
+      "verified_at": "2026-09-07T13:26:00Z",
+      "updated_at": null,
+      "last_reason": null,
+      "last_actor": null,
+      "telemetry_href": "/operator",
+      "tab": "detection",
+      "evidence": {
+        "parse": "backend/searcher-rs/src/cartridge_boot.rs:59-79 (parse off|shadow|active; Active 'behaves as Shadow today' :56)",
+        "vps": ".env ARBX_CARTRIDGE_MODE=active; boot scanner.cartridge_mode mode=active + cartridge.loaded @13:20:25Z"
+      }
+    },
+    {
+      "id": "route_scanner_multihop",
+      "name": "Route Scanner multihop (RU-3)",
+      "description": "Escaneo proactivo por bloque de ciclos multihop 2-8 (negative-cycle finder) → despacha al pipeline canónico. El switch que originó el /goal: construido meses, jamás encendido hasta hoy. Default off (fail-safe).",
+      "module_class": "B",
+      "control_key": "env:ARBX_ROUTE_SCANNER_MODE",
+      "declared_on": true,
+      "verified_on": true,
+      "verified_source": "log:route_scanner.mode mode=on + route_scanner.done",
+      "verified_at": "2026-09-07T13:26:00Z",
+      "updated_at": "2026-09-07T12:12:58Z",
+      "last_reason": "RU-3: feed sin hops 2-6 (flip manual .env, ver CB-05-PROPUESTA-B.md E1)",
+      "last_actor": "operador (manual .env, pre-board)",
+      "telemetry_href": "/opportunities",
+      "tab": "detection",
+      "seed": true,
+      "evidence": {
+        "parse": "backend/searcher-rs/src/workers/route_scanner_worker.rs:104-125 (RouteScannerMode off|on, garbage→off); spawn scanner.rs:960-973; boot log route_scanner_worker.rs:796-807",
+        "vps": ".env:136 ARBX_ROUTE_SCANNER_MODE=on (mtime .env 12:12:58Z); boot route_scanner.mode mode=on dispatch_path=orchestrator @13:20:25Z; runtime route_scanner.done cycles_found=500 dispatched=371 (136 líneas)"
+      }
+    },
+    {
+      "id": "route_discovery_radar",
+      "name": "Route Discovery radar (NO-ACTIVE pin)",
+      "description": "Arquitectura radar de descubrimiento de rutas: SOLO off|shadow — el enum NO tiene variante Active (el sistema de tipos prohíbe camino de ejecución; 'active' deliberadamente → Off). 'shadow' = discovery+clasificación+telemetría, jamás escribe arbx:opps:detected.",
+      "module_class": "B",
+      "control_key": "env:ARBX_ROUTE_DISCOVERY_MODE",
+      "declared_on": true,
+      "verified_on": true,
+      "verified_source": "log:route_discovery.mode mode=shadow dispatch_enabled=true",
+      "verified_at": "2026-09-07T13:26:00Z",
+      "updated_at": null,
+      "last_reason": null,
+      "last_actor": null,
+      "telemetry_href": "/opportunities",
+      "tab": "detection",
+      "seed": true,
+      "evidence": {
+        "parse": "backend/searcher-rs/src/route_discovery/mod.rs:46-78 (RouteDiscoveryMode Off|Shadow; 'active' deliberadamente → Off); spawn route_discovery_worker.rs:1670 / scanner.rs:945",
+        "vps": ".env ARBX_ROUTE_DISCOVERY_MODE=shadow; boot route_discovery.mode mode=shadow dispatch_enabled=true @13:20:25Z; runtime route_discovery.tick pools_total=235 routes_found=500"
+      }
+    },
+    {
+      "id": "route_discovery_outcomes",
+      "name": "Emisor route_discovery outcomes",
+      "description": "cartridge_runner emite outcomes shadow al stream arbx:route_discovery:outcomes (fire-and-forget, NUNCA arbx:opps:detected). ARBX_ROUTE_DISCOVERY_OUTCOMES ∈ {shadow,on,1,true}, default off. Compañeros: ARBX_ROUTE_DISCOVERY_MAX_DEPTH=7, _V2_SCHEMA.",
+      "module_class": "B",
+      "control_key": "env:ARBX_ROUTE_DISCOVERY_OUTCOMES",
+      "declared_on": true,
+      "verified_on": true,
+      "verified_source": "env:ARBX_ROUTE_DISCOVERY_OUTCOMES=shadow (.env + env_file compose)",
+      "verified_at": "2026-09-07T13:37:00Z",
+      "updated_at": null,
+      "last_reason": null,
+      "last_actor": null,
+      "telemetry_href": "/opportunities",
+      "tab": "detection",
+      "evidence": {
+        "parse": "backend/searcher-rs/src/cartridge_boot.rs:377-384 (gate {shadow,on,1,true}), :462 (V2_SCHEMA)",
+        "vps": ".env ARBX_ROUTE_DISCOVERY_OUTCOMES=shadow + ARBX_ROUTE_DISCOVERY_MAX_DEPTH=7"
+      }
+    },
+    {
+      "id": "rd_outcome_sink",
+      "name": "Sink outcomes → feed shadow",
+      "description": "api-server consume arbx:route_discovery:outcomes y escribe opportunities paper-marked (amount_in_wei=0, dex_a=route_discovery) para que /opportunities muestre rutas shadow reales. ARBX_ROUTE_DISCOVERY_OUTCOMES_SINK ∈ {on,1,true,shadow}, default off.",
+      "module_class": "B",
+      "control_key": "env:ARBX_ROUTE_DISCOVERY_OUTCOMES_SINK",
+      "declared_on": true,
+      "verified_on": true,
+      "verified_source": "log:rd_outcome_sink.started@api-server 13:20:08Z",
+      "verified_at": "2026-09-07T13:37:00Z",
+      "updated_at": null,
+      "last_reason": null,
+      "last_actor": null,
+      "telemetry_href": "/opportunities",
+      "tab": "detection",
+      "evidence": {
+        "parse": "backend/api-server/src/routes/route-discovery-outcome-sink.ts:17,43; montaje index.ts:1925-1936",
+        "vps": ".env ARBX_ROUTE_DISCOVERY_OUTCOMES_SINK=shadow; boot rd_outcome_sink.started @13:20:08Z"
+      }
+    },
+    {
+      "id": "pool_enumeration",
+      "name": "Pool Enumeration (top-TVL discovery)",
+      "description": "Enumeración proactiva de pools top-TVL (subgraph+dexscreener+defillama+geckoterminal+alchemy, read-only). Spawnea SOLO con ARBX_POOL_ENUM_MODE='shadow' exacto — ausente/otro valor → poolenum.disabled (default OFF; CB-05 §1 'default shadow' REFUTADO por pool_enumeration_worker.rs:186-205).",
+      "module_class": "B",
+      "control_key": "env:ARBX_POOL_ENUM_MODE",
+      "declared_on": true,
+      "verified_on": true,
+      "verified_source": "log:poolenum.enabled",
+      "verified_at": "2026-09-07T13:26:00Z",
+      "updated_at": null,
+      "last_reason": null,
+      "last_actor": null,
+      "telemetry_href": "/pools",
+      "tab": "detection",
+      "evidence": {
+        "parse": "backend/searcher-rs/src/workers/pool_enumeration_worker.rs:45 (ENV_MODE), :186-205 (spawn_if_enabled solo 'shadow'; cualquier otra cosa → disabled) — confirmado por claim-owner 13:5xZ",
+        "vps": ".env ARBX_POOL_ENUM_MODE=shadow; boot poolenum.enabled interval_ms=3600000 top_n=500 min_tvl=50000 @13:20:25Z"
+      }
+    },
+    {
+      "id": "native_engines",
+      "name": "Native Engines fan-out (Dex/Triangular/Flashloan/Liquidation)",
+      "description": "Fan-out de los motores nativos del orchestrator. Cualquier valor distinto de 'off' (incl. ausente) = ON. 'off' deja fluir SOLO candidatos de cartuchos.",
+      "module_class": "B",
+      "control_key": "env:ARBX_NATIVE_ENGINES",
+      "declared_on": true,
+      "verified_on": true,
+      "verified_source": "env:ausente→default-on (observado .env + container)",
+      "verified_at": "2026-09-07T13:04:00Z",
+      "updated_at": null,
+      "last_reason": null,
+      "last_actor": null,
+      "telemetry_href": "/operations",
+      "tab": "detection",
+      "seed": true,
+      "evidence": {
+        "parse": "backend/searcher-rs/src/scanner.rs:541-549 (native_engines_enabled: solo 'off' apaga)",
+        "vps": "clave AUSENTE en .env y container env → efectivo ON (default); runtime: v2.emitter.input strategy=dex_arb_v3v3 observado"
+      }
+    },
+    {
+      "id": "mempool_mode",
+      "name": "Mempool ingestion mode",
+      "description": "Modo de ingesta: auto | disabled/filtered/firehose | block (newHeads+getLogs backrun). Default auto. Valor desconocido → auto + warn.",
+      "module_class": "B",
+      "control_key": "env:ARBX_MEMPOOL_MODE",
+      "declared_on": true,
+      "verified_on": true,
+      "verified_source": "log:scanner.mempool_mode_selected mode=auto + env container",
+      "verified_at": "2026-09-07T13:26:00Z",
+      "updated_at": null,
+      "last_reason": null,
+      "last_actor": null,
+      "telemetry_href": "/operations",
+      "tab": "detection",
+      "evidence": {
+        "parse": "backend/searcher-rs/src/chain_client.rs:280-302 (MempoolMode::from_env, unknown→auto)",
+        "vps": ".env + container ARBX_MEMPOOL_MODE=auto; boot scanner.mempool_mode_selected @13:20:25Z; sin línea scanner.block_mode (solo en modo block) — consistente"
+      }
+    },
+    {
+      "id": "legacy_triangular_worker",
+      "name": "Legacy Triangular Worker",
+      "description": "Worker legacy de ciclos triangulares (bypass del orchestrator dedup). Default OFF post-Phase-15; requiere ARBX_ENABLE_LEGACY_TRIANGULAR_WORKER=true exacto.",
+      "module_class": "B",
+      "control_key": "env:ARBX_ENABLE_LEGACY_TRIANGULAR_WORKER",
+      "declared_on": false,
+      "verified_on": false,
+      "verified_source": "log:scanner.legacy_worker_state enabled=false",
+      "verified_at": "2026-09-07T13:26:00Z",
+      "updated_at": null,
+      "last_reason": null,
+      "last_actor": null,
+      "telemetry_href": "/operations",
+      "tab": "detection",
+      "evidence": {
+        "parse": "backend/searcher-rs/src/main.rs:253-258 (eq_ignore_ascii_case 'true', default false)",
+        "vps": "clave ausente en .env; boot 'triangular_worker not spawned; event-driven TriangularEngine active' @13:20:17Z"
+      }
+    },
+    {
+      "id": "legacy_flashloan_worker",
+      "name": "Legacy Flashloan-Arb Worker",
+      "description": "Worker legacy flashloan (bypass dedup). Default OFF post-Phase-15.",
+      "module_class": "B",
+      "control_key": "env:ARBX_ENABLE_LEGACY_FLASHLOAN_WORKER",
+      "declared_on": false,
+      "verified_on": false,
+      "verified_source": "log:scanner.legacy_worker_state enabled=false",
+      "verified_at": "2026-09-07T13:26:00Z",
+      "updated_at": null,
+      "last_reason": null,
+      "last_actor": null,
+      "telemetry_href": "/operations",
+      "tab": "detection",
+      "evidence": {
+        "parse": "backend/searcher-rs/src/main.rs:260-265",
+        "vps": "clave ausente; boot 'flashloan_arb_worker not spawned' @13:20:17Z"
+      }
+    },
+    {
+      "id": "legacy_liquidation_worker",
+      "name": "Legacy Liquidation Worker",
+      "description": "Worker legacy de liquidaciones Aave (bypass dedup). Default OFF post-Phase-15.",
+      "module_class": "B",
+      "control_key": "env:ARBX_ENABLE_LEGACY_LIQUIDATION_WORKER",
+      "declared_on": false,
+      "verified_on": false,
+      "verified_source": "log:scanner.legacy_worker_state enabled=false",
+      "verified_at": "2026-09-07T13:26:00Z",
+      "updated_at": null,
+      "last_reason": null,
+      "last_actor": null,
+      "telemetry_href": "/operations",
+      "tab": "detection",
+      "evidence": {
+        "parse": "backend/searcher-rs/src/main.rs:267-272",
+        "vps": "clave ausente; boot 'liquidation_worker not spawned' @13:20:17Z"
+      }
+    },
+    {
+      "id": "enabled_chains",
+      "name": "Enabled Chains (universo de detección)",
+      "description": "Override de cadenas activas (CSV u64); sin la clave usa el TOML. Vacío = boot refuse (B0.4 fail-honest). NOTA: trading_config solo chain 1 → las demás IDLE económicamente.",
+      "module_class": "B",
+      "control_key": "env:ARBX_ENABLED_CHAINS",
+      "declared_on": true,
+      "verified_on": true,
+      "verified_source": "env:container ARBX_ENABLED_CHAINS=1,10,42161,8453,137",
+      "verified_at": "2026-09-07T13:04:00Z",
+      "updated_at": null,
+      "last_reason": null,
+      "last_actor": null,
+      "telemetry_href": "/chains",
+      "tab": "detection",
+      "evidence": {
+        "parse": "backend/shared-rs/src/config.rs:248-255 (override CSV); main.rs:752-760 (B0.4 refuse)",
+        "vps": ".env + container ARBX_ENABLED_CHAINS=1,10,42161,8453,137 (5 cadenas); redis trading_config SOLO chain 1"
+      }
+    },
+    {
+      "id": "v3_arb_cartridge",
+      "name": "Cartucho V3 arb",
+      "description": "Modalidad V3 del cartucho dex_arb: default OFF — hasta ARBX_V3_ARB_MODE=on emite SOLO la observación honesta.",
+      "module_class": "B",
+      "control_key": "env:ARBX_V3_ARB_MODE",
+      "declared_on": false,
+      "verified_on": false,
+      "verified_source": "env:ARBX_V3_ARB_MODE ausente (.env + container) → default off",
+      "verified_at": "2026-09-07T13:37:00Z",
+      "updated_at": null,
+      "last_reason": null,
+      "last_actor": null,
+      "telemetry_href": "/operator",
+      "tab": "detection",
+      "evidence": {
+        "parse": "backend/searcher-rs/cartridges/dex_arb.rhai:160 ('Default OFF. Until an operator sets ARBX_V3_ARB_MODE=on, emit ONLY the honest…')",
+        "vps": "clave ausente en .env y container"
+      }
+    },
+    {
+      "id": "canonical_knobs",
+      "name": "Canonical Knobs (superficie 01_CONFIG)",
+      "description": "53 knobs canónicos (42 ULTRA + 11 QUOTEBASE-264) con precedencia env>deploy YAML>workbook. HOY boot-time (from_env UNA vez, main.rs:361); snapshot publicado a Redis arbx:config:canonical_knobs (observabilidad). ARBX_KNOB_BEAM_K y otros declarados-validados sin consumidor hot-path.",
+      "module_class": "B",
+      "control_key": "env:ARBX_KNOB_* (53 claves)",
+      "declared_on": true,
+      "verified_on": true,
+      "verified_source": "log:config.canonical_knobs + redis EXISTS arbx:config:canonical_knobs=1",
+      "verified_at": "2026-09-07T13:26:00Z",
+      "updated_at": null,
+      "last_reason": null,
+      "last_actor": null,
+      "telemetry_href": "/config",
+      "tab": "evaluation",
+      "seed": true,
+      "evidence": {
+        "parse": "backend/searcher-rs/src/canonical_knobs.rs:46+ (struct), :214,245,345 (precedencia/env_bool); from_env solo en main.rs:361 (producción)",
+        "vps": "NINGÚN ARBX_KNOB_* en .env → todos default del workbook; boot config.canonical_knobs beam_k=4 block_cadence_s=12 candidate_budget_routes_block=250000 @13:20:06Z; redis EXISTS=1 TTL=-1 (claim-owner 13:36Z)"
+      }
+    },
+    {
+      "id": "trading_config_gate",
+      "name": "Trading Config gate (estrategias/cadenas por Redis)",
+      "description": "Config operatoria por cadena: enabled_strategies, allowlist de tokens, capital, gates económicos. Fuente PG trading_config, espejo Redis arbx:trading_config:<chain>, hot-reload <1s (TTL 1s + pub/sub). El searcher la consulta POR oportunidad — sin fila, la cadena queda IDLE. control_key null: valor JSON incompatible con dialecto true/false del PUT del board (corrompería) — escritura vía PUT /admin/trading-config/:chain_id existente; CB-02-DISENO define adaptador.",
+      "module_class": "A",
+      "control_key": null,
+      "declared_on": null,
+      "verified_on": true,
+      "verified_source": "redis:GET arbx:trading_config:1 enabled=true",
+      "verified_at": "2026-09-07T13:05:00Z",
+      "updated_at": null,
+      "last_reason": null,
+      "last_actor": null,
+      "telemetry_href": "/config",
+      "tab": "evaluation",
+      "evidence": {
+        "parse": "backend/shared-rs/src/trading_config.rs:22-36 (key+canal), :1-20 (arquitectura <1s); scanner.rs:226,729 (TradingConfigClient por oportunidad); admin backend/api-server/src/routes/trading-config.ts:551",
+        "vps": "redis GET arbx:trading_config:1: enabled=true, capital_usd=1000, enabled_strategies=[dex_arb_v2v2,dex_arb,liquidation,flashloan_arb,triangular]; SOLO chain 1 (10/42161/8453/137 sin clave = IDLE, verificado por ambos agentes)"
+      }
+    },
+    {
+      "id": "scoring_hard_gate",
+      "name": "Scoring hard-gate (Bayesian Gate C)",
+      "description": "Endurece el scoring Bayesian de advisory a BLOCKING. Default false = 'NEVER blocks' (dormido). Clave ausente hoy. Propuesta E2 de CB-05 pendiente.",
+      "module_class": "B",
+      "control_key": "env:ARBX_SCORING_HARD_GATE",
+      "declared_on": false,
+      "verified_on": false,
+      "verified_source": "env:ausente→default false (observado .env)",
+      "verified_at": "2026-09-07T13:04:00Z",
+      "updated_at": null,
+      "last_reason": null,
+      "last_actor": null,
+      "telemetry_href": "/operations",
+      "tab": "evaluation",
+      "evidence": {
+        "parse": "backend/searcher-rs/src/scoring_pipeline.rs:92-93 (hard_gate env_bool default false), :278-288 (env_bool 1|true|yes|on), :12 (NEVER blocks)",
+        "vps": "ARBX_SCORING_HARD_GATE ausente en .env → efectivo false (advisory-only, dormido)"
+      }
+    },
+    {
+      "id": "gate_macro_mev",
+      "name": "Gate Macro-MEV",
+      "description": "Gate macro-MEV (enabled bool default true + threshold/epsilon f64). CONFIRMADO: ARBX_MACRO_MEV_THRESHOLD=1,1 y EPSILON=0,01 usan coma decimal → parse f64 falla → defaults del workbook efectivos (valores escritos con locale ES, sin efecto hasta reescribirlos con punto).",
+      "module_class": "B",
+      "control_key": "env:ARBX_GATE_MACRO_MEV_ENABLED",
+      "declared_on": true,
+      "verified_on": true,
+      "verified_source": "env:container ARBX_GATE_MACRO_MEV_ENABLED=1",
+      "verified_at": "2026-09-07T13:04:00Z",
+      "updated_at": null,
+      "last_reason": null,
+      "last_actor": null,
+      "telemetry_href": "/operations",
+      "tab": "evaluation",
+      "evidence": {
+        "parse": "backend/searcher-rs/src/gates/mod.rs:127-140 (bool 1|true|yes|on), :139-144 (threshold/epsilon .ok().and_then(parse) → default si falla)",
+        "vps": ".env ARBX_GATE_MACRO_MEV_ENABLED=1 + container; ARBX_MACRO_MEV_LOG_HITS=True parsea; THRESHOLD=1,1 / EPSILON=0,01 con coma CONFIRMADO 13:5xZ (segunda lectura) → defaults efectivos"
+      }
+    },
+    {
+      "id": "sim_backend",
+      "name": "Sim Backend (anvil|revm)",
+      "description": "Backend de simulación de sim-ctl. 'revm' exige REDIS_URL (gas real desde Redis) — sin silent fall-through, drain-guard fail-loud. HOY anvil.",
+      "module_class": "B",
+      "control_key": "env:SIM_BACKEND",
+      "declared_on": true,
+      "verified_on": true,
+      "verified_source": "log:sim.backend_selected backend=anvil + env container",
+      "verified_at": "2026-09-07T13:26:00Z",
+      "updated_at": null,
+      "last_reason": null,
+      "last_actor": null,
+      "telemetry_href": "/operations",
+      "tab": "evaluation",
+      "seed": true,
+      "evidence": {
+        "parse": "backend/sim-ctl/src/main.rs:655-666 (match env; revm requiere REDIS_URL), :855-870 (drain guard)",
+        "vps": ".env + container SIM_BACKEND=anvil; boot sim.backend_selected backend=anvil @13:20:06Z"
+      }
+    },
+    {
+      "id": "simulator_v2_dispatch",
+      "name": "Simulator V2 dispatch (sim-ctl)",
+      "description": "Gate de dispatch a SimulatorV2 en sim-ctl — leído A REQUEST TIME (capabilities.rs:49) aunque el env del contenedor es fijo → efecto boot-time. En searcher la MISMA clave es INERT (main.rs:462-465 'let _ = … no runtime flip yet' — solo boot-log). Compañero: ARBX_SIMULATOR_V2_READY (bandera de readiness relays/api-server).",
+      "module_class": "B",
+      "control_key": "env:ARBX_USE_SIMULATOR_V2",
+      "declared_on": true,
+      "verified_on": true,
+      "verified_source": "env:container ARBX_USE_SIMULATOR_V2=true (searcher + sim-ctl)",
+      "verified_at": "2026-09-07T13:37:00Z",
+      "updated_at": null,
+      "last_reason": null,
+      "last_actor": null,
+      "telemetry_href": "/operations",
+      "tab": "evaluation",
+      "evidence": {
+        "parse": "backend/sim-ctl/src/capabilities.rs:13 (SIMULATOR_V2_GATE_ENV), :49-52 (request-time), :100-103 (dispatch_enabled); searcher main.rs:462-465 (let _ = inert) + :716 (v2_runtime_requested boot-log)",
+        "vps": ".env ARBX_USE_SIMULATOR_V2=true (duplicada 2x misma valor) + containers searcher/sim-ctl; ARBX_SIMULATOR_V2_READY=true (readiness soft-flag: g-sim-1.ts, wallet-sim-runtime.ts, live_exec_policy.rs:7)"
+      }
+    },
+    {
+      "id": "aave_watchlist",
+      "name": "Aave V3 Watchlist (targets de liquidación)",
+      "description": "SET Redis operator-managed con los borrowers a vigilar; el worker la lee CADA tick (SMEMBERS). SET vacío = skip honesto cada ciclo (skip_empty_watchlist). HOY vacía. control_key null: es un SET (no string true/false) — edición directa por el operador en Redis; el PUT del board no aplica.",
+      "module_class": "A",
+      "control_key": null,
+      "declared_on": null,
+      "verified_on": false,
+      "verified_source": "redis:SCARD arbx:aave_v3_watchlist:1 = 0",
+      "verified_at": "2026-09-07T13:38:00Z",
+      "updated_at": null,
+      "last_reason": null,
+      "last_actor": null,
+      "telemetry_href": "/operations",
+      "tab": "evaluation",
+      "seed": true,
+      "evidence": {
+        "parse": "backend/searcher-rs/src/workers/liquidation_worker.rs:21,59-71 (docstring: operator-managed, SMEMBERS por tick, skip vacío honesto)",
+        "vps": "redis SCARD arbx:aave_v3_watchlist:1 = 0 → sin targets, worker idling honesto (LED rojo = alcance 0, mecanismo vivo)"
+      }
+    },
+    {
+      "id": "live_exec_policy",
+      "name": "Live Exec Policy (terminus broadcast)",
+      "description": "CATEGORIA C §34.3 — LOCKED SIN TOGGLE. relays-client es el ÚNICO binario con firma/broadcast. Default-deny (ARBX_LIVE_EXEC_ENABLED exige 'true' EXACTO), mainnet chain_id=1 físicamente rechazado (MainnetRefused), testnet-only (default Sepolia). Flip a live = operador-only con gates (§34.3: jamás inferido de flags ni chat).",
+      "module_class": "C",
+      "control_key": "gate:live_exec_policy(default-deny+MainnetRefused) §34.3",
+      "declared_on": false,
+      "verified_on": false,
+      "verified_source": "log:relays live_exec.policy enabled=false live_mode=false",
+      "verified_at": "2026-09-07T13:26:00Z",
+      "updated_at": null,
+      "last_reason": "no flip — default-deny intacto",
+      "last_actor": null,
+      "telemetry_href": "/live-testnet",
+      "tab": "execution",
+      "seed": true,
+      "evidence": {
+        "parse": "backend/relays-client/src/live_exec_policy.rs:12 (MAINNET_CHAIN_ID), :53-54 (from_env fail-closed), :74-83 (assert_broadcast_allowed: NotEnabled→MainnetRefused→ChainNotAllowed)",
+        "vps": ".env ARBX_LIVE_EXEC_ENABLED=False (capital F — != 'true' exacto → denegado) + ARBX_LIVE_EXEC_CHAINS=11155111; boot relays 'live_exec.policy enabled=false allowed_chains=[11155111] chain_id=1 live_mode=false' @13:20:06Z"
+      }
+    },
+    {
+      "id": "paper_mode_terminus",
+      "name": "Paper-Mode terminus (por cadena)",
+      "description": "CATEGORIA C §34.3 — LOCKED SIN TOGGLE en el board (clasificación del operador, GOAL-WORKORDERS.md:36-37 'terminus paper/live = Categoría C LOCKED'). Técnicamente runtime-Redis (arbx:papermode:<chain>, TTL 1s + pub/sub, admin POST /admin/config/paper-mode index.ts:1265-1308) — pero es el terminus capital/papel: LED candado.",
+      "module_class": "C",
+      "control_key": "gate:papermode-terminus §34.3 (redis arbx:papermode:<chain>)",
+      "declared_on": true,
+      "verified_on": true,
+      "verified_source": "redis:GET arbx:papermode:1 enabled=true",
+      "verified_at": "2026-09-07T13:05:00Z",
+      "updated_at": "2026-08-29T16:30:15Z",
+      "last_reason": null,
+      "last_actor": "omega-diagnosis-2026-08-29",
+      "telemetry_href": "/paper",
+      "tab": "execution",
+      "seed": true,
+      "evidence": {
+        "parse": "backend/shared-rs/src/paper_mode.rs:23-36 (keys/canal, default enabled=true fail-safe); relays-client/src/submit_engine.rs:137 (ARBX_PAPER_MODE env override)",
+        "vps": "redis GET arbx:papermode:1 = enabled:true (PAPER activo, chain 1) actualizado 2026-08-29T16:30:15Z; legacy arbx:papermode global = nil; chains 10/42161/8453/137 sin clave; .env ARBX_TRADE_MODE=paper (readiness-extras.ts:231-241 fuerza paper pre-A.9)"
+      }
+    },
+    {
+      "id": "paper_executor",
+      "name": "Ejecutor paper",
+      "description": "Consumidor paper del stream detectado (ledger paper end-to-end). ARBX_PAPER_EXECUTOR_MODE default off — dormido hoy.",
+      "module_class": "B",
+      "control_key": "env:ARBX_PAPER_EXECUTOR_MODE",
+      "declared_on": false,
+      "verified_on": false,
+      "verified_source": "log:paper_executor.dormant reason=mode_off@api-server 13:20:08Z",
+      "verified_at": "2026-09-07T13:37:00Z",
+      "updated_at": null,
+      "last_reason": null,
+      "last_actor": null,
+      "telemetry_href": "/paper",
+      "tab": "execution",
+      "evidence": {
+        "parse": "backend/api-server/src/index.ts:1904-1915 (== 'on' case-insens, default dormant)",
+        "vps": "boot log 'paper executor dormant (set ARBX_PAPER_EXECUTOR_MODE=on to enable)' @13:20:08Z + clave ausente"
+      }
+    },
+    {
+      "id": "paper_auto_reconcile",
+      "name": "Reconcile paper automático",
+      "description": "POST /admin/paper-mode/reconcile (Lua-atomic) responde 503 reconcile_disabled a menos que el gate esté on. ARBX_PAPER_AUTO_RECONCILE default off.",
+      "module_class": "B",
+      "control_key": "env:ARBX_PAPER_AUTO_RECONCILE",
+      "declared_on": false,
+      "verified_on": false,
+      "verified_source": "env:ARBX_PAPER_AUTO_RECONCILE ausente (.env + container) → gate off",
+      "verified_at": "2026-09-07T13:37:00Z",
+      "updated_at": null,
+      "last_reason": null,
+      "last_actor": null,
+      "telemetry_href": "/paper",
+      "tab": "execution",
+      "evidence": {
+        "parse": "backend/api-server/src/routes/paper-mode-reconcile.ts:49-53 (≠ 'on' → 503 reconcile_disabled)",
+        "vps": "clave ausente en .env"
+      }
+    },
+    {
+      "id": "service_control",
+      "name": "Service Control (docker start/stop via API)",
+      "description": "start/stop de servicios docker vía API admin (allowlist ARBX_SERVICE_CONTROL_ALLOWLIST). OFF → 501 not_implemented. Peligroso: apaga servicios — gated por flag + allowlist + admin token.",
+      "module_class": "B",
+      "control_key": "env:ARBX_SERVICE_CONTROL",
+      "declared_on": true,
+      "verified_on": true,
+      "verified_source": "env:container ARBX_SERVICE_CONTROL=on",
+      "verified_at": "2026-09-07T13:04:00Z",
+      "updated_at": null,
+      "last_reason": null,
+      "last_actor": null,
+      "telemetry_href": "/operations",
+      "tab": "infra",
+      "seed": true,
+      "evidence": {
+        "parse": "backend/api-server/src/routes/service-control.ts:141-145 (flag != 'on' → 501), :79+ (allowlist)",
+        "vps": ".env ARBX_SERVICE_CONTROL=on + container (allowlist searcher-rs,sim-ctl,relays-client,recon,token-enricher)"
+      }
+    },
+    {
+      "id": "scoring_archiver",
+      "name": "Scoring Archiver (scored_opportunities)",
+      "description": "Archivo pasivo del stream arbx:scoring:scored → tabla scored_opportunities. Dormant por default ('off').",
+      "module_class": "B",
+      "control_key": "env:ARBX_SCORING_ARCHIVER_MODE",
+      "declared_on": true,
+      "verified_on": true,
+      "verified_source": "log:scoring_archiver.started",
+      "verified_at": "2026-09-07T13:26:00Z",
+      "updated_at": null,
+      "last_reason": null,
+      "last_actor": null,
+      "telemetry_href": "/operations",
+      "tab": "infra",
+      "evidence": {
+        "parse": "backend/api-server/src/index.ts:1958-1961 (== 'on' case-insens)",
+        "vps": ".env ARBX_SCORING_ARCHIVER_MODE=on; boot 'scoring_archiver.started stream=arbx:scoring:scored' @13:20:08Z"
+      }
+    },
+    {
+      "id": "paper_archiver",
+      "name": "Paper Archiver (shadow ledger)",
+      "description": "Archivo shadow del stream arbx:opps:detected (ledger papel, capital seed $1000 + outlier guard). Dormant por default.",
+      "module_class": "B",
+      "control_key": "env:ARBX_PAPER_ARCHIVER_MODE",
+      "declared_on": true,
+      "verified_on": true,
+      "verified_source": "log:paper_archiver.started",
+      "verified_at": "2026-09-07T13:26:00Z",
+      "updated_at": null,
+      "last_reason": null,
+      "last_actor": null,
+      "telemetry_href": "/paper",
+      "tab": "infra",
+      "evidence": {
+        "parse": "backend/api-server/src/index.ts (paper archiver junto al scoring, patrón idéntico; log boot distingue)",
+        "vps": ".env ARBX_PAPER_ARCHIVER_MODE=on; boot 'paper_archiver.started' + 'paper_archiver.capital_seed capital_usd=1000' @13:20:08Z"
+      }
+    },
+    {
+      "id": "opps_bridge_archiver",
+      "name": "Ops Bridge Archiver (opportunities-bridge)",
+      "description": "Modo del bridge-archiver de opportunities (off|on). Default off — el feed shadow hoy va por rd_outcome_sink (ON).",
+      "module_class": "B",
+      "control_key": "env:ARBX_OPPS_BRIDGE_MODE",
+      "declared_on": false,
+      "verified_on": false,
+      "verified_source": "log:opps_bridge.dormant reason=mode_off + env ARBX_OPPS_BRIDGE_MODE=off",
+      "verified_at": "2026-09-07T13:26:00Z",
+      "updated_at": null,
+      "last_reason": null,
+      "last_actor": null,
+      "telemetry_href": "/opportunities",
+      "tab": "infra",
+      "evidence": {
+        "parse": "backend/api-server/src/routes/opportunities-bridge-archiver.ts:79 (== 'on'); montaje index.ts:1977-1988",
+        "vps": ".env ARBX_OPPS_BRIDGE_MODE=off; boot opps_bridge.dormant @13:20:08Z"
+      }
+    },
+    {
+      "id": "ws_consumer_purge",
+      "name": "WS Consumer Purge (websocket.ts)",
+      "description": "Purga periódica de consumidores WS idle: intervalo 15min / idle 30min por default (ARBX_WS_CONSUMER_PURGE_INTERVAL_MS / _IDLE_MS). Siempre-encendido con knobs de cadencia.",
+      "module_class": "B",
+      "control_key": "env:ARBX_WS_CONSUMER_PURGE_INTERVAL_MS|ARBX_WS_CONSUMER_PURGE_IDLE_MS",
+      "declared_on": true,
+      "verified_on": true,
+      "verified_source": "env:ausente→defaults 900000/1800000 (observado .env)",
+      "verified_at": "2026-09-07T13:04:00Z",
+      "updated_at": null,
+      "last_reason": null,
+      "last_actor": null,
+      "telemetry_href": "/operations",
+      "tab": "infra",
+      "seed": true,
+      "evidence": {
+        "parse": "backend/api-server/src/websocket.ts:821-822 (envPositiveInt defaults 15*60_000 / 30*60_000), loop :980-1067",
+        "vps": "claves ausentes en .env → defaults activos"
+      }
+    },
+    {
+      "id": "pool_sync",
+      "name": "Pool Sync Worker (reserves refresh)",
+      "description": "Sincronización de reservas por cadena (batch/backoff/timeout tuneables POOL_SYNC_*; 8 knobs), tick alineado a block-time. Siempre-on con defaults.",
+      "module_class": "B",
+      "control_key": "env:POOL_SYNC_BATCH_SIZE|POOL_SYNC_RELOAD_EVERY_TICKS|POOL_SYNC_MAX_RETRIES|POOL_SYNC_CALL_TIMEOUT_MS|POOL_SYNC_MIN_BATCH_SIZE|POOL_SYNC_BACKOFF_BASE_MS|...",
+      "declared_on": true,
+      "verified_on": true,
+      "verified_source": "log:worker_orchestrator.pool_sync_interval interval_ms=12000@searcher-rs 13:20:17Z",
+      "verified_at": "2026-09-07T13:37:00Z",
+      "updated_at": null,
+      "last_reason": null,
+      "last_actor": null,
+      "telemetry_href": "/pools",
+      "tab": "infra",
+      "seed": true,
+      "evidence": {
+        "parse": "backend/searcher-rs/src/workers/pool_sync_worker.rs:482-530 (env::var POOL_SYNC_* ×8); spawn via orchestrator.start_all_multichain main.rs:801-808",
+        "vps": "POOL_SYNC_* ausentes en .env → defaults; boot worker_orchestrator.pool_sync_interval interval_ms=12000 @13:20:17Z (claim-owner) — el 'pool_sync interval' de la semilla"
+      }
+    },
+    {
+      "id": "drift_tracker",
+      "name": "Drift Tracker (recon)",
+      "description": "Comparador sim-vs-labels del recon. ARBX_DRIFT_TRACKER_MODE — dormido sin modo (clave ausente).",
+      "module_class": "B",
+      "control_key": "env:ARBX_DRIFT_TRACKER_MODE",
+      "declared_on": false,
+      "verified_on": false,
+      "verified_source": "log:drift_tracker.dormant mode=\"\"@recon 13:20:17Z",
+      "verified_at": "2026-09-07T13:37:00Z",
+      "updated_at": null,
+      "last_reason": null,
+      "last_actor": null,
+      "telemetry_href": "/operations",
+      "tab": "infra",
+      "evidence": {
+        "parse": "backend/recon/src/main.rs:337-339 (drift_mode de env, default vacío)",
+        "vps": "boot drift_tracker.dormant mode=\"\" @13:20:17Z + clave ausente"
+      }
+    },
+    {
+      "id": "edge_rate_limit",
+      "name": "Edge rate-limit (429)",
+      "description": "Bucket por-minuto del edge worker (la capa que fijó los 429 del dominio público) + bucket separado de auditoría. EDGE_RATE_LIMIT_PER_MIN (prod 600); EDGE_AUDIT_RATE_LIMIT_PER_MIN para /api/v1/audit.",
+      "module_class": "B",
+      "control_key": "env:EDGE_RATE_LIMIT_PER_MIN",
+      "declared_on": true,
+      "verified_on": true,
+      "verified_source": "env:EDGE_RATE_LIMIT_PER_MIN=600 (.env + env_file al contenedor edge)",
+      "verified_at": "2026-09-07T13:37:00Z",
+      "updated_at": null,
+      "last_reason": null,
+      "last_actor": null,
+      "telemetry_href": "/operations",
+      "tab": "infra",
+      "evidence": {
+        "parse": "edge/worker/src/index.ts:59-66 (RATE_LIMIT_PER_MIN default 600, prod .env), :34-38,80 (audit bucket separado)",
+        "vps": ".env EDGE_RATE_LIMIT_PER_MIN=600; edge Up healthy"
+      }
+    },
+    {
+      "id": "alertmanager_webhook",
+      "name": "Webhook Alertmanager → audit_log",
+      "description": "POST /admin/alertmanager/webhook persiste cada alerta Prometheus al ledger de auditoría — montado INCONDICIONALMENTE (sin env switch): encendido = presencia del servicio. Verificador readiness ALERTS vivo.",
+      "module_class": "B",
+      "control_key": null,
+      "declared_on": true,
+      "verified_on": true,
+      "verified_source": "code:montaje incondicional index.ts:690 + docker:alertmanager Up healthy + readiness ALERTS",
+      "verified_at": "2026-09-07T13:37:00Z",
+      "updated_at": null,
+      "last_reason": null,
+      "last_actor": null,
+      "telemetry_href": "/audit-logs",
+      "tab": "infra",
+      "evidence": {
+        "parse": "backend/api-server/src/routes/alertmanager-webhook.ts:2-91; montaje index.ts:131,690; readiness/verifiers/alerts.ts:7,100",
+        "vps": "contenedor alertmanager Up healthy (flota 24/24); ruta montada en el binario desplegado e65040f1"
+      }
+    },
+    {
+      "id": "retention",
+      "name": "Retention / Archivo Frío",
+      "description": "Retención tiered rollup-first: dir de archivos ARBX_RETENTION_ARCHIVE_DIR (default /app/archives) + cron diario 04:17 pg_retention.sh + prune builder semanal (dom 05:23).",
+      "module_class": "B",
+      "control_key": "env:ARBX_RETENTION_ARCHIVE_DIR",
+      "declared_on": true,
+      "verified_on": true,
+      "verified_source": "vps:crontab '17 4 * * * pg_retention.sh' + env ausente→default",
+      "verified_at": "2026-09-07T13:23:00Z",
+      "updated_at": null,
+      "last_reason": null,
+      "last_actor": null,
+      "telemetry_href": "/operations",
+      "tab": "infra",
+      "seed": true,
+      "evidence": {
+        "parse": "backend/api-server/src/routes/archive-control.ts:76 (ARCHIVES_DIR default /app/archives)",
+        "vps": "crontab root: '17 4 * * * bash /opt/arbitragex-v2/scripts/pg_retention.sh' + '23 5 * * 0 docker builder prune -f'; ARBX_RETENTION_ARCHIVE_DIR ausente → default (verificado por ambos agentes)"
+      }
+    },
+    {
+      "id": "config_reload_omni",
+      "name": "Omni Reload Coordinator (BUILT-NOT-WIRED)",
+      "description": "Fabric pub/sub de hot-reload para 11 catálogos (arbx:config:{rpcs,dexes,tokens,pools,wallets,strategies,risk,capital,contracts,relays,agents}:reload) con Arc-swap O(1). CONSTRUIDO PERO NO CABLEADO: ni siquiera declarado como módulo (NO COMPILO en el binario — lib.rs:195 declara config_reload, no config_reload_omni). Exactamente la categoría que origina esta orden del operador.",
+      "module_class": "B",
+      "control_key": null,
+      "declared_on": null,
+      "verified_on": false,
+      "verified_source": "repo:0 referencias externas (grep searcher-rs completo) + lib.rs SIN mod config_reload_omni",
+      "verified_at": "2026-09-07T13:55:00Z",
+      "updated_at": null,
+      "last_reason": null,
+      "last_actor": null,
+      "telemetry_href": "/operations",
+      "tab": "infra",
+      "built_not_wired": true,
+      "evidence": {
+        "parse": "backend/searcher-rs/src/config_reload_omni.rs:8-18 (docstring 11 canales), :72-77 (trait ReloadableCatalog); lib.rs:195 declara 'config_reload' (NO _omni) — confirmado por claim-owner 13:5xZ; main.rs:78 mod config_reload",
+        "vps": "N/A — no está compilado en el binario (no puede correr). Refina CB-02-RUST-APPLY §3.3: no es 'no spawn-eado', es 'no declarado como módulo'"
+      }
+    },
+    {
+      "id": "token_enricher_oracles",
+      "name": "Token-Enricher Oracles (DexScreener + GeckoTerminal)",
+      "description": "Tiers de enriquecimiento off-chain de tokens (default-OFF c/u; 'active' los enciende). Read-only, sin contract calls.",
+      "module_class": "B",
+      "control_key": "env:ARBX_DEXSCREENER_ORACLE|ARBX_GECKOTERMINAL_ORACLE",
+      "declared_on": true,
+      "verified_on": true,
+      "verified_source": "env:container ambos=active",
+      "verified_at": "2026-09-07T13:04:00Z",
+      "updated_at": null,
+      "last_reason": null,
+      "last_actor": null,
+      "telemetry_href": "/operations",
+      "tab": "infra",
+      "evidence": {
+        "parse": "backend/token-enricher/src/dexscreener.rs:76 (ENV_GATE), geckoterminal_tier.rs:66 (ENV_GATE)",
+        "vps": ".env ARBX_DEXSCREENER_ORACLE=active + ARBX_GECKOTERMINAL_ORACLE=active + container; token-enricher Up healthy (StartedAt 13:20:06Z)"
+      }
+    },
+    {
+      "id": "kill_switch",
+      "name": "Kill-Switch global (halta maestra)",
+      "description": "Halta maestra de detección: clave Redis arbx:killswitch (JSON) con poll TTL 1s + pub/sub arbx:killswitch:changes; admin POST /admin/killswitch (edge adminProxy). FAIL-SAFE: error Redis → default_when_absent (prod=true=armado). Ya tiene página propia — el board ENLAZA, no duplica. PROYECCIÓN: verified_on = !enabled (verde = detección corriendo). control_key null: dialecto JSON incompatible con el true/false del PUT del board (escribirlo corrompería y el fail-closed haltearía TODO) — toggle vía endpoint existente.",
+      "module_class": "A",
+      "control_key": null,
+      "declared_on": null,
+      "verified_on": true,
+      "verified_source": "redis:GET arbx:killswitch enabled=false (disarmado → detección ACTIVA, proyección invertida)",
+      "verified_at": "2026-09-07T13:05:00Z",
+      "updated_at": "2026-09-07T12:53:29Z",
+      "last_reason": "VER",
+      "last_actor": "admin",
+      "telemetry_href": "/killswitch",
+      "tab": "security",
+      "seed": true,
+      "evidence": {
+        "parse": "backend/shared-rs/src/killswitch.rs:15-16 (KILLSWITCH_KEY/CHANNEL), :54-68 (TTL 1s), :70-77 (fail-safe); consumo scanner.rs:83,724 + main.rs:345 + chain_supervisor.rs:64",
+        "vps": "redis GET arbx:killswitch = {enabled:false, reason:'VER', triggered_by:'admin', updated_at:'2026-09-07T12:53:29.152Z'} → DISARMADO, detección viva (ambos agentes)"
+      }
+    },
+    {
+      "id": "capital_key_lockout",
+      "name": "Capital-key lockout (searcher observer-only)",
+      "description": "CATEGORIA C §34.3 — invariante de boot NO toggleable: searcher-rs PANIC si cualquier clave de capital está poblada. 'Turning execution on is a deliberate code change (FASE D), never a flag' (main.rs:309-336).",
+      "module_class": "C",
+      "control_key": "gate:searcher-capital-lockout(FASE D) §34.3",
+      "declared_on": true,
+      "verified_on": true,
+      "verified_source": "log:searcher.capital_lock (boot 13:20:06Z)",
+      "verified_at": "2026-09-07T13:26:00Z",
+      "updated_at": null,
+      "last_reason": null,
+      "last_actor": null,
+      "telemetry_href": "/operations",
+      "tab": "security",
+      "evidence": {
+        "parse": "backend/searcher-rs/src/main.rs:297-335 (CAPITAL_KEY_ENV + panic FATAL; verificado claim-owner) :309-336 (docstring FASE D)",
+        "vps": "boot log 'capital-key lockout verified: no signer keys in env (capital_exposed=0, observer-only, all modes)' @13:20:06.607Z"
+      }
+    },
+    {
+      "id": "csp_enforce",
+      "name": "CSP enforcing (ARBX_CSP_ENFORCE, build-time)",
+      "description": "CORREGIDO por claim-owner vs CB-01-VERIFY: la clave SÍ EXISTE — consumidor en frontend/next.config.js:150-160 (WO-09 2026-09-06: header ENFORCING duplicado byte a byte cuando ARBX_CSP_ENFORCE === 'true' exacto, fail-closed, evaluado en next build). PERO built-not-wired al deploy: ausente de .env y SIN build arg en compose.dev.yml:337-348 NI compose.prod.yml:443-449 → el flag no puede llegar al builder hoy. Existe además el switch manual de código next.config.js:19-26. Flip real = build arg en compose + rebuild (RULE 03) + smoke.",
+      "module_class": "B",
+      "control_key": "env:ARBX_CSP_ENFORCE",
+      "declared_on": false,
+      "verified_on": false,
+      "verified_source": "code+deploy:flag inalcanzable en el builder (sin build arg ni .env) → enforcing OFF por construcción; runtime probe no gastado (presupuesto)",
+      "verified_at": "2026-09-07T13:55:00Z",
+      "updated_at": null,
+      "last_reason": null,
+      "last_actor": null,
+      "telemetry_href": "/operations",
+      "tab": "security",
+      "seed": true,
+      "built_not_wired": true,
+      "evidence": {
+        "parse": "frontend/next.config.js:150-160 (gate exact-string, header enforcing; refutación a '0 consumidores'), :19-26 (switch manual código), :162-168 (HSTS); compose build args SIN la clave (dev :337-348, prod :443-449)",
+        "vps": "ARBX_CSP_ENFORCE ausente en .env (grep 0) + sin build arg → enforcing imposible en el deploy actual; readiness PR-1 (pr-1-csp.ts) vigila Report-Only"
+      }
+    },
+    {
+      "id": "sybil_asn_denylist",
+      "name": "Edge anti-sybil ASN denylist",
+      "description": "Denylist de ASNs en el edge worker (SYBIL_ASN_DENYLIST). Ausente = sin bloqueo ASN.",
+      "module_class": "B",
+      "control_key": "env:SYBIL_ASN_DENYLIST (edge)",
+      "declared_on": false,
+      "verified_on": false,
+      "verified_source": "env:ausente en .env VPS (grep -c=0)",
+      "verified_at": "2026-09-07T13:23:00Z",
+      "updated_at": null,
+      "last_reason": null,
+      "last_actor": null,
+      "telemetry_href": "/operations",
+      "tab": "security",
+      "evidence": {
+        "parse": "edge/worker/src/index.ts:346 (process.env['SYBIL_ASN_DENYLIST'])",
+        "vps": "grep -c '^SYBIL_ASN_DENYLIST=' /opt/arbitragex-v2/.env = 0 → inactivo"
+      }
+    },
+    {
+      "id": "token_safety_floor",
+      "name": "Filtro token-safety (floor)",
+      "description": "Score mínimo de seguridad por token en el pre-execute checklist (bajo floor → TokenNotAllowed) y en pool enumeration. TOKEN_SAFETY_FLOOR default 70 = app.toml [token_safety] min_acceptable_score. El flood 'TokenNotAllowed' del feed usa exactamente este floor.",
+      "module_class": "B",
+      "control_key": "env:TOKEN_SAFETY_FLOOR",
+      "declared_on": true,
+      "verified_on": true,
+      "verified_source": "env:TOKEN_SAFETY_FLOOR ausente → default 70 (.env + container)",
+      "verified_at": "2026-09-07T13:37:00Z",
+      "updated_at": null,
+      "last_reason": null,
+      "last_actor": null,
+      "telemetry_href": "/operations",
+      "tab": "security",
+      "evidence": {
+        "parse": "backend/shared-rs/src/pre_execute_checklist.rs:463-467 (default 70 + TokenNotAllowed), pool_enumeration_worker.rs:50",
+        "vps": "clave ausente en .env + container → floor 70 efectivo"
+      }
+    },
+    {
+      "id": "frontend_edge_urls",
+      "name": "Frontend Edge/WS URLs (build-time RULE 03)",
+      "description": "NEXT_PUBLIC_EDGE_URL / NEXT_PUBLIC_WS_URL se hornean en next build: cambiarlas exige rebuild --no-cache (RULE 03) + verificación CSP (RULE 04). WS va DIRECTO al api-server, jamás por edge (RULE 02).",
+      "module_class": "B",
+      "control_key": "env:NEXT_PUBLIC_EDGE_URL|NEXT_PUBLIC_WS_URL",
+      "declared_on": true,
+      "verified_on": true,
+      "verified_source": "env:.env VPS (valores no-secretos)",
+      "verified_at": "2026-09-07T13:04:00Z",
+      "updated_at": null,
+      "last_reason": null,
+      "last_actor": null,
+      "telemetry_href": "/operations",
+      "tab": "frontend",
+      "evidence": {
+        "parse": "docker/compose.prod.yml:443-457 (build args NEXT_PUBLIC_*; EDGE_URL requerido), compose.dev.yml:337-348; guard localhost next.config.js:12-16",
+        "vps": ".env NEXT_PUBLIC_EDGE_URL=https://edge-arbx.ape-tv.net + NEXT_PUBLIC_WS_URL=http://195.201.235.70 (bare IP); frontend/edge recreados 13:20:06Z por el deploy"
+      }
+    },
+    {
+      "id": "tls_hsts",
+      "name": "TLS/HSTS (frontend build)",
+      "description": "HSTS 1y includeSubDomains solo cuando ARBX_TLS_ENABLED === 'true' en build prod (SÍ es build arg en ambos compose). Dev build plain HTTP por diseño.",
+      "module_class": "B",
+      "control_key": "env:ARBX_TLS_ENABLED",
+      "declared_on": false,
+      "verified_on": false,
+      "verified_source": "env:ARBX_TLS_ENABLED ausente → default false (dev build plain HTTP)",
+      "verified_at": "2026-09-07T13:37:00Z",
+      "updated_at": null,
+      "last_reason": null,
+      "last_actor": null,
+      "telemetry_href": "/operations",
+      "tab": "frontend",
+      "evidence": {
+        "parse": "frontend/next.config.js:162-168 (HSTS gate NODE_ENV prod + ARBX_TLS_ENABLED 'true'); compose build args ARBX_TLS_ENABLED (dev :341-345)",
+        "vps": "clave ausente en .env → HSTS off en el build desplegado"
+      }
+    }
+  ],
+  "annex": {
+    "always_on_no_switch": [
+      "price_worker (PRICE_WORKER_INTERVAL_SECS default 30s; Alchemy→Coingecko cascade; main.rs:770-816) — interval knob, no switch",
+      "heartbeat_worker (SEARCHER_HEARTBEAT_PERIOD_SECS default 60s; main.rs:810-819; log scanner.heartbeat period_secs=60 @13:21:17Z)",
+      "cex_dex_worker (CEX_DEX_WORKER_INTERVAL_MS; main.rs:1049-1062)",
+      "topology_reload (pub/sub arbx:topology:mutation; spawn main.rs:390-397) — fabric de reload, siempre-on, CABLEADO",
+      "chain config hot-reload (arbx:config:chains:reload; config_reload.rs:134-237; spawn main.rs:434) — siempre-on, CABLEADO (publisher admin-chains.ts:131)",
+      "rpc_health (RPC_HEALTH_INTERVAL_MS=15000 en .env; log rpc_health.boot @13:20:17Z) + gas_oracle workers (orchestrator.start_all_multichain main.rs:801-808)",
+      "block_scanner backrun mode (solo si ARBX_MEMPOOL_MODE=block; scanner.rs:977-999)",
+      "latency series/budget (searcher-rs/src/latency_budget.rs; lat_pass_p95 visible en route_discovery.tick live) — 'latency series' de la semilla del operador",
+      "alerts_stack: prometheus+alertmanager+rules (readiness ALERTS verifiers/alerts.ts; contenedores Up healthy) — sin switch, gates de readiness",
+      "math-engine service (compose.prod.yml; contenedor Up healthy) — servicio de evaluación, sin env-switch"
+    ],
+    "env_keys_no_consumer": [
+      "ARBX_GATE_THRESHOLD_ENERGY=10 (.env VPS) — 0 consumidores en repo (verificado por ambos agentes) — RUIDO RULE 00",
+      "ARBX_MIN_PRICE_LIQUIDITY_USD=10000 (.env VPS + passthrough docker/compose.prod.yml:611) — 0 consumidores de código",
+      "ARBX_USE_SIMULATOR_V2=true — INERT en searcher (main.rs:462-465 let _ = 'no runtime flip yet'); consumidor REAL en sim-ctl capabilities.rs (ver módulo simulator_v2_dispatch)",
+      "ARBX_CSP_ENFORCE — consumidor EXISTE (next.config.js:150-160, refutación a CB-01-VERIFY) pero SIN camino al builder (sin build arg ni .env) — built-not-wired de capa deploy, no 'inexistente'"
+    ],
+    "fleet_state_2026_09_07": "24/25 contenedores healthy (incl. math-engine y 3 thanos; geth ausente por diseño en prod); recreate completo 13:20:06Z deploy main e65040f1 (PR #555); searcher StartedAt 13:20:06.37Z; api /health 200 interno; sin drift .env↔container en las claves relevadas (49 ARBX_* en searcher)."
+  }
+}

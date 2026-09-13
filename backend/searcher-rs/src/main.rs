@@ -83,6 +83,7 @@ mod topology_reload;
 mod metrics;
 mod patterns;
 mod persistence;
+mod priors_cache; // BR-05 (2026-09-07): Stage 2c §IV read side (WO-07 port-back).
 mod publisher;
 mod reserves;
 // XLS-QB-05 / ARBX-0003: dirty-pool signal consumed by `workers::pool_sync_worker`
@@ -169,6 +170,9 @@ mod source_supervisor;
 #[allow(dead_code)]
 mod route_discovery;
 mod route_intent;
+// CB-02 (2026-09-07) — control-plane runtime knobs (class A toggle client,
+// worker heartbeat, boot census). See audits/control-board-2026-09-07/.
+mod runtime_knobs;
 // XLS-QB-02: declared in BOTH crates — route_discovery_worker references
 // `crate::strategy_hop_mask` (XLS-QB-03 hop-mask dispatch), which resolves
 // against each target's own module tree. The bin uses only
@@ -379,6 +383,29 @@ async fn main() -> anyhow::Result<()> {
             warn!(
                 event = "config.canonical_knobs.publish_failed",
                 "canonical-knobs snapshot not published to Redis (non-fatal; retried at next boot)"
+            );
+        }
+
+        // CB-02 (2026-09-07) — boot census (CB-02-DISENO §3.2): self-report of
+        // the env-derived boot gates this process itself consumes. Declared
+        // side of the class-B control-board rows + boot defaults of class-A
+        // toggles + CB-04 env-drift diff input (§15-R10: NOT a GET
+        // requirement). Same non-fatal SET + warn pattern as above.
+        let census = runtime_knobs::boot_census();
+        info!(
+            event = "config.boot_census",
+            census = %census,
+            "boot census assembled (env-derived class-A/B gates; CB-02)"
+        );
+        let census_result: Result<(), redis::RedisError> = redis::cmd("SET")
+            .arg(runtime_knobs::BOOT_CENSUS_REDIS_KEY)
+            .arg(census.to_string())
+            .query_async(&mut knobs_redis)
+            .await;
+        if census_result.is_err() {
+            warn!(
+                event = "config.boot_census.publish_failed",
+                "boot census not published to Redis (non-fatal; retried at next boot)"
             );
         }
     }

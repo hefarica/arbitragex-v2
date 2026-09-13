@@ -15,7 +15,7 @@
     "env":  {
                 "ANTHROPIC_API_KEY":  "ccr-local",
                 "CLAUDE_AUTOCOMPACT_PCT_OVERRIDE":  "81",
-                "CLAUDE_CODE_MAX_CONTEXT_TOKENS":  "251658",
+                "CLAUDE_CODE_MAX_CONTEXT_TOKENS":  "960000",
                 "CLAUDE_CODE_MAX_RETRIES":  "2",
                 "ANTHROPIC_BASE_URL":  "http://127.0.0.1:3466",
                 "ANTHROPIC_API_BASE_URL":  "http://127.0.0.1:3466",
@@ -25,9 +25,9 @@
                 "ENABLE_TOOL_SEARCH":  "false",
                 "API_TIMEOUT_MS":  "120000",
                 "ANTHROPIC_AUTH_TOKEN":  "sk-ccr-oHW3pgJfEtI-iXBvH3sZ-woGGCZ-v6y9JKs2JPCoRb4",
-                "ANTHROPIC_MODEL":  "anthropic/claude-ccr-h6b696d692d636f64652f6b696d692d666f722d636f64696e67",
-                "CCR_CLAUDE_CODE_MODEL":  "anthropic/claude-ccr-h6b696d692d636f64652f6b696d692d666f722d636f64696e67",
-                "CODEXL_CLAUDE_CODE_MODEL":  "anthropic/claude-ccr-h6b696d692d636f64652f6b696d692d666f722d636f64696e67"
+                "ANTHROPIC_MODEL":  "anthropic/claude-ccr-h7a61692d636f64696e672d706c616e2d322f676c6d2d352e33",
+                "CCR_CLAUDE_CODE_MODEL":  "anthropic/claude-ccr-h7a61692d636f64696e672d706c616e2d322f676c6d2d352e33",
+                "CODEXL_CLAUDE_CODE_MODEL":  "anthropic/claude-ccr-h7a61692d636f64696e672d706c616e2d322f676c6d2d352e33"
             },
     "useAutoModeDuringPlan":  false,
     "disableAllHooks":  true,

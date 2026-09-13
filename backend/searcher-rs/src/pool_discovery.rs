@@ -63,6 +63,12 @@ pub struct PoolDiscoveryService {
     rpc_pool: Option<Arc<HttpRpcPool>>,
     reserves_cache: Arc<crate::engines::triangular_engine::ReservesCache>,
     factories: RwLock<Option<Vec<(Uuid, Address, crate::route_intent::ProtocolType, String)>>>,
+    // BR-02 (2026-09-07) — reserves coherence knobs (canonical ARBX_KNOB_*):
+    // the ONE declared freshness budget shared by the graph layer and this
+    // backfill's TTL, and the declarative gate for backfill-at-discovery
+    // (OFF = pre-BR-02 behavior, in-proc cache only).
+    reserves_freshness_budget_s: u64,
+    reserves_backfill_on_discovery: bool,
 }
 
 /// Outcome of a single Block-2 enumeration attempt — fail-honest reasons, never
@@ -88,6 +94,10 @@ impl PoolDiscoveryService {
         rpc_pool: Option<Arc<HttpRpcPool>>,
         reserves_cache: Arc<crate::engines::triangular_engine::ReservesCache>,
     ) -> Self {
+        // BR-02 (2026-09-07) — resolve the reserves coherence knobs ONCE at
+        // construction (boot-time env; the canonical validate() pass guards
+        // their invariants elsewhere).
+        let knobs = crate::canonical_knobs::CanonicalKnobs::from_env();
         Self {
             chain_id,
             db,
@@ -96,6 +106,8 @@ impl PoolDiscoveryService {
             rpc_pool,
             reserves_cache,
             factories: RwLock::new(None),
+            reserves_freshness_budget_s: knobs.reserves_freshness_budget_s,
+            reserves_backfill_on_discovery: knobs.reserves_backfill_on_discovery,
         }
     }
 
@@ -530,7 +542,10 @@ impl PoolDiscoveryService {
         // Hydrate ReservesCache
         match proto {
             crate::route_intent::ProtocolType::V2 => {
-                let reserves = rpc
+                // BR-02 (2026-09-07) — the tuple also carries the head block
+                // number so the backfill's ReservesEntry.blk is the REAL
+                // observation block (same with_retry envelope, no extra hop).
+                let (reserves, obs_blk) = rpc
                     .with_retry(|provider| {
                         let p_addr = pool_addr;
                         async move {
@@ -545,20 +560,88 @@ impl PoolDiscoveryService {
                                 .map_err(|e| anyhow::anyhow!("getReserves rpc error: {}", e))?;
                             let decoded = IUniswapV2Pair::getReservesCall::abi_decode_returns(&res)
                                 .map_err(|e| anyhow::anyhow!("getReserves decode error: {}", e))?;
-                            Ok((decoded.reserve0, decoded.reserve1))
+                            let blk = provider.get_block_number().await.map_err(|e| {
+                                anyhow::anyhow!("get_block_number rpc error: {}", e)
+                            })?;
+                            Ok(((decoded.reserve0, decoded.reserve1), blk))
                         }
                     })
                     .await?;
-                // We insert directly into the cache.
-                self.reserves_cache
-                    .insert(
-                        e_pool,
-                        ethers::types::U256::from_str_radix(&reserves.0.to_string(), 10)
-                            .unwrap_or_default(),
-                        ethers::types::U256::from_str_radix(&reserves.1.to_string(), 10)
-                            .unwrap_or_default(),
-                    )
-                    .await;
+                // BR-02 (2026-09-07) — R8: a decimal-parse failure of an
+                // ABI-decoded uint112 is impossible in practice, but this is a
+                // fund-path value: declare the miss and skip BOTH the in-proc
+                // insert and the Redis backfill (the previous
+                // `unwrap_or_default()` fabricated (0, 0) reserves).
+                let (r0, r1) = (
+                    ethers::types::U256::from_str_radix(&reserves.0.to_string(), 10),
+                    ethers::types::U256::from_str_radix(&reserves.1.to_string(), 10),
+                );
+                match (r0, r1) {
+                    (Ok(r0), Ok(r1)) => {
+                        // We insert directly into the cache.
+                        self.reserves_cache.insert(e_pool, r0, r1).await;
+
+                        // BR-02 (2026-09-07) — backfill-at-discovery: ALSO
+                        // publish the JUST-OBSERVED on-chain reserves to the
+                        // Redis key the graph layer reads, so a newly
+                        // discovered pool exists for graph AND sizing at t=0
+                        // instead of at the next PoolSyncWorker reload
+                        // (~reload_every ticks ≈ 12 min at the deployed
+                        // cadence). Same entry shape PoolSyncWorker writes
+                        // (token0_addr + real blk/ts). TTL = the ONE canonical
+                        // reserves freshness budget: the key serves exactly as
+                        // long as the layers consider reserves legally fresh
+                        // (ROUTES_CROWN_JEWEL — two layers, one reality).
+                        // Fail-honest: a Redis error logs and moves on (the
+                        // pool is still persisted + in the in-proc cache).
+                        if self.reserves_backfill_on_discovery {
+                            let entry = crate::reserves::ReservesEntry {
+                                r0: reserves.0.to_string(),
+                                r1: reserves.1.to_string(),
+                                token0_addr: Some(format!("{e_t0:#x}")),
+                                blk: obs_blk,
+                                ts: std::time::SystemTime::now()
+                                    .duration_since(std::time::UNIX_EPOCH)
+                                    .map(|d| d.as_secs())
+                                    .unwrap_or(0),
+                            };
+                            let mut redis_conn = self.redis.clone();
+                            match crate::reserves::set_reserves(
+                                &mut redis_conn,
+                                self.chain_id,
+                                &format!("{e_pool:#x}"),
+                                &entry,
+                                self.reserves_freshness_budget_s,
+                            )
+                            .await
+                            {
+                                Ok(()) => info!(
+                                    event = "discovery.reserves_backfilled",
+                                    pool = format!("{e_pool:#x}"),
+                                    blk = obs_blk,
+                                    ttl_s = self.reserves_freshness_budget_s,
+                                    "BR-02 backfill-at-discovery: V2 reserves published to Redis"
+                                ),
+                                Err(e) => warn!(
+                                    event = "discovery.reserves_backfill_failed",
+                                    pool = format!("{e_pool:#x}"),
+                                    error = %e,
+                                    "BR-02 backfill Redis write failed (non-fatal; pool persisted)"
+                                ),
+                            }
+                        }
+                    }
+                    (r0, r1) => {
+                        // R8 — never fabricate: declare which leg failed to parse.
+                        warn!(
+                            event = "discovery.reserves_parse_failed",
+                            pool = format!("{e_pool:#x}"),
+                            r0_ok = r0.is_ok(),
+                            r1_ok = r1.is_ok(),
+                            "reserves decimal parse failed; skipping cache insert AND backfill (R8)"
+                        );
+                    }
+                }
             }
             crate::route_intent::ProtocolType::V3 => {
                 // Read slot0 + liquidity
@@ -592,10 +675,49 @@ impl PoolDiscoveryService {
                     })
                     .await?;
 
-                // We set v3 state via the cache
-                // Note: the reserves cache doesn't fully support V3 slots directly yet without Phase 15 state projector,
-                // but we insert what we can or wait for the V3 indexer.
-                // For now, fail-honest: we just fetched it successfully to prove it exists.
+                // BR-02 (2026-09-07) — the on-chain slot0 + liquidity fetched
+                // above used to be DISCARDED ("prove it exists"): a freshly
+                // discovered V3 pool had no state in ANY layer (in-proc cache
+                // is V2-shaped; Redis was never written) until the next
+                // PoolSyncWorker reload (~reload_every ticks ≈ 12 min) — the
+                // graph's V3 edges died as missing_reserves for that whole
+                // window. Publish the REAL observed values to the
+                // `arbx:v3_slot0` key graph_builder reads, same TTL
+                // discipline as the V2 backfill. Fail-honest: Redis errors
+                // log and move on.
+                if self.reserves_backfill_on_discovery {
+                    let entry = crate::reserves::V3Slot0Entry {
+                        sqrt_price_x96: _sqrt_price.to_string(),
+                        liquidity: _liq.to_string(),
+                        ts: std::time::SystemTime::now()
+                            .duration_since(std::time::UNIX_EPOCH)
+                            .map(|d| d.as_secs())
+                            .unwrap_or(0),
+                    };
+                    let mut redis_conn = self.redis.clone();
+                    match crate::reserves::set_v3_slot0(
+                        &mut redis_conn,
+                        self.chain_id,
+                        &format!("{e_pool:#x}"),
+                        &entry,
+                        self.reserves_freshness_budget_s,
+                    )
+                    .await
+                    {
+                        Ok(()) => info!(
+                            event = "discovery.v3_slot0_backfilled",
+                            pool = format!("{e_pool:#x}"),
+                            ttl_s = self.reserves_freshness_budget_s,
+                            "BR-02 backfill-at-discovery: V3 slot0 published to Redis"
+                        ),
+                        Err(e) => warn!(
+                            event = "discovery.v3_slot0_backfill_failed",
+                            pool = format!("{e_pool:#x}"),
+                            error = %e,
+                            "BR-02 backfill Redis write failed (non-fatal; pool persisted)"
+                        ),
+                    }
+                }
             }
             _ => {}
         }

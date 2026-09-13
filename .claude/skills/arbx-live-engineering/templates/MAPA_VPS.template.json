@@ -1,0 +1,347 @@
+{
+  "schema_version": 1,
+  "snapshot_id": "PENDIENTE",
+  "captured_at_utc": "",
+  "target": {
+    "ssh_alias": "arbx",
+    "identity": "",
+    "project_path": "/opt/arbitragex-v2",
+    "identity_evidence_id": ""
+  },
+  "domains": [
+    {
+      "id": "identidad_acceso",
+      "enumeration_complete": false,
+      "enumeration_evidence_ids": [],
+      "asset_ids": [],
+      "absence_reason": null,
+      "checks": [
+        {
+          "id": "host_y_huella",
+          "status": "unverified",
+          "finding": "",
+          "evidence_ids": []
+        },
+        {
+          "id": "usuario_y_alcance",
+          "status": "unverified",
+          "finding": "",
+          "evidence_ids": []
+        },
+        {
+          "id": "ruta_y_frontera",
+          "status": "unverified",
+          "finding": "",
+          "evidence_ids": []
+        }
+      ]
+    },
+    {
+      "id": "recursos",
+      "enumeration_complete": false,
+      "enumeration_evidence_ids": [],
+      "asset_ids": [],
+      "absence_reason": null,
+      "checks": [
+        {
+          "id": "cpu_memoria_swap",
+          "status": "unverified",
+          "finding": "",
+          "evidence_ids": []
+        },
+        {
+          "id": "carga_y_procesos",
+          "status": "unverified",
+          "finding": "",
+          "evidence_ids": []
+        },
+        {
+          "id": "limites_y_oom",
+          "status": "unverified",
+          "finding": "",
+          "evidence_ids": []
+        }
+      ]
+    },
+    {
+      "id": "almacenamiento",
+      "enumeration_complete": false,
+      "enumeration_evidence_ids": [],
+      "asset_ids": [],
+      "absence_reason": null,
+      "checks": [
+        {
+          "id": "filesystems_espacio_inodos",
+          "status": "unverified",
+          "finding": "",
+          "evidence_ids": []
+        },
+        {
+          "id": "volumenes_y_mounts",
+          "status": "unverified",
+          "finding": "",
+          "evidence_ids": []
+        },
+        {
+          "id": "crecimiento_y_picos",
+          "status": "unverified",
+          "finding": "",
+          "evidence_ids": []
+        }
+      ]
+    },
+    {
+      "id": "servicios",
+      "enumeration_complete": false,
+      "enumeration_evidence_ids": [],
+      "asset_ids": [],
+      "absence_reason": null,
+      "checks": [
+        {
+          "id": "sistema_y_contenedores",
+          "status": "unverified",
+          "finding": "",
+          "evidence_ids": []
+        },
+        {
+          "id": "salud_y_reinicios",
+          "status": "unverified",
+          "finding": "",
+          "evidence_ids": []
+        },
+        {
+          "id": "dependencias_y_procesos",
+          "status": "unverified",
+          "finding": "",
+          "evidence_ids": []
+        }
+      ]
+    },
+    {
+      "id": "datos",
+      "enumeration_complete": false,
+      "enumeration_evidence_ids": [],
+      "asset_ids": [],
+      "absence_reason": null,
+      "checks": [
+        {
+          "id": "catalogos_y_tamanos",
+          "status": "unverified",
+          "finding": "",
+          "evidence_ids": []
+        },
+        {
+          "id": "persistencia_y_durabilidad",
+          "status": "unverified",
+          "finding": "",
+          "evidence_ids": []
+        },
+        {
+          "id": "locks_slots_y_archivado",
+          "status": "unverified",
+          "finding": "",
+          "evidence_ids": []
+        }
+      ]
+    },
+    {
+      "id": "retencion_backups",
+      "enumeration_complete": false,
+      "enumeration_evidence_ids": [],
+      "asset_ids": [],
+      "absence_reason": null,
+      "checks": [
+        {
+          "id": "jobs_y_politicas",
+          "status": "unverified",
+          "finding": "",
+          "evidence_ids": []
+        },
+        {
+          "id": "historial_y_crecimiento",
+          "status": "unverified",
+          "finding": "",
+          "evidence_ids": []
+        },
+        {
+          "id": "copias_y_restauracion",
+          "status": "unverified",
+          "finding": "",
+          "evidence_ids": []
+        }
+      ]
+    },
+    {
+      "id": "red_seguridad",
+      "enumeration_complete": false,
+      "enumeration_evidence_ids": [],
+      "asset_ids": [],
+      "absence_reason": null,
+      "checks": [
+        {
+          "id": "listeners_y_firewall",
+          "status": "unverified",
+          "finding": "",
+          "evidence_ids": []
+        },
+        {
+          "id": "rutas_tls_y_tuneles",
+          "status": "unverified",
+          "finding": "",
+          "evidence_ids": []
+        },
+        {
+          "id": "acceso_y_exposicion",
+          "status": "unverified",
+          "finding": "",
+          "evidence_ids": []
+        }
+      ]
+    },
+    {
+      "id": "despliegue",
+      "enumeration_complete": false,
+      "enumeration_evidence_ids": [],
+      "asset_ids": [],
+      "absence_reason": null,
+      "checks": [
+        {
+          "id": "repo_y_cambios",
+          "status": "unverified",
+          "finding": "",
+          "evidence_ids": []
+        },
+        {
+          "id": "imagenes_y_revision",
+          "status": "unverified",
+          "finding": "",
+          "evidence_ids": []
+        },
+        {
+          "id": "ci_locks_y_watchdogs",
+          "status": "unverified",
+          "finding": "",
+          "evidence_ids": []
+        }
+      ]
+    },
+    {
+      "id": "configuracion",
+      "enumeration_complete": false,
+      "enumeration_evidence_ids": [],
+      "asset_ids": [],
+      "absence_reason": null,
+      "checks": [
+        {
+          "id": "nombres_y_requisitos",
+          "status": "unverified",
+          "finding": "",
+          "evidence_ids": []
+        },
+        {
+          "id": "origen_y_precedencia",
+          "status": "unverified",
+          "finding": "",
+          "evidence_ids": []
+        },
+        {
+          "id": "permisos_y_referencias",
+          "status": "unverified",
+          "finding": "",
+          "evidence_ids": []
+        }
+      ]
+    },
+    {
+      "id": "observabilidad",
+      "enumeration_complete": false,
+      "enumeration_evidence_ids": [],
+      "asset_ids": [],
+      "absence_reason": null,
+      "checks": [
+        {
+          "id": "metricas_y_logs",
+          "status": "unverified",
+          "finding": "",
+          "evidence_ids": []
+        },
+        {
+          "id": "alertas_y_silencios",
+          "status": "unverified",
+          "finding": "",
+          "evidence_ids": []
+        },
+        {
+          "id": "salud_extremo_a_extremo",
+          "status": "unverified",
+          "finding": "",
+          "evidence_ids": []
+        }
+      ]
+    },
+    {
+      "id": "blockchain",
+      "enumeration_complete": false,
+      "enumeration_evidence_ids": [],
+      "asset_ids": [],
+      "absence_reason": null,
+      "checks": [
+        {
+          "id": "redes_y_rpc",
+          "status": "unverified",
+          "finding": "",
+          "evidence_ids": []
+        },
+        {
+          "id": "dex_y_pools",
+          "status": "unverified",
+          "finding": "",
+          "evidence_ids": []
+        },
+        {
+          "id": "firmantes_y_limites",
+          "status": "unverified",
+          "finding": "",
+          "evidence_ids": []
+        }
+      ]
+    },
+    {
+      "id": "dependencias",
+      "enumeration_complete": false,
+      "enumeration_evidence_ids": [],
+      "asset_ids": [],
+      "absence_reason": null,
+      "checks": [
+        {
+          "id": "grafo_y_propietarios",
+          "status": "unverified",
+          "finding": "",
+          "evidence_ids": []
+        },
+        {
+          "id": "activos_huerfanos",
+          "status": "unverified",
+          "finding": "",
+          "evidence_ids": []
+        },
+        {
+          "id": "conciliacion_y_paginacion",
+          "status": "unverified",
+          "finding": "",
+          "evidence_ids": []
+        }
+      ]
+    }
+  ],
+  "assets": [],
+  "evidence": [],
+  "open_gaps": [
+    "Plantilla sin completar. No hay evidencia del VPS en este paquete."
+  ],
+  "mapper_attestation": {
+    "inventory_sources_reconciled": false,
+    "secrets_excluded": false,
+    "no_intentional_remote_mutations": false
+  }
+}
