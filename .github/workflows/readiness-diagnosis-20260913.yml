@@ -8,30 +8,83 @@ concurrency:
   group: readiness-diagnosis
   cancel-in-progress: false
 jobs:
-  diagnose:
+  profile:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 5
     steps:
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
-        with:
-          persist-credentials: false
-      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444
-        with:
-          node-version: 22
-          cache: npm
-      - name: Install locked browser test dependencies
-        run: npm ci --ignore-scripts --no-audit --no-fund
-      - name: Install Chromium from the frontend workspace
-        run: node frontend/node_modules/playwright/cli.js install --with-deps chromium
-      - name: Reproduce public page and both endpoints (read only)
+      - name: Prepare read-only query profiler on the runner
+        run: |
+          mkdir -p readiness-evidence
+          cat > "$RUNNER_TEMP/readiness-profile.cjs" <<'NODE'
+          const { Client } = require('pg');
+          (async () => {
+            const client = new Client({connectionString: process.env.DATABASE_URL,
+              connectionTimeoutMillis: 2500, statement_timeout: 2000,
+              application_name: 'arbx-readiness-readonly-profile',
+              options: '-c default_transaction_read_only=on'});
+            const out = {scope:'read_only_query_profile', utc:new Date().toISOString(),
+              sha:process.env.ARBX_DEPLOY_SHA||null, observations:[]};
+            try {
+              await client.connect();
+              for (const [name, sql] of [
+                ['old_paper_count', "SELECT COUNT(*)::int AS n FROM opportunities WHERE detected_at > NOW() - interval '7 days'"],
+                ['new_paper_exists', "SELECT EXISTS (SELECT 1 FROM opportunities WHERE detected_at > NOW() - interval '7 days') AS has_recent"],
+                ['old_scoring_aggregate', 'SELECT COUNT(*)::int AS total, MAX(created_at) AS last, MIN(created_at) AS first FROM scored_opportunities'],
+                ['new_scoring_wiring', 'SELECT EXISTS (SELECT 1 FROM scored_opportunities) AS has_sample'],
+              ]) {
+                const result = {name}; const start = Date.now();
+                try {
+                  await client.query('BEGIN READ ONLY');
+                  await client.query("SET LOCAL statement_timeout='2000ms'; SET LOCAL lock_timeout='500ms'");
+                  const r = await client.query('EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) ' + sql);
+                  const p = r.rows[0]['QUERY PLAN'][0];
+                  result.execution_ms=p['Execution Time']; result.planning_ms=p['Planning Time'];
+                  result.scans=[];
+                  const walk = n => {
+                    if(n['Relation Name']) result.scans.push({relation:n['Relation Name'],
+                      node:n['Node Type'],rows:n['Actual Rows'],loops:n['Actual Loops'],
+                      blocks_read:n['Shared Read Blocks'],blocks_hit:n['Shared Hit Blocks']});
+                    for(const child of n.Plans||[]) walk(child);
+                  }; walk(p.Plan); result.ok=true;
+                } catch(e) { result.ok=false; result.error_code=typeof e.code==='string'?e.code:e.name; }
+                finally { await client.query('ROLLBACK'); }
+                result.elapsed_ms=Date.now()-start; out.observations.push(result);
+              }
+            } catch(e) {out.error_code=typeof e.code==='string'?e.code:e.name; process.exitCode=1;}
+            finally {await client.end().catch(()=>{}); console.log(JSON.stringify(out,null,2));}
+          })().catch(e=>{console.error(e.name);process.exitCode=1});
+          NODE
+          node --check "$RUNNER_TEMP/readiness-profile.cjs"
+      - name: Execute bounded read-only profiler through existing authorized SSH
         env:
-          NODE_PATH: ${{ github.workspace }}/frontend/node_modules
-        run: node scripts/ci/readiness_browser_20260913.cjs
-      - name: Preserve evidence (collection success is not a health assertion)
+          VPS_KEY: ${{ secrets.VPS_SSH_KEY }}
+          VPS_HOST: ${{ secrets.VPS_SSH_HOST }}
+          VPS_USER: ${{ secrets.VPS_SSH_USER }}
+          VPS_PORT: ${{ secrets.VPS_PORT || '22' }}
+          VPS_KNOWN_HOSTS: ${{ secrets.VPS_SSH_KNOWN_HOSTS }}
+        run: |
+          set -euo pipefail
+          umask 077
+          KEY="$RUNNER_TEMP/profile_key"; HOSTS="$RUNNER_TEMP/profile_hosts"; ERR="$RUNNER_TEMP/profile_err"
+          trap 'rm -f "$KEY" "$HOSTS" "$ERR"' EXIT
+          test -n "$VPS_KEY" && test -n "$VPS_HOST" && test -n "$VPS_USER"
+          [[ "$VPS_HOST" =~ ^[A-Za-z0-9][A-Za-z0-9.-]*$ ]]
+          [[ "$VPS_USER" =~ ^[A-Za-z_][A-Za-z0-9_.-]*$ ]]
+          [[ "$VPS_PORT" =~ ^[0-9]+$ ]] && (( VPS_PORT > 0 && VPS_PORT < 65536 ))
+          printf '%s\n' "$VPS_KEY" > "$KEY"
+          if [ -n "$VPS_KNOWN_HOSTS" ]; then printf '%s\n' "$VPS_KNOWN_HOSTS" > "$HOSTS";
+          else ssh-keyscan -T 10 -p "$VPS_PORT" -H "$VPS_HOST" > "$HOSTS" 2>"$ERR"; fi
+          test -s "$HOSTS"
+          ssh -i "$KEY" -p "$VPS_PORT" -T -o IdentitiesOnly=yes -o BatchMode=yes \
+            -o StrictHostKeyChecking=yes -o UserKnownHostsFile="$HOSTS" -o ConnectTimeout=15 \
+            "$VPS_USER@$VPS_HOST" 'docker exec -i arbitragex-v2-api-server-1 node -' \
+            < "$RUNNER_TEMP/readiness-profile.cjs" > readiness-evidence/sql-profile.json 2>"$ERR"
+          python3 -c "import json; d=json.load(open('readiness-evidence/sql-profile.json')); assert d['scope']=='read_only_query_profile'; print(json.dumps(d,indent=2))"
+      - name: Preserve actual query evidence, never credential values
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: readiness-browser-${{ github.run_id }}
+          name: readiness-sql-profile-${{ github.run_id }}
           path: readiness-evidence/
           if-no-files-found: error
           retention-days: 7
