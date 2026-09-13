@@ -1,0 +1,73 @@
+name: Prepare verified readiness fix branch
+on:
+  push:
+    branches: [ops/prepare-readiness-fix-20260913]
+permissions:
+  contents: write
+concurrency:
+  group: prepare-readiness-fix-20260913
+  cancel-in-progress: false
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
+        with:
+          fetch-depth: 0
+      - name: Apply exact reviewed patch on immutable main base (never update main)
+        env:
+          BASE: f0daeb650b67b3e40c74e02ca62380c906c2b2b1
+          FIX_BRANCH: fix/readiness-query-fanout-20260913
+        run: |
+          set -euo pipefail
+          git fetch origin main
+          test "$(git rev-parse origin/main)" = "$BASE"
+          REMOTE=$(git ls-remote --heads origin "$FIX_BRANCH")
+          test -z "$REMOTE"
+          # Repair the known paste-only insertion in the transport. The decoded
+          # patch must still match its ORIGINAL local SHA256, or nothing runs.
+          sed 's/hvWpfWwo/hvWwo/' scripts/ci/readiness-fix.patch.gz.b64 | base64 -d | gzip -d > "$RUNNER_TEMP/readiness-fix.patch"
+          echo "13d542d84781b9fa2e7d8bbd811f0794601c02b39523e96ba4269a74c8fc1c2a  $RUNNER_TEMP/readiness-fix.patch" | sha256sum -c -
+          git checkout -b "$FIX_BRANCH" "$BASE"
+          git apply --check "$RUNNER_TEMP/readiness-fix.patch"
+          git apply "$RUNNER_TEMP/readiness-fix.patch"
+          git diff --check
+          git add -- backend/api-server/src/readiness/paper-mode-readiness.ts backend/api-server/src/readiness/single-flight.ts backend/api-server/src/readiness/single-flight.test.ts backend/api-server/src/readiness/verifiers/index.ts backend/api-server/src/readiness/verifiers/g-pap-1.ts backend/api-server/src/readiness/verifiers/circuit-breaker-inputs.ts backend/api-server/src/readiness/verifiers/circuit-breaker-inputs.test.ts backend/api-server/src/routes/scoring-status.ts backend/api-server/src/routes/scoring-wiring.test.ts backend/api-server/src/routes/risk-circuit-breakers.ts backend/api-server/test/readiness-query-performance.test.ts
+          test "$(git diff --cached --name-only | wc -l)" -eq 11
+          git diff --cached --stat
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci --no-audit --no-fund
+      - run: npm run build -w @arbx/shared
+      - run: npm run build -w @arbx/api-server
+      - name: API unit regressions
+        run: npm test -w @arbx/api-server
+      - name: Real isolated PostgreSQL query regressions
+        run: npm run test:integration -w @arbx/api-server -- test/readiness-query-performance.test.ts
+      - name: Publish only the new fix branch after passing tests
+        env:
+          BASE: f0daeb650b67b3e40c74e02ca62380c906c2b2b1
+          FIX_BRANCH: fix/readiness-query-fanout-20260913
+        run: |
+          set -euo pipefail
+          git fetch origin main
+          test "$(git rev-parse origin/main)" = "$BASE"
+          test "$(git branch --show-current)" = "$FIX_BRANCH"
+          test "$(git rev-parse HEAD)" = "$BASE"
+          git diff --cached --check
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m 'fix(readiness): remove repeated history scans and unrelated verifier fan-out'
+          git push origin "HEAD:refs/heads/$FIX_BRANCH"
+          printf 'Prepared fix SHA: %s\n' "$(git rev-parse HEAD)" >> "$GITHUB_STEP_SUMMARY"
+      - name: Preserve the decoded auditable patch
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: readiness-reviewed-patch-${{ github.run_id }}
+          path: ${{ runner.temp }}/readiness-fix.patch
+          if-no-files-found: warn
+          retention-days: 7
