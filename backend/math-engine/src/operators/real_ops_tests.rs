@@ -489,9 +489,14 @@ mod tests {
         let o = out.unwrap();
         assert_eq!(o.operator_id, 32);
         // Contrato nsga2: escalar = cardinalidad del frente de Pareto ({0,1}).
-        let v = o.scalar_value.expect("op_32 computes on candidate objectives");
+        let v = o
+            .scalar_value
+            .expect("op_32 computes on candidate objectives");
         assert!(v.is_finite(), "scalar finite: {v}");
-        assert_eq!(v, 2.0, "Pareto front = candidatos 0 y 1 (el 2 está dominado)");
+        assert_eq!(
+            v, 2.0,
+            "Pareto front = candidatos 0 y 1 (el 2 está dominado)"
+        );
         assert_eq!(o.metadata.get("computed"), Some(&1.0));
         assert!(o.matrix_result.is_some(), "frente de Pareto presente");
         // Fail-honest por registry: sin objetivos nsga2.* → computed=0, sin escalar.

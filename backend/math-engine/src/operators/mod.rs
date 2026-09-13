@@ -44,8 +44,8 @@ pub mod op_31_drl_agent;
 // consumido por api.rs y searcher/live_risk_ranker. El brazo HP-03 (2026-09-08,
 // escalarización ponderada mo_weight_*) se conserva compilable como capacidad
 // de referencia; SOLO nsga2 está registrado en el OperatorRegistry.
-pub mod op_32_nsga2;
 pub mod op_32_multi_objective;
+pub mod op_32_nsga2;
 
 #[cfg(test)]
 mod real_ops_tests;
