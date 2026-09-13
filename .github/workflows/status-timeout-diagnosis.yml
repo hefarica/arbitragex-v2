@@ -1,0 +1,82 @@
+name: A8 A6 read-only timeout diagnosis
+on:
+  push:
+    branches: [ops/status-timeout-diagnosis-20260913]
+permissions:
+  contents: read
+concurrency:
+  group: vps-readonly-snapshot
+  cancel-in-progress: false
+jobs:
+  observe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
+        with:
+          persist-credentials: false
+      - name: Capture read-only request timings and dependency metadata
+        env:
+          VPS_KEY: ${{ secrets.VPS_SSH_KEY }}
+          VPS_HOST: ${{ secrets.VPS_SSH_HOST }}
+          VPS_USER: ${{ secrets.VPS_SSH_USER }}
+          VPS_PORT: ${{ secrets.VPS_PORT || '22' }}
+          VPS_KNOWN_HOSTS: ${{ secrets.VPS_SSH_KNOWN_HOSTS }}
+        run: |
+          set -euo pipefail
+          umask 077
+          KEY="$RUNNER_TEMP/status_probe_key"
+          HOSTS="$RUNNER_TEMP/status_probe_hosts"
+          ERR="$RUNNER_TEMP/status_probe_errors"
+          trap 'rm -f "$KEY" "$HOSTS" "$ERR"' EXIT
+          test -n "$VPS_KEY" && test -n "$VPS_HOST" && test -n "$VPS_USER"
+          [[ "$VPS_HOST" =~ ^[A-Za-z0-9][A-Za-z0-9.-]*$ ]]
+          [[ "$VPS_USER" =~ ^[A-Za-z_][A-Za-z0-9_.-]*$ ]]
+          [[ "$VPS_PORT" =~ ^[0-9]+$ ]] && (( VPS_PORT > 0 && VPS_PORT < 65536 ))
+          printf '%s\n' "$VPS_KEY" > "$KEY"
+          if [ -n "$VPS_KNOWN_HOSTS" ]; then
+            printf '%s\n' "$VPS_KNOWN_HOSTS" > "$HOSTS"
+          else
+            ssh-keyscan -T 10 -p "$VPS_PORT" -H "$VPS_HOST" > "$HOSTS" 2>"$ERR"
+          fi
+          test -s "$HOSTS"
+          mkdir -p status-evidence
+          python3 -m py_compile scripts/ci/status_timeout_probe.py
+          ssh -i "$KEY" -p "$VPS_PORT" -T -o IdentitiesOnly=yes -o BatchMode=yes \
+            -o StrictHostKeyChecking=yes -o UserKnownHostsFile="$HOSTS" \
+            -o ConnectTimeout=15 -o ServerAliveInterval=15 -o ServerAliveCountMax=3 \
+            "$VPS_USER@$VPS_HOST" 'python3 -' < scripts/ci/status_timeout_probe.py \
+            > status-evidence/observations.json 2>"$ERR"
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          data=json.loads(Path('status-evidence/observations.json').read_text())
+          assert data['scope']=='read_only_status_timeout_diagnosis'
+          print(json.dumps(data, indent=2))
+          PY
+      - name: Preserve exact public source for isolated analysis
+        if: always()
+        run: |
+          mkdir -p status-evidence
+          python3 - <<'PY'
+          import pathlib, subprocess, zipfile
+          root=pathlib.Path('.')
+          paths=subprocess.check_output(['git','ls-files','-z']).decode().split('\0')
+          prefixes=('frontend/','edge/','backend/api-server/','database/','docker/','scripts/ci/')
+          suffixes=('.ts','.tsx','.js','.jsx','.json','.mjs','.cjs','.md','.sql','.yml','.yaml','.toml','.sh','.py')
+          with zipfile.ZipFile('status-evidence/source.zip','w',zipfile.ZIP_DEFLATED) as z:
+            for p in paths:
+              if not p or not (p.startswith(prefixes) or '/' not in p): continue
+              if not (p.endswith(suffixes) or 'Dockerfile' in pathlib.Path(p).name): continue
+              f=root/p
+              if f.is_symlink() or not f.is_file() or f.stat().st_size>10000000: continue
+              z.write(f,p)
+            z.writestr('SOURCE_COMMIT.txt',subprocess.check_output(['git','rev-parse','HEAD']))
+          PY
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: status-timeout-${{ github.run_id }}
+          path: status-evidence/
+          if-no-files-found: error
+          retention-days: 7
