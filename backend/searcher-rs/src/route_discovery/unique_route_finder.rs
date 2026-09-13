@@ -1,4 +1,4 @@
-//! UniqueRouteFinder — bounded DFS (2–3 hops) over the live token graph.
+//! UniqueRouteFinder — bounded DFS over the live token graph (default 2–3 hops).
 //!
 //! Enumerates **closed cycles** (an arb realizes its yield by returning to the
 //! start token) discovered *from the live graph*, not from any fixed list:
@@ -32,6 +32,7 @@ use crate::route_discovery::types::{RouteCandidate, RouteDirection, RouteEdge, R
 use crate::route_intent::ProtocolType;
 use ethers::types::Address;
 use std::collections::{HashMap, HashSet};
+use std::rc::Rc;
 use std::time::Instant;
 
 /// Tunables for the bounded DFS. Defaults mirror the env caps in the plan.
@@ -81,7 +82,7 @@ pub struct RouteFinderOutcome {
     /// cycles dropped at the emission point. NOT a complete total: whole
     /// subtrees/start-tokens abandoned once the cap is hit are not counted.
     pub dropped_for_cap: usize,
-    /// `true` when the route cap stopped enumeration early ⇒ the route set is
+    /// `true` when the route or work cap stopped enumeration early ⇒ the route set is
     /// **incomplete** (R8 fail-honest: signal truncation, don't imply completeness).
     pub capped: bool,
     /// `true` when `max_pools_per_pair` dropped one or more parallel pools between
@@ -91,6 +92,8 @@ pub struct RouteFinderOutcome {
     /// excluded by the per-pair branching cap" — so the set is not provably exhaustive
     /// over the full pool universe (R8: don't let a per-pair drop masquerade as complete).
     pub pools_truncated: bool,
+    pub edge_visits: usize,
+    pub work_limited: bool,
     /// ARBX-0010 (workbook r7/r8 stage split): Pair (2-leg direct) vs Expand
     /// (deeper) attribution of this pass's wall time. `pair_ns + expand_ns`
     /// equals the pass's TOTAL elapsed (invariant); the split follows the
@@ -125,11 +128,17 @@ struct FinderState<'g> {
     graph: &'g TokenGraph,
     chain_id: u64,
     cfg: &'g RouteFinderConfig,
+    // Lazy, pass-local pruning: reuse ranked edge indices across DFS visits,
+    // never quotes or priorities from an earlier graph snapshot.
+    outgoing: HashMap<Address, Rc<(Vec<usize>, bool)>>,
     seen: HashSet<String>,
     results: Vec<RouteCandidate>,
     dropped_for_cap: usize,
     capped: bool,
     pools_truncated: bool,
+    edge_visits: usize,
+    max_edge_visits: usize,
+    work_limited: bool,
     /// ARBX-0010: segment-attribution clocks (see [`DiscoveryTimings`]).
     t_last_emit: Instant,
     pair_ns: u64,
@@ -168,31 +177,56 @@ impl<'g> FinderState<'g> {
     /// Returns `(edges, truncated)` where `truncated` is `true` iff at least one
     /// parallel pool was dropped by the per-pair cap — so the caller can flag the
     /// result set as not-provably-exhaustive (R8) instead of silently swallowing it.
-    fn collect_out_edges(&self, token: Address) -> (Vec<RouteEdge>, bool) {
+    fn collect_out_edges(&self, token: Address) -> (Vec<usize>, bool) {
+        if self.graph.has_dense_pair_cache() {
+            // Reuse triangular buckets built once per snapshot, preserving
+            // source adjacency order and every parallel pool in the pair.
+            let mut destinations = Vec::new();
+            for index in self.graph.out_edge_indices(&token) {
+                let destination = self.graph.edges[index].token_out;
+                if !destinations.contains(&destination) {
+                    destinations.push(destination);
+                }
+            }
+            let mut out = Vec::new();
+            let mut truncated = false;
+            for destination in destinations {
+                let mut edges: Vec<_> = self
+                    .graph
+                    .dense_pair_edges(&token, &destination)
+                    .unwrap_or(&[])
+                    .iter()
+                    .filter_map(|(_, _, index)| {
+                        let edge = &self.graph.edges[*index as usize];
+                        (edge.token_in == token).then_some(*index as usize)
+                    })
+                    .collect();
+                if edges.len() > self.cfg.max_pools_per_pair {
+                    truncated = true;
+                    edges.sort_by(|a, b| {
+                        rank_parallel_pools(&self.graph.edges[*a], &self.graph.edges[*b])
+                    });
+                    edges.truncate(self.cfg.max_pools_per_pair);
+                }
+                out.extend(edges);
+            }
+            return (out, truncated);
+        }
         // Group parallel pools by destination, preserving first-seen destination
         // order so enumeration (and cap-driven drops) stay deterministic.
         let mut pair_order: Vec<Address> = Vec::new();
-        let mut per_pair: HashMap<Address, Vec<RouteEdge>> = HashMap::new();
+        let mut per_pair: HashMap<Address, Vec<usize>> = HashMap::new();
         // ARBX-0019: dense O(1) out-edge indices when the view is built (same
         // shared id space `pair_index` owns); the HashMap path stays the
         // fallback — both views are pinned equivalent in graph_builder tests.
-        let out_ix: Vec<usize> = match self.graph.dense_out_indices(&token) {
-            Some(ix) => ix.iter().map(|&i| i as usize).collect(),
-            None => self
-                .graph
-                .adjacency
-                .get(&token)
-                .map(|v| v.to_vec())
-                .unwrap_or_default(),
-        };
-        for i in out_ix {
+        for i in self.graph.out_edge_indices(&token) {
             let e = &self.graph.edges[i];
             per_pair
                 .entry(e.token_out)
-                .and_modify(|v| v.push(e.clone()))
+                .and_modify(|v| v.push(i))
                 .or_insert_with(|| {
                     pair_order.push(e.token_out);
-                    vec![e.clone()]
+                    vec![i]
                 });
         }
 
@@ -202,13 +236,24 @@ impl<'g> FinderState<'g> {
             if let Some(mut edges) = per_pair.remove(&dest) {
                 if edges.len() > self.cfg.max_pools_per_pair {
                     truncated = true; // real pools exist but only the ranked top-K are kept
-                    edges.sort_by(rank_parallel_pools);
+                    edges.sort_by(|a, b| {
+                        rank_parallel_pools(&self.graph.edges[*a], &self.graph.edges[*b])
+                    });
                     edges.truncate(self.cfg.max_pools_per_pair);
                 }
                 out.extend(edges);
             }
         }
         (out, truncated)
+    }
+
+    fn cached_out_edges(&mut self, token: Address) -> Rc<(Vec<usize>, bool)> {
+        if let Some(out) = self.outgoing.get(&token) {
+            return Rc::clone(out);
+        }
+        let out = Rc::new(self.collect_out_edges(token));
+        self.outgoing.insert(token, Rc::clone(&out));
+        out
     }
 
     fn dfs(
@@ -228,13 +273,21 @@ impl<'g> FinderState<'g> {
             return; // no more edges may be taken
         }
 
-        // Clone out-edges first so we don't hold an immutable borrow of the
-        // graph across the mutable `self` recursion.
-        let (out, truncated) = self.collect_out_edges(current);
-        if truncated {
+        // Share the pruned indices across visits; the graph is immutable for
+        // this pass. Rc keeps recursion independent of the cache's borrow.
+        let out = self.cached_out_edges(current);
+        if out.1 {
             self.pools_truncated = true; // R8: a parallel pool was dropped here
         }
-        for edge in out {
+        let graph = self.graph;
+        for &index in &out.0 {
+            if self.edge_visits >= self.max_edge_visits {
+                self.capped = true;
+                self.work_limited = true;
+                return;
+            }
+            self.edge_visits += 1;
+            let edge = &graph.edges[index];
             if pools_used.contains(&edge.pool) {
                 continue; // never reuse a pool within a cycle
             }
@@ -265,6 +318,9 @@ impl<'g> FinderState<'g> {
                 visited_tokens.remove(&nt);
                 pools_used.remove(&edge.pool);
                 path.pop();
+                if self.work_limited {
+                    return;
+                }
             }
             // else: new_depth == max_depth and nt != start → can't close → prune
         }
@@ -342,6 +398,20 @@ pub fn find_routes(
     chain_id: u64,
     cfg: &RouteFinderConfig,
 ) -> RouteFinderOutcome {
+    find_routes_with_work_budget(
+        graph,
+        chain_id,
+        cfg,
+        crate::route_discovery::multi_hop_search::DEFAULT_MAX_EDGE_VISITS,
+    )
+}
+
+pub fn find_routes_with_work_budget(
+    graph: &TokenGraph,
+    chain_id: u64,
+    cfg: &RouteFinderConfig,
+    max_edge_visits: usize,
+) -> RouteFinderOutcome {
     // ARBX-0010: one clock for both anchors so the segment identity
     // `pair_ns + expand_ns == t0.elapsed()` holds exactly.
     let t0 = Instant::now();
@@ -349,16 +419,20 @@ pub fn find_routes(
         graph,
         chain_id,
         cfg,
+        outgoing: HashMap::new(),
         seen: HashSet::new(),
         results: Vec::new(),
         dropped_for_cap: 0,
         capped: false,
         pools_truncated: false,
+        edge_visits: 0,
+        max_edge_visits,
+        work_limited: false,
         t_last_emit: t0,
         pair_ns: 0,
     };
 
-    let starts: Vec<Address> = if cfg.base_tokens.is_empty() {
+    let mut starts: Vec<Address> = if cfg.base_tokens.is_empty() {
         graph.tokens().cloned().collect()
     } else {
         cfg.base_tokens
@@ -368,7 +442,14 @@ pub fn find_routes(
             .collect()
     };
 
+    if cfg.base_tokens.is_empty() {
+        starts.sort_unstable();
+    }
+
     for start in starts {
+        if state.work_limited {
+            break;
+        }
         if state.results.len() >= cfg.max_routes_per_tick {
             state.capped = true; // remaining start tokens abandoned — set truncated
             break;
@@ -395,6 +476,8 @@ pub fn find_routes(
         dropped_for_cap: state.dropped_for_cap,
         capped: state.capped,
         pools_truncated: state.pools_truncated,
+        edge_visits: state.edge_visits,
+        work_limited: state.work_limited,
         timings,
     }
 }
@@ -450,6 +533,40 @@ mod tests {
         let mut k: Vec<RouteKind> = o.routes.iter().map(|r| r.route_kind).collect();
         k.sort_by_key(|x| x.as_str());
         k
+    }
+
+    #[test]
+    fn pair_cache_matches_sparse_finder_with_parallel_pool_cap() {
+        use ProtocolType::V2;
+        let sparse = graph_from(&[
+            (10, 1, 2, V2),
+            (11, 1, 2, V2),
+            (12, 1, 2, V2),
+            (13, 2, 3, V2),
+            (14, 3, 1, V2),
+        ]);
+        let mut dense = sparse.clone();
+        dense.build_dense(1);
+        let cfg = RouteFinderConfig {
+            max_pools_per_pair: 2,
+            ..Default::default()
+        };
+        let a = find_routes(&sparse, 1, &cfg);
+        let b = find_routes(&dense, 1, &cfg);
+        assert_eq!(
+            a.routes.iter().map(|r| &r.route_hash).collect::<Vec<_>>(),
+            b.routes.iter().map(|r| &r.route_hash).collect::<Vec<_>>()
+        );
+        assert!(a.pools_truncated && b.pools_truncated);
+    }
+
+    #[test]
+    fn short_cycle_work_budget_stops_and_reports_incomplete() {
+        use ProtocolType::V2;
+        let graph = graph_from(&[(10, 1, 2, V2), (11, 2, 3, V2), (12, 3, 1, V2)]);
+        let result = find_routes_with_work_budget(&graph, 1, &RouteFinderConfig::default(), 3);
+        assert_eq!(result.edge_visits, 3);
+        assert!(result.capped && result.work_limited);
     }
 
     #[test]
@@ -785,6 +902,32 @@ mod tests {
         assert!(!o.pools_truncated);
         assert!(o.routes.iter().any(|r| r.pools.contains(&addr(0x10))));
         assert!(o.routes.iter().any(|r| r.pools.contains(&addr(0x20))));
+    }
+
+    #[test]
+    fn pruned_adjacency_is_refreshed_between_snapshots() {
+        let mut before =
+            triangle_with_parallel_ab(&[(0x10, 100.0, Some(0.01)), (0x20, 1.0, Some(0.01))]);
+        before.build_dense(1);
+        let mut after =
+            triangle_with_parallel_ab(&[(0x10, 1.0, Some(0.01)), (0x20, 100.0, Some(0.01))]);
+        after.build_dense(1);
+        let cfg = RouteFinderConfig {
+            max_pools_per_pair: 1,
+            ..Default::default()
+        };
+        for (graph, winner, loser) in [(&before, 0x10, 0x20), (&after, 0x20, 0x10)] {
+            let result = find_routes(graph, 1, &cfg);
+            assert!(result.pools_truncated);
+            assert!(result
+                .routes
+                .iter()
+                .any(|r| r.pools.contains(&addr(winner))));
+            assert!(result
+                .routes
+                .iter()
+                .all(|r| !r.pools.contains(&addr(loser))));
+        }
     }
 
     // ── ARBX-0010: Pair/Expand timing split ─────────────────────────────

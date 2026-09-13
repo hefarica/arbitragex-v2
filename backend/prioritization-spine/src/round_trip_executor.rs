@@ -37,10 +37,31 @@
 //!
 //! See `docs/superpowers/plans/2026-05-05-revm-real-implementation.md`.
 
-use ethers::types::{Address, Bytes, U256};
+use ethers::types::{Address, Bytes, H256, U256};
 use serde::{Deserialize, Serialize};
 
 use crate::swap_encoder::{encode_erc20_balance_of, encode_v2_swap_exact_tokens_for_tokens};
+
+/// Facts captured by the simulator from one canonical, hash-pinned snapshot.
+#[derive(Debug, Clone)]
+pub struct SimulationEvidence {
+    pub chain_id: u64,
+    pub block_number: u64,
+    pub block_hash: H256,
+    pub block_timestamp: u64,
+    pub simulated_at_ms: i64,
+    pub caller: Address,
+    pub calldata_hash: H256,
+    pub plan_inputs_hash: H256,
+    pub flash_loan_executor: Address,
+    pub gas_limit: u64,
+    pub flash_fee_wei: U256,
+    pub min_profit_wei: U256,
+    pub forward_quote: U256,
+    pub backward_quote: U256,
+    pub total_slippage_bps: u16,
+    pub state_overrides_used: bool,
+}
 
 /// Output of a round-trip simulation. Either the simulation completed
 /// successfully (`passed = true`) and we have realised profit + gas, OR
@@ -79,6 +100,7 @@ pub struct SimulationOutcome {
     /// producer / failure path (so the broadcast path can only ever replay
     /// calldata that the sim actually proved out).
     pub wrapped_calldata: Option<Vec<u8>>,
+    pub evidence: Option<SimulationEvidence>,
 }
 
 impl SimulationOutcome {
@@ -91,6 +113,7 @@ impl SimulationOutcome {
             gas_price_wei: U256::zero(),
             fail_reason: Some(reason.into()),
             wrapped_calldata: None,
+            evidence: None,
         }
     }
 }

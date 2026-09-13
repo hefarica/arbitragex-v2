@@ -13,6 +13,8 @@
     "total": 60
   },
   "dirty_seeds": 4,
+  "discovery_edge_visits": 12,
+  "discovery_work_limited": false,
   "drain_already_dirty": 3,
   "drain_drained": 11,
   "drain_evicted": 0,
@@ -144,6 +146,8 @@
   "multi_hop_capped": false,
   "multi_hop_detector": "R_CLOSED_CYCLE",
   "multi_hop_do_not": "Do not replace detector math with generic spot-price spread.",
+  "multi_hop_duplicate_cycles": 0,
+  "multi_hop_edge_visits": 4,
   "multi_hop_execution_class": "DETERMINISTIC_EXECUTABLE",
   "multi_hop_family_clamped": false,
   "multi_hop_family_hops": [
@@ -157,6 +161,7 @@
     2
   ],
   "multi_hop_hot_seed": "Spread/log-alpha/depth dislocation",
+  "multi_hop_invalid_weights": 0,
   "multi_hop_mask_skip": false,
   "multi_hop_mask_strategy": "MEV-01-015",
   "multi_hop_may_seed": true,
@@ -165,7 +170,9 @@
   "multi_hop_profitable_cycles": 0,
   "multi_hop_status": "route_ready",
   "multi_hop_status_skip_reason": null,
+  "multi_hop_time_limited": false,
   "multi_hop_v3_skipped": 4,
+  "multi_hop_work_limited": false,
   "pools_total": 3,
   "pools_truncated": false,
   "required_data_gate": {

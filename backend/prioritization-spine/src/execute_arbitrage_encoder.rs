@@ -43,6 +43,8 @@ use crate::swap_encoder::encode_v2_swap_exact_tokens_for_tokens;
 pub enum ExecuteArbitrageEncodeError {
     #[error("forward calldata is empty after encoding")]
     EmptyForwardCalldata,
+    #[error("invalid nonzero slippage minima or malformed route")]
+    InvalidSlippageBounds,
 }
 
 /// First 4 bytes of `keccak256("executeArbitrage(bytes32,address,address,uint256,uint256,address[],bytes[])")`.
@@ -95,9 +97,37 @@ fn encode_execute_arbitrage_body(
     min_profit_wei: U256,
     executor_address: Address,
 ) -> Result<Vec<u8>, ExecuteArbitrageEncodeError> {
+    encode_execute_arbitrage_body_with_minima(
+        selector,
+        ctx,
+        backward_amount_in,
+        route_hash,
+        min_profit_wei,
+        executor_address,
+        SwapMinima {
+            forward: U256::zero(),
+            backward: U256::zero(),
+        },
+    )
+}
+
+struct SwapMinima {
+    forward: U256,
+    backward: U256,
+}
+
+fn encode_execute_arbitrage_body_with_minima(
+    selector: [u8; 4],
+    ctx: &RoundTripContext,
+    backward_amount_in: U256,
+    route_hash: [u8; 32],
+    min_profit_wei: U256,
+    executor_address: Address,
+    minima: SwapMinima,
+) -> Result<Vec<u8>, ExecuteArbitrageEncodeError> {
     let forward_payload = encode_v2_swap_exact_tokens_for_tokens(
         ctx.amount_in,
-        U256::zero(), // amountOutMin=0 for sim; downstream gates enforce slippage
+        minima.forward,
         &ctx.forward_path,
         executor_address, // recipient = the executor contract holding funds
         ctx.deadline,
@@ -113,7 +143,7 @@ fn encode_execute_arbitrage_body(
     // records that revert honestly).
     let backward_payload = encode_v2_swap_exact_tokens_for_tokens(
         backward_amount_in,
-        U256::zero(),
+        minima.backward,
         &ctx.backward_path,
         executor_address,
         ctx.deadline,
@@ -287,6 +317,70 @@ pub fn build_flash_funded_broadcast_calldata_with_intermediate(
         executor_address,
     )?;
     // asset = the borrowed token = token_in; amount = amountIn (both from ctx).
+    Ok(build_request_flash_loan_calldata(
+        ctx.token_in,
+        ctx.amount_in,
+        &inner,
+    ))
+}
+
+/// Apply a bounded loss budget with ceiling division: rounding never weakens
+/// the requested minimum, even for assets with few decimals or a 1-wei quote.
+pub fn minimum_after_slippage(quote: U256, bps: u16) -> Result<U256, ExecuteArbitrageEncodeError> {
+    if quote.is_zero() || bps > 50 {
+        return Err(ExecuteArbitrageEncodeError::InvalidSlippageBounds);
+    }
+    let divisor = U256::from(10_000u64);
+    let keep = U256::from(10_000u64 - u64::from(bps));
+    let whole = (quote / divisor)
+        .checked_mul(keep)
+        .ok_or(ExecuteArbitrageEncodeError::InvalidSlippageBounds)?;
+    let tail = (quote % divisor) * keep;
+    whole
+        .checked_add(tail / divisor + U256::from(!((tail % divisor).is_zero()) as u8))
+        .ok_or(ExecuteArbitrageEncodeError::InvalidSlippageBounds)
+}
+
+/// Broadcast encoder with nonzero on-chain minima. Both quotes must come from
+/// the same state used by the final wrapped simulation. The backward amount is
+/// explicit; minOut on the first leg also covers the amount consumed by leg 2.
+pub fn build_flash_funded_broadcast_calldata_with_minima(
+    ctx: &RoundTripContext,
+    backward_amount_in: U256,
+    forward_min_out: U256,
+    backward_min_out: U256,
+    route_hash: [u8; 32],
+    min_profit_wei: U256,
+    executor_address: Address,
+) -> Result<Vec<u8>, ExecuteArbitrageEncodeError> {
+    if forward_min_out.is_zero()
+        || backward_min_out.is_zero()
+        || backward_amount_in.is_zero()
+        || forward_min_out < backward_amount_in
+        || executor_address.is_zero()
+        || ctx.amount_in.is_zero()
+        || ctx.forward_path.len() < 2
+        || ctx.backward_path.len() < 2
+        || ctx.forward_path.first() != Some(&ctx.token_in)
+        || ctx.forward_path.last() != Some(&ctx.token_out)
+        || ctx.backward_path.first() != Some(&ctx.token_out)
+        || ctx.backward_path.last() != Some(&ctx.token_in)
+        || min_profit_wei.is_zero()
+    {
+        return Err(ExecuteArbitrageEncodeError::InvalidSlippageBounds);
+    }
+    let inner = encode_execute_arbitrage_body_with_minima(
+        EXECUTE_ARBITRAGE_FLASH_FUNDED_SELECTOR,
+        ctx,
+        backward_amount_in,
+        route_hash,
+        min_profit_wei,
+        executor_address,
+        SwapMinima {
+            forward: forward_min_out,
+            backward: backward_min_out,
+        },
+    )?;
     Ok(build_request_flash_loan_calldata(
         ctx.token_in,
         ctx.amount_in,

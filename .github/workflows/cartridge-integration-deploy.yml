@@ -29,6 +29,8 @@ on:
       - "backend/searcher-rs/cartridges/**"
       - "scripts/cartridge-deployment/**"
       - "tests/e2e/cartridge-integration.spec.ts"
+      - ".github/workflows/cartridge-integration-deploy.yml"
+      - ".github/workflows/e2e.yml"
 
 permissions:
   contents: read
@@ -38,7 +40,7 @@ permissions:
 
 concurrency:
   group: cartridge-${{ github.ref }}
-  cancel-in-progress: false
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   validate-cartridges:
@@ -101,112 +103,14 @@ jobs:
 
   test-cartridges:
     name: Test Cartridge Integration (E2E)
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
     needs: [validate-cartridges]
-
-    services:
-      postgres:
-        image: postgres:16
-        env:
-          POSTGRES_USER: postgres
-          POSTGRES_PASSWORD: postgres
-          POSTGRES_DB: arbitragex
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd "pg_isready -U postgres"
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 10
-
-      redis:
-        image: redis:7
-        ports:
-          - 6379:6379
-        options: >-
-          --health-cmd "redis-cli ping"
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 10
-
-    env:
-      DATABASE_URL: postgres://postgres:postgres@localhost:5432/arbitragex
-      REDIS_URL: redis://localhost:6379
-
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v6
-        with:
-          fetch-depth: 1
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v6
-        with:
-          node-version: "20"
-          cache: npm
-
-      - name: Install dependencies
-        run: npm install
-
-      # CI-FLAKE-PLAYWRIGHT-APT (2026-08-18/19, 3×): same apt-mirror hang as
-      # e2e.yml — cache the browser (warm runs = zero network) and bound the
-      # deps install with timeout + retry so a bad mirror fails LOUD in
-      # minutes instead of eating the job timeout silently.
-      - name: Cache Playwright browsers
-        uses: actions/cache@0400d5f644dc74513175e3cd8d07132dd4860809 # v4.2.4 (G-CI-1: previous pin 0057852b… never existed)
-        with:
-          path: ~/.cache/ms-playwright
-          key: playwright-chromium-cid-${{ hashFiles('package.json') }}
-      - name: Install Playwright (apt-flake resilient)
-        run: |
-          npx playwright install chromium
-          for i in 1 2; do
-            if timeout 180 npx playwright install-deps chromium; then
-              echo "deps ok (attempt $i)"
-              exit 0
-            fi
-            echo "attempt $i: apt mirror flake — retrying in 30s"
-            sleep 30
-          done
-          echo "::error::playwright install-deps failed after 2 bounded attempts"
-          exit 1
-
-      - name: psql shim (cached postgres:16 image — no apt)
-        # CI-FLAKE-PSQL-APT (2026-08-17): apt-get hung until job timeout on a
-        # black-holed mirror; the postgres:16 service image is already on the
-        # runner, so the shim needs zero network. Same pattern as migrate.sh's
-        # own docker fallback, pinned to the cached tag.
-        run: |
-          set -euo pipefail
-          printf '#!/bin/sh\nexec docker run --rm -v "$PWD:$PWD" -w "$PWD" --network host postgres:16 psql "$@"\n' \
-            | sudo tee /usr/local/bin/psql >/dev/null
-          sudo chmod +x /usr/local/bin/psql
-          psql --version
-
-      - name: Apply DB migrations
-        run: |
-          psql "postgres://postgres:postgres@localhost:5432/arbitragex" \
-            -v ON_ERROR_STOP=1 -c "CREATE EXTENSION IF NOT EXISTS pgcrypto;"
-          bash automation/scripts/migrate.sh
-
-      - name: Run cartridge integration tests
-        working-directory: tests/e2e
-        env:
-          ARBX_FRONTEND_URL: http://localhost:5173
-          ARBX_ASSUME_NO_RPC: "1"
-        run: |
-          echo "=== Running cartridge integration tests ==="
-          npx playwright test cartridge-integration.spec.ts --reporter=html || true
-          echo "=== Tests completed (optional, may skip in CI) ==="
-
-      - name: Upload test report
-        if: always()
-        uses: actions/upload-artifact@v7
-        with:
-          name: cartridge-test-report
-          path: tests/e2e/playwright-report
-          retention-days: 7
+    # Reuse the verified E2E stack, its isolated npm lockfile and blocking tests.
+    # The former job installed only root workspaces, had no Playwright binary,
+    # never started an API/frontend and discarded test failures with `|| true`.
+    # Cartridge tests requiring live RPC retain their explicit suite-level skips.
+    uses: ./.github/workflows/e2e.yml
+    secrets:
+      LHCI_BASE_URL: ${{ secrets.LHCI_BASE_URL }}
 
   validate-deployment-scripts:
     name: Validate Deployment Scripts

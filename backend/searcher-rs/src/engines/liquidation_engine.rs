@@ -33,6 +33,8 @@
 //! - `gross_profit_usd = None` when debt is zero or pricing fails (R8 honest).
 //! - Reuses math kernels from `liquidation_worker` verbatim — no new float math.
 
+pub mod math;
+
 use crate::engines::StrategyCandidate;
 use crate::impact_index::{ImpactSet, LendingProtocol, UserPositionRef};
 use crate::lending_position_indexer::LendingPositionIndexer;

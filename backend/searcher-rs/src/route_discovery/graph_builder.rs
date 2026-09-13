@@ -20,11 +20,11 @@
 
 use crate::amm_math::v3_spot_snapshot;
 use crate::impact_index::PoolRef;
-use crate::pair_index::{DenseIdBuilder, TokenKey};
+use crate::pair_index::{pair_count, DenseIdBuilder, PairBuckets, TokenKey};
 use crate::reserves::{
     get_reserves, get_token_meta, get_v3_slot0, ReservesEntry, TokenMeta, V3Slot0Entry,
 };
-use crate::route_discovery::dense_view::{DenseAdjacency, MembershipRows};
+use crate::route_discovery::dense_view::{DenseAdjacency, MembershipRows, TokenBitSet};
 use crate::route_discovery::types::{RouteDirection, RouteEdge};
 use crate::route_intent::ProtocolType;
 use ethers::types::Address;
@@ -104,9 +104,46 @@ pub struct DenseView {
     /// `dense_view::membership_bitset_fits(N)`; `None` for large/sparse N —
     /// the CSR scan inside `dense_has_edge` is the fallback.
     membership: Option<MembershipRows>,
+    /// Triangular pair lookup within a bounded memory footprint. Built from
+    /// the SAME edge list; larger universes retain CSR as the fallback.
+    pairs: Option<PairBuckets<u32>>,
+}
+
+/// Borrowed edge indices: no per-visit Vec allocation in route expansion.
+pub enum EdgeIndices<'a> {
+    Dense(std::slice::Iter<'a, u32>),
+    Sparse(std::slice::Iter<'a, usize>),
+}
+
+impl Iterator for EdgeIndices<'_> {
+    type Item = usize;
+    fn next(&mut self) -> Option<usize> {
+        match self {
+            Self::Dense(it) => it.next().map(|&i| i as usize),
+            Self::Sparse(it) => it.next().copied(),
+        }
+    }
 }
 
 impl TokenGraph {
+    pub fn out_edge_indices(&self, token: &Address) -> EdgeIndices<'_> {
+        match self.dense_out_indices(token) {
+            Some(indices) => EdgeIndices::Dense(indices.iter()),
+            None => EdgeIndices::Sparse(
+                self.adjacency
+                    .get(token)
+                    .map(Vec::as_slice)
+                    .unwrap_or(&[])
+                    .iter(),
+            ),
+        }
+    }
+
+    pub fn dense_neighbors(&self, token: &Address) -> Option<&TokenBitSet> {
+        let view = self.dense.as_ref()?;
+        view.membership.as_ref()?.row(*view.id_of.get(token)?)
+    }
+
     /// Out-edges leaving `token` (edges whose `token_in == token`).
     pub fn out_edges(&self, token: &Address) -> impl Iterator<Item = &RouteEdge> {
         self.adjacency
@@ -149,11 +186,30 @@ impl TokenGraph {
         }
         let csr = DenseAdjacency::from_edge_sources(builder.len(), &sources);
         let membership = MembershipRows::build(builder.len(), &sources, &dests);
+        let pair_bytes = pair_count(builder.len())
+            .saturating_mul(std::mem::size_of::<Vec<(usize, usize, u32)>>())
+            .saturating_add(
+                sources
+                    .len()
+                    // Vec::push reserves at least four tuples initially and
+                    // grows geometrically. Charge four slots per edge so the
+                    // decision accounts for capacity, not just logical length.
+                    .saturating_mul(4)
+                    .saturating_mul(std::mem::size_of::<(usize, usize, u32)>()),
+            );
+        let pairs = (pair_bytes <= 1 << 20).then(|| {
+            let mut buckets = PairBuckets::new(builder.len());
+            for (index, (&source, &destination)) in sources.iter().zip(&dests).enumerate() {
+                buckets.push(source as usize, destination as usize, index as u32);
+            }
+            buckets
+        });
         self.dense = Some(DenseView {
             builder,
             id_of,
             csr,
             membership,
+            pairs,
         });
         self
     }
@@ -200,6 +256,20 @@ impl TokenGraph {
     /// Size of the dense token universe (tokens touched by ≥1 edge).
     pub fn dense_token_count(&self) -> usize {
         self.dense.as_ref().map(|v| v.builder.len()).unwrap_or(0)
+    }
+
+    /// All directed pool edges of one unordered token pair. The tuple keeps
+    /// source/destination orientation; multiple pools are never collapsed.
+    /// None means no dense pair cache (or unknown token), not an absent pool.
+    pub fn dense_pair_edges(&self, a: &Address, b: &Address) -> Option<&[(usize, usize, u32)]> {
+        let view = self.dense.as_ref()?;
+        view.pairs
+            .as_ref()?
+            .bucket(*view.id_of.get(a)? as usize, *view.id_of.get(b)? as usize)
+    }
+
+    pub fn has_dense_pair_cache(&self) -> bool {
+        self.dense.as_ref().is_some_and(|view| view.pairs.is_some())
     }
 }
 
@@ -1039,6 +1109,50 @@ mod tests {
         assert_eq!(ids.len(), g.adjacency.len());
         assert_eq!(ids.first().copied(), Some(0));
         assert_eq!(ids.last().copied(), Some(g.adjacency.len() - 1));
+    }
+
+    #[test]
+    fn triangular_pair_cache_preserves_orientations_and_parallel_edges() {
+        let mut g = synth_graph(22, 6);
+        let extra = g.edges[0].clone();
+        g.adjacency
+            .entry(extra.token_in)
+            .or_default()
+            .push(g.edges.len());
+        g.edges.push(extra);
+        g.build_dense(1);
+        assert!(g.has_dense_pair_cache());
+        for a in g.adjacency.keys() {
+            for b in g.adjacency.keys() {
+                if a == b {
+                    continue;
+                }
+                let expected: Vec<_> = g
+                    .edges
+                    .iter()
+                    .enumerate()
+                    .filter_map(|(i, e)| {
+                        ((e.token_in == *a && e.token_out == *b)
+                            || (e.token_in == *b && e.token_out == *a))
+                            .then_some(i)
+                    })
+                    .collect();
+                let got: Vec<_> = g
+                    .dense_pair_edges(a, b)
+                    .unwrap()
+                    .iter()
+                    .map(|(s, d, i)| {
+                        let e = &g.edges[*i as usize];
+                        assert_eq!(g.dense_token_id(&e.token_in), Some(*s));
+                        assert_eq!(g.dense_token_id(&e.token_out), Some(*d));
+                        *i as usize
+                    })
+                    .collect();
+                assert_eq!(got, expected);
+            }
+        }
+        assert!(!synth_graph(2048, 2).has_dense_pair_cache());
+        assert!(!synth_graph(170, 169).has_dense_pair_cache());
     }
 
     /// Bench vs HashMap (AC "bench vs HashMap registrado"): measures both

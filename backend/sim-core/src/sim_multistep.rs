@@ -551,6 +551,10 @@ pub fn execute_multistep_revm(
         CallOutcome, SequenceCall, SequenceContext, StorageOverride as SeqStorageOverride,
     };
 
+    if !config.paper_mode {
+        return crate::verified_simulation::execute(ctx, simulator, config);
+    }
+
     // 0. Resolve the FlashLoanExecutor `.to()` (env-driven, fail-closed). This
     //    is the rubric `.to() == resolve_flashloan_executor_address(chain_id)`.
     let flashloan_executor =
@@ -838,6 +842,7 @@ pub fn execute_multistep_revm(
         // Carry the VALIDATED wrapped-flash calldata (leg-1 encoded with the
         // real forward-quoted intermediate) ONLY on this passing outcome.
         wrapped_calldata: validated_wrapped_calldata,
+        evidence: None,
     }
 }
 

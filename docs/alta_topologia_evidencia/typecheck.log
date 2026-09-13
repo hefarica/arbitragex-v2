@@ -1,0 +1,35 @@
+npm warn Unknown env config "http-proxy". This will stop working in the next major version of npm.
+
+> arbitragex-v2-workspace@0.1.0 typecheck
+> npm run typecheck:all
+
+npm warn Unknown env config "http-proxy". This will stop working in the next major version of npm.
+
+> arbitragex-v2-workspace@0.1.0 typecheck:all
+> npm run typecheck --workspaces --if-present
+
+npm warn Unknown env config "http-proxy". This will stop working in the next major version of npm.
+
+> @arbx/shared@0.1.0 typecheck
+> tsc --noEmit -p tsconfig.json
+
+
+> @arbx/selector-api@0.1.0 typecheck
+> tsc --noEmit -p tsconfig.json
+
+
+> @arbx/api-server@0.1.0 typecheck
+> tsc --noEmit -p tsconfig.json
+
+
+> @arbx/edge-worker@0.1.0 typecheck
+> tsc --noEmit -p tsconfig.json
+
+
+> @arbx/edge-dev-local@0.1.0 typecheck
+> tsc --noEmit -p tsconfig.json
+
+
+> @arbx/frontend@0.1.0 typecheck
+> tsc --noEmit
+

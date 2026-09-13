@@ -126,7 +126,12 @@ impl FlashbotsClient {
             params: vec![CallBundleParams {
                 txs: vec![signed_tx_hex.to_owned()],
                 block_number: format!("0x{:x}", target_block),
-                state_block_number: "latest".to_owned(),
+                state_block_number: format!(
+                    "0x{:x}",
+                    target_block
+                        .checked_sub(1)
+                        .ok_or_else(|| anyhow::anyhow!("invalid_target_block"))?
+                ),
             }],
         })
         .context("serialize eth_callBundle request")?;
@@ -149,7 +154,8 @@ impl FlashbotsClient {
             .ok_or_else(|| anyhow::anyhow!("eth_callBundle returned null result"))?;
 
         // coinbaseDiff is a hex string, e.g. "0x1a2b3c".
-        let coinbase_diff_wei = parse_hex_u128(&result.coinbase_diff).unwrap_or(0);
+        let coinbase_diff_wei = parse_rpc_u128(&result.coinbase_diff)
+            .ok_or_else(|| anyhow::anyhow!("invalid_coinbase_diff"))?;
 
         let tx_results = result
             .results
@@ -262,7 +268,21 @@ struct TxCallResultRaw {
     revert: Option<String>,
 }
 
+fn parse_rpc_u128(s: &str) -> Option<u128> {
+    if s.starts_with("0x") || s.starts_with("0X") {
+        if s.len() <= 2 {
+            return None;
+        }
+        u128::from_str_radix(&s[2..], 16).ok()
+    } else if !s.is_empty() && s.bytes().all(|c| c.is_ascii_digit()) {
+        s.parse().ok()
+    } else {
+        None
+    }
+}
+
 /// Parse a `"0x…"` hex string into `u128`. Returns `None` on malformed input.
+#[cfg(test)]
 fn parse_hex_u128(s: &str) -> Option<u128> {
     let trimmed = s.trim_start_matches("0x").trim_start_matches("0X");
     // Empty string after stripping prefix (e.g. "" or bare "0x") represents 0.
@@ -714,5 +734,25 @@ mod tests {
             "ETH_CALLBUNDLE_STAGING_OUTCOME=PASS outcome={outcome_kind} relay={relay_url} target_block={target_block}"
         );
         println!("ETH_CALLBUNDLE_STAGING_JSON={detail}");
+    }
+}
+
+#[cfg(test)]
+mod exact_rpc_amount_tests {
+    use super::parse_rpc_u128;
+    #[test]
+    fn decimal_and_prefixed_hex_have_distinct_semantics() {
+        assert_eq!(parse_rpc_u128("100"), Some(100));
+        assert_eq!(parse_rpc_u128("0x100"), Some(256));
+        for value in [
+            "",
+            "0x",
+            "-1",
+            "1e3",
+            "100g",
+            "340282366920938463463374607431768211456",
+        ] {
+            assert_eq!(parse_rpc_u128(value), None);
+        }
     }
 }

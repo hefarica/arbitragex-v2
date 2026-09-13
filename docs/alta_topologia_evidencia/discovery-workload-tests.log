@@ -1,0 +1,19 @@
+    Blocking waiting for file lock on build directory
+   Compiling searcher-rs v0.1.0 (/workspace/scratch/e38757127d8c/arbitragex-v2/backend/searcher-rs)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 1m 10s
+     Running unittests src/lib.rs (target/debug/deps/searcher_rs-38890e7706fb0100)
+
+running 10 tests
+test discovery_workload::tests::canonical_bucket_ladder_available ... ok
+test discovery_workload::tests::circulant_degree_is_exact ... ok
+test discovery_workload::tests::hop_mask_bounds_intersection ... ok
+test discovery_workload::tests::throughput_rates_honest ... ok
+test discovery_workload::tests::parallel_pools_average_is_workbook_2_5 ... ok
+test discovery_workload::tests::seeds_round_trip_and_starts ... ok
+test discovery_workload::tests::sla_truth_table ... ok
+test discovery_workload::tests::proc_parsers_exact_and_honest ... ok
+test discovery_workload::tests::hop3_only_strategy_runs_or_skips ... ok
+test discovery_workload::tests::pipeline_base_pass_sanity ... ok
+
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 1164 filtered out; finished in 0.22s
+

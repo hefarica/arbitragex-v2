@@ -233,6 +233,12 @@ export const MultiHopTelemetrySchema = z.object({
   /** Truncation FLAG (MultiHopResult.capped: bool) — parallel to routes_capped. */
   multi_hop_capped: z.boolean(),
   multi_hop_noise_dropped: z.number().int().min(0),
+  /** Optional for older searchers; absent never means measured zero. */
+  multi_hop_invalid_weights: z.number().int().min(0).optional(),
+  multi_hop_edge_visits: z.number().int().min(0).optional(),
+  multi_hop_work_limited: z.boolean().optional(),
+  multi_hop_time_limited: z.boolean().optional(),
+  multi_hop_duplicate_cycles: z.number().int().min(0).optional(),
   /** Selected strategy id when the StrategyMask gated the pass. */
   multi_hop_mask_strategy: z.string().nullable(),
   multi_hop_hops_effective: HopBoundsSchema.nullable(),
@@ -353,6 +359,8 @@ export const PairFinderTickSchema = z.object({
   routes_capped: z.boolean(),
   /** Per-pair branching cap dropped a parallel pool (set not exhaustive). */
   pools_truncated: z.boolean(),
+  discovery_edge_visits: z.number().int().min(0).optional(),
+  discovery_work_limited: z.boolean().optional(),
   latency_ms: z.number().min(0),
   mode: z.string(),
 }).strict();

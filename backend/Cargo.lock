@@ -5539,6 +5539,7 @@ dependencies = [
  "thiserror 1.0.69",
  "tokio",
  "tracing",
+ "uuid 1.24.1",
 ]
 
 [[package]]
@@ -6055,6 +6056,8 @@ dependencies = [
  "serde_json",
  "sha2 0.10.9",
  "shared-rs",
+ "sim-core",
+ "simulator-v2",
  "sqlx",
  "thiserror 1.0.69",
  "tokio",
@@ -7433,6 +7436,7 @@ dependencies = [
 name = "sim-core"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "bigdecimal",
  "ethers",
  "prioritization-spine",

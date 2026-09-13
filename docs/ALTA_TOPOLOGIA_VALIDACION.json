@@ -1,0 +1,346 @@
+{
+  "generated_utc": "2026-09-11T04:27:22.357860+00:00",
+  "status": "verified_core_changes_external_integration_pending",
+  "suites": {
+    "math_engine_lib_api": {
+      "passed": 132,
+      "failed": 0,
+      "ignored": 0
+    },
+    "searcher_lib": {
+      "passed": 1173,
+      "failed": 0,
+      "ignored": 3,
+      "ignored_reason": "Three declared Redis-dependent tests; Redis integration was not run."
+    },
+    "frontend_contracts": {
+      "passed": 74,
+      "failed": 0,
+      "test_files": 7
+    },
+    "rust_workspace_all_targets_check": "PASS",
+    "npm_typecheck": "PASS",
+    "npm_build": "PASS_with_existing_dependency_and_lint_warnings"
+  },
+  "environment": {
+    "rust": "1.91.0",
+    "architecture": "x86_64",
+    "os": "Ubuntu 24.04 / Linux",
+    "visible_cpus": 9,
+    "cpu_model": "AMD EPYC 9V74 80-Core Processor",
+    "execution": "Shared container; no claim of dedicated production hardware."
+  },
+  "benchmark": {
+    "scope": "Synthetic find + multihop + rank + refine only. Excludes ingest, queues, live simulation and transaction submission.",
+    "points": 30,
+    "samples_per_point": 400,
+    "warmup_per_point": 50,
+    "profile": "release",
+    "formal_gate_scope": "Existing harness judges only the base point.",
+    "formal_summary": {
+      "gate": {
+        "budget_ms": 30.0,
+        "formal": true,
+        "p95_ms": 11.570617,
+        "pass": true,
+        "verdict": "PASS"
+      },
+      "resources": {
+        "alloc_probe_passes": 16,
+        "allocs_per_pass": 46480.0,
+        "cpu_seconds": 120.52,
+        "peak_rss_mib": 2.6171875,
+        "throughput": {
+          "measured_tick_ms_total": 105961.194088,
+          "pairs_per_sec": 8606.924524110125,
+          "passes": 12000,
+          "quotes_per_sec": 15673.662554432123,
+          "routes_per_sec": 53317.6324467243
+        }
+      },
+      "run_id": "discovery_gate_2026-09-11T04:25:17Z",
+      "ts": "2026-09-11T04:25:17Z"
+    },
+    "base": {
+      "aux": {
+        "capped": true,
+        "cycles": 294,
+        "discovery_edge_visits": 7517,
+        "discovery_work_limited": false,
+        "edges": 330,
+        "finalists": 4,
+        "multi_hop_capped": false,
+        "multi_hop_edge_visits": 67138,
+        "multi_hop_work_limited": false,
+        "pools_truncated": false,
+        "quotes": 128,
+        "routes": 500
+      },
+      "matrix_axis": {
+        "avg_parallel_pools": 2.5,
+        "axis": "base",
+        "buckets": 32,
+        "degree": 6,
+        "hop_max": 3,
+        "multihop_bounds": [
+          2,
+          3
+        ],
+        "pairs": 66,
+        "pools": 165,
+        "seeds": 4,
+        "strategy": "none",
+        "tokens": 22,
+        "value": "base"
+      },
+      "percentiles_ms": {
+        "p50": 8.088095,
+        "p90": 9.474205,
+        "p95": 11.570617,
+        "p99": 12.689043
+      },
+      "run_id": "discovery_matrix_base_base_2026-09-11T04:25:17Z",
+      "samples": 400,
+      "stages_ms": {
+        "find": {
+          "p50": 3.994624,
+          "p90": 4.688669,
+          "p95": 5.932955,
+          "p99": 6.602836
+        },
+        "multihop": {
+          "p50": 3.790015,
+          "p90": 4.415778,
+          "p95": 5.554955,
+          "p99": 5.800786
+        },
+        "rank": {
+          "p50": 0.057336,
+          "p90": 0.069746,
+          "p95": 0.082734,
+          "p99": 0.745013
+        },
+        "refine": {
+          "p50": 0.133381,
+          "p90": 0.18532,
+          "p95": 0.192801,
+          "p99": 0.374354
+        }
+      },
+      "ts": "2026-09-11T04:25:17Z"
+    },
+    "all_observed_matrix_points_p95_lt_30ms": true,
+    "worst_observed_point": {
+      "axis": [
+        "hop",
+        "7"
+      ],
+      "p95_ms": 14.768606
+    },
+    "points_p95_ge_30ms": [],
+    "output_work_counters_equal_before_and_after_final_optimization": true,
+    "candidate_identity_evidence": "Existing golden contracts and canonicalization differential test (768 cases); counters alone do not prove route identity.",
+    "before_final_optimization": {
+      "summary": {
+        "gate": {
+          "budget_ms": 30.0,
+          "formal": true,
+          "p95_ms": 15.107322,
+          "pass": true,
+          "verdict": "PASS"
+        },
+        "resources": {
+          "alloc_probe_passes": 16,
+          "allocs_per_pass": 112712.0,
+          "cpu_seconds": 261.65,
+          "peak_rss_mib": 2.546875,
+          "throughput": {
+            "measured_tick_ms_total": 230852.935814,
+            "pairs_per_sec": 3950.567042971485,
+            "passes": 12000,
+            "quotes_per_sec": 7194.190509832283,
+            "routes_per_sec": 24472.723208302305
+          }
+        },
+        "run_id": "discovery_gate_2026-09-11T04:18:32Z",
+        "ts": "2026-09-11T04:18:32Z"
+      },
+      "base": {
+        "aux": {
+          "capped": true,
+          "cycles": 294,
+          "discovery_edge_visits": 7517,
+          "discovery_work_limited": false,
+          "edges": 330,
+          "finalists": 4,
+          "multi_hop_capped": false,
+          "multi_hop_edge_visits": 67138,
+          "multi_hop_work_limited": false,
+          "pools_truncated": false,
+          "quotes": 128,
+          "routes": 500
+        },
+        "matrix_axis": {
+          "avg_parallel_pools": 2.5,
+          "axis": "base",
+          "buckets": 32,
+          "degree": 6,
+          "hop_max": 3,
+          "multihop_bounds": [
+            2,
+            3
+          ],
+          "pairs": 66,
+          "pools": 165,
+          "seeds": 4,
+          "strategy": "none",
+          "tokens": 22,
+          "value": "base"
+        },
+        "percentiles_ms": {
+          "p50": 13.485506,
+          "p90": 14.344289,
+          "p95": 15.107322,
+          "p99": 21.326388
+        },
+        "run_id": "discovery_matrix_base_base_2026-09-11T04:18:32Z",
+        "samples": 400,
+        "stages_ms": {
+          "find": {
+            "p50": 9.49623,
+            "p90": 9.98694,
+            "p95": 10.717722,
+            "p99": 15.198738
+          },
+          "multihop": {
+            "p50": 3.694632,
+            "p90": 4.000763,
+            "p95": 4.183699,
+            "p99": 5.61043
+          },
+          "rank": {
+            "p50": 0.05274,
+            "p90": 0.065128,
+            "p95": 0.072118,
+            "p99": 0.389298
+          },
+          "refine": {
+            "p50": 0.133301,
+            "p90": 0.152631,
+            "p95": 0.182255,
+            "p99": 0.28494
+          }
+        },
+        "ts": "2026-09-11T04:18:32Z"
+      }
+    },
+    "development_diagnostic_only": {
+      "summary": {
+        "gate": {
+          "budget_ms": 30.0,
+          "formal": false,
+          "p95_ms": 239.95288,
+          "pass": false,
+          "verdict": "not_evaluated_dev_run"
+        },
+        "resources": {
+          "alloc_probe_passes": 16,
+          "allocs_per_pass": 112712.0,
+          "cpu_seconds": 144.27,
+          "peak_rss_mib": 3.39453125,
+          "throughput": {
+            "measured_tick_ms_total": 118096.070817,
+            "pairs_per_sec": 386.12630957604944,
+            "passes": 600,
+            "quotes_per_sec": 703.1563321753322,
+            "routes_per_sec": 2391.950875636896
+          }
+        },
+        "run_id": "discovery_gate_2026-09-11T04:12:35Z",
+        "ts": "2026-09-11T04:12:35Z"
+      },
+      "base": {
+        "aux": {
+          "capped": true,
+          "cycles": 294,
+          "discovery_edge_visits": 7517,
+          "discovery_work_limited": false,
+          "edges": 330,
+          "finalists": 4,
+          "multi_hop_capped": false,
+          "multi_hop_edge_visits": 67138,
+          "multi_hop_work_limited": false,
+          "pools_truncated": false,
+          "quotes": 128,
+          "routes": 500
+        },
+        "matrix_axis": {
+          "avg_parallel_pools": 2.5,
+          "axis": "base",
+          "buckets": 32,
+          "degree": 6,
+          "hop_max": 3,
+          "multihop_bounds": [
+            2,
+            3
+          ],
+          "pairs": 66,
+          "pools": 165,
+          "seeds": 4,
+          "strategy": "none",
+          "tokens": 22,
+          "value": "base"
+        },
+        "percentiles_ms": {
+          "p50": 171.970249,
+          "p90": 231.576322,
+          "p95": 239.95288,
+          "p99": 262.006467
+        },
+        "run_id": "discovery_matrix_base_base_2026-09-11T04:12:35Z",
+        "samples": 20,
+        "stages_ms": {
+          "find": {
+            "p50": 89.790056,
+            "p90": 130.656997,
+            "p95": 135.509933,
+            "p99": 184.667958
+          },
+          "multihop": {
+            "p50": 76.560507,
+            "p90": 104.342575,
+            "p95": 106.891689,
+            "p99": 107.664364
+          },
+          "rank": {
+            "p50": 0.359702,
+            "p90": 0.554016,
+            "p95": 0.604151,
+            "p99": 0.618032
+          },
+          "refine": {
+            "p50": 1.981277,
+            "p90": 2.489343,
+            "p95": 2.495522,
+            "p99": 3.34656
+          }
+        },
+        "ts": "2026-09-11T04:12:35Z"
+      },
+      "note": "Pre-final optimization; some points overlapped release compilation. Not used for SLA acceptance."
+    }
+  },
+  "not_verified": [
+    "264 strategies executable end to end",
+    "mainnet deployment or transaction broadcast",
+    "Erigon/RPC/mempool live operation",
+    "Redis integration tests",
+    "CUDA/GPU kernels",
+    "NSGA-II connected to live per-candidate CVaR and latency",
+    "SIMD approximate quotes used by a production consumer",
+    "Flash-loan settlement, liquidations and cross-chain execution end to end",
+    "10000 opportunities/s, 1000 simulations/s, detection-to-mempool under 100ms",
+    "Profit per hour, win rate or Sharpe ratio",
+    "Operational discovery p95 SLA across the whole pipeline"
+  ]
+}

@@ -264,3 +264,5 @@ impl Simulator for SimulatorV2 {
         revm_runner::run(candidate, db, effective_block)
     }
 }
+
+pub mod verified_environment;

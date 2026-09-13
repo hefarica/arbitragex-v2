@@ -92,6 +92,8 @@ pub enum EmitOutcome {
     /// Dedup hit — same (route, time_bucket, profit_bucket) triple seen before.
     /// No I/O was performed.
     Deduped,
+    /// Published as a rejection, while retaining the original analysis separately.
+    Rejected,
     /// PG write failed but Redis publish succeeded. Data is in the stream but
     /// not persisted. Operator should investigate via `db_errors` counter.
     DbError,
@@ -211,8 +213,30 @@ impl OpportunityEmitter {
     pub async fn emit_accepted(
         &self,
         opportunity: &Opportunity,
+        strategy: StrategyLabel,
+        route: Option<&shared_rs::candidates::RouteMetadata>,
+    ) -> anyhow::Result<EmitOutcome> {
+        self.emit_accepted_inner(opportunity, strategy, route, None)
+            .await
+    }
+
+    pub async fn emit_accepted_with_plan(
+        &self,
+        opportunity: &Opportunity,
+        strategy: StrategyLabel,
+        route: Option<&shared_rs::candidates::RouteMetadata>,
+        plan: &prioritization_spine::route_plan::RoutePlan,
+    ) -> anyhow::Result<EmitOutcome> {
+        self.emit_accepted_inner(opportunity, strategy, route, Some(plan))
+            .await
+    }
+
+    async fn emit_accepted_inner(
+        &self,
+        opportunity: &Opportunity,
         strategy_label: StrategyLabel,
         route: Option<&shared_rs::candidates::RouteMetadata>,
+        plan: Option<&prioritization_spine::route_plan::RoutePlan>,
     ) -> anyhow::Result<EmitOutcome> {
         // GATE (2026-08-18, "arbitrajes reales, no de fallback"): an ACCEPTED
         // row must carry computed economics. Live prod showed rows emitted as
@@ -267,10 +291,10 @@ impl OpportunityEmitter {
         }
         // A5/N-01b: increment passed_all_gates so the heartbeat reflects V2-path
         // accepted candidates (previously only the legacy scanner incremented it).
-        counters().passed_all_gates.fetch_add(1, Ordering::Relaxed);
 
         // Dry-run (shadow mode): log + record, no I/O.
         if self.dry_run {
+            counters().passed_all_gates.fetch_add(1, Ordering::Relaxed);
             tracing::debug!(
                 event = "opportunity_emitter.shadow_accepted",
                 opp_id = %opportunity.id,
@@ -289,6 +313,44 @@ impl OpportunityEmitter {
             }
             return Ok(EmitOutcome::Published);
         }
+
+        crate::candidate_simulation::preserve_analysis(
+            opportunity,
+            route,
+            plan,
+            &mut self.redis.clone(),
+        )
+        .await?;
+
+        // A candidate becomes executable only after the exact atomic simulation.
+        // Keep the permit through persistence/publication, including cancellation.
+        let permit = match crate::candidate_simulation::try_acquire() {
+            Ok(p) => p,
+            Err(e) => {
+                return self
+                    .emit_rejected(opportunity, strategy_label, &e.to_string(), route)
+                    .await
+                    .map(|_| EmitOutcome::Rejected)
+            }
+        };
+        let admission = match (route, plan) {
+            (Some(route), Some(plan)) => {
+                crate::candidate_simulation::prepare(opportunity, route, plan, permit.clone()).await
+            }
+            _ => Err(anyhow::anyhow!("candidate_topology_required")),
+        };
+        let admission = match admission {
+            Ok(a) => a,
+            Err(e) => {
+                return self
+                    .emit_rejected(opportunity, strategy_label, &e.to_string(), route)
+                    .await
+                    .map(|_| EmitOutcome::Rejected)
+            }
+        };
+        crate::candidate_simulation::persist(&admission, &mut self.redis.clone()).await?;
+        let opportunity = &admission.opportunity;
+        counters().passed_all_gates.fetch_add(1, Ordering::Relaxed);
 
         // WO-10 (2026-09-06): emit-boundary span origin — entry of the REAL
         // I/O path (dedup → Gate-C scoring → PG insert → Redis XADD). Dry-run

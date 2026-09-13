@@ -1,16 +1,9 @@
 name: 'Post readiness evidence'
 description: >-
-  POST an evidence payload (evidence-payload.json) to the G-SIM-1
-  readiness_evidence registry (POST /admin/readiness-evidence on api-server).
-  Transport preference:
-    1. Direct URL — when ARBX_READINESS_EVIDENCE_URL + ARBX_ADMIN_TOKEN are
-       provisioned (public token-guarded route, operator's choice).
-    2. VPS SSH tunnel — when only the VPS_SSH_* secrets exist. The registry is
-       internal-only (api-server binds 127.0.0.1:8080), so the POST is executed
-       ON the VPS; the admin token is read from the deployment .env on the host
-       and never leaves it.
-    3. Neither — ::warning:: + skip (the cargo/test steps still gate; only the
-       registry row is not written).
+  Deliver and read back readiness evidence through configured HTTP endpoints,
+  then SSH with Docker-discovered published ports, bridge IPs or API-container
+  execution. Failed routes are reported without credentials. If every route
+  fails, the action fails and preserves the payload as an artifact for retry.
 
 inputs:
   payload_file:
@@ -21,6 +14,18 @@ inputs:
     description: 'secrets.ARBX_READINESS_EVIDENCE_URL — full POST URL (empty = not provisioned)'
     required: false
     default: ''
+  evidence_urls:
+    description: 'Optional JSON array of additional configured registry HTTPS URLs'
+    required: false
+    default: '[]'
+  compose_file:
+    description: 'Compose file relative to the deployed repository'
+    required: false
+    default: 'docker/compose.prod.yml'
+  api_service:
+    description: 'Compose service implementing the evidence registry'
+    required: false
+    default: 'api-server'
   admin_token:
     description: 'secrets.ARBX_ADMIN_TOKEN (empty = not provisioned)'
     required: false
@@ -49,43 +54,28 @@ inputs:
 runs:
   using: composite
   steps:
-    - name: POST evidence to the registry (direct URL → SSH tunnel → warn+skip)
+    - name: Discover available transports and verify evidence delivery
+      id: delivery
       shell: bash
       env:
         PAYLOAD_FILE: ${{ inputs.payload_file }}
         EVIDENCE_URL: ${{ inputs.evidence_url }}
+        EVIDENCE_URLS: ${{ inputs.evidence_urls }}
         ADMIN_TOKEN: ${{ inputs.admin_token }}
         SSH_KEY: ${{ inputs.ssh_key }}
         SSH_HOST: ${{ inputs.ssh_host }}
         SSH_PORT: ${{ inputs.ssh_port }}
         SSH_USER: ${{ inputs.ssh_user }}
         DEPLOY_PATH: ${{ inputs.deploy_path }}
-      run: |
-        set -euo pipefail
-        if [ -n "${EVIDENCE_URL}" ] && [ -n "${ADMIN_TOKEN}" ]; then
-          echo "recording evidence via direct registry URL"
-          curl --fail-with-body -sS --max-time 20 -X POST \
-            -H "Content-Type: application/json" \
-            -H "x-arbx-admin-token: ${ADMIN_TOKEN}" \
-            --data-binary @"${PAYLOAD_FILE}" \
-            "${EVIDENCE_URL}"
-          exit 0
-        fi
-        if [ -n "${SSH_KEY}" ] && [ -n "${SSH_HOST}" ]; then
-          echo "recording evidence via VPS SSH tunnel (registry internal-only; admin token stays on the host)"
-          mkdir -p "${HOME}/.ssh" && chmod 700 "${HOME}/.ssh"
-          printf '%s\n' "${SSH_KEY}" > "${HOME}/.ssh/gsim1_evidence_key"
-          chmod 600 "${HOME}/.ssh/gsim1_evidence_key"
-          ssh -o StrictHostKeyChecking=accept-new -o ConnectTimeout=10 \
-              -i "${HOME}/.ssh/gsim1_evidence_key" -p "${SSH_PORT}" \
-              "${SSH_USER}@${SSH_HOST}" \
-              "TOKEN=\$(grep -E '^ARBX_ADMIN_TOKEN=' '${DEPLOY_PATH}/.env' | cut -d= -f2-) && \
-               curl --fail-with-body -sS --max-time 20 -X POST \
-                 -H 'Content-Type: application/json' \
-                 -H \"x-arbx-admin-token: \${TOKEN}\" \
-                 --data-binary @- http://127.0.0.1:8080/admin/readiness-evidence" \
-              < "${PAYLOAD_FILE}" && SSH_RC=0 || SSH_RC=$?
-          rm -f "${HOME}/.ssh/gsim1_evidence_key"
-          exit "${SSH_RC}"
-        fi
-        echo "::warning::evidence not recorded: provision ARBX_READINESS_EVIDENCE_URL + ARBX_ADMIN_TOKEN (direct transport) or the VPS_SSH_* secrets (tunnel transport)"
+        COMPOSE_FILE: ${{ inputs.compose_file }}
+        API_SERVICE: ${{ inputs.api_service }}
+      run: python3 scripts/ci/evidence_delivery.py
+
+    - name: Preserve evidence if delivery fails
+      if: failure() && steps.delivery.outcome == 'failure'
+      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+      with:
+        name: readiness-undelivered-${{ github.job }}-${{ github.run_attempt }}
+        path: ${{ inputs.payload_file }}
+        if-no-files-found: error
+        retention-days: 30

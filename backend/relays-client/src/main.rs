@@ -21,9 +21,11 @@ mod live_exec_policy;
 mod multi_relay;
 mod nonce_manager;
 mod persistence;
+mod plan_validation;
 mod relay_bloxroute;
 mod relay_catalog;
 mod relay_flashbots;
+mod settlement_accounting;
 // ARBX-RDY-05 (A.7): local no-submit bundle simulation — zero network egress.
 // Library fn + unit tests only; main.rs has no subcommand pattern, so wiring a
 // CLI entry is deferred.
@@ -166,13 +168,7 @@ async fn main() -> anyhow::Result<()> {
         .find(|c| c.enabled)
         .map(|c| c.chain_id)
         .unwrap_or(1);
-    // M1 (2026-06-28): default-deny + testnet-only live-execution barrier.
-    // relays-client is the ONLY binary that can sign+broadcast; unlike searcher-rs
-    // (hard capital-key boot panic) it was gated only by soft flags, so an env
-    // mistake could broadcast mainnet. Assert fail-fast at boot that a LIVE
-    // (paper_mode=false) node may only target an allowlisted testnet — mainnet is
-    // physically refused. The same policy is re-checked on every build_and_sign
-    // call (the runtime barrier that also catches paper_mode flipped AFTER boot).
+    // Explicit per-chain activation is enforced at boot and again before signing.
     {
         let policy = live_exec_policy::LiveExecPolicy::from_env();
         let live_mode = !paper_mode.is_enabled().await;
@@ -182,16 +178,11 @@ async fn main() -> anyhow::Result<()> {
             allowed_chains = ?policy.allowed_chains,
             chain_id,
             live_mode,
-            "M1 live-execution policy resolved (default-deny, testnet-only; mainnet refused)"
+            "live-execution policy resolved (explicit chain allowlist)"
         );
         if live_mode {
             if let Err(e) = policy.assert_broadcast_allowed(chain_id) {
-                anyhow::bail!(
-                    "M1 live-exec lockout: paper_mode=false but broadcasting on chain_id={chain_id} \
-                     is refused — {e}. Live execution is default-deny + testnet-only: set \
-                     ARBX_LIVE_EXEC_ENABLED=true and target an allowlisted testnet (default Sepolia \
-                     11155111). Mainnet (chain_id=1) is physically refused in this phase."
-                );
+                anyhow::bail!("Live execution on chain_id={chain_id} is disabled by configuration: {e}. Set ARBX_LIVE_EXEC_ENABLED=true and explicitly include the chain in ARBX_LIVE_EXEC_CHAINS.");
             }
         }
     }
@@ -431,6 +422,9 @@ async fn main() -> anyhow::Result<()> {
         client.get_connection_manager().await?
     };
 
+    if let Some(pool) = db_pool_opt.clone() {
+        settlement_accounting::start_worker(redis_mgr_for_engine.clone(), pool);
+    }
     let engine = Arc::new(SubmitEngine {
         signer: signer.clone(),
         rpc_pool: rpc_pool.clone(),
@@ -553,3 +547,5 @@ async fn main() -> anyhow::Result<()> {
         .await?;
     Ok(())
 }
+
+mod execution_admission;

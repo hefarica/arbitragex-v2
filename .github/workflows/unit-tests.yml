@@ -28,9 +28,10 @@ jobs:
         with:
           workspaces: backend
       - name: Run cargo test --lib
-        # --lib only — integration tests need PG/Redis live (not in CI).
+        # Library tests plus the relays binary's admission/accounting regressions.
+        # Integration targets requiring external services remain separate.
         # sqlx offline mode satisfied by stub DATABASE_URL.
-        run: cargo test --workspace --locked --lib
+        run: cargo test --workspace --locked --lib --bin relays-client
         env:
           DATABASE_URL: postgres://test:test@localhost/arbitragex_test
           REDIS_URL: redis://localhost:6379

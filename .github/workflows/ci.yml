@@ -64,7 +64,12 @@ jobs:
         run: cargo clippy --workspace --locked -- -D warnings
         working-directory: backend
       - name: cargo test --lib (workspace)
-        run: cargo test --workspace --locked --lib
+        run: cargo test --workspace --locked --lib --bin relays-client
+        working-directory: backend
+
+      # This binary is not covered by --lib --bin relays-client above.
+      - name: BR-03 legacy symbol regression tests (blocking)
+        run: cargo test -p token-enricher --locked --bin token-enricher br03_symbol_regression_tests
         working-directory: backend
 
   lint-and-test-frontend:
@@ -99,9 +104,23 @@ jobs:
         run: forge fmt --check
         working-directory: contracts
 
+  retention-vacuum-regression:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+        with:
+          persist-credentials: false
+      - name: Validate retention Bash syntax
+        run: bash -n scripts/pg_retention.sh
+      - name: Reproduce old error and validate fix on disposable PostgreSQL 15
+        run: python3 scripts/ci/test_retention_vacuum.py
+
   ci-gate:
     runs-on: ubuntu-latest
-    needs: [lint-and-test-node, lint-and-test-rust, lint-and-test-frontend, lint-and-test-contracts]
+    needs: [lint-and-test-node, lint-and-test-rust, lint-and-test-frontend, lint-and-test-contracts, retention-vacuum-regression]
     steps:
       - name: All checks passed
         run: echo "CI gate passed"

@@ -24,6 +24,7 @@
 // over the SAME curve the golden-section kernel maximizes.
 pub mod amm_math;
 pub mod amount_buckets;
+pub mod batch_quote;
 pub mod calldata;
 pub mod canonical_enums;
 pub mod canonical_knobs;
@@ -52,6 +53,7 @@ pub mod fe_normalization;
 // evaluation of a sized route, and the legacy-preserving selection policy.
 pub mod financing;
 // ARBX-0009: sheet-07 Net_bps contract + deterministic ranking (QB 07).
+pub mod live_risk_ranker;
 pub mod net_bps_ranking;
 // ARBX-QB-07-006: canonical discovery-workload builders (bench + unit tests
 // share one source — the workload the Discovery_SLA gate judges).
@@ -242,3 +244,5 @@ pub mod telemetry_publisher;
 // Observer telemetry — real-node head divergence (reorg) → arbx:telemetry:observability.
 // Ungated: depends only on redis + serde, used by block_scanner in all builds.
 pub mod telemetry_observability;
+
+pub mod candidate_simulation;
