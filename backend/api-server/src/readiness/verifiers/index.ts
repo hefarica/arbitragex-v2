@@ -1,4 +1,5 @@
 import type pg from "pg";
+import { createSingleFlight } from "../single-flight.js";
 import type { ReadinessReport } from "../types.js";
 import { verifyVDB1 } from "./v-db-1.js";
 import { verifyVAT1 } from "./v-at-1.js";
@@ -32,7 +33,7 @@ import { verifyAlerts } from "./alerts.js";
  * Time-based gates (G-PAP-1) return yellow with countdown until the
  * threshold is met; they are NEVER green-faked.
  */
-export async function verifyAll(deps: {
+async function verifyAllOnce(deps: {
   pool: pg.Pool | null;
   now?: () => Date;
 }): Promise<ReadinessReport> {
@@ -81,4 +82,16 @@ export async function verifyAll(deps: {
     flip_blocked: summary.green !== summary.total,
     generated_at: now().toISOString(),
   };
+}
+
+// /live-readiness mounts several panels which ask for the same full report.
+// Previously every panel independently started 19 probes, including DB scans.
+// Share overlapping work, but do NOT reuse a settled report or a custom clock.
+const fullReportFlight = createSingleFlight<pg.Pool | null, ReadinessReport>();
+export function verifyAll(deps: {
+  pool: pg.Pool | null;
+  now?: () => Date;
+}): Promise<ReadinessReport> {
+  if (deps.now) return verifyAllOnce(deps);
+  return fullReportFlight(deps.pool, () => verifyAllOnce(deps));
 }

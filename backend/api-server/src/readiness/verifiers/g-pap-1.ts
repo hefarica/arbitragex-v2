@@ -2,7 +2,11 @@ import type pg from "pg";
 import { Redis } from "ioredis";
 import type { ReadinessItem } from "../types.js";
 import { resolvePaperModeState, type PaperModeState } from "../paper-mode-state.js";
-import { gradePaperReadiness, type PaperAccumulationState } from "../paper-mode-readiness.js";
+import { gradePaperReadiness } from "../paper-mode-readiness.js";
+
+// Index-bounded boolean evidence, NOT a fabricated or approximate row count.
+export const PAPER_RECENT_ACTIVITY_SQL =
+  "SELECT EXISTS (SELECT 1 FROM opportunities WHERE detected_at > NOW() - interval '7 days') AS has_recent";
 
 const DEFAULT_REDIS = process.env["REDIS_URL"] ?? "redis://redis:6379";
 
@@ -79,7 +83,7 @@ export async function verifyGPAP1(opts?: {
     };
   }
 
-  let recent_count = 0;
+  let hasRecent = false;
   let first_row_age_days: number | null = null;
   let last_row_age_hours: number | null = null;
   try {
@@ -87,10 +91,8 @@ export async function verifyGPAP1(opts?: {
     // legitimately go quiet for hours when gas + min_profit_usd thresholds are
     // tight; the doctrine point is that the pipeline HAS PRODUCED detections
     // recently, not that it's producing every hour.
-    const r1 = await opts.pool.query(
-      `SELECT COUNT(*)::int AS n FROM opportunities WHERE detected_at > NOW() - interval '7 days'`,
-    );
-    recent_count = r1.rows[0]?.n ?? 0;
+    const r1 = await opts.pool.query(PAPER_RECENT_ACTIVITY_SQL);
+    hasRecent = r1.rows[0]?.has_recent === true;
 
     const r2 = await opts.pool.query(
       `SELECT
@@ -110,14 +112,13 @@ export async function verifyGPAP1(opts?: {
     };
   }
 
-  const accumulation: PaperAccumulationState = {
+  const accumulation = {
     days_accumulated: first_row_age_days ?? 0,
-    recent_opportunities: recent_count,
     last_opportunity_at:
       last_row_age_hours != null
         ? new Date(Date.now() - last_row_age_hours * 3600_000).toISOString()
         : null,
-    pipeline_active: recent_count > 0,
+    pipeline_active: hasRecent,
     degraded: authority.degraded,
     reasons: authority.reasons,
   };
@@ -126,7 +127,7 @@ export async function verifyGPAP1(opts?: {
 
   const suffix =
     first_row_age_days != null
-      ? `; ${recent_count} detections in last 7d, last ${(last_row_age_hours ?? 0).toFixed(1)}h ago · authority: ${authority.confidence}`
+      ? `; detections ${hasRecent ? "present" : "absent"} in last 7d, last ${(last_row_age_hours ?? 0).toFixed(1)}h ago · authority: ${authority.confidence}`
       : "";
   const reason = `${grade.reason}${suffix}`;
 

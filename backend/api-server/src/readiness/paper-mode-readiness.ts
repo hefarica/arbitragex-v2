@@ -20,7 +20,8 @@ export type PaperReadinessGrade = {
 
 export function gradePaperReadiness(
   authority: PaperModeState,
-  accumulation: PaperAccumulationState,
+  accumulation: Omit<PaperAccumulationState, "recent_opportunities"> &
+    Partial<Pick<PaperAccumulationState, "recent_opportunities">>,
 ): PaperReadinessGrade {
   const days = accumulation.days_accumulated;
 
