@@ -79,6 +79,9 @@ pub mod persistence;
 pub mod pool_candidate;
 pub mod pool_discovery;
 pub mod pool_sources;
+// Stage 2c (§IV read side): per-operator log-LR cache + the posterior fold.
+// BR-05 (2026-09-07): WO-07 port-back.
+pub mod priors_cache;
 pub mod publisher;
 // QUOTEBASE-264 05_QUOTE_BASE: QuoteScore weighted form + workbook fixtures
 // (XLS-QB-06). Lib-only: consumers are the future dense-id quote-base layer.
@@ -93,6 +96,10 @@ pub mod route_api;
 pub mod route_decoder;
 pub mod route_discovery;
 pub mod route_intent;
+// CB-02 (2026-09-07) — control-plane runtime knobs (class A toggle client,
+// worker heartbeat, boot census). Declared in the lib too because the lib
+// target compiles workers::route_scanner_worker, which wires this module.
+pub mod runtime_knobs;
 pub mod scoring;
 pub mod scoring_pipeline;
 pub mod shared;

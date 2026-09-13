@@ -218,6 +218,9 @@ interface OpportunityLiveRow extends QueryResultRow {
   // full A→B cycle (2..N legs) per opportunity (R8: empty {} = no topology,
   // caller falls back to dex_a/dex_b).
   route_metadata: Record<string, unknown> | null;
+  // WO-H4 (2026-09-07): COUNT(*) OVER () — total rows matching the window
+  // WHERE (pre-LIMIT). Same value on every row; absent when 0 rows match.
+  window_total: number;
   // LEFT JOIN tokens ti (token_in side)
   token_in_symbol: string | null;
   token_in_decimals: number | null;
@@ -264,7 +267,15 @@ SELECT
   o.chain_id_out,
   o.bridge,
   o.bridge_fee_usd::float               AS bridge_fee_usd,
-  o.route_metadata                       AS route_metadata
+  o.route_metadata                       AS route_metadata,
+  -- WO-H4 (2026-09-07): real total of the live window, UNBOUNDED by LIMIT.
+  -- Window functions evaluate before LIMIT, so COUNT(*) OVER () counts every
+  -- row matching the WHERE (time window + viable_only filter) even when only
+  -- the top-N are returned — the dashboard can show the true detection count
+  -- instead of the fetch-window length. ::int because COUNT is bigint and
+  -- node-postgres returns int8 as string. Tokens PK (chain_id, address)
+  -- cannot fan out the LEFT JOINs, so the count equals opportunities rows.
+  (COUNT(*) OVER ())::int                  AS window_total
 FROM opportunities o
 LEFT JOIN tokens ti
   ON  ti.chain_id = o.chain_id
@@ -887,6 +898,11 @@ export function mountOpportunitiesLive(
 
       res.status(200).json({
         count:           q.rows.length,
+        // WO-H4 (2026-09-07): ALL detections in the live window (COUNT over
+        // the WHERE, unbounded by `limit`) so consumers can show the real
+        // total instead of the fetch-window length. 0 rows → 0
+        // (computed-and-exactly-zero, R8 — never null, never items.length).
+        window_total:    q.rows[0]?.window_total ?? 0,
         window:          "latest",
         viable_only:     viableOnly,
         max_age_seconds: maxAgeSeconds,

@@ -13,7 +13,7 @@
 
 ## Operators
 - **Primary**: op_19, op_24, op_27, op_29
-- **Secondary**: op_20, op_22, op_23
+- **Secondary**: op_20, op_22, op_23, op_32
 
 ## Cartridge
 - Rhai: backend/searcher-rs/cartridges/strategies/ (search for mev-01-030)

@@ -30,7 +30,9 @@
 //! sizing is the cartridge/orchestrator's job downstream. V3 legs without a
 //! computable weight are skipped + counted by the finder, never faked. The
 //! worker NEVER writes `arbx:opps:detected`; its only Redis writes are
-//! telemetry PUBLISHes to `arbx:route_discovery:telemetry`.
+//! telemetry PUBLISHes to `arbx:route_discovery:telemetry` plus the CB-02
+//! (2026-09-07) control-board heartbeat (`arbx:controlboard:route_scanner:hb`,
+//! SETEX 75s, 1 write per received block — design §3.3).
 
 use crate::cartridge::runner::CartridgeRunner;
 use crate::cartridge_boot::shadow_evaluate_intent;
@@ -42,6 +44,11 @@ use crate::route_discovery::multi_hop_search::{find_profitable_cycles, Profitabl
 use crate::route_discovery::telemetry;
 use crate::route_intent::{
     DetectionSource, RouteIntent, RouteIntentLeg, RouterKind, SwapExactMode,
+};
+// CB-02 (2026-09-07) — control-plane runtime gate (class A read-only toggle
+// client + the two board metrics), CB-02-DISENO §3.1/§3.3.
+use crate::runtime_knobs::{
+    RuntimeToggleClient, ROUTE_SCANNER_BOARD_HALT_BLOCKS_TOTAL, ROUTE_SCANNER_BOARD_ON,
 };
 use ethers::providers::StreamExt as _;
 use ethers::types::{Address, H256, U256};
@@ -246,7 +253,19 @@ impl ScannerConfig {
             },
             max_hops: env_usize("ARBX_ROUTE_SCANNER_MAX_HOPS", DEFAULT_MAX_HOPS).clamp(2, 7),
             anchors,
-            graph: GraphBuildConfig::default(),
+            // BR-02 (2026-09-07) — the graph layer's reserves staleness bound
+            // comes from the ONE canonical freshness knob (ARBX_KNOB_RESERVES_
+            // FRESHNESS_BUDGET_S, shared with the discovery backfill TTL),
+            // not the struct default: graph and sizing must declare reserves
+            // stale at the SAME age (ROUTES_CROWN_JEWEL — two layers, one
+            // reality). The struct default stays for non-knob callers.
+            graph: {
+                let knobs = crate::canonical_knobs::CanonicalKnobs::from_env();
+                GraphBuildConfig {
+                    max_age_secs: knobs.reserves_freshness_budget_s,
+                    ..GraphBuildConfig::default()
+                }
+            },
             max_cycle_events: env_usize(
                 "ARBX_ROUTE_SCANNER_MAX_CYCLE_EVENTS",
                 DEFAULT_MAX_CYCLE_EVENTS,
@@ -685,6 +704,7 @@ async fn scan_block(
 #[allow(clippy::too_many_arguments)] // per-block coordinator wiring
 async fn run_scan_subscription(
     mut redis: ConnectionManager,
+    board: &RuntimeToggleClient,
     chain_id: u64,
     url: &str,
     impact_index: &Arc<RwLock<ImpactIndex>>,
@@ -707,6 +727,40 @@ async fn run_scan_subscription(
                     return Err(anyhow::anyhow!("newHeads stream ended"));
                 };
                 let Some(number) = block.number else { continue };
+                // CB-02 (2026-09-07) — class-A runtime gate (design §3.3),
+                // between block reception and `scan_block`:
+                //   1. fail-safe poll (`is_on`: ≤1 GET/s TTL-cached, bool copy);
+                //   2. heartbeat EVERY received block, in BOTH states (run AND
+                //      halted — the board verifies both; TTL 75s ⇒ expiry
+                //      surfaces as DESCONOCIDO, never a stale run);
+                //   3. halted ⇒ per-item `debug!` + counter, scan skipped
+                //      (LOGFLOOD-01: no per-block info flood; the existing
+                //      per-block `route_scanner.done` info stays for scanned
+                //      blocks only).
+                let board_on = board.is_on().await;
+                ROUTE_SCANNER_BOARD_ON.set(i64::from(board_on));
+                if let Err(hb_err) = board
+                    .emit_heartbeat(&mut redis, board_on, number.as_u64())
+                    .await
+                {
+                    debug!(
+                        event = "route_scanner.board_hb_failed",
+                        chain_id,
+                        block_number = number.as_u64(),
+                        error = %hb_err,
+                        "heartbeat write failed; TTL expiry surfaces DESCONOCIDO (R8)"
+                    );
+                }
+                if !board_on {
+                    debug!(
+                        event = "route_scanner.halted_by_board",
+                        chain_id,
+                        block_number = number.as_u64(),
+                        "control-board runtime gate halted this block (scan skipped)"
+                    );
+                    ROUTE_SCANNER_BOARD_HALT_BLOCKS_TOTAL.inc();
+                    continue;
+                }
                 scan_block(
                     &mut redis,
                     impact_index,
@@ -727,6 +781,7 @@ async fn run_scan_subscription(
 #[allow(clippy::too_many_arguments)] // per-chain coordinator wiring
 async fn run_loop(
     redis: ConnectionManager,
+    board: RuntimeToggleClient,
     chain_id: u64,
     ws_urls: Vec<String>,
     impact_index: Arc<RwLock<ImpactIndex>>,
@@ -745,6 +800,7 @@ async fn run_loop(
         let url = &ws_urls[url_idx % ws_urls.len()];
         match run_scan_subscription(
             redis.clone(),
+            &board,
             chain_id,
             url,
             &impact_index,
@@ -793,6 +849,19 @@ pub fn spawn_route_scanner(
     cancel: CancellationToken,
 ) {
     let mode = RouteScannerMode::from_env();
+    // CB-02 (2026-09-07) — control-board runtime gate (class A, design §3.3):
+    // read-only client on `arbx:controlboard:route_scanner` ("true"/"false",
+    // written ONLY by the board's admin PUT). Built BEFORE the `Off`
+    // early-return so the fail-safe default is exactly the boot verdict —
+    // key absent / foreign value / Redis down ⇒ `mode == On` ⇒ deployed
+    // behavior (INV-CB02-1). The env spawn gate below is UNCHANGED: off ⇒
+    // nothing spawned, zero overhead (§37 Nivel-1 route-discovery intact —
+    // the toggle gates only WHETHER the already-deployed scan runs per block).
+    let board = RuntimeToggleClient::from_manager(
+        redis.clone(),
+        "route_scanner",
+        mode == RouteScannerMode::On,
+    );
     info!(
         event = "route_scanner.mode",
         chain_id,
@@ -841,6 +910,7 @@ pub fn spawn_route_scanner(
     tokio::spawn(async move {
         run_loop(
             redis,
+            board,
             chain_id,
             ws_urls,
             impact_index,

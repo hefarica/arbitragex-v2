@@ -1,0 +1,11 @@
+{
+  "id": 32,
+  "code": "op_32",
+  "name": "NSGA-II Multi-Objective",
+  "canonical_role": "Pareto ranking/selection over [rentabilidad_neta, riesgo_CVaR, latencia] of already-evaluated candidates; empty front = None (fail-honest R8).",
+  "enabled": true,
+  "engine_present": false,
+  "calibration_state": "NOT_IMPLEMENTED",
+  "formula": "min F(x) = (-rentabilidad_neta(x), CVaR(x), latencia(x)) - NSGA-II fast non-dominated sort + crowding distance",
+  "implementation_file": "backend/math-engine/src/operators/op_32_nsga2.rs"
+}

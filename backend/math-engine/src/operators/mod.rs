@@ -3,7 +3,9 @@
 //! Doctrina de Aislamiento Topológico:
 //! - Cada operador existe en su propio archivo .rs
 //! - Acoplamiento exclusivo vía trait TopologicalOperator
-//! - Añadir operador → crear archivo + registrar en OperatorRegistry
+//! - Añadir op_XX → crear archivo + registrar en el registry (mod.rs) — así se
+//!   añadió op_32 // HP-03 (2026-09-08), luego sustituido por NSGA-II (alta
+//!   topología, 2026-09-11)
 //! - El despachador (lib.rs) no requiere modificación
 
 // Declaraciones de los 32 operadores; se preservan los IDs históricos 1–31.
@@ -38,7 +40,12 @@ pub mod op_28_jit_liquidity;
 pub mod op_29_shapley;
 pub mod op_30_gnn_encoder;
 pub mod op_31_drl_agent;
+// Operador 32 — brazo canónico ÚNICO: NSGA-II (alta topología, 2026-09-11),
+// consumido por api.rs y searcher/live_risk_ranker. El brazo HP-03 (2026-09-08,
+// escalarización ponderada mo_weight_*) se conserva compilable como capacidad
+// de referencia; SOLO nsga2 está registrado en el OperatorRegistry.
 pub mod op_32_nsga2;
+pub mod op_32_multi_objective;
 
 #[cfg(test)]
 mod real_ops_tests;
@@ -161,6 +168,7 @@ impl OperatorRegistry {
             29 => Box::new(crate::operators::op_29_shapley::ShapleyOperator::new()),
             30 => Box::new(crate::operators::op_30_gnn_encoder::GnnEncoderOperator::new()),
             31 => Box::new(crate::operators::op_31_drl_agent::DrlAgentOperator::new()),
+            // Op 32 canónico: NSGA-II (alta topología). Un solo brazo registrado.
             32 => Box::new(crate::operators::op_32_nsga2::Nsga2Operator::new()),
         }
     }

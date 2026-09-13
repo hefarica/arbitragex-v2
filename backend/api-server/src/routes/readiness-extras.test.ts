@@ -9,11 +9,15 @@
  *     2026-08-20 via gate_c_validation fork-validation evidence).
  *   - summarize counts severities + unions blocked phases.
  *   - overallStatus follows the precedence (critical > partial > ready).
+ *   - composeNextAction (WO H-1, 2026-09-07): next_action is derived from the
+ *     LIVE blockers (severity-ordered, A.9 sign-off terminal) and never
+ *     claims "All known blockers cleared" while blockers exist.
  */
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { __forTesting } from "./readiness-extras.js";
 
-const { probeEnv, envBlockers, doctrinalBlockers, summarize, overallStatus } = __forTesting;
+const { probeEnv, envBlockers, doctrinalBlockers, readinessItemsToBlockers, summarize, overallStatus, composeNextAction } =
+  __forTesting;
 
 // Snapshot + restore process.env around each test to keep them isolated.
 const SAVED_ENV = { ...process.env };
@@ -211,5 +215,103 @@ describe("overallStatus", () => {
   });
   it("returns 'ready' only when ALL counts are zero", () => {
     expect(overallStatus({ critical: 0, high: 0, medium: 0, low: 0, blocked_phases: [] })).toBe("ready");
+  });
+});
+
+describe("composeNextAction (WO H-1, 2026-09-07 — live blockers drive next_action)", () => {
+  // composeNextAction only reads id/severity/required_action — a narrow
+  // factory keeps these tests about the composition contract, not the full
+  // Blocker wire shape.
+  type NextActionBlocker = Parameters<typeof composeNextAction>[0][number];
+  const mk = (
+    id: string,
+    severity: "critical" | "high" | "medium" | "low",
+    required_action = `Resolve readiness item ${id}.`,
+  ): NextActionBlocker => ({ id, severity, required_action }) as NextActionBlocker;
+
+  it("regression H-1: G-PIPE-1 (critical) + G-DISK-1 (high) + A.9 pending — no false 'All known blockers cleared'", () => {
+    // Reproduces the live /live-readiness state the Browse Auditor saw
+    // 2026-09-09: critical G-PIPE-1, high G-DISK-1, A.9 pending — while the
+    // old next_action claimed "All known blockers cleared at this layer".
+    const blockers = [
+      mk("readiness_g_disk_1", "high", "Resolve readiness item G-DISK-1 (Host disk usage below critical threshold)."),
+      mk("readiness_g_pipe_1", "critical", "Resolve readiness item G-PIPE-1 (Paper pipeline stream flow (detected→validated→simulated))."),
+      mk("a9_go_no_go_formal_pending", "critical", "Generate the formal GO/NO-GO ledger."),
+    ];
+    const s = composeNextAction(blockers);
+    expect(s).not.toContain("All known blockers cleared");
+    // severity ordering: critical G-PIPE-1 lands before high G-DISK-1
+    expect(s.indexOf("readiness_g_pipe_1")).toBeGreaterThan(-1);
+    expect(s.indexOf("readiness_g_pipe_1")).toBeLessThan(s.indexOf("readiness_g_disk_1"));
+    // each surfaced blocker carries its severity + required action
+    expect(s).toContain("readiness_g_pipe_1 [critical]");
+    expect(s).toContain("Resolve readiness item G-PIPE-1");
+    // the terminal step is the A.9 sign-off
+    expect(s.endsWith("Await A.9 formal GO/NO-GO sign-off.")).toBe(true);
+  });
+
+  it("consumes the exact id mapping produced by readinessItemsToBlockers (guards id drift)", () => {
+    const items = [
+      {
+        id: "G-PIPE-1",
+        group: "operations",
+        label: "Paper pipeline stream flow (detected→validated→simulated)",
+        status: "red",
+        reason: "selector consumer stalled: 500 entries behind on arbx:opps:detected (deliverable, ≥500)",
+        verified_at: "2026-09-07T00:00:00.000Z",
+      },
+    ] as Parameters<typeof readinessItemsToBlockers>[0];
+    const blockers = readinessItemsToBlockers(items);
+    const s = composeNextAction(blockers);
+    expect(s).toContain("readiness_g_pipe_1");
+    expect(s).toContain("Resolve readiness item G-PIPE-1");
+  });
+
+  it("keeps the specific A.4 runbook FIRST when the A.4 blocker is present", () => {
+    const blockers = [
+      mk("readiness_g_pipe_1", "critical"),
+      mk("a4_fork_real_not_executed", "critical"),
+    ];
+    const s = composeNextAction(blockers);
+    expect(s.startsWith("Provide RPC_HTTP_1 + EXECUTOR_1")).toBe(true);
+    expect(s).toContain("readiness_g_pipe_1");
+  });
+
+  it("A.9-only state names the pending sign-off instead of a false all-clear", () => {
+    const s = composeNextAction([mk("a9_go_no_go_formal_pending", "critical")]);
+    expect(s).toBe("Await A.9 formal GO/NO-GO sign-off.");
+    expect(s).not.toContain("All known blockers cleared");
+  });
+
+  it("caps derived blocker parts at 3 — lower severities drop first", () => {
+    const blockers = [
+      mk("b_low_1", "low"),
+      mk("b_high_1", "high"),
+      mk("b_crit_1", "critical"),
+      mk("b_med_1", "medium"),
+      mk("b_low_2", "low"),
+    ];
+    const s = composeNextAction(blockers);
+    expect(s).toContain("b_crit_1");
+    expect(s).toContain("b_high_1");
+    expect(s).toContain("b_med_1");
+    expect(s).not.toContain("b_low_1");
+    expect(s).not.toContain("b_low_2");
+  });
+
+  it("empty list keeps the honest default (all-clear stated ONLY when nothing blocks)", () => {
+    expect(composeNextAction([])).toBe(
+      "All known blockers cleared at this layer; await A.9 formal GO/NO-GO sign-off.",
+    );
+  });
+
+  it("does not mutate the input blockers array (stable sort on a copy)", () => {
+    const blockers = [
+      mk("b_low_1", "low"),
+      mk("b_crit_1", "critical"),
+    ];
+    const idsBefore = blockers.map((b) => b.id).join(",");
+    composeNextAction(blockers);
+    expect(blockers.map((b) => b.id).join(",")).toBe(idsBefore);
   });
 });
