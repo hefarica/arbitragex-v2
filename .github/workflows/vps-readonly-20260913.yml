@@ -1,0 +1,76 @@
+name: VPS read-only snapshot (release f0daeb65)
+
+# Auxiliary verification only. It does not merge, deploy, restart or enable LIVE.
+on:
+  push:
+    branches: [ops/verify-vps-f0daeb65-20260913]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: vps-readonly-snapshot
+  cancel-in-progress: false
+
+jobs:
+  read-only-vps:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+        with:
+          persist-credentials: false
+      - name: Validate probe locally before connecting
+        run: python3 scripts/ci/vps_readonly_20260913/test_probe.py
+      - name: Capture bounded read-only VPS observations
+        env:
+          VPS_KEY: ${{ secrets.VPS_SSH_KEY }}
+          VPS_HOST: ${{ secrets.VPS_SSH_HOST }}
+          VPS_USER: ${{ secrets.VPS_SSH_USER }}
+          VPS_PORT: ${{ secrets.VPS_PORT || '22' }}
+          VPS_KNOWN_HOSTS: ${{ secrets.VPS_SSH_KNOWN_HOSTS }}
+        run: |
+          set -euo pipefail
+          umask 077
+          KEY="$RUNNER_TEMP/arbx_readonly_key"
+          HOSTS="$RUNNER_TEMP/arbx_readonly_known_hosts"
+          ERR="$RUNNER_TEMP/arbx_readonly_ssh_errors"
+          trap 'rm -f "$KEY" "$HOSTS" "$ERR"' EXIT
+          test -n "$VPS_KEY" && test -n "$VPS_HOST" && test -n "$VPS_USER"
+          [[ "$VPS_HOST" =~ ^[A-Za-z0-9][A-Za-z0-9.-]*$ ]]
+          [[ "$VPS_USER" =~ ^[A-Za-z_][A-Za-z0-9_.-]*$ ]]
+          [[ "$VPS_PORT" =~ ^[0-9]+$ ]] && (( VPS_PORT > 0 && VPS_PORT < 65536 ))
+          printf '%s\n' "$VPS_KEY" > "$KEY"
+          if [ -n "$VPS_KNOWN_HOSTS" ]; then
+            printf '%s\n' "$VPS_KNOWN_HOSTS" > "$HOSTS"
+          else
+            # Same host-key bootstrap as the existing canonical deployment.
+            ssh-keyscan -T 10 -p "$VPS_PORT" -H "$VPS_HOST" > "$HOSTS" 2>"$ERR"
+          fi
+          test -s "$HOSTS"
+          mkdir -p readonly-evidence
+          # Python is sent on stdin; no script or report is written on the VPS.
+          # All child commands use stdin=DEVNULL and no shell expansion.
+          ssh -i "$KEY" -p "$VPS_PORT" -T \
+            -o IdentitiesOnly=yes -o BatchMode=yes -o StrictHostKeyChecking=yes \
+            -o UserKnownHostsFile="$HOSTS" -o ConnectTimeout=15 \
+            -o ServerAliveInterval=15 -o ServerAliveCountMax=3 \
+            "$VPS_USER@$VPS_HOST" 'python3 -' \
+            < scripts/ci/vps_readonly_20260913/probe.py \
+            > readonly-evidence/vps-snapshot.json 2>"$ERR"
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          data = json.loads(Path('readonly-evidence/vps-snapshot.json').read_text())
+          assert data['scope'] == 'read_only_snapshot'
+          assert data['target_main_sha'] == 'f0daeb650b67b3e40c74e02ca62380c906c2b2b1'
+          print('READ-ONLY SNAPSHOT; capture success is NOT deployment certification')
+          print(json.dumps(data, indent=2, ensure_ascii=True))
+          PY
+      - name: Preserve read-only evidence
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: vps-readonly-${{ github.run_id }}
+          path: readonly-evidence/vps-snapshot.json
+          if-no-files-found: error
+          retention-days: 7
