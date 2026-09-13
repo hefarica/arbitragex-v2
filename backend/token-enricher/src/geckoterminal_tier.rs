@@ -287,6 +287,10 @@ pub struct GeckoTerminalOracle {
     db: PgPool,
     redis_url: String,
     http: reqwest::Client,
+    /// G-PRICE-5 circuit breaker (CG429-01 mirror): 3 consecutive 429s →
+    /// open for 300s. Stops the log-flood AND the wasted request cycles.
+    consecutive_429s: std::sync::atomic::AtomicU32,
+    breaker_until_ms: std::sync::atomic::AtomicI64,
 }
 
 impl GeckoTerminalOracle {
@@ -301,6 +305,8 @@ impl GeckoTerminalOracle {
             db,
             redis_url,
             http,
+            consecutive_429s: std::sync::atomic::AtomicU32::new(0),
+            breaker_until_ms: std::sync::atomic::AtomicI64::new(0),
         })
     }
 
@@ -534,7 +540,30 @@ impl GeckoTerminalOracle {
     }
 
     /// One GeckoTerminal `tokens/multi` request for up to `MAX_ADDRS_PER_REQUEST`.
+    /// G-PRICE-5: circuit breaker (CG429-01 mirror) — 3 consecutive 429s →
+    /// skip ALL requests for 300s. One log line on open, one on close.
     async fn query_chunk(&self, slug: &str, addresses: &[&str]) -> Result<Vec<GtToken>> {
+        use std::sync::atomic::Ordering;
+
+        // Circuit breaker check: if open, skip the request entirely.
+        let until = self.breaker_until_ms.load(Ordering::Relaxed);
+        if until > 0 {
+            let now_ms = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_millis() as i64)
+                .unwrap_or(0);
+            if now_ms < until {
+                anyhow::bail!("geckoterminal circuit breaker open (G-PRICE-5) — request skipped");
+            }
+            // Breaker expired — reset and log one line.
+            self.breaker_until_ms.store(0, Ordering::Relaxed);
+            self.consecutive_429s.store(0, Ordering::Relaxed);
+            tracing::info!(
+                event = "geckoterminal.breaker_closed",
+                "GeckoTerminal circuit breaker CLOSED — resuming requests after cooldown"
+            );
+        }
+
         let joined = addresses.join(",");
         let url = format!("{GT_BASE_URL}{slug}/tokens/multi/{joined}");
         let resp = self
@@ -546,10 +575,30 @@ impl GeckoTerminalOracle {
             .context("GeckoTerminal GET")?;
         let status = resp.status();
         if status.as_u16() == 429 {
+            let count = self.consecutive_429s.fetch_add(1, Ordering::Relaxed) + 1;
+            if count >= 3 {
+                // Open the breaker for 300s (CG429-01 mirror).
+                let now_ms = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|d| d.as_millis() as i64)
+                    .unwrap_or(0);
+                self.breaker_until_ms
+                    .store(now_ms + 300_000, Ordering::Relaxed);
+                tracing::warn!(
+                    event = "geckoterminal.breaker_open",
+                    consecutive_429s = count,
+                    cooldown_secs = 300,
+                    "GeckoTerminal circuit breaker OPEN — 429 flood detected (G-PRICE-5, CG429-01 mirror)"
+                );
+            }
             warn!(
                 event = "geckoterminal.rate_limited",
-                "GeckoTerminal 429 Too Many Requests — chunk skipped fail-honestly; cycle pacing is ~2.1s/request"
+                consecutive = count,
+                "GeckoTerminal 429 — chunk skipped fail-honestly"
             );
+        } else if status.is_success() {
+            // Successful request resets the counter.
+            self.consecutive_429s.store(0, Ordering::Relaxed);
         }
         if !status.is_success() {
             anyhow::bail!("GeckoTerminal HTTP {status}");
