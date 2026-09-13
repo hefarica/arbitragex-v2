@@ -1,0 +1,75 @@
+name: Readiness timeout diagnosis (read only)
+on:
+  push:
+    branches: [ops/readiness-diagnosis-20260913]
+permissions:
+  contents: read
+concurrency:
+  group: readiness-diagnosis
+  cancel-in-progress: false
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
+        with:
+          persist-credentials: false
+          fetch-depth: 2
+      - name: Validate diagnostic syntax
+        run: |
+          python3 -m py_compile scripts/ci/readiness_probe_20260913.py
+          node --check scripts/ci/readiness_browser_20260913.cjs
+      - name: Collect immutable public source for offline review
+        run: |
+          mkdir -p readiness-evidence
+          git archive --format=zip -o readiness-evidence/source-f0daeb65.zip f0daeb650b67b3e40c74e02ca62380c906c2b2b1 backend/api-server frontend edge docker database package.json package-lock.json
+      - name: Probe actual VPS (read only, no remote files)
+        env:
+          VPS_KEY: ${{ secrets.VPS_SSH_KEY }}
+          VPS_HOST: ${{ secrets.VPS_SSH_HOST }}
+          VPS_USER: ${{ secrets.VPS_SSH_USER }}
+          VPS_PORT: ${{ secrets.VPS_PORT || '22' }}
+          VPS_KNOWN_HOSTS: ${{ secrets.VPS_SSH_KNOWN_HOSTS }}
+        run: |
+          set -euo pipefail
+          umask 077
+          KEY="$RUNNER_TEMP/arbx_readiness_key"
+          HOSTS="$RUNNER_TEMP/arbx_readiness_hosts"
+          ERR="$RUNNER_TEMP/arbx_readiness_errors"
+          trap 'rm -f "$KEY" "$HOSTS" "$ERR"' EXIT
+          test -n "$VPS_KEY" && test -n "$VPS_HOST" && test -n "$VPS_USER"
+          [[ "$VPS_HOST" =~ ^[A-Za-z0-9][A-Za-z0-9.-]*$ ]]
+          [[ "$VPS_USER" =~ ^[A-Za-z_][A-Za-z0-9_.-]*$ ]]
+          [[ "$VPS_PORT" =~ ^[0-9]+$ ]] && (( VPS_PORT > 0 && VPS_PORT < 65536 ))
+          printf '%s\n' "$VPS_KEY" > "$KEY"
+          if [ -n "$VPS_KNOWN_HOSTS" ]; then
+            printf '%s\n' "$VPS_KNOWN_HOSTS" > "$HOSTS"
+          else
+            ssh-keyscan -T 10 -p "$VPS_PORT" -H "$VPS_HOST" > "$HOSTS" 2>"$ERR"
+          fi
+          test -s "$HOSTS"
+          ssh -i "$KEY" -p "$VPS_PORT" -T -o IdentitiesOnly=yes -o BatchMode=yes \
+            -o StrictHostKeyChecking=yes -o UserKnownHostsFile="$HOSTS" -o ConnectTimeout=15 \
+            -o ServerAliveInterval=15 -o ServerAliveCountMax=3 \
+            "$VPS_USER@$VPS_HOST" 'python3 -' < scripts/ci/readiness_probe_20260913.py \
+            > readiness-evidence/vps.json 2>"$ERR"
+          python3 -c "import json; d=json.load(open('readiness-evidence/vps.json')); assert d['scope']=='read_only_readiness_probe'; print(json.dumps(d,indent=2))"
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444
+        with:
+          node-version: 22
+          cache: npm
+      - name: Install locked browser test dependencies
+        run: npm ci --ignore-scripts --no-audit --no-fund
+      - name: Install Chromium
+        run: npx --no-install playwright install --with-deps chromium
+      - name: Reproduce public page and both endpoints (read only)
+        run: node scripts/ci/readiness_browser_20260913.cjs
+      - name: Preserve evidence (collection success is not a health assertion)
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: readiness-diagnosis-${{ github.run_id }}
+          path: readiness-evidence/
+          if-no-files-found: error
+          retention-days: 7
