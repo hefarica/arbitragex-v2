@@ -1,0 +1,21 @@
+npm warn Unknown env config "http-proxy". This will stop working in the next major version of npm.
+
+> @arbx/frontend@0.1.0 test
+> vitest run lib/apex/schemas/__tests__
+
+
+ RUN  v3.2.6 /workspace/scratch/e38757127d8c/arbitragex-v2/frontend
+
+ ✓ lib/apex/schemas/__tests__/tick-summary-dp-blocks.test.ts (8 tests) 7ms
+ ✓ lib/apex/schemas/__tests__/lat-candidates.test.ts (12 tests) 10ms
+ ✓ lib/apex/schemas/__tests__/knobs-mode.test.ts (6 tests) 5ms
+ ✓ lib/apex/schemas/__tests__/contract-route-discovery-tick.test.ts (4 tests) 14ms
+ ✓ lib/apex/schemas/__tests__/p5-p7-schemas.test.ts (20 tests) 11ms
+ ✓ lib/apex/schemas/__tests__/quote-anchor.test.ts (11 tests) 12ms
+ ✓ lib/apex/schemas/__tests__/p5-p7-differential.test.ts (13 tests) 27ms
+
+ Test Files  7 passed (7)
+      Tests  74 passed (74)
+   Start at  11:09:17
+   Duration  725ms (transform 659ms, setup 322ms, collect 1.38s, tests 86ms, environment 1ms, prepare 672ms)
+

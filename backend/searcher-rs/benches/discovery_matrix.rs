@@ -34,12 +34,10 @@
 //! kernel (`latency_budget::nearest_rank`) — a bench p95 and a wire p95 are
 //! the same number-shape.
 //!
-//! Formal timings are release-profile (CI/VPS — AppControl blocks release
-//! locally; ARBX-0012 precedent). Dev-profile runs locally still validate
+//! Formal timings require the release profile. Dev-profile runs still validate
 //! harness correctness + JSON shape + RULE 00 sanity — `DM_SAMPLES` /
-//! `DM_WARMUP` shrink the local pass count (the multihop stage is an
-//! EXHAUSTIVE observe-only DFS when profitable cycles are sparse, so dev
-//! profile makes it seconds per pass); every JSON row reports the ACTUAL
+//! `DM_WARMUP` shrink the local pass count. Both DFS kernels have independent
+//! work and output limits, reported alongside each timing; every JSON row reports the ACTUAL
 //! sample count, so a reduced run can never masquerade as formal.
 //!
 //! Run: `cargo bench --bench discovery_matrix`
@@ -241,7 +239,7 @@ fn main() {
             max_routes_per_tick: MAX_ROUTES,
             base_tokens,
             mode: "shadow".to_string(),
-            hop_mask_strategy_id: None, // the main finder serves every coarse strategy (QB-03 contract)
+            hop_mask_strategy_id: point.strategy.map(str::to_owned), // only multihop consumes this mask
         };
         let bounds = mh_bounds(point.hop_max, point.strategy);
 
@@ -360,6 +358,11 @@ fn main() {
                 "cycles": audit.cycles,
                 "finalists": audit.finalists,
                 "quotes": audit.quotes,
+                "discovery_edge_visits": audit.discovery_edge_visits,
+                "multi_hop_edge_visits": audit.multi_hop_edge_visits,
+                "discovery_work_limited": audit.discovery_work_limited,
+                "multi_hop_work_limited": audit.multi_hop_work_limited,
+                "multi_hop_capped": audit.multi_hop_capped,
             },
         });
         println!("{}", line);

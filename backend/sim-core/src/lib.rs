@@ -43,3 +43,6 @@ pub mod sim_multistep;
 // `crate::sim_encoder::*` / `searcher_rs::sim_encoder::*` call site keeps
 // compiling unchanged.
 pub mod sim_encoder;
+
+#[cfg(feature = "v2-simulator")]
+pub mod verified_simulation;

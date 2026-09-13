@@ -138,6 +138,45 @@ impl TokenBitSet {
     pub fn count_ones(&self) -> u32 {
         self.words.iter().map(|w| w.count_ones()).sum()
     }
+
+    /// Allocation-free adjacency ∩ allowlist ∖ visited, across any number
+    /// of 64-bit words. All sets must address the same dense-id snapshot.
+    pub fn neighbors<'a>(
+        &'a self,
+        allowed: &'a Self,
+        visited: &'a Self,
+    ) -> impl Iterator<Item = u32> + 'a {
+        assert_eq!(self.len, allowed.len, "allowlist universe mismatch");
+        assert_eq!(self.len, visited.len, "visited universe mismatch");
+        self.words
+            .iter()
+            .zip(&allowed.words)
+            .zip(&visited.words)
+            .enumerate()
+            .flat_map(|(word, ((adj, allow), seen))| {
+                let mut remaining = adj & allow & !seen;
+                std::iter::from_fn(move || {
+                    if remaining == 0 {
+                        return None;
+                    }
+                    let bit = remaining.trailing_zeros();
+                    remaining &= remaining - 1;
+                    Some(word as u32 * 64 + bit)
+                })
+            })
+    }
+
+    /// Prune a dead end with word intersections while permitting the one
+    /// visited token that closes a simple cycle. No allocation in DFS.
+    pub fn has_unvisited_or(&self, visited: &Self, closing: u32) -> bool {
+        assert_eq!(self.len, visited.len, "visited universe mismatch");
+        self.contains(closing)
+            || self
+                .words
+                .iter()
+                .zip(&visited.words)
+                .any(|(adj, seen)| adj & !seen != 0)
+    }
 }
 
 /// ARBX-0020 policy: build per-token destination bitset rows only while the
@@ -176,6 +215,7 @@ impl MembershipRows {
     /// Build rows over dense ids from `(sources[i], dests[i])` edge pairs.
     /// Returns `None` when `membership_bitset_fits(n_tokens)` is false.
     pub fn build(n_tokens: usize, sources: &[u32], dests: &[u32]) -> Option<Self> {
+        assert_eq!(sources.len(), dests.len(), "edge endpoint count mismatch");
         if !membership_bitset_fits(n_tokens) {
             return None;
         }
@@ -219,6 +259,49 @@ impl MembershipRows {
 mod tests {
     use super::*;
     use std::collections::HashMap;
+
+    #[test]
+    fn neighbor_intersection_handles_word_boundaries_and_allowlist() {
+        for n in [0, 1, 22, 64, 65, 128, 129] {
+            let mut adjacent = TokenBitSet::new(n);
+            let mut allowed = TokenBitSet::new(n);
+            let mut visited = TokenBitSet::new(n);
+            for id in 0..n {
+                if id % 3 != 0 {
+                    adjacent.set(id);
+                }
+                if id % 5 != 0 {
+                    allowed.set(id);
+                }
+                if id % 7 == 0 {
+                    visited.set(id);
+                }
+            }
+            let expected: Vec<_> = (0..n)
+                .filter(|i| i % 3 != 0 && i % 5 != 0 && i % 7 != 0)
+                .collect();
+            assert_eq!(
+                adjacent.neighbors(&allowed, &visited).collect::<Vec<_>>(),
+                expected
+            );
+        }
+    }
+
+    #[test]
+    fn closing_token_survives_visited_prune() {
+        let mut row = TokenBitSet::new(65);
+        let mut visited = TokenBitSet::new(65);
+        row.set(64);
+        visited.set(64);
+        assert!(row.has_unvisited_or(&visited, 64));
+        assert!(!row.has_unvisited_or(&visited, 0));
+    }
+
+    #[test]
+    #[should_panic(expected = "edge endpoint count mismatch")]
+    fn membership_rejects_mismatched_edges() {
+        MembershipRows::build(2, &[0, 1], &[1]);
+    }
 
     #[test]
     fn csr_prefix_sums_and_per_token_order() {

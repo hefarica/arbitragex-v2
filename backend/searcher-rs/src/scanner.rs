@@ -3170,6 +3170,7 @@ async fn dispatch_orchestrator_and_classify(
         // `opp.id` + Redis handle to persist it (M2 carrier-B producer). The
         // broadcast path reads `wrapped_calldata` back and sends it verbatim.
         let validated_plan = prioritization_spine::ValidatedPlan {
+            binding: None, // Historical paper analysis cannot authorize broadcast.
             ctx: plan_ctx,
             route_hash,
             min_profit_wei,

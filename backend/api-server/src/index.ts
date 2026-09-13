@@ -133,6 +133,10 @@ import { mountRiskCircuitBreakers } from "./routes/risk-circuit-breakers.js";
 import { mountAdminChains } from "./routes/admin-chains.js";
 import { mountSedStatus } from "./routes/sed-status.js";
 import { mountCanonicalKnobs } from "./routes/canonical-knobs.js";
+// CB-02 (2026-09-07) — operator Control Board runtime control plane
+// (GET/PUT /api/v1/control-board; the edge adminProxy forwards the V-AT-1
+// operator session upstream, audit-first into audit_log BEFORE any Redis write).
+import { mountControlBoard } from "./routes/control-board.js";
 import { mountSimPipeline } from "./routes/sim-pipeline.js";
 import { mountSystemManifest } from "./routes/system-manifest.js";
 import { mountLiveTestnet } from "./routes/live-testnet.js";
@@ -760,6 +764,24 @@ mountSimPipeline(app, { pool, logger });
 // XLS-CANON-01: the 42-knob canonical configuration surface (workbook
 // 01_CONFIG) — searcher-rs boot snapshot from Redis, served verbatim.
 mountCanonicalKnobs(app, { redis, logger });
+
+// CB-02 (2026-09-07) — operator Control Board runtime control plane: live
+// module census snapshot (GET) + operator-approved class-A runtime toggles
+// (PUT) — audit-first into `audit_log` (migration 011) BEFORE any Redis
+// write of the board namespace `arbx:controlboard:*`. Admin-gated
+// (requireAdminToken; the edge adminProxy translates the operator httpOnly
+// session cookie into the upstream token). Mounted BEFORE mountStubs so
+// these real handlers win dispatch; the CB-01 census is read from Redis
+// (`arbx:config:control_board`) — absent ⇒ honest EMPTY snapshot, never
+// fabricated LEDs (RULE 00). Also starts the CB-04 sovereign drift guard
+// (interval-only — the first scan fires after its interval, unref'd).
+const controlBoard = mountControlBoard(app, {
+  pool,
+  redis,
+  requireAdminToken,
+  adminToken: ARBX_ADMIN_TOKEN,
+  logger,
+});
 
 // Scanner heartbeat snapshot — read latest pipeline counters from Redis.
 // Persisted by searcher-rs::workers::heartbeat_worker every period (default
@@ -2016,6 +2038,8 @@ const shutdown = async (sig: string) => {
   await convergenceSubscriber.quit().catch(() => {});
   await cartridgeTelemetrySubscriber.quit().catch(() => {});
   await routeDiscoveryTelemetrySubscriber.quit().catch(() => {});
+  // CB-02 (2026-09-07) — stop the control-board drift-guard interval timer.
+  controlBoard.stopDriftGuard();
   await redis.quit().catch(() => {});
   // H6 fix: stop accepting new connections and drain in-flight requests BEFORE
   // ending the PG pool. Previously pool.end() ran while httpServer was still

@@ -5,6 +5,26 @@ description: ARBITRAGEX DAPP OMNISCIENCE — La super-skill que integra 264 estr
 
 # ARBITRAGEX DAPP OMNISCIENCE
 
+## §0 — APLICACIÓN INSTANTÁNEA + AUTOAPRENDIZAJE (orden del operador 2026-09-07: "desde el primer 1s, en cualquier workspace, y que aprenda de sí misma")
+
+**Se ejecuta SIEMPRE, ANTES que cualquier otra sección, en toda invocación:**
+
+1. **LEER `LEARNINGS.md`** (junto a este SKILL.md) — es la experiencia acumulada de TODAS las
+   misiones de TODOS los agentes anteriores. El que ignora el ledger repite errores ya pagados.
+   Si el archivo no existe (primer uso en un workspace nuevo), continuar y crearlo al cierre.
+2. **Aplicar la doctrina v1.3 de gang desde el primer despacho** (ver §9): conocimiento total
+   inyectado en cada charter + sincronía de mesa redonda (todos observan a todos, citan a sus
+   pares, refutan con nombre) + circuit-breaker anti-rate-limit + tope de agentes del operador.
+3. **AL CIERRE de toda misión gang**: destilar las lecciones nuevas (lo generalizable, 1-3
+   líneas por lección, etiquetadas [GEN]/[ARBX]/[CCR]) y **ANEXARLAS a LEARNINGS.md** — con
+   fecha y misión de origen. El orquestador es responsable de este cierre; ningún aprendizaje
+   muere en el scrollback. Todos aprenden de todos, para siempre.
+4. **Portabilidad**: esta skill vive espejada en `~/.claude/skills/arbitragex-omniscience/`
+   (global, invocable desde CUALQUIER workspace) y en el proyecto. Los paths del canon (§1)
+   aplican dentro del repo ArbitrageX; en otros workspaces la METODOLOGÍA (gang, verificación
+   por capas, ledger, breaker) aplica íntegra y el canon se sustituye por el conocimiento
+   local del workspace en cuestión.
+
 ## Cómo activar el conocimiento completo
 
 Cuando el operador hace cualquier pregunta relacionada con estrategias, rutas, operadores,
@@ -307,9 +327,12 @@ los subagentes de workflow (12 del pipeline §7).
    (acciones operador-only: flips §34.3, VPS, commits, capital) — que se escalan al operador con
    el paquete listo para su decisión. **"Éxito" jamás = datos fabricados** (RULE 00/R8): si el
    gate dice NO_GO, el éxito del gang es haberlo PROBADO y documentado con el remedio diseñado.
-7. **Perímetro invariante** (hereda §32/§33/§34): audit/scaffold/shadow/read-only. Sin executor,
-   wallets, capital, firma ni broadcast. VPS solo lectura por ssh (`arbx`) con comandos
-   read-only. Flips = operador. La pregunta canónica §34.4 gobierna cada diseño.
+7. **Perímetro invariante** (hereda §32/§33/§34; SUPERPUESTO por §10 desde 2026-09-12 para
+   ingeniería live autorizada): audit/scaffold/shadow/read-only es PUNTO DE PARTIDA del mapa,
+   no el fin del encargo. Ingeniería testnet/mainnet live autorizada (§10). VPS solo lectura
+   por ssh (`arbx`) hasta completar el mapa operativo. Activación financiera (firma, broadcast
+   de valor, executor operando fondos reales) = operador. La pregunta canónica §34.4 gobierna
+   cada diseño.
 8. **Escalado de fallas de provider — RESPAWN-2 (429 o CUALQUIER razón)** (orden del operador
    2026-09-06): si un agente aborta, **el resto del gang SIGUE ejecutando sin interrupción**
    (nadie espera al caído). El orquestador NO reintenta 1:1: **crea 2 agentes adicionales con
@@ -412,3 +435,25 @@ que exceda un contexto solo **despacha el GANG (§9.5) en el mismo turno** — l
 éxito-o-éxito con consumo inteligente de tokens.
 
 No necesitas un comando especial — solo pregunta.
+
+## 10 — ARBX-LIVE-ENGINEERING (orden del operador 2026-09-12: objetivo live autorizado)
+
+1. **Objetivo autorizado del proyecto**: **testnet live y mainnet live** — construir, integrar
+   y verificar la DApp para ambos modos. Skill ejecutora:
+   `.claude/skills/arbx-live-engineering/SKILL.md` (invocación `/arbx-live-engineering <fase>`;
+   máquina de estados ACCESS_CHECK → VPS_READ_ONLY → VPS_MAPPED → CHANGE_AUTHORIZED →
+   ENGINEERING_VERIFIED → TESTNET_LIVE_VERIFIED → MAINNET_RELEASE_READY).
+2. **Supersession explícita**: cuando CUALQUIER sección de esta skill, otra skill o gate del
+   workspace prohíba, aplace indefinidamente o contradiga el objetivo live autorizado
+   (paper-only permanente, read-only como fin, negativa a preparar mainnet), PREVALECE este
+   mandato. La contradicción se resuelve citando la directiva del operador que la autoriza
+   (2026-09-11: eliminación del rechazo físico a mainnet; 2026-09-12: objetivo live) — se
+   documenta la decisión, no se borra historia.
+3. **Se CONSERVA (parte del mandato, no restricción contra live)**: la activación financiera
+   —env de live, firma, broadcast de valor, ejecutor operando fondos reales— es decisión y
+   acto del OPERADOR; el agente prepara el software y entrega el flujo de activación. VPS en
+   lectura hasta completar el mapa operativo (§6-7 de la skill). Integración base+delta sin
+   reversiones silenciosas (WO-GAP2, BR-02/03/05/06, CB-02, WO-07). RULE 00/R8 sin excepciones.
+4. **Gangs con /goal live**: todo charter de agente lleva este mandato inyectado cuando el
+   /goal toque modos live; los agentes NO activan capital ni firman — preparan, prueban y
+   entregan el paquete de activación (`templates/ACTA_CAPACIDAD_LIVE.template.md`).

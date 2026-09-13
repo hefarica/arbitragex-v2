@@ -1,6 +1,12 @@
-// GANG OMNISCIENCE §9 — Mesa redonda PhD con loop de éxito total (v1.2, 2026-09-06/07)
+// GANG OMNISCIENCE §9 — Mesa redonda PhD con loop de éxito total (v1.3, 2026-09-07)
 // v1.1: RESPAWN-2 §9.1.8 (orden del operador) — agente muerto (429 o cualquier razón) →
 //       2 reemplazos de doble conocimiento con la tarea SUBREPARTIDA; el gang sigue sin parar.
+// v1.3: CONOCIMIENTO TOTAL + SINCRONÍA DE MESA (orden del operador 2026-09-07: "agentes que
+//       sean la puta ostia con todo el conocimiento del mundo, normas de mesa redonda con eje
+//       central donde todos observen lo de todos, máxima sincronizidad y paralelismo"): cada
+//       charter lleva el canon omniscience inyectado (ultra/world/doctrina) + directiva de
+//       leer el BOARD y los reportes de los pares ANTES de empezar, citarlos, y refutar con
+//       nombre propio; el cross verifica la sincronía además de la corrección.
 // v1.2: CIRCUIT-BREAKER ANTI-RATE-LIMIT (orden del operador 2026-09-07: "controlar para no
 //       hacer rate limit"). Lección wf_29b60a15-af2: 63/71 agentes muertos por 429 sistémico —
 //       RESPAWN-2 duplica CONOCIMIENTO, nunca presión sobre un proveedor saturado. Controles:
@@ -36,6 +42,18 @@ const RULES = `REGLAS DURAS (inviolables, CLAUDE.md):
 - §34.3: flips LIVE_MAINNET = operador-only. default-deny y MainnetRefused INTOCABLES.
 - NO-GIT: CERO commit/push/PR/deploy (protocolo operador 2026-08-23). Edición local + verificación (tests/tsc/cargo check) SOLAMENTE.
 - Diffs propios marcados con el ID del WO: "// WO-XX (${NOW})".
+
+CONOCIMIENTO TOTAL A TU DISPOSICIÓN (órdemlo antes de opinar — eres PhD con TODO el canon de la mesa):
+- Canon maestro: skills/arbitragex-ultra/SUPER_SKILL.md · knowledge_graph.jsonl (2,511 edges Strategy↔Operator↔Detector) · capability_matrix.json (265 estrategias) · operators/op_XX/ (31 operadores) · strategies/MEV-XX-XXX/ (264 cartuchos).
+- Investigación mundial: skills/arbitragex-ultra/world/{graph-algorithms,mev-practice,defi-protocols,security-simulation,quant-math}/ — RICH/CFMM convex routing, searchers reales/bundles/margins, UniV4/Morpho/intents, REVM/verify formal, Kyle/HJB/Kelly/VPIN.
+- Doctrina: docs/ROUTES_CROWN_JEWEL_DOCTRINE.md (fees on-chain, dos capas discovery≠evaluation, financiamiento dimensión de ruta) · docs/excel_*_extracted.json.
+- Reglas de razonamiento: fail-honest · fees leídos de la cadena · clasifica toda afirmación (CANONICAL_WORKBOOK/CANONICAL_REPO/PRIMARY_SOURCE/INFERRED/HYPOTHESIS/UNKNOWN).
+Antes de proolver: consulta el canon relevante a TU mitad — no re-derives lo que el mundo ya sabe.
+
+SINCRONÍA DE MESA REDONDA (eje central — todos observan a todos):
+- ANTES de empezar: lee ${BOARD} completo Y los reportes más recientes de tus pares en ${DIR} (lista el dir, lee los 3-5 más nuevos relevantes a tu WO).
+- Tu trabajo CONSTRUYE sobre lo ya encontrado: cita a tus pares por archivo. Si contradices un hallazgo previo, nómbralo y refútalo con evidencia propia — jamás lo ignores.
+- Tu reporte es público para la mesa: cualquier pares posteriores lo leerá. Escribe para ellos además del operador.
 - Presupuesto dominio público: máximo 5 requests HTTP manuales por agente (429 self-contamination). El navegador hace journeys, no barridos.
 - Lexicon OMEGA: TLS/Holonomic Loop Resolution/Topological Yield/Decoherencia de Estado/Variedad de Liquidez.
 - Board: ${BOARD}. Todo entregable escribe su reporte en ${DIR} y cita file:line como evidencia.`
@@ -179,7 +197,7 @@ phase('Cross')
 const doneWos = roundResults.map(r => r.wo)
 const crossResults = (await waved(plan.specialists.filter(s => doneWos.includes(s.wo)), s =>
   runAgent(`Eres el CROSS-EXAMINER par del agente que ejecutó ${s.wo} (Gang Omniscience, ${NOW}). Tu trabajo: REFUTAR su entregable.
-Lee el reporte (${DIR}) y los archivos que tocó (${s.files.join(', ')}). Desafía con evidencia propia: ¿cumple el charter? ¿la verificación es real o de humo? ¿introdujo regresiones fuera de su claim? ¿RULE 00/R8 violados? Los gaps que encuentras: agent-fixable (el gang corrige) vs operator-gated (exige decisión del operador: flips/commits/VPS/capital).
+Lee el reporte (${DIR}) y los archivos que tocó (${s.files.join(', ')}). Desafía con evidencia propia: ¿cumple el charter? ¿la verificación es real o de humo? ¿introdujo regresiones fuera de su claim? ¿RULE 00/R8 violados? ¿CITÓ y respetó los hallazgos de sus pares (sincronía de mesa) o duplicó/contradijo trabajo ajeno sin nombrarlo? Los gaps que encuentras: agent-fixable (el gang corrige) vs operator-gated (exige decisión del operador: flips/commits/VPS/capital).
 ${RULES}`, { schema: CROSS_SCHEMA, label: 'cross:' + s.wo, phase: 'Cross' })
 )).filter(Boolean)
 log(`Cross: ${crossResults.filter(c => c.verdict === 'PASS').length} PASS · ${crossResults.flatMap(c => c.gaps).length} gaps`)

@@ -8,7 +8,7 @@
 //! | Group     | Method | Path                           | Purpose                          |
 //! |-----------|--------|--------------------------------|----------------------------------|
 //! | Health    | GET    | `/health`                      | Liveness probe                   |
-//! | Toggles   | GET    | `/api/operators`               | List all 31 operators            |
+//! | Toggles   | GET    | `/api/operators`               | List all 32 operators            |
 //! | Toggles   | GET    | `/api/operators/:id`           | Single operator metadata         |
 //! | Toggles   | POST   | `/api/operators/:id/toggle`    | Enable / disable operator        |
 //! | Compute   | POST   | `/api/compute`                 | Dispatch operator(s) on state    |
@@ -19,7 +19,7 @@
 //! ## State model
 //!
 //! `ApiState` holds:
-//! - `registry`: the 31-operator `OperatorRegistry`
+//! - `registry`: the 32-operator `OperatorRegistry`
 //! - `disabled`: a `HashSet<u8>` of operator IDs that have been soft-disabled
 //!
 //! Disabling is **soft** — the operator remains in the registry but
@@ -36,7 +36,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use std::sync::{Arc, RwLock};
 
-use crate::operators::{MarketState, OperatorOutput, OperatorRegistry};
+use crate::operators::{MarketState, OperatorOutput, OperatorRegistry, OPERATOR_COUNT};
 
 // ---------------------------------------------------------------------------
 // Shared state
@@ -45,7 +45,7 @@ use crate::operators::{MarketState, OperatorOutput, OperatorRegistry};
 /// Application state shared across all handlers.
 #[derive(Clone)]
 pub struct ApiState {
-    /// The canonical operator registry (31 topological operators).
+    /// The canonical operator registry (32 topological operators).
     registry: Arc<RwLock<OperatorRegistry>>,
     /// Set of operator IDs that have been soft-disabled at runtime.
     disabled: Arc<RwLock<HashSet<u8>>>,
@@ -135,7 +135,7 @@ pub struct OperatorInfo {
 pub struct ComputeRequest {
     /// Market state to evaluate against.
     pub market_state: MarketState,
-    /// Operator IDs to dispatch (1–31).
+    /// Operator IDs to dispatch (1–32).
     pub operator_ids: Vec<u8>,
 }
 
@@ -181,10 +181,10 @@ pub struct ProjectionMatrixMeta {
 // ---------------------------------------------------------------------------
 
 fn validate_operator_id(id: u8) -> Result<(), ErrorResponse> {
-    if id == 0 || id > 31 {
+    if id == 0 || id > OPERATOR_COUNT {
         Err(ErrorResponse {
             error: "invalid_operator_id",
-            detail: format!("operator id {id} is out of range (valid: 1–31)"),
+            detail: format!("operator id {id} is out of range (valid: 1–{OPERATOR_COUNT})"),
         })
     } else {
         Ok(())
@@ -226,7 +226,7 @@ async fn health_handler() -> Response {
     Json(serde_json::json!({
         "ok": true,
         "service": "math-engine",
-        "operators": 31,
+        "operators": OPERATOR_COUNT,
     }))
     .into_response()
 }
@@ -415,6 +415,34 @@ mod tests {
             .unwrap();
         let resp = app.oneshot(req).await.unwrap();
         assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn test_nsga2_registered_and_next_id_rejected() {
+        for (id, expected) in [(32, StatusCode::OK), (33, StatusCode::BAD_REQUEST)] {
+            let response = test_app()
+                .oneshot(
+                    Request::builder()
+                        .uri(format!("/api/operators/{id}"))
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(response.status(), expected);
+        }
+    }
+
+    #[test]
+    fn operator_bounds_cover_entire_registry_without_changing_projection() {
+        for id in 1..=OPERATOR_COUNT {
+            assert!(validate_operator_id(id).is_ok());
+        }
+        assert!(validate_operator_id(0).is_err());
+        assert!(validate_operator_id(OPERATOR_COUNT + 1).is_err());
+        // Existing strategy/operator assignments stay 264x31 until explicit
+        // strategy mappings for NSGA-II exist.
+        assert_eq!(crate::matrix::topology_map::COLS, 31);
     }
 
     #[tokio::test]

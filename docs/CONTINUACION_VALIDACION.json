@@ -1,0 +1,94 @@
+{
+  "generated_utc": "2026-09-11T11:23:13.619942+00:00",
+  "status": "local_checks_passed_live_integration_not_run",
+  "rust_suites": [
+    {
+      "name": "math_engine",
+      "passed": 124,
+      "failed": 0,
+      "ignored": 0
+    },
+    {
+      "name": "prioritization_spine",
+      "passed": 123,
+      "failed": 0,
+      "ignored": 0
+    },
+    {
+      "name": "relays_client",
+      "passed": 91,
+      "failed": 0,
+      "ignored": 1
+    },
+    {
+      "name": "searcher_rs",
+      "passed": 1189,
+      "failed": 0,
+      "ignored": 3
+    },
+    {
+      "name": "shared_rs",
+      "passed": 231,
+      "failed": 0,
+      "ignored": 0
+    },
+    {
+      "name": "sim_core",
+      "passed": 73,
+      "failed": 0,
+      "ignored": 0
+    },
+    {
+      "name": "simulator_v2",
+      "passed": 26,
+      "failed": 0,
+      "ignored": 0
+    }
+  ],
+  "rust_total_passed": 1857,
+  "rust_total_ignored": 4,
+  "rust_workspace_all_targets": "PASS",
+  "typescript_typecheck": "PASS",
+  "typescript_and_frontend_build": "PASS_WITH_INHERITED_WARNINGS",
+  "frontend": {
+    "passed": 1074,
+    "failed": 0,
+    "files": 119
+  },
+  "external_integration": "NOT_RUN",
+  "ignored_requirements": [
+    "3 tests require Redis",
+    "1 test requires a staging private simulation endpoint"
+  ],
+  "production_transactions_sent": 0,
+  "deployment_performed": false,
+  "revenue_measured": false,
+  "end_to_end_sla_measured": false,
+  "source_references": [
+    "https://eips.ethereum.org/EIPS/eip-1898",
+    "https://github.com/ethereum/go-ethereum/blob/master/params/config.go",
+    "https://github.com/aave/aave-v3-core/blob/master/contracts/protocol/libraries/math/PercentageMath.sol"
+  ],
+  "logs": [
+    {
+      "path": "docs/continuacion_evidencia/recovery-check.log",
+      "sha256": "87be28b2f27a2f230658b6790f3360a241597a33b924ff90bcd7e3ed1d672afc"
+    },
+    {
+      "path": "docs/continuacion_evidencia/recovery-tests-final.log",
+      "sha256": "4b4214f23f463512075ce988904f01e8791cc2633e93f13c4a8d3414980a0079"
+    },
+    {
+      "path": "docs/continuacion_evidencia/recovery-typecheck.log",
+      "sha256": "3fbf6d37ace7259ce6c2b0277e5c6fb37d8854a75affe8ae4660dabe290f5d8f"
+    },
+    {
+      "path": "docs/continuacion_evidencia/recovery-frontend-tests.log",
+      "sha256": "1e537bd139ed66b844531338aab61c0a868a006d29dd759fa7050731720b3bef"
+    },
+    {
+      "path": "docs/continuacion_evidencia/recovery-build.log",
+      "sha256": "c08589f11fff1426ede7c371bc32fbf5c7cfb256492873bb796654dfecc1ea7b"
+    }
+  ]
+}

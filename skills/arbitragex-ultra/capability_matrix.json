@@ -9,7 +9,8 @@
       "op_22",
       "op_26",
       "op_27",
-      "op_30"
+      "op_30",
+      "op_32"
     ],
     "rhai_implemented": true,
     "excel_documented": true
@@ -24,7 +25,8 @@
       "op_22",
       "op_26",
       "op_27",
-      "op_30"
+      "op_30",
+      "op_32"
     ],
     "rhai_implemented": true,
     "excel_documented": true
@@ -39,7 +41,8 @@
       "op_22",
       "op_26",
       "op_27",
-      "op_30"
+      "op_30",
+      "op_32"
     ],
     "rhai_implemented": true,
     "excel_documented": true
@@ -54,7 +57,8 @@
       "op_22",
       "op_26",
       "op_27",
-      "op_30"
+      "op_30",
+      "op_32"
     ],
     "rhai_implemented": true,
     "excel_documented": true
@@ -69,7 +73,8 @@
       "op_22",
       "op_26",
       "op_27",
-      "op_30"
+      "op_30",
+      "op_32"
     ],
     "rhai_implemented": true,
     "excel_documented": true
@@ -84,7 +89,8 @@
       "op_22",
       "op_26",
       "op_27",
-      "op_30"
+      "op_30",
+      "op_32"
     ],
     "rhai_implemented": true,
     "excel_documented": true
@@ -99,7 +105,8 @@
       "op_22",
       "op_26",
       "op_27",
-      "op_30"
+      "op_30",
+      "op_32"
     ],
     "rhai_implemented": true,
     "excel_documented": true
@@ -114,7 +121,8 @@
       "op_22",
       "op_26",
       "op_27",
-      "op_30"
+      "op_30",
+      "op_32"
     ],
     "rhai_implemented": true,
     "excel_documented": true
@@ -128,7 +136,8 @@
       "op_13",
       "op_16",
       "op_22",
-      "op_23"
+      "op_23",
+      "op_32"
     ],
     "rhai_implemented": true,
     "excel_documented": true
@@ -142,7 +151,8 @@
       "op_13",
       "op_16",
       "op_22",
-      "op_23"
+      "op_23",
+      "op_32"
     ],
     "rhai_implemented": true,
     "excel_documented": true
@@ -156,7 +166,8 @@
       "op_13",
       "op_16",
       "op_22",
-      "op_23"
+      "op_23",
+      "op_32"
     ],
     "rhai_implemented": true,
     "excel_documented": true
@@ -170,7 +181,8 @@
       "op_13",
       "op_16",
       "op_22",
-      "op_23"
+      "op_23",
+      "op_32"
     ],
     "rhai_implemented": true,
     "excel_documented": true
@@ -185,7 +197,8 @@
       "op_22",
       "op_26",
       "op_27",
-      "op_30"
+      "op_30",
+      "op_32"
     ],
     "rhai_implemented": true,
     "excel_documented": true
@@ -200,7 +213,8 @@
       "op_22",
       "op_26",
       "op_27",
-      "op_30"
+      "op_30",
+      "op_32"
     ],
     "rhai_implemented": true,
     "excel_documented": true
@@ -215,7 +229,8 @@
       "op_22",
       "op_26",
       "op_27",
-      "op_30"
+      "op_30",
+      "op_32"
     ],
     "rhai_implemented": true,
     "excel_documented": true
@@ -230,7 +245,8 @@
       "op_22",
       "op_26",
       "op_27",
-      "op_30"
+      "op_30",
+      "op_32"
     ],
     "rhai_implemented": true,
     "excel_documented": true
@@ -245,7 +261,8 @@
       "op_22",
       "op_26",
       "op_27",
-      "op_30"
+      "op_30",
+      "op_32"
     ],
     "rhai_implemented": true,
     "excel_documented": true
@@ -260,7 +277,8 @@
       "op_22",
       "op_26",
       "op_27",
-      "op_30"
+      "op_30",
+      "op_32"
     ],
     "rhai_implemented": true,
     "excel_documented": true
@@ -275,7 +293,8 @@
       "op_22",
       "op_26",
       "op_27",
-      "op_30"
+      "op_30",
+      "op_32"
     ],
     "rhai_implemented": true,
     "excel_documented": true
@@ -290,7 +309,8 @@
       "op_22",
       "op_26",
       "op_27",
-      "op_30"
+      "op_30",
+      "op_32"
     ],
     "rhai_implemented": true,
     "excel_documented": true
@@ -305,7 +325,8 @@
       "op_22",
       "op_26",
       "op_27",
-      "op_30"
+      "op_30",
+      "op_32"
     ],
     "rhai_implemented": true,
     "excel_documented": true
@@ -320,7 +341,8 @@
       "op_22",
       "op_26",
       "op_27",
-      "op_30"
+      "op_30",
+      "op_32"
     ],
     "rhai_implemented": true,
     "excel_documented": true
@@ -333,7 +355,8 @@
       "op_20",
       "op_21",
       "op_22",
-      "op_27"
+      "op_27",
+      "op_32"
     ],
     "rhai_implemented": true,
     "excel_documented": true
@@ -346,7 +369,8 @@
       "op_20",
       "op_21",
       "op_22",
-      "op_27"
+      "op_27",
+      "op_32"
     ],
     "rhai_implemented": true,
     "excel_documented": true
@@ -359,7 +383,8 @@
       "op_20",
       "op_21",
       "op_22",
-      "op_27"
+      "op_27",
+      "op_32"
     ],
     "rhai_implemented": true,
     "excel_documented": true
@@ -372,7 +397,8 @@
       "op_20",
       "op_21",
       "op_22",
-      "op_27"
+      "op_27",
+      "op_32"
     ],
     "rhai_implemented": true,
     "excel_documented": true
@@ -386,7 +412,8 @@
       "op_16",
       "op_19",
       "op_21",
-      "op_22"
+      "op_22",
+      "op_32"
     ],
     "rhai_implemented": true,
     "excel_documented": true
@@ -400,7 +427,8 @@
       "op_16",
       "op_19",
       "op_21",
-      "op_22"
+      "op_22",
+      "op_32"
     ],
     "rhai_implemented": true,
     "excel_documented": true
@@ -415,7 +443,8 @@
       "op_22",
       "op_26",
       "op_27",
-      "op_30"
+      "op_30",
+      "op_32"
     ],
     "rhai_implemented": true,
     "excel_documented": true
@@ -429,7 +458,8 @@
       "op_23",
       "op_24",
       "op_27",
-      "op_29"
+      "op_29",
+      "op_32"
     ],
     "rhai_implemented": true,
     "excel_documented": true
@@ -444,7 +474,8 @@
       "op_22",
       "op_26",
       "op_27",
-      "op_30"
+      "op_30",
+      "op_32"
     ],
     "rhai_implemented": true,
     "excel_documented": true
@@ -459,7 +490,8 @@
       "op_22",
       "op_26",
       "op_27",
-      "op_30"
+      "op_30",
+      "op_32"
     ],
     "rhai_implemented": true,
     "excel_documented": true
@@ -474,7 +506,8 @@
       "op_22",
       "op_26",
       "op_27",
-      "op_30"
+      "op_30",
+      "op_32"
     ],
     "rhai_implemented": true,
     "excel_documented": true
@@ -489,7 +522,8 @@
       "op_22",
       "op_26",
       "op_27",
-      "op_30"
+      "op_30",
+      "op_32"
     ],
     "rhai_implemented": true,
     "excel_documented": true
@@ -504,7 +538,8 @@
       "op_22",
       "op_26",
       "op_27",
-      "op_30"
+      "op_30",
+      "op_32"
     ],
     "rhai_implemented": true,
     "excel_documented": true
@@ -519,7 +554,8 @@
       "op_22",
       "op_26",
       "op_27",
-      "op_30"
+      "op_30",
+      "op_32"
     ],
     "rhai_implemented": true,
     "excel_documented": true
@@ -747,7 +783,8 @@
       "op_21",
       "op_22",
       "op_25",
-      "op_27"
+      "op_27",
+      "op_32"
     ],
     "rhai_implemented": true,
     "excel_documented": true
@@ -762,7 +799,8 @@
       "op_21",
       "op_22",
       "op_25",
-      "op_27"
+      "op_27",
+      "op_32"
     ],
     "rhai_implemented": true,
     "excel_documented": true
@@ -777,7 +815,8 @@
       "op_21",
       "op_22",
       "op_25",
-      "op_27"
+      "op_27",
+      "op_32"
     ],
     "rhai_implemented": true,
     "excel_documented": true
@@ -792,7 +831,8 @@
       "op_21",
       "op_22",
       "op_25",
-      "op_27"
+      "op_27",
+      "op_32"
     ],
     "rhai_implemented": true,
     "excel_documented": true
@@ -807,7 +847,8 @@
       "op_21",
       "op_22",
       "op_25",
-      "op_27"
+      "op_27",
+      "op_32"
     ],
     "rhai_implemented": true,
     "excel_documented": true
@@ -822,7 +863,8 @@
       "op_21",
       "op_22",
       "op_25",
-      "op_27"
+      "op_27",
+      "op_32"
     ],
     "rhai_implemented": true,
     "excel_documented": true
@@ -836,7 +878,8 @@
       "op_13",
       "op_16",
       "op_22",
-      "op_23"
+      "op_23",
+      "op_32"
     ],
     "rhai_implemented": true,
     "excel_documented": true
@@ -850,7 +893,8 @@
       "op_13",
       "op_16",
       "op_22",
-      "op_23"
+      "op_23",
+      "op_32"
     ],
     "rhai_implemented": true,
     "excel_documented": true
@@ -864,7 +908,8 @@
       "op_11",
       "op_21",
       "op_22",
-      "op_25"
+      "op_25",
+      "op_32"
     ],
     "rhai_implemented": true,
     "excel_documented": true
@@ -878,7 +923,8 @@
       "op_11",
       "op_21",
       "op_22",
-      "op_25"
+      "op_25",
+      "op_32"
     ],
     "rhai_implemented": true,
     "excel_documented": true
@@ -891,7 +937,8 @@
       "op_11",
       "op_13",
       "op_21",
-      "op_22"
+      "op_22",
+      "op_32"
     ],
     "rhai_implemented": true,
     "excel_documented": true
@@ -904,7 +951,8 @@
       "op_11",
       "op_13",
       "op_21",
-      "op_22"
+      "op_22",
+      "op_32"
     ],
     "rhai_implemented": true,
     "excel_documented": true
@@ -917,7 +965,8 @@
       "op_11",
       "op_13",
       "op_21",
-      "op_22"
+      "op_22",
+      "op_32"
     ],
     "rhai_implemented": true,
     "excel_documented": true
@@ -930,7 +979,8 @@
       "op_11",
       "op_13",
       "op_21",
-      "op_22"
+      "op_22",
+      "op_32"
     ],
     "rhai_implemented": true,
     "excel_documented": true
@@ -943,7 +993,8 @@
       "op_11",
       "op_13",
       "op_21",
-      "op_22"
+      "op_22",
+      "op_32"
     ],
     "rhai_implemented": true,
     "excel_documented": true
@@ -956,7 +1007,8 @@
       "op_11",
       "op_13",
       "op_21",
-      "op_22"
+      "op_22",
+      "op_32"
     ],
     "rhai_implemented": true,
     "excel_documented": true
@@ -969,7 +1021,8 @@
       "op_11",
       "op_13",
       "op_21",
-      "op_22"
+      "op_22",
+      "op_32"
     ],
     "rhai_implemented": true,
     "excel_documented": true
@@ -982,7 +1035,8 @@
       "op_11",
       "op_13",
       "op_21",
-      "op_22"
+      "op_22",
+      "op_32"
     ],
     "rhai_implemented": true,
     "excel_documented": true
@@ -995,7 +1049,8 @@
       "op_11",
       "op_13",
       "op_21",
-      "op_22"
+      "op_22",
+      "op_32"
     ],
     "rhai_implemented": true,
     "excel_documented": true
@@ -1008,7 +1063,8 @@
       "op_11",
       "op_13",
       "op_21",
-      "op_22"
+      "op_22",
+      "op_32"
     ],
     "rhai_implemented": true,
     "excel_documented": true
@@ -1021,7 +1077,8 @@
       "op_11",
       "op_13",
       "op_21",
-      "op_22"
+      "op_22",
+      "op_32"
     ],
     "rhai_implemented": true,
     "excel_documented": true
@@ -1034,7 +1091,8 @@
       "op_11",
       "op_13",
       "op_21",
-      "op_22"
+      "op_22",
+      "op_32"
     ],
     "rhai_implemented": true,
     "excel_documented": true
@@ -1047,7 +1105,8 @@
       "op_11",
       "op_13",
       "op_21",
-      "op_22"
+      "op_22",
+      "op_32"
     ],
     "rhai_implemented": true,
     "excel_documented": true
@@ -1060,7 +1119,8 @@
       "op_11",
       "op_13",
       "op_21",
-      "op_22"
+      "op_22",
+      "op_32"
     ],
     "rhai_implemented": true,
     "excel_documented": true
@@ -1073,7 +1133,8 @@
       "op_21",
       "op_22",
       "op_23",
-      "op_24"
+      "op_24",
+      "op_32"
     ],
     "rhai_implemented": true,
     "excel_documented": true
@@ -1086,7 +1147,8 @@
       "op_21",
       "op_22",
       "op_23",
-      "op_24"
+      "op_24",
+      "op_32"
     ],
     "rhai_implemented": true,
     "excel_documented": true
@@ -1100,7 +1162,8 @@
       "op_13",
       "op_16",
       "op_22",
-      "op_23"
+      "op_23",
+      "op_32"
     ],
     "rhai_implemented": true,
     "excel_documented": true
@@ -1114,7 +1177,8 @@
       "op_13",
       "op_16",
       "op_22",
-      "op_23"
+      "op_23",
+      "op_32"
     ],
     "rhai_implemented": true,
     "excel_documented": true
@@ -1147,7 +1211,8 @@
       "op_11",
       "op_13",
       "op_21",
-      "op_22"
+      "op_22",
+      "op_32"
     ],
     "rhai_implemented": true,
     "excel_documented": true
@@ -1554,7 +1619,8 @@
       "op_16",
       "op_21",
       "op_22",
-      "op_23"
+      "op_23",
+      "op_32"
     ],
     "rhai_implemented": true,
     "excel_documented": true
@@ -1569,7 +1635,8 @@
       "op_16",
       "op_21",
       "op_22",
-      "op_23"
+      "op_23",
+      "op_32"
     ],
     "rhai_implemented": true,
     "excel_documented": true
@@ -1584,7 +1651,8 @@
       "op_16",
       "op_21",
       "op_22",
-      "op_23"
+      "op_23",
+      "op_32"
     ],
     "rhai_implemented": true,
     "excel_documented": true
@@ -1599,7 +1667,8 @@
       "op_16",
       "op_21",
       "op_22",
-      "op_23"
+      "op_23",
+      "op_32"
     ],
     "rhai_implemented": true,
     "excel_documented": true
@@ -1614,7 +1683,8 @@
       "op_16",
       "op_21",
       "op_22",
-      "op_23"
+      "op_23",
+      "op_32"
     ],
     "rhai_implemented": true,
     "excel_documented": true
@@ -1629,7 +1699,8 @@
       "op_16",
       "op_21",
       "op_22",
-      "op_23"
+      "op_23",
+      "op_32"
     ],
     "rhai_implemented": true,
     "excel_documented": true
@@ -1644,7 +1715,8 @@
       "op_16",
       "op_21",
       "op_22",
-      "op_23"
+      "op_23",
+      "op_32"
     ],
     "rhai_implemented": true,
     "excel_documented": true
@@ -1659,7 +1731,8 @@
       "op_16",
       "op_21",
       "op_22",
-      "op_23"
+      "op_23",
+      "op_32"
     ],
     "rhai_implemented": true,
     "excel_documented": true
@@ -1673,7 +1746,8 @@
       "op_13",
       "op_16",
       "op_22",
-      "op_23"
+      "op_23",
+      "op_32"
     ],
     "rhai_implemented": true,
     "excel_documented": true
@@ -1687,7 +1761,8 @@
       "op_13",
       "op_16",
       "op_22",
-      "op_23"
+      "op_23",
+      "op_32"
     ],
     "rhai_implemented": true,
     "excel_documented": true
@@ -1702,7 +1777,8 @@
       "op_16",
       "op_21",
       "op_22",
-      "op_23"
+      "op_23",
+      "op_32"
     ],
     "rhai_implemented": true,
     "excel_documented": true
@@ -1717,7 +1793,8 @@
       "op_16",
       "op_21",
       "op_22",
-      "op_23"
+      "op_23",
+      "op_32"
     ],
     "rhai_implemented": true,
     "excel_documented": true
@@ -1732,7 +1809,8 @@
       "op_16",
       "op_21",
       "op_22",
-      "op_23"
+      "op_23",
+      "op_32"
     ],
     "rhai_implemented": true,
     "excel_documented": true
@@ -1747,7 +1825,8 @@
       "op_16",
       "op_21",
       "op_22",
-      "op_23"
+      "op_23",
+      "op_32"
     ],
     "rhai_implemented": true,
     "excel_documented": true
@@ -1762,7 +1841,8 @@
       "op_16",
       "op_22",
       "op_23",
-      "op_27"
+      "op_27",
+      "op_32"
     ],
     "rhai_implemented": true,
     "excel_documented": true
@@ -1777,7 +1857,8 @@
       "op_16",
       "op_22",
       "op_23",
-      "op_27"
+      "op_27",
+      "op_32"
     ],
     "rhai_implemented": true,
     "excel_documented": true
@@ -1792,7 +1873,8 @@
       "op_16",
       "op_22",
       "op_23",
-      "op_27"
+      "op_27",
+      "op_32"
     ],
     "rhai_implemented": true,
     "excel_documented": true
@@ -1807,7 +1889,8 @@
       "op_16",
       "op_22",
       "op_23",
-      "op_27"
+      "op_27",
+      "op_32"
     ],
     "rhai_implemented": true,
     "excel_documented": true
@@ -1822,7 +1905,8 @@
       "op_16",
       "op_22",
       "op_23",
-      "op_27"
+      "op_27",
+      "op_32"
     ],
     "rhai_implemented": true,
     "excel_documented": true
@@ -1837,7 +1921,8 @@
       "op_16",
       "op_22",
       "op_23",
-      "op_27"
+      "op_27",
+      "op_32"
     ],
     "rhai_implemented": true,
     "excel_documented": true
@@ -1852,7 +1937,8 @@
       "op_16",
       "op_22",
       "op_23",
-      "op_27"
+      "op_27",
+      "op_32"
     ],
     "rhai_implemented": true,
     "excel_documented": true
@@ -1866,7 +1952,8 @@
       "op_13",
       "op_16",
       "op_22",
-      "op_23"
+      "op_23",
+      "op_32"
     ],
     "rhai_implemented": true,
     "excel_documented": true
@@ -1880,7 +1967,8 @@
       "op_13",
       "op_16",
       "op_22",
-      "op_23"
+      "op_23",
+      "op_32"
     ],
     "rhai_implemented": true,
     "excel_documented": true
@@ -1895,7 +1983,8 @@
       "op_16",
       "op_22",
       "op_23",
-      "op_27"
+      "op_27",
+      "op_32"
     ],
     "rhai_implemented": true,
     "excel_documented": true
@@ -1910,7 +1999,8 @@
       "op_16",
       "op_22",
       "op_23",
-      "op_27"
+      "op_27",
+      "op_32"
     ],
     "rhai_implemented": true,
     "excel_documented": true
@@ -1924,7 +2014,8 @@
       "op_13",
       "op_16",
       "op_22",
-      "op_23"
+      "op_23",
+      "op_32"
     ],
     "rhai_implemented": true,
     "excel_documented": true
@@ -1938,7 +2029,8 @@
       "op_13",
       "op_16",
       "op_22",
-      "op_23"
+      "op_23",
+      "op_32"
     ],
     "rhai_implemented": true,
     "excel_documented": true
@@ -1952,7 +2044,8 @@
       "op_13",
       "op_16",
       "op_22",
-      "op_23"
+      "op_23",
+      "op_32"
     ],
     "rhai_implemented": true,
     "excel_documented": true
@@ -1966,7 +2059,8 @@
       "op_13",
       "op_16",
       "op_22",
-      "op_23"
+      "op_23",
+      "op_32"
     ],
     "rhai_implemented": true,
     "excel_documented": true
@@ -1980,7 +2074,8 @@
       "op_13",
       "op_16",
       "op_22",
-      "op_23"
+      "op_23",
+      "op_32"
     ],
     "rhai_implemented": true,
     "excel_documented": true
@@ -1994,7 +2089,8 @@
       "op_13",
       "op_16",
       "op_22",
-      "op_23"
+      "op_23",
+      "op_32"
     ],
     "rhai_implemented": true,
     "excel_documented": true
@@ -2008,7 +2104,8 @@
       "op_13",
       "op_16",
       "op_22",
-      "op_23"
+      "op_23",
+      "op_32"
     ],
     "rhai_implemented": true,
     "excel_documented": true
@@ -2022,7 +2119,8 @@
       "op_13",
       "op_16",
       "op_22",
-      "op_23"
+      "op_23",
+      "op_32"
     ],
     "rhai_implemented": true,
     "excel_documented": true
@@ -2036,7 +2134,8 @@
       "op_13",
       "op_16",
       "op_22",
-      "op_23"
+      "op_23",
+      "op_32"
     ],
     "rhai_implemented": true,
     "excel_documented": true
@@ -2050,7 +2149,8 @@
       "op_13",
       "op_16",
       "op_22",
-      "op_23"
+      "op_23",
+      "op_32"
     ],
     "rhai_implemented": true,
     "excel_documented": true
@@ -2064,7 +2164,8 @@
       "op_13",
       "op_16",
       "op_22",
-      "op_23"
+      "op_23",
+      "op_32"
     ],
     "rhai_implemented": true,
     "excel_documented": true
@@ -2079,7 +2180,8 @@
       "op_16",
       "op_22",
       "op_23",
-      "op_27"
+      "op_27",
+      "op_32"
     ],
     "rhai_implemented": true,
     "excel_documented": true
@@ -2093,7 +2195,8 @@
       "op_13",
       "op_16",
       "op_22",
-      "op_23"
+      "op_23",
+      "op_32"
     ],
     "rhai_implemented": true,
     "excel_documented": true
@@ -2107,7 +2210,8 @@
       "op_13",
       "op_16",
       "op_22",
-      "op_23"
+      "op_23",
+      "op_32"
     ],
     "rhai_implemented": true,
     "excel_documented": true
@@ -2121,7 +2225,8 @@
       "op_13",
       "op_16",
       "op_22",
-      "op_23"
+      "op_23",
+      "op_32"
     ],
     "rhai_implemented": true,
     "excel_documented": true
@@ -2136,7 +2241,8 @@
       "op_16",
       "op_22",
       "op_23",
-      "op_27"
+      "op_27",
+      "op_32"
     ],
     "rhai_implemented": true,
     "excel_documented": true
@@ -2151,7 +2257,8 @@
       "op_16",
       "op_22",
       "op_23",
-      "op_27"
+      "op_27",
+      "op_32"
     ],
     "rhai_implemented": true,
     "excel_documented": true
@@ -2165,7 +2272,8 @@
       "op_11",
       "op_13",
       "op_22",
-      "op_23"
+      "op_23",
+      "op_32"
     ],
     "rhai_implemented": true,
     "excel_documented": true
@@ -2179,7 +2287,8 @@
       "op_11",
       "op_13",
       "op_22",
-      "op_23"
+      "op_23",
+      "op_32"
     ],
     "rhai_implemented": true,
     "excel_documented": true
@@ -2193,7 +2302,8 @@
       "op_16",
       "op_21",
       "op_22",
-      "op_23"
+      "op_23",
+      "op_32"
     ],
     "rhai_implemented": true,
     "excel_documented": true
@@ -2207,7 +2317,8 @@
       "op_16",
       "op_21",
       "op_22",
-      "op_23"
+      "op_23",
+      "op_32"
     ],
     "rhai_implemented": true,
     "excel_documented": true
@@ -2221,7 +2332,8 @@
       "op_16",
       "op_21",
       "op_22",
-      "op_23"
+      "op_23",
+      "op_32"
     ],
     "rhai_implemented": true,
     "excel_documented": true
@@ -2235,7 +2347,8 @@
       "op_16",
       "op_21",
       "op_22",
-      "op_23"
+      "op_23",
+      "op_32"
     ],
     "rhai_implemented": true,
     "excel_documented": true
@@ -2249,7 +2362,8 @@
       "op_16",
       "op_21",
       "op_22",
-      "op_23"
+      "op_23",
+      "op_32"
     ],
     "rhai_implemented": true,
     "excel_documented": true
@@ -2263,7 +2377,8 @@
       "op_16",
       "op_21",
       "op_22",
-      "op_23"
+      "op_23",
+      "op_32"
     ],
     "rhai_implemented": true,
     "excel_documented": true
@@ -2277,7 +2392,8 @@
       "op_16",
       "op_21",
       "op_22",
-      "op_23"
+      "op_23",
+      "op_32"
     ],
     "rhai_implemented": true,
     "excel_documented": true
@@ -2291,7 +2407,8 @@
       "op_13",
       "op_16",
       "op_22",
-      "op_23"
+      "op_23",
+      "op_32"
     ],
     "rhai_implemented": true,
     "excel_documented": true
@@ -2305,7 +2422,8 @@
       "op_13",
       "op_16",
       "op_22",
-      "op_23"
+      "op_23",
+      "op_32"
     ],
     "rhai_implemented": true,
     "excel_documented": true
@@ -2319,7 +2437,8 @@
       "op_16",
       "op_21",
       "op_22",
-      "op_23"
+      "op_23",
+      "op_32"
     ],
     "rhai_implemented": true,
     "excel_documented": true
@@ -2333,7 +2452,8 @@
       "op_16",
       "op_21",
       "op_22",
-      "op_23"
+      "op_23",
+      "op_32"
     ],
     "rhai_implemented": true,
     "excel_documented": true
@@ -2347,7 +2467,8 @@
       "op_16",
       "op_21",
       "op_22",
-      "op_23"
+      "op_23",
+      "op_32"
     ],
     "rhai_implemented": true,
     "excel_documented": true
@@ -2361,7 +2482,8 @@
       "op_16",
       "op_21",
       "op_22",
-      "op_23"
+      "op_23",
+      "op_32"
     ],
     "rhai_implemented": true,
     "excel_documented": true
@@ -2375,7 +2497,8 @@
       "op_16",
       "op_21",
       "op_22",
-      "op_23"
+      "op_23",
+      "op_32"
     ],
     "rhai_implemented": true,
     "excel_documented": true
@@ -2389,7 +2512,8 @@
       "op_16",
       "op_21",
       "op_22",
-      "op_23"
+      "op_23",
+      "op_32"
     ],
     "rhai_implemented": true,
     "excel_documented": true
@@ -2402,7 +2526,8 @@
       "op_13",
       "op_19",
       "op_21",
-      "op_22"
+      "op_22",
+      "op_32"
     ],
     "rhai_implemented": true,
     "excel_documented": true
@@ -2415,7 +2540,8 @@
       "op_13",
       "op_19",
       "op_21",
-      "op_22"
+      "op_22",
+      "op_32"
     ],
     "rhai_implemented": true,
     "excel_documented": true
@@ -2428,7 +2554,8 @@
       "op_13",
       "op_19",
       "op_21",
-      "op_22"
+      "op_22",
+      "op_32"
     ],
     "rhai_implemented": true,
     "excel_documented": true
@@ -2441,7 +2568,8 @@
       "op_13",
       "op_19",
       "op_21",
-      "op_22"
+      "op_22",
+      "op_32"
     ],
     "rhai_implemented": true,
     "excel_documented": true
@@ -2454,7 +2582,8 @@
       "op_13",
       "op_14",
       "op_19",
-      "op_22"
+      "op_22",
+      "op_32"
     ],
     "rhai_implemented": true,
     "excel_documented": true
@@ -2467,7 +2596,8 @@
       "op_13",
       "op_14",
       "op_19",
-      "op_22"
+      "op_22",
+      "op_32"
     ],
     "rhai_implemented": true,
     "excel_documented": true
@@ -2480,7 +2610,8 @@
       "op_13",
       "op_14",
       "op_19",
-      "op_22"
+      "op_22",
+      "op_32"
     ],
     "rhai_implemented": true,
     "excel_documented": true
@@ -2493,7 +2624,8 @@
       "op_13",
       "op_14",
       "op_19",
-      "op_22"
+      "op_22",
+      "op_32"
     ],
     "rhai_implemented": true,
     "excel_documented": true
@@ -2506,7 +2638,8 @@
       "op_13",
       "op_14",
       "op_19",
-      "op_22"
+      "op_22",
+      "op_32"
     ],
     "rhai_implemented": true,
     "excel_documented": true
@@ -2519,7 +2652,8 @@
       "op_13",
       "op_14",
       "op_19",
-      "op_22"
+      "op_22",
+      "op_32"
     ],
     "rhai_implemented": true,
     "excel_documented": true
@@ -2532,7 +2666,8 @@
       "op_13",
       "op_21",
       "op_22",
-      "op_23"
+      "op_23",
+      "op_32"
     ],
     "rhai_implemented": true,
     "excel_documented": true
@@ -2545,7 +2680,8 @@
       "op_13",
       "op_21",
       "op_22",
-      "op_23"
+      "op_23",
+      "op_32"
     ],
     "rhai_implemented": true,
     "excel_documented": true
@@ -2558,7 +2694,8 @@
       "op_13",
       "op_21",
       "op_22",
-      "op_23"
+      "op_23",
+      "op_32"
     ],
     "rhai_implemented": true,
     "excel_documented": true
@@ -2571,7 +2708,8 @@
       "op_13",
       "op_21",
       "op_22",
-      "op_23"
+      "op_23",
+      "op_32"
     ],
     "rhai_implemented": true,
     "excel_documented": true
@@ -2584,7 +2722,8 @@
       "op_13",
       "op_21",
       "op_22",
-      "op_23"
+      "op_23",
+      "op_32"
     ],
     "rhai_implemented": true,
     "excel_documented": true
@@ -2598,7 +2737,8 @@
       "op_13",
       "op_16",
       "op_21",
-      "op_22"
+      "op_22",
+      "op_32"
     ],
     "rhai_implemented": true,
     "excel_documented": true
@@ -2612,7 +2752,8 @@
       "op_13",
       "op_16",
       "op_21",
-      "op_22"
+      "op_22",
+      "op_32"
     ],
     "rhai_implemented": true,
     "excel_documented": true
@@ -2626,7 +2767,8 @@
       "op_13",
       "op_16",
       "op_21",
-      "op_22"
+      "op_22",
+      "op_32"
     ],
     "rhai_implemented": true,
     "excel_documented": true
@@ -2640,7 +2782,8 @@
       "op_13",
       "op_16",
       "op_21",
-      "op_22"
+      "op_22",
+      "op_32"
     ],
     "rhai_implemented": true,
     "excel_documented": true
@@ -2654,7 +2797,8 @@
       "op_13",
       "op_16",
       "op_21",
-      "op_22"
+      "op_22",
+      "op_32"
     ],
     "rhai_implemented": true,
     "excel_documented": true
@@ -2666,7 +2810,8 @@
       "op_11",
       "op_13",
       "op_21",
-      "op_22"
+      "op_22",
+      "op_32"
     ],
     "rhai_implemented": true,
     "excel_documented": true
@@ -2678,7 +2823,8 @@
       "op_11",
       "op_13",
       "op_21",
-      "op_22"
+      "op_22",
+      "op_32"
     ],
     "rhai_implemented": true,
     "excel_documented": true
@@ -2690,7 +2836,8 @@
       "op_11",
       "op_13",
       "op_21",
-      "op_22"
+      "op_22",
+      "op_32"
     ],
     "rhai_implemented": true,
     "excel_documented": true
@@ -2704,7 +2851,8 @@
       "op_13",
       "op_16",
       "op_21",
-      "op_22"
+      "op_22",
+      "op_32"
     ],
     "rhai_implemented": true,
     "excel_documented": true
@@ -2718,7 +2866,8 @@
       "op_13",
       "op_16",
       "op_21",
-      "op_22"
+      "op_22",
+      "op_32"
     ],
     "rhai_implemented": true,
     "excel_documented": true
@@ -2731,7 +2880,8 @@
       "op_17",
       "op_20",
       "op_21",
-      "op_22"
+      "op_22",
+      "op_32"
     ],
     "rhai_implemented": true,
     "excel_documented": true
@@ -2746,7 +2896,8 @@
       "op_21",
       "op_22",
       "op_23",
-      "op_26"
+      "op_26",
+      "op_32"
     ],
     "rhai_implemented": true,
     "excel_documented": true
@@ -2761,7 +2912,8 @@
       "op_21",
       "op_22",
       "op_23",
-      "op_26"
+      "op_26",
+      "op_32"
     ],
     "rhai_implemented": true,
     "excel_documented": true
@@ -2776,7 +2928,8 @@
       "op_21",
       "op_22",
       "op_23",
-      "op_26"
+      "op_26",
+      "op_32"
     ],
     "rhai_implemented": true,
     "excel_documented": true
@@ -2791,7 +2944,8 @@
       "op_21",
       "op_22",
       "op_23",
-      "op_26"
+      "op_26",
+      "op_32"
     ],
     "rhai_implemented": true,
     "excel_documented": true
@@ -2806,7 +2960,8 @@
       "op_21",
       "op_22",
       "op_23",
-      "op_26"
+      "op_26",
+      "op_32"
     ],
     "rhai_implemented": true,
     "excel_documented": true
@@ -2821,7 +2976,8 @@
       "op_21",
       "op_22",
       "op_23",
-      "op_26"
+      "op_26",
+      "op_32"
     ],
     "rhai_implemented": true,
     "excel_documented": true
@@ -2834,7 +2990,8 @@
       "op_19",
       "op_21",
       "op_22",
-      "op_23"
+      "op_23",
+      "op_32"
     ],
     "rhai_implemented": true,
     "excel_documented": true
@@ -2847,7 +3004,8 @@
       "op_19",
       "op_21",
       "op_22",
-      "op_23"
+      "op_23",
+      "op_32"
     ],
     "rhai_implemented": true,
     "excel_documented": true
@@ -2860,7 +3018,8 @@
       "op_19",
       "op_21",
       "op_22",
-      "op_23"
+      "op_23",
+      "op_32"
     ],
     "rhai_implemented": true,
     "excel_documented": true
@@ -2873,7 +3032,8 @@
       "op_19",
       "op_21",
       "op_22",
-      "op_23"
+      "op_23",
+      "op_32"
     ],
     "rhai_implemented": true,
     "excel_documented": true
@@ -2885,7 +3045,8 @@
       "op_11",
       "op_13",
       "op_21",
-      "op_22"
+      "op_22",
+      "op_32"
     ],
     "rhai_implemented": true,
     "excel_documented": true
@@ -2897,7 +3058,8 @@
       "op_11",
       "op_13",
       "op_21",
-      "op_22"
+      "op_22",
+      "op_32"
     ],
     "rhai_implemented": true,
     "excel_documented": true
@@ -2912,7 +3074,8 @@
       "op_21",
       "op_22",
       "op_23",
-      "op_26"
+      "op_26",
+      "op_32"
     ],
     "rhai_implemented": true,
     "excel_documented": true
@@ -2926,7 +3089,8 @@
       "op_13",
       "op_16",
       "op_21",
-      "op_22"
+      "op_22",
+      "op_32"
     ],
     "rhai_implemented": true,
     "excel_documented": true
@@ -2940,7 +3104,8 @@
       "op_23",
       "op_24",
       "op_27",
-      "op_29"
+      "op_29",
+      "op_32"
     ],
     "rhai_implemented": true,
     "excel_documented": true
@@ -2954,7 +3119,8 @@
       "op_23",
       "op_24",
       "op_27",
-      "op_29"
+      "op_29",
+      "op_32"
     ],
     "rhai_implemented": true,
     "excel_documented": true
@@ -2968,7 +3134,8 @@
       "op_23",
       "op_24",
       "op_27",
-      "op_29"
+      "op_29",
+      "op_32"
     ],
     "rhai_implemented": true,
     "excel_documented": true
@@ -2982,7 +3149,8 @@
       "op_23",
       "op_24",
       "op_27",
-      "op_29"
+      "op_29",
+      "op_32"
     ],
     "rhai_implemented": true,
     "excel_documented": true
@@ -2995,7 +3163,8 @@
       "op_22",
       "op_24",
       "op_27",
-      "op_29"
+      "op_29",
+      "op_32"
     ],
     "rhai_implemented": true,
     "excel_documented": true
@@ -3008,7 +3177,8 @@
       "op_22",
       "op_24",
       "op_27",
-      "op_29"
+      "op_29",
+      "op_32"
     ],
     "rhai_implemented": true,
     "excel_documented": true
@@ -3021,7 +3191,8 @@
       "op_22",
       "op_24",
       "op_27",
-      "op_29"
+      "op_29",
+      "op_32"
     ],
     "rhai_implemented": true,
     "excel_documented": true
@@ -3034,7 +3205,8 @@
       "op_22",
       "op_24",
       "op_27",
-      "op_29"
+      "op_29",
+      "op_32"
     ],
     "rhai_implemented": true,
     "excel_documented": true
@@ -3047,7 +3219,8 @@
       "op_21",
       "op_22",
       "op_23",
-      "op_24"
+      "op_24",
+      "op_32"
     ],
     "rhai_implemented": true,
     "excel_documented": true
@@ -3060,7 +3233,8 @@
       "op_23",
       "op_24",
       "op_25",
-      "op_27"
+      "op_27",
+      "op_32"
     ],
     "rhai_implemented": true,
     "excel_documented": true
@@ -3073,7 +3247,8 @@
       "op_23",
       "op_24",
       "op_25",
-      "op_27"
+      "op_27",
+      "op_32"
     ],
     "rhai_implemented": true,
     "excel_documented": true
@@ -3087,7 +3262,8 @@
       "op_23",
       "op_24",
       "op_27",
-      "op_29"
+      "op_29",
+      "op_32"
     ],
     "rhai_implemented": true,
     "excel_documented": true
@@ -3101,7 +3277,8 @@
       "op_23",
       "op_24",
       "op_27",
-      "op_29"
+      "op_29",
+      "op_32"
     ],
     "rhai_implemented": true,
     "excel_documented": true
@@ -3115,7 +3292,8 @@
       "op_23",
       "op_24",
       "op_27",
-      "op_29"
+      "op_29",
+      "op_32"
     ],
     "rhai_implemented": true,
     "excel_documented": true
@@ -3129,7 +3307,8 @@
       "op_23",
       "op_24",
       "op_27",
-      "op_29"
+      "op_29",
+      "op_32"
     ],
     "rhai_implemented": true,
     "excel_documented": true
@@ -3143,7 +3322,8 @@
       "op_23",
       "op_24",
       "op_27",
-      "op_29"
+      "op_29",
+      "op_32"
     ],
     "rhai_implemented": true,
     "excel_documented": true
@@ -3156,7 +3336,8 @@
       "op_23",
       "op_24",
       "op_25",
-      "op_27"
+      "op_27",
+      "op_32"
     ],
     "rhai_implemented": true,
     "excel_documented": true
@@ -3169,7 +3350,8 @@
       "op_23",
       "op_24",
       "op_25",
-      "op_27"
+      "op_27",
+      "op_32"
     ],
     "rhai_implemented": true,
     "excel_documented": true

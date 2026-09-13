@@ -375,8 +375,14 @@ for spec in "${TABLES[@]}"; do
   # VACUUM ANALYZE (ShareUpdateExclusive: no bloquea writers; devuelve espacio
   # reutilizable a la tabla y refresca stats para los planes de la API)
   if [ "$VACUUM" = "1" ] && [ "$deleted" -gt 0 ]; then
+    # Each -c is a separate request. SET + VACUUM in one -c creates an
+    # implicit transaction, where PostgreSQL refuses VACUUM (SQLSTATE 25001).
+    # Keep this as ordinary VACUUM: never rewrite a relation with VACUUM FULL.
     docker exec -i "$PG_CONTAINER" psql -U postgres -d arbitragex -X -qAt \
-      -c "SET statement_timeout='600s'; VACUUM (ANALYZE) $tbl" >/dev/null 2>&1 \
+      -v ON_ERROR_STOP=1 \
+      -c "SET lock_timeout='$BATCH_LOCK_TIMEOUT'" \
+      -c "SET statement_timeout='600s'" \
+      -c "VACUUM (ANALYZE) $tbl" >/dev/null 2>&1 \
       || log "retention.vacuum table=$tbl failed (non-fatal)"
   fi
 done

@@ -24,6 +24,7 @@
 // over the SAME curve the golden-section kernel maximizes.
 pub mod amm_math;
 pub mod amount_buckets;
+pub mod batch_quote;
 pub mod calldata;
 pub mod canonical_enums;
 pub mod canonical_knobs;
@@ -52,6 +53,7 @@ pub mod fe_normalization;
 // evaluation of a sized route, and the legacy-preserving selection policy.
 pub mod financing;
 // ARBX-0009: sheet-07 Net_bps contract + deterministic ranking (QB 07).
+pub mod live_risk_ranker;
 pub mod net_bps_ranking;
 // ARBX-QB-07-006: canonical discovery-workload builders (bench + unit tests
 // share one source — the workload the Discovery_SLA gate judges).
@@ -77,6 +79,9 @@ pub mod persistence;
 pub mod pool_candidate;
 pub mod pool_discovery;
 pub mod pool_sources;
+// Stage 2c (§IV read side): per-operator log-LR cache + the posterior fold.
+// BR-05 (2026-09-07): WO-07 port-back.
+pub mod priors_cache;
 pub mod publisher;
 // QUOTEBASE-264 05_QUOTE_BASE: QuoteScore weighted form + workbook fixtures
 // (XLS-QB-06). Lib-only: consumers are the future dense-id quote-base layer.
@@ -91,6 +96,10 @@ pub mod route_api;
 pub mod route_decoder;
 pub mod route_discovery;
 pub mod route_intent;
+// CB-02 (2026-09-07) — control-plane runtime knobs (class A toggle client,
+// worker heartbeat, boot census). Declared in the lib too because the lib
+// target compiles workers::route_scanner_worker, which wires this module.
+pub mod runtime_knobs;
 pub mod scoring;
 pub mod scoring_pipeline;
 pub mod shared;
@@ -242,3 +251,5 @@ pub mod telemetry_publisher;
 // Observer telemetry — real-node head divergence (reorg) → arbx:telemetry:observability.
 // Ungated: depends only on redis + serde, used by block_scanner in all builds.
 pub mod telemetry_observability;
+
+pub mod candidate_simulation;

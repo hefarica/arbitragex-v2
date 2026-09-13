@@ -7,6 +7,8 @@ license.workspace = true
 description = "ArbitrageX v2 — private execution via Flashbots/builders. S1: /execute returns 501 by design."
 
 [dependencies]
+sim-core = { path = "../sim-core" }
+simulator-v2 = { path = "../simulator-v2" }
 shared-rs.workspace = true
 # M2-core: shared executeArbitrage calldata encoder (sim↔exec parity, single source of truth).
 prioritization-spine = { workspace = true }

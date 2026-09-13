@@ -13,8 +13,10 @@
 //! later M2 increments.
 
 use crate::round_trip_executor::RoundTripContext;
-use ethers::types::{Address, U256};
+use crate::round_trip_executor::{SimulationEvidence, SimulationOutcome};
+use ethers::types::{Address, H256, U256};
 use serde::{Deserialize, Serialize};
+use uuid::Uuid;
 
 /// Carrier-B record: the exact validated inputs to
 /// [`crate::execute_arbitrage_encoder::build_execute_arbitrage_calldata`],
@@ -25,6 +27,30 @@ use serde::{Deserialize, Serialize};
 /// (available since serde 1.0.123) cover `[u8; 32]` directly, so the plain
 /// derive round-trips it with no custom adapter — it serializes as a JSON array
 /// of 32 byte values and deserializes back to the identical bytes.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SimulationBinding {
+    pub schema_version: u8,
+    pub opportunity_id: Uuid,
+    pub strategy_kind: String,
+    pub chain_id: u64,
+    pub block_number: u64,
+    pub block_hash: H256,
+    pub block_timestamp: u64,
+    pub simulated_at_ms: i64,
+    pub caller: Address,
+    pub calldata_hash: H256,
+    pub flash_loan_executor: Address,
+    pub gas_price_wei: U256,
+    pub gas_limit: u64,
+    pub gas_used: u64,
+    pub retained_profit_wei: U256,
+    pub flash_fee_wei: U256,
+    pub forward_quote: U256,
+    pub backward_quote: U256,
+    pub total_slippage_bps: u16,
+    pub state_overrides_used: bool,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ValidatedPlan {
     pub ctx: RoundTripContext,
@@ -39,6 +65,105 @@ pub struct ValidatedPlan {
     /// path sends these bytes VERBATIM — real byte-parity, not a re-encode. serde
     /// round-trips `Vec<u8>` as a JSON array of byte values.
     pub wrapped_calldata: Vec<u8>,
+    /// Missing in older carriers: readable for history, never valid for broadcast.
+    #[serde(default)]
+    pub binding: Option<SimulationBinding>,
+}
+
+/// Hash of all encoder inputs, including the public EOA. This prevents attaching
+/// evidence from one simulation to a different route/context at the producer.
+pub fn plan_inputs_hash(
+    ctx: &RoundTripContext,
+    route_hash: [u8; 32],
+    min_profit: U256,
+    executor: Address,
+) -> Result<H256, &'static str> {
+    let bytes = serde_json::to_vec(&(ctx, route_hash, min_profit, executor))
+        .map_err(|_| "plan_inputs_serialization_failed")?;
+    Ok(H256::from(ethers::utils::keccak256(bytes)))
+}
+
+impl ValidatedPlan {
+    /// Sole production constructor. The simulation supplies state/execution
+    /// evidence; the candidate producer attaches identity only after success.
+    pub fn from_simulation(
+        ctx: RoundTripContext,
+        opportunity_id: Uuid,
+        strategy_kind: impl Into<String>,
+        route_hash: [u8; 32],
+        min_profit_wei: U256,
+        executor_address: Address,
+        outcome: &SimulationOutcome,
+    ) -> Result<Self, &'static str> {
+        let e: &SimulationEvidence = outcome
+            .evidence
+            .as_ref()
+            .ok_or("simulation_evidence_missing")?;
+        let bytes = outcome
+            .wrapped_calldata
+            .as_ref()
+            .filter(|b| !b.is_empty())
+            .ok_or("wrapped_calldata_missing")?;
+        let strategy_kind = strategy_kind.into();
+        if !outcome.passed || opportunity_id.is_nil() || strategy_kind.trim().is_empty() {
+            return Err("simulation_or_identity_invalid");
+        }
+        if e.state_overrides_used
+            || e.block_hash == H256::zero()
+            || e.chain_id == 0
+            || e.block_number == 0
+            || e.block_timestamp == 0
+            || e.simulated_at_ms <= 0
+            || e.caller != ctx.caller
+            || e.flash_loan_executor == Address::zero()
+            || outcome.gas_used_total == 0
+            || e.gas_limit < outcome.gas_used_total
+            || outcome.gas_price_wei.is_zero()
+            || e.total_slippage_bps > 50
+            || min_profit_wei <= e.flash_fee_wei
+            || min_profit_wei != e.min_profit_wei
+            || e.forward_quote.is_zero()
+            || e.backward_quote.is_zero()
+            || outcome.simulated_profit_token_in.is_zero()
+        {
+            return Err("simulation_evidence_invalid");
+        }
+        if e.plan_inputs_hash
+            != plan_inputs_hash(&ctx, route_hash, min_profit_wei, executor_address)?
+            || e.calldata_hash != H256::from(ethers::utils::keccak256(bytes))
+        {
+            return Err("simulation_binding_mismatch");
+        }
+        Ok(Self {
+            ctx,
+            route_hash,
+            min_profit_wei,
+            executor_address,
+            wrapped_calldata: bytes.clone(),
+            binding: Some(SimulationBinding {
+                schema_version: 1,
+                opportunity_id,
+                strategy_kind,
+                chain_id: e.chain_id,
+                block_number: e.block_number,
+                block_hash: e.block_hash,
+                block_timestamp: e.block_timestamp,
+                simulated_at_ms: e.simulated_at_ms,
+                caller: e.caller,
+                calldata_hash: e.calldata_hash,
+                flash_loan_executor: e.flash_loan_executor,
+                gas_price_wei: outcome.gas_price_wei,
+                gas_limit: e.gas_limit,
+                gas_used: outcome.gas_used_total,
+                flash_fee_wei: e.flash_fee_wei,
+                retained_profit_wei: outcome.simulated_profit_token_in,
+                total_slippage_bps: e.total_slippage_bps,
+                forward_quote: e.forward_quote,
+                backward_quote: e.backward_quote,
+                state_overrides_used: e.state_overrides_used,
+            }),
+        })
+    }
 }
 
 #[cfg(test)]
@@ -79,6 +204,7 @@ mod tests {
             // prefix: requestFlashLoan 0x5107d61e) so the round-trip test catches
             // truncation / reordering in the byte-array serde path.
             wrapped_calldata: vec![0x51, 0x07, 0xd6, 0x1e, 0xde, 0xad, 0xbe, 0xef],
+            binding: None,
         }
     }
 
@@ -141,5 +267,110 @@ mod tests {
         let json = serde_json::to_string(&plan).expect("serialize");
         let decoded: ValidatedPlan = serde_json::from_str(&json).expect("deserialize");
         assert_eq!(decoded.route_hash, hash);
+    }
+
+    fn evidence_for(plan: &ValidatedPlan) -> SimulationOutcome {
+        let bytes = plan.wrapped_calldata.clone();
+        SimulationOutcome {
+            passed: true,
+            simulated_profit_token_in: U256::from(20),
+            intermediate_amount_out: Some(U256::from(100)),
+            gas_used_total: 50000,
+            gas_price_wei: U256::from(100),
+            fail_reason: None,
+            wrapped_calldata: Some(bytes.clone()),
+            evidence: Some(SimulationEvidence {
+                chain_id: 1,
+                block_number: 100,
+                block_hash: H256::repeat_byte(1),
+                block_timestamp: 1700000000,
+                simulated_at_ms: 1700000000000,
+                caller: plan.ctx.caller,
+                calldata_hash: H256(ethers::utils::keccak256(bytes)),
+                plan_inputs_hash: plan_inputs_hash(
+                    &plan.ctx,
+                    plan.route_hash,
+                    plan.min_profit_wei,
+                    plan.executor_address,
+                )
+                .unwrap(),
+                flash_loan_executor: Address::from_low_u64_be(55),
+                gas_limit: 100000,
+                flash_fee_wei: U256::zero(),
+                min_profit_wei: plan.min_profit_wei,
+                total_slippage_bps: 50,
+                state_overrides_used: false,
+                forward_quote: U256::from(100),
+                backward_quote: U256::from(120),
+            }),
+        }
+    }
+
+    #[test]
+    fn analysis_requires_real_evidence_to_authorize() {
+        let plan = fixed_plan();
+        let id = Uuid::new_v4();
+        let outcome = evidence_for(&plan);
+        let upgrade = |o: &SimulationOutcome| {
+            ValidatedPlan::from_simulation(
+                plan.ctx.clone(),
+                id,
+                "dex_arb",
+                plan.route_hash,
+                plan.min_profit_wei,
+                plan.executor_address,
+                o,
+            )
+        };
+        assert!(upgrade(&outcome).is_ok());
+        let mut paper = outcome.clone();
+        paper.evidence.as_mut().unwrap().state_overrides_used = true;
+        assert!(upgrade(&paper).is_err());
+        paper.evidence = None;
+        assert!(upgrade(&paper).is_err());
+        // The analysis remains reusable: attach the subsequent real simulation.
+        assert!(upgrade(&outcome).is_ok());
+    }
+
+    #[test]
+    fn execution_evidence_rejects_context_and_calldata_substitution() {
+        let plan = fixed_plan();
+        let outcome = evidence_for(&plan);
+        let mut changed = plan.ctx.clone();
+        changed.amount_in += U256::one();
+        assert!(ValidatedPlan::from_simulation(
+            changed,
+            Uuid::new_v4(),
+            "dex_arb",
+            plan.route_hash,
+            plan.min_profit_wei,
+            plan.executor_address,
+            &outcome
+        )
+        .is_err());
+        let mut altered = outcome.clone();
+        altered.wrapped_calldata.as_mut().unwrap().push(0);
+        assert!(ValidatedPlan::from_simulation(
+            plan.ctx.clone(),
+            Uuid::new_v4(),
+            "dex_arb",
+            plan.route_hash,
+            plan.min_profit_wei,
+            plan.executor_address,
+            &altered
+        )
+        .is_err());
+        let mut zero = outcome;
+        zero.evidence.as_mut().unwrap().forward_quote = U256::zero();
+        assert!(ValidatedPlan::from_simulation(
+            plan.ctx,
+            Uuid::new_v4(),
+            "dex_arb",
+            plan.route_hash,
+            plan.min_profit_wei,
+            plan.executor_address,
+            &zero
+        )
+        .is_err());
     }
 }

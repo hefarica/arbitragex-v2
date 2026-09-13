@@ -66,10 +66,10 @@ jobs:
         run: cargo clippy --workspace --locked -- -D warnings
 
       - name: cargo test --lib (workspace)
-        # --lib runs only unit tests in lib targets, skipping integration tests
-        # that require a live PostgreSQL or Redis (not available in CI here).
+        # Library tests plus relays-client's binary unit tests cover live
+        # admission/accounting; external integration targets remain separate.
         # sqlx compile-time checked queries are excluded by DATABASE_URL stub.
-        run: cargo test --workspace --locked --lib
+        run: cargo test --workspace --locked --lib --bin relays-client
         env:
           # Satisfies sqlx offline-mode guard at compile time; no real DB needed.
           DATABASE_URL: postgres://test:test@localhost/arbitragex_test

@@ -118,10 +118,16 @@ impl MultiRelayClient {
                 let from = bundle.from;
                 let nonce = bundle.nonce;
                 let value_wei = bundle.value_wei;
+                let state_block = bundle.state_block;
+                let state_block_hash = bundle.state_block_hash;
+                let gas_limit = bundle.gas_limit;
                 async move {
                     let owned_bundle = SignedBundle {
                         opportunity_id,
                         target_block,
+                        state_block,
+                        state_block_hash,
+                        gas_limit,
                         tx_raw_hex,
                         tx_hash,
                         from,
@@ -268,6 +274,9 @@ mod tests {
         SignedBundle {
             opportunity_id: uuid::Uuid::new_v4(),
             target_block: 20_000_000,
+            state_block: 19_999_999,
+            state_block_hash: ethers::types::H256::zero(),
+            gas_limit: 500_000,
             tx_raw_hex: "0xdeadbeef".to_string(),
             tx_hash: H256::zero(),
             from: Address::zero(),

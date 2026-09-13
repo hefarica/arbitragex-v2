@@ -195,6 +195,7 @@ impl ConfigProvider {
 /// Main orchestrator. Constructed once per chain and shared across tasks via `Arc`.
 pub struct Orchestrator {
     ctx: OrchestratorContext,
+    risk_ranker: crate::live_risk_ranker::LiveRiskRanker,
 }
 
 impl Orchestrator {
@@ -224,7 +225,10 @@ impl Orchestrator {
                 "off"
             }
         );
-        Self { ctx }
+        Self {
+            ctx,
+            risk_ranker: Default::default(),
+        }
     }
 
     // -----------------------------------------------------------------------
@@ -1007,6 +1011,30 @@ impl Orchestrator {
         // emit. One summary line per multi-candidate batch (R9 — per-item
         // detail already logged at debug in Phase 1).
         sized_batch.sort_by(|(a, _, _), (b, _, _)| crate::net_bps_ranking::net_bps_order(a, b));
+        let risk_ranking = self.risk_ranker.rank(
+            &mut sized_batch,
+            chain_id,
+            &self.ctx.math_redis,
+            |(ranked, candidate, _)| {
+                if candidate.rejection_reason.is_some() || ranked.economics.net_bps().is_none() {
+                    return None;
+                }
+                Some(crate::live_risk_ranker::RankingInput {
+                    strategy_kind: candidate.opportunity.strategy_kind.as_str().to_owned(),
+                    token_in: candidate.opportunity.token_in.clone(),
+                    principal_usd: ranked.economics.start_amount_usd,
+                    expected_profit_usd: ranked.economics.net_profit_usd(),
+                })
+            },
+        );
+        debug!(
+            event = "orchestrator.empirical_nsga2",
+            chain_id,
+            considered = risk_ranking.considered,
+            with_history = risk_ranking.with_history,
+            reordered = risk_ranking.reordered,
+            source = "finalized_receipt_cohort"
+        );
         if sized_batch.len() > 1 {
             debug!(
                 event = "orchestrator.net_bps_ranked_batch",
@@ -1238,9 +1266,8 @@ impl Orchestrator {
             } => {
                 let reason = format!("TokenNotAllowed:{token_symbol_or_addr}");
                 let mut opp = sc.opportunity.clone();
-                opp.rejection_reason = Some(reason.clone());
-                opp.roi_pct = Some(0.0);
-                opp.risk_score = Some(0.0);
+                // WO-GAP2 (2026-09-07): R8 — roi_pct None, never a Some(0.0) placeholder.
+                apply_gate_rejection_fields(&mut opp, reason.clone());
                 // TASK 3: use REJECTED_CONFIG_TOTAL, not SIMULATION_FAILED_TOTAL.
                 REJECTED_CONFIG_TOTAL
                     .with_label_values(&[&chain_str, label_str, "token_not_allowed"])
@@ -1265,9 +1292,8 @@ impl Orchestrator {
             ConfigGateOutcome::StrategyDisabled { strategy_kind: sk } => {
                 let reason = format!("StrategyDisabled:{sk}");
                 let mut opp = sc.opportunity.clone();
-                opp.rejection_reason = Some(reason.clone());
-                opp.roi_pct = Some(0.0);
-                opp.risk_score = Some(0.0);
+                // WO-GAP2 (2026-09-07): R8 — roi_pct None, never a Some(0.0) placeholder.
+                apply_gate_rejection_fields(&mut opp, reason.clone());
                 // TASK 3: use REJECTED_CONFIG_TOTAL, not SIMULATION_FAILED_TOTAL.
                 REJECTED_CONFIG_TOTAL
                     .with_label_values(&[&chain_str, label_str, "strategy_disabled"])
@@ -1293,9 +1319,8 @@ impl Orchestrator {
                 let tag = reason.tag();
                 let reason_str = format!("{tag}:{reason:?}");
                 let mut opp = sc.opportunity.clone();
-                opp.rejection_reason = Some(reason_str.clone());
-                opp.roi_pct = Some(0.0);
-                opp.risk_score = Some(0.0);
+                // WO-GAP2 (2026-09-07): R8 — roi_pct None, never a Some(0.0) placeholder.
+                apply_gate_rejection_fields(&mut opp, reason_str.clone());
                 // TASK 3: use REJECTED_CONFIG_TOTAL, not SIMULATION_FAILED_TOTAL.
                 REJECTED_CONFIG_TOTAL
                     .with_label_values(&[&chain_str, label_str, tag])
@@ -1328,9 +1353,8 @@ impl Orchestrator {
                 if let Some(rej_reason) = rejection {
                     // Math gate rejected — this is a genuine evaluation failure.
                     let reason_str = format!("{rej_reason:?}");
-                    opp.rejection_reason = Some(reason_str.clone());
-                    opp.roi_pct = Some(0.0);
-                    opp.risk_score = Some(0.0);
+                    // WO-GAP2 (2026-09-07): R8 — roi_pct None, never a Some(0.0) placeholder.
+                    apply_gate_rejection_fields(&mut opp, reason_str.clone());
                     // Propagate net_expected_profit_usd when gross is available (R8).
                     opp.net_expected_profit_usd =
                         opp.expected_profit_usd.map(|g| g - outcome.gas_cost_usd);
@@ -1373,9 +1397,12 @@ impl Orchestrator {
                         if let Some(gate_outcome) = gate.evaluate(&opp, &gate_config) {
                             if gate_outcome.reject {
                                 let reason_str = format!("{:?}", gate_outcome.reason);
-                                opp.rejection_reason = Some(reason_str.clone());
-                                opp.roi_pct = Some(0.0);
-                                opp.risk_score = Some(0.0);
+                                // WO-GAP2 (2026-09-07): the spine DID compute
+                                // net_roi_pct above (the Some(outcome.net_roi_pct)
+                                // assignment), but the trajectory diverged
+                                // (E_state >= τ) — its marginal figure is NOT
+                                // reported; None keeps the row honest on the wire.
+                                apply_gate_rejection_fields(&mut opp, reason_str.clone());
                                 REJECTED_CONFIG_TOTAL
                                     .with_label_values(&[&chain_str, label_str, "macro_mev_gate"])
                                     .inc();
@@ -1418,7 +1445,7 @@ impl Orchestrator {
                     let emit_outcome = self
                         .ctx
                         .emitter
-                        .emit_accepted(&opp, label, route_ref)
+                        .emit_accepted_with_plan(&opp, label, route_ref, &sc.route_plan)
                         .await?;
                     match emit_outcome {
                         EmitOutcome::Published
@@ -1428,6 +1455,7 @@ impl Orchestrator {
                                 .with_label_values(&[&chain_str, label_str])
                                 .inc();
                         }
+                        EmitOutcome::Rejected => {}
                         EmitOutcome::Deduped => {
                             debug!(
                                 event = "v2.emitter.deduped",
@@ -1462,6 +1490,26 @@ impl Orchestrator {
 // ---------------------------------------------------------------------------
 
 // WO-16 resolve_hot_gate_inputs excised (see struct-field tombstone; §5.4).
+
+/// WO-GAP2 (2026-09-07): R8 fail-honest rejection fields for the spine-gate
+/// branches of `process_candidate` (TokenNotAllowed / StrategyDisabled /
+/// StrategyConfigGateBlocked / EvaluatedRejected / MacroMevGate). `roi_pct`
+/// MUST stay `None` — the evaluator never produced a converged Topological
+/// Yield measurement for a row a gate rejected (and for MacroMevGate the
+/// divergent trajectory's marginal figure is deliberately not reported).
+/// `Some(0.0)` here would ride the wire (PG `roi_pct` + `arbx:opps:detected`
+/// → FE) masquerading as "computed and exactly zero" — a RULE 00 placeholder
+/// the faithful FE would render "+0.00%" (GAP-2: backend mirror of G-6;
+/// verifier ronda 2: 0/10,004 stream rows carry 0.0 today, these branches are
+/// the latent source). `risk_score` keeps the pre-existing rejected-row
+/// `Some(0.0)` convention (scanner.rs "rejection volume" doctrine) — its
+/// adjudication is a separate anomaly, NOT this WO.
+fn apply_gate_rejection_fields(opp: &mut shared_rs::contracts::Opportunity, reason: String) {
+    opp.rejection_reason = Some(reason);
+    // WO-GAP2 (2026-09-07): None = not computed — NEVER a non-computed zero.
+    opp.roi_pct = None;
+    opp.risk_score = Some(0.0);
+}
 
 /// Returns a static string label for a `DetectionSource`.
 ///
@@ -1779,6 +1827,56 @@ mod tests {
         assert!(
             c.opportunity.expected_profit_usd.is_none(),
             "expected_profit_usd must be None when not computed"
+        );
+    }
+
+    // ── orchestrator::tests::r8_gate_rejection_roi_none ─────────────────────
+    //
+    // WO-GAP2 (2026-09-07): R8 — the spine-gate rejection branches of
+    // `process_candidate` (TokenNotAllowed / StrategyDisabled /
+    // StrategyConfigGateBlocked / EvaluatedRejected / MacroMevGate) all stamp
+    // rows via `apply_gate_rejection_fields`; that helper must NEVER emit a
+    // placeholder roi_pct. `None` = not computed; `Some(0.0)` would ride the
+    // wire (PG + arbx:opps:detected → FE) as "computed and exactly zero" —
+    // GAP-2, the backend mirror of G-6 (fabricated "+0.00%" on the ticker).
+    // The stale-Some precondition matters: the MacroMevGate branch calls the
+    // helper AFTER the spine already set Some(net_roi_pct), so the helper
+    // must overwrite a pre-existing computed value with None (divergent
+    // trajectory → figure deliberately not reported).
+
+    #[test]
+    fn r8_gate_rejection_roi_none() {
+        let mut opp = make_opportunity(StrategyLabel::DexArbV2V2);
+        // Precondition: a stale computed-looking value, as the MacroMevGate
+        // branch sees after `opp.roi_pct = Some(outcome.net_roi_pct)`.
+        opp.roi_pct = Some(1.23);
+
+        apply_gate_rejection_fields(&mut opp, "TokenNotAllowed:AGLD".to_string());
+
+        assert_eq!(
+            opp.roi_pct, None,
+            "R8: gate-rejected row must not carry a computed-looking roi_pct"
+        );
+        assert!(
+            opp.risk_score.is_some(),
+            "risk_score rejected-row convention preserved (out of GAP-2 scope)"
+        );
+        assert_eq!(
+            opp.rejection_reason.as_deref(),
+            Some("TokenNotAllowed:AGLD"),
+            "rejection reason must survive the helper verbatim"
+        );
+
+        // Idempotence across the whole rejection-reason family: every branch
+        // funnels through the same helper, so one input contract suffices.
+        apply_gate_rejection_fields(&mut opp, "MacroMevGate: DivergentTrajectory".to_string());
+        assert_eq!(
+            opp.roi_pct, None,
+            "R8: second stamp (gate-after-spine path) must still yield None"
+        );
+        assert_eq!(
+            opp.rejection_reason.as_deref(),
+            Some("MacroMevGate: DivergentTrajectory")
         );
     }
 

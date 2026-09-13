@@ -372,6 +372,7 @@ pub fn execute_round_trip_revm(
                 "executeArbitrage simulation succeeded"
             );
             SimulationOutcome {
+                evidence: None,
                 passed: true,
                 simulated_profit_token_in: profit_u256,
                 intermediate_amount_out: None,

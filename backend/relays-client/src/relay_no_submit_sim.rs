@@ -347,6 +347,9 @@ mod tests {
         SignedBundle {
             opportunity_id: uuid::Uuid::new_v4(),
             target_block: 20_000_000,
+            state_block: 19_999_999,
+            state_block_hash: ethers::types::H256::zero(),
+            gas_limit: 500_000,
             tx_raw_hex: raw_tx_hex(110),
             tx_hash: H256::zero(),
             from: Address::zero(),

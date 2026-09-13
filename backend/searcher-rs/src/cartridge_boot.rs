@@ -1642,7 +1642,9 @@ async fn process_cartridge_candidate(
                     let mut opp = sc.opportunity.clone();
                     opp.net_expected_profit_usd = Some(outcome.net_profit_usd);
                     opp.roi_pct = Some(outcome.net_roi_pct);
-                    emitter.emit_accepted(&opp, label, route_ref).await?;
+                    emitter
+                        .emit_accepted_with_plan(&opp, label, route_ref, &sc.route_plan)
+                        .await?;
                 }
             }
         }

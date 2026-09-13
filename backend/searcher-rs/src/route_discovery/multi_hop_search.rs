@@ -12,12 +12,14 @@
 //!      `Π (1-fee)·rate > 1` ⇒ theoretical arbitrage). This is the correct, testable
 //!      first increment; MMBF over L(G) is the later scale optimization (task 3.2b).
 //!
-//! FAIL-HONEST (R8): edges whose `log_weight` is `None` (V3 — concentrated liquidity
-//! sizing deferred) are SKIPPED and counted in `v3_skipped`, never assigned a fake
-//! weight. Hitting the route cap sets `capped = true` (never silently truncates).
+//! Missing weights and non-finite values are skipped and counted. V3 edges
+//! with a valid marginal price can participate; exact tick-aware sizing and
+//! simulation remain downstream requirements. Exploration has independent
+//! output/work budgets and an optional cooperative deadline.
 //!
-//! NO-ACTIVE: pure analysis over a graph snapshot — no Redis, no RPC, no execution,
-//! no capital. Fully unit-testable offline (RULE 01 safe).
+//! The kernel has no I/O, capital or execution. It is shared by the analysis
+//! radar AND the canonical scanner, so funding-asset rotations are preserved
+//! by default. Only the analysis caller enables rotation deduplication.
 
 use crate::route_discovery::graph_builder::TokenGraph;
 use ethers::types::Address;
@@ -83,200 +85,285 @@ pub struct ProfitableCycle {
     pub hop_count: usize,
 }
 
-/// Result of a bounded multi-hop negative-cycle search, with honest caps/skip counters.
-#[derive(Debug, Clone)]
+/// Result of a bounded multi-hop negative-cycle search. A cap is always
+/// observable; a negative marginal log sum is NOT a sized net-profit quote.
+#[derive(Debug, Clone, Default)]
 pub struct MultiHopResult {
     pub cycles: Vec<ProfitableCycle>,
-    /// True if the route cap was hit before the search exhausted the graph (R8 honesty).
     pub capped: bool,
-    /// Cycles dropped because the cap was reached.
+    /// Lower bound on eligible cycles omitted at the output cap.
     pub dropped_for_cap: usize,
-    /// Edges skipped because `log_weight` was `None` (V3 sizing pending — R8 honesty).
+    /// Missing weights encountered during traversal (legacy telemetry name).
     pub v3_skipped: usize,
-    /// PR-ROUTE-06: cycles dropped because |sum_log_weight| was below the
-    /// 1e-6 noise floor (floating-point / stale-reserve artifact, no economic basis).
     pub noise_dropped: usize,
+    pub invalid_weights: usize,
+    pub edge_visits: usize,
+    pub work_limited: bool,
+    pub time_limited: bool,
+    pub duplicate_cycles: usize,
 }
 
-/// Find profitable (negative summed `log_weight`) closed cycles of length
-/// `min_hops..=max_hops` starting and ending at the same token, via bounded DFS.
-/// Honest: skips `None`-weight edges (V3) and caps the result count.
-/// `min_hops`/`max_hops` are the XLS-CANON-01 `Min_Hops`/`Max_Hops` knobs
-/// (01_CONFIG workbook; canonical floor 2, ceiling 7).
+/// Independent work and time bounds: an output cap alone does not bound
+/// a dense graph with no profitable cycles. Time is a cooperative deadline,
+/// checked every 64 edge visits; it is not a real-time SLA guarantee.
+#[derive(Debug, Clone, Copy)]
+pub struct SearchLimits {
+    pub max_edge_visits: usize,
+    pub max_duration: Option<std::time::Duration>,
+    /// Six bits: bit (h-2) permits hop length h, h in 2..=7.
+    pub hop_mask: u8,
+    /// Analysis-only deduplication. Keep false for execution discovery:
+    /// rotations may need different borrowing assets and funding providers.
+    pub deduplicate_rotations: bool,
+}
+
+pub const DEFAULT_MAX_EDGE_VISITS: usize = 100_000;
+
+impl Default for SearchLimits {
+    fn default() -> Self {
+        Self {
+            max_edge_visits: DEFAULT_MAX_EDGE_VISITS,
+            max_duration: None,
+            hop_mask: 0b11_1111,
+            deduplicate_rotations: false,
+        }
+    }
+}
+
+/// Compatibility entry point with a deterministic work budget. Live callers
+/// may additionally request a deadline and an exact strategy mask.
 pub fn find_profitable_cycles(
     graph: &TokenGraph,
     min_hops: usize,
     max_hops: usize,
     max_cycles: usize,
 ) -> MultiHopResult {
-    let max_hops = max_hops.clamp(2, 7);
-    let min_hops = min_hops.clamp(2, max_hops);
-    let mut out: Vec<ProfitableCycle> = Vec::new();
-    let mut capped = false;
-    let mut dropped_for_cap = 0usize;
-    let mut v3_skipped = 0usize;
+    find_profitable_cycles_with_limits(
+        graph,
+        min_hops,
+        max_hops,
+        max_cycles,
+        SearchLimits::default(),
+    )
+}
 
-    // Try each token as a cycle start. The start token is the route's base asset.
-    let start_tokens: Vec<Address> = graph.adjacency.keys().copied().collect();
-
-    for start in start_tokens {
-        if capped {
+pub fn find_profitable_cycles_with_limits(
+    graph: &TokenGraph,
+    min_hops: usize,
+    max_hops: usize,
+    max_cycles: usize,
+    limits: SearchLimits,
+) -> MultiHopResult {
+    let min_hops = min_hops.max(2);
+    let max_hops = max_hops.min(7);
+    if min_hops > max_hops || limits.hop_mask & 0b11_1111 == 0 {
+        return MultiHopResult::default();
+    }
+    let interval_mask = (min_hops..=max_hops).fold(0u8, |mask, hops| mask | (1 << (hops - 2)));
+    let effective_mask = limits.hop_mask & interval_mask;
+    if effective_mask == 0 {
+        return MultiHopResult::default();
+    }
+    let max_hops = 2 + (7 - effective_mask.leading_zeros() as usize);
+    let limits = SearchLimits {
+        hop_mask: effective_mask,
+        ..limits
+    };
+    let mut walker = CycleSearch {
+        graph,
+        min_hops,
+        max_hops,
+        max_cycles,
+        limits,
+        began: std::time::Instant::now(),
+        result: MultiHopResult::default(),
+        seen: std::collections::HashSet::new(),
+    };
+    // HashMap order must not decide which starting assets receive the budget.
+    let mut starts: Vec<_> = graph.adjacency.keys().copied().collect();
+    starts.sort_unstable();
+    let mut path = Vec::with_capacity(max_hops);
+    let mut pools = Vec::with_capacity(max_hops);
+    for start in starts {
+        if walker.result.capped {
             break;
         }
-        // DFS state: current token, path of edge indices, pools used, summed weight.
-        let mut path: Vec<usize> = Vec::with_capacity(max_hops);
-        let mut pools: Vec<Address> = Vec::with_capacity(max_hops);
-        // PR-ROUTE-05: visited_tokens prevents degenerate bowtie cycles where the
-        // same intermediate token is bought/sold twice without economic basis
-        // (e.g. A→B→C→B→A). The start token is inserted once; intermediate tokens
-        // are inserted on entry and removed on backtrack (mirroring
-        // unique_route_finder.rs:197-199). MMBF theory is preserved: any non-simple
-        // negative cycle decomposes into simple negative cycles at least as
-        // profitable (fewer fees) — pruning to simple cycles loses zero realizable
-        // yield. The cartridge MEV-01-019 already states this constraint.
-        use std::collections::HashSet;
-        let mut visited_tokens: HashSet<Address> = HashSet::new();
-        visited_tokens.insert(start);
-        dfs_cycles(
-            graph,
+        let mut visited = std::collections::HashSet::new();
+        visited.insert(start);
+        let mut dense_visited = graph.dense.as_ref().map(|_| {
+            crate::route_discovery::dense_view::TokenBitSet::new(graph.dense_token_count() as u32)
+        });
+        if let (Some(bits), Some(id)) = (&mut dense_visited, graph.dense_token_id(&start)) {
+            bits.set(id as u32);
+        }
+        walker.dfs(
             start,
             start,
             &mut path,
             &mut pools,
-            &mut visited_tokens,
+            &mut visited,
+            &mut dense_visited,
             0.0,
-            min_hops,
-            max_hops,
-            max_cycles,
-            &mut out,
-            &mut capped,
-            &mut dropped_for_cap,
-            &mut v3_skipped,
         );
     }
-
-    // PR-ROUTE-06: drop cycles whose profitability is floating-point / stale-reserve
-    // noise. The fee floor alone is ~0.3% (30 bps) per leg; a cycle whose
-    // |sum_log_weight| is below 1e-6 is either a rounding artifact or a stale
-    // reserve snapshot that briefly looked negative. Such "profitable" cycles
-    // have no economic basis — they would never survive the net-profit gate
-    // (gas alone dwarfs a 1e-6 log spread). Honest prune (R8): not fabricated,
-    // just excluded from the observe-only counter that feeds telemetry.
-    const MIN_LOG_PROFIT: f64 = 1e-6;
-    let before = out.len();
-    out.retain(|c| c.sum_log_weight.abs() >= MIN_LOG_PROFIT);
-    let noise_dropped = before - out.len();
-
-    MultiHopResult {
-        cycles: out,
-        capped,
-        dropped_for_cap,
-        v3_skipped,
-        noise_dropped,
-    }
+    walker.result
 }
 
-#[allow(clippy::too_many_arguments)]
-fn dfs_cycles(
-    graph: &TokenGraph,
-    start: Address,
-    current: Address,
-    path: &mut Vec<usize>,
-    pools: &mut Vec<Address>,
-    visited_tokens: &mut std::collections::HashSet<Address>,
-    sum_w: f64,
+struct CycleSearch<'g> {
+    graph: &'g TokenGraph,
     min_hops: usize,
     max_hops: usize,
     max_cycles: usize,
-    out: &mut Vec<ProfitableCycle>,
-    capped: &mut bool,
-    dropped_for_cap: &mut usize,
-    v3_skipped: &mut usize,
-) {
-    if path.len() >= max_hops {
-        return;
-    }
-    // ARBX-0019: dense O(1) view — indices come straight from the CSR slice
-    // (no hashing, and no O(E) `position(ptr::eq)` index recovery). Falls
-    // back to the HashMap path when the view is absent; both views are
-    // pinned equivalent by the graph_builder tests.
-    let out_indices: Vec<usize> = match graph.dense_out_indices(&current) {
-        Some(ix) => ix.iter().map(|&i| i as usize).collect(),
-        None => graph
-            .adjacency
-            .get(&current)
-            .map(|v| v.to_vec())
-            .unwrap_or_default(),
-    };
-    for idx in out_indices {
-        let e = &graph.edges[idx];
+    limits: SearchLimits,
+    began: std::time::Instant,
+    result: MultiHopResult,
+    seen: std::collections::HashSet<Vec<usize>>,
+}
 
-        // Skip immediate same-pool reuse.
-        if pools.last() == Some(&e.pool) {
-            continue;
+impl CycleSearch<'_> {
+    fn admit_work(&mut self) -> bool {
+        if self.result.edge_visits >= self.limits.max_edge_visits {
+            self.result.capped = true;
+            self.result.work_limited = true;
+            return false;
         }
-        // PR-ROUTE-05: anti-degeneracy — a non-start token already in the path
-        // means the cycle revisits an intermediate token (bowtie shape like
-        // A→B→C→B→A). Block it: the same token bought/sold twice mid-cycle has
-        // no economic basis beyond wash-fee-burning. The start token is the
-        // only allowed revisit (it closes the cycle, handled below).
-        if e.token_out != start && visited_tokens.contains(&e.token_out) {
-            continue;
+        if self.result.edge_visits % 64 == 0
+            && self
+                .limits
+                .max_duration
+                .is_some_and(|limit| self.began.elapsed() >= limit)
+        {
+            self.result.capped = true;
+            self.result.time_limited = true;
+            return false;
         }
-        // R8: V3 (or any) edge without a computable weight is skipped, never faked.
-        let w = match e.log_weight {
-            Some(w) => w,
-            None => {
-                *v3_skipped += 1;
+        self.result.edge_visits += 1;
+        true
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn dfs(
+        &mut self,
+        start: Address,
+        current: Address,
+        path: &mut Vec<usize>,
+        pools: &mut Vec<Address>,
+        visited: &mut std::collections::HashSet<Address>,
+        dense_visited: &mut Option<crate::route_discovery::dense_view::TokenBitSet>,
+        sum: f64,
+    ) {
+        if path.len() >= self.max_hops {
+            return;
+        }
+        if let (Some(row), Some(bits), Some(start_id)) = (
+            self.graph.dense_neighbors(&current),
+            dense_visited.as_ref(),
+            self.graph.dense_token_id(&start),
+        ) {
+            if !row.has_unvisited_or(bits, start_id as u32) {
+                return;
+            }
+        }
+        // The graph is borrowed independently of mutable traversal state.
+        let graph = self.graph;
+        for index in graph.out_edge_indices(&current) {
+            if !self.admit_work() {
+                return;
+            }
+            let edge = &graph.edges[index];
+            if pools.contains(&edge.pool) {
                 continue;
             }
-        };
-
-        let next_sum = sum_w + w;
-        path.push(idx);
-        pools.push(e.pool);
-
-        if e.token_out == start && path.len() >= min_hops {
-            // Closed cycle. Profitable iff Σ log_weight < 0.
-            if next_sum < 0.0 {
-                if out.len() >= max_cycles {
-                    *capped = true;
-                    *dropped_for_cap += 1;
-                } else {
-                    out.push(ProfitableCycle {
-                        edges: path.clone(),
-                        sum_log_weight: next_sum,
-                        hop_count: path.len(),
-                    });
-                }
+            let destination_id = graph.dense_token_id(&edge.token_out);
+            let already_visited = match (dense_visited.as_ref(), destination_id) {
+                (Some(bits), Some(id)) => bits.contains(id as u32),
+                _ => visited.contains(&edge.token_out),
+            };
+            if edge.token_out != start && already_visited {
+                continue;
             }
-            // Do not extend past a closed cycle on the start token.
-        } else if e.token_out != start {
-            visited_tokens.insert(e.token_out);
-            dfs_cycles(
-                graph,
-                start,
-                e.token_out,
-                path,
-                pools,
-                visited_tokens,
-                next_sum,
-                min_hops,
-                max_hops,
-                max_cycles,
-                out,
-                capped,
-                dropped_for_cap,
-                v3_skipped,
-            );
-            visited_tokens.remove(&e.token_out);
-        }
-
-        path.pop();
-        pools.pop();
-
-        if *capped {
-            return;
+            let weight = match edge.log_weight {
+                Some(weight) if weight.is_finite() => weight,
+                Some(_) => {
+                    self.result.invalid_weights += 1;
+                    continue;
+                }
+                None => {
+                    self.result.v3_skipped += 1;
+                    continue;
+                }
+            };
+            let next_sum = sum + weight;
+            if !next_sum.is_finite() {
+                self.result.invalid_weights += 1;
+                continue;
+            }
+            path.push(index);
+            pools.push(edge.pool);
+            if edge.token_out == start {
+                let hops = path.len();
+                if hops >= self.min_hops
+                    && self.limits.hop_mask & (1u8 << (hops - 2)) != 0
+                    && next_sum < 0.0
+                {
+                    if next_sum > -1e-6 {
+                        // Noise never consumes the output capacity.
+                        self.result.noise_dropped += 1;
+                    } else {
+                        // Same-direction rotations share one key; reversed
+                        // traversals and parallel pools remain distinct.
+                        let rotation = path
+                            .iter()
+                            .enumerate()
+                            .min_by_key(|(_, e)| *e)
+                            .map(|(i, _)| i)
+                            .unwrap_or(0);
+                        let canonical: Vec<_> = path[rotation..]
+                            .iter()
+                            .chain(&path[..rotation])
+                            .copied()
+                            .collect();
+                        if self.limits.deduplicate_rotations && self.seen.contains(&canonical) {
+                            self.result.duplicate_cycles += 1;
+                        } else if self.result.cycles.len() >= self.max_cycles {
+                            self.result.capped = true;
+                            self.result.dropped_for_cap += 1;
+                        } else {
+                            if self.limits.deduplicate_rotations {
+                                self.seen.insert(canonical);
+                            }
+                            self.result.cycles.push(ProfitableCycle {
+                                edges: path.clone(),
+                                sum_log_weight: next_sum,
+                                hop_count: hops,
+                            });
+                        }
+                    }
+                }
+            } else {
+                visited.insert(edge.token_out);
+                if let (Some(bits), Some(id)) = (dense_visited.as_mut(), destination_id) {
+                    bits.set(id as u32);
+                }
+                self.dfs(
+                    start,
+                    edge.token_out,
+                    path,
+                    pools,
+                    visited,
+                    dense_visited,
+                    next_sum,
+                );
+                if let (Some(bits), Some(id)) = (dense_visited.as_mut(), destination_id) {
+                    bits.clear(id as u32);
+                }
+                visited.remove(&edge.token_out);
+            }
+            path.pop();
+            pools.pop();
+            if self.result.capped {
+                return;
+            }
         }
     }
 }
@@ -290,6 +377,139 @@ mod tests {
     use crate::route_intent::ProtocolType;
     use ethers::types::Address;
     use std::collections::HashMap;
+
+    #[test]
+    fn work_budget_bounds_nonprofitable_dense_graph() {
+        let mut edges = Vec::new();
+        for a in 1..=22 {
+            for b in 1..=22 {
+                if a != b {
+                    edges.push(edge(a, b, a * 100 + b, Some(0.1)));
+                }
+            }
+        }
+        let graph = graph_from(edges);
+        let result = find_profitable_cycles_with_limits(
+            &graph,
+            2,
+            7,
+            100,
+            SearchLimits {
+                max_edge_visits: 37,
+                ..Default::default()
+            },
+        );
+        assert_eq!(result.edge_visits, 37);
+        assert!(result.capped && result.work_limited);
+        assert!(result.cycles.is_empty());
+    }
+
+    #[test]
+    fn mask_excludes_interior_hop_and_rotations_deduplicate() {
+        let graph = graph_from(vec![
+            edge(1, 2, 10, Some(-0.1)),
+            edge(2, 1, 11, Some(-0.1)),
+            edge(2, 3, 12, Some(-0.1)),
+            edge(3, 1, 13, Some(-0.1)),
+            edge(3, 4, 14, Some(-0.1)),
+            edge(4, 1, 15, Some(-0.1)),
+        ]);
+        let result = find_profitable_cycles_with_limits(
+            &graph,
+            2,
+            4,
+            100,
+            SearchLimits {
+                hop_mask: 0b000101,
+                deduplicate_rotations: true,
+                ..Default::default()
+            },
+        );
+        assert_eq!(result.cycles.len(), 2);
+        assert!(result
+            .cycles
+            .iter()
+            .all(|c| c.hop_count == 2 || c.hop_count == 4));
+        assert!(result.duplicate_cycles > 0);
+    }
+
+    #[test]
+    fn nonfinite_weights_never_produce_profit() {
+        for bad in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
+            let graph = graph_from(vec![edge(1, 2, 10, Some(bad)), edge(2, 1, 11, Some(-0.1))]);
+            let result = find_profitable_cycles(&graph, 2, 7, 100);
+            assert!(result.cycles.is_empty());
+            assert!(result.invalid_weights > 0);
+        }
+    }
+
+    #[test]
+    fn noise_does_not_fill_cycle_capacity() {
+        let graph = graph_from(vec![
+            edge(1, 2, 10, Some(-1e-9)),
+            edge(2, 1, 11, Some(-1e-9)),
+            edge(3, 4, 12, Some(-0.1)),
+            edge(4, 3, 13, Some(-0.1)),
+        ]);
+        let result = find_profitable_cycles_with_limits(
+            &graph,
+            2,
+            7,
+            1,
+            SearchLimits {
+                deduplicate_rotations: true,
+                ..Default::default()
+            },
+        );
+        assert_eq!(result.cycles.len(), 1);
+        assert!(result.cycles[0].sum_log_weight < -0.1);
+        assert!(result.noise_dropped > 0);
+        assert!(!result.capped);
+    }
+
+    #[test]
+    fn invalid_hop_interval_is_empty_and_zero_deadline_is_observable() {
+        let graph = graph_from(vec![edge(1, 2, 10, Some(-0.1)), edge(2, 1, 11, Some(-0.1))]);
+        assert!(find_profitable_cycles(&graph, 7, 2, 100).cycles.is_empty());
+        let absent = find_profitable_cycles_with_limits(
+            &graph,
+            2,
+            3,
+            100,
+            SearchLimits {
+                hop_mask: 0b100000,
+                max_edge_visits: 0,
+                ..Default::default()
+            },
+        );
+        assert_eq!(absent.edge_visits, 0);
+        assert!(!absent.capped);
+        let result = find_profitable_cycles_with_limits(
+            &graph,
+            2,
+            7,
+            100,
+            SearchLimits {
+                max_duration: Some(std::time::Duration::ZERO),
+                ..Default::default()
+            },
+        );
+        assert!(result.time_limited && result.capped);
+        assert_eq!(result.edge_visits, 0);
+    }
+
+    #[test]
+    fn capped_search_is_repeatable_for_identical_snapshot() {
+        let edges = vec![
+            edge(3, 4, 12, Some(-0.1)),
+            edge(4, 3, 13, Some(-0.1)),
+            edge(1, 2, 10, Some(-0.1)),
+            edge(2, 1, 11, Some(-0.1)),
+        ];
+        let a = find_profitable_cycles(&graph_from(edges.clone()), 2, 7, 1);
+        let b = find_profitable_cycles(&graph_from(edges), 2, 7, 1);
+        assert_eq!(a.cycles, b.cycles);
+    }
 
     fn addr(n: u64) -> Address {
         Address::from_low_u64_be(n)

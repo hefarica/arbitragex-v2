@@ -34,14 +34,15 @@ use std::time::Duration;
 
 use dashmap::DashMap;
 use ethers::providers::{Http, Middleware, Provider};
-use ethers::types::{BlockId, BlockNumber, H160 as EH160, H256, U64 as EU64};
+use ethers::types::{Block, BlockId, BlockNumber, H160 as EH160, H256, U64 as EU64};
 use revm::bytecode::Bytecode;
 use revm::primitives::{Address, B256, KECCAK_EMPTY, U256};
 use revm::state::AccountInfo;
 use revm::Database;
 use revm::DatabaseRef;
+use serde_json::{json, Value};
 use thiserror::Error;
-use tokio::runtime::{Handle, Runtime, RuntimeFlavor};
+use tokio::runtime::{Handle, RuntimeFlavor};
 use tracing::{debug, warn};
 use url::Url;
 
@@ -90,40 +91,49 @@ type StorageKey = (Address, U256);
 mod bridge {
     use super::*;
 
-    /// Drive `fut` synchronously, wrapping it with a `timeout_secs` deadline.
-    ///
-    /// ## Runtime flavor guard (CRITICAL #1 fix)
-    ///
-    /// `tokio::task::block_in_place` requires the `MultiThread` scheduler
-    /// and **panics** when called inside a `CurrentThread` runtime (the default
-    /// for `#[tokio::test]`).
-    ///
-    /// Decision tree — ONE place, no duplication:
-    /// - `MultiThread` handle found  → `block_in_place` + `handle.block_on`
-    /// - `CurrentThread` or no handle → `owned_rt.block_on`
-    ///
-    /// The outer `tokio::time::timeout` is defense-in-depth: even if the HTTP
-    /// client does not honour its deadline, this stops the worker parking.
     pub(super) fn block_on_with_timeout<F, T>(
-        owned_rt: &Arc<Runtime>,
         timeout_secs: u64,
         fut: F,
         context: &str,
     ) -> Result<T, LazyDbError>
     where
-        F: Future<Output = T>,
+        F: Future<Output = T> + Send,
+        T: Send,
     {
-        let timed = tokio::time::timeout(Duration::from_secs(timeout_secs), fut);
-        let res = match Handle::try_current() {
+        // Construct the timer INSIDE its runtime. A current-thread runtime
+        // cannot nest block_on: execute on a scoped thread with its own runtime.
+        let drive = async { tokio::time::timeout(Duration::from_secs(timeout_secs), fut).await };
+        let result = match Handle::try_current() {
             Ok(handle) if handle.runtime_flavor() == RuntimeFlavor::MultiThread => {
-                // Safe: multi-thread scheduler keeps other workers alive.
-                tokio::task::block_in_place(|| handle.block_on(timed))
+                tokio::task::block_in_place(|| handle.block_on(drive))
             }
-            // CurrentThread flavor or no ambient runtime: use owned fallback.
-            _ => owned_rt.block_on(timed),
+            _ => std::thread::scope(|scope| {
+                scope
+                    .spawn(move || {
+                        let rt = tokio::runtime::Builder::new_current_thread()
+                            .enable_all()
+                            .build()
+                            .map_err(|_| LazyDbError::Provider("runtime_create_failed".into()))?;
+                        Ok::<_, LazyDbError>(rt.block_on(drive))
+                    })
+                    .join()
+                    .map_err(|_| LazyDbError::Provider("rpc_worker_panicked".into()))?
+            })?,
         };
-        res.map_err(|_| LazyDbError::Timeout(format!("rpc timeout ({timeout_secs}s): {context}")))
+        result
+            .map_err(|_| LazyDbError::Timeout(format!("rpc timeout ({timeout_secs}s): {context}")))
     }
+}
+
+/// Full execution header captured alongside chain identity. The constructor
+/// validates the mandatory fields; all reads use hash + requireCanonical.
+#[derive(Debug, Clone)]
+pub struct ChainSnapshot {
+    pub chain_id: u64,
+    pub number: u64,
+    pub hash: H256,
+    pub timestamp: u64,
+    pub header: Block<H256>,
 }
 
 // ---------------------------------------------------------------------------
@@ -150,7 +160,7 @@ pub struct LazyDb {
     block_hash_cache: DashMap<u64, B256>,
     /// Owned Tokio runtime — always present.  Serves as the fallback for both
     /// `CurrentThread` runtimes and "no runtime" contexts (unit tests).
-    fallback_rt: Arc<Runtime>,
+    snapshot: Option<ChainSnapshot>,
     /// Per-call RPC timeout in seconds.
     timeout_secs: u64,
 }
@@ -187,24 +197,19 @@ impl LazyDb {
             .build()
             .map_err(|e| LazyDbError::Provider(format!("reqwest client build: {e}")))?;
 
-        let url = Url::parse(rpc_url)
-            .map_err(|e| LazyDbError::Decode(format!("invalid RPC URL '{rpc_url}': {e}")))?;
+        let url = Url::parse(rpc_url).map_err(|_| LazyDbError::Decode("invalid RPC URL".into()))?;
+        if !matches!(url.scheme(), "http" | "https") {
+            return Err(LazyDbError::Decode("RPC must use HTTP(S)".into()));
+        }
 
         let http = Http::new_with_client(url, http_client);
         let client = Arc::new(Provider::new(http));
-
-        // Always create an owned fallback runtime.
-        // It handles both CurrentThread contexts and no-runtime contexts.
-        let fallback_rt = Arc::new(
-            Runtime::new().map_err(|e| LazyDbError::Provider(format!("tokio rt create: {e}")))?,
-        );
 
         let (pinned_block_number, pinned_block) = match block_number {
             Some(n) => (n, BlockId::Number(BlockNumber::Number(EU64::from(n)))),
             None => {
                 // Resolve latest with runtime-flavor guard + timeout (CRITICAL #1).
                 let bn_result = bridge::block_on_with_timeout(
-                    &fallback_rt,
                     timeout_secs,
                     client.get_block_number(),
                     "get_block_number",
@@ -223,9 +228,110 @@ impl LazyDb {
             account_cache: DashMap::new(),
             storage_cache: DashMap::new(),
             block_hash_cache: DashMap::new(),
-            fallback_rt,
+            snapshot: None,
             timeout_secs,
         })
+    }
+
+    /// Canonical production snapshot. Number-only constructors are retained for
+    /// historical analysis/tests and cannot issue bound broadcast evidence.
+    pub fn new_verified(rpc_url: &str, block_number: Option<u64>) -> Result<Self, LazyDbError> {
+        let mut db = Self::new(rpc_url, block_number)?;
+        let header = db
+            .rpc("snapshot_header", db.client.get_block(db.pinned_block))?
+            .ok_or_else(|| LazyDbError::NotFound("snapshot_header".into()))?;
+        let chain = db.rpc("snapshot_chain_id", db.client.get_chainid())?;
+        if chain.is_zero() || chain > ethers::types::U256::from(u64::MAX) {
+            return Err(LazyDbError::Decode("invalid_chain_id".into()));
+        }
+        let number = header
+            .number
+            .ok_or_else(|| LazyDbError::Decode("missing_block_number".into()))?
+            .as_u64();
+        let hash = header
+            .hash
+            .filter(|h| *h != H256::zero())
+            .ok_or_else(|| LazyDbError::Decode("missing_block_hash".into()))?;
+        if number != db.pinned_block_number
+            || header.timestamp.is_zero()
+            || header.timestamp > ethers::types::U256::from(u64::MAX)
+            || header.gas_limit.is_zero()
+            || header.gas_limit > ethers::types::U256::from(u64::MAX)
+            || header.author.is_none()
+        {
+            return Err(LazyDbError::Decode("invalid_block_header".into()));
+        }
+        db.snapshot = Some(ChainSnapshot {
+            chain_id: chain.as_u64(),
+            number,
+            hash,
+            timestamp: header.timestamp.as_u64(),
+            header,
+        });
+        db.pinned_block = BlockId::Hash(hash);
+        db.assert_canonical()?;
+        Ok(db)
+    }
+
+    pub fn snapshot(&self) -> Option<&ChainSnapshot> {
+        self.snapshot.as_ref()
+    }
+
+    pub fn state_selector(&self) -> Value {
+        match &self.snapshot {
+            Some(s) => json!({"blockHash":s.hash,"requireCanonical":true}),
+            None => json!(format!("0x{:x}", self.pinned_block_number)),
+        }
+    }
+
+    pub fn assert_canonical(&self) -> Result<(), LazyDbError> {
+        let s = self
+            .snapshot
+            .as_ref()
+            .ok_or_else(|| LazyDbError::Decode("verified_snapshot_required".into()))?;
+        let header = self
+            .rpc("check_canonical", self.client.get_block(s.number))?
+            .ok_or_else(|| LazyDbError::NotFound("canonical_header".into()))?;
+        if header.hash != Some(s.hash) {
+            return Err(LazyDbError::Provider("snapshot_reorged".into()));
+        }
+        Ok(())
+    }
+
+    /// Execute a read-only call against the same canonical hash.
+    pub fn call_at_snapshot(
+        &self,
+        to: EH160,
+        data: Vec<u8>,
+    ) -> Result<ethers::types::Bytes, LazyDbError> {
+        if self.snapshot.is_none() {
+            return Err(LazyDbError::Decode("verified_snapshot_required".into()));
+        }
+        self.rpc(
+            "eth_call",
+            self.client.request(
+                "eth_call",
+                json!([
+                    {"to":to,"data":format!("0x{}", hex::encode(data))}, self.state_selector()
+                ]),
+            ),
+        )
+    }
+
+    pub fn gas_price(&self) -> Result<ethers::types::U256, LazyDbError> {
+        self.rpc("eth_gasPrice", self.client.get_gas_price())
+    }
+
+    pub fn provider(&self) -> &Provider<Http> {
+        &self.client
+    }
+
+    pub fn run_rpc_future<F, T>(&self, fut: F) -> Result<T, LazyDbError>
+    where
+        F: Future<Output = T> + Send,
+        T: Send,
+    {
+        bridge::block_on_with_timeout(self.timeout_secs, fut, "bound_rpc")
     }
 
     /// Override the RPC timeout after construction (builder pattern).
@@ -249,10 +355,11 @@ impl LazyDb {
     /// Execute a single provider future with the timeout + flavor guard.
     fn rpc<F, T>(&self, context: &str, fut: F) -> Result<T, LazyDbError>
     where
-        F: Future<Output = Result<T, ethers::providers::ProviderError>>,
+        F: Future<Output = Result<T, ethers::providers::ProviderError>> + Send,
+        T: Send,
     {
-        bridge::block_on_with_timeout(&self.fallback_rt, self.timeout_secs, fut, context)?
-            .map_err(|e| LazyDbError::Provider(format!("{context}: {e}")))
+        bridge::block_on_with_timeout(self.timeout_secs, fut, context)?
+            .map_err(|_| LazyDbError::Provider(format!("{context}: rpc_failed")))
     }
 
     // -----------------------------------------------------------------------
@@ -318,18 +425,22 @@ impl LazyDb {
         );
 
         let eth_addr = Self::addr_to_ethers(address);
-        let block = Some(self.pinned_block);
+        let block = self.state_selector();
         let client = self.client.clone();
 
         // Three parallel fetches: balance, nonce, code.
         // Uses bridge::block_on_with_timeout for runtime-flavor guard + timeout.
         let (balance_res, nonce_res, code_res) = bridge::block_on_with_timeout(
-            &self.fallback_rt,
             self.timeout_secs,
             async move {
-                let b_fut = client.get_balance(eth_addr, block);
-                let n_fut = client.get_transaction_count(eth_addr, block);
-                let c_fut = client.get_code(eth_addr, block);
+                let b_fut = client
+                    .request::<_, ethers::types::U256>("eth_getBalance", json!([eth_addr, block]));
+                let n_fut = client.request::<_, ethers::types::U256>(
+                    "eth_getTransactionCount",
+                    json!([eth_addr, block]),
+                );
+                let c_fut = client
+                    .request::<_, ethers::types::Bytes>("eth_getCode", json!([eth_addr, block]));
                 tokio::join!(b_fut, n_fut, c_fut)
             },
             &format!("basic({address})"),
@@ -371,6 +482,9 @@ impl LazyDb {
             hash = %code_hash,
             "code_by_hash called unexpectedly; returning empty bytecode"
         );
+        if self.snapshot.is_some() {
+            return Err(LazyDbError::NotFound(format!("bytecode:{code_hash}")));
+        }
         Ok(Bytecode::new())
     }
 
@@ -402,8 +516,10 @@ impl LazyDb {
 
         let raw = self.rpc(
             &format!("get_storage_at({address}, {index})"),
-            self.client
-                .get_storage_at(eth_addr, slot_h256, Some(self.pinned_block)),
+            self.client.request(
+                "eth_getStorageAt",
+                json!([eth_addr, slot_h256, self.state_selector()]),
+            ),
         )?;
 
         let value = Self::h256_to_u256(raw);
@@ -429,6 +545,29 @@ impl LazyDb {
             number = n,
             "fetching block hash from RPC"
         );
+
+        if let Some(snapshot) = &self.snapshot {
+            if n >= snapshot.number || snapshot.number - n > 256 {
+                return Ok(B256::ZERO);
+            }
+            let mut number = snapshot.number - 1;
+            let mut hash = snapshot.header.parent_hash;
+            loop {
+                self.block_hash_cache
+                    .insert(number, Self::h256_to_b256(hash));
+                if number == n {
+                    return Ok(Self::h256_to_b256(hash));
+                }
+                let parent = self
+                    .rpc("ancestor_by_hash", self.client.get_block(hash))?
+                    .ok_or_else(|| LazyDbError::NotFound("ancestor_header".into()))?;
+                if parent.hash != Some(hash) || parent.number.map(|v| v.as_u64()) != Some(number) {
+                    return Err(LazyDbError::Decode("ancestor_header_mismatch".into()));
+                }
+                hash = parent.parent_hash;
+                number -= 1;
+            }
+        }
 
         let block_id = BlockId::Number(BlockNumber::Number(EU64::from(n)));
         let maybe_block = self.rpc(&format!("get_block({n})"), self.client.get_block(block_id))?;
