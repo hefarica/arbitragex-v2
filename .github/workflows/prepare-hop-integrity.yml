@@ -39,12 +39,16 @@ jobs:
           import base64,gzip,hashlib,json,os,pathlib,subprocess,urllib.request
           assert subprocess.check_output(['git','rev-parse','HEAD'],text=True).strip()==os.environ['BASE_SHA']
           output=pathlib.Path('hop-integrity-evidence'); output.mkdir()
-          url='https://api.github.com/repos/hefarica/arbitragex-v2/git/blobs/f22705cd402a64aaedd4f10079818ba08626fd13'
-          request=urllib.request.Request(url,headers={'Authorization':'Bearer '+os.environ['GH_TOKEN'],'Accept':'application/vnd.github+json'})
-          with urllib.request.urlopen(request,timeout=30) as response: blob=json.load(response)
-          assert blob['encoding']=='base64'
-          patch=gzip.decompress(base64.b64decode(blob['content']))
+          def fetch_blob(sha):
+            url='https://api.github.com/repos/hefarica/arbitragex-v2/git/blobs/'+sha
+            request=urllib.request.Request(url,headers={'Authorization':'Bearer '+os.environ['GH_TOKEN'],'Accept':'application/vnd.github+json'})
+            with urllib.request.urlopen(request,timeout=30) as response: blob=json.load(response)
+            assert blob['encoding']=='base64'
+            return base64.b64decode(blob['content'])
+          patch=gzip.decompress(fetch_blob('f22705cd402a64aaedd4f10079818ba08626fd13'))
           assert hashlib.sha256(patch).hexdigest()=='c8a05f7527f1eb69a8b16d91ed0f495e34a966869ff54cd347ef87e4f6754f9a'
+          overlay=fetch_blob('79a324f6df1e510cf31f634774689be6ccdc48d8')
+          assert hashlib.sha256(overlay).hexdigest()=='f3aa2d95bc79828cc2f68932e5e5334e6afa84cb019b7fcbb0a5a45f43eb73fb'
           allowed={
           'backend/api-server/src/routes/opportunities-live.ts',
           'backend/api-server/src/routes/opportunities-live.test.ts',
@@ -55,13 +59,14 @@ jobs:
           'frontend/lib/store/types.ts',
           'frontend/lib/store/__tests__/deriveLegs.test.ts',
           'frontend/lib/store/__tests__/multihop-integrity.test.ts'}
-          p=output/'change.patch';p.write_bytes(patch)
-          subprocess.run(['git','apply','--check','--index',str(p)],check=True)
-          subprocess.run(['git','apply','--index',str(p)],check=True)
+          for name,data in [('change.patch',patch),('test-age-overlay.patch',overlay)]:
+            p=output/name;p.write_bytes(data)
+            subprocess.run(['git','apply','--check','--index',str(p)],check=True)
+            subprocess.run(['git','apply','--index',str(p)],check=True)
           paths=set(subprocess.check_output(['git','diff','--cached','--name-only'],text=True).splitlines())
           assert paths==allowed,paths
           subprocess.run(['git','diff','--cached','--check'],check=True)
-          (output/'manifest.json').write_text(json.dumps({'base_sha':os.environ['BASE_SHA'],'patch_sha256':hashlib.sha256(patch).hexdigest(),'files':[{ 'path':name,'sha256':hashlib.sha256(pathlib.Path(name).read_bytes()).hexdigest()} for name in sorted(paths)]},indent=2))
+          (output/'manifest.json').write_text(json.dumps({'base_sha':os.environ['BASE_SHA'],'patch_sha256':hashlib.sha256(patch).hexdigest(),'test_overlay_sha256':hashlib.sha256(overlay).hexdigest(),'files':[{ 'path':name,'sha256':hashlib.sha256(pathlib.Path(name).read_bytes()).hexdigest()} for name in sorted(paths)]},indent=2))
           print('Verified patch, unchanged base, and all nine allowed code/test paths. No deployment.')
           PY
       - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444
