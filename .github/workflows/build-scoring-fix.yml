@@ -44,8 +44,6 @@ jobs:
           import hashlib, pathlib, subprocess
           def git(*args): return subprocess.check_output(['git',*args],text=True).strip()
           assert git('rev-parse','HEAD') == '2bf32778eaf4a7ccf92e23b224ccb5123a85eb77'
-          patch = pathlib.Path('../transport/.github/scoring-bounded.patch')
-          assert hashlib.sha256(patch.read_bytes()).hexdigest() == 'a83ae0366f3f5d37209d6d42f05bc66059fb4b692f1014a701306524184c9e5f'
           bases = {
             'backend/api-server/src/readiness/scoring-summary.test.ts': None,
             'backend/api-server/src/readiness/scoring-summary.ts': None,
@@ -59,8 +57,14 @@ jobs:
           for path, sha in bases.items():
             if sha is None: assert not pathlib.Path(path).exists(), path
             else: assert git('hash-object',path) == sha, path
-          subprocess.run(['git','apply','--check','--index','--whitespace=error-all',str(patch)],check=True)
-          subprocess.run(['git','apply','--index','--whitespace=error-all',str(patch)],check=True)
+          for name, digest in [
+            ('scoring-bounded.patch','a83ae0366f3f5d37209d6d42f05bc66059fb4b692f1014a701306524184c9e5f'),
+            ('scoring-followup.patch','ad00abb9701578672359f8347790cde2d01de4e230e265a75eac75eb23d6896b'),
+          ]:
+            patch = pathlib.Path('../transport/.github') / name
+            assert hashlib.sha256(patch.read_bytes()).hexdigest() == digest
+            subprocess.run(['git','apply','--check','--index','--whitespace=error-all',str(patch)],check=True)
+            subprocess.run(['git','apply','--index','--whitespace=error-all',str(patch)],check=True)
           assert set(git('diff','--cached','--name-only').splitlines()) == set(bases)
           subprocess.run(['git','diff','--cached','--check'],check=True)
           print('Exact base and 8-file patch verified; main and VPS unchanged')

@@ -1,0 +1,14 @@
+diff --git a/backend/api-server/test/scoring-summary.test.ts b/backend/api-server/test/scoring-summary.test.ts
+--- a/backend/api-server/test/scoring-summary.test.ts
++++ b/backend/api-server/test/scoring-summary.test.ts
+@@ -124,7 +124,9 @@
+     await request(app()).get(endpoint).expect(200);
+   });
+   it("releases a late acquired connection after a pool-wait timeout", async () => {
+-    const one = new Pool({ ...pool.options, max: 1 });
++    if (!container) throw new Error("test container unavailable");
++    const one = new Pool({ host: container.getHost(), port: container.getMappedPort(5432),
++      user: "postgres", password: "test", database: "scoring_test", max: 1 });
+     const held = await one.connect();
+     try {
+       await expect(withScoringRead(one, db => db.query("SELECT 1"))).rejects.toThrow("scoring_pool_timeout");
