@@ -1,0 +1,86 @@
+name: VPS deployment progress (read only)
+on:
+  push:
+    branches: [ops/deploy-progress-a30343c1]
+permissions:
+  contents: read
+jobs:
+  observe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 4
+    steps:
+      - name: Observe build processes, capacity, lock and image metadata without changing the VPS
+        env:
+          VPS_KEY: ${{ secrets.VPS_SSH_KEY }}
+          VPS_HOST: ${{ secrets.VPS_SSH_HOST }}
+          VPS_USER: ${{ secrets.VPS_SSH_USER }}
+          VPS_PORT: ${{ secrets.VPS_PORT || '22' }}
+          VPS_KNOWN_HOSTS: ${{ secrets.VPS_SSH_KNOWN_HOSTS }}
+        run: |
+          set -euo pipefail
+          umask 077
+          KEY="$RUNNER_TEMP/progress_key"
+          HOSTS="$RUNNER_TEMP/progress_hosts"
+          ERR="$RUNNER_TEMP/progress_errors"
+          trap 'rm -f "$KEY" "$HOSTS" "$ERR"' EXIT
+          test -n "$VPS_KEY" && test -n "$VPS_HOST" && test -n "$VPS_USER"
+          [[ "$VPS_HOST" =~ ^[A-Za-z0-9][A-Za-z0-9.-]*$ ]]
+          [[ "$VPS_USER" =~ ^[A-Za-z_][A-Za-z0-9_.-]*$ ]]
+          [[ "$VPS_PORT" =~ ^[0-9]+$ ]] && (( VPS_PORT > 0 && VPS_PORT < 65536 ))
+          printf '%s\n' "$VPS_KEY" > "$KEY"
+          if [ -n "$VPS_KNOWN_HOSTS" ]; then
+            printf '%s\n' "$VPS_KNOWN_HOSTS" > "$HOSTS"
+          else
+            ssh-keyscan -T 10 -p "$VPS_PORT" -H "$VPS_HOST" > "$HOSTS" 2>"$ERR"
+          fi
+          test -s "$HOSTS"
+          mkdir -p progress-evidence
+          ssh -i "$KEY" -p "$VPS_PORT" -T -o IdentitiesOnly=yes -o BatchMode=yes \
+            -o StrictHostKeyChecking=yes -o UserKnownHostsFile="$HOSTS" -o ConnectTimeout=15 \
+            -o ServerAliveInterval=15 -o ServerAliveCountMax=3 \
+            "$VPS_USER@$VPS_HOST" 'python3 -' > progress-evidence/progress.json 2>"$ERR" <<'PY'
+          import datetime, json, os, re, subprocess
+          report = {'scope': 'read_only_deployment_progress', 'utc': datetime.datetime.now(datetime.timezone.utc).isoformat(), 'errors': []}
+          def run(name, args, timeout=15):
+              try:
+                  p = subprocess.run(args, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True, timeout=timeout, check=False)
+                  if p.returncode:
+                      report['errors'].append({'probe': name, 'exit_code': p.returncode})
+                      return ''
+                  return p.stdout
+              except (OSError, subprocess.TimeoutExpired) as e:
+                  report['errors'].append({'probe': name, 'error': type(e).__name__})
+                  return ''
+          v = os.statvfs('/')
+          report['filesystem'] = {'total_gib': round(v.f_blocks * v.f_frsize / 2**30, 2), 'available_gib': round(v.f_bavail * v.f_frsize / 2**30, 2)}
+          head = run('checkout', ['git','--no-optional-locks','-C','/opt/arbitragex-v2','rev-parse','HEAD']).strip()
+          report['checkout_sha'] = head if re.fullmatch('[0-9a-f]{40}', head) else None
+          report['containers'] = []
+          for line in run('containers', ['docker','ps','-a','--format','{{json .}}']).splitlines():
+              row = json.loads(line)
+              if row.get('Names','').startswith('arbitragex-v2-'):
+                  report['containers'].append({k:row.get(k) for k in ['Names','State','Status','Image','ID']})
+          report['images'] = []
+          for line in run('images', ['docker','image','ls','--format','{{json .}}']).splitlines():
+              row = json.loads(line)
+              if row.get('Repository','').startswith('arbitragex-v2-'):
+                  report['images'].append({k:row.get(k) for k in ['Repository','Tag','ID','CreatedSince','Size']})
+          report['selected_processes'] = []
+          allow = {'cargo','rustc','rust-lld','cc1plus','ld','cc1','node','npm','buildkitd','dockerd','git','apt-get','make','ninja','c++','cc','postgres','redis-server'}
+          for line in run('processes', ['ps','-eo','pid,ppid,comm,etimes,pcpu,pmem','--no-headers']).splitlines():
+              cols = line.split()
+              if len(cols)==6 and cols[2] in allow:
+                  report['selected_processes'].append({'pid':int(cols[0]),'parent_pid':int(cols[1]),'command':cols[2],'elapsed_s':int(cols[3]),'cpu_pct':float(cols[4]),'memory_pct':float(cols[5])})
+          report['deploy_lock_observations'] = [line.strip() for line in run('locks', ['lslocks','-n','-o','COMMAND,TYPE,MODE,PATH']).splitlines() if '/tmp/arbx-deploy.lock' in line]
+          report['note'] = 'Metadata only; image tags and checkout do NOT certify the version served. No config, environment values, raw logs, SQL, files or services modified.'
+          print(json.dumps(report, indent=2))
+          PY
+          python3 -m json.tool progress-evidence/progress.json
+      - name: Preserve bounded observations
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: deploy-progress-${{ github.run_id }}
+          path: progress-evidence/progress.json
+          if-no-files-found: warn
+          retention-days: 7
