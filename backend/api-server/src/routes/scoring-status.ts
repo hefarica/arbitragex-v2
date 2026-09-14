@@ -26,6 +26,7 @@
 
 import type { Application, Request, Response } from "express";
 import type pg from "pg";
+import { createSingleFlight } from "../readiness/single-flight.js";
 
 // ---------------------------------------------------------------------------
 // Wire contract types — mirror frontend Zod schemas exactly.
@@ -139,7 +140,7 @@ function emptyEvidence(): ScoringEvidence {
   };
 }
 
-async function gatherEvidence(
+async function gatherEvidenceOnce(
   pool: pg.Pool | null,
   logger: { warn: (obj: object, msg?: string) => void },
 ): Promise<ScoringEvidence> {
@@ -191,6 +192,18 @@ async function gatherEvidence(
     logger.warn({ event: "scoring_status.evidence_err", err: (err as Error).message });
   }
   return e;
+}
+
+// Sharing in-flight reads prevents the three browser retries and sibling
+// panels from each starting another exact historical COUNT. No stale TTL cache:
+// after the read settles, the next request reads real evidence again.
+const evidenceFlight = createSingleFlight<pg.Pool, ScoringEvidence>();
+function gatherEvidence(
+  pool: pg.Pool | null,
+  logger: { warn: (obj: object, msg?: string) => void },
+): Promise<ScoringEvidence> {
+  if (!pool) return gatherEvidenceOnce(pool, logger);
+  return evidenceFlight(pool, () => gatherEvidenceOnce(pool, logger));
 }
 
 // ---------------------------------------------------------------------------
@@ -362,8 +375,23 @@ export async function isScoringPipelineWired(
   pool: pg.Pool | null,
   logger: { warn: (obj: object, msg?: string) => void } = { warn: () => {} },
 ): Promise<boolean> {
-  const e = await gatherEvidence(pool, logger);
-  return deriveScoringPipelineState(e) !== "BLOCKED";
+  if (!pool) return false;
+  try {
+    const table = await pool.query(
+      "SELECT to_regclass('public.scored_opportunities') IS NOT NULL AS exists",
+    );
+    if (table.rows[0]?.exists !== true) return false;
+    // With no sample, the existing contract requires a running archiver.
+    // An existing sample proves wiring even if the archiver is now dormant.
+    if ((process.env["ARBX_SCORING_ARCHIVER_MODE"] ?? "off").toLowerCase() === "on") return true;
+    const sample = await pool.query(
+      "SELECT EXISTS (SELECT 1 FROM scored_opportunities) AS has_sample",
+    );
+    return sample.rows[0]?.has_sample === true;
+  } catch (err) {
+    logger.warn({ event: "scoring_status.wiring_probe_err", err: (err as Error).message });
+    return false;
+  }
 }
 
 // ---------------------------------------------------------------------------

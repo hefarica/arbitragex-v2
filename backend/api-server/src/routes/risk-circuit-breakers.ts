@@ -20,7 +20,8 @@
  *
  * Sources reused:
  *   - KillSwitchClient.state() — Redis-backed real runtime.
- *   - verifyAll() — 16 readiness items, source of truth for risk + sim + rpc.
+ *   - G-RPC-1 / G-SIM-1 / G-TOK-1 — the three readiness items consumed here.
+ *     The full 19-item go/no-go report remains separate and unchanged.
  *   - process.env — RPC_HTTP_1, EXECUTOR_1, ARBX_TRADE_MODE, ARBX_CB_*.
  *   - GET /api/v1/scoring/status (in-process via __forTesting export) — A.8.
  *   - paper_trade_runs (chain-filtered) — equity marks for the DD breaker,
@@ -53,7 +54,7 @@ import {
   riskCbTripsTotal,
 } from "@arbx/shared";
 
-import { verifyAll } from "../readiness/verifiers/index.js";
+import { verifyCircuitBreakerInputs } from "../readiness/verifiers/circuit-breaker-inputs.js";
 import type { ReadinessReport } from "../readiness/types.js";
 import { isScoringPipelineWired } from "./scoring-status.js";
 import {
@@ -331,7 +332,7 @@ interface EvalCtx {
   chainId: number;
   killSwitchEnabled: boolean | null;
   killSwitchReason: string | null;
-  readiness: ReadinessReport | null;
+  readiness: Pick<ReadinessReport, "items"> | null;
   readinessError: string | null;
   envRpc: boolean;
   envExecutor: boolean;
@@ -361,10 +362,10 @@ async function collectCtx(deps: {
     // KillSwitch is Redis-backed; failure → unknown, not pretend.
   }
 
-  let readiness: ReadinessReport | null = null;
+  let readiness: Pick<ReadinessReport, "items"> | null = null;
   let readinessError: string | null = null;
   try {
-    readiness = await verifyAll({ pool: deps.pool });
+    readiness = await verifyCircuitBreakerInputs({ pool: deps.pool });
   } catch (e) {
     readinessError = (e as Error).message.slice(0, 120);
   }
@@ -1524,7 +1525,11 @@ export function mountRiskCircuitBreakers(
   // on shutdown. Failures increment arbx_risk_cb_eval_failures_total and are
   // logged — they never crash the service (R8: an evaluation failure is
   // reported, never silently skipped or fabricated as a state).
+  let periodicRunning = false;
   const emitTick = async (): Promise<void> => {
+    // A slow evaluation must not start another periodic copy every minute.
+    if (periodicRunning) return;
+    periodicRunning = true;
     try {
       const ctx = await collectCtx({ pool: deps.pool, killSwitch: deps.killSwitch });
       const breakers = buildAllBreakers(ctx);
@@ -1533,6 +1538,8 @@ export function mountRiskCircuitBreakers(
     } catch (e) {
       riskCbEvalFailuresTotal.labels("periodic").inc();
       deps.logger.warn({ event: "circuit_breakers.periodic_emit_failed", err: (e as Error).message });
+    } finally {
+      periodicRunning = false;
     }
   };
   void emitTick();
