@@ -1,0 +1,85 @@
+name: Hops runtime matrix (read only)
+on:
+  push:
+    branches: [ops/audit-hops-2-5-20260914]
+    paths: [.github/workflows/hops-runtime-readonly.yml]
+permissions:
+  contents: read
+jobs:
+  observe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
+        with:
+          ref: 46f22f8212d51b0bdb23c11f02ee4aca4571b075
+          persist-credentials: false
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci --ignore-scripts --no-audit --no-fund
+      - run: node frontend/node_modules/playwright/cli.js install --with-deps chromium
+      - name: Read real runtime and validate JSON contracts; never change configuration
+        env:
+          NODE_PATH: ${{ github.workspace }}/frontend/node_modules
+        run: |
+          node <<'JS'
+          const {chromium}=require('playwright');
+          const fs=require('node:fs');const path=require('node:path');const Module=require('node:module');
+          const ts=require('typescript');
+          const filename=path.resolve('frontend/lib/schemas.ts');
+          const schemaModule=new Module(filename,module);schemaModule.filename=filename;schemaModule.paths=Module._nodeModulePaths(path.dirname(filename));
+          schemaModule._compile(ts.transpileModule(fs.readFileSync(filename,'utf8'),{compilerOptions:{target:ts.ScriptTarget.ES2022,module:ts.ModuleKind.CommonJS}}).outputText,filename);
+          const S=schemaModule.exports;
+          const origin='https://arbx.ape-tv.net';const out='hops-runtime-evidence';fs.mkdirSync(out,{recursive:true});
+          (async()=>{
+            const browser=await chromium.launch({headless:true});const context=await browser.newContext({viewport:{width:1440,height:1000},serviceWorkers:'block'});
+            const report={started_at:new Date().toISOString(),scope:'public_GET_runtime_observation_not_transaction_validation',requests:[],blocked_writes:0};
+            await context.route('**/*',r=>['GET','HEAD','OPTIONS'].includes(r.request().method())?r.continue():(report.blocked_writes++,r.abort('blockedbyclient')));
+            const page=await context.newPage();
+            const endpoints=[
+              ['identity-before','/api/status','StatusResponseSchema'],
+              ['opportunities','/api/opportunities/live?limit=200','OpportunitiesLiveSchema'],
+              ['readiness','/api/readiness','ReadinessReportSchema'],
+              ['risk','/api/risk/circuit-breakers/status','CircuitBreakersStatusResponseSchema'],
+              ['scoring','/api/scoring/status','ScoringStatusResponseSchema'],
+              ['discovery-status','/api/route-discovery/status'],
+              ['discovery-metrics','/api/route-discovery/metrics'],
+              ['discovered-routes','/api/route-discovery/routes?limit=200'],
+              ['cartridges-status','/api/cartridges/status'],
+              ['cartridges-registry','/api/cartridges/runtime?chain_id=1'],
+              ['knobs','/api/config/canonical-knobs'],
+              ['pipeline','/api/sim/pipeline'],
+              ['identity-after','/api/status','StatusResponseSchema']];
+            try{
+              const initial=await page.goto(origin+'/opportunities',{waitUntil:'domcontentloaded',timeout:30000});report.page_http=initial?.status();
+              for(const [name,url,schema] of endpoints){
+                const result=await page.evaluate(async url=>{
+                  const start=performance.now();const controller=new AbortController();const timer=setTimeout(()=>controller.abort(),10000);
+                  try{const response=await fetch(url,{signal:controller.signal,credentials:'same-origin'});const text=await response.text();
+                    if(text.length>2000000)throw new Error('capture_limit');
+                    let json;try{json=JSON.parse(text)}catch{}
+                    return {status:response.status,ms:Math.round(performance.now()-start),json};
+                  }catch(e){return {ms:Math.round(performance.now()-start),error:e.name}}finally{clearTimeout(timer)}
+                },url);
+                const record={name,path:url,status:result.status,ms:result.ms,error:result.error,captured_at:new Date().toISOString()};
+                if(schema&&result.json!==undefined){const checked=S[schema].safeParse(result.json);record.schema=schema;record.schema_valid=checked.success;if(!checked.success)record.issues=checked.error.issues.slice(0,12).map(x=>({path:x.path,code:x.code}));}
+                let data=result.json;
+                if(name.startsWith('identity-')&&data){data={deploy:data.deploy,ts:data.ts,ok:data.ok,services:Object.fromEntries(Object.entries(data.services||{}).map(([k,v])=>[k,{ok:v.ok,status:v.status}]))};}
+                if(name==='knobs'&&data){const selected=Object.fromEntries(Object.entries(data.knobs||{}).filter(([k])=>/hops|tokens|pairs|reserve|beam|budget|duration|mode|enabled|chain|profit/i.test(k)&&!/url|key|token.*address|secret|password/i.test(k)));data={source:data.source,generated_at:data.generated_at,knobs:selected,error:data.error};}
+                if(data!==undefined)fs.writeFileSync(`${out}/${name}.json`,JSON.stringify(data,null,2));
+                report.requests.push(record);
+              }
+              await page.screenshot({path:`${out}/opportunities-current.png`,fullPage:true,timeout:10000});
+            }catch(e){report.error=e.name;}
+            finally{report.finished_at=new Date().toISOString();fs.writeFileSync(`${out}/report.json`,JSON.stringify(report,null,2));console.log(JSON.stringify(report,null,2));await context.close();await browser.close();}
+          })().catch(e=>{console.error(e.name);process.exitCode=1});
+          JS
+      - if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: hops-runtime-${{ github.run_id }}
+          path: hops-runtime-evidence/
+          retention-days: 7
+          if-no-files-found: error
