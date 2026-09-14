@@ -12,6 +12,8 @@ env:
   BASE_SHA: 46f22f8212d51b0bdb23c11f02ee4aca4571b075
   PATCH_SHA256: 220cb9643db2452617764da6fa3b8008e7d44a6985b47af2d1bb72019f8ac00b
   PATCH_PARTS: 6d34a3dc9424b5e2a885f0397930aa9d0a7c7a7f,38ae26312779e676ca7acaeebe5f4615eb463fe5,aec28a5364e3ccbd83d700e7e56ebcf83a7b3cf3
+  TEST_PATCH_BLOB: 92d6410a69e4b8399c69a85a0ae2533c6a6d9f91
+  TEST_PATCH_SHA256: b69be65b80b1bdae5d5278ebbc967ad8f17ba86fc7c97983c9220bb93d6366f7
 jobs:
   node-and-postgres:
     runs-on: ubuntu-latest
@@ -32,30 +34,29 @@ jobs:
         with:
           ref: 46f22f8212d51b0bdb23c11f02ee4aca4571b075
           persist-credentials: false
-      - name: Authenticate exact patch and apply outside main
+      - name: Authenticate exact patches and apply outside main
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           python3 - <<'PY'
           import base64,gzip,hashlib,json,os,subprocess,urllib.request,pathlib
           assert subprocess.check_output(['git','rev-parse','HEAD'],text=True).strip()==os.environ['BASE_SHA']
-          parts=[]
-          for sha in os.environ['PATCH_PARTS'].split(','):
-              url=f"https://api.github.com/repos/{os.environ['GITHUB_REPOSITORY']}/git/blobs/{sha}"
-              req=urllib.request.Request(url,headers={'Authorization':'Bearer '+os.environ['GH_TOKEN'],'Accept':'application/vnd.github+json'})
-              with urllib.request.urlopen(req,timeout=30) as r: blob=json.load(r)
-              raw=base64.b64decode(blob['content']); assert hashlib.sha1(b'blob '+str(len(raw)).encode()+b'\0'+raw).hexdigest()==sha
-              parts.append(raw)
-          patch=gzip.decompress(base64.b64decode(b''.join(parts)))
-          assert hashlib.sha256(patch).hexdigest()==os.environ['PATCH_SHA256']
-          pathlib.Path('.git/hop-provenance.patch').write_bytes(patch)
-          subprocess.run(['git','apply','--check','--index','.git/hop-provenance.patch'],check=True)
-          subprocess.run(['git','apply','--index','.git/hop-provenance.patch'],check=True)
+          def blob(sha):
+              req=urllib.request.Request(f"https://api.github.com/repos/{os.environ['GITHUB_REPOSITORY']}/git/blobs/{sha}",headers={'Authorization':'Bearer '+os.environ['GH_TOKEN'],'Accept':'application/vnd.github+json'})
+              with urllib.request.urlopen(req,timeout=30) as r: obj=json.load(r)
+              raw=base64.b64decode(obj['content']); assert hashlib.sha1(b'blob '+str(len(raw)).encode()+b'\0'+raw).hexdigest()==sha
+              return raw
+          patches=[(gzip.decompress(base64.b64decode(b''.join(blob(s) for s in os.environ['PATCH_PARTS'].split(',')))),os.environ['PATCH_SHA256']),(blob(os.environ['TEST_PATCH_BLOB']),os.environ['TEST_PATCH_SHA256'])]
+          for i,(patch,digest) in enumerate(patches):
+              assert hashlib.sha256(patch).hexdigest()==digest
+              path=f'.git/hop-provenance-{i}.patch';pathlib.Path(path).write_bytes(patch)
+              subprocess.run(['git','apply','--check','--index',path],check=True)
+              subprocess.run(['git','apply','--index',path],check=True)
           names=subprocess.check_output(['git','diff','--cached','--name-only'],text=True).splitlines()
-          assert len(names)==13 and all(n.startswith(('backend/api-server/','backend/searcher-rs/src/candidate_simulation.rs','frontend/')) for n in names)
+          assert len(names)==14 and all(n.startswith(('backend/api-server/','backend/searcher-rs/src/candidate_simulation.rs','frontend/')) for n in names)
           assert not any('.env' in n or '/workflows/' in n for n in names)
           pathlib.Path('hop-validation-evidence').mkdir()
-          pathlib.Path('hop-validation-evidence/source.json').write_text(json.dumps({'base_sha':os.environ['BASE_SHA'],'patch_sha256':os.environ['PATCH_SHA256'],'files':names},indent=2))
+          pathlib.Path('hop-validation-evidence/source.json').write_text(json.dumps({'base_sha':os.environ['BASE_SHA'],'patch_sha256':os.environ['PATCH_SHA256'],'test_patch_sha256':os.environ['TEST_PATCH_SHA256'],'files':names},indent=2))
           subprocess.run(['git','diff','--cached','--check'],check=True)
           PY
       - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444
@@ -106,24 +107,24 @@ jobs:
         with:
           ref: 46f22f8212d51b0bdb23c11f02ee4aca4571b075
           persist-credentials: false
-      - name: Apply the identical authenticated patch
+      - name: Apply the identical authenticated patches
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           python3 - <<'PY'
           import base64,gzip,hashlib,json,os,subprocess,urllib.request,pathlib
           assert subprocess.check_output(['git','rev-parse','HEAD'],text=True).strip()==os.environ['BASE_SHA']
-          parts=[]
-          for sha in os.environ['PATCH_PARTS'].split(','):
+          def blob(sha):
               req=urllib.request.Request(f"https://api.github.com/repos/{os.environ['GITHUB_REPOSITORY']}/git/blobs/{sha}",headers={'Authorization':'Bearer '+os.environ['GH_TOKEN'],'Accept':'application/vnd.github+json'})
-              with urllib.request.urlopen(req,timeout=30) as r: blob=json.load(r)
-              raw=base64.b64decode(blob['content']); assert hashlib.sha1(b'blob '+str(len(raw)).encode()+b'\0'+raw).hexdigest()==sha
-              parts.append(raw)
-          patch=gzip.decompress(base64.b64decode(b''.join(parts)))
-          assert hashlib.sha256(patch).hexdigest()==os.environ['PATCH_SHA256']
-          pathlib.Path('.git/hop-provenance.patch').write_bytes(patch)
-          subprocess.run(['git','apply','--check','--index','.git/hop-provenance.patch'],check=True)
-          subprocess.run(['git','apply','--index','.git/hop-provenance.patch'],check=True)
+              with urllib.request.urlopen(req,timeout=30) as r: obj=json.load(r)
+              raw=base64.b64decode(obj['content']); assert hashlib.sha1(b'blob '+str(len(raw)).encode()+b'\0'+raw).hexdigest()==sha
+              return raw
+          patches=[(gzip.decompress(base64.b64decode(b''.join(blob(s) for s in os.environ['PATCH_PARTS'].split(',')))),os.environ['PATCH_SHA256']),(blob(os.environ['TEST_PATCH_BLOB']),os.environ['TEST_PATCH_SHA256'])]
+          for i,(patch,digest) in enumerate(patches):
+              assert hashlib.sha256(patch).hexdigest()==digest
+              path=f'.git/hop-provenance-{i}.patch';pathlib.Path(path).write_bytes(patch)
+              subprocess.run(['git','apply','--check','--index',path],check=True)
+              subprocess.run(['git','apply','--index',path],check=True)
           pathlib.Path('hop-rust-evidence').mkdir()
           PY
       - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4
@@ -169,19 +170,19 @@ jobs:
           python3 - <<'PY'
           import base64,gzip,hashlib,json,os,subprocess,urllib.request,pathlib
           assert subprocess.check_output(['git','rev-parse','HEAD'],text=True).strip()==os.environ['BASE_SHA']
-          parts=[]
-          for sha in os.environ['PATCH_PARTS'].split(','):
+          def blob(sha):
               req=urllib.request.Request(f"https://api.github.com/repos/{os.environ['GITHUB_REPOSITORY']}/git/blobs/{sha}",headers={'Authorization':'Bearer '+os.environ['GH_TOKEN'],'Accept':'application/vnd.github+json'})
-              with urllib.request.urlopen(req,timeout=30) as r: blob=json.load(r)
-              raw=base64.b64decode(blob['content']); assert hashlib.sha1(b'blob '+str(len(raw)).encode()+b'\0'+raw).hexdigest()==sha
-              parts.append(raw)
-          patch=gzip.decompress(base64.b64decode(b''.join(parts)))
-          assert hashlib.sha256(patch).hexdigest()==os.environ['PATCH_SHA256']
-          pathlib.Path('.git/hop-provenance.patch').write_bytes(patch)
-          subprocess.run(['git','apply','--check','--index','.git/hop-provenance.patch'],check=True)
-          subprocess.run(['git','apply','--index','.git/hop-provenance.patch'],check=True)
+              with urllib.request.urlopen(req,timeout=30) as r: obj=json.load(r)
+              raw=base64.b64decode(obj['content']); assert hashlib.sha1(b'blob '+str(len(raw)).encode()+b'\0'+raw).hexdigest()==sha
+              return raw
+          patches=[(gzip.decompress(base64.b64decode(b''.join(blob(s) for s in os.environ['PATCH_PARTS'].split(',')))),os.environ['PATCH_SHA256']),(blob(os.environ['TEST_PATCH_BLOB']),os.environ['TEST_PATCH_SHA256'])]
+          for i,(patch,digest) in enumerate(patches):
+              assert hashlib.sha256(patch).hexdigest()==digest
+              path=f'.git/hop-provenance-{i}.patch';pathlib.Path(path).write_bytes(patch)
+              subprocess.run(['git','apply','--check','--index',path],check=True)
+              subprocess.run(['git','apply','--index',path],check=True)
           names=subprocess.check_output(['git','diff','--cached','--name-only'],text=True).splitlines()
-          assert len(names)==13 and all(n.startswith(('backend/api-server/','backend/searcher-rs/src/candidate_simulation.rs','frontend/')) for n in names)
+          assert len(names)==14 and all(n.startswith(('backend/api-server/','backend/searcher-rs/src/candidate_simulation.rs','frontend/')) for n in names)
           assert not any('.env' in n or '/workflows/' in n for n in names)
           subprocess.run(['git','diff','--cached','--check'],check=True)
           PY
@@ -190,6 +191,6 @@ jobs:
           git checkout -b "$branch"
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git commit -m 'fix(opportunities): preserve hop topology and stop fabricated ROI and simulation costs' -m "Validated in workflow $GITHUB_RUN_ID against $BASE_SHA; patch $PATCH_SHA256. No production settings, execution controls or credentials changed."
+          git commit -m 'fix(opportunities): preserve hop topology and stop fabricated ROI and simulation costs' -m "Validated in workflow $GITHUB_RUN_ID against $BASE_SHA; patch $PATCH_SHA256; test corrections $TEST_PATCH_SHA256. First validation preserved: two test failures corrected, no assertions removed. No production settings, execution controls or credentials changed."
           git push origin "HEAD:refs/heads/$branch"
           git log -1 --format='PUBLISHED_SHA=%H%nTREE=%T'
