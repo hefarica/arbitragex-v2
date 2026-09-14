@@ -1,0 +1,114 @@
+name: Prepare verified hop integrity candidate
+on:
+  push:
+    branches: [ops/audit-hops-2-5-20260914]
+    paths: [.github/workflows/prepare-hop-integrity.yml]
+permissions:
+  contents: read
+concurrency:
+  group: prepare-hop-integrity
+  cancel-in-progress: false
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: write
+    services:
+      redis:
+        image: redis:7-alpine
+        ports: [6379:6379]
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s --health-timeout 3s --health-retries 20
+    env:
+      BASE_SHA: 46f22f8212d51b0bdb23c11f02ee4aca4571b075
+      CANDIDATE_BRANCH: fix/opportunity-evidence-hop-integrity-20260914
+      REDIS_URL: redis://localhost:6379
+      NEXT_PUBLIC_EDGE_URL: https://edge.ci.invalid
+      NEXT_PUBLIC_WS_URL: wss://ws.ci.invalid
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
+        with:
+          ref: 46f22f8212d51b0bdb23c11f02ee4aca4571b075
+      - name: Verify patch identity, exact base and permitted paths
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python3 - <<'PY'
+          import base64,gzip,hashlib,json,os,pathlib,subprocess,urllib.request
+          assert subprocess.check_output(['git','rev-parse','HEAD'],text=True).strip()==os.environ['BASE_SHA']
+          output=pathlib.Path('hop-integrity-evidence'); output.mkdir()
+          url='https://api.github.com/repos/hefarica/arbitragex-v2/git/blobs/f22705cd402a64aaedd4f10079818ba08626fd13'
+          request=urllib.request.Request(url,headers={'Authorization':'Bearer '+os.environ['GH_TOKEN'],'Accept':'application/vnd.github+json'})
+          with urllib.request.urlopen(request,timeout=30) as response: blob=json.load(response)
+          assert blob['encoding']=='base64'
+          patch=gzip.decompress(base64.b64decode(blob['content']))
+          assert hashlib.sha256(patch).hexdigest()=='c8a05f7527f1eb69a8b16d91ed0f495e34a966869ff54cd347ef87e4f6754f9a'
+          allowed={
+          'backend/api-server/src/routes/opportunities-live.ts',
+          'backend/api-server/src/routes/opportunities-live.test.ts',
+          'backend/api-server/src/routes/risk-circuit-breakers.ts',
+          'backend/api-server/src/routes/risk-circuit-breakers.test.ts',
+          'frontend/components/opportunities/exchange/OpportunityExchangeCard.tsx',
+          'frontend/components/opportunities/exchange/__tests__/OpportunityExchangeCard.test.tsx',
+          'frontend/lib/store/types.ts',
+          'frontend/lib/store/__tests__/deriveLegs.test.ts',
+          'frontend/lib/store/__tests__/multihop-integrity.test.ts'}
+          p=output/'change.patch';p.write_bytes(patch)
+          subprocess.run(['git','apply','--check','--index',str(p)],check=True)
+          subprocess.run(['git','apply','--index',str(p)],check=True)
+          paths=set(subprocess.check_output(['git','diff','--cached','--name-only'],text=True).splitlines())
+          assert paths==allowed,paths
+          subprocess.run(['git','diff','--cached','--check'],check=True)
+          (output/'manifest.json').write_text(json.dumps({'base_sha':os.environ['BASE_SHA'],'patch_sha256':hashlib.sha256(patch).hexdigest(),'files':[{ 'path':name,'sha256':hashlib.sha256(pathlib.Path(name).read_bytes()).hexdigest()} for name in sorted(paths)]},indent=2))
+          print('Verified patch, unchanged base, and all nine allowed code/test paths. No deployment.')
+          PY
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444
+        with:
+          node-version: 22
+          cache: npm
+      - name: Install locked workspace dependencies on runner
+        run: npm ci --ignore-scripts --no-audit --no-fund
+      - name: Build shared and typecheck API
+        run: |
+          set -o pipefail
+          npm run build --workspace @arbx/shared 2>&1 | tee hop-integrity-evidence/shared-build.log
+          npm run typecheck --workspace @arbx/api-server 2>&1 | tee hop-integrity-evidence/api-typecheck.log
+      - name: Run complete API unit suite
+        run: |
+          set -o pipefail
+          npm test --workspace @arbx/api-server 2>&1 | tee hop-integrity-evidence/api-tests.log
+      - name: Build API and typecheck frontend
+        run: |
+          set -o pipefail
+          npm run build --workspace @arbx/api-server 2>&1 | tee hop-integrity-evidence/api-build.log
+          npm run typecheck --workspace @arbx/frontend 2>&1 | tee hop-integrity-evidence/frontend-typecheck.log
+      - name: Run complete frontend unit suite (including 2/3/4/5 hop regressions)
+        run: |
+          set -o pipefail
+          npm test --workspace @arbx/frontend 2>&1 | tee hop-integrity-evidence/frontend-tests.log
+      - name: Build production frontend
+        run: |
+          set -o pipefail
+          npm run build --workspace @arbx/frontend 2>&1 | tee hop-integrity-evidence/frontend-build.log
+      - name: Publish candidate only after all validations; never main or force push
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$BASE_SHA"
+          test -z "$(git diff --name-only)"
+          test -z "$(git ls-remote --heads origin "refs/heads/$CANDIDATE_BRANCH")"
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m 'fix(opportunities): preserve hop and economics evidence; report rejections and risk states honestly'
+          git push origin "HEAD:refs/heads/$CANDIDATE_BRANCH"
+          git rev-parse HEAD | tee hop-integrity-evidence/candidate-sha.txt
+          git diff --stat "$BASE_SHA" HEAD | tee hop-integrity-evidence/changes.txt
+      - name: Preserve evidence even on failure
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: hop-integrity-validation-${{ github.run_id }}
+          path: hop-integrity-evidence/
+          retention-days: 7
+          if-no-files-found: error
