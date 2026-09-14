@@ -1,0 +1,141 @@
+name: Public DApp user journeys and screenshots
+on:
+  push:
+    branches: [ops/audit-hops-2-5-20260914]
+    paths: [.github/workflows/audit-public-user-journeys.yml]
+permissions:
+  contents: read
+concurrency:
+  group: arbx-public-ui-audit
+  cancel-in-progress: false
+jobs:
+  browser:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      PUBLIC_ORIGIN: https://arbx.ape-tv.net
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
+        with:
+          ref: 660ecb2fb45ba1908f8d5610dfb11ad7ec16161d
+          persist-credentials: false
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci --ignore-scripts --no-audit --no-fund
+      - run: npx --no-install playwright install --with-deps chromium
+        working-directory: frontend
+      - name: Navigate live pages and exercise read-only controls
+        run: |
+          mkdir -p public-ui-evidence
+          cat > frontend/.audit-public-user.cjs <<'JS'
+          const {chromium}=require('@playwright/test');
+          const fs=require('node:fs');
+          const path=require('node:path');
+          const crypto=require('node:crypto');
+          const origin=process.env.PUBLIC_ORIGIN;
+          const out=path.resolve('public-ui-evidence');
+          const report={started_at:new Date().toISOString(),origin,run_id:process.env.GITHUB_RUN_ID,mode:'public-read-only',journeys:[],requests:[],blocked_writes:[],page_errors:[]};
+          let browser;
+          const limited=(e)=>String(e?.message??e).split('\n')[0].slice(0,220);
+          const endpoint=(u)=>{try{return new URL(u).pathname}catch{return '(invalid)'}};
+          async function main(){
+            browser=await chromium.launch({headless:true});
+            const context=await browser.newContext({viewport:{width:1600,height:1000},deviceScaleFactor:1});
+            await context.route('**/*',async route=>{
+              const req=route.request();
+              if(!['GET','HEAD','OPTIONS'].includes(req.method())){
+                report.blocked_writes.push({method:req.method(),path:endpoint(req.url())});
+                return route.abort('blockedbyclient');
+              }
+              return route.continue();
+            });
+            const page=await context.newPage();
+            page.on('pageerror',e=>report.page_errors.push({path:endpoint(page.url()),error:limited(e)}));
+            page.on('response',r=>{if(endpoint(r.url()).startsWith('/api/'))report.requests.push({path:endpoint(r.url()),status:r.status(),at:new Date().toISOString()})});
+            async function get(url){const r=await context.request.get(origin+url,{timeout:15000});let body=null;try{body=await r.json()}catch{}return {status:r.status(),body};}
+            async function stamp(){const r=await get('/api/status');return {http:r.status,deploy:r.body?.deploy??null,version:r.body?.version??null,at:new Date().toISOString()};}
+            report.before=await stamp();
+            for(const route of ['/live-readiness','/dex-registry','/chains','/opportunities/exchange','/']){
+              const j={path:route,started_at:new Date().toISOString(),actions:[],success:false};report.journeys.push(j);
+              const name=route==='/'?'home':route.slice(1).replaceAll('/','-');
+              try{
+                const started=Date.now();const res=await page.goto(origin+route,{waitUntil:'domcontentloaded',timeout:60000});
+                j.http=res?.status();j.navigation_ms=Date.now()-started;
+                await page.waitForTimeout(6000);
+                j.headings=await page.locator('h1,h2').allTextContents();
+                j.visible_rows=await page.locator('tbody tr').count();
+                if(route==='/live-readiness'){
+                  await page.getByText('Confidence scoring (A.8)',{exact:false}).first().waitFor({timeout:20000});
+                  await page.getByText('Risk circuit breakers (A.6)',{exact:false}).first().waitFor({timeout:20000});
+                  if(await page.getByText(/Cannot fetch scoring status|Cannot fetch circuit breakers|edge timeout after/).count())throw Error('Status cards show a fetch/timeout error');
+                  j.actions.push({action:'verify_scoring_and_breakers',ok:true});
+                }
+                if(route==='/dex-registry'){
+                  const all=page.getByRole('button',{name:'All chains',exact:true});
+                  if(await all.count()){
+                    const group=all.locator('..');const buttons=group.getByRole('button');const n=await buttons.count();
+                    for(let i=1;i<Math.min(n,4);i++){
+                      const label=await buttons.nth(i).innerText();await buttons.nth(i).click();await page.waitForTimeout(350);
+                      j.actions.push({action:'filter_chain',label,rows:await page.locator('tbody tr').count()});
+                    }
+                    await all.click();
+                  }
+                  const cell=page.locator('tbody tr td:first-child').first();
+                  if(await cell.count()){
+                    const label=await cell.innerText();await cell.click();
+                    await page.getByRole('dialog').waitFor({timeout:8000});
+                    j.actions.push({action:'open_dex_details',label,ok:true});
+                    await page.screenshot({path:path.join(out,'dex-details.png'),fullPage:true});
+                    await page.keyboard.press('Escape');
+                  }
+                  const catalog=page.locator('[data-testid="liquidity-catalog"]');j.catalog_implemented=await catalog.count()>0;
+                }
+                if(route==='/opportunities/exchange'){
+                  const inspect=page.getByRole('button',{name:'Inspect details',exact:true}).first();
+                  if(await inspect.count()){
+                    await inspect.click();await page.getByRole('dialog').waitFor({timeout:8000});
+                    j.actions.push({action:'inspect_opportunity_no_simulation',ok:true});
+                    await page.screenshot({path:path.join(out,'opportunity-details.png'),fullPage:true});
+                    await page.keyboard.press('Escape');
+                  }
+                }
+                await page.screenshot({path:path.join(out,name+'.png'),fullPage:true});
+                j.success=j.http>=200&&j.http<400;
+              }catch(e){j.error=limited(e);await page.screenshot({path:path.join(out,name+'-failure.png'),fullPage:true}).catch(()=>{});}
+              j.completed_at=new Date().toISOString();
+            }
+            const chains=await get('/api/v1/chains');
+            const rows=Array.isArray(chains.body?.data)?chains.body.data:[];
+            report.chains={http:chains.status,items:rows.map(c=>({id:String(c.chain_id??c.id),name:c.name,is_active:c.is_active}))};
+            report.pool_samples=[];
+            for(const chain of report.chains.items.filter(c=>/^\d+$/.test(c.id)).slice(0,3)){
+              const pools=await get('/api/v1/pools?chain_id='+encodeURIComponent(chain.id)+'&limit=5');
+              report.pool_samples.push({chain_id:chain.id,http:pools.status,returned_count:Array.isArray(pools.body?.items)?pools.body.items.length:null,items:(pools.body?.items??[]).map(p=>({id:p.id,chain_id:String(p.chain_id),address:p.address,protocol_type:p.protocol_type,dex_name:p.dex_name}))});
+            }
+            report.after=await stamp();
+            report.same_deploy=report.before.deploy?.sha!=null&&report.before.deploy.sha===report.after.deploy?.sha;
+            report.completed_at=new Date().toISOString();
+            report.success=report.same_deploy&&report.journeys.every(j=>j.success)&&report.page_errors.length===0;
+            await browser.close();browser=null;
+          }
+          main().catch(e=>{report.fatal=limited(e);report.success=false;}).finally(async()=>{
+            if(browser)await browser.close();
+            report.completed_at??=new Date().toISOString();
+            fs.writeFileSync(path.join(out,'report.json'),JSON.stringify(report,null,2));
+            const files=fs.readdirSync(out).map(name=>({name,sha256:crypto.createHash('sha256').update(fs.readFileSync(path.join(out,name))).digest('hex')}));
+            fs.writeFileSync(path.join(out,'manifest.json'),JSON.stringify({run_id:process.env.GITHUB_RUN_ID,files},null,2));
+            console.log(JSON.stringify({success:report.success,deploy:report.after?.deploy,journeys:report.journeys.map(({path,success,error})=>({path,success,error})),page_errors:report.page_errors},null,2));
+            process.exitCode=report.success?0:1;
+          });
+          JS
+          node frontend/.audit-public-user.cjs
+      - name: Preserve screenshots and evidence on success or failure
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: public-ui-${{ github.run_id }}
+          path: public-ui-evidence/
+          if-no-files-found: error
+          retention-days: 7
