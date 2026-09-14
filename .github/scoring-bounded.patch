@@ -1,0 +1,603 @@
+diff --git a/backend/api-server/src/readiness/scoring-summary.test.ts b/backend/api-server/src/readiness/scoring-summary.test.ts
+new file mode 100644
+--- /dev/null
++++ b/backend/api-server/src/readiness/scoring-summary.test.ts
+@@ -0,0 +1,25 @@
++import { describe, expect, it } from "vitest";
++import { scoringCountLimit, readScoringSummary, type ScoringReader } from "./scoring-summary.js";
++
++describe("bounded scoring observation contract (unit inputs, not live evidence)", () => {
++  it("never caps below the configured calibration threshold", () => {
++    expect(scoringCountLimit(100)).toBe(1000);
++    expect(scoringCountLimit(2000)).toBe(2000);
++    expect(scoringCountLimit(2000.1)).toBe(2001);
++  });
++  for (const invalid of [-1, NaN, Infinity, Number.MAX_SAFE_INTEGER]) {
++    it(`rejects a non-representable threshold ${invalid}`, () => {
++      expect(() => scoringCountLimit(invalid)).toThrow("scoring_threshold_invalid");
++    });
++  }
++  for (const total of [-1, "nonsense", 1002]) {
++    it(`does not turn invalid SQL count ${total} into zero`, async () => {
++      const db = { query: async () => ({ rows: [{ total, first: null, last: null }] }) } as unknown as ScoringReader;
++      await expect(readScoringSummary(db, 100)).rejects.toThrow("scoring_summary_count_invalid");
++    });
++  }
++  it("does not interpret missing bounds as an empty ledger", async () => {
++    const db = { query: async () => ({ rows: [{ total: "1", first: null, last: null }] }) } as unknown as ScoringReader;
++    await expect(readScoringSummary(db, 100)).rejects.toThrow("scoring_summary_bounds_invalid");
++  });
++});
+diff --git a/backend/api-server/src/readiness/scoring-summary.ts b/backend/api-server/src/readiness/scoring-summary.ts
+new file mode 100644
+--- /dev/null
++++ b/backend/api-server/src/readiness/scoring-summary.ts
+@@ -0,0 +1,118 @@
++/** Bounded scoring observations, NOT a trading/activation policy.
++ * Uses migration 097's created_at index; no scan of the entire scoring ledger.
++ * Small populations are exact, large populations are an explicit lower bound.
++ */
++import type pg from "pg";
++
++export const SCORING_ACQUIRE_MS = 500;
++export const SCORING_READ_MS = 2500;
++export const SCORING_STATEMENT_MS = 1500;
++
++export interface ScoringReader {
++  query<T extends pg.QueryResultRow = pg.QueryResultRow>(text: string, values?: unknown[]): Promise<pg.QueryResult<T>>;
++}
++
++export function scoringCountLimit(minScored: number): number {
++  const required = Math.ceil(minScored);
++  if (!Number.isFinite(minScored) || minScored < 0 || !Number.isSafeInteger(required) || required >= Number.MAX_SAFE_INTEGER) {
++    throw new Error("scoring_threshold_invalid");
++  }
++  // At least the operator's calibration threshold: a display cap must not
++  // silently change whether that threshold has actually been reached.
++  return Math.max(1000, required);
++}
++
++export const SCORING_SUMMARY_SQL = `SELECT
++  (SELECT COUNT(*)::bigint FROM
++    (SELECT 1 FROM scored_opportunities ORDER BY created_at DESC LIMIT $1) observed) AS total,
++  (SELECT created_at FROM scored_opportunities ORDER BY created_at DESC LIMIT 1) AS last,
++  (SELECT created_at FROM scored_opportunities ORDER BY created_at ASC LIMIT 1) AS first`;
++
++export async function readScoringSummary(db: ScoringReader, minScored: number) {
++  const limit = scoringCountLimit(minScored);
++  // One look-ahead row distinguishes exactly limit from strictly more.
++  // Count and full-history date bounds are read from ONE statement snapshot.
++  const result = await db.query<{ total: string; first: Date | null; last: Date | null }>(SCORING_SUMMARY_SQL, [limit + 1]);
++  const row = result.rows[0];
++  if (!row) throw new Error("scoring_summary_missing");
++  if (typeof row.total !== "string" || !/^[0-9]+$/.test(row.total)) throw new Error("scoring_summary_count_invalid");
++  const observed = Number(row.total);
++  if (!Number.isSafeInteger(observed) || observed < 0 || observed > limit + 1) {
++    throw new Error("scoring_summary_count_invalid");
++  }
++  if ((observed === 0) !== (row.first === null && row.last === null)
++      || (observed > 0 && (row.first === null || row.last === null))) {
++    throw new Error("scoring_summary_bounds_invalid");
++  }
++  const first = row.first === null ? null : new Date(row.first).toISOString();
++  const last = row.last === null ? null : new Date(row.last).toISOString();
++  if (first !== null && last !== null && first > last) throw new Error("scoring_summary_bounds_invalid");
++  return { count: Math.min(observed, limit), exact: observed <= limit, limit, first, last };
++}
++
++function acquire(pool: pg.Pool): Promise<pg.PoolClient> {
++  return new Promise((resolve, reject) => {
++    let pending = true;
++    const timer = setTimeout(() => {
++      pending = false;
++      reject(new Error("scoring_pool_timeout"));
++    }, SCORING_ACQUIRE_MS);
++    // A timed-out waiter can still receive a connection later. Always release
++    // that late connection, or pool exhaustion becomes permanent.
++    void Promise.resolve().then(() => pool.connect()).then((client) => {
++      if (!pending) { client.release(); return; }
++      pending = false;
++      clearTimeout(timer);
++      resolve(client);
++    }, (error: unknown) => {
++      if (!pending) return;
++      pending = false;
++      clearTimeout(timer);
++      reject(error);
++    });
++  });
++}
++
++/** Same-client READ ONLY transaction, bounded both in PostgreSQL and in Node.
++ * SET LOCAL never changes shared pool defaults. On failure/expiry the physical
++ * connection is destroyed (including any open transaction), never recycled.
++ * The wrapper prevents a late continuation from issuing another SQL statement.
++ */
++export async function withScoringRead<T>(pool: pg.Pool, work: (db: ScoringReader) => Promise<T>): Promise<T> {
++  const client = await acquire(pool);
++  let active = true;
++  let reusable = false;
++  let timer: ReturnType<typeof setTimeout> | undefined;
++  const check = () => { if (!active) throw new Error("scoring_read_timeout"); };
++  const db: ScoringReader = {
++    async query<R extends pg.QueryResultRow = pg.QueryResultRow>(text: string, values?: unknown[]): Promise<pg.QueryResult<R>> {
++      check();
++      const result = await client.query<R>(text, values);
++      check();
++      return result;
++    },
++  };
++  try {
++    const deadline = new Promise<never>((_resolve, reject) => {
++      timer = setTimeout(() => {
++        active = false;
++        reject(new Error("scoring_read_timeout"));
++      }, SCORING_READ_MS);
++    });
++    const task = (async () => {
++      await db.query("BEGIN READ ONLY");
++      await db.query(`SET LOCAL lock_timeout='250ms'; SET LOCAL statement_timeout='${SCORING_STATEMENT_MS}ms'`);
++      const result = await work(db);
++      check();
++      await db.query("COMMIT");
++      return result;
++    })();
++    const result = await Promise.race([task, deadline]);
++    reusable = true;
++    return result;
++  } finally {
++    active = false;
++    if (timer !== undefined) clearTimeout(timer);
++    client.release(!reusable);
++  }
++}
+diff --git a/backend/api-server/src/routes/scoring-status.test.ts b/backend/api-server/src/routes/scoring-status.test.ts
+--- a/backend/api-server/src/routes/scoring-status.test.ts
++++ b/backend/api-server/src/routes/scoring-status.test.ts
+@@ -117,7 +117,7 @@
+ 
+ describe("scoring-status — version + security regression", () => {
+   it("version is the evidence-based release", () => {
+-    expect(SCORING_VERSION).toBe("0.2.0-evidence");
++    expect(SCORING_VERSION).toBe("0.3.0-bounded-evidence");
+   });
+ 
+   it("no component evidence_ref leaks a secret (RPC, DB, contract address)", () => {
+diff --git a/backend/api-server/src/routes/scoring-status.ts b/backend/api-server/src/routes/scoring-status.ts
+--- a/backend/api-server/src/routes/scoring-status.ts
++++ b/backend/api-server/src/routes/scoring-status.ts
+@@ -27,6 +27,7 @@
+ import type { Application, Request, Response } from "express";
+ import type pg from "pg";
+ import { createSingleFlight } from "../readiness/single-flight.js";
++import { readScoringSummary, scoringCountLimit, withScoringRead } from "../readiness/scoring-summary.js";
+ 
+ // ---------------------------------------------------------------------------
+ // Wire contract types — mirror frontend Zod schemas exactly.
+@@ -85,6 +86,8 @@
+   min_expected_value_wei: string | null;
+   scoring_version: string;
+   recent_scored_count: number;
++  recent_scored_count_exact: boolean;
++  scoring_count_limit: number;
+   last_scored_at: string | null;
+   calibrated_pairs: number;
+   blocked_reasons: ScoringBlockedReason[];
+@@ -97,7 +100,7 @@
+   next_action: string;
+ }
+ 
+-const SCORING_VERSION = "0.2.0-evidence";
++const SCORING_VERSION = "0.3.0-bounded-evidence";
+ 
+ // ---------------------------------------------------------------------------
+ // Evidence gathering (the only DB reads; all guarded + non-fatal).
+@@ -107,6 +110,8 @@
+   tableExists: boolean;
+   archiverEnabled: boolean;
+   totalScored: number;
++  countExact: boolean;
++  countLimit: number;
+   lastScoredAt: string | null;
+   firstScoredAt: string | null;
+   a4Passed: boolean;
+@@ -129,6 +134,8 @@
+     tableExists: false,
+     archiverEnabled: false,
+     totalScored: 0,
++    countExact: true,
++    countLimit: 1000,
+     lastScoredAt: null,
+     firstScoredAt: null,
+     a4Passed: false,
+@@ -142,60 +149,57 @@
+ 
+ async function gatherEvidenceOnce(
+   pool: pg.Pool | null,
+-  logger: { warn: (obj: object, msg?: string) => void },
++  _logger: { warn: (obj: object, msg?: string) => void },
+ ): Promise<ScoringEvidence> {
++  if (!pool) throw new Error("scoring_database_unavailable");
+   const e = emptyEvidence();
+-  // Archiver state is the api-server's OWN runtime knowledge (env), not a DB read:
+-  // a dormant archiver (mode != 'on') means nothing consumes arbx:scoring:scored,
+-  // so scores are XADDed but never persisted — claiming "wired" would be cosmetic.
++  e.countLimit = scoringCountLimit(e.minScored);
+   e.archiverEnabled = (process.env["ARBX_SCORING_ARCHIVER_MODE"] ?? "off").toLowerCase() === "on";
+-  if (!pool) return e;
+-  try {
+-    const t = await pool.query(
+-      "SELECT to_regclass('public.scored_opportunities') IS NOT NULL AS exists",
+-    );
+-    e.tableExists = t.rows[0]?.exists === true;
++  return withScoringRead(pool, async (db) => {
++    // Known absent relations are real missing evidence, not query failures.
++    // Unexpected errors abort the observation; never manufacture zero counts.
++    const tables = await db.query(`SELECT
++      to_regclass('public.scored_opportunities') IS NOT NULL AS scored,
++      to_regclass('public.gate_c_validation') IS NOT NULL AS gates,
++      to_regclass('public.bayesian_priors') IS NOT NULL AS priors,
++      to_regclass('public.paper_trade_runs') IS NOT NULL AS paper`);
++    const present = tables.rows[0];
++    if (!present) throw new Error("scoring_catalog_unavailable");
++    e.tableExists = present.scored === true;
+     if (e.tableExists) {
+-      const s = await pool.query(
+-        "SELECT COUNT(*)::int AS total, MAX(created_at) AS last, MIN(created_at) AS first FROM scored_opportunities",
+-      );
+-      e.totalScored = s.rows[0]?.total ?? 0;
+-      e.lastScoredAt = s.rows[0]?.last ? new Date(s.rows[0].last).toISOString() : null;
+-      e.firstScoredAt = s.rows[0]?.first ? new Date(s.rows[0].first).toISOString() : null;
++      const summary = await readScoringSummary(db, e.minScored);
++      e.totalScored = summary.count;
++      e.countExact = summary.exact;
++      e.countLimit = summary.limit;
++      e.lastScoredAt = summary.last;
++      e.firstScoredAt = summary.first;
+     }
+-    try {
+-      const a = await pool.query(
++    if (present.gates === true) {
++      const a = await db.query(
+         "SELECT 1 FROM gate_c_validation WHERE gate = 'a4_fork_validation' AND status = 'passed' LIMIT 1",
+       );
+       e.a4Passed = (a.rowCount ?? 0) > 0;
+-    } catch {
+-      /* gate_c_validation absent → A4 pending */
+     }
+-    try {
+-      const c = await pool.query(
+-        "SELECT COUNT(*)::int AS n FROM bayesian_priors WHERE observation_count >= $1",
+-        [e.minObs],
++    if (present.priors === true) {
++      const c = await db.query(
++        "SELECT COUNT(*)::int AS n FROM bayesian_priors WHERE observation_count >= $1", [e.minObs],
+       );
+-      e.calibratedPriors = c.rows[0]?.n ?? 0;
+-    } catch {
+-      /* bayesian_priors absent → 0 calibrated */
++      const n = c.rows[0]?.n;
++      if (!Number.isSafeInteger(n) || n < 0) throw new Error("scoring_priors_count_invalid");
++      e.calibratedPriors = n;
+     }
+-    try {
+-      const p = await pool.query(
+-        "SELECT MAX(created_at) AS last FROM paper_trade_runs WHERE created_at > now() - interval '7 days'",
++    if (present.paper === true) {
++      const p = await db.query(
++        "SELECT created_at AS last FROM paper_trade_runs WHERE created_at > now() - interval '7 days' ORDER BY created_at DESC LIMIT 1",
+       );
+       e.paperShadowActive = p.rows[0]?.last != null;
+-    } catch {
+-      /* paper_trade_runs absent → rely on scored rows for activity */
+     }
+-  } catch (err) {
+-    logger.warn({ event: "scoring_status.evidence_err", err: (err as Error).message });
+-  }
+-  return e;
++    return e;
++  });
+ }
+ 
+ // Sharing in-flight reads prevents the three browser retries and sibling
+-// panels from each starting another exact historical COUNT. No stale TTL cache:
++// panels from each starting another bounded observation. No stale TTL cache:
+ // after the read settles, the next request reads real evidence again.
+ const evidenceFlight = createSingleFlight<pg.Pool, ScoringEvidence>();
+ function gatherEvidence(
+@@ -403,7 +407,15 @@
+   deps: { pool: pg.Pool | null; logger: { warn: (obj: object, msg?: string) => void } },
+ ): void {
+   app.get("/api/v1/scoring/status", async (_req: Request, res: Response) => {
+-    const evidence = await gatherEvidence(deps.pool, deps.logger);
++    let evidence: ScoringEvidence;
++    try {
++      evidence = await gatherEvidence(deps.pool, deps.logger);
++    } catch {
++      // No SQL, credentials, fabricated KPIs or healthy defaults in error replies.
++      deps.logger.warn({ event: "scoring_status.unavailable" });
++      res.status(503).json({ error: "scoring_status_unavailable" });
++      return;
++    }
+     const pipelineState = deriveScoringPipelineState(evidence);
+     const a4State = deriveA4State(evidence);
+     const a5State = deriveA5State(evidence);
+@@ -432,6 +444,8 @@
+       min_expected_value_wei: null,
+       scoring_version: SCORING_VERSION,
+       recent_scored_count: evidence.totalScored,
++      recent_scored_count_exact: evidence.countExact,
++      scoring_count_limit: evidence.countLimit,
+       last_scored_at: evidence.lastScoredAt,
+       calibrated_pairs: evidence.calibratedPriors,
+       blocked_reasons,
+diff --git a/backend/api-server/test/scoring-summary.test.ts b/backend/api-server/test/scoring-summary.test.ts
+new file mode 100644
+--- /dev/null
++++ b/backend/api-server/test/scoring-summary.test.ts
+@@ -0,0 +1,151 @@
++/** Real PostgreSQL 15, isolated test container. No production access or data.
++ * Guards row visits, wire precision, calibration semantics and SQL cancellation.
++ */
++import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
++import { GenericContainer, Wait, type StartedTestContainer } from "testcontainers";
++import { Pool } from "pg";
++import express from "express";
++import request from "supertest";
++import { mountScoringStatus } from "../src/routes/scoring-status.js";
++import { readScoringSummary, SCORING_SUMMARY_SQL, withScoringRead } from "../src/readiness/scoring-summary.js";
++
++let container: StartedTestContainer | undefined;
++let pool: Pool;
++const keys = ["ARBX_SCORING_ARCHIVER_MODE", "ARBX_CALIBRATION_MIN_SCORED"] as const;
++const saved = new Map(keys.map(k => [k, process.env[k]]));
++beforeAll(async () => {
++  container = await new GenericContainer("postgres:15")
++    .withEnvironment({ POSTGRES_PASSWORD: "test", POSTGRES_DB: "scoring_test" })
++    .withExposedPorts(5432)
++    .withWaitStrategy(Wait.forLogMessage("database system is ready to accept connections", 2)).start();
++  pool = new Pool({ host: container.getHost(), port: container.getMappedPort(5432),
++    user: "postgres", password: "test", database: "scoring_test", max: 4 });
++  await pool.query(`CREATE TABLE scored_opportunities(id bigint, created_at timestamptz NOT NULL);
++    CREATE INDEX idx_scored_opportunities_created ON scored_opportunities(created_at DESC);
++    CREATE TABLE gate_c_validation(gate text, status text);
++    CREATE TABLE bayesian_priors(observation_count int);
++    CREATE TABLE paper_trade_runs(created_at timestamptz);
++    CREATE INDEX ON paper_trade_runs(created_at DESC);`);
++}, 120_000);
++afterEach(async () => {
++  if (pool) await pool.query("TRUNCATE scored_opportunities, gate_c_validation, bayesian_priors, paper_trade_runs");
++  for (const k of keys) {
++    const value = saved.get(k);
++    if (value === undefined) delete process.env[k]; else process.env[k] = value;
++  }
++});
++afterAll(async () => { if (pool) await pool.end(); if (container) await container.stop(); }, 30_000);
++const endpoint = "/api/v1/scoring/status";
++function app() { const a = express(); mountScoringStatus(a, { pool, logger: { warn: () => {} } }); return a; }
++async function seed(n: number) {
++  await pool.query("INSERT INTO scored_opportunities SELECT n, '2026-08-01'::timestamptz + n * interval '1 second' FROM generate_series(1,$1) n", [n]);
++}
++
++describe("scoring summary on actual PostgreSQL", () => {
++  for (const n of [0, 1, 999, 1000, 1001, 150000]) {
++    it(`reports correct precision and full-history bounds for ${n} rows`, async () => {
++      await seed(n);
++      const s = await withScoringRead(pool, db => readScoringSummary(db, 100));
++      const full = await pool.query("SELECT COUNT(*)::int AS n, MIN(created_at) AS first, MAX(created_at) AS last FROM scored_opportunities");
++      expect(s.count).toBe(Math.min(n, 1000));
++      expect(s.exact).toBe(n <= 1000);
++      expect(s.first).toBe(full.rows[0].first?.toISOString() ?? null);
++      expect(s.last).toBe(full.rows[0].last?.toISOString() ?? null);
++      expect(s.limit).toBe(1000);
++    });
++  }
++  it("uses bounded indexed visits instead of reading 150000 historical rows", async () => {
++    await seed(150000); await pool.query("ANALYZE scored_opportunities");
++    const plan = await pool.query("EXPLAIN (ANALYZE, FORMAT JSON) " + SCORING_SUMMARY_SQL, [1001]);
++    const scans: Record<string, any>[] = [];
++    const visit = (node: Record<string, any>) => {
++      if (node["Relation Name"] === "scored_opportunities") scans.push(node);
++      for (const child of node.Plans ?? []) visit(child);
++    };
++    visit(plan.rows[0]["QUERY PLAN"][0].Plan);
++    expect(scans).toHaveLength(3);
++    expect(scans.every(s => /Index/.test(s["Node Type"]))).toBe(true);
++    expect(scans.map(s => s["Actual Rows"]).sort((a,b) => a-b)).toEqual([1, 1, 1001]);
++  });
++  it("preserves a configured calibration threshold larger than the display floor", async () => {
++    process.env["ARBX_CALIBRATION_MIN_SCORED"] = "2000";
++    process.env["ARBX_SCORING_ARCHIVER_MODE"] = "on";
++    await seed(1999);
++    await pool.query("UPDATE scored_opportunities SET created_at=now() WHERE id=1999");
++    const a = app();
++    const below = await request(a).get(endpoint).expect(200);
++    expect(below.body.recent_scored_count).toBe(1999);
++    expect(below.body.a5_state).toBe("PAPER_SHADOW_WARMING");
++    await pool.query("INSERT INTO scored_opportunities VALUES (2000,now())");
++    const at = await request(a).get(endpoint).expect(200);
++    expect(at.body.recent_scored_count).toBe(2000);
++    expect(at.body.recent_scored_count_exact).toBe(true);
++    expect(at.body.a5_state).toBe("CALIBRATED_CANDIDATE");
++    await pool.query("INSERT INTO scored_opportunities VALUES (2001,now())");
++    const above = await request(a).get(endpoint).expect(200);
++    expect(above.body.scoring_count_limit).toBe(2000);
++    expect(above.body.recent_scored_count_exact).toBe(false);
++    expect(above.body.a5_state).toBe(at.body.a5_state);
++    expect(above.body.a4_state).toBe("A4_PENDING");
++    expect(above.body.live_trading).toBe(false);
++    expect(above.body.submit_enabled).toBe(false);
++    await pool.query("INSERT INTO gate_c_validation VALUES ('a4_fork_validation','passed'); INSERT INTO bayesian_priors VALUES (40)");
++    const calibrated = await request(a).get(endpoint).expect(200);
++    expect(calibrated.body.a4_state).toBe("A4_PASSED");
++    expect(calibrated.body.a5_state).toBe("CALIBRATED");
++    expect(calibrated.body.live_trading).toBe(false);
++  });
++  it("cancels actual slow SQL on the server and releases the connection", async () => {
++    const start = Date.now();
++    await expect(withScoringRead(pool, db => db.query("SELECT pg_sleep(5) /* scoring_timeout_probe */"))).rejects.toThrow();
++    expect(Date.now() - start).toBeLessThan(4000);
++    const active = await pool.query("SELECT count(*)::int AS n FROM pg_stat_activity WHERE pid<>pg_backend_pid() AND state='active' AND query LIKE '%scoring_timeout_probe%'");
++    expect(active.rows[0].n).toBe(0);
++    await expect(withScoringRead(pool, db => db.query("SELECT 1"))).resolves.toBeDefined();
++  });
++  it("does not mutate pool defaults and prevents writes in the observation", async () => {
++    const before = (await pool.query("SHOW statement_timeout")).rows[0].statement_timeout;
++    await withScoringRead(pool, async db => {
++      expect((await db.query("SHOW transaction_read_only")).rows[0].transaction_read_only).toBe("on");
++      expect((await db.query("SHOW statement_timeout")).rows[0].statement_timeout).toBe("1500ms");
++    });
++    expect((await pool.query("SHOW statement_timeout")).rows[0].statement_timeout).toBe(before);
++    await expect(withScoringRead(pool, db => db.query("INSERT INTO scored_opportunities VALUES (1,now())"))).rejects.toThrow();
++  });
++  it("returns 503 under a real table lock, never a fabricated empty count", async () => {
++    const lock = await pool.connect();
++    try {
++      await lock.query("BEGIN; LOCK TABLE scored_opportunities IN ACCESS EXCLUSIVE MODE");
++      const start = Date.now();
++      const r = await request(app()).get(endpoint).expect(503);
++      expect(Date.now()-start).toBeLessThan(4000);
++      expect(r.body).toEqual({error:"scoring_status_unavailable"});
++    } finally { await lock.query("ROLLBACK"); lock.release(); }
++    await request(app()).get(endpoint).expect(200);
++  });
++  it("releases a late acquired connection after a pool-wait timeout", async () => {
++    const one = new Pool({ ...pool.options, max: 1 });
++    const held = await one.connect();
++    try {
++      await expect(withScoringRead(one, db => db.query("SELECT 1"))).rejects.toThrow("scoring_pool_timeout");
++    } finally { held.release(); }
++    try {
++      await expect(withScoringRead(one, db => db.query("SELECT 1"))).resolves.toBeDefined();
++      expect(one.waitingCount).toBe(0);
++      expect(one.idleCount).toBe(1);
++    } finally { await one.end(); }
++  });
++  it("bounds non-SQL stalls and never queries after the deadline", async () => {
++    const late = withScoringRead(pool, async db => {
++      await new Promise(r => setTimeout(r, 2700));
++      return db.query("SELECT 1 /* must_not_run_after_deadline */");
++    });
++    await expect(late).rejects.toThrow("scoring_read_timeout");
++    await new Promise(r => setTimeout(r, 350));
++    await expect(withScoringRead(pool, db => db.query("SELECT 1"))).resolves.toBeDefined();
++  });
++  it("no database is unavailable, not an empty healthy pipeline", async () => {
++    const a = express(); mountScoringStatus(a, {pool:null,logger:{warn:()=>{}}});
++    expect((await request(a).get(endpoint).expect(503)).body).toEqual({error:"scoring_status_unavailable"});
++  });
++});
+diff --git a/frontend/features/readiness/ConfidenceScoringPanel.tsx b/frontend/features/readiness/ConfidenceScoringPanel.tsx
+--- a/frontend/features/readiness/ConfidenceScoringPanel.tsx
++++ b/frontend/features/readiness/ConfidenceScoringPanel.tsx
+@@ -125,6 +125,10 @@
+   return <Badge variant="destructive" className="font-mono text-[10px] uppercase">{status}</Badge>;
+ }
+ 
++export function formatScoredCount(count: number, exact: boolean | undefined): string {
++  return `${exact === false ? "≥ " : ""}${count}`;
++}
++
+ function ScoringBody({ data }: { data: ScoringStatusResponse }) {
+   const totalWired = data.components.filter((c) => c.wired).length;
+   const total = data.components.length;
+@@ -157,9 +161,16 @@
+         <SignalTile label="Kelly sizing" wired={data.kelly_sizing_wired} />
+         <SignalTile label="VPIN toxicity" wired={data.vpin_wired} />
+         <SignalTile label="Pipeline integrated" wired={data.scoring_pipeline_wired} />
+-        <SignalTile label="Recent scored" wired={data.recent_scored_count > 0} valueLabel={String(data.recent_scored_count)} />
++        <SignalTile label="Scored rows observed" wired={data.recent_scored_count > 0} valueLabel={formatScoredCount(data.recent_scored_count, data.recent_scored_count_exact)} />
+         <SignalTile label="Threshold (bps)" wired={data.confidence_threshold_bps > 0} valueLabel={String(data.confidence_threshold_bps)} />
+       </div>
++
++      {data.recent_scored_count_exact === false && (
++        <p data-slot="scoring-count-bound" className="text-xs text-muted-foreground">
++          Verified lower bound from a bounded read, not an exact historical total.
++          Full-history first/last timestamps and the configured calibration threshold are preserved.
++        </p>
++      )}
+ 
+       <Accordion type="multiple" className="w-full">
+         <AccordionItem value="components">
+diff --git a/frontend/features/readiness/__tests__/scoring-count-contract.test.ts b/frontend/features/readiness/__tests__/scoring-count-contract.test.ts
+new file mode 100644
+--- /dev/null
++++ b/frontend/features/readiness/__tests__/scoring-count-contract.test.ts
+@@ -0,0 +1,43 @@
++/** Constructed schema-boundary inputs, not recorded production observations. */
++import { describe, expect, it } from "vitest";
++import { ScoringStatusResponseSchema } from "@/lib/schemas";
++import { formatScoredCount } from "../ConfidenceScoringPanel";
++const legacy = {
++  generated_at: "2026-09-14T00:00:00Z", source: "runtime_evidence", mode: "paper_only",
++  scoring_status: "partial", scoring_enabled: false, bayesian_filter_wired: true,
++  kelly_sizing_wired: true, vpin_wired: true, scoring_pipeline_wired: false,
++  components: [], confidence_threshold_bps: 7000, min_expected_value_wei: null,
++  scoring_version: "0.2.0-evidence", recent_scored_count: 0, last_scored_at: null,
++  blocked_reasons: [], available_decisions: [], live_trading: false,
++  private_relay: false, submit_enabled: false, capital_exposure_usd: 0, next_action: "test input",
++};
++const bounded = { ...legacy, scoring_version: "0.3.0-bounded-evidence", recent_scored_count: 1000,
++  recent_scored_count_exact: false, scoring_count_limit: 1000 };
++describe("scoring wire precision and presentation", () => {
++  it("accepts unchanged legacy exact-count responses", () => {
++    expect(ScoringStatusResponseSchema.safeParse(legacy).success).toBe(true);
++    expect(formatScoredCount(42, undefined)).toBe("42");
++  });
++  it("accepts and visibly distinguishes a proven lower bound", () => {
++    expect(ScoringStatusResponseSchema.safeParse(bounded).success).toBe(true);
++    expect(formatScoredCount(1000, false)).toBe("≥ 1000");
++  });
++  for (const n of [0, 1, 1000]) {
++    it(`accepts an exact bounded population ${n}`, () => {
++      expect(ScoringStatusResponseSchema.safeParse({ ...bounded, recent_scored_count: n, recent_scored_count_exact: true }).success).toBe(true);
++      expect(formatScoredCount(n, true)).toBe(String(n));
++    });
++  }
++  for (const patch of [
++    { recent_scored_count_exact: undefined }, { scoring_count_limit: undefined },
++    { recent_scored_count: 999 }, { recent_scored_count: 1001 },
++    { recent_scored_count_exact: "false" }, { scoring_count_limit: 0 },
++  ]) {
++    it(`rejects misleading bounded metadata ${JSON.stringify(patch)}`, () => {
++      expect(ScoringStatusResponseSchema.safeParse({ ...bounded, ...patch }).success).toBe(false);
++    });
++  }
++  it("a new-version response cannot omit all precision metadata", () => {
++    expect(ScoringStatusResponseSchema.safeParse({ ...legacy, scoring_version: bounded.scoring_version }).success).toBe(false);
++  });
++});
+diff --git a/frontend/lib/schemas.ts b/frontend/lib/schemas.ts
+--- a/frontend/lib/schemas.ts
++++ b/frontend/lib/schemas.ts
+@@ -1042,6 +1042,10 @@
+   min_expected_value_wei: z.string().nullable(),
+   scoring_version: z.string(),
+   recent_scored_count: z.number().int().nonnegative(),
++  // Legacy 0.2 responses have exact counts. Bounded 0.3 responses MUST carry
++  // precision metadata; otherwise the UI could mislabel a lower bound as total.
++  recent_scored_count_exact: z.boolean().optional(),
++  scoring_count_limit: z.number().int().positive().safe().optional(),
+   last_scored_at: z.string().nullable(),
+   blocked_reasons: z.array(ScoringBlockedReasonSchema),
+   available_decisions: z.array(z.string()),
+@@ -1050,6 +1054,19 @@
+   submit_enabled: z.boolean(),
+   capital_exposure_usd: z.number().nonnegative(),
+   next_action: z.string(),
++}).superRefine((data, ctx) => {
++  const required = data.scoring_version === "0.3.0-bounded-evidence";
++  const hasExact = data.recent_scored_count_exact !== undefined;
++  const hasLimit = data.scoring_count_limit !== undefined;
++  if (required || hasExact || hasLimit) {
++    if (!hasExact) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["recent_scored_count_exact"], message: "count precision is required" });
++    if (!hasLimit) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["scoring_count_limit"], message: "count bound is required" });
++    if (data.scoring_count_limit !== undefined &&
++        (data.recent_scored_count > data.scoring_count_limit ||
++         (data.recent_scored_count_exact === false && data.recent_scored_count !== data.scoring_count_limit))) {
++      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["recent_scored_count"], message: "count and precision metadata disagree" });
++    }
++  }
+ });
+ 
+ export type ScoringComponent = z.infer<typeof ScoringComponentSchema>;

@@ -1,0 +1,101 @@
+name: Validate and publish bounded scoring fix
+on:
+  push:
+    branches: [ops/build-scoring-bounded]
+permissions:
+  contents: write
+concurrency:
+  group: prepare-scoring-bounded-fix
+  cancel-in-progress: false
+jobs:
+  validate-and-publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    services:
+      redis:
+        image: redis:7-alpine
+        ports: ['6379:6379']
+        options: --health-cmd 'redis-cli ping' --health-interval 5s --health-timeout 3s --health-retries 20
+    env:
+      REDIS_URL: redis://localhost:6379
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
+        with:
+          path: transport
+          persist-credentials: false
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
+        with:
+          ref: 2bf32778eaf4a7ccf92e23b224ccb5123a85eb77
+          path: source
+          persist-credentials: true
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: source/package-lock.json
+      - name: Verify exact base and apply the allowlisted patch only
+        working-directory: source
+        run: |
+          python3 - <<'PY'
+          import hashlib, pathlib, subprocess
+          def git(*args): return subprocess.check_output(['git',*args],text=True).strip()
+          assert git('rev-parse','HEAD') == '2bf32778eaf4a7ccf92e23b224ccb5123a85eb77'
+          patch = pathlib.Path('../transport/.github/scoring-bounded.patch')
+          assert hashlib.sha256(patch.read_bytes()).hexdigest() == 'a83ae0366f3f5d37209d6d42f05bc66059fb4b692f1014a701306524184c9e5f'
+          bases = {
+            'backend/api-server/src/readiness/scoring-summary.test.ts': None,
+            'backend/api-server/src/readiness/scoring-summary.ts': None,
+            'backend/api-server/src/routes/scoring-status.test.ts': '8bdab9787d41dd2ff673046a4f91db59a04fd2d3',
+            'backend/api-server/src/routes/scoring-status.ts': '8359ff712620fd29282b53fc1cc52de15264de37',
+            'backend/api-server/test/scoring-summary.test.ts': None,
+            'frontend/features/readiness/ConfidenceScoringPanel.tsx': 'c3e5843ced4904a8087ad0117a802d8c8ead1460',
+            'frontend/features/readiness/__tests__/scoring-count-contract.test.ts': None,
+            'frontend/lib/schemas.ts': 'da04673fc30fefee359855de88f675feebab8285',
+          }
+          for path, sha in bases.items():
+            if sha is None: assert not pathlib.Path(path).exists(), path
+            else: assert git('hash-object',path) == sha, path
+          subprocess.run(['git','apply','--check','--index','--whitespace=error-all',str(patch)],check=True)
+          subprocess.run(['git','apply','--index','--whitespace=error-all',str(patch)],check=True)
+          assert set(git('diff','--cached','--name-only').splitlines()) == set(bases)
+          subprocess.run(['git','diff','--cached','--check'],check=True)
+          print('Exact base and 8-file patch verified; main and VPS unchanged')
+          PY
+      - name: Install locked dependencies on runner
+        working-directory: source
+        run: npm ci --no-audit --no-fund
+      - name: Build shared library and typecheck API
+        working-directory: source
+        run: npm run build --workspace shared-ts && npm run typecheck --workspace backend/api-server
+      - name: API regression suite
+        working-directory: source
+        run: npm test --workspace backend/api-server
+      - name: Real PostgreSQL 15 scoring and existing readiness regressions
+        working-directory: source
+        run: npm run test:integration --workspace backend/api-server -- test/scoring-summary.test.ts test/readiness-query-performance.test.ts
+      - name: Full frontend typecheck, build and tests including FE-0045
+        working-directory: source
+        run: |
+          npm run typecheck --workspace frontend
+          npm run build --workspace frontend
+          npm test --workspace frontend
+      - name: Publish ONE new feature branch, never main and never force
+        working-directory: source
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = 2bf32778eaf4a7ccf92e23b224ccb5123a85eb77
+          git diff --exit-code
+          test -z "$(git ls-remote --heads origin refs/heads/fix/scoring-status-bounded-read)"
+          git -c user.name='github-actions[bot]' -c user.email='41898282+github-actions[bot]@users.noreply.github.com' commit -m 'fix(readiness): bound scoring reads and expose truthful count precision' -m 'Preserve #562 and #563. Use indexed limited count with lookahead, full-history date bounds, operator-threshold preservation and bounded read-only SQL. Missing DB/errors return unavailable, never fabricated zero. Frontend validates precision metadata and labels lower bounds. Real PostgreSQL and frontend suites passed on this exact staged tree before publication. No LIVE, credentials, migrations or deploy policy changes.'
+          git push origin HEAD:refs/heads/fix/scoring-status-bounded-read
+          mkdir -p ../publication
+          git rev-parse HEAD > ../publication/commit.txt
+          git diff-tree --no-commit-id --name-only -r HEAD > ../publication/files.txt
+      - name: Preserve published commit identity
+        if: success()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: scoring-fix-publication-${{ github.run_id }}
+          path: publication/
+          if-no-files-found: error
+          retention-days: 7
