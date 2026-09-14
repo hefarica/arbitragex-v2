@@ -99,7 +99,8 @@ describe("OpportunityExchangeCard — SSOT two states", () => {
     const html = renderToStaticMarkup(<OpportunityExchangeCard {...props(makeOpp())} />);
     // atlas_264 model badge splits the old single string into badge words.
     expect(html).toContain("Detección");
-    expect(html).toContain("Sin evaluar");
+    expect(html).toContain("Rechazada");
+    expect(html).not.toContain(">PENDING<");
     expect(html).toContain("cartridge_unmapped_strategy_label:route_graph_engine");
     // model footer wording (Sin evaluación económica no hay Execute…).
     expect(html).toContain("Sin evaluación económica no hay Execute");
@@ -374,4 +375,39 @@ describe("PR566 review — preserve failed lifecycle over paper rollup rejection
       expect(html).not.toContain(">Evaluada<");
     });
   }
+});
+
+// Review 5193737767: exercise the REAL shell branch, not a zero-valued ledger.
+describe("terminal state survives absent economics on both card faces", () => {
+  for (const status of ["failed", "rejected"] as const) {
+    for (const reason of [null, "build_error:isolated-test"] as const) {
+      it(`${status}, reason=${String(reason)} retains its terminal badge with no economics`, () => {
+        const opp = makeOpp({status, rejection_reason: reason, paper_status: "paper_rejected", route_metadata: null});
+        expect(isUnevaluatedShell(opp)).toBe(true);
+        const html = renderToStaticMarkup(<OpportunityExchangeCard {...props(opp)} />);
+        expect(html).toContain(status === "failed" ? "Fallida" : "Rechazada");
+        expect(html).toContain(`>${status.toUpperCase()}<`);
+        expect(html).not.toContain(">PENDING<");
+        expect(html).not.toContain(">Sin evaluar<");
+        expect(html).not.toContain('class="btn"');
+        expect(html).not.toContain("Gross out (AMM)");
+        if (status === "failed") expect(html).not.toContain("→ REJECTED");
+      });
+    }
+  }
+  it.each([2,3,4,5])("a closed %s-hop cycle is not a degenerate self-swap", (hops) => {
+    const tokens = Array.from({length:hops},(_,i)=>`0x${String(i+1).padStart(40,"0")}`);
+    tokens.push(tokens[0]!);
+    const opp = makeOpp({token_in:tokens[0],token_out:tokens[0],rejection_reason:null,
+      route_metadata:{token_addresses:tokens,pool_addresses:Array.from({length:hops},(_,i)=>`pool-${i}`),dex_adapters:Array(hops).fill("test-v2")}});
+    const html = renderToStaticMarkup(<OpportunityExchangeCard {...props(opp)} />);
+    expect(html).toContain("cierre declarado");
+    expect(html).not.toContain("degenerada");
+    expect(html).toContain(">PENDING<");
+  });
+  it("an actual adjacent self-swap is distinct from equal cycle endpoints", () => {
+    const opp=makeOpp({token_in:"A",token_out:"A",rejection_reason:null,
+      route_metadata:{token_addresses:["A","A","A"],pool_addresses:["p1","p2"],dex_adapters:["v2","v2"]}});
+    expect(renderToStaticMarkup(<OpportunityExchangeCard {...props(opp)} />)).toContain("self-swap");
+  });
 });

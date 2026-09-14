@@ -25,10 +25,12 @@ import { Info, Loader2 } from "lucide-react";
 import { formatPctOrDash, formatProfitUSD, shortAddr } from "@/lib/format";
 import {
   deriveLegs,
+  parseRouteMetadata,
   SYNTHETIC_LEGACY_VIEW_LABEL,
   type OmniOpportunity,
   type TokenInfo,
 } from "@/lib/store/types";
+import { terminalOpportunityState } from "@/lib/opportunity-presentation";
 import { QuarantineStrip } from "@/components/QuarantineStrip";
 import { familyOf } from "@/lib/strategy-kinds";
 import type { StrategyRuntimeConfig } from "@/lib/schemas";
@@ -175,7 +177,7 @@ export function isUnevaluatedShell(opp: OmniOpportunity): boolean {
 
 /** Honest explanation when the row carries NO machine reason at all. */
 const NO_ECONOMICS_TEXT =
-  "Sin evaluación económica computada: esta fila no lleva profit/ROI/riesgo ni razón de rechazo registrada — el motor de evaluación no corrió para esta detección.";
+  "Sin evaluación económica computada en este registro: faltan resultados verificables; su ausencia no demuestra que el motor nunca haya intentado procesarlo.";
 
 /** Human decoding of the machine rejection codes the engines emit. */
 function decodeRejectionReason(reason: string): string {
@@ -337,9 +339,8 @@ function OpportunityExchangeCardImpl({
       <div className="dapp-badge">
         {/* eslint-disable-next-line @next/next/no-img-element */}
         <img src={QUANTUMX_LOGO} alt="QuantumX" />
-        <span>{opp.status === "failed" ? "Fallida"
-          : opp.rejection_reason != null || opp.status === "rejected" || opp.paper_status === "paper_rejected"
-            ? "Rechazada" : "Evaluada"}</span>
+        <span>{terminalOpportunityState(opp) === "failed" ? "Fallida"
+          : terminalOpportunityState(opp) === "rejected" ? "Rechazada" : "Evaluada"}</span>
         <span className="sep">·</span>
         <span title={opp.strategy_kind ?? "sin strategy_kind en el payload (§28)"}>
           {strategyFamilyLabel(opp.strategy_kind)}
@@ -609,7 +610,17 @@ function DetectionDiagnosticCard({
   const isStale: boolean | null =
     opp.detected_at == null ? null : (ageSecs as number) > STALE_SECS;
   const reason = opp.rejection_reason;
-  const degeneratePair = opp.token_in === opp.token_out;
+  const terminalState = terminalOpportunityState(opp);
+  const topology = parseRouteMetadata(opp.route_metadata);
+  // Equal endpoints are normal for a cycle. Only an evidenced adjacent
+  // self-swap is degenerate; missing topology cannot prove such a swap.
+  const sameToken = (a: string, b: string) =>
+    /^0x[0-9a-f]{40}$/i.test(a) && /^0x[0-9a-f]{40}$/i.test(b)
+      ? a.toLowerCase() === b.toLowerCase() : a === b;
+  const selfSwap = topology?.token_addresses.some((token, index, tokens) =>
+    index + 1 < tokens.length && sameToken(token, tokens[index + 1]!),
+  ) ?? false;
+  const closedEndpoints = sameToken(opp.token_in, opp.token_out);
 
   return (
     <div
@@ -634,10 +645,10 @@ function DetectionDiagnosticCard({
         <img src={QUANTUMX_LOGO} alt="QuantumX" />
         <span>Detección</span>
         <span className="sep">·</span>
-        <span>Sin evaluar</span>
+        <span>{terminalState === "failed" ? "Fallida" : terminalState === "rejected" ? "Rechazada" : "Sin evaluar"}</span>
         <span className="led-group">
           <span className="led wait" />
-          <span className="led-text-hot">PENDING</span>
+          <span className="led-text-hot">{terminalState?.toUpperCase() ?? "PENDING"}</span>
         </span>
       </div>
 
@@ -683,11 +694,9 @@ function DetectionDiagnosticCard({
         <span>Estado</span>
         {/* R8: only claim REJECTED when a machine rejection actually exists. */}
         <span className="v val-warn">
-          {opp.status == null
-            ? "UNKNOWN"
-            : reason != null
-              ? `${opp.status.toUpperCase()} → REJECTED`
-              : opp.status.toUpperCase()}
+          {terminalState === "failed" ? "FAILED"
+            : terminalState === "rejected" ? `${opp.status?.toUpperCase() ?? "UNKNOWN"} → REJECTED`
+            : opp.status?.toUpperCase() ?? "UNKNOWN"}
         </span>
       </div>
 
@@ -712,7 +721,8 @@ function DetectionDiagnosticCard({
       <div className="kv">
         <span>Dato crudo</span>
         <span className="v">
-          {degeneratePair ? "token_in == token_out (degenerada)" : "—"}
+          {selfSwap ? "self-swap: tokens adyacentes iguales (degenerada)"
+            : closedEndpoints ? "token_in == token_out (cierre declarado; no acredita ejecución)" : "—"}
         </span>
       </div>
 
@@ -737,8 +747,8 @@ function DetectionDiagnosticCard({
       </div>
       <div className="kv diag-footer">
         <span className="diag-footer-text">
-          Sin evaluación económica no hay Execute. Cuando el motor correspondiente la evalúe,
-          esta misma fila aparecerá como oportunidad con números reales.
+          Sin evaluación económica no hay Execute. Los estados de rechazo o fallo se conservan;
+          solo resultados reales pueden completar el análisis de esta fila.
         </span>
       </div>
     </div>

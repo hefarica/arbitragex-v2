@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { getOpportunitiesLive } from "@/lib/api-client";
+import { terminalOpportunityState } from "@/lib/opportunity-presentation";
 import type { OpportunityRow } from "@/lib/schemas";
 
 interface TickerItem {
@@ -57,7 +58,7 @@ export function opportunityToTickerItem(opp: OpportunityRow): TickerItem | null 
     from,
     to,
     yield: yieldPct,
-    status: opp.rejection_reason != null ? "rejected" : opp.status,
+    status: terminalOpportunityState(opp) ?? opp.status,
     rejectionReason: opp.rejection_reason ?? null,
     ago: formatAgo(opp.detected_at),
   };

@@ -69,3 +69,16 @@ describe("HOPS-PROVENANCE — ticker reports measured ROI and rejection state", 
     expect(opportunityToTickerItem({ ...record(null), status: "detected" })!.status).toBe("rejected");
   });
 });
+
+
+describe("ticker lifecycle precedence matches the card",()=>{
+  it.each([null,"build_error","timeout"])("failed is never rewritten as rejected (reason=%s)",(reason)=>{
+    const opp={token_in:"A",token_out:"B",dex_a:"v2",dex_b:"v2",pair_symbol:"A/B",
+      net_expected_profit_usd:0,expected_profit_usd:0,roi_pct:null,status:"failed",
+      rejection_reason:reason,detected_at:"2026-09-14T00:00:00Z"} as Parameters<typeof opportunityToTickerItem>[0];
+    const item=opportunityToTickerItem(opp);
+    expect(item?.status).toBe("failed");
+    expect(item?.rejectionReason).toBe(reason);
+    expect(item?.yield).toBeNull();
+  });
+});
