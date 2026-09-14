@@ -117,7 +117,7 @@ describe("scoring-status — blocked reasons resolve with evidence", () => {
 
 describe("scoring-status — version + security regression", () => {
   it("version is the evidence-based release", () => {
-    expect(SCORING_VERSION).toBe("0.2.0-evidence");
+    expect(SCORING_VERSION).toBe("0.3.0-bounded-evidence");
   });
 
   it("no component evidence_ref leaks a secret (RPC, DB, contract address)", () => {

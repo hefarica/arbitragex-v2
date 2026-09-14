@@ -27,6 +27,7 @@
 import type { Application, Request, Response } from "express";
 import type pg from "pg";
 import { createSingleFlight } from "../readiness/single-flight.js";
+import { readScoringSummary, scoringCountLimit, withScoringRead } from "../readiness/scoring-summary.js";
 
 // ---------------------------------------------------------------------------
 // Wire contract types — mirror frontend Zod schemas exactly.
@@ -85,6 +86,8 @@ interface ScoringStatusResponse {
   min_expected_value_wei: string | null;
   scoring_version: string;
   recent_scored_count: number;
+  recent_scored_count_exact: boolean;
+  scoring_count_limit: number;
   last_scored_at: string | null;
   calibrated_pairs: number;
   blocked_reasons: ScoringBlockedReason[];
@@ -97,7 +100,7 @@ interface ScoringStatusResponse {
   next_action: string;
 }
 
-const SCORING_VERSION = "0.2.0-evidence";
+const SCORING_VERSION = "0.3.0-bounded-evidence";
 
 // ---------------------------------------------------------------------------
 // Evidence gathering (the only DB reads; all guarded + non-fatal).
@@ -107,6 +110,8 @@ interface ScoringEvidence {
   tableExists: boolean;
   archiverEnabled: boolean;
   totalScored: number;
+  countExact: boolean;
+  countLimit: number;
   lastScoredAt: string | null;
   firstScoredAt: string | null;
   a4Passed: boolean;
@@ -129,6 +134,8 @@ function emptyEvidence(): ScoringEvidence {
     tableExists: false,
     archiverEnabled: false,
     totalScored: 0,
+    countExact: true,
+    countLimit: 1000,
     lastScoredAt: null,
     firstScoredAt: null,
     a4Passed: false,
@@ -142,60 +149,57 @@ function emptyEvidence(): ScoringEvidence {
 
 async function gatherEvidenceOnce(
   pool: pg.Pool | null,
-  logger: { warn: (obj: object, msg?: string) => void },
+  _logger: { warn: (obj: object, msg?: string) => void },
 ): Promise<ScoringEvidence> {
+  if (!pool) throw new Error("scoring_database_unavailable");
   const e = emptyEvidence();
-  // Archiver state is the api-server's OWN runtime knowledge (env), not a DB read:
-  // a dormant archiver (mode != 'on') means nothing consumes arbx:scoring:scored,
-  // so scores are XADDed but never persisted — claiming "wired" would be cosmetic.
+  e.countLimit = scoringCountLimit(e.minScored);
   e.archiverEnabled = (process.env["ARBX_SCORING_ARCHIVER_MODE"] ?? "off").toLowerCase() === "on";
-  if (!pool) return e;
-  try {
-    const t = await pool.query(
-      "SELECT to_regclass('public.scored_opportunities') IS NOT NULL AS exists",
-    );
-    e.tableExists = t.rows[0]?.exists === true;
+  return withScoringRead(pool, async (db) => {
+    // Known absent relations are real missing evidence, not query failures.
+    // Unexpected errors abort the observation; never manufacture zero counts.
+    const tables = await db.query(`SELECT
+      to_regclass('public.scored_opportunities') IS NOT NULL AS scored,
+      to_regclass('public.gate_c_validation') IS NOT NULL AS gates,
+      to_regclass('public.bayesian_priors') IS NOT NULL AS priors,
+      to_regclass('public.paper_trade_runs') IS NOT NULL AS paper`);
+    const present = tables.rows[0];
+    if (!present) throw new Error("scoring_catalog_unavailable");
+    e.tableExists = present.scored === true;
     if (e.tableExists) {
-      const s = await pool.query(
-        "SELECT COUNT(*)::int AS total, MAX(created_at) AS last, MIN(created_at) AS first FROM scored_opportunities",
-      );
-      e.totalScored = s.rows[0]?.total ?? 0;
-      e.lastScoredAt = s.rows[0]?.last ? new Date(s.rows[0].last).toISOString() : null;
-      e.firstScoredAt = s.rows[0]?.first ? new Date(s.rows[0].first).toISOString() : null;
+      const summary = await readScoringSummary(db, e.minScored);
+      e.totalScored = summary.count;
+      e.countExact = summary.exact;
+      e.countLimit = summary.limit;
+      e.lastScoredAt = summary.last;
+      e.firstScoredAt = summary.first;
     }
-    try {
-      const a = await pool.query(
+    if (present.gates === true) {
+      const a = await db.query(
         "SELECT 1 FROM gate_c_validation WHERE gate = 'a4_fork_validation' AND status = 'passed' LIMIT 1",
       );
       e.a4Passed = (a.rowCount ?? 0) > 0;
-    } catch {
-      /* gate_c_validation absent → A4 pending */
     }
-    try {
-      const c = await pool.query(
-        "SELECT COUNT(*)::int AS n FROM bayesian_priors WHERE observation_count >= $1",
-        [e.minObs],
+    if (present.priors === true) {
+      const c = await db.query(
+        "SELECT COUNT(*)::int AS n FROM bayesian_priors WHERE observation_count >= $1", [e.minObs],
       );
-      e.calibratedPriors = c.rows[0]?.n ?? 0;
-    } catch {
-      /* bayesian_priors absent → 0 calibrated */
+      const n = c.rows[0]?.n;
+      if (!Number.isSafeInteger(n) || n < 0) throw new Error("scoring_priors_count_invalid");
+      e.calibratedPriors = n;
     }
-    try {
-      const p = await pool.query(
-        "SELECT MAX(created_at) AS last FROM paper_trade_runs WHERE created_at > now() - interval '7 days'",
+    if (present.paper === true) {
+      const p = await db.query(
+        "SELECT created_at AS last FROM paper_trade_runs WHERE created_at > now() - interval '7 days' ORDER BY created_at DESC LIMIT 1",
       );
       e.paperShadowActive = p.rows[0]?.last != null;
-    } catch {
-      /* paper_trade_runs absent → rely on scored rows for activity */
     }
-  } catch (err) {
-    logger.warn({ event: "scoring_status.evidence_err", err: (err as Error).message });
-  }
-  return e;
+    return e;
+  });
 }
 
 // Sharing in-flight reads prevents the three browser retries and sibling
-// panels from each starting another exact historical COUNT. No stale TTL cache:
+// panels from each starting another bounded observation. No stale TTL cache:
 // after the read settles, the next request reads real evidence again.
 const evidenceFlight = createSingleFlight<pg.Pool, ScoringEvidence>();
 function gatherEvidence(
@@ -403,7 +407,15 @@ export function mountScoringStatus(
   deps: { pool: pg.Pool | null; logger: { warn: (obj: object, msg?: string) => void } },
 ): void {
   app.get("/api/v1/scoring/status", async (_req: Request, res: Response) => {
-    const evidence = await gatherEvidence(deps.pool, deps.logger);
+    let evidence: ScoringEvidence;
+    try {
+      evidence = await gatherEvidence(deps.pool, deps.logger);
+    } catch {
+      // No SQL, credentials, fabricated KPIs or healthy defaults in error replies.
+      deps.logger.warn({ event: "scoring_status.unavailable" });
+      res.status(503).json({ error: "scoring_status_unavailable" });
+      return;
+    }
     const pipelineState = deriveScoringPipelineState(evidence);
     const a4State = deriveA4State(evidence);
     const a5State = deriveA5State(evidence);
@@ -432,6 +444,8 @@ export function mountScoringStatus(
       min_expected_value_wei: null,
       scoring_version: SCORING_VERSION,
       recent_scored_count: evidence.totalScored,
+      recent_scored_count_exact: evidence.countExact,
+      scoring_count_limit: evidence.countLimit,
       last_scored_at: evidence.lastScoredAt,
       calibrated_pairs: evidence.calibratedPriors,
       blocked_reasons,
