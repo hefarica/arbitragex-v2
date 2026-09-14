@@ -159,7 +159,7 @@ describe("OpportunityExchangeCard — SSOT two states", () => {
     const html = renderToStaticMarkup(<OpportunityExchangeCard {...props(opp)} />);
     // model labels are title-case ("Net Yield") and the button is uppercase.
     expect(html).toContain("Net Yield");
-    expect(html).toContain("SIMULATE");
+    expect(html).toContain("SIMULATE (PAPER SHADOW)");
     expect(html).not.toContain("Detección — sin evaluar");
     // FE-0030 (§29): persisted topology is ROUTE-grade — NO synthetic marker.
     expect(html).not.toContain("SYNTHETIC LEGACY VIEW");
@@ -324,21 +324,40 @@ describe("OpportunityExchangeCard — SSOT two states", () => {
 });
 
 
-describe("HOPS-PROVENANCE — evaluated rejection is visible", () => {
-  it("keeps the analysis but explicitly labels rejection and the diagnostic action", () => {
-    const opp = makeOpp({
-      status: "rejected", rejection_reason: "TokenNotAllowed:fixture",
-      route_metadata: {token_addresses:["0xaaaa","0xbbbb","0xaaaa"],dex_adapters:["uniswap_v2","sushiswap"],pool_addresses:["0xpool1","0xpool2"]},
-      expected_profit_usd: 7.6, net_expected_profit_usd: 7,
-      simulated_net_profit_usd: null, simulated_cost_breakdown: null,
-    });
-    const html = renderToStaticMarkup(<OpportunityExchangeCard {...props(opp)} />);
-    expect(html).toContain("RECHAZADA");
-    expect(html).toContain("No ejecutable");
-    expect(html).toContain("TokenNotAllowed:fixture");
-    expect(html).toContain("7.00");
-    expect(html).not.toContain("-$0.00");
+describe("rejected estimates must not masquerade as executable LIVE opportunities", () => {
+  it("shows rejection and exact reason even when a profitable estimate exists", () => {
+    const opp=makeOpp({status:"rejected",paper_status:"paper_rejected",rejection_reason:"TokenNotAllowed:unit",
+      net_expected_profit_usd:7.24,route_metadata:null});
+    const html=renderToStaticMarkup(<OpportunityExchangeCard {...props(opp)} />);
+    expect(html).toContain("Rechazada");
+    expect(html).toContain("TokenNotAllowed:unit");
+    expect(html).toContain("STALE"); // fixture is 16s old; do not relax the production TTL
+    expect(html).not.toContain(">Evaluada<");
+    expect(html).not.toContain(">LIVE<");
     expect(html).toContain("SIMULATE (PAPER SHADOW)");
-    expect(html).not.toContain("EXECUTE (");
+    expect(html).not.toContain("⚡ EXECUTE");
+  });
+  it("a lifecycle failure is visible even without a machine rejection reason", () => {
+    const opp=makeOpp({status:"failed",rejection_reason:null,net_expected_profit_usd:0,route_metadata:null});
+    const html=renderToStaticMarkup(<OpportunityExchangeCard {...props(opp)} />);
+    expect(html).toContain("Fallida");expect(html).not.toContain(">Evaluada<");
+  });
+  it("memo invalidates when only paper rejection, semantic evidence or intermediate symbols change", () => {
+    const compare=(OpportunityExchangeCard as unknown as {compare:(a:ReturnType<typeof props>,b:ReturnType<typeof props>)=>boolean}).compare;
+    const previous=props(makeOpp({net_expected_profit_usd:1,route_metadata:null}));
+    for(const patch of [{paper_status:"paper_rejected"},{semantic_violations:["missing_block"]},{leg_symbols:{"0xa":"UNIT"}}]) {
+      expect(compare(previous,{...previous,opp:{...previous.opp,...patch} as OmniOpportunity})).toBe(false);
+    }
+  });
+});
+
+
+describe("freshness is not LIVE execution", () => {
+  it("labels a one-second-old detection as RECIENTE without claiming LIVE", () => {
+    const opp=makeOpp({status:"detected",rejection_reason:null,expected_profit_usd:1,route_metadata:null});
+    const html=renderToStaticMarkup(<OpportunityExchangeCard {...props(opp)} now={Date.parse(opp.detected_at!) + 1000} />);
+    expect(html).toContain("RECIENTE");
+    expect(html).not.toContain(">LIVE<");
+    expect(html).not.toContain(">STALE<");
   });
 });

@@ -29,14 +29,18 @@ import pg from "pg";
 import { VIABLE_STATUSES } from "./opportunities-live.js";
 
 // CASE guards prevent jsonb_array_length from running on malformed scalars.
-// Tokens/adapters define the swap count; unresolved pools do not remove hops.
+// Tokens/adapters define the swap count. Only complete aligned routes enter
+// routed/by_hops; an unresolved pool never turns an h-hop route into h-1 hops.
 const HOPS_SQL = `CASE
   WHEN jsonb_typeof(route_metadata->'dex_adapters') = 'array'
    AND jsonb_typeof(route_metadata->'token_addresses') = 'array'
+   AND jsonb_typeof(route_metadata->'pool_addresses') = 'array'
   THEN CASE
     WHEN jsonb_array_length(route_metadata->'dex_adapters') > 0
      AND jsonb_array_length(route_metadata->'token_addresses') =
          jsonb_array_length(route_metadata->'dex_adapters') + 1
+     AND jsonb_array_length(route_metadata->'pool_addresses') =
+         jsonb_array_length(route_metadata->'dex_adapters')
     THEN jsonb_array_length(route_metadata->'dex_adapters')
     ELSE NULL END
   ELSE NULL END`;

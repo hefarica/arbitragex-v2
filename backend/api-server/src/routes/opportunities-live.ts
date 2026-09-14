@@ -421,15 +421,17 @@ function tokenInfoFromRow(
  * is the default operational mode (`ARBX_PAPER_TRADE=true`), so every
  * opportunity is either viable for the paper P&L or rejected by some gate.
  *
- *   rejection_reason IS NULL  →  paper_viable
- *   rejection_reason !== NULL →  paper_rejected
+ *   no rejection reason and no terminal rejection/failure → paper_viable
+ *   rejection reason OR rejected/failed lifecycle → paper_rejected
+ * This is pipeline classification, not simulation or execution certification.
  *
  * The status field exists so the dashboard can filter / count without
  * re-doing the rejection_reason null-check inline. R8 fail-honest: derivation
  * is exact, not synthesised.
  */
 function paperStatusFromRow(row: OpportunityLiveRow): "paper_viable" | "paper_rejected" {
-  return row.rejection_reason == null ? "paper_viable" : "paper_rejected";
+  return row.rejection_reason != null || row.status === "rejected" || row.status === "failed"
+    ? "paper_rejected" : "paper_viable";
 }
 
 /**
@@ -446,13 +448,21 @@ function chainsUsedFromRow(row: OpportunityLiveRow): number[] {
 }
 
 /**
- * Derives the unique set of DEX adapter names from `dex_a` + `dex_b`. Empty
+ * Derives all DEX adapter names from endpoints AND the full route topology. Empty
  * when both are blank. Lowercase-stable for case-insensitive joins.
  */
 function dexesUsedFromRow(row: OpportunityLiveRow): string[] {
   const set = new Set<string>();
   if (row.dex_a) set.add(row.dex_a.toLowerCase());
   if (row.dex_b) set.add(row.dex_b.toLowerCase());
+  // A 3/4/5-hop route can use intermediate venues not represented by dex_a/b.
+  // Read only names actually carried by the persisted route, without guessing.
+  const adapters = row.route_metadata?.dex_adapters;
+  if (Array.isArray(adapters)) {
+    for (const adapter of adapters) {
+      if (typeof adapter === "string" && adapter.trim()) set.add(adapter.toLowerCase());
+    }
+  }
   return Array.from(set).sort();
 }
 
@@ -489,10 +499,10 @@ function rowToOpportunity(
   const validationOut = validations.get(
     `${tokenOutChain}:${row.token_out.toLowerCase()}`,
   ) ?? null;
-  // HOPS-PROVENANCE: a canonical estimate stays in net_expected_profit_usd.
-  // No forward result means no simulated fields. In particular, gross - net
-  // cannot identify gas/LP/flash costs and must not be labelled ops overhead.
-  // Genuine model-computed zero costs remain zero when forward exists.
+  // Observation provenance: a canonical estimate is not a forward simulation.
+  // Keep gross/net/ROI in their canonical fields below. Without a computed
+  // forward result every simulated field is null, never an invented zero-cost
+  // breakdown or a copy of the estimate dressed as simulation evidence.
   const simulated_net_profit_usd = sim?.forward?.net_usd ?? null;
   const simulated_amount_in_usd = sim?.forward?.amount_in_usd ?? null;
   const simulated_roi_pct = sim?.forward?.roi_pct ?? null;
@@ -883,3 +893,6 @@ export function mountOpportunitiesLive(
     }
   });
 }
+
+// Pure mapper exposed for regression inputs, never mounted as an endpoint.
+export const __forTesting = { rowToOpportunity };

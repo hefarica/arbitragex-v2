@@ -1388,7 +1388,22 @@ function resetTripEpisodeState(): void {
 // Test-only exports.
 // ---------------------------------------------------------------------------
 
+/** Every aggregate state has its own instruction; WARN/UNKNOWN are never PASS. */
+function nextActionForState(state: BreakerState): string {
+  const actions: Record<BreakerState, string> = {
+    KILLED: "Operator disarm kill-switch with explicit reason.",
+    PAUSED: "Investigate worst-state breaker; review readiness items G-RPC-1/G-SIM-1.",
+    BLOCKED: "Resolve env prerequisites (RPC_HTTP_1, EXECUTOR_1) and run A.4 fork validation.",
+    NOT_AVAILABLE: "Configure ARBX_CB_* thresholds and accumulate paper_trade_runs history so DD/revert/gas evaluators have evidence.",
+    WARN: "Review warning breakers and unavailable evidence; no all-clear is implied. LIVE remains gated by A.9 formal sign-off.",
+    UNKNOWN: "Restore missing or failed breaker evidence before assessing readiness. LIVE remains gated by A.9 formal sign-off.",
+    PASS: "All real breakers PASS; LIVE remains gated by A.9 formal sign-off.",
+  };
+  return actions[state];
+}
+
 export const __forTesting = {
+  nextActionForState,
   makeDrawdownBreaker,
   makeRevertRateBreaker,
   makeGasBurnBreaker,
@@ -1434,12 +1449,7 @@ export function mountRiskCircuitBreakers(
       const overallState = overall(breakers);
       // Best-effort trip persistence — internal failures are logged, never surfaced as 5xx.
       await persistBreakerTrips(deps, breakers, ctx.chainId);
-      const nextAction =
-        overallState === "KILLED" ? "Operator disarm kill-switch with explicit reason."
-        : overallState === "PAUSED" ? "Investigate worst-state breaker; review readiness items G-RPC-1/G-SIM-1."
-        : overallState === "BLOCKED" ? "Resolve env prerequisites (RPC_HTTP_1, EXECUTOR_1) and run A.4 fork validation."
-        : overallState === "NOT_AVAILABLE" ? "Configure ARBX_CB_* thresholds and accumulate paper_trade_runs history so DD/revert/gas evaluators have evidence."
-        : "All real breakers PASS; LIVE remains gated by A.9 formal sign-off.";
+      const nextAction = nextActionForState(overallState);
 
       const response: CircuitBreakersStatusResponse = {
         generated_at: ctx.now,

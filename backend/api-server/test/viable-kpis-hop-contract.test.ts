@@ -21,7 +21,7 @@ beforeAll(async () => {
 afterAll(async()=>{ await pool?.end(); await container?.stop(); });
 beforeEach(async()=>{ await pool.query("TRUNCATE opportunities"); });
 function metadata(hops:number) {
-  return {dex_adapters:Array(hops).fill("unit-v2"),token_addresses:[...Array.from({length:hops},(_,i)=>`token-${i}`),"token-0"],pool_addresses:Array(Math.max(0,hops-2)).fill("unresolved-subset")};
+  return {dex_adapters:Array(hops).fill("unit-v2"),token_addresses:[...Array.from({length:hops},(_,i)=>`token-${i}`),"token-0"],pool_addresses:Array.from({length:hops},(_,i)=>`pool-${i}`)};
 }
 async function insert(route:unknown,status="detected",reason:string|null=null) {
   await pool.query("INSERT INTO opportunities(status,rejection_reason,strategy_kind,route_metadata) VALUES($1,$2,'unit-only',$3)",[status,reason,JSON.stringify(route)]);
@@ -31,11 +31,22 @@ async function read() {
   return request(app).get("/api/v1/analytics/viable-kpis?hours=1");
 }
 describe("HOPS-PROVENANCE — real PostgreSQL aggregation",()=>{
-  it("counts 2/3/4/5 by token/adapter topology even when pools are unresolved",async()=>{
+  it("counts complete 2/3/4/5 by token/adapter topology consistently with the view model",async()=>{
     for(const h of [2,3,4,5])await insert(metadata(h));
     const r=await read();expect(r.status).toBe(200);
     expect(r.body.data.by_hops).toEqual([2,3,4,5].map(hops=>({hops,n:1})));
     expect(r.body.data.totals).toEqual({total:4,viable:4,routed:4,viability_pct:100});
+  });
+  it("does not count unresolved pools as complete routes or invent fewer swaps",async()=>{
+    for(const h of [2,3,4,5]) {
+      const r=metadata(h);
+      await insert({...r,pool_addresses:r.pool_addresses.slice(1)});
+    }
+    await insert({...metadata(3),pool_addresses:"not-an-array"});
+    const r=await read();expect(r.status).toBe(200);
+    expect(r.body.data.by_hops).toEqual([]);
+    expect(r.body.data.totals).toEqual({total:5,viable:5,routed:0,viability_pct:100});
+    // viable is pipeline lifecycle only, NOT a declaration of executability.
   });
   it("excludes explicit rejections even when a stale status says detected",async()=>{
     await insert(metadata(4),"detected","TokenNotAllowed:unit-only");

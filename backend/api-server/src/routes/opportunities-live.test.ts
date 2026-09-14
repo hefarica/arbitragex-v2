@@ -155,44 +155,60 @@ describe("GET /api/v1/opportunities/live — window_total contract (WO-H4)", () 
 });
 
 
-describe("HOPS-PROVENANCE — estimates never become fabricated simulation evidence", () => {
+describe("opportunity evidence provenance — constructed unit inputs, not production observations", () => {
+  it("canonical estimates are preserved but never fabricate simulation or individual costs", async () => {
+    const app = await buildApp(fakePool({ rows: [fixtureRow({
+      status: "rejected", rejection_reason: "TokenNotAllowed:unit-test",
+      expected_profit_usd: 7.83771991, net_expected_profit_usd: 7.240022, roi_pct: null,
+    })] }));
+    const response = await request(app).get("/api/v1/opportunities/live");
+    expect(response.status).toBe(200);
+    const row = response.body.items[0];
+    expect(row.expected_profit_usd).toBe(7.83771991);
+    expect(row.net_expected_profit_usd).toBe(7.240022);
+    expect(row.paper_status).toBe("paper_rejected");
+    for (const key of ["simulated_net_profit_usd", "simulated_amount_in_usd", "simulated_roi_pct",
+      "simulated_cost_breakdown", "simulated_at", "simulated_target"]) expect(row[key], key).toBeNull();
+  });
   for (const hops of [2, 3, 4, 5]) {
-    it(`${hops} hops: preserves rejected analysis and every leg, without invented zero costs`, async () => {
-      const tokens = Array.from({ length: hops }, (_, i) => `0x${String(i + 1).padStart(40, "0")}`);
-      tokens.push(tokens[0]!);
-      const route = {
-        token_addresses: tokens,
-        dex_adapters: Array.from({ length: hops }, () => "unknown"),
-        pool_addresses: Array.from({ length: hops }, (_, i) => `0x${String(i + 100).padStart(40, "0")}`),
-        decimals: { map: {} },
+    it(`${hops} hops preserve every pool/token and ALL intermediate DEX names`, async () => {
+      const addresses = Array.from({length: hops}, (_, i) => `0x${(i + 1).toString(16).padStart(40, "0")}`);
+      const adapters = Array.from({length: hops}, (_, i) => `unit-dex-${i}`);
+      const topology = {
+        token_addresses: [...addresses, addresses[0]],
+        pool_addresses: addresses.map((_, i) => `0x${(i + 101).toString(16).padStart(40, "0")}`),
+        dex_adapters: adapters,
       };
       const app = await buildApp(fakePool({ rows: [fixtureRow({
-        status: "rejected", rejection_reason: "TokenNotAllowed:test-fixture",
-        expected_profit_usd: 7.6, net_expected_profit_usd: 7.0, roi_pct: null,
-        route_metadata: route,
+        token_in: addresses[0], token_out: addresses[0], dex_a: adapters[0], dex_b: adapters[hops - 1],
+        route_metadata: topology,
       })] }));
-      const r = await request(app).get("/api/v1/opportunities/live");
-      expect(r.status).toBe(200);
-      const row = r.body.items[0];
-      expect(row.route_metadata).toEqual(route);
-      expect(row.rejection_reason).toBe("TokenNotAllowed:test-fixture");
-      expect(row.net_expected_profit_usd).toBe(7.0);
-      expect(row.expected_profit_usd).toBe(7.6);
-      expect(row.simulated_net_profit_usd).toBeNull();
-      expect(row.simulated_cost_breakdown).toBeNull();
-      expect(row.simulated_roi_pct).toBeNull();
-      expect(row.simulated_at).toBeNull();
+      const response = await request(app).get("/api/v1/opportunities/live");
+      expect(response.status).toBe(200);
+      expect(response.body.items[0].route_metadata).toEqual(topology);
+      expect(response.body.items[0].dexes_used).toEqual(adapters);
     });
   }
-
-  it("a genuine recorded zero net/ROI remains zero only in its original estimate fields", async () => {
-    const app = await buildApp(fakePool({ rows: [fixtureRow({
-      expected_profit_usd: 0, net_expected_profit_usd: 0, roi_pct: 0,
-    })] }));
-    const r = await request(app).get("/api/v1/opportunities/live");
-    expect(r.body.items[0].net_expected_profit_usd).toBe(0);
-    expect(r.body.items[0].roi_pct).toBe(0);
-    expect(r.body.items[0].simulated_cost_breakdown).toBeNull();
-    expect(r.body.items[0].simulated_roi_pct).toBeNull();
+  for (const status of ["rejected", "failed"]) {
+    it(`${status} without a reason does not become paper_viable`, async () => {
+      const app = await buildApp(fakePool({ rows: [fixtureRow({status, rejection_reason: null})] }));
+      const response = await request(app).get("/api/v1/opportunities/live");
+      expect(response.status).toBe(200);
+      expect(response.body.items[0].paper_status).toBe("paper_rejected");
+    });
+  }
+  it("preserves a computed forward zero, complete cost vector and timestamp without fallback", async () => {
+    const { __forTesting } = await import("./opportunities-live.js");
+    const cost = {gas_usd: 1, lp_fees_usd: 2, slippage_usd: 0, failure_buffer_usd: 0,
+      copied_buffer_usd: 0, capital_cost_usd: 0, ops_overhead_usd: 0, flashloan_fee_usd: 0, relay_fee_usd: 0};
+    const sim = {forward:{net_usd:0,amount_in_usd:100,roi_pct:0,cost_breakdown:cost,notes:[]},
+      inverse:null, simulated_at:"2026-09-14T00:00:00Z"};
+    const result = __forTesting.rowToOpportunity(fixtureRow() as never, sim as never, null, new Map(), new Map());
+    expect(result.simulated_net_profit_usd).toBe(0);
+    expect(result.simulated_roi_pct).toBe(0);
+    expect(result.simulated_amount_in_usd).toBe(100);
+    expect(result.simulated_cost_breakdown).toEqual(cost);
+    expect(result.simulated_at).toBe(sim.simulated_at);
+    expect(result.net_expected_profit_usd).toBe(0.5);
   });
 });

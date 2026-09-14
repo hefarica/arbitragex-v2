@@ -39,6 +39,8 @@ pub mod unique_route_finder;
 /// Cross-module safety guarantees (NO-ACTIVE / opps-untouched). Test-only.
 #[cfg(test)]
 mod guarantees;
+#[cfg(test)]
+mod hops_matrix_tests;
 
 use std::env;
 

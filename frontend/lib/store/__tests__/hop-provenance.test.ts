@@ -34,11 +34,14 @@ describe("HOPS-PROVENANCE — 2/3/4/5-hop view-model fidelity", () => {
     }
     expect(deriveLegLedger(opp)![hops-1]!.cycle_delta_wei).toBe(String(hops));
   });
-  it("never shifts the third pool into a missing second-hop slot", () => {
+  it("quarantines an invalid pool position instead of shifting the third pool into it", () => {
     const raw=fixture(3);
     const opp=mapToOmniOpportunity({...raw, route_metadata:{...raw.route_metadata, pool_addresses:["pool-0",null,"pool-2"]}});
-    expect(deriveLegs(opp).map(l=>l.pool)).toEqual(["pool-0","","pool-2"]);
-    expect(opp.hop_count).toBe(3);
+    expect(opp.route_metadata).toBeNull();
+    expect(opp.hop_count).toBeNull();
+    expect(opp.semantic_violations).toContain("route_metadata_invalid");
+    expect(deriveLegs(opp).every(l=>l.synthetic)).toBe(true);
+    expect(deriveLegLedger(opp)).toBeNull();
   });
   it("does not manufacture a shorter route by filtering an invalid middle token", () => {
     const raw=fixture(3);

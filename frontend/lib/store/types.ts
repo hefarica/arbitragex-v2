@@ -146,7 +146,9 @@ export interface RouteMetadataWire {
  */
 export function deriveHopCount(rm: RouteMetadataWire | null): number | null {
   if (!rm || rm.dex_adapters.length === 0) return null;
-  return rm.dex_adapters.length;
+  const hops = rm.dex_adapters.length;
+  if (rm.token_addresses.length !== hops + 1 || rm.pool_addresses.length !== hops) return null;
+  return hops;
 }
 
 /**
@@ -288,6 +290,9 @@ export interface OmniOpportunity {
   // Full A→B cycle (2..N legs). Null for legacy rows / detection failures —
   // callers fall back to dex_a/dex_b. Drives the per-leg route ledger.
   route_metadata: RouteMetadataWire | null;
+  /** ViewModel diagnostics only: malformed input is not a missing legacy route. */
+  route_metadata_invalid?: boolean;
+  route_ledger_invalid?: boolean;
 
   // === Simulation Results (Rust spine) ===
   simulated_net_profit_usd: number | null;
@@ -439,6 +444,13 @@ export function mapToOmniOpportunity(raw: Record<string, unknown>): OmniOpportun
   // FE-0031 (§30): compute AFTER the row is fully mapped — the validator
   // audits the finished ViewModel, so every path (WS/polling/SSR) quarantines
   // identically.
+  const rawRoute = raw.route_metadata;
+  const hasRawRoute = rawRoute != null &&
+    (typeof rawRoute !== "object" || Array.isArray(rawRoute) || Object.keys(rawRoute).length > 0);
+  if (hasRawRoute && routeMetadata === null) mapped.route_metadata_invalid = true;
+  if (routeMetadata !== null && !validLegLedgerInput(rawRoute as Record<string, unknown>, routeMetadata.dex_adapters.length)) {
+    mapped.route_ledger_invalid = true;
+  }
   mapped.semantic_violations = validateOpportunitySemantics(mapped);
   return mapped;
 }
@@ -452,25 +464,36 @@ export function mapToOmniOpportunity(raw: Record<string, unknown>): OmniOpportun
  * Returns null when absent, non-object, or an empty object (R8 fail-honest:
  * no topology = no topology; never a half-fabricated `RouteMetadataWire`).
  */
+function isUnsignedWei(value: unknown): value is string {
+  if (typeof value !== "string" || !/^[0-9]{1,78}$/.test(value)) return false;
+  return BigInt(value) < (1n << 256n);
+}
+
+function validLegLedgerInput(obj: Record<string, unknown>, hops: number): boolean {
+  const inputs = [obj.leg_amounts_in, obj.leg_amounts_out, obj.leg_zero_for_one];
+  if (inputs.every((value) => value == null)) return true; // genuinely uncomputed
+  return Array.isArray(obj.leg_amounts_in) && obj.leg_amounts_in.length === hops &&
+    obj.leg_amounts_in.every(isUnsignedWei) &&
+    Array.isArray(obj.leg_amounts_out) && obj.leg_amounts_out.length === hops &&
+    obj.leg_amounts_out.every(isUnsignedWei) &&
+    Array.isArray(obj.leg_zero_for_one) && obj.leg_zero_for_one.length === hops &&
+    obj.leg_zero_for_one.every((value) => typeof value === "boolean");
+}
+
 export function parseRouteMetadata(
   raw: unknown,
 ): RouteMetadataWire | null {
-  if (raw == null || typeof raw !== "object") return null;
+  if (raw == null || typeof raw !== "object" || Array.isArray(raw)) return null;
   const obj = raw as Record<string, unknown>;
-  const tokenAddresses = Array.isArray(obj.token_addresses)
-    && obj.token_addresses.every((s): s is string => typeof s === "string")
-    ? obj.token_addresses
-    : [];
-  const dexAdapters = Array.isArray(obj.dex_adapters)
-    && obj.dex_adapters.every((s): s is string => typeof s === "string")
-    ? obj.dex_adapters
-    : [];
-  const poolAddresses = Array.isArray(obj.pool_addresses)
-    ? (obj.pool_addresses as unknown[]).map((s) => typeof s === "string" ? s : "")
-    : [];
-  // Never compact parallel arrays: an unknown middle pool keeps its slot.
-  // Malformed token/adapter arrays cannot describe a trustworthy traversal.
-  // Require at least one hop + a closing token to be meaningful.
+  // Never filter individual entries: that shifts a pool/amount onto a different
+  // hop and can turn malformed input into a plausible but fabricated route.
+  const stringArray = (value: unknown): value is string[] =>
+    Array.isArray(value) && Array.from(value).every((entry) => typeof entry === "string");
+  if (!stringArray(obj.token_addresses) || !stringArray(obj.dex_adapters) ||
+      !stringArray(obj.pool_addresses)) return null;
+  const tokenAddresses = [...obj.token_addresses];
+  const dexAdapters = [...obj.dex_adapters];
+  const poolAddresses = [...obj.pool_addresses];
   if (dexAdapters.length === 0 || tokenAddresses.length < 2) return null;
   // decimals — Rust serializes DecimalsMap as a newtype: {"map": {...}} (the
   // REAL wire shape; see shared-rs candidates.rs). Accept it AND a flat record
@@ -484,24 +507,19 @@ export function parseRouteMetadata(
         : raw;
     const out: Record<string, number> = {};
     for (const [k, v] of Object.entries(src)) {
-      if (typeof v === "number") out[k] = v;
+      if (typeof v === "number" && Number.isInteger(v) && v >= 0 && v <= 255) out[k.toLowerCase()] = v;
     }
     decimals = out;
   }
   // HOPS-LEDGER-04: project the optional per-leg ledger arrays. Undefined
   // (NOT empty) when absent — absence is the R8 state "not computed".
-  const legAmountsIn = Array.isArray(obj.leg_amounts_in)
-    && obj.leg_amounts_in.every((v): v is string => typeof v === "string")
-    ? obj.leg_amounts_in
-    : undefined;
-  const legAmountsOut = Array.isArray(obj.leg_amounts_out)
-    && obj.leg_amounts_out.every((v): v is string => typeof v === "string")
-    ? obj.leg_amounts_out
-    : undefined;
-  const legZeroForOne = Array.isArray(obj.leg_zero_for_one)
-    && obj.leg_zero_for_one.every((v): v is boolean => typeof v === "boolean")
-    ? obj.leg_zero_for_one
-    : undefined;
+  const ledgerValid = validLegLedgerInput(obj, dexAdapters.length);
+  const legAmountsIn = ledgerValid && Array.isArray(obj.leg_amounts_in)
+    ? [...obj.leg_amounts_in] as string[] : undefined;
+  const legAmountsOut = ledgerValid && Array.isArray(obj.leg_amounts_out)
+    ? [...obj.leg_amounts_out] as string[] : undefined;
+  const legZeroForOne = ledgerValid && Array.isArray(obj.leg_zero_for_one)
+    ? [...obj.leg_zero_for_one] as boolean[] : undefined;
   return {
     token_addresses: tokenAddresses,
     dex_adapters: dexAdapters,
@@ -613,7 +631,7 @@ export interface LegLedgerEntry {
  */
 export function deriveLegLedger(opp: OmniOpportunity): LegLedgerEntry[] | null {
   const rm = opp.route_metadata;
-  if (!rm) return null;
+  if (!rm || opp.route_ledger_invalid || deriveHopCount(rm) === null) return null;
   const hops = rm.dex_adapters.length;
   if (hops === 0) return null;
   const { leg_amounts_in: amountsIn, leg_amounts_out: amountsOut, leg_zero_for_one: zeroForOne } = rm;
@@ -623,7 +641,9 @@ export function deriveLegLedger(opp: OmniOpportunity): LegLedgerEntry[] | null {
     !zeroForOne ||
     amountsIn.length !== hops ||
     amountsOut.length !== hops ||
-    zeroForOne.length !== hops
+    zeroForOne.length !== hops ||
+    !amountsIn.every(isUnsignedWei) || !amountsOut.every(isUnsignedWei) ||
+    !zeroForOne.every((value) => typeof value === "boolean")
   ) {
     return null;
   }
@@ -638,7 +658,7 @@ export function deriveLegLedger(opp: OmniOpportunity): LegLedgerEntry[] | null {
   // opening token. BigInt-exact; a non-numeric payload leaves it null (R8 —
   // never fabricate a figure from garbage).
   const tokens = rm.token_addresses;
-  if (tokens.length === hops + 1 && tokens[0] && tokens[0] === tokens[hops]) {
+  if (tokens.length === hops + 1 && tokens[0] && tokens[0].toLowerCase() === tokens[hops]?.toLowerCase()) {
     const initialIn = entries[0]?.amount_in_wei;
     const closing = entries[hops - 1];
     const finalOut = closing?.amount_out_wei;
@@ -669,6 +689,10 @@ export type SemanticViolation =
   | "degenerate_pair"
   /** Topology hop arithmetic broken: tokens ≠ hops + 1. */
   | "hop_incoherent"
+  /** Malformed raw topology was refused instead of silently repaired. */
+  | "route_metadata_invalid"
+  /** Present per-leg amounts/directions are incomplete or not exact uint256. */
+  | "leg_ledger_incoherent"
   /** Leg chain broken: doesn't link leg-to-leg / doesn't close the cycle. */
   | "legs_incoherent"
   /** No block context — a row the §30 contract expects block_number on. */
@@ -694,6 +718,8 @@ export const QUARANTINED_LABEL = "QUARANTINED";
  */
 export function validateOpportunitySemantics(opp: OmniOpportunity): SemanticViolation[] {
   const v: SemanticViolation[] = [];
+  if (opp.route_metadata_invalid) v.push("route_metadata_invalid");
+  if (opp.route_ledger_invalid) v.push("leg_ledger_incoherent");
 
   // route_id/strategy_id identity.
   const legs = deriveLegs(opp);
@@ -707,7 +733,7 @@ export function validateOpportunitySemantics(opp: OmniOpportunity): SemanticViol
   // Only a self-swap LEG (X→X inside the route) is a provable no-op. Synthetic
   // §29 legs are display shape — not audited here.
   const wireLegs = legs.filter((l) => !l.synthetic);
-  if (wireLegs.some((l) => l.token_in !== "" && l.token_in === l.token_out)) {
+  if (wireLegs.some((l) => l.token_in !== "" && l.token_in.toLowerCase() === l.token_out.toLowerCase())) {
     v.push("degenerate_pair");
   }
 
@@ -715,7 +741,7 @@ export function validateOpportunitySemantics(opp: OmniOpportunity): SemanticViol
   // synthetic §29 legs are display shape, not an operational route to audit).
   const rm = opp.route_metadata;
   if (rm != null) {
-    if (rm.token_addresses.length !== rm.dex_adapters.length + 1) v.push("hop_incoherent");
+    if (deriveHopCount(rm) === null || rm.token_addresses.some((t) => t.trim() === "")) v.push("hop_incoherent");
     // Chain must link: token_addresses[i+1] is leg i's out — trivially true by
     // construction, so the REAL linkage check is the cycle close on
     // single-chain rows: last address === first address.
@@ -723,7 +749,7 @@ export function validateOpportunitySemantics(opp: OmniOpportunity): SemanticViol
     if (
       singleChain &&
       rm.token_addresses.length >= 2 &&
-      rm.token_addresses[rm.token_addresses.length - 1] !== rm.token_addresses[0]
+      rm.token_addresses[rm.token_addresses.length - 1]?.toLowerCase() !== rm.token_addresses[0]?.toLowerCase()
     ) {
       v.push("legs_incoherent");
     }
