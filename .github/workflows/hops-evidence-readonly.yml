@@ -1,0 +1,124 @@
+name: Hops 2-5 evidence (read only)
+on:
+  push:
+    branches: [ops/audit-hops-2-5-20260914]
+    paths: [.github/workflows/hops-evidence-readonly.yml]
+permissions:
+  contents: read
+concurrency:
+  group: hops-evidence-readonly
+  cancel-in-progress: false
+jobs:
+  capture:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
+        with:
+          ref: a30343c1f4b7cd0bd6928b2e7192bcedc4eab483
+          persist-credentials: false
+      - name: Export tracked source and capture public GET responses (no SSH)
+        run: |
+          python3 - <<'PY'
+          import datetime, hashlib, json, pathlib, subprocess, time, urllib.request, urllib.error, zipfile
+          out = pathlib.Path('hops-evidence'); out.mkdir()
+          sha = subprocess.check_output(['git','rev-parse','HEAD'], text=True).strip()
+          assert sha == 'a30343c1f4b7cd0bd6928b2e7192bcedc4eab483'
+          paths = subprocess.check_output(['git','ls-files','-z']).decode().split('\0')
+          roots = ('backend/','frontend/','shared-ts/','tests/','scripts/','database/','.github/workflows/')
+          extensions = {'.rs','.ts','.tsx','.js','.cjs','.mjs','.json','.toml','.sql','.yml','.yaml','.sh','.md'}
+          rootfiles = {'AGENTS.md','CLAUDE.md','FRONTEND-DOCTRINE.md','package.json','package-lock.json','tsconfig.json','rust-toolchain.toml','Cargo.lock','Cargo.toml'}
+          files = []
+          with zipfile.ZipFile(out/'source.zip','w',zipfile.ZIP_DEFLATED) as z:
+            for name in paths:
+              p=pathlib.Path(name)
+              if not name or not p.is_file() or p.is_symlink(): continue
+              if name not in rootfiles and not (name.startswith(roots) and p.suffix in extensions): continue
+              if any(x in name.lower() for x in ('credentials/fixtures','secrets/','.env','private-key')): continue
+              data=p.read_bytes(); z.writestr(name,data)
+              files.append({'path':name,'sha256':hashlib.sha256(data).hexdigest()})
+          manifest={'source_sha':sha,'captured_at':datetime.datetime.now(datetime.timezone.utc).isoformat(),'files':files}
+          (out/'source-manifest.json').write_text(json.dumps(manifest,indent=2))
+          routes=[('status','/api/status'),('opportunities','/api/opportunities/live?limit=200'),('readiness','/api/readiness'),('risk','/api/risk/circuit-breakers/status'),('scoring','/api/scoring/status')]
+          observations=[]
+          for name,route in routes:
+            t=time.monotonic(); item={'name':name,'path':route,'captured_at':datetime.datetime.now(datetime.timezone.utc).isoformat()}
+            try:
+              req=urllib.request.Request('https://arbx.ape-tv.net'+route,headers={'Accept':'application/json'})
+              with urllib.request.urlopen(req,timeout=12) as response:
+                raw=response.read(3000001); item['status']=response.status
+                if len(raw)>3000000: raise ValueError('response_exceeds_capture_limit')
+                data=json.loads(raw)
+                if name=='status': data={k:data.get(k) for k in ('deploy','mode','paper_mode','version','service')}
+                (out/(name+'.json')).write_text(json.dumps(data,indent=2))
+                item['json_valid']=True; item['bytes']=len(raw)
+            except urllib.error.HTTPError as e: item['status']=e.code; item['error']='http_error'
+            except Exception as e: item['error']=type(e).__name__
+            item['ms']=round((time.monotonic()-t)*1000); observations.append(item)
+          (out/'http-observations.json').write_text(json.dumps(observations,indent=2))
+          print(json.dumps({'source_sha':sha,'source_files':len(files),'observations':observations},indent=2))
+          PY
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444
+        with:
+          node-version: 22
+          cache: npm
+      - name: Install locked runner dependencies
+        run: npm ci --ignore-scripts --no-audit --no-fund
+      - name: Install runner Chromium
+        run: node frontend/node_modules/playwright/cli.js install --with-deps chromium
+      - name: Capture rendered opportunities and received route payloads
+        env:
+          NODE_PATH: ${{ github.workspace }}/frontend/node_modules
+        run: |
+          node <<'JS'
+          const {chromium}=require('playwright');
+          const fs=require('node:fs');
+          const origin='https://arbx.ape-tv.net';
+          const out='hops-evidence';
+          (async()=>{
+            const browser=await chromium.launch({headless:true});
+            const context=await browser.newContext({viewport:{width:1440,height:1000},serviceWorkers:'block'});
+            const report={started_at:new Date().toISOString(),scope:'observation_only_not_execution_certification',blocked_writes:0,pages:[]};
+            await context.route('**/*',route=>['GET','HEAD','OPTIONS'].includes(route.request().method())?route.continue():(report.blocked_writes++,route.abort('blockedbyclient')));
+            try {
+              for(const [name,pathname] of [['opportunities-page','/opportunities'],['exchange-page','/opportunities/exchange']]){
+                const page=await context.newPage();
+                const item={path:pathname,responses:[],errors:[],socket_opportunities:[],failed_requests:[]}; report.pages.push(item);
+                const tasks=[];
+                const safePath=u=>{try{return new URL(u).pathname}catch{return 'invalid_path'}};
+                page.on('pageerror',e=>item.errors.push({type:e.name,message:String(e.message).slice(0,180)}));
+                page.on('requestfailed',r=>{if(safePath(r.url()).startsWith('/api/'))item.failed_requests.push({path:safePath(r.url()),error:r.failure()?.errorText})});
+                page.on('response',r=>{
+                  const p=safePath(r.url());
+                  if(!p.includes('/opportunities/'))return;
+                  tasks.push((async()=>{const entry={path:p,status:r.status()};item.responses.push(entry);try{const data=await r.json();entry.json=true;if(r.status()===200&&item.responses.length<=8)fs.writeFileSync(`${out}/${name}-response-${item.responses.length}.json`,JSON.stringify(data,null,2));}catch{entry.json=false}})());
+                });
+                page.on('websocket',socket=>socket.on('framereceived',event=>{
+                  if(item.socket_opportunities.length>=80)return;
+                  const text=event.payload.toString();
+                  if(text.startsWith('42')){try{const message=JSON.parse(text.slice(2));if(['new_opportunity','opportunity','opportunities'].includes(message[0]))item.socket_opportunities.push(message);}catch{}}
+                }));
+                try{
+                  const response=await page.goto(origin+pathname,{waitUntil:'domcontentloaded',timeout:30000});item.page_http=response?.status();
+                  await page.waitForTimeout(20000);
+                  fs.writeFileSync(`${out}/${name}-text.txt`,await page.locator('body').innerText({timeout:5000}));
+                  await page.screenshot({path:`${out}/${name}.png`,fullPage:true,timeout:15000});
+                  item.observed_at=new Date().toISOString();
+                }catch(e){item.navigation_error=e.name;}
+                finally{await Promise.allSettled(tasks);await page.close();}
+              }
+            }finally{
+              report.finished_at=new Date().toISOString();fs.writeFileSync(`${out}/browser.json`,JSON.stringify(report,null,2));
+              console.log(JSON.stringify({pages:report.pages.map(p=>({path:p.path,page_http:p.page_http,response_count:p.responses.length,ws_opportunities:p.socket_opportunities.length,errors:p.errors.length,failed_requests:p.failed_requests.length,navigation_error:p.navigation_error})),blocked_writes:report.blocked_writes}));
+              await context.close();await browser.close();
+            }
+          })().catch(e=>{console.error(e.name);process.exitCode=1});
+          JS
+      - name: Preserve diagnostic evidence including failures
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: hops-evidence-${{ github.run_id }}
+          path: hops-evidence/
+          retention-days: 7
+          if-no-files-found: error
