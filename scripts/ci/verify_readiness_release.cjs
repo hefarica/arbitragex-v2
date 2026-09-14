@@ -41,7 +41,10 @@ function safePath(url) { try { return new URL(url).pathname; } catch { return 'i
       const page = await context.newPage();
       const start = new WeakMap();
       const finished = [];
-      page.on('request', r => { if (wanted.has(safePath(r.url()))) start.set(r, Date.now()); });
+      const outstanding = new Set();
+      page.on('request', r => {
+        if (wanted.has(safePath(r.url()))) { start.set(r, Date.now()); outstanding.add(r); }
+      });
       page.on('requestfinished', r => {
         if (!start.has(r)) return;
         finished.push((async () => {
@@ -57,16 +60,20 @@ function safePath(url) { try { return new URL(url).pathname; } catch { return 'i
             }
           } catch { item.payload_valid = false; }
           round.requests.push(item);
+          outstanding.delete(r);
         })());
       });
       page.on('requestfailed', r => {
-        if (start.has(r)) round.requests.push({path: safePath(r.url()), ms: Date.now() - start.get(r), result: 'failed'});
+        if (start.has(r)) {
+          round.requests.push({path: safePath(r.url()), ms: Date.now() - start.get(r), result: 'failed'});
+          outstanding.delete(r);
+        }
       });
       try {
         const response = await page.goto(ORIGIN + '/live-readiness', {waitUntil: 'domcontentloaded', timeout: 30000});
         round.page_http = response?.status();
         await page.locator('[data-slot="confidence-scoring-panel"]').waitFor({timeout: 20000});
-        await page.waitForTimeout(16500); // captures all three old five-second attempts on failure
+        await page.waitForTimeout(22000); // also covers the risk panel's 15s poll and its full 5s deadline
         for (const [name, slot] of Object.entries(slots)) {
           const panel = page.locator(`[data-slot="${slot}"]`);
           const text = await panel.innerText({timeout: 5000});
@@ -75,11 +82,16 @@ function safePath(url) { try { return new URL(url).pathname; } catch { return 'i
           await panel.screenshot({path: path.join(OUT, `${name}-${n+1}.png`), timeout: 10000});
         }
         await Promise.all(finished);
-        round.passed = round.page_http === 200 && [...wanted].every(p => round.requests.some(r => r.path === p && r.status === 200 && r.payload_valid && r.ms < 5000))
+        round.outstanding_at_assertion = outstanding.size;
+        round.passed = outstanding.size === 0 && round.page_http === 200 && [...wanted].every(p => round.requests.some(r => r.path === p && r.status === 200 && r.payload_valid && r.ms < 5000))
           && !round.requests.some(r => r.result === 'failed' || r.status !== 200 || !r.payload_valid)
           && Object.values(round.panels).every(p => p.content_visible && !p.error_visible);
       } catch (e) { round.error_type = e.name; }
-      finally { await page.close(); await Promise.all(finished); }
+      finally {
+        await page.close(); await Promise.all(finished);
+        // A late abort while closing must never leave a previously computed green result.
+        round.passed = round.passed && !round.requests.some(r => r.result === 'failed' || r.status !== 200 || !r.payload_valid);
+      }
     }
     report.passed = report.rounds.length === 2 && report.rounds.every(r => r.passed);
   } catch (e) { report.error = ['public_release_identity_mismatch'].includes(e.message) ? e.message : e.name; }
