@@ -1,0 +1,195 @@
+name: Validate opportunity hop provenance
+on:
+  push:
+    branches: [ops/verify-hop-provenance-20260914]
+    paths: [.github/workflows/hop-provenance-validation.yml]
+permissions:
+  contents: read
+concurrency:
+  group: opportunity-hop-provenance-validation
+  cancel-in-progress: false
+env:
+  BASE_SHA: 46f22f8212d51b0bdb23c11f02ee4aca4571b075
+  PATCH_SHA256: 220cb9643db2452617764da6fa3b8008e7d44a6985b47af2d1bb72019f8ac00b
+  PATCH_PARTS: 6d34a3dc9424b5e2a885f0397930aa9d0a7c7a7f,38ae26312779e676ca7acaeebe5f4615eb463fe5,aec28a5364e3ccbd83d700e7e56ebcf83a7b3cf3
+jobs:
+  node-and-postgres:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    services:
+      redis:
+        image: redis:7.2-alpine
+        ports: [6379:6379]
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 20
+    env:
+      REDIS_URL: redis://localhost:6379
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
+        with:
+          ref: 46f22f8212d51b0bdb23c11f02ee4aca4571b075
+          persist-credentials: false
+      - name: Authenticate exact patch and apply outside main
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python3 - <<'PY'
+          import base64,gzip,hashlib,json,os,subprocess,urllib.request,pathlib
+          assert subprocess.check_output(['git','rev-parse','HEAD'],text=True).strip()==os.environ['BASE_SHA']
+          parts=[]
+          for sha in os.environ['PATCH_PARTS'].split(','):
+              url=f"https://api.github.com/repos/{os.environ['GITHUB_REPOSITORY']}/git/blobs/{sha}"
+              req=urllib.request.Request(url,headers={'Authorization':'Bearer '+os.environ['GH_TOKEN'],'Accept':'application/vnd.github+json'})
+              with urllib.request.urlopen(req,timeout=30) as r: blob=json.load(r)
+              raw=base64.b64decode(blob['content']); assert hashlib.sha1(b'blob '+str(len(raw)).encode()+b'\0'+raw).hexdigest()==sha
+              parts.append(raw)
+          patch=gzip.decompress(base64.b64decode(b''.join(parts)))
+          assert hashlib.sha256(patch).hexdigest()==os.environ['PATCH_SHA256']
+          pathlib.Path('.git/hop-provenance.patch').write_bytes(patch)
+          subprocess.run(['git','apply','--check','--index','.git/hop-provenance.patch'],check=True)
+          subprocess.run(['git','apply','--index','.git/hop-provenance.patch'],check=True)
+          names=subprocess.check_output(['git','diff','--cached','--name-only'],text=True).splitlines()
+          assert len(names)==13 and all(n.startswith(('backend/api-server/','backend/searcher-rs/src/candidate_simulation.rs','frontend/')) for n in names)
+          assert not any('.env' in n or '/workflows/' in n for n in names)
+          pathlib.Path('hop-validation-evidence').mkdir()
+          pathlib.Path('hop-validation-evidence/source.json').write_text(json.dumps({'base_sha':os.environ['BASE_SHA'],'patch_sha256':os.environ['PATCH_SHA256'],'files':names},indent=2))
+          subprocess.run(['git','diff','--cached','--check'],check=True)
+          PY
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444
+        with:
+          node-version: 22
+          cache: npm
+      - name: Install locked dependencies (runner only)
+        run: npm ci --ignore-scripts --no-audit --no-fund
+      - name: Build shared and API; typecheck API and frontend
+        run: |
+          npm run build --workspace @arbx/shared
+          npm run typecheck --workspace @arbx/api-server
+          npm run build --workspace @arbx/api-server
+          npm run typecheck --workspace @arbx/frontend
+      - name: Complete API unit suite, including rejected 2/3/4/5-hop provenance
+        run: npm test --workspace @arbx/api-server -- --reporter=default --reporter=json --outputFile="$GITHUB_WORKSPACE/hop-validation-evidence/api-tests.json"
+      - name: Actual PostgreSQL 15 hop aggregation and live API integration
+        run: npm run test:integration --workspace @arbx/api-server -- test/viable-kpis-hop-contract.test.ts test/opportunities-live.test.ts --reporter=default --reporter=json --outputFile="$GITHUB_WORKSPACE/hop-validation-evidence/pg-tests.json"
+      - name: Complete frontend suite, including ROI and parallel hop arrays
+        run: npm test --workspace @arbx/frontend -- --reporter=default --reporter=json --outputFile="$GITHUB_WORKSPACE/hop-validation-evidence/frontend-tests.json"
+      - name: Production frontend build
+        run: npm run build --workspace @arbx/frontend
+      - name: Require tests to have actually run
+        run: |
+          python3 - <<'PY'
+          import json,pathlib
+          for name in ['api-tests.json','pg-tests.json','frontend-tests.json']:
+              r=json.loads(pathlib.Path('hop-validation-evidence',name).read_text())
+              assert r['success'] and r['numPassedTests']>0 and r['numFailedTests']==0,(name,r)
+              print(name,{k:r[k] for k in ['numPassedTests','numFailedTests','numPendingTests']})
+          PY
+      - if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: hop-provenance-node-${{ github.run_id }}
+          path: hop-validation-evidence/
+          if-no-files-found: error
+          retention-days: 7
+  rust-hop-contract:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    env:
+      DATABASE_URL: postgres://test:test@localhost/arbitragex_test
+      REDIS_URL: redis://localhost:6379
+      SIM_SIGNER_ADDRESS: '0x000000000000000000000000000000000000dead'
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
+        with:
+          ref: 46f22f8212d51b0bdb23c11f02ee4aca4571b075
+          persist-credentials: false
+      - name: Apply the identical authenticated patch
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python3 - <<'PY'
+          import base64,gzip,hashlib,json,os,subprocess,urllib.request,pathlib
+          assert subprocess.check_output(['git','rev-parse','HEAD'],text=True).strip()==os.environ['BASE_SHA']
+          parts=[]
+          for sha in os.environ['PATCH_PARTS'].split(','):
+              req=urllib.request.Request(f"https://api.github.com/repos/{os.environ['GITHUB_REPOSITORY']}/git/blobs/{sha}",headers={'Authorization':'Bearer '+os.environ['GH_TOKEN'],'Accept':'application/vnd.github+json'})
+              with urllib.request.urlopen(req,timeout=30) as r: blob=json.load(r)
+              raw=base64.b64decode(blob['content']); assert hashlib.sha1(b'blob '+str(len(raw)).encode()+b'\0'+raw).hexdigest()==sha
+              parts.append(raw)
+          patch=gzip.decompress(base64.b64decode(b''.join(parts)))
+          assert hashlib.sha256(patch).hexdigest()==os.environ['PATCH_SHA256']
+          pathlib.Path('.git/hop-provenance.patch').write_bytes(patch)
+          subprocess.run(['git','apply','--check','--index','.git/hop-provenance.patch'],check=True)
+          subprocess.run(['git','apply','--index','.git/hop-provenance.patch'],check=True)
+          pathlib.Path('hop-rust-evidence').mkdir()
+          PY
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4
+        with:
+          toolchain: 1.91.0
+          components: rustfmt
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32
+        with:
+          workspaces: backend
+      - name: Rust format gate
+        working-directory: backend
+        run: cargo fmt --all -- --check
+      - name: Admission, real route finder and scanner unit contracts (no transactions)
+        working-directory: backend
+        run: |
+          set -euo pipefail
+          for filter in candidate_simulation route_discovery::multi_hop_search route_scanner_worker; do
+            name="${filter//:/_}"
+            cargo test -p searcher-rs --locked --lib "$filter" -- --nocapture 2>&1 | tee "../hop-rust-evidence/$name.log"
+            grep -Eq 'test result: ok\. [1-9][0-9]* passed;' "../hop-rust-evidence/$name.log"
+          done
+      - if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: hop-provenance-rust-${{ github.run_id }}
+          path: hop-rust-evidence/
+          if-no-files-found: warn
+          retention-days: 7
+  publish-review-branch:
+    needs: [node-and-postgres, rust-hop-contract]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
+        with:
+          ref: 46f22f8212d51b0bdb23c11f02ee4aca4571b075
+      - name: Publish only the tested candidate on a new feature branch
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python3 - <<'PY'
+          import base64,gzip,hashlib,json,os,subprocess,urllib.request,pathlib
+          assert subprocess.check_output(['git','rev-parse','HEAD'],text=True).strip()==os.environ['BASE_SHA']
+          parts=[]
+          for sha in os.environ['PATCH_PARTS'].split(','):
+              req=urllib.request.Request(f"https://api.github.com/repos/{os.environ['GITHUB_REPOSITORY']}/git/blobs/{sha}",headers={'Authorization':'Bearer '+os.environ['GH_TOKEN'],'Accept':'application/vnd.github+json'})
+              with urllib.request.urlopen(req,timeout=30) as r: blob=json.load(r)
+              raw=base64.b64decode(blob['content']); assert hashlib.sha1(b'blob '+str(len(raw)).encode()+b'\0'+raw).hexdigest()==sha
+              parts.append(raw)
+          patch=gzip.decompress(base64.b64decode(b''.join(parts)))
+          assert hashlib.sha256(patch).hexdigest()==os.environ['PATCH_SHA256']
+          pathlib.Path('.git/hop-provenance.patch').write_bytes(patch)
+          subprocess.run(['git','apply','--check','--index','.git/hop-provenance.patch'],check=True)
+          subprocess.run(['git','apply','--index','.git/hop-provenance.patch'],check=True)
+          names=subprocess.check_output(['git','diff','--cached','--name-only'],text=True).splitlines()
+          assert len(names)==13 and all(n.startswith(('backend/api-server/','backend/searcher-rs/src/candidate_simulation.rs','frontend/')) for n in names)
+          assert not any('.env' in n or '/workflows/' in n for n in names)
+          subprocess.run(['git','diff','--cached','--check'],check=True)
+          PY
+          branch=fix/opportunity-hop-provenance-20260914
+          test -z "$(git ls-remote --heads origin "refs/heads/$branch")" || { echo 'Branch already exists; refusing overwrite'; exit 1; }
+          git checkout -b "$branch"
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m 'fix(opportunities): preserve hop topology and stop fabricated ROI and simulation costs' -m "Validated in workflow $GITHUB_RUN_ID against $BASE_SHA; patch $PATCH_SHA256. No production settings, execution controls or credentials changed."
+          git push origin "HEAD:refs/heads/$branch"
+          git log -1 --format='PUBLISHED_SHA=%H%nTREE=%T'
