@@ -125,6 +125,10 @@ function ScoringStatusBadge({ status }: { status: string }) {
   return <Badge variant="destructive" className="font-mono text-[10px] uppercase">{status}</Badge>;
 }
 
+export function formatScoredCount(count: number, exact: boolean | undefined): string {
+  return `${exact === false ? "≥ " : ""}${count}`;
+}
+
 function ScoringBody({ data }: { data: ScoringStatusResponse }) {
   const totalWired = data.components.filter((c) => c.wired).length;
   const total = data.components.length;
@@ -157,9 +161,16 @@ function ScoringBody({ data }: { data: ScoringStatusResponse }) {
         <SignalTile label="Kelly sizing" wired={data.kelly_sizing_wired} />
         <SignalTile label="VPIN toxicity" wired={data.vpin_wired} />
         <SignalTile label="Pipeline integrated" wired={data.scoring_pipeline_wired} />
-        <SignalTile label="Recent scored" wired={data.recent_scored_count > 0} valueLabel={String(data.recent_scored_count)} />
+        <SignalTile label="Scored rows observed" wired={data.recent_scored_count > 0} valueLabel={formatScoredCount(data.recent_scored_count, data.recent_scored_count_exact)} />
         <SignalTile label="Threshold (bps)" wired={data.confidence_threshold_bps > 0} valueLabel={String(data.confidence_threshold_bps)} />
       </div>
+
+      {data.recent_scored_count_exact === false && (
+        <p data-slot="scoring-count-bound" className="text-xs text-muted-foreground">
+          Verified lower bound from a bounded read, not an exact historical total.
+          Full-history first/last timestamps and the configured calibration threshold are preserved.
+        </p>
+      )}
 
       <Accordion type="multiple" className="w-full">
         <AccordionItem value="components">

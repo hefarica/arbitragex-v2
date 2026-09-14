@@ -1042,6 +1042,10 @@ export const ScoringStatusResponseSchema = z.object({
   min_expected_value_wei: z.string().nullable(),
   scoring_version: z.string(),
   recent_scored_count: z.number().int().nonnegative(),
+  // Legacy 0.2 responses have exact counts. Bounded 0.3 responses MUST carry
+  // precision metadata; otherwise the UI could mislabel a lower bound as total.
+  recent_scored_count_exact: z.boolean().optional(),
+  scoring_count_limit: z.number().int().positive().safe().optional(),
   last_scored_at: z.string().nullable(),
   blocked_reasons: z.array(ScoringBlockedReasonSchema),
   available_decisions: z.array(z.string()),
@@ -1050,6 +1054,19 @@ export const ScoringStatusResponseSchema = z.object({
   submit_enabled: z.boolean(),
   capital_exposure_usd: z.number().nonnegative(),
   next_action: z.string(),
+}).superRefine((data, ctx) => {
+  const required = data.scoring_version === "0.3.0-bounded-evidence";
+  const hasExact = data.recent_scored_count_exact !== undefined;
+  const hasLimit = data.scoring_count_limit !== undefined;
+  if (required || hasExact || hasLimit) {
+    if (!hasExact) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["recent_scored_count_exact"], message: "count precision is required" });
+    if (!hasLimit) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["scoring_count_limit"], message: "count bound is required" });
+    if (data.scoring_count_limit !== undefined &&
+        (data.recent_scored_count > data.scoring_count_limit ||
+         (data.recent_scored_count_exact === false && data.recent_scored_count !== data.scoring_count_limit))) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["recent_scored_count"], message: "count and precision metadata disagree" });
+    }
+  }
 });
 
 export type ScoringComponent = z.infer<typeof ScoringComponentSchema>;
