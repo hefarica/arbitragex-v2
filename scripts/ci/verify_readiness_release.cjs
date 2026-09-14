@@ -78,7 +78,16 @@ function safePath(url) { try { return new URL(url).pathname; } catch { return 'i
           const panel = page.locator(`[data-slot="${slot}"]`);
           const text = await panel.innerText({timeout: 5000});
           round.panels[name] = {error_visible: /Cannot fetch|edge timeout after/.test(text),
-            content_visible: name === 'scoring' ? text.includes('Wire coverage') : /Overall:\s*(PASS|WARN|PAUSED|KILLED|BLOCKED|NOT_AVAILABLE|UNKNOWN)/.test(text)};
+            content_visible: name === 'scoring' ? text.includes('Wire coverage') : /Overall:\s*(PASS|WARN|PAUSED|KILLED|BLOCKED|NOT_AVAILABLE|UNKNOWN)/i.test(text)};
+          if (name === 'breakers') {
+            // CSS text-transform:uppercase affects innerText, not state semantics.
+            // Also require all ten actual rows, so a heading alone cannot pass.
+            const renderedStates = await panel.locator('[data-state-val]').evaluateAll(
+              rows => rows.map(row => row.getAttribute('data-state-val')));
+            round.panels[name].rendered_breaker_count = renderedStates.length;
+            round.panels[name].content_visible = round.panels[name].content_visible
+              && renderedStates.length === 10 && renderedStates.every(state => allowedStates.has(state));
+          }
           await panel.screenshot({path: path.join(OUT, `${name}-${n+1}.png`), timeout: 10000});
         }
         await Promise.all(finished);
