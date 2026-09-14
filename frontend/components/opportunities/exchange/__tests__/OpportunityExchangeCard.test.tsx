@@ -159,7 +159,7 @@ describe("OpportunityExchangeCard — SSOT two states", () => {
     const html = renderToStaticMarkup(<OpportunityExchangeCard {...props(opp)} />);
     // model labels are title-case ("Net Yield") and the button is uppercase.
     expect(html).toContain("Net Yield");
-    expect(html).toContain("EXECUTE");
+    expect(html).toContain("SIMULATE");
     expect(html).not.toContain("Detección — sin evaluar");
     // FE-0030 (§29): persisted topology is ROUTE-grade — NO synthetic marker.
     expect(html).not.toContain("SYNTHETIC LEGACY VIEW");
@@ -320,5 +320,25 @@ describe("OpportunityExchangeCard — SSOT two states", () => {
       />,
     );
     expect(clean).not.toContain("QUARANTINED");
+  });
+});
+
+
+describe("HOPS-PROVENANCE — evaluated rejection is visible", () => {
+  it("keeps the analysis but explicitly labels rejection and the diagnostic action", () => {
+    const opp = makeOpp({
+      status: "rejected", rejection_reason: "TokenNotAllowed:fixture",
+      route_metadata: {token_addresses:["0xaaaa","0xbbbb","0xaaaa"],dex_adapters:["uniswap_v2","sushiswap"],pool_addresses:["0xpool1","0xpool2"]},
+      expected_profit_usd: 7.6, net_expected_profit_usd: 7,
+      simulated_net_profit_usd: null, simulated_cost_breakdown: null,
+    });
+    const html = renderToStaticMarkup(<OpportunityExchangeCard {...props(opp)} />);
+    expect(html).toContain("RECHAZADA");
+    expect(html).toContain("No ejecutable");
+    expect(html).toContain("TokenNotAllowed:fixture");
+    expect(html).toContain("7.00");
+    expect(html).not.toContain("-$0.00");
+    expect(html).toContain("SIMULATE (PAPER SHADOW)");
+    expect(html).not.toContain("EXECUTE (");
   });
 });

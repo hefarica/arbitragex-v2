@@ -6,7 +6,7 @@
  * Serves the workbook's route-funnel KPIs from REAL opportunities rows via
  * useViableKpis (edge → api-server /api/v1/analytics/viable-kpis):
  *   - Viable by HOPS — viable opportunities grouped by
- *     jsonb_array_length(route_metadata->'pool_addresses'), the persisted
+ *     jsonb_array_length(route_metadata->'dex_adapters'), the persisted
  *     multi-hop topology.
  *   - Viable by KIND — grouped by canonical strategy_kind (cartridge stems).
  *   - Viability % — viable / total in window (null → "—", R8 never 0%).

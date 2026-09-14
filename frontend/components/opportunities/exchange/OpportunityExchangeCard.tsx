@@ -337,7 +337,7 @@ function OpportunityExchangeCardImpl({
       <div className="dapp-badge">
         {/* eslint-disable-next-line @next/next/no-img-element */}
         <img src={QUANTUMX_LOGO} alt="QuantumX" />
-        <span>Evaluada</span>
+        <span>{opp.rejection_reason != null || opp.status === "rejected" ? "Evaluada · RECHAZADA" : "Evaluada"}</span>
         <span className="sep">·</span>
         <span title={opp.strategy_kind ?? "sin strategy_kind en el payload (§28)"}>
           {strategyFamilyLabel(opp.strategy_kind)}
@@ -352,6 +352,11 @@ function OpportunityExchangeCardImpl({
 
       {/* FE-0031 (§30): semantic violations render a QUARANTINED strip. */}
       <QuarantineStrip violations={opp.semantic_violations} />
+      {opp.rejection_reason != null && (
+        <div className="evidence" role="note" data-slot="opportunity-rejection">
+          No ejecutable · {opp.rejection_reason}
+        </div>
+      )}
 
       {/* ── identity + detection ── */}
       <div className="kv">
@@ -505,7 +510,7 @@ function OpportunityExchangeCardImpl({
             <Loader2 size={12} style={{ verticalAlign: "-2px", marginRight: "4px" }} className="animate-spin" /> SIMULATING…
           </span>
         ) : (
-          `⚡ EXECUTE (${modeLabel === "paper" ? "PAPER SHADOW" : "LIVE SHADOW"})`
+          `⚡ SIMULATE (${modeLabel === "paper" ? "PAPER SHADOW" : "LIVE SHADOW"})`
         )}
       </button>
 

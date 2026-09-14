@@ -8,7 +8,9 @@ interface TickerItem {
   pair: string;
   from: string;
   to: string;
-  yield: number;
+  yield: number | null;
+  status: string;
+  rejectionReason: string | null;
   ago: string;
 }
 
@@ -37,26 +39,34 @@ function formatAgo(detectedAt: string): string {
   return `${Math.floor(diffSeconds / 3600)}h`;
 }
 
-function opportunityToTickerItem(opp: OpportunityRow): TickerItem | null {
+export function opportunityToTickerItem(opp: OpportunityRow): TickerItem | null {
   // Use net_expected_profit_usd (NET yield) when available, fallback to expected_profit_usd (GROSS)
   const profit = opp.net_expected_profit_usd ?? opp.expected_profit_usd ?? null;
-  if (profit === null) return null;
+  if (profit === null || !Number.isFinite(profit)) return null;
 
   const pair = opp.pair_symbol ?? `${opp.token_in.slice(0, 6)}…/${opp.token_out.slice(0, 6)}…`;
   const from = opp.dex_a ?? "Unknown";
   const to = opp.dex_b ?? opp.dex_a ?? "Unknown";
 
-  // Convert profit to percentage yield (approximation based on typical capital)
-  // If roi_pct is available, use it; otherwise estimate from profit
-  const yieldPct = opp.roi_pct ?? (profit > 0 ? profit * 0.1 : profit * 0.1); // Rough scaling
+  // USD is not a percentage. Without recorded ROI/capital there is no
+  // denominator, so never infer ROI from a hypothetical $1000 position.
+  const yieldPct = opp.roi_pct != null && Number.isFinite(opp.roi_pct) ? opp.roi_pct : null;
 
   return {
     pair,
     from,
     to,
     yield: yieldPct,
+    status: opp.rejection_reason != null ? "rejected" : opp.status,
+    rejectionReason: opp.rejection_reason ?? null,
     ago: formatAgo(opp.detected_at),
   };
+}
+
+export function formatTickerYield(value: number | null): string {
+  return value == null || !Number.isFinite(value)
+    ? "ROI —"
+    : `ROI ${value >= 0 ? "+" : ""}${value.toFixed(2)}%`;
 }
 
 export function OpportunityTicker() {
@@ -132,24 +142,26 @@ export function OpportunityTicker() {
     <div className="ticker">
       <span className="sr-only">
         {latest
-          ? `Live opportunity feed: ${items.length} recent opportunities — latest ${latest.pair} ${latest.from} to ${latest.to} ${latest.yield >= 0 ? "+" : ""}${latest.yield.toFixed(2)}%.`
+          ? `Live opportunity feed: ${items.length} recent opportunities — latest ${latest.pair} ${latest.from} to ${latest.to} ${latest.status.toUpperCase()} · ${formatTickerYield(latest.yield)}.`
           : "Live opportunity feed."}
       </span>
       <div className="ticker-track" aria-hidden="true">
         {displayItems.map((item, idx) => {
-          const isPositive = item.yield >= 0;
+          const isPositive = item.yield != null && item.yield >= 0;
+          const tone = item.yield == null ? undefined : isPositive ? "pos" : "neg";
           return (
             <span key={idx} className="ticker-item">
               <b>{item.pair}</b>
               <span>·</span>
               <span>{item.from} → {item.to}</span>
               <span>·</span>
-              <span className={isPositive ? "pos" : "neg"}>
-                {isPositive ? "+" : ""}{item.yield.toFixed(2)}%
+              <span title={item.rejectionReason ?? `Recorded status: ${item.status}`}>
+                {item.status.toUpperCase()}
               </span>
-              <span className={`arr ${isPositive ? "pos" : "neg"}`}>
-                {isPositive ? "▲" : "▼"}
-              </span>
+              <span className={tone}>{formatTickerYield(item.yield)}</span>
+              {item.yield != null && (
+                <span className={`arr ${tone}`}>{isPositive ? "▲" : "▼"}</span>
+              )}
               <span>·</span>
               <span className="ago">{item.ago}</span>
             </span>

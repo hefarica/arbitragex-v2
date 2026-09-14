@@ -153,3 +153,46 @@ describe("GET /api/v1/opportunities/live — window_total contract (WO-H4)", () 
     expect(text).toContain("AS window_total");
   });
 });
+
+
+describe("HOPS-PROVENANCE — estimates never become fabricated simulation evidence", () => {
+  for (const hops of [2, 3, 4, 5]) {
+    it(`${hops} hops: preserves rejected analysis and every leg, without invented zero costs`, async () => {
+      const tokens = Array.from({ length: hops }, (_, i) => `0x${String(i + 1).padStart(40, "0")}`);
+      tokens.push(tokens[0]!);
+      const route = {
+        token_addresses: tokens,
+        dex_adapters: Array.from({ length: hops }, () => "unknown"),
+        pool_addresses: Array.from({ length: hops }, (_, i) => `0x${String(i + 100).padStart(40, "0")}`),
+        decimals: { map: {} },
+      };
+      const app = await buildApp(fakePool({ rows: [fixtureRow({
+        status: "rejected", rejection_reason: "TokenNotAllowed:test-fixture",
+        expected_profit_usd: 7.6, net_expected_profit_usd: 7.0, roi_pct: null,
+        route_metadata: route,
+      })] }));
+      const r = await request(app).get("/api/v1/opportunities/live");
+      expect(r.status).toBe(200);
+      const row = r.body.items[0];
+      expect(row.route_metadata).toEqual(route);
+      expect(row.rejection_reason).toBe("TokenNotAllowed:test-fixture");
+      expect(row.net_expected_profit_usd).toBe(7.0);
+      expect(row.expected_profit_usd).toBe(7.6);
+      expect(row.simulated_net_profit_usd).toBeNull();
+      expect(row.simulated_cost_breakdown).toBeNull();
+      expect(row.simulated_roi_pct).toBeNull();
+      expect(row.simulated_at).toBeNull();
+    });
+  }
+
+  it("a genuine recorded zero net/ROI remains zero only in its original estimate fields", async () => {
+    const app = await buildApp(fakePool({ rows: [fixtureRow({
+      expected_profit_usd: 0, net_expected_profit_usd: 0, roi_pct: 0,
+    })] }));
+    const r = await request(app).get("/api/v1/opportunities/live");
+    expect(r.body.items[0].net_expected_profit_usd).toBe(0);
+    expect(r.body.items[0].roi_pct).toBe(0);
+    expect(r.body.items[0].simulated_cost_breakdown).toBeNull();
+    expect(r.body.items[0].simulated_roi_pct).toBeNull();
+  });
+});

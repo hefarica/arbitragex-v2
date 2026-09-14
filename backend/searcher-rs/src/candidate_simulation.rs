@@ -684,6 +684,28 @@ mod tests {
         )
     }
     #[test]
+    fn two_through_five_hops_keep_every_swap_in_the_execution_context() {
+        for hops in 2..=5 {
+            for split in 1..hops {
+                let mut adapters = vec!["UniswapV2"; split];
+                adapters.extend(vec!["SushiSwap"; hops - split]);
+                let (o, r, p) = fixtures(&adapters);
+                let ctx = build(&o, &r, &p).unwrap();
+                assert_eq!(ctx.forward_path.len() - 1, split);
+                assert_eq!(ctx.backward_path.len() - 1, hops - split);
+                let rebuilt: Vec<_> = ctx
+                    .forward_path
+                    .iter()
+                    .chain(ctx.backward_path.iter().skip(1))
+                    .map(|token| format!("{token:#x}"))
+                    .collect();
+                assert_eq!(rebuilt, r.token_addresses);
+                assert_eq!(ctx.amount_in, U256::from_dec_str(&o.amount_in_wei).unwrap());
+            }
+        }
+    }
+
+    #[test]
     fn exact_principal_above_two_to_200_survives() {
         let (mut o, r, p) = fixtures(&["UniswapV2", "SushiSwap"]);
         let amount = (U256::one() << 201) + U256::from(173);

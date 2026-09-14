@@ -458,14 +458,18 @@ export function parseRouteMetadata(
   if (raw == null || typeof raw !== "object") return null;
   const obj = raw as Record<string, unknown>;
   const tokenAddresses = Array.isArray(obj.token_addresses)
-    ? (obj.token_addresses as unknown[]).filter((s): s is string => typeof s === "string")
+    && obj.token_addresses.every((s): s is string => typeof s === "string")
+    ? obj.token_addresses
     : [];
   const dexAdapters = Array.isArray(obj.dex_adapters)
-    ? (obj.dex_adapters as unknown[]).filter((s): s is string => typeof s === "string")
+    && obj.dex_adapters.every((s): s is string => typeof s === "string")
+    ? obj.dex_adapters
     : [];
   const poolAddresses = Array.isArray(obj.pool_addresses)
-    ? (obj.pool_addresses as unknown[]).filter((s): s is string => typeof s === "string")
+    ? (obj.pool_addresses as unknown[]).map((s) => typeof s === "string" ? s : "")
     : [];
+  // Never compact parallel arrays: an unknown middle pool keeps its slot.
+  // Malformed token/adapter arrays cannot describe a trustworthy traversal.
   // Require at least one hop + a closing token to be meaningful.
   if (dexAdapters.length === 0 || tokenAddresses.length < 2) return null;
   // decimals — Rust serializes DecimalsMap as a newtype: {"map": {...}} (the
@@ -487,19 +491,16 @@ export function parseRouteMetadata(
   // HOPS-LEDGER-04: project the optional per-leg ledger arrays. Undefined
   // (NOT empty) when absent — absence is the R8 state "not computed".
   const legAmountsIn = Array.isArray(obj.leg_amounts_in)
-    ? (obj.leg_amounts_in as unknown[]).filter(
-        (s): s is string => typeof s === "string",
-      )
+    && obj.leg_amounts_in.every((v): v is string => typeof v === "string")
+    ? obj.leg_amounts_in
     : undefined;
   const legAmountsOut = Array.isArray(obj.leg_amounts_out)
-    ? (obj.leg_amounts_out as unknown[]).filter(
-        (s): s is string => typeof s === "string",
-      )
+    && obj.leg_amounts_out.every((v): v is string => typeof v === "string")
+    ? obj.leg_amounts_out
     : undefined;
   const legZeroForOne = Array.isArray(obj.leg_zero_for_one)
-    ? (obj.leg_zero_for_one as unknown[]).filter(
-        (b): b is boolean => typeof b === "boolean",
-    )
+    && obj.leg_zero_for_one.every((v): v is boolean => typeof v === "boolean")
+    ? obj.leg_zero_for_one
     : undefined;
   return {
     token_addresses: tokenAddresses,
