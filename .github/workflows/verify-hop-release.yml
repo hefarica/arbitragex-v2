@@ -1,0 +1,70 @@
+name: Verify served hop/readiness release
+on:
+  push:
+    branches: [ops/audit-hops-2-5-20260914]
+    paths: [.github/workflows/verify-hop-release.yml]
+permissions:
+  contents: read
+  actions: read
+concurrency:
+  group: verify-hop-release
+  cancel-in-progress: false
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    env:
+      TARGET_SHA: 46f22f8212d51b0bdb23c11f02ee4aca4571b075
+      DEPLOY_RUN_ID: '34798354474'
+      VERIFY_OPPORTUNITIES: 'false'
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
+        with:
+          persist-credentials: false
+      - name: Wait for exact canonical deployment; no retry, mutation or alternative deploy
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python3 - <<'PY'
+          import json,os,pathlib,time,urllib.request
+          out=pathlib.Path('release-verification');out.mkdir(exist_ok=True)
+          request=urllib.request.Request('https://api.github.com/repos/hefarica/arbitragex-v2/actions/runs/'+os.environ['DEPLOY_RUN_ID'],headers={'Authorization':'Bearer '+os.environ['GH_TOKEN'],'Accept':'application/vnd.github+json'})
+          deadline=time.monotonic()+4500
+          while True:
+            with urllib.request.urlopen(request,timeout=30) as response: run=json.load(response)
+            evidence={k:run.get(k) for k in ['id','head_sha','head_branch','path','event','status','conclusion','run_attempt','html_url','updated_at']}
+            (out/'deploy-result.json').write_text(json.dumps(evidence,indent=2))
+            assert run['head_sha']==os.environ['TARGET_SHA'] and run['head_branch']=='main' and run['event']=='push' and run['path']=='.github/workflows/auto-deploy-vps.yml'
+            if run['status']=='completed':
+              assert run['conclusion']=='success','Canonical deployment did not succeed'
+              print('Exact deployment succeeded; independent public checks follow');break
+            if time.monotonic()>deadline: raise RuntimeError('Deployment still pending: verification not performed')
+            time.sleep(30)
+          PY
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
+        with:
+          ref: ${{ env.TARGET_SHA }}
+          path: target-source
+          persist-credentials: false
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: target-source/package-lock.json
+      - name: Install locked runner dependencies
+        run: npm ci --ignore-scripts --no-audit --no-fund
+        working-directory: target-source
+      - name: Install runner browser
+        run: node target-source/frontend/node_modules/playwright/cli.js install --with-deps chromium
+      - name: Verify public API and rendered panels three rounds with current schemas
+        env:
+          NODE_PATH: ${{ github.workspace }}/target-source/frontend/node_modules:${{ github.workspace }}/target-source/node_modules
+        run: node scripts/ci/verify-hop-release.cjs
+      - name: Preserve results, including failures
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: release-verification-${{ github.run_id }}
+          path: release-verification/
+          retention-days: 7
+          if-no-files-found: error
