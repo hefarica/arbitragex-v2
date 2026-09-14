@@ -1,0 +1,73 @@
+name: Verify deployed readiness contracts and browser
+on:
+  push:
+    branches: [ops/verify-readiness-a30343c1]
+permissions:
+  contents: read
+  actions: read
+concurrency:
+  group: readiness-postdeploy-verification
+  cancel-in-progress: false
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 70
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444
+        with:
+          node-version: 22
+          cache: npm
+      - name: Install locked dependencies (runner only)
+        run: npm ci --ignore-scripts --no-audit --no-fund
+      - name: Run the exact historical contract suite supplied by the operator
+        run: npm test --workspace frontend -- lib/__tests__/api-json-vs-zod-contract.test.ts
+      - name: Build actual runtime schemas and install Chromium
+        run: |
+          mkdir -p readiness-verification
+          node -e "require('esbuild').buildSync({entryPoints:['frontend/lib/schemas.ts'],bundle:true,platform:'node',format:'cjs',outfile:'readiness-verification/runtime-schemas.cjs'})"
+          node frontend/node_modules/playwright/cli.js install --with-deps chromium
+      - name: Wait for the existing canonical deployment (read only; never rerun)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python3 - <<'PY'
+          import json, os, time, urllib.request
+          sha = 'a30343c1f4b7cd0bd6928b2e7192bcedc4eab483'
+          url = 'https://api.github.com/repos/hefarica/arbitragex-v2/actions/runs/34791936310'
+          deadline = time.monotonic() + 3300
+          while True:
+              req = urllib.request.Request(url, headers={'Authorization': 'Bearer ' + os.environ['GH_TOKEN'], 'Accept': 'application/vnd.github+json'})
+              with urllib.request.urlopen(req, timeout=30) as response:
+                  run = json.load(response)
+              assert run['head_sha'] == sha and run['path'] == '.github/workflows/auto-deploy-vps.yml'
+              print(run['id'], run['status'], run['conclusion'], flush=True)
+              if run['status'] == 'completed':
+                  with open('readiness-verification/deploy-result.json', 'w') as out:
+                      json.dump({k: run[k] for k in ['id','head_sha','run_attempt','status','conclusion','html_url']}, out, indent=2)
+                  if run['conclusion'] != 'success':
+                      raise SystemExit('Canonical deployment did not succeed; no production mutation attempted')
+                  break
+              if time.monotonic() >= deadline:
+                  raise SystemExit('Deployment still pending; public post-deploy certification NOT performed')
+              time.sleep(30)
+          PY
+      - name: Assert public page, real schemas, served SHA and 5000ms budget
+        env:
+          NODE_PATH: ${{ github.workspace }}/frontend/node_modules
+          READINESS_SCHEMA_BUNDLE: readiness-verification/runtime-schemas.cjs
+          EXPECTED_DEPLOY_SHA: a30343c1f4b7cd0bd6928b2e7192bcedc4eab483
+        run: node scripts/ci/verify_readiness_public.cjs
+      - name: Preserve verification evidence, including failures
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: readiness-public-${{ github.run_id }}
+          path: |
+            readiness-verification/result.json
+            readiness-verification/deploy-result.json
+            readiness-verification/*.png
+          if-no-files-found: warn
+          retention-days: 7
