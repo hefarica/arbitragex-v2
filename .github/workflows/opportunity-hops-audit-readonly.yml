@@ -1,0 +1,134 @@
+name: Opportunity hops audit (read only)
+on:
+  push:
+    branches: [ops/audit-opportunity-hops-20260914]
+    paths: [.github/workflows/opportunity-hops-audit-readonly.yml]
+permissions:
+  contents: read
+concurrency:
+  group: opportunity-hops-audit-readonly
+  cancel-in-progress: false
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      TARGET_SHA: a30343c1f4b7cd0bd6928b2e7192bcedc4eab483
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
+        with:
+          ref: a30343c1f4b7cd0bd6928b2e7192bcedc4eab483
+          persist-credentials: false
+      - name: Preserve exact source and bounded public GET samples
+        run: |
+          python3 - <<'PY'
+          import hashlib, json, os, pathlib, subprocess, tarfile, time, urllib.request, urllib.error
+          from datetime import datetime, timezone
+          out=pathlib.Path('hops-audit-evidence'); out.mkdir()
+          actual=subprocess.check_output(['git','rev-parse','HEAD'],text=True).strip()
+          assert actual == os.environ['TARGET_SHA']
+          paths=subprocess.check_output(['git','ls-files','-z']).decode().split('\0')
+          extensions={'.rs','.ts','.tsx','.js','.cjs','.mjs','.json','.toml','.lock','.yml','.yaml','.sql','.sol','.md','.sh','.py'}
+          roots={'backend','frontend','shared-ts','shared','packages','tests','scripts','docker','.github','contracts'}
+          selected=[]
+          with tarfile.open(out/'source.tar.gz','w:gz') as archive:
+              for name in paths:
+                  p=pathlib.Path(name)
+                  if not name or not p.is_file() or p.is_symlink() or p.suffix not in extensions: continue
+                  if len(p.parts)>1 and p.parts[0] not in roots: continue
+                  if any(x.startswith('.env') or x in {'node_modules','.git'} for x in p.parts): continue
+                  archive.add(p,arcname=name,recursive=False)
+                  selected.append({'path':name,'sha256':hashlib.sha256(p.read_bytes()).hexdigest()})
+          (out/'source-manifest.json').write_text(json.dumps({'sha':actual,'files':selected},indent=2))
+          # No credentials, RPCs, SSH, database writes or application changes.
+          def capture(path, label):
+              start=time.monotonic(); item={'path':path,'started_at':datetime.now(timezone.utc).isoformat()}
+              req=urllib.request.Request('https://arbx.ape-tv.net'+path,headers={'Accept':'application/json','User-Agent':'ArbitrageX-readonly-hops-audit/1.0'})
+              try:
+                  with urllib.request.urlopen(req,timeout=10) as r:
+                      body=r.read(2500000); item.update(status=r.status,bytes=len(body),content_type=r.headers.get('Content-Type'))
+                      try:
+                          payload=json.loads(body); (out/(label+'.json')).write_text(json.dumps(payload,indent=2))
+                          item['payload_file']=label+'.json'
+                      except ValueError: item['error']='non_json_response'
+              except urllib.error.HTTPError as e: item.update(status=e.code,error='http_error')
+              except Exception as e: item.update(status=None,error=type(e).__name__)
+              item['elapsed_ms']=round((time.monotonic()-start)*1000); return item
+          measurements=[capture('/api/status','status-before')]
+          for i in range(4):
+              measurements.append(capture('/api/opportunities/live?limit=50&viable_only=false','opportunities-'+str(i)))
+              if i<3: time.sleep(15)
+          for path,label in [('/api/readiness','readiness'),('/api/risk/circuit-breakers/status','breakers'),('/api/scoring/status','scoring'),('/api/status','status-after')]:
+              measurements.append(capture(path,label))
+          (out/'http-measurements.json').write_text(json.dumps(measurements,indent=2))
+          print(json.dumps({'source_sha':actual,'source_files':len(selected),'http':measurements},indent=2))
+          PY
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444
+        with:
+          node-version: 22
+          cache: npm
+      - name: Install locked browser dependencies on runner only
+        run: npm ci --ignore-scripts --no-audit --no-fund
+      - name: Install Chromium on runner only
+        run: node frontend/node_modules/playwright/cli.js install --with-deps chromium
+      - name: Observe the actual public UI and its network traffic
+        env:
+          NODE_PATH: ${{ github.workspace }}/frontend/node_modules
+        run: |
+          node <<'JS'
+          const {chromium}=require('playwright');
+          const fs=require('node:fs');
+          const out='hops-audit-evidence';
+          (async()=>{
+            const browser=await chromium.launch({headless:true});
+            const context=await browser.newContext({viewport:{width:1440,height:1000}});
+            const report={started_at:new Date().toISOString(),target_sha:process.env.TARGET_SHA,pages:[],blocked_writes:[]};
+            // No admin/control/trade requests. Socket.IO POST is protocol transport,
+            // not a business mutation, and is required by the existing live client.
+            await context.route('**/*',async route=>{
+              const r=route.request(), u=new URL(r.url());
+              if(!['GET','HEAD','OPTIONS'].includes(r.method()) && !(u.origin==='https://arbx.ape-tv.net' && u.pathname==='/socket.io/')) {
+                report.blocked_writes.push({method:r.method(),path:u.pathname});return route.abort();
+              }
+              return route.continue();
+            });
+            for(const path of ['/opportunities/exchange','/live-readiness']) {
+              const page=await context.newPage(); const label=path.split('/').filter(Boolean).join('-');
+              const item={path,console_errors:[],requests:[],websockets:[],response_files:[],started_at:new Date().toISOString()};
+              report.pages.push(item);const pending=new Set();const times=new WeakMap();let seq=0;
+              page.on('request',r=>times.set(r,Date.now()));
+              page.on('requestfailed',r=>item.requests.push({path:new URL(r.url()).pathname,error:r.failure()?.errorText,ms:Date.now()-(times.get(r)||Date.now())}));
+              page.on('pageerror',e=>item.console_errors.push(e.message.slice(0,400)));
+              page.on('websocket',ws=>{const record={url:new URL(ws.url()).pathname,received:0,opportunity_frames:0};item.websockets.push(record);ws.on('framereceived',f=>{record.received++;if(/opportunit/.test(String(f.payload)))record.opportunity_frames++;});});
+              page.on('response',r=>{
+                const u=new URL(r.url());if(u.origin!=='https://arbx.ape-tv.net'||!u.pathname.startsWith('/api/'))return;
+                const record={path:u.pathname,status:r.status(),ms:Date.now()-(times.get(r.request())||Date.now())};item.requests.push(record);
+                if(/opportunities\/live|scoring\/status|circuit-breakers\/status/.test(u.pathname)&&seq<20){
+                  const file=label+'-response-'+(seq++)+'.json';
+                  const promise=r.body().then(b=>{if(b.length<=2500000){JSON.parse(b.toString());fs.writeFileSync(out+'/'+file,b);item.response_files.push({path:u.pathname,file});}}).catch(e=>{record.body_error=e.message.slice(0,100);}).finally(()=>pending.delete(promise));pending.add(promise);
+                }
+              });
+              try{
+                const response=await page.goto('https://arbx.ape-tv.net'+path,{waitUntil:'domcontentloaded',timeout:45000});item.http=response?.status();
+                await page.waitForTimeout(35000);
+                item.text=(await page.locator('body').innerText()).slice(0,100000);
+                await page.screenshot({path:out+'/'+label+'.png',fullPage:true});
+                item.screenshot=label+'.png';
+              }catch(e){item.error=e.message.slice(0,500);}
+              await Promise.race([Promise.allSettled([...pending]),new Promise(resolve=>setTimeout(resolve,10000))]);
+              item.finished_at=new Date().toISOString(); await page.close();
+            }
+            report.finished_at=new Date().toISOString();
+            fs.writeFileSync(out+'/browser-observation.json',JSON.stringify(report,null,2));
+            console.log(JSON.stringify({pages:report.pages.map(({path,http,error,requests,websockets})=>({path,http,error,requests,websockets})),blocked_writes:report.blocked_writes},null,2));
+            await context.close();await browser.close();
+          })().catch(e=>{console.error(e);process.exitCode=1;});
+          JS
+      - name: Preserve evidence even if a capture failed
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: opportunity-hops-audit-${{ github.run_id }}
+          path: hops-audit-evidence/
+          if-no-files-found: error
+          retention-days: 7
