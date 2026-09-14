@@ -1,0 +1,91 @@
+name: Verify PR564 on public domain after canonical deploy
+on:
+  push:
+    branches: [ops/verify-public-scoring-564]
+permissions:
+  contents: read
+  actions: read
+concurrency:
+  group: public-scoring-564-verification
+  cancel-in-progress: false
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 150
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444
+        with:
+          node-version: 22
+          cache: npm
+      - name: Prepare actual schemas and Chromium on runner only
+        run: |
+          npm ci --ignore-scripts --no-audit --no-fund
+          mkdir -p readiness-verification
+          node -e "require('esbuild').buildSync({entryPoints:['frontend/lib/schemas.ts'],bundle:true,platform:'node',format:'cjs',outfile:'readiness-verification/runtime-schemas.cjs'})"
+          node frontend/node_modules/playwright/cli.js install --with-deps chromium
+      - name: Observe protected merge and same-SHA canonical deployment (no writes)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python3 - <<'PY'
+          import json, os, time, urllib.request, urllib.parse
+          repo = 'hefarica/arbitragex-v2'
+          head = 'af73214355c55f101538ff6a221b82436bbedc89'
+          tree = '0f24889fe0802e5a10cf713ff1c322d627631e9e'
+          def api(path):
+              req = urllib.request.Request('https://api.github.com/repos/' + repo + '/' + path,
+                  headers={'Authorization': 'Bearer ' + os.environ['GH_TOKEN'], 'Accept':'application/vnd.github+json'})
+              with urllib.request.urlopen(req, timeout=30) as r: return json.load(r)
+          deadline = time.monotonic() + 8100
+          sha = None
+          while time.monotonic() < deadline:
+              pr = api('pulls/564')
+              assert pr['head']['sha'] == head, 'PR HEAD changed; this verifier must be updated before certification'
+              if pr['merged']:
+                  sha = pr['merge_commit_sha']
+                  assert api('git/commits/' + sha)['tree']['sha'] == tree, 'Merged tree differs from schemas under test'
+                  break
+              if pr['state'] == 'closed': raise SystemExit('PR closed without merge; no deployment certified')
+              print('Waiting for protected merge of the exact tested PR HEAD', flush=True)
+              time.sleep(30)
+          if not sha: raise SystemExit('Merge still pending; verification not performed')
+          while time.monotonic() < deadline:
+              assert api('git/ref/heads/main')['object']['sha'] == sha, 'Main superseded target; do not certify another release'
+              q = urllib.parse.urlencode({'head_sha':sha,'branch':'main','event':'push','per_page':100})
+              data = api('actions/runs?' + q)
+              assert data['total_count'] <= 100, 'Incomplete workflow listing'
+              runs = [r for r in data['workflow_runs'] if r['path']=='.github/workflows/auto-deploy-vps.yml']
+              if runs:
+                  run = max(runs, key=lambda r:(r['id'],r['run_attempt']))
+                  print(run['id'],run['status'],run['conclusion'],flush=True)
+                  if run['status']=='completed':
+                      with open('readiness-verification/deploy-result.json','w') as out:
+                          json.dump({k:run[k] for k in ['id','head_sha','run_attempt','status','conclusion','html_url']},out,indent=2)
+                      if run['conclusion']!='success': raise SystemExit('Canonical deploy failed; no rerun or production mutation attempted')
+                      with open(os.environ['GITHUB_ENV'],'a') as out:
+                          out.write('EXPECTED_DEPLOY_SHA=' + sha + '\n')
+                      break
+              time.sleep(30)
+          else: raise SystemExit('Deployment still pending; verification not performed')
+          # Existing Edge caches may span a container restart. Wait past 30s TTL.
+          time.sleep(35)
+          PY
+      - name: Verify page, full responses, precision, fresh generations and served SHA
+        env:
+          NODE_PATH: ${{ github.workspace }}/frontend/node_modules
+          READINESS_SCHEMA_BUNDLE: readiness-verification/runtime-schemas.cjs
+        run: node scripts/ci/verify_scoring_564_public.cjs
+      - name: Preserve evidence including actual failures
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: scoring-public-${{ github.run_id }}
+          path: |
+            readiness-verification/result.json
+            readiness-verification/deploy-result.json
+            readiness-verification/*.png
+          if-no-files-found: warn
+          retention-days: 7
