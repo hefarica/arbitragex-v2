@@ -1,0 +1,129 @@
+name: Validate combined hop evidence 565 and 566
+on:
+  push:
+    branches: [ops/verify-hop-provenance-20260914]
+    paths: [.github/workflows/hop-combined-validation.yml]
+permissions:
+  contents: read
+concurrency:
+  group: combined-hop-evidence-validation
+  cancel-in-progress: false
+env:
+  TARGET_SHA: 92bba47babb9fe940326586d9573e6b60807fa4c
+jobs:
+  api-frontend-postgres:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    services:
+      redis:
+        image: redis:7.2-alpine
+        ports: [6379:6379]
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 20
+    env:
+      REDIS_URL: redis://localhost:6379
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
+        with:
+          ref: 92bba47babb9fe940326586d9573e6b60807fa4c
+          persist-credentials: false
+          fetch-depth: 50
+      - name: Verify exact identity and preserve reviewable code
+        run: |
+          python3 - <<'PY'
+          import hashlib,json,os,pathlib,subprocess,tarfile
+          sha=subprocess.check_output(['git','rev-parse','HEAD'],text=True).strip()
+          assert sha==os.environ['TARGET_SHA']
+          parents=subprocess.check_output(['git','show','-s','--format=%P','HEAD'],text=True).strip().split()
+          assert parents==['89d4af1bd2964971ca14e72931808db648f70b7d','fd045274200e11fa8e2d18cdc20ec77d0385f426']
+          out=pathlib.Path('combined-evidence');out.mkdir()
+          paths=subprocess.check_output(['git','diff','--name-only','46f22f8212d51b0bdb23c11f02ee4aca4571b075','HEAD'],text=True).splitlines()
+          assert len(paths)==19 and all(p.startswith(('backend/api-server/','backend/searcher-rs/','frontend/')) for p in paths)
+          assert not any('.env' in p or '/workflows/' in p for p in paths)
+          manifest=[]
+          with tarfile.open(out/'changed-source.tar.gz','w:gz') as archive:
+              for p in paths:
+                  b=pathlib.Path(p).read_bytes();manifest.append({'path':p,'sha256':hashlib.sha256(b).hexdigest()});archive.add(p,arcname=p,recursive=False)
+          (out/'identity.json').write_text(json.dumps({'sha':sha,'parents':parents,'files':manifest},indent=2))
+          subprocess.run(['git','diff','--check','46f22f8212d51b0bdb23c11f02ee4aca4571b075','HEAD'],check=True)
+          PY
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444
+        with:
+          node-version: 22
+          cache: npm
+      - name: Install locked dependencies on runner only
+        run: npm ci --ignore-scripts --no-audit --no-fund
+      - name: Shared/API build and API/frontend typecheck
+        run: |
+          npm run build --workspace @arbx/shared
+          npm run typecheck --workspace @arbx/api-server
+          npm run build --workspace @arbx/api-server
+          npm run typecheck --workspace @arbx/frontend
+      - name: Complete API tests including WO-3
+        run: npm test --workspace @arbx/api-server -- --reporter=default --reporter=json --outputFile="$GITHUB_WORKSPACE/combined-evidence/api-tests.json"
+      - name: Real PostgreSQL 15 integration and hop shape parity
+        run: npm run test:integration --workspace @arbx/api-server -- test/viable-kpis-hop-contract.test.ts test/opportunities-live.test.ts --reporter=default --reporter=json --outputFile="$GITHUB_WORKSPACE/combined-evidence/pg-tests.json"
+      - name: Complete frontend tests including both hop regression suites and ROI
+        run: npm test --workspace @arbx/frontend -- --reporter=default --reporter=json --outputFile="$GITHUB_WORKSPACE/combined-evidence/frontend-tests.json"
+      - name: Production frontend build
+        run: npm run build --workspace @arbx/frontend
+      - name: Verify tests ran without failures
+        run: |
+          python3 - <<'PY'
+          import json,pathlib
+          for name in ['api-tests.json','pg-tests.json','frontend-tests.json']:
+              r=json.loads(pathlib.Path('combined-evidence',name).read_text())
+              assert r['success'] and r['numPassedTests']>0 and r['numFailedTests']==0,(name,r)
+              print(name,{k:r[k] for k in ['numPassedTests','numFailedTests','numPendingTests']})
+          PY
+      - if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: combined-hops-node-${{ github.run_id }}
+          path: combined-evidence/
+          if-no-files-found: error
+          retention-days: 7
+  rust-hop-matrix:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    env:
+      DATABASE_URL: postgres://test:test@localhost/arbitragex_test
+      REDIS_URL: redis://localhost:6379
+      SIM_SIGNER_ADDRESS: '0x000000000000000000000000000000000000dead'
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
+        with:
+          ref: 92bba47babb9fe940326586d9573e6b60807fa4c
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4
+        with:
+          toolchain: 1.91.0
+          components: rustfmt
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32
+        with:
+          workspaces: backend
+      - name: Exact SHA and format
+        run: |
+          test "$(git rev-parse HEAD)" = "$TARGET_SHA"
+          mkdir -p combined-rust-evidence
+          cd backend
+          cargo fmt --all -- --check
+      - name: Both 2/3/4/5-hop suites, route finder and scanner (no transactions)
+        working-directory: backend
+        run: |
+          set -euo pipefail
+          for filter in candidate_simulation route_discovery::hops_matrix_tests route_discovery::multi_hop_search route_scanner_worker; do
+            name="${filter//:/_}"
+            cargo test -p searcher-rs --locked --lib "$filter" -- --nocapture 2>&1 | tee "../combined-rust-evidence/$name.log"
+            grep -Eq 'test result: ok\. [1-9][0-9]* passed;' "../combined-rust-evidence/$name.log"
+          done
+      - if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: combined-hops-rust-${{ github.run_id }}
+          path: combined-rust-evidence/
+          if-no-files-found: warn
+          retention-days: 7
