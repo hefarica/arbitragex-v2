@@ -21,7 +21,7 @@ jobs:
       REDIS_URL: redis://127.0.0.1:6379
       NEXT_PUBLIC_EDGE_URL: https://edge.ci.invalid
       NEXT_PUBLIC_WS_URL: wss://ws.ci.invalid
-      INTERNAL_EDGE_URL: http://127.0.0.1:8787
+      INTERNAL_EDGE_URL: https://edge.ci.invalid
     services:
       postgres:
         image: postgres:15
