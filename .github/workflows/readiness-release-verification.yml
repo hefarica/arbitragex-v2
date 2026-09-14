@@ -1,0 +1,70 @@
+name: Verify deployed readiness PR 562 (read only)
+on:
+  push:
+    branches: [ops/verify-readiness-pr562]
+permissions:
+  contents: read
+  actions: read
+concurrency:
+  group: verify-readiness-pr562
+  cancel-in-progress: false
+jobs:
+  verify-public-release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 150
+    env:
+      TARGET_SHA: a30343c1f4b7cd0bd6928b2e7192bcedc4eab483
+      DEPLOY_RUN_ID: '34791936310'
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
+        with:
+          persist-credentials: false
+      - name: Wait for this exact canonical deployment (no rerun or mutation)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          python3 - <<'PY'
+          import json, os, time, urllib.request
+          from pathlib import Path
+          out = Path('readiness-release-evidence')
+          out.mkdir(exist_ok=True)
+          url = f"https://api.github.com/repos/{os.environ['GITHUB_REPOSITORY']}/actions/runs/{os.environ['DEPLOY_RUN_ID']}"
+          headers = {'Authorization': 'Bearer ' + os.environ['GH_TOKEN'], 'Accept': 'application/vnd.github+json'}
+          deadline = time.monotonic() + 7800
+          while True:
+              with urllib.request.urlopen(urllib.request.Request(url, headers=headers), timeout=30) as response:
+                  run = json.load(response)
+              evidence = {k: run.get(k) for k in ('id','head_sha','head_branch','event','path','status','conclusion','run_attempt','html_url','updated_at')}
+              out.joinpath('deploy-result.json').write_text(json.dumps(evidence, indent=2))
+              if run['head_sha'] != os.environ['TARGET_SHA'] or run['head_branch'] != 'main' or run['event'] != 'push' or run['path'] != '.github/workflows/auto-deploy-vps.yml':
+                  raise SystemExit('Unexpected deployment identity; no verification claimed')
+              if run['status'] == 'completed':
+                  if run['conclusion'] != 'success':
+                      raise SystemExit('Canonical deployment did not succeed: ' + str(run['conclusion']))
+                  print('Canonical deployment complete; proceeding to independent public verification')
+                  break
+              if time.monotonic() > deadline:
+                  raise SystemExit('Deployment still pending; public verification NOT executed')
+              print('Waiting for canonical deployment: ' + run['status'], flush=True)
+              time.sleep(30)
+          PY
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444
+        with:
+          node-version: 22
+          cache: npm
+      - name: Install locked browser dependencies (runner only)
+        run: npm ci --ignore-scripts --no-audit --no-fund
+      - name: Install Chromium (runner only)
+        run: node frontend/node_modules/playwright/cli.js install --with-deps chromium
+      - name: Verify public identity, responses and rendered panels twice
+        env:
+          NODE_PATH: ${{ github.workspace }}/frontend/node_modules
+        run: node scripts/ci/verify_readiness_release.cjs
+      - name: Preserve results, including failures
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: readiness-release-${{ github.run_id }}
+          path: readiness-release-evidence/
+          if-no-files-found: error
+          retention-days: 7
