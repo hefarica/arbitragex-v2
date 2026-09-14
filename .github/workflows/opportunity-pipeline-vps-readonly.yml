@@ -48,8 +48,8 @@ jobs:
               start=time.monotonic()
               try:
                   p=subprocess.run(argv,text=True,capture_output=True,timeout=timeout,input=input,env={**os.environ,'GIT_OPTIONAL_LOCKS':'0'})
-                  return {'code':p.returncode,'ms':round((time.monotonic()-start)*1000),'stdout':p.stdout,'error':clean(p.stderr[-1500:])}
-              except subprocess.TimeoutExpired:return {'code':None,'ms':round((time.monotonic()-start)*1000),'error':'timeout'}
+                  return {'code':p.returncode,'ms':int((time.monotonic()-start)*1000),'stdout':p.stdout,'error':clean(p.stderr[-1500:])}
+              except subprocess.TimeoutExpired:return {'code':None,'ms':int((time.monotonic()-start)*1000),'error':'timeout'}
           report={'started_at':now(),'scope':'read_only_bounded_runtime_hops_and_pipeline','mutations_performed':False}
           fs=os.statvfs('/');report['disk']={'free_bytes':fs.f_bavail*fs.f_frsize,'total_bytes':fs.f_blocks*fs.f_frsize}
           report['checkout_before']=run(['git','-C','/opt/arbitragex-v2','rev-parse','HEAD'])
@@ -73,14 +73,14 @@ jobs:
           allowed={'loading','aof_enabled','aof_last_write_status','aof_last_bgrewrite_status','rdb_last_bgsave_status','aof_rewrite_in_progress'}
           report['redis_persistence']={k:v.strip() for line in persistence.get('stdout','').splitlines() if ':' in line for k,v in [line.split(':',1)] if k in allowed}
           report['streams']=[]
-          for round in range(2):
+          for sample_no in range(2):
               item={'at':now(),'groups':{}}
               for stream in ['arbx:opps:detected','arbx:opps:validated','arbx:opps:simulated']:
                   item['groups'][stream]=redis(['XINFO','GROUPS',stream])
               item['sim_pending']=redis(['XPENDING','arbx:opps:validated','sim-ctl-g0'])
               item['sim_consumers']=redis(['XINFO','CONSUMERS','arbx:opps:validated','sim-ctl-g0'])
               report['streams'].append(item)
-              if round==0:time.sleep(15)
+              if sample_no==0:time.sleep(15)
           def sql(name,query):
               script="BEGIN READ ONLY; SET LOCAL statement_timeout='2500ms'; SET LOCAL lock_timeout='250ms'; "+query+"; ROLLBACK;"
               r=run(['docker','exec','-i','arbitragex-v2-postgres-1','psql','-U','postgres','-d','arbitragex','-X','-qAt','-v','ON_ERROR_STOP=1'],timeout=6,input=script)
@@ -102,8 +102,8 @@ jobs:
                   with urllib.request.urlopen(url,timeout=6) as r:
                       raw=r.read(100000);data=json.loads(raw)
                       if name.startswith('status'):data={'deploy':data.get('deploy'),'generated_at':data.get('generated_at')}
-                      report[name]={'status':r.status,'ms':round((time.monotonic()-start)*1000),'data':data}
-              except Exception as e:report[name]={'error':type(e).__name__,'ms':round((time.monotonic()-start)*1000)}
+                      report[name]={'status':r.status,'ms':int((time.monotonic()-start)*1000),'data':data}
+              except Exception as e:report[name]={'error':type(e).__name__,'ms':int((time.monotonic()-start)*1000)}
           http('status_served','http://127.0.0.1:8787/api/status')
           http('sim_health','http://127.0.0.1:3003/health')
           report['logs']=[]
@@ -111,7 +111,7 @@ jobs:
               p=run(['docker','logs','--since','10m','--tail','250','arbitragex-v2-'+svc+'-1'])
               lines=(p.get('stdout','')+'\n'+p.get('error','')).splitlines()
               selected=[clean(s)[:500] for s in lines if re.search(r'consumer|route_scanner\.|canonical_dispatch|candidate_|persist|fail|error|missing|stalled',s,re.I)]
-              report['logs'].append({'service':svc,'limit_lines':250,'matching_tail':selected[-60:]})
+              report['logs'].append({'service':svc,'limit_lines':250,'stderr_limit_bytes':1500,'matching_tail':selected[-60:]})
           report['checkout_after']=run(['git','-C','/opt/arbitragex-v2','rev-parse','HEAD'])
           report['finished_at']=now()
           print(json.dumps(report,indent=2))
