@@ -31,6 +31,8 @@ import { VIABLE_STATUSES } from "./opportunities-live.js";
 // CASE guards prevent jsonb_array_length from running on malformed scalars.
 // Tokens/adapters define the swap count. Only complete aligned routes enter
 // routed/by_hops; an unresolved pool never turns an h-hop route into h-1 hops.
+// Each element must be a nonblank string. chr() lists String.trim whitespace
+// explicitly so the SQL agrees with the ViewModel regardless of PG locale.
 const HOPS_SQL = `CASE
   WHEN jsonb_typeof(route_metadata->'dex_adapters') = 'array'
    AND jsonb_typeof(route_metadata->'token_addresses') = 'array'
@@ -41,6 +43,21 @@ const HOPS_SQL = `CASE
          jsonb_array_length(route_metadata->'dex_adapters') + 1
      AND jsonb_array_length(route_metadata->'pool_addresses') =
          jsonb_array_length(route_metadata->'dex_adapters')
+     AND NOT EXISTS (
+       SELECT 1 FROM jsonb_array_elements(route_metadata->'token_addresses') AS elem(value)
+       WHERE jsonb_typeof(value) <> 'string'
+          OR btrim(value #>> '{}', chr(9) || chr(10) || chr(11) || chr(12) || chr(13) || chr(32) || chr(160) || chr(5760) || chr(8192) || chr(8193) || chr(8194) || chr(8195) || chr(8196) || chr(8197) || chr(8198) || chr(8199) || chr(8200) || chr(8201) || chr(8202) || chr(8232) || chr(8233) || chr(8239) || chr(8287) || chr(12288) || chr(65279)) = ''
+     )
+     AND NOT EXISTS (
+       SELECT 1 FROM jsonb_array_elements(route_metadata->'dex_adapters') AS elem(value)
+       WHERE jsonb_typeof(value) <> 'string'
+          OR btrim(value #>> '{}', chr(9) || chr(10) || chr(11) || chr(12) || chr(13) || chr(32) || chr(160) || chr(5760) || chr(8192) || chr(8193) || chr(8194) || chr(8195) || chr(8196) || chr(8197) || chr(8198) || chr(8199) || chr(8200) || chr(8201) || chr(8202) || chr(8232) || chr(8233) || chr(8239) || chr(8287) || chr(12288) || chr(65279)) = ''
+     )
+     AND NOT EXISTS (
+       SELECT 1 FROM jsonb_array_elements(route_metadata->'pool_addresses') AS elem(value)
+       WHERE jsonb_typeof(value) <> 'string'
+          OR btrim(value #>> '{}', chr(9) || chr(10) || chr(11) || chr(12) || chr(13) || chr(32) || chr(160) || chr(5760) || chr(8192) || chr(8193) || chr(8194) || chr(8195) || chr(8196) || chr(8197) || chr(8198) || chr(8199) || chr(8200) || chr(8201) || chr(8202) || chr(8232) || chr(8233) || chr(8239) || chr(8287) || chr(12288) || chr(65279)) = ''
+     )
     THEN jsonb_array_length(route_metadata->'dex_adapters')
     ELSE NULL END
   ELSE NULL END`;

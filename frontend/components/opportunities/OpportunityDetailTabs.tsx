@@ -41,6 +41,7 @@ import { LatencyCandidatesPanel } from "@/components/opportunities/LatencyCandid
 import {
   deriveLegs,
   deriveLegLedger,
+  routeTokenDecimals,
   SYNTHETIC_LEGACY_VIEW_LABEL,
   type OmniOpportunity,
 } from "@/lib/store/types";
@@ -308,9 +309,9 @@ export function OpportunityDetailTabs({
                 {ledger.map((e) => {
                   const tokIn = rm.token_addresses[e.index] ?? "";
                   const tokOut = rm.token_addresses[e.index + 1] ?? "";
-                  const openDecimals = rm.decimals?.[rm.token_addresses[0] ?? ""];
-                  const humanIn = weiToHuman(e.amount_in_wei, rm.decimals?.[tokIn]);
-                  const humanOut = weiToHuman(e.amount_out_wei, rm.decimals?.[tokOut]);
+                  const openDecimals = routeTokenDecimals(rm, rm.token_addresses[0] ?? "");
+                  const humanIn = weiToHuman(e.amount_in_wei, routeTokenDecimals(rm, tokIn));
+                  const humanOut = weiToHuman(e.amount_out_wei, routeTokenDecimals(rm, tokOut));
                   const delta = e.cycle_delta_wei;
                   return (
                     <tr key={e.index} className="border-b border-border/50 align-top">

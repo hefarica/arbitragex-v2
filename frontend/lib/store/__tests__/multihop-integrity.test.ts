@@ -81,3 +81,23 @@ describe("2/3/4/5-hop route and ledger fidelity",()=>{
     expect(deriveHopCount(null)).toBeNull();
   });
 });
+
+
+describe("PR566 review — unresolved positions are quarantined, never compacted", () => {
+  for (const hops of [2, 3, 4, 5]) {
+    for (const field of ["token_addresses", "pool_addresses", "dex_adapters"] as const) {
+      for (const blank of ["", " ", "\t\n", "\u00a0", "\ufeff"]) {
+        it(`${hops} hops ${field} blank ${JSON.stringify(blank)} has no operational count`, () => {
+          const raw = route(hops);
+          raw[field][1] = blank;
+          const opp = mapped(raw);
+          expect(opp.route_metadata?.[field]).toEqual(raw[field]);
+          expect(opp.hop_count).toBeNull();
+          expect(opp.semantic_violations).toContain("hop_incoherent");
+          expect(deriveLegLedger(opp)).toBeNull();
+          expect(deriveLegs(opp)[1]?.pool).toBe(raw.pool_addresses[1]);
+        });
+      }
+    }
+  }
+});

@@ -337,8 +337,9 @@ function OpportunityExchangeCardImpl({
       <div className="dapp-badge">
         {/* eslint-disable-next-line @next/next/no-img-element */}
         <img src={QUANTUMX_LOGO} alt="QuantumX" />
-        <span>{opp.rejection_reason != null || opp.status === "rejected" || opp.paper_status === "paper_rejected"
-          ? "Rechazada" : opp.status === "failed" ? "Fallida" : "Evaluada"}</span>
+        <span>{opp.status === "failed" ? "Fallida"
+          : opp.rejection_reason != null || opp.status === "rejected" || opp.paper_status === "paper_rejected"
+            ? "Rechazada" : "Evaluada"}</span>
         <span className="sep">·</span>
         <span title={opp.strategy_kind ?? "sin strategy_kind en el payload (§28)"}>
           {strategyFamilyLabel(opp.strategy_kind)}

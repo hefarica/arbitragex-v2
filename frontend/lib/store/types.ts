@@ -148,7 +148,19 @@ export function deriveHopCount(rm: RouteMetadataWire | null): number | null {
   if (!rm || rm.dex_adapters.length === 0) return null;
   const hops = rm.dex_adapters.length;
   if (rm.token_addresses.length !== hops + 1 || rm.pool_addresses.length !== hops) return null;
+  // Shape alone is not resolved topology: keep unknown positions visible, but
+  // never advertise them as complete operational hops (PR #566 review).
+  if (![rm.token_addresses, rm.pool_addresses, rm.dex_adapters].every(
+    (values) => Array.from(values).every((v) => typeof v === "string" && v.trim() !== ""),
+  )) return null;
   return hops;
+}
+
+/** EVM decimal-map lookup: normalize both sides; absence is not 18/0. */
+export function routeTokenDecimals(rm: RouteMetadataWire, token: string): number | undefined {
+  const value = rm.decimals?.[token.toLowerCase()] ?? rm.decimals?.[token];
+  return typeof value === "number" && Number.isInteger(value) && value >= 0 && value <= 255
+    ? value : undefined;
 }
 
 /**

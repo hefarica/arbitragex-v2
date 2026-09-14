@@ -69,3 +69,22 @@ describe("HOPS-PROVENANCE — real PostgreSQL aggregation",()=>{
     expect(r.body.data.totals).toEqual({total:0,viable:0,routed:0,viability_pct:null});
   });
 });
+
+
+describe("PR566 review — metadata element parity with the canonical ViewModel", () => {
+  for (const field of ["token_addresses", "pool_addresses", "dex_adapters"] as const) {
+    for (const invalid of [null, 42, true, {}, "", " ", "\t\n", "\u00a0", "\ufeff"]) {
+      it(`${field} rejects ${JSON.stringify(invalid)} without inventing a complete route`, async () => {
+        const valid = metadata(3);
+        const values: unknown[] = [...valid[field]];
+        values[1] = invalid;
+        await insert({ ...valid, [field]: values });
+        await insert(metadata(5));
+        const res = await read();
+        expect(res.status).toBe(200);
+        expect(res.body.data.by_hops).toEqual([{hops: 5, n: 1}]);
+        expect(res.body.data.totals).toEqual({total: 2, viable: 2, routed: 1, viability_pct: 100});
+      });
+    }
+  }
+});

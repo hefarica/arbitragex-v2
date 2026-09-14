@@ -361,3 +361,17 @@ describe("freshness is not LIVE execution", () => {
     expect(html).not.toContain(">STALE<");
   });
 });
+
+
+describe("PR566 review — preserve failed lifecycle over paper rollup rejection", () => {
+  for (const rejection_reason of [null, "sim_timeout", "build_error:unit-only"]) {
+    it(`failed remains Fallida with paper_rejected and reason ${rejection_reason}`, () => {
+      const opp=makeOpp({status:"failed",paper_status:"paper_rejected",rejection_reason,
+        net_expected_profit_usd:0,route_metadata:null});
+      const html=renderToStaticMarkup(<OpportunityExchangeCard {...props(opp)} />);
+      expect(html).toContain(">Fallida<");
+      expect(html).not.toContain(">Rechazada<");
+      expect(html).not.toContain(">Evaluada<");
+    });
+  }
+});
