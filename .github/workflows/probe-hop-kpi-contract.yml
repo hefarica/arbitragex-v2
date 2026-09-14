@@ -1,0 +1,72 @@
+name: Probe combined hop KPI contract (isolated)
+on:
+  push:
+    branches: [ops/audit-hops-2-5-20260914]
+    paths: [.github/workflows/probe-hop-kpi-contract.yml]
+permissions:
+  contents: read
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_PASSWORD: isolated-contract-fixture
+          POSTGRES_DB: hop_probe
+        ports: [5432:5432]
+        options: >-
+          --health-cmd "pg_isready -U postgres -d hop_probe"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      PGHOST: 127.0.0.1
+      PGPORT: '5432'
+      PGUSER: postgres
+      PGDATABASE: hop_probe
+      PGPASSWORD: isolated-contract-fixture
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
+        with:
+          ref: 92bba47babb9fe940326586d9573e6b60807fa4c
+          persist-credentials: false
+      - name: Execute exact combined SQL expression on adversarial constructed rows
+        run: |
+          python3 - <<'PY'
+          import copy,datetime,json,pathlib,re,subprocess
+          out=pathlib.Path('hop-kpi-probe');out.mkdir()
+          sha=subprocess.check_output(['git','rev-parse','HEAD'],text=True).strip()
+          assert sha=='92bba47babb9fe940326586d9573e6b60807fa4c'
+          source=pathlib.Path('backend/api-server/src/routes/viable-kpis.ts').read_text()
+          expressions=re.findall(r'const HOPS_SQL = `([^`]+)`;',source)
+          assert len(expressions)==1
+          expr=expressions[0]
+          normal={'dex_adapters':['unit-v2','unit-v2'],'token_addresses':['unit-token-a','unit-token-b','unit-token-a'],'pool_addresses':['unit-pool-a','unit-pool-b']}
+          cases=[('valid',normal,2)]
+          for field in ['dex_adapters','token_addresses','pool_addresses']:
+            data=copy.deepcopy(normal);data[field][1]=None;cases.append((field+'_null_element',data,None))
+          data=copy.deepcopy(normal);data['token_addresses'][1]=17;cases.append(('numeric_token',data,None))
+          data=copy.deepcopy(normal);data['token_addresses'][1]='';cases.append(('empty_token',data,None))
+          data=copy.deepcopy(normal);data['pool_addresses']=['unit-pool-a'];cases.append(('short_pool_array',data,None))
+          result={'source_sha':sha,'at':datetime.datetime.now(datetime.timezone.utc).isoformat(),'scope':'isolated_synthetic_negative_SQL_contract_not_market_data','checks':[],'passed':True}
+          for name,data,expected in cases:
+            raw=json.dumps(data).replace("'","''")
+            sql=f"SELECT COALESCE(({expr})::text,'NULL') FROM (VALUES ('{raw}'::jsonb)) AS sample(route_metadata)"
+            p=subprocess.run(['psql','-X','-qAt','-v','ON_ERROR_STOP=1','-c',sql],text=True,capture_output=True,timeout=10)
+            assert p.returncode==0,p.stderr
+            value=p.stdout.strip();actual=None if value=='NULL' else int(value)
+            ok=actual==expected;result['passed'] &= ok
+            result['checks'].append({'case':name,'expected_hops':expected,'actual_hops':actual,'passed':ok})
+          (out/'result.json').write_text(json.dumps(result,indent=2))
+          (out/'source-expression.sql').write_text(expr)
+          print(json.dumps(result,indent=2))
+          if not result['passed']: raise SystemExit('Reproduced contract mismatch; production was not modified')
+          PY
+      - name: Keep reproduction even when it finds a defect
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: hop-kpi-probe-${{ github.run_id }}
+          path: hop-kpi-probe/
+          retention-days: 7
+          if-no-files-found: error
