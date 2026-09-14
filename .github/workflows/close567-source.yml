@@ -1,0 +1,44 @@
+name: Export exact blocker repair sources
+on:
+  push:
+    branches: [ops/audit-hops-2-5-20260914]
+    paths: [.github/workflows/close567-source.yml]
+permissions:
+  contents: read
+jobs:
+  source:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
+        with:
+          ref: 92bba47babb9fe940326586d9573e6b60807fa4c
+          persist-credentials: false
+      - name: Export only tracked source, no environment or credentials
+        run: |
+          python3 - <<'PY'
+          import hashlib,json,pathlib,subprocess,zipfile
+          sha=subprocess.check_output(['git','rev-parse','HEAD'],text=True).strip()
+          assert sha=='92bba47babb9fe940326586d9573e6b60807fa4c'
+          out=pathlib.Path('source-evidence');out.mkdir()
+          files=subprocess.check_output(['git','ls-files','-z']).decode().split('\0')
+          manifest=[]
+          suffixes={'.rs','.ts','.tsx','.js','.jsx','.mjs','.cjs','.json','.toml','.lock','.yaml','.yml','.md','.sh','.py','.sql','.sol','.txt','.css','.scss','.html','.conf','.example','.svg'}
+          with zipfile.ZipFile(out/'source.zip','w',zipfile.ZIP_DEFLATED) as z:
+            for f in files:
+              if not f: continue
+              p=pathlib.Path(f)
+              if p.is_symlink() or not p.is_file(): continue
+              if p.name=='.env' or p.suffix in {'.pem','.key','.p12','.pfx'}: continue
+              if p.suffix not in suffixes and p.name not in {'Dockerfile','.npmrc','.nvmrc','.gitignore','.dockerignore'}: continue
+              b=p.read_bytes();z.writestr(f,b)
+              manifest.append({'path':f,'sha256':hashlib.sha256(b).hexdigest()})
+          (out/'manifest.json').write_text(json.dumps({'sha':sha,'files':manifest},indent=2))
+          print('source_sha='+sha+' files='+str(len(manifest)))
+          PY
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: blocker-source-${{ github.run_id }}
+          path: source-evidence/
+          retention-days: 7
+          if-no-files-found: error
