@@ -1,0 +1,106 @@
+name: Verify opportunity surfaces corrected types
+on:
+  push:
+    branches: [ops/audit-hops-2-5-20260914]
+    paths: [.github/workflows/verify-566-surfaces-r2.yml]
+permissions:
+  contents: read
+concurrency:
+  group: verify-566-surfaces
+  cancel-in-progress: false
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    permissions:
+      contents: write
+    services:
+      redis:
+        image: redis:7-alpine
+        ports: [6379:6379]
+        options: --health-cmd "redis-cli ping" --health-interval 5s --health-timeout 3s --health-retries 20
+    env:
+      REDIS_URL: redis://localhost:6379
+      NEXT_PUBLIC_EDGE_URL: https://edge.ci.invalid
+      NEXT_PUBLIC_WS_URL: wss://ws.ci.invalid
+      BASE_SHA: d9ef5c96e1e2a3b63b481acb7f9ce278bd6c8925
+      CANDIDATE_BRANCH: fix/566-surfaces-verified-20260914
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
+        with:
+          ref: d9ef5c96e1e2a3b63b481acb7f9ce278bd6c8925
+      - name: Apply authenticated patches to exact reviewed base
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python3 - <<'PY'
+          import base64,gzip,hashlib,json,os,pathlib,subprocess,urllib.request
+          assert subprocess.check_output(['git','rev-parse','HEAD'],text=True).strip()==os.environ['BASE_SHA']
+          out=pathlib.Path('surface-evidence');out.mkdir()
+          def read_blob(sha):
+            req=urllib.request.Request('https://api.github.com/repos/hefarica/arbitragex-v2/git/blobs/'+sha,headers={'Authorization':'Bearer '+os.environ['GH_TOKEN'],'Accept':'application/vnd.github+json'})
+            with urllib.request.urlopen(req,timeout=30) as r: blob=json.load(r)
+            raw=base64.b64decode(blob['content']);assert hashlib.sha1(b'blob '+str(len(raw)).encode()+b'\0'+raw).hexdigest()==sha
+            return raw
+          pieces=['1cfcf3e5476861b5f6181e190080237878f03d03','562c6a2be1f36268d72f6e4edc820e0367952494','b2083983927688c9c87731332849795b6aa6576d','7cc4512686cd6c72f4400345d997005c46bdb301']
+          surface=gzip.decompress(base64.b64decode(b''.join(read_blob(s) for s in pieces),validate=True))
+          # The second transport blob has one leading space on a diff header;
+          # normalize that single header, then verify the exact local patch hash.
+          typing=read_blob('57f0a65ea753bf00f9fd97398a3f71179af1661a').replace(b'\n diff --git',b'\ndiff --git')
+          for name,patch,expected in [('surface',surface,'85d3c6438d82607bd08c1bb4f53c805eb87fdeb77f95cdeeb2ddb99bf9185c0c'),('typing',typing,'326fe0930e68791864bf9f4c8097442a1e729255cf2d60a3f763d86d7e7bfd56')]:
+            assert hashlib.sha256(patch).hexdigest()==expected
+            p=out/(name+'.patch');p.write_bytes(patch)
+            subprocess.run(['git','apply','--check','--index',str(p)],check=True)
+            subprocess.run(['git','apply','--index',str(p)],check=True)
+          files=set(subprocess.check_output(['git','diff','--cached','--name-only'],text=True).splitlines())
+          assert files=={'frontend/app/page.tsx','frontend/components/OpportunityTicker.tsx','frontend/components/XRayCard.tsx','frontend/components/__tests__/OpportunityTicker.test.tsx','frontend/components/__tests__/XRayCard.test.tsx','frontend/components/opportunities/exchange/OpportunityExchangeCard.tsx','frontend/components/opportunities/exchange/__tests__/OpportunityExchangeCard.test.tsx','frontend/lib/__tests__/home-opportunity.test.ts','frontend/lib/home-opportunity.ts','frontend/lib/opportunity-presentation.ts'}
+          subprocess.run(['git','diff','--cached','--check'],check=True)
+          (out/'final.patch').write_bytes(subprocess.check_output(['git','diff','--cached']))
+          (out/'manifest.json').write_text(json.dumps({'base_sha':os.environ['BASE_SHA'],'prior_failure_run':34806973680,'rpc_candidate_verified':False,'files':[{'path':f,'sha256':hashlib.sha256(pathlib.Path(f).read_bytes()).hexdigest()} for f in sorted(files)]},indent=2))
+          PY
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444
+        with:
+          node-version: 22
+          cache: npm
+      - name: Install locked runner dependencies
+        run: npm ci --ignore-scripts --no-audit --no-fund
+      - name: Typecheck and compile shared and API
+        run: |
+          set -o pipefail
+          npm run build -w @arbx/shared 2>&1 | tee surface-evidence/shared-build.log
+          npm run typecheck -w @arbx/api-server 2>&1 | tee surface-evidence/api-typecheck.log
+          npm run build -w @arbx/api-server 2>&1 | tee surface-evidence/api-build.log
+          npm run typecheck -w @arbx/frontend 2>&1 | tee surface-evidence/frontend-typecheck.log
+      - name: Complete API and frontend suites
+        run: |
+          set -o pipefail
+          npm test -w @arbx/api-server 2>&1 | tee surface-evidence/api-tests.log
+          npm test -w @arbx/frontend 2>&1 | tee surface-evidence/frontend-tests.log
+      - name: PostgreSQL 15 regression matrix
+        run: |
+          set -o pipefail
+          npm run test:integration -w @arbx/api-server -- test/viable-kpis-hop-contract.test.ts 2>&1 | tee surface-evidence/postgres-tests.log
+      - name: Frontend lint and production build
+        run: |
+          set -o pipefail
+          npm run lint -w @arbx/frontend 2>&1 | tee surface-evidence/frontend-lint.log
+          npm run build -w @arbx/frontend 2>&1 | tee surface-evidence/frontend-build.log
+      - name: Publish only the validated candidate branch
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$BASE_SHA"
+          test -z "$(git diff --name-only)"
+          test -z "$(git ls-remote --heads origin "refs/heads/$CANDIDATE_BRANCH")"
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m 'fix(frontend): preserve terminal outcomes and topology-derived hops across all cards'
+          git push origin "HEAD:refs/heads/$CANDIDATE_BRANCH"
+          git rev-parse HEAD | tee surface-evidence/candidate-sha.txt
+      - name: Preserve results even on failure
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: surfaces566-${{ github.run_id }}
+          path: surface-evidence/
+          retention-days: 7
+          if-no-files-found: error
