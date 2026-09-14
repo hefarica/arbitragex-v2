@@ -1,0 +1,97 @@
+name: Validate PR566 review closure
+on:
+  push:
+    branches: [ops/audit-hops-2-5-20260914]
+    paths: [.github/workflows/prepare-566-review.yml]
+permissions:
+  contents: read
+concurrency:
+  group: prepare-566-review
+  cancel-in-progress: false
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    permissions:
+      contents: write
+    services:
+      redis:
+        image: redis:7-alpine
+        ports: [6379:6379]
+        options: --health-cmd "redis-cli ping" --health-interval 5s --health-timeout 3s --health-retries 20
+    env:
+      REDIS_URL: redis://localhost:6379
+      NEXT_PUBLIC_EDGE_URL: https://edge.ci.invalid
+      NEXT_PUBLIC_WS_URL: wss://ws.ci.invalid
+      BASE_SHA: 92bba47babb9fe940326586d9573e6b60807fa4c
+      CANDIDATE_BRANCH: fix/566-review-closure-20260914
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
+        with:
+          ref: 92bba47babb9fe940326586d9573e6b60807fa4c
+      - name: Apply authenticated patch to exact reviewed base
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python3 - <<'PY'
+          import base64,gzip,hashlib,json,os,pathlib,subprocess,urllib.request
+          assert subprocess.check_output(['git','rev-parse','HEAD'],text=True).strip()==os.environ['BASE_SHA']
+          out=pathlib.Path('review-evidence');out.mkdir()
+          req=urllib.request.Request('https://api.github.com/repos/hefarica/arbitragex-v2/git/blobs/ea8455f14abfa08e16d1cf3aa1c84da8de42b4d0',headers={'Authorization':'Bearer '+os.environ['GH_TOKEN'],'Accept':'application/vnd.github+json'})
+          with urllib.request.urlopen(req,timeout=30) as response: blob=json.load(response)
+          assert blob['encoding']=='base64'
+          patch=gzip.decompress(base64.b64decode(blob['content']))
+          assert hashlib.sha256(patch).hexdigest()=='5de09e95f117ee9f9f5b1b45e5eeba5792d6ecdc6c4022191f75eab87fe5cc26'
+          p=out/'review.patch';p.write_bytes(patch)
+          subprocess.run(['git','apply','--check','--index',str(p)],check=True)
+          subprocess.run(['git','apply','--index',str(p)],check=True)
+          files=set(subprocess.check_output(['git','diff','--cached','--name-only'],text=True).splitlines())
+          assert files=={'backend/api-server/src/routes/viable-kpis.ts','backend/api-server/test/viable-kpis-hop-contract.test.ts','frontend/lib/store/types.ts','frontend/lib/store/__tests__/multihop-integrity.test.ts','frontend/components/opportunities/OpportunityDetailTabs.tsx','frontend/components/opportunities/__tests__/OpportunityDetailTabs.test.tsx','frontend/components/opportunities/exchange/OpportunityExchangeCard.tsx','frontend/components/opportunities/exchange/__tests__/OpportunityExchangeCard.test.tsx'}
+          subprocess.run(['git','diff','--cached','--check'],check=True)
+          (out/'manifest.json').write_text(json.dumps({'base_sha':os.environ['BASE_SHA'],'patch_sha256':hashlib.sha256(patch).hexdigest(),'files':[{'path':f,'sha256':hashlib.sha256(pathlib.Path(f).read_bytes()).hexdigest()} for f in sorted(files)]},indent=2))
+          PY
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444
+        with:
+          node-version: 22
+          cache: npm
+      - name: Install locked dependencies in isolated runner
+        run: npm ci --ignore-scripts --no-audit --no-fund
+      - name: Compile shared and API; typecheck frontend
+        run: |
+          set -o pipefail
+          npm run build -w @arbx/shared 2>&1 | tee review-evidence/shared-build.log
+          npm run typecheck -w @arbx/api-server 2>&1 | tee review-evidence/api-typecheck.log
+          npm run build -w @arbx/api-server 2>&1 | tee review-evidence/api-build.log
+          npm run typecheck -w @arbx/frontend 2>&1 | tee review-evidence/frontend-typecheck.log
+      - name: Complete API and frontend unit suites
+        run: |
+          set -o pipefail
+          npm test -w @arbx/api-server 2>&1 | tee review-evidence/api-tests.log
+          npm test -w @arbx/frontend 2>&1 | tee review-evidence/frontend-tests.log
+      - name: Execute PostgreSQL hop counterexamples and regression matrix
+        run: |
+          set -o pipefail
+          npm run test:integration -w @arbx/api-server -- test/viable-kpis-hop-contract.test.ts 2>&1 | tee review-evidence/postgres-tests.log
+      - name: Full production frontend build
+        run: |
+          set -o pipefail
+          npm run build -w @arbx/frontend 2>&1 | tee review-evidence/frontend-build.log
+      - name: Publish validated delta to new branch only
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$BASE_SHA"
+          test -z "$(git diff --name-only)"
+          test -z "$(git ls-remote --heads origin "refs/heads/$CANDIDATE_BRANCH")"
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m 'fix(review): quarantine incomplete hop evidence and preserve failed/decimal semantics'
+          git push origin "HEAD:refs/heads/$CANDIDATE_BRANCH"
+          git rev-parse HEAD | tee review-evidence/candidate-sha.txt
+      - name: Preserve every result including failures
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: review566-${{ github.run_id }}
+          path: review-evidence/
+          retention-days: 7
+          if-no-files-found: error
