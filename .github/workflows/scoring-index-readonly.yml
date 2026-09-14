@@ -1,0 +1,71 @@
+name: Verify scoring index plan on VPS (read only)
+on:
+  push:
+    branches: [ops/scoring-index-readonly]
+permissions:
+  contents: read
+jobs:
+  observe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 4
+    steps:
+      - name: Read bounded query plan, without applying code or changing database state
+        env:
+          VPS_KEY: ${{ secrets.VPS_SSH_KEY }}
+          VPS_HOST: ${{ secrets.VPS_SSH_HOST }}
+          VPS_USER: ${{ secrets.VPS_SSH_USER }}
+          VPS_PORT: ${{ secrets.VPS_PORT || '22' }}
+          VPS_KNOWN_HOSTS: ${{ secrets.VPS_SSH_KNOWN_HOSTS }}
+        run: |
+          set -euo pipefail
+          umask 077
+          KEY="$RUNNER_TEMP/scoring_key"
+          HOSTS="$RUNNER_TEMP/scoring_hosts"
+          ERR="$RUNNER_TEMP/scoring_errors"
+          trap 'rm -f "$KEY" "$HOSTS" "$ERR"' EXIT
+          test -n "$VPS_KEY" && test -n "$VPS_HOST" && test -n "$VPS_USER"
+          [[ "$VPS_HOST" =~ ^[A-Za-z0-9][A-Za-z0-9.-]*$ ]]
+          [[ "$VPS_USER" =~ ^[A-Za-z_][A-Za-z0-9_.-]*$ ]]
+          [[ "$VPS_PORT" =~ ^[0-9]+$ ]] && (( VPS_PORT > 0 && VPS_PORT < 65536 ))
+          printf '%s\n' "$VPS_KEY" > "$KEY"
+          if [ -n "$VPS_KNOWN_HOSTS" ]; then
+            printf '%s\n' "$VPS_KNOWN_HOSTS" > "$HOSTS"
+          else
+            ssh-keyscan -T 10 -p "$VPS_PORT" -H "$VPS_HOST" > "$HOSTS" 2>"$ERR"
+          fi
+          test -s "$HOSTS"
+          mkdir -p scoring-plan
+          ssh -i "$KEY" -p "$VPS_PORT" -T -o IdentitiesOnly=yes -o BatchMode=yes \
+            -o StrictHostKeyChecking=yes -o UserKnownHostsFile="$HOSTS" -o ConnectTimeout=15 \
+            "$VPS_USER@$VPS_HOST" 'python3 -' > scoring-plan/result.json 2>"$ERR" <<'PY'
+          import datetime, json, os, subprocess, time
+          sql = '''EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) SELECT
+            (SELECT COUNT(*)::bigint FROM
+              (SELECT 1 FROM scored_opportunities ORDER BY created_at DESC LIMIT 1001) observed) AS total,
+            (SELECT created_at FROM scored_opportunities ORDER BY created_at DESC LIMIT 1) AS last,
+            (SELECT created_at FROM scored_opportunities ORDER BY created_at ASC LIMIT 1) AS first'''
+          result = {'utc':datetime.datetime.now(datetime.timezone.utc).isoformat(),
+                    'scope':'read_only_bounded_query_plan', 'count_probe_limit':1001,
+                    'note':'EXPLAIN ANALYZE of SELECT only; no business rows, settings, indexes or code changed. This is not a deployed API verification.'}
+          v=os.statvfs('/'); result['available_gib']=round(v.f_bavail*v.f_frsize/2**30,2)
+          start=time.monotonic()
+          try:
+              p=subprocess.run(['docker','exec','-e','PGOPTIONS=-c default_transaction_read_only=on -c statement_timeout=1500 -c lock_timeout=250',
+                'arbitragex-v2-postgres-1','psql','-U','postgres','-d','arbitragex','-X','-At','-v','ON_ERROR_STOP=1','-c',sql],
+                stdin=subprocess.DEVNULL,stdout=subprocess.PIPE,stderr=subprocess.DEVNULL,text=True,timeout=5)
+              result['exit_code']=p.returncode
+              if p.returncode==0: result['plan']=json.loads(p.stdout)
+          except (OSError,subprocess.TimeoutExpired,ValueError) as e:
+              result['error']=type(e).__name__
+          result['elapsed_ms']=round((time.monotonic()-start)*1000)
+          print(json.dumps(result,indent=2))
+          PY
+          python3 -m json.tool scoring-plan/result.json
+      - name: Preserve observed plan
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: scoring-plan-${{ github.run_id }}
+          path: scoring-plan/result.json
+          if-no-files-found: warn
+          retention-days: 7
