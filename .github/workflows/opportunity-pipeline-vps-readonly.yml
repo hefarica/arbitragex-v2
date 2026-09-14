@@ -1,0 +1,130 @@
+name: Opportunity pipeline VPS inspection (read only)
+on:
+  push:
+    branches: [ops/audit-opportunity-hops-20260914]
+    paths: [.github/workflows/opportunity-pipeline-vps-readonly.yml]
+permissions:
+  contents: read
+concurrency:
+  group: opportunity-pipeline-readonly
+  cancel-in-progress: false
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - name: Prepare existing authorized SSH access on runner only
+        env:
+          VPS_KEY: ${{ secrets.VPS_SSH_KEY }}
+          VPS_HOST: ${{ secrets.VPS_SSH_HOST }}
+          VPS_PORT: ${{ secrets.VPS_PORT || '22' }}
+        run: |
+          set -euo pipefail
+          test -n "$VPS_KEY" && test -n "$VPS_HOST"
+          [[ "$VPS_PORT" =~ ^[0-9]+$ ]] && (( VPS_PORT > 0 && VPS_PORT < 65536 ))
+          install -m 700 -d ~/.ssh
+          umask 077
+          printf '%s\n' "$VPS_KEY" > ~/.ssh/deploy_key
+          ssh-keyscan -T 10 -p "$VPS_PORT" -H "$VPS_HOST" > ~/.ssh/known_hosts
+          test -s ~/.ssh/known_hosts
+      - name: Stream read-only bounded diagnostics; no remote files or state changes
+        env:
+          VPS_HOST: ${{ secrets.VPS_SSH_HOST }}
+          VPS_USER: ${{ secrets.VPS_SSH_USER }}
+          VPS_PORT: ${{ secrets.VPS_PORT || '22' }}
+        run: |
+          set -euo pipefail
+          mkdir -p pipeline-evidence
+          ssh -i ~/.ssh/deploy_key -p "$VPS_PORT" -o ConnectTimeout=15 -o ServerAliveInterval=15 -o ServerAliveCountMax=4 -o BatchMode=yes -o StrictHostKeyChecking=yes "$VPS_USER@$VPS_HOST" 'python3 -B -' >pipeline-evidence/vps.json <<'PY'
+          import subprocess, json, os, re, time, urllib.request
+          from datetime import datetime, timezone
+          def now(): return datetime.now(timezone.utc).isoformat()
+          def clean(s):
+              s=re.sub(r'[A-Za-z][A-Za-z0-9+.-]*://[^\s\"<>]+','[URL REDACTED]',s)
+              s=re.sub(r'(?i)((?:password|secret|authorization|api_key|private_key|access_token)[\s\"\x27:=]+)[^\s,}\"\x27]+',r'\1[REDACTED]',s)
+              s=re.sub(r'0x[0-9a-fA-F]{64,}','[HEX REDACTED]',s)
+              return s
+          def run(argv,timeout=10,input=None):
+              start=time.monotonic()
+              try:
+                  p=subprocess.run(argv,text=True,capture_output=True,timeout=timeout,input=input,env={**os.environ,'GIT_OPTIONAL_LOCKS':'0'})
+                  return {'code':p.returncode,'ms':round((time.monotonic()-start)*1000),'stdout':p.stdout,'error':clean(p.stderr[-1500:])}
+              except subprocess.TimeoutExpired:return {'code':None,'ms':round((time.monotonic()-start)*1000),'error':'timeout'}
+          report={'started_at':now(),'scope':'read_only_bounded_runtime_hops_and_pipeline','mutations_performed':False}
+          fs=os.statvfs('/');report['disk']={'free_bytes':fs.f_bavail*fs.f_frsize,'total_bytes':fs.f_blocks*fs.f_frsize}
+          report['checkout_before']=run(['git','-C','/opt/arbitragex-v2','rev-parse','HEAD'])
+          safe_flags={'ARBX_ROUTE_SCANNER_MODE','ARBX_ROUTE_SCANNER_MAX_HOPS','ARBX_ROUTE_SCANNER_CANONICAL_PER_BLOCK','ARBX_ROUTE_DISCOVERY_MODE','ARBX_ORCHESTRATOR_MODE','ARBX_CARTRIDGE_MODE','ARBX_ENABLED_CHAINS','SIM_BACKEND','ARBX_PAPER_ARCHIVER_MODE','ARBX_OPPS_BRIDGE_MODE'}
+          required={'DATABASE_URL','REDIS_URL','ARBX_ACCOUNTING_FEEDS_JSON','SIM_CALLER_1','EXECUTOR_1','REVM_RPC_URL','ANVIL_FORK_URL','FORK_RPC_URL'}
+          report['containers']=[]
+          for svc in ['api-server','edge','frontend','postgres','redis','searcher-rs','selector-api','sim-ctl','relays-client','recon']:
+              response=run(['docker','inspect','arbitragex-v2-'+svc+'-1'])
+              if response['code']!=0:report['containers'].append({'service':svc,'error':response['error']});continue
+              d=json.loads(response['stdout'])[0];env=dict(x.split('=',1) for x in d.get('Config',{}).get('Env',[]) if '=' in x)
+              state=d.get('State',{});labels=d.get('Config',{}).get('Labels') or {}
+              flags={k:v for k,v in env.items() if k in safe_flags and re.fullmatch(r'[A-Za-z0-9_, .-]{0,150}',v)}
+              report['containers'].append({'service':svc,'state':state.get('Status'),'health':state.get('Health',{}).get('Status'),'started_at':state.get('StartedAt'),'restarts':d.get('RestartCount'),'oom':state.get('OOMKilled'),'image_id':d.get('Image'),'revision_label':labels.get('org.opencontainers.image.revision'),'flags':flags,'required_presence':{k:bool(env.get(k)) for k in sorted(required)},'rpc_format':{k:{'present':bool(v),'csv_entries':len(v.split(',')) if v else 0,'named_first_provider':not v.startswith(('http://','https://')) and '=' in v} for k,v in env.items() if re.fullmatch('RPC_HTTP_[0-9]+',k)}})
+          def redis(args):
+              r=run(['docker','exec','arbitragex-v2-redis-1','redis-cli','--json']+args)
+              if r['code']==0:
+                  try:r['data']=json.loads(r.pop('stdout'))
+                  except ValueError:r['stdout']=clean(r.get('stdout',''))[:1500]
+              return r
+          persistence=run(['docker','exec','arbitragex-v2-redis-1','redis-cli','INFO','persistence'])
+          allowed={'loading','aof_enabled','aof_last_write_status','aof_last_bgrewrite_status','rdb_last_bgsave_status','aof_rewrite_in_progress'}
+          report['redis_persistence']={k:v.strip() for line in persistence.get('stdout','').splitlines() if ':' in line for k,v in [line.split(':',1)] if k in allowed}
+          report['streams']=[]
+          for round in range(2):
+              item={'at':now(),'groups':{}}
+              for stream in ['arbx:opps:detected','arbx:opps:validated','arbx:opps:simulated']:
+                  item['groups'][stream]=redis(['XINFO','GROUPS',stream])
+              item['sim_pending']=redis(['XPENDING','arbx:opps:validated','sim-ctl-g0'])
+              item['sim_consumers']=redis(['XINFO','CONSUMERS','arbx:opps:validated','sim-ctl-g0'])
+              report['streams'].append(item)
+              if round==0:time.sleep(15)
+          def sql(name,query):
+              script="BEGIN READ ONLY; SET LOCAL statement_timeout='2500ms'; SET LOCAL lock_timeout='250ms'; "+query+"; ROLLBACK;"
+              r=run(['docker','exec','-i','arbitragex-v2-postgres-1','psql','-U','postgres','-d','arbitragex','-X','-qAt','-v','ON_ERROR_STOP=1'],timeout=6,input=script)
+              if r['code']==0:
+                  try:r['data']=json.loads(r.pop('stdout'))
+                  except ValueError:r['error']='non_json_sql_result';r.pop('stdout',None)
+              else:r.pop('stdout',None)
+              report[name]=r
+          ready=run(['docker','exec','arbitragex-v2-postgres-1','pg_isready','-U','postgres','-d','arbitragex'])
+          report['postgres_available']=ready['code']==0
+          if ready['code']==0:
+              sql('database_health',"SELECT json_build_object('recovery',pg_is_in_recovery(),'locks_waiting',(SELECT count(*) FROM pg_locks WHERE NOT granted),'long_transactions',(SELECT count(*) FROM pg_stat_activity WHERE pid<>pg_backend_pid() AND xact_start<now()-interval '5 minutes'))")
+              # Latest 10000 rows by indexed time. Counts below apply ONLY to this sample.
+              sql('recent_hops',"""WITH recent AS MATERIALIZED (SELECT id,chain_id,status,rejection_reason,strategy_kind,block_number,detected_at,route_metadata FROM opportunities ORDER BY detected_at DESC LIMIT 10000), shaped AS (SELECT *,CASE WHEN jsonb_typeof(route_metadata->'dex_adapters')='array' THEN jsonb_array_length(route_metadata->'dex_adapters') ELSE NULL END AS hops FROM recent), grouped AS (SELECT chain_id,hops,status,split_part(rejection_reason,':',1) AS rejection,count(*) AS n,count(*) FILTER (WHERE block_number IS NULL) AS missing_block,min(detected_at) AS oldest,max(detected_at) AS newest FROM shaped GROUP BY chain_id,hops,status,split_part(rejection_reason,':',1)) SELECT json_build_object('sample_limit',10000,'sample_rows',(SELECT count(*) FROM recent),'groups',(SELECT coalesce(json_agg(grouped),'[]'::json) FROM grouped))""")
+              sql('recent_simulations',"""WITH recent AS MATERIALIZED (SELECT opportunity_id,simulator,passed,fail_reason,simulated_at FROM simulations ORDER BY simulated_at DESC LIMIT 1000), grouped AS (SELECT simulator,passed,split_part(fail_reason,':',1) AS reason,count(*) AS n,min(simulated_at) AS oldest,max(simulated_at) AS newest FROM recent GROUP BY simulator,passed,split_part(fail_reason,':',1)) SELECT json_build_object('sample_limit',1000,'sample_rows',(SELECT count(*) FROM recent),'groups',(SELECT coalesce(json_agg(grouped),'[]'::json) FROM grouped))""")
+          def http(name,url):
+              start=time.monotonic()
+              try:
+                  with urllib.request.urlopen(url,timeout=6) as r:
+                      raw=r.read(100000);data=json.loads(raw)
+                      if name.startswith('status'):data={'deploy':data.get('deploy'),'generated_at':data.get('generated_at')}
+                      report[name]={'status':r.status,'ms':round((time.monotonic()-start)*1000),'data':data}
+              except Exception as e:report[name]={'error':type(e).__name__,'ms':round((time.monotonic()-start)*1000)}
+          http('status_served','http://127.0.0.1:8787/api/status')
+          http('sim_health','http://127.0.0.1:3003/health')
+          report['logs']=[]
+          for svc in ['sim-ctl','selector-api','searcher-rs']:
+              p=run(['docker','logs','--since','10m','--tail','250','arbitragex-v2-'+svc+'-1'])
+              lines=(p.get('stdout','')+'\n'+p.get('error','')).splitlines()
+              selected=[clean(s)[:500] for s in lines if re.search(r'consumer|route_scanner\.|canonical_dispatch|candidate_|persist|fail|error|missing|stalled',s,re.I)]
+              report['logs'].append({'service':svc,'limit_lines':250,'matching_tail':selected[-60:]})
+          report['checkout_after']=run(['git','-C','/opt/arbitragex-v2','rev-parse','HEAD'])
+          report['finished_at']=now()
+          print(json.dumps(report,indent=2))
+          PY
+          python3 - <<'PY'
+          import json
+          d=json.load(open('pipeline-evidence/vps.json'))
+          print(json.dumps({k:d.get(k) for k in ['started_at','finished_at','disk','postgres_available','recent_hops','recent_simulations']},indent=2))
+          PY
+      - if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: opportunity-pipeline-vps-${{ github.run_id }}
+          path: pipeline-evidence/
+          if-no-files-found: error
+          retention-days: 7
