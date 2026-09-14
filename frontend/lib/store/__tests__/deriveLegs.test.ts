@@ -76,7 +76,7 @@ describe("parseRouteMetadata", () => {
     expect(withoutLedger!.leg_zero_for_one).toBeUndefined();
   });
 
-  it("filters non-string/non-boolean junk out of the ledger arrays (type-gate)", () => {
+  it("refuses the ENTIRE malformed ledger without shifting entries between hops", () => {
     const rm = parseRouteMetadata({
       token_addresses: [WETH, USDC, WETH],
       pool_addresses: ["0xp1", "0xp2"],
@@ -85,9 +85,10 @@ describe("parseRouteMetadata", () => {
       leg_amounts_out: ["990", "1010"],
       leg_zero_for_one: [true, "yes"],
     });
-    expect(rm!.leg_amounts_in).toEqual(["1000"]);
-    expect(rm!.leg_amounts_out).toEqual(["990", "1010"]);
-    expect(rm!.leg_zero_for_one).toEqual([true]);
+    expect(rm!.leg_amounts_in).toBeUndefined();
+    expect(rm!.leg_amounts_out).toBeUndefined();
+    expect(rm!.leg_zero_for_one).toBeUndefined();
+    expect(rm!.token_addresses).toEqual([WETH, USDC, WETH]);
   });
 
   it("unwraps the REAL DecimalsMap wire shape {\"map\":{…}} (flat tolerated, junk dropped)", () => {

@@ -421,15 +421,17 @@ function tokenInfoFromRow(
  * is the default operational mode (`ARBX_PAPER_TRADE=true`), so every
  * opportunity is either viable for the paper P&L or rejected by some gate.
  *
- *   rejection_reason IS NULL  →  paper_viable
- *   rejection_reason !== NULL →  paper_rejected
+ *   no rejection reason and no terminal rejection/failure → paper_viable
+ *   rejection reason OR rejected/failed lifecycle → paper_rejected
+ * This is pipeline classification, not simulation or execution certification.
  *
  * The status field exists so the dashboard can filter / count without
  * re-doing the rejection_reason null-check inline. R8 fail-honest: derivation
  * is exact, not synthesised.
  */
 function paperStatusFromRow(row: OpportunityLiveRow): "paper_viable" | "paper_rejected" {
-  return row.rejection_reason == null ? "paper_viable" : "paper_rejected";
+  return row.rejection_reason != null || row.status === "rejected" || row.status === "failed"
+    ? "paper_rejected" : "paper_viable";
 }
 
 /**
@@ -446,13 +448,21 @@ function chainsUsedFromRow(row: OpportunityLiveRow): number[] {
 }
 
 /**
- * Derives the unique set of DEX adapter names from `dex_a` + `dex_b`. Empty
+ * Derives all DEX adapter names from endpoints AND the full route topology. Empty
  * when both are blank. Lowercase-stable for case-insensitive joins.
  */
 function dexesUsedFromRow(row: OpportunityLiveRow): string[] {
   const set = new Set<string>();
   if (row.dex_a) set.add(row.dex_a.toLowerCase());
   if (row.dex_b) set.add(row.dex_b.toLowerCase());
+  // A 3/4/5-hop route can use intermediate venues not represented by dex_a/b.
+  // Read only names actually carried by the persisted route, without guessing.
+  const adapters = row.route_metadata?.dex_adapters;
+  if (Array.isArray(adapters)) {
+    for (const adapter of adapters) {
+      if (typeof adapter === "string" && adapter.trim()) set.add(adapter.toLowerCase());
+    }
+  }
   return Array.from(set).sort();
 }
 
@@ -489,58 +499,15 @@ function rowToOpportunity(
   const validationOut = validations.get(
     `${tokenOutChain}:${row.token_out.toLowerCase()}`,
   ) ?? null;
-  // HARDENING (2026-08-22): cuando forwardSimulate no produce output pero
-  // el searcher-rs ya pobló net_expected_profit_usd en PG, usar ese valor
-  // como fallback para que la tarjeta muestre el net yield aunque el cost
-  // breakdown no esté disponible. El cost breakdown se computa cuando
-  // forwardSimulate tiene amount_in_wei + token_price; cuando no, usamos
-  // el gross→net delta como cost proxy.
-  const simulated_net_profit_usd =
-    sim?.forward != null ? sim.forward.net_usd : (row.net_expected_profit_usd ?? null);
-  // Capital amount: derivar del amount_in_wei + token price cuando el
-  // forwardSimulate no lo compute. Si no hay amount_in_wei, usar null (R8).
-  const simulated_amount_in_usd =
-    sim?.forward != null ? sim.forward.amount_in_usd
-      : (row.amount_in_wei && row.token_in_decimals
-        ? (() => {
-            try {
-              const wei = BigInt(row.amount_in_wei);
-              const decimals = row.token_in_decimals;
-              // No tenemos token_price aquí (no viene del SQL query), pero
-              // podemos estimar el capital en USD si hay un price snapshot.
-              // Por ahora retornamos el amount en token units (sin USD).
-              // El frontend lo mostrará como "—" si no es USD.
-              return null; // R8: no fabricamos USD sin precio real
-            } catch { return null; }
-          })()
-        : null);
-  // ROI: (net / capital) * 100 cuando ambos existen; fallback a row.roi_pct.
-  const simulated_roi_pct =
-    sim?.forward != null && sim.forward.roi_pct != null
-      ? sim.forward.roi_pct
-      : (row.roi_pct != null
-        ? row.roi_pct
-        : (row.net_expected_profit_usd != null && row.amount_in_wei && row.token_in_decimals
-          ? null // R8: no podemos computar ROI sin precio del token
-          : null));
+  // Observation provenance: a canonical estimate is not a forward simulation.
+  // Keep gross/net/ROI in their canonical fields below. Without a computed
+  // forward result every simulated field is null, never an invented zero-cost
+  // breakdown or a copy of the estimate dressed as simulation evidence.
+  const simulated_net_profit_usd = sim?.forward?.net_usd ?? null;
+  const simulated_amount_in_usd = sim?.forward?.amount_in_usd ?? null;
+  const simulated_roi_pct = sim?.forward?.roi_pct ?? null;
   const simulated_cost_breakdown: SimulatedCostBreakdown | null =
-    sim?.forward != null && sim.forward.cost_breakdown != null
-      ? sim.forward.cost_breakdown
-      : (row.expected_profit_usd != null && row.net_expected_profit_usd != null
-        ? {
-            // R8: 0 = exactly zero (cost not individually computed), NOT null.
-            // The gross→net delta is the real total cost (ops_overhead_usd).
-            gas_usd: 0,
-            flashloan_fee_usd: 0,
-            lp_fees_usd: 0,
-            slippage_usd: 0,
-            failure_buffer_usd: 0,
-            copied_buffer_usd: 0,
-            capital_cost_usd: 0,
-            ops_overhead_usd: row.expected_profit_usd - row.net_expected_profit_usd,
-            relay_fee_usd: 0,
-          } as SimulatedCostBreakdown
-        : null);
+    sim?.forward?.cost_breakdown ?? null;
   const simulated_target: InverseSizingResult | null =
     sim?.inverse != null ? sim.inverse : null;
   // simulated_at is the timestamp of any sim activity (forward OR Path-B
@@ -926,3 +893,6 @@ export function mountOpportunitiesLive(
     }
   });
 }
+
+// Pure mapper exposed for regression inputs, never mounted as an endpoint.
+export const __forTesting = { rowToOpportunity };

@@ -337,7 +337,8 @@ function OpportunityExchangeCardImpl({
       <div className="dapp-badge">
         {/* eslint-disable-next-line @next/next/no-img-element */}
         <img src={QUANTUMX_LOGO} alt="QuantumX" />
-        <span>Evaluada</span>
+        <span>{opp.rejection_reason != null || opp.status === "rejected" || opp.paper_status === "paper_rejected"
+          ? "Rechazada" : opp.status === "failed" ? "Fallida" : "Evaluada"}</span>
         <span className="sep">·</span>
         <span title={opp.strategy_kind ?? "sin strategy_kind en el payload (§28)"}>
           {strategyFamilyLabel(opp.strategy_kind)}
@@ -345,13 +346,18 @@ function OpportunityExchangeCardImpl({
         <span className="led-group">
           {isStale !== false ? <span className="led wait" /> : <span className="led on" />}
           <span className={isStale !== false ? "led-text-wait" : "led-text-live"}>
-            {isStale == null ? "NO DATE" : isStale ? "STALE" : "LIVE"}
+            {isStale == null ? "NO DATE" : isStale ? "STALE" : "RECIENTE"}
           </span>
         </span>
       </div>
 
       {/* FE-0031 (§30): semantic violations render a QUARANTINED strip. */}
       <QuarantineStrip violations={opp.semantic_violations} />
+      {opp.rejection_reason != null && (
+        <div className="kv" data-rejection-reason={opp.rejection_reason}>
+          <span>Rechazo</span><span className="v">{opp.rejection_reason}</span>
+        </div>
+      )}
 
       {/* ── identity + detection ── */}
       <div className="kv">
@@ -505,7 +511,7 @@ function OpportunityExchangeCardImpl({
             <Loader2 size={12} style={{ verticalAlign: "-2px", marginRight: "4px" }} className="animate-spin" /> SIMULATING…
           </span>
         ) : (
-          `⚡ EXECUTE (${modeLabel === "paper" ? "PAPER SHADOW" : "LIVE SHADOW"})`
+          `⚡ SIMULATE (${modeLabel === "paper" ? "PAPER SHADOW" : "LIVE SHADOW"})`
         )}
       </button>
 
@@ -552,6 +558,9 @@ export const OpportunityExchangeCard = React.memo(
     return (
       p.id === n.id &&
       p.status === n.status &&
+      p.paper_status === n.paper_status &&
+      sameJson(p.semantic_violations, n.semantic_violations) &&
+      sameJson(p.leg_symbols, n.leg_symbols) &&
       p.strategy_kind === n.strategy_kind &&
       p.chain_base_token_symbol === n.chain_base_token_symbol &&
       p.detected_at === n.detected_at &&
