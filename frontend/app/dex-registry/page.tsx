@@ -1,4 +1,5 @@
 import DexRegistryClient, { type DexRegistrySnapshot } from "./DexRegistryClient";
+import LiquidityCatalog from "./LiquidityCatalog";
 import { getApiBaseUrl } from "@/lib/api-client";
 
 export const metadata = { title: "Exchange Registry | QuantumX" };
@@ -10,6 +11,7 @@ async function getInitialDexes(): Promise<DexRegistrySnapshot> {
   try {
     const res = await fetch(`${EDGE_URL}/api/v1/dexes`, {
       cache: "no-store",
+      signal: AbortSignal.timeout(5000),
       headers: { accept: "application/json" },
     });
     if (res.status === 404) {
@@ -28,5 +30,8 @@ async function getInitialDexes(): Promise<DexRegistrySnapshot> {
 
 export default async function DexRegistryPage() {
   const initialSnapshot = await getInitialDexes();
-  return <DexRegistryClient initialSnapshot={initialSnapshot} />;
+  return <>
+    <LiquidityCatalog />
+    <div id="dex-admin"><DexRegistryClient initialSnapshot={initialSnapshot} /></div>
+  </>;
 }

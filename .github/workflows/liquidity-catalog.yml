@@ -1,0 +1,117 @@
+name: Liquidity Catalog Contract
+on:
+  workflow_call:
+  push:
+    branches: [feat/liquidity-catalog-hardening-20260914]
+    paths:
+      - 'backend/api-server/**'
+      - 'frontend/**'
+      - 'tests/liquidity-catalog/**'
+      - '.github/workflows/liquidity-catalog.yml'
+permissions:
+  contents: read
+concurrency:
+  group: liquidity-catalog-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  contracts-and-postgres:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      REDIS_URL: redis://127.0.0.1:6379
+      NEXT_PUBLIC_EDGE_URL: https://edge.ci.invalid
+      NEXT_PUBLIC_WS_URL: wss://ws.ci.invalid
+      INTERNAL_EDGE_URL: http://127.0.0.1:8787
+      CATALOG_BUILD_DIR: ${{ runner.temp }}/arbx-catalog-build
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_PASSWORD: catalog_fixture_only
+          POSTGRES_DB: arbx_catalog_ci
+        ports: [35432:5432]
+        options: --health-cmd "pg_isready -U postgres -d arbx_catalog_ci" --health-interval 5s --health-timeout 3s --health-retries 20
+      redis:
+        image: redis:7-alpine
+        ports: [6379:6379]
+        options: --health-cmd "redis-cli ping" --health-interval 5s --health-timeout 3s --health-retries 20
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444
+        with:
+          node-version: 22
+          cache: npm
+      - name: Record source identity
+        run: |
+          mkdir -p catalog-evidence
+          git rev-parse HEAD | tee catalog-evidence/source-sha.txt
+          git diff --check
+      - run: npm ci --ignore-scripts --no-audit --no-fund
+      - name: Build shared contracts, API and check real dependency types
+        run: |
+          set -euo pipefail
+          npm run build -w @arbx/shared 2>&1 | tee catalog-evidence/shared-build.log
+          npm run typecheck -w @arbx/api-server 2>&1 | tee catalog-evidence/api-typecheck.log
+          npm run build -w @arbx/api-server 2>&1 | tee catalog-evidence/api-build.log
+          npm run typecheck -w @arbx/frontend 2>&1 | tee catalog-evidence/frontend-typecheck.log
+      - name: Complete API and frontend unit suites
+        run: |
+          set -euo pipefail
+          npm test -w @arbx/api-server 2>&1 | tee catalog-evidence/api-tests.log
+          npm test -w @arbx/frontend 2>&1 | tee catalog-evidence/frontend-tests.log
+      - name: Compile and verify isolated catalog contracts
+        run: |
+          set -euo pipefail
+          npx --no-install tsc --target ES2022 --module commonjs --strict --noUncheckedIndexedAccess \
+            --exactOptionalPropertyTypes --skipLibCheck --rootDir . --outDir "$CATALOG_BUILD_DIR" \
+            backend/api-server/src/routes/liquidity-catalog-core.ts \
+            backend/api-server/src/routes/liquidity-catalog.ts \
+            frontend/app/dex-registry/liquidity-catalog-model.ts
+          printf '{"type":"commonjs"}\n' > "$CATALOG_BUILD_DIR/package.json"
+          node --test tests/liquidity-catalog/run.cjs 2>&1 | tee catalog-evidence/contract.tap
+      - name: Actual PostgreSQL 15 queries in an isolated schema
+        env:
+          CATALOG_DISPOSABLE_DB: '1'
+          CATALOG_TEST_DATABASE_URL: postgres://postgres:catalog_fixture_only@127.0.0.1:35432/arbx_catalog_ci
+        run: |
+          set -euo pipefail
+          node --test tests/liquidity-catalog/postgres.cjs 2>&1 | tee catalog-evidence/postgres.tap
+      - name: Frontend lint and production build
+        run: |
+          set -euo pipefail
+          npm run lint -w @arbx/frontend 2>&1 | tee catalog-evidence/frontend-lint.log
+          npm run build -w @arbx/frontend 2>&1 | tee catalog-evidence/frontend-build.log
+      - name: Install locked Chromium browser
+        working-directory: frontend
+        run: npx --no-install playwright install --with-deps chromium
+      - name: User interactions on the candidate build, isolated UI fixtures only
+        env:
+          E2E_BASE_URL: http://127.0.0.1:3000
+          PLAYWRIGHT_JUNIT_OUTPUT_FILE: ../catalog-evidence/browser.xml
+        run: |
+          set -euo pipefail
+          npm run start -w @arbx/frontend > catalog-evidence/frontend-server.log 2>&1 &
+          server=$!
+          trap 'kill "$server" 2>/dev/null || true' EXIT
+          ready=0
+          for i in $(seq 1 60); do
+            if curl --fail --silent --max-time 5 http://127.0.0.1:3000/dex-registry -o /dev/null; then ready=1; break; fi
+            sleep 2
+          done
+          test "$ready" = 1
+          cd frontend
+          npx --no-install playwright test e2e/liquidity-catalog.spec.ts --workers=1 --retries=0 \
+            --reporter=line,junit --output=../catalog-evidence/browser-results 2>&1 | tee ../catalog-evidence/browser.log
+      - name: Preserve exact evidence even when a gate fails
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: catalog-verification-${{ github.run_id }}-${{ github.run_attempt }}
+          path: catalog-evidence/
+          if-no-files-found: error
+          retention-days: 14
