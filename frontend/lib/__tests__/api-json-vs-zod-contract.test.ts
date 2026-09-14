@@ -57,7 +57,20 @@ const ManifestSchema = z.object({
     .refine((entries) => new Set(entries.map((e) => e.file)).size === entries.length, "duplicate fixture")
     .refine((entries) => new Set(entries.map((e) => e.url)).size === entries.length, "duplicate endpoint"),
 }).strict();
-const MANIFEST = ManifestSchema.parse(JSON.parse(readFileSync(join(FIXTURES, "manifest.json"), "utf8")));
+// Independent provenance anchor, verified against the pre-#477 manifest Git
+// blob 3e67af87a8c97ff8d3b986123f5751b4bdf5163f at commit 3cde75da.
+// Updating a fixture AND its adjacent manifest cannot silently redefine this
+// recording. Changing this anchor requires an explicit provenance review.
+const HISTORICAL_MANIFEST_SHA256 = "5d859ba6ee1e84285805db927feb792b4aef1be94ab5f06b9d2430fc77409d2e";
+function verifyManifest(raw: string): z.infer<typeof ManifestSchema> {
+  const value: unknown = JSON.parse(raw);
+  const digest = createHash("sha256").update(JSON.stringify(value), "utf8").digest("hex");
+  if (digest !== HISTORICAL_MANIFEST_SHA256) {
+    throw new Error("HISTORICAL MANIFEST DRIFT: restore the anchored recording; do not regenerate its hashes");
+  }
+  return ManifestSchema.parse(value);
+}
+const MANIFEST = verifyManifest(readFileSync(join(FIXTURES, "manifest.json"), "utf8"));
 const SCHEMA_MODULES: Record<"S" | "OPS", Record<string, unknown>> = {
   S,
   OPS: { KpiPayloadSchema, ScannerHeartbeatResponseSchema },
@@ -143,6 +156,22 @@ describe("FE-0045 · fixtures — anti-stale structure (manifest ↔ disk ↔ th
       .toThrow("FIXTURE INTEGRITY DRIFT");
   });
 
+  it("rejects changing a payload and regenerating its adjacent manifest together", () => {
+    const original = loadFixture("readiness_decision.json") as Record<string, unknown>;
+    const replacement = Buffer.from(JSON.stringify({ ...original, go_a4: true }), "utf8");
+    const regenerated = {
+      ...MANIFEST,
+      endpoints: MANIFEST.endpoints.map((e) => e.file !== "readiness_decision.json" ? e : {
+        ...e,
+        bytes: replacement.length,
+        sha256: createHash("sha256").update(replacement).digest("hex"),
+      }),
+    };
+    // A mutually consistent forgery passes structure, but not the pinned baseline.
+    expect(ManifestSchema.safeParse(regenerated).success).toBe(true);
+    expect(() => verifyManifest(JSON.stringify(regenerated))).toThrow("HISTORICAL MANIFEST DRIFT");
+  });
+
   it("rejects duplicate entries, traversal and inconsistent schema declarations", () => {
     const first = MANIFEST.endpoints[0]!;
     expect(ManifestSchema.safeParse({ ...MANIFEST, endpoints: [...MANIFEST.endpoints, first] }).success).toBe(false);
@@ -179,6 +208,29 @@ describe("FE-0045 · historical contract — current schema or explicit version 
         );
       }
       expect(parsed.success).toBe(true);
+    });
+  }
+});
+
+describe("FE-0045 · current go_a4 domain — constructed unit inputs, NOT recordings", () => {
+  // These are schema-boundary inputs only. They are never saved as fixtures,
+  // published as observations or used as evidence that A.4 passed in production.
+  for (const goA4 of [false, true]) {
+    it(`the complete current decision schema accepts go_a4=${goA4}`, () => {
+      const historical = loadFixture("readiness_decision.json") as Record<string, unknown>;
+      const input = { ...historical, go_a4: goA4 };
+      const parsed = S.ReadinessDecisionResponseSchema.safeParse(input);
+      if (!parsed.success) throw new Error(`current boolean-domain regression:\n${issuesOf(parsed)}`);
+      expect(parsed.data.go_a4).toBe(goA4);
+      // Positive unit inputs must never leak back into the historical recording.
+      expect(loadFixture("readiness_decision.json")).not.toHaveProperty("go_a4");
+    });
+  }
+
+  for (const invalid of [undefined, null, "true", "false", 0, 1]) {
+    it(`the current decision schema rejects non-boolean go_a4=${String(invalid)}`, () => {
+      const historical = loadFixture("readiness_decision.json") as Record<string, unknown>;
+      expect(S.ReadinessDecisionResponseSchema.safeParse({ ...historical, go_a4: invalid }).success).toBe(false);
     });
   }
 });
