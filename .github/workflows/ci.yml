@@ -118,9 +118,26 @@ jobs:
       - name: Reproduce old error and validate fix on disposable PostgreSQL 15
         run: python3 scripts/ci/test_retention_vacuum.py
 
+  liquidity-catalog-contract:
+    permissions:
+      contents: read
+    uses: ./.github/workflows/liquidity-catalog.yml
+
   ci-gate:
+    if: always()
     runs-on: ubuntu-latest
-    needs: [lint-and-test-node, lint-and-test-rust, lint-and-test-frontend, lint-and-test-contracts, retention-vacuum-regression]
+    needs: [lint-and-test-node, lint-and-test-rust, lint-and-test-frontend, lint-and-test-contracts, retention-vacuum-regression, liquidity-catalog-contract]
     steps:
-      - name: All checks passed
-        run: echo "CI gate passed"
+      - name: All checks must actually succeed, including the catalog
+        env:
+          REQUIRED_RESULTS: ${{ toJSON(needs) }}
+        run: |
+          python3 - <<'PY_GATE'
+          import json, os
+          results = json.loads(os.environ['REQUIRED_RESULTS'])
+          required = {'lint-and-test-node', 'lint-and-test-rust', 'lint-and-test-frontend',
+                      'lint-and-test-contracts', 'retention-vacuum-regression', 'liquidity-catalog-contract'}
+          if set(results) != required or any(v.get('result') != 'success' for v in results.values()):
+              raise SystemExit('CI gate failed: missing, skipped, cancelled or failed required job')
+          print('CI gate passed: every required job succeeded')
+          PY_GATE
