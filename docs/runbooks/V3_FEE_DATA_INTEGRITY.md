@@ -27,9 +27,10 @@ python scripts/data_integrity/v3_fee_manifest.py \
 `--expected-deploy-sha` is mandatory. The output directory must not already
 exist; the CLI claims it atomically so concurrent runs cannot interleave files.
 
-The tool validates the served deploy identity, RPC chain, and the catalog
-envelope (`schema_version`, `source`, `level`, `scope`). It collects the entire
-V3 census, pins one block hash and calls, per pool:
+The tool validates the served deploy identity with distinct cache-busted status reads,
+requires a positive RPC batch size, validates RPC chain and the catalog envelope
+(`schema_version`, `source`, `level`, `scope`). It collects the entire V3 census,
+pins a block whose returned number must match the requested height, and calls per pool:
 
 - `fee()`
 - `factory()`
@@ -37,7 +38,8 @@ V3 census, pins one block hash and calls, per pool:
 - `token1()`
 - `factory.getPool(token0, token1, fee)`
 
-Every `eth_call` is bound to that block hash with EIP-1898
+ABI uint words must be exactly 64 hexadecimal digits. Every `eth_call` is bound
+to that block hash with EIP-1898
 `requireCanonical=true`. After on-chain verification, the complete catalog is
 read again with a different cache-buster; both canonical catalog digests must
 match. The numbered block and served deploy identity are rechecked before any
@@ -75,8 +77,8 @@ contract is `arbx:pool_index_v3:<chain>:<sym0>:<sym1>` with canonical
 
 ## Evidence captured on 2026-09-15
 For served deploy `2cdbce35425ad74340d354afac661bf443bac46e` (deploy run
-`35029159263`), the hardened verifier checked Ethereum block `25986141`, hash
-`0x203430bdbb078bf879043807098e800084b28d1f5db41d0dc0d7374dab8fffb8`.
+`35029159263`), the hardened verifier checked Ethereum block `25986250`, hash
+`0xbf2e5b25a394f726fb5a347bee16a9736176900d62720891f31e55200e72798d`.
 Both complete catalog censuses had digest
 `e41b02b48ecbf87ad12055faf2a89a13d71a61ae0899705832800f5e29c6ace4`.
 

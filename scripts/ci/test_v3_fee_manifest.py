@@ -72,6 +72,7 @@ class V3FeeManifestTests(unittest.TestCase):
         self.assertIsNone(m.decode_address("0x1234"))
         self.assertEqual(m.decode_abi_uint("0x" + "00" * 31 + "01"), 1)
         self.assertIsNone(m.decode_abi_uint("0x01"))
+        self.assertIsNone(m.decode_abi_uint("0x" + "0" * 59 + "0_bb8"))
         self.assertIsNone(m.decode_address("0x" + "01" + "00" * 31))
         self.assertIsNone(m.decode_address("0x" + "00" * 32))
 
@@ -80,6 +81,21 @@ class V3FeeManifestTests(unittest.TestCase):
         for bad in (None, "", "unknown", "abc", "g" * 40):
             with self.assertRaises(RuntimeError):
                 m.require_expected_deploy_sha(bad)
+
+    def test_batch_size_must_be_positive_and_row_count_is_guarded(self):
+        self.assertEqual(m.positive_int("20"), 20)
+        for bad in ("0", "-1"):
+            with self.assertRaisesRegex(Exception, "must be > 0"):
+                m.positive_int(bad)
+        with self.assertRaisesRegex(RuntimeError, "batch_pools_must_be_positive"):
+            m.verify_pools([pool_item()], "https://rpc.invalid", "0x7b", 123, BLOCK_HASH, 0)
+
+    def test_status_cache_busters_are_distinct(self):
+        before = m.status_url("https://catalog.invalid", "run-before")
+        after = m.status_url("https://catalog.invalid", "run-after")
+        self.assertNotEqual(before, after)
+        self.assertIn("integrity_nonce=run-before", before)
+        self.assertIn("integrity_nonce=run-after", after)
 
     def test_rpc_batch_rejects_duplicate_ids_before_collapsing(self):
         original = m._json_request
@@ -156,12 +172,15 @@ class V3FeeManifestTests(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, "output_dir_already_claimed"):
                 m.claim_output_dir(target)
 
-    def test_block_hash_revalidation_rejects_reorg(self):
+    def test_block_identity_revalidation_checks_number_and_hash(self):
         original = m.rpc_one
-        m.rpc_one = lambda *_a, **_k: {"result": {"hash": "0x" + "ee" * 32}}
         try:
+            m.rpc_one = lambda *_a, **_k: {"result": {"number": "0x7b", "hash": "0x" + "ee" * 32}}
             with self.assertRaisesRegex(RuntimeError, "rpc_block_reorg_detected"):
-                m.assert_block_still_canonical("https://rpc.invalid", "0x7b", BLOCK_HASH)
+                m.assert_block_still_canonical("https://rpc.invalid", "0x7b", 123, BLOCK_HASH)
+            m.rpc_one = lambda *_a, **_k: {"result": {"number": "0x7c", "hash": BLOCK_HASH}}
+            with self.assertRaisesRegex(RuntimeError, "rpc_block_number_mismatch"):
+                m.assert_block_still_canonical("https://rpc.invalid", "0x7b", 123, BLOCK_HASH)
         finally:
             m.rpc_one = original
 

@@ -25,6 +25,8 @@ TOKEN1_SELECTOR = "0xd21220a7"
 GET_POOL_SELECTOR = "0x1698ee82"  # getPool(address,address,uint24)
 SELECTORS = (FEE_SELECTOR, FACTORY_SELECTOR, TOKEN0_SELECTOR, TOKEN1_SELECTOR)
 HEX40 = re.compile(r"^[0-9a-f]{40}$")
+HEX64 = re.compile(r"^[0-9a-fA-F]{64}$")
+HEX_QUANTITY = re.compile(r"^0x[0-9a-fA-F]+$")
 CSV_FORMULA_PREFIXES = ("=", "+", "-", "@", "\t", "\r", "\n")
 DEFAULT_CATALOG = "https://arbx.ape-tv.net"
 USER_AGENT = "ArbitrageX-V3-DataIntegrity/1.0"
@@ -70,7 +72,7 @@ def rpc_batch(rpc_url: str, calls: list[tuple[str, list[Any]]]) -> list[dict[str
 
 
 def decode_u256(value: Any) -> int | None:
-    if not isinstance(value, str) or not value.startswith("0x") or len(value) < 3:
+    if not isinstance(value, str) or not HEX_QUANTITY.fullmatch(value):
         return None
     try:
         return int(value, 16)
@@ -81,10 +83,9 @@ def decode_u256(value: Any) -> int | None:
 def decode_abi_uint(value: Any) -> int | None:
     if not isinstance(value, str) or len(value) != 66 or not value.startswith("0x"):
         return None
-    try:
-        return int(value, 16)
-    except ValueError:
+    if not HEX64.fullmatch(value[2:]):
         return None
+    return int(value, 16)
 
 
 def decode_address(value: Any) -> str | None:
@@ -240,6 +241,8 @@ def verify_pools(
     pools: list[dict[str, Any]], rpc_url: str, block_hex: str, block_number: int,
     block_hash: str, batch_pools: int,
 ) -> list[dict[str, Any]]:
+    if batch_pools <= 0:
+        raise RuntimeError("batch_pools_must_be_positive")
     del block_hex  # calls are deliberately bound to blockHash, never number.
     rows: list[dict[str, Any]] = []
     rpc_host = parse.urlparse(rpc_url).hostname or "unknown"
@@ -328,6 +331,8 @@ def verify_pools(
             row["classification"] = classify(row["catalog_fee"], row["onchain_fee"], bool(row["identity_ok"]))
             rows.append(row)
         time.sleep(0.10)
+    if len(rows) != len(pools):
+        raise RuntimeError("verified_pool_count_mismatch")
     return rows
 
 
@@ -350,6 +355,20 @@ def claim_output_dir(path: Path) -> None:
         raise RuntimeError("output_dir_already_claimed") from exc
 
 
+def positive_int(value: str) -> int:
+    try:
+        parsed = int(value)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError("must be an integer") from exc
+    if parsed <= 0:
+        raise argparse.ArgumentTypeError("must be > 0")
+    return parsed
+
+
+def status_url(base: str, nonce: str) -> str:
+    return base.rstrip("/") + "/api/status?" + parse.urlencode({"integrity_nonce": nonce})
+
+
 def require_expected_deploy_sha(value: Any) -> str:
     if not isinstance(value, str):
         raise RuntimeError("expected_deploy_sha_required")
@@ -370,9 +389,15 @@ def require_stable_catalog(
     return before
 
 
-def assert_block_still_canonical(rpc_url: str, block_hex: str, expected_hash: str) -> None:
+def assert_block_still_canonical(
+    rpc_url: str, block_hex: str, expected_number: int, expected_hash: str,
+) -> None:
     result = rpc_one(rpc_url, "eth_getBlockByNumber", [block_hex, False]).get("result")
-    if not isinstance(result, dict) or str(result.get("hash", "")).lower() != expected_hash.lower():
+    if not isinstance(result, dict):
+        raise RuntimeError("rpc_block_reorg_detected")
+    if decode_u256(result.get("number")) != expected_number:
+        raise RuntimeError("rpc_block_number_mismatch")
+    if str(result.get("hash", "")).lower() != expected_hash.lower():
         raise RuntimeError("rpc_block_reorg_detected")
 
 
@@ -493,7 +518,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--catalog-base", default=DEFAULT_CATALOG)
     parser.add_argument("--rpc-url", default=os.environ.get("ETH_RPC"))
     parser.add_argument("--chain-id", type=int, default=1)
-    parser.add_argument("--batch-pools", type=int, default=20)
+    parser.add_argument("--batch-pools", type=positive_int, default=20)
     parser.add_argument("--expected-deploy-sha", required=True)
     parser.add_argument("--output-dir", type=Path, required=True)
     return parser.parse_args()
@@ -505,8 +530,9 @@ def main() -> int:
     if not args.rpc_url:
         raise SystemExit("--rpc-url or ETH_RPC is required")
     claim_output_dir(args.output_dir)
+    run_nonce = f"{time.time_ns()}-{os.getpid()}"
 
-    status = _json_request(args.catalog_base.rstrip("/") + "/api/status")
+    status = _json_request(status_url(args.catalog_base, run_nonce + "-status-before"))
     if not isinstance(status, dict) or status.get("ok") is not True or not isinstance(status.get("deploy"), dict):
         raise SystemExit("served_status_invalid")
     deploy_sha = str(status["deploy"].get("sha", "")).lower()
@@ -526,14 +552,16 @@ def main() -> int:
     block = rpc_one(args.rpc_url, "eth_getBlockByNumber", [block_hex, False]).get("result")
     if not isinstance(block, dict) or not isinstance(block.get("hash"), str):
         raise SystemExit("rpc_block_hash_missing")
+    if decode_u256(block.get("number")) != block_number:
+        raise SystemExit("rpc_block_number_mismatch")
     block_hash = str(block["hash"]).lower()
 
-    snapshot_seed = f"{time.time_ns()}-{os.getpid()}"
+    snapshot_seed = run_nonce
     dexes, pools = collect_v3_catalog(
         args.catalog_base, args.chain_id, snapshot_nonce=snapshot_seed + "-before"
     )
     rows = verify_pools(pools, args.rpc_url, block_hex, block_number, block_hash, args.batch_pools)
-    assert_block_still_canonical(args.rpc_url, block_hex, block_hash)
+    assert_block_still_canonical(args.rpc_url, block_hex, block_number, block_hash)
 
     # A cache-buster alone is NOT a database snapshot. Re-read the complete
     # catalog after the on-chain pass and require byte-equivalent canonical
@@ -543,7 +571,7 @@ def main() -> int:
     )
     stable_catalog_digest = require_stable_catalog(dexes, pools, dexes_after, pools_after)
 
-    status_after = _json_request(args.catalog_base.rstrip("/") + "/api/status")
+    status_after = _json_request(status_url(args.catalog_base, run_nonce + "-status-after"))
     after_deploy = status_after.get("deploy", {}) if isinstance(status_after, dict) else {}
     if (status_after.get("ok") is not True if isinstance(status_after, dict) else True) or        str(after_deploy.get("sha", "")).lower() != deploy_sha or str(after_deploy.get("id", "")) != deploy_id:
         raise RuntimeError("served_deploy_changed_during_manifest")
