@@ -144,7 +144,10 @@ fn partial_dex_binding_is_never_published() {
     pools[2].dex_name = " ".to_owned();
     let lookup = pools.iter().map(|p| ((p.chain_id, p.address), p)).collect();
     let mut intent = cycle_to_intent(&graph, 1, 1000, &cycle).unwrap();
-    assert_eq!(bind_dexes(&mut intent, &lookup), Err("missing_dex_identity"));
+    assert_eq!(
+        bind_dexes(&mut intent, &lookup),
+        Err("missing_dex_identity")
+    );
     assert!(intent.legs.iter().all(|leg| leg.dex_hint.is_none()));
 }
 
@@ -161,7 +164,10 @@ fn dex_binding_checks_pair_protocol_chain_and_fee() {
         }
         let lookup = bad.iter().map(|p| ((1, p.address), p)).collect();
         let mut intent = cycle_to_intent(&graph, 1, 1000, &cycle).unwrap();
-        assert_eq!(bind_dexes(&mut intent, &lookup), Err("pool_identity_mismatch"));
+        assert_eq!(
+            bind_dexes(&mut intent, &lookup),
+            Err("pool_identity_mismatch")
+        );
         assert!(intent.legs.iter().all(|leg| leg.dex_hint.is_none()));
     }
 }

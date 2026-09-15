@@ -57,6 +57,12 @@ jobs:
           fi
           echo "RUSTSEC_IGNORES allowlist valid until ${ALLOWLIST_EXPIRES} (today ${today})"
 
+      - name: TLS dependency regression (offline, blocking)
+        run: |
+          set -euo pipefail
+          python3 -m unittest discover -s scripts/ci -p test_tls_dependency_guard.py -v
+          python3 scripts/ci/tls_dependency_guard.py --lockfile backend/Cargo.lock
+
       - name: Run cargo audit
         working-directory: backend
         # Blocking — audit A6 (2026-05-10). No silent failures.

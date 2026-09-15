@@ -40,6 +40,10 @@ jobs:
           toolchain: 1.91.0
           components: clippy, rustfmt
 
+      # Fail on formatting before restoring caches or compiling RPC tests.
+      - name: cargo fmt (blocking — workspace)
+        run: cargo fmt --all -- --check
+
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
         with:
           workspaces: backend
@@ -62,9 +66,6 @@ jobs:
       # Other crates use the workspace-wide advisory step further down.
       - name: cargo clippy (gating — searcher-rs + relays-client)
         run: cargo clippy -p searcher-rs -p relays-client --locked --all-targets -- -D warnings
-
-      - name: cargo fmt (blocking — workspace)
-        run: cargo fmt --all -- --check
 
       - name: cargo fmt (blocking — searcher-rs + relays-client)
         run: cargo fmt -p searcher-rs -p relays-client -- --check
