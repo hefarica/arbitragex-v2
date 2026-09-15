@@ -55,9 +55,13 @@ def rpc_batch(rpc_url: str, calls: list[tuple[str, list[Any]]]) -> list[dict[str
     response = _json_request(rpc_url, payload)
     if not isinstance(response, list):
         raise RuntimeError("rpc_batch_not_array")
-    by_id = {item.get("id"): item for item in response if isinstance(item, dict)}
-    if set(by_id) != set(range(1, len(payload) + 1)):
+    if len(response) != len(payload) or not all(isinstance(item, dict) for item in response):
+        raise RuntimeError("rpc_batch_cardinality_invalid")
+    ids = [item.get("id") for item in response]
+    expected = set(range(1, len(payload) + 1))
+    if len(set(ids)) != len(ids) or set(ids) != expected:
         raise RuntimeError("rpc_batch_missing_or_duplicate_ids")
+    by_id = {item["id"]: item for item in response}
     return [by_id[i] for i in range(1, len(payload) + 1)]
 
 
@@ -85,7 +89,7 @@ def decode_address(value: Any) -> str | None:
     if value[2:26] != "0" * 24:
         return None
     tail = value[26:].lower()
-    if any(ch not in "0123456789abcdef" for ch in tail):
+    if any(ch not in "0123456789abcdef" for ch in tail) or tail == "0" * 40:
         return None
     return "0x" + tail
 
@@ -108,11 +112,40 @@ def collect_v3_catalog(
     catalog_base: str,
     chain_id: int,
     fetch_json: Callable[[str], Any] = _json_request,
+    snapshot_nonce: str | None = None,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
-    dex_payload = fetch_json(_catalog_url(catalog_base, {
-        "view": "liquidity_catalog", "level": "dexes", "chain_id": str(chain_id), "limit": "100"
-    }))
-    dexes = [item for item in dex_payload.get("items", []) if item.get("protocol_type") == "UNISWAP_V3"]
+    # The public Edge caches liquidity-catalog GETs by full query string. One
+    # nonce is reused for this snapshot so every page bypasses an older cache
+    # entry while still representing one coherent manifest collection.
+    nonce = snapshot_nonce or f"{time.time_ns()}-{os.getpid()}"
+    all_dexes: list[dict[str, Any]] = []
+    dex_after: str | None = None
+    seen_dex_ids: set[str] = set()
+    while True:
+        params = {
+            "view": "liquidity_catalog", "level": "dexes", "chain_id": str(chain_id),
+            "limit": "100", "snapshot": nonce,
+        }
+        if dex_after:
+            params["after"] = dex_after
+        dex_payload = fetch_json(_catalog_url(catalog_base, params))
+        items = dex_payload.get("items", [])
+        if not isinstance(items, list):
+            raise RuntimeError("catalog_dex_items_not_array")
+        for item in items:
+            dex_id = str(item.get("id") or "")
+            if not dex_id or dex_id in seen_dex_ids:
+                raise RuntimeError("catalog_duplicate_dex_id")
+            seen_dex_ids.add(dex_id)
+            all_dexes.append(item)
+        next_after = dex_payload.get("next_after")
+        if next_after is None:
+            break
+        if not items or next_after == dex_after or next_after != items[-1].get("id"):
+            raise RuntimeError("catalog_dex_cursor_invalid")
+        dex_after = str(next_after)
+
+    dexes = [item for item in all_dexes if item.get("protocol_type") == "UNISWAP_V3"]
     if not dexes:
         raise RuntimeError("no_v3_dexes_in_catalog")
     pools: list[dict[str, Any]] = []
@@ -120,8 +153,10 @@ def collect_v3_catalog(
         after: str | None = None
         fetched = 0
         while True:
-            params = {"view": "liquidity_catalog", "level": "pools", "chain_id": str(chain_id),
-                      "dex_id": str(dex["id"]), "limit": "100"}
+            params = {
+                "view": "liquidity_catalog", "level": "pools", "chain_id": str(chain_id),
+                "dex_id": str(dex["id"]), "limit": "100", "snapshot": nonce,
+            }
             if after:
                 params["after"] = after
             page = fetch_json(_catalog_url(catalog_base, params))
@@ -157,9 +192,10 @@ def verify_pools(
 ) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
     rpc_host = parse.urlparse(rpc_url).hostname or "unknown"
+    block_ref = {"blockHash": block_hash, "requireCanonical": True}
     for start in range(0, len(pools), batch_pools):
         chunk = pools[start:start + batch_pools]
-        calls = [("eth_call", [{"to": pool["pool_address"], "data": selector}, block_hex])
+        calls = [("eth_call", [{"to": pool["pool_address"], "data": selector}, block_ref])
                  for pool in chunk for selector in SELECTORS]
         replies = rpc_batch(rpc_url, calls)
         for idx, pool in enumerate(chunk):
@@ -170,7 +206,9 @@ def verify_pools(
             factory = decode_address(values[1])
             token0 = decode_address(values[2])
             token1 = decode_address(values[3])
-            if values[0] is not None and fee is None:
+            if values[0] is None:
+                verification_errors.append("fee_result_missing")
+            elif fee is None:
                 verification_errors.append("fee_abi_invalid")
             if fee is not None and fee >= 1_000_000:
                 verification_errors.append("fee_out_of_range")
@@ -212,6 +250,22 @@ CSV_FIELDS = [
     "onchain_token1", "token1_symbol", "identity_ok", "classification",
     "block_number", "block_hash", "rpc_host", "rpc_error", "verification_error",
 ]
+
+
+def ensure_empty_output_dir(path: Path) -> None:
+    if path.exists():
+        if not path.is_dir():
+            raise RuntimeError("output_dir_not_directory")
+        if any(path.iterdir()):
+            raise RuntimeError("output_dir_not_empty")
+    else:
+        path.mkdir(parents=True, exist_ok=False)
+
+
+def assert_block_still_canonical(rpc_url: str, block_hex: str, expected_hash: str) -> None:
+    result = rpc_one(rpc_url, "eth_getBlockByNumber", [block_hex, False]).get("result")
+    if not isinstance(result, dict) or str(result.get("hash", "")).lower() != expected_hash.lower():
+        raise RuntimeError("rpc_block_reorg_detected")
 
 
 def write_csv(path: Path, rows: list[dict[str, Any]]) -> None:
@@ -272,6 +326,7 @@ def write_artifacts(output_dir: Path, rows: list[dict[str, Any]], metadata: dict
         "identity_mismatch": sum(not row["identity_ok"] for row in rows),
         "rpc_errors": sum(bool(row["rpc_error"]) for row in rows),
         "verification_errors": sum(bool(row["verification_error"]) for row in rows),
+        "onchain_errors": sum(row["classification"] == "ONCHAIN_ERROR" for row in rows),
         "classification_counts": dict(Counter(row["classification"] for row in rows)),
         "active_repair_candidates": len(active), "all_repair_candidates": len(candidates),
         "fee_distribution": {str(k): v for k, v in sorted(Counter(row["onchain_fee"] for row in rows).items(), key=lambda item: str(item[0]))},
@@ -297,6 +352,11 @@ def write_artifacts(output_dir: Path, rows: list[dict[str, Any]], metadata: dict
     return summary
 
 
+def manifest_exit_code(summary: dict[str, Any]) -> int:
+    return 2 if (summary.get("identity_mismatch") or summary.get("rpc_errors")
+                 or summary.get("verification_errors") or summary.get("onchain_errors")) else 0
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--catalog-base", default=DEFAULT_CATALOG)
@@ -310,6 +370,7 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> int:
     args = parse_args()
+    ensure_empty_output_dir(args.output_dir)
     if not args.rpc_url:
         raise SystemExit("--rpc-url or ETH_RPC is required")
     status = _json_request(args.catalog_base.rstrip("/") + "/api/status")
@@ -329,6 +390,9 @@ def main() -> int:
     block_hash = block["hash"]
     dexes, pools = collect_v3_catalog(args.catalog_base, args.chain_id)
     rows = verify_pools(pools, args.rpc_url, block_hex, block_number, block_hash, args.batch_pools)
+    # Belt-and-suspenders after EIP-1898 requireCanonical calls: the numbered
+    # block must still resolve to the same hash before evidence is written.
+    assert_block_still_canonical(args.rpc_url, block_hex, block_hash)
     metadata = {
         "schema_version": 1, "phase": "WO-DI-01-read-only", "chain_id": args.chain_id,
         "source_deploy_sha": deploy_sha, "source_deploy_id": status.get("deploy", {}).get("id"),
@@ -338,7 +402,7 @@ def main() -> int:
     }
     summary = write_artifacts(args.output_dir, rows, metadata)
     print(json.dumps(summary, indent=2, sort_keys=True))
-    return 2 if summary["identity_mismatch"] or summary["rpc_errors"] or summary["verification_errors"] else 0
+    return manifest_exit_code(summary)
 
 
 if __name__ == "__main__":
