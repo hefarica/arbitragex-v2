@@ -38,5 +38,13 @@ class HydrationOrderTests(unittest.TestCase):
         self.assertIn(".map_err(anyhow::Error::msg)?", body)
         self.assertNotIn("unwrap_or_default()", body)
 
+
+    def test_v3_bootstrap_writer_uses_shared_cas_not_unconditional_set(self):
+        source = (ROOT / "backend/searcher-rs/src/reserves.rs").read_text(encoding="utf-8")
+        body = source.split("pub async fn set_pool_index_v3(", 1)[1].split("pub async fn get_pools_for_pair_v3(", 1)[0]
+        self.assertNotIn(".set(", body)
+        self.assertIn("publish_v3_bootstrap(", body)
+        self.assertIn("INDEX_COMPARE_AND_SET", body)
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

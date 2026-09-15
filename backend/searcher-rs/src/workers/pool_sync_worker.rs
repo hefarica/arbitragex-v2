@@ -1178,7 +1178,8 @@ impl PoolSyncWorker {
 
     /// One-shot bootstrap of the V3 pool index. Reads V3 pools from PG (joined
     /// to factories->dexes for protocol_type filter), groups by sorted-symbol
-    /// pair, and writes Vec<V3PoolInfo> per pair to Redis.
+    /// pair, and additively merges Vec<V3PoolInfo> through the shared Redis CAS.
+    /// A PG snapshot must not overwrite later on-chain hydration or remove pools.
     ///
     /// V3 slot0 is populated per-tick in the main polling loop (not here).
     /// This index just lets the scanner discover which V3 pools cover a given
@@ -1213,7 +1214,11 @@ impl PoolSyncWorker {
         let mut skipped = 0usize;
         for (addr, sym0, sym1, fee_tier) in rows {
             let (sym0, sym1, fee_tier) = match (sym0, sym1, fee_tier) {
-                (Some(a), Some(b), Some(f)) if !a.is_empty() && !b.is_empty() => (a, b, f),
+                (Some(a), Some(b), Some(f))
+                    if !a.is_empty() && !b.is_empty() && (0..1_000_000).contains(&f) =>
+                {
+                    (a, b, f)
+                }
                 _ => {
                     skipped += 1;
                     debug!(event = "pool_sync.v3_pool_skipped_null", chain_id = self.chain_id, addr = %addr);
@@ -1243,6 +1248,7 @@ impl PoolSyncWorker {
         for ((sym_a, sym_b), pools) in &by_pair {
             if let Err(e) = set_pool_index_v3(redis, self.chain_id, sym_a, sym_b, pools).await {
                 warn!(event = "pool_sync.v3_pool_index_set_failed", error = %e);
+                return Err(anyhow::anyhow!("v3_index_bootstrap_incomplete"));
             }
         }
         info!(

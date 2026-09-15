@@ -94,8 +94,8 @@ pub(crate) fn updated_v3_index(
 pub(crate) async fn publish_v3_index<Read, ReadFuture, Cas, CasFuture>(
     address: &str,
     fee: V3FeePips,
-    mut read: Read,
-    mut compare_and_set: Cas,
+    read: Read,
+    compare_and_set: Cas,
 ) -> Result<usize, &'static str>
 where
     Read: FnMut() -> ReadFuture,
@@ -103,11 +103,92 @@ where
     Cas: FnMut(Option<String>, String) -> CasFuture,
     CasFuture: std::future::Future<Output = Result<bool, &'static str>>,
 {
+    publish_index_update(read, compare_and_set, |previous| {
+        updated_v3_index(previous, address, fee).map_err(|_| "redis_v3_index_invalid")
+    })
+    .await
+}
+
+/// Bootstrap is an additive PG snapshot, NOT a newer on-chain observation.
+/// Never erase a hydrated pool or overwrite its fee with a snapshot captured
+/// earlier. Historical corrections/removals require a separately verified job.
+fn merged_v3_bootstrap(
+    previous: Option<&str>,
+    snapshot: &[crate::reserves::V3PoolInfo],
+) -> Result<Option<String>, &'static str> {
+    let mut entries: Vec<V3PoolInfo> = match previous {
+        Some(raw) => serde_json::from_str(raw).map_err(|_| "redis_v3_index_invalid")?,
+        None => Vec::new(),
+    };
+    let mut known: std::collections::HashSet<String> = entries
+        .iter()
+        .map(|entry| entry.pool.pool_addr.to_ascii_lowercase())
+        .collect();
+    let mut changed = false;
+    for row in snapshot {
+        if row.pool_addr.len() != 42
+            || !row.pool_addr.starts_with("0x")
+            || !row.pool_addr.as_bytes()[2..]
+                .iter()
+                .all(u8::is_ascii_hexdigit)
+            || row.fee_bps >= 1_000_000
+        {
+            return Err("v3_bootstrap_row_invalid");
+        }
+        let address = row.pool_addr.to_ascii_lowercase();
+        if known.insert(address.clone()) {
+            entries.push(V3PoolInfo {
+                pool: crate::reserves::V3PoolInfo {
+                    pool_addr: address,
+                    fee_bps: row.fee_bps,
+                },
+                extra: Default::default(),
+            });
+            changed = true;
+        }
+    }
+    if changed {
+        serde_json::to_string(&entries)
+            .map(Some)
+            .map_err(|_| "redis_v3_index_invalid")
+    } else {
+        Ok(None)
+    }
+}
+
+pub(crate) async fn publish_v3_bootstrap<Read, ReadFuture, Cas, CasFuture>(
+    snapshot: &[crate::reserves::V3PoolInfo],
+    read: Read,
+    compare_and_set: Cas,
+) -> Result<usize, &'static str>
+where
+    Read: FnMut() -> ReadFuture,
+    ReadFuture: std::future::Future<Output = Result<Option<String>, &'static str>>,
+    Cas: FnMut(Option<String>, String) -> CasFuture,
+    CasFuture: std::future::Future<Output = Result<bool, &'static str>>,
+{
+    publish_index_update(read, compare_and_set, |previous| {
+        merged_v3_bootstrap(previous, snapshot)
+    })
+    .await
+}
+
+/// The single retry/CAS implementation used by BOTH bootstrap and hydration.
+async fn publish_index_update<Read, ReadFuture, Cas, CasFuture, Merge>(
+    mut read: Read,
+    mut compare_and_set: Cas,
+    merge: Merge,
+) -> Result<usize, &'static str>
+where
+    Read: FnMut() -> ReadFuture,
+    ReadFuture: std::future::Future<Output = Result<Option<String>, &'static str>>,
+    Cas: FnMut(Option<String>, String) -> CasFuture,
+    CasFuture: std::future::Future<Output = Result<bool, &'static str>>,
+    Merge: Fn(Option<&str>) -> Result<Option<String>, &'static str>,
+{
     for attempt in 1..=4 {
         let previous = read().await?;
-        let replacement = updated_v3_index(previous.as_deref(), address, fee)
-            .map_err(|_| "redis_v3_index_invalid")?;
-        let Some(replacement) = replacement else {
+        let Some(replacement) = merge(previous.as_deref())? else {
             return Ok(attempt);
         };
         if compare_and_set(previous, replacement).await? {
@@ -448,5 +529,145 @@ mod retry_regression {
             },
         ));
         assert_eq!(result, Ok(1));
+    }
+    #[test]
+    fn v3_review_bootstrap_preserves_hydrated_fee_metadata_and_other_pools() {
+        let previous = format!(r#"[{{"pool_addr":"{A}","fee_bps":3000,"block":123}}]"#);
+        let snapshot = vec![
+            crate::reserves::V3PoolInfo {
+                pool_addr: A.into(),
+                fee_bps: 30,
+            },
+            crate::reserves::V3PoolInfo {
+                pool_addr: B.into(),
+                fee_bps: 500,
+            },
+        ];
+        let next = merged_v3_bootstrap(Some(&previous), &snapshot)
+            .unwrap()
+            .unwrap();
+        let rows: Vec<serde_json::Value> = serde_json::from_str(&next).unwrap();
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0]["fee_bps"], 3000);
+        assert_eq!(rows[0]["block"], 123);
+        assert_eq!(rows[1]["fee_bps"], 500);
+    }
+
+    #[test]
+    fn v3_review_bootstrap_conflict_rereads_hydration_before_merging() {
+        let state = RefCell::new(None::<String>);
+        let writes = Cell::new(0);
+        let snapshot = vec![
+            crate::reserves::V3PoolInfo {
+                pool_addr: A.into(),
+                fee_bps: 30,
+            },
+            crate::reserves::V3PoolInfo {
+                pool_addr: B.into(),
+                fee_bps: 500,
+            },
+        ];
+        let result = immediate(publish_v3_bootstrap(
+            &snapshot,
+            || ready(Ok(state.borrow().clone())),
+            |previous, updated| {
+                writes.set(writes.get() + 1);
+                if writes.get() == 1 {
+                    *state.borrow_mut() = updated_v3_index(None, A, fee()).unwrap();
+                    return ready(Ok(false));
+                }
+                assert_eq!(previous, *state.borrow());
+                *state.borrow_mut() = Some(updated);
+                ready(Ok(true))
+            },
+        ));
+        assert_eq!(result, Ok(2));
+        let rows: Vec<crate::reserves::V3PoolInfo> =
+            serde_json::from_str(state.borrow().as_ref().unwrap()).unwrap();
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0].fee_bps, 3000);
+        assert_eq!(rows[1].fee_bps, 500);
+    }
+
+    #[test]
+    fn v3_review_bootstrap_never_erases_on_empty_snapshot() {
+        let previous = updated_v3_index(None, A, fee()).unwrap().unwrap();
+        assert_eq!(merged_v3_bootstrap(Some(&previous), &[]), Ok(None));
+        assert_eq!(merged_v3_bootstrap(None, &[]), Ok(None));
+    }
+
+    #[test]
+    fn v3_review_bootstrap_deduplicates_case_without_replacing_existing_tier() {
+        let rows = vec![
+            crate::reserves::V3PoolInfo {
+                pool_addr: A.into(),
+                fee_bps: 3000,
+            },
+            crate::reserves::V3PoolInfo {
+                pool_addr: format!("0x{}", &A[2..].to_uppercase()),
+                fee_bps: 30,
+            },
+        ];
+        let next = merged_v3_bootstrap(None, &rows).unwrap().unwrap();
+        let result: Vec<crate::reserves::V3PoolInfo> = serde_json::from_str(&next).unwrap();
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].fee_bps, 3000);
+    }
+
+    #[test]
+    fn v3_review_bootstrap_errors_do_not_write_or_fabricate_success() {
+        let snapshot = vec![crate::reserves::V3PoolInfo {
+            pool_addr: A.into(),
+            fee_bps: 500,
+        }];
+        for read in [
+            Err("redis_v3_index_read_failed"),
+            Ok(Some("broken".to_string())),
+        ] {
+            let result = immediate(publish_v3_bootstrap(
+                &snapshot,
+                || ready(read.clone()),
+                |_, _| {
+                    panic!("bad source must not write");
+                    #[allow(unreachable_code)]
+                    ready(Ok(true))
+                },
+            ));
+            assert!(result.is_err());
+        }
+        for row in [
+            crate::reserves::V3PoolInfo {
+                pool_addr: "invalid".into(),
+                fee_bps: 500,
+            },
+            crate::reserves::V3PoolInfo {
+                pool_addr: A.into(),
+                fee_bps: 1_000_000,
+            },
+        ] {
+            assert_eq!(
+                merged_v3_bootstrap(None, &[row]),
+                Err("v3_bootstrap_row_invalid")
+            );
+        }
+    }
+
+    #[test]
+    fn v3_review_bootstrap_conflicts_use_same_bounded_retry() {
+        let snapshot = vec![crate::reserves::V3PoolInfo {
+            pool_addr: A.into(),
+            fee_bps: 500,
+        }];
+        let writes = Cell::new(0);
+        let result = immediate(publish_v3_bootstrap(
+            &snapshot,
+            || ready(Ok(None)),
+            |_, _| {
+                writes.set(writes.get() + 1);
+                ready(Ok(false))
+            },
+        ));
+        assert_eq!(result, Err("redis_v3_index_conflict_exhausted"));
+        assert_eq!(writes.get(), 4);
     }
 }

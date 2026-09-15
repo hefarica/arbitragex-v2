@@ -150,3 +150,33 @@ One additional read-only source-search command in this review session was
 rejected by the tool security layer before execution. It was not retried via
 an alternate path or used as runtime evidence. File edits and isolated test
 commands that were independently authorized continued normally.
+
+
+### Cross-examination: bootstrap is a competing writer too
+
+The a37bcbfc review found a remaining P2: PoolSync took its PG snapshot before
+an unconditional Redis SET, so it could erase a later hydrated pool/correction.
+The earlier two-writer tests exercised only hydration, not this actual writer.
+
+The follow-up changes `reserves::set_pool_index_v3` itself to share the bounded
+read/merge/CAS used by hydration. Bootstrap is explicitly ADDITIVE: it seeds
+missing addresses but cannot supersede a cached fee or delete pools merely
+because an older PG snapshot omitted them. Hydration is still the writer that
+updates a fee using its on-chain observation. A dedicated reviewed historical
+repair/removal remains necessary; no freshness is invented for old cached rows.
+PoolSync rejects absent/out-of-range fee metadata and propagates failed pair
+publication instead of counting it as a successful bootstrap.
+
+A fourth STATIC guard failed against a37bcbfc (unconditional `.set(`, exit1),
+then passed after the change. Six more tests exercise the actual bootstrap
+merge/retry and fail-honest behavior. The new opt-in real-Redis race forces BOTH
+commit orders between the actual bootstrap helper and actual hydration helper,
+sharing the exact runtime CAS Lua: an old 30-pip PG hint cannot overwrite an
+observed3000-pip fee, and a second pool must survive. The PG snapshot itself is
+a declared fixture in this test, not a live PostgreSQL/on-chain observation.
+
+Local Desktop Commander result for this follow-up:27 passed production-helper
+unit tests,4 passed static ordering guards,3 Redis tests compiled but skipped
+locally (no disposable Redis there). CI explicitly executes all3 against its
+isolated Redis service. Full Rust/other CI and review must run again on the
+new commit; green results from a37bcbfc are not assigned to its successor.

@@ -171,3 +171,89 @@ fn v3_review_real_redis_invalid_index_is_preserved_by_production_retry() {
         Some("malformed-index")
     );
 }
+
+#[test]
+#[ignore = "requires explicit disposable Redis on 127.0.0.1:36379"]
+fn v3_review_real_redis_bootstrap_races_hydration_in_both_commit_orders() {
+    use crate::v3_fee::publish_v3_bootstrap;
+    use std::sync::{Condvar, Mutex};
+    const A: &str = "0x7995430a85156b2d40d5bb701608788cf84019e3";
+    const B: &str = "0x26f35b980f3b791ac3f7c09ff152815c0dcb5bf3";
+    for bootstrap_wins in [false, true] {
+        let fixture = Fixture::new();
+        let barrier = Arc::new(Barrier::new(2));
+        let done = Arc::new((Mutex::new(false), Condvar::new()));
+        let joins: Vec<_> = [false, true]
+            .into_iter()
+            .map(|is_bootstrap| {
+                let key = fixture.0.clone();
+                let barrier = barrier.clone();
+                let done = done.clone();
+                std::thread::spawn(move || {
+                    let winner = is_bootstrap == bootstrap_wins;
+                    let mut first_read = true;
+                    let mut first_cas = true;
+                    let read = || {
+                        let prior = command(&["GET", &key]);
+                        if first_read {
+                            first_read = false;
+                            barrier.wait();
+                        }
+                        ready(prior)
+                    };
+                    let update = |prior, next| {
+                        if first_cas && !winner {
+                            let (lock, cv) = &*done;
+                            let guard = lock.lock().unwrap();
+                            let waited = cv
+                                .wait_timeout_while(guard, Duration::from_secs(5), |finished| {
+                                    !(*finished)
+                                })
+                                .unwrap();
+                            assert!(*waited.0, "winner did not complete before fixture timeout");
+                        }
+                        let result = cas(&key, prior, next);
+                        if first_cas && winner {
+                            assert_eq!(result, Ok(true));
+                            let (lock, cv) = &*done;
+                            *lock.lock().unwrap() = true;
+                            cv.notify_all();
+                        }
+                        first_cas = false;
+                        ready(result)
+                    };
+                    if is_bootstrap {
+                        // Simulate a PG snapshot taken before fee hydration (30 vs3000).
+                        let rows = vec![
+                            crate::reserves::V3PoolInfo {
+                                pool_addr: A.into(),
+                                fee_bps: 30,
+                            },
+                            crate::reserves::V3PoolInfo {
+                                pool_addr: B.into(),
+                                fee_bps: 500,
+                            },
+                        ];
+                        immediate(publish_v3_bootstrap(&rows, read, update))
+                    } else {
+                        immediate(publish_v3_index(A, observed(3000), read, update))
+                    }
+                })
+            })
+            .collect();
+        let mut attempts: Vec<_> = joins
+            .into_iter()
+            .map(|j| j.join().unwrap().unwrap())
+            .collect();
+        attempts.sort_unstable();
+        assert_eq!(attempts, vec![1, 2]);
+        let rows: Vec<crate::reserves::V3PoolInfo> =
+            serde_json::from_str(&command(&["GET", &fixture.0]).unwrap().unwrap()).unwrap();
+        assert_eq!(rows.len(), 2);
+        assert_eq!(
+            rows.iter().find(|r| r.pool_addr == A).unwrap().fee_bps,
+            3000
+        );
+        assert_eq!(rows.iter().find(|r| r.pool_addr == B).unwrap().fee_bps, 500);
+    }
+}

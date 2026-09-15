@@ -19,7 +19,7 @@ use crate::impact_index::{ImpactIndex, PoolRef};
 use crate::route_intent::{DetectionSource, RouteIntent};
 use shared_rs::rpc_failover::HttpRpcPool;
 
-mod v3_fee;
+pub(crate) mod v3_fee;
 use v3_fee::V3FeePips;
 
 sol! {
