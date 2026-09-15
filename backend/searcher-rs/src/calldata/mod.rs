@@ -54,12 +54,14 @@ pub struct DecodedSwap {
     ///   same as before — no synthetic intermediates introduced).
     pub path_tokens: Vec<Address>,
 
-    /// LP fee per hop in basis points, length = `path_tokens.len() - 1`.
+    /// Protocol fee per hop (legacy field name), length = `path_tokens.len() - 1`.
     ///
     /// - V2 swaps: `vec![30; path.len() - 1]` — the Uniswap V2 protocol-level
     ///   0.30% fee is a compile-time constant (R8 exception: this is a protocol
     ///   invariant, not fabricated data).
-    /// - V3 `exactInputSingle`: `vec![fee_bps]` extracted from the struct.
+    /// - V3: raw uint24 pips (1e-6), including fractional-bps tiers.
+    ///   Do not normalize to bps here: graph/PG/Quoter use the same raw unit.
+    /// - V3 `exactInputSingle`: exact fee extracted from the struct.
     /// - V3 `exactInput` multi-hop: one entry per hop extracted from the packed
     ///   3-byte fee fields.
     /// - Unknown protocol or decode failure: `vec![]` (empty — R8 fail-honest).
@@ -116,7 +118,7 @@ pub fn decode(input: &[u8], router: RouterKind) -> Result<DecodedSwap, DecodeFai
 /// Layout: `token(20) [fee(3) token(20)]*`
 /// Minimum length for one hop: 20 + 3 + 20 = 43 bytes.
 ///
-/// Returns `(tokens, fees_bps)` where `fees_bps.len() == tokens.len() - 1`.
+/// Returns `(tokens, fee_pips)` where `fee_pips.len() == tokens.len() - 1`.
 /// Returns `None` when the byte string is too short or misaligned.
 pub(crate) fn parse_v3_path_bytes_with_fees(path: &[u8]) -> Option<(Vec<Address>, Vec<u32>)> {
     if path.len() < 43 {
@@ -141,7 +143,7 @@ pub(crate) fn parse_v3_path_bytes_with_fees(path: &[u8]) -> Option<(Vec<Address>
         // fee is a 3-byte big-endian uint24 (Uniswap V3 convention).
         let fee_raw = u32::from_be_bytes([0, path[offset], path[offset + 1], path[offset + 2]]);
         // V3 fee in ABI units (e.g. 3000 = 0.3%) — convert to basis points (/100).
-        fees.push(fee_raw / 100);
+        fees.push(fee_raw);
         offset += 3;
 
         let t: [u8; 20] = path[offset..offset + 20].try_into().ok()?;
@@ -168,12 +170,12 @@ mod tests {
     fn v3_path_bytes_two_tokens() {
         let mut p = Vec::new();
         p.extend_from_slice(&[0xAAu8; 20]);
-        p.extend_from_slice(&[0x00, 0x0b, 0xb8]); // 3000 raw / 100 = 30 bps
+        p.extend_from_slice(&[0x00, 0x0b, 0xb8]); // 3000 raw pips = 30 bps
         p.extend_from_slice(&[0xBBu8; 20]);
         let (addrs, fees) = parse_v3_path_bytes_with_fees(&p).unwrap();
         assert_eq!(addrs.len(), 2);
         assert_eq!(fees.len(), 1);
-        assert_eq!(fees[0], 30);
+        assert_eq!(fees[0], 3000);
         assert_eq!(addrs[0], Address::from([0xAAu8; 20]));
         assert_eq!(addrs[1], Address::from([0xBBu8; 20]));
     }
@@ -189,8 +191,8 @@ mod tests {
         let (addrs, fees) = parse_v3_path_bytes_with_fees(&p).unwrap();
         assert_eq!(addrs.len(), 3);
         assert_eq!(fees.len(), 2);
-        assert_eq!(fees[0], 30);
-        assert_eq!(fees[1], 5);
+        assert_eq!(fees[0], 3000);
+        assert_eq!(fees[1], 500);
     }
 
     #[test]
@@ -204,5 +206,15 @@ mod tests {
         // 44 bytes: (44 - 20) = 24, 24 % 23 != 0 → None
         let p = vec![0u8; 44];
         assert!(parse_v3_path_bytes_with_fees(&p).is_none());
+    }
+    #[test]
+    fn v3_review_packed_path_retains_fractional_bps_and_100_pips() {
+        for raw in [0u32, 1, 100, 150, 500, 3000, 10000, 999999] {
+            let mut p = vec![0xAA; 20];
+            p.extend_from_slice(&raw.to_be_bytes()[1..]);
+            p.extend_from_slice(&[0xBB; 20]);
+            let (_, fees) = parse_v3_path_bytes_with_fees(&p).unwrap();
+            assert_eq!(fees, vec![raw]);
+        }
     }
 }

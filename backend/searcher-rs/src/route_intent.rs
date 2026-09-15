@@ -151,7 +151,8 @@ pub struct RouteIntentLeg {
     /// Human-readable DEX name hint (e.g. `"uniswap-v2"`, `"sushi"`).
     /// `None` when not available — R8 fail-honest, never an empty string.
     pub dex_hint: Option<String>,
-    /// Pool fee in basis points (e.g. 30 for 0.3% Uniswap V2, 500/3000/10000 for V3).
+    /// Legacy field name: V2 basis points; V3 exact uint24 pips (500/3000/10000).
+    /// Both calldata decoders and graph producers preserve this protocol-tagged unit.
     /// `None` when the fee is not embedded in the calldata — R8 fail-honest.
     pub fee_bps: Option<u32>,
     /// Protocol family of this leg's pool.

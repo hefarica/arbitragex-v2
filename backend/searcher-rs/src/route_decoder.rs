@@ -499,9 +499,9 @@ mod tests {
         assert_eq!(intent.legs[1].token_in, Address::from(addr_b));
         assert_eq!(intent.legs[1].token_out, Address::from(addr_c));
         assert_eq!(intent.legs[0].protocol_type, ProtocolType::V3);
-        // V3 fee: 3000 / 100 = 30 bps per hop.
-        assert_eq!(intent.legs[0].fee_bps, Some(30));
-        assert_eq!(intent.legs[1].fee_bps, Some(30));
+        // V3 fee: 3000 raw pips per hop.
+        assert_eq!(intent.legs[0].fee_bps, Some(3000));
+        assert_eq!(intent.legs[1].fee_bps, Some(3000));
     }
 
     // ── V3 exactInputSingle preserves the real fee tier ──────────────────────
@@ -520,7 +520,7 @@ mod tests {
         let intents =
             decode_to_route_intents(&tx, &router, 1, DetectionSource::PublicMempool).unwrap();
         let intent = &intents[0];
-        assert_eq!(intent.legs[0].fee_bps, Some(5), "500 raw → 5 bps");
+        assert_eq!(intent.legs[0].fee_bps, Some(500), "500 raw → 5 bps");
 
         // 3000 raw → 30 bps
         let tx2 = build_tx(
@@ -530,7 +530,7 @@ mod tests {
         );
         let intents2 =
             decode_to_route_intents(&tx2, &router, 1, DetectionSource::PublicMempool).unwrap();
-        assert_eq!(intents2[0].legs[0].fee_bps, Some(30), "3000 raw → 30 bps");
+        assert_eq!(intents2[0].legs[0].fee_bps, Some(3000), "3000 raw → 30 bps");
 
         // 10000 raw → 100 bps
         let tx3 = build_tx(
@@ -542,7 +542,7 @@ mod tests {
             decode_to_route_intents(&tx3, &router, 1, DetectionSource::PublicMempool).unwrap();
         assert_eq!(
             intents3[0].legs[0].fee_bps,
-            Some(100),
+            Some(10000),
             "10000 raw → 100 bps"
         );
     }
@@ -579,10 +579,10 @@ mod tests {
         assert_eq!(intent.legs.len(), 2);
         assert_eq!(intent.legs[0].token_in, Address::from(addr_a));
         assert_eq!(intent.legs[0].token_out, Address::from(addr_b));
-        assert_eq!(intent.legs[0].fee_bps, Some(30)); // 3000/100
+        assert_eq!(intent.legs[0].fee_bps, Some(3000)); // 3000 raw pips
         assert_eq!(intent.legs[1].token_in, Address::from(addr_b));
         assert_eq!(intent.legs[1].token_out, Address::from(addr_c));
-        assert_eq!(intent.legs[1].fee_bps, Some(5)); // 500/100
+        assert_eq!(intent.legs[1].fee_bps, Some(500)); // 500 raw pips
     }
 
     // ── spec §8: route_decoder::tests::unknown_router_zero_intents ───────────
@@ -628,8 +628,8 @@ mod tests {
         assert_eq!(intent.legs[0].token_in, tin);
         assert_eq!(intent.legs[0].token_out, tout);
         assert_eq!(intent.legs[0].protocol_type, ProtocolType::V3);
-        // fee 3000 ABI units / 100 = 30 bps.
-        assert_eq!(intent.legs[0].fee_bps, Some(30));
+        // fee 3000 ABI units retained exactly.
+        assert_eq!(intent.legs[0].fee_bps, Some(3000));
         assert_eq!(intent.exact_mode, SwapExactMode::ExactIn);
     }
 
@@ -803,7 +803,7 @@ mod tests {
         assert_eq!(intent.legs.len(), 1);
         assert_eq!(intent.legs[0].token_in, token(0xA));
         assert_eq!(intent.legs[0].token_out, token(0xB));
-        assert_eq!(intent.legs[0].fee_bps, Some(30));
+        assert_eq!(intent.legs[0].fee_bps, Some(3000));
         assert_eq!(intent.legs[0].protocol_type, ProtocolType::V3);
         assert_eq!(intent.legs[0].dex_hint.as_deref(), Some("universal-router"));
         assert_eq!(intent.amount_in, U256::from(1_000u64));
@@ -832,7 +832,7 @@ mod tests {
         let intent = &intents[0];
         assert_eq!(intent.legs[0].token_in, token(0xA));
         assert_eq!(intent.legs[0].token_out, token(0xB));
-        assert_eq!(intent.legs[0].fee_bps, Some(5));
+        assert_eq!(intent.legs[0].fee_bps, Some(500));
         assert_eq!(intent.exact_mode, SwapExactMode::ExactOut);
         assert_eq!(intent.amount_in, U256::from(1_100u64)); // amountInMax
         assert_eq!(intent.min_amount_out, Some(U256::from(950u64))); // amountOut
