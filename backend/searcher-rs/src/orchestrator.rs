@@ -867,7 +867,13 @@ impl Orchestrator {
             Option<(Vec<String>, Vec<String>)>,
         );
         let mut sized_batch: Vec<SizedBatchEntry> = Vec::new();
-        for candidate in all_candidates {
+        for mut candidate in all_candidates {
+            // Preserve the observed block without overwriting engine evidence.
+            // Admission still pins and verifies the full canonical block hash.
+            candidate.opportunity.block_number = candidate
+                .opportunity
+                .block_number
+                .or(intent.observed_block());
             // Skip sizing for already-rejected candidates (engine rejection).
             if candidate.rejection_reason.is_some() {
                 sized_batch.push((

@@ -1175,7 +1175,7 @@ pub async fn active_evaluate_and_emit(
                     net_expected_profit_usd: None, // Filled by spine evaluator
                     roi_pct: None,
                     risk_score: None,
-                    block_number: None,
+                    block_number: intent.observed_block(),
                     rejection_reason: None,
                     cartridge_id: Some(cartridge_id.clone()),
                     detected_at: chrono::Utc::now(),
@@ -1225,6 +1225,16 @@ pub async fn active_evaluate_and_emit(
                     });
                 }
 
+                let Some(token_path) = intent.token_path() else {
+                    warn!(
+                        event = "cartridge.invalid_token_path",
+                        chain_id,
+                        cartridge_id = %cartridge_id,
+                        "candidate has discontinuous token geometry"
+                    );
+                    continue;
+                };
+
                 // Build OpportunityCandidate for ConfigAwareEvaluator
                 // Uses the real prioritization_spine::types::OpportunityCandidate shape
                 let candidate = prioritization_spine::types::OpportunityCandidate {
@@ -1239,12 +1249,9 @@ pub async fn active_evaluate_and_emit(
                         .iter()
                         .filter_map(|l| l.pool_hint.map(|p| format!("{:#x}", p)))
                         .collect(),
-                    token_addresses: intent
-                        .legs
+                    token_addresses: token_path
                         .iter()
-                        .flat_map(|l| {
-                            vec![format!("{:#x}", l.token_in), format!("{:#x}", l.token_out)]
-                        })
+                        .map(|token| format!("{token:#x}"))
                         .collect(),
                     dex_adapters: intent
                         .legs
@@ -1312,13 +1319,10 @@ pub async fn active_evaluate_and_emit(
                     price_impact_pct: None,
                 };
 
-                // HOPS-EMIT-01: resolve the route topology ONCE for every emit
-                // below — accepted AND rejected. The plan legs carry the true
-                // traversal path ([A,B,C,A]); `candidate.token_addresses` above
-                // flattens per-leg pairs ([A,B,B,C,C,A]) and would fail the
-                // persistence structural gate (token_addresses.len() == hops+1),
-                // so the PLAN is the only valid source on this path. No legs →
-                // None → '{}' (R8: same as before, never a fabricated topology).
+                // Resolve topology once for accepted and rejected emissions.
+                // Candidate and plan now preserve the same h+1 token traversal.
+                // The plan remains the source for per-leg pool/DEX identity;
+                // missing geometry stays absent, never a fabricated route.
                 let route_metadata = {
                     let rm = crate::persistence::build_route_metadata_from_plan(&route_plan);
                     if rm.is_populated() {

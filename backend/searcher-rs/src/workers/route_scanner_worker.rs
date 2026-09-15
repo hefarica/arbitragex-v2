@@ -34,6 +34,8 @@
 //! (2026-09-07) control-board heartbeat (`arbx:controlboard:route_scanner:hb`,
 //! SETEX 75s, 1 write per received block — design §3.3).
 
+mod provenance;
+
 use crate::cartridge::runner::CartridgeRunner;
 use crate::cartridge_boot::shadow_evaluate_intent;
 use crate::chain_client::WsChainClient;
@@ -53,7 +55,7 @@ use crate::runtime_knobs::{
 use ethers::providers::StreamExt as _;
 use ethers::types::{Address, H256, U256};
 use redis::aio::ConnectionManager;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::str::FromStr;
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
@@ -392,7 +394,7 @@ pub fn cycle_to_intent(
     block_number: u64,
     cycle: &ProfitableCycle,
 ) -> Option<RouteIntent> {
-    if cycle.edges.is_empty() || cycle.sum_log_weight >= 0.0 {
+    if !provenance::valid_cycle(graph, chain_id, block_number, cycle) {
         return None;
     }
     let mut legs: Vec<RouteIntentLeg> = Vec::with_capacity(cycle.edges.len());
@@ -412,7 +414,7 @@ pub fn cycle_to_intent(
     if legs.first()?.token_in != legs.last()?.token_out {
         return None;
     }
-    RouteIntent::new(
+    let mut intent = RouteIntent::new(
         chain_id,
         synthetic_tx_hash(chain_id, block_number, &cycle.edges),
         Address::zero(),
@@ -423,7 +425,9 @@ pub fn cycle_to_intent(
         None,
         SwapExactMode::ExactIn,
         DetectionSource::NewBlock,
-    )
+    )?;
+    intent.observed_block_number = Some(block_number);
+    Some(intent)
 }
 
 // ---------------------------------------------------------------------------
@@ -504,6 +508,10 @@ async fn scan_block(
     let t0 = Instant::now();
     let pools = { impact_index.read().await.all_pools() };
     let pools_total = pools.len();
+    let pool_lookup: HashMap<_, _> = pools
+        .iter()
+        .map(|pool| ((pool.chain_id, pool.address), pool))
+        .collect();
     if pools.is_empty() {
         debug!(
             event = "route_scanner.no_pools",
@@ -585,10 +593,12 @@ async fn scan_block(
     let canonical_set: std::collections::HashSet<usize> =
         canonical_order.into_iter().take(canonical_budget).collect();
     let mut canonical_dispatched = 0usize;
+    let mut provenance_rejected = 0usize;
     let mut dispatched = 0usize;
     let mut cycle_events = 0usize;
     for (cycle_idx, cycle) in scan.dispatchable.iter().enumerate() {
-        let Some(intent) = cycle_to_intent(&graph, chain_id, block_number, cycle) else {
+        let Some(mut intent) = cycle_to_intent(&graph, chain_id, block_number, cycle) else {
+            provenance_rejected += 1;
             debug!(
                 event = "route_scanner.cycle_malformed",
                 chain_id,
@@ -598,6 +608,14 @@ async fn scan_block(
             );
             continue;
         };
+        if let Err(reason) = provenance::bind_dexes(&mut intent, &pool_lookup) {
+            provenance_rejected += 1;
+            debug!(
+                event = "route_scanner.provenance_rejected",
+                chain_id, block_number, reason, "pool identity could not be bound"
+            );
+            continue;
+        }
         debug!(
             event = "route_scanner.cycle_emitted",
             chain_id,
@@ -671,7 +689,7 @@ async fn scan_block(
             "top-K profitable cycles entered the canonical orchestrator pipeline"
         );
     }
-    let done = done_event(
+    let mut done = done_event(
         chain_id,
         block_number,
         pools_total,
@@ -682,6 +700,7 @@ async fn scan_block(
         elapsed_ms,
         capped,
     );
+    done["provenance_rejected"] = serde_json::json!(provenance_rejected);
     telemetry::publish(redis, &done).await;
 
     // R9: one aggregated INFO per block (per-cycle detail stays at debug).
@@ -691,6 +710,7 @@ async fn scan_block(
         block_number,
         cycles_found = scan.cycles_found,
         cycles_dispatched = dispatched,
+        provenance_rejected,
         cycles_shadow_forced = scan.shadow_only.len(),
         cycles_anchor_rejected = scan.anchor_rejected,
         capped,

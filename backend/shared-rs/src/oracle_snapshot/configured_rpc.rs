@@ -16,12 +16,14 @@ const SELECTION_TIMEOUT: Duration = Duration::from_secs(8);
 
 fn configured_urls(raw: &str) -> Result<VecDeque<String>> {
     ensure!(raw.len() <= 65536, "oracle_rpc_config_too_large");
-    let entries = crate::rpc_failover::parse_csv(raw)
-        .map_err(|_| anyhow!("oracle_rpc_config_invalid"))?;
+    let entries =
+        crate::rpc_failover::parse_csv(raw).map_err(|_| anyhow!("oracle_rpc_config_invalid"))?;
     let mut seen = BTreeSet::new();
     let mut urls = VecDeque::new();
     for (_, url) in entries {
-        let Ok(parsed) = reqwest::Url::parse(&url) else { continue };
+        let Ok(parsed) = reqwest::Url::parse(&url) else {
+            continue;
+        };
         if !matches!(parsed.scheme(), "http" | "https")
             || parsed.host_str().is_none()
             || parsed.fragment().is_some()
@@ -38,19 +40,25 @@ fn configured_urls(raw: &str) -> Result<VecDeque<String>> {
 }
 
 fn chain_id(value: &serde_json::Value) -> Result<u64> {
-    let digits = value.as_str().and_then(|v| v.strip_prefix("0x"))
+    let digits = value
+        .as_str()
+        .and_then(|v| v.strip_prefix("0x"))
         .ok_or_else(|| anyhow!("oracle_rpc_chain_id_invalid"))?;
-    ensure!(!digits.is_empty() && digits.len() <= 16
-        && digits.bytes().all(|c| c.is_ascii_hexdigit())
-        && (digits.len() == 1 || !digits.starts_with('0')),
-        "oracle_rpc_chain_id_invalid");
+    ensure!(
+        !digits.is_empty()
+            && digits.len() <= 16
+            && digits.bytes().all(|c| c.is_ascii_hexdigit())
+            && (digits.len() == 1 || !digits.starts_with('0')),
+        "oracle_rpc_chain_id_invalid"
+    );
     u64::from_str_radix(digits, 16).map_err(|_| anyhow!("oracle_rpc_chain_id_invalid"))
 }
 
 async fn probe(url: String, chain: u64) -> Result<OracleRpc> {
     let rpc = OracleRpc::from_url(&url)?;
     let value = tokio::time::timeout(PROBE_TIMEOUT, rpc.call("eth_chainId", json!([])))
-        .await.map_err(|_| anyhow!("oracle_rpc_probe_timeout"))??;
+        .await
+        .map_err(|_| anyhow!("oracle_rpc_probe_timeout"))??;
     ensure!(chain_id(&value)? == chain, "oracle_rpc_chain_mismatch");
     Ok(rpc)
 }
@@ -59,7 +67,9 @@ async fn select(mut urls: VecDeque<String>, chain: u64) -> Result<OracleRpc> {
     let mut probes = JoinSet::new();
     // Start only the preferred provider. Hedge slowly, at most three requests
     // in flight, rather than fan out to every configured vendor per candidate.
-    if let Some(url) = urls.pop_front() { probes.spawn(probe(url, chain)); }
+    if let Some(url) = urls.pop_front() {
+        probes.spawn(probe(url, chain));
+    }
     let mut hedge = tokio::time::interval(HEDGE_DELAY);
     hedge.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
     hedge.tick().await;
@@ -89,9 +99,12 @@ impl OracleRpc {
         ensure!(chain > 0, "oracle_rpc_chain_invalid");
         let urls = configured_urls(raw)?;
         tokio::time::timeout(SELECTION_TIMEOUT, select(urls, chain))
-            .await.map_err(|_| anyhow!("oracle_rpc_selection_timeout"))?
+            .await
+            .map_err(|_| anyhow!("oracle_rpc_selection_timeout"))?
     }
 
     /// Internal hand-off to SimulatorV2. Contains credentials: never log this.
-    pub fn endpoint(&self) -> &str { &self.url }
+    pub fn endpoint(&self) -> &str {
+        &self.url
+    }
 }
