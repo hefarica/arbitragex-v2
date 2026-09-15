@@ -47,12 +47,14 @@ jobs:
           set -euo pipefail
           cargo test --locked --manifest-path tests/v3-fee-units/Cargo.toml --lib 2>&1 | tee fee-evidence/fee-tests.log
           rustfmt --edition 2021 --check backend/searcher-rs/src/pool_discovery.rs
+          python3 tests/v3-fee-units/test_hydration_order.py 2>&1 | tee fee-evidence/hydration-order.log
       - name: Actual Redis compare-and-set, disposable loopback fixture only
         env:
           ARBX_V3_FEE_DISPOSABLE_REDIS: '1'
         run: |
           set -euo pipefail
           python3 tests/v3-fee-units/test_redis_cas.py 2>&1 | tee fee-evidence/redis-tests.log
+          cargo test --locked --manifest-path tests/v3-fee-units/Cargo.toml --lib v3_review_real_redis -- --ignored --test-threads=1 2>&1 | tee fee-evidence/redis-retry-tests.log
       - name: Preserve evidence even after failures
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02

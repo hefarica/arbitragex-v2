@@ -6,7 +6,7 @@ publish = false
 
 # Compile the actual production module, never a rewritten test copy.
 [lib]
-path = "../../backend/searcher-rs/src/pool_discovery/v3_fee.rs"
+path = "lib.rs"
 
 [workspace]
 

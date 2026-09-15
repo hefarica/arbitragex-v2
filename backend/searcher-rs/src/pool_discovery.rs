@@ -20,7 +20,7 @@ use crate::route_intent::{DetectionSource, RouteIntent};
 use shared_rs::rpc_failover::HttpRpcPool;
 
 mod v3_fee;
-use v3_fee::{updated_v3_index, V3FeePips};
+use v3_fee::V3FeePips;
 
 sol! {
     #[derive(Debug)]
@@ -314,6 +314,7 @@ impl PoolDiscoveryService {
             }
 
             if !discovered_pools.is_empty() {
+                let mut resolved_pool = None;
                 for (f_id, pool_addr, proto, dex_name, fee_raw) in discovered_pools {
                     let e_pool = Address::from_slice(pool_addr.as_slice());
                     let fee_bps = fee_raw.map(|f| match proto {
@@ -330,18 +331,10 @@ impl PoolDiscoveryService {
                         chain_id,
                         pool_addr = ?e_pool,
                         protocol = ?proto,
-                        "status" = "inserted",
+                        "status" = "found_unhydrated",
                         "Discovered real on-chain pool"
                     );
 
-                    self.record_observation(
-                        leg.token_in,
-                        leg.token_out,
-                        intent.router,
-                        intent.source_event,
-                        Some(e_pool),
-                    )
-                    .await;
                     if let Ok(pool_ref) = self
                         .hydrate_and_persist_pool(
                             rpc.clone(),
@@ -360,12 +353,23 @@ impl PoolDiscoveryService {
                         let mut idx = self.impact_index.write().await;
                         idx.add_pool(pool_ref);
                         drop(idx);
+                        resolved_pool = Some(e_pool);
                         info!(event = "pool_discovery.impact_index_refreshed");
                         discovered_any = true;
                     } else {
                         warn!("pool_discovery.hydration_failed");
                     }
                 }
+                // A factory lookup is only a discovery, not successful hydration.
+                // Failed siblings must not overwrite a successful resolution.
+                self.record_observation(
+                    leg.token_in,
+                    leg.token_out,
+                    intent.router,
+                    intent.source_event,
+                    resolved_pool,
+                )
+                .await;
             } else {
                 warn!(
                     event = "pool_discovery.failed",
@@ -772,62 +776,56 @@ impl PoolDiscoveryService {
                 }
             }
             crate::route_intent::ProtocolType::V3 => {
-                let key = format!(
-                    "arbx:pool_index_v3:{}:{}:{}",
+                // Symbol order must match reserves::key_pool_index_v3, the reader.
+                let key = crate::reserves::key_pool_index_v3(
                     self.chain_id,
-                    sym0.to_lowercase(),
-                    sym1.to_lowercase()
+                    &sym0.to_lowercase(),
+                    &sym1.to_lowercase(),
                 );
                 let fee =
                     verified_v3_fee.ok_or_else(|| anyhow::anyhow!("v3_fee_observation_missing"))?;
-                let raw: Result<Option<String>, _> = redis::cmd("GET")
-                    .arg(&key)
-                    .query_async(&mut redis_conn)
-                    .await;
-                match raw {
-                    Ok(previous) => {
-                        match updated_v3_index(previous.as_deref(), &format!("{e_pool:#x}"), fee) {
-                            Ok(Some(json)) => {
-                                // A concurrent hydrator must not lose another pool's
-                                // update between our GET and SET. A lost CAS leaves
-                                // the observed value untouched and is reported.
-                                let result: Result<i64, _> = redis::cmd("EVAL")
-                                    .arg(v3_fee::INDEX_COMPARE_AND_SET)
-                                    .arg(1)
-                                    .arg(&key)
-                                    .arg(if previous.is_some() { "1" } else { "0" })
-                                    .arg(previous.as_deref().unwrap_or(""))
-                                    .arg(json)
-                                    .query_async(&mut redis_conn)
-                                    .await;
-                                match result {
-                                    Ok(1) => info!(
-                                        event = "pool_discovery.redis_v3_index_updated",
-                                        pool = %e_pool,
-                                        fee_pips = fee.get()
-                                    ),
-                                    Ok(_) => warn!(
-                                        event = "pool_discovery.redis_v3_index_conflict",
-                                        pool = %e_pool
-                                    ),
-                                    Err(_) => warn!(
-                                        event = "pool_discovery.redis_v3_index_write_failed",
-                                        pool = %e_pool
-                                    ),
-                                }
-                            }
-                            Ok(None) => {} // This exact observed fee is already cached.
-                            Err(_) => warn!(
-                                event = "pool_discovery.redis_v3_index_invalid",
-                                pool = %e_pool
-                            ),
+                let read_conn = self.redis.clone();
+                let write_conn = self.redis.clone();
+                let attempts = v3_fee::publish_v3_index(
+                    &format!("{e_pool:#x}"),
+                    fee,
+                    || {
+                        let mut conn = read_conn.clone();
+                        let key = key.clone();
+                        async move {
+                            redis::cmd("GET")
+                                .arg(key)
+                                .query_async(&mut conn)
+                                .await
+                                .map_err(|_| "redis_v3_index_read_failed")
                         }
-                    }
-                    Err(_) => warn!(
-                        event = "pool_discovery.redis_v3_index_read_failed",
-                        pool = %e_pool
-                    ),
-                }
+                    },
+                    |previous, replacement| {
+                        let mut conn = write_conn.clone();
+                        let key = key.clone();
+                        async move {
+                            let written: i64 = redis::cmd("EVAL")
+                                .arg(v3_fee::INDEX_COMPARE_AND_SET)
+                                .arg(1)
+                                .arg(key)
+                                .arg(if previous.is_some() { "1" } else { "0" })
+                                .arg(previous.as_deref().unwrap_or(""))
+                                .arg(replacement)
+                                .query_async(&mut conn)
+                                .await
+                                .map_err(|_| "redis_v3_index_write_failed")?;
+                            match written {
+                                0 => Ok(false),
+                                1 => Ok(true),
+                                _ => Err("redis_v3_index_cas_invalid_result"),
+                            }
+                        }
+                    },
+                )
+                .await
+                .map_err(anyhow::Error::msg)?;
+                info!(event = "pool_discovery.redis_v3_index_updated", pool = %e_pool,
+                      fee_pips = fee.get(), attempts);
             }
             _ => {}
         }

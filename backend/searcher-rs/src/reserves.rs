@@ -75,13 +75,8 @@ pub struct UniverseToken {
 /// Unlike V2 (which only needs an address; reserves are fetched separately),
 /// V3 quoting goes through the on-chain QuoterV2 and the fee tier is part
 /// of the call signature, so it must travel with the address.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub struct V3PoolInfo {
-    /// Pool address, lowercase hex with 0x prefix.
-    pub pool_addr: String,
-    /// V3 fee tier in basis points: 100 (0.01%), 500 (0.05%), 3000 (0.30%), 10000 (1.00%).
-    pub fee_bps: u32,
-}
+mod v3_pool_info;
+pub use v3_pool_info::V3PoolInfo;
 
 pub fn key_pool_reserves(chain_id: u64, pool_addr_lower: &str) -> String {
     format!("arbx:pool_reserves:{}:{}", chain_id, pool_addr_lower)

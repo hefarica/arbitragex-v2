@@ -800,46 +800,8 @@ mod tests {
             "calc_v3_spot_price",
             |_s: &str, _di: i64, _do: i64| -> f64 { 3000.0 },
         );
-        // Real single-tick math (same conversion as the production host binding: bps -> pips ×100).
-        engine.register_fn(
-            "v3_amount_out_single_tick",
-            |amount_in: &str,
-             sqrt_price_x96: &str,
-             liquidity: &str,
-             fee_bps: i64,
-             zero_for_one: bool|
-             -> Dynamic {
-                use ethers::types::U256;
-                let amount_in = match U256::from_dec_str(amount_in) {
-                    Ok(v) => v,
-                    Err(_) => return Dynamic::UNIT,
-                };
-                let sqrt_price_x96 = match U256::from_dec_str(sqrt_price_x96) {
-                    Ok(v) => v,
-                    Err(_) => return Dynamic::UNIT,
-                };
-                let liquidity = match U256::from_dec_str(liquidity) {
-                    Ok(v) => v,
-                    Err(_) => return Dynamic::UNIT,
-                };
-                let fee_pips = fee_bps * 100;
-                if !(0..1_000_000).contains(&fee_pips) {
-                    return Dynamic::UNIT;
-                }
-                let result = crate::amm_math::v3_amount_out_single_tick(
-                    amount_in,
-                    sqrt_price_x96,
-                    liquidity,
-                    fee_pips as u32,
-                    zero_for_one,
-                );
-                if result.is_zero() {
-                    Dynamic::UNIT
-                } else {
-                    Dynamic::from(result.to_string())
-                }
-            },
-        );
+        // Exercise the actual production binding, not a duplicated unit conversion.
+        crate::cartridge::host_bindings::register_v3_amount_out_bindings(&mut engine);
         // Cross-pool arb gate: default OFF in this unit test so the V3 branch emits the honest
         // is_opportunity:false single-tick candidate (the is_opportunity:true path is exercised
         // separately/integration). Production reads ARBX_V3_ARB_MODE.
@@ -896,6 +858,7 @@ mod tests {
         pd.insert("protocol_type".into(), Dynamic::from(protocol.to_string()));
         // V3 fee tier (0.30% = 30 bps) so the V3 branch exercises the single-tick candidate path.
         pd.insert("fee_bps".into(), Dynamic::from(30i64));
+        pd.insert("fee_pips".into(), Dynamic::from(3000i64));
 
         let res: Dynamic = engine
             .call_fn(&mut scope, &ast, "evaluate_opportunity", (pd,))

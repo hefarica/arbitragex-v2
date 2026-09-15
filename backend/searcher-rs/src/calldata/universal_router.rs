@@ -473,7 +473,7 @@ mod tests {
         assert_eq!(s.amount_in, U256::from(1_000u64));
         assert_eq!(s.min_amount_out, U256::from(900u64));
         assert_eq!(s.path_tokens, vec![token(0xA), token(0xB)]);
-        assert_eq!(s.path_fees_bps, vec![30]);
+        assert_eq!(s.path_fees_bps, vec![3000]);
         assert_eq!(s.exact_mode, SwapExactMode::ExactIn);
         assert_eq!(s.protocol_type, ProtocolType::V3);
         assert_eq!(s.deadline, U256::zero());
@@ -496,7 +496,7 @@ mod tests {
         assert_eq!(s.token_in, token(0xA));
         assert_eq!(s.token_out, token(0xB));
         assert_eq!(s.path_tokens, vec![token(0xA), token(0xB)]);
-        assert_eq!(s.path_fees_bps, vec![5]);
+        assert_eq!(s.path_fees_bps, vec![500]);
         assert_eq!(s.amount_in, U256::from(1_100u64)); // amountInMax (upper bound)
         assert_eq!(s.min_amount_out, U256::from(950u64)); // amountOut (exact)
         assert_eq!(s.exact_mode, SwapExactMode::ExactOut);
@@ -520,7 +520,7 @@ mod tests {
         assert_eq!(swaps.len(), 1);
         let s = &swaps[0];
         assert_eq!(s.path_tokens, vec![token(0xA), token(0xB), token(0xC)]);
-        assert_eq!(s.path_fees_bps, vec![30, 5]);
+        assert_eq!(s.path_fees_bps, vec![3000, 500]);
         assert_eq!(s.token_in, token(0xA));
         assert_eq!(s.token_out, token(0xC));
     }
@@ -613,7 +613,7 @@ mod tests {
             assert_eq!(s.token_out, token(0xB));
             assert_eq!(s.amount_in, U256::from(1_000u64));
             assert_eq!(s.min_amount_out, U256::from(900u64));
-            assert_eq!(s.path_fees_bps, vec![30]);
+            assert_eq!(s.path_fees_bps, vec![3000]);
         }
     }
 

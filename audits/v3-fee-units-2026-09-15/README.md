@@ -92,3 +92,61 @@ No such data mutation is performed by this PR, the workflow, or the tests.
 XEN remains outside the published allowlist. Its TokenNotAllowed is independent
 of this fee correction. A.9, full-route no-cheat simulation (#567), paper accounting
 and the multimode execution gateway (#570) remain separate open obligations.
+
+
+## Review follow-up (same PR, before merge)
+
+Base reviewed: 71bae985e6df02440e779cbd135081230e86ff51. The earlier green
+CI did not catch five semantic issues. This follow-up addresses them together:
+
+1. **Redis wire identity.** The actual consumer DTO is now shared:
+   `reserves::V3PoolInfo { pool_addr, fee_bps }`. The updater wraps this exact
+   type with flattened extra metadata instead of inventing `address`.
+   A new test failed against the prior HEAD with `missing field address`
+   (Cargo exit 101), before the correction. It now passes along with a
+   producer/consumer serialization round trip. The V3 key also uses the
+   consumer's canonical sorted-symbol key builder.
+2. **Protocol fee units.** Internal V3 fees stay raw pips through calldata,
+   RouteIntent, PG, Redis and graph. The V2 contract stays basis points.
+   Previously the V3 calldata decoders divided by 100 while graph-produced
+   RouteIntents did not, so dividing at the cartridge boundary alone was
+   insufficient. V3 decoder assertions were updated against the same encoded
+   bytes, not weakened: 500/3000/10000 must remain exact, and 150 may not become1.
+   The Rhai boundary publishes explicit fee_pips and true fee_bps. The built-in
+   V3 cartridge uses a raw-pips binding. Legacy bps bindings remain supported,
+   including exact integral-pip fractional-bps values; overflow, non-finite,
+   out-of-range and genuine sub-pip inputs fail instead of rounding/defaulting.
+   Runtime and cartridge tests register the SAME math binding, not a test copy.
+3. **Concurrent cache hydration.** The production updater rereads, merges and
+   retries CAS up to four times. Read/malformed-index/uncertain-write failures
+   and exhausted conflicts return errors rather than success. Pure tests call
+   the actual updater. Two separate opt-in integration tests call that updater
+   and its exact Lua against disposable loopback Redis, including two racing
+   pool additions that must BOTH survive. They are not counted as run locally
+   when the test Redis service is absent.
+4. **Memory index.** add_pool replaces an existing (chain,address) in its
+   immutable token pair, removes duplicate copies and preserves other pools,
+   chains, ordering and cycle associations. It no longer treats rehydration as
+   an additional venue.
+5. **Resolution provenance.** Reactive discovery records a resolved pool only
+   after successful hydration and memory-index publication. It records once
+   per observed pair, preserving a successful sibling when another fails.
+   Discovery logs say found_unhydrated until hydration has really finished.
+
+The three hydration-order Python tests are explicitly STATIC call-order guards,
+not claims of a database fault-injection or blockchain test. Full Rust CI must
+also compile/test the parent searcher and the actual Rhai bridge; the small
+fee-module harness does not replace it.
+
+Remaining release/data obligations are unchanged: review and CI for the new
+HEAD; protected merge/deploy; a reviewed chain/address/old-value/on-chain-factory,
+fee/tokens/block-hash repair manifest for historical rows; reconcile PG/Redis
+and the in-process index; then repeat quotes on the version actually served.
+No blanket multiplication, token permission change, A.9 approval, signer, LIVE
+flag or financial transaction is part of this change. A quote is not a proved
+profitable cycle or realized income. #567 and #570 remain separate open work.
+
+One additional read-only source-search command in this review session was
+rejected by the tool security layer before execution. It was not retried via
+an alternate path or used as runtime evidence. File edits and isolated test
+commands that were independently authorized continued normally.

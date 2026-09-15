@@ -162,6 +162,74 @@ pub(crate) fn v3_spot_price_from_sqrt(sqrt_price_x96: &str, dec_in: i64, dec_out
     raw_price * 10f64.powi((dec_in - dec_out) as i32)
 }
 
+/// Pure bindings shared by the runtime and cartridge regression tests. The
+/// legacy name accepts actual basis points; the new name accepts raw V3 pips.
+/// Neither can turn absent, non-integral-pip or out-of-range fees into zero.
+pub(crate) fn register_v3_amount_out_bindings(engine: &mut Engine) {
+    engine.register_fn("v3_amount_out_single_tick_pips", v3_amount_out_pips);
+    engine.register_fn(
+        "v3_amount_out_single_tick",
+        |amount: &str, sqrt: &str, liquidity: &str, bps: i64, direction: bool| match bps
+            .checked_mul(100)
+        {
+            Some(pips) => v3_amount_out_pips(amount, sqrt, liquidity, pips, direction),
+            None => Dynamic::UNIT,
+        },
+    );
+    engine.register_fn(
+        "v3_amount_out_single_tick",
+        |amount: &str, sqrt: &str, liquidity: &str, bps: f64, direction: bool| {
+            match legacy_bps_to_pips(bps) {
+                Some(pips) => v3_amount_out_pips(amount, sqrt, liquidity, pips, direction),
+                None => Dynamic::UNIT,
+            }
+        },
+    );
+}
+
+fn legacy_bps_to_pips(bps: f64) -> Option<i64> {
+    if !bps.is_finite() || !(0.0..10_000.0).contains(&bps) {
+        return None;
+    }
+    let scaled = bps * 100.0;
+    let pips = scaled.round();
+    // Only absorb IEEE-754 roundoff of an integral-pip value. A genuine
+    // sub-pip fee is unrepresentable, not rounded to a different tier.
+    let tolerance = f64::EPSILON * scaled.abs().max(1.0) * 4.0;
+    if (scaled - pips).abs() > tolerance || !(0.0..1_000_000.0).contains(&pips) {
+        None
+    } else {
+        Some(pips as i64)
+    }
+}
+
+fn v3_amount_out_pips(
+    amount: &str,
+    sqrt: &str,
+    liquidity: &str,
+    pips: i64,
+    direction: bool,
+) -> Dynamic {
+    use ethers::types::U256;
+    if !(0..1_000_000).contains(&pips) {
+        return Dynamic::UNIT;
+    }
+    let (Ok(amount), Ok(sqrt), Ok(liquidity)) = (
+        U256::from_dec_str(amount),
+        U256::from_dec_str(sqrt),
+        U256::from_dec_str(liquidity),
+    ) else {
+        return Dynamic::UNIT;
+    };
+    let result =
+        crate::amm_math::v3_amount_out_single_tick(amount, sqrt, liquidity, pips as u32, direction);
+    if result.is_zero() {
+        Dynamic::UNIT
+    } else {
+        Dynamic::from(result.to_string())
+    }
+}
+
 /// Registers all host bindings into the Rhai engine.
 ///
 /// This function is called once during `CartridgeRunner` initialization.
@@ -310,52 +378,8 @@ pub fn register_host_bindings(engine: &mut Engine, ctx: HostContext) {
         },
     );
 
-    // v3_amount_out_single_tick(amount_in, sqrt_price_x96, liquidity, fee_bps, zero_for_one) -> Dynamic
-    // Within-tick (single-tick) Uniswap-V3 output estimate. This is an UPPER BOUND on real output
-    // (V3 has less liquidity beyond the active tick), so cartridges MUST treat the result as a
-    // candidate only — never as a confirmed opportunity. Pure integer math (no RPC/Redis/block_on).
-    // `fee_bps` (basis points: 30 = 0.30%) is converted to V3 on-chain pips (millionths) by ×100.
-    // Returns the decimal-string amount_out, or () on parse error / out-of-range fee / degenerate move.
-    engine.register_fn(
-        "v3_amount_out_single_tick",
-        move |amount_in: &str,
-              sqrt_price_x96: &str,
-              liquidity: &str,
-              fee_bps: i64,
-              zero_for_one: bool|
-              -> Dynamic {
-            use ethers::types::U256;
-            let amount_in = match U256::from_dec_str(amount_in) {
-                Ok(v) => v,
-                Err(_) => return Dynamic::UNIT,
-            };
-            let sqrt_price_x96 = match U256::from_dec_str(sqrt_price_x96) {
-                Ok(v) => v,
-                Err(_) => return Dynamic::UNIT,
-            };
-            let liquidity = match U256::from_dec_str(liquidity) {
-                Ok(v) => v,
-                Err(_) => return Dynamic::UNIT,
-            };
-            // V3 on-chain fee is in millionths (pips): bps 30 -> pips 3000 (0.30%).
-            let fee_pips = fee_bps * 100;
-            if !(0..1_000_000).contains(&fee_pips) {
-                return Dynamic::UNIT;
-            }
-            let result = crate::amm_math::v3_amount_out_single_tick(
-                amount_in,
-                sqrt_price_x96,
-                liquidity,
-                fee_pips as u32,
-                zero_for_one,
-            );
-            if result.is_zero() {
-                Dynamic::UNIT
-            } else {
-                Dynamic::from(result.to_string())
-            }
-        },
-    );
+    // Upper-bound single-tick estimates only; not verified executable quotes.
+    register_v3_amount_out_bindings(engine);
 
     // v2_amount_out_str(amount_in, reserve_in, reserve_out, fee_bps) -> Dynamic
     // Constant-product (Uniswap-V2) EXACT-INPUT output, post-fee, as a decimal wei STRING.
@@ -1123,5 +1147,35 @@ mod tests {
     fn sim_swap_rpc_min_interval_constant_is_100ms() {
         // Locks the contract: 100ms floor between any two RPC calls.
         assert_eq!(SIM_SWAP_RPC_MIN_INTERVAL_NS, 100_000_000);
+    }
+    #[test]
+    fn v3_review_legacy_bps_preserves_every_integral_pip() {
+        for pips in 0..1_000_000i64 {
+            assert_eq!(legacy_bps_to_pips(pips as f64 / 100.0), Some(pips));
+        }
+        for invalid in [f64::NAN, f64::INFINITY, -1.0, 10_000.0, 0.005, 1.2345] {
+            assert_eq!(legacy_bps_to_pips(invalid), None);
+        }
+    }
+
+    #[test]
+    fn v3_review_invalid_and_overflow_fees_fail_without_panicking() {
+        let mut engine = Engine::new();
+        register_v3_amount_out_bindings(&mut engine);
+        let mut scope = rhai::Scope::new();
+        scope.push("sqrt", (ethers::types::U256::one() << 96).to_string());
+        scope.push("fee", 0i64);
+        for invalid in [i64::MIN, -1, 10_000, i64::MAX] {
+            scope.set_value("fee", invalid);
+            let value = engine.eval_with_scope::<Dynamic>(&mut scope,
+                "v3_amount_out_single_tick(\"1000000000000\",sqrt,\"1000000000000000000000000\",fee,true)").unwrap();
+            assert!(value.is_unit());
+        }
+        for invalid in [i64::MIN, -1, 1_000_000, i64::MAX] {
+            scope.set_value("fee", invalid);
+            let value = engine.eval_with_scope::<Dynamic>(&mut scope,
+                "v3_amount_out_single_tick_pips(\"1000000000000\",sqrt,\"1000000000000000000000000\",fee,true)").unwrap();
+            assert!(value.is_unit());
+        }
     }
 }
