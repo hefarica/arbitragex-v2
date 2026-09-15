@@ -48,7 +48,10 @@ export function readCatalog(value: unknown, wanted: CatalogScope, after: string 
       if (typeof n !== "string" || !/^(0|[1-9][0-9]*)$/.test(n)) throw new Error("Conteo inválido");
     }
     if (wanted.level === "chains" && typeof row["registered"] !== "boolean") throw new Error("Registro inválido");
-    if (wanted.level !== "chains" && (typeof row["protocol_type"] !== "string" || !row["protocol_type"])) {
+    // NULL is permitted by dexes.protocol_type: inventory unknown, not executable.
+    const protocol = row["protocol_type"];
+    if (wanted.level !== "chains" && protocol !== null &&
+        (typeof protocol !== "string" || protocol.trim() === "")) {
       throw new Error("Protocolo inválido");
     }
     if (wanted.level === "pools") {

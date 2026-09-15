@@ -14,6 +14,7 @@ beforeAll(async () => {
     .withWaitStrategy(Wait.forLogMessage("database system is ready to accept connections", 2)).start();
   pool = new Pool({host:container.getHost(),port:container.getMappedPort(5432),user:"postgres",password:"isolated-fixture",database:"hop_test"});
   await pool.query(`CREATE TABLE opportunities (
+    chain_id integer DEFAULT 1, chain_id_out integer,
     status text, rejection_reason text, strategy_kind text,
     route_metadata jsonb, detected_at timestamptz DEFAULT now()
   )`);
@@ -87,4 +88,29 @@ describe("PR566 review — metadata element parity with the canonical ViewModel"
       });
     }
   }
+});
+
+describe("PR569 single-chain cycle closure matches the frontend", () => {
+  it.each([2, 3, 4, 5])("does not credit an open %i-hop path as routed", async (hops) => {
+    const route = metadata(hops);
+    route.token_addresses[hops] = "another-token";
+    await insert(route);
+    await insert(metadata(hops));
+    const result = await read();
+    expect(result.status).toBe(200);
+    expect(result.body.data.by_hops).toEqual([{ hops, n: 1 }]);
+    expect(result.body.data.totals).toEqual({ total: 2, viable: 2, routed: 1, viability_pct: 100 });
+  });
+  it("compares cycle endpoints without case drift", async () => {
+    const route = metadata(3);
+    route.token_addresses[3] = "TOKEN-0";
+    await insert(route);
+    expect((await read()).body.data.by_hops).toEqual([{ hops: 3, n: 1 }]);
+  });
+  it("retains genuine cross-chain open paths", async () => {
+    const route = metadata(3);
+    route.token_addresses[3] = "other-chain-token";
+    await pool.query("INSERT INTO opportunities(status,strategy_kind,route_metadata,chain_id,chain_id_out) VALUES('detected','cross_chain',$1,1,42161)", [JSON.stringify(route)]);
+    expect((await read()).body.data.by_hops).toEqual([{ hops: 3, n: 1 }]);
+  });
 });

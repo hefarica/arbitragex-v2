@@ -82,3 +82,23 @@ describe("ticker lifecycle precedence matches the card",()=>{
     expect(item?.yield).toBeNull();
   });
 });
+
+// PR569: a terminal failure before economics is evidence, not an empty feed.
+describe("terminal ticker rows without calculated economics", () => {
+  it.each(["rejected", "failed"])("retains %s with honest null profit and ROI", (status) => {
+    const opp = { token_in: "A", token_out: "B", status,
+      expected_profit_usd: null, net_expected_profit_usd: null, roi_pct: null,
+      detected_at: "2026-09-14T00:00:00Z", rejection_reason: "missing_quote" } as Parameters<typeof opportunityToTickerItem>[0];
+    const result = opportunityToTickerItem(opp);
+    expect(result?.status).toBe(status);
+    expect(result?.yield).toBeNull();
+    expect(result?.rejectionReason).toBe("missing_quote");
+    expect(formatTickerYield(result?.yield ?? null)).toBe("ROI —");
+  });
+  it("retains an explicit rejection even with stale detected status and no economics", () => {
+    const opp = { token_in: "A", token_out: "B", status: "detected",
+      expected_profit_usd: null, net_expected_profit_usd: null, roi_pct: null,
+      detected_at: "2026-09-14T00:00:00Z", rejection_reason: "TokenNotAllowed" } as Parameters<typeof opportunityToTickerItem>[0];
+    expect(opportunityToTickerItem(opp)?.status).toBe("rejected");
+  });
+});

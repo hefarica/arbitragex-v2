@@ -123,3 +123,19 @@ test('root pool count equals reachable pages and excludes orphaned factories',as
   assert.deepEqual([...first.items,...second.items].map(r=>r.id),[id(31),id(32)]);
   assert.equal(second.next_after,null);
 });
+
+test('nullable DEX protocol survives real PostgreSQL and the client contract',async()=>{
+  const {readCatalog}=require(path.join(build,'frontend/app/dex-registry/liquidity-catalog-model.js'));
+  await pool.query('UPDATE dexes SET protocol_type=NULL WHERE id=$1',[id(1)]);
+  try {
+    for(const level of ['dexes','pools']) {
+      const wire=await query({level,chain_id:'1'});
+      const result=readCatalog(wire,{level,chainId:'1',dexId:null,search:''});
+      assert.ok(result.items.length>0);
+      assert.ok(result.items.every(row=>row.protocol_type===null));
+      assert.equal(wire.execution_verified,false);
+    }
+  } finally {
+    await pool.query('UPDATE dexes SET protocol_type=$1 WHERE id=$2',['UNISWAP_V2',id(1)]);
+  }
+});

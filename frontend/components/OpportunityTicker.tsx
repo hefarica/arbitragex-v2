@@ -43,7 +43,9 @@ function formatAgo(detectedAt: string): string {
 export function opportunityToTickerItem(opp: OpportunityRow): TickerItem | null {
   // Use net_expected_profit_usd (NET yield) when available, fallback to expected_profit_usd (GROSS)
   const profit = opp.net_expected_profit_usd ?? opp.expected_profit_usd ?? null;
-  if (profit === null || !Number.isFinite(profit)) return null;
+  const terminal = terminalOpportunityState(opp);
+  // Rejection/failure before economics must remain visible as recorded evidence.
+  if ((profit === null || !Number.isFinite(profit)) && terminal === null) return null;
 
   const pair = opp.pair_symbol ?? `${opp.token_in.slice(0, 6)}…/${opp.token_out.slice(0, 6)}…`;
   const from = opp.dex_a ?? "Unknown";
@@ -58,7 +60,7 @@ export function opportunityToTickerItem(opp: OpportunityRow): TickerItem | null 
     from,
     to,
     yield: yieldPct,
-    status: terminalOpportunityState(opp) ?? opp.status,
+    status: terminal ?? opp.status,
     rejectionReason: opp.rejection_reason ?? null,
     ago: formatAgo(opp.detected_at),
   };

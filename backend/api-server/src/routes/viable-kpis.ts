@@ -58,6 +58,11 @@ const HOPS_SQL = `CASE
        WHERE jsonb_typeof(value) <> 'string'
           OR btrim(value #>> '{}', chr(9) || chr(10) || chr(11) || chr(12) || chr(13) || chr(32) || chr(160) || chr(5760) || chr(8192) || chr(8193) || chr(8194) || chr(8195) || chr(8196) || chr(8197) || chr(8198) || chr(8199) || chr(8200) || chr(8201) || chr(8202) || chr(8232) || chr(8233) || chr(8239) || chr(8287) || chr(12288) || chr(65279)) = ''
      )
+     AND (
+       (chain_id_out IS NOT NULL AND chain_id IS NOT NULL AND chain_id_out <> chain_id)
+       OR lower(route_metadata->'token_addresses'->>0) =
+          lower(route_metadata->'token_addresses'->>-1)
+     )
     THEN jsonb_array_length(route_metadata->'dex_adapters')
     ELSE NULL END
   ELSE NULL END`;
