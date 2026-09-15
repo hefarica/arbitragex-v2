@@ -350,7 +350,7 @@ async fn reconcile(item: &PendingAccounting) -> Result<SettlementResult> {
     if !matches!(opp.chain_id, 1 | 11_155_111) {
         bail!("accounting_fee_model_unavailable");
     }
-    let rpc = OracleRpc::from_env(opp.chain_id)?;
+    let rpc = OracleRpc::from_env(opp.chain_id).await?;
     let (receipt, tx, chain) = tokio::try_join!(
         rpc.call(
             "eth_getTransactionReceipt",

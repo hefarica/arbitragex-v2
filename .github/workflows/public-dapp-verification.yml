@@ -1,0 +1,68 @@
+name: Public DApp verified journeys
+on:
+  workflow_dispatch:
+    inputs:
+      expected_sha:
+        description: Expected full served SHA; empty means diagnostic only
+        type: string
+        required: false
+  workflow_run:
+    workflows: ['Auto-Deploy VPS (Post-E2E)']
+    types: [completed]
+    branches: [main]
+  push:
+    branches: [feat/liquidity-catalog-hardening-20260914]
+    paths: ['scripts/verification/**', '.github/workflows/public-dapp-verification.yml']
+permissions:
+  contents: read
+concurrency:
+  group: public-dapp-verified-journeys
+  cancel-in-progress: false
+jobs:
+  public-browser:
+    if: github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444
+        with:
+          node-version: 22
+          cache: npm
+      - name: Record tested source, without production secrets
+        run: |
+          mkdir -p public-evidence
+          echo "SOURCE_SHA=$(git rev-parse HEAD)" >> "$GITHUB_ENV"
+          echo "CATALOG_BUILD_DIR=$RUNNER_TEMP/arbx-catalog-build" >> "$GITHUB_ENV"
+          git rev-parse HEAD > public-evidence/source-sha.txt
+      - run: npm ci --ignore-scripts --no-audit --no-fund
+      - name: Verify that the verifier cannot manufacture a success
+        run: |
+          set -euo pipefail
+          node --test scripts/verification/read-only-policy.test.cjs | tee public-evidence/verifier-tests.tap
+          npx --no-install tsc --target ES2022 --module commonjs --strict --noUncheckedIndexedAccess \
+            --skipLibCheck --rootDir . --outDir "$CATALOG_BUILD_DIR" \
+            frontend/app/dex-registry/liquidity-catalog-model.ts
+          printf '{"type":"commonjs"}\n' > "$CATALOG_BUILD_DIR/package.json"
+      - name: Install locked browser
+        working-directory: frontend
+        run: npx --no-install playwright install --with-deps chromium
+      - name: Actual public browser, GET and read-only socket subscriptions
+        env:
+          DAPP_ORIGIN: ${{ vars.DAPP_ORIGIN || 'https://arbx.ape-tv.net' }}
+          EXPECTED_SERVED_SHA: ${{ github.event.workflow_run.head_sha || inputs.expected_sha || '' }}
+          EVIDENCE_DIR: public-evidence
+        run: |
+          set -euo pipefail
+          node scripts/verification/public-dapp.cjs 2>&1 | tee public-evidence/browser.log
+      - name: Preserve failures as well as screenshots
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: public-verification-${{ github.run_id }}-${{ github.run_attempt }}
+          path: public-evidence/
+          if-no-files-found: error
+          retention-days: 14

@@ -8,14 +8,14 @@ interface XRayCardProps {
   /** A.8 confidence 0-100, or null when the scorer hasn't scored this
    * opportunity (R8: null = not computed — rendered as "—", never 0%). */
   confidence: number | null;
-  legs: number;
+  legs: number | null;
   ago: string;
   route: string;
   fees: string;
   tlsAmount: string;
   simVerdict: string;
-  safetyA: number;
-  safetyB: number;
+  safetyA: number | null;
+  safetyB: number | null;
 }
 
 export function XRayCard({
@@ -48,7 +48,7 @@ export function XRayCard({
             {confidence != null ? "% conf" : " conf (unscored)"}
           </span>
           <span>
-            <b className="text-[var(--foreground)]">{legs}</b> legs
+            <b className="text-[var(--foreground)]">{legs ?? "—"}</b> legs
           </span>
           <span>{ago}</span>
           <span className="text-[var(--primary)]">[PAPER]</span>
@@ -71,7 +71,7 @@ export function XRayCard({
             value={isSuccessVerdict(simVerdict) ? `✓ ${simVerdict}` : simVerdict}
             ok={isSuccessVerdict(simVerdict)}
           />
-          <XRayRow label="TOKEN SAFETY" value={`A ${safetyA} · B ${safetyB}`} bold />
+          <XRayRow label="TOKEN SAFETY" value={`A ${safetyA ?? "—"} · B ${safetyB ?? "—"}`} bold />
         </div>
       </div>
     </article>

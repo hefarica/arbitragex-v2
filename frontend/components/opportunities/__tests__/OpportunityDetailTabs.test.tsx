@@ -402,3 +402,20 @@ describe("OpportunityDetailTabs (§37)", () => {
     expect(a).toBe(b);
   });
 });
+
+
+describe("PR566 review — checksummed EVM decimal keys and token path", () => {
+  it("renders measured units and cycle delta after mapper normalizes keys", () => {
+    const opp = mapToOmniOpportunity(wire({route_metadata: {
+      ...rm2hopLedger,
+      token_addresses: ["0xA", "0xB", "0xA"],
+      decimals: {map: {"0xA":18,"0xB":18}},
+    }}));
+    expect(opp.route_metadata?.decimals).toEqual({"0xa":18,"0xb":18});
+    const html=tab(opp,"ledger");
+    expect(html).toContain("0.99");
+    expect(html).toContain("1.01");
+    expect(html).toContain("+0.01");
+    expect(html).toContain("in_wei=1000000000000000000");
+  });
+});

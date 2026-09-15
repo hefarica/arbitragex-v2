@@ -6,6 +6,8 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 use std::{collections::BTreeMap, time::Duration};
 
+mod configured_rpc;
+
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Feed {
@@ -51,12 +53,14 @@ impl OracleRpc {
         Ok(Self {
             client: reqwest::Client::builder()
                 .timeout(Duration::from_secs(5))
+                .redirect(reqwest::redirect::Policy::none())
                 .build()?,
             url: url.to_owned(),
         })
     }
-    pub fn from_env(chain: u64) -> Result<Self> {
-        Self::from_url(&std::env::var(format!("RPC_HTTP_{chain}")).context("oracle_rpc_missing")?)
+    pub async fn from_env(chain: u64) -> Result<Self> {
+        let raw = std::env::var(format!("RPC_HTTP_{chain}")).context("oracle_rpc_missing")?;
+        Self::from_config(chain, &raw).await
     }
     pub async fn call(&self, method: &str, params: Value) -> Result<Value> {
         let r = self
@@ -71,6 +75,11 @@ impl OracleRpc {
             .json::<Value>()
             .await
             .map_err(|_| anyhow!("oracle_rpc_json"))?;
+        if r.get("jsonrpc").and_then(Value::as_str) != Some("2.0")
+            || r.get("id").and_then(Value::as_u64) != Some(1)
+        {
+            bail!("oracle_rpc_response_identity");
+        }
         if r.get("error").is_some() {
             bail!("oracle_rpc_method_failed:{method}");
         }

@@ -866,7 +866,7 @@ pub fn parse_csv(raw: &str) -> Result<Vec<(String, String)>, PoolError> {
         if tok.is_empty() {
             continue;
         }
-        if let Some((n, u)) = tok.split_once('=') {
+        if let Some((n, u)) = tok.split_once('=').filter(|_| !is_supported_scheme(tok)) {
             let name = n.trim().to_string();
             let url = u.trim().to_string();
             if name.is_empty() || url.is_empty() {

@@ -27,6 +27,10 @@ use serde::{Deserialize, Serialize};
 pub struct RouteIntent {
     /// EVM chain ID (e.g. 1 = Ethereum mainnet).
     pub chain_id: u64,
+    /// Block event that triggered discovery, not a verified execution snapshot.
+    /// Pending-transaction decoders leave this absent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub observed_block_number: Option<u64>,
     /// Hash of the originating pending transaction.
     pub tx_hash: H256,
     /// Router contract address that received the call.
@@ -56,6 +60,36 @@ pub struct RouteIntent {
 }
 
 impl RouteIntent {
+    /// Ordered h+1 token addresses, never a flattened list of 2h endpoints.
+    /// Missing or discontinuous geometry is not compacted into another route.
+    pub fn token_path(&self) -> Option<Vec<Address>> {
+        let first = self.legs.first()?.token_in;
+        if first.is_zero() {
+            return None;
+        }
+        let mut path = Vec::with_capacity(self.legs.len() + 1);
+        path.push(first);
+        for leg in &self.legs {
+            if path.last().copied() != Some(leg.token_in)
+                || leg.token_out.is_zero()
+                || leg.token_in == leg.token_out
+            {
+                return None;
+            }
+            path.push(leg.token_out);
+        }
+        Some(path)
+    }
+
+    /// Preserve an actual new-block observation without inventing a height for
+    /// mempool/oracle events. The execution path still verifies block and hash.
+    pub fn observed_block(&self) -> Option<u64> {
+        if self.source_event != DetectionSource::NewBlock {
+            return None;
+        }
+        self.observed_block_number.filter(|height| *height > 0)
+    }
+
     /// Constructs a `RouteIntent`, enforcing the `legs.len() >= 1` invariant.
     ///
     /// Returns `None` when `legs` is empty — callers should treat this as a
@@ -82,6 +116,7 @@ impl RouteIntent {
         }
         Some(Self {
             chain_id,
+            observed_block_number: None,
             tx_hash,
             router,
             router_kind,

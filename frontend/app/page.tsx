@@ -5,6 +5,7 @@ import { GateSection } from "@/components/GateSection";
 // server page — standard Next App Router island pattern).
 import { HomeStoreAggregationContainer } from "@/components/home/HomeStoreAggregation";
 import { getApiBaseUrl, getReadinessDecision } from "@/lib/api-client";
+import { toXRayProps } from "@/lib/home-opportunity";
 import type { OpportunityRow } from "@/lib/schemas";
 
 export const dynamic = "force-dynamic";
@@ -43,42 +44,6 @@ async function getHomeData(): Promise<HomeData> {
   }
 }
 
-// Map a real OpportunityRow onto the XRayCard props. Every field derives from
-// the API payload; anything the API leaves null renders as an honest "—".
-function toXRayProps(opp: OpportunityRow) {
-  const net = opp.net_expected_profit_usd ?? opp.simulated_net_profit_usd ?? null;
-  const gross = opp.expected_profit_usd;
-  const pair = opp.pair_symbol ?? `${opp.token_in.slice(0, 6)}…/${opp.token_out.slice(0, 6)}…`;
-  const legs = (opp.dexes_used?.length ?? (opp.dex_b ? 2 : 1));
-  return {
-    pair,
-    yield:
-      net != null
-        ? `${net >= 0 ? "+" : ""}${(opp.roi_pct ?? 0).toFixed(2)}%`
-        : gross != null
-          ? `${gross >= 0 ? "+" : ""}${(opp.roi_pct ?? 0).toFixed(2)}%`
-          : "—",
-    // AUDIT-2026-08-29 (R8): unscored ≠ 0%. null (A.8 scorer hasn't scored
-    // this opportunity) propagates as null — the card renders "— unscored",
-    // never a fabricated "0% conf".
-    confidence:
-      opp.confidence_score_bps != null
-        ? Math.round(opp.confidence_score_bps / 100)
-        : null,
-    legs,
-    ago: opp.detected_at,
-    route: `${opp.dex_a}${opp.dex_b ? ` → ${opp.dex_b}` : ""}`,
-    fees:
-      opp.roi_pct != null
-        ? `convergence ${opp.roi_pct.toFixed(2)}%`
-        : "—",
-    tlsAmount: "—",
-    simVerdict: opp.sim_classification ?? opp.simulation_status ?? "pendiente",
-    safetyA: 0,
-    safetyB: 0,
-  };
-}
-
 export default async function HomePage() {
   const [{ opportunities, source }, decisionRes] = await Promise.all([
     getHomeData(),
@@ -91,10 +56,9 @@ export default async function HomePage() {
   const nets = opportunities
     .map((o) => o.net_expected_profit_usd ?? o.simulated_net_profit_usd ?? null)
     .filter((v): v is number => v != null);
-  const avgRoi =
-    opportunities.length > 0
-      ? opportunities.reduce((acc, o) => acc + (o.roi_pct ?? 0), 0) / opportunities.length
-      : null;
+  const rois = opportunities.map((opp) => opp.roi_pct)
+    .filter((roi): roi is number => roi != null && Number.isFinite(roi));
+  const avgRoi = rois.length > 0 ? rois.reduce((sum, roi) => sum + roi, 0) / rois.length : null;
   const bestNet = nets.length > 0 ? Math.max(...nets) : null;
 
   return (

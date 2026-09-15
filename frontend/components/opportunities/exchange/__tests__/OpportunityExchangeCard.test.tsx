@@ -99,7 +99,8 @@ describe("OpportunityExchangeCard — SSOT two states", () => {
     const html = renderToStaticMarkup(<OpportunityExchangeCard {...props(makeOpp())} />);
     // atlas_264 model badge splits the old single string into badge words.
     expect(html).toContain("Detección");
-    expect(html).toContain("Sin evaluar");
+    expect(html).toContain("Rechazada");
+    expect(html).not.toContain(">PENDING<");
     expect(html).toContain("cartridge_unmapped_strategy_label:route_graph_engine");
     // model footer wording (Sin evaluación económica no hay Execute…).
     expect(html).toContain("Sin evaluación económica no hay Execute");
@@ -159,7 +160,7 @@ describe("OpportunityExchangeCard — SSOT two states", () => {
     const html = renderToStaticMarkup(<OpportunityExchangeCard {...props(opp)} />);
     // model labels are title-case ("Net Yield") and the button is uppercase.
     expect(html).toContain("Net Yield");
-    expect(html).toContain("EXECUTE");
+    expect(html).toContain("SIMULATE (PAPER SHADOW)");
     expect(html).not.toContain("Detección — sin evaluar");
     // FE-0030 (§29): persisted topology is ROUTE-grade — NO synthetic marker.
     expect(html).not.toContain("SYNTHETIC LEGACY VIEW");
@@ -320,5 +321,93 @@ describe("OpportunityExchangeCard — SSOT two states", () => {
       />,
     );
     expect(clean).not.toContain("QUARANTINED");
+  });
+});
+
+
+describe("rejected estimates must not masquerade as executable LIVE opportunities", () => {
+  it("shows rejection and exact reason even when a profitable estimate exists", () => {
+    const opp=makeOpp({status:"rejected",paper_status:"paper_rejected",rejection_reason:"TokenNotAllowed:unit",
+      net_expected_profit_usd:7.24,route_metadata:null});
+    const html=renderToStaticMarkup(<OpportunityExchangeCard {...props(opp)} />);
+    expect(html).toContain("Rechazada");
+    expect(html).toContain("TokenNotAllowed:unit");
+    expect(html).toContain("STALE"); // fixture is 16s old; do not relax the production TTL
+    expect(html).not.toContain(">Evaluada<");
+    expect(html).not.toContain(">LIVE<");
+    expect(html).toContain("SIMULATE (PAPER SHADOW)");
+    expect(html).not.toContain("⚡ EXECUTE");
+  });
+  it("a lifecycle failure is visible even without a machine rejection reason", () => {
+    const opp=makeOpp({status:"failed",rejection_reason:null,net_expected_profit_usd:0,route_metadata:null});
+    const html=renderToStaticMarkup(<OpportunityExchangeCard {...props(opp)} />);
+    expect(html).toContain("Fallida");expect(html).not.toContain(">Evaluada<");
+  });
+  it("memo invalidates when only paper rejection, semantic evidence or intermediate symbols change", () => {
+    const compare=(OpportunityExchangeCard as unknown as {compare:(a:ReturnType<typeof props>,b:ReturnType<typeof props>)=>boolean}).compare;
+    const previous=props(makeOpp({net_expected_profit_usd:1,route_metadata:null}));
+    for(const patch of [{paper_status:"paper_rejected"},{semantic_violations:["missing_block"]},{leg_symbols:{"0xa":"UNIT"}}]) {
+      expect(compare(previous,{...previous,opp:{...previous.opp,...patch} as OmniOpportunity})).toBe(false);
+    }
+  });
+});
+
+
+describe("freshness is not LIVE execution", () => {
+  it("labels a one-second-old detection as RECIENTE without claiming LIVE", () => {
+    const opp=makeOpp({status:"detected",rejection_reason:null,expected_profit_usd:1,route_metadata:null});
+    const html=renderToStaticMarkup(<OpportunityExchangeCard {...props(opp)} now={Date.parse(opp.detected_at!) + 1000} />);
+    expect(html).toContain("RECIENTE");
+    expect(html).not.toContain(">LIVE<");
+    expect(html).not.toContain(">STALE<");
+  });
+});
+
+
+describe("PR566 review — preserve failed lifecycle over paper rollup rejection", () => {
+  for (const rejection_reason of [null, "sim_timeout", "build_error:unit-only"]) {
+    it(`failed remains Fallida with paper_rejected and reason ${rejection_reason}`, () => {
+      const opp=makeOpp({status:"failed",paper_status:"paper_rejected",rejection_reason,
+        net_expected_profit_usd:0,route_metadata:null});
+      const html=renderToStaticMarkup(<OpportunityExchangeCard {...props(opp)} />);
+      expect(html).toContain(">Fallida<");
+      expect(html).not.toContain(">Rechazada<");
+      expect(html).not.toContain(">Evaluada<");
+    });
+  }
+});
+
+// Review 5193737767: exercise the REAL shell branch, not a zero-valued ledger.
+describe("terminal state survives absent economics on both card faces", () => {
+  for (const status of ["failed", "rejected"] as const) {
+    for (const reason of [null, "build_error:isolated-test"] as const) {
+      it(`${status}, reason=${String(reason)} retains its terminal badge with no economics`, () => {
+        const opp = makeOpp({status, rejection_reason: reason, paper_status: "paper_rejected", route_metadata: null});
+        expect(isUnevaluatedShell(opp)).toBe(true);
+        const html = renderToStaticMarkup(<OpportunityExchangeCard {...props(opp)} />);
+        expect(html).toContain(status === "failed" ? "Fallida" : "Rechazada");
+        expect(html).toContain(`>${status.toUpperCase()}<`);
+        expect(html).not.toContain(">PENDING<");
+        expect(html).not.toContain(">Sin evaluar<");
+        expect(html).not.toContain('class="btn"');
+        expect(html).not.toContain("Gross out (AMM)");
+        if (status === "failed") expect(html).not.toContain("→ REJECTED");
+      });
+    }
+  }
+  it.each([2,3,4,5])("a closed %s-hop cycle is not a degenerate self-swap", (hops) => {
+    const tokens = Array.from({length:hops},(_,i)=>`0x${String(i+1).padStart(40,"0")}`);
+    tokens.push(tokens[0]!);
+    const opp = makeOpp({token_in:tokens[0],token_out:tokens[0],rejection_reason:null,
+      route_metadata:{token_addresses:tokens,pool_addresses:Array.from({length:hops},(_,i)=>`pool-${i}`),dex_adapters:Array(hops).fill("test-v2")}});
+    const html = renderToStaticMarkup(<OpportunityExchangeCard {...props(opp)} />);
+    expect(html).toContain("cierre declarado");
+    expect(html).not.toContain("degenerada");
+    expect(html).toContain(">PENDING<");
+  });
+  it("an actual adjacent self-swap is distinct from equal cycle endpoints", () => {
+    const opp=makeOpp({token_in:"A",token_out:"A",rejection_reason:null,
+      route_metadata:{token_addresses:["A","A","A"],pool_addresses:["p1","p2"],dex_adapters:["v2","v2"]}});
+    expect(renderToStaticMarkup(<OpportunityExchangeCard {...props(opp)} />)).toContain("self-swap");
   });
 });

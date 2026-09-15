@@ -892,3 +892,15 @@ describe("regression: no fake metrics + no secrets", () => {
     }
   });
 });
+
+
+describe("WO-3 exhaustive next action without false PASS", () => {
+  for (const state of ["KILLED","PAUSED","BLOCKED","WARN","UNKNOWN","NOT_AVAILABLE","PASS"] as const) {
+    it(`next_action faithfully describes ${state}`, async () => {
+      const {__forTesting}=await import("./risk-circuit-breakers.js");
+      const action=__forTesting.nextActionForState(state);
+      expect(typeof action).toBe("string");expect(action.length).toBeGreaterThan(10);
+      expect(action.includes("All real breakers PASS")).toBe(state === "PASS");
+    });
+  }
+});

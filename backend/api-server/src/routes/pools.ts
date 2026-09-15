@@ -12,6 +12,7 @@
 
 import { Router, type Request, type Response } from "express";
 import type { Pool } from "pg";
+import { serveLiquidityCatalog } from "./liquidity-catalog.js";
 
 interface Deps {
   pool: Pool | null;
@@ -23,6 +24,11 @@ const UUID_RE = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0
 
 export function mountPools(app: import("express").Express, deps: Deps): void {
   app.get("/api/v1/pools", async (req: Request, res: Response) => {
+    // Additive view: preserve the legacy pool contract and the existing Edge proxy.
+    if (req.query["view"] === "liquidity_catalog") {
+      await serveLiquidityCatalog(req, res, deps);
+      return;
+    }
     if (!deps.pool) {
       res.status(503).json({ error: "db_unavailable", detail: "DATABASE_URL not configured" });
       return;

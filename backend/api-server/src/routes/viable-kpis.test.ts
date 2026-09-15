@@ -3,7 +3,7 @@
  *
  * Pins the hard invariants of GET /api/v1/analytics/viable-kpis:
  *   (a) 503 db_unavailable when the PG pool is null (R8 fail-honest),
- *   (b) by_hops groups over jsonb_array_length(route_metadata->'pool_addresses')
+ *   (b) by_hops groups over jsonb_array_length(route_metadata->'dex_adapters')
  *       for the VIABLE statuses only — verbatim from the shared TS mirror,
  *   (c) viability_pct is null when total = 0 (R8: not computed, never 0%),
  *   (d) a transient query error degrades to 503 query_failed, never a crash,
@@ -48,7 +48,7 @@ describe("GET /api/v1/analytics/viable-kpis (XLS-DASH-01)", () => {
     expect(res.body.reason).toBe("db_unavailable");
   });
 
-  it("serves by_hops from route_metadata pool_addresses and by_kind grouped", async () => {
+  it("serves by_hops from canonical route_metadata hop count and by_kind grouped", async () => {
     const res = await request(buildApp(cannedPool())).get("/api/v1/analytics/viable-kpis?hours=12");
     expect(res.status).toBe(200);
     expect(res.body.ok).toBe(true);

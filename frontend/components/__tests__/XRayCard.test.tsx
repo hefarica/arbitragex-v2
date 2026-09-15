@@ -67,3 +67,13 @@ describe("XRayCard label honesty (AUDIT-2026-08-29)", () => {
     expect(reverted).not.toContain("✓");
   });
 });
+
+
+describe("XRayCard unknown route/safety evidence",()=>{
+  it("renders unknown hops and token safety as absent, not zero or invented legs",()=>{
+    const html=render({confidence:null,simVerdict:"failed",legs:null,safetyA:null,safetyB:null});
+    expect(html).toContain(">—</b> legs");
+    expect(html).toContain("A — · B —");
+    expect(html).not.toContain("✓");
+  });
+});

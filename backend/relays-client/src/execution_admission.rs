@@ -38,7 +38,7 @@ pub async fn refresh(
             "analysis_binding_mismatch"
         );
     }
-    let rpc = OracleRpc::from_env(opp.chain_id)?;
+    let rpc = OracleRpc::from_env(opp.chain_id).await?;
     let head = rpc
         .call("eth_getBlockByNumber", serde_json::json!(["latest", false]))
         .await?;
@@ -78,8 +78,8 @@ pub async fn refresh(
             .ok_or_else(|| anyhow!("head_timestamp_missing"))?,
         16,
     )?;
-    let rpc_url = std::env::var(format!("RPC_HTTP_{}", opp.chain_id))
-        .map_err(|_| anyhow!("execution_rpc_missing"))?;
+    // Oracle reads and the exact EVM replay share the selected provider.
+    let rpc_url = rpc.endpoint().to_owned();
     let mut ctx = original.ctx.clone();
     ctx.caller = caller;
     ctx.deadline = U256::from(
@@ -158,7 +158,7 @@ pub async fn economics(
         .binding
         .as_ref()
         .ok_or_else(|| anyhow!("execution_binding_missing"))?;
-    let rpc = OracleRpc::from_env(opp.chain_id)?;
+    let rpc = OracleRpc::from_env(opp.chain_id).await?;
     let feeds = configured_chain(opp.chain_id)?;
     let asset = feeds
         .assets_usd

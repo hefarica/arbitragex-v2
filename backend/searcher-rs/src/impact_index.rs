@@ -923,6 +923,7 @@ mod tests {
         // exercise the resolve() guard.
         let intent = RouteIntent {
             chain_id: 1,
+            observed_block_number: None,
             tx_hash: H256::zero(),
             router: Address::zero(),
             router_kind: RouterKind::Unknown,

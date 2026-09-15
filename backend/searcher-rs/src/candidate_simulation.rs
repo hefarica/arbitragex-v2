@@ -399,13 +399,9 @@ async fn prepare_inner(
         matches!(opportunity.chain_id, 1 | 11155111),
         "candidate_fee_model_unavailable"
     );
-    let rpc_url = std::env::var(format!("RPC_HTTP_{}", opportunity.chain_id))
-        .map_err(|_| anyhow!("candidate_rpc_missing"))?;
-    let rpc = OracleRpc::from_url(&rpc_url)?;
-    ensure!(
-        quantity_u64(&rpc.call("eth_chainId", json!([])).await?)? == opportunity.chain_id,
-        "candidate_rpc_chain_mismatch"
-    );
+    let rpc = OracleRpc::from_env(opportunity.chain_id).await?;
+    // Reuse the selected, chain-checked HTTP endpoint, never the original CSV.
+    let rpc_url = rpc.endpoint().to_owned();
     let requested = opportunity
         .block_number
         .map(|b| format!("0x{b:x}"))
@@ -683,6 +679,28 @@ mod tests {
             U256::from(1_800_000_000u64),
         )
     }
+    #[test]
+    fn two_through_five_hops_keep_every_swap_in_the_execution_context() {
+        for hops in 2..=5 {
+            for split in 1..hops {
+                let mut adapters = vec!["UniswapV2"; split];
+                adapters.extend(vec!["SushiSwap"; hops - split]);
+                let (o, r, p) = fixtures(&adapters);
+                let ctx = build(&o, &r, &p).unwrap();
+                assert_eq!(ctx.forward_path.len() - 1, split);
+                assert_eq!(ctx.backward_path.len() - 1, hops - split);
+                let rebuilt: Vec<_> = ctx
+                    .forward_path
+                    .iter()
+                    .chain(ctx.backward_path.iter().skip(1))
+                    .map(|token| format!("{token:#x}"))
+                    .collect();
+                assert_eq!(rebuilt, r.token_addresses);
+                assert_eq!(ctx.amount_in, U256::from_dec_str(&o.amount_in_wei).unwrap());
+            }
+        }
+    }
+
     #[test]
     fn exact_principal_above_two_to_200_survives() {
         let (mut o, r, p) = fixtures(&["UniswapV2", "SushiSwap"]);
