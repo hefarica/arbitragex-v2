@@ -104,6 +104,19 @@ jobs:
             "export DEPLOY_PATH=$(printf %q "$REMOTE_PATH"); export TARGET_SHA=$(printf %q "$TARGET_SHA"); export DEPLOY_RUN_ID=$(printf %q "$DEPLOY_RUN_ID"); bash -s" <<'EOF'
           set -euo pipefail
 
+          # EX-01: EOF or an early exit 0 is not a completed deployment.
+          DEPLOY_POSTCHECK_COMPLETE=0
+          deploy_completion_guard() {
+            local rc="${1:-$?}"
+            trap - EXIT
+            if [ "$rc" -eq 0 ] && [ "$DEPLOY_POSTCHECK_COMPLETE" != "1" ]; then
+              echo "::error::Deploy stopped before mandatory final verification"
+              rc=1
+            fi
+            exit "$rc"
+          }
+          trap deploy_completion_guard EXIT
+
           echo "[0/9] Entering deploy path: ${DEPLOY_PATH}"
           if [ ! -d "$DEPLOY_PATH" ]; then
             echo "ERROR: DEPLOY_PATH does not exist: $DEPLOY_PATH"
@@ -290,7 +303,7 @@ jobs:
             else
               echo "Stack is UP (api-server running) — no restore needed."
             fi
-            return $rc
+            deploy_completion_guard "$rc"
           }
           trap deploy_self_heal EXIT
 
@@ -370,15 +383,14 @@ jobs:
           echo
           curl -sf http://127.0.0.1:8787/health | head -c 400 || true
           echo
-          # R7 traceability: confirm the data hot-path is producing (searcher → redis).
-          # Empty stream is honest while RPC is absent; non-empty = pipeline alive.
+          # R7 inventory snapshot only; non-empty does not prove forward progress.
+          # -T disables TTY, not stdin. Protect the remaining SSH bash -s program.
           echo "hot-path trace (arbx:opps:detected XLEN):"
-          docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" exec -T redis \
-            redis-cli XLEN arbx:opps:detected 2>/dev/null || echo "redis stream not yet available"
+          docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" exec -T --interactive=false redis \
+            redis-cli XLEN arbx:opps:detected </dev/null 2>/dev/null || echo "redis stream not yet available"
           echo "[9/9b] G4 DEPLOY-VERAZ assertion (post-deploy truth)..."
-          # The deploy is only TRUE if the repo STILL sits at TARGET_SHA and the
-          # frontend serves the new build. A green workflow with a stale box is
-          # the incident this closes (2026-08-18: VPS 2 deploys behind on green).
+          # Verify checkout identity, served API marker and document availability.
+          # This does not attest image contents, persistence or EVM execution.
           POST_HEAD="$(git rev-parse HEAD)"
           if [ "$POST_HEAD" != "$TARGET_SHA" ]; then
             echo "::error::POST-DEPLOY DRIFT: HEAD=${POST_HEAD} != TARGET=${TARGET_SHA}"
@@ -388,7 +400,14 @@ jobs:
             echo "::error::frontend NOT serving /opportunities/exchange after deploy"
             exit 1
           fi
-          echo "G4 PASS: box anchored at ${TARGET_SHA:0:8} + frontend serving the new build"
+          # A document HTTP 200 is not proof of the API's served revision.
+          # Keep the whole body within the curl timeout; pipefail propagates HTTP errors.
+          curl --fail --silent --show-error --connect-timeout 5 --max-time 15 \
+            http://127.0.0.1:8080/status | \
+            python3 scripts/ci/verify_deploy_identity.py --sha "$TARGET_SHA" \
+              --run-id "$DEPLOY_RUN_ID" --deployed-at "$ARBX_DEPLOYED_AT"
+          echo "G4 PASS: checkout and served API identity match $TARGET_SHA; frontend document reachable"
+          DEPLOY_POSTCHECK_COMPLETE=1
           echo "✅ Deploy completed at $(git rev-parse --short HEAD)"
           EOF
 
