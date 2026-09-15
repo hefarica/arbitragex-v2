@@ -230,6 +230,33 @@ fn protocol_type_str(pt: ProtocolType) -> &'static str {
     }
 }
 
+/// Protocol-aware cartridge boundary. RouteIntent V3 fees are raw pips;
+/// `fee_bps` is retained in actual basis points for legacy cartridges.
+fn insert_cartridge_fee_fields(map: &mut rhai::Map, leg: &crate::route_intent::RouteIntentLeg) {
+    use rhai::Dynamic;
+    let Some(fee) = leg.fee_bps else {
+        return;
+    };
+    if leg.protocol_type == ProtocolType::V3 {
+        if fee >= 1_000_000 {
+            map.insert(
+                "fee_error".into(),
+                Dynamic::from("v3_fee_out_of_range".to_string()),
+            );
+            return;
+        }
+        map.insert("fee_pips".into(), Dynamic::from(fee as i64));
+        let bps = if fee % 100 == 0 {
+            Dynamic::from((fee / 100) as i64)
+        } else {
+            Dynamic::from(f64::from(fee) / 100.0)
+        };
+        map.insert("fee_bps".into(), bps);
+    } else {
+        map.insert("fee_bps".into(), Dynamic::from(fee as i64));
+    }
+}
+
 /// Builds the `pool_data` Rhai `Map` passed to a cartridge's `evaluate_opportunity`.
 ///
 /// Pure function (no I/O), built from the first leg of the route intent plus the
@@ -263,9 +290,7 @@ pub fn build_cartridge_pool_data(
             "protocol_type".into(),
             Dynamic::from(protocol_type_str(leg.protocol_type).to_string()),
         );
-        if let Some(fee) = leg.fee_bps {
-            m.insert("fee_bps".into(), Dynamic::from(fee as i64));
-        }
+        insert_cartridge_fee_fields(&mut m, leg);
         let pool = leg
             .pool_hint
             .map(|p| format!("{:#x}", p))
@@ -299,9 +324,7 @@ pub fn build_cartridge_pool_data(
             "protocol_type".into(),
             Dynamic::from(protocol_type_str(leg.protocol_type).to_string()),
         );
-        if let Some(fee) = leg.fee_bps {
-            lm.insert("fee_bps".into(), Dynamic::from(fee as i64));
-        }
+        insert_cartridge_fee_fields(&mut lm, leg);
         route_arr.push(Dynamic::from(lm));
     }
     m.insert("route".into(), Dynamic::from(route_arr));
@@ -2367,5 +2390,76 @@ mod tests {
         assert_eq!(invariant_of("Balancer"), "weighted");
         assert_eq!(invariant_of("V2"), "constant_product");
         assert_eq!(invariant_of("Mystery"), "unknown");
+    }
+    #[test]
+    fn v3_review_cartridge_fee_fields_are_protocol_aware() {
+        for raw in [0u32, 1, 100, 150, 500, 3000, 10000, 999999] {
+            let mut intent = three_leg_intent();
+            intent.legs[0].fee_bps = Some(raw);
+            let map = build_cartridge_pool_data(&intent, None);
+            assert_eq!(map["fee_pips"].as_int().unwrap(), i64::from(raw));
+            if raw % 100 == 0 {
+                assert_eq!(map["fee_bps"].as_int().unwrap(), i64::from(raw / 100));
+            } else {
+                assert_eq!(map["fee_bps"].as_float().unwrap(), f64::from(raw) / 100.0);
+            }
+            let route = map["route"].clone().into_array().unwrap();
+            let v3 = route[0].clone().cast::<rhai::Map>();
+            let v2 = route[2].clone().cast::<rhai::Map>();
+            assert_eq!(v3["fee_pips"].as_int().unwrap(), i64::from(raw));
+            assert_eq!(v2["fee_bps"].as_int().unwrap(), 30);
+            assert!(!v2.contains_key("fee_pips"));
+        }
+    }
+
+    #[test]
+    fn v3_review_missing_or_invalid_fee_is_not_fabricated() {
+        for fee in [None, Some(1_000_000), Some(u32::MAX)] {
+            let mut intent = three_leg_intent();
+            intent.legs[0].fee_bps = fee;
+            let map = build_cartridge_pool_data(&intent, None);
+            assert!(!map.contains_key("fee_bps"));
+            assert!(!map.contains_key("fee_pips"));
+        }
+    }
+
+    #[test]
+    fn v3_review_graph_fee_reaches_real_rhai_math_without_double_conversion() {
+        use ethers::types::U256;
+        let sqrt = (U256::one() << 96).to_string();
+        let liquidity = U256::exp10(24).to_string();
+        let amount = U256::exp10(12).to_string();
+        for raw in [0u32, 1, 100, 150, 500, 3000, 10000, 999999] {
+            let mut intent = three_leg_intent();
+            intent.legs[0].fee_bps = Some(raw);
+            let map = build_cartridge_pool_data(&intent, None);
+            let mut engine = rhai::Engine::new();
+            crate::cartridge::host_bindings::register_v3_amount_out_bindings(&mut engine);
+            for direction in [true, false] {
+                let expected = crate::amm_math::v3_amount_out_single_tick(
+                    U256::exp10(12),
+                    U256::one() << 96,
+                    U256::exp10(24),
+                    raw,
+                    direction,
+                )
+                .to_string();
+                let mut scope = rhai::Scope::new();
+                scope.push("pd", map.clone());
+                scope.push("amount", amount.clone());
+                scope.push("sqrt", sqrt.clone());
+                scope.push("liquidity", liquidity.clone());
+                scope.push("direction", direction);
+                for script in [
+                    "v3_amount_out_single_tick_pips(amount,sqrt,liquidity,pd.fee_pips,direction)",
+                    "v3_amount_out_single_tick(amount,sqrt,liquidity,pd.fee_bps,direction)",
+                ] {
+                    let result = engine
+                        .eval_with_scope::<String>(&mut scope, script)
+                        .unwrap();
+                    assert_eq!(result, expected, "raw={raw}, script={script}");
+                }
+            }
+        }
     }
 }

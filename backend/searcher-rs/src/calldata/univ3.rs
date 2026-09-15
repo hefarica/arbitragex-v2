@@ -13,7 +13,7 @@
 //! and `protocol_type`.
 //!
 //! For `exactInputSingle` / `exactOutputSingle`:
-//!   `path_tokens = [tokenIn, tokenOut]`, `path_fees_bps = [fee / 100]`.
+//!   `path_tokens = [tokenIn, tokenOut]`, `path_fees_bps = [fee]` (legacy name, exact raw pips).
 //!
 //! For `exactInput` / `exactOutput`:
 //!   parsed from the packed path bytes using `calldata::parse_v3_path_bytes_with_fees`.
@@ -98,7 +98,7 @@ fn decode_exact_input_single(
         .ok_or(DecodeFailReason::AbiDecodeError)?;
 
     // fee_raw is in V3 units (e.g. 3000 = 0.3%) → convert to basis points (/100).
-    let fee_bps = fee_raw / 100;
+    let fee_bps = fee_raw;
 
     Ok(DecodedSwap {
         router: "uniswap-v3",
@@ -251,7 +251,7 @@ fn decode_exact_output_single(
         .and_then(|t| t.clone().into_uint())
         .ok_or(DecodeFailReason::AbiDecodeError)?;
 
-    let fee_bps = fee_raw / 100;
+    let fee_bps = fee_raw;
 
     Ok(DecodedSwap {
         router: "uniswap-v3",
@@ -410,7 +410,7 @@ mod tests {
         let decoded = decode([0x41, 0x4b, 0xf3, 0x89], &body).unwrap();
 
         assert_eq!(decoded.path_tokens, vec![tin, tout]);
-        assert_eq!(decoded.path_fees_bps, vec![5]); // 500 / 100 = 5 bps
+        assert_eq!(decoded.path_fees_bps, vec![500]); // Exact calldata pips
         assert_eq!(decoded.exact_mode, SwapExactMode::ExactIn);
         assert_eq!(decoded.protocol_type, ProtocolType::V3);
     }
@@ -422,7 +422,7 @@ mod tests {
         let body = v3_exact_input_single_body(tin, tout, 3000, 2_000);
         let decoded = decode([0x41, 0x4b, 0xf3, 0x89], &body).unwrap();
 
-        assert_eq!(decoded.path_fees_bps, vec![30]);
+        assert_eq!(decoded.path_fees_bps, vec![3000]);
     }
 
     #[test]
@@ -432,7 +432,7 @@ mod tests {
         let body = v3_exact_input_single_body(tin, tout, 10000, 3_000);
         let decoded = decode([0x41, 0x4b, 0xf3, 0x89], &body).unwrap();
 
-        assert_eq!(decoded.path_fees_bps, vec![100]);
+        assert_eq!(decoded.path_fees_bps, vec![10000]);
     }
 
     // ── exactInput multi-hop: path_tokens + path_fees_bps in order ──────────
@@ -453,7 +453,7 @@ mod tests {
         let decoded = decode([0xc0, 0x4b, 0x8d, 0x59], &body).unwrap();
 
         assert_eq!(decoded.path_tokens, vec![ta, tb, tc]);
-        assert_eq!(decoded.path_fees_bps, vec![30, 5]); // 3000/100=30, 500/100=5
+        assert_eq!(decoded.path_fees_bps, vec![3000, 500]); // Exact pips in execution order
         assert_eq!(decoded.exact_mode, SwapExactMode::ExactIn);
         assert_eq!(decoded.protocol_type, ProtocolType::V3);
     }
@@ -477,7 +477,7 @@ mod tests {
         let decoded = decode([0xdb, 0x3e, 0x21, 0x98], &body).unwrap();
 
         assert_eq!(decoded.path_tokens, vec![tin, tout]);
-        assert_eq!(decoded.path_fees_bps, vec![30]);
+        assert_eq!(decoded.path_fees_bps, vec![3000]);
         assert_eq!(decoded.exact_mode, SwapExactMode::ExactOut);
         assert_eq!(decoded.protocol_type, ProtocolType::V3);
     }
@@ -505,7 +505,7 @@ mod tests {
         // After reversal: execution order [A, B, C]
         assert_eq!(decoded.path_tokens, vec![ta, tb, tc]);
         // Fees also reversed: original [500, 3000] → reversed to hops A→B (3000) and B→C (500)
-        assert_eq!(decoded.path_fees_bps, vec![30, 5]);
+        assert_eq!(decoded.path_fees_bps, vec![3000, 500]);
         assert_eq!(decoded.exact_mode, SwapExactMode::ExactOut);
         assert_eq!(decoded.token_in, ta);
         assert_eq!(decoded.token_out, tc);

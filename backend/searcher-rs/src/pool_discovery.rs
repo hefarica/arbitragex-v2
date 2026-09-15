@@ -19,6 +19,9 @@ use crate::impact_index::{ImpactIndex, PoolRef};
 use crate::route_intent::{DetectionSource, RouteIntent};
 use shared_rs::rpc_failover::HttpRpcPool;
 
+pub(crate) mod v3_fee;
+use v3_fee::V3FeePips;
+
 sol! {
     #[derive(Debug)]
     interface IUniswapV2Factory {
@@ -311,6 +314,7 @@ impl PoolDiscoveryService {
             }
 
             if !discovered_pools.is_empty() {
+                let mut resolved_pool = None;
                 for (f_id, pool_addr, proto, dex_name, fee_raw) in discovered_pools {
                     let e_pool = Address::from_slice(pool_addr.as_slice());
                     let fee_bps = fee_raw.map(|f| match proto {
@@ -327,18 +331,10 @@ impl PoolDiscoveryService {
                         chain_id,
                         pool_addr = ?e_pool,
                         protocol = ?proto,
-                        "status" = "inserted",
+                        "status" = "found_unhydrated",
                         "Discovered real on-chain pool"
                     );
 
-                    self.record_observation(
-                        leg.token_in,
-                        leg.token_out,
-                        intent.router,
-                        intent.source_event,
-                        Some(e_pool),
-                    )
-                    .await;
                     if let Ok(pool_ref) = self
                         .hydrate_and_persist_pool(
                             rpc.clone(),
@@ -357,12 +353,23 @@ impl PoolDiscoveryService {
                         let mut idx = self.impact_index.write().await;
                         idx.add_pool(pool_ref);
                         drop(idx);
+                        resolved_pool = Some(e_pool);
                         info!(event = "pool_discovery.impact_index_refreshed");
                         discovered_any = true;
                     } else {
                         warn!("pool_discovery.hydration_failed");
                     }
                 }
+                // A factory lookup is only a discovery, not successful hydration.
+                // Failed siblings must not overwrite a successful resolution.
+                self.record_observation(
+                    leg.token_in,
+                    leg.token_out,
+                    intent.router,
+                    intent.source_event,
+                    resolved_pool,
+                )
+                .await;
             } else {
                 warn!(
                     event = "pool_discovery.failed",
@@ -434,7 +441,7 @@ impl PoolDiscoveryService {
         factory_id: Uuid,
         proto: crate::route_intent::ProtocolType,
         dex_name: &str,
-        fee_bps: Option<u32>,
+        fee_hint_bps: Option<u32>,
         intent_t_a: alloy::primitives::Address,
         intent_t_b: alloy::primitives::Address,
         is_active: bool,
@@ -486,6 +493,20 @@ impl PoolDiscoveryService {
             anyhow::bail!("token_pair_mismatch");
         }
 
+        // V3 discovery sources normalize fees to bps, but PG fee_tier and the
+        // legacy pool_index_v3/PoolRef fee_bps fields are consumed as raw pips
+        // by QuoterV2. Resolve the immutable fee ON-CHAIN before ANY writes;
+        // neither a source hint nor a magnitude heuristic can repair this.
+        let verified_v3_fee = if matches!(proto, crate::route_intent::ProtocolType::V3) {
+            Some(self.read_pool_v3_fee(&rpc, pool_addr).await?)
+        } else {
+            None
+        };
+        let fee_tier = match verified_v3_fee {
+            Some(fee) => Some(fee.get()),
+            None => fee_hint_bps, // V2 keeps its existing basis-point contract.
+        };
+
         // Extract metadata for token0
         let (sym0, dec0) = match self
             .fetch_token_meta(
@@ -533,7 +554,7 @@ impl PoolDiscoveryService {
             factory_id,
             token0_id,
             token1_id,
-            fee_bps,
+            fee_tier,
             is_active,
             enum_source,
         )
@@ -755,44 +776,56 @@ impl PoolDiscoveryService {
                 }
             }
             crate::route_intent::ProtocolType::V3 => {
-                let key = format!(
-                    "arbx:pool_index_v3:{}:{}:{}",
+                // Symbol order must match reserves::key_pool_index_v3, the reader.
+                let key = crate::reserves::key_pool_index_v3(
                     self.chain_id,
-                    sym0.to_lowercase(),
-                    sym1.to_lowercase()
+                    &sym0.to_lowercase(),
+                    &sym1.to_lowercase(),
                 );
-                let raw_val: Option<String> = redis::cmd("GET")
-                    .arg(&key)
-                    .query_async(&mut redis_conn)
-                    .await
-                    .unwrap_or(None);
-
-                #[derive(serde::Serialize, serde::Deserialize, PartialEq)]
-                struct V3PoolInfo {
-                    address: String,
-                    fee_bps: u32,
-                }
-
-                let mut list: Vec<V3PoolInfo> = raw_val
-                    .and_then(|v| serde_json::from_str(&v).ok())
-                    .unwrap_or_default();
-                let addr_str = format!("0x{:x}", e_pool);
-                let fee = fee_bps.unwrap_or(30);
-
-                if !list.iter().any(|p| p.address == addr_str) {
-                    list.push(V3PoolInfo {
-                        address: addr_str,
-                        fee_bps: fee,
-                    });
-                    if let Ok(json) = serde_json::to_string(&list) {
-                        let _ = redis::cmd("SET")
-                            .arg(&key)
-                            .arg(&json)
-                            .query_async::<_, ()>(&mut redis_conn)
-                            .await;
-                        info!(event="pool_discovery.redis_v3_index_updated", key=?key);
-                    }
-                }
+                let fee =
+                    verified_v3_fee.ok_or_else(|| anyhow::anyhow!("v3_fee_observation_missing"))?;
+                let read_conn = self.redis.clone();
+                let write_conn = self.redis.clone();
+                let attempts = v3_fee::publish_v3_index(
+                    &format!("{e_pool:#x}"),
+                    fee,
+                    || {
+                        let mut conn = read_conn.clone();
+                        let key = key.clone();
+                        async move {
+                            redis::cmd("GET")
+                                .arg(key)
+                                .query_async(&mut conn)
+                                .await
+                                .map_err(|_| "redis_v3_index_read_failed")
+                        }
+                    },
+                    |previous, replacement| {
+                        let mut conn = write_conn.clone();
+                        let key = key.clone();
+                        async move {
+                            let written: i64 = redis::cmd("EVAL")
+                                .arg(v3_fee::INDEX_COMPARE_AND_SET)
+                                .arg(1)
+                                .arg(key)
+                                .arg(if previous.is_some() { "1" } else { "0" })
+                                .arg(previous.as_deref().unwrap_or(""))
+                                .arg(replacement)
+                                .query_async(&mut conn)
+                                .await
+                                .map_err(|_| "redis_v3_index_write_failed")?;
+                            match written {
+                                0 => Ok(false),
+                                1 => Ok(true),
+                                _ => Err("redis_v3_index_cas_invalid_result"),
+                            }
+                        }
+                    },
+                )
+                .await
+                .map_err(anyhow::Error::msg)?;
+                info!(event = "pool_discovery.redis_v3_index_updated", pool = %e_pool,
+                      fee_pips = fee.get(), attempts);
             }
             _ => {}
         }
@@ -802,10 +835,33 @@ impl PoolDiscoveryService {
             address: e_pool,
             token0: std::cmp::min(e_t0, e_t1),
             token1: std::cmp::max(e_t0, e_t1),
-            fee_bps,
+            // Legacy field name, raw pips for V3 (same as PG/Redis/quoter).
+            fee_bps: fee_tier,
             dex_name: dex_name.to_string(),
             protocol_type: proto,
         })
+    }
+
+    /// The pool's immutable fee is authoritative, including custom fee tiers.
+    /// An empty/invalid ABI response never becomes a source-hint fallback.
+    async fn read_pool_v3_fee(
+        &self,
+        rpc: &Arc<HttpRpcPool>,
+        pool_addr: alloy::primitives::Address,
+    ) -> anyhow::Result<V3FeePips> {
+        rpc.with_retry(|provider| async move {
+            use alloy::rpc::types::TransactionRequest;
+            use alloy_sol_types::SolCall;
+            let req = TransactionRequest::default()
+                .to(pool_addr)
+                .input(IUniswapV3Pool::feeCall {}.abi_encode().into());
+            // Preserve the provider error inside with_retry: its 429/transport
+            // classifier needs the real error. Sanitize only the final boundary.
+            let response = provider.call(req).await?;
+            V3FeePips::from_abi_word(response.as_ref()).map_err(anyhow::Error::msg)
+        })
+        .await
+        .map_err(|_| anyhow::anyhow!("v3_fee_observation_failed"))
     }
 
     async fn fetch_token_meta(
@@ -914,7 +970,7 @@ impl PoolDiscoveryService {
         factory_id: Uuid,
         token0_id: Uuid,
         token1_id: Uuid,
-        fee_bps: Option<u32>,
+        fee_tier: Option<u32>,
         is_active: bool,
         enum_source: &str,
     ) -> anyhow::Result<()> {
@@ -948,7 +1004,7 @@ impl PoolDiscoveryService {
             .bind(factory_id)
             .bind(token0_id)
             .bind(token1_id)
-            .bind(fee_bps.map(|f| f as i32))
+            .bind(fee_tier.map(|f| f as i32))
             .bind(is_active)
             .bind(enum_source)
             .execute(db)

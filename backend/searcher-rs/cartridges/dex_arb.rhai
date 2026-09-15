@@ -100,7 +100,7 @@ fn evaluate_opportunity(pool_data) {
         // Telemetría shadow REAL → arbx:cartridge:telemetry (log_quantum) → api-server WS → UI.
         // El sizing V3 (amount_out vía QuoterV2 / liquidez por tick) es la siguiente capa.
         log_quantum("info", `v3_source_priced cartridge=dex_arb chain=${chain_id} source_pool=${source_pool} sqrt_price_x96=${slot0.sqrt_price_x96} liquidity=${slot0.liquidity} source_price=${source_price} mode=shadow`);
-        if pool_data.fee_bps == () {
+        if pool_data.fee_pips == () {
             return #{
                 is_opportunity: false,
                 estimated_profit: 0.0,
@@ -126,7 +126,7 @@ fn evaluate_opportunity(pool_data) {
         }
         // hex address order = token0 is the smaller address (Uniswap convention)
         let zero_for_one = token_in < token_out;
-        let est_out = v3_amount_out_single_tick(amount_in_str, slot0.sqrt_price_x96, slot0.liquidity, pool_data.fee_bps, zero_for_one);
+        let est_out = v3_amount_out_single_tick_pips(amount_in_str, slot0.sqrt_price_x96, slot0.liquidity, pool_data.fee_pips, zero_for_one);
         if est_out == () {
             return #{
                 is_opportunity: false,
@@ -241,7 +241,7 @@ fn evaluate_opportunity(pool_data) {
             // returns either () (uncomputable) or #{ net_usd, final_in, direction }. Extracted to a
             // helper to keep evaluate_opportunity's expression-nesting under the Rhai depth limit.
             let rt = v3_roundtrip_for_alt(alt_pool, source_pool, token_in, token_out,
-                amount_in_str, amount_in_f, slot0, pool_data.fee_bps,
+                amount_in_str, amount_in_f, slot0, pool_data.fee_pips,
                 zfo_in_to_out, zfo_out_to_in, v2_fee_bps, price_in_usd, gas_usd,
                 decimals_in, block_number);
             if rt == () {
@@ -624,7 +624,7 @@ fn calculate_amount_out_v2(amount_in_str, r0_str, r1_str) {
 /// Math is per-protocol-partitioned: V3 source leg -> v3_amount_out_single_tick (slot0),
 /// V2 alt leg -> v2_amount_out_str (reserves). gross_profit_wei = final_in - amount_in.
 fn v3_roundtrip_for_alt(alt_pool, source_pool, token_in, token_out, amount_in_str, amount_in_f,
-    slot0, v3_fee_bps, zfo_in_to_out, zfo_out_to_in, v2_fee_bps, price_in_usd, gas_usd,
+    slot0, v3_fee_pips, zfo_in_to_out, zfo_out_to_in, v2_fee_bps, price_in_usd, gas_usd,
     decimals_in, block_number) {
 
     let alt_res = get_reserves(alt_pool);
@@ -652,7 +652,7 @@ fn v3_roundtrip_for_alt(alt_pool, source_pool, token_in, token_out, amount_in_st
     let best = ();
 
     // Direction A: leg1 = V3 source (in->out), leg2 = V2 alt (out->in).
-    let a_leg1 = v3_amount_out_single_tick(amount_in_str, slot0.sqrt_price_x96, slot0.liquidity, v3_fee_bps, zfo_in_to_out);
+    let a_leg1 = v3_amount_out_single_tick_pips(amount_in_str, slot0.sqrt_price_x96, slot0.liquidity, v3_fee_pips, zfo_in_to_out);
     if a_leg1 != () {
         let a_leg2 = v2_amount_out_str(a_leg1, rin_oi, rout_oi, v2_fee_bps);
         if a_leg2 != () {
@@ -664,7 +664,7 @@ fn v3_roundtrip_for_alt(alt_pool, source_pool, token_in, token_out, amount_in_st
     // Direction B: leg1 = V2 alt (in->out), leg2 = V3 source (out->in).
     let b_leg1 = v2_amount_out_str(amount_in_str, rin_io, rout_io, v2_fee_bps);
     if b_leg1 != () {
-        let b_leg2 = v3_amount_out_single_tick(b_leg1, slot0.sqrt_price_x96, slot0.liquidity, v3_fee_bps, zfo_out_to_in);
+        let b_leg2 = v3_amount_out_single_tick_pips(b_leg1, slot0.sqrt_price_x96, slot0.liquidity, v3_fee_pips, zfo_out_to_in);
         if b_leg2 != () {
             let net_usd = (from_wei(b_leg2, decimals_in) - amount_in_f) * price_in_usd - gas_usd;
             if best == () || net_usd > best.net_usd {

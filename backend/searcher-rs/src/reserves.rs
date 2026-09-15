@@ -75,13 +75,8 @@ pub struct UniverseToken {
 /// Unlike V2 (which only needs an address; reserves are fetched separately),
 /// V3 quoting goes through the on-chain QuoterV2 and the fee tier is part
 /// of the call signature, so it must travel with the address.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub struct V3PoolInfo {
-    /// Pool address, lowercase hex with 0x prefix.
-    pub pool_addr: String,
-    /// V3 fee tier in basis points: 100 (0.01%), 500 (0.05%), 3000 (0.30%), 10000 (1.00%).
-    pub fee_bps: u32,
-}
+mod v3_pool_info;
+pub use v3_pool_info::V3PoolInfo;
 
 pub fn key_pool_reserves(chain_id: u64, pool_addr_lower: &str) -> String {
     format!("arbx:pool_reserves:{}:{}", chain_id, pool_addr_lower)
@@ -227,6 +222,8 @@ pub async fn get_pools_for_pair(
         .unwrap_or_default())
 }
 
+/// Add a PG bootstrap snapshot through the shared V3 compare-and-set protocol.
+/// A snapshot does not supersede cache entries already published by hydration.
 pub async fn set_pool_index_v3(
     redis: &mut ConnectionManager,
     chain_id: u64,
@@ -234,12 +231,47 @@ pub async fn set_pool_index_v3(
     sym_b: &str,
     pools: &[V3PoolInfo],
 ) -> redis::RedisResult<()> {
-    let json = serde_json::to_string(pools).map_err(|e| {
-        redis::RedisError::from((redis::ErrorKind::TypeError, "serde", e.to_string()))
-    })?;
-    let _: () = redis
-        .set(key_pool_index_v3(chain_id, sym_a, sym_b), json)
-        .await?;
+    use crate::pool_discovery::v3_fee::{publish_v3_bootstrap, INDEX_COMPARE_AND_SET};
+    let key = key_pool_index_v3(chain_id, sym_a, sym_b);
+    let read_conn = redis.clone();
+    let write_conn = redis.clone();
+    publish_v3_bootstrap(
+        pools,
+        || {
+            let mut conn = read_conn.clone();
+            let key = key.clone();
+            async move {
+                redis::cmd("GET")
+                    .arg(key)
+                    .query_async(&mut conn)
+                    .await
+                    .map_err(|_| "redis_v3_index_read_failed")
+            }
+        },
+        |previous, replacement| {
+            let mut conn = write_conn.clone();
+            let key = key.clone();
+            async move {
+                let written: i64 = redis::cmd("EVAL")
+                    .arg(INDEX_COMPARE_AND_SET)
+                    .arg(1)
+                    .arg(key)
+                    .arg(if previous.is_some() { "1" } else { "0" })
+                    .arg(previous.as_deref().unwrap_or(""))
+                    .arg(replacement)
+                    .query_async(&mut conn)
+                    .await
+                    .map_err(|_| "redis_v3_index_write_failed")?;
+                match written {
+                    0 => Ok(false),
+                    1 => Ok(true),
+                    _ => Err("redis_v3_index_cas_invalid_result"),
+                }
+            }
+        },
+    )
+    .await
+    .map_err(|reason| redis::RedisError::from((redis::ErrorKind::TypeError, reason)))?;
     Ok(())
 }
 

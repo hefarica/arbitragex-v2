@@ -94,6 +94,7 @@ pub struct PoolRef {
     pub protocol_type: ProtocolType,
     pub token0: Address,
     pub token1: Address,
+    /// Legacy field name: basis points for V2, raw fee() pips for V3.
     pub fee_bps: Option<u32>,
 }
 
@@ -350,13 +351,30 @@ impl ImpactIndex {
     // Incremental update
     // -----------------------------------------------------------------------
 
-    /// Adds a single pool to the index, updating both `token_pair_to_pools`
-    /// and (when applicable) `pool_to_cycles`.
+    /// Inserts or replaces a pool by (chain, address) within its immutable token pair.
+    /// Existing cycle associations and other pool references remain unchanged.
     ///
     /// Called by `pool_sync_worker` when it discovers a new pool on-chain.
     pub fn add_pool(&mut self, pool: PoolRef) {
         let key = TokenPairKey::canonical(pool.token0, pool.token1);
-        self.token_pair_to_pools.entry(key).or_default().push(pool);
+        let pools = self.token_pair_to_pools.entry(key).or_default();
+        // Rehydration replaces this physical pool, never adds another venue.
+        // Deduplicate legacy copies while preserving pair order and other chains.
+        let mut found = false;
+        pools.retain_mut(|existing| {
+            if existing.chain_id != pool.chain_id || existing.address != pool.address {
+                return true;
+            }
+            if found {
+                return false;
+            }
+            *existing = pool.clone();
+            found = true;
+            true
+        });
+        if !found {
+            pools.push(pool);
+        }
     }
 
     /// Checks if the index has any pools for the given pair key.
@@ -1364,5 +1382,52 @@ mod tests {
         let parsed = parse_csv_addresses(&csv_addrs(&[1, 2]));
         assert_eq!(parsed, Some(vec![addr(1), addr(2)]));
         assert!(parse_csv_addresses("0xnothex,0x22").is_none());
+    }
+    #[test]
+    fn v3_review_rehydration_replaces_pool_fee_not_venue() {
+        let mut idx = ImpactIndex::empty();
+        let mut pool = make_pool(1, addr(100), addr(1), addr(2));
+        pool.protocol_type = ProtocolType::V3;
+        idx.add_pool(pool.clone());
+        idx.add_pool(make_pool(1, addr(101), addr(2), addr(1)));
+        pool.fee_bps = Some(3000);
+        idx.add_pool(pool);
+        let key = TokenPairKey::canonical(addr(1), addr(2));
+        assert_eq!(idx.pool_count_for_pair(key), 2);
+        assert_eq!(idx.token_pair_to_pools[&key][0].fee_bps, Some(3000));
+        assert_eq!(idx.token_pair_to_pools[&key][1].address, addr(101));
+    }
+
+    #[test]
+    fn v3_review_rehydration_removes_legacy_duplicates() {
+        let mut idx = ImpactIndex::empty();
+        let mut pool = make_pool(1, addr(100), addr(1), addr(2));
+        let key = TokenPairKey::canonical(addr(1), addr(2));
+        idx.token_pair_to_pools
+            .insert(key, vec![pool.clone(), pool.clone()]);
+        idx.seed_cycles_from_mvp(&[MvpCycleSeed {
+            cycle_id: 9,
+            pool_address: pool.address,
+        }]);
+        pool.fee_bps = Some(10000);
+        idx.add_pool(pool);
+        assert_eq!(idx.pool_count_for_pair(key), 1);
+        assert_eq!(idx.token_pair_to_pools[&key][0].fee_bps, Some(10000));
+        assert_eq!(idx.pool_to_cycles[&addr(100)], vec![9]);
+    }
+
+    #[test]
+    fn v3_review_same_address_on_another_chain_is_preserved() {
+        let mut idx = ImpactIndex::empty();
+        let mut pool = make_pool(1, addr(100), addr(1), addr(2));
+        idx.add_pool(pool.clone());
+        pool.chain_id = 10;
+        idx.add_pool(pool.clone());
+        pool.fee_bps = Some(500);
+        idx.add_pool(pool);
+        let key = TokenPairKey::canonical(addr(1), addr(2));
+        assert_eq!(idx.pool_count_for_pair(key), 2);
+        assert_eq!(idx.token_pair_to_pools[&key][0].fee_bps, Some(30));
+        assert_eq!(idx.token_pair_to_pools[&key][1].fee_bps, Some(500));
     }
 }
