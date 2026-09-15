@@ -1,0 +1,63 @@
+name: V3 Fee Boundary Regression
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'backend/searcher-rs/**'
+      - 'tests/v3-fee-units/**'
+      - '.github/workflows/v3-fee-units.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'backend/searcher-rs/**'
+      - 'tests/v3-fee-units/**'
+      - '.github/workflows/v3-fee-units.yml'
+permissions:
+  contents: read
+concurrency:
+  group: v3-fee-units-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  fee-units-and-cache:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    services:
+      redis:
+        image: redis:7-alpine
+        ports: ['127.0.0.1:36379:6379']
+        options: --health-cmd "redis-cli ping" --health-interval 5s --health-timeout 3s --health-retries 20
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4
+        with:
+          toolchain: 1.91.0
+          components: rustfmt
+      - name: Record the exact tested source
+        run: |
+          mkdir -p fee-evidence
+          git rev-parse HEAD | tee fee-evidence/source-sha.txt
+          git diff --check
+      - name: Compile and test the actual production fee module
+        run: |
+          set -euo pipefail
+          cargo test --locked --manifest-path tests/v3-fee-units/Cargo.toml --lib 2>&1 | tee fee-evidence/fee-tests.log
+          rustfmt --edition 2021 --check backend/searcher-rs/src/pool_discovery.rs
+      - name: Actual Redis compare-and-set, disposable loopback fixture only
+        env:
+          ARBX_V3_FEE_DISPOSABLE_REDIS: '1'
+        run: |
+          set -euo pipefail
+          python3 tests/v3-fee-units/test_redis_cas.py 2>&1 | tee fee-evidence/redis-tests.log
+      - name: Preserve evidence even after failures
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: v3-fee-boundary-${{ github.run_id }}-${{ github.run_attempt }}
+          path: fee-evidence/
+          if-no-files-found: error
+          retention-days: 14
