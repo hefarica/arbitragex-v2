@@ -84,6 +84,7 @@ export function catalogSql(q: CatalogQuery): { text: string; values: unknown[] }
       (SELECT count(DISTINCT f.dex_id)::text FROM factories f WHERE f.chain_id=s.chain_id) AS dex_count,
       (SELECT count(*)::text FROM factories f WHERE f.chain_id=s.chain_id) AS factory_count,
       (SELECT count(*)::text FROM pools p JOIN factories f ON f.id=p.factory_id AND f.chain_id=p.chain_id
+       JOIN dexes d ON d.id=f.dex_id
        WHERE p.chain_id=s.chain_id) AS pool_count
       FROM page s ORDER BY s.chain_id`,
   };
@@ -100,6 +101,8 @@ export function catalogSql(q: CatalogQuery): { text: string; values: unknown[] }
         AND (d.name ILIKE $3 OR d.protocol_type ILIKE $3)
       ORDER BY d.id LIMIT $4`,
   };
+  // The production pool column can be INTEGER while runtime IDs are BIGINT.
+  // Type the parameter, not the column: valid large IDs produce an empty page.
   return {
     values: [q.chainId, q.dexId, q.after, search, q.limit + 1],
     text: `SELECT p.id::text AS id, p.chain_id::text AS chain_id, p.address AS label,
@@ -112,7 +115,7 @@ export function catalogSql(q: CatalogQuery): { text: string; values: unknown[] }
       JOIN dexes d ON d.id=f.dex_id
       LEFT JOIN tokens t0 ON t0.id=p.token0_id AND t0.chain_id=p.chain_id
       LEFT JOIN tokens t1 ON t1.id=p.token1_id AND t1.chain_id=p.chain_id
-      WHERE p.chain_id=$1 AND ($2::uuid IS NULL OR d.id=$2::uuid)
+      WHERE p.chain_id=$1::bigint AND ($2::uuid IS NULL OR d.id=$2::uuid)
         AND ($3::uuid IS NULL OR p.id > $3::uuid)
         AND (p.address ILIKE $4 OR d.name ILIKE $4 OR d.protocol_type ILIKE $4
           OR t0.address ILIKE $4 OR t1.address ILIKE $4 OR t0.symbol ILIKE $4 OR t1.symbol ILIKE $4)

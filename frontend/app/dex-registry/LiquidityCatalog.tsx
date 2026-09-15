@@ -66,6 +66,7 @@ export default function LiquidityCatalog() {
           <h2 id="liquidity-catalog-title" className="mt-1 text-xl font-semibold">Blockchains → DEX → Pools</h2>
           <p className="mt-2 max-w-3xl text-sm text-slate-300">
             PostgreSQL: cadenas configuradas y factories registradas. Los conteos incluyen registros activos e inactivos.
+            El conteo de pools incluye solo los asociados a un DEX, disponibles en este recorrido.
             Un registro activo no acredita RPC saludable, liquidez vigente ni autorización para operar.
           </p>
         </div>
@@ -139,16 +140,17 @@ export default function LiquidityCatalog() {
                 </tr>)}</tbody>
               </table>
             </div>}
-          <div className="mt-4 flex items-center gap-3">
-            <button type="button" className={button} disabled={history.length === 0} onClick={() => {
-              setAfter(history.at(-1) ?? null); setHistory((pages) => pages.slice(0, -1)); setData(null); setBusy(true);
-            }}>Anterior</button>
-            <span className="text-xs text-slate-400">Página {history.length + 1}</span>
-            <button type="button" className={button} disabled={data.next_after === null} onClick={() => {
-              setHistory((pages) => [...pages, after]); setAfter(data.next_after); setData(null); setBusy(true);
-            }}>Siguiente</button>
-          </div>
         </>}
+        {/* History survives an error; do not restore stale rows just to go back. */}
+        <div className="mt-4 flex items-center gap-3">
+          <button type="button" className={button} disabled={busy || history.length === 0} onClick={() => {
+            setAfter(history.at(-1) ?? null); setHistory((pages) => pages.slice(0, -1)); setData(null); setError(null); setBusy(true);
+          }}>Anterior</button>
+          <span className="text-xs text-slate-400">Página {history.length + 1}</span>
+          <button type="button" className={button} disabled={busy || data?.next_after == null} onClick={() => {
+            setHistory((pages) => [...pages, after]); setAfter(data?.next_after ?? null); setData(null); setError(null); setBusy(true);
+          }}>Siguiente</button>
+        </div>
       </div>
     </section>
   );

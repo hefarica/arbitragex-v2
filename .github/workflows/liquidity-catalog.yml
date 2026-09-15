@@ -92,6 +92,9 @@ jobs:
       - name: User interactions on the candidate build, isolated UI fixtures only
         env:
           E2E_BASE_URL: http://127.0.0.1:3000
+          # Runtime-only closed loopback port makes the SSR fallback independent
+          # of external DNS/proxies. The production build guard remains unchanged.
+          INTERNAL_EDGE_URL: http://127.0.0.1:18787
           PLAYWRIGHT_JUNIT_OUTPUT_FILE: ../catalog-evidence/browser.xml
         run: |
           set -euo pipefail
@@ -105,7 +108,7 @@ jobs:
           done
           test "$ready" = 1
           cd frontend
-          npx --no-install playwright test e2e/liquidity-catalog.spec.ts --workers=1 --retries=0 \
+          npx --no-install playwright test e2e/liquidity-catalog.spec.ts e2e/liquidity-catalog-recovery.spec.ts --workers=1 --retries=0 \
             --reporter=line,junit --output=../catalog-evidence/browser-results 2>&1 | tee ../catalog-evidence/browser.log
       - name: Preserve exact evidence even when a gate fails
         if: always()

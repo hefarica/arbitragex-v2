@@ -23,9 +23,9 @@ before(async()=>{
   await pool.query(`
     CREATE TABLE chains_runtime(chain_id bigint PRIMARY KEY,name text,enabled boolean,rpc_http_url text);
     CREATE TABLE dexes(id uuid PRIMARY KEY,name text,protocol_type text,is_active boolean);
-    CREATE TABLE factories(id uuid PRIMARY KEY,dex_id uuid REFERENCES dexes(id),chain_id bigint,address text);
-    CREATE TABLE tokens(id uuid PRIMARY KEY,chain_id bigint,address text,symbol text);
-    CREATE TABLE pools(id uuid PRIMARY KEY,chain_id bigint,address text,factory_id uuid REFERENCES factories(id),
+    CREATE TABLE factories(id uuid PRIMARY KEY,dex_id uuid REFERENCES dexes(id),chain_id integer,address text);
+    CREATE TABLE tokens(id uuid PRIMARY KEY,chain_id integer,address text,symbol text);
+    CREATE TABLE pools(id uuid PRIMARY KEY,chain_id integer,address text,factory_id uuid REFERENCES factories(id),
       token0_id uuid REFERENCES tokens(id),token1_id uuid REFERENCES tokens(id),fee_tier int,is_active boolean);
     INSERT INTO chains_runtime VALUES (1,'Mainnet fixture',true,'https://rpc.invalid/secret'),
       (11155111,'Testnet fixture',false,'https://rpc.invalid/secret'),(9007199254740993,'Big ID',false,'');
@@ -39,6 +39,9 @@ before(async()=>{
     [33,'11155111',12,23,24,true],[34,'11155111',13,23,24,true],
     [35,'1',12,21,22,true]]) // intentionally inconsistent factory chain: must not leak.
     await pool.query('INSERT INTO pools VALUES($1,$2,$3,$4,$5,$6,$7,$8)',[id(n),chain,addr(n),id(factory),id(t0),id(t1),3000,active]);
+  // Real schema allows factories without a DEX. They are not reachable pool inventory.
+  await pool.query('INSERT INTO factories VALUES($1,NULL,1,$2)',[id(15),addr(15)]);
+  await pool.query('INSERT INTO pools VALUES($1,1,$2,$3,$4,$5,3000,true)',[id(36),addr(36),id(15),id(21),id(22)]);
 });
 after(async()=>{await pool.end();try{await admin.query(`DROP SCHEMA IF EXISTS ${schema} CASCADE`);}finally{await admin.end();}});
 async function query(raw={}) {
@@ -92,4 +95,31 @@ test('actual handler uses the pg pool and returns current wire schema',async()=>
   let code,body;const res={setHeader(){},status(v){code=v;return this},json(v){body=v}};
   await serveLiquidityCatalog({query:{level:'pools',chain_id:'1'}},res,{pool,logger:{warn(){}}});
   assert.equal(code,200);assert.equal(body.schema_version,1);assert.equal(body.execution_verified,false);assert.equal(body.count,2);
+});
+test('negative control reproduces untyped INTEGER parameter overflow',async()=>{
+  await assert.rejects(pool.query('SELECT id FROM pools WHERE chain_id=$1',['9007199254740993']),
+    error=>error.code==='22003');
+});
+test('full bigint range can drill into INTEGER pool storage without a 503',async()=>{
+  for(const chain_id of ['2147483648','9007199254740993','9223372036854775807']){
+    for(const level of ['dexes','pools']){
+      const result=await query({level,chain_id});
+      assert.equal(result.count,0);assert.equal(result.scope.chain_id,chain_id);
+    }
+  }
+});
+test('HTTP handler returns empty pool inventory for a valid large chain identity',async()=>{
+  let code,body;const res={setHeader(){},status(v){code=v;return this},json(v){body=v}};
+  await serveLiquidityCatalog({query:{level:'pools',chain_id:'9007199254740993'}},res,{pool,logger:{warn(){}}});
+  assert.equal(code,200);assert.equal(body.count,0);assert.deepEqual(body.items,[]);
+});
+test('root pool count equals reachable pages and excludes orphaned factories',async()=>{
+  const raw=await pool.query('SELECT count(*)::int AS n FROM pools p JOIN factories f ON f.id=p.factory_id AND f.chain_id=p.chain_id WHERE p.chain_id=1');
+  assert.equal(raw.rows[0].n,3,'fixture must reproduce the old overcount');
+  const root=(await query()).items.find(r=>r.id==='1');
+  const first=await query({level:'pools',chain_id:'1',limit:'1'});
+  const second=await query({level:'pools',chain_id:'1',limit:'1',after:first.next_after});
+  assert.equal(root.pool_count,String(first.count+second.count));
+  assert.deepEqual([...first.items,...second.items].map(r=>r.id),[id(31),id(32)]);
+  assert.equal(second.next_after,null);
 });
