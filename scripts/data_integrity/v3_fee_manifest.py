@@ -12,6 +12,7 @@ import csv
 import hashlib
 import json
 import os
+import re
 from pathlib import Path
 import time
 from typing import Any, Callable, Iterable
@@ -21,7 +22,10 @@ FEE_SELECTOR = "0xddca3f43"
 FACTORY_SELECTOR = "0xc45a0155"
 TOKEN0_SELECTOR = "0x0dfe1681"
 TOKEN1_SELECTOR = "0xd21220a7"
+GET_POOL_SELECTOR = "0x1698ee82"  # getPool(address,address,uint24)
 SELECTORS = (FEE_SELECTOR, FACTORY_SELECTOR, TOKEN0_SELECTOR, TOKEN1_SELECTOR)
+HEX40 = re.compile(r"^[0-9a-f]{40}$")
+CSV_FORMULA_PREFIXES = ("=", "+", "-", "@", "\t", "\r", "\n")
 DEFAULT_CATALOG = "https://arbx.ape-tv.net"
 USER_AGENT = "ArbitrageX-V3-DataIntegrity/1.0"
 
@@ -108,15 +112,52 @@ def _catalog_url(base: str, params: dict[str, str]) -> str:
     return base.rstrip("/") + "/api/v1/pools?" + parse.urlencode(params)
 
 
+def _validate_catalog_page(
+    page: Any, *, level: str, chain_id: int, dex_id: str | None, expected_limit: int,
+) -> list[dict[str, Any]]:
+    if not isinstance(page, dict):
+        raise RuntimeError("catalog_page_not_object")
+    if page.get("schema_version") != 1 or page.get("source") != "postgresql-registry":
+        raise RuntimeError("catalog_provenance_invalid")
+    if page.get("level") != level or page.get("execution_verified") is not False:
+        raise RuntimeError("catalog_provenance_invalid")
+    scope = page.get("scope")
+    if not isinstance(scope, dict) or str(scope.get("chain_id")) != str(chain_id):
+        raise RuntimeError("catalog_scope_invalid")
+    if scope.get("dex_id") != dex_id or scope.get("q") != "":
+        raise RuntimeError("catalog_scope_invalid")
+    if page.get("limit") != expected_limit or page.get("counts_include_inactive") is not True:
+        raise RuntimeError("catalog_envelope_invalid")
+    items = page.get("items")
+    if not isinstance(items, list) or page.get("count") != len(items):
+        raise RuntimeError("catalog_items_count_invalid")
+    next_after = page.get("next_after")
+    if next_after is not None and not isinstance(next_after, str):
+        raise RuntimeError("catalog_cursor_invalid")
+    for item in items:
+        if not isinstance(item, dict) or str(item.get("chain_id")) != str(chain_id):
+            raise RuntimeError("catalog_row_scope_invalid")
+        if not isinstance(item.get("id"), str) or not item["id"]:
+            raise RuntimeError("catalog_row_id_invalid")
+        if level == "pools":
+            if item.get("dex_id") != dex_id or item.get("protocol_type") != "UNISWAP_V3":
+                raise RuntimeError("catalog_row_scope_invalid")
+    return items
+
+
+def catalog_digest(dexes: list[dict[str, Any]], pools: list[dict[str, Any]]) -> str:
+    raw = json.dumps({"dexes": dexes, "pools": pools}, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
+
 def collect_v3_catalog(
     catalog_base: str,
     chain_id: int,
     fetch_json: Callable[[str], Any] = _json_request,
     snapshot_nonce: str | None = None,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
-    # The public Edge caches liquidity-catalog GETs by full query string. One
-    # nonce is reused for this snapshot so every page bypasses an older cache
-    # entry while still representing one coherent manifest collection.
+    # `snapshot` is only a cache-buster. Consistency is proven separately by
+    # comparing a full second census after all on-chain verification.
     nonce = snapshot_nonce or f"{time.time_ns()}-{os.getpid()}"
     all_dexes: list[dict[str, Any]] = []
     dex_after: str | None = None
@@ -129,14 +170,12 @@ def collect_v3_catalog(
         if dex_after:
             params["after"] = dex_after
         dex_payload = fetch_json(_catalog_url(catalog_base, params))
-        items = dex_payload.get("items", [])
-        if not isinstance(items, list):
-            raise RuntimeError("catalog_dex_items_not_array")
+        items = _validate_catalog_page(dex_payload, level="dexes", chain_id=chain_id, dex_id=None, expected_limit=100)
         for item in items:
-            dex_id = str(item.get("id") or "")
-            if not dex_id or dex_id in seen_dex_ids:
+            dex_id_value = str(item.get("id") or "")
+            if dex_id_value in seen_dex_ids:
                 raise RuntimeError("catalog_duplicate_dex_id")
-            seen_dex_ids.add(dex_id)
+            seen_dex_ids.add(dex_id_value)
             all_dexes.append(item)
         next_after = dex_payload.get("next_after")
         if next_after is None:
@@ -160,9 +199,7 @@ def collect_v3_catalog(
             if after:
                 params["after"] = after
             page = fetch_json(_catalog_url(catalog_base, params))
-            items = page.get("items", [])
-            if not isinstance(items, list):
-                raise RuntimeError("catalog_items_not_array")
+            items = _validate_catalog_page(page, level="pools", chain_id=chain_id, dex_id=str(dex["id"]), expected_limit=100)
             pools.extend(items)
             fetched += len(items)
             next_after = page.get("next_after")
@@ -173,6 +210,8 @@ def collect_v3_catalog(
             after = str(next_after)
         if fetched != int(dex.get("pool_count", -1)):
             raise RuntimeError(f"catalog_count_mismatch:{dex.get('label')}:{fetched}")
+    if not pools:
+        raise RuntimeError("empty_v3_pool_census")
     addresses = [str(pool.get("pool_address", "")).lower() for pool in pools]
     if not all(addr.startswith("0x") and len(addr) == 42 for addr in addresses):
         raise RuntimeError("catalog_pool_address_invalid")
@@ -186,10 +225,22 @@ def _rpc_error(items: Iterable[dict[str, Any]]) -> str:
     return json.dumps(errors, separators=(",", ":")) if errors else ""
 
 
+def encode_get_pool_call(token0: str, token1: str, fee: int) -> str:
+    def address_word(value: str) -> str:
+        raw = value.lower().removeprefix("0x")
+        if len(raw) != 40 or any(ch not in "0123456789abcdef" for ch in raw) or raw == "0" * 40:
+            raise ValueError("factory_get_pool_address_invalid")
+        return "0" * 24 + raw
+    if fee < 0 or fee >= 1_000_000:
+        raise ValueError("factory_get_pool_fee_invalid")
+    return GET_POOL_SELECTOR + address_word(token0) + address_word(token1) + f"{fee:064x}"
+
+
 def verify_pools(
     pools: list[dict[str, Any]], rpc_url: str, block_hex: str, block_number: int,
     block_hash: str, batch_pools: int,
 ) -> list[dict[str, Any]]:
+    del block_hex  # calls are deliberately bound to blockHash, never number.
     rows: list[dict[str, Any]] = []
     rpc_host = parse.urlparse(rpc_url).hostname or "unknown"
     block_ref = {"blockHash": block_hash, "requireCanonical": True}
@@ -198,6 +249,9 @@ def verify_pools(
         calls = [("eth_call", [{"to": pool["pool_address"], "data": selector}, block_ref])
                  for pool in chunk for selector in SELECTORS]
         replies = rpc_batch(rpc_url, calls)
+        chunk_rows: list[dict[str, Any]] = []
+        mapping_calls: list[tuple[str, list[Any]]] = []
+        mapping_row_indexes: list[int] = []
         for idx, pool in enumerate(chunk):
             group = replies[idx * 4:(idx + 1) * 4]
             values = [item.get("result") for item in group]
@@ -214,17 +268,19 @@ def verify_pools(
                 verification_errors.append("fee_out_of_range")
                 fee = None
             for label, raw, decoded in (("factory", values[1], factory), ("token0", values[2], token0), ("token1", values[3], token1)):
-                if raw is not None and decoded is None:
+                if raw is None:
+                    verification_errors.append(f"{label}_result_missing")
+                elif decoded is None:
                     verification_errors.append(f"{label}_abi_invalid")
             expected_factory = str(pool.get("factory_address") or "").lower()
             expected_token0 = str(pool.get("token0_address") or "").lower()
             expected_token1 = str(pool.get("token1_address") or "").lower()
-            identity_ok = bool(factory and token0 and token1) and (
+            basic_identity_ok = bool(factory and token0 and token1) and (
                 factory == expected_factory and token0 == expected_token0 and token1 == expected_token1
             )
             raw_fee = pool.get("fee_tier")
             catalog_fee = None if raw_fee in (None, "") else int(raw_fee)
-            rows.append({
+            row = {
                 "pool_id": pool["id"], "chain_id": str(pool["chain_id"]),
                 "dex_name": pool["dex_name"], "protocol_type": pool["protocol_type"],
                 "pool_address": str(pool["pool_address"]).lower(), "active": pool.get("active"),
@@ -233,12 +289,44 @@ def verify_pools(
                 "catalog_token0": expected_token0, "onchain_token0": token0,
                 "token0_symbol": pool.get("token0_symbol"),
                 "catalog_token1": expected_token1, "onchain_token1": token1,
-                "token1_symbol": pool.get("token1_symbol"), "identity_ok": identity_ok,
-                "classification": classify(catalog_fee, fee, identity_ok),
+                "token1_symbol": pool.get("token1_symbol"),
+                "factory_pool": None, "factory_mapping_ok": False,
+                "identity_ok": False, "classification": "ONCHAIN_ERROR",
                 "block_number": block_number, "block_hash": block_hash, "rpc_host": rpc_host,
                 "rpc_error": _rpc_error(group),
                 "verification_error": ",".join(verification_errors),
-            })
+                "_basic_identity_ok": basic_identity_ok,
+            }
+            chunk_rows.append(row)
+            if fee is not None and factory and token0 and token1:
+                mapping_calls.append(("eth_call", [{"to": factory, "data": encode_get_pool_call(token0, token1, fee)}, block_ref]))
+                mapping_row_indexes.append(idx)
+
+        if mapping_calls:
+            mapping_replies = rpc_batch(rpc_url, mapping_calls)
+            for map_idx, reply in enumerate(mapping_replies):
+                row = chunk_rows[mapping_row_indexes[map_idx]]
+                raw = reply.get("result")
+                factory_pool = decode_address(raw)
+                errors = [part for part in str(row["verification_error"]).split(",") if part]
+                if raw is None:
+                    errors.append("factory_get_pool_result_missing")
+                elif factory_pool is None:
+                    errors.append("factory_get_pool_abi_invalid")
+                mapping_ok = factory_pool == row["pool_address"]
+                if factory_pool is not None and not mapping_ok:
+                    errors.append("factory_mapping_mismatch")
+                rpc_extra = _rpc_error([reply])
+                if rpc_extra:
+                    row["rpc_error"] = ";".join(part for part in (str(row["rpc_error"]), rpc_extra) if part)
+                row["factory_pool"] = factory_pool
+                row["factory_mapping_ok"] = mapping_ok
+                row["verification_error"] = ",".join(errors)
+
+        for row in chunk_rows:
+            row["identity_ok"] = bool(row.pop("_basic_identity_ok")) and bool(row["factory_mapping_ok"])
+            row["classification"] = classify(row["catalog_fee"], row["onchain_fee"], bool(row["identity_ok"]))
+            rows.append(row)
         time.sleep(0.10)
     return rows
 
@@ -247,19 +335,39 @@ CSV_FIELDS = [
     "pool_id", "chain_id", "dex_name", "protocol_type", "pool_address", "active",
     "catalog_fee", "onchain_fee", "catalog_factory", "onchain_factory",
     "catalog_token0", "onchain_token0", "token0_symbol", "catalog_token1",
-    "onchain_token1", "token1_symbol", "identity_ok", "classification",
-    "block_number", "block_hash", "rpc_host", "rpc_error", "verification_error",
+    "onchain_token1", "token1_symbol", "factory_pool", "factory_mapping_ok",
+    "identity_ok", "classification", "block_number", "block_hash", "rpc_host",
+    "rpc_error", "verification_error",
 ]
 
 
-def ensure_empty_output_dir(path: Path) -> None:
-    if path.exists():
-        if not path.is_dir():
-            raise RuntimeError("output_dir_not_directory")
-        if any(path.iterdir()):
-            raise RuntimeError("output_dir_not_empty")
-    else:
+def claim_output_dir(path: Path) -> None:
+    # mkdir(exist_ok=False) is the ownership primitive: two concurrent runs
+    # cannot both claim the same evidence directory, even when it was empty.
+    try:
         path.mkdir(parents=True, exist_ok=False)
+    except FileExistsError as exc:
+        raise RuntimeError("output_dir_already_claimed") from exc
+
+
+def require_expected_deploy_sha(value: Any) -> str:
+    if not isinstance(value, str):
+        raise RuntimeError("expected_deploy_sha_required")
+    normalized = value.strip().lower()
+    if not HEX40.fullmatch(normalized):
+        raise RuntimeError("expected_deploy_sha_invalid")
+    return normalized
+
+
+def require_stable_catalog(
+    before_dexes: list[dict[str, Any]], before_pools: list[dict[str, Any]],
+    after_dexes: list[dict[str, Any]], after_pools: list[dict[str, Any]],
+) -> str:
+    before = catalog_digest(before_dexes, before_pools)
+    after = catalog_digest(after_dexes, after_pools)
+    if before != after:
+        raise RuntimeError("catalog_drift_detected")
+    return before
 
 
 def assert_block_still_canonical(rpc_url: str, block_hex: str, expected_hash: str) -> None:
@@ -268,16 +376,27 @@ def assert_block_still_canonical(rpc_url: str, block_hex: str, expected_hash: st
         raise RuntimeError("rpc_block_reorg_detected")
 
 
+def _csv_safe_value(value: Any) -> Any:
+    if not isinstance(value, str) or not value:
+        return value
+    stripped = value.lstrip(" \t\r\n")
+    if stripped and stripped[0] in CSV_FORMULA_PREFIXES:
+        return "\'" + value
+    return value
+
+
 def write_csv(path: Path, rows: list[dict[str, Any]]) -> None:
     with path.open("w", newline="", encoding="utf-8") as handle:
         writer = csv.DictWriter(handle, fieldnames=CSV_FIELDS)
         writer.writeheader()
-        writer.writerows(rows)
+        for row in rows:
+            writer.writerow({key: _csv_safe_value(row.get(key)) for key in CSV_FIELDS})
 
 
 def build_rollback_sql(rows: list[dict[str, Any]], active_only: bool) -> str:
     candidates = [row for row in rows if row["classification"] in {"MISSING_FEE", "FEE_MISMATCH"}
-                  and row["identity_ok"] and (not active_only or row["active"] is True)]
+                  and row["identity_ok"] and row.get("factory_mapping_ok") is True
+                  and (not active_only or row["active"] is True)]
     lines = [
         "-- PREPARED ONLY: this plan cannot commit by itself.",
         "-- Re-run manifest immediately before any approved apply.",
@@ -285,12 +404,20 @@ def build_rollback_sql(rows: list[dict[str, Any]], active_only: bool) -> str:
     ]
     for row in candidates:
         old = "NULL" if row["catalog_fee"] is None else str(row["catalog_fee"])
+        active = "TRUE" if row["active"] is True else "FALSE"
         lines.append(
-            "UPDATE pools SET fee_tier = {new} WHERE id = '{pool_id}'::uuid "
-            "AND chain_id = {chain} AND lower(address) = '{address}' "
-            "AND fee_tier IS NOT DISTINCT FROM {old};".format(
+            "UPDATE pools AS p SET fee_tier = {new} WHERE p.id = '{pool_id}'::uuid "
+            "AND p.chain_id = {chain} AND lower(p.address) = '{address}' "
+            "AND p.fee_tier IS NOT DISTINCT FROM {old} AND p.is_active IS NOT DISTINCT FROM {active} "
+            "AND EXISTS (SELECT 1 FROM factories f WHERE f.id=p.factory_id AND f.chain_id=p.chain_id "
+            "AND lower(f.address)='{factory}') "
+            "AND EXISTS (SELECT 1 FROM tokens t0 WHERE t0.id=p.token0_id AND t0.chain_id=p.chain_id "
+            "AND lower(t0.address)='{token0}') "
+            "AND EXISTS (SELECT 1 FROM tokens t1 WHERE t1.id=p.token1_id AND t1.chain_id=p.chain_id "
+            "AND lower(t1.address)='{token1}');".format(
                 new=row["onchain_fee"], pool_id=row["pool_id"], chain=row["chain_id"],
-                address=row["pool_address"], old=old,
+                address=row["pool_address"], old=old, active=active,
+                factory=row["catalog_factory"], token0=row["catalog_token0"], token1=row["catalog_token1"],
             )
         )
     lines += ["-- Review affected-row counts here.", "ROLLBACK; -- mandatory default"]
@@ -304,7 +431,7 @@ def _sha256(path: Path) -> str:
 def write_artifacts(output_dir: Path, rows: list[dict[str, Any]], metadata: dict[str, Any]) -> dict[str, Any]:
     output_dir.mkdir(parents=True, exist_ok=True)
     candidates = [row for row in rows if row["classification"] in {"MISSING_FEE", "FEE_MISMATCH"}
-                  and row["identity_ok"]]
+                  and row["identity_ok"] and row.get("factory_mapping_ok") is True]
     active = [row for row in candidates if row["active"] is True]
     files = {
         "v3_fee_manifest_full.csv": rows,
@@ -313,6 +440,10 @@ def write_artifacts(output_dir: Path, rows: list[dict[str, Any]], metadata: dict
     }
     for name, data in files.items():
         write_csv(output_dir / name, data)
+    (output_dir / "v3_fee_manifest_raw.json").write_text(
+        json.dumps({"metadata": metadata, "rows": rows}, indent=2, sort_keys=True, ensure_ascii=False),
+        encoding="utf-8",
+    )
     (output_dir / "repair_active_PREPARED_ROLLBACK.sql").write_text(
         build_rollback_sql(rows, active_only=True), encoding="utf-8"
     )
@@ -333,7 +464,7 @@ def write_artifacts(output_dir: Path, rows: list[dict[str, Any]], metadata: dict
         "writes_performed": False, "human_signatures": 0, "required_human_signatures_before_apply": 2,
     })
     (output_dir / "summary.json").write_text(json.dumps(summary, indent=2, sort_keys=True), encoding="utf-8")
-    artifact_names = [*files, "repair_active_PREPARED_ROLLBACK.sql", "repair_all_PREPARED_ROLLBACK.sql", "summary.json"]
+    artifact_names = [*files, "v3_fee_manifest_raw.json", "repair_active_PREPARED_ROLLBACK.sql", "repair_all_PREPARED_ROLLBACK.sql", "summary.json"]
     hashes = {name: _sha256(output_dir / name) for name in artifact_names}
     (output_dir / "MANIFEST.sha256").write_text(
         "".join(f"{digest}  {name}\n" for name, digest in hashes.items()), encoding="utf-8"
@@ -363,20 +494,28 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--rpc-url", default=os.environ.get("ETH_RPC"))
     parser.add_argument("--chain-id", type=int, default=1)
     parser.add_argument("--batch-pools", type=int, default=20)
-    parser.add_argument("--expected-deploy-sha")
+    parser.add_argument("--expected-deploy-sha", required=True)
     parser.add_argument("--output-dir", type=Path, required=True)
     return parser.parse_args()
 
 
 def main() -> int:
     args = parse_args()
-    ensure_empty_output_dir(args.output_dir)
+    expected_sha = require_expected_deploy_sha(args.expected_deploy_sha)
     if not args.rpc_url:
         raise SystemExit("--rpc-url or ETH_RPC is required")
+    claim_output_dir(args.output_dir)
+
     status = _json_request(args.catalog_base.rstrip("/") + "/api/status")
-    deploy_sha = str(status.get("deploy", {}).get("sha", ""))
-    if args.expected_deploy_sha and deploy_sha != args.expected_deploy_sha:
+    if not isinstance(status, dict) or status.get("ok") is not True or not isinstance(status.get("deploy"), dict):
+        raise SystemExit("served_status_invalid")
+    deploy_sha = str(status["deploy"].get("sha", "")).lower()
+    deploy_id = str(status["deploy"].get("id", ""))
+    if not HEX40.fullmatch(deploy_sha) or not deploy_id:
+        raise SystemExit("served_deploy_identity_invalid")
+    if deploy_sha != expected_sha:
         raise SystemExit(f"served_deploy_sha_mismatch:{deploy_sha}")
+
     chain_response = rpc_one(args.rpc_url, "eth_chainId", [])
     if decode_u256(chain_response.get("result")) != args.chain_id:
         raise SystemExit("rpc_chain_id_mismatch")
@@ -387,16 +526,33 @@ def main() -> int:
     block = rpc_one(args.rpc_url, "eth_getBlockByNumber", [block_hex, False]).get("result")
     if not isinstance(block, dict) or not isinstance(block.get("hash"), str):
         raise SystemExit("rpc_block_hash_missing")
-    block_hash = block["hash"]
-    dexes, pools = collect_v3_catalog(args.catalog_base, args.chain_id)
+    block_hash = str(block["hash"]).lower()
+
+    snapshot_seed = f"{time.time_ns()}-{os.getpid()}"
+    dexes, pools = collect_v3_catalog(
+        args.catalog_base, args.chain_id, snapshot_nonce=snapshot_seed + "-before"
+    )
     rows = verify_pools(pools, args.rpc_url, block_hex, block_number, block_hash, args.batch_pools)
-    # Belt-and-suspenders after EIP-1898 requireCanonical calls: the numbered
-    # block must still resolve to the same hash before evidence is written.
     assert_block_still_canonical(args.rpc_url, block_hex, block_hash)
+
+    # A cache-buster alone is NOT a database snapshot. Re-read the complete
+    # catalog after the on-chain pass and require byte-equivalent canonical
+    # census content before accepting the evidence.
+    dexes_after, pools_after = collect_v3_catalog(
+        args.catalog_base, args.chain_id, snapshot_nonce=snapshot_seed + "-after"
+    )
+    stable_catalog_digest = require_stable_catalog(dexes, pools, dexes_after, pools_after)
+
+    status_after = _json_request(args.catalog_base.rstrip("/") + "/api/status")
+    after_deploy = status_after.get("deploy", {}) if isinstance(status_after, dict) else {}
+    if (status_after.get("ok") is not True if isinstance(status_after, dict) else True) or        str(after_deploy.get("sha", "")).lower() != deploy_sha or str(after_deploy.get("id", "")) != deploy_id:
+        raise RuntimeError("served_deploy_changed_during_manifest")
+
     metadata = {
         "schema_version": 1, "phase": "WO-DI-01-read-only", "chain_id": args.chain_id,
-        "source_deploy_sha": deploy_sha, "source_deploy_id": status.get("deploy", {}).get("id"),
-        "catalog_source": "postgresql-registry", "v3_dexes": [dex["label"] for dex in dexes],
+        "source_deploy_sha": deploy_sha, "source_deploy_id": deploy_id,
+        "catalog_source": "postgresql-registry", "catalog_digest": stable_catalog_digest,
+        "catalog_stability_reads": 2, "v3_dexes": [dex["label"] for dex in dexes],
         "block_number": block_number, "block_hash": block_hash,
         "rpc_host": parse.urlparse(args.rpc_url).hostname or "unknown",
     }

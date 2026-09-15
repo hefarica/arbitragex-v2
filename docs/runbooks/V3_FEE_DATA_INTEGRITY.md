@@ -1,17 +1,18 @@
 # V3 Fee Data Integrity — read-only manifest and repair gate
 
-This runbook is the first gate after PR #572. It does **not** authorize a
-PostgreSQL update, Redis mutation, service restart, A.9 sign-off, or LIVE mode.
+This runbook is the first data-integrity gate after PR #572. It does **not**
+authorize a PostgreSQL update, Redis mutation, service restart, A.9 sign-off,
+or LIVE mode.
 
 ## Canonical schema
 
-The production registry uses `pools`, not a separate `pools_v3` table:
+Production uses `pools`, not a separate `pools_v3` table:
 `pools(id, chain_id, factory_id, address, token0_id, token1_id, fee_tier, is_active)`.
-`fee_tier` for V3 is consumed as raw fee pips by the Quoter path.
+V3 `fee_tier` is consumed as raw fee pips by the Quoter path.
 
 PR #572 prevents new V3 hydration from trusting bps-like source hints: it reads
-immutable `fee()` on-chain before writing PG/Redis/PoolRef. Historical rows can
-still be wrong or null and therefore require an independent repair manifest.
+immutable `fee()` on-chain before publishing PG/Redis/PoolRef. Historical rows
+can still be wrong or null and therefore require an independent repair manifest.
 
 ## Generate a manifest
 
@@ -20,61 +21,74 @@ Use a read-only RPC. Never place a private RPC credential in a committed file:
 ```bash
 python scripts/data_integrity/v3_fee_manifest.py \
   --rpc-url https://ethereum-rpc.publicnode.com \
-  --expected-deploy-sha <FULL_SERVED_SHA> \
-  --output-dir ./artifacts/v3-fee-manifest
+  --expected-deploy-sha <FULL_40_HEX_SERVED_SHA> \
+  --output-dir ./artifacts/v3-fee-manifest-<UNIQUE_RUN_ID>
 ```
-The tool first confirms the served deploy SHA and RPC chain, pins one block,
-then discovers every `UNISWAP_V3` DEX/pool through the PostgreSQL-backed
-liquidity catalog. At the same block it calls, per pool:
+`--expected-deploy-sha` is mandatory. The output directory must not already
+exist; the CLI claims it atomically so concurrent runs cannot interleave files.
+
+The tool validates the served deploy identity, RPC chain, and the catalog
+envelope (`schema_version`, `source`, `level`, `scope`). It collects the entire
+V3 census, pins one block hash and calls, per pool:
 
 - `fee()`
 - `factory()`
 - `token0()`
 - `token1()`
+- `factory.getPool(token0, token1, fee)`
 
-A fee difference is not accepted as repair evidence when factory/token identity
-does not match. RPC failures and identity mismatches make the command non-zero.
+Every `eth_call` is bound to that block hash with EIP-1898
+`requireCanonical=true`. After on-chain verification, the complete catalog is
+read again with a different cache-buster; both canonical catalog digests must
+match. The numbered block and served deploy identity are rechecked before any
+artifact is accepted.
 
-The output contains:
+RPC, ABI, provenance, catalog-drift, identity, factory-mapping, reorg or
+`ONCHAIN_ERROR` conditions make the command non-zero. An empty V3 census also
+fails closed.
 
-- full verification CSV;
-- all and active-only repair candidate CSVs;
-- SQL review plans ending in mandatory `ROLLBACK`;
-- summary JSON;
-- SHA-256 manifest;
-- unsigned two-reviewer sign-off template.
-
-The generator has no database or Redis write capability. This is deliberate.
+The output contains spreadsheet-safe CSVs, raw non-executable JSON evidence,
+ROLLBACK-only SQL review plans, `summary.json`, `MANIFEST.sha256`, and an
+unsigned two-reviewer sign-off template.
+The generated SQL guards the old fee, row identity, chain, address, factory,
+token relationships and active state. It still ends in mandatory `ROLLBACK`.
+The generator has no PostgreSQL or Redis mutation client and no APPLY path.
 
 ## Absolute repair gate
 
 Do **not** apply a candidate until all of the following exist:
 
-1. two independent human reviews of the same manifest hash;
-2. PostgreSQL backup with a demonstrated restore check;
-3. a fresh re-run against the then-current DB rows and an on-chain pinned block;
-4. the exact old PG value still matches the manifest (optimistic concurrency guard);
-5. a reviewed PG → Redis `arbx:pool_index_v3:*` → in-process index reconciliation plan;
-6. post-apply re-verification from both PG and on-chain getters.
+1. two independent human reviews of the same `MANIFEST.sha256`;
+2. PostgreSQL backup plus a demonstrated restore check;
+3. a fresh manifest against the then-current served SHA and pinned block;
+4. the exact old row identity/state still matches the manifest guards;
+5. a reviewed PG → `arbx:pool_index_v3:*` → in-process reconciliation plan;
+6. post-apply re-verification from PG and immutable on-chain getters.
 
-Never run a global `fee_tier = fee_tier * 100` repair. Raw on-chain tiers include
-legitimate values such as 100 and non-3000 tiers, while historical rows may be
-NULL. Magnitude alone cannot identify the correct value.
+Never run a global `fee_tier = fee_tier * 100` repair. Raw V3 tiers include
+legitimate values such as 100, 500, 2500, 3000 and 10000, while historical
+rows may be NULL. Magnitude alone cannot identify the correct value.
 
 Do not invent a Redis key such as `pool:<chain>:<pool>:fee`. The current wire
 contract is `arbx:pool_index_v3:<chain>:<sym0>:<sym1>` with canonical
-`V3PoolInfo`. Reconciliation must use the producer contract landed in #572.
+`V3PoolInfo`; reconciliation must use the producer contract landed in #572.
 
 ## Evidence captured on 2026-09-15
+For served deploy `2cdbce35425ad74340d354afac661bf443bac46e` (deploy run
+`35029159263`), the hardened verifier checked Ethereum block `25986141`, hash
+`0x203430bdbb078bf879043807098e800084b28d1f5db41d0dc0d7374dab8fffb8`.
+Both complete catalog censuses had digest
+`e41b02b48ecbf87ad12055faf2a89a13d71a61ae0899705832800f5e29c6ace4`.
 
-For served deploy `a575a4e4e6b9a1cd876752f32b755ccc6f081b45`, a read-only
-verification of Ethereum chain 1 observed 318 V3 pools. All 318 matched their
-catalog factory/token0/token1 identity and all getter calls succeeded.
+All 318 V3 pools passed catalog provenance, strict ABI decoding,
+factory/token identity and canonical factory mapping, with zero RPC,
+verification, identity or on-chain errors. The classification remained:
+34 MATCH, 80 FEE_MISMATCH and 204 MISSING_FEE, with 90 active repair
+candidates.
 
-Observed classifications were 34 MATCH, 80 FEE_MISMATCH and 204 MISSING_FEE.
-There were 90 active repair candidates. Mismatch pairs were 1→100 (8),
-5→500 (15), 30→3000 (25), and 100→10000 (32). On-chain tiers also included
-2500, proving a universal multiplier would be unsafe.
+Mismatch pairs remain 1→100 (8), 5→500 (15), 30→3000 (25), and
+100→10000 (32). On-chain tiers also include 2500, proving a universal
+multiplier would be unsafe.
 
-This observation is historical evidence, not authorization to mutate the live
-registry. Re-run immediately before any approved repair.
+This is read-only historical evidence, not authorization to mutate the live
+registry. Re-run immediately before any separately approved repair.
