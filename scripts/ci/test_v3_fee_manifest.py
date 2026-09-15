@@ -18,6 +18,9 @@ class V3FeeManifestTests(unittest.TestCase):
         encoded = "0x" + "00" * 12 + "1f98431c8ad98523631ae4a59f267346ea31f984"
         self.assertEqual(m.decode_address(encoded), "0x1f98431c8ad98523631ae4a59f267346ea31f984")
         self.assertIsNone(m.decode_address("0x1234"))
+        self.assertEqual(m.decode_abi_uint("0x" + "00" * 31 + "01"), 1)
+        self.assertIsNone(m.decode_abi_uint("0x01"))
+        self.assertIsNone(m.decode_address("0x" + "01" + "00" * 31))
 
     def test_classification_never_turns_missing_identity_into_match(self):
         self.assertEqual(m.classify(None, 3000, True), "MISSING_FEE")
@@ -66,7 +69,7 @@ class V3FeeManifestTests(unittest.TestCase):
             "token0_symbol": "AAA", "catalog_token1": "0x" + "cc" * 20,
             "onchain_token1": "0x" + "cc" * 20, "token1_symbol": "BBB",
             "identity_ok": True, "block_number": 123, "block_hash": "0x" + "dd" * 32,
-            "rpc_host": "rpc.invalid", "rpc_error": "",
+            "rpc_host": "rpc.invalid", "rpc_error": "", "verification_error": "",
         }
         mismatch = dict(base, catalog_fee=30, onchain_fee=3000, classification="FEE_MISMATCH")
         missing = dict(base, pool_id="00000000-0000-4000-8000-000000000002",

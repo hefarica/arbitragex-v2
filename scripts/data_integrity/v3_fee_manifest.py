@@ -70,10 +70,21 @@ def decode_u256(value: Any) -> int | None:
         return None
 
 
-def decode_address(value: Any) -> str | None:
-    if not isinstance(value, str) or not value.startswith("0x") or len(value) < 42:
+def decode_abi_uint(value: Any) -> int | None:
+    if not isinstance(value, str) or len(value) != 66 or not value.startswith("0x"):
         return None
-    tail = value[-40:].lower()
+    try:
+        return int(value, 16)
+    except ValueError:
+        return None
+
+
+def decode_address(value: Any) -> str | None:
+    if not isinstance(value, str) or len(value) != 66 or not value.startswith("0x"):
+        return None
+    if value[2:26] != "0" * 24:
+        return None
+    tail = value[26:].lower()
     if any(ch not in "0123456789abcdef" for ch in tail):
         return None
     return "0x" + tail
@@ -154,10 +165,19 @@ def verify_pools(
         for idx, pool in enumerate(chunk):
             group = replies[idx * 4:(idx + 1) * 4]
             values = [item.get("result") for item in group]
-            fee = decode_u256(values[0])
+            verification_errors: list[str] = []
+            fee = decode_abi_uint(values[0])
             factory = decode_address(values[1])
             token0 = decode_address(values[2])
             token1 = decode_address(values[3])
+            if values[0] is not None and fee is None:
+                verification_errors.append("fee_abi_invalid")
+            if fee is not None and fee >= 1_000_000:
+                verification_errors.append("fee_out_of_range")
+                fee = None
+            for label, raw, decoded in (("factory", values[1], factory), ("token0", values[2], token0), ("token1", values[3], token1)):
+                if raw is not None and decoded is None:
+                    verification_errors.append(f"{label}_abi_invalid")
             expected_factory = str(pool.get("factory_address") or "").lower()
             expected_token0 = str(pool.get("token0_address") or "").lower()
             expected_token1 = str(pool.get("token1_address") or "").lower()
@@ -179,6 +199,7 @@ def verify_pools(
                 "classification": classify(catalog_fee, fee, identity_ok),
                 "block_number": block_number, "block_hash": block_hash, "rpc_host": rpc_host,
                 "rpc_error": _rpc_error(group),
+                "verification_error": ",".join(verification_errors),
             })
         time.sleep(0.10)
     return rows
@@ -189,7 +210,7 @@ CSV_FIELDS = [
     "catalog_fee", "onchain_fee", "catalog_factory", "onchain_factory",
     "catalog_token0", "onchain_token0", "token0_symbol", "catalog_token1",
     "onchain_token1", "token1_symbol", "identity_ok", "classification",
-    "block_number", "block_hash", "rpc_host", "rpc_error",
+    "block_number", "block_hash", "rpc_host", "rpc_error", "verification_error",
 ]
 
 
@@ -250,6 +271,7 @@ def write_artifacts(output_dir: Path, rows: list[dict[str, Any]], metadata: dict
         "pools_verified": len(rows),
         "identity_mismatch": sum(not row["identity_ok"] for row in rows),
         "rpc_errors": sum(bool(row["rpc_error"]) for row in rows),
+        "verification_errors": sum(bool(row["verification_error"]) for row in rows),
         "classification_counts": dict(Counter(row["classification"] for row in rows)),
         "active_repair_candidates": len(active), "all_repair_candidates": len(candidates),
         "fee_distribution": {str(k): v for k, v in sorted(Counter(row["onchain_fee"] for row in rows).items(), key=lambda item: str(item[0]))},
@@ -316,7 +338,7 @@ def main() -> int:
     }
     summary = write_artifacts(args.output_dir, rows, metadata)
     print(json.dumps(summary, indent=2, sort_keys=True))
-    return 2 if summary["identity_mismatch"] or summary["rpc_errors"] else 0
+    return 2 if summary["identity_mismatch"] or summary["rpc_errors"] or summary["verification_errors"] else 0
 
 
 if __name__ == "__main__":
