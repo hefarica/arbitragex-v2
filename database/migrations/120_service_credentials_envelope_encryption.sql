@@ -173,7 +173,7 @@ SELECT (count(*) = 0)::int AS roundtrip_ok, count(*) AS n_undecryptable
    AND :'arbx_credentials_master_key' <> '';
 \gset
 \if :roundtrip_ok
-\echo '120: decrypt roundtrip verified for version :'arbx_credentials_master_key_version'
+\echo '120: decrypt roundtrip verified for version' :arbx_credentials_master_key_version
 \else
 \echo '120: FATAL — :n_undecryptable encrypted rows failed to decrypt; aborting deploy'
 SELECT 1/0 AS backfill_roundtrip_failed;
