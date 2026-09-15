@@ -2,7 +2,7 @@ name: Rust CI
 
 on:
   push:
-    branches: [main]
+    branches: [main, feat/real-opportunity-pipeline-20260915]
     paths:
       - 'backend/**'
       - '.github/workflows/rust.yml'
@@ -44,6 +44,13 @@ jobs:
         with:
           workspaces: backend
 
+      - name: RPC provider contract regression (blocking, isolated loopback)
+        run: |
+          set -euo pipefail
+          mkdir -p ../rpc-evidence
+          git rev-parse HEAD > ../rpc-evidence/source-sha.txt
+          cargo test -p shared-rs --locked --test oracle_rpc_selection 2>&1 | tee ../rpc-evidence/rpc-selection.log
+
       - name: cargo check (workspace)
         run: cargo check --workspace --locked
 
@@ -76,3 +83,12 @@ jobs:
           REDIS_URL: redis://localhost:6379
           # Required by searcher-rs boot guard (RULE 02)
           SIM_SIGNER_ADDRESS: "0x000000000000000000000000000000000000dead"
+
+      - name: Preserve RPC test evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: rpc-contract-${{ github.run_id }}-${{ github.run_attempt }}
+          path: rpc-evidence/
+          if-no-files-found: warn
+          retention-days: 14

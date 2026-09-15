@@ -399,13 +399,9 @@ async fn prepare_inner(
         matches!(opportunity.chain_id, 1 | 11155111),
         "candidate_fee_model_unavailable"
     );
-    let rpc_url = std::env::var(format!("RPC_HTTP_{}", opportunity.chain_id))
-        .map_err(|_| anyhow!("candidate_rpc_missing"))?;
-    let rpc = OracleRpc::from_url(&rpc_url)?;
-    ensure!(
-        quantity_u64(&rpc.call("eth_chainId", json!([])).await?)? == opportunity.chain_id,
-        "candidate_rpc_chain_mismatch"
-    );
+    let rpc = OracleRpc::from_env(opportunity.chain_id).await?;
+    // Reuse the selected, chain-checked HTTP endpoint, never the original CSV.
+    let rpc_url = rpc.endpoint().to_owned();
     let requested = opportunity
         .block_number
         .map(|b| format!("0x{b:x}"))
