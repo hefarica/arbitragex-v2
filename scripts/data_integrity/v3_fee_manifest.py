@@ -184,7 +184,8 @@ def _validate_catalog_page(
         if level == "pools":
             if item.get("dex_id") != dex_id or item.get("protocol_type") != "UNISWAP_V3":
                 raise RuntimeError("catalog_row_scope_invalid")
-            if item.get("active") not in (True, False, None):
+            active_value = item.get("active")
+            if active_value is not None and type(active_value) is not bool:
                 raise RuntimeError("catalog_pool_active_invalid")
             for key in ("pool_address", "factory_address", "token0_address", "token1_address"):
                 if _canonical_evm_address(item.get(key)) is None:

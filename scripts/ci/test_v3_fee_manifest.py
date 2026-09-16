@@ -190,6 +190,13 @@ class V3FeeManifestTests(unittest.TestCase):
         self.assertTrue(all("snapshot=nonce123" in url for url in seen))
 
 
+    def test_catalog_rejects_non_boolean_pool_activity(self):
+        for bad_active in (1, 0, 1.0, 0.0, "true", "false"):
+            bad = page("pools", [pool_item(active=bad_active)], dex_id=DEX_V3)
+            with self.assertRaisesRegex(RuntimeError, "catalog_pool_active_invalid"):
+                m._validate_catalog_page(bad, level="pools", chain_id=1,
+                                         dex_id=DEX_V3, expected_limit=100)
+
     def test_catalog_rejects_noncanonical_uuid_and_duplicate_pool_ids(self):
         bad_uuid = page("pools", [pool_item(pool_id="not-a-uuid")], dex_id=DEX_V3)
         with self.assertRaisesRegex(RuntimeError, "catalog_row_id_invalid"):
