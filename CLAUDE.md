@@ -402,6 +402,30 @@ LIVE_MAINNET?"*. Si la respuesta implica "depende del modo" para la matemática 
 viola §34.1 y se rechaza.
 <!-- END: execution-modes-doctrine -->
 
+### 34.5 AUTORIZACIÓN PERMANENTE CONDICIONADA DEL OPERADOR (2026-09-15)
+
+> Directiva explícita del dueño único (hefarica/Héctor), ordenada en sesión del
+> 2026-09-15: "quita la restricción y pon la aplicación en live cuando cumpla todo".
+
+1. **Autorización permanente otorgada**: cuando TODOS los gates G1-G8 del skill
+   `arbitragex-v2-mainnet-live` pasen con evidencia VERIFICADA (artefactos
+   reproducibles: salidas de tests, tallies de PostgreSQL, tx hashes, attestation
+   de deploy), el flip a `LIVE_MAINNET` y el canary (capital en riesgo ≤ $350,
+   principal TLS 5 WETH) proceden SIN nueva ceremonia de autorización.
+2. El punto 3 de §34.3 ("no inferida de flags ni de chat") queda satisfecho para
+   este fin por la presente directiva registrada en el repo. Los puntos 1-2 de
+   §34.3 (skills `arbx-*` PASS + promoción §32/§33) SIGUEN VIGENTES como condición.
+3. **Estándar de evidencia**: solo artefactos reproducibles. NO bastan afirmaciones
+   de documentos/skills/issues. Precedente 2026-09-15: GATE-2 del skill citaba
+   "Issue #567 closed with PR merged (codex/567-canonical-plan-simulation)" — la
+   rama y el commit `9a10350` NUNCA existieron (verificado: git ls-remote + GitHub
+   API + object store; el propio operador corroboró los 404 en el issue #567).
+4. El default-deny técnico (`MainnetRefused`), el kill-switch y los límites de
+   capital permanecen como controles técnicos; se levantan en el terminus al
+   cumplirse la condición, no antes.
+5. Revocación: el operador edita esta sección. La confirmación en el momento del
+   broadcast es notificación de ejecución, no pregunta (salvo anomalía material).
+
 ---
 
 # 36. DISCIPLINA DE BRANCHES CONCURRENTES (ANTI-CAOS MULTI-AGENTE)
