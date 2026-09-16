@@ -198,6 +198,14 @@ class V3FeeManifestTests(unittest.TestCase):
             m._validate_catalog_page(bad, level="pools", chain_id=1,
                                      dex_id=DEX_V3, expected_limit=100)
 
+    def test_catalog_requires_fee_tier_key(self):
+        item = pool_item()
+        item.pop("fee_tier")
+        bad = page("pools", [item], dex_id=DEX_V3)
+        with self.assertRaisesRegex(RuntimeError, "catalog_fee_tier_missing"):
+            m._validate_catalog_page(bad, level="pools", chain_id=1,
+                                     dex_id=DEX_V3, expected_limit=100)
+
     def test_catalog_fee_tier_must_be_null_or_canonical_decimal_string(self):
         for bad_fee in (3000, 3000.9, True, False, "", "03", "3000.0", "+3000", "-1", "1_000"):
             bad = page("pools", [pool_item(fee=bad_fee)], dex_id=DEX_V3)

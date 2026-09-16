@@ -189,7 +189,9 @@ def _validate_catalog_page(
             active_value = item["active"]
             if active_value is not None and type(active_value) is not bool:
                 raise RuntimeError("catalog_pool_active_invalid")
-            raw_fee = item.get("fee_tier")
+            if "fee_tier" not in item:
+                raise RuntimeError("catalog_fee_tier_missing")
+            raw_fee = item["fee_tier"]
             if raw_fee is not None:
                 if not isinstance(raw_fee, str) or not raw_fee or not raw_fee.isascii() or not raw_fee.isdigit():
                     raise RuntimeError("catalog_fee_tier_invalid")
