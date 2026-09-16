@@ -1,0 +1,43 @@
+name: V3 Fee Data Integrity
+
+on:
+  pull_request:
+    paths:
+      - "scripts/data_integrity/v3_fee_manifest.py"
+      - "scripts/ci/test_v3_fee_manifest.py"
+      - "docs/runbooks/V3_FEE_DATA_INTEGRITY.md"
+      - ".github/workflows/v3-fee-data-integrity.yml"
+  push:
+    branches: [main]
+    paths:
+      - "scripts/data_integrity/v3_fee_manifest.py"
+      - "scripts/ci/test_v3_fee_manifest.py"
+      - "docs/runbooks/V3_FEE_DATA_INTEGRITY.md"
+      - ".github/workflows/v3-fee-data-integrity.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  read-only-tooling:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Compile manifest tooling
+        run: python -m py_compile scripts/data_integrity/v3_fee_manifest.py scripts/ci/test_v3_fee_manifest.py
+
+      - name: Unit tests — no network or production writes
+        run: python -m unittest scripts.ci.test_v3_fee_manifest -v
+
+      - name: Guard against accidental apply capability
+        shell: bash
+        run: |
+          set -euo pipefail
+          ! grep -Eq '(^|[^[:alnum:]_])(psycopg|asyncpg|redis\.Redis|redis\.from_url)' scripts/data_integrity/v3_fee_manifest.py
+          grep -F 'ROLLBACK; -- mandatory default' scripts/data_integrity/v3_fee_manifest.py
+          ! grep -F 'fee_tier = fee_tier * 100' scripts/data_integrity/v3_fee_manifest.py
