@@ -32,6 +32,13 @@ def dex_item(dex_id=DEX_V3, *, proto="UNISWAP_V3", pool_count="1", label="Uniswa
     }
 
 
+def chain_item(*, chain_id=CHAIN, dex_count="1", factory_count="1", pool_count="1"):
+    return {
+        "id": chain_id, "chain_id": chain_id, "label": f"Chain {chain_id}", "active": True,
+        "registered": True, "dex_count": dex_count, "factory_count": factory_count, "pool_count": pool_count,
+    }
+
+
 def pool_item(pool_id="00000000-0000-4000-8000-000000000001", *, address=POOL,
               dex_id=DEX_V3, fee="3000", active=True, symbol0="AAA", symbol1="BBB"):
     return {
@@ -202,6 +209,8 @@ class V3FeeManifestTests(unittest.TestCase):
         dex_v2 = "11111111-1111-4111-8111-111111111111"
         def fake(url):
             seen.append(url)
+            if "level=chains" in url:
+                return page("chains", [chain_item(dex_count="2")], chain_id=None)
             if "level=dexes" in url and "after=" not in url:
                 return page("dexes", [dex_item(dex_v2, proto="UNISWAP_V2", pool_count="0", label="V2")],
                             next_after=dex_v2)
@@ -262,6 +271,8 @@ class V3FeeManifestTests(unittest.TestCase):
 
         duplicate_id = "00000000-0000-4000-8000-000000000001"
         def duplicate(url):
+            if "level=chains" in url:
+                return page("chains", [chain_item()], chain_id=None)
             if "level=dexes" in url:
                 return page("dexes", [dex_item(pool_count="2")])
             return page("pools", [
@@ -289,17 +300,42 @@ class V3FeeManifestTests(unittest.TestCase):
 
     def test_catalog_count_mismatch_and_empty_census_fail(self):
         def mismatch(url):
+            if "level=chains" in url:
+                return page("chains", [chain_item()], chain_id=None)
             if "level=dexes" in url:
                 return page("dexes", [dex_item(pool_count="2")])
             return page("pools", [pool_item()], dex_id=DEX_V3)
         with self.assertRaisesRegex(RuntimeError, "catalog_count_mismatch"):
             m.collect_v3_catalog("https://catalog.invalid", 1, mismatch, snapshot_nonce="x")
         def empty(url):
+            if "level=chains" in url:
+                return page("chains", [chain_item()], chain_id=None)
             if "level=dexes" in url:
                 return page("dexes", [dex_item(pool_count="0")])
             return page("pools", [], dex_id=DEX_V3)
         with self.assertRaisesRegex(RuntimeError, "empty_v3_pool_census"):
             m.collect_v3_catalog("https://catalog.invalid", 1, empty, snapshot_nonce="y")
+
+    def test_catalog_cross_checks_dex_count_from_chain_level(self):
+        def truncated(url):
+            if "level=chains" in url:
+                return page("chains", [chain_item(dex_count="2")], chain_id=None)
+            if "level=dexes" in url:
+                return page("dexes", [dex_item()], next_after=None)
+            return page("pools", [pool_item()], dex_id=DEX_V3)
+        with self.assertRaisesRegex(RuntimeError, "catalog_dex_count_mismatch"):
+            m.collect_v3_catalog("https://catalog.invalid", 1, truncated, snapshot_nonce="total")
+
+    def test_chain_level_contract_and_target_count_are_strict(self):
+        good = page("chains", [chain_item(dex_count="2")], chain_id=None)
+        self.assertEqual(m._validate_chain_page(good, expected_limit=100)[0]["dex_count"], "2")
+        missing_cursor = dict(good)
+        missing_cursor.pop("next_after")
+        with self.assertRaisesRegex(RuntimeError, "catalog_chain_cursor_missing"):
+            m._validate_chain_page(missing_cursor, expected_limit=100)
+        bad_count = page("chains", [chain_item(dex_count=1.9)], chain_id=None)
+        with self.assertRaisesRegex(RuntimeError, "catalog_chain_dex_count_invalid"):
+            m._validate_chain_page(bad_count, expected_limit=100)
 
     def test_catalog_drift_is_detected(self):
         dexes = [dex_item()]

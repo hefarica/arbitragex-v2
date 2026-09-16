@@ -260,6 +260,80 @@ def _validate_catalog_page(
     return items
 
 
+def _validate_chain_page(page: Any, *, expected_limit: int) -> list[dict[str, Any]]:
+    if not isinstance(page, dict):
+        raise RuntimeError("catalog_chain_page_not_object")
+    if type(page.get("schema_version")) is not int or page.get("schema_version") != 1:
+        raise RuntimeError("catalog_chain_provenance_invalid")
+    if page.get("source") != "postgresql-registry" or page.get("level") != "chains":
+        raise RuntimeError("catalog_chain_provenance_invalid")
+    if page.get("execution_verified") is not False:
+        raise RuntimeError("catalog_chain_provenance_invalid")
+    scope = page.get("scope")
+    if not isinstance(scope, dict) or scope.get("chain_id") is not None or scope.get("dex_id") is not None or scope.get("q") != "":
+        raise RuntimeError("catalog_chain_scope_invalid")
+    if type(page.get("limit")) is not int or page.get("limit") != expected_limit:
+        raise RuntimeError("catalog_chain_envelope_invalid")
+    if page.get("counts_include_inactive") is not True:
+        raise RuntimeError("catalog_chain_envelope_invalid")
+    items = page.get("items")
+    if not isinstance(items, list) or type(page.get("count")) is not int or page.get("count") != len(items):
+        raise RuntimeError("catalog_chain_items_count_invalid")
+    if "next_after" not in page:
+        raise RuntimeError("catalog_chain_cursor_missing")
+    next_after = page["next_after"]
+    if next_after is not None and _canonical_decimal_string(next_after) is None:
+        raise RuntimeError("catalog_chain_cursor_invalid")
+    for item in items:
+        if not isinstance(item, dict):
+            raise RuntimeError("catalog_chain_row_invalid")
+        chain_key = _canonical_decimal_string(item.get("chain_id"))
+        if chain_key is None or item.get("id") != chain_key:
+            raise RuntimeError("catalog_chain_row_invalid")
+        if not isinstance(item.get("label"), str) or "active" not in item:
+            raise RuntimeError("catalog_chain_row_invalid")
+        active = item["active"]
+        if active is not None and type(active) is not bool:
+            raise RuntimeError("catalog_chain_row_invalid")
+        if type(item.get("registered")) is not bool:
+            raise RuntimeError("catalog_chain_row_invalid")
+        for key in ("dex_count", "factory_count", "pool_count"):
+            if _canonical_decimal_string(item.get(key)) is None:
+                raise RuntimeError(f"catalog_chain_{key}_invalid")
+    return items
+
+
+def collect_chain_dex_count(
+    catalog_base: str, chain_id: int, fetch_json: Callable[[str], Any], snapshot_nonce: str,
+) -> int:
+    after: str | None = None
+    target = str(chain_id)
+    found: str | None = None
+    seen: set[str] = set()
+    while True:
+        params = {"view": "liquidity_catalog", "level": "chains", "limit": "100", "snapshot": snapshot_nonce}
+        if after is not None:
+            params["after"] = after
+        payload = fetch_json(_catalog_url(catalog_base, params))
+        items = _validate_chain_page(payload, expected_limit=100)
+        for item in items:
+            item_id = item["id"]
+            if item_id in seen:
+                raise RuntimeError("catalog_duplicate_chain_id")
+            seen.add(item_id)
+            if item_id == target:
+                found = item["dex_count"]
+        next_after = payload["next_after"]
+        if next_after is None:
+            break
+        if not items or next_after == after or next_after != items[-1]["id"]:
+            raise RuntimeError("catalog_chain_cursor_invalid")
+        after = next_after
+    if found is None:
+        raise RuntimeError(f"catalog_chain_missing:{chain_id}")
+    return int(found)
+
+
 def catalog_digest(dexes: list[dict[str, Any]], pools: list[dict[str, Any]]) -> str:
     raw = json.dumps({"dexes": dexes, "pools": pools}, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()
@@ -274,6 +348,7 @@ def collect_v3_catalog(
     # `snapshot` is only a cache-buster. Consistency is proven separately by
     # comparing a full second census after all on-chain verification.
     nonce = snapshot_nonce or f"{time.time_ns()}-{os.getpid()}"
+    expected_dex_count = collect_chain_dex_count(catalog_base, chain_id, fetch_json, nonce)
     all_dexes: list[dict[str, Any]] = []
     dex_after: str | None = None
     seen_dex_ids: set[str] = set()
@@ -299,6 +374,8 @@ def collect_v3_catalog(
             raise RuntimeError("catalog_dex_cursor_invalid")
         dex_after = str(next_after)
 
+    if len(all_dexes) != expected_dex_count:
+        raise RuntimeError(f"catalog_dex_count_mismatch:{len(all_dexes)}!={expected_dex_count}")
     dexes = [item for item in all_dexes if item.get("protocol_type") == "UNISWAP_V3"]
     if not dexes:
         raise RuntimeError("no_v3_dexes_in_catalog")
