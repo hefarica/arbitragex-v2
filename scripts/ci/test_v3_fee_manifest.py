@@ -97,11 +97,30 @@ class V3FeeManifestTests(unittest.TestCase):
         self.assertIn("integrity_nonce=run-before", before)
         self.assertIn("integrity_nonce=run-after", after)
 
+    def test_rpc_one_validates_jsonrpc_envelope(self):
+        original = m._json_request
+        try:
+            m._json_request = lambda *_a, **_k: {"jsonrpc": "2.0", "id": 1, "result": "0x1"}
+            self.assertEqual(m.rpc_one("https://rpc.invalid", "eth_chainId", [])["result"], "0x1")
+            invalid = [
+                {"jsonrpc": "2.0", "id": True, "result": "0x1"},
+                {"jsonrpc": "2.0", "id": 2, "result": "0x1"},
+                {"jsonrpc": "1.0", "id": 1, "result": "0x1"},
+                {"jsonrpc": "2.0", "id": 1, "error": {"code": -32000}, "result": "0x1"},
+                {"jsonrpc": "2.0", "id": 1},
+            ]
+            for payload in invalid:
+                m._json_request = lambda *_a, _payload=payload, **_k: _payload
+                with self.assertRaises(RuntimeError):
+                    m.rpc_one("https://rpc.invalid", "eth_chainId", [])
+        finally:
+            m._json_request = original
+
     def test_rpc_batch_rejects_duplicate_ids_before_collapsing(self):
         original = m._json_request
         m._json_request = lambda *_a, **_k: [
-            {"id": 1, "result": "0x01"}, {"id": 2, "result": "0x02"},
-            {"id": 2, "result": "0x03"},
+            {"jsonrpc": "2.0", "id": 1, "result": "0x01"}, {"jsonrpc": "2.0", "id": 2, "result": "0x02"},
+            {"jsonrpc": "2.0", "id": 2, "result": "0x03"},
         ]
         try:
             with self.assertRaisesRegex(RuntimeError, "rpc_batch_cardinality_invalid"):
@@ -114,7 +133,7 @@ class V3FeeManifestTests(unittest.TestCase):
         try:
             for bad_id in (True, 1.0, "1"):
                 m._json_request = lambda *_a, _bad_id=bad_id, **_k: [
-                    {"id": _bad_id, "result": "0x01"},
+                    {"jsonrpc": "2.0", "id": _bad_id, "result": "0x01"},
                 ]
                 with self.assertRaisesRegex(RuntimeError, "rpc_batch_id_type_invalid"):
                     m.rpc_batch("https://rpc.invalid", [("a", [])])
@@ -205,13 +224,13 @@ class V3FeeManifestTests(unittest.TestCase):
             captured.extend(calls)
             if len(calls) == 4:
                 return [
-                    {"id": 1, "result": "0x" + f"{3000:064x}"},
-                    {"id": 2, "result": word_address(FACTORY)},
-                    {"id": 3, "result": word_address(TOKEN0)},
-                    {"id": 4, "result": word_address(TOKEN1)},
+                    {"jsonrpc": "2.0", "id": 1, "result": "0x" + f"{3000:064x}"},
+                    {"jsonrpc": "2.0", "id": 2, "result": word_address(FACTORY)},
+                    {"jsonrpc": "2.0", "id": 3, "result": word_address(TOKEN0)},
+                    {"jsonrpc": "2.0", "id": 4, "result": word_address(TOKEN1)},
                 ]
             self.assertEqual(len(calls), 1)
-            return [{"id": 1, "result": word_address(POOL)}]
+            return [{"jsonrpc": "2.0", "id": 1, "result": word_address(POOL)}]
         original = m.rpc_batch
         m.rpc_batch = fake_batch
         try:
@@ -228,10 +247,10 @@ class V3FeeManifestTests(unittest.TestCase):
         def fake_batch(_rpc, calls):
             if len(calls) == 4:
                 return [
-                    {"id": 1, "result": "0x" + f"{3000:064x}"},
-                    {"id": 2, "result": word_address(FACTORY)},
-                    {"id": 3, "result": word_address(TOKEN0)},
-                    {"id": 4, "result": word_address(TOKEN1)},
+                    {"jsonrpc": "2.0", "id": 1, "result": "0x" + f"{3000:064x}"},
+                    {"jsonrpc": "2.0", "id": 2, "result": word_address(FACTORY)},
+                    {"jsonrpc": "2.0", "id": 3, "result": word_address(TOKEN0)},
+                    {"jsonrpc": "2.0", "id": 4, "result": word_address(TOKEN1)},
                 ]
             return [{"id": 1, "result": word_address("0x" + "99" * 20)}]
         original = m.rpc_batch
@@ -248,8 +267,8 @@ class V3FeeManifestTests(unittest.TestCase):
         def fake_batch(_rpc, calls):
             self.assertEqual(len(calls), 4)
             return [
-                {"id": 1, "result": None}, {"id": 2, "result": word_address(FACTORY)},
-                {"id": 3, "result": word_address(TOKEN0)}, {"id": 4, "result": word_address(TOKEN1)},
+                {"id": 1, "result": None}, {"jsonrpc": "2.0", "id": 2, "result": word_address(FACTORY)},
+                {"jsonrpc": "2.0", "id": 3, "result": word_address(TOKEN0)}, {"jsonrpc": "2.0", "id": 4, "result": word_address(TOKEN1)},
             ]
         original = m.rpc_batch
         m.rpc_batch = fake_batch

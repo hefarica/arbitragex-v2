@@ -52,7 +52,19 @@ def _json_request(url: str, payload: Any | None = None, retries: int = 3) -> Any
 
 
 def rpc_one(rpc_url: str, method: str, params: list[Any]) -> dict[str, Any]:
-    return _json_request(rpc_url, {"jsonrpc": "2.0", "id": 1, "method": method, "params": params})
+    response = _json_request(rpc_url, {"jsonrpc": "2.0", "id": 1, "method": method, "params": params})
+    if not isinstance(response, dict):
+        raise RuntimeError("rpc_response_not_object")
+    if response.get("jsonrpc") != "2.0":
+        raise RuntimeError("rpc_response_version_invalid")
+    response_id = response.get("id")
+    if type(response_id) is not int or response_id != 1:
+        raise RuntimeError("rpc_response_id_invalid")
+    if response.get("error") is not None:
+        raise RuntimeError(f"rpc_response_error:{response['error']}")
+    if "result" not in response:
+        raise RuntimeError("rpc_response_result_missing")
+    return response
 
 
 def rpc_batch(rpc_url: str, calls: list[tuple[str, list[Any]]]) -> list[dict[str, Any]]:
@@ -63,6 +75,10 @@ def rpc_batch(rpc_url: str, calls: list[tuple[str, list[Any]]]) -> list[dict[str
         raise RuntimeError("rpc_batch_not_array")
     if len(response) != len(payload) or not all(isinstance(item, dict) for item in response):
         raise RuntimeError("rpc_batch_cardinality_invalid")
+    if any(item.get("jsonrpc") != "2.0" for item in response):
+        raise RuntimeError("rpc_batch_version_invalid")
+    if any(item.get("error") is not None and "result" in item for item in response):
+        raise RuntimeError("rpc_batch_envelope_invalid")
     ids = [item.get("id") for item in response]
     if not all(type(response_id) is int for response_id in ids):
         raise RuntimeError("rpc_batch_id_type_invalid")
