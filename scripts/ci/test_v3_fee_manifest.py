@@ -249,6 +249,22 @@ class V3FeeManifestTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "catalog_duplicate_pool_id"):
             m.collect_v3_catalog("https://catalog.invalid", 1, duplicate, snapshot_nonce="dup")
 
+    def test_catalog_rejects_noncanonical_dex_counts_and_numeric_envelope_types(self):
+        for bad_count in (1, 1.9, True, False, "01", "1.0", "+1", "-1", ""):
+            bad_dex = dex_item(pool_count=bad_count)
+            bad = page("dexes", [bad_dex])
+            with self.assertRaisesRegex(RuntimeError, "catalog_pool_count_invalid"):
+                m._validate_catalog_page(bad, level="dexes", chain_id=1, dex_id=None, expected_limit=100)
+        good = page("dexes", [dex_item(pool_count="1")])
+        for key, value in (("schema_version", True), ("count", True), ("limit", True)):
+            malformed = dict(good)
+            malformed[key] = value
+            with self.assertRaises(RuntimeError):
+                m._validate_catalog_page(malformed, level="dexes", chain_id=1, dex_id=None, expected_limit=100)
+        malformed_scope = dict(good, scope={"chain_id": 1, "dex_id": None, "q": ""})
+        with self.assertRaisesRegex(RuntimeError, "catalog_scope_invalid"):
+            m._validate_catalog_page(malformed_scope, level="dexes", chain_id=1, dex_id=None, expected_limit=100)
+
     def test_catalog_count_mismatch_and_empty_census_fail(self):
         def mismatch(url):
             if "level=dexes" in url:

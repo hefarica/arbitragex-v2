@@ -141,6 +141,14 @@ def _catalog_url(base: str, params: dict[str, str]) -> str:
     return base.rstrip("/") + "/api/v1/pools?" + parse.urlencode(params)
 
 
+def _canonical_decimal_string(value: Any) -> str | None:
+    if not isinstance(value, str) or not value or not value.isascii() or not value.isdigit():
+        return None
+    if len(value) > 1 and value.startswith("0"):
+        return None
+    return value
+
+
 def _canonical_uuid(value: Any) -> str | None:
     if not isinstance(value, str):
         return None
@@ -168,49 +176,68 @@ def _validate_catalog_page(
 ) -> list[dict[str, Any]]:
     if not isinstance(page, dict):
         raise RuntimeError("catalog_page_not_object")
-    if page.get("schema_version") != 1 or page.get("source") != "postgresql-registry":
+    if type(page.get("schema_version")) is not int or page.get("schema_version") != 1:
         raise RuntimeError("catalog_provenance_invalid")
-    if page.get("level") != level or page.get("execution_verified") is not False:
+    if page.get("source") != "postgresql-registry" or page.get("level") != level:
+        raise RuntimeError("catalog_provenance_invalid")
+    if page.get("execution_verified") is not False:
         raise RuntimeError("catalog_provenance_invalid")
     scope = page.get("scope")
-    if not isinstance(scope, dict) or str(scope.get("chain_id")) != str(chain_id):
+    if not isinstance(scope, dict) or scope.get("chain_id") != str(chain_id):
         raise RuntimeError("catalog_scope_invalid")
     if scope.get("dex_id") != dex_id or scope.get("q") != "":
         raise RuntimeError("catalog_scope_invalid")
-    if page.get("limit") != expected_limit or page.get("counts_include_inactive") is not True:
+    page_limit = page.get("limit")
+    page_count = page.get("count")
+    if type(page_limit) is not int or page_limit != expected_limit:
+        raise RuntimeError("catalog_envelope_invalid")
+    if page.get("counts_include_inactive") is not True:
         raise RuntimeError("catalog_envelope_invalid")
     items = page.get("items")
-    if not isinstance(items, list) or page.get("count") != len(items):
+    if not isinstance(items, list):
+        raise RuntimeError("catalog_items_count_invalid")
+    if type(page_count) is not int or page_count < 0 or page_count != len(items):
         raise RuntimeError("catalog_items_count_invalid")
     next_after = page.get("next_after")
     if next_after is not None and not isinstance(next_after, str):
         raise RuntimeError("catalog_cursor_invalid")
     for item in items:
-        if not isinstance(item, dict) or str(item.get("chain_id")) != str(chain_id):
+        if not isinstance(item, dict) or item.get("chain_id") != str(chain_id):
             raise RuntimeError("catalog_row_scope_invalid")
         if _canonical_uuid(item.get("id")) is None:
             raise RuntimeError("catalog_row_id_invalid")
+        if not isinstance(item.get("label"), str):
+            raise RuntimeError("catalog_row_label_invalid")
+        if "active" not in item:
+            raise RuntimeError("catalog_pool_active_missing" if level == "pools" else "catalog_dex_active_missing")
+        active_value = item["active"]
+        if active_value is not None and type(active_value) is not bool:
+            raise RuntimeError("catalog_pool_active_invalid")
+        if level == "dexes":
+            if not isinstance(item.get("protocol_type"), str):
+                raise RuntimeError("catalog_dex_protocol_invalid")
+            for key in ("factory_count", "pool_count"):
+                if _canonical_decimal_string(item.get(key)) is None:
+                    raise RuntimeError(f"catalog_{key}_invalid")
         if level == "pools":
             if item.get("dex_id") != dex_id or item.get("protocol_type") != "UNISWAP_V3":
                 raise RuntimeError("catalog_row_scope_invalid")
-            if "active" not in item:
-                raise RuntimeError("catalog_pool_active_missing")
-            active_value = item["active"]
-            if active_value is not None and type(active_value) is not bool:
-                raise RuntimeError("catalog_pool_active_invalid")
+            if not isinstance(item.get("dex_name"), str):
+                raise RuntimeError("catalog_dex_name_invalid")
+            if "dex_active" not in item or (item["dex_active"] is not None and type(item["dex_active"]) is not bool):
+                raise RuntimeError("catalog_dex_active_invalid")
             if "fee_tier" not in item:
                 raise RuntimeError("catalog_fee_tier_missing")
             raw_fee = item["fee_tier"]
             if raw_fee is not None:
-                if not isinstance(raw_fee, str) or not raw_fee or not raw_fee.isascii() or not raw_fee.isdigit():
-                    raise RuntimeError("catalog_fee_tier_invalid")
-                if len(raw_fee) > 1 and raw_fee.startswith("0"):
-                    raise RuntimeError("catalog_fee_tier_invalid")
-                fee_value = int(raw_fee)
-                if fee_value < 0 or fee_value >= 1_000_000:
+                canonical_fee = _canonical_decimal_string(raw_fee)
+                if canonical_fee is None or int(canonical_fee) >= 1_000_000:
                     raise RuntimeError("catalog_fee_tier_invalid")
             for key in ("pool_address", "factory_address", "token0_address", "token1_address"):
                 if _canonical_evm_address(item.get(key)) is None:
+                    raise RuntimeError(f"catalog_{key}_invalid")
+            for key in ("token0_symbol", "token1_symbol"):
+                if item.get(key) is not None and not isinstance(item.get(key), str):
                     raise RuntimeError(f"catalog_{key}_invalid")
     return items
 
@@ -278,7 +305,10 @@ def collect_v3_catalog(
             if not items or next_after == after or next_after != items[-1].get("id"):
                 raise RuntimeError("catalog_cursor_invalid")
             after = str(next_after)
-        if fetched != int(dex.get("pool_count", -1)):
+        expected_pool_count = _canonical_decimal_string(dex.get("pool_count"))
+        if expected_pool_count is None:
+            raise RuntimeError(f"catalog_pool_count_invalid:{dex.get('label')}")
+        if fetched != int(expected_pool_count):
             raise RuntimeError(f"catalog_count_mismatch:{dex.get('label')}:{fetched}")
     if not pools:
         raise RuntimeError("empty_v3_pool_census")
