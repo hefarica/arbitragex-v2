@@ -28,6 +28,7 @@ SELECTORS = (FEE_SELECTOR, FACTORY_SELECTOR, TOKEN0_SELECTOR, TOKEN1_SELECTOR)
 HEX40 = re.compile(r"^[0-9a-f]{40}$")
 HEX64 = re.compile(r"^[0-9a-fA-F]{64}$")
 HEX_QUANTITY = re.compile(r"^0x[0-9a-fA-F]+$")
+DEPLOY_ID = re.compile(r"^[1-9][0-9]*$")
 CSV_FORMULA_PREFIXES = ("=", "+", "-", "@", "\t", "\r", "\n")
 DEFAULT_CATALOG = "https://arbx.ape-tv.net"
 USER_AGENT = "ArbitrageX-V3-DataIntegrity/1.0"
@@ -149,6 +150,21 @@ def _canonical_decimal_string(value: Any) -> str | None:
     return value
 
 
+def parse_served_deploy_identity(status: Any) -> tuple[str, str]:
+    if not isinstance(status, dict) or status.get("ok") is not True:
+        raise RuntimeError("served_status_invalid")
+    deploy = status.get("deploy")
+    if not isinstance(deploy, dict):
+        raise RuntimeError("served_status_invalid")
+    raw_sha = deploy.get("sha")
+    raw_id = deploy.get("id")
+    if not isinstance(raw_sha, str) or not HEX40.fullmatch(raw_sha.lower()):
+        raise RuntimeError("served_deploy_identity_invalid")
+    if not isinstance(raw_id, str) or not DEPLOY_ID.fullmatch(raw_id):
+        raise RuntimeError("served_deploy_identity_invalid")
+    return raw_sha.lower(), raw_id
+
+
 def _canonical_uuid(value: Any) -> str | None:
     if not isinstance(value, str):
         return None
@@ -198,8 +214,10 @@ def _validate_catalog_page(
         raise RuntimeError("catalog_items_count_invalid")
     if type(page_count) is not int or page_count < 0 or page_count != len(items):
         raise RuntimeError("catalog_items_count_invalid")
-    next_after = page.get("next_after")
-    if next_after is not None and not isinstance(next_after, str):
+    if "next_after" not in page:
+        raise RuntimeError("catalog_cursor_missing")
+    next_after = page["next_after"]
+    if next_after is not None and _canonical_uuid(next_after) is None:
         raise RuntimeError("catalog_cursor_invalid")
     for item in items:
         if not isinstance(item, dict) or item.get("chain_id") != str(chain_id):
@@ -637,12 +655,10 @@ def main() -> int:
     run_nonce = f"{time.time_ns()}-{os.getpid()}"
 
     status = _json_request(status_url(args.catalog_base, run_nonce + "-status-before"))
-    if not isinstance(status, dict) or status.get("ok") is not True or not isinstance(status.get("deploy"), dict):
-        raise SystemExit("served_status_invalid")
-    deploy_sha = str(status["deploy"].get("sha", "")).lower()
-    deploy_id = str(status["deploy"].get("id", ""))
-    if not HEX40.fullmatch(deploy_sha) or not deploy_id:
-        raise SystemExit("served_deploy_identity_invalid")
+    try:
+        deploy_sha, deploy_id = parse_served_deploy_identity(status)
+    except RuntimeError as exc:
+        raise SystemExit(str(exc)) from exc
     if deploy_sha != expected_sha:
         raise SystemExit(f"served_deploy_sha_mismatch:{deploy_sha}")
 
@@ -678,8 +694,11 @@ def main() -> int:
     stable_catalog_digest = require_stable_catalog(dexes, pools, dexes_after, pools_after)
 
     status_after = _json_request(status_url(args.catalog_base, run_nonce + "-status-after"))
-    after_deploy = status_after.get("deploy", {}) if isinstance(status_after, dict) else {}
-    if (status_after.get("ok") is not True if isinstance(status_after, dict) else True) or        str(after_deploy.get("sha", "")).lower() != deploy_sha or str(after_deploy.get("id", "")) != deploy_id:
+    try:
+        after_sha, after_id = parse_served_deploy_identity(status_after)
+    except RuntimeError as exc:
+        raise RuntimeError("served_deploy_changed_during_manifest") from exc
+    if after_sha != deploy_sha or after_id != deploy_id:
         raise RuntimeError("served_deploy_changed_during_manifest")
 
     metadata = {

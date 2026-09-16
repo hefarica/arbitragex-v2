@@ -103,6 +103,18 @@ class V3FeeManifestTests(unittest.TestCase):
         self.assertIn("integrity_nonce=run-before", before)
         self.assertIn("integrity_nonce=run-after", after)
 
+    def test_served_deploy_identity_is_strict(self):
+        good = {"ok": True, "deploy": {"sha": "A" * 40, "id": "35029159263"}}
+        self.assertEqual(m.parse_served_deploy_identity(good), ("a" * 40, "35029159263"))
+        bad_ids = (None, "", "unknown", 35029159263, True, {}, [], "0", "01", "+1", "1.0")
+        for bad_id in bad_ids:
+            bad = {"ok": True, "deploy": {"sha": "a" * 40, "id": bad_id}}
+            with self.assertRaisesRegex(RuntimeError, "served_deploy_identity_invalid"):
+                m.parse_served_deploy_identity(bad)
+        for bad in ({}, {"ok": False, "deploy": {}}, {"ok": True, "deploy": None}):
+            with self.assertRaisesRegex(RuntimeError, "served_status_invalid"):
+                m.parse_served_deploy_identity(bad)
+
     def test_rpc_one_validates_jsonrpc_envelope(self):
         original = m._json_request
         try:
@@ -174,6 +186,16 @@ class V3FeeManifestTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "catalog_scope_invalid"):
             m._validate_catalog_page(bad_scope, level="dexes", chain_id=1,
                                      dex_id=None, expected_limit=100)
+
+    def test_catalog_requires_next_after_and_canonical_cursor(self):
+        missing = page("dexes", [dex_item()])
+        missing.pop("next_after")
+        with self.assertRaisesRegex(RuntimeError, "catalog_cursor_missing"):
+            m._validate_catalog_page(missing, level="dexes", chain_id=1, dex_id=None, expected_limit=100)
+        for bad_cursor in (True, 1, 1.0, "", "not-a-uuid", "00000000-0000-4000-8000-000000000001x"):
+            bad = page("dexes", [dex_item()], next_after=bad_cursor)
+            with self.assertRaisesRegex(RuntimeError, "catalog_cursor_invalid"):
+                m._validate_catalog_page(bad, level="dexes", chain_id=1, dex_id=None, expected_limit=100)
 
     def test_catalog_paginates_dexes_pools_and_cache_busts(self):
         seen = []
