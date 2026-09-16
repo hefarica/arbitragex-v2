@@ -107,6 +107,7 @@ class V3FeeManifestTests(unittest.TestCase):
                 {"jsonrpc": "2.0", "id": 2, "result": "0x1"},
                 {"jsonrpc": "1.0", "id": 1, "result": "0x1"},
                 {"jsonrpc": "2.0", "id": 1, "error": {"code": -32000}, "result": "0x1"},
+                {"jsonrpc": "2.0", "id": 1, "error": None, "result": "0x1"},
                 {"jsonrpc": "2.0", "id": 1},
             ]
             for payload in invalid:
@@ -136,6 +137,21 @@ class V3FeeManifestTests(unittest.TestCase):
                     {"jsonrpc": "2.0", "id": _bad_id, "result": "0x01"},
                 ]
                 with self.assertRaisesRegex(RuntimeError, "rpc_batch_id_type_invalid"):
+                    m.rpc_batch("https://rpc.invalid", [("a", [])])
+        finally:
+            m._json_request = original
+
+
+    def test_rpc_batch_rejects_error_member_even_when_null_and_missing_result(self):
+        original = m._json_request
+        try:
+            invalid_batches = [
+                [{"jsonrpc": "2.0", "id": 1, "error": None, "result": "0x01"}],
+                [{"jsonrpc": "2.0", "id": 1}],
+            ]
+            for payload in invalid_batches:
+                m._json_request = lambda *_a, _payload=payload, **_k: _payload
+                with self.assertRaisesRegex(RuntimeError, "rpc_batch_envelope_invalid"):
                     m.rpc_batch("https://rpc.invalid", [("a", [])])
         finally:
             m._json_request = original
@@ -172,6 +188,24 @@ class V3FeeManifestTests(unittest.TestCase):
         self.assertEqual([d["id"] for d in dexes], [DEX_V3])
         self.assertEqual(len(pools), 2)
         self.assertTrue(all("snapshot=nonce123" in url for url in seen))
+
+
+    def test_catalog_rejects_noncanonical_uuid_and_duplicate_pool_ids(self):
+        bad_uuid = page("pools", [pool_item(pool_id="not-a-uuid")], dex_id=DEX_V3)
+        with self.assertRaisesRegex(RuntimeError, "catalog_row_id_invalid"):
+            m._validate_catalog_page(bad_uuid, level="pools", chain_id=1,
+                                     dex_id=DEX_V3, expected_limit=100)
+
+        duplicate_id = "00000000-0000-4000-8000-000000000001"
+        def duplicate(url):
+            if "level=dexes" in url:
+                return page("dexes", [dex_item(pool_count="2")])
+            return page("pools", [
+                pool_item(duplicate_id, address=POOL),
+                pool_item(duplicate_id, address="0x" + "22" * 20),
+            ], dex_id=DEX_V3)
+        with self.assertRaisesRegex(RuntimeError, "catalog_duplicate_pool_id"):
+            m.collect_v3_catalog("https://catalog.invalid", 1, duplicate, snapshot_nonce="dup")
 
     def test_catalog_count_mismatch_and_empty_census_fail(self):
         def mismatch(url):
@@ -298,7 +332,7 @@ class V3FeeManifestTests(unittest.TestCase):
         mismatch = dict(base, catalog_fee=30, onchain_fee=3000, classification="FEE_MISMATCH")
         missing = dict(base, pool_id="00000000-0000-4000-8000-000000000002",
                        pool_address="0x" + "12" * 20, factory_pool="0x" + "12" * 20,
-                       active=False, catalog_fee=None, onchain_fee=500, classification="MISSING_FEE")
+                       active=None, catalog_fee=None, onchain_fee=500, classification="MISSING_FEE")
         match = dict(base, pool_id="00000000-0000-4000-8000-000000000003",
                      pool_address="0x" + "13" * 20, factory_pool="0x" + "13" * 20,
                      catalog_fee=100, onchain_fee=100, classification="MATCH")
@@ -318,7 +352,7 @@ class V3FeeManifestTests(unittest.TestCase):
     def test_all_plan_guards_null_fee_and_inactive_state(self):
         sql = m.build_rollback_sql(self.sample_rows(), active_only=False)
         self.assertIn("p.fee_tier IS NOT DISTINCT FROM NULL", sql)
-        self.assertIn("p.is_active IS NOT DISTINCT FROM FALSE", sql)
+        self.assertIn("p.is_active IS NOT DISTINCT FROM NULL", sql)
         self.assertIn("00000000-0000-4000-8000-000000000002", sql)
 
     def test_csv_formula_is_neutralized_but_raw_json_preserves_value(self):

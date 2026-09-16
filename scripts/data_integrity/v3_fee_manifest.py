@@ -15,6 +15,7 @@ import os
 import re
 from pathlib import Path
 import time
+import uuid
 from typing import Any, Callable, Iterable
 from urllib import parse, request
 
@@ -60,8 +61,8 @@ def rpc_one(rpc_url: str, method: str, params: list[Any]) -> dict[str, Any]:
     response_id = response.get("id")
     if type(response_id) is not int or response_id != 1:
         raise RuntimeError("rpc_response_id_invalid")
-    if response.get("error") is not None:
-        raise RuntimeError(f"rpc_response_error:{response['error']}")
+    if "error" in response:
+        raise RuntimeError(f"rpc_response_error_member_present:{response['error']}")
     if "result" not in response:
         raise RuntimeError("rpc_response_result_missing")
     return response
@@ -77,7 +78,7 @@ def rpc_batch(rpc_url: str, calls: list[tuple[str, list[Any]]]) -> list[dict[str
         raise RuntimeError("rpc_batch_cardinality_invalid")
     if any(item.get("jsonrpc") != "2.0" for item in response):
         raise RuntimeError("rpc_batch_version_invalid")
-    if any(item.get("error") is not None and "result" in item for item in response):
+    if any("error" in item or "result" not in item for item in response):
         raise RuntimeError("rpc_batch_envelope_invalid")
     ids = [item.get("id") for item in response]
     if not all(type(response_id) is int for response_id in ids):
@@ -131,6 +132,28 @@ def _catalog_url(base: str, params: dict[str, str]) -> str:
     return base.rstrip("/") + "/api/v1/pools?" + parse.urlencode(params)
 
 
+def _canonical_uuid(value: Any) -> str | None:
+    if not isinstance(value, str):
+        return None
+    try:
+        parsed = uuid.UUID(value)
+    except (ValueError, AttributeError):
+        return None
+    canonical = str(parsed)
+    return canonical if value.lower() == canonical else None
+
+
+def _canonical_evm_address(value: Any) -> str | None:
+    if not isinstance(value, str):
+        return None
+    normalized = value.lower()
+    if not normalized.startswith("0x") or len(normalized) != 42:
+        return None
+    if not HEX40.fullmatch(normalized[2:]) or normalized == "0x" + "0" * 40:
+        return None
+    return normalized
+
+
 def _validate_catalog_page(
     page: Any, *, level: str, chain_id: int, dex_id: str | None, expected_limit: int,
 ) -> list[dict[str, Any]]:
@@ -156,11 +179,16 @@ def _validate_catalog_page(
     for item in items:
         if not isinstance(item, dict) or str(item.get("chain_id")) != str(chain_id):
             raise RuntimeError("catalog_row_scope_invalid")
-        if not isinstance(item.get("id"), str) or not item["id"]:
+        if _canonical_uuid(item.get("id")) is None:
             raise RuntimeError("catalog_row_id_invalid")
         if level == "pools":
             if item.get("dex_id") != dex_id or item.get("protocol_type") != "UNISWAP_V3":
                 raise RuntimeError("catalog_row_scope_invalid")
+            if item.get("active") not in (True, False, None):
+                raise RuntimeError("catalog_pool_active_invalid")
+            for key in ("pool_address", "factory_address", "token0_address", "token1_address"):
+                if _canonical_evm_address(item.get(key)) is None:
+                    raise RuntimeError(f"catalog_{key}_invalid")
     return items
 
 
@@ -232,10 +260,13 @@ def collect_v3_catalog(
     if not pools:
         raise RuntimeError("empty_v3_pool_census")
     addresses = [str(pool.get("pool_address", "")).lower() for pool in pools]
-    if not all(addr.startswith("0x") and len(addr) == 42 for addr in addresses):
+    if not all(_canonical_evm_address(addr) for addr in addresses):
         raise RuntimeError("catalog_pool_address_invalid")
     if len(set(addresses)) != len(addresses):
         raise RuntimeError("catalog_duplicate_pool_address")
+    pool_ids = [str(pool.get("id", "")).lower() for pool in pools]
+    if len(set(pool_ids)) != len(pool_ids):
+        raise RuntimeError("catalog_duplicate_pool_id")
     return dexes, pools
 
 
@@ -447,7 +478,7 @@ def build_rollback_sql(rows: list[dict[str, Any]], active_only: bool) -> str:
     ]
     for row in candidates:
         old = "NULL" if row["catalog_fee"] is None else str(row["catalog_fee"])
-        active = "TRUE" if row["active"] is True else "FALSE"
+        active = "TRUE" if row["active"] is True else "FALSE" if row["active"] is False else "NULL"
         lines.append(
             "UPDATE pools AS p SET fee_tier = {new} WHERE p.id = '{pool_id}'::uuid "
             "AND p.chain_id = {chain} AND lower(p.address) = '{address}' "
