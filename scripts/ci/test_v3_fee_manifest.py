@@ -109,6 +109,18 @@ class V3FeeManifestTests(unittest.TestCase):
         finally:
             m._json_request = original
 
+    def test_rpc_batch_rejects_non_integer_response_ids(self):
+        original = m._json_request
+        try:
+            for bad_id in (True, 1.0, "1"):
+                m._json_request = lambda *_a, _bad_id=bad_id, **_k: [
+                    {"id": _bad_id, "result": "0x01"},
+                ]
+                with self.assertRaisesRegex(RuntimeError, "rpc_batch_id_type_invalid"):
+                    m.rpc_batch("https://rpc.invalid", [("a", [])])
+        finally:
+            m._json_request = original
+
     def test_catalog_provenance_and_scope_are_enforced(self):
         good = page("dexes", [dex_item()])
         self.assertEqual(len(m._validate_catalog_page(good, level="dexes", chain_id=1,

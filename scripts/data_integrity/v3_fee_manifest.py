@@ -64,6 +64,8 @@ def rpc_batch(rpc_url: str, calls: list[tuple[str, list[Any]]]) -> list[dict[str
     if len(response) != len(payload) or not all(isinstance(item, dict) for item in response):
         raise RuntimeError("rpc_batch_cardinality_invalid")
     ids = [item.get("id") for item in response]
+    if not all(type(response_id) is int for response_id in ids):
+        raise RuntimeError("rpc_batch_id_type_invalid")
     expected = set(range(1, len(payload) + 1))
     if len(set(ids)) != len(ids) or set(ids) != expected:
         raise RuntimeError("rpc_batch_missing_or_duplicate_ids")
