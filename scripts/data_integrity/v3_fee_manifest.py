@@ -184,9 +184,20 @@ def _validate_catalog_page(
         if level == "pools":
             if item.get("dex_id") != dex_id or item.get("protocol_type") != "UNISWAP_V3":
                 raise RuntimeError("catalog_row_scope_invalid")
-            active_value = item.get("active")
+            if "active" not in item:
+                raise RuntimeError("catalog_pool_active_missing")
+            active_value = item["active"]
             if active_value is not None and type(active_value) is not bool:
                 raise RuntimeError("catalog_pool_active_invalid")
+            raw_fee = item.get("fee_tier")
+            if raw_fee is not None:
+                if not isinstance(raw_fee, str) or not raw_fee or not raw_fee.isascii() or not raw_fee.isdigit():
+                    raise RuntimeError("catalog_fee_tier_invalid")
+                if len(raw_fee) > 1 and raw_fee.startswith("0"):
+                    raise RuntimeError("catalog_fee_tier_invalid")
+                fee_value = int(raw_fee)
+                if fee_value < 0 or fee_value >= 1_000_000:
+                    raise RuntimeError("catalog_fee_tier_invalid")
             for key in ("pool_address", "factory_address", "token0_address", "token1_address"):
                 if _canonical_evm_address(item.get(key)) is None:
                     raise RuntimeError(f"catalog_{key}_invalid")
@@ -332,7 +343,9 @@ def verify_pools(
                 factory == expected_factory and token0 == expected_token0 and token1 == expected_token1
             )
             raw_fee = pool.get("fee_tier")
-            catalog_fee = None if raw_fee in (None, "") else int(raw_fee)
+            # Catalog provenance validation guarantees either explicit JSON null
+            # or a canonical base-10 decimal string, so conversion is lossless.
+            catalog_fee = None if raw_fee is None else int(raw_fee)
             row = {
                 "pool_id": pool["id"], "chain_id": str(pool["chain_id"]),
                 "dex_name": pool["dex_name"], "protocol_type": pool["protocol_type"],

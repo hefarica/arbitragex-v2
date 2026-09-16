@@ -190,6 +190,27 @@ class V3FeeManifestTests(unittest.TestCase):
         self.assertTrue(all("snapshot=nonce123" in url for url in seen))
 
 
+    def test_catalog_requires_activity_key(self):
+        item = pool_item()
+        item.pop("active")
+        bad = page("pools", [item], dex_id=DEX_V3)
+        with self.assertRaisesRegex(RuntimeError, "catalog_pool_active_missing"):
+            m._validate_catalog_page(bad, level="pools", chain_id=1,
+                                     dex_id=DEX_V3, expected_limit=100)
+
+    def test_catalog_fee_tier_must_be_null_or_canonical_decimal_string(self):
+        for bad_fee in (3000, 3000.9, True, False, "", "03", "3000.0", "+3000", "-1", "1_000"):
+            bad = page("pools", [pool_item(fee=bad_fee)], dex_id=DEX_V3)
+            with self.assertRaisesRegex(RuntimeError, "catalog_fee_tier_invalid"):
+                m._validate_catalog_page(bad, level="pools", chain_id=1,
+                                         dex_id=DEX_V3, expected_limit=100)
+        good_null = page("pools", [pool_item(fee=None)], dex_id=DEX_V3)
+        self.assertEqual(len(m._validate_catalog_page(good_null, level="pools", chain_id=1,
+                                                      dex_id=DEX_V3, expected_limit=100)), 1)
+        good = page("pools", [pool_item(fee="3000")], dex_id=DEX_V3)
+        self.assertEqual(len(m._validate_catalog_page(good, level="pools", chain_id=1,
+                                                      dex_id=DEX_V3, expected_limit=100)), 1)
+
     def test_catalog_rejects_non_boolean_pool_activity(self):
         for bad_active in (1, 0, 1.0, 0.0, "true", "false"):
             bad = page("pools", [pool_item(active=bad_active)], dex_id=DEX_V3)
