@@ -3,8 +3,11 @@
 //! Reads `arbx:opps:validated` published by selector-api (S3). For each opp:
 //!   1. simulate — SIMWIRE-02: when the full B2c env is present at boot
 //!      (`SIM_BACKEND=revm` + `REVM_RPC_URL` + `ARBITRAGE_EXECUTOR` +
-//!      `REDIS_URL`), the route-aware REAL pipeline runs: canonical
-//!      `route_metadata` from PG → decimals resolution → the SAME encoder
+//!      `REDIS_URL`), the route-aware REAL pipeline runs: validated-plan
+//!      carrier from Redis FIRST (Issue #567 — the producer's plan is the
+//!      route of record; full 2-5 hop cycles, never reconstructed from
+//!      token_in/token_out) → canonical `route_metadata` from PG → decimals
+//!      resolution → the SAME encoder
 //!      the searcher uses → `execute_multistep_revm` (paper_mode=true,
 //!      observer-only). The legacy `SimulatorBackend` (SIMWIRE-01 wiring)
 //!      remains for the anvil default and HTTP compat — it is NEVER Canal
@@ -21,6 +24,7 @@
 //! (redelivery) on a fixed cadence, so a crashed/errored consumer's entries
 //! are reclaimed and reprocessed instead of living in the PEL forever.
 
+use crate::canonical_plan_consumer;
 use crate::persistence::insert_simulation;
 use crate::route_lookup;
 use crate::sim_runner::{run_real_simulation, RealSimEnvConfig};
@@ -495,6 +499,37 @@ impl Consumer {
         opp: &Opportunity,
         entry_id: &str,
     ) -> Result<SimulationResult, String> {
+        // 0) Canonical carrier FIRST (Issue #567): the producer's validated
+        //    plan is the route of record. Recover it by opportunity id and
+        //    re-simulate the FULL cycle — never reconstruct a cyclic route
+        //    from token_in/token_out (the single-swap probe CANNOT represent
+        //    token_in == token_out; that is the 712/1000 `not_implemented/
+        //    strategy_cyclic_route_not_simulatable_in_s4` class). Absent or
+        //    expired carrier → fall through to the reconstruction path below,
+        //    unchanged (strictly additive).
+        {
+            let mut carrier_redis = self.redis.clone();
+            match canonical_plan_consumer::fetch(&mut carrier_redis, opp.id).await {
+                Ok(Some(plan)) => {
+                    info!(event = "sim_consumer.canonical_plan_hit", id = %entry_id);
+                    return canonical_plan_consumer::resimulate(b2c, opp, plan).await;
+                }
+                Ok(None) => {
+                    // Normal outside the 300s TTL window or when the producer
+                    // never reached SIM_SUCCESS — reconstruct below.
+                }
+                Err(canonical_plan_consumer::FetchError::Redis(e)) => {
+                    // Transient infra — PEL retry, never a market verdict.
+                    return Err(e.as_fail_reason());
+                }
+                Err(canonical_plan_consumer::FetchError::Parse(e)) => {
+                    // Terminal, honest: typed gap keeps the opportunity
+                    // non-rejected while the simulations row records why.
+                    return Ok(counted_gap(opp.id, &e.as_fail_reason()));
+                }
+            }
+        }
+
         // 1) Canonical inputs — same source as the A3 HTTP path.
         let inputs = match route_lookup::fetch_candidate_inputs(&self.pool, opp.id).await {
             Ok(Some(i)) => i,
@@ -652,7 +687,7 @@ fn count_simulation(sim: &SimulationResult) {
 /// opportunity stays non-rejected (status detected/validated,
 /// rejection_reason NULL) while the simulations row records the skip
 /// honestly. Counted in SIMULATIONS_TOTAL because the attempt really ran.
-fn counted_gap(opportunity_id: Uuid, reason: &str) -> SimulationResult {
+pub(crate) fn counted_gap(opportunity_id: Uuid, reason: &str) -> SimulationResult {
     let r = SimulationResult {
         opportunity_id,
         passed: false,

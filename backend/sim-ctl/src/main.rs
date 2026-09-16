@@ -9,6 +9,7 @@
 //! and the consumer logs idle; never fabricates results.
 
 mod anvil_backend;
+mod canonical_plan_consumer;
 mod consumer;
 mod fork_manager;
 mod persistence;
