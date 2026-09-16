@@ -76,6 +76,12 @@ class V3FeeManifestTests(unittest.TestCase):
         self.assertIsNone(m.decode_address("0x" + "01" + "00" * 31))
         self.assertIsNone(m.decode_address("0x" + "00" * 32))
 
+    def test_block_hash_must_be_canonical_32_byte_hex(self):
+        good = "0x" + "AB" * 32
+        self.assertEqual(m.normalize_block_hash(good), good.lower())
+        for bad in (None, "", "0x1234", "0x" + "gg" * 32, "0X" + "ab" * 32, "0x" + "ab" * 31, "0x" + "ab" * 33):
+            self.assertIsNone(m.normalize_block_hash(bad))
+
     def test_expected_deploy_sha_is_mandatory_and_normalized(self):
         self.assertEqual(m.require_expected_deploy_sha("A" * 40), "a" * 40)
         for bad in (None, "", "unknown", "abc", "g" * 40):

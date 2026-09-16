@@ -107,6 +107,15 @@ def decode_abi_uint(value: Any) -> int | None:
     return int(value, 16)
 
 
+def normalize_block_hash(value: Any) -> str | None:
+    if not isinstance(value, str) or len(value) != 66 or not value.startswith("0x"):
+        return None
+    payload = value[2:]
+    if not HEX64.fullmatch(payload):
+        return None
+    return "0x" + payload.lower()
+
+
 def decode_address(value: Any) -> str | None:
     if not isinstance(value, str) or len(value) != 66 or not value.startswith("0x"):
         return None
@@ -615,11 +624,13 @@ def main() -> int:
         raise SystemExit("rpc_block_number_missing")
     block_number = int(block_hex, 16)
     block = rpc_one(args.rpc_url, "eth_getBlockByNumber", [block_hex, False]).get("result")
-    if not isinstance(block, dict) or not isinstance(block.get("hash"), str):
+    if not isinstance(block, dict):
         raise SystemExit("rpc_block_hash_missing")
+    block_hash = normalize_block_hash(block.get("hash"))
+    if block_hash is None:
+        raise SystemExit("rpc_block_hash_invalid")
     if decode_u256(block.get("number")) != block_number:
         raise SystemExit("rpc_block_number_mismatch")
-    block_hash = str(block["hash"]).lower()
 
     snapshot_seed = run_nonce
     dexes, pools = collect_v3_catalog(
