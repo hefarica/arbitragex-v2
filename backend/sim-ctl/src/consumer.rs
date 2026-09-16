@@ -518,14 +518,14 @@ impl Consumer {
                     // Normal outside the 300s TTL window or when the producer
                     // never reached SIM_SUCCESS — reconstruct below.
                 }
-                Err(canonical_plan_consumer::FetchError::Redis(e)) => {
+                Err(err @ canonical_plan_consumer::FetchError::Redis(_)) => {
                     // Transient infra — PEL retry, never a market verdict.
-                    return Err(e.as_fail_reason());
+                    return Err(err.as_fail_reason());
                 }
-                Err(canonical_plan_consumer::FetchError::Parse(e)) => {
+                Err(err @ canonical_plan_consumer::FetchError::Parse(_)) => {
                     // Terminal, honest: typed gap keeps the opportunity
                     // non-rejected while the simulations row records why.
-                    return Ok(counted_gap(opp.id, &e.as_fail_reason()));
+                    return Ok(counted_gap(opp.id, &err.as_fail_reason()));
                 }
             }
         }
