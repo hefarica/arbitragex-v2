@@ -12,6 +12,7 @@ use ethers::abi::{decode as abi_decode, ParamType};
 use ethers::core::types::transaction::eip2718::TypedTransaction;
 use ethers::prelude::*;
 use shared_rs::contracts::{Opportunity, SimulationResult, SimulatorKind};
+use sim_ctl::signer_funding::SignerFunder;
 use std::time::Duration;
 use tokio::time::timeout;
 use tracing::{debug, warn};
@@ -21,6 +22,11 @@ pub struct SimEngine {
     pub signer_from: Address,
     pub timeout: Duration,
     pub max_slippage_for_pass_pct: f64,
+    /// SIM-FUND-01 (2026-09-17): seeds the signer's token balance on the
+    /// fork (anvil_setStorageAt, sentinel-verified slot) so the probe's
+    /// `transferFrom(signer, …)` can actually settle. `None` keeps the
+    /// pre-fix behavior (unfunded probes → TRANSFER_FROM_FAILED/STF).
+    pub funder: Option<SignerFunder>,
 }
 
 impl SimEngine {
@@ -85,6 +91,26 @@ impl SimEngine {
                 return Self::failed(id, trace_id, "fork_acquire_failed");
             }
         };
+
+        // SIM-FUND-01 (2026-09-17): fund the signer for token_in INSIDE the
+        // snapshot window — the probe swaps `amount_in` of token_in and the
+        // router pulls it with transferFrom(signer). Without this, every
+        // honest probe reverted TRANSFER_FROM_FAILED (V2) / STF (V3) because
+        // the signer is an observation address with zero balance on the
+        // fork. Fail-closed: an unfundable token is a typed failure, never a
+        // fabricated pass.
+        if let Some(funder) = &self.funder {
+            if let (Ok(token_in), Ok(amount_in)) = (
+                opp.token_in.parse::<Address>(),
+                U256::from_dec_str(&opp.amount_in_wei),
+            ) {
+                if let Err(reason) = funder.ensure_funded(token_in, probe.from, amount_in).await {
+                    warn!(event = "sim.funding_failed", id = %id, reason = %reason);
+                    let _ = handle.release().await;
+                    return Self::failed(id, trace_id, &reason);
+                }
+            }
+        }
 
         let tx_req = TransactionRequest::new()
             .from(probe.from)

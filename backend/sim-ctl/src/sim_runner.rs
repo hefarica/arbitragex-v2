@@ -243,6 +243,7 @@ fn route_hash_from_fingerprint(fingerprint: &str) -> [u8; 32] {
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
     use super::*;
 

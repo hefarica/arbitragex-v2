@@ -649,6 +649,11 @@ async fn main() -> anyhow::Result<()> {
         signer_from: signer,
         timeout: sim_timeout,
         max_slippage_for_pass_pct: max_slippage,
+        // SIM-FUND-01: fund the probe signer on the fork (anvil-only debug
+        // RPC; None when no fork, preserving the honest 501 path).
+        funder: fork
+            .as_ref()
+            .map(|f| sim_ctl::signer_funding::SignerFunder::new(f.provider.clone())),
     });
 
     // Backend selection: SIM_BACKEND env var chooses Anvil (default) or REVM.

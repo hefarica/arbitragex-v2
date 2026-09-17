@@ -111,6 +111,19 @@ groups:
           summary: "Route discovery found ZERO routes with a live graph for >=15m (chain {{ $labels.chain_id }})"
           description: "arbx_discovery_routes_found==0 while arbx_discovery_edges_built>0 — discovery is walking a live graph and emitting nothing. Check arbx_discovery_work_limited (1 = edge-visit budget exhausted before hubs were reached: start-order starvation class of ROUTES-0-20260916) and docker logs searcher-rs | grep route_discovery.tick (discovery_edge_visits/discovery_work_limited fields). Runbook: audits/real-cycles-audit-20260916/ROOT-CAUSE-ROUTES-FOUND-0.md."
 
+      # SIM-FUND-01 (2026-09-17): sentinel-verified slot discovery failing
+      # repeatedly on the anvil fork means probes are fail-closed with
+      # sim_signer_funding_slot_unresolved and NO simulation executes at
+      # all — the pre-fix state (TRANSFER_FROM_FAILED/STF) at least ran.
+      # >5 unresolved tokens in 30m on mainstream tokens = page.
+      - alert: SIM_FUNDER_SLOT_UNRESOLVED
+        expr: increase(arbx_sim_funding_total{outcome="slot_unresolved"}[30m]) > 5
+        for: 5m
+        labels: { severity: warning, service: sim-ctl, platform: arbitragex }
+        annotations:
+          summary: "Signer funding slot discovery failing on the sim fork (>5/30m)"
+          description: "arbx_sim_funding_total{outcome=slot_unresolved} rising — the sentinel-verified ERC20 balance-slot probe cannot resolve the token layout (exotic proxy or non-standard ERC20). Sims on those tokens are fail-closed (sim_signer_funding_slot_unresolved) instead of reverting TRANSFER_FROM_FAILED. Inspect docker logs sim-ctl | grep sim.funding_failed and extend CANDIDATE_SLOTS or handle the proxy layout. Runbook: audits/real-cycles-audit-20260916/00-SYNTHESIS.md (SIM-FUND-01)."
+
       - alert: RpcAllProvidersUnhealthy
         expr: count(arbx_rpc_provider_state == 0) == 0 and count(arbx_rpc_provider_state) > 0
         for: 2m

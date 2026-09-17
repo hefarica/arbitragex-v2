@@ -9,6 +9,7 @@
 //! execute there. The bin (`src/main.rs`) consumes this lib for the route.
 
 pub mod capabilities;
+pub mod signer_funding;
 
 /// SIMWIRE-02c P1-2: drain-guard authorization is PER-BACKEND, never a
 /// common `fork || b2c` OR. ANVIL_URL is always set in prod compose, so
