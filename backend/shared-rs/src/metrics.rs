@@ -61,6 +61,24 @@ pub static SIMULATIONS_TOTAL: Lazy<IntCounterVec> = Lazy::new(|| {
     c
 });
 
+/// SIM-FUND-01 (2026-09-17): fork-side signer funding outcomes for anvil
+/// probes. `slot_unresolved` recurring on a mainstream token means the
+/// sentinel-verified slot discovery failed (exotic proxy) — the simulation
+/// is fail-closed with `sim_signer_funding_slot_unresolved` and this
+/// counter is the R8-visible trace of it.
+pub static SIM_FUNDING_TOTAL: Lazy<IntCounterVec> = Lazy::new(|| {
+    let c = IntCounterVec::new(
+        prometheus::opts!(
+            "arbx_sim_funding_total",
+            "Signer funding outcomes on the simulation fork"
+        ),
+        &["outcome"],
+    )
+    .expect("metric");
+    REGISTRY.register(Box::new(c.clone())).expect("register");
+    c
+});
+
 pub static EXECUTIONS_TOTAL: Lazy<IntCounterVec> = Lazy::new(|| {
     let c = IntCounterVec::new(
         prometheus::opts!("arbx_execution_total", "Executions by relay/status/chain"),
@@ -416,6 +434,7 @@ pub fn init_metrics() {
     let _ = &*HTTP_REQUEST_DURATION;
     let _ = &*OPPORTUNITIES_TOTAL;
     let _ = &*SIMULATIONS_TOTAL;
+    let _ = &*SIM_FUNDING_TOTAL;
     let _ = &*EXECUTIONS_TOTAL;
     let _ = &*KILLSWITCH_ENABLED;
     let _ = &*SERVICE_UP;
