@@ -18,6 +18,10 @@ pub enum RouterKind {
     /// Uniswap Universal Router — command-dispatcher contract; a single
     /// `execute()` call can carry several swaps (V2/V3) plus permits/wraps.
     UniversalRouter,
+    /// PancakeSwap V3 Smart Router (PANCAKE-ROUTER-01) — exposes the
+    /// SwapRouter02-style `exactInputSingle` (7-field tuple, no deadline),
+    /// NOT the UniV3 v1 8-field shape.
+    PancakeV3,
     Unknown,
 }
 
@@ -30,6 +34,7 @@ impl RouterKind {
             RouterKind::Curve => "curve",
             RouterKind::Balancer => "balancer",
             RouterKind::UniversalRouter => "universal-router",
+            RouterKind::PancakeV3 => "pancake-v3",
             RouterKind::Unknown => "unknown",
         }
     }
@@ -397,6 +402,21 @@ const SUSHI_ROUTER_MAINNET: RouterEntry = RouterEntry {
     address: hex20("0xd9e1ce17f2641f24ae83637ab66a2cca9c378b9f"),
 };
 
+// PANCAKE-ROUTER-01 (2026-09-17): PancakeSwap V3 Smart Router on mainnet —
+// address verified against BOTH the official PancakeSwap developer docs
+// (developer.pancakeswap.finance/contracts/v3/addresses, ETH row) and
+// Etherscan's labeled contract page (PancakeSwap V3: Smart Router), which
+// also confirms the SwapRouter02-style exactInputSingle signature (7-field
+// tuple without deadline). The router catalog previously had NO mainnet
+// Pancake entry, so every Pancake-bearing candidate died with
+// "router not in catalog" at probe-build time (79 rows / 2h).
+const PANCAKE_SMART_ROUTER_MAINNET: RouterEntry = RouterEntry {
+    chain_id: 1,
+    name: "pancakeswap-v3-smart-router",
+    kind: RouterKind::PancakeV3,
+    address: hex20("0x13f4ea83d0bd40e75c8222255bc855a974568dd4"),
+};
+
 // Universal Router (command-dispatcher entrypoint). One execute() tx can
 // carry several swaps, so volume here is meaningful for the searcher.
 // Addresses per the official Uniswap deployments docs / deploy-addresses repo:
@@ -427,6 +447,7 @@ pub const ROUTERS_MAINNET: &[RouterEntry] = &[
     UNIV3_SWAPROUTER_MAINNET,
     UNIV3_SWAPROUTER02_MAINNET,
     SUSHI_ROUTER_MAINNET,
+    PANCAKE_SMART_ROUTER_MAINNET,
     UNIVERSAL_ROUTER_V2_MAINNET,
     UNIVERSAL_ROUTER_V2_1_1_MAINNET,
     UNIVERSAL_ROUTER_V1_2_MAINNET,
