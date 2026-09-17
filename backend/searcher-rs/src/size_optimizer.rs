@@ -100,6 +100,14 @@ pub enum OptimizeRejectReason {
     /// distinct from `NonPositiveProfit` (which means the quoter answered and
     /// the real spread is ≤ 0).
     V3QuoteUnavailable,
+    /// The V3 pool address is absent from the fee catalog (WO-06): the QuoterV2
+    /// derives the pool from the fee tier, so quoting would be blind at an
+    /// unverified tier. Rejected WITHOUT an RPC — distinct from
+    /// `V3QuoteUnavailable` (a real provider failure).
+    V3PoolNotCatalogued,
+    /// The token pair has no known V3 pools at all (WO-06) — no fee tier can
+    /// exist, so the candidate is rejected WITHOUT an RPC.
+    V3PairNoPools,
 }
 
 impl OptimizeRejectReason {
@@ -123,6 +131,20 @@ impl OptimizeRejectReason {
             Self::GasFloorBreach => "gas_floor_breach",
             Self::KellyNegativeEdge => "kelly_negative_edge",
             Self::V3QuoteUnavailable => "v3_quote_unavailable",
+            Self::V3PoolNotCatalogued => "v3_pool_not_catalogued",
+            Self::V3PairNoPools => "v3_pair_no_pools",
+        }
+    }
+
+    /// Map a V3 quote-failure label (`ProjectV3Error::as_label`) to its
+    /// precise reject reason (WO-06). "v3_quote_unavailable" stays reserved
+    /// for real provider failures — the former single bucket is now honestly
+    /// split so the production metrics can arbitrate the fix branches.
+    pub fn from_v3_unavailable_label(label: &'static str) -> Self {
+        match label {
+            "v3_pool_not_catalogued" => Self::V3PoolNotCatalogued,
+            "v3_pair_no_pools" => Self::V3PairNoPools,
+            _ => Self::V3QuoteUnavailable,
         }
     }
 
@@ -1150,6 +1172,9 @@ impl SizeOptimizer {
         let mut leg0_priced = false;
         let mut leg1_priced = false;
         let mut leg1_reached = false;
+        // WO-06: honest split of the former single "unavailable" bucket — the
+        // first V3 failure label decides the reject reason downstream.
+        let mut v3_unavailable_label: Option<&'static str> = None;
 
         for x in probes {
             if x.is_zero() {
@@ -1161,7 +1186,10 @@ impl SizeOptimizer {
                     leg0_priced = true;
                     v
                 }
-                LegQuote::Unavailable => continue, // V3 leg could not be priced
+                LegQuote::Unavailable(label) => {
+                    v3_unavailable_label.get_or_insert(label);
+                    continue; // V3 leg could not be priced
+                }
             };
             if out_a.is_zero() {
                 continue; // leg 0 yields nothing → unprofitable; don't quote leg 1 on 0
@@ -1174,7 +1202,10 @@ impl SizeOptimizer {
                     leg1_priced = true;
                     v
                 }
-                LegQuote::Unavailable => continue,
+                LegQuote::Unavailable(label) => {
+                    v3_unavailable_label.get_or_insert(label);
+                    continue;
+                }
             };
             if out_b.is_zero() {
                 continue;
@@ -1197,7 +1228,13 @@ impl SizeOptimizer {
                 let v3_unpriced =
                     (leg0_v3 && !leg0_priced) || (leg1_v3 && leg1_reached && !leg1_priced);
                 if v3_unpriced {
-                    return OptimizeOutcome::Rejected(OptimizeRejectReason::V3QuoteUnavailable);
+                    // WO-06: the recorded label splits catalog gaps
+                    // (v3_pool_not_catalogued / v3_pair_no_pools) from real
+                    // provider failures (v3_quote_unavailable).
+                    let reason = v3_unavailable_label
+                        .map(OptimizeRejectReason::from_v3_unavailable_label)
+                        .unwrap_or(OptimizeRejectReason::V3QuoteUnavailable);
+                    return OptimizeOutcome::Rejected(reason);
                 }
                 return OptimizeOutcome::Rejected(OptimizeRejectReason::NonPositiveProfit);
             }
@@ -1832,6 +1869,23 @@ mod tests {
         Address::from_low_u64_be(n)
     }
 
+    /// Empty in-memory fee catalog (WO-06): every pool/pair is uncatalogued —
+    /// V3 tests that only exercise V2 legs or the no-provider path use this.
+    fn empty_v3_fee_catalog() -> Arc<crate::v3_fee_catalog::V3FeeCatalog> {
+        Arc::new(crate::v3_fee_catalog::V3FeeCatalog::new())
+    }
+
+    /// Catalog for the standard V3 test fixture: pools addr(0x10)/addr(0x11)
+    /// on the addr(0xAAAA)/addr(0xBBBB) pair at the 0.05% tier — the same
+    /// fixture legs carry (fee_bps = Some(500)) — so V3 sizing tests exercise
+    /// the catalogued path (WO-06).
+    fn v3_test_fee_catalog() -> Arc<crate::v3_fee_catalog::V3FeeCatalog> {
+        let c = empty_v3_fee_catalog();
+        c.record_observed(addr(0x10), addr(0xAAAA), addr(0xBBBB), 500);
+        c.record_observed(addr(0x11), addr(0xAAAA), addr(0xBBBB), 500);
+        c
+    }
+
     fn unit(n: u64) -> U256 {
         U256::from(10u128).pow(U256::from(18u32)) * U256::from(n)
     }
@@ -2036,7 +2090,7 @@ mod tests {
         let r_out_b = unit(600); // 600 WETH (implied price ~1667 USDC/WETH — higher than pool A's 2000)
         cache.insert(pool_b, r_in_b, r_out_b).await;
 
-        let projector = Arc::new(StateProjector::new(cache, None));
+        let projector = Arc::new(StateProjector::new(cache, None, empty_v3_fee_catalog()));
         let optimizer = SizeOptimizer::new(projector);
 
         let candidate = make_dex_candidate(
@@ -2091,7 +2145,7 @@ mod tests {
         cache.insert(pool_a, r, r).await;
         cache.insert(pool_b, r, r).await;
 
-        let projector = Arc::new(StateProjector::new(cache, None));
+        let projector = Arc::new(StateProjector::new(cache, None, empty_v3_fee_catalog()));
         let optimizer = SizeOptimizer::new(projector);
 
         let candidate = make_dex_candidate(
@@ -2197,7 +2251,7 @@ mod tests {
     #[tokio::test]
     async fn route_quote_v2_leg_matches_v2_amount_out() {
         let cache = Arc::new(ReservesCache::new());
-        let projector = StateProjector::new(cache, None);
+        let projector = StateProjector::new(cache, None, empty_v3_fee_catalog());
         let rin = U256::from(1_000_000u64);
         let rout = U256::from(2_000_000u64);
         let leg = LegEval::V2 {
@@ -2229,7 +2283,7 @@ mod tests {
     #[tokio::test]
     async fn route_quote_route_folds_and_propagates_unavailable() {
         let cache = Arc::new(ReservesCache::new());
-        let projector = StateProjector::new(cache, None);
+        let projector = StateProjector::new(cache, None, empty_v3_fee_catalog());
         // V2 → V2 route: out of leg0 feeds leg1. Compose by hand, compare exactly.
         let legs = [
             LegEval::V2 {
@@ -2281,7 +2335,7 @@ mod tests {
         cache.insert(pool_a, unit(10_000), unit(20_000_000)).await;
         cache.insert(pool_b, unit(9_000_000), unit(6_000)).await;
 
-        let projector = Arc::new(StateProjector::new(cache, None));
+        let projector = Arc::new(StateProjector::new(cache, None, empty_v3_fee_catalog()));
         let optimizer = SizeOptimizer::new(projector);
 
         let candidate = make_dex_candidate(
@@ -2334,7 +2388,7 @@ mod tests {
         cache.insert(pool_a, unit(1000), unit(2_000_000)).await;
         cache.insert(pool_b, unit(1_000_000), unit(600)).await;
 
-        let projector = Arc::new(StateProjector::new(cache, None));
+        let projector = Arc::new(StateProjector::new(cache, None, empty_v3_fee_catalog()));
         let optimizer = SizeOptimizer::new(projector);
 
         let candidate = make_dex_candidate(
@@ -2376,7 +2430,7 @@ mod tests {
         cache.insert(pool_a, unit(1000), unit(1100)).await;
         cache.insert(pool_b, unit(1100), unit(1000)).await;
 
-        let projector = Arc::new(StateProjector::new(cache, None));
+        let projector = Arc::new(StateProjector::new(cache, None, empty_v3_fee_catalog()));
         let optimizer = SizeOptimizer::new(projector);
 
         let candidate = make_dex_candidate(
@@ -2444,7 +2498,7 @@ mod tests {
             )
             .await;
 
-        let projector = Arc::new(StateProjector::new(cache, None));
+        let projector = Arc::new(StateProjector::new(cache, None, empty_v3_fee_catalog()));
         let optimizer = SizeOptimizer::new(projector);
 
         let id = Uuid::new_v4();
@@ -2601,7 +2655,7 @@ mod tests {
         cache.insert(pool_a, unit(1000), unit(2_000_000)).await;
         cache.insert(pool_b, unit(1_000_000), unit(600)).await;
 
-        let projector = Arc::new(StateProjector::new(cache, None));
+        let projector = Arc::new(StateProjector::new(cache, None, empty_v3_fee_catalog()));
         let optimizer = SizeOptimizer::new(projector);
 
         let candidate = make_dex_candidate(
@@ -2645,7 +2699,7 @@ mod tests {
             // Insert pool_b reserves but NOT pool_a.
             cache.insert(pool_b, unit(1_000_000), unit(600)).await;
 
-            let projector = Arc::new(StateProjector::new(cache, None));
+            let projector = Arc::new(StateProjector::new(cache, None, empty_v3_fee_catalog()));
             let optimizer = SizeOptimizer::new(projector);
 
             let candidate = make_dex_candidate(
@@ -2678,7 +2732,7 @@ mod tests {
             // Insert pool_a reserves but NOT pool_b.
             cache.insert(pool_a, unit(1000), unit(2_000_000)).await;
 
-            let projector = Arc::new(StateProjector::new(cache, None));
+            let projector = Arc::new(StateProjector::new(cache, None, empty_v3_fee_catalog()));
             let optimizer = SizeOptimizer::new(projector);
 
             let candidate = make_dex_candidate(
@@ -2745,7 +2799,7 @@ mod tests {
             )
             .await;
 
-        let projector = Arc::new(StateProjector::new(cache, None));
+        let projector = Arc::new(StateProjector::new(cache, None, empty_v3_fee_catalog()));
         let optimizer = SizeOptimizer::new(projector);
 
         let candidate = make_dex_candidate(
@@ -2817,7 +2871,7 @@ mod tests {
         let r_out_b = unit(600);
         cache.insert(pool_b, r_in_b, r_out_b).await;
 
-        let projector = Arc::new(StateProjector::new(cache, None));
+        let projector = Arc::new(StateProjector::new(cache, None, empty_v3_fee_catalog()));
         let optimizer = SizeOptimizer::new(projector);
 
         let candidate = make_dex_candidate(
@@ -2883,7 +2937,7 @@ mod tests {
         cache.insert(pool_a, unit(10_000), unit(10_000)).await;
         cache.insert(pool_b, unit(10_000), unit(10_000)).await;
 
-        let projector = Arc::new(StateProjector::new(cache, None));
+        let projector = Arc::new(StateProjector::new(cache, None, empty_v3_fee_catalog()));
         let optimizer = SizeOptimizer::new(projector);
 
         let mut candidate = make_dex_candidate(
@@ -3135,6 +3189,28 @@ mod tests {
             OptimizeRejectReason::V3QuoteUnavailable.as_str(),
             "v3_quote_unavailable"
         );
+        // WO-06: catalog gaps are honestly split out of the provider-failure
+        // bucket.
+        assert_eq!(
+            OptimizeRejectReason::V3PoolNotCatalogued.as_str(),
+            "v3_pool_not_catalogued"
+        );
+        assert_eq!(
+            OptimizeRejectReason::V3PairNoPools.as_str(),
+            "v3_pair_no_pools"
+        );
+        assert_eq!(
+            OptimizeRejectReason::from_v3_unavailable_label("v3_pool_not_catalogued"),
+            OptimizeRejectReason::V3PoolNotCatalogued
+        );
+        assert_eq!(
+            OptimizeRejectReason::from_v3_unavailable_label("v3_pair_no_pools"),
+            OptimizeRejectReason::V3PairNoPools
+        );
+        assert_eq!(
+            OptimizeRejectReason::from_v3_unavailable_label("v3_quote_unavailable"),
+            OptimizeRejectReason::V3QuoteUnavailable
+        );
     }
 
     /// ARBX-0007: exactly the three net-derived gates (whose net includes the
@@ -3221,7 +3297,11 @@ mod tests {
     async fn v3_route_sized_with_mock_provider() {
         let cache = Arc::new(ReservesCache::new()); // V3 legs don't read reserves
         let provider = Arc::new(ProportionalV3Mock { num: 12, den: 10 }); // 1.2x/leg → profitable
-        let projector = Arc::new(StateProjector::new(cache, Some(provider)));
+        let projector = Arc::new(StateProjector::new(
+            cache,
+            Some(provider),
+            v3_test_fee_catalog(),
+        ));
         let optimizer = SizeOptimizer::new(projector);
 
         let candidate = make_v3_dex_candidate(addr(0x10), addr(0x11), addr(0xAAAA), addr(0xBBBB));
@@ -3253,7 +3333,7 @@ mod tests {
     #[tokio::test]
     async fn v3_route_without_provider_is_quote_unavailable() {
         let cache = Arc::new(ReservesCache::new());
-        let projector = Arc::new(StateProjector::new(cache, None)); // no V3 provider wired
+        let projector = Arc::new(StateProjector::new(cache, None, empty_v3_fee_catalog())); // no V3 provider wired
         let optimizer = SizeOptimizer::new(projector);
 
         let candidate = make_v3_dex_candidate(addr(0x10), addr(0x11), addr(0xAAAA), addr(0xBBBB));
@@ -3281,7 +3361,11 @@ mod tests {
     async fn v3_route_unprofitable_is_non_positive_profit() {
         let cache = Arc::new(ReservesCache::new());
         let provider = Arc::new(ProportionalV3Mock { num: 8, den: 10 }); // 0.8x/leg → always a loss
-        let projector = Arc::new(StateProjector::new(cache, Some(provider)));
+        let projector = Arc::new(StateProjector::new(
+            cache,
+            Some(provider),
+            v3_test_fee_catalog(),
+        ));
         let optimizer = SizeOptimizer::new(projector);
 
         let candidate = make_v3_dex_candidate(addr(0x10), addr(0x11), addr(0xAAAA), addr(0xBBBB));
@@ -3310,7 +3394,11 @@ mod tests {
     async fn v3_route_zero_quote_is_non_positive_not_unavailable() {
         let cache = Arc::new(ReservesCache::new());
         let provider = Arc::new(ProportionalV3Mock { num: 0, den: 1 }); // quoter answers, always 0
-        let projector = Arc::new(StateProjector::new(cache, Some(provider)));
+        let projector = Arc::new(StateProjector::new(
+            cache,
+            Some(provider),
+            v3_test_fee_catalog(),
+        ));
         let optimizer = SizeOptimizer::new(projector);
 
         let candidate = make_v3_dex_candidate(addr(0x10), addr(0x11), addr(0xAAAA), addr(0xBBBB));
@@ -3483,7 +3571,11 @@ mod tests {
             curves,
             calls: AtomicU64::new(0),
         });
-        let projector = Arc::new(StateProjector::new(cache, Some(provider)));
+        let projector = Arc::new(StateProjector::new(
+            cache,
+            Some(provider),
+            v3_test_fee_catalog(),
+        ));
         let optimizer = SizeOptimizer::new(projector); // no slot0 cache ⇒ grid runs
 
         let candidate = make_v3_curve_candidate(pool_a, pool_b, token0, token1);
@@ -3531,7 +3623,11 @@ mod tests {
             curves,
             calls: AtomicU64::new(0),
         });
-        let projector = Arc::new(StateProjector::new(cache, Some(provider)));
+        let projector = Arc::new(StateProjector::new(
+            cache,
+            Some(provider),
+            v3_test_fee_catalog(),
+        ));
         let optimizer = SizeOptimizer::new(projector);
 
         let candidate = make_v3_curve_candidate(pool_a, pool_b, token0, token1);
@@ -3595,7 +3691,11 @@ mod tests {
             curves,
             calls: AtomicU64::new(0),
         });
-        let projector = Arc::new(StateProjector::new(cache, Some(provider.clone())));
+        let projector = Arc::new(StateProjector::new(
+            cache,
+            Some(provider.clone()),
+            v3_test_fee_catalog(),
+        ));
         let optimizer = SizeOptimizer::new(projector).with_slot0_cache(slot0);
 
         let candidate = make_v3_curve_candidate(pool_a, pool_b, token0, token1);

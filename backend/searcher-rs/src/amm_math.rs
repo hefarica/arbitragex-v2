@@ -370,7 +370,9 @@ fn quoter_v2_function() -> Function {
 }
 
 /// Encode a single `quoteExactInputSingle` call as calldata bytes.
-fn encode_quote_calldata(req: &V3QuoteRequest) -> anyhow::Result<Bytes> {
+/// `pub(crate)` so the v3_fee_catalog pin-encoding tests (WO-06 T1/T7) can
+/// anchor the exact bytes without going through the multicall path.
+pub(crate) fn encode_quote_calldata(req: &V3QuoteRequest) -> anyhow::Result<Bytes> {
     let f = quoter_v2_function();
     let tuple = Token::Tuple(vec![
         Token::Address(req.token_in),

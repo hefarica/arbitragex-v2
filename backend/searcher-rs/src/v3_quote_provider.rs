@@ -249,43 +249,50 @@ impl V3QuoteProvider for MulticallV3QuoteProvider {
 
             // 4. One in-flight RPC for this key.
             quote_outcome_metric("rpc");
-            let rpc_result =
-                rpc_pool
-                    .with_retry(|provider| {
-                        // with_retry engages circuit-breaker + failover; the closure
-                        // may run more than once, so build the (single-element)
-                        // request set per attempt.
-                        let reqs = vec![V3QuoteRequest {
-                            pool_addr: pool,
-                            token_in,
-                            token_out,
-                            amount_in,
-                            fee_bps,
-                        }];
-                        async move {
-                            v3_quote_exact_in_multicall(provider, quoter, multicall, reqs).await
-                        }
-                    })
-                    .await
-                    .map_err(|e| anyhow::anyhow!("v3 quote rpc failover exhausted: {e}"))
-                    .and_then(|results| match results.into_iter().next() {
-                        Some(r) if r.success => Ok(r.amount_out),
-                        Some(_) => Err(anyhow::anyhow!(
-                        "v3 quote failed (insufficient liquidity / wrong fee tier / pool revert)"
-                    )),
-                        None => Err(anyhow::anyhow!("v3 quote returned an empty result set")),
-                    });
+            let (outcome, rpc_result) = rpc_pool
+                .with_retry(|provider| {
+                    // with_retry engages circuit-breaker + failover; the closure
+                    // may run more than once, so build the (single-element)
+                    // request set per attempt.
+                    let reqs = vec![V3QuoteRequest {
+                        pool_addr: pool,
+                        token_in,
+                        token_out,
+                        amount_in,
+                        fee_bps,
+                    }];
+                    async move {
+                        v3_quote_exact_in_multicall(provider, quoter, multicall, reqs).await
+                    }
+                })
+                .await
+                .map_err(|e| anyhow::anyhow!("v3 quote rpc failover exhausted: {e}"))
+                .map(|results| match results.into_iter().next() {
+                    Some(r) if r.success => ("rpc_ok", Ok(r.amount_out)),
+                    // Per-pool revert: the quoter call itself reverted at the
+                    // requested tier (insufficient liquidity / wrong tier /
+                    // pool revert). WO-06: split from transport failures — with
+                    // catalog-resolved tiers this label is the tier-mismatch
+                    // canary that used to hide inside `rpc_error`.
+                    Some(_) => (
+                        "rpc_tier_revert",
+                        Err(anyhow::anyhow!(
+                            "v3 quote failed (insufficient liquidity / wrong fee tier / pool revert)"
+                        )),
+                    ),
+                    None => (
+                        "rpc_error",
+                        Err(anyhow::anyhow!("v3 quote returned an empty result set")),
+                    ),
+                })
+                .unwrap_or_else(|e| ("rpc_error", Err(e)));
 
             // 5. Store (success + negative, distinct TTLs), release the slot,
             //    answer. The cache stores String errors (Clone); the returned
             //    anyhow::Error is rebuilt from the stored String on hits.
             self.cache_put(key, rpc_result.as_ref().map_err(|e| e.to_string()).cloned());
             self.inflight_clear(&key);
-            quote_outcome_metric(if rpc_result.is_ok() {
-                "rpc_ok"
-            } else {
-                "rpc_error"
-            });
+            quote_outcome_metric(outcome);
             rpc_result
         })
     }
