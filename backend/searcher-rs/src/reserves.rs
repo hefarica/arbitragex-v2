@@ -231,47 +231,76 @@ pub async fn set_pool_index_v3(
     sym_b: &str,
     pools: &[V3PoolInfo],
 ) -> redis::RedisResult<()> {
-    use crate::pool_discovery::v3_fee::{publish_v3_bootstrap, INDEX_COMPARE_AND_SET};
+    set_pool_index_v3_opt(redis, chain_id, sym_a, sym_b, pools, false).await
+}
+
+/// CATALOG-BACKFILL-01 (2026-09-17): bootstrap publish that REPLACES a
+/// legacy unparseable `pool_index_v3` key (pre-WO-06 `"address"`-field
+/// entries) with the fee-verified snapshot instead of failing forever.
+/// Only the pool_sync bootstrap path may call this — its snapshot tiers are
+/// canonical-from-PG or on-chain `fee()`-resolved.
+pub async fn set_pool_index_v3_repair(
+    redis: &mut ConnectionManager,
+    chain_id: u64,
+    sym_a: &str,
+    sym_b: &str,
+    pools: &[V3PoolInfo],
+) -> redis::RedisResult<()> {
+    set_pool_index_v3_opt(redis, chain_id, sym_a, sym_b, pools, true).await
+}
+
+async fn set_pool_index_v3_opt(
+    redis: &mut ConnectionManager,
+    chain_id: u64,
+    sym_a: &str,
+    sym_b: &str,
+    pools: &[V3PoolInfo],
+    repair_malformed: bool,
+) -> redis::RedisResult<()> {
+    use crate::pool_discovery::v3_fee::{
+        publish_v3_bootstrap, publish_v3_bootstrap_repair, INDEX_COMPARE_AND_SET,
+    };
     let key = key_pool_index_v3(chain_id, sym_a, sym_b);
     let read_conn = redis.clone();
     let write_conn = redis.clone();
-    publish_v3_bootstrap(
-        pools,
-        || {
-            let mut conn = read_conn.clone();
-            let key = key.clone();
-            async move {
-                redis::cmd("GET")
-                    .arg(key)
-                    .query_async(&mut conn)
-                    .await
-                    .map_err(|_| "redis_v3_index_read_failed")
+    let read = || {
+        let mut conn = read_conn.clone();
+        let key = key.clone();
+        async move {
+            redis::cmd("GET")
+                .arg(key)
+                .query_async(&mut conn)
+                .await
+                .map_err(|_| "redis_v3_index_read_failed")
+        }
+    };
+    let cas = |previous: Option<String>, replacement: String| {
+        let mut conn = write_conn.clone();
+        let key = key.clone();
+        async move {
+            let written: i64 = redis::cmd("EVAL")
+                .arg(INDEX_COMPARE_AND_SET)
+                .arg(1)
+                .arg(key)
+                .arg(if previous.is_some() { "1" } else { "0" })
+                .arg(previous.as_deref().unwrap_or(""))
+                .arg(replacement)
+                .query_async(&mut conn)
+                .await
+                .map_err(|_| "redis_v3_index_write_failed")?;
+            match written {
+                0 => Ok(false),
+                1 => Ok(true),
+                _ => Err("redis_v3_index_cas_invalid_result"),
             }
-        },
-        |previous, replacement| {
-            let mut conn = write_conn.clone();
-            let key = key.clone();
-            async move {
-                let written: i64 = redis::cmd("EVAL")
-                    .arg(INDEX_COMPARE_AND_SET)
-                    .arg(1)
-                    .arg(key)
-                    .arg(if previous.is_some() { "1" } else { "0" })
-                    .arg(previous.as_deref().unwrap_or(""))
-                    .arg(replacement)
-                    .query_async(&mut conn)
-                    .await
-                    .map_err(|_| "redis_v3_index_write_failed")?;
-                match written {
-                    0 => Ok(false),
-                    1 => Ok(true),
-                    _ => Err("redis_v3_index_cas_invalid_result"),
-                }
-            }
-        },
-    )
-    .await
-    .map_err(|reason| redis::RedisError::from((redis::ErrorKind::TypeError, reason)))?;
+        }
+    };
+    let result = if repair_malformed {
+        publish_v3_bootstrap_repair(pools, read, cas).await
+    } else {
+        publish_v3_bootstrap(pools, read, cas).await
+    };
+    result.map_err(|reason| redis::RedisError::from((redis::ErrorKind::TypeError, reason)))?;
     Ok(())
 }
 

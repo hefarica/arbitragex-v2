@@ -40,8 +40,8 @@ use tracing::{debug, info, warn};
 
 use crate::dirty_signal;
 use crate::reserves::{
-    set_pool_index, set_pool_index_v3, set_reserves, set_token_meta, set_v3_slot0, ReservesEntry,
-    TokenMeta, V3PoolInfo, V3Slot0Entry,
+    set_pool_index, set_pool_index_v3_repair, set_reserves, set_token_meta, set_v3_slot0,
+    ReservesEntry, TokenMeta, V3PoolInfo, V3Slot0Entry,
 };
 
 /// Alloy 1.0 migration: replaced ethers `abigen!` for Multicall3 with `sol!`.
@@ -116,6 +116,65 @@ const BACKOFF_CAP_MS: u64 = 5_000;
 /// (observed: a 60-call aggregate3 to a public RPC stalled the loop forever, leaving
 /// `arbx:pool_reserves`/`arbx:v3_slot0` empty). Override: `POOL_SYNC_CALL_TIMEOUT_MS`.
 const DEFAULT_MULTICALL_TIMEOUT_MS: u64 = 4_000;
+
+// ── CATALOG-BACKFILL-01 (2026-09-17): fee-tier normalization at the writer ──
+//
+// EVIDENCE (2026-09-17): PG `pools.fee_tier` for active V3 pools on chain 1
+// holds 30/5/1/NULL (44 rows of 121) — basis-point-unit garbage from a legacy
+// ingestion path (3000 pips = 30 bps, 500 = 5, 100 = 1), plus NULLs. Those
+// tiers flow verbatim into `arbx:pool_index_v3` → the fee catalog quotes at
+// them → the quoter reverts (`rpc_tier_revert`/`rpc_error`) or the pool is
+// skipped (`not_catalogued`).
+//
+// Remedy (writer side, BEFORE indexing): a PG tier that is NULL or NOT one of
+// the canonical deployed V3 tiers is resolved ONCE per pool by an on-chain
+// `fee()` read (raw pips — immutable pool property, ground truth). The
+// resolved tier is cached back into PG (`UPDATE pools.fee_tier`) and indexed.
+// If `fee()` fails/reverts or returns an invalid word, the pool is OMITTED
+// from the index with an R8 counter — never indexed with a fabricated tier.
+// Protocol-canonical constant set (same class as MULTICALL3_ADDR: immutable
+// deploy-time properties, NOT operator data — arbx-no-hardcode-doctrine).
+const CANONICAL_V3_FEE_TIERS: [i32; 5] = [100, 500, 2500, 3000, 10000];
+/// Minimum returnData length for a valid fee() response: 1 x uint24 = 32 bytes.
+const FEE_RETURN_LEN: usize = 32;
+
+/// CATALOG-BACKFILL-01 (2026-09-17): does this PG `fee_tier` need on-chain
+/// resolution before it may enter the V3 index? NULL or non-canonical → yes.
+/// The canonical set is a PROTOCOL constant; the on-chain `fee()` read remains
+/// the ultimate authority — an exotic-but-real tier (e.g. 5 pips) read on-chain
+/// is accepted verbatim, only PG-side suspects are re-resolved.
+fn tier_needs_resolution(fee_tier: Option<i32>) -> bool {
+    !matches!(fee_tier, Some(f) if CANONICAL_V3_FEE_TIERS.contains(&f))
+}
+
+/// CATALOG-BACKFILL-01 (2026-09-17): decode fee() multicall results into
+/// (pool_addr, resolved_pips) pairs. Pure → unit-tested. Omission rules (R8):
+///   * result `None`            → request-level failure after retries — omit.
+///   * `success == false`       → on-chain revert — omit.
+///   * wrong-length returnData  → not one canonical ABI word — omit.
+///   * `V3FeePips` decode error → out-of-range/non-canonical padding — omit.
+///
+/// Omitted pools are counted (never fabricated, never fatal).
+fn apply_fee_resolution(
+    addrs: &[String],
+    results: Vec<Option<multicall_abi::Result>>,
+) -> (Vec<(String, u32)>, usize) {
+    let mut resolved = Vec::new();
+    let mut omitted = 0usize;
+    for (addr, result) in addrs.iter().zip(results.into_iter()) {
+        let tier = result
+            .filter(|r| r.success && r.returnData.len() == FEE_RETURN_LEN)
+            .and_then(|r| {
+                crate::pool_discovery::v3_fee::V3FeePips::from_abi_word(&r.returnData).ok()
+            })
+            .map(|f| f.get());
+        match tier {
+            Some(t) => resolved.push((addr.clone(), t)),
+            None => omitted += 1,
+        }
+    }
+    (resolved, omitted)
+}
 
 /// Exponential backoff with a hard ceiling. `attempt` is 0-based; the shift is clamped so
 /// a large `attempt` can never overflow the `u64` shift. Pure → unit-tested.
@@ -393,6 +452,50 @@ struct PoolRow {
     token0_address_lower: String,
 }
 
+/// Resilient-batching knobs (all env-tunable; see the `DEFAULT_*` consts).
+/// CATALOG-BACKFILL-01 (2026-09-17): extracted from `run` into a struct so
+/// the boot-time V3 fee-tier resolution pass shares the SAME chunk/timeout/
+/// retry config as the polling loop (one definition site, no drift).
+#[derive(Clone, Copy)]
+struct BatchConfig {
+    batch_size: usize,
+    min_batch: usize,
+    max_retries: u32,
+    backoff_base_ms: u64,
+    call_timeout: Duration,
+}
+
+fn read_batch_config() -> BatchConfig {
+    BatchConfig {
+        batch_size: std::env::var("POOL_SYNC_BATCH_SIZE")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .filter(|&n| n > 0)
+            .unwrap_or(DEFAULT_MULTICALL_BATCH),
+        min_batch: std::env::var("POOL_SYNC_MIN_BATCH_SIZE")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .filter(|&n| n > 0)
+            .unwrap_or(DEFAULT_MIN_BATCH),
+        max_retries: std::env::var("POOL_SYNC_MAX_RETRIES")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(DEFAULT_MAX_RETRIES),
+        backoff_base_ms: std::env::var("POOL_SYNC_BACKOFF_BASE_MS")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .filter(|&n| n > 0)
+            .unwrap_or(DEFAULT_BACKOFF_BASE_MS),
+        call_timeout: Duration::from_millis(
+            std::env::var("POOL_SYNC_CALL_TIMEOUT_MS")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .filter(|&n| n > 0)
+                .unwrap_or(DEFAULT_MULTICALL_TIMEOUT_MS),
+        ),
+    }
+}
+
 /// Minimal V3 pool descriptor for the slot0 polling loop. Only the pool address
 /// is needed -- symbol and fee_tier are already in `arbx:pool_index_v3`.
 struct V3PoolRow {
@@ -436,6 +539,9 @@ impl PoolSyncWorker {
         );
 
         let multicall_addr = Address::from_str(MULTICALL3_ADDR)?;
+        // alloy address of the multicall contract -- computed once (needed
+        // before the V3 fee-resolution bootstrap pass — CATALOG-BACKFILL-01).
+        let multicall_alloy = AlloyAddress::from_slice(multicall_addr.as_bytes());
 
         // Bootstrap: read pools + tokens from DB and populate Redis caches.
         // V2 pools enter the reserves polling loop (getReserves every tick).
@@ -450,9 +556,27 @@ impl PoolSyncWorker {
 
         let mut v3_pools = self.load_v3_pools(&db).await?;
 
+        // Resilient-batching config: chunk size + hard per-call timeout. Both env-tunable
+        // (no hardcoded productive values; defaults are conservative for public RPCs).
+        // CATALOG-BACKFILL-01: read BEFORE bootstrap so the V3 fee-resolution
+        // pass shares the same knobs.
+        let batch = read_batch_config();
+        info!(
+            event = "pool_sync.batch_config",
+            chain_id = self.chain_id,
+            batch_size = batch.batch_size,
+            min_batch = batch.min_batch,
+            max_retries = batch.max_retries,
+            backoff_base_ms = batch.backoff_base_ms,
+            call_timeout_ms = batch.call_timeout.as_millis() as u64,
+            "resilient multicall batching active (chunk + timeout + exponential-backoff retry + dynamic sub-chunk degradation)"
+        );
+
         self.bootstrap_token_cache(&db, &mut redis).await?;
         self.bootstrap_pool_index_cache(&pools, &mut redis).await?;
-        let v3_count = self.bootstrap_v3_pool_index_cache(&db, &mut redis).await?;
+        let v3_count = self
+            .bootstrap_v3_pool_index_cache(&db, &mut redis, &rpc_pool, multicall_alloy, &batch)
+            .await?;
         info!(
             event = "pool_sync.caches_bootstrapped",
             chain_id = self.chain_id,
@@ -473,50 +597,6 @@ impl PoolSyncWorker {
             .unwrap();
         let slot0_calldata: Vec<u8> = slot0_selector.to_vec();
         let liquidity_calldata: Vec<u8> = liquidity_selector.to_vec();
-
-        // alloy address of the multicall contract -- computed once.
-        let multicall_alloy = AlloyAddress::from_slice(multicall_addr.as_bytes());
-
-        // Resilient-batching config: chunk size + hard per-call timeout. Both env-tunable
-        // (no hardcoded productive values; defaults are conservative for public RPCs).
-        let batch_size: usize = std::env::var("POOL_SYNC_BATCH_SIZE")
-            .ok()
-            .and_then(|v| v.parse().ok())
-            .filter(|&n| n > 0)
-            .unwrap_or(DEFAULT_MULTICALL_BATCH);
-        let call_timeout = Duration::from_millis(
-            std::env::var("POOL_SYNC_CALL_TIMEOUT_MS")
-                .ok()
-                .and_then(|v| v.parse().ok())
-                .filter(|&n| n > 0)
-                .unwrap_or(DEFAULT_MULTICALL_TIMEOUT_MS),
-        );
-        // Degradation knobs: floor for sub-chunk bisection + retry/backoff budget. All env-tunable
-        // (resilience tuning constants, NOT operator productive data — defaults are safe for public RPCs).
-        let min_batch: usize = std::env::var("POOL_SYNC_MIN_BATCH_SIZE")
-            .ok()
-            .and_then(|v| v.parse().ok())
-            .filter(|&n| n > 0)
-            .unwrap_or(DEFAULT_MIN_BATCH);
-        let max_retries: u32 = std::env::var("POOL_SYNC_MAX_RETRIES")
-            .ok()
-            .and_then(|v| v.parse().ok())
-            .unwrap_or(DEFAULT_MAX_RETRIES);
-        let backoff_base_ms: u64 = std::env::var("POOL_SYNC_BACKOFF_BASE_MS")
-            .ok()
-            .and_then(|v| v.parse().ok())
-            .filter(|&n| n > 0)
-            .unwrap_or(DEFAULT_BACKOFF_BASE_MS);
-        info!(
-            event = "pool_sync.batch_config",
-            chain_id = self.chain_id,
-            batch_size,
-            min_batch,
-            max_retries,
-            backoff_base_ms,
-            call_timeout_ms = call_timeout.as_millis() as u64,
-            "resilient multicall batching active (chunk + timeout + exponential-backoff retry + dynamic sub-chunk degradation)"
-        );
 
         // Pool-set refresh (2026-08-18, RESERVES-COVERAGE anomaly): the working
         // set was previously loaded at BOOT ONLY — pools discovered later by the
@@ -562,6 +642,28 @@ impl PoolSyncWorker {
                                 error = %e
                             );
                         }
+                        // CATALOG-BACKFILL-01 (2026-09-17): the V3 index was
+                        // boot-ONLY before — pools discovered after boot NEVER
+                        // entered `arbx:pool_index_v3` (a live contributor to
+                        // `not_catalogued`). Re-run the same fee-normalizing
+                        // bootstrap on refresh; failure warns (never kills the
+                        // loop — the prior index stays).
+                        if let Err(e) = self
+                            .bootstrap_v3_pool_index_cache(
+                                &db,
+                                &mut redis,
+                                &rpc_pool,
+                                multicall_alloy,
+                                &batch,
+                            )
+                            .await
+                        {
+                            warn!(
+                                event = "pool_sync.set_refresh_v3_index_failed",
+                                chain_id = self.chain_id,
+                                error = %e
+                            );
+                        }
                     }
                     (Err(e), _) | (_, Err(e)) => {
                         warn!(
@@ -598,11 +700,11 @@ impl PoolSyncWorker {
                 &rpc_pool,
                 multicall_alloy,
                 &calls,
-                batch_size,
-                min_batch,
-                max_retries,
-                backoff_base_ms,
-                call_timeout,
+                batch.batch_size,
+                batch.min_batch,
+                batch.max_retries,
+                batch.backoff_base_ms,
+                batch.call_timeout,
                 self.chain_id,
                 "v2_reserves",
             )
@@ -616,7 +718,7 @@ impl PoolSyncWorker {
 
             // Get current block once per tick — timeout-bounded so it can't hang either.
             let block_number: u64 = tokio::time::timeout(
-                call_timeout,
+                batch.call_timeout,
                 rpc_pool.with_retry(|provider| async move {
                     provider
                         .get_block_number()
@@ -809,11 +911,11 @@ impl PoolSyncWorker {
                     &rpc_pool,
                     multicall_alloy,
                     &v3_calls,
-                    batch_size,
-                    min_batch,
-                    max_retries,
-                    backoff_base_ms,
-                    call_timeout,
+                    batch.batch_size,
+                    batch.min_batch,
+                    batch.max_retries,
+                    batch.backoff_base_ms,
+                    batch.call_timeout,
                     self.chain_id,
                     "v3_slot0",
                 )
@@ -1178,8 +1280,19 @@ impl PoolSyncWorker {
 
     /// One-shot bootstrap of the V3 pool index. Reads V3 pools from PG (joined
     /// to factories->dexes for protocol_type filter), groups by sorted-symbol
-    /// pair, and additively merges Vec<V3PoolInfo> through the shared Redis CAS.
+    /// pair, and merges Vec<V3PoolInfo> through the shared Redis CAS.
     /// A PG snapshot must not overwrite later on-chain hydration or remove pools.
+    ///
+    /// CATALOG-BACKFILL-01 (2026-09-17): fee-tier NORMALIZATION at the
+    /// writer. PG tiers that are NULL or non-canonical (legacy bps-unit
+    /// 1/5/30 garbage — 44 of 121 active V3 pools on chain 1) are resolved
+    /// ONCE per pool via an on-chain `fee()` multicall (raw pips, immutable
+    /// pool property), cached back into PG (`UPDATE pools.fee_tier`), and
+    /// indexed with the resolved value. A pool whose `fee()` fails/reverts is
+    /// OMITTED from the index with an R8 counter — never a fabricated tier.
+    /// Publish uses `set_pool_index_v3_repair` so legacy unparseable keys
+    /// (93 observed in Redis, pre-WO-06 `"address"`-field schema) are replaced
+    /// by the fee-verified snapshot instead of failing the CAS forever.
     ///
     /// V3 slot0 is populated per-tick in the main polling loop (not here).
     /// This index just lets the scanner discover which V3 pools cover a given
@@ -1190,6 +1303,9 @@ impl PoolSyncWorker {
         &self,
         db: &PgPool,
         redis: &mut redis::aio::ConnectionManager,
+        rpc_pool: &Arc<shared_rs::rpc_failover::HttpRpcPool>,
+        multicall_alloy: AlloyAddress,
+        batch: &BatchConfig,
     ) -> anyhow::Result<usize> {
         // Nullable symbol/fee_tier decode: one V3 pool whose token has a NULL symbol (or a
         // NULL fee_tier) must not crash the worker. Fail-honest: skip the unindexable pool.
@@ -1208,17 +1324,18 @@ impl PoolSyncWorker {
         .fetch_all(db)
         .await?;
 
-        // Group by sorted-symbol pair.
+        // Group by sorted-symbol pair. Partition fee tiers:
+        //   * canonical (100/500/2500/3000/10000) → indexed as-is.
+        //   * suspect (NULL or anything else)     → queued for on-chain fee().
         use std::collections::HashMap;
         let mut by_pair: HashMap<(String, String), Vec<V3PoolInfo>> = HashMap::new();
         let mut skipped = 0usize;
+        let mut canonical = 0usize;
+        // CATALOG-BACKFILL-01: (pool_addr_lower, sym_lo, sym_hi) awaiting fee().
+        let mut suspect: Vec<(String, String, String)> = Vec::new();
         for (addr, sym0, sym1, fee_tier) in rows {
-            let (sym0, sym1, fee_tier) = match (sym0, sym1, fee_tier) {
-                (Some(a), Some(b), Some(f))
-                    if !a.is_empty() && !b.is_empty() && (0..1_000_000).contains(&f) =>
-                {
-                    (a, b, f)
-                }
+            let (sym0, sym1) = match (sym0, sym1) {
+                (Some(a), Some(b)) if !a.is_empty() && !b.is_empty() => (a, b),
                 _ => {
                     skipped += 1;
                     debug!(event = "pool_sync.v3_pool_skipped_null", chain_id = self.chain_id, addr = %addr);
@@ -1230,23 +1347,111 @@ impl PoolSyncWorker {
             } else {
                 (sym1.clone(), sym0.clone())
             };
-            by_pair.entry((lo, hi)).or_default().push(V3PoolInfo {
-                pool_addr: addr.to_lowercase(),
-                fee_bps: fee_tier as u32,
-            });
+            if tier_needs_resolution(fee_tier) {
+                suspect.push((addr.to_lowercase(), lo, hi));
+            } else {
+                // fee_tier is Some(canonical) by tier_needs_resolution's negation.
+                let tier = fee_tier.unwrap_or_default();
+                by_pair.entry((lo, hi)).or_default().push(V3PoolInfo {
+                    pool_addr: addr.to_lowercase(),
+                    fee_bps: tier as u32,
+                });
+                canonical += 1;
+            }
         }
+
+        // ── CATALOG-BACKFILL-01: on-chain fee() resolution for suspect tiers ──
+        let mut resolved_count = 0usize;
+        let mut omitted_count = 0usize;
+        let mut db_update_failed = 0usize;
+        if !suspect.is_empty() {
+            let fee_selector: [u8; 4] = ethers::utils::keccak256("fee()")[..4].try_into().unwrap();
+            let fee_calldata: Vec<u8> = fee_selector.to_vec();
+            let mut calls: Vec<multicall_abi::Call3> = Vec::with_capacity(suspect.len());
+            for (addr, _, _) in &suspect {
+                let parsed = Address::from_str(addr)
+                    .map_err(|e| anyhow::anyhow!("suspect pool addr {addr}: {e}"))?;
+                calls.push(multicall_abi::Call3 {
+                    target: AlloyAddress::from_slice(parsed.as_bytes()),
+                    allowFailure: true,
+                    callData: fee_calldata.clone().into(),
+                });
+            }
+            let results = multicall_resilient(
+                rpc_pool,
+                multicall_alloy,
+                &calls,
+                batch.batch_size,
+                batch.min_batch,
+                batch.max_retries,
+                batch.backoff_base_ms,
+                batch.call_timeout,
+                self.chain_id,
+                "v3_fee_resolution",
+            )
+            .await;
+            let addrs: Vec<String> = suspect.iter().map(|(a, _, _)| a.clone()).collect();
+            let (resolved, omitted) = apply_fee_resolution(&addrs, results);
+            omitted_count = omitted;
+            for (addr, tier) in resolved {
+                // Cache the on-chain truth back into PG (once per pool).
+                if let Err(e) = sqlx::query(
+                    "UPDATE pools SET fee_tier = $1 WHERE chain_id = $2 AND address = $3",
+                )
+                .bind(tier as i32)
+                .bind(self.chain_id as i64)
+                .bind(&addr)
+                .execute(db)
+                .await
+                {
+                    db_update_failed += 1;
+                    warn!(
+                        event = "pool_sync.v3_fee_tier_update_failed",
+                        chain_id = self.chain_id,
+                        pool = %addr,
+                        tier,
+                        error = %e
+                    );
+                }
+                // Index with the resolved tier (position-aligned with `addrs`).
+                if let Some((_, lo, hi)) = suspect.iter().find(|(a, _, _)| *a == addr) {
+                    by_pair
+                        .entry((lo.clone(), hi.clone()))
+                        .or_default()
+                        .push(V3PoolInfo {
+                            pool_addr: addr.clone(),
+                            fee_bps: tier,
+                        });
+                    resolved_count += 1;
+                }
+            }
+            if omitted_count > 0 || db_update_failed > 0 {
+                warn!(
+                    event = "pool_sync.v3_fee_resolution_failed",
+                    chain_id = self.chain_id,
+                    omitted = omitted_count,
+                    db_update_failed,
+                    "suspect-fee pools omitted from the V3 index (R8: fee() failed/reverted — no fabricated tiers)"
+                );
+            }
+        }
+
         let total = by_pair.values().map(|v| v.len()).sum::<usize>();
         if skipped > 0 {
             warn!(
                 event = "pool_sync.v3_pools_skipped_null",
                 chain_id = self.chain_id,
                 skipped,
-                "V3 pools skipped from index — NULL symbol/fee_tier (data gap, not fatal)"
+                "V3 pools skipped from index — NULL symbol (data gap, not fatal)"
             );
         }
 
         for ((sym_a, sym_b), pools) in &by_pair {
-            if let Err(e) = set_pool_index_v3(redis, self.chain_id, sym_a, sym_b, pools).await {
+            // CATALOG-BACKFILL-01: repair publish — a legacy unparseable key
+            // is REPLACED by this fee-verified snapshot (see fn doc).
+            if let Err(e) =
+                set_pool_index_v3_repair(redis, self.chain_id, sym_a, sym_b, pools).await
+            {
                 warn!(event = "pool_sync.v3_pool_index_set_failed", error = %e);
                 return Err(anyhow::anyhow!("v3_index_bootstrap_incomplete"));
             }
@@ -1256,6 +1461,11 @@ impl PoolSyncWorker {
             chain_id = self.chain_id,
             pool_count = total,
             pair_count = by_pair.len(),
+            canonical_tier = canonical,
+            fee_resolved = resolved_count,
+            fee_omitted = omitted_count,
+            fee_db_update_failed = db_update_failed,
+            "CATALOG-BACKFILL-01: suspect tiers resolved on-chain (fee()) before indexing"
         );
         Ok(total)
     }
@@ -1426,5 +1636,70 @@ mod tests {
             0,
             "no exec calls for empty input"
         );
+    }
+
+    // ── CATALOG-BACKFILL-01 (2026-09-17): fee-tier normalization at the writer ──
+
+    #[test]
+    fn catalog_backfill_tier_needs_resolution_classification() {
+        // Canonical deployed tiers (incl. PancakeV3's 2500) → indexed as-is.
+        for tier in [100, 500, 2500, 3000, 10000] {
+            assert!(!tier_needs_resolution(Some(tier)), "{tier} is canonical");
+        }
+        // NULL and legacy bps-unit garbage (1/5/30 = 100/500/3000 pips written
+        // as bps by the old ingestion) → resolve on-chain via fee().
+        assert!(tier_needs_resolution(None));
+        for tier in [1, 5, 30, 0, 123, 250, 999_999] {
+            assert!(tier_needs_resolution(Some(tier)), "{tier} is suspect");
+        }
+    }
+
+    fn fee_word(pips: u32) -> Vec<u8> {
+        let mut word = vec![0u8; 32];
+        word[28..].copy_from_slice(&pips.to_be_bytes());
+        word
+    }
+
+    fn fee_result(ok: bool, data: Vec<u8>) -> Option<multicall_abi::Result> {
+        Some(multicall_abi::Result {
+            success: ok,
+            returnData: data.into(),
+        })
+    }
+
+    #[test]
+    fn catalog_backfill_fee_resolution_accepts_canonical_and_exotic_pips() {
+        // (b) on-chain resolved tiers enter with the EXACT pips — the four
+        // canonical deploy tiers plus a real exotic tier (5 pips) verbatim
+        // (never rounded to a "known" tier — read provenance is mandatory).
+        let addrs: Vec<String> = (0..5).map(|i| format!("0x{:040x}", i + 1)).collect();
+        let results = vec![
+            fee_result(true, fee_word(100)),
+            fee_result(true, fee_word(500)),
+            fee_result(true, fee_word(3000)),
+            fee_result(true, fee_word(10000)),
+            fee_result(true, fee_word(5)),
+        ];
+        let (resolved, omitted) = apply_fee_resolution(&addrs, results);
+        assert_eq!(omitted, 0);
+        let tiers: Vec<u32> = resolved.iter().map(|(_, t)| *t).collect();
+        assert_eq!(tiers, vec![100, 500, 3000, 10000, 5]);
+        assert_eq!(resolved[0].0, addrs[0], "address alignment preserved");
+    }
+
+    #[test]
+    fn catalog_backfill_fee_resolution_revert_and_failure_are_omitted() {
+        // (c) fee() revert (success=false), request-level None, short data and
+        // out-of-range pips are ALL omitted and counted — never fabricated.
+        let addrs: Vec<String> = (0..4).map(|i| format!("0x{:040x}", i + 1)).collect();
+        let results = vec![
+            fee_result(false, Vec::new()),
+            None,
+            fee_result(true, vec![0u8; 31]),
+            fee_result(true, fee_word(1_000_000)),
+        ];
+        let (resolved, omitted) = apply_fee_resolution(&addrs, results);
+        assert!(resolved.is_empty(), "no fabricated tiers (R8)");
+        assert_eq!(omitted, 4);
     }
 }
