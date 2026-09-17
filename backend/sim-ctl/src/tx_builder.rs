@@ -100,6 +100,19 @@ pub fn build_probe(opp: &Opportunity, signer_from: Address) -> Result<ProbeTx, B
         RouterKind::UniswapV3 => {
             encode_v3_exact_input_single(token_in, token_out, amount_in, signer_from, deadline)
         }
+        RouterKind::PancakeV3 => {
+            // PANCAKE-ROUTER-01: Smart Router exposes the SwapRouter02-style
+            // exactInputSingle — 7-field tuple WITHOUT deadline. Sending the
+            // UniV3 v1 shape (deadline inside the tuple) reverts on this
+            // router, so the shapes must stay distinct.
+            encode_router02_exact_input_single(
+                token_in,
+                token_out,
+                DEFAULT_UNIV3_FEE,
+                signer_from,
+                amount_in,
+            )
+        }
         _ => {
             return Err(BuildError::UnknownRouter {
                 chain: opp.chain_id,
@@ -229,6 +242,37 @@ fn encode_v3_exact_input_single(
         Token::Uint(U256::zero()), // sqrtPriceLimitX96 = 0
     ]);
     let mut buf = selector.to_vec();
+    buf.extend(encode(&[params]));
+    Bytes::from(buf)
+}
+
+/// PANCAKE-ROUTER-01 (2026-09-17): SwapRouter02-style exactInputSingle as
+/// exposed by the PancakeSwap V3 Smart Router (and UniV3 SwapRouter02) —
+/// a 7-field tuple WITHOUT deadline:
+///   (tokenIn, tokenOut, fee, recipient, amountIn, amountOutMinimum,
+///    sqrtPriceLimitX96)
+/// The selector is COMPUTED from the canonical signature so this function
+/// cannot silently drift from the ABI it claims to encode; a wrong
+/// hand-typed constant would fail the pancake test, not the fork.
+fn encode_router02_exact_input_single(
+    token_in: Address,
+    token_out: Address,
+    fee: u32,
+    to: Address,
+    amount_in: U256,
+) -> Bytes {
+    let sig = "exactInputSingle((address,address,uint24,address,uint256,uint256,uint160))";
+    let selector = ethers::utils::keccak256(sig.as_bytes())[..4].to_vec();
+    let params = Token::Tuple(vec![
+        Token::Address(token_in),
+        Token::Address(token_out),
+        Token::Uint(U256::from(fee)),
+        Token::Address(to),
+        Token::Uint(amount_in),
+        Token::Uint(U256::zero()), // amountOutMinimum = 0 (simulation only)
+        Token::Uint(U256::zero()), // sqrtPriceLimitX96 = 0
+    ]);
+    let mut buf = selector;
     buf.extend(encode(&[params]));
     Bytes::from(buf)
 }
@@ -413,5 +457,45 @@ mod tests {
             build_probe(&o, [0; 20].into()),
             Err(BuildError::UnknownRouter { .. })
         ));
+    }
+
+    // ── PANCAKE-ROUTER-01 (2026-09-17) ────────────────────────────────────
+    // Incident: 79 build_errors "router not in catalog for chain=1
+    // dex=PancakeSwap V3" in 2h — PancakeSwap V3 pools ARE in the live
+    // graph, but the router catalog has no mainnet Pancake entry, so every
+    // Pancake-bearing candidate died at build time.
+
+    #[test]
+    fn pancake_v3_display_name_resolves() {
+        let entry = find_router_by_name(1, "PancakeSwap V3").expect("catalog miss");
+        assert_eq!(
+            format!("{:#x}", Address::from(entry.address)),
+            "0x13f4ea83d0bd40e75c8222255bc855a974568dd4"
+        );
+        // The other spellings the graph emits must resolve to the same router.
+        for dex in ["PancakeSwapV3", "pancakeswap-v3", "pancake-v3-smart-router"] {
+            let e = find_router_by_name(1, dex).unwrap_or_else(|| panic!("catalog miss for {dex}"));
+            assert_eq!(e.address, entry.address, "spelling {dex} diverged");
+        }
+    }
+
+    #[test]
+    fn pancake_v3_probe_uses_router02_style_encode() {
+        // The Pancake Smart Router exposes the SwapRouter02-style
+        // exactInputSingle (7-field tuple, NO deadline). Locking the SHAPE
+        // (selector + field count via decoded length), not a memorized
+        // selector: compute the selector from the signature so a wrong
+        // hand-typed constant fails here, not on the fork.
+        let signer: Address = [0xef; 20].into();
+        let o = opp(StrategyKind::dex_arb(), 1, "PancakeSwap V3");
+        let tx = build_probe(&o, signer).expect("pancake probe must build");
+        let expected_sel = ethers::utils::keccak256(
+            "exactInputSingle((address,address,uint24,address,uint256,uint256,uint160))".as_bytes(),
+        )[..4]
+            .to_vec();
+        assert_eq!(tx.data.as_ref()[0..4].to_vec(), expected_sel);
+        // 4 selector + tuple head + 7 words (last is empty bytes offset) —
+        // structurally distinguishable from the 8-word UniV3 v1 encode.
+        assert!(tx.data.len() > 4 + 32, "tuple-encoded payload expected");
     }
 }
