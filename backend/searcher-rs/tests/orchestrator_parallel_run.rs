@@ -120,7 +120,6 @@ async fn build_test_orchestrator() -> Option<std::sync::Arc<searcher_rs::orchest
 {
     use searcher_rs::engines::dex_engine::DexEngine;
     use searcher_rs::engines::flashloan_engine::FlashloanEngine;
-    use searcher_rs::v3_fee_catalog::V3FeeCatalog;
     use searcher_rs::engines::liquidation_engine::LiquidationEngine;
     use searcher_rs::engines::triangular_engine::{ReservesCache, TriangularEngine};
     use searcher_rs::impact_index::ImpactIndex;
@@ -129,6 +128,7 @@ async fn build_test_orchestrator() -> Option<std::sync::Arc<searcher_rs::orchest
     use searcher_rs::orchestrator::{ConfigProvider, Orchestrator, OrchestratorContext};
     use searcher_rs::size_optimizer::SizeOptimizer;
     use searcher_rs::state_projector::StateProjector;
+    use searcher_rs::v3_fee_catalog::V3FeeCatalog;
     use shared_rs::trading_config::TradingConfigClient;
     use std::sync::Arc;
     use tokio::sync::RwLock;
@@ -154,7 +154,11 @@ async fn build_test_orchestrator() -> Option<std::sync::Arc<searcher_rs::orchest
     // FEE-TIER-AWARE-QUOTING: empty in-memory catalog — uncatalogued pools
     // fail honest with zero RPC, matching this test's provider-less setup.
     let fee_catalog = Arc::new(V3FeeCatalog::default());
-    let state_projector = Arc::new(StateProjector::new(reserves_cache.clone(), None, fee_catalog));
+    let state_projector = Arc::new(StateProjector::new(
+        reserves_cache.clone(),
+        None,
+        fee_catalog,
+    ));
     let size_optimizer = Arc::new(SizeOptimizer::new(state_projector.clone()));
     let dex_engine = Arc::new(DexEngine::new(
         reserves_cache.clone(),

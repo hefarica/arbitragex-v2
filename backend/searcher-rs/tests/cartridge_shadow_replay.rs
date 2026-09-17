@@ -176,7 +176,11 @@ async fn build_ctx(
     let reserves_cache = Arc::new(ReservesCache::new());
     // FEE-TIER-AWARE-QUOTING: empty in-memory catalog (provider-less setup).
     let fee_catalog = Arc::new(searcher_rs::v3_fee_catalog::V3FeeCatalog::default());
-    let state_projector = Arc::new(StateProjector::new(reserves_cache.clone(), None, fee_catalog));
+    let state_projector = Arc::new(StateProjector::new(
+        reserves_cache.clone(),
+        None,
+        fee_catalog,
+    ));
     let size_optimizer = Arc::new(SizeOptimizer::new(state_projector.clone()));
     let dex_engine = Arc::new(DexEngine::new(
         reserves_cache.clone(),
