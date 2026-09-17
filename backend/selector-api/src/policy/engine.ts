@@ -23,6 +23,21 @@ export type PrefilterInput = {
   tokenSafetyCb: CircuitBreaker;
 };
 
+/**
+ * SEL-GATE-01 (2026-09-17): true when the PRODUCER already rejected this
+ * opportunity upstream (searcher lifecycle verdict), so it must never reach
+ * the validated stream — publishing it only burns sim-ctl fork RPC on rows
+ * that can never execute (87% of sims were `status="rejected"` /
+ * `amount_in_wei="0"` rows re-decided as accepts).
+ *
+ * Classification is lifecycle-only and conservative: absent status AND absent
+ * rejection_reason (older producers) is NOT dropped.
+ */
+export function producerRejected(opp: Opportunity): boolean {
+  if (opp.status === "rejected") return true;
+  return opp.rejection_reason != null && opp.rejection_reason !== "";
+}
+
 export async function prefilter(
   redis: Redis,
   input: PrefilterInput,
@@ -31,6 +46,15 @@ export async function prefilter(
 
   if (killSwitchOn) {
     return { kind: "reject", score: null, reason: "kill_switch_on", severity: "info" };
+  }
+
+  // SEL-GATE-01: producer-rejected rows are terminal — before any expensive
+  // work (safety fetch, scoring) and before the persist/publish tail. The
+  // original producer reason stays queryable in opportunities.rejection_reason;
+  // the selector decision carries the bounded `producer_rejected` label so
+  // decisionsTotal{reason} keeps low cardinality.
+  if (producerRejected(opp)) {
+    return { kind: "reject", score: null, reason: "producer_rejected", severity: "info" };
   }
 
   const bl = await pairAllowed(redis, opp.chain_id, opp.token_in, opp.token_out);
