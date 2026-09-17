@@ -162,6 +162,34 @@ pub static REJECTED_CONFIG_TOTAL: Lazy<IntCounterVec> = Lazy::new(|| {
 });
 
 // ---------------------------------------------------------------------------
+// v3_quote_total{outcome}  (V3-QUOTE-CACHE-20260916, R8 visibility)
+// ---------------------------------------------------------------------------
+
+/// V3 QuoterV2 provider outcomes (read-only staticcall path). Outcomes:
+///   - `rpc`       — an RPC round-trip was issued (cache miss / expired);
+///   - `rpc_ok`    — the RPC round-trip succeeded;
+///   - `rpc_error` — the RPC round-trip failed (failover exhausted / revert);
+///   - `cache_hit` — answered from cache without RPC (fresh success);
+///   - `cache_neg_hit` — answered from the negative cache (fresh failure).
+///
+/// The hit/error split is the canary for the quote cache health: `rpc` ≫
+/// `cache_hit` means the dedup is no longer collapsing duplicate probe volume
+/// (root cause: fixed `probe_amount` re-quoting the same keys per tick —
+/// see audits/real-cycles-audit-20260916/ROOT-CAUSE-v3-quote.md).
+pub static V3_QUOTE_TOTAL: Lazy<IntCounterVec> = Lazy::new(|| {
+    let c = IntCounterVec::new(
+        prometheus::opts!(
+            "arbx_v3_quote_total",
+            "V3 QuoterV2 provider outcomes: RPC issued vs cache-served, ok vs error"
+        ),
+        &["outcome"],
+    )
+    .expect("metric");
+    REGISTRY.register(Box::new(c.clone())).expect("register");
+    c
+});
+
+// ---------------------------------------------------------------------------
 // simulation_failed_total{chain_id, strategy, reason}
 // ---------------------------------------------------------------------------
 
