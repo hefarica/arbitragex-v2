@@ -245,11 +245,23 @@ fn decode_u256(out: &Bytes) -> Option<U256> {
 
 /// keccak256(abi.encode(signer, slot)) — the canonical Solidity mapping
 /// value location for `mapping(address => uint256)`.
+/// SIM-FUND-01b (2026-09-17): `abi.encode` RIGHT-pads an address inside its
+/// 32-byte word (bytes 12..31). The previous left-padded write computed a
+/// slot nobody reads — every `anvil_setStorageAt` landed in dead storage, the
+/// sentinel never reproduced through `balanceOf`, and 706/706 funding
+/// attempts died `slot_unresolved` on the live fork. Reproduced by contrast:
+/// the same write with `cast index` (correct padding) surfaces the sentinel
+/// immediately on the same anvil.
 fn balance_slot(slot: u64, signer: Address) -> H256 {
-    let mut buf = [0u8; 64];
-    buf[..20].copy_from_slice(signer.as_bytes());
-    buf[32..40].copy_from_slice(&slot.to_be_bytes());
-    H256(ethers::utils::keccak256(buf))
+    // Idiomatic (Sancho-validated SIM-FUND-01b): let ethers' ABI encoder do
+    // the padding — keccak256(abi.encode(address, uint256)), exactly what
+    // `cast index <addr> <slot>` computes. Manual byte alignment here caused
+    // the 706/706 slot_unresolved production failure (address left-padded +
+    // slot top-aligned instead of right-aligned words).
+    H256(ethers::utils::keccak256(ethers::abi::encode(&[
+        ethers::abi::Token::Address(signer),
+        ethers::abi::Token::Uint(ethers::types::U256::from(slot)),
+    ])))
 }
 
 fn u256_to_h256(v: U256) -> H256 {
@@ -265,24 +277,37 @@ mod tests {
     use super::*;
 
     #[test]
-    fn balance_slot_is_keccak_of_packed_signer_slot() {
+    fn balance_slot_is_keccak_of_abi_encoded_signer_slot() {
         let signer: Address = "0x1111111111111111111111111111111111111111"
             .parse()
             .unwrap();
-        // Slot 0, known vector: keccak256(abi.encodePacked(addr, 0, 0..0))
-        let s0 = balance_slot(0, signer);
-        // Deterministic and 32 bytes — cross-checked against an independent
-        // computation in the same test (structure, not a memorized constant).
-        let mut buf = [0u8; 64];
-        buf[..20].copy_from_slice(signer.as_bytes());
-        assert_eq!(s0, H256(ethers::utils::keccak256(buf)));
+        // SIM-FUND-01b: `cast index address 0x1111…1111 9` (foundry, correct
+        // abi.encode padding) — the regression vector that the left-padded
+        // implementation failed. Cross-checked live on the VPS anvil: writing
+        // the sentinel at THIS slot reproduces through balanceOf.
+        let known = H256::from_slice(
+            &ethers::utils::hex::decode(
+                "233b1b49de63438bb1ac1a57ef81babcc52ccd4555c968bb144593ea539bbebc",
+            )
+            .unwrap(),
+        );
+        assert_eq!(balance_slot(9, signer), known);
+        // abi.encode semantics pinned by the EXTERNAL cast vector above — this
+        // structural check would have caught both original padding bugs.
+        assert_eq!(
+            balance_slot(9, signer),
+            H256(ethers::utils::keccak256(ethers::abi::encode(&[
+                ethers::abi::Token::Address(signer),
+                ethers::abi::Token::Uint(ethers::types::U256::from(9u64)),
+            ])))
+        );
         // Different slot → different location.
-        assert_ne!(s0, balance_slot(2, signer));
+        assert_ne!(balance_slot(0, signer), balance_slot(2, signer));
         // Different signer → different location.
         let other: Address = "0x2222222222222222222222222222222222222222"
             .parse()
             .unwrap();
-        assert_ne!(s0, balance_slot(0, other));
+        assert_ne!(balance_slot(0, signer), balance_slot(0, other));
     }
 
     #[test]
