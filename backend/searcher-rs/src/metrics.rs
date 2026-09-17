@@ -416,6 +416,77 @@ pub static PIPELINE_LAST_OPPORTUNITY_INSERT_UNIXTIME: Lazy<IntGauge> = Lazy::new
 });
 
 // ---------------------------------------------------------------------------
+// Route discovery tick gauges (ROUTES-0-20260916)
+// ---------------------------------------------------------------------------
+
+/// Gauges for the route-discovery funnel head, labelled by chain. Updated once
+/// per completed discovery tick by route_discovery_worker with the SAME values
+/// the `route_discovery.tick` log line and the Redis tick snapshot carry.
+///
+/// Backs the ROUTES-0 alert in monitoring/alerts.rules.yml:
+///   routes_found == 0 while edges_built > 0 (live graph) for >= 15m
+///
+/// Motivation (incident ROUTES-0, 2026-09-16, 01:00–11:00Z): discovery sat at
+/// routes_found=0 with a live 374-edge graph for 10 hours while the honest
+/// signals (discovery_edge_visits pinned at the budget, work_limited=true)
+/// were only visible in logs and the Redis tick snapshot — nobody was
+/// listening. These gauges convert that silence into a 15-minute alert.
+///
+/// RULE 00: set ONLY from a real completed tick's outcome — never fabricated.
+/// R8: an absent series (searcher down) is covered by ServiceDown/SEARCHER_SCRAPE_DOWN.
+pub static DISCOVERY_ROUTES_FOUND: Lazy<prometheus::IntGaugeVec> = Lazy::new(|| {
+    let g = prometheus::IntGaugeVec::new(
+        prometheus::opts!(
+            "arbx_discovery_routes_found",
+            "Routes emitted by the last route-discovery tick, by chain (real tick outcomes only)"
+        ),
+        &["chain_id"],
+    )
+    .expect("metric");
+    REGISTRY.register(Box::new(g.clone())).expect("register");
+    g
+});
+
+pub static DISCOVERY_EDGES_BUILT: Lazy<prometheus::IntGaugeVec> = Lazy::new(|| {
+    let g = prometheus::IntGaugeVec::new(
+        prometheus::opts!(
+            "arbx_discovery_edges_built",
+            "Graph edges built by the last route-discovery tick, by chain"
+        ),
+        &["chain_id"],
+    )
+    .expect("metric");
+    REGISTRY.register(Box::new(g.clone())).expect("register");
+    g
+});
+
+pub static DISCOVERY_WORK_LIMITED: Lazy<prometheus::IntGaugeVec> = Lazy::new(|| {
+    let g = prometheus::IntGaugeVec::new(
+        prometheus::opts!(
+            "arbx_discovery_work_limited",
+            "1 if the last route-discovery tick exhausted its edge-visit budget before completing, by chain"
+        ),
+        &["chain_id"],
+    )
+    .expect("metric");
+    REGISTRY.register(Box::new(g.clone())).expect("register");
+    g
+});
+
+pub static DISCOVERY_EDGE_VISITS: Lazy<prometheus::IntGaugeVec> = Lazy::new(|| {
+    let g = prometheus::IntGaugeVec::new(
+        prometheus::opts!(
+            "arbx_discovery_edge_visits",
+            "Edge visits consumed by the last route-discovery tick, by chain"
+        ),
+        &["chain_id"],
+    )
+    .expect("metric");
+    REGISTRY.register(Box::new(g.clone())).expect("register");
+    g
+});
+
+// ---------------------------------------------------------------------------
 // Initialiser — call once at boot (main.rs after init_metrics())
 // ---------------------------------------------------------------------------
 
@@ -444,6 +515,12 @@ pub fn init_orchestrator_metrics() {
     // boot time — the watchdog then measures silence FROM boot, so a fresh
     // process does not instantly alert.
     PIPELINE_LAST_OPPORTUNITY_INSERT_UNIXTIME.set(chrono::Utc::now().timestamp());
+    // ROUTES-0-20260916: force-register the discovery gauges so the series
+    // exist (absent = 0) before the first tick completes.
+    let _ = &*DISCOVERY_ROUTES_FOUND;
+    let _ = &*DISCOVERY_EDGES_BUILT;
+    let _ = &*DISCOVERY_WORK_LIMITED;
+    let _ = &*DISCOVERY_EDGE_VISITS;
 }
 
 // ---------------------------------------------------------------------------

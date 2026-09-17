@@ -433,7 +433,23 @@ pub fn find_routes_with_work_budget(
     };
 
     let mut starts: Vec<Address> = if cfg.base_tokens.is_empty() {
-        graph.tokens().cloned().collect()
+        // ROUTES-0-20260916: a degree-1 leaf cannot start any simple cycle
+        // (closing the loop would reuse its only pool), yet under address
+        // ordering three low-address leaf starts each burned a whole depth-7
+        // subtree walk (~30k edge visits apiece) of the SHARED work budget,
+        // starving every hub before a single route was emitted
+        // (routes_found=0 with edges_built=374, deterministic). Skipping leaf
+        // starts is lossless; ordering hubs-first (degree desc, address asc as
+        // deterministic tiebreak) guarantees the budget reaches cycle-bearing
+        // tokens before any dead-end subtree.
+        let mut ranked: Vec<(Address, usize)> = graph
+            .adjacency
+            .iter()
+            .filter(|(_, out)| out.len() >= 2)
+            .map(|(t, out)| (*t, out.len()))
+            .collect();
+        ranked.sort_unstable_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
+        ranked.into_iter().map(|(t, _)| t).collect()
     } else {
         cfg.base_tokens
             .iter()
@@ -441,10 +457,6 @@ pub fn find_routes_with_work_budget(
             .cloned()
             .collect()
     };
-
-    if cfg.base_tokens.is_empty() {
-        starts.sort_unstable();
-    }
 
     for start in starts {
         if state.work_limited {
@@ -928,6 +940,84 @@ mod tests {
                 .iter()
                 .all(|r| !r.pools.contains(&addr(loser))));
         }
+    }
+
+    // ── ROUTES-0-20260916: leaf-start starvation of the global work budget ──
+    //
+    // Incident (2026-09-16, 01:00–11:00Z): with starts = every token in
+    // address order, the first three degree-1 leaf starts (0x0267…, 0x03ec…,
+    // 0x0604…) each burned a whole depth-7 subtree walk (~30k edge visits
+    // apiece) that can never close a simple cycle, exhausting the shared
+    // 100_000-visit budget before any hub (WETH, degree 170, owner of the
+    // graph's ~29.7k cycles) was ever started. Result: routes_found=0 with
+    // edges_built=374 and work_limited=true on every tick, deterministically.
+    //
+    // A degree-1 token cannot be the start of any simple cycle (closing the
+    // loop would need its only pool a second time), so skipping leaf starts
+    // is lossless. Hubs-first ordering then guarantees the budget reaches
+    // cycle-bearing tokens before any dead-end subtrees.
+    #[test]
+    fn leaf_starts_cannot_starve_the_work_budget() {
+        // Prod shape, scaled down: a WETH-like hub (degree 2) plus one
+        // twin-hub pair, each carrying real 2-cycles, fronted by three
+        // degree-1 leaves with LOW addresses (they sort first today).
+        let pools: Vec<(u64, u64, u64, ProtocolType)> = vec![
+            // Leaf chains: leaf_i --(own pool)--> hub. Leaf addresses are the
+            // smallest in the graph so address order starts here.
+            (100, 1, 0x1000, ProtocolType::V2), // leaf 1 -> hub A
+            (101, 2, 0x2000, ProtocolType::V2), // leaf 2 -> hub B
+            (102, 3, 0x2000, ProtocolType::V2), // leaf 3 -> hub B
+            // Real cycle mass: two parallel pools A<->B (2-cycles) and a
+            // triangle A->B->C->A over distinct pools.
+            (110, 0x1000, 0x2000, ProtocolType::V2),
+            (111, 0x1000, 0x2000, ProtocolType::V2),
+            (112, 0x1000, 0x3000, ProtocolType::V2),
+            (113, 0x2000, 0x3000, ProtocolType::V2),
+        ];
+        let g = graph_from(&pools);
+        // Depth 7 (the deployed .env), default 100k budget — but tightened to
+        // prove the point at unit scale: even a generous per-start share is
+        // useless if the starts are leaves.
+        let cfg = RouteFinderConfig {
+            min_depth: 2,
+            max_depth: 7,
+            ..Default::default()
+        };
+        let o = find_routes_with_work_budget(&g, 1, &cfg, 60);
+        assert!(
+            !o.routes.is_empty(),
+            "hub cycles must be found even when low-address leaves front the graph"
+        );
+        assert!(
+            !o.work_limited || o.routes.len() >= 2,
+            "if the budget trips at all it must be AFTER cycles were emitted, not before"
+        );
+    }
+
+    #[test]
+    fn hubs_first_ordering_finds_cycles_under_tight_budget() {
+        // Same topology as the incident shape: three low-address degree-1
+        // leaves fronting a hub (0x1000) that owns all the 2-cycles. A budget
+        // too small for every start must still surface the hub's cycles
+        // because hubs are visited first, not last.
+        let all: Vec<(u64, u64, u64, ProtocolType)> = vec![
+            (100, 1, 0x1000, ProtocolType::V2),
+            (101, 2, 0x1000, ProtocolType::V2),
+            (102, 3, 0x1000, ProtocolType::V2),
+            (110, 0x1000, 0x2000, ProtocolType::V2),
+            (111, 0x1000, 0x2000, ProtocolType::V2),
+        ];
+        let g = graph_from(&all);
+        let cfg = RouteFinderConfig {
+            min_depth: 2,
+            max_depth: 7,
+            ..Default::default()
+        };
+        let o = find_routes_with_work_budget(&g, 1, &cfg, 40);
+        assert!(
+            !o.routes.is_empty(),
+            "the degree-2 hub owns 2-cycles; a 40-visit budget must find one"
+        );
     }
 
     // ── ARBX-0010: Pair/Expand timing split ─────────────────────────────

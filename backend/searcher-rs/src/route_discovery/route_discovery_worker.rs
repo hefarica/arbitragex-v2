@@ -1574,6 +1574,33 @@ async fn run_loop(
             adapter_scoped_skip,
             fe_prefilter_below_reference,
         );
+
+        // ROUTES-0-20260916: export the SAME tick outcome as Prometheus
+        // gauges so a dead-but-alive discovery (routes_found=0 with a live
+        // graph, work budget exhausted) pages within 15 minutes instead of
+        // sitting unread in logs/Redis for hours.
+        let chain_label = chain_id.to_string();
+        let chain_label: [&str; 1] = [chain_label.as_str()];
+        crate::metrics::DISCOVERY_ROUTES_FOUND
+            .with_label_values(&chain_label)
+            .set(routes_found as i64);
+        crate::metrics::DISCOVERY_EDGES_BUILT
+            .with_label_values(&chain_label)
+            .set(outcome.graph.edges.len() as i64);
+        crate::metrics::DISCOVERY_EDGE_VISITS
+            .with_label_values(&chain_label)
+            .set(
+                tick.tick_summary["discovery_edge_visits"]
+                    .as_u64()
+                    .unwrap_or(0) as i64,
+            );
+        crate::metrics::DISCOVERY_WORK_LIMITED
+            .with_label_values(&chain_label)
+            .set(i64::from(
+                tick.tick_summary["discovery_work_limited"]
+                    .as_bool()
+                    .unwrap_or(false),
+            ));
     }
 }
 

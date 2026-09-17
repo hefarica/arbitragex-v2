@@ -95,6 +95,22 @@ groups:
           summary: "searcher-rs /metrics scrape DOWN (process dead or exporter hung)"
           description: "Prometheus cannot scrape searcher-rs:9001/metrics for over 1m (native up==0 — independent of any custom gauge). If the container is 'Up' but unscrapeable, the exporter thread is hung: restart container, then check docker logs searcher-rs --tail 200."
 
+      # ROUTES-0-20260916: discovery can be 'dead-but-alive' — the tick loop
+      # runs, the graph is live (edges_built > 0), yet routes_found pins at 0
+      # for hours (original incident: 10h, 01:00–11:00Z, leaf-start budget
+      # starvation). This rule converts that silence into a 15-minute page.
+      # The gauges are exported per chain by route_discovery_worker with the
+      # same values as the route_discovery.tick log line (RULE 00: real tick
+      # outcomes only). A searcher that is fully down is covered separately
+      # by SEARCHER_SCRAPE_DOWN / ServiceDown, not by this rule.
+      - alert: ROUTES_FOUND_ZERO_WITH_LIVE_GRAPH
+        expr: arbx_discovery_routes_found == 0 and arbx_discovery_edges_built > 0
+        for: 15m
+        labels: { severity: critical, service: searcher-rs, platform: arbitragex }
+        annotations:
+          summary: "Route discovery found ZERO routes with a live graph for >=15m (chain {{ $labels.chain_id }})"
+          description: "arbx_discovery_routes_found==0 while arbx_discovery_edges_built>0 — discovery is walking a live graph and emitting nothing. Check arbx_discovery_work_limited (1 = edge-visit budget exhausted before hubs were reached: start-order starvation class of ROUTES-0-20260916) and docker logs searcher-rs | grep route_discovery.tick (discovery_edge_visits/discovery_work_limited fields). Runbook: audits/real-cycles-audit-20260916/ROOT-CAUSE-ROUTES-FOUND-0.md."
+
       - alert: RpcAllProvidersUnhealthy
         expr: count(arbx_rpc_provider_state == 0) == 0 and count(arbx_rpc_provider_state) > 0
         for: 2m

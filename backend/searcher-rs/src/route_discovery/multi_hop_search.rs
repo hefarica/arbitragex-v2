@@ -180,8 +180,28 @@ pub fn find_profitable_cycles_with_limits(
         seen: std::collections::HashSet::new(),
     };
     // HashMap order must not decide which starting assets receive the budget.
-    let mut starts: Vec<_> = graph.adjacency.keys().copied().collect();
-    starts.sort_unstable();
+    // ROUTES-0-20260916: leaf starts starve the shared work budget exactly as
+    // in unique_route_finder — under address ordering, tokens incident to a
+    // single pool burn the budget in dead-end walks that can never close a
+    // simple cycle (the cycle must LEAVE through one pool and RETURN through
+    // a different one; same-pool reuse is rejected in dfs). This graph is
+    // directed at the edge level, so the lossless eligibility test counts
+    // DISTINCT INCIDENT POOLS across both the token_in and token_out sides;
+    // skipping tokens under two is lossless. Hubs-first (incident pools desc,
+    // address asc tiebreak) keeps the walk deterministic.
+    let mut incident: std::collections::HashMap<Address, std::collections::BTreeSet<Address>> =
+        std::collections::HashMap::new();
+    for e in &graph.edges {
+        incident.entry(e.token_in).or_default().insert(e.pool);
+        incident.entry(e.token_out).or_default().insert(e.pool);
+    }
+    let mut starts: Vec<(usize, Address)> = incident
+        .into_iter()
+        .filter(|(t, pools)| pools.len() >= 2 && graph.adjacency.contains_key(t))
+        .map(|(t, pools)| (pools.len(), t))
+        .collect();
+    starts.sort_unstable_by(|a, b| b.0.cmp(&a.0).then_with(|| a.1.cmp(&b.1)));
+    let starts: Vec<Address> = starts.into_iter().map(|(_, t)| t).collect();
     let mut path = Vec::with_capacity(max_hops);
     let mut pools = Vec::with_capacity(max_hops);
     for start in starts {
