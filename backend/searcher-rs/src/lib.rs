@@ -147,6 +147,8 @@ pub mod workers;
 pub mod state_projector;
 // V3 oracle: on-chain QuoterV2 read-only provider feeding StateProjector.
 pub mod v3_quote_provider;
+// V3 fee catalog: Redis pool_index_v3 mirror — authoritative fee tiers (WO-06).
+pub mod v3_fee_catalog;
 // Phase 13: SizeOptimizer -- optimal amount_in sizing for arb candidates.
 pub mod size_optimizer;
 // Phase 11: LendingPositionIndexer -- Redis-backed watchlist + cache for

@@ -168,7 +168,11 @@ pub static REJECTED_CONFIG_TOTAL: Lazy<IntCounterVec> = Lazy::new(|| {
 /// V3 QuoterV2 provider outcomes (read-only staticcall path). Outcomes:
 ///   - `rpc`       — an RPC round-trip was issued (cache miss / expired);
 ///   - `rpc_ok`    — the RPC round-trip succeeded;
-///   - `rpc_error` — the RPC round-trip failed (failover exhausted / revert);
+///   - `rpc_error` — the RPC round-trip failed at the transport level
+///     (failover exhausted / empty result set);
+///   - `rpc_tier_revert` — the quoter call itself reverted at the requested
+///     fee tier (insufficient liquidity / wrong tier / pool revert) — WO-06:
+///     previously folded into `rpc_error`;
 ///   - `cache_hit` — answered from cache without RPC (fresh success);
 ///   - `cache_neg_hit` — answered from the negative cache (fresh failure).
 ///
@@ -187,6 +191,46 @@ pub static V3_QUOTE_TOTAL: Lazy<IntCounterVec> = Lazy::new(|| {
     .expect("metric");
     REGISTRY.register(Box::new(c.clone())).expect("register");
     c
+});
+
+// ---------------------------------------------------------------------------
+// v3_fee_resolution_total{resolution} + v3_fee_catalog_pools (WO-06, R8)
+// ---------------------------------------------------------------------------
+
+/// Fee-tier resolution outcome for every V3 quote attempt (WO-06
+/// FEE-TIER-AWARE-QUOTING). Resolutions:
+///   - `catalog`       — pool catalogued, offered fee matched;
+///   - `mismatch`      — offered fee differed from the catalog (catalog wins);
+///   - `not_catalogued` — pool address unknown to the catalog (pair HAS tiers);
+///   - `pair_no_pools` — token pair has no known V3 pools at all.
+///
+/// This is the production arbiter between the fix branches: mismatch ≫
+/// everything else points at a fee hardcode upstream; not_catalogued ≫ points
+/// at a catalog backfill gap; both ~0 with high `v3_quote_unavailable` points
+/// at the size_optimizer/provider path instead.
+pub static V3_FEE_RESOLUTION_TOTAL: Lazy<IntCounterVec> = Lazy::new(|| {
+    let c = IntCounterVec::new(
+        prometheus::opts!(
+            "arbx_v3_fee_resolution_total",
+            "V3 fee-tier resolution against the pool catalog (WO-06)"
+        ),
+        &["resolution"],
+    )
+    .expect("metric");
+    REGISTRY.register(Box::new(c.clone())).expect("register");
+    c
+});
+
+/// V3 pools currently known to the fee catalog (Redis pool_index_v3 mirror +
+/// passive post-RPC observations). Zero on a cold/failed boot load.
+pub static V3_FEE_CATALOG_POOLS: Lazy<IntGauge> = Lazy::new(|| {
+    let g = IntGauge::new(
+        "arbx_v3_fee_catalog_pools",
+        "V3 pools known to the fee catalog (WO-06)",
+    )
+    .expect("metric");
+    REGISTRY.register(Box::new(g.clone())).expect("register");
+    g
 });
 
 // ---------------------------------------------------------------------------
@@ -549,6 +593,16 @@ pub fn init_orchestrator_metrics() {
     let _ = &*DISCOVERY_EDGES_BUILT;
     let _ = &*DISCOVERY_WORK_LIMITED;
     let _ = &*DISCOVERY_EDGE_VISITS;
+    // WO-06 (FEE-TIER-AWARE-QUOTING): force-register the fee-resolution
+    // counter and seed every label series so the production branch-arbiter
+    // (catalog vs mismatch vs not_catalogued vs pair_no_pools) exists (absent
+    // = 0) before the first quote.
+    let _ = &*V3_QUOTE_TOTAL;
+    let _ = &*V3_FEE_RESOLUTION_TOTAL;
+    let _ = &*V3_FEE_CATALOG_POOLS;
+    for resolution in ["catalog", "mismatch", "not_catalogued", "pair_no_pools"] {
+        V3_FEE_RESOLUTION_TOTAL.with_label_values(&[resolution]);
+    }
 }
 
 // ---------------------------------------------------------------------------

@@ -224,6 +224,8 @@ mod size_optimizer;
 #[allow(dead_code)]
 mod state_projector;
 #[allow(dead_code)]
+mod v3_fee_catalog;
+#[allow(dead_code)]
 mod v3_quote_provider;
 
 use shared_rs::{

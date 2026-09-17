@@ -42,11 +42,12 @@
 use crate::amm_math::v2_amount_out;
 use crate::engines::triangular_engine::ReservesCache;
 use crate::route_intent::RouteIntent;
+use crate::v3_fee_catalog::{FeeResolution, V3FeeCatalog};
 use ethers::types::{Address, U256};
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
-use tracing::debug;
+use tracing::{debug, warn};
 
 /// Default V2 fee in basis points.
 const V2_FEE_BPS: u32 = 30;
@@ -103,7 +104,38 @@ pub struct V2VirtualReserves {
 pub struct V3VirtualQuote {
     pub pool: Address,
     pub amount_out: U256,
+    /// Fee tier actually quoted (raw pips, resolved from the catalog — WO-06).
     pub fee_bps: u32,
+}
+
+/// Checked V3 quote failure (WO-06). Each variant maps to a DISTINCT
+/// rejection label (`as_label`) so downstream observations never collapse a
+/// catalog gap into a provider failure — `v3_quote_unavailable` stays
+/// reserved for real provider failures (absent / RPC exhausted / revert).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ProjectV3Error {
+    /// Pool address absent from the fee catalog while the pair HAS known V3
+    /// tiers — quoting would be blind at an unverified tier. Zero RPC.
+    PoolNotCatalogued,
+    /// Token pair has no known V3 pools at all — no tier can exist.
+    /// Zero RPC.
+    PairHasNoV3Pools,
+    /// No `V3QuoteProvider` wired (non-mainnet / absent at boot).
+    ProviderUnavailable,
+    /// Provider present but the quote failed (RPC failure / revert), or the
+    /// amount was zero.
+    QuoteFailed(String),
+}
+
+impl ProjectV3Error {
+    /// Stable rejection label (matches the `OptimizeRejectReason` strings).
+    pub fn as_label(&self) -> &'static str {
+        match self {
+            Self::PoolNotCatalogued => "v3_pool_not_catalogued",
+            Self::PairHasNoV3Pools => "v3_pair_no_pools",
+            Self::ProviderUnavailable | Self::QuoteFailed(_) => "v3_quote_unavailable",
+        }
+    }
 }
 
 /// Projected state for a full triangular cycle.
@@ -145,6 +177,10 @@ pub struct StateProjector {
     /// for sizing bounds without going through the full projection API.
     pub(crate) reserves_cache: Arc<ReservesCache>,
     v3_provider: Option<Arc<dyn V3QuoteProvider>>,
+    /// Authoritative V3 fee tiers (WO-06): every V3 quote resolves its tier
+    /// from this catalog instead of a blind default — the quoter derives the
+    /// pool from the fee, so an uncatalogued tier is a guaranteed revert.
+    fee_catalog: Arc<V3FeeCatalog>,
 }
 
 impl StateProjector {
@@ -152,13 +188,17 @@ impl StateProjector {
     ///
     /// - `reserves_cache`: shared pool reserves (populated by PoolSyncWorker).
     /// - `v3_provider`: optional V3 quoter impl. `None` → V3 projection returns `None`.
+    /// - `fee_catalog`: V3 fee-tier catalog (Redis pool_index_v3 mirror +
+    ///   passive observations). Tests inject an in-memory catalog.
     pub fn new(
         reserves_cache: Arc<ReservesCache>,
         v3_provider: Option<Arc<dyn V3QuoteProvider>>,
+        fee_catalog: Arc<V3FeeCatalog>,
     ) -> Self {
         Self {
             reserves_cache,
             v3_provider,
+            fee_catalog,
         }
     }
 
@@ -303,30 +343,71 @@ impl StateProjector {
     // V3 projection
     // -----------------------------------------------------------------------
 
-    /// Get a V3 quote at `amount_in` for the given pool.
+    /// Get a V3 quote at `amount_in` for the given pool, with the failure
+    /// reason preserved (WO-06 FEE-TIER-AWARE-QUOTING).
     ///
-    /// For Phase 12 this is a direct forward to the V3QuoteProvider. The
-    /// quoter reads CURRENT on-chain state, which IS the post-tx state for
-    /// mempool transactions (they haven't been included yet). Phase 15+ can
-    /// add tick-level projection here.
+    /// The fee tier is resolved from the fee catalog — QuoterV2 derives the
+    /// pool via `factory.getPool(tokenIn, tokenOut, fee)`, so the tier is part
+    /// of the call identity and a blind default (the former `unwrap_or(500)`)
+    /// reverts on any pool not at that exact tier. Uncatalogued pools/pairs
+    /// are rejected WITHOUT an RPC (fail-honest, cero RPC).
     ///
-    /// Returns `None` when:
-    ///   - `v3_provider` is `None` (R8 honest: no fabrication without RPC).
-    ///   - The provider returns an error (RPC failure or pool reverts).
-    ///   - `amount_in.is_zero()`.
-    pub async fn project_v3_quote(
+    /// On a successful quote the observed (pool, pair, tier) is recorded back
+    /// into the catalog — passive reconciliation against Redis index lag.
+    pub async fn project_v3_quote_checked(
         &self,
         pool: &PoolRef,
         amount_in: U256,
         zero_for_one: bool,
-    ) -> Option<V3VirtualQuote> {
-        let provider = self.v3_provider.as_ref()?;
-
+    ) -> Result<V3VirtualQuote, ProjectV3Error> {
         if amount_in.is_zero() {
-            return None;
+            return Err(ProjectV3Error::QuoteFailed("zero_amount_in".to_string()));
         }
 
-        let fee_bps = pool.fee_bps.unwrap_or(500); // V3 default 0.05%
+        let provider = self
+            .v3_provider
+            .as_ref()
+            .ok_or(ProjectV3Error::ProviderUnavailable)?;
+
+        let fee_pips = match self.fee_catalog.resolve(pool.address, pool.fee_bps) {
+            FeeResolution::Catalog(fee) => {
+                crate::v3_fee_catalog::fee_resolution_metric("catalog");
+                fee
+            }
+            FeeResolution::Mismatch { offered, catalog } => {
+                crate::v3_fee_catalog::fee_resolution_metric("mismatch");
+                warn!(
+                    event = "state_projector.v3_fee_mismatch",
+                    pool = %pool.address,
+                    offered,
+                    catalog,
+                    "offered fee differs from catalog — quoting with catalog tier"
+                );
+                catalog
+            }
+            FeeResolution::NotCatalogued => {
+                if self
+                    .fee_catalog
+                    .tiers_for_pair(pool.token0, pool.token1)
+                    .is_empty()
+                {
+                    crate::v3_fee_catalog::fee_resolution_metric("pair_no_pools");
+                    debug!(
+                        event = "state_projector.v3_pair_no_pools",
+                        pool = %pool.address,
+                        "pair has no known V3 pools — rejecting without RPC (R8)"
+                    );
+                    return Err(ProjectV3Error::PairHasNoV3Pools);
+                }
+                crate::v3_fee_catalog::fee_resolution_metric("not_catalogued");
+                debug!(
+                    event = "state_projector.v3_pool_not_catalogued",
+                    pool = %pool.address,
+                    "pool absent from fee catalog — rejecting without RPC (R8)"
+                );
+                return Err(ProjectV3Error::PoolNotCatalogued);
+            }
+        };
 
         // Orient token_in / token_out from zero_for_one flag.
         let (token_in, token_out) = if zero_for_one {
@@ -336,20 +417,25 @@ impl StateProjector {
         };
 
         match provider
-            .quote_exact_input_single(pool.address, token_in, token_out, amount_in, fee_bps)
+            .quote_exact_input_single(pool.address, token_in, token_out, amount_in, fee_pips)
             .await
         {
             Ok(amount_out) => {
+                // Passive reconciliation: the quoter answered at this tier,
+                // so the tier is real even if the Redis index lagged.
+                self.fee_catalog
+                    .record_observed(pool.address, pool.token0, pool.token1, fee_pips);
                 debug!(
                     event = "state_projector.v3_quote",
                     pool = %pool.address,
                     amount_in = %amount_in,
                     amount_out = %amount_out,
+                    fee_pips,
                 );
-                Some(V3VirtualQuote {
+                Ok(V3VirtualQuote {
                     pool: pool.address,
                     amount_out,
-                    fee_bps,
+                    fee_bps: fee_pips,
                 })
             }
             Err(e) => {
@@ -358,9 +444,30 @@ impl StateProjector {
                     pool = %pool.address,
                     error = %e,
                 );
-                None
+                Err(ProjectV3Error::QuoteFailed(e.to_string()))
             }
         }
+    }
+
+    /// Get a V3 quote at `amount_in` for the given pool, flattened to
+    /// `Option` (legacy callers that only need the amount). The checked
+    /// variant preserves the honest failure reason — prefer it at new call
+    /// sites.
+    ///
+    /// Returns `None` when:
+    ///   - `v3_provider` is `None` (R8 honest: no fabrication without RPC).
+    ///   - The provider returns an error (RPC failure or pool reverts).
+    ///   - `amount_in.is_zero()`.
+    ///   - The pool/pair is not in the fee catalog (WO-06: no blind quotes).
+    pub async fn project_v3_quote(
+        &self,
+        pool: &PoolRef,
+        amount_in: U256,
+        zero_for_one: bool,
+    ) -> Option<V3VirtualQuote> {
+        self.project_v3_quote_checked(pool, amount_in, zero_for_one)
+            .await
+            .ok()
     }
 
     // -----------------------------------------------------------------------
@@ -507,9 +614,12 @@ pub enum LegQuote {
     /// The leg was priced. V2 is always priced (local CPMM); V3 is `Priced`
     /// when the on-chain quoter answered — the value may legitimately be 0.
     Priced(U256),
-    /// A V3 leg could not be priced: provider absent, RPC failure, or pool
-    /// revert. V2 legs never produce this (local arithmetic always succeeds).
-    Unavailable,
+    /// A V3 leg could not be priced, carrying the honest rejection label
+    /// (`ProjectV3Error::as_label` — WO-06): "v3_pool_not_catalogued" /
+    /// "v3_pair_no_pools" for catalog gaps, "v3_quote_unavailable" only for
+    /// real provider failures. V2 legs never produce this (local arithmetic
+    /// always succeeds).
+    Unavailable(&'static str),
 }
 
 /// Protocol-agnostic quoting for sizing. The SizeOptimizer consumes this; it
@@ -538,7 +648,7 @@ pub trait RouteQuoteProvider: Send + Sync {
             for leg in legs {
                 match self.quote_leg(leg, amount).await {
                     LegQuote::Priced(out) => amount = out,
-                    LegQuote::Unavailable => return None,
+                    LegQuote::Unavailable(_) => return None,
                 }
             }
             Some(amount)
@@ -568,9 +678,12 @@ impl RouteQuoteProvider for StateProjector {
                     *fee_bps,
                 )),
                 LegEval::V3 { pool, zero_for_one } => {
-                    match self.project_v3_quote(pool, amount_in, *zero_for_one).await {
-                        Some(q) => LegQuote::Priced(q.amount_out),
-                        None => LegQuote::Unavailable,
+                    match self
+                        .project_v3_quote_checked(pool, amount_in, *zero_for_one)
+                        .await
+                    {
+                        Ok(q) => LegQuote::Priced(q.amount_out),
+                        Err(e) => LegQuote::Unavailable(e.as_label()),
                     }
                 }
             }
@@ -664,15 +777,80 @@ mod tests {
     }
 
     fn make_projector_no_v3(cache: Arc<ReservesCache>) -> StateProjector {
-        StateProjector::new(cache, None)
+        StateProjector::new(cache, None, Arc::new(V3FeeCatalog::new()))
     }
 
-    fn make_projector_with_mock(cache: Arc<ReservesCache>, amount_out: U256) -> StateProjector {
+    fn make_projector_with_mock(
+        cache: Arc<ReservesCache>,
+        amount_out: U256,
+        catalog: Arc<V3FeeCatalog>,
+    ) -> StateProjector {
         let provider = Arc::new(MockV3Provider {
             amount_out,
             always_err: false,
         });
-        StateProjector::new(cache, Some(provider))
+        StateProjector::new(cache, Some(provider), catalog)
+    }
+
+    // ── WO-06 mocks: capture the exact fee requested / panic on any call ─────
+
+    /// Capturing mock: records every (pool, fee) the projector requests and
+    /// answers with a fixed amount — proves the EXACT catalog tiers reach the
+    /// provider (T2/T4) without RPC.
+    struct CapturingV3Mock {
+        amount_out: U256,
+        calls: std::sync::Mutex<Vec<(Address, u32)>>,
+    }
+
+    impl V3QuoteProvider for CapturingV3Mock {
+        fn quote_exact_input_single(
+            &self,
+            pool: Address,
+            _token_in: Address,
+            _token_out: Address,
+            _amount_in: U256,
+            fee_bps: u32,
+        ) -> std::pin::Pin<Box<dyn std::future::Future<Output = anyhow::Result<U256>> + Send + '_>>
+        {
+            self.calls
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .push((pool, fee_bps));
+            let out = self.amount_out;
+            Box::pin(async move { Ok(out) })
+        }
+    }
+
+    /// Panic mock: any invocation fails the test — proves ZERO RPC was issued
+    /// for catalog-rejected pools/pairs (T3/T5).
+    struct PanicV3Mock;
+
+    impl V3QuoteProvider for PanicV3Mock {
+        fn quote_exact_input_single(
+            &self,
+            _pool: Address,
+            _token_in: Address,
+            _token_out: Address,
+            _amount_in: U256,
+            _fee_bps: u32,
+        ) -> std::pin::Pin<Box<dyn std::future::Future<Output = anyhow::Result<U256>> + Send + '_>>
+        {
+            Box::pin(async move { panic!("provider must never be invoked (zero-RPC test)") })
+        }
+    }
+
+    fn v3_pool(
+        address: Address,
+        token0: Address,
+        token1: Address,
+        fee_bps: Option<u32>,
+    ) -> PoolRef {
+        PoolRef {
+            address,
+            token0,
+            token1,
+            fee_bps,
+        }
     }
 
     // ── state_projector::tests::v2_post_swap_increases_reserve_in ────────────
@@ -832,9 +1010,12 @@ mod tests {
     async fn v3_quote_forwards_to_provider() {
         let cache = Arc::new(ReservesCache::new());
         let expected_out = U256::from(999_888_777u128);
-        let projector = make_projector_with_mock(cache, expected_out);
+        // WO-06: the pool must be catalogued for the quote to proceed.
+        let catalog = Arc::new(V3FeeCatalog::new());
+        catalog.record_observed(addr(0x99), addr(0x1), addr(0x2), 30);
+        let projector = make_projector_with_mock(cache, expected_out, catalog);
 
-        let pool = make_pool(addr(0x99), addr(0x1), addr(0x2));
+        let pool = v3_pool(addr(0x99), addr(0x1), addr(0x2), Some(30));
         let amount_in = unit(1);
 
         let result = projector
@@ -847,6 +1028,10 @@ mod tests {
             "project_v3_quote must forward mock provider result"
         );
         assert_eq!(result.pool, addr(0x99));
+        assert_eq!(
+            result.fee_bps, 30,
+            "resolved catalog fee travels on the quote"
+        );
     }
 
     // ── state_projector::tests::v3_quote_no_provider_returns_none ─────────────
@@ -856,12 +1041,173 @@ mod tests {
         let cache = Arc::new(ReservesCache::new());
         let projector = make_projector_no_v3(cache);
 
-        let pool = make_pool(addr(0x99), addr(0x1), addr(0x2));
+        let pool = v3_pool(addr(0x99), addr(0x1), addr(0x2), Some(500));
         let result = projector.project_v3_quote(&pool, unit(1), true).await;
 
         assert!(
             result.is_none(),
             "v3_provider = None must return None — R8 fail-honest"
+        );
+    }
+
+    // ── WO-06: FEE-TIER-AWARE-QUOTING (design tests T2-T6) ───────────────────
+
+    // T2 — resolution replaces the blind unwrap_or(500): a catalogued pool
+    // quotes at its CATALOG tier whether the caller offered None or a wrong
+    // value (Mismatch still quotes WITH the catalog tier).
+    #[tokio::test]
+    async fn v3_fee_resolution_replaces_blind_default() {
+        let cache = Arc::new(ReservesCache::new());
+        let catalog = Arc::new(V3FeeCatalog::new());
+        let pool_addr = addr(0x99);
+        catalog.record_observed(pool_addr, addr(0x1), addr(0x2), 3000);
+        let mock = Arc::new(CapturingV3Mock {
+            amount_out: U256::from(1234u64),
+            calls: std::sync::Mutex::new(Vec::new()),
+        });
+        let projector = StateProjector::new(cache, Some(mock.clone()), catalog);
+
+        // fee_bps = None: previously quoted BLIND at 500 → now Catalog(3000).
+        let q_none = projector
+            .project_v3_quote_checked(
+                &v3_pool(pool_addr, addr(0x1), addr(0x2), None),
+                unit(1),
+                true,
+            )
+            .await
+            .expect("catalogued pool with fee None must quote at the catalog tier");
+        assert_eq!(q_none.fee_bps, 3000);
+
+        // fee_bps = Some(100): Mismatch → still quotes WITH the catalog tier.
+        let q_offered = projector
+            .project_v3_quote_checked(
+                &v3_pool(pool_addr, addr(0x1), addr(0x2), Some(100)),
+                unit(1),
+                true,
+            )
+            .await
+            .expect("mismatch must still quote at the catalog tier");
+        assert_eq!(q_offered.fee_bps, 3000);
+
+        let calls = mock.calls.lock().unwrap();
+        assert_eq!(
+            calls.as_slice(),
+            &[(pool_addr, 3000), (pool_addr, 3000)],
+            "both quotes must use the catalog tier — never 500 nor 100"
+        );
+    }
+
+    // T3 — pair with no known V3 pools: PairHasNoV3Pools, ZERO RPC (the mock
+    // panics if invoked).
+    #[tokio::test]
+    async fn v3_pair_without_pools_errors_without_rpc() {
+        let cache = Arc::new(ReservesCache::new());
+        let projector = StateProjector::new(
+            cache,
+            Some(Arc::new(PanicV3Mock)),
+            Arc::new(V3FeeCatalog::new()), // empty — pair unknown
+        );
+
+        let err = projector
+            .project_v3_quote_checked(
+                &v3_pool(addr(0x99), addr(0x1), addr(0x2), Some(500)),
+                unit(1),
+                true,
+            )
+            .await
+            .expect_err("uncatalogued pair must error without RPC");
+        assert_eq!(err, ProjectV3Error::PairHasNoV3Pools);
+        assert_eq!(err.as_label(), "v3_pair_no_pools");
+    }
+
+    // T4 — exotic tiers: catalog {1, 5}; the provider must be asked for
+    // EXACTLY 1 and 5 — a non-existent 100 must never be requested.
+    #[tokio::test]
+    async fn v3_exotic_tiers_quote_exact_catalog_values() {
+        let cache = Arc::new(ReservesCache::new());
+        let catalog = Arc::new(V3FeeCatalog::new());
+        catalog.record_observed(addr(0x91), addr(0x1), addr(0x2), 1);
+        catalog.record_observed(addr(0x95), addr(0x1), addr(0x2), 5);
+        let mock = Arc::new(CapturingV3Mock {
+            amount_out: U256::from(42u64),
+            calls: std::sync::Mutex::new(Vec::new()),
+        });
+        let projector = StateProjector::new(cache, Some(mock.clone()), catalog);
+
+        // Offered 100 (a tier that does NOT exist for this pair) → Mismatch.
+        let q1 = projector
+            .project_v3_quote_checked(
+                &v3_pool(addr(0x91), addr(0x1), addr(0x2), Some(100)),
+                unit(1),
+                true,
+            )
+            .await
+            .expect("tier-1 pool must quote");
+        assert_eq!(q1.fee_bps, 1);
+        // No offered fee → Catalog(5).
+        let q5 = projector
+            .project_v3_quote_checked(
+                &v3_pool(addr(0x95), addr(0x1), addr(0x2), None),
+                unit(1),
+                false,
+            )
+            .await
+            .expect("tier-5 pool must quote");
+        assert_eq!(q5.fee_bps, 5);
+
+        let calls = mock.calls.lock().unwrap();
+        let fees: Vec<u32> = calls.iter().map(|(_, f)| *f).collect();
+        assert_eq!(
+            fees,
+            vec![1, 5],
+            "exactly the exotic catalog tiers requested"
+        );
+        assert!(!fees.contains(&100), "tier 100 must NEVER be requested");
+    }
+
+    // T5 + T6 — pool not catalogued while the pair HAS tiers: PoolNotCatalogued
+    // with the EXACT label (zero RPC), never "v3_quote_unavailable".
+    #[tokio::test]
+    async fn v3_pool_not_catalogued_errors_without_rpc_exact_label() {
+        let cache = Arc::new(ReservesCache::new());
+        let catalog = Arc::new(V3FeeCatalog::new());
+        // A DIFFERENT pool on the same pair is catalogued → pair has tiers,
+        // but THIS pool address is unknown.
+        catalog.record_observed(addr(0x50), addr(0x1), addr(0x2), 500);
+        let projector = StateProjector::new(cache, Some(Arc::new(PanicV3Mock)), catalog);
+
+        let err = projector
+            .project_v3_quote_checked(
+                &v3_pool(addr(0x99), addr(0x1), addr(0x2), Some(500)),
+                unit(1),
+                true,
+            )
+            .await
+            .expect_err("uncatalogued pool must error without RPC");
+        assert_eq!(err, ProjectV3Error::PoolNotCatalogued);
+        // T6: the label must be the exact new string, NOT v3_quote_unavailable
+        // (that stays reserved for real provider failures).
+        assert_eq!(err.as_label(), "v3_pool_not_catalogued");
+        assert_ne!(err.as_label(), "v3_quote_unavailable");
+    }
+
+    #[test]
+    fn v3_error_labels_are_exact() {
+        assert_eq!(
+            ProjectV3Error::PoolNotCatalogued.as_label(),
+            "v3_pool_not_catalogued"
+        );
+        assert_eq!(
+            ProjectV3Error::PairHasNoV3Pools.as_label(),
+            "v3_pair_no_pools"
+        );
+        assert_eq!(
+            ProjectV3Error::ProviderUnavailable.as_label(),
+            "v3_quote_unavailable"
+        );
+        assert_eq!(
+            ProjectV3Error::QuoteFailed("rpc".into()).as_label(),
+            "v3_quote_unavailable"
         );
     }
 

@@ -367,7 +367,85 @@ async fn build_orchestrator(
         }
     };
 
-    let state_projector = Arc::new(StateProjector::new(reserves_cache.clone(), v3_provider));
+    // FEE-TIER-AWARE-QUOTING (WO-06): mirror the Redis V3 pool index into an
+    // in-memory fee catalog so every V3 quote resolves its fee tier from a
+    // catalogued real pool. This kills the blind `unwrap_or(500)` default that
+    // made QuoterV2 revert on any pool not at the guessed tier (the revert
+    // surfaced downstream as `v3_quote_unavailable` — a transport-looking
+    // label hiding a tier gap). Boot load is capped (same P0 boot-hang guard
+    // as the reserves hydration); empty/partial → honest zero-RPC rejects.
+    let fee_catalog = Arc::new(crate::v3_fee_catalog::V3FeeCatalog::new());
+    match tokio::time::timeout(
+        Duration::from_secs(30),
+        fee_catalog.load_from_redis(&mut redis, chain_id),
+    )
+    .await
+    {
+        Err(_) => {
+            warn!(
+                event = "scanner.v3_fee_catalog_load_timeout",
+                chain_id,
+                timeout_secs = 30,
+                "V3 fee catalog load exceeded 30s; starting cold (R8 fail-honest)"
+            );
+        }
+        Ok(Ok(pools)) => {
+            info!(
+                event = "scanner.v3_fee_catalog_loaded",
+                chain_id, pools, "V3 fee catalog loaded from Redis at boot"
+            );
+        }
+        Ok(Err(e)) => {
+            warn!(
+                event = "scanner.v3_fee_catalog_load_failed",
+                chain_id,
+                error = %e,
+                "V3 fee catalog load failed; starting cold (R8 fail-honest)"
+            );
+        }
+    }
+    // Keep the catalog LIVE on a 60s timer (pool_sync republishes the Redis
+    // index every tick; 60s bounds tier-freshness for quoting, and passive
+    // post-RPC observations reconcile faster still). Non-fatal on error: the
+    // prior snapshot is retained (R8).
+    {
+        let catalog = fee_catalog.clone();
+        let mut refresh_redis = redis.clone();
+        let cid = chain_id;
+        info!(
+            event = "scanner.v3_fee_catalog_refresh_scheduled",
+            chain_id,
+            interval_secs = 60,
+            "V3 fee catalog periodic refresh from Redis enabled"
+        );
+        tokio::spawn(async move {
+            let mut ticker = tokio::time::interval(Duration::from_secs(60));
+            ticker.tick().await; // discard immediate first tick (boot load above)
+            loop {
+                ticker.tick().await;
+                match catalog.load_from_redis(&mut refresh_redis, cid).await {
+                    Ok(pools) => debug!(
+                        event = "scanner.v3_fee_catalog_refresh",
+                        chain_id = cid,
+                        pools,
+                        "V3 fee catalog periodic refresh"
+                    ),
+                    Err(e) => warn!(
+                        event = "scanner.v3_fee_catalog_refresh_failed",
+                        chain_id = cid,
+                        error = %e,
+                        "V3 fee catalog refresh failed (non-fatal; prior snapshot retained)"
+                    ),
+                }
+            }
+        });
+    }
+
+    let state_projector = Arc::new(StateProjector::new(
+        reserves_cache.clone(),
+        v3_provider,
+        fee_catalog,
+    ));
 
     let size_optimizer = Arc::new(SizeOptimizer::new(state_projector.clone()));
 
