@@ -173,6 +173,41 @@ where
     .await
 }
 
+/// CATALOG-BACKFILL-01 (2026-09-17): bootstrap that REPLACES a legacy
+/// unparseable index instead of erroring forever.
+///
+/// Evidence (Redis dump 2026-09-17): 93 of 186 `arbx:pool_index_v3` keys hold
+/// pre-WO-06 entries (`[{"address":"0x…","fee_bps":30}]`) that serde can never
+/// parse as `Vec<V3PoolInfo>`. The additive `merged_v3_bootstrap` returns
+/// `redis_v3_index_invalid` for them, so `set_pool_index_v3` has been failing
+/// on those pairs at EVERY boot — the garbage is unpreserveable and the pools
+/// in it can never be fixed by an additive merge. This variant treats an
+/// unparseable previous value as ABSENT and writes the snapshot (whose tiers
+/// are canonical-from-PG or on-chain `fee()`-verified by the caller) in its
+/// place. The CAS still guards concurrency: the write only lands if the key is
+/// unchanged since the read.
+pub(crate) async fn publish_v3_bootstrap_repair<Read, ReadFuture, Cas, CasFuture>(
+    snapshot: &[crate::reserves::V3PoolInfo],
+    read: Read,
+    compare_and_set: Cas,
+) -> Result<usize, &'static str>
+where
+    Read: FnMut() -> ReadFuture,
+    ReadFuture: std::future::Future<Output = Result<Option<String>, &'static str>>,
+    Cas: FnMut(Option<String>, String) -> CasFuture,
+    CasFuture: std::future::Future<Output = Result<bool, &'static str>>,
+{
+    publish_index_update(read, compare_and_set, |previous| {
+        match merged_v3_bootstrap(previous, snapshot) {
+            // Unparseable legacy index: retry the merge as if the key were
+            // absent — the snapshot (fee-verified by the caller) replaces it.
+            Err("redis_v3_index_invalid") => merged_v3_bootstrap(None, snapshot),
+            other => other,
+        }
+    })
+    .await
+}
+
 /// The single retry/CAS implementation used by BOTH bootstrap and hydration.
 async fn publish_index_update<Read, ReadFuture, Cas, CasFuture, Merge>(
     mut read: Read,
@@ -407,6 +442,14 @@ mod retry_regression {
             Poll::Ready(value) => value,
             Poll::Pending => panic!("This laboratory adapter only returns ready futures"),
         }
+    }
+
+    /// CATALOG-BACKFILL-01: parametrized observed fee (the module-level
+    /// `fee()` helper is hardwired to 3000).
+    fn observed_fee(raw: u32) -> V3FeePips {
+        let mut word = [0u8; 32];
+        word[28..].copy_from_slice(&raw.to_be_bytes());
+        V3FeePips::from_abi_word(&word).unwrap()
     }
 
     #[test]
@@ -669,5 +712,92 @@ mod retry_regression {
         ));
         assert_eq!(result, Err("redis_v3_index_conflict_exhausted"));
         assert_eq!(writes.get(), 4);
+    }
+
+    // ── CATALOG-BACKFILL-01 (2026-09-17): legacy-index repair ────────────────
+
+    fn verified_snapshot() -> Vec<crate::reserves::V3PoolInfo> {
+        vec![
+            // On-chain fee()-verified canonical tier (3000 pips, NOT the
+            // legacy bps-unit 30 the garbage key carried).
+            crate::reserves::V3PoolInfo {
+                pool_addr: A.into(),
+                fee_bps: 3000,
+            },
+            crate::reserves::V3PoolInfo {
+                pool_addr: B.into(),
+                fee_bps: 100,
+            },
+        ]
+    }
+
+    #[test]
+    fn catalog_backfill_repair_replaces_legacy_unparseable_index() {
+        // The EXACT legacy shape found in 93 production keys (2026-09-17):
+        // "address" field + bps-unit fee — unparsable as Vec<V3PoolInfo>.
+        let legacy = r#"[{"address":"0x7995430a85156b2d40d5bb701608788cf84019e3","fee_bps":30}]"#;
+        let state = RefCell::new(Some(legacy.to_string()));
+        let result = immediate(publish_v3_bootstrap_repair(
+            &verified_snapshot(),
+            || ready(Ok(state.borrow().clone())),
+            |previous, updated| {
+                assert_eq!(previous.as_deref(), Some(legacy));
+                *state.borrow_mut() = Some(updated);
+                ready(Ok(true))
+            },
+        ));
+        assert_eq!(result, Ok(1));
+        let rows: Vec<crate::reserves::V3PoolInfo> =
+            serde_json::from_str(state.borrow().as_ref().unwrap()).unwrap();
+        assert_eq!(rows.len(), 2, "legacy garbage is replaced, not merged");
+        assert_eq!(rows[0].pool_addr, A);
+        assert_eq!(
+            rows[0].fee_bps, 3000,
+            "on-chain verified pips, not bps-unit 30"
+        );
+        assert_eq!(rows[1].fee_bps, 100);
+    }
+
+    #[test]
+    fn catalog_backfill_repair_still_merges_additively_when_parseable() {
+        // A healthy (parseable) index is NOT replaced — additive merge only.
+        let healthy = updated_v3_index(None, B, observed_fee(500))
+            .unwrap()
+            .unwrap();
+        let state = RefCell::new(Some(healthy.clone()));
+        let result = immediate(publish_v3_bootstrap_repair(
+            &verified_snapshot(),
+            || ready(Ok(state.borrow().clone())),
+            |previous, updated| {
+                assert_eq!(previous.as_deref(), Some(healthy.as_str()));
+                *state.borrow_mut() = Some(updated);
+                ready(Ok(true))
+            },
+        ));
+        assert_eq!(result, Ok(1));
+        let rows: Vec<crate::reserves::V3PoolInfo> =
+            serde_json::from_str(state.borrow().as_ref().unwrap()).unwrap();
+        assert_eq!(rows.len(), 2, "parseable index keeps its entries (A added)");
+        assert_eq!(rows[0].pool_addr, B);
+        assert_eq!(rows[0].fee_bps, 500, "existing hydrated tier is preserved");
+        assert_eq!(rows[1].pool_addr, A);
+    }
+
+    #[test]
+    fn catalog_backfill_plain_bootstrap_still_fails_on_legacy_index() {
+        // Guard: the ORIGINAL publish_v3_bootstrap keeps its contract — a
+        // malformed index is an error, never a silent replacement (only the
+        // explicitly-repairing caller may replace).
+        let legacy = r#"[{"address":"0x7995430a85156b2d40d5bb701608788cf84019e3","fee_bps":30}]"#;
+        let result = immediate(publish_v3_bootstrap(
+            &verified_snapshot(),
+            || ready(Ok(Some(legacy.to_string()))),
+            |_, _| {
+                panic!("plain bootstrap must not write over a malformed index");
+                #[allow(unreachable_code)]
+                ready(Ok(true))
+            },
+        ));
+        assert_eq!(result, Err("redis_v3_index_invalid"));
     }
 }

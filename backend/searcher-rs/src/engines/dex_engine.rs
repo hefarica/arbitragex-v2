@@ -32,6 +32,11 @@
 //! |                           | genuine price miss — G-ECON-1 narrowed it)  |
 //! | `v3_quote_unavailable`    | V3 projector missing / quote failed on a    |
 //! |                           | leg / both legs quoted zero (G-ECON-1)      |
+//! | `v3_pool_not_catalogued`  | pool absent from the V3 fee catalog —       |
+//! |                           | zero-RPC catalog gap (CATALOG-BACKFILL-01;  |
+//! |                           | previously flattened into the line above)   |
+//! | `v3_pair_no_pools`        | pair has no known V3 pools at all —         |
+//! |                           | zero-RPC (CATALOG-BACKFILL-01; ditto)       |
 //! | `spread_zero_equilibrium` | both legs quoted identical amounts — an     |
 //! |                           | efficient market, not a data gap (G-ECON-1) |
 //! | `non_positive_spread`     | spread <= 0 after CPMM math                 |
@@ -69,6 +74,13 @@ pub(crate) enum V3GrossOutcome {
     /// Projector missing, quote failed on either leg, or both legs quoted
     /// zero — the quote pipeline produced nothing usable.
     QuoteUnavailable,
+    /// CATALOG-BACKFILL-01 (2026-09-17): a V3 leg was rejected by the
+    /// projector with its PRECISE label (`ProjectV3Error::as_label()` —
+    /// `v3_pool_not_catalogued` / `v3_pair_no_pools` / `v3_quote_unavailable`).
+    /// Carried verbatim so the emitted `rejection_reason` never collapses a
+    /// catalog gap into the old transport-looking `v3_quote_unavailable`
+    /// (which hid not_catalogued=23% of resolutions from the operator).
+    V3Labeled(&'static str),
     /// Both legs quoted IDENTICAL amounts out — an efficient market with no
     /// spread to capture (honest equilibrium, not a data gap).
     SpreadZeroEquilibrium,
@@ -79,6 +91,17 @@ pub(crate) enum V3GrossOutcome {
     NoConfig,
     /// The pair was priceable via the V2 reserves path — projector not needed.
     Skipped,
+}
+
+/// CATALOG-BACKFILL-01 (2026-09-17): per-leg quote failure classification —
+/// the V3 projector's precise label survives the leg boundary instead of being
+/// flattened into a bare `Option::None`.
+#[derive(Debug, Clone, Copy)]
+enum V3QuoteLegError {
+    /// V2 leg reserves cache miss — no distinct catalog label at this altitude.
+    ReservesMiss,
+    /// V3 projector rejection with its precise rejection label.
+    V3(&'static str),
 }
 
 impl V3GrossOutcome {
@@ -333,6 +356,9 @@ impl DexEngine {
                     if gross_profit_usd.is_none() && cfg_opt.is_some() && !can_price_v2 {
                         let reason = match v3_gross_usd {
                             V3GrossOutcome::QuoteUnavailable => "v3_quote_unavailable",
+                            // CATALOG-BACKFILL-01: catalog gaps surface their
+                            // OWN label — never the flattened transport string.
+                            V3GrossOutcome::V3Labeled(label) => label,
                             V3GrossOutcome::SpreadZeroEquilibrium => "spread_zero_equilibrium",
                             // The genuine token-price miss — keeps the original label.
                             V3GrossOutcome::NoTokenPrice => "no_price_oracle",
@@ -430,17 +456,24 @@ impl DexEngine {
         // For each V3 pool, get a virtual quote using project_v3_quote.
         // V2 pools: use v2_amount_out with canonical unit reserves (same approximation
         // as compute_spread_v2_only — the real reserves are used by size_optimizer).
-        let Some(out_a) = self
+        // CATALOG-BACKFILL-01: leg errors carry the projector's precise label —
+        // a catalog gap (PoolNotCatalogued / PairHasNoV3Pools) is surfaced as
+        // V3Labeled(label), only a V2 reserves miss stays QuoteUnavailable.
+        let out_a = match self
             .get_pool_quote(pool_a, probe_amount, projector, intent)
             .await
-        else {
-            return V3GrossOutcome::QuoteUnavailable;
+        {
+            Ok(v) => v,
+            Err(V3QuoteLegError::V3(label)) => return V3GrossOutcome::V3Labeled(label),
+            Err(V3QuoteLegError::ReservesMiss) => return V3GrossOutcome::QuoteUnavailable,
         };
-        let Some(out_b) = self
+        let out_b = match self
             .get_pool_quote(pool_b, probe_amount, projector, intent)
             .await
-        else {
-            return V3GrossOutcome::QuoteUnavailable;
+        {
+            Ok(v) => v,
+            Err(V3QuoteLegError::V3(label)) => return V3GrossOutcome::V3Labeled(label),
+            Err(V3QuoteLegError::ReservesMiss) => return V3GrossOutcome::QuoteUnavailable,
         };
 
         if out_a.is_zero() && out_b.is_zero() {
@@ -481,14 +514,20 @@ impl DexEngine {
     ///
     /// V2 pools are handled directly in `build_from_impacted_pairs` with
     /// real reserves from `ReservesCache`. This method is called only for V3.
+    ///
+    /// CATALOG-BACKFILL-01 (2026-09-17): returns `Err(V3QuoteLegError)`
+    /// instead of `Option` so the projector's precise rejection label
+    /// (`ProjectV3Error::as_label()`) survives the leg boundary — the prior
+    /// `.ok()`-flattening was exactly where `v3_pool_not_catalogued` /
+    /// `v3_pair_no_pools` collapsed into `v3_quote_unavailable`.
     async fn get_pool_quote(
         &self,
         pool: &PoolRef,
         probe_amount: U256,
         projector: &StateProjector,
         intent: &RouteIntent,
-    ) -> Option<U256> {
-        // V3 pools: virtual quote via state_projector.
+    ) -> Result<U256, V3QuoteLegError> {
+        // V3 pools: virtual quote via state_projector (checked — label preserved).
         if matches!(pool.protocol_type, ProtocolType::V3) {
             let intent_token_in = intent.legs.first().map(|l| l.token_in).unwrap_or_default();
             let zero_for_one = intent_token_in == pool.token0 || intent_token_in == Address::zero();
@@ -499,21 +538,24 @@ impl DexEngine {
                 fee_bps: pool.fee_bps,
             };
             projector
-                .project_v3_quote(&sp_pool, probe_amount, zero_for_one)
+                .project_v3_quote_checked(&sp_pool, probe_amount, zero_for_one)
                 .await
                 .map(|q| q.amount_out)
+                .map_err(|e| V3QuoteLegError::V3(e.as_label()))
         } else {
             // V2 / Curve / Balancer: quote via REAL reserves from the cache.
             // J-5 fix (2026-08-09): `compute_v3_gross_usd` calls this on BOTH
             // pools of a mixed V2-V3 pair. The prior `None` return for non-V3
             // pools made the `out_a?`/`out_b?` short-circuit reject EVERY
             // mixed V2-V3 pair as `no_price_oracle` (the V2 leg never quoted).
-            // Reserves miss → None (R8: no fabrication), same as the pure-V2
+            // Reserves miss → Err (R8: no fabrication), same as the pure-V2
             // path which already emits `reserves_cache_miss` upstream.
-            let (r0, r1) = self.reserves_cache.get(&pool.address).await?;
+            let Some((r0, r1)) = self.reserves_cache.get(&pool.address).await else {
+                return Err(V3QuoteLegError::ReservesMiss);
+            };
             let (r_in, r_out) = orient_reserves((r0, r1), pool, intent);
             let fee = pool.fee_bps.unwrap_or(30);
-            Some(amm_math::v2_amount_out(probe_amount, r_in, r_out, fee))
+            Ok(amm_math::v2_amount_out(probe_amount, r_in, r_out, fee))
         }
     }
 }
@@ -883,9 +925,15 @@ mod tests {
     use crate::route_intent::{
         DetectionSource, ProtocolType, RouteIntent, RouteIntentLeg, RouterKind, SwapExactMode,
     };
+    use crate::state_projector::{StateProjector, V3QuoteProvider};
     use crate::strategy_label::StrategyLabel;
+    use crate::v3_fee_catalog::V3FeeCatalog;
     use ethers::types::{Address, H256, U256};
     use shared_rs::contracts::StrategyKind;
+    use shared_rs::trading_config::{GasPriceStrategy, TradingConfigState};
+    use std::collections::HashMap;
+    use std::future::Future;
+    use std::pin::Pin;
 
     /// G-ECON-1: the Option-shaped plumbing only surfaces Usd; every failure
     /// classification stays invisible to gross consumers by design.
@@ -893,6 +941,10 @@ mod tests {
     fn v3_gross_outcome_usd_only_for_computed() {
         assert_eq!(V3GrossOutcome::Usd(1.5).usd(), Some(1.5));
         assert_eq!(V3GrossOutcome::QuoteUnavailable.usd(), None);
+        assert_eq!(
+            V3GrossOutcome::V3Labeled("v3_pool_not_catalogued").usd(),
+            None
+        );
         assert_eq!(V3GrossOutcome::SpreadZeroEquilibrium.usd(), None);
         assert_eq!(V3GrossOutcome::NoTokenPrice.usd(), None);
         assert_eq!(V3GrossOutcome::NoConfig.usd(), None);
@@ -1410,5 +1462,204 @@ mod tests {
                 "route_plan.strategy_kind must match label.as_str()"
             );
         }
+    }
+
+    // ── CATALOG-BACKFILL-01 (2026-09-17): precise catalog-gap labels ──────────
+    //
+    // Regression anchor for the flattening bug: `get_pool_quote` used
+    // `project_v3_quote(...).ok()` — Option::ok() discarded the checked
+    // `ProjectV3Error`, so EVERY catalog gap surfaced downstream as
+    // rejection_reason "v3_quote_unavailable" (evidence 2026-09-17:
+    // not_catalogued=13,880 metric hits but ZERO v3_pool_not_catalogued /
+    // v3_pair_no_pools strings in opportunities.rejection_reason for
+    // dex_arb_v3v3).
+
+    /// V3 provider mock that always answers — proves the rejection comes from
+    /// the CATALOG path (zero-RPC), never from the provider.
+    struct OkV3Mock;
+    impl V3QuoteProvider for OkV3Mock {
+        fn quote_exact_input_single(
+            &self,
+            _pool: Address,
+            _token_in: Address,
+            _token_out: Address,
+            _amount_in: U256,
+            _fee_bps: u32,
+        ) -> Pin<Box<dyn Future<Output = anyhow::Result<U256>> + Send + '_>> {
+            Box::pin(async move { Ok(U256::from(1_000u64)) })
+        }
+    }
+
+    /// Minimal `TradingConfigState` (same shape as triangular_engine's helper)
+    /// so the engine-level rejection branch (`cfg_opt.is_some()`) fires.
+    fn make_cfg() -> TradingConfigState {
+        TradingConfigState {
+            chain_id: 1,
+            capital_usd: 10_000.0,
+            base_token_symbol: "WETH".into(),
+            base_token_price_usd: 3_000.0,
+            allowed_token_symbols: vec!["WETH".into(), "USDC".into()],
+            token_prices_usd: HashMap::new(),
+            simulation_capital_usd: None,
+            simulation_per_token_amounts_usd: HashMap::new(),
+            simulation_per_strategy_caps_usd: HashMap::new(),
+            simulation_target_profit_usd: None,
+            simulation_target_roi_pct: None,
+            min_profit_usd: 0.01,
+            min_roi_pct: 0.0,
+            min_landing_probability: 0.0,
+            min_liquidity_confidence: 0.0,
+            max_token_risk_score: 1.0,
+            gas_price_strategy: GasPriceStrategy::Fixed,
+            fixed_gas_price_gwei: Some(20.0),
+            gas_estimate_units: 200_000,
+            max_slippage_pct: 1.0,
+            failure_risk_buffer_pct: 0.001,
+            flashloan_fee_pct: 0.0,
+            enabled_strategies: vec!["dex_arb".into()],
+            enabled_dex_ids: None,
+            strategy_configs: HashMap::new(),
+            capital_cost_rate_annual_pct: 0.0,
+            ops_overhead_usd_per_attempt: 0.0,
+            spread_sanity_mult: 3.0,
+            p_copied_volume_threshold_usd: 1_000_000.0,
+            p_copied_max: 0.5,
+            lp_fee_default_pct: 0.003,
+            kelly_multiplier: 0.5,
+            kelly_max_per_trade_fraction: 1.0,
+            kelly_gas_safety_multiplier: 1.0,
+            enabled: true,
+            updated_at: Utc::now(),
+            updated_by: None,
+        }
+    }
+
+    fn rejection_reasons(candidates: &[StrategyCandidate]) -> Vec<String> {
+        candidates
+            .iter()
+            .filter_map(|c| c.rejection_reason.clone())
+            .collect()
+    }
+
+    #[tokio::test]
+    async fn catalog_backfill_not_catalogued_rejection_keeps_precise_label() {
+        let tok_a = addr(0x1);
+        let tok_b = addr(0x2);
+        // Pool A catalogued (pair HAS tiers) at 3000; pool B absent from
+        // by_pool → leg B resolves PoolNotCatalogued with ZERO RPC.
+        let catalog = Arc::new(V3FeeCatalog::new());
+        catalog.record_observed(addr(0x10), tok_a, tok_b, 3000);
+        let projector = Arc::new(StateProjector::new(
+            Arc::new(ReservesCache::new()),
+            Some(Arc::new(OkV3Mock)),
+            catalog,
+        ));
+        let engine = DexEngine::new(Arc::new(ReservesCache::new()), None, Some(projector));
+
+        let pool_a = make_pool(addr(0x10), tok_a, tok_b, ProtocolType::V3);
+        let pool_b = make_pool(addr(0x11), tok_a, tok_b, ProtocolType::V3);
+        let intent = make_intent(tok_a, tok_b);
+        let impact = make_impact(vec![pool_a, pool_b]);
+        let cfg = make_cfg();
+
+        let candidates = engine
+            .build_from_impacted_pairs(&intent, &impact, Some(&cfg))
+            .await
+            .expect("engine must not error");
+
+        let reasons = rejection_reasons(&candidates);
+        assert!(
+            reasons.iter().any(|r| r == "v3_pool_not_catalogued"),
+            "uncatalogued pool must reject with ITS label, got {reasons:?}"
+        );
+        assert!(
+            !reasons.iter().any(|r| r == "v3_quote_unavailable"),
+            "a catalog gap must NOT be flattened to v3_quote_unavailable, got {reasons:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn catalog_backfill_pair_no_pools_rejection_keeps_precise_label() {
+        let tok_a = addr(0x1);
+        let tok_b = addr(0x2);
+        // EMPTY catalog: the pair has no known V3 tiers at all → the leading
+        // leg resolves PairHasNoV3Pools with ZERO RPC.
+        let catalog = Arc::new(V3FeeCatalog::new());
+        let projector = Arc::new(StateProjector::new(
+            Arc::new(ReservesCache::new()),
+            Some(Arc::new(OkV3Mock)),
+            catalog,
+        ));
+        let engine = DexEngine::new(Arc::new(ReservesCache::new()), None, Some(projector));
+
+        let pool_a = make_pool(addr(0x10), tok_a, tok_b, ProtocolType::V3);
+        let pool_b = make_pool(addr(0x11), tok_a, tok_b, ProtocolType::V3);
+        let intent = make_intent(tok_a, tok_b);
+        let impact = make_impact(vec![pool_a, pool_b]);
+        let cfg = make_cfg();
+
+        let candidates = engine
+            .build_from_impacted_pairs(&intent, &impact, Some(&cfg))
+            .await
+            .expect("engine must not error");
+
+        let reasons = rejection_reasons(&candidates);
+        assert!(
+            reasons.iter().any(|r| r == "v3_pair_no_pools"),
+            "unknown pair must reject with v3_pair_no_pools, got {reasons:?}"
+        );
+        assert!(
+            !reasons.iter().any(|r| r == "v3_quote_unavailable"),
+            "a pair gap must NOT be flattened to v3_quote_unavailable, got {reasons:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn catalog_backfill_provider_failure_still_uses_transport_label() {
+        // Guard: a REAL provider failure keeps the transport label — the
+        // precise labels are reserved for catalog gaps, not a blanket rename.
+        let tok_a = addr(0x1);
+        let tok_b = addr(0x2);
+        struct ErrV3Mock;
+        impl V3QuoteProvider for ErrV3Mock {
+            fn quote_exact_input_single(
+                &self,
+                _pool: Address,
+                _token_in: Address,
+                _token_out: Address,
+                _amount_in: U256,
+                _fee_bps: u32,
+            ) -> Pin<Box<dyn Future<Output = anyhow::Result<U256>> + Send + '_>> {
+                Box::pin(async move { Err(anyhow::anyhow!("mock rpc error")) })
+            }
+        }
+        // BOTH pools catalogued → no catalog gap; the provider error must
+        // surface as the transport label v3_quote_unavailable.
+        let catalog = Arc::new(V3FeeCatalog::new());
+        catalog.record_observed(addr(0x10), tok_a, tok_b, 3000);
+        catalog.record_observed(addr(0x11), tok_a, tok_b, 500);
+        let projector = Arc::new(StateProjector::new(
+            Arc::new(ReservesCache::new()),
+            Some(Arc::new(ErrV3Mock)),
+            catalog,
+        ));
+        let engine = DexEngine::new(Arc::new(ReservesCache::new()), None, Some(projector));
+
+        let pool_a = make_pool(addr(0x10), tok_a, tok_b, ProtocolType::V3);
+        let pool_b = make_pool(addr(0x11), tok_a, tok_b, ProtocolType::V3);
+        let intent = make_intent(tok_a, tok_b);
+        let impact = make_impact(vec![pool_a, pool_b]);
+        let cfg = make_cfg();
+
+        let candidates = engine
+            .build_from_impacted_pairs(&intent, &impact, Some(&cfg))
+            .await
+            .expect("engine must not error");
+
+        let reasons = rejection_reasons(&candidates);
+        assert!(
+            reasons.iter().any(|r| r == "v3_quote_unavailable"),
+            "provider RPC failure must keep v3_quote_unavailable, got {reasons:?}"
+        );
     }
 }

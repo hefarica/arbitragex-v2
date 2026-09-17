@@ -136,6 +136,36 @@ impl V3FeeCatalog {
         self.by_pool.read().unwrap_or_else(|e| e.into_inner()).len()
     }
 
+    /// Parse ONE `arbx:pool_index_v3` payload (a JSON array of `V3PoolInfo`)
+    /// and merge its entries into `by_pool`. Returns the malformed-entry count
+    /// for this payload (R8: unparseable / non-address entries are counted and
+    /// skipped — never fabricated, never fatal).
+    ///
+    /// CATALOG-BACKFILL-01 (2026-09-17): extracted from `load_from_redis`
+    /// so the wire-contract rejection cases (legacy `"address"`-field entries,
+    /// `fee_bps: null`, missing fields) are unit-testable without Redis.
+    /// EVIDENCE (Redis dump 2026-09-17): 93 of 186 keys hold pre-WO-06 entries
+    /// like `[{"address":"0x…","fee_bps":30}]` — `V3PoolInfo` requires
+    /// `pool_addr`, so serde rejects the whole array → key skipped → every pool
+    /// in it resolves `NotCatalogued`.
+    fn ingest_index_payload(&self, json: &str) -> usize {
+        let pools: Vec<V3PoolInfo> = match serde_json::from_str(json) {
+            Ok(p) => p,
+            Err(_) => return 1,
+        };
+        let mut malformed = 0usize;
+        let mut by_pool = self.by_pool.write().unwrap_or_else(|e| e.into_inner());
+        for info in pools {
+            match info.pool_addr.parse::<Address>() {
+                Ok(addr) => {
+                    by_pool.insert(addr, info.fee_bps);
+                }
+                Err(_) => malformed += 1,
+            }
+        }
+        malformed
+    }
+
     /// Merge the Redis `arbx:pool_index_v3:<chain>:*` index into `by_pool`
     /// (SCAN + per-key GET — same access pattern as price_worker's pool-index
     /// scan). Entries never disappear on refresh: a pool dropped by Redis
@@ -172,22 +202,7 @@ impl V3FeeCatalog {
                 .await
                 .map_err(|e| anyhow::anyhow!("v3 fee catalog GET {key} failed: {e}"))?;
             let Some(json) = raw else { continue };
-            let pools: Vec<V3PoolInfo> = match serde_json::from_str(&json) {
-                Ok(p) => p,
-                Err(_) => {
-                    malformed += 1;
-                    continue;
-                }
-            };
-            let mut by_pool = self.by_pool.write().unwrap_or_else(|e| e.into_inner());
-            for info in pools {
-                match info.pool_addr.parse::<Address>() {
-                    Ok(addr) => {
-                        by_pool.insert(addr, info.fee_bps);
-                    }
-                    Err(_) => malformed += 1,
-                }
-            }
+            malformed += self.ingest_index_payload(&json);
         }
         if malformed > 0 {
             warn!(
@@ -247,6 +262,63 @@ mod tests {
             c.tiers_for_pair(addr(0xA), addr(0xC)).is_empty(),
             "unknown pair must have no tiers (R8)"
         );
+    }
+
+    // ── CATALOG-BACKFILL-01 (2026-09-17): wire-contract rejection cases ──────
+    //
+    // Anchored to the REAL Redis dump of 2026-09-17 (186 keys, 93 malformed):
+    // every malformed payload must count as malformed and contribute NOTHING
+    // to the catalog (R8: no fabricated tiers), while a canonical payload
+    // populates `by_pool` with its exact pips.
+
+    const WETH_POOL_3000: &str = "0x0000000000000000000000000000000000000001";
+
+    #[test]
+    fn catalog_backfill_null_fee_tier_is_malformed_and_not_catalogued() {
+        let c = V3FeeCatalog::new();
+        // (a) null fee_bps → serde rejects the payload → malformed, catalog untouched.
+        let malformed = c.ingest_index_payload(
+            r#"[{"pool_addr":"0x0000000000000000000000000000000000000009","fee_bps":null}]"#,
+        );
+        assert_eq!(malformed, 1, "null fee_bps payload must count as malformed");
+        assert_eq!(c.pool_count(), 0, "null fee_bps must NOT enter the catalog");
+    }
+
+    #[test]
+    fn catalog_backfill_legacy_address_field_is_malformed_and_not_catalogued() {
+        let c = V3FeeCatalog::new();
+        // Legacy pre-WO-06 schema (`"address"` instead of `pool_addr`) — the
+        // exact shape of the 93 malformed keys observed in Redis.
+        let malformed = c.ingest_index_payload(
+            r#"[{"address":"0xaea3df60e99c4726abc1e7dd9a2fa570e4eed638","fee_bps":30}]"#,
+        );
+        assert_eq!(
+            malformed, 1,
+            "legacy address-field payload must be malformed"
+        );
+        assert_eq!(
+            c.pool_count(),
+            0,
+            "legacy entries must NOT enter the catalog"
+        );
+    }
+
+    #[test]
+    fn catalog_backfill_canonical_payload_enters_with_exact_pips() {
+        let c = V3FeeCatalog::new();
+        let malformed = c.ingest_index_payload(&format!(
+            r#"[{{"pool_addr":"{WETH_POOL_3000}","fee_bps":3000}}]"#
+        ));
+        assert_eq!(malformed, 0);
+        assert_eq!(c.pool_count(), 1);
+        assert_eq!(c.fee_for_pool(addr(1)), Some(3000));
+        // A garbage fee value in a PARSEABLE payload still enters as-is — the
+        // reader never second-guesses tiers; the writer-side on-chain
+        // resolution (pool_sync_worker) is what fixes bad values at the source.
+        let _ = c.ingest_index_payload(
+            r#"[{"pool_addr":"0x0000000000000000000000000000000000000002","fee_bps":30}]"#,
+        );
+        assert_eq!(c.fee_for_pool(addr(2)), Some(30));
     }
 
     // ── T1: PIN ENCODING — fee word is raw pips, ABI-padded to 32 bytes ──────
