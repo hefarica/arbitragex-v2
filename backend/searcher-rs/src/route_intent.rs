@@ -261,7 +261,9 @@ pub enum RouterKind {
 impl From<shared_rs::chains::RouterKind> for RouterKind {
     /// Converts the shared router catalog kind to the local intent kind.
     /// `shared_rs::chains::RouterKind` has no `OneInch` variant — that maps to
-    /// `Unknown` until the catalog is extended.
+    /// `Unknown` until the catalog is extended. `PancakeV3` (SwapRouter02-style
+    /// encoding, handled in sim-ctl/tx_builder.rs) has no local intent variant
+    /// either — it maps to `Unknown` (R8 safe default) likewise.
     fn from(k: shared_rs::chains::RouterKind) -> Self {
         match k {
             shared_rs::chains::RouterKind::UniswapV2 => RouterKind::UniswapV2,
@@ -270,6 +272,7 @@ impl From<shared_rs::chains::RouterKind> for RouterKind {
             shared_rs::chains::RouterKind::Curve => RouterKind::Curve,
             shared_rs::chains::RouterKind::Balancer => RouterKind::Balancer,
             shared_rs::chains::RouterKind::UniversalRouter => RouterKind::UniversalRouter,
+            shared_rs::chains::RouterKind::PancakeV3 => RouterKind::Unknown,
             shared_rs::chains::RouterKind::Unknown => RouterKind::Unknown,
         }
     }
@@ -396,6 +399,9 @@ mod tests {
             (Shared::Curve, RouterKind::Curve),
             (Shared::Balancer, RouterKind::Balancer),
             (Shared::UniversalRouter, RouterKind::UniversalRouter),
+            // PANCAKE-ROUTER-01 follow-up: no local intent variant yet — R8
+            // safe default is Unknown (same policy as OneInch).
+            (Shared::PancakeV3, RouterKind::Unknown),
             (Shared::Unknown, RouterKind::Unknown),
         ];
         for &(shared, expected) in cases {
