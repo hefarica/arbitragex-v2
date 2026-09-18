@@ -11,6 +11,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import {
   OpportunitySummaryGrid,
   NOT_EMITTED,
+  NOT_COMPUTED,
 } from "../OpportunitySummaryGrid";
 import { mapToOmniOpportunity } from "@/lib/store/types";
 
@@ -99,13 +100,73 @@ describe("OpportunitySummaryGrid (§36)", () => {
     expect(html).toContain("jamás el conteo sintético §29");
   });
 
-  it("gaps declared: detector and latencia are 'no emitido' (nivel-(b))", () => {
+  it("WO-CARDS-COMPLETE-01: detector_id + pipeline_latency_ms render from the wire", () => {
+    const opp = mapToOmniOpportunity(
+      wire({
+        route_metadata: rm2hop,
+        detector_id: "cross_dex_detector_v3",
+        pipeline_latency_ms: 42,
+      }),
+    );
+    const html = renderToStaticMarkup(
+      React.createElement(OpportunitySummaryGrid, { opp }),
+    );
+    expect(html).toContain("cross_dex_detector_v3"); // detector cell
+    expect(html).toContain("42ms"); // latencia cell
+  });
+
+  it("WO-CARDS-COMPLETE-01: null detector/latencia stay 'no emitido' (nivel-(b) resuelto, R8)", () => {
     const opp = mapToOmniOpportunity(wire({ route_metadata: rm2hop }));
     const html = renderToStaticMarkup(
       React.createElement(OpportunitySummaryGrid, { opp }),
     );
     expect(html).toContain(NOT_EMITTED);
-    expect(html).toContain("ARBX-FE-EMIT-09"); // latencia gap points at its emission task
+    expect(html).toContain("detector_id ausente en el payload");
+    expect(html).toContain("pipeline_latency_ms ausente en el payload");
+  });
+
+  it("WO-CARDS-COMPLETE-01: null economics on a rejected row render 'no computado' with the R8 reason", () => {
+    const opp = mapToOmniOpportunity(
+      wire({
+        route_metadata: rm2hop,
+        status: "rejected",
+        rejection_reason: "impact_zero",
+      }),
+    );
+    const html = renderToStaticMarkup(
+      React.createElement(OpportunitySummaryGrid, { opp }),
+    );
+    expect(html).toContain(NOT_COMPUTED);
+    expect(html).toContain("no computado: impact_zero (R8)");
+    expect(html).not.toContain("$0.00"); // reason stated, never a fabricated zero
+  });
+
+  it("WO-CARDS-COMPLETE-01 regression: accepted row with full data shows the values", () => {
+    const opp = mapToOmniOpportunity(
+      wire({
+        route_metadata: rm2hop,
+        detector_id: "det-1",
+        pipeline_latency_ms: 7,
+        expected_profit_usd: 10.5,
+        net_expected_profit_usd: 8.25,
+        roi_pct: 0.12,
+        risk_score: 0.34,
+        simulated_amount_in_usd: 4500,
+        simulated_net_profit_usd: 7.9,
+      }),
+    );
+    const html = renderToStaticMarkup(
+      React.createElement(OpportunitySummaryGrid, { opp }),
+    );
+    expect(html).toContain("det-1");
+    expect(html).toContain("7ms");
+    expect(html).toContain("$10.50");
+    expect(html).toContain("$8.25");
+    expect(html).toContain("12"); // bps
+    expect(html).toContain("0.34");
+    expect(html).toContain("$4500.00");
+    expect(html).toContain("~$7.90");
+    expect(html).not.toContain(NOT_COMPUTED); // full data row never shows the placeholder
   });
 
   it("§79: the Sim cell carries a VALUE, never a PASS/FAIL verdict", () => {

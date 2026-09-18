@@ -1,5 +1,22 @@
 import { z } from "zod";
 
+// WO-G2-PARITY (2026-09-17): opportunities.block_number lives in a BIGINT
+// column and node-postgres hands int8 back as a string, so the live REST feed
+// can arrive with block_number: "25995384" (deploy-skew window while the
+// api-server normalization lands). Accept a numeric string and coerce it;
+// null stays null (R8: not detected ≠ block 0 — deliberately NOT z.coerce,
+// whose Number(null) === 0 would fabricate block 0); a NON-numeric string is
+// left as-is so z.number() rejects it and the feed fails honestly instead of
+// silently dropping the field.
+const BlockNumberWireSchema = z.preprocess(
+  (v) => {
+    if (typeof v !== "string") return v;
+    const t = v.trim();
+    return /^-?\d+$/.test(t) ? Number(t) : v;
+  },
+  z.number().nullable(),
+);
+
 export const KillSwitchStateSchema = z.object({
   enabled: z.boolean(),
   reason: z.string().nullable(),
@@ -60,10 +77,14 @@ export const OpportunityRowSchema = z.object({
   roi_pct: z.number().nullable(),
   risk_score: z.number().nullable(),
   rejection_reason: z.string().nullable().optional(),
+  // WO-CARDS-COMPLETE-01 (2026-09-18): emitted on every opportunity (accepted
+  // AND rejected) — null when absent (R8). Matches shared-ts OpportunitySchema.
+  detector_id: z.string().nullable().optional(),
+  pipeline_latency_ms: z.number().int().nonnegative().nullable().optional(),
   paper_status: PaperStatusSchema.optional(),
   chains_used: z.array(z.number()).optional(),
   dexes_used: z.array(z.string()).optional(),
-  block_number: z.number().nullable(),
+  block_number: BlockNumberWireSchema, // WO-G2-PARITY (2026-09-17)
   status: z.string(),
   detected_at: z.string(),
   trace_id: z.string(),
@@ -1179,7 +1200,7 @@ export const AdminChainProbeResultSchema = z.object({
   matches: z.boolean().nullable(),
   observed_chain_id: z.number().int().nullable(),
   latency_ms: z.number().int().nullable(),
-  block_number: z.number().int().nullable(),
+  block_number: BlockNumberWireSchema, // WO-G2-PARITY (2026-09-17) — same int8-as-string class; producer emits number today (parseInt in admin-chains.ts), hardened defensively
   error: z.string().nullable(),
   probed_at: z.string(),
 });

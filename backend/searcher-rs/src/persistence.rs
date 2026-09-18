@@ -150,13 +150,15 @@ pub async fn insert_opportunity_with_route(
             token_in, token_out, amount_in_wei,
             expected_profit_usd, net_expected_profit_usd, roi_pct, risk_score,
             block_number, status, rejection_reason, trace_id, detected_at,
-            route_metadata, cartridge_id
+            route_metadata, cartridge_id,
+            detector_id, pipeline_latency_ms
         ) VALUES (
             $1, $2, $3, $4, $5, $6,
             $7, $8, $9,
             $10, $11, $12, $13,
             $14, $20, $15, $16, $17,
-            $18, $19
+            $18, $19,
+            $21, $22
         )
         ON CONFLICT (id) DO NOTHING
         "#,
@@ -181,6 +183,10 @@ pub async fn insert_opportunity_with_route(
     .bind(route_json)
     .bind(o.cartridge_id.as_deref())
     .bind(status)
+    // WO-CARDS-COMPLETE-01 (2026-09-17): detector identity + emit-boundary
+    // latency (migration 121). Both NULL-able — legacy rows carry None (R8).
+    .bind(o.detector_id.as_deref())
+    .bind(o.pipeline_latency_ms.map(|m| m as i64))
     .execute(pool)
     .await
     .context("insert opportunity")?;

@@ -46,6 +46,14 @@ export const OpportunitySchema = z.object({
   // OpportunitySchema.parse reject every published Opportunity
   // (paper_archiver.invalid_message flood).
   cartridge_id: z.string().nullable().optional(),
+  // WO-CARDS-COMPLETE-01 (2026-09-17): detector identity (core engine name or
+  // cartridge stem) + emit-boundary latency in ms. Same strict-schema rule as
+  // cartridge_id above: the Rust producer always serializes these keys
+  // (#[serde(default)] without skip_serializing_if emits null when None), so
+  // omitting them here makes OpportunitySchema.parse reject every published
+  // Opportunity.
+  detector_id: z.string().nullable().optional(),
+  pipeline_latency_ms: z.number().int().nonnegative().nullable().optional(),
   // Cross-chain bridging fields (added in BE-01 Sprint A migration 047).
   // Null for single-chain opportunities; populated for cex_dex / cross_chain.
   chain_id_out: z.number().int().positive().nullable().optional(),

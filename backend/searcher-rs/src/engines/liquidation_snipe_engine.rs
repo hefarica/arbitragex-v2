@@ -359,6 +359,9 @@ impl LiquidationSnipeEngine {
             block_number: None,
             rejection_reason: rejection_reason.clone(),
             cartridge_id: None,
+            // WO-CARDS-COMPLETE-01 (2026-09-17): detector identity at construction.
+            detector_id: Some("liquidation_snipe_engine".to_string()),
+            pipeline_latency_ms: None,
             detected_at: Utc::now(),
             trace_id,
         };

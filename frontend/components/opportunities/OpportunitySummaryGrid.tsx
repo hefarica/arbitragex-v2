@@ -12,7 +12,8 @@
  * Column → wire source (all null-honest; §28/§29 discipline):
  *   ruta      dex_a → dex_b
  *   strategy  strategy_kind (null ⇒ "—")
- *   detector  NOT EMITTED on the wire — "no emitido" (nivel-(b))
+ *   detector  detector_id (WO-CARDS-COMPLETE-01); null ⇒ "no emitido"
+ *             (nivel-(b) resuelto — el campo YA se emite)
  *   hops      hop_count — route_metadata-grade ONLY (FE-0028); null ⇒ "—",
  *             never the §29 synthetic count
  *   in        simulated_amount_in_usd when computed (amount_in_wei in the
@@ -26,8 +27,11 @@
  *             the wire persists no simulation verdict (§79 — the FE never
  *             recomputes one); the only PASS/FAIL on this card is the
  *             strategy-target verdict, owned by meets_target_at_cap.
- *   latencia  NOT EMITTED per-opportunity yet — "no emitido" (nivel-(b);
- *             backend per-candidate latency emission is ARBX-FE-EMIT-09).
+ *   latencia  pipeline_latency_ms (WO-CARDS-COMPLETE-01); null ⇒ "no emitido"
+ *             (nivel-(b) resuelto).
+ * Null economics with a rejection_reason on the row render "no computado"
+ * with the R8 reason in the title (WO-CARDS-COMPLETE-01) — a bare dash only
+ * when there is no reason to state (R8: absence is a state, not silence).
  */
 
 // SSR-test support (repo pattern): classic JSX path needs the React namespace.
@@ -37,6 +41,7 @@ import type { OmniOpportunity } from "@/lib/store/types";
 
 const DASH = "—";
 export const NOT_EMITTED = "no emitido";
+export const NOT_COMPUTED = "no computado";
 
 function usd(v: number, digits = 2): string {
   const s = v.toFixed(digits);
@@ -49,6 +54,19 @@ function summaryCells(opp: OmniOpportunity): Array<{
   title: string;
 }> {
   const bps = opp.roi_pct != null ? (opp.roi_pct * 100).toFixed(0) : null;
+  // WO-CARDS-COMPLETE-01: a null economic value on a row that carries a
+  // rejection_reason is "no computado" with the R8 reason in the title —
+  // the bare dash stays only when there is no reason to state.
+  const cell = (
+    label: string,
+    v: string | null,
+    title: string,
+  ): { label: string; value: string; title: string } =>
+    v != null
+      ? { label, value: v, title }
+      : opp.rejection_reason != null
+        ? { label, value: NOT_COMPUTED, title: `no computado: ${opp.rejection_reason} (R8)` }
+        : { label, value: DASH, title };
   return [
     {
       label: "ruta",
@@ -65,8 +83,11 @@ function summaryCells(opp: OmniOpportunity): Array<{
     },
     {
       label: "detector",
-      value: NOT_EMITTED,
-      title: "detector_id no es columna del feed de oportunidades (nivel-(b))",
+      value: opp.detector_id ?? NOT_EMITTED,
+      title:
+        opp.detector_id == null
+          ? "detector_id ausente en el payload — no emitido (nivel-(b) resuelto, R8)"
+          : "detector_id del wire",
     },
     {
       label: "hops",
@@ -76,51 +97,47 @@ function summaryCells(opp: OmniOpportunity): Array<{
           ? "sin route_metadata persistida — hop_count null (FE-0028), jamás el conteo sintético §29"
           : "hop_count = route_metadata.dex_adapters.length",
     },
-    {
-      label: "in",
-      value:
-        opp.simulated_amount_in_usd != null
-          ? usd(opp.simulated_amount_in_usd)
-          : DASH,
-      title: `amount_in_wei=${opp.amount_in_wei ?? "no emitido"} · USD solo cuando la simulación lo computa (R8)`,
-    },
-    {
-      label: "Gross",
-      value: opp.expected_profit_usd != null ? usd(opp.expected_profit_usd) : DASH,
-      title: "expected_profit_usd (gross, pre-costos)",
-    },
-    {
-      label: "Net",
-      value: opp.net_expected_profit_usd != null ? usd(opp.net_expected_profit_usd) : DASH,
-      title: "net_expected_profit_usd (spine canónico)",
-    },
-    {
-      label: "bps",
-      value: bps ?? DASH,
-      title:
-        opp.roi_pct == null
-          ? "roi_pct no computado (R8)"
-          : `roi_pct ${opp.roi_pct.toFixed(4)}% × 100 — conversión de unidad, no un veredicto`,
-    },
-    {
-      label: "Risk",
-      value: opp.risk_score != null ? opp.risk_score.toFixed(2) : DASH,
-      title: "risk_score del wire",
-    },
-    {
-      label: "Sim",
-      value:
-        opp.simulated_net_profit_usd != null
-          ? `~${usd(opp.simulated_net_profit_usd)}`
-          : DASH,
-      title:
-        "forward-sim net como VALOR — el wire no persiste veredicto PASS/FAIL de simulación (§79); PASS/FAIL solo vive en el target verdict",
-    },
+    cell(
+      "in",
+      opp.simulated_amount_in_usd != null ? usd(opp.simulated_amount_in_usd) : null,
+      `amount_in_wei=${opp.amount_in_wei ?? "no emitido"} · USD solo cuando la simulación lo computa (R8)`,
+    ),
+    cell(
+      "Gross",
+      opp.expected_profit_usd != null ? usd(opp.expected_profit_usd) : null,
+      "expected_profit_usd (gross, pre-costos)",
+    ),
+    cell(
+      "Net",
+      opp.net_expected_profit_usd != null ? usd(opp.net_expected_profit_usd) : null,
+      "net_expected_profit_usd (spine canónico)",
+    ),
+    cell(
+      "bps",
+      bps,
+      opp.roi_pct == null
+        ? "roi_pct no computado (R8)"
+        : `roi_pct ${opp.roi_pct.toFixed(4)}% × 100 — conversión de unidad, no un veredicto`,
+    ),
+    cell(
+      "Risk",
+      opp.risk_score != null ? opp.risk_score.toFixed(2) : null,
+      "risk_score del wire",
+    ),
+    cell(
+      "Sim",
+      opp.simulated_net_profit_usd != null
+        ? `~${usd(opp.simulated_net_profit_usd)}`
+        : null,
+      "forward-sim net como VALOR — el wire no persiste veredicto PASS/FAIL de simulación (§79); PASS/FAIL solo vive en el target verdict",
+    ),
     {
       label: "latencia",
-      value: NOT_EMITTED,
+      value: opp.pipeline_latency_ms != null ? `${opp.pipeline_latency_ms}ms` : NOT_EMITTED,
       title:
-        "latencia por-candidato no emitida aún (nivel-(b)) — emisión pendiente ARBX-FE-EMIT-09",
+        opp.pipeline_latency_ms == null
+          ? "pipeline_latency_ms ausente en el payload — no emitido (nivel-(b) resuelto, R8)"
+          : "pipeline_latency_ms del wire (detección → emisión)",
     },
   ];
 }

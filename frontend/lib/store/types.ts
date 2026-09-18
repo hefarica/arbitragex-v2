@@ -238,8 +238,10 @@ export interface OmniOpportunity {
   route_id: string | null;
   /** Pair id — not on the opportunities wire today. */
   pair_id: string | null;
-  /** Detector id — not on the opportunities wire today. */
+  /** Detector id — wire field (WO-CARDS-COMPLETE-01); null when the payload omits it. */
   detector_id: string | null;
+  /** Pipeline latency (detection → emission, ms) — wire field (WO-CARDS-COMPLETE-01); null = not emitted. */
+  pipeline_latency_ms: number | null;
   /** Quote/payout token address — not on the opportunities wire today. */
   quote_token: string | null;
   /** Quote graph/config/strategy versions — not on the opportunities wire today. */
@@ -358,13 +360,17 @@ export function mapToOmniOpportunity(raw: Record<string, unknown>): OmniOpportun
     // Extended Identity (FE-0028): cartridge_id is a real wire field
     // (opportunities.cartridge_id — REST live query SELECTs it; WS payloads
     // may omit it → null). hop_count derives from the parsed topology below.
-    // The level-(b) fields have NO wire today → pinned null, never fabricated.
+    // WO-CARDS-COMPLETE-01: detector_id + pipeline_latency_ms map from the
+    // wire (null-honest when absent). The remaining level-(b) fields have NO
+    // wire today → pinned null, never fabricated.
     cartridge_id: raw.cartridge_id != null ? String(raw.cartridge_id) : null,
     hop_count: deriveHopCount(routeMetadata),
     candidate_id: null,
     route_id: null,
     pair_id: null,
-    detector_id: null,
+    detector_id: raw.detector_id != null ? String(raw.detector_id) : null,
+    pipeline_latency_ms:
+      raw.pipeline_latency_ms != null ? Number(raw.pipeline_latency_ms) : null,
     quote_token: null,
     quote_version: null,
     graph_version: null,

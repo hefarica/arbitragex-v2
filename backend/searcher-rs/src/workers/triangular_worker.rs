@@ -1536,6 +1536,9 @@ impl TriangularWorker {
             block_number: Some(cycle_block),
             rejection_reason: None,
             cartridge_id: None,
+            // WO-CARDS-COMPLETE-01 (2026-09-17): detector identity at construction.
+            detector_id: Some("triangular_worker".to_string()),
+            pipeline_latency_ms: None,
             detected_at: Utc::now(),
             trace_id: Uuid::new_v4(),
         };
@@ -1961,6 +1964,9 @@ impl TriangularWorker {
                 block_number: Some(cycle_block),
                 rejection_reason: None,
                 cartridge_id: None,
+                // WO-CARDS-COMPLETE-01 (2026-09-17): detector identity at construction.
+                detector_id: Some("triangular_worker".to_string()),
+                pipeline_latency_ms: None,
                 detected_at: Utc::now(),
                 trace_id: Uuid::new_v4(),
             };

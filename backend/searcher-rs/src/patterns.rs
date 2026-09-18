@@ -56,6 +56,10 @@ pub fn build_dex_arb_candidate(ctx: &TxContext, swap: &DecodedSwap) -> Opportuni
         block_number: ctx.block_number,
         rejection_reason: None, // Populated by scanner.rs at each gate decision point.
         cartridge_id: None,
+        // WO-CARDS-COMPLETE-01 (2026-09-17): detector identity at construction —
+        // the S2 pattern matcher that built this dex_arb candidate.
+        detector_id: Some("patterns".to_string()),
+        pipeline_latency_ms: None,
         detected_at: Utc::now(),
         trace_id: Uuid::new_v4(),
     }
