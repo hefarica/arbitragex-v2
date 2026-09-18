@@ -525,4 +525,63 @@ mod tests {
         assert!(rm.leg_amounts_out.is_none());
         assert!(rm.leg_zero_for_one.is_none());
     }
+
+    // WO-LEGS-TRIANGULAR-01: a 3-hop (triangular) ledger round-trips exactly.
+    // The amounts are the independent Python vector asserted wei-exact in
+    // searcher-rs (cycle_profit_with_ledger): x=1e18,
+    // outs = [1184589641276473558, 1283975251278183205, 2527886585228387775],
+    // fee 30 bps, hops [(100e18,120e18),(100e18,110e18),(100e18,200e18)].
+    #[test]
+    fn test_attach_leg_ledger_three_hop_roundtrip() {
+        let mut rm = RouteMetadata {
+            pool_addresses: vec!["0xpool1".into(), "0xpool2".into(), "0xpool3".into()],
+            // Cycle A→B→C→A with ascending A < B < C:
+            //   leg0 A→B ⇒ 0→1 (true), leg1 B→C ⇒ true, leg2 C→A ⇒ false.
+            token_addresses: vec!["0xA".into(), "0xB".into(), "0xC".into(), "0xA".into()],
+            dex_adapters: vec!["uni".into(), "sushi".into(), "uni".into()],
+            decimals: DecimalsMap::new(),
+            leg_amounts_in: None,
+            leg_amounts_out: None,
+            leg_zero_for_one: None,
+        };
+        assert!(rm.attach_leg_ledger(
+            &[
+                "1000000000000000000".to_string(),
+                "1184589641276473558".to_string(),
+                "1283975251278183205".to_string(),
+            ],
+            &[
+                "1184589641276473558".to_string(),
+                "1283975251278183205".to_string(),
+                "2527886585228387775".to_string(),
+            ]
+        ));
+        assert_eq!(
+            rm.leg_amounts_in.as_deref().unwrap(),
+            &[
+                "1000000000000000000",
+                "1184589641276473558",
+                "1283975251278183205"
+            ]
+        );
+        assert_eq!(
+            rm.leg_amounts_out.as_deref().unwrap(),
+            &[
+                "1184589641276473558",
+                "1283975251278183205",
+                "2527886585228387775"
+            ]
+        );
+        assert_eq!(
+            rm.leg_zero_for_one.as_deref().unwrap(),
+            &[true, true, false]
+        );
+
+        // Round-trip preserves the 3-hop arrays as exact strings.
+        let json = serde_json::to_string(&rm).expect("serialize");
+        let back: RouteMetadata = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(back.leg_amounts_in, rm.leg_amounts_in);
+        assert_eq!(back.leg_amounts_out, rm.leg_amounts_out);
+        assert_eq!(back.leg_zero_for_one, rm.leg_zero_for_one);
+    }
 }
