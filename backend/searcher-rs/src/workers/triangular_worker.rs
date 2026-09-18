@@ -262,6 +262,39 @@ pub fn cycle_profit(x: U256, hop_reserves: &[(U256, U256)], fee_bps: u32) -> (U2
     (current, profit)
 }
 
+/// Same integer kernel as [`cycle_profit`], additionally collecting each hop's
+/// output amount (WO-LEGS-TRIANGULAR-01). Returns `(amount_out, profit,
+/// leg_outputs)` where `leg_outputs[i]` is the exact V2 `amount_out` of hop i
+/// — length equals the hop count on success, empty on degenerate inputs (same
+/// semantics as `cycle_profit` returning `(zero, 0)`).
+///
+/// Kept as a separate function rather than folding the collection into
+/// `cycle_profit` on purpose: the golden-section search calls `cycle_profit`
+/// ~2× per iteration inside the hot loop, and this variant allocates a `Vec`
+/// per call. It is used ONCE per candidate, at the post-clamp re-evaluation
+/// that produces the reported profit, so the ledger chains exactly to the
+/// figures the candidate reports (Sancho condition 1, run_6db07).
+pub fn cycle_profit_with_ledger(
+    x: U256,
+    hop_reserves: &[(U256, U256)],
+    fee_bps: u32,
+) -> (U256, i128, Vec<U256>) {
+    if hop_reserves.is_empty() || x.is_zero() {
+        return (U256::zero(), 0, Vec::new());
+    }
+    let mut current = x;
+    let mut leg_outputs = Vec::with_capacity(hop_reserves.len());
+    for (r_in, r_out) in hop_reserves {
+        current = v2_amount_out(current, *r_in, *r_out, fee_bps);
+        if current.is_zero() {
+            return (U256::zero(), 0, Vec::new());
+        }
+        leg_outputs.push(current);
+    }
+    let profit = u256_to_i128_clamped(current).saturating_sub(u256_to_i128_clamped(x));
+    (current, profit, leg_outputs)
+}
+
 /// Saturating-clamp a U256 to i128. For our use case (token amounts within
 /// ~$10K capital cap) the value comfortably fits, but we defensively clamp
 /// to avoid panic on the rare case of a very large amount_out from a thin pool.
@@ -739,6 +772,12 @@ pub struct EvalResult {
     #[allow(dead_code)]
     pub profit_token_a_wei: i128,
     pub expected_profit_usd: Option<f64>,
+    /// Per-hop V2 `amount_out` collected from the SAME post-clamp re-evaluation
+    /// loop that produced `amount_out_wei` / `profit_token_a_wei`
+    /// (WO-LEGS-TRIANGULAR-01). Present only on the pure-V2 `evaluate_cycle`
+    /// path when the clamped profit is strictly positive; `None` on the mixed
+    /// V2/V3 path and on degenerate inputs (R8: absent = not computed).
+    pub leg_outputs: Option<Vec<U256>>,
 }
 
 /// Pure-function kernel: spot-check + golden-section + USD pricing on a single
@@ -809,9 +848,11 @@ pub fn evaluate_cycle(input: &EvalInput) -> Option<EvalResult> {
 
     // Re-evaluate profit at the clamped input (golden-section's best guess might
     // have been at the cap, in which case the value is identical; if the cap
-    // shrank x_star, recompute honestly).
-    let (amount_out, profit_at_clamped) =
-        cycle_profit(amount_in, &input.hop_reserves, input.fee_bps);
+    // shrank x_star, recompute honestly). WO-LEGS-TRIANGULAR-01: use the ledger
+    // variant so the per-hop outputs come from THIS loop — the same one whose
+    // final amount_out / profit the EvalResult reports.
+    let (amount_out, profit_at_clamped, leg_outputs) =
+        cycle_profit_with_ledger(amount_in, &input.hop_reserves, input.fee_bps);
     if profit_at_clamped <= 0 {
         // Capital cap pushed us below break-even (the unconstrained optimum
         // was higher than the operator allows). Honest skip — emitting a
@@ -829,6 +870,14 @@ pub fn evaluate_cycle(input: &EvalInput) -> Option<EvalResult> {
         amount_out_wei: amount_out,
         profit_token_a_wei: profit_at_clamped,
         expected_profit_usd,
+        // Empty vec == degenerate loop (zero intermediate) — but that arm
+        // already returned None above (profit 0). Only a full 3-hop chain
+        // reaches here, so map to None rather than an empty Some (R8).
+        leg_outputs: if leg_outputs.len() == input.hop_reserves.len() {
+            Some(leg_outputs)
+        } else {
+            None
+        },
     })
 }
 
@@ -961,6 +1010,11 @@ pub fn evaluate_v3_cycle(
         amount_out_wei: final_out,
         profit_token_a_wei: profit_wei,
         expected_profit_usd,
+        // WO-LEGS-TRIANGULAR-01 scope: the ledger wiring targets the pure-V2
+        // `evaluate_cycle` path (size_triangular_with_reason). The mixed V2/V3
+        // chain has exact hop values available above, but no consumer wires
+        // them yet — honestly absent rather than speculative (R8).
+        leg_outputs: None,
     })
 }
 
@@ -2635,6 +2689,165 @@ mod tests {
         assert!(r.expected_profit_usd.is_some());
         assert!(r.amount_in_wei > U256::zero());
         assert!(r.amount_out_wei > r.amount_in_wei);
+    }
+
+    // ---------------------------------------------------------------
+    // WO-LEGS-TRIANGULAR-01 — per-leg ledger from the post-clamp re-eval
+    // ---------------------------------------------------------------
+
+    #[test]
+    fn cycle_profit_with_ledger_matches_cycle_profit() {
+        // The ledger variant must be the SAME kernel: identical (out, profit)
+        // as cycle_profit on identical inputs, only adding the hop outputs.
+        let x = U256::from(10u64).pow(U256::from(18u64));
+        let hops = vec![
+            (
+                U256::from(100u128) * U256::exp10(18),
+                U256::from(120u128) * U256::exp10(18),
+            ),
+            (
+                U256::from(100u128) * U256::exp10(18),
+                U256::from(110u128) * U256::exp10(18),
+            ),
+            (
+                U256::from(100u128) * U256::exp10(18),
+                U256::from(200u128) * U256::exp10(18),
+            ),
+        ];
+        let (out_plain, profit_plain) = cycle_profit(x, &hops, 30);
+        let (out_ledger, profit_ledger, legs) = cycle_profit_with_ledger(x, &hops, 30);
+        assert_eq!(out_plain, out_ledger);
+        assert_eq!(profit_plain, profit_ledger);
+        assert_eq!(legs.len(), 3);
+        assert_eq!(
+            legs[2], out_ledger,
+            "last leg output IS the cycle amount_out"
+        );
+    }
+
+    #[test]
+    fn cycle_profit_with_ledger_wei_exact_independent_vector() {
+        // Independent vector generated with Python (§12.1: never a test that
+        // re-computes the kernel's own formula). Generator, run outside Rust:
+        //
+        //   def v2_amount_out(x, ri, ro, fee_bps=30):
+        //       a = x * (10000 - fee_bps)
+        //       return (a * ro) // (ri * 10000 + a)   # floor division
+        //   E18 = 10**18
+        //   x = 1 * E18
+        //   hops = [(100*E18, 120*E18), (100*E18, 110*E18), (100*E18, 200*E18)]
+        //
+        //   leg_out_0 = 1184589641276473558
+        //   leg_out_1 = 1283975251278183205
+        //   leg_out_2 = 2527886585228387775
+        //   profit    = 1527886585228387775  (= leg_out_2 - x)
+        let x = U256::from(10u64).pow(U256::from(18u64));
+        let hops = vec![
+            (
+                U256::from(100u128) * U256::exp10(18),
+                U256::from(120u128) * U256::exp10(18),
+            ),
+            (
+                U256::from(100u128) * U256::exp10(18),
+                U256::from(110u128) * U256::exp10(18),
+            ),
+            (
+                U256::from(100u128) * U256::exp10(18),
+                U256::from(200u128) * U256::exp10(18),
+            ),
+        ];
+        let (out, profit, legs) = cycle_profit_with_ledger(x, &hops, 30);
+        let expect: Vec<U256> = [
+            "1184589641276473558",
+            "1283975251278183205",
+            "2527886585228387775",
+        ]
+        .iter()
+        .map(|s| U256::from_dec_str(s).unwrap())
+        .collect();
+        assert_eq!(legs, expect, "per-leg wei must match the Python vector");
+        assert_eq!(
+            out, expect[2],
+            "final amount_out must equal the last leg output"
+        );
+        assert_eq!(profit, 1_527_886_585_228_387_775i128);
+    }
+
+    #[test]
+    fn cycle_profit_with_ledger_degenerate_inputs() {
+        let x = U256::from(10u64).pow(U256::from(18u64));
+        // Empty hop list → degenerate.
+        let (out, profit, legs) = cycle_profit_with_ledger(x, &[], 30);
+        assert!(out.is_zero());
+        assert_eq!(profit, 0);
+        assert!(legs.is_empty());
+        // Zero input → degenerate.
+        let (out, profit, legs) =
+            cycle_profit_with_ledger(U256::zero(), &[(U256::one(), U256::one())], 30);
+        assert!(out.is_zero());
+        assert_eq!(profit, 0);
+        assert!(legs.is_empty());
+    }
+
+    #[test]
+    fn evaluate_cycle_leg_outputs_chain_to_reported_amounts() {
+        // Profitable cycle: EvalResult.leg_outputs must be Some, len 3, and
+        // chain EXACTLY to the reported figures — last output IS amount_out_wei
+        // and the profit was computed from that same value (post-clamp loop).
+        let reserves = vec![
+            (U256::from(1_000_000u64), U256::from(5_000_000_000u64)),
+            (U256::from(5_000_000_000u64), U256::from(5_000_000_000u64)),
+            (U256::from(5_000_000_000u64), U256::from(5_000_000_000u64)),
+        ];
+        let inp = EvalInput {
+            hop_reserves: reserves,
+            token_a_price_usd: Some(2000.0),
+            token_a_decimals: 18,
+            cap_usd: 100_000_000.0,
+            fee_bps: 30,
+        };
+        let r = evaluate_cycle(&inp).expect("profitable cycle must yield Some");
+        let legs = r.leg_outputs.as_ref().expect("leg_outputs must be Some");
+        assert_eq!(legs.len(), 3, "3-hop cycle must yield 3 leg outputs");
+        // Cross-check (Sancho cond. 4): leg_outputs[last] == cycle_profit().0
+        // at the reported amount_in — i.e. the ledger comes from the SAME
+        // evaluation that produced the reported profit, not from the search.
+        let (plain_out, plain_profit) =
+            cycle_profit(r.amount_in_wei, &inp.hop_reserves, inp.fee_bps);
+        assert_eq!(legs[2], plain_out);
+        assert_eq!(r.amount_out_wei, plain_out);
+        assert_eq!(r.profit_token_a_wei, plain_profit);
+        // Chain consistency: the input of hop i+1 is the output of hop i.
+        let reconstructed_in = [r.amount_in_wei, legs[0], legs[1]];
+        for i in 0..3 {
+            // in[i] feeds hop i; out[i-1] == in[i] for i > 0 (structural).
+            if i > 0 {
+                assert_eq!(
+                    reconstructed_in[i],
+                    legs[i - 1],
+                    "leg {i} input must equal leg {} output",
+                    i - 1
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn evaluate_cycle_unprofitable_has_no_ledger() {
+        // Unprofitable → the whole EvalResult is None (R8) — nothing to chain.
+        let reserves = vec![
+            (U256::from(1_000_000u64), U256::from(1_000_000u64)),
+            (U256::from(1_000_000u64), U256::from(1_000_000u64)),
+            (U256::from(1_000_000u64), U256::from(1_000_000u64)),
+        ];
+        let inp = EvalInput {
+            hop_reserves: reserves,
+            token_a_price_usd: Some(2000.0),
+            token_a_decimals: 18,
+            cap_usd: 1000.0,
+            fee_bps: 30,
+        };
+        assert!(evaluate_cycle(&inp).is_none());
     }
 
     #[test]

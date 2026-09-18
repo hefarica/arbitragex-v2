@@ -750,6 +750,32 @@ impl SizeOptimizer {
             None => return OptimizeOutcome::Rejected(OptimizeRejectReason::NonPositiveProfit),
         };
 
+        // WO-LEGS-TRIANGULAR-01: exact per-leg wei from the POST-CLAMP
+        // re-evaluation inside `evaluate_cycle` — the same hop chain whose
+        // final amount_out the reported profit consumed (Sancho condition 1).
+        // leg_outputs = [out0, out1, out2]; the honest input chain is
+        // [x, out0, out1] (leg i+1's input IS leg i's output). Same shape the
+        // 2-leg kernel emits (see `leg_amounts_in` in size_two_leg_with_reason).
+        // R8: any missing link → no ledger at all (all-or-nothing).
+        let (leg_amounts_in, leg_amounts_out) = match eval_result.leg_outputs.as_ref() {
+            Some(outs) if outs.len() == 3 => {
+                let x = eval_result.amount_in_wei;
+                (
+                    Some(vec![
+                        x.to_string(),
+                        outs[0].to_string(),
+                        outs[1].to_string(),
+                    ]),
+                    Some(vec![
+                        outs[0].to_string(),
+                        outs[1].to_string(),
+                        outs[2].to_string(),
+                    ]),
+                )
+            }
+            _ => (None, None),
+        };
+
         let gross_usd = match eval_result.expected_profit_usd {
             Some(g) if g > 0.0 => g,
             _ => return OptimizeOutcome::Rejected(OptimizeRejectReason::NonPositiveGrossUsd),
@@ -797,10 +823,11 @@ impl SizeOptimizer {
                 estimated_net_profit_usd: net_usd,
                 net_negative: true,
                 net_economics,
-                // HOPS-LEDGER-04: triangular kernel exposes only the final
-                // cycle amount — per-leg wei honestly absent (R8).
-                leg_amounts_in: None,
-                leg_amounts_out: None,
+                // WO-LEGS-TRIANGULAR-01: ledger from the post-clamp re-eval —
+                // still at the REPORTED size here (no rescale happens on this
+                // arm), so the chain is exact, not stale.
+                leg_amounts_in,
+                leg_amounts_out,
             }));
         }
 
@@ -816,10 +843,12 @@ impl SizeOptimizer {
             estimated_net_profit_usd: net_usd,
             net_negative: false,
             net_economics,
-            // HOPS-LEDGER-04: triangular kernel exposes only the final
-            // cycle amount — per-leg wei honestly absent (R8).
-            leg_amounts_in: None,
-            leg_amounts_out: None,
+            // WO-LEGS-TRIANGULAR-01: per-leg wei from the post-clamp
+            // re-evaluation — replaces the honest-absent placeholders of
+            // HOPS-LEDGER-04. Kelly overlay still nulls these when it rescales
+            // (apply_kelly_constraints runs for every kernel outcome).
+            leg_amounts_in,
+            leg_amounts_out,
         }))
     }
 
@@ -2643,6 +2672,191 @@ mod tests {
         // processing the reserves in the expected orientation.
     }
 
+    // ── size_optimizer::tests::triangular_sized_emits_per_leg_ledger ────────
+    //
+    // WO-LEGS-TRIANGULAR-01: the triangular kernel must emit the per-leg wei
+    // ledger on the SizedCandidate, chained to the reported amount_in and the
+    // profit's own hop chain (post-clamp re-evaluation inside evaluate_cycle).
+
+    #[tokio::test]
+    async fn triangular_sized_emits_per_leg_ledger() {
+        let pool_a = addr(0x100);
+        let pool_b = addr(0x200);
+        let pool_c = addr(0x300);
+        let tok_a = addr(0x10);
+        let tok_b = addr(0x20);
+        let tok_c = addr(0x30);
+
+        let cache = Arc::new(ReservesCache::new());
+        // Same profitable reserves/orientation as triangular_uses_golden_section:
+        //   hop0 (a→b): (r_in, r_out) = (100e18, 120e18)
+        //   hop1 (b→c): (r_in, r_out) = (100e18, 110e18)
+        //   hop2 (c→a): (r_in, r_out) = (100e18, 200e18)
+        let unit_val = U256::from(10u128).pow(U256::from(18u32));
+        cache
+            .insert(
+                pool_a,
+                unit_val * U256::from(100u32),
+                unit_val * U256::from(120u32),
+            )
+            .await;
+        cache
+            .insert(
+                pool_b,
+                unit_val * U256::from(100u32),
+                unit_val * U256::from(110u32),
+            )
+            .await;
+        cache
+            .insert(
+                pool_c,
+                unit_val * U256::from(200u32),
+                unit_val * U256::from(100u32),
+            )
+            .await;
+
+        let projector = Arc::new(StateProjector::new(cache, None, empty_v3_fee_catalog()));
+        let optimizer = SizeOptimizer::new(projector);
+
+        let pool_a_str = format!("0x{:040x}", pool_a);
+        let pool_b_str = format!("0x{:040x}", pool_b);
+        let pool_c_str = format!("0x{:040x}", pool_c);
+        let tok_a_str = format!("0x{:040x}", tok_a);
+        let tok_b_str = format!("0x{:040x}", tok_b);
+        let tok_c_str = format!("0x{:040x}", tok_c);
+
+        let make_leg = |pool: String, t_in: String, t_out: String| RouteLeg {
+            dex_id: "uniswap-v2".to_string(),
+            dex_name: "uniswap-v2".to_string(),
+            protocol_type: "uniswap-v2".to_string(),
+            factory_address: String::new(),
+            pool_id: None,
+            pool_address: Some(pool),
+            token_in: t_in,
+            token_out: t_out,
+            fee_bps: Some(30),
+            amount_in: Some(1.0),
+            amount_out: None,
+            tvl_usd: None,
+            volume_24h_usd: None,
+            pool_is_active: true,
+        };
+
+        let opp = Opportunity {
+            id: Uuid::new_v4(),
+            chain_id: 1,
+            strategy_kind: StrategyKind::triangular(),
+            dex_a: "uniswap-v2".to_string(),
+            dex_b: None,
+            pair_symbol: "WETH(tri-ledger)".to_string(),
+            token_in: tok_a_str.clone(),
+            token_out: tok_a_str.clone(),
+            amount_in_wei: unit_val.to_string(),
+            expected_profit_usd: Some(1.0),
+            net_expected_profit_usd: None,
+            roi_pct: None,
+            risk_score: None,
+            block_number: None,
+            rejection_reason: None,
+            cartridge_id: None,
+            detector_id: None,
+            pipeline_latency_ms: None,
+            detected_at: Utc::now(),
+            trace_id: Uuid::new_v4(),
+        };
+
+        let route_plan = RoutePlan {
+            route_id: Some("tri-ledger-test".to_string()),
+            strategy_kind: "triangular_arb".to_string(),
+            chain_id: 1,
+            legs: vec![
+                make_leg(pool_a_str.clone(), tok_a_str.clone(), tok_b_str.clone()),
+                make_leg(pool_b_str.clone(), tok_b_str.clone(), tok_c_str.clone()),
+                make_leg(pool_c_str.clone(), tok_c_str.clone(), tok_a_str.clone()),
+            ],
+            atomic: true,
+            estimated_slippage_pct: None,
+            price_impact_pct: None,
+        };
+
+        let candidate = StrategyCandidate {
+            label: StrategyLabel::TriangularArb,
+            opportunity: opp,
+            candidate: OpportunityCandidate {
+                route_fingerprint: "tri-ledger-test".to_string(),
+                pool_addresses: vec![],
+                token_addresses: vec![],
+                dex_adapters: vec!["uniswap-v2".to_string(); 3],
+                amount_in: 1.0,
+                expected_amount_out: 2.0,
+                gross_profit: 1.0,
+            },
+            route_plan,
+            gross_profit_usd: Some(1.0),
+            net_expected_profit_usd: None,
+            rejection_reason: None,
+            source_intent_hash: H256::zero(),
+            base_strategy: None,
+        };
+
+        let intent = make_intent(tok_a, tok_b);
+        // Generous Kelly budget ($1M NAV, per-trade cap 100%) so the overlay
+        // does NOT rescale — this test pins the KERNEL's ledger emission;
+        // the rescale-null-out is pinned separately in
+        // kelly_overlay_nulls_triangular_leg_ledger_when_rescaling.
+        let cfg = make_cfg_kelly(
+            /* capital_usd */ 1_000_000.0,
+            /* multiplier */ 1.0,
+            /* max_per_trade */ 1.0,
+            /* gas_safety */ 1.0,
+            /* min_p */ 0.9,
+        );
+
+        let result = optimizer
+            .optimize(candidate, &intent, Some(&cfg))
+            .await
+            .expect("optimize must not error");
+
+        let sized = result.expect("profitable triangular fixture must size");
+        assert!(
+            sized.estimated_net_profit_usd > 0.0,
+            "fixture must be net-positive for the ledger arm"
+        );
+        let ins = sized.leg_amounts_in.expect("leg_amounts_in must be Some");
+        let outs = sized.leg_amounts_out.expect("leg_amounts_out must be Some");
+        assert_eq!(ins.len(), 3, "3-hop route → 3 leg inputs");
+        assert_eq!(outs.len(), 3, "3-hop route → 3 leg outputs");
+
+        // Ledger entry point == the reported optimal amount.
+        assert_eq!(ins[0], sized.optimal_amount_in.to_string());
+
+        // Chain consistency (Sancho cond. 4): in[i+1] == out[i].
+        for i in 0..2 {
+            assert_eq!(
+                ins[i + 1],
+                outs[i],
+                "leg {} input must equal leg {} output",
+                i + 1,
+                i
+            );
+        }
+
+        // Cross-check against the kernel: outs[last] == cycle_profit().0 at
+        // the reported amount_in — the ledger is the SAME evaluation whose
+        // profit was reported, not a stale re-quote.
+        let hop_reserves = vec![
+            (unit_val * U256::from(100u32), unit_val * U256::from(120u32)),
+            (unit_val * U256::from(100u32), unit_val * U256::from(110u32)),
+            (unit_val * U256::from(100u32), unit_val * U256::from(200u32)),
+        ];
+        let (plain_out, _plain_profit) = crate::workers::triangular_worker::cycle_profit(
+            sized.optimal_amount_in,
+            &hop_reserves,
+            30,
+        );
+        assert_eq!(outs[2], plain_out.to_string());
+    }
+
     // ── size_optimizer::tests::no_config_returns_rejected_no_config ─────────
     //
     // TASK 2: Passing cfg = None must return Rejected(NoConfig), not Ok(None).
@@ -3176,6 +3390,99 @@ mod tests {
             matches!(result, OptimizeOutcome::Sized(_)),
             "positive Kelly edge should accept",
         );
+    }
+
+    // ── WO-LEGS-TRIANGULAR-01: Kelly overlay vs the triangular ledger ───────
+    //
+    // Sancho condition 2 (run_6db07): apply_kelly_constraints runs in
+    // optimize_with_reason Step 8 for EVERY kernel outcome — the triangular
+    // SizedCandidate flows through the same code path as the 2-leg one, so the
+    // HOPS-LEDGER-04 null-out applies to it too. These tests document and
+    // pin that inheritance.
+
+    #[test]
+    fn kelly_overlay_nulls_triangular_leg_ledger_when_rescaling() {
+        // 1 WETH bet, gross=$100, net=$90 (cost=$10). max_per_trade=0.1% of
+        // $1M NAV → $1000 cap → 0.333 WETH. Kelly binds and rescales:
+        // new_gross=$33.3, new_net=$23.3 > 0, gas floor (1.0×) passes → Sized
+        // with a SMALLER amount — the per-leg ledger was computed at the
+        // kernel size, so it must be honestly absent (R8), never stale.
+        let cfg = make_cfg_kelly(
+            /* capital_usd */ 1_000_000.0,
+            /* multiplier */ 0.5,
+            /* max_per_trade */ 0.001,
+            /* gas_safety */ 1.0,
+            /* min_p */ 0.7,
+        );
+        let mut sized = make_sized(unit(1), 100.0, 90.0);
+        sized.candidate.label = StrategyLabel::TriangularArb;
+        sized.leg_amounts_in = Some(vec![
+            "1000000000000000000".to_string(),
+            "995000000000000000".to_string(),
+            "990000000000000000".to_string(),
+        ]);
+        sized.leg_amounts_out = Some(vec![
+            "995000000000000000".to_string(),
+            "990000000000000000".to_string(),
+            "1010000000000000000".to_string(),
+        ]);
+        let before_amount = sized.optimal_amount_in;
+        let result = SizeOptimizer::apply_kelly_constraints(
+            OptimizeOutcome::Sized(Box::new(sized)),
+            &cfg,
+            cfg.capital_usd,
+            3000.0,
+            18,
+        );
+        match result {
+            OptimizeOutcome::Sized(s) => {
+                assert!(
+                    s.optimal_amount_in < before_amount,
+                    "Kelly cap should have reduced the triangular amount"
+                );
+                assert!(
+                    s.leg_amounts_in.is_none(),
+                    "triangular ledger must be absent after Kelly rescale (R8)"
+                );
+                assert!(
+                    s.leg_amounts_out.is_none(),
+                    "triangular ledger must be absent after Kelly rescale (R8)"
+                );
+            }
+            OptimizeOutcome::Rejected(r) => panic!("unexpected reject {:?}", r),
+        }
+    }
+
+    #[test]
+    fn kelly_overlay_preserves_triangular_leg_ledger_when_cap_not_binding() {
+        // Generous Kelly budget → no rescale → the triangular ledger survives.
+        let cfg = make_cfg_kelly(1_000_000.0, 0.5, 1.0, 1.0, 0.7);
+        let mut sized = make_sized(unit(1), 100.0, 90.0);
+        sized.candidate.label = StrategyLabel::TriangularArb;
+        sized.leg_amounts_in = Some(vec![
+            "1000000000000000000".to_string(),
+            "995000000000000000".to_string(),
+            "990000000000000000".to_string(),
+        ]);
+        sized.leg_amounts_out = Some(vec![
+            "995000000000000000".to_string(),
+            "990000000000000000".to_string(),
+            "1010000000000000000".to_string(),
+        ]);
+        let result = SizeOptimizer::apply_kelly_constraints(
+            OptimizeOutcome::Sized(Box::new(sized)),
+            &cfg,
+            cfg.capital_usd,
+            3000.0,
+            18,
+        );
+        match result {
+            OptimizeOutcome::Sized(s) => {
+                assert!(s.leg_amounts_in.is_some(), "ledger must survive");
+                assert!(s.leg_amounts_out.is_some(), "ledger must survive");
+            }
+            OptimizeOutcome::Rejected(r) => panic!("unexpected reject {:?}", r),
+        }
     }
 
     #[test]
