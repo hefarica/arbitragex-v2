@@ -26,8 +26,23 @@ PGDB=arbitragex
 CONTAINER="${PG_CONTAINER:-arbitragex-v2-postgres-1}"
 MIG_DIR="${MIGRATIONS_DIR:-/opt/arbitragex-v2/database/migrations}"
 
+# Role passwords come from the environment (Vault/docker secrets in prod);
+# dev defaults only for local bootstrapping. NEVER hardcode these in an ALTER —
+# incident 2026-09-18 (flipper #2): the hardcoded ALTERs below reset arbx_rw to
+# the dev password on EVERY migration run and took the pipeline down for hours.
+MIG_PW="${ARBX_MIGRATOR_PW:-arbx_migrator_dev_only}"
+RW_PW="${ARBX_RW_PW:-arbx_rw_dev_only}"
+RO_PW="${ARBX_RO_PW:-arbx_ro_dev_only}"
+
 run_sql() {
-  docker exec -e PGOPTIONS="$MIG_LOCK_OPTS" "$CONTAINER" psql -U "$PGUSER" -d "$PGDB" -v ON_ERROR_STOP=1 -c "$1"
+  # -v keeps passwords out of the SQL text (psql :'var' quoting handles
+  # single-quotes/special chars safely — no shell interpolation into SQL).
+  docker exec -e PGOPTIONS="$MIG_LOCK_OPTS" "$CONTAINER" psql -U "$PGUSER" -d "$PGDB" \
+    -v ON_ERROR_STOP=1 \
+    -v arbx_migrator_pw="$MIG_PW" \
+    -v arbx_rw_pw="$RW_PW" \
+    -v arbx_ro_pw="$RO_PW" \
+    -c "$1"
 }
 
 run_file() {
@@ -37,9 +52,7 @@ run_file() {
   # (arbx-no-hardcode-doctrine). Migrations that don't use :'var' ignore them.
   # In production these should come from Vault/docker secrets; here we use the
   # same dev defaults the script sets via ALTER ROLE above.
-  local MIG_PW="${ARBX_MIGRATOR_PW:-arbx_migrator_dev_only}"
-  local RW_PW="${ARBX_RW_PW:-arbx_rw_dev_only}"
-  local RO_PW="${ARBX_RO_PW:-arbx_ro_dev_only}"
+  # MIG_PW/RW_PW/RO_PW are defined at the top of the script.
   docker exec -i -e PGOPTIONS="$MIG_LOCK_OPTS" "$CONTAINER" psql -U "$PGUSER" -d "$PGDB" \
     -v ON_ERROR_STOP=1 -v VERBOSITY=verbose \
     -v arbx_migrator_pw="$MIG_PW" \
@@ -54,9 +67,12 @@ run_sql "DO \$\$ BEGIN CREATE ROLE arbx_migrator WITH LOGIN CREATEDB; EXCEPTION 
 run_sql "DO \$\$ BEGIN CREATE ROLE arbx_rw WITH LOGIN; EXCEPTION WHEN duplicate_object THEN NULL; END \$\$;"
 run_sql "DO \$\$ BEGIN CREATE ROLE arbx_ro WITH LOGIN; EXCEPTION WHEN duplicate_object THEN NULL; END \$\$;"
 run_sql "GRANT CONNECT ON DATABASE arbitragex TO arbx_migrator, arbx_rw, arbx_ro;"
-run_sql "ALTER ROLE arbx_migrator WITH PASSWORD 'arbx_migrator_dev_only';"
-run_sql "ALTER ROLE arbx_rw WITH PASSWORD 'arbx_rw_dev_only';"
-run_sql "ALTER ROLE arbx_ro WITH PASSWORD 'arbx_ro_dev_only';"
+# :'var' quoting (psql -v above) — never a literal password in the SQL
+# (incident 2026-09-18, flipper #2: hardcoded ALTERs reset production
+# credentials on every migration run).
+run_sql "ALTER ROLE arbx_migrator WITH PASSWORD :'arbx_migrator_pw';"
+run_sql "ALTER ROLE arbx_rw WITH PASSWORD :'arbx_rw_pw';"
+run_sql "ALTER ROLE arbx_ro WITH PASSWORD :'arbx_ro_pw';"
 
 echo "=== Running schema migrations (auto-discovered, idempotent) ==="
 # Glob every .sql in numeric order. printf+sort -V gives 002,003,...,099,100,101,102.
