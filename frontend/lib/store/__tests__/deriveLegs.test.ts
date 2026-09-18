@@ -317,3 +317,68 @@ describe("deriveLegs — synthetic legacy marking (FE-0030 §29)", () => {
     expect(SYNTHETIC_LEGACY_VIEW_LABEL).toBe("SYNTHETIC LEGACY VIEW");
   });
 });
+
+describe("WO-LEGS-ECON-01 f1 — per-leg fees (raw dual-unit)", () => {
+  const baseWire = {
+    id: "fees",
+    chain_id: 1,
+    strategy_kind: "dex_arb",
+    detected_at: "2026-09-18T00:00:00Z",
+    trace_id: "t",
+    dex_a: "uniswap-v2",
+    dex_b: "uniswap-v3",
+    token_in: WETH,
+    token_out: WETH,
+    route_metadata: {
+      token_addresses: [WETH, USDC, WETH],
+      pool_addresses: ["0xp1", "0xp2"],
+      dex_adapters: ["uniswap_v2_router", "uniswap-v3"],
+      leg_amounts_in: ["1000000000000000000", "990000000000000000"],
+      leg_amounts_out: ["990000000000000000", "1010000000000000000"],
+      leg_zero_for_one: [true, false],
+      // Raw dual-unit: leg0 = V2 30 bps reales; leg1 = V3 tier 500 pips
+      // (millionths — 0.05%). Values verbatim, never normalized (MATH-Batch
+      // verdict 2026-09-18).
+      leg_fees_bps: [30, 500],
+    },
+  } as Record<string, unknown>;
+
+  it("parseRouteMetadata projects the aligned fee array verbatim; undefined (NOT []) when absent (R8)", () => {
+    const rm = parseRouteMetadata(baseWire.route_metadata);
+    expect(rm!.leg_fees_bps).toEqual([30, 500]);
+
+    const withoutFees = { ...(baseWire.route_metadata as Record<string, unknown>) };
+    delete withoutFees.leg_fees_bps;
+    expect(parseRouteMetadata(withoutFees)!.leg_fees_bps).toBeUndefined();
+  });
+
+  it("a MISALIGNED fee array is dropped entirely — never shifted onto hops", () => {
+    const misaligned = {
+      ...(baseWire.route_metadata as Record<string, unknown>),
+      leg_fees_bps: [30], // 1 fee vs 2 hops
+    };
+    expect(parseRouteMetadata(misaligned)!.leg_fees_bps).toBeUndefined();
+  });
+
+  it("deriveLegs exposes fee_bps per leg; undefined when the array is absent", () => {
+    const legs = deriveLegs(mapToOmniOpportunity(baseWire));
+    expect(legs.map((l) => l.fee_bps)).toEqual([30, 500]);
+
+    const withoutFees = { ...(baseWire.route_metadata as Record<string, unknown>) };
+    delete withoutFees.leg_fees_bps;
+    const legsBare = deriveLegs(mapToOmniOpportunity({ ...baseWire, route_metadata: withoutFees }));
+    expect(legsBare.every((l) => l.fee_bps === undefined)).toBe(true);
+  });
+
+  it("deriveLegLedger carries the raw fee per entry; null when not emitted (R8)", () => {
+    const ledger = deriveLegLedger(mapToOmniOpportunity(baseWire));
+    expect(ledger!.map((e) => e.fee_bps)).toEqual([30, 500]);
+
+    const withoutFees = { ...(baseWire.route_metadata as Record<string, unknown>) };
+    delete withoutFees.leg_fees_bps;
+    const ledgerBare = deriveLegLedger(
+      mapToOmniOpportunity({ ...baseWire, route_metadata: withoutFees }),
+    );
+    expect(ledgerBare!.every((e) => e.fee_bps === null)).toBe(true);
+  });
+});

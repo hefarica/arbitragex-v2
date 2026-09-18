@@ -226,6 +226,13 @@ pub fn build_route_metadata_from_plan(plan: &RoutePlan) -> RouteMetadata {
     let mut pool_addresses = Vec::with_capacity(plan.legs.len());
     let mut dex_adapters = Vec::with_capacity(plan.legs.len());
     let mut token_addresses: Vec<String> = Vec::with_capacity(plan.legs.len() + 1);
+    // WO-LEGS-ECON-01 f1: per-leg fees stop dying at this boundary. All-or-
+    // nothing — `Option<Vec>` collect yields Some ONLY when every leg carried
+    // its fee; one fee-less leg leaves the whole array absent (R8). Values are
+    // the RAW `RouteLeg.fee_bps` dual-unit contract (V2/Curve/Balancer bps,
+    // V3 tier pips — MATH-BATCH verdict 2026-09-18): persisted verbatim,
+    // normalization belongs to each consumer, never the source.
+    let leg_fees_bps: Option<Vec<u32>> = plan.legs.iter().map(|leg| leg.fee_bps).collect();
 
     for (i, leg) in plan.legs.iter().enumerate() {
         // First leg seeds token_addresses with token_in; subsequent legs append token_out.
@@ -267,6 +274,9 @@ pub fn build_route_metadata_from_plan(plan: &RoutePlan) -> RouteMetadata {
         leg_amounts_in: None,
         leg_amounts_out: None,
         leg_zero_for_one: None,
+        // Per-leg fees (WO-LEGS-ECON-01 f1): from the plan legs above — already
+        // length-aligned with dex_adapters by construction (one entry per leg).
+        leg_fees_bps,
     }
 }
 
@@ -361,6 +371,9 @@ mod fidelity_tests {
         assert!(rm.leg_amounts_in.is_none());
         assert!(rm.leg_amounts_out.is_none());
         assert!(rm.leg_zero_for_one.is_none());
+        // Helper legs carry no fee ⇒ the fee array is absent too (all-or-
+        // nothing — the "no fee" state is None, never a fabricated 0).
+        assert!(rm.leg_fees_bps.is_none());
 
         // Aligned arrays attach; zero_for_one derives from ascending token
         // order (0xA < 0xB ⇒ leg0 true; 0xB > 0xA ⇒ leg1 false).
@@ -384,6 +397,38 @@ mod fidelity_tests {
         assert!(rm2.leg_amounts_in.is_none());
         assert!(rm2.leg_amounts_out.is_none());
         assert!(rm2.leg_zero_for_one.is_none());
+    }
+
+    // WO-LEGS-ECON-01 f1: the fee per leg stops dying at the persistence
+    // boundary. All-or-nothing: every leg must carry its fee for the array to
+    // persist; values are RAW dual-unit (V2 bps / V3 tier pips) — verbatim,
+    // never normalized here.
+    #[test]
+    fn build_from_plan_conserves_leg_fees_all_or_nothing() {
+        let mut legs = vec![
+            leg("0xA", "0xB", Some("0xp1"), "uniswap_v2_router"),
+            leg("0xB", "0xA", Some("0xp2"), "uniswap-v3"),
+        ];
+        legs[0].fee_bps = Some(30); // V2: 0.30% in real bps.
+        legs[1].fee_bps = Some(500); // V3: tier 500 in pips (millionths).
+        let rm = build_route_metadata_from_plan(&plan(legs));
+        assert_eq!(rm.leg_fees_bps.as_deref(), Some(&[30u32, 500u32][..]));
+
+        // One fee-less leg ⇒ the WHOLE array stays absent (R8: never a
+        // partial fee list that could shift onto the wrong hop).
+        let mut partial = vec![
+            leg("0xA", "0xB", Some("0xp1"), "uniswap_v2_router"),
+            leg("0xB", "0xA", Some("0xp2"), "uniswap-v3"),
+        ];
+        partial[0].fee_bps = Some(30);
+        let rm_partial = build_route_metadata_from_plan(&plan(partial));
+        assert!(rm_partial.leg_fees_bps.is_none());
+
+        // JSON round-trip preserves the raw dual-unit values verbatim.
+        let json = serde_json::to_string(&rm).expect("serialize");
+        let back: shared_rs::candidates::RouteMetadata =
+            serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(back.leg_fees_bps, rm.leg_fees_bps);
     }
 
     #[test]
@@ -446,6 +491,7 @@ mod fidelity_tests {
             leg_amounts_in: None,
             leg_amounts_out: None,
             leg_zero_for_one: None,
+            leg_fees_bps: None,
         };
         assert_ne!(
             candidate_flattened.token_addresses.len(),

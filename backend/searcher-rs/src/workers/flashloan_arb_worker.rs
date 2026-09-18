@@ -766,6 +766,9 @@ fn build_flashloan_route_metadata(
         leg_amounts_in: None,
         leg_amounts_out: None,
         leg_zero_for_one: None,
+        // This builder has no RouteLeg source — the fee array stays honestly
+        // absent (R8, WO-LEGS-ECON-01 f1).
+        leg_fees_bps: None,
     }
 }
 

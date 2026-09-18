@@ -136,6 +136,14 @@ export interface RouteMetadataWire {
   leg_amounts_in?: string[];
   leg_amounts_out?: string[];
   leg_zero_for_one?: boolean[];
+  /**
+   * Per-leg LP fee, RAW dual-unit (WO-LEGS-ECON-01 f1): V2/Curve/Balancer =
+   * basis points (/1e4); V3 = raw uint24 fee tier in millionths ("pips",
+   * /1e6). Never normalized at the source (MATH-Batch verdict 2026-09-18) —
+   * consumers choose the divisor per protocol. All-or-nothing: present only
+   * when EVERY leg carried its fee; absent = not computed (R8).
+   */
+  leg_fees_bps?: number[];
 }
 
 /**
@@ -181,6 +189,13 @@ export interface RouteLeg {
   dex: string;
   /** Pool address for this leg. Honest "" when only the factory was known. */
   pool: string;
+  /**
+   * RAW dual-unit fee for this leg (WO-LEGS-ECON-01 f1): V2/Curve/Balancer =
+   * bps (/1e4); V3 = tier pips (/1e6) — renderers must label the unit, never
+   * present it as plain "bps" for V3. Undefined when the persisted fee array
+   * is absent or misaligned (R8).
+   */
+  fee_bps?: number;
   /** Present ONLY on legacy synthetic-fallback legs (FE-0030 §29). */
   synthetic?: true;
 }
@@ -538,6 +553,16 @@ export function parseRouteMetadata(
     ? [...obj.leg_amounts_out] as string[] : undefined;
   const legZeroForOne = ledgerValid && Array.isArray(obj.leg_zero_for_one)
     ? [...obj.leg_zero_for_one] as boolean[] : undefined;
+  // WO-LEGS-ECON-01 f1: per-leg fees, all-or-nothing — projected only when the
+  // array aligns with the hops and every entry is a non-negative integer.
+  // Misaligned/garbage fees are dropped ENTIRELY (a fee shifted onto the wrong
+  // hop would misprice it), never coerced (R8).
+  const legFeesBps =
+    Array.isArray(obj.leg_fees_bps) &&
+    obj.leg_fees_bps.length === dexAdapters.length &&
+    obj.leg_fees_bps.every((f) => typeof f === "number" && Number.isInteger(f) && f >= 0)
+      ? ([...obj.leg_fees_bps] as number[])
+      : undefined;
   return {
     token_addresses: tokenAddresses,
     dex_adapters: dexAdapters,
@@ -546,6 +571,7 @@ export function parseRouteMetadata(
     leg_amounts_in: legAmountsIn,
     leg_amounts_out: legAmountsOut,
     leg_zero_for_one: legZeroForOne,
+    leg_fees_bps: legFeesBps,
   };
 }
 
@@ -570,6 +596,10 @@ export function deriveLegs(opp: OmniOpportunity): RouteLeg[] {
   if (rm && rm.dex_adapters.length > 0 && rm.token_addresses.length >= 2) {
     const legs: RouteLeg[] = [];
     const hops = rm.dex_adapters.length;
+    // WO-LEGS-ECON-01 f1: expose the per-leg fee only when the persisted array
+    // aligns with the hops — misaligned fees stay undefined, never shifted.
+    const feesAligned =
+      rm.leg_fees_bps && rm.leg_fees_bps.length === hops ? rm.leg_fees_bps : null;
     for (let i = 0; i < hops; i++) {
       const tokenIn = rm.token_addresses[i] ?? "";
       const tokenOut = rm.token_addresses[i + 1] ?? "";
@@ -579,6 +609,7 @@ export function deriveLegs(opp: OmniOpportunity): RouteLeg[] {
         token_out: tokenOut,
         dex: rm.dex_adapters[i] ?? "",
         pool: rm.pool_addresses[i] ?? "",
+        ...(feesAligned ? { fee_bps: feesAligned[i] } : {}),
       });
     }
     return legs;
@@ -633,6 +664,12 @@ export interface LegLedgerEntry {
   amount_out_wei: string;
   /** Uniswap token0→token1 swap direction (deployment fact, not pool state). */
   zero_for_one: boolean;
+  /**
+   * RAW dual-unit fee for this leg (WO-LEGS-ECON-01 f1): V2/Curve/Balancer =
+   * bps (/1e4); V3 = tier pips (/1e6). Null when the persisted fee array is
+   * absent or misaligned (R8) — never 0 as a stand-in for "not emitted".
+   */
+  fee_bps: number | null;
   /** Closed-cycle delta in opening-token wei — closing leg only, else null. */
   cycle_delta_wei: string | null;
 }
@@ -670,6 +707,10 @@ export function deriveLegLedger(opp: OmniOpportunity): LegLedgerEntry[] | null {
     amount_in_wei,
     amount_out_wei: amountsOut[i] ?? "",
     zero_for_one: zeroForOne[i] ?? false,
+    fee_bps:
+      rm.leg_fees_bps && rm.leg_fees_bps.length === hops
+        ? (rm.leg_fees_bps[i] ?? null)
+        : null,
     cycle_delta_wei: null,
   }));
   // Closing-leg delta: only when the topology closes the cycle back to the

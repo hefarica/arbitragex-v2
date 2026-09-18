@@ -1105,6 +1105,9 @@ impl Orchestrator {
                 leg_amounts_in: None,
                 leg_amounts_out: None,
                 leg_zero_for_one: None,
+                // Fees ride the plan-built metadata too (WO-LEGS-ECON-01 f1);
+                // the candidate struct has no per-leg fee to offer (R8).
+                leg_fees_bps: None,
             };
             let from_plan = crate::persistence::build_route_metadata_from_plan(&sc.route_plan);
             // Prefer the source with the longer (more complete) token path.

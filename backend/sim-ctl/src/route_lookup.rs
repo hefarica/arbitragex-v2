@@ -174,6 +174,7 @@ mod tests {
             leg_amounts_in: None,
             leg_amounts_out: None,
             leg_zero_for_one: None,
+            leg_fees_bps: None,
         };
         assert!(rm.is_populated());
     }

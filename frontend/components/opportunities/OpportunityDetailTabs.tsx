@@ -15,8 +15,9 @@
  *               pool per leg; §29 fallback rendered marked); per-leg
  *               economics beyond amounts are declared gaps — see Ledger
  *   Ledger      HOPS-LEDGER-04: exact per-leg wei (in/out/direction) from the
- *               sizing kernel + the closed-cycle delta on the closing leg;
- *               absent honestly on non-Sized rows (R8)
+ *               sizing kernel + the closed-cycle delta on the closing leg +
+ *               the raw dual-unit per-leg fee (WO-LEGS-ECON-01 f1); absent
+ *               honestly on non-Sized rows (R8)
  *   Economics   Gross = expected_profit_usd, Net = net_expected_profit_usd
  *               (fixes the legacy mislabel that showed gross as "Net Yield");
  *               §39 waterfall renders EVERY cost line of the simulated block
@@ -175,6 +176,10 @@ export function OpportunityDetailTabs({
   // HOPS-LEDGER-04: null = no honest ledger (not-Sized / triangular / absent).
   const rm = opp.route_metadata;
   const ledger = deriveLegLedger(opp);
+  // WO-LEGS-ECON-01 f1: the Fee column exists only when the persisted
+  // leg_fees_bps array reached the entries (aligned with the hops). Absent
+  // array ⇒ no column at all (R8), never a fabricated 0.
+  const showLegFees = ledger != null && ledger.some((e) => e.fee_bps != null);
 
   // HOPS-SYM-02: leg token symbols at the same priority as the exchange card
   // (F2/§11 RC1) — pair info first (symbol → registry_symbol, matching the
@@ -273,10 +278,11 @@ export function OpportunityDetailTabs({
           </p>
         )}
         <p className="mt-2 text-xs italic text-muted-foreground/70">
-          Per-leg economics: los MONTOS exactos por hop ya se emiten para filas
-          Sized — tab Ledger (HOPS-LEDGER-04). Rate / fee / liquidity / impact /
-          gas / state age: no emitidos en el wire persistido (nivel-(b)) — viven
-          en memoria del scanner.
+          Per-leg economics: los MONTOS exactos por hop y la FEE por leg ya se
+          emiten para filas con ledger — tab Ledger (HOPS-LEDGER-04 /
+          WO-LEGS-ECON-01). Rate / liquidity / impact / gas / state age: no
+          emitidos en el wire persistido (nivel-(b)) — viven en memoria del
+          scanner.
         </p>
       </TabsContent>
 
@@ -302,6 +308,14 @@ export function OpportunityDetailTabs({
                   </th>
                   <th className="py-1.5 pr-2 font-medium uppercase tracking-wide">In (wei)</th>
                   <th className="py-1.5 pr-2 font-medium uppercase tracking-wide">Out (wei)</th>
+                  {showLegFees && (
+                    <th
+                      className="py-1.5 pr-2 font-medium uppercase tracking-wide"
+                      title="fee cruda dual-unit — V2/Curve/Balancer: bps (÷10⁴) · V3: tier en millionths (÷10⁶)"
+                    >
+                      Fee
+                    </th>
+                  )}
                   <th className="py-1.5 font-medium uppercase tracking-wide">Δ ciclo</th>
                 </tr>
               </thead>
@@ -340,6 +354,22 @@ export function OpportunityDetailTabs({
                           <span className="text-muted-foreground">{e.amount_out_wei}</span>
                         )}
                       </td>
+                      {showLegFees && (
+                        <td
+                          className="py-1.5 pr-2 whitespace-nowrap"
+                          title={
+                            e.fee_bps != null
+                              ? `fee cruda=${e.fee_bps} — dual-unit: V2/Curve/Balancer bps (÷10⁴) · V3 tier pips (÷10⁶)`
+                              : "fee no emitida para este leg (R8)"
+                          }
+                        >
+                          {e.fee_bps != null ? (
+                            e.fee_bps
+                          ) : (
+                            <span className="text-muted-foreground/50 italic">—</span>
+                          )}
+                        </td>
+                      )}
                       <td
                         className="py-1.5 break-all"
                         title={delta != null ? `cycle_delta_wei=${delta}` : undefined}
@@ -366,6 +396,9 @@ export function OpportunityDetailTabs({
               Montos EXACTOS en wei del kernel de sizing (filas Sized); el título
               de cada celda lleva el wei completo. Δ ciclo = out final − in
               inicial en wei del token base — sólo el hop de cierre del ciclo.
+              Fee = valor crudo dual-unit (WO-LEGS-ECON-01): V2/Curve/Balancer
+              en bps (÷10⁴), V3 = tier en millionths (÷10⁶) — sin normalizar en
+              la fuente; el divisor lo elige cada consumidor.
             </p>
           </div>
         ) : (

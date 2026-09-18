@@ -167,6 +167,18 @@ pub struct RouteMetadata {
     /// hops; present iff the amount arrays are present.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub leg_zero_for_one: Option<Vec<bool>>,
+
+    /// Per-leg LP fee carried verbatim from `RouteLeg.fee_bps`
+    /// (WO-LEGS-ECON-01 f1). DUAL-UNIT contract (MATH-BATCH verdict
+    /// 2026-09-18; amm_math.rs:11-12, graph_builder.rs:394-399):
+    /// V2/Curve/Balancer = real basis points (/1e4); V3 = raw uint24 fee
+    /// tier in millionths ("pips", /1e6). The RAW value is persisted —
+    /// normalization belongs to each consumer, never the source (three
+    /// consumers depend on the raw value). Length = hops; present only when
+    /// EVERY leg carried its fee (all-or-nothing — one fee-less leg leaves
+    /// the whole array absent, R8: absent = not computed).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub leg_fees_bps: Option<Vec<u32>>,
 }
 
 impl RouteMetadata {
@@ -180,6 +192,7 @@ impl RouteMetadata {
             leg_amounts_in: None,
             leg_amounts_out: None,
             leg_zero_for_one: None,
+            leg_fees_bps: None,
         }
     }
 
@@ -226,6 +239,20 @@ impl RouteMetadata {
         self.leg_amounts_in = Some(amounts_in.to_vec());
         self.leg_amounts_out = Some(amounts_out.to_vec());
         self.leg_zero_for_one = Some(zero_for_one);
+        true
+    }
+
+    /// Attach the per-leg LP fees (WO-LEGS-ECON-01 f1) — raw `RouteLeg.fee_bps`
+    /// values, DUAL-UNIT (V2/Curve/Balancer = bps /1e4, V3 = tier pips /1e6;
+    /// see the field doc). Same length guard as `attach_leg_ledger`:
+    /// `fees.len()` must equal the hop count (`dex_adapters.len()`), otherwise
+    /// nothing is attached and `false` is returned — a fee array shifted
+    /// against the hops would misprice a leg (all-or-nothing, R8).
+    pub fn attach_leg_fees(&mut self, fees: &[u32]) -> bool {
+        if fees.len() != self.dex_adapters.len() {
+            return false;
+        }
+        self.leg_fees_bps = Some(fees.to_vec());
         true
     }
 
@@ -328,6 +355,7 @@ mod tests {
             leg_amounts_in: None,
             leg_amounts_out: None,
             leg_zero_for_one: None,
+            leg_fees_bps: None,
         };
         assert!(rm.is_populated());
     }
@@ -347,6 +375,7 @@ mod tests {
             leg_amounts_in: None,
             leg_amounts_out: None,
             leg_zero_for_one: None,
+            leg_fees_bps: None,
         };
         assert!(
             rm.validate().is_ok(),
@@ -364,6 +393,7 @@ mod tests {
             leg_amounts_in: None,
             leg_amounts_out: None,
             leg_zero_for_one: None,
+            leg_fees_bps: None,
         };
         let err = rm.validate().unwrap_err();
         assert!(
@@ -383,6 +413,7 @@ mod tests {
             leg_amounts_in: None,
             leg_amounts_out: None,
             leg_zero_for_one: None,
+            leg_fees_bps: None,
         };
         let err = rm.validate().unwrap_err();
         assert!(
@@ -406,6 +437,7 @@ mod tests {
             leg_amounts_in: None,
             leg_amounts_out: None,
             leg_zero_for_one: None,
+            leg_fees_bps: None,
         };
 
         let json = serde_json::to_string(&rm).expect("serialize");
@@ -430,11 +462,13 @@ mod tests {
             leg_amounts_in: None,
             leg_amounts_out: None,
             leg_zero_for_one: None,
+            leg_fees_bps: None,
         };
         let json = serde_json::to_string(&rm).expect("serialize");
         assert!(!json.contains("leg_amounts_in"));
         assert!(!json.contains("leg_amounts_out"));
         assert!(!json.contains("leg_zero_for_one"));
+        assert!(!json.contains("leg_fees_bps"));
     }
 
     #[test]
@@ -451,6 +485,7 @@ mod tests {
         assert!(rm.leg_amounts_in.is_none());
         assert!(rm.leg_amounts_out.is_none());
         assert!(rm.leg_zero_for_one.is_none());
+        assert!(rm.leg_fees_bps.is_none());
         assert!(rm.is_populated());
     }
 
@@ -465,6 +500,7 @@ mod tests {
             leg_amounts_in: None,
             leg_amounts_out: None,
             leg_zero_for_one: None,
+            leg_fees_bps: None,
         };
         assert!(rm.attach_leg_ledger(
             &["1000".to_string(), "995".to_string()],
@@ -492,6 +528,7 @@ mod tests {
             leg_amounts_in: None,
             leg_amounts_out: None,
             leg_zero_for_one: None,
+            leg_fees_bps: None,
         };
         // Length mismatch (1 vs 2 hops) ⇒ nothing attached, no partial ledger.
         assert!(!rm.attach_leg_ledger(&["1000".to_string()], &["995".to_string()]));
@@ -515,6 +552,7 @@ mod tests {
             leg_amounts_in: None,
             leg_amounts_out: None,
             leg_zero_for_one: None,
+            leg_fees_bps: None,
         };
         // Amounts ARE correctly aligned (2 vs 2 hops) — the token path is not.
         assert!(!rm.attach_leg_ledger(
@@ -543,6 +581,7 @@ mod tests {
             leg_amounts_in: None,
             leg_amounts_out: None,
             leg_zero_for_one: None,
+            leg_fees_bps: None,
         };
         assert!(rm.attach_leg_ledger(
             &[
@@ -583,5 +622,50 @@ mod tests {
         assert_eq!(back.leg_amounts_in, rm.leg_amounts_in);
         assert_eq!(back.leg_amounts_out, rm.leg_amounts_out);
         assert_eq!(back.leg_zero_for_one, rm.leg_zero_for_one);
+    }
+
+    // WO-LEGS-ECON-01 f1 — per-leg fees: all-or-nothing attach, raw dual-unit
+    // values (V2 bps / V3 tier pips) preserved verbatim, serde round-trip.
+    #[test]
+    fn test_attach_leg_fees_roundtrip_preserves_raw_dual_unit_values() {
+        let mut rm = RouteMetadata {
+            pool_addresses: vec!["0xpool1".into(), "0xpool2".into()],
+            token_addresses: vec!["0xA".into(), "0xB".into(), "0xA".into()],
+            dex_adapters: vec!["uniswap_v2_router".into(), "uniswap-v3".into()],
+            decimals: DecimalsMap::new(),
+            leg_amounts_in: None,
+            leg_amounts_out: None,
+            leg_zero_for_one: None,
+            leg_fees_bps: None,
+        };
+        // Leg 0: V2 0.30% = 30 bps reales. Leg 1: V3 tier 500 (pips,
+        // millionths — 0.05%). The RAW values attach verbatim — no consumer
+        // may normalize at the source (MATH-BATCH verdict 2026-09-18).
+        assert!(rm.attach_leg_fees(&[30, 500]));
+        assert_eq!(rm.leg_fees_bps.as_deref(), Some(&[30u32, 500u32][..]));
+
+        // Round-trip preserves the raw values exactly (wei of unit preservation
+        // for fees: u32 verbatim through JSON).
+        let json = serde_json::to_string(&rm).expect("serialize");
+        let back: RouteMetadata = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(back.leg_fees_bps, rm.leg_fees_bps);
+    }
+
+    #[test]
+    fn test_attach_leg_fees_all_or_nothing() {
+        let mut rm = RouteMetadata {
+            pool_addresses: vec!["0xpool1".into(), "0xpool2".into()],
+            token_addresses: vec!["0xA".into(), "0xB".into(), "0xA".into()],
+            dex_adapters: vec!["uni".into(), "sushi".into()],
+            decimals: DecimalsMap::new(),
+            leg_amounts_in: None,
+            leg_amounts_out: None,
+            leg_zero_for_one: None,
+            leg_fees_bps: None,
+        };
+        // Length mismatch (1 fee vs 2 hops) ⇒ nothing attached — a fee array
+        // misaligned against the hops would misprice a leg (R8).
+        assert!(!rm.attach_leg_fees(&[30]));
+        assert!(rm.leg_fees_bps.is_none());
     }
 }

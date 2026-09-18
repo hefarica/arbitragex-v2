@@ -473,6 +473,9 @@ pub fn build_liquidation_route_metadata(
         leg_amounts_in: None,
         leg_amounts_out: None,
         leg_zero_for_one: None,
+        // Aave liquidation legs carry no `RouteLeg.fee_bps` at this layer —
+        // the fee array stays honestly absent (R8, WO-LEGS-ECON-01 f1).
+        leg_fees_bps: None,
     }
 }
 

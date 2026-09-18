@@ -130,10 +130,11 @@ describe("OpportunityDetailTabs (§37)", () => {
     expect(withRm).toContain("0xa → 0xb");
     expect(withRm).toContain("0xpool1");
     expect(withRm).not.toContain("SYNTHETIC LEGACY VIEW");
-    // the §38 gap set is disclosed, not papered over — amounts now point at
-    // the Ledger tab (HOPS-LEDGER-04), the rest stay declared gaps
-    expect(withRm).toContain("tab Ledger (HOPS-LEDGER-04)");
-    expect(withRm).toContain("Rate / fee / liquidity / impact / gas / state age");
+    // the §38 gap set is disclosed, not papered over — amounts + per-leg fee
+    // now point at the Ledger tab (HOPS-LEDGER-04 / WO-LEGS-ECON-01), the
+    // rest stay declared gaps
+    expect(withRm).toContain("tab Ledger (HOPS-LEDGER-04");
+    expect(withRm).toContain("Rate / liquidity / impact / gas / state age");
     expect(withRm).toContain("nivel-(b)");
   });
 
@@ -160,6 +161,28 @@ describe("OpportunityDetailTabs (§37)", () => {
     expect(html).toContain("Sin ledger por-leg persistido");
     expect(html).toContain("(R8: ausencia = no computado, jamás cero)");
     expect(html).not.toContain("0→1");
+  });
+
+  // WO-LEGS-ECON-01 f1: the per-leg fee column. Values are the RAW dual-unit
+  // wire (V2 bps / V3 tier pips) rendered verbatim with the unit disclosed —
+  // never normalized at the source (MATH-Batch verdict 2026-09-18).
+  it("Ledger WO-LEGS-ECON-01: Fee column with RAW dual-unit values when leg_fees_bps present", () => {
+    const rmFees = { ...rm2hopLedger, leg_fees_bps: [30, 500] };
+    const html = tab(mapToOmniOpportunity(wire({ route_metadata: rmFees })), "ledger");
+    expect(html).toContain(">Fee</th>");
+    // raw values verbatim: leg0 V2 30 bps; leg1 V3 tier 500 pips
+    expect(html).toContain(">30</td>");
+    expect(html).toContain(">500</td>");
+    // the dual-unit disclosure rides the column header + note
+    expect(html).toContain("dual-unit");
+    expect(html).toContain("millionths");
+  });
+
+  it("Ledger WO-LEGS-ECON-01: NO Fee column when leg_fees_bps absent (R8)", () => {
+    const html = tab(mapToOmniOpportunity(wire({ route_metadata: rm2hopLedger })), "ledger");
+    expect(html).not.toContain(">Fee</th>");
+    // the wei ledger itself still renders (fees are independent of amounts)
+    expect(html).toContain("Δ ciclo");
   });
 
   it("Route §29: legacy fallback legs render marked — never ROUTE VERIFIED", () => {
