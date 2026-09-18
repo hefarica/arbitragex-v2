@@ -458,6 +458,31 @@ body::after {
   animation: arbx-card-enter 0.25s ease-out both;
 }
 
+/* WO-PRICE-EXCHANGE-V1 (FE) — CEX-style one-shot value flash (Binance-like).
+   A brief background wash that fades to transparent, driven by
+   components/cex/flash.ts: the class lands only when the displayed value
+   CHANGED, and callers remount the element (React key = seq) so consecutive
+   same-direction changes replay the animation. Zero JS state per animation. */
+@keyframes arbx-flash-up {
+  from { background-color: color-mix(in oklab, var(--success) 24%, transparent); }
+  to { background-color: transparent; }
+}
+
+@keyframes arbx-flash-down {
+  from { background-color: color-mix(in oklab, var(--destructive) 24%, transparent); }
+  to { background-color: transparent; }
+}
+
+.arbx-flash-up {
+  animation: arbx-flash-up 0.9s ease-out;
+  border-radius: 3px;
+}
+
+.arbx-flash-down {
+  animation: arbx-flash-down 0.9s ease-out;
+  border-radius: 3px;
+}
+
 .ticker-item {
   display: inline-flex;
   align-items: center;
