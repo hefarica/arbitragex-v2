@@ -86,6 +86,20 @@ pub struct ScannerCounters {
     /// Price worker: HTTP / parse / Redis errors per period.
     /// Steady non-zero = config or upstream API regression.
     pub price_worker_errors: AtomicU64,
+    /// WO-PRICE-SOVEREIGN-01 f1 — price worker circuit-breaker transitions
+    /// INTO an exponential backoff window, per provider (429/5xx received).
+    /// Prometheus-equivalent: `arbx_price_backoff_total{provider="alchemy"}`.
+    pub price_alchemy_backoff_total: AtomicU64,
+    /// Same as `price_alchemy_backoff_total` for the Coingecko fallback.
+    /// Prometheus-equivalent: `arbx_price_backoff_total{provider="coingecko"}`.
+    pub price_coingecko_backoff_total: AtomicU64,
+    /// WO-PRICE-SOVEREIGN-01 f1 — gauge (read WITHOUT swap-reset): 1 while
+    /// the Alchemy breaker sits in an active backoff window, 0 when healthy.
+    /// Prometheus-equivalent: `arbx_price_backoff_active{provider="alchemy"}`.
+    pub price_alchemy_backoff_active: AtomicU64,
+    /// Same gauge for Coingecko.
+    /// Prometheus-equivalent: `arbx_price_backoff_active{provider="coingecko"}`.
+    pub price_coingecko_backoff_active: AtomicU64,
     /// TriangularWorker: cycles scanned this period (every tick × MVP_CYCLES.len() × 2 directions).
     /// Surfaced in heartbeat so operator sees the worker is alive and exercising
     /// every configured cycle, regardless of whether any were profitable.
