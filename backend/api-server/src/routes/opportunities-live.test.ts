@@ -212,3 +212,50 @@ describe("opportunity evidence provenance — constructed unit inputs, not produ
     expect(result.net_expected_profit_usd).toBe(0.5);
   });
 });
+
+// WO-G2-PARITY (2026-09-17): regression for FEED-SCHEMA-01 — opportunities
+// .block_number is BIGINT (migration 003) and node-postgres returns int8 as a
+// STRING, so rowToOpportunity shipped "25995384" on the wire while its own
+// interface declared number|null; the frontend Zod z.number() then rejected the
+// WHOLE /api/v1/opportunities/live payload and OpportunityTicker (root layout,
+// every page incl. /operations and /status) stayed on "Opportunity feed
+// unavailable (retrying every 30s)". The mapper must normalize to a real JSON
+// number, keep null as null (R8), and never emit NaN.
+describe("WO-G2-PARITY — block_number wire normalization (int8-as-string)", () => {
+  it("maps a node-postgres int8 string to a JSON number", async () => {
+    const { __forTesting } = await import("./opportunities-live.js");
+    const result = __forTesting.rowToOpportunity(
+      fixtureRow({ block_number: "25995384" }) as never,
+      undefined, null, new Map(), new Map(),
+    );
+    expect(result.block_number).toBe(25995384);
+    expect(typeof result.block_number).toBe("number");
+  });
+
+  it("keeps a numeric block_number numeric (no double coercion drift)", async () => {
+    const { __forTesting } = await import("./opportunities-live.js");
+    const result = __forTesting.rowToOpportunity(
+      fixtureRow({ block_number: 1000 }) as never,
+      undefined, null, new Map(), new Map(),
+    );
+    expect(result.block_number).toBe(1000);
+  });
+
+  it("keeps null as null — R8: block not detected is not block 0", async () => {
+    const { __forTesting } = await import("./opportunities-live.js");
+    const result = __forTesting.rowToOpportunity(
+      fixtureRow({ block_number: null }) as never,
+      undefined, null, new Map(), new Map(),
+    );
+    expect(result.block_number).toBeNull();
+  });
+
+  it("degrades a non-numeric value to null instead of emitting NaN on the wire", async () => {
+    const { __forTesting } = await import("./opportunities-live.js");
+    const result = __forTesting.rowToOpportunity(
+      fixtureRow({ block_number: "garbage" }) as never,
+      undefined, null, new Map(), new Map(),
+    );
+    expect(result.block_number).toBeNull();
+  });
+});

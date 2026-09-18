@@ -91,6 +91,21 @@ pub struct Opportunity {
     /// true strategy so rows never collapse into gaps.
     #[serde(default)]
     pub cartridge_id: Option<String>,
+    /// WO-CARDS-COMPLETE-01 (operator order 2026-09-17): which detector
+    /// produced this row — the core engine name (`dex_engine`,
+    /// `triangular_engine`, `liquidation_engine`, …) or the cartridge
+    /// stem/id when it came from the cartridge layer (same value as
+    /// `cartridge_id`). Set at CONSTRUCTION, never at emit. None only for
+    /// rows that predate the field (R8 fail-honest — never fabricated).
+    #[serde(default)]
+    pub detector_id: Option<String>,
+    /// WO-CARDS-COMPLETE-01 (operator order 2026-09-17): wall-clock
+    /// milliseconds between `detected_at` and entry into the emit path —
+    /// stamped by `OpportunityEmitter` before serialize/publish on BOTH the
+    /// accepted and rejected paths. None for pre-field rows or when the
+    /// span is negative (clock step guard, R8).
+    #[serde(default)]
+    pub pipeline_latency_ms: Option<u64>,
     pub detected_at: DateTime<Utc>,
     pub trace_id: Uuid,
 }

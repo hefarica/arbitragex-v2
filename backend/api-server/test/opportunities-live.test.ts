@@ -98,6 +98,11 @@ beforeAll(async () => {
     // manual ALTER — schema drift; the live route SELECTs it). Same drift
     // family as 099 above: without it the testcontainer query fails 503.
     "102_opportunities_cartridge_id.sql",
+    // 121 adds opportunities.detector_id + pipeline_latency_ms (WO-CARDS-
+    // COMPLETE-01): the live route SELECTs both. Same drift family as
+    // 099/102: without it the testcontainer query fails 503 query_failed
+    // ("column detector_id does not exist") on every happy-path GET.
+    "121_opportunities_detector_id_pipeline_latency.sql",
   ]) {
     await pool.query(loadMigration(f));
   }

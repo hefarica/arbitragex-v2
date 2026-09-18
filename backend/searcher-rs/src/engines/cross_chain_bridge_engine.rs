@@ -324,6 +324,9 @@ impl CrossChainBridgeEngine {
             block_number: None,
             rejection_reason: None,
             cartridge_id: None,
+            // WO-CARDS-COMPLETE-01 (2026-09-17): detector identity at construction.
+            detector_id: Some("cross_chain_bridge_engine".to_string()),
+            pipeline_latency_ms: None,
             detected_at: Utc::now(),
             trace_id,
         };

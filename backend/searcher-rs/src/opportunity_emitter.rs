@@ -11,7 +11,8 @@
 //!   1. `OppDedup` check (accepted path only).
 //!   2. `persistence::insert_opportunity` write to PG.
 //!   3. `publisher::publish` to Redis stream `arbx:opps:detected`.
-//!   4. `counters().db_persisted` / `db_errors` increments.
+//!   4. `chain_counters(chain_id).db_persisted` / `db_errors` increments
+//!      (WO-FUNNEL-01 2026-09-17: per-chain bucket, mirrors heartbeat drain).
 //!   5. `OPPORTUNITIES_TOTAL` metric increment with a standardised label set.
 //!   6. Rejection-row persistence (RULE 00 transparency — operators see rejection
 //!      volume in the dashboard and can audit allowlist gaps).
@@ -27,7 +28,11 @@
 //! - When `pool = None` (DB not configured), only Redis publish happens and the
 //!   outcome is `NoDbConfigured` (not an error).
 
-use crate::counters::counters;
+// WO-FUNNEL-01 (2026-09-17): per-chain bucket. The emitter is the single emit
+// path for the ACTIVE cartridge route; writing to the legacy chain-0 bucket
+// while heartbeat_worker drains `chain_counters(primary_chain)` left the
+// funnel (passed / persisted / gate_*) at 0 forever (falso "pipeline quieto").
+use crate::counters::chain_counters;
 use crate::dedup::OppDedup;
 use crate::persistence;
 // BR-05 (2026-09-07): Stage 2c read side — the §IV posterior fold over the
@@ -310,7 +315,10 @@ impl OpportunityEmitter {
 
         // Dry-run (shadow mode): log + record, no I/O.
         if self.dry_run {
-            counters().passed_all_gates.fetch_add(1, Ordering::Relaxed);
+            // WO-FUNNEL-01 (2026-09-17): chain bucket of the opportunity, not legacy chain 0.
+            chain_counters(opportunity.chain_id)
+                .passed_all_gates
+                .fetch_add(1, Ordering::Relaxed);
             tracing::debug!(
                 event = "opportunity_emitter.shadow_accepted",
                 opp_id = %opportunity.id,
@@ -318,10 +326,12 @@ impl OpportunityEmitter {
                 profit_usd = ?opportunity.expected_profit_usd,
                 "shadow mode: would have emitted accepted (no write)"
             );
-            // Record for test introspection (TASK 4).
+            // Record for test introspection (TASK 4). Stamped with the
+            // emit-boundary latency so the recorded clone mirrors the wire
+            // contract (WO-CARDS-COMPLETE-01).
             if let Ok(mut guard) = self.recorded.lock() {
                 guard.push(EmittedRecord {
-                    opportunity: opportunity.clone(),
+                    opportunity: stamped_for_emit(opportunity, None),
                     strategy: strategy_label,
                     accepted: true,
                     rejection_reason: None,
@@ -355,7 +365,7 @@ impl OpportunityEmitter {
             }
             _ => Err(anyhow::anyhow!("candidate_topology_required")),
         };
-        let admission = match admission {
+        let mut admission = match admission {
             Ok(a) => a,
             Err(e) => {
                 return self
@@ -365,8 +375,17 @@ impl OpportunityEmitter {
             }
         };
         crate::candidate_simulation::persist(&admission, &mut self.redis.clone()).await?;
+        // WO-CARDS-COMPLETE-01 (2026-09-17): stamp the emit-boundary latency on
+        // the admitted opportunity BEFORE dedup/score/insert/publish — the wire
+        // contract computes it at emit entry. `detector_id` was already set at
+        // construction by the engine/cartridge that built the row.
+        admission.opportunity.pipeline_latency_ms =
+            pipeline_latency_ms_now(admission.opportunity.detected_at);
         let opportunity = &admission.opportunity;
-        counters().passed_all_gates.fetch_add(1, Ordering::Relaxed);
+        // WO-FUNNEL-01 (2026-09-17): chain bucket of the opportunity, not legacy chain 0.
+        chain_counters(opportunity.chain_id)
+            .passed_all_gates
+            .fetch_add(1, Ordering::Relaxed);
 
         // WO-10 (2026-09-06): emit-boundary span origin — entry of the REAL
         // I/O path (dedup → Gate-C scoring → PG insert → Redis XADD). Dry-run
@@ -447,7 +466,11 @@ impl OpportunityEmitter {
     ) -> anyhow::Result<EmitOutcome> {
         // A5/N-01b: classify rejection reason and increment matching gate
         // counter so the heartbeat reflects V2-path rejections.
-        let c = counters();
+        // WO-FUNNEL-01 (2026-09-17): chain bucket of the opportunity, not legacy
+        // chain 0 — the heartbeat drains `chain_counters(primary_chain)`, so the
+        // chain-0 writes were invisible (reject taxonomy showed 0 with 100%
+        // rejected feeds).
+        let c = chain_counters(opportunity.chain_id);
         let rl = rejection_reason.to_ascii_lowercase();
         if rl.contains("token_not_allowed") || rl.contains("tokennotallowed") {
             c.gate_token_not_allowed.fetch_add(1, Ordering::Relaxed);
@@ -472,10 +495,12 @@ impl OpportunityEmitter {
                 reason = rejection_reason,
                 "shadow mode: would have emitted rejected (no write)"
             );
-            // Record for test introspection (TASK 4).
+            // Record for test introspection (TASK 4). Stamped with the
+            // emit-boundary latency + rejection reason so the recorded clone
+            // mirrors the wire contract (WO-CARDS-COMPLETE-01).
             if let Ok(mut guard) = self.recorded.lock() {
                 guard.push(EmittedRecord {
-                    opportunity: opportunity.clone(),
+                    opportunity: stamped_for_emit(opportunity, Some(rejection_reason)),
                     strategy: strategy_label,
                     accepted: false,
                     rejection_reason: Some(rejection_reason.to_owned()),
@@ -499,8 +524,10 @@ impl OpportunityEmitter {
 
         // ── PG write ──────────────────────────────────────────────────────
         // Mutate a local copy so the caller's value is not modified.
-        let mut rejected = opportunity.clone();
-        rejected.rejection_reason = Some(rejection_reason.to_owned());
+        // WO-CARDS-COMPLETE-01 (2026-09-17): the clone is also where the
+        // emit-boundary `pipeline_latency_ms` is stamped — rejected rows carry
+        // the same two wire fields as accepted ones.
+        let rejected = stamped_for_emit(opportunity, Some(rejection_reason));
 
         let pg_ok = self.try_insert_pg_with_route(&rejected, route).await;
 
@@ -696,11 +723,17 @@ impl OpportunityEmitter {
             None => EmitOutcome::NoDbConfigured,
             Some(pg) => match persistence::insert_opportunity_with_route(pg, opp, route).await {
                 Ok(()) => {
-                    counters().db_persisted.fetch_add(1, Ordering::Relaxed);
+                    // WO-FUNNEL-01 (2026-09-17): chain bucket of the row, not legacy chain 0.
+                    chain_counters(opp.chain_id)
+                        .db_persisted
+                        .fetch_add(1, Ordering::Relaxed);
                     EmitOutcome::PersistedAndPublished
                 }
                 Err(e) => {
-                    counters().db_errors.fetch_add(1, Ordering::Relaxed);
+                    // WO-FUNNEL-01 (2026-09-17): chain bucket of the row, not legacy chain 0.
+                    chain_counters(opp.chain_id)
+                        .db_errors
+                        .fetch_add(1, Ordering::Relaxed);
                     error!(
                         event = "opportunity_emitter.db_error",
                         opp_id = %opp.id,
@@ -728,6 +761,34 @@ impl OpportunityEmitter {
 /// an accepted row the operator cannot act on is a cosmetic acceptance).
 fn has_computed_economics(opp: &Opportunity) -> bool {
     opp.expected_profit_usd.is_some() || opp.net_expected_profit_usd.is_some()
+}
+
+/// WO-CARDS-COMPLETE-01 (2026-09-17): wall-clock ms between `detected_at` and
+/// emit entry — `(Utc::now() - detected_at).num_milliseconds()`, computed
+/// BEFORE serialization. R8 clock-step guard: a negative span (`detected_at`
+/// in the future after an NTP step) returns None — never a fabricated
+/// negative or clamped-zero value.
+fn pipeline_latency_ms_now(detected_at: chrono::DateTime<chrono::Utc>) -> Option<u64> {
+    let ms = (chrono::Utc::now() - detected_at).num_milliseconds();
+    if ms < 0 {
+        None
+    } else {
+        Some(ms as u64)
+    }
+}
+
+/// WO-CARDS-COMPLETE-01 (2026-09-17): build the emit-boundary clone of an
+/// opportunity — `rejection_reason` (rejected path) and `pipeline_latency_ms`
+/// stamped, every other field (including `detector_id`, set at construction)
+/// verbatim. Shared by the dry-run record and the real I/O path so the wire
+/// contract is identical in both. Pure (no I/O) — unit-testable.
+fn stamped_for_emit(opportunity: &Opportunity, rejection_reason: Option<&str>) -> Opportunity {
+    let mut o = opportunity.clone();
+    if let Some(reason) = rejection_reason {
+        o.rejection_reason = Some(reason.to_owned());
+    }
+    o.pipeline_latency_ms = pipeline_latency_ms_now(opportunity.detected_at);
+    o
 }
 
 /// Builds the Gate C scoring stream record XADDed to `arbx:scoring:scored`
@@ -857,6 +918,9 @@ mod tests {
             block_number: Some(12_345_678),
             rejection_reason: rejection,
             cartridge_id: None,
+            // WO-CARDS-COMPLETE-01: construction-site field (the detector).
+            detector_id: Some("dex_engine".to_owned()),
+            pipeline_latency_ms: None, // stamped at emit entry, not construction
             detected_at: Utc::now(),
             trace_id: Uuid::new_v4(),
         }
@@ -1089,5 +1153,66 @@ mod tests {
         assert!(!route.is_empty());
         // Profit is still None.
         assert!(opp.expected_profit_usd.is_none(), "profit must stay None");
+    }
+
+    // ── WO-CARDS-COMPLETE-01 (2026-09-17): rejected wire contract ──────────
+
+    /// A REJECTED record must carry BOTH wire fields at emit: the
+    /// construction-time `detector_id` and a stamped `pipeline_latency_ms`
+    /// (non-null for a normal past `detected_at`). The emitted clone is what
+    /// `emit_rejected` persists + publishes (and what the dry-run record
+    /// mirrors), so asserting on `stamped_for_emit` locks the wire contract.
+    #[test]
+    fn rejected_record_carries_detector_id_and_latency() {
+        let mut opp = make_opp(Uuid::new_v4(), None, None);
+        opp.detector_id = Some("triangular_engine".to_owned());
+        opp.detected_at = Utc::now() - chrono::Duration::milliseconds(5);
+
+        let rejected = stamped_for_emit(&opp, Some("StrategyDisabled:triangular"));
+
+        assert_eq!(
+            rejected.detector_id.as_deref(),
+            Some("triangular_engine"),
+            "detector_id set at construction must survive the emit clone verbatim"
+        );
+        let latency = rejected
+            .pipeline_latency_ms
+            .expect("rejected record must stamp a non-null pipeline_latency_ms");
+        assert!(latency >= 5, "latency must cover the detected_at→emit span");
+        assert_eq!(
+            rejected.rejection_reason.as_deref(),
+            Some("StrategyDisabled:triangular")
+        );
+        // The caller's value is not modified (clone semantics preserved).
+        assert!(opp.pipeline_latency_ms.is_none());
+        assert!(opp.rejection_reason.is_none());
+    }
+
+    /// R8 clock-step guard: a `detected_at` in the future (NTP step backwards)
+    /// yields None — never a fabricated negative or clamped value.
+    #[test]
+    fn latency_none_on_negative_clock_span() {
+        let mut opp = make_opp(Uuid::new_v4(), None, None);
+        opp.detected_at = Utc::now() + chrono::Duration::seconds(30);
+        let rejected = stamped_for_emit(&opp, Some("AnomalousMath"));
+        assert_eq!(rejected.pipeline_latency_ms, None);
+    }
+
+    /// The serialized wire payload always carries both keys (null when absent)
+    /// — the frontend Zod schema keys on their presence.
+    #[test]
+    fn wire_serialization_includes_detector_id_and_latency() {
+        let opp = make_opp(Uuid::new_v4(), None, None);
+        let stamped = stamped_for_emit(&opp, Some("TokenNotAllowed:PEPE"));
+        let json = serde_json::to_value(&stamped).unwrap();
+        assert_eq!(json["detector_id"], "dex_engine");
+        assert!(
+            json["pipeline_latency_ms"].is_u64(),
+            "stamped latency must serialize as a non-null u64"
+        );
+        // Pre-field shape: a None latency serializes as null (serde default).
+        let json_legacy = serde_json::to_value(&opp).unwrap();
+        assert_eq!(json_legacy["pipeline_latency_ms"], serde_json::Value::Null);
+        assert_eq!(json_legacy["detector_id"], "dex_engine");
     }
 }

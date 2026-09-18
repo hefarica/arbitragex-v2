@@ -807,6 +807,10 @@ fn build_accepted_opportunity(
         block_number: None,
         rejection_reason: None,
         cartridge_id: None,
+        // WO-CARDS-COMPLETE-01 (2026-09-17): detector identity at construction;
+        // pipeline_latency_ms is stamped by the emitter at emit entry.
+        detector_id: Some("dex_engine".to_string()),
+        pipeline_latency_ms: None,
         detected_at: Utc::now(),
         trace_id,
     };

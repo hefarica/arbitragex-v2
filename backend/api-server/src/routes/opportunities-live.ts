@@ -204,10 +204,24 @@ interface OpportunityLiveRow extends QueryResultRow {
   roi_pct: number | null;
   risk_score: number | null;
   rejection_reason: string | null;
-  block_number: number | null;
+  // WO-G2-PARITY (2026-09-17): opportunities.block_number is BIGINT (migration
+  // 003) and node-postgres returns int8 as a STRING at runtime — the declared
+  // `number` below was a lie that shipped `"25995384"` on the wire and made the
+  // frontend Zod z.number() drop the whole live feed (G2 §37 parity hole,
+  // FEED-SCHEMA-01). Runtime type is string|number|null; the emitted wire value
+  // is normalized to number|null by normalizeBlockNumber() below.
+  block_number: number | string | null;
   status: string;
   detected_at: Date | string;
   trace_id: string;
+  // WO-CARDS-COMPLETE-01 (2026-09-17, migration 121): which detector produced
+  // the row (core engine name or cartridge stem). NULL on legacy rows.
+  detector_id: string | null;
+  // WO-CARDS-COMPLETE-01: BIGINT → node-postgres returns int8 as a STRING at
+  // runtime (same parity trap as block_number, WO-G2-PARITY); normalized to
+  // number|null by normalizeBlockNumber() below. NULL = not stamped at emit
+  // (pre-field row or dry-run) — R8.
+  pipeline_latency_ms: number | string | null;
   chain_id_out: number | null;
   bridge: string | null;
   bridge_fee_usd: number | null;
@@ -264,6 +278,10 @@ SELECT
   o.detected_at,
   o.trace_id,
   o.cartridge_id,
+  -- WO-CARDS-COMPLETE-01 (2026-09-17, migration 121): detector identity +
+  -- emit-boundary latency. NULL on pre-migration rows (R8: never fabricated).
+  o.detector_id,
+  o.pipeline_latency_ms,
   o.chain_id_out,
   o.bridge,
   o.bridge_fee_usd::float               AS bridge_fee_usd,
@@ -417,6 +435,22 @@ function tokenInfoFromRow(
  * is clearer and avoids surprises if serialization path changes.
  */
 /**
+ * WO-G2-PARITY (2026-09-17): normalizes a raw PG block_number to the wire
+ * contract's `number | null`. node-postgres returns BIGINT (int8) as a string,
+ * which violated this route's own declared type and made the frontend Zod
+ * schema reject the entire /api/opportunities/live payload (FEED-SCHEMA-01:
+ * "items.0.block_number: Expected number, received string" — OpportunityTicker
+ * stuck on "Opportunity feed unavailable"). Null passes through unchanged
+ * (R8: block not detected ≠ block 0); values that are not safe integers
+ * degrade to null rather than fabricating 0 or NaN on the wire.
+ */
+function normalizeBlockNumber(v: number | string | null): number | null {
+  if (v == null) return null;
+  const n = typeof v === "number" ? v : Number(v);
+  return Number.isSafeInteger(n) ? n : null;
+}
+
+/**
  * Derives the paper-mode visibility status from rejection state. Paper mode
  * is the default operational mode (`ARBX_PAPER_TRADE=true`), so every
  * opportunity is either viable for the paper P&L or rejected by some gate.
@@ -569,12 +603,16 @@ function rowToOpportunity(
     paper_status:             paperStatusFromRow(row),
     chains_used:              chainsUsedFromRow(row),
     dexes_used:               dexesUsedFromRow(row),
-    block_number:             row.block_number,
+    block_number:             normalizeBlockNumber(row.block_number), // WO-G2-PARITY (2026-09-17)
     status:                   row.status,
     detected_at:              row.detected_at instanceof Date
                                 ? row.detected_at.toISOString()
                                 : row.detected_at,
     trace_id:                 row.trace_id,
+    // WO-CARDS-COMPLETE-01 (2026-09-17): passed through verbatim (null on
+    // legacy rows); latency normalized from the int8 string like block_number.
+    detector_id:              row.detector_id,
+    pipeline_latency_ms:      normalizeBlockNumber(row.pipeline_latency_ms),
     chain_id_out:             row.chain_id_out,
     bridge:                   row.bridge,
     bridge_fee_usd:           row.bridge_fee_usd,

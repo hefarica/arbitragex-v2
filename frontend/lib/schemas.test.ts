@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import {
+  AdminChainProbeResultSchema,
   ExecutionRowSchema,
   KillSwitchStateSchema,
   OpportunitiesLiveSchema,
@@ -81,6 +82,99 @@ describe("OpportunitiesLiveSchema", () => {
       ts: "2026-04-22T12:00:00.000Z",
     });
     expect(r.success).toBe(true);
+  });
+
+  // WO-G2-PARITY (2026-09-17): regression for FEED-SCHEMA-01 — the live feed
+  // arrived with block_number serialized as a string (BIGINT → node-postgres
+  // int8) and the strict z.number() rejected the WHOLE payload, leaving
+  // OpportunityTicker permanently on "Opportunity feed unavailable".
+  it("coerces a numeric-string block_number to a number (int8-as-string wire)", () => {
+    const r = OpportunitiesLiveSchema.safeParse({
+      count: 1,
+      window: "60s",
+      items: [
+        {
+          id: "op-1", chain_id: 1, strategy_kind: "dex_arb",
+          dex_a: "uniswap", dex_b: "curve", pair_symbol: "WETH/USDC",
+          token_in: "0xa", token_out: "0xb", amount_in_wei: "1000000",
+          expected_profit_usd: 12.34, roi_pct: 0.5, risk_score: null,
+          block_number: "25995384", status: "detected",
+          detected_at: "2026-09-17T00:00:00.000Z",
+          trace_id: "t-1",
+        },
+      ],
+      ts: "2026-09-17T00:00:00.000Z",
+    });
+    expect(r.success).toBe(true);
+    if (r.success) expect(r.data.items[0]?.block_number).toBe(25995384);
+  });
+
+  it("keeps block_number null as null (R8: never fabricated as 0)", () => {
+    const r = OpportunitiesLiveSchema.safeParse({
+      count: 1,
+      window: "60s",
+      items: [
+        {
+          id: "op-1", chain_id: 1, strategy_kind: "dex_arb",
+          dex_a: "uniswap", dex_b: "curve", pair_symbol: "WETH/USDC",
+          token_in: "0xa", token_out: "0xb", amount_in_wei: "1000000",
+          expected_profit_usd: 12.34, roi_pct: 0.5, risk_score: null,
+          block_number: null, status: "detected",
+          detected_at: "2026-09-17T00:00:00.000Z",
+          trace_id: "t-1",
+        },
+      ],
+      ts: "2026-09-17T00:00:00.000Z",
+    });
+    expect(r.success).toBe(true);
+    if (r.success) expect(r.data.items[0]?.block_number).toBeNull();
+  });
+
+  it("still rejects a non-numeric block_number string (fail-honest, no silent drop)", () => {
+    const r = OpportunitiesLiveSchema.safeParse({
+      count: 1,
+      window: "60s",
+      items: [
+        {
+          id: "op-1", chain_id: 1, strategy_kind: "dex_arb",
+          dex_a: "uniswap", dex_b: "curve", pair_symbol: "WETH/USDC",
+          token_in: "0xa", token_out: "0xb", amount_in_wei: "1000000",
+          expected_profit_usd: 12.34, roi_pct: 0.5, risk_score: null,
+          block_number: "not-a-block", status: "detected",
+          detected_at: "2026-09-17T00:00:00.000Z",
+          trace_id: "t-1",
+        },
+      ],
+      ts: "2026-09-17T00:00:00.000Z",
+    });
+    expect(r.success).toBe(false);
+  });
+});
+
+// WO-G2-PARITY (2026-09-17): same int8-as-string class as the live feed,
+// hardened defensively (today's producer emits a number via parseInt).
+describe("AdminChainProbeResultSchema", () => {
+  const base = {
+    chain_id: 1,
+    probed_rpc_url_redacted: "https://rpc.example.com/<path-redacted>",
+    reachable: true,
+    matches: true,
+    observed_chain_id: 1,
+    latency_ms: 120,
+    error: null,
+    probed_at: "2026-09-17T00:00:00.000Z",
+  };
+  it("accepts a numeric block_number", () => {
+    const r = AdminChainProbeResultSchema.safeParse({ ...base, block_number: 25995384 });
+    expect(r.success).toBe(true);
+  });
+  it("coerces a numeric-string block_number and keeps null as null", () => {
+    const s = AdminChainProbeResultSchema.safeParse({ ...base, block_number: "25995384" });
+    expect(s.success).toBe(true);
+    if (s.success) expect(s.data.block_number).toBe(25995384);
+    const n = AdminChainProbeResultSchema.safeParse({ ...base, block_number: null });
+    expect(n.success).toBe(true);
+    if (n.success) expect(n.data.block_number).toBeNull();
   });
 });
 

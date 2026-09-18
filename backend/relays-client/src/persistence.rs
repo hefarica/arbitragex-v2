@@ -273,6 +273,8 @@ mod tests {
             block_number: Some(123),
             rejection_reason: None,
             cartridge_id: None,
+            detector_id: None,
+            pipeline_latency_ms: None,
             detected_at: chrono::Utc::now(),
             trace_id: Uuid::new_v4(),
         }

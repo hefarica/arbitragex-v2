@@ -1201,6 +1201,11 @@ pub async fn active_evaluate_and_emit(
                     block_number: intent.observed_block(),
                     rejection_reason: None,
                     cartridge_id: Some(cartridge_id.clone()),
+                    // WO-CARDS-COMPLETE-01 (2026-09-17): cartridge detector
+                    // identity — the cartridge stem/id itself (the struct's
+                    // canonical cartridge identity), stamped at construction.
+                    detector_id: Some(cartridge_id.clone()),
+                    pipeline_latency_ms: None,
                     detected_at: chrono::Utc::now(),
                     trace_id: Uuid::new_v4(), // Generate new trace ID for cartridge path
                 };

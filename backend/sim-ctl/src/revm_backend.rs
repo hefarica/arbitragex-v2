@@ -290,6 +290,8 @@ mod tests {
             block_number: Some(19_000_000),
             rejection_reason: None,
             cartridge_id: None,
+            detector_id: None,
+            pipeline_latency_ms: None,
             detected_at: Utc::now(),
             trace_id: Uuid::new_v4(),
         }
