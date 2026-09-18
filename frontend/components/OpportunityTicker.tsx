@@ -3,9 +3,11 @@
 import { useEffect, useState } from "react";
 import { getOpportunitiesLive } from "@/lib/api-client";
 import { terminalOpportunityState } from "@/lib/opportunity-presentation";
+import { flashClass, useValueFlash } from "@/components/cex/flash";
 import type { OpportunityRow } from "@/lib/schemas";
 
 interface TickerItem {
+  id: string;
   pair: string;
   from: string;
   to: string;
@@ -30,7 +32,7 @@ export function summarizeTickerError(err: string): string {
   return concise.length > 120 ? `${concise.slice(0, 117)}…` : concise;
 }
 
-function formatAgo(detectedAt: string): string {
+export function formatAgo(detectedAt: string): string {
   const detected = new Date(detectedAt).getTime();
   const now = Date.now();
   const diffSeconds = Math.floor((now - detected) / 1000);
@@ -56,6 +58,7 @@ export function opportunityToTickerItem(opp: OpportunityRow): TickerItem | null 
   const yieldPct = opp.roi_pct != null && Number.isFinite(opp.roi_pct) ? opp.roi_pct : null;
 
   return {
+    id: opp.id,
     pair,
     from,
     to,
@@ -70,6 +73,43 @@ export function formatTickerYield(value: number | null): string {
   return value == null || !Number.isFinite(value)
     ? "ROI —"
     : `ROI ${value >= 0 ? "+" : ""}${value.toFixed(2)}%`;
+}
+
+/**
+ * WO-PRICE-EXCHANGE-V1 (FE) — one marquee entry, owning its CEX-style flash.
+ * The flash memory lives in a ref INSIDE this component (useValueFlash), so a
+ * changed ROI/Gross value animates only its own entry — the rest of the
+ * marquee never re-renders for it. Keyed by the entry's identity: the parent
+ * uses `${item.id}·${idx}` so a re-fetched feed updates the SAME entry in
+ * place and the value comparison is meaningful.
+ */
+function TickerEntry({ item }: { item: TickerItem }) {
+  const flash = useValueFlash(item.yield);
+  const isPositive = item.yield != null && item.yield >= 0;
+  const tone = item.yield == null ? undefined : isPositive ? "pos" : "neg";
+  const fcls = flashClass(flash);
+  const yieldCls = fcls ? `${tone ?? ""} ${fcls}`.trim() : tone;
+  return (
+    <span className="ticker-item">
+      <b>{item.pair}</b>
+      <span>·</span>
+      <span>{item.from} → {item.to}</span>
+      <span>·</span>
+      <span title={item.rejectionReason ?? `Recorded status: ${item.status}`}>
+        {item.status.toUpperCase()}
+      </span>
+      {/* key=seq remounts the span on each CHANGE so the one-shot CSS
+          animation replays even for consecutive same-direction moves. */}
+      <span key={flash.seq} className={yieldCls}>
+        {formatTickerYield(item.yield)}
+      </span>
+      {item.yield != null && (
+        <span className={`arr ${tone}`}>{isPositive ? "▲" : "▼"}</span>
+      )}
+      <span>·</span>
+      <span className="ago">{item.ago}</span>
+    </span>
+  );
 }
 
 export function OpportunityTicker() {
@@ -149,27 +189,9 @@ export function OpportunityTicker() {
           : "Live opportunity feed."}
       </span>
       <div className="ticker-track" aria-hidden="true">
-        {displayItems.map((item, idx) => {
-          const isPositive = item.yield != null && item.yield >= 0;
-          const tone = item.yield == null ? undefined : isPositive ? "pos" : "neg";
-          return (
-            <span key={idx} className="ticker-item">
-              <b>{item.pair}</b>
-              <span>·</span>
-              <span>{item.from} → {item.to}</span>
-              <span>·</span>
-              <span title={item.rejectionReason ?? `Recorded status: ${item.status}`}>
-                {item.status.toUpperCase()}
-              </span>
-              <span className={tone}>{formatTickerYield(item.yield)}</span>
-              {item.yield != null && (
-                <span className={`arr ${tone}`}>{isPositive ? "▲" : "▼"}</span>
-              )}
-              <span>·</span>
-              <span className="ago">{item.ago}</span>
-            </span>
-          );
-        })}
+        {displayItems.map((item, idx) => (
+          <TickerEntry key={`${item.id}·${idx}`} item={item} />
+        ))}
       </div>
     </div>
   );
