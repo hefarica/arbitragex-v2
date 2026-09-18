@@ -419,3 +419,38 @@ groups:
         annotations:
           summary: "Risk circuit-breaker evaluation stale (>5m since last eval)"
           description: "api-server's breaker evaluation loop has not emitted arbx_risk_cb_last_eval_unixtime in >5 minutes. Check docker logs api-server for circuit_breakers.periodic_emit_failed and arbx_risk_cb_eval_failures_total."
+
+# ═══ FUNNEL LIVENESS (orden del operador 2026-09-17: "pipeline siempre vivo en dominio") ═══
+# Cada regla nace de una muerte real de hoy — lección → sensor.
+- alert: FunnelDetectionDead
+  expr: (time() - arbx_opps_detected_last_ts{chain_id="1"}) > 300
+  for: 2m
+  labels: {severity: critical}
+  annotations:
+    summary: "Detección muerta >5min (lección: flipper de credenciales mató el flujo 8h sin alerta)"
+- alert: SearcherDBDegraded
+  expr: increase(arbx_searcher_db_connect_failed_total[10m]) > 0
+  for: 1m
+  labels: {severity: critical}
+  annotations:
+    summary: "Searcher sin PG pool (auth flipper clase 2026-09-17 — corre sin persistencia y grafo vacío)"
+- alert: StrategyDisabledReappeared
+  expr: increase(arbx_rejections_total{reason=~"StrategyDisabled.*"}[15m]) > 0
+  for: 1m
+  labels: {severity: warning}
+  annotations:
+    summary: "Allowlist stale volvió a bloquear estrategias (lección: enabled_strategies legacy sin familias)"
+- alert: FeeCatalogStarved
+  expr: arbx_v3_fee_catalog_pools < 100
+  for: 5m
+  labels: {severity: warning}
+  annotations:
+    summary: "Catálogo V3 hambriento (<100 pools) — pool_sync no alimenta el índice"
+- alert: QuoteTransportDegraded
+  expr: |
+    sum(rate(arbx_v3_quote_total{outcome="rpc_error"}[5m]))
+      / clamp_min(sum(rate(arbx_v3_quote_total{outcome="rpc"}[5m])), 0.001) > 0.5
+  for: 10m
+  labels: {severity: warning}
+  annotations:
+    summary: ">50% de quotes RPC fallando — proveedores degradados (Alchemy cuota/drpc key)"
