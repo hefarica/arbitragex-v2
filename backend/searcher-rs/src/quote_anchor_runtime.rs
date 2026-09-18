@@ -9,7 +9,7 @@
 //!
 //! | Axis | Runtime derivation (all inputs real) |
 //! |---|---|
-//! | `liquidity` | Σ over the token's pools of its own side reserve valued at the live price (`arbx:token_prices:<chain>`, G-PRICE-1). The side reserve is reconstructed EXACTLY from `RouteEdge` magnitudes: `hint = r_a + r_b` and `log_weight = −ln((1−fee)·rate)` ⇒ `r_a = hint/(1+rate)` (exact when `fee_bps` is `Some`; the `None` path drops the `(1−fee)` correction — bounded by one fee tier, documented approximation). |
+//! | `liquidity` | Σ over the token's pools of its own side reserve valued at the live price (`arbx:token_prices:<chain>`, G-PRICE-1). The side reserve is reconstructed EXACTLY from `RouteEdge` magnitudes: `hint = r_a + r_b` and `log_weight = −ln((1−fee)·rate)` ⇒ `r_a = hint/(1+rate)` (exact when `fee_bps` is `Some`; the `None` path drops the `(1−fee)` correction — bounded by one fee tier, documented approximation). `fee` is DUAL-UNIT by pool type (S1): V3 tiers are uint24 pips (`/1e6`), V2-family are real bps (`/1e4`) — see [`fee_fraction`]. |
 //! | `venue_coverage` | distinct `(protocol, fee_bps)` combinations among the token's pools — V2/V3/fee-tier is the honest venue granularity the pool index carries today (brand-level RouterKind is not per-pool; same boundary convention as the `venues` wire mapping). |
 //! | `stability` | `100·e^(−mean_dispersion)` where dispersion is the max pairwise `|Δln net_rate|` across PARALLEL pools of the same pair — observed cross-venue pricing coherence. A pair with fewer than 2 rate-computable pools contributes 0 (no evidence of dispersion); orientation is normalized via reciprocal (net-rate fee asymmetry is second-order for dispersion). |
 //! | `cross_dex` | `100 · (pairs with ≥2 distinct pools / total pairs)` — share of the token's pairs with venue redundancy. |
@@ -116,6 +116,25 @@ impl QuoteAnchorSelection {
     }
 }
 
+/// Dual-unit fee fraction (S1, math-batch verdict §1a): `fee_bps` is a
+/// DUAL-UNIT field — V3 stores the on-chain uint24 tier in PIPS (millionths,
+/// `graph_builder.rs:394-399`, pinned by `v3_log_weight_sum_pins_fee_in_pips_not_bps`),
+/// while V2/Curve/Balancer store real basis points (`amm_math.rs:11-12`).
+/// The divisor is decided by POOL TYPE, not by the field's name:
+/// `D = 1_000_000` if protocol is "v3", `10_000` otherwise. "unknown" is
+/// treated as the V2-family `/1e4` reading — the verdict's documented
+/// option; NO divisor is invented for it. The unit must NOT be normalized
+/// at the source: V3 pips ARE the field's contract (`v2_amount_out` expects
+/// bps and the fee catalog resolves raw tiers).
+fn fee_fraction(protocol: &str, fee_bps: Option<u32>) -> f64 {
+    let divisor = if protocol.eq_ignore_ascii_case("v3") {
+        1_000_000.0
+    } else {
+        10_000.0
+    };
+    fee_bps.unwrap_or(0) as f64 / divisor
+}
+
 /// Compute the axes, score every candidate and rank. `prices` maps the
 /// UPPERCASED symbol → live quote-unit price; `symbol_of` maps a lowercase
 /// address → display symbol. Deterministic: rows sort by score desc, then
@@ -169,7 +188,7 @@ pub fn select_quote_anchor(
             // Liquidity: this side's reserve, valued at the live price.
             if let (Some(hint), Some(lw)) = (e.liquidity_hint, e.log_weight) {
                 if hint.is_finite() && hint > 0.0 && lw.is_finite() {
-                    let fee = e.fee_bps.unwrap_or(0) as f64 / 10_000.0;
+                    let fee = fee_fraction(&e.protocol, e.fee_bps);
                     let rate = (-lw).exp() / (1.0 - fee);
                     if rate.is_finite() && rate > 0.0 {
                         let r_a = hint / (1.0 + rate); // a-side of THIS edge's orientation
@@ -531,6 +550,127 @@ mod tests {
         let r_a_rec = hint / (1.0 + rate_rec);
         assert!((r_a_rec - r_weth).abs() < 1e-6);
         assert!((hint - r_a_rec - r_usdc).abs() < 1e-6);
+    }
+
+    /// S1 (math-batch §1c vector 1): V3 fee tiers are uint24 PIPS — the
+    /// liquidity reconstruction must read them as `tier/1e6`. Independent
+    /// vector: known reserves ⇒ rate = r_b/r_a, lw = −ln((1−f)·rate); the
+    /// core must recover the reserves EXACTLY (prices 1.0 ⇒ the valued sides
+    /// ARE the reserves, so the axis ratio is 100·r_a/r_b), for tiers 3000
+    /// and 100. Under the /1e4 misread tier 3000 → fee 0.30 → the a-side
+    /// inflates ~100× (rate 1.42×) and the assertion fails.
+    #[test]
+    fn v3_pips_tiers_3000_and_100_reconstruct_reserves_exactly() {
+        for tier in [3000u32, 100] {
+            let f = tier as f64 / 1_000_000.0;
+            let r_a = 1.0f64;
+            let r_b = 3000.0f64;
+            let lw = -((1.0 - f) * (r_b / r_a)).ln();
+            let sel = env(
+                &[stat(
+                    "0xp1",
+                    "0xa",
+                    "0xb",
+                    "v3",
+                    Some(tier),
+                    Some(r_a + r_b),
+                    Some(lw),
+                )],
+                &[("0xa", "AA"), ("0xb", "BB")],
+                &[("AA", 1.0), ("BB", 1.0)],
+            )
+            .unwrap();
+            let by_sym = |s: &str| sel.rows.iter().find(|r| r.0.symbol == s).unwrap();
+            let got_b = by_sym("BB").1.liquidity;
+            assert!((got_b - 100.0).abs() < 1e-9, "tier {tier}: b-axis {got_b}");
+            let expect_a = 100.0 * r_a / r_b;
+            let got_a = by_sym("AA").1.liquidity;
+            assert!(
+                (got_a - expect_a).abs() <= 1e-9 * expect_a,
+                "tier {tier}: a-axis {got_a} expected {expect_a} (relative 1e-9)"
+            );
+        }
+    }
+
+    /// S1 (§1c vector 2): tier 10000 pips (fee 0.01) must yield a FINITE
+    /// rate and a strictly positive liquidity contribution — under the /1e4
+    /// misread fee=1.0 made the rate infinite and silently erased the pool's
+    /// liquidity (priced_pools=0 ⇒ no candidates ⇒ `None`).
+    #[test]
+    fn v3_tier_10000_contributes_positive_liquidity() {
+        let f = 10_000.0f64 / 1_000_000.0;
+        let r_a = 1.0f64;
+        let r_b = 3000.0f64;
+        let lw = -((1.0 - f) * (r_b / r_a)).ln();
+        let sel = env(
+            &[stat(
+                "0xp1",
+                "0xa",
+                "0xb",
+                "v3",
+                Some(10_000),
+                Some(r_a + r_b),
+                Some(lw),
+            )],
+            &[("0xa", "AA"), ("0xb", "BB")],
+            &[("AA", 1.0), ("BB", 1.0)],
+        )
+        .expect("tier-10000 pool must remain scoreable");
+        assert_eq!(sel.rows.len(), 2);
+        for r in &sel.rows {
+            assert!(r.1.liquidity > 0.0, "liquidity erased for {}", r.0.symbol);
+        }
+        let b = sel.rows.iter().find(|r| r.0.symbol == "BB").unwrap();
+        assert!((b.1.liquidity - 100.0).abs() < 1e-9);
+    }
+
+    /// S1: the divisor is keyed on pool TYPE — pips (1e6) only for V3.
+    #[test]
+    fn fee_fraction_divisor_by_pool_type() {
+        assert_eq!(fee_fraction("v3", Some(3000)), 0.003);
+        assert_eq!(fee_fraction("v3", Some(10_000)), 0.01);
+        assert_eq!(fee_fraction("v2", Some(30)), 0.003);
+        assert_eq!(fee_fraction("curve", Some(30)), 0.003);
+        assert_eq!(fee_fraction("balancer", Some(30)), 0.003);
+        assert_eq!(fee_fraction("unknown", Some(30)), 0.003); // documented /1e4
+        assert_eq!(fee_fraction("v3", None), 0.0);
+    }
+
+    /// S1 (§1c vector 3): the V2 family — and curve/balancer/unknown — keep
+    /// the bps reading (`fee/1e4`): the same edge with fee_bps=30 must
+    /// produce the same exact reconstruction as before the dual-unit fix
+    /// (no-damage regression; "unknown" is the documented /1e4 option of the
+    /// verdict, not an invented divisor).
+    #[test]
+    fn v2_curve_balancer_unknown_fee_30_reads_bps_unchanged() {
+        let r_a = 1.0f64;
+        let r_b = 3000.0f64;
+        let f = 30.0f64 / 10_000.0;
+        let lw = -((1.0 - f) * (r_b / r_a)).ln();
+        for proto in ["v2", "curve", "balancer", "unknown"] {
+            let sel = env(
+                &[stat(
+                    "0xp1",
+                    "0xa",
+                    "0xb",
+                    proto,
+                    Some(30),
+                    Some(r_a + r_b),
+                    Some(lw),
+                )],
+                &[("0xa", "AA"), ("0xb", "BB")],
+                &[("AA", 1.0), ("BB", 1.0)],
+            )
+            .unwrap();
+            let by_sym = |s: &str| sel.rows.iter().find(|r| r.0.symbol == s).unwrap();
+            assert!((by_sym("BB").1.liquidity - 100.0).abs() < 1e-9, "{proto}");
+            let expect_a = 100.0 * r_a / r_b;
+            let got = by_sym("AA").1.liquidity;
+            assert!(
+                (got - expect_a).abs() <= 1e-9 * expect_a,
+                "{proto}: {got} vs {expect_a}"
+            );
+        }
     }
 
     /// Venue axis counts distinct (protocol, fee_bps) combos; cross_dex is
