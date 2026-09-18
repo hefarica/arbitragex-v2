@@ -98,6 +98,20 @@ pub struct HeartbeatSnapshot {
     /// = config or upstream API regression.
     #[serde(default)]
     pub price_worker_errors: u64,
+    /// WO-PRICE-SOVEREIGN-01 f1 — transitions INTO exponential backoff this
+    /// period, per provider (`arbx_price_backoff_total{provider="alchemy"}`).
+    #[serde(default)]
+    pub price_alchemy_backoff_total: u64,
+    /// Same, Coingecko (`arbx_price_backoff_total{provider="coingecko"}`).
+    #[serde(default)]
+    pub price_coingecko_backoff_total: u64,
+    /// WO-PRICE-SOVEREIGN-01 f1 — gauge, current breaker state at emit time
+    /// (`arbx_price_backoff_active{provider="alchemy"}`): 1 = window open.
+    #[serde(default)]
+    pub price_alchemy_backoff_active: u64,
+    /// Same, Coingecko (`arbx_price_backoff_active{provider="coingecko"}`).
+    #[serde(default)]
+    pub price_coingecko_backoff_active: u64,
     /// TriangularWorker — cycles scanned this period. Steady non-zero proves
     /// the worker is alive and exercising MVP_CYCLES every tick. A zero value
     /// across consecutive heartbeats (with the worker enabled in main.rs) is
@@ -252,6 +266,14 @@ impl HeartbeatWorker {
             let price_coingecko = c.price_coingecko_hits.swap(0, Ordering::Relaxed);
             let price_misses = c.price_cache_misses.swap(0, Ordering::Relaxed);
             let price_errors = c.price_worker_errors.swap(0, Ordering::Relaxed);
+            // WO-PRICE-SOVEREIGN-01 f1 — backoff totals are period deltas
+            // (swap→0); the `*_active` gauges are READ WITHOUT reset so they
+            // reflect the breaker state at emit time, not a period sum.
+            let price_alchemy_bo = c.price_alchemy_backoff_total.swap(0, Ordering::Relaxed);
+            let price_coingecko_bo = c.price_coingecko_backoff_total.swap(0, Ordering::Relaxed);
+            let price_alchemy_bo_active = c.price_alchemy_backoff_active.load(Ordering::Relaxed);
+            let price_coingecko_bo_active =
+                c.price_coingecko_backoff_active.load(Ordering::Relaxed);
             let tri_scanned = c.triangular_cycles_scanned.swap(0, Ordering::Relaxed);
             let tri_emitted = c.triangular_opps_emitted.swap(0, Ordering::Relaxed);
             let fl_scanned = c.flashloan_arb_pairs_scanned.swap(0, Ordering::Relaxed);
@@ -291,6 +313,10 @@ impl HeartbeatWorker {
                 price_coingecko_hits = price_coingecko,
                 price_cache_misses = price_misses,
                 price_worker_errors = price_errors,
+                price_alchemy_backoff_total = price_alchemy_bo,
+                price_coingecko_backoff_total = price_coingecko_bo,
+                price_alchemy_backoff_active = price_alchemy_bo_active,
+                price_coingecko_backoff_active = price_coingecko_bo_active,
                 triangular_cycles_scanned = tri_scanned,
                 triangular_opps_emitted = tri_emitted,
                 flashloan_arb_pairs_scanned = fl_scanned,
@@ -338,6 +364,10 @@ impl HeartbeatWorker {
                 price_coingecko_hits: price_coingecko,
                 price_cache_misses: price_misses,
                 price_worker_errors: price_errors,
+                price_alchemy_backoff_total: price_alchemy_bo,
+                price_coingecko_backoff_total: price_coingecko_bo,
+                price_alchemy_backoff_active: price_alchemy_bo_active,
+                price_coingecko_backoff_active: price_coingecko_bo_active,
                 triangular_cycles_scanned: tri_scanned,
                 triangular_opps_emitted: tri_emitted,
                 flashloan_arb_pairs_scanned: fl_scanned,
