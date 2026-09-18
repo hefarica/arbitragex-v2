@@ -439,8 +439,15 @@ impl TriangularEngine {
                     // cap or profit path — use the same label for consistency.
                     "spot_product_le_one"
                 };
-                let (opp, cand, rp) =
-                    build_opportunity(chain_id, tx_hash, cycle_def, None, None, eval_input.cap_usd);
+                let (opp, cand, rp) = build_opportunity(
+                    chain_id,
+                    tx_hash,
+                    cycle_def,
+                    None,
+                    None,
+                    token_a_price_usd,
+                    eval_input.cap_usd,
+                );
                 vec![StrategyCandidate {
                     label: StrategyLabel::TriangularArb,
                     opportunity: opp,
@@ -463,6 +470,7 @@ impl TriangularEngine {
                             cycle_def,
                             None,
                             Some(result.amount_in_wei),
+                            token_a_price_usd,
                             eval_input.cap_usd,
                         );
                         return vec![StrategyCandidate {
@@ -485,6 +493,7 @@ impl TriangularEngine {
                         cycle_def,
                         Some(profit_usd),
                         Some(result.amount_in_wei),
+                        token_a_price_usd,
                         eval_input.cap_usd,
                     );
                     opp.expected_profit_usd = Some(profit_usd);
@@ -523,6 +532,7 @@ impl TriangularEngine {
                         cycle_def,
                         None,
                         Some(result.amount_in_wei),
+                        token_a_price_usd,
                         eval_input.cap_usd,
                     );
                     vec![StrategyCandidate {
@@ -554,6 +564,7 @@ fn build_opportunity(
     cycle_def: &CycleDefinition,
     gross_profit_usd: Option<f64>,
     amount_in_wei: Option<U256>,
+    token_a_price_usd: Option<f64>,
     _cap_usd: f64,
 ) -> (Opportunity, OpportunityCandidate, RoutePlan) {
     let id = Uuid::new_v4();
@@ -592,6 +603,18 @@ fn build_opportunity(
         trace_id,
     };
 
+    // TRIANGULAR-PRICE-SCALE-01 (2026-09-17): convert the USD profit to
+    // token-a units using the REAL price resolved by `extract_pricing`.
+    // The previous `gross_profit_usd / 3000.0` hardcoded an implicit
+    // price(token_a) = $3000 (WETH), leaving `expected_amount_out` off by
+    // 3000x for stablecoin cycles (USDC/DAI/USDT, price $1). Fail-honest
+    // (R8): when the price is unavailable (None or ≤ 0) no conversion is
+    // fabricated — `expected_amount_out` stays equal to `amount_in`.
+    let expected_amount_out = match token_a_price_usd {
+        Some(p) if p > 0.0 => amount_in_f64 + gross_profit_usd.unwrap_or(0.0) / p,
+        _ => amount_in_f64,
+    };
+
     let candidate = OpportunityCandidate {
         route_fingerprint: format!("tri_{}_{}", cycle_def.cycle_id, cycle_def.token_a_symbol),
         pool_addresses: cycle_def
@@ -602,7 +625,7 @@ fn build_opportunity(
         token_addresses: vec![token_a_addr.clone(), token_c_addr.clone()],
         dex_adapters: vec!["uniswap-v2".to_string(); 3],
         amount_in: amount_in_f64,
-        expected_amount_out: amount_in_f64 + gross_profit_usd.unwrap_or(0.0) / 3000.0,
+        expected_amount_out,
         gross_profit: gross_profit_usd.unwrap_or(0.0),
     };
 
@@ -831,7 +854,9 @@ fn addr_to_hex(a: Address) -> String {
     format!("0x{:040x}", a)
 }
 
-/// Lossless-truncating `U256` → `f64`. Same as scanner.rs + dex_engine.rs.
+/// `U256` → `f64` conversion. Lossy when the value has `high_u128() != 0`
+/// (the high 128 bits are silently dropped); lossless only when the value
+/// fits the low 128 bits. Same helper as scanner.rs + dex_engine.rs.
 fn u256_to_f64(v: &U256) -> f64 {
     v.low_u128() as f64
 }
@@ -1430,6 +1455,198 @@ mod tests {
                 );
             }
         }
+    }
+
+    // ── TRIANGULAR-PRICE-SCALE-01 (2026-09-17) tests ─────────────────────────
+    //
+    // Defect: `build_opportunity` computed
+    //   expected_amount_out = amount_in + profit_usd / 3000.0
+    // which hardcodes an implicit price(token_a) = $3000 (WETH). For a
+    // USDC/DAI cycle (price $1) the field was displaced 3000x. The real
+    // price is already resolved by `extract_pricing` in `evaluate_one_cycle`.
+
+    /// Minimal `CycleDefinition` with a configurable token_a symbol.
+    fn tri_cycle_def(token_a_symbol: &str) -> CycleDefinition {
+        let a = addr(0x10);
+        let b = addr(0x20);
+        let c = addr(0x30);
+        let hop = |pool: u64, tin: Address, tout: Address| HopDescriptor {
+            pool_address: addr(pool),
+            token_in: tin,
+            token_out: tout,
+            pool_address_str: format!("0x{:040x}", addr(pool)),
+            swap_in_is_token0: tin < tout,
+        };
+        CycleDefinition {
+            cycle_id: 0,
+            token_a_symbol: token_a_symbol.to_string(),
+            hops: [hop(0x100, a, b), hop(0x200, b, c), hop(0x300, c, a)],
+        }
+    }
+
+    /// T1 — USDC scale: `extract_pricing` resolves USDC to $1.0 (stablecoin
+    /// match arm), so a $6.0 profit on a 100.0 USDC input MUST yield
+    /// expected_amount_out = 100.0 + 6.0/1.0 = **106.0** exactly.
+    /// (Old code: 100.0 + 6.0/3000.0 = 100.002 — 3000x scale error.)
+    #[test]
+    fn price_scale_t1_usdc_cycle_uses_real_price() {
+        // Pin the pricing source first: USDC resolves to $1.0 via the
+        // stablecoin match arm in extract_pricing, independent of
+        // base_token_price_usd.
+        let cfg = make_cfg(3000.0, 50_000.0);
+        let (usdc_price, _cap) = extract_pricing(&Some(cfg), "USDC");
+        assert_eq!(usdc_price, Some(1.0), "USDC must resolve to $1.0");
+
+        let cycle_def = tri_cycle_def("USDC");
+        let amount_in_wei = U256::from(100u32) * U256::from(10u32).pow(U256::from(18u32)); // 100e18 → 100.0 tokens
+        let (_opp, cand, _rp) = build_opportunity(
+            1,
+            H256::zero(),
+            &cycle_def,
+            Some(6.0),
+            Some(amount_in_wei),
+            usdc_price,
+            1000.0,
+        );
+
+        assert_eq!(cand.amount_in, 100.0, "amount_in must be 100.0 USDC");
+        assert_eq!(
+            cand.expected_amount_out, 106.0,
+            "T1: 100.0 + 6.0/1.0 = 106.0 (old code gave 100.002 — 3000x off)"
+        );
+        assert_eq!(cand.gross_profit, 6.0);
+    }
+
+    /// T2 — WETH scale: price $3000, profit $6.0, amount_in 1.0 WETH →
+    /// expected_amount_out = 1.0 + 6.0/3000.0 = **1.002** (backwards-
+    /// compatible with the WETH behaviour the old constant encoded).
+    #[test]
+    fn price_scale_t2_weth_cycle_uses_real_price() {
+        let cycle_def = tri_cycle_def("WETH");
+        let amount_in_wei = U256::from(10u32).pow(U256::from(18u32)); // 1e18 → 1.0 WETH
+        let (_opp, cand, _rp) = build_opportunity(
+            1,
+            H256::zero(),
+            &cycle_def,
+            Some(6.0),
+            Some(amount_in_wei),
+            Some(3000.0),
+            1000.0,
+        );
+
+        assert_eq!(cand.amount_in, 1.0, "amount_in must be 1.0 WETH");
+        assert_eq!(
+            cand.expected_amount_out,
+            1.0 + 6.0 / 3000.0,
+            "T2: 1.0 + 6.0/3000.0 = 1.002"
+        );
+        assert!(
+            (cand.expected_amount_out - 1.002).abs() < 1e-12,
+            "T2 numeric check: expected 1.002, got {}",
+            cand.expected_amount_out
+        );
+    }
+
+    /// T3 — no price (fail-honest): when `token_a_price_usd` is None the USD
+    /// profit cannot be converted to token units without fabricating a price,
+    /// so expected_amount_out MUST equal amount_in exactly. Same for a
+    /// degenerate price of 0.0.
+    #[test]
+    fn price_scale_t3_no_price_keeps_expected_amount_out_equal_to_amount_in() {
+        let cycle_def = tri_cycle_def("USDC");
+        let amount_in_wei = U256::from(100u32) * U256::from(10u32).pow(U256::from(18u32));
+        let (_opp, cand, _rp) = build_opportunity(
+            1,
+            H256::zero(),
+            &cycle_def,
+            Some(6.0), // profit present — must still NOT be converted
+            Some(amount_in_wei),
+            None, // no price oracle
+            1000.0,
+        );
+        assert_eq!(cand.amount_in, 100.0);
+        assert_eq!(
+            cand.expected_amount_out, 100.0,
+            "T3 (None price): expected_amount_out must equal amount_in exactly"
+        );
+
+        // Degenerate price 0.0 → same fail-honest branch.
+        let (_opp, cand0, _rp) = build_opportunity(
+            1,
+            H256::zero(),
+            &cycle_def,
+            Some(6.0),
+            Some(amount_in_wei),
+            Some(0.0),
+            1000.0,
+        );
+        assert_eq!(
+            cand0.expected_amount_out, 100.0,
+            "T3 (price 0.0): expected_amount_out must equal amount_in exactly"
+        );
+    }
+
+    /// T4 — EDGE (auditor's question): a spot product of exactly 1.0 + 1e-7
+    /// above the profitability threshold must still be ACCEPTED by
+    /// `evaluate_cycle` — there is no rounding cliff at the `s <= 1.0` gate.
+    ///
+    /// Construction (verified with `spot_product` itself before asserting):
+    /// γ = 1 − 30/10_000 = 0.997 per hop (V2 30bps). Hops 0 and 1 have
+    /// equal reserves (ratio 1.0); hop 2 carries the whole imbalance:
+    ///   spot = γ³ · (1) · (1) · (r_out/r_in) = 1.0 + 1e-7
+    ///   ⇒ r_out/r_in = (1 + 1e-7)/γ³ ≈ 1.0090543721255507
+    /// Reserves R = 1e32 wei each make the integer V2 profit positive at the
+    /// golden-section optimum despite the tiny (1e-7) edge.
+    #[test]
+    fn price_scale_t4_edge_spot_product_one_plus_epsilon_is_accepted() {
+        let r = U256::from(10u32).pow(U256::from(32u32)); // 1e32 wei
+        let r2_out =
+            U256::from_dec_str("100905437212555074846173507354624").expect("valid decimal reserve");
+
+        let hops_u256 = vec![(r, r), (r, r), (r, r2_out)];
+
+        // Step 1 — verify the construction with spot_product itself.
+        let r_f64: Vec<(f64, f64)> = hops_u256
+            .iter()
+            .map(|(ri, ro)| (u256_to_f64(ri), u256_to_f64(ro)))
+            .collect();
+        let sp = spot_product(&r_f64, V2_FEE_BPS);
+        assert!(
+            sp > 1.0,
+            "T4 precondition: spot_product {sp} must be strictly > 1.0 (no rounding cliff)"
+        );
+        assert!(
+            (sp - (1.0 + 1e-7)).abs() < 1e-15,
+            "T4 precondition: spot_product {sp} must equal 1.0 + 1e-7"
+        );
+
+        // Step 2 — evaluate_cycle must ACCEPT (return Some) at this edge.
+        let input = EvalInput {
+            hop_reserves: hops_u256,
+            token_a_price_usd: Some(1.0),
+            token_a_decimals: 18,
+            cap_usd: 1e12,
+            fee_bps: V2_FEE_BPS,
+        };
+        let result = evaluate_cycle(&input)
+            .expect("T4: evaluate_cycle must accept spot_product = 1.0 + 1e-7");
+
+        // Deterministic golden-section vector (25 iterations, IEEE-754):
+        // amount_in = 1842007345950290798968832 wei, profit = 83020516236513038 wei.
+        assert_eq!(
+            result.amount_in_wei,
+            U256::from_dec_str("1842007345950290798968832").expect("valid amount_in"),
+            "T4: deterministic golden-section amount_in"
+        );
+        assert_eq!(result.profit_token_a_wei, 83020516236513038i128);
+        assert!(
+            result.amount_out_wei > result.amount_in_wei,
+            "T4: out must exceed in on an accepted cycle"
+        );
+        assert!(
+            result.expected_profit_usd.unwrap_or(0.0) > 0.0,
+            "T4: accepted cycle must carry a positive USD profit"
+        );
     }
 
     // ── ReservesCache::hydrate_from_redis tests ────────────────────────────────
