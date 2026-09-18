@@ -345,6 +345,99 @@ describe("OpportunityDetailTabs (§37)", () => {
     expect(html).toContain("cap insuficiente"); // notes surface
   });
 
+  // ── WO-RISK-VIS: three free wins — simulated_notes / estimation_basis /
+  // target_roi_pct already travel in the payload; the tab now paints them. ──
+
+  it("Simulation WO-RISK-VIS: simulated_notes render as a muted list", () => {
+    const opp = mapToOmniOpportunity(
+      wire({
+        route_metadata: rm2hop,
+        simulated_notes: [
+          "clamp: amount_in capped by max_amount_in_usd",
+          "gas from cached oracle (stale 2s)",
+        ],
+      }),
+    );
+    const html = tab(opp, "simulation");
+    expect(html).toContain("Notes");
+    expect(html).toContain("clamp: amount_in capped by max_amount_in_usd");
+    expect(html).toContain("gas from cached oracle (stale 2s)");
+  });
+
+  it("Simulation WO-RISK-VIS: absent or empty simulated_notes paint nothing", () => {
+    // absent → no Notes block at all (simulation tab carries no other "Notes")
+    const absent = tab(rich(), "simulation");
+    expect(absent).not.toContain(">Notes</p>");
+    // empty array = computed nothing-to-report, also not painted
+    const empty = tab(
+      mapToOmniOpportunity(wire({ route_metadata: rm2hop, simulated_notes: [] })),
+      "simulation",
+    );
+    expect(empty).not.toContain(">Notes</p>");
+  });
+
+  it("Gates WO-RISK-VIS: estimation_basis renders with its explanatory title", () => {
+    const observed = tab(rich(), "gates"); // estimation_basis: "observed-gross"
+    expect(observed).toContain("Estimation Basis");
+    expect(observed).toContain("observed-gross");
+    expect(observed).toContain("gross real grabado");
+
+    const assumed = mapToOmniOpportunity(
+      wire({
+        route_metadata: rm2hop,
+        simulated_target: {
+          target_net_usd: 10,
+          target_roi_pct: null,
+          target_source: "simulation_tab",
+          binding_floor: "roi-unreachable",
+          estimation_basis: "roi-assumed",
+          required_amount_in_usd: 100,
+          cap_amount_in_usd: 5000,
+          suggested_amount_in_usd: 4500,
+          suggested_net_usd: 4.2,
+          suggested_roi_pct: 0.09,
+          meets_target_at_cap: false,
+          notes: [],
+        },
+      }),
+    );
+    const assumedHtml = tab(assumed, "gates");
+    expect(assumedHtml).toContain("roi-assumed");
+    expect(assumedHtml).toContain("piso ROI del operador");
+  });
+
+  it("Gates WO-RISK-VIS: target_roi_pct renders next to target_net; null stays the dash", () => {
+    const html = tab(rich(), "gates"); // target_roi_pct: 0.1
+    expect(html).toContain("Required (target ROI)");
+    expect(html).toContain("0.1000%");
+
+    // null target_roi_pct → label present, honest dash, never a fabricated 0%
+    const nullRoi = tab(
+      mapToOmniOpportunity(
+        wire({
+          route_metadata: rm2hop,
+          simulated_target: {
+            target_net_usd: 10,
+            target_roi_pct: null,
+            target_source: "simulation_tab",
+            binding_floor: "roi-unreachable",
+            estimation_basis: "roi-assumed",
+            required_amount_in_usd: 100,
+            cap_amount_in_usd: 5000,
+            suggested_amount_in_usd: 4500,
+            suggested_net_usd: 4.2,
+            suggested_roi_pct: 0.09,
+            meets_target_at_cap: false,
+            notes: [],
+          },
+        }),
+      ),
+      "gates",
+    );
+    expect(nullRoi).toContain("Required (target ROI)");
+    expect(nullRoi).not.toContain("0.0000%");
+  });
+
   it("Provenance: detected_at null renders the dash — never a fabricated 1970 date", () => {
     const html = tab(
       mapToOmniOpportunity(wire({ route_metadata: rm2hop, detected_at: undefined })),

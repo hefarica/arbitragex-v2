@@ -450,6 +450,19 @@ export function OpportunityDetailTabs({
           }
         />
         <Row label="Simulated At" value={opp.simulated_at} />
+        {/* WO-RISK-VIS: simulated_notes travel in the payload but were never
+            painted. Only when the array exists AND is non-empty (R8: an empty
+            array is a computed "nothing to report", not absent data). */}
+        {opp.simulated_notes != null && opp.simulated_notes.length > 0 && (
+          <div className="mt-2">
+            <p className="text-xs text-muted-foreground uppercase tracking-wide">Notes</p>
+            <ul className="mt-1 list-disc pl-4 text-xs text-muted-foreground">
+              {opp.simulated_notes.map((n, i) => (
+                <li key={i} className="break-all">{n}</li>
+              ))}
+            </ul>
+          </div>
+        )}
         {simCost != null ? (
           <>
             <Row label="Gas (USD)" value={usd4(simCost.gas_usd)} />
@@ -490,6 +503,22 @@ export function OpportunityDetailTabs({
               label="Target Verdict"
               value={target.meets_target_at_cap ? "PASS" : "FAIL"}
             />
+            {/* WO-RISK-VIS: how the required floor was derived — wire-owned value
+                with the operator-facing explanation in the title. */}
+            <Row
+              label="Estimation Basis"
+              value={
+                <span
+                  title={
+                    target.estimation_basis === "observed-gross"
+                      ? "observed-gross: gross real grabado por simulación (piso derivado del gross observado)"
+                      : "roi-assumed: piso ROI del operador asumido (sin gross observado)"
+                  }
+                >
+                  {target.estimation_basis}
+                </span>
+              }
+            />
             {/* §40: observed / required / delta / reason — every value wire-owned
                 except delta, a display subtraction declared in the title (unit
                 conversion of the same magnitude, never a second verdict). */}
@@ -497,6 +526,16 @@ export function OpportunityDetailTabs({
             <Row
               label="Required (target_net)"
               value={target.target_net_usd != null ? usd4(target.target_net_usd) : null}
+            />
+            {/* WO-RISK-VIS: the ROI leg of the required floor, next to its USD
+                twin — null-honest when the wire carries no ROI floor. */}
+            <Row
+              label="Required (target ROI)"
+              value={
+                target.target_roi_pct != null
+                  ? `${target.target_roi_pct.toFixed(4)}%`
+                  : null
+              }
             />
             {target.target_net_usd != null && (
               <Row
