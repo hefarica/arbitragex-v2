@@ -31,13 +31,19 @@
 //!
 //! ## Failure modes (R8 fail-honest)
 //!
-//! - Alchemy down → log `price_worker.alchemy_failed`, all tokens fall to Coingecko.
-//! - Coingecko down / 429 → log `price_worker.coingecko_failed` once, then
-//!   skip Coingecko entirely for `COINGECKO_BACKOFF_SECS` (single
-//!   `price_worker.coingecko_backoff` INFO on transition) instead of
-//!   re-triggering the rate limit every tick; tokens missing from Alchemy stay
-//!   missing in cache; spine cascade falls through to ConfigPriceOracle
-//!   (operator overrides).
+//! - Alchemy 429/5xx → `ProviderBackoff` opens an exponential window
+//!   (1s → 2s → 4s → … cap 60s) during which NO Alchemy request is sent —
+//!   the tick's remaining chunks are skipped early (self-contamination
+//!   guard: a 158-token cache-miss tick must not become 158 Alchemy calls).
+//!   Single `price_worker.alchemy_backoff` INFO per transition in.
+//! - Coingecko 429/5xx → same `ProviderBackoff` mechanism (supersedes the
+//!   fixed CG429-01 300s window). Single `price_worker.coingecko_backoff`
+//!   INFO per transition in.
+//! - On window expiry exactly ONE probe request is allowed (half-open); if
+//!   it fails backoff-worthy the window doubles, on success the breaker
+//!   resets gradually (failure level halved per success).
+//! - Non-rate-limit errors (parse, 4xx other than 429, timeouts) do NOT open
+//!   a window — they keep the pre-existing warn + counter behaviour.
 //! - Both down → cache not updated this tick; existing TTL-bounded entries
 //!   continue serving (≤60s old). After TTL expiry, cache empties and the
 //!   spine cascades to ConfigPriceOracle. NEVER fabricates a price.
@@ -62,7 +68,7 @@ use serde::{Deserialize, Serialize};
 use shared_rs::price_oracle::redis_token_prices_key;
 use shared_rs::trading_config::{redis_key as trading_config_redis_key, TradingConfigState};
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicI64, Ordering};
+use std::sync::atomic::Ordering;
 use std::time::{Duration, Instant};
 use tokio::time::interval;
 use tracing::{debug, info, warn};
@@ -91,26 +97,139 @@ pub const HTTP_TIMEOUT_SECS: u64 = 8;
 /// Lower this if `price_worker.coingecko_failed` rises under sustained
 /// Alchemy outage; the allowlist always survives the cut.
 pub const MAX_PRICED_TOKENS: usize = 300;
-/// Coingecko circuit breaker (CG429-01): after a batch failure (free-tier 429
-/// or any HTTP client error) skip Coingecko entirely for this long instead of
-/// re-triggering the rate limit every tick. Affected tokens keep falling
-/// through to ConfigPriceOracle exactly as on any other Coingecko failure
-/// (R8). A later successful response needs no reset — the window simply
-/// expires.
-pub const COINGECKO_BACKOFF_SECS: i64 = 300;
+/// WO-PRICE-SOVEREIGN-01 f1 — per-provider exponential backoff base window
+/// (1s). Each consecutive backoff-worthy failure (429/5xx) doubles it.
+pub const PRICE_BACKOFF_BASE_MS: u64 = 1_000;
+/// Hard cap of one backoff window: 1s → 2s → 4s → … → 60s, never beyond.
+pub const PRICE_BACKOFF_CAP_MS: u64 = 60_000;
 
-/// Epoch-seconds deadline until which Coingecko attempts are suppressed.
-/// `fetch_max` extends the window while returning the previous value, so the
-/// transition INFO fires exactly once per backoff entry.
-static COINGECKO_BACKOFF_UNTIL: AtomicI64 = AtomicI64::new(0);
-
-/// Current wall-clock epoch seconds. 0 on clock error — degrades to "not in
-/// backoff" (same convention as `host_bindings`).
-fn unix_now_secs() -> i64 {
+/// Current wall-clock epoch milliseconds. 0 on clock error — degrades to "not
+/// in backoff" (same convention as the previous `unix_now_secs` helper).
+fn unix_now_ms() -> u64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs() as i64)
+        .map(|d| d.as_millis() as u64)
         .unwrap_or(0)
+}
+
+/// Exponential backoff circuit breaker for ONE price provider
+/// (WO-PRICE-SOVEREIGN-01 f1). Replaces the fixed CG429-01 Coingecko window
+/// and extends the same protection to Alchemy, whose 429s were being
+/// re-triggered ~158×/tick (self-contamination).
+///
+/// State machine (all transitions pure functions of `now_ms` — no clock and
+/// no network inside, so every behaviour is unit-testable):
+///
+/// ```text
+///   healthy --429/5xx--> window = base·2^(failures-1) [cap 60s]
+///   in-window --now < deadline--> NO request (skip early)
+///   in-window --now >= deadline--> exactly ONE probe request (half-open)
+///        probe --429/5xx--> window doubles (failures += 1)
+///        probe --success--> window cleared, failures /= 2 (gradual reset)
+///   healthy --success--> failures /= 2 (floors at 0)
+/// ```
+///
+/// "Gradual reset": a success HALVES the failure level instead of zeroing it,
+/// so a flapping provider re-enters backoff one exponent below its previous
+/// peak (peak 4s → one success → next window 2s) rather than restarting from
+/// the base window every time; two consecutive successes fully heal.
+#[derive(Debug)]
+pub struct ProviderBackoff {
+    consecutive_failures: u32,
+    /// Epoch-ms deadline until which attempts are suppressed. 0 = healthy.
+    backoff_until_ms: u64,
+    /// Half-open guard: true while the single allowed probe request is in
+    /// flight. Prevents a burst of probes the instant a window expires.
+    probe_in_flight: bool,
+}
+
+impl Default for ProviderBackoff {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl ProviderBackoff {
+    pub fn new() -> Self {
+        Self {
+            consecutive_failures: 0,
+            backoff_until_ms: 0,
+            probe_in_flight: false,
+        }
+    }
+
+    /// May the caller send exactly one request right now? `Ok(())` = yes
+    /// (this is the half-open probe when a window just expired); `Err(
+    /// remaining_ms)` = no, suppress — skip early, do NOT retry.
+    pub fn gate(&mut self, now_ms: u64) -> Result<(), u64> {
+        if self.probe_in_flight {
+            return Err(self.backoff_until_ms.saturating_sub(now_ms));
+        }
+        if now_ms < self.backoff_until_ms {
+            return Err(self.backoff_until_ms - now_ms);
+        }
+        if self.backoff_until_ms > 0 {
+            // Window just expired — this attempt is the single probe.
+            self.probe_in_flight = true;
+        }
+        Ok(())
+    }
+
+    /// Register a successful request: clears any open window and the probe
+    /// flag, halves the failure level (gradual reset — see struct docs).
+    pub fn record_success(&mut self) {
+        self.probe_in_flight = false;
+        self.backoff_until_ms = 0;
+        self.consecutive_failures /= 2;
+    }
+
+    /// Register a failed request. Caller decides (via
+    /// `error_is_backoff_worthy`) whether the failure opens/doubles the
+    /// window; this method always clears the probe flag so the breaker never
+    /// wedges on a non-backoff error mid-probe. Returns the window opened
+    /// (`Some(ms)`) when the failure was backoff-worthy, `None` otherwise.
+    pub fn record_failure(&mut self, now_ms: u64, backoff_worthy: bool) -> Option<u64> {
+        self.probe_in_flight = false;
+        if !backoff_worthy {
+            return None;
+        }
+        self.consecutive_failures = self.consecutive_failures.saturating_add(1);
+        // failures=1 → base (2^0), 2 → 2·base, … capped. Shift width bounded
+        // so it can never overflow u64 before the min() clamps to the cap.
+        let exp = self.consecutive_failures.saturating_sub(1).min(32);
+        let window = PRICE_BACKOFF_BASE_MS
+            .saturating_mul(1u64 << exp)
+            .min(PRICE_BACKOFF_CAP_MS);
+        self.backoff_until_ms = now_ms.saturating_add(window);
+        Some(window)
+    }
+
+    /// True while a backoff window is open (probe-in-flight included).
+    pub fn is_active(&self, now_ms: u64) -> bool {
+        self.probe_in_flight || now_ms < self.backoff_until_ms
+    }
+
+    /// Current consecutive-failure level (diagnostics + tests).
+    pub fn consecutive_failures(&self) -> u32 {
+        self.consecutive_failures
+    }
+}
+
+/// Does this HTTP status open/double a backoff window? Only 429 (rate limit)
+/// and 5xx (provider unhealthy) — a 400 bad-batch or 404 is a permanent
+/// shape error that hammering-with-pauses will never fix.
+fn status_is_backoff_worthy(status: Option<reqwest::StatusCode>) -> bool {
+    match status {
+        Some(s) => s.as_u16() == 429 || s.is_server_error(),
+        None => false,
+    }
+}
+
+/// `reqwest::error::Error` surfaced through `anyhow` (the `error_for_status`
+/// path carries the HTTP status; transport errors carry none).
+fn error_is_backoff_worthy(e: &anyhow::Error) -> bool {
+    e.downcast_ref::<reqwest::Error>()
+        .is_some_and(|re| status_is_backoff_worthy(re.status()))
 }
 
 // -------- Alchemy request/response types --------
@@ -334,6 +453,28 @@ impl PriceWorkerConfig {
 pub struct PriceWorker {
     cfg: PriceWorkerConfig,
     http: reqwest::Client,
+    /// WO-PRICE-SOVEREIGN-01 f1 — per-provider circuit breakers. Mutex (never
+    /// contended: one worker task per chain) so `run_one_tick(&self)` can
+    /// gate + record without taking `&mut self`.
+    alchemy_backoff: std::sync::Mutex<ProviderBackoff>,
+    coingecko_backoff: std::sync::Mutex<ProviderBackoff>,
+}
+
+/// Which provider a fetch went to — selects the breaker instance, the
+/// heartbeat counters and the log event names.
+#[derive(Debug, Clone, Copy)]
+enum PriceProvider {
+    Alchemy,
+    Coingecko,
+}
+
+impl PriceProvider {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Alchemy => "alchemy",
+            Self::Coingecko => "coingecko",
+        }
+    }
 }
 
 impl PriceWorker {
@@ -342,7 +483,83 @@ impl PriceWorker {
             .timeout(Duration::from_secs(HTTP_TIMEOUT_SECS))
             .user_agent("arbitragex-v2-price-worker/0.1")
             .build()?;
-        Ok(Self { cfg, http })
+        Ok(Self {
+            cfg,
+            http,
+            alchemy_backoff: std::sync::Mutex::new(ProviderBackoff::new()),
+            coingecko_backoff: std::sync::Mutex::new(ProviderBackoff::new()),
+        })
+    }
+
+    fn backoff_for(&self, provider: PriceProvider) -> &std::sync::Mutex<ProviderBackoff> {
+        match provider {
+            PriceProvider::Alchemy => &self.alchemy_backoff,
+            PriceProvider::Coingecko => &self.coingecko_backoff,
+        }
+    }
+
+    /// May we send ONE request to this provider right now? False = backoff
+    /// window open → the caller must skip early (whole remaining loop, not
+    /// just this chunk). Poisoned lock = a panic while holding it; the state
+    /// machine is still memory-valid, recover it (same stance as counters).
+    fn gate_provider(&self, provider: PriceProvider, now_ms: u64) -> bool {
+        let mut bo = self
+            .backoff_for(provider)
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        bo.gate(now_ms).is_ok()
+    }
+
+    /// Register a successful provider request: breaker reset (gradual) +
+    /// active-gauge to 0.
+    fn record_provider_success(&self, provider: PriceProvider) {
+        let mut bo = self
+            .backoff_for(provider)
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        bo.record_success();
+        let c = crate::counters::chain_counters(self.cfg.chain_id);
+        match provider {
+            PriceProvider::Alchemy => c.price_alchemy_backoff_active.store(0, Ordering::Relaxed),
+            PriceProvider::Coingecko => {
+                c.price_coingecko_backoff_active.store(0, Ordering::Relaxed)
+            }
+        }
+    }
+
+    /// Register a failed provider request. Returns `Some(window_ms)` when the
+    /// failure was backoff-worthy (429/5xx) and opened/doubled a window —
+    /// the caller logs the transition INFO. Bumps the per-provider
+    /// `*_backoff_total` counter and sets the active gauge on entry.
+    fn record_provider_failure(
+        &self,
+        provider: PriceProvider,
+        e: &anyhow::Error,
+        now_ms: u64,
+    ) -> Option<u64> {
+        let worthy = error_is_backoff_worthy(e);
+        let mut bo = self
+            .backoff_for(provider)
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let window = bo.record_failure(now_ms, worthy);
+        drop(bo);
+        if window.is_some() {
+            let c = crate::counters::chain_counters(self.cfg.chain_id);
+            match provider {
+                PriceProvider::Alchemy => {
+                    c.price_alchemy_backoff_total
+                        .fetch_add(1, Ordering::Relaxed);
+                    c.price_alchemy_backoff_active.store(1, Ordering::Relaxed);
+                }
+                PriceProvider::Coingecko => {
+                    c.price_coingecko_backoff_total
+                        .fetch_add(1, Ordering::Relaxed);
+                    c.price_coingecko_backoff_active.store(1, Ordering::Relaxed);
+                }
+            }
+        }
+        window
     }
 
     /// Run forever — never returns. Caller should `tokio::spawn` it.
@@ -435,11 +652,18 @@ impl PriceWorker {
         }
 
         // Tier 1: Alchemy batch (fills only what Chainlink did NOT already price).
+        // Circuit breaker (WO-PRICE-SOVEREIGN-01 f1): one 429/5xx opens an
+        // exponential window; while it is open the loop breaks immediately —
+        // a 158-token cache-miss tick must NOT become 158 Alchemy calls.
         let mut alchemy_hits = 0usize;
         if self.cfg.alchemy_api_key.is_some() {
             for chunk in tokens.chunks(MAX_BATCH_SIZE) {
+                if !self.gate_provider(PriceProvider::Alchemy, unix_now_ms()) {
+                    break; // backoff active — skip early, no request, no retry.
+                }
                 match self.fetch_alchemy(chunk).await {
                     Ok(map) => {
+                        self.record_provider_success(PriceProvider::Alchemy);
                         for (sym, price) in map {
                             if let std::collections::hash_map::Entry::Vacant(e) = prices.entry(sym)
                             {
@@ -449,9 +673,20 @@ impl PriceWorker {
                         }
                     }
                     Err(e) => {
+                        let backoff_ms =
+                            self.record_provider_failure(PriceProvider::Alchemy, &e, unix_now_ms());
                         counters()
                             .price_worker_errors
                             .fetch_add(1, Ordering::Relaxed);
+                        if let Some(retry_in_ms) = backoff_ms {
+                            info!(
+                                event = "price_worker.alchemy_backoff",
+                                chain_id = self.cfg.chain_id,
+                                provider = PriceProvider::Alchemy.as_str(),
+                                retry_in_ms,
+                                "Alchemy entering exponential backoff; remaining tokens fall through to Coingecko/ConfigPriceOracle"
+                            );
+                        }
                         warn!(
                             event = "price_worker.alchemy_failed",
                             chain_id = self.cfg.chain_id,
@@ -475,16 +710,18 @@ impl PriceWorker {
         let mut coingecko_hits = 0usize;
         if !missing.is_empty() {
             for chunk in missing.chunks(MAX_BATCH_SIZE) {
-                // Circuit breaker (CG429-01): skip Coingecko entirely while the
-                // backoff window opened by a previous batch failure is still
-                // active — no request, no WARN. The missing tokens simply stay
-                // unpriced and cascade to ConfigPriceOracle downstream (R8).
-                if unix_now_secs() < COINGECKO_BACKOFF_UNTIL.load(Ordering::Relaxed) {
+                // Circuit breaker (WO-PRICE-SOVEREIGN-01 f1, supersedes the
+                // fixed CG429-01 window): skip Coingecko entirely while the
+                // exponential backoff window is active — no request, no WARN.
+                // The missing tokens simply stay unpriced and cascade to
+                // ConfigPriceOracle downstream (R8).
+                if !self.gate_provider(PriceProvider::Coingecko, unix_now_ms()) {
                     break;
                 }
                 let chunk_owned: Vec<TokenRef> = chunk.iter().map(|t| (*t).clone()).collect();
                 match self.fetch_coingecko(&chunk_owned).await {
                     Ok(map) => {
+                        self.record_provider_success(PriceProvider::Coingecko);
                         for (sym, price) in map {
                             // Don't overwrite an existing Alchemy hit. Use Entry
                             // API for clippy::map_entry compliance + clearer intent.
@@ -496,20 +733,23 @@ impl PriceWorker {
                         }
                     }
                     Err(e) => {
+                        let backoff_ms = self.record_provider_failure(
+                            PriceProvider::Coingecko,
+                            &e,
+                            unix_now_ms(),
+                        );
                         counters()
                             .price_worker_errors
                             .fetch_add(1, Ordering::Relaxed);
-                        // Open the backoff window. INFO only when this failure
-                        // actually transitioned us in (previous deadline was
-                        // already expired) — ops sees the state once, not per tick.
-                        let prev = COINGECKO_BACKOFF_UNTIL
-                            .fetch_max(unix_now_secs() + COINGECKO_BACKOFF_SECS, Ordering::Relaxed);
-                        if unix_now_secs() >= prev {
+                        // INFO only when this failure actually opened/doubled a
+                        // window — ops sees the state once, not per tick.
+                        if let Some(retry_in_ms) = backoff_ms {
                             info!(
                                 event = "price_worker.coingecko_backoff",
                                 chain_id = self.cfg.chain_id,
-                                retry_in_secs = COINGECKO_BACKOFF_SECS,
-                                "Coingecko entering backoff; affected tokens fall through to ConfigPriceOracle"
+                                provider = PriceProvider::Coingecko.as_str(),
+                                retry_in_ms,
+                                "Coingecko entering exponential backoff; affected tokens fall through to ConfigPriceOracle"
                             );
                         }
                         warn!(
@@ -1262,6 +1502,132 @@ mod tests {
         let tokens = vec![token_ref("WETH", "0x01")];
         let result = worker.fetch_coingecko(&tokens).await;
         assert!(result.is_err());
+    }
+
+    // --------------- ProviderBackoff state machine (WO-PRICE-SOVEREIGN-01 f1) ---------------
+    //
+    // Pure unit tests: the state machine takes `now_ms` as a parameter, so
+    // every transition, the cap and the gradual reset are verified with NO
+    // clock and NO network.
+
+    #[test]
+    fn backoff_doubles_per_consecutive_failure_and_caps_at_60s() {
+        let mut bo = ProviderBackoff::new();
+        let t0 = 1_000_000u64;
+        // First backoff-worthy failure opens the base window.
+        assert_eq!(bo.record_failure(t0, true), Some(PRICE_BACKOFF_BASE_MS));
+        assert_eq!(bo.record_failure(t0, true), Some(2_000));
+        assert_eq!(bo.record_failure(t0, true), Some(4_000));
+        assert_eq!(bo.record_failure(t0, true), Some(8_000));
+        // Keep failing: window must double but NEVER exceed the cap.
+        let mut last = 0u64;
+        for _ in 0..20 {
+            if let Some(w) = bo.record_failure(t0, true) {
+                assert!(w >= last, "window must be non-decreasing");
+                assert!(w <= PRICE_BACKOFF_CAP_MS, "window {w} exceeds cap");
+                last = w;
+            }
+        }
+        assert_eq!(last, PRICE_BACKOFF_CAP_MS, "window must reach the cap");
+    }
+
+    #[test]
+    fn backoff_non_worthy_failure_does_not_open_window() {
+        let mut bo = ProviderBackoff::new();
+        let t0 = 5_000u64;
+        assert_eq!(bo.record_failure(t0, false), None);
+        assert!(
+            !bo.is_active(t0),
+            "non-backoff failure must not open a window"
+        );
+        assert!(
+            bo.gate(t0).is_ok(),
+            "still healthy after non-backoff failure"
+        );
+        assert_eq!(bo.consecutive_failures(), 0);
+    }
+
+    #[test]
+    fn backoff_blocks_during_window_then_allows_exactly_one_probe() {
+        let mut bo = ProviderBackoff::new();
+        let t0 = 5_000u64;
+        assert!(bo.gate(t0).is_ok());
+        assert_eq!(bo.record_failure(t0, true), Some(PRICE_BACKOFF_BASE_MS));
+        // Inside the window: suppressed, and `gate` reports the remainder.
+        assert_eq!(bo.gate(t0 + PRICE_BACKOFF_BASE_MS - 1), Err(1));
+        assert!(bo.is_active(t0 + PRICE_BACKOFF_BASE_MS - 1));
+        // Window expired: the FIRST attempt is the single half-open probe…
+        assert!(bo.gate(t0 + PRICE_BACKOFF_BASE_MS).is_ok());
+        // …and no second probe is allowed until the first one resolves.
+        assert!(
+            bo.gate(t0 + PRICE_BACKOFF_BASE_MS + 500).is_err(),
+            "probe burst must be suppressed"
+        );
+        // Probe succeeded → healthy again immediately (gradual reset path).
+        bo.record_success();
+        assert!(bo.gate(t0 + PRICE_BACKOFF_BASE_MS + 600).is_ok());
+        assert!(!bo.is_active(t0 + PRICE_BACKOFF_BASE_MS + 600));
+    }
+
+    #[test]
+    fn backoff_failed_probe_doubles_the_window() {
+        let mut bo = ProviderBackoff::new();
+        let t0 = 10_000u64;
+        bo.record_failure(t0, true); // 1s window → until 11_000
+        let t1 = t0 + 1_000; // expiry → probe
+        assert!(bo.gate(t1).is_ok());
+        // Probe fails backoff-worthy → window doubles (2s), not restarts at 1s.
+        assert_eq!(bo.record_failure(t1, true), Some(2_000));
+        assert!(
+            bo.gate(t1 + 1_999).is_err(),
+            "doubled window must still block"
+        );
+    }
+
+    #[test]
+    fn backoff_resets_gradually_on_success() {
+        let mut bo = ProviderBackoff::new();
+        let t0 = 10_000u64;
+        bo.record_failure(t0, true); // 1s, failures=1
+        bo.record_failure(t0, true); // 2s, failures=2
+        bo.record_failure(t0, true); // 4s, failures=3
+        assert_eq!(bo.consecutive_failures(), 3);
+        bo.record_success(); // window cleared, failures = 3/2 = 1 (halved)
+        assert!(bo.gate(t0).is_ok());
+        // Next failure re-enters one exponent BELOW the 4s peak.
+        assert_eq!(bo.record_failure(t0, true), Some(2_000));
+        // Two more successes shed the remaining levels → fully healed.
+        bo.record_success();
+        bo.record_success();
+        assert_eq!(bo.consecutive_failures(), 0);
+        assert_eq!(bo.record_failure(t0, true), Some(PRICE_BACKOFF_BASE_MS));
+        // Successes while already healthy floor at zero (no underflow).
+        bo.record_success();
+        bo.record_success();
+        assert_eq!(bo.consecutive_failures(), 0);
+    }
+
+    #[test]
+    fn backoff_classifier_accepts_only_429_and_5xx() {
+        use reqwest::StatusCode;
+        assert!(status_is_backoff_worthy(Some(
+            StatusCode::TOO_MANY_REQUESTS
+        )));
+        assert!(status_is_backoff_worthy(Some(
+            StatusCode::INTERNAL_SERVER_ERROR
+        )));
+        assert!(status_is_backoff_worthy(Some(StatusCode::BAD_GATEWAY)));
+        assert!(status_is_backoff_worthy(Some(
+            StatusCode::SERVICE_UNAVAILABLE
+        )));
+        assert!(!status_is_backoff_worthy(Some(StatusCode::BAD_REQUEST)));
+        assert!(!status_is_backoff_worthy(Some(StatusCode::UNAUTHORIZED)));
+        assert!(!status_is_backoff_worthy(Some(StatusCode::NOT_FOUND)));
+        assert!(!status_is_backoff_worthy(None));
+        // Non-reqwest errors (and reqwest transport errors, which carry no
+        // status) are NOT backoff-worthy per spec.
+        let parse_err = anyhow::anyhow!("json parse blew up");
+        assert!(!error_is_backoff_worthy(&parse_err));
     }
 
     // --------------- url helpers ---------------

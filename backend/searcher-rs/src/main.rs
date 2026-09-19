@@ -822,8 +822,21 @@ async fn main() -> anyhow::Result<()> {
             price_period_secs,
             price_alchemy_key,
         );
+        let has_db_pool = price_db.is_some();
+        let has_rpc_url = price_rpc_url.is_some();
         if let (Some(db), Some(url)) = (price_db, price_rpc_url) {
             cfg = cfg.with_chainlink(db, url);
+        } else {
+            // WO-PRICE-SOVEREIGN-01 f1: this skip was SILENT — a missing PG
+            // pool (e.g. `arbx_rw` auth failure at boot) zeroed chainlink_hits
+            // with no log line to grep. Fail-honest: say it happened and why.
+            warn!(
+                event = "price_worker.chainlink_disabled",
+                chain_id = price_chain,
+                has_db_pool,
+                has_rpc_url,
+                "Chainlink Tier-0 disabled (no PG pool or no RPC_HTTP_<chain> URL); cascade degrades to Alchemy/Coingecko/Config"
+            );
         }
         cfg.coingecko_api_key = price_coingecko_key;
         match workers::price_worker::PriceWorker::new(cfg) {
