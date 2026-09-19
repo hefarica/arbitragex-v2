@@ -1,3 +1,4 @@
+---
 name: arbx-d-d038-advanced-bitcoin-stacks-babylon
 description: "Post-Doc skill alineada al monorepo hefarica/arbitragex-v2 (Multi-Chain, L2 & Bridges). Se activa cuando: BTC settlement. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

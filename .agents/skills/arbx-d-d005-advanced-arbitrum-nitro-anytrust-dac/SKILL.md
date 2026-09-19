@@ -1,3 +1,4 @@
+---
 name: arbx-d-d005-advanced-arbitrum-nitro-anytrust-dac
 description: "Post-Doc skill alineada al monorepo hefarica/arbitragex-v2 (Multi-Chain, L2 & Bridges). Se activa cuando: Stylus WASM research. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

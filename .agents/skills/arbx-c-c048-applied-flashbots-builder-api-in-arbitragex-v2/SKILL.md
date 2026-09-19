@@ -1,3 +1,4 @@
+---
 name: arbx-c-c048-applied-flashbots-builder-api-in-arbitragex-v2
 description: "Staff Engineer skill alineada al monorepo hefarica/arbitragex-v2 (MEV, Mempool & Bundle Submission). Se activa cuando: arbitragex builder integration. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

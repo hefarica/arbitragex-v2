@@ -1,3 +1,4 @@
+---
 name: arbx-d-d018-applied-linea-taiko-based-rollup-in-arbitragex-v2
 description: "Staff Engineer skill alineada al monorepo hefarica/arbitragex-v2 (Multi-Chain, L2 & Bridges). Se activa cuando: preconfirmation strategy. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

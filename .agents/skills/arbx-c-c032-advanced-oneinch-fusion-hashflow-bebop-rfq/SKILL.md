@@ -1,3 +1,4 @@
+---
 name: arbx-c-c032-advanced-oneinch-fusion-hashflow-bebop-rfq
 description: "Post-Doc skill alineada al monorepo hefarica/arbitragex-v2 (MEV, Mempool & Bundle Submission). Se activa cuando: oFlow detection patterns. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

@@ -1,3 +1,4 @@
+---
 name: arbx-d-d039-applied-bitcoin-stacks-babylon-in-arbitragex-v2
 description: "Staff Engineer skill alineada al monorepo hefarica/arbitragex-v2 (Multi-Chain, L2 & Bridges). Se activa cuando: arbitragex BTC-aware route. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

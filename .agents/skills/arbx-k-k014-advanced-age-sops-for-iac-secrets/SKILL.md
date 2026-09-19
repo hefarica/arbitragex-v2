@@ -1,3 +1,4 @@
+---
 name: arbx-k-k014-advanced-age-sops-for-iac-secrets
 description: "Post-Doc skill alineada al monorepo hefarica/arbitragex-v2 (Security & Cryptography Applied). Se activa cuando: threshold age research. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

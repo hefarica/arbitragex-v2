@@ -1,3 +1,4 @@
+---
 name: arbx-c-c058-block-builder-tip-optimization
 description: "PhD/Master skill alineada al monorepo hefarica/arbitragex-v2 (MEV, Mempool & Bundle Submission). Se activa cuando: EV per-block calc. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

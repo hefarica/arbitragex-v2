@@ -1,3 +1,4 @@
+---
 name: arbx-j-j021-applied-redis-cluster-resharding-sentinel-in-arbitragex-v2
 description: "Staff Engineer skill alineada al monorepo hefarica/arbitragex-v2 (Database & Storage (Postgres/Redis/Timescale)). Se activa cuando: HA hot standby. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

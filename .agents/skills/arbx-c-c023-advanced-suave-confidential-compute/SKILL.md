@@ -1,3 +1,4 @@
+---
 name: arbx-c-c023-advanced-suave-confidential-compute
 description: "Post-Doc skill alineada al monorepo hefarica/arbitragex-v2 (MEV, Mempool & Bundle Submission). Se activa cuando: kettle architecture. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

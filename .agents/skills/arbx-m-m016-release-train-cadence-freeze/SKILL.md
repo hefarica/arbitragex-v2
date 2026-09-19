@@ -1,3 +1,4 @@
+---
 name: arbx-m-m016-release-train-cadence-freeze
 description: "PhD/Master skill alineada al monorepo hefarica/arbitragex-v2 (Doctrine, Process & Release Engineering). Se activa cuando: pre-release freeze. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

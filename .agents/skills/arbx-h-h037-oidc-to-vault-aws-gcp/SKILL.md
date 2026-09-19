@@ -1,3 +1,4 @@
+---
 name: arbx-h-h037-oidc-to-vault-aws-gcp
 description: "PhD/Master skill alineada al monorepo hefarica/arbitragex-v2 (CI/CD Doctrinal & DevSecOps). Se activa cuando: short-lived creds. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

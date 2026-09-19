@@ -1,3 +1,4 @@
+---
 name: arbx-m-m005-advanced-pr-hygiene-forensic-reports
 description: "Post-Doc skill alineada al monorepo hefarica/arbitragex-v2 (Doctrine, Process & Release Engineering). Se activa cuando: mergeStateStatus math. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

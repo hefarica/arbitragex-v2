@@ -1,3 +1,4 @@
+---
 name: arbx-l-l006-applied-slippage-modeling-historical-mempool-in-arbitragex-v2
 description: "Staff Engineer skill alineada al monorepo hefarica/arbitragex-v2 (Risk, Backtesting & Quant Engineering). Se activa cuando: gas-adjusted backtester. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

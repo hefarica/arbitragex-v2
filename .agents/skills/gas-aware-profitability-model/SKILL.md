@@ -1,3 +1,8 @@
+---
+name: gas-aware-profitability-model
+description: "Local ArbitrageX specialist skill: gas-aware-profitability-model."
+---
+
 # Gas-Aware Profitability Model
 
 ## Propósito

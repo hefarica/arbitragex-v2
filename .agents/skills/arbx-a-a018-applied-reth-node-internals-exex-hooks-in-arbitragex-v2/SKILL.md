@@ -1,3 +1,4 @@
+---
 name: arbx-a-a018-applied-reth-node-internals-exex-hooks-in-arbitragex-v2
 description: "Staff Engineer skill alineada al monorepo hefarica/arbitragex-v2 (Rust Systems & Searcher Engine). Se activa cuando: embedded indexer. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

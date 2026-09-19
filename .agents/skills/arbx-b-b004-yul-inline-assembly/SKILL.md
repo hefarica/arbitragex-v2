@@ -1,3 +1,4 @@
+---
 name: arbx-b-b004-yul-inline-assembly
 description: "PhD/Master skill alineada al monorepo hefarica/arbitragex-v2 (Smart Contracts, Solidity & Auditing). Se activa cuando: mload/mstore patterns. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

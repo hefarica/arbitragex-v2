@@ -1,3 +1,4 @@
+---
 name: arbx-b-b002-advanced-solidity-08x-custom-errors-viair
 description: "Post-Doc skill alineada al monorepo hefarica/arbitragex-v2 (Smart Contracts, Solidity & Auditing). Se activa cuando: memory safety analyzer. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

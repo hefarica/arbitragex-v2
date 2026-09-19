@@ -1,3 +1,4 @@
+---
 name: arbx-b-b019-echidna-property-based-fuzzing
 description: "PhD/Master skill alineada al monorepo hefarica/arbitragex-v2 (Smart Contracts, Solidity & Auditing). Se activa cuando: YAML config optimization. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

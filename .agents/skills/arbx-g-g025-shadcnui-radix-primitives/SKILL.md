@@ -1,3 +1,4 @@
+---
 name: arbx-g-g025-shadcnui-radix-primitives
 description: "PhD/Master skill alineada al monorepo hefarica/arbitragex-v2 (Frontend Doctrinal (Next.js + Playwright)). Se activa cuando: variant composition. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

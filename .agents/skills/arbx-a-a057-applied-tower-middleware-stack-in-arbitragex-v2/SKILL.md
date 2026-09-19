@@ -1,3 +1,4 @@
+---
 name: arbx-a-a057-applied-tower-middleware-stack-in-arbitragex-v2
 description: "Staff Engineer skill alineada al monorepo hefarica/arbitragex-v2 (Rust Systems & Searcher Engine). Se activa cuando: api-server hardening. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

@@ -1,3 +1,8 @@
+---
+name: 12-design-system-engineer
+description: "Local ArbitrageX specialist skill: 12-design-system-engineer."
+---
+
 # Skill 12: Design System Engineer
 
 ## 1. Propósito

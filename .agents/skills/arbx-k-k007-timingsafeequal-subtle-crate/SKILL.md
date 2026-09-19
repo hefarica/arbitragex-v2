@@ -1,3 +1,4 @@
+---
 name: arbx-k-k007-timingsafeequal-subtle-crate
 description: "PhD/Master skill alineada al monorepo hefarica/arbitragex-v2 (Security & Cryptography Applied). Se activa cuando: constant-time compare. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

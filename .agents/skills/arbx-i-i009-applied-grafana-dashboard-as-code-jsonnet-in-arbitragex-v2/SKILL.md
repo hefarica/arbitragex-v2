@@ -1,3 +1,4 @@
+---
 name: arbx-i-i009-applied-grafana-dashboard-as-code-jsonnet-in-arbitragex-v2
 description: "Staff Engineer skill alineada al monorepo hefarica/arbitragex-v2 (Observability & SRE). Se activa cuando: Topological Yield realtime. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

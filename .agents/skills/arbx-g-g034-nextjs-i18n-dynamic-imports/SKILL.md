@@ -1,3 +1,4 @@
+---
 name: arbx-g-g034-nextjs-i18n-dynamic-imports
 description: "PhD/Master skill alineada al monorepo hefarica/arbitragex-v2 (Frontend Doctrinal (Next.js + Playwright)). Se activa cuando: app-router locale. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

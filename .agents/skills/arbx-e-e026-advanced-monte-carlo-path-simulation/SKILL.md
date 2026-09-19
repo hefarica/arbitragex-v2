@@ -1,3 +1,4 @@
+---
 name: arbx-e-e026-advanced-monte-carlo-path-simulation
 description: "Post-Doc skill alineada al monorepo hefarica/arbitragex-v2 (AMM Math & Quantitative DeFi). Se activa cuando: importance sampling. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

@@ -1,3 +1,4 @@
+---
 name: arbx-h-h046-runner-hardening-stride
 description: "PhD/Master skill alineada al monorepo hefarica/arbitragex-v2 (CI/CD Doctrinal & DevSecOps). Se activa cuando: network egress rules. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

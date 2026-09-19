@@ -1,3 +1,4 @@
+---
 name: arbx-k-k011-advanced-vault-transit-dynamic-db-creds
 description: "Post-Doc skill alineada al monorepo hefarica/arbitragex-v2 (Security & Cryptography Applied). Se activa cuando: TTL=1h rotation. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

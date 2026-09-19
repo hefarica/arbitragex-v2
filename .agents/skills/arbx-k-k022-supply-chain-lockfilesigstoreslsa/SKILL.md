@@ -1,3 +1,4 @@
+---
 name: arbx-k-k022-supply-chain-lockfilesigstoreslsa
 description: "PhD/Master skill alineada al monorepo hefarica/arbitragex-v2 (Security & Cryptography Applied). Se activa cuando: dependency confusion. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

@@ -1,3 +1,8 @@
+---
+name: ternary-search-trade-size-optimizer
+description: "Local ArbitrageX specialist skill: ternary-search-trade-size-optimizer."
+---
+
 # Ternary Search Trade Size Optimizer
 
 ## Propósito

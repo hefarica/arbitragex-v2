@@ -1,3 +1,4 @@
+---
 name: arbx-a-a044-advanced-rust-lock-free-crossbeam
 description: "Post-Doc skill alineada al monorepo hefarica/arbitragex-v2 (Rust Systems & Searcher Engine). Se activa cuando: C11 memory model. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

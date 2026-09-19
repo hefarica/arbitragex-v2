@@ -1,3 +1,4 @@
+---
 name: arbx-c-c034-validator-mev-boost-adoption
 description: "PhD/Master skill alineada al monorepo hefarica/arbitragex-v2 (MEV, Mempool & Bundle Submission). Se activa cuando: builder market analysis. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

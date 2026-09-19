@@ -1,3 +1,4 @@
+---
 name: arbx-b-b044-advanced-aave-v3-flashloan-callbacks
 description: "Post-Doc skill alineada al monorepo hefarica/arbitragex-v2 (Smart Contracts, Solidity & Auditing). Se activa cuando: cross-chain Flash research. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

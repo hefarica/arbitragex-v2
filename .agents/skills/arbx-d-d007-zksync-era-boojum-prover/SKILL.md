@@ -1,3 +1,4 @@
+---
 name: arbx-d-d007-zksync-era-boojum-prover
 description: "PhD/Master skill alineada al monorepo hefarica/arbitragex-v2 (Multi-Chain, L2 & Bridges). Se activa cuando: STARK→SNARK wrap. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

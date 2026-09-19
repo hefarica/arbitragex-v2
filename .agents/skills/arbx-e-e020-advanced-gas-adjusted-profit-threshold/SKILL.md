@@ -1,3 +1,4 @@
+---
 name: arbx-e-e020-advanced-gas-adjusted-profit-threshold
 description: "Post-Doc skill alineada al monorepo hefarica/arbitragex-v2 (AMM Math & Quantitative DeFi). Se activa cuando: EIP-1559 fee models. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

@@ -1,3 +1,4 @@
+---
 name: arbx-e-e034-hmm-regime-detection
 description: "PhD/Master skill alineada al monorepo hefarica/arbitragex-v2 (AMM Math & Quantitative DeFi). Se activa cuando: latent state inference. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

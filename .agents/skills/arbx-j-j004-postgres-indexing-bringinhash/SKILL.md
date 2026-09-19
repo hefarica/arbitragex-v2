@@ -1,3 +1,4 @@
+---
 name: arbx-j-j004-postgres-indexing-bringinhash
 description: "PhD/Master skill alineada al monorepo hefarica/arbitragex-v2 (Database & Storage (Postgres/Redis/Timescale)). Se activa cuando: per-query choice. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

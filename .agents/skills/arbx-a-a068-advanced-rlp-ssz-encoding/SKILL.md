@@ -1,3 +1,4 @@
+---
 name: arbx-a-a068-advanced-rlp-ssz-encoding
 description: "Post-Doc skill alineada al monorepo hefarica/arbitragex-v2 (Rust Systems & Searcher Engine). Se activa cuando: ssz-rs research. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

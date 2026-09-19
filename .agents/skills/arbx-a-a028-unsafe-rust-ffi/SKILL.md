@@ -1,3 +1,4 @@
+---
 name: arbx-a-a028-unsafe-rust-ffi
 description: "PhD/Master skill alineada al monorepo hefarica/arbitragex-v2 (Rust Systems & Searcher Engine). Se activa cuando: bindgen cxx soundness. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

@@ -1,3 +1,4 @@
+---
 name: arbx-i-i013-tempo-tail-based-sampling
 description: "PhD/Master skill alineada al monorepo hefarica/arbitragex-v2 (Observability & SRE). Se activa cuando: sample on errors. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

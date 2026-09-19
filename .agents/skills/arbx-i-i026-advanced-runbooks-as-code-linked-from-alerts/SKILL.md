@@ -1,3 +1,4 @@
+---
 name: arbx-i-i026-advanced-runbooks-as-code-linked-from-alerts
 description: "Post-Doc skill alineada al monorepo hefarica/arbitragex-v2 (Observability & SRE). Se activa cuando: postmortem template. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

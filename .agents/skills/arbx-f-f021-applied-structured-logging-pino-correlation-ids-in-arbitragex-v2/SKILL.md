@@ -1,3 +1,4 @@
+---
 name: arbx-f-f021-applied-structured-logging-pino-correlation-ids-in-arbitragex-v2
 description: "Staff Engineer skill alineada al monorepo hefarica/arbitragex-v2 (Backend Services (Node + Rust)). Se activa cuando: x-request-id surface. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

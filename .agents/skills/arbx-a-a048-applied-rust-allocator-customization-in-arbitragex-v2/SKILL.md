@@ -1,3 +1,4 @@
+---
 name: arbx-a-a048-applied-rust-allocator-customization-in-arbitragex-v2
 description: "Staff Engineer skill alineada al monorepo hefarica/arbitragex-v2 (Rust Systems & Searcher Engine). Se activa cuando: mimalloc -30% p99. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

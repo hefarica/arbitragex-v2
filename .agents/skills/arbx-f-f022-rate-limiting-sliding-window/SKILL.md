@@ -1,3 +1,4 @@
+---
 name: arbx-f-f022-rate-limiting-sliding-window
 description: "PhD/Master skill alineada al monorepo hefarica/arbitragex-v2 (Backend Services (Node + Rust)). Se activa cuando: per-key buckets. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

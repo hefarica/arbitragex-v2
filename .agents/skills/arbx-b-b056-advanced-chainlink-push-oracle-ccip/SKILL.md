@@ -1,3 +1,4 @@
+---
 name: arbx-b-b056-advanced-chainlink-push-oracle-ccip
 description: "Post-Doc skill alineada al monorepo hefarica/arbitragex-v2 (Smart Contracts, Solidity & Auditing). Se activa cuando: CCIP risk management. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

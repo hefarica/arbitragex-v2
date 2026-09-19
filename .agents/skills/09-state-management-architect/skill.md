@@ -1,3 +1,8 @@
+---
+name: 09-state-management-architect
+description: "Local ArbitrageX specialist skill: 09-state-management-architect."
+---
+
 # Skill 09: State Management Architect
 
 ## 1. Propósito

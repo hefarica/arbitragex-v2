@@ -1,3 +1,4 @@
+---
 name: arbx-c-c014-advanced-jit-liquidity-uni-v3
 description: "Post-Doc skill alineada al monorepo hefarica/arbitragex-v2 (MEV, Mempool & Bundle Submission). Se activa cuando: optimal range width. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

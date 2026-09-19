@@ -1,3 +1,4 @@
+---
 name: arbx-c-c002-advanced-mempool-websocket-subscription
 description: "Post-Doc skill alineada al monorepo hefarica/arbitragex-v2 (MEV, Mempool & Bundle Submission). Se activa cuando: bloom dedup tuning. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

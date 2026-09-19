@@ -1,3 +1,4 @@
+---
 name: arbx-i-i034-on-call-rotations-escalation
 description: "PhD/Master skill alineada al monorepo hefarica/arbitragex-v2 (Observability & SRE). Se activa cuando: paging policy. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

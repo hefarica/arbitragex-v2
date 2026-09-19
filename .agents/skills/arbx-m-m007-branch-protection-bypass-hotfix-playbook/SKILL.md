@@ -1,3 +1,4 @@
+---
 name: arbx-m-m007-branch-protection-bypass-hotfix-playbook
 description: "PhD/Master skill alineada al monorepo hefarica/arbitragex-v2 (Doctrine, Process & Release Engineering). Se activa cuando: emergency procedure. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

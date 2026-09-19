@@ -1,3 +1,4 @@
+---
 name: arbx-c-c013-jit-liquidity-uni-v3
 description: "PhD/Master skill alineada al monorepo hefarica/arbitragex-v2 (MEV, Mempool & Bundle Submission). Se activa cuando: mint→swap→burn one block. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

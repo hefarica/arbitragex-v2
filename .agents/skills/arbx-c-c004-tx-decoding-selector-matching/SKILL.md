@@ -1,3 +1,4 @@
+---
 name: arbx-c-c004-tx-decoding-selector-matching
 description: "PhD/Master skill alineada al monorepo hefarica/arbitragex-v2 (MEV, Mempool & Bundle Submission). Se activa cuando: 4byte signature DB. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

@@ -1,3 +1,4 @@
+---
 name: arbx-c-c035-advanced-validator-mev-boost-adoption
 description: "Post-Doc skill alineada al monorepo hefarica/arbitragex-v2 (MEV, Mempool & Bundle Submission). Se activa cuando: PBS attester research. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

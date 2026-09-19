@@ -1,3 +1,8 @@
+---
+name: uniswap-v3-concentrated-liquidity-math
+description: "Local ArbitrageX specialist skill: uniswap-v3-concentrated-liquidity-math."
+---
+
 # Uniswap V3 Concentrated Liquidity Math
 
 ## Propósito

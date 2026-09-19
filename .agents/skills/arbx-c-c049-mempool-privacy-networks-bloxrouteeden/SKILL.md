@@ -1,3 +1,4 @@
+---
 name: arbx-c-c049-mempool-privacy-networks-bloxrouteeden
 description: "PhD/Master skill alineada al monorepo hefarica/arbitragex-v2 (MEV, Mempool & Bundle Submission). Se activa cuando: private RPC submit. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

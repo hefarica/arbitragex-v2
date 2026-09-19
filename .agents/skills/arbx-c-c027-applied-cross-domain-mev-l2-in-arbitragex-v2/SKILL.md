@@ -1,3 +1,4 @@
+---
 name: arbx-c-c027-applied-cross-domain-mev-l2-in-arbitragex-v2
 description: "Staff Engineer skill alineada al monorepo hefarica/arbitragex-v2 (MEV, Mempool & Bundle Submission). Se activa cuando: per-chain mempool listener. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

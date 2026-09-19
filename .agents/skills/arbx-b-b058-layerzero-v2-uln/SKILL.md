@@ -1,3 +1,4 @@
+---
 name: arbx-b-b058-layerzero-v2-uln
 description: "PhD/Master skill alineada al monorepo hefarica/arbitragex-v2 (Smart Contracts, Solidity & Auditing). Se activa cuando: DVN+executor. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

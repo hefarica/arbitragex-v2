@@ -1,3 +1,4 @@
+---
 name: arbx-i-i035-advanced-on-call-rotations-escalation
 description: "Post-Doc skill alineada al monorepo hefarica/arbitragex-v2 (Observability & SRE). Se activa cuando: ack SLA. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

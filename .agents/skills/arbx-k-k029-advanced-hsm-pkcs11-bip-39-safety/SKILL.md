@@ -1,3 +1,4 @@
+---
 name: arbx-k-k029-advanced-hsm-pkcs11-bip-39-safety
 description: "Post-Doc skill alineada al monorepo hefarica/arbitragex-v2 (Security & Cryptography Applied). Se activa cuando: seed entropy. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

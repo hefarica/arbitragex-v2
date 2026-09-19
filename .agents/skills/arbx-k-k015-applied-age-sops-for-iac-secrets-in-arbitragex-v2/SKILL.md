@@ -1,3 +1,4 @@
+---
 name: arbx-k-k015-applied-age-sops-for-iac-secrets-in-arbitragex-v2
 description: "Staff Engineer skill alineada al monorepo hefarica/arbitragex-v2 (Security & Cryptography Applied). Se activa cuando: encrypted .env offsite. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

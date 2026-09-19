@@ -1,3 +1,4 @@
+---
 name: arbx-e-e030-applied-convex-optimization-multi-pool-routing-in-arbitragex-v2
 description: "Staff Engineer skill alineada al monorepo hefarica/arbitragex-v2 (AMM Math & Quantitative DeFi). Se activa cuando: embedded <1ms 5-hop solve. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

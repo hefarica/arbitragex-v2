@@ -1,3 +1,4 @@
+---
 name: arbx-l-l030-applied-regime-aware-ensembling-in-arbitragex-v2
 description: "Staff Engineer skill alineada al monorepo hefarica/arbitragex-v2 (Risk, Backtesting & Quant Engineering). Se activa cuando: arbitragex strategy ensembler. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

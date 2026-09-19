@@ -1,3 +1,4 @@
+---
 name: arbx-c-c028-cowswap-solver-competition
 description: "PhD/Master skill alineada al monorepo hefarica/arbitragex-v2 (MEV, Mempool & Bundle Submission). Se activa cuando: batch auction RFQ. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

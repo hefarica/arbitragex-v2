@@ -1,3 +1,4 @@
+---
 name: arbx-h-h029-advanced-compose-healthcheck-depends_on
 description: "Post-Doc skill alineada al monorepo hefarica/arbitragex-v2 (CI/CD Doctrinal & DevSecOps). Se activa cuando: profiles dev/prod. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

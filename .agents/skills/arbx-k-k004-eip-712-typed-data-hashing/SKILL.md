@@ -1,3 +1,4 @@
+---
 name: arbx-k-k004-eip-712-typed-data-hashing
 description: "PhD/Master skill alineada al monorepo hefarica/arbitragex-v2 (Security & Cryptography Applied). Se activa cuando: domain separator. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

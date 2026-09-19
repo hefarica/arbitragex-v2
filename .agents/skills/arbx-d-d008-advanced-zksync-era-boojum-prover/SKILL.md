@@ -1,3 +1,4 @@
+---
 name: arbx-d-d008-advanced-zksync-era-boojum-prover
 description: "Post-Doc skill alineada al monorepo hefarica/arbitragex-v2 (Multi-Chain, L2 & Bridges). Se activa cuando: native AA research. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

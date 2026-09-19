@@ -1,3 +1,4 @@
+---
 name: arbx-e-e024-applied-pre-trade-simulation-revm-fork-in-arbitragex-v2
 description: "Staff Engineer skill alineada al monorepo hefarica/arbitragex-v2 (AMM Math & Quantitative DeFi). Se activa cuando: sim-ctl reject negative-EV. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

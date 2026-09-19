@@ -1,3 +1,8 @@
+---
+name: evm-state-simulation-with-revm-anvil-alloy
+description: "Local ArbitrageX specialist skill: evm-state-simulation-with-revm-anvil-alloy."
+---
+
 # EVM State Simulation with REVM/Anvil
 
 ## Propósito

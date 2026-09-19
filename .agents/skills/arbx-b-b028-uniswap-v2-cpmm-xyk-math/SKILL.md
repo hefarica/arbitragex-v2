@@ -1,3 +1,4 @@
+---
 name: arbx-b-b028-uniswap-v2-cpmm-xyk-math
 description: "PhD/Master skill alineada al monorepo hefarica/arbitragex-v2 (Smart Contracts, Solidity & Auditing). Se activa cuando: optimal input derivation. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

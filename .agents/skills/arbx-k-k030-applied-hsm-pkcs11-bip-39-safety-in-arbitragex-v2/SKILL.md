@@ -1,3 +1,4 @@
+---
 name: arbx-k-k030-applied-hsm-pkcs11-bip-39-safety-in-arbitragex-v2
 description: "Staff Engineer skill alineada al monorepo hefarica/arbitragex-v2 (Security & Cryptography Applied). Se activa cuando: arbitragex signer policies. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

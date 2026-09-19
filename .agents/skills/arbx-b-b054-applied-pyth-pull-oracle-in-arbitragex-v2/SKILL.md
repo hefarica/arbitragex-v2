@@ -1,3 +1,4 @@
+---
 name: arbx-b-b054-applied-pyth-pull-oracle-in-arbitragex-v2
 description: "Staff Engineer skill alineada al monorepo hefarica/arbitragex-v2 (Smart Contracts, Solidity & Auditing). Se activa cuando: arbitragex price feed. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

@@ -1,3 +1,4 @@
+---
 name: arbx-b-b024-applied-slither-static-analysis-in-arbitragex-v2
 description: "Staff Engineer skill alineada al monorepo hefarica/arbitragex-v2 (Smart Contracts, Solidity & Auditing). Se activa cuando: CI gating high severity. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

@@ -1,3 +1,4 @@
+---
 name: arbx-e-e007-stableswap-newton-raphson
 description: "PhD/Master skill alineada al monorepo hefarica/arbitragex-v2 (AMM Math & Quantitative DeFi). Se activa cuando: D iteration A·n^n. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

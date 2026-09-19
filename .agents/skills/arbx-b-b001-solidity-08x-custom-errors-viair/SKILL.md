@@ -1,3 +1,4 @@
+---
 name: arbx-b-b001-solidity-08x-custom-errors-viair
 description: "PhD/Master skill alineada al monorepo hefarica/arbitragex-v2 (Smart Contracts, Solidity & Auditing). Se activa cuando: optimizer runs tuning. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

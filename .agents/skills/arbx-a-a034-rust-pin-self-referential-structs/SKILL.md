@@ -1,3 +1,4 @@
+---
 name: arbx-a-a034-rust-pin-self-referential-structs
 description: "PhD/Master skill alineada al monorepo hefarica/arbitragex-v2 (Rust Systems & Searcher Engine). Se activa cuando: Future implementations. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

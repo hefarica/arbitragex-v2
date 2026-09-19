@@ -1,3 +1,4 @@
+---
 name: arbx-k-k019-owasp-asvs-top-10-coverage
 description: "PhD/Master skill alineada al monorepo hefarica/arbitragex-v2 (Security & Cryptography Applied). Se activa cuando: L2 baseline. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

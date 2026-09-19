@@ -1,3 +1,4 @@
+---
 name: arbx-k-k013-age-sops-for-iac-secrets
 description: "PhD/Master skill alineada al monorepo hefarica/arbitragex-v2 (Security & Cryptography Applied). Se activa cuando: per-recipient enc. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

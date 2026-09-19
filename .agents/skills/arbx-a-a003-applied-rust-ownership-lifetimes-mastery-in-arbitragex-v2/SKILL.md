@@ -1,3 +1,4 @@
+---
 name: arbx-a-a003-applied-rust-ownership-lifetimes-mastery-in-arbitragex-v2
 description: "Staff Engineer skill alineada al monorepo hefarica/arbitragex-v2 (Rust Systems & Searcher Engine). Se activa cuando: searcher-rs hot path. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

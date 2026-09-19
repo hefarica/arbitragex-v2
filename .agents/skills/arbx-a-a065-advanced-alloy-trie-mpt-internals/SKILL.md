@@ -1,3 +1,4 @@
+---
 name: arbx-a-a065-advanced-alloy-trie-mpt-internals
 description: "Post-Doc skill alineada al monorepo hefarica/arbitragex-v2 (Rust Systems & Searcher Engine). Se activa cuando: sparse trie research. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

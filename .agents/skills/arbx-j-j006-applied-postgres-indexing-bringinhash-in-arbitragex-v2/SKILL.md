@@ -1,3 +1,4 @@
+---
 name: arbx-j-j006-applied-postgres-indexing-bringinhash-in-arbitragex-v2
 description: "Staff Engineer skill alineada al monorepo hefarica/arbitragex-v2 (Database & Storage (Postgres/Redis/Timescale)). Se activa cuando: opportunities <1ms. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

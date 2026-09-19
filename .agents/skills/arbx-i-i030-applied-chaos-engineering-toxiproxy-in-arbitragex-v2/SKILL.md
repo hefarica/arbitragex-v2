@@ -1,3 +1,4 @@
+---
 name: arbx-i-i030-applied-chaos-engineering-toxiproxy-in-arbitragex-v2
 description: "Staff Engineer skill alineada al monorepo hefarica/arbitragex-v2 (Observability & SRE). Se activa cuando: staging chaos drills. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

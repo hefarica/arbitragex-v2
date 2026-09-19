@@ -1,3 +1,4 @@
+---
 name: arbx-h-h036-applied-dependabot-grouped-renovate-in-arbitragex-v2
 description: "Staff Engineer skill alineada al monorepo hefarica/arbitragex-v2 (CI/CD Doctrinal & DevSecOps). Se activa cuando: arbitragex weekly cadence. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

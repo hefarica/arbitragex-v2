@@ -1,3 +1,4 @@
+---
 name: arbx-a-a020-advanced-tokio-channels-mpscbroadcastwatch
 description: "Post-Doc skill alineada al monorepo hefarica/arbitragex-v2 (Rust Systems & Searcher Engine). Se activa cuando: cancellation tokens. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

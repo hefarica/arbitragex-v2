@@ -1,3 +1,4 @@
+---
 name: arbx-a-a019-tokio-channels-mpscbroadcastwatch
 description: "PhD/Master skill alineada al monorepo hefarica/arbitragex-v2 (Rust Systems & Searcher Engine). Se activa cuando: backpressure semantics. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

@@ -1,3 +1,4 @@
+---
 name: arbx-g-g004-react-19-usetransitionuseoptimistic
 description: "PhD/Master skill alineada al monorepo hefarica/arbitragex-v2 (Frontend Doctrinal (Next.js + Playwright)). Se activa cuando: concurrent rendering. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

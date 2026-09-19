@@ -1,3 +1,8 @@
+---
+name: mev-opportunity-prioritization-engine
+description: "Local ArbitrageX specialist skill: mev-opportunity-prioritization-engine."
+---
+
 # MEV Opportunity Prioritization Engine
 
 ## Propósito

@@ -1,3 +1,8 @@
+---
+name: 08-real-time-ui-performance-engineer
+description: "Local ArbitrageX specialist skill: 08-real-time-ui-performance-engineer."
+---
+
 # Skill 08: Real-Time UI Performance Engineer
 
 ## 1. Propósito

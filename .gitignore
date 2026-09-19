@@ -136,3 +136,4 @@ scratchpad/
 ci-artifacts/
 .next-*/
 /exchange-settled.yml
+.worktrees/

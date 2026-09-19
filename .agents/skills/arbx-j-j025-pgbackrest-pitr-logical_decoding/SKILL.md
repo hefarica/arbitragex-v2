@@ -1,3 +1,4 @@
+---
 name: arbx-j-j025-pgbackrest-pitr-logical_decoding
 description: "PhD/Master skill alineada al monorepo hefarica/arbitragex-v2 (Database & Storage (Postgres/Redis/Timescale)). Se activa cuando: backup restore drills. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

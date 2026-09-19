@@ -1,3 +1,4 @@
+---
 name: arbx-j-j024-applied-pgvector-ivfflat-hnsw-in-arbitragex-v2
 description: "Staff Engineer skill alineada al monorepo hefarica/arbitragex-v2 (Database & Storage (Postgres/Redis/Timescale)). Se activa cuando: opportunity dedup embedding. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

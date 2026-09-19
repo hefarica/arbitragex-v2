@@ -1,3 +1,4 @@
+---
 name: arbx-a-a021-applied-tokio-channels-mpscbroadcastwatch-in-arbitragex-v2
 description: "Staff Engineer skill alineada al monorepo hefarica/arbitragex-v2 (Rust Systems & Searcher Engine). Se activa cuando: graceful shutdown opportunity pipeline. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

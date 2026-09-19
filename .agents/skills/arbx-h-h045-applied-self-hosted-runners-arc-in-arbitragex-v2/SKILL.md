@@ -1,3 +1,4 @@
+---
 name: arbx-h-h045-applied-self-hosted-runners-arc-in-arbitragex-v2
 description: "Staff Engineer skill alineada al monorepo hefarica/arbitragex-v2 (CI/CD Doctrinal & DevSecOps). Se activa cuando: arbitragex private runners. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

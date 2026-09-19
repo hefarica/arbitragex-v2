@@ -1,3 +1,4 @@
+---
 name: arbx-c-c037-private-orderflow-auctions-ofa
 description: "PhD/Master skill alineada al monorepo hefarica/arbitragex-v2 (MEV, Mempool & Bundle Submission). Se activa cuando: MEV refund mechanisms. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

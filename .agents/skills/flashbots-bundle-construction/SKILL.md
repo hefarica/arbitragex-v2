@@ -1,3 +1,8 @@
+---
+name: flashbots-bundle-construction
+description: "Local ArbitrageX specialist skill: flashbots-bundle-construction."
+---
+
 # Flashbots Bundle Construction
 
 ## Propósito

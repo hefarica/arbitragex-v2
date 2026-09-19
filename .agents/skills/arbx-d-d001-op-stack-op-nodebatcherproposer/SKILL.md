@@ -1,3 +1,4 @@
+---
 name: arbx-d-d001-op-stack-op-nodebatcherproposer
 description: "PhD/Master skill alineada al monorepo hefarica/arbitragex-v2 (Multi-Chain, L2 & Bridges). Se activa cuando: derivation pipeline. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

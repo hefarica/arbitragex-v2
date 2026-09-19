@@ -1,3 +1,4 @@
+---
 name: arbx-d-d013-polygon-zkevm-plonky2
 description: "PhD/Master skill alineada al monorepo hefarica/arbitragex-v2 (Multi-Chain, L2 & Bridges). Se activa cuando: type-2 fork-friendly. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

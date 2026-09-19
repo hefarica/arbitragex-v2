@@ -1,3 +1,8 @@
+---
+name: 15-bundle-runtime-optimization-expert
+description: "Local ArbitrageX specialist skill: 15-bundle-runtime-optimization-expert."
+---
+
 # Skill 15: Bundle & Runtime Optimization Expert
 
 ## 1. Propósito

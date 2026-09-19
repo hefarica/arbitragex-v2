@@ -1,3 +1,4 @@
+---
 name: arbx-h-h025-docker-buildkit-multi-stage
 description: "PhD/Master skill alineada al monorepo hefarica/arbitragex-v2 (CI/CD Doctrinal & DevSecOps). Se activa cuando: cache mounts heredocs. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

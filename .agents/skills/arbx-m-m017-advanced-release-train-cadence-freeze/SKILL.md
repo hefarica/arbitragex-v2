@@ -1,3 +1,4 @@
+---
 name: arbx-m-m017-advanced-release-train-cadence-freeze
 description: "Post-Doc skill alineada al monorepo hefarica/arbitragex-v2 (Doctrine, Process & Release Engineering). Se activa cuando: trunk-based short-lived. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

@@ -1,3 +1,4 @@
+---
 name: arbx-e-e037-bayesian-update-on-oracle-drift
 description: "PhD/Master skill alineada al monorepo hefarica/arbitragex-v2 (AMM Math & Quantitative DeFi). Se activa cuando: prior-posterior price. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

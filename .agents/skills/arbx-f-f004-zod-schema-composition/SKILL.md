@@ -1,3 +1,4 @@
+---
 name: arbx-f-f004-zod-schema-composition
 description: "PhD/Master skill alineada al monorepo hefarica/arbitragex-v2 (Backend Services (Node + Rust)). Se activa cuando: discriminatedUnion brand. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

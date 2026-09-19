@@ -1,3 +1,4 @@
+---
 name: arbx-e-e029-advanced-convex-optimization-multi-pool-routing
 description: "Post-Doc skill alineada al monorepo hefarica/arbitragex-v2 (AMM Math & Quantitative DeFi). Se activa cuando: MIP branch-and-cut. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

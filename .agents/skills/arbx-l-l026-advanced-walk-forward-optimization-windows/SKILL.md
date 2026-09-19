@@ -1,3 +1,4 @@
+---
 name: arbx-l-l026-advanced-walk-forward-optimization-windows
 description: "Post-Doc skill alineada al monorepo hefarica/arbitragex-v2 (Risk, Backtesting & Quant Engineering). Se activa cuando: combinatorial purged CV. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

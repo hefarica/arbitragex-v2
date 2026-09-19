@@ -1,3 +1,4 @@
+---
 name: arbx-h-h012-applied-gitleaks-sast-pre-commit-in-arbitragex-v2
 description: "Staff Engineer skill alineada al monorepo hefarica/arbitragex-v2 (CI/CD Doctrinal & DevSecOps). Se activa cuando: required check arbitragex. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

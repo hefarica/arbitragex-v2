@@ -1,3 +1,4 @@
+---
 name: arbx-e-e044-advanced-sharpesortinocalmar-strategy-kpis
 description: "Post-Doc skill alineada al monorepo hefarica/arbitragex-v2 (AMM Math & Quantitative DeFi). Se activa cuando: deflated Sharpe. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

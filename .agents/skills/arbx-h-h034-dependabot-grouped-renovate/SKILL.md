@@ -1,3 +1,4 @@
+---
 name: arbx-h-h034-dependabot-grouped-renovate
 description: "PhD/Master skill alineada al monorepo hefarica/arbitragex-v2 (CI/CD Doctrinal & DevSecOps). Se activa cuando: semantic-release. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

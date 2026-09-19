@@ -1,3 +1,8 @@
+---
+name: balancer-weighted-pool-routing
+description: "Local ArbitrageX specialist skill: balancer-weighted-pool-routing."
+---
+
 # Balancer Weighted Pool Routing
 
 ## Propósito

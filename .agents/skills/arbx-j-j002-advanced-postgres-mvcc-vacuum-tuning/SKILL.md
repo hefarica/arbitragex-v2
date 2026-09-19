@@ -1,3 +1,4 @@
+---
 name: arbx-j-j002-advanced-postgres-mvcc-vacuum-tuning
 description: "Post-Doc skill alineada al monorepo hefarica/arbitragex-v2 (Database & Storage (Postgres/Redis/Timescale)). Se activa cuando: logical replication. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

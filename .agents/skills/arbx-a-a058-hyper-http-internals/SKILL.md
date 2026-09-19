@@ -1,3 +1,4 @@
+---
 name: arbx-a-a058-hyper-http-internals
 description: "PhD/Master skill alineada al monorepo hefarica/arbitragex-v2 (Rust Systems & Searcher Engine). Se activa cuando: h2 streams flow control. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

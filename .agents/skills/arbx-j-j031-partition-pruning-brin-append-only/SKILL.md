@@ -1,3 +1,4 @@
+---
 name: arbx-j-j031-partition-pruning-brin-append-only
 description: "PhD/Master skill alineada al monorepo hefarica/arbitragex-v2 (Database & Storage (Postgres/Redis/Timescale)). Se activa cuando: time-range pruning. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

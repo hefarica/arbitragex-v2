@@ -1,3 +1,8 @@
+---
+name: viem-websocket-resilience
+description: "Local ArbitrageX specialist skill: viem-websocket-resilience."
+---
+
 # Resiliencia de WebSockets en Viem
 
 ## Nivel

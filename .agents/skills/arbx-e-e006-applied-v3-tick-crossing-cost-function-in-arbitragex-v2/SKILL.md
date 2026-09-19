@@ -1,3 +1,4 @@
+---
 name: arbx-e-e006-applied-v3-tick-crossing-cost-function-in-arbitragex-v2
 description: "Staff Engineer skill alineada al monorepo hefarica/arbitragex-v2 (AMM Math & Quantitative DeFi). Se activa cuando: multi-tick swap sim. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

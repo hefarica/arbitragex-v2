@@ -1,3 +1,8 @@
+---
+name: exact-out-and-exact-in-simulation
+description: "Local ArbitrageX specialist skill: exact-out-and-exact-in-simulation."
+---
+
 # Exact-Out and Exact-In Simulation
 
 ## Propósito

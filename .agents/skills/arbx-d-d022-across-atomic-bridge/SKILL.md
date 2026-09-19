@@ -1,3 +1,4 @@
+---
 name: arbx-d-d022-across-atomic-bridge
 description: "PhD/Master skill alineada al monorepo hefarica/arbitragex-v2 (Multi-Chain, L2 & Bridges). Se activa cuando: UMA optimistic. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

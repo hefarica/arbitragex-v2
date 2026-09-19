@@ -1,3 +1,4 @@
+---
 name: arbx-l-l001-backtesting-framework-architecture
 description: "PhD/Master skill alineada al monorepo hefarica/arbitragex-v2 (Risk, Backtesting & Quant Engineering). Se activa cuando: event-driven walk-forward. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

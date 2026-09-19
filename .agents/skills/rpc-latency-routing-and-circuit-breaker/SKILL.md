@@ -1,3 +1,8 @@
+---
+name: rpc-latency-routing-and-circuit-breaker
+description: "Local ArbitrageX specialist skill: rpc-latency-routing-and-circuit-breaker."
+---
+
 # RPC Latency Routing and Circuit Breaker
 
 ## Propósito

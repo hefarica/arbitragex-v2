@@ -1,3 +1,4 @@
+---
 name: arbx-f-f031-bullmq-nats-jetstream-redis-streams
 description: "PhD/Master skill alineada al monorepo hefarica/arbitragex-v2 (Backend Services (Node + Rust)). Se activa cuando: job queues consumer groups. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

@@ -1,3 +1,4 @@
+---
 name: arbx-a-a033-applied-procedural-macros-proc-macro2synquote-in-arbitragex-v2
 description: "Staff Engineer skill alineada al monorepo hefarica/arbitragex-v2 (Rust Systems & Searcher Engine). Se activa cuando: Solidity ABI to Rust struct codegen. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

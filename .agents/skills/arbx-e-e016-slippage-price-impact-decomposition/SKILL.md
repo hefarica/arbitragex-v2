@@ -1,3 +1,4 @@
+---
 name: arbx-e-e016-slippage-price-impact-decomposition
 description: "PhD/Master skill alineada al monorepo hefarica/arbitragex-v2 (AMM Math & Quantitative DeFi). Se activa cuando: trader-induced vs market. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

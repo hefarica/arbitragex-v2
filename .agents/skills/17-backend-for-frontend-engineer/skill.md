@@ -1,3 +1,8 @@
+---
+name: 17-backend-for-frontend-engineer
+description: "Local ArbitrageX specialist skill: 17-backend-for-frontend-engineer."
+---
+
 # Skill 17: Backend-for-Frontend Engineer
 
 ## 1. Propósito

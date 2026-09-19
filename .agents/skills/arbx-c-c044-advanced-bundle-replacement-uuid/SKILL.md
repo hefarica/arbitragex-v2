@@ -1,3 +1,4 @@
+---
 name: arbx-c-c044-advanced-bundle-replacement-uuid
 description: "Post-Doc skill alineada al monorepo hefarica/arbitragex-v2 (MEV, Mempool & Bundle Submission). Se activa cuando: bundle priority research. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

@@ -1,3 +1,4 @@
+---
 name: arbx-m-m001-conventional-commits-atomic-splits
 description: "PhD/Master skill alineada al monorepo hefarica/arbitragex-v2 (Doctrine, Process & Release Engineering). Se activa cuando: per-concern atomic. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

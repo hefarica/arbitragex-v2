@@ -1,3 +1,4 @@
+---
 name: arbx-b-b038-advanced-curve-stableswap-invariant
 description: "Post-Doc skill alineada al monorepo hefarica/arbitragex-v2 (Smart Contracts, Solidity & Auditing). Se activa cuando: CryptoSwap repeg research. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

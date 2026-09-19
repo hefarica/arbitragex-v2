@@ -1,3 +1,4 @@
+---
 name: arbx-a-a066-applied-alloy-trie-mpt-internals-in-arbitragex-v2
 description: "Staff Engineer skill alineada al monorepo hefarica/arbitragex-v2 (Rust Systems & Searcher Engine). Se activa cuando: historical state queries. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

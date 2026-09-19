@@ -1,3 +1,4 @@
+---
 name: arbx-a-a067-rlp-ssz-encoding
 description: "PhD/Master skill alineada al monorepo hefarica/arbitragex-v2 (Rust Systems & Searcher Engine). Se activa cuando: rlp-rs encoder. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

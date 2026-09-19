@@ -1,3 +1,4 @@
+---
 name: arbx-i-i006-applied-prometheus-histogram-buckets-in-arbitragex-v2
 description: "Staff Engineer skill alineada al monorepo hefarica/arbitragex-v2 (Observability & SRE). Se activa cuando: p50/p95/p99 per strategy. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

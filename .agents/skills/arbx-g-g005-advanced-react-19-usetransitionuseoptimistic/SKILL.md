@@ -1,3 +1,4 @@
+---
 name: arbx-g-g005-advanced-react-19-usetransitionuseoptimistic
 description: "Post-Doc skill alineada al monorepo hefarica/arbitragex-v2 (Frontend Doctrinal (Next.js + Playwright)). Se activa cuando: server actions form state. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

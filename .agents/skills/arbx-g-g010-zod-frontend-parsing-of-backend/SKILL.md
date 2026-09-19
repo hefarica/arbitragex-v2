@@ -1,3 +1,4 @@
+---
 name: arbx-g-g010-zod-frontend-parsing-of-backend
 description: "PhD/Master skill alineada al monorepo hefarica/arbitragex-v2 (Frontend Doctrinal (Next.js + Playwright)). Se activa cuando: strict layer. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

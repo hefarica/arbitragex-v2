@@ -1,3 +1,4 @@
+---
 name: arbx-k-k027-applied-post-quantum-migration-prep-in-arbitragex-v2
 description: "Staff Engineer skill alineada al monorepo hefarica/arbitragex-v2 (Security & Cryptography Applied). Se activa cuando: post-quantum readiness ADR. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

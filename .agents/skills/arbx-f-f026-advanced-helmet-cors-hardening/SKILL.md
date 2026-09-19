@@ -1,3 +1,4 @@
+---
 name: arbx-f-f026-advanced-helmet-cors-hardening
 description: "Post-Doc skill alineada al monorepo hefarica/arbitragex-v2 (Backend Services (Node + Rust)). Se activa cuando: CSP nonce-based. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

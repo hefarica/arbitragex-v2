@@ -1,3 +1,4 @@
+---
 name: arbx-g-g016-data-testid-naming-convention
 description: "PhD/Master skill alineada al monorepo hefarica/arbitragex-v2 (Frontend Doctrinal (Next.js + Playwright)). Se activa cuando: service-health-row pattern. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

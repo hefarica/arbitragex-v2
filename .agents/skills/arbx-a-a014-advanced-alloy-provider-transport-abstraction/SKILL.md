@@ -1,3 +1,4 @@
+---
 name: arbx-a-a014-advanced-alloy-provider-transport-abstraction
 description: "Post-Doc skill alineada al monorepo hefarica/arbitragex-v2 (Rust Systems & Searcher Engine). Se activa cuando: subscription filter streams. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

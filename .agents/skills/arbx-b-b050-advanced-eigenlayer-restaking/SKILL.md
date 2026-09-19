@@ -1,3 +1,4 @@
+---
 name: arbx-b-b050-advanced-eigenlayer-restaking
 description: "Post-Doc skill alineada al monorepo hefarica/arbitragex-v2 (Smart Contracts, Solidity & Auditing). Se activa cuando: AVS slashing research. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

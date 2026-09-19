@@ -1,3 +1,4 @@
+---
 name: arbx-a-a006-applied-tokio-async-runtime-engineering-in-arbitragex-v2
 description: "Staff Engineer skill alineada al monorepo hefarica/arbitragex-v2 (Rust Systems & Searcher Engine). Se activa cuando: searcher-rs/sim-ctl/executor-rs. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

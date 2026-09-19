@@ -1,3 +1,4 @@
+---
 name: arbx-g-g030-applied-viem-wagmi-rainbowkit-in-arbitragex-v2
 description: "Staff Engineer skill alineada al monorepo hefarica/arbitragex-v2 (Frontend Doctrinal (Next.js + Playwright)). Se activa cuando: admin web3 panel. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

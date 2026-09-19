@@ -1,3 +1,4 @@
+---
 name: arbx-a-a075-applied-signers-kmshsmlocal-in-rust-in-arbitragex-v2
 description: "Staff Engineer skill alineada al monorepo hefarica/arbitragex-v2 (Rust Systems & Searcher Engine). Se activa cuando: executor-rs multi-signer abstraction. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

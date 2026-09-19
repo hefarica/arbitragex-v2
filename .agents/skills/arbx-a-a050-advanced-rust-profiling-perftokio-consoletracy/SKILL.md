@@ -1,3 +1,4 @@
+---
 name: arbx-a-a050-advanced-rust-profiling-perftokio-consoletracy
 description: "Post-Doc skill alineada al monorepo hefarica/arbitragex-v2 (Rust Systems & Searcher Engine). Se activa cuando: async-aware sampling. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

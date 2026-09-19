@@ -1,3 +1,4 @@
+---
 name: arbx-g-g032-advanced-framer-motion-recharts
 description: "Post-Doc skill alineada al monorepo hefarica/arbitragex-v2 (Frontend Doctrinal (Next.js + Playwright)). Se activa cuando: perf charts research. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

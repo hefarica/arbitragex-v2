@@ -1,3 +1,4 @@
+---
 name: arbx-a-a013-alloy-provider-transport-abstraction
 description: "PhD/Master skill alineada al monorepo hefarica/arbitragex-v2 (Rust Systems & Searcher Engine). Se activa cuando: RPC routing fallback. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

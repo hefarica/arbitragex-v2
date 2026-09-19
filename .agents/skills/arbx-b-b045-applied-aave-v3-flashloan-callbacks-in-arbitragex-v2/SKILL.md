@@ -1,3 +1,4 @@
+---
 name: arbx-b-b045-applied-aave-v3-flashloan-callbacks-in-arbitragex-v2
 description: "Staff Engineer skill alineada al monorepo hefarica/arbitragex-v2 (Smart Contracts, Solidity & Auditing). Se activa cuando: arbitragex Aave adapter. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

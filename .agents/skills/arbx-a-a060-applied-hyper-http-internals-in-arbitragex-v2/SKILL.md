@@ -1,3 +1,4 @@
+---
 name: arbx-a-a060-applied-hyper-http-internals-in-arbitragex-v2
 description: "Staff Engineer skill alineada al monorepo hefarica/arbitragex-v2 (Rust Systems & Searcher Engine). Se activa cuando: alt-svc upgrade in api-server. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

@@ -1,3 +1,4 @@
+---
 name: arbx-f-f033-applied-bullmq-nats-jetstream-redis-streams-in-arbitragex-v2
 description: "Staff Engineer skill alineada al monorepo hefarica/arbitragex-v2 (Backend Services (Node + Rust)). Se activa cuando: opportunity bus backbone. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

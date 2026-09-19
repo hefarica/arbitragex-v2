@@ -1,3 +1,4 @@
+---
 name: arbx-l-l023-advanced-strategy-decay-detection
 description: "Post-Doc skill alineada al monorepo hefarica/arbitragex-v2 (Risk, Backtesting & Quant Engineering). Se activa cuando: deflated Sharpe BH-FDR. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

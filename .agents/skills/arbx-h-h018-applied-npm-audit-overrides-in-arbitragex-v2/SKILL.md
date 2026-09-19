@@ -1,3 +1,4 @@
+---
 name: arbx-h-h018-applied-npm-audit-overrides-in-arbitragex-v2
 description: "Staff Engineer skill alineada al monorepo hefarica/arbitragex-v2 (CI/CD Doctrinal & DevSecOps). Se activa cuando: next 14→15.5.18 PR#90 commit3. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

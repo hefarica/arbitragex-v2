@@ -1,3 +1,4 @@
+---
 name: arbx-f-f019-structured-logging-pino-correlation-ids
 description: "PhD/Master skill alineada al monorepo hefarica/arbitragex-v2 (Backend Services (Node + Rust)). Se activa cuando: JSON log discipline. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

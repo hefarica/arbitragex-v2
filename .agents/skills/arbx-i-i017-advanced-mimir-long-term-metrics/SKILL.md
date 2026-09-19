@@ -1,3 +1,4 @@
+---
 name: arbx-i-i017-advanced-mimir-long-term-metrics
 description: "Post-Doc skill alineada al monorepo hefarica/arbitragex-v2 (Observability & SRE). Se activa cuando: compactor research. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

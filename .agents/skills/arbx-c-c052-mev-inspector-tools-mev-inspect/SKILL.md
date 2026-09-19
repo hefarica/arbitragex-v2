@@ -1,3 +1,4 @@
+---
 name: arbx-c-c052-mev-inspector-tools-mev-inspect
 description: "PhD/Master skill alineada al monorepo hefarica/arbitragex-v2 (MEV, Mempool & Bundle Submission). Se activa cuando: historical MEV decoding. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

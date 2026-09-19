@@ -1,3 +1,4 @@
+---
 name: arbx-f-f002-advanced-fastify-plugin-encapsulation
 description: "Post-Doc skill alineada al monorepo hefarica/arbitragex-v2 (Backend Services (Node + Rust)). Se activa cuando: schema-first AJV. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

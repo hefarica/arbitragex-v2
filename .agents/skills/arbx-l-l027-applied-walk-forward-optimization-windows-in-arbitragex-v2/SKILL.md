@@ -1,3 +1,4 @@
+---
 name: arbx-l-l027-applied-walk-forward-optimization-windows-in-arbitragex-v2
 description: "Staff Engineer skill alineada al monorepo hefarica/arbitragex-v2 (Risk, Backtesting & Quant Engineering). Se activa cuando: WFO scheduler. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

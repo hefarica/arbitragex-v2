@@ -1,3 +1,4 @@
+---
 name: arbx-i-i032-advanced-blameless-postmortems-adrs
 description: "Post-Doc skill alineada al monorepo hefarica/arbitragex-v2 (Observability & SRE). Se activa cuando: systemic causes. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

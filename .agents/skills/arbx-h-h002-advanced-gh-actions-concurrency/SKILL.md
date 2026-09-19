@@ -1,3 +1,4 @@
+---
 name: arbx-h-h002-advanced-gh-actions-concurrency
 description: "Post-Doc skill alineada al monorepo hefarica/arbitragex-v2 (CI/CD Doctrinal & DevSecOps). Se activa cuando: reusable workflows. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

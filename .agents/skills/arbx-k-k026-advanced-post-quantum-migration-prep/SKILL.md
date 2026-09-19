@@ -1,3 +1,4 @@
+---
 name: arbx-k-k026-advanced-post-quantum-migration-prep
 description: "Post-Doc skill alineada al monorepo hefarica/arbitragex-v2 (Security & Cryptography Applied). Se activa cuando: lattice research. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

@@ -1,3 +1,4 @@
+---
 name: arbx-m-m003-applied-conventional-commits-atomic-splits-in-arbitragex-v2
 description: "Staff Engineer skill alineada al monorepo hefarica/arbitragex-v2 (Doctrine, Process & Release Engineering). Se activa cuando: iter18 rustfmt vs semantic split. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

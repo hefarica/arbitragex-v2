@@ -1,3 +1,4 @@
+---
 name: arbx-h-h024-applied-sigstore-cosign-slsa-provenance-in-arbitragex-v2
 description: "Staff Engineer skill alineada al monorepo hefarica/arbitragex-v2 (CI/CD Doctrinal & DevSecOps). Se activa cuando: GHCR push attestation. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

@@ -1,3 +1,4 @@
+---
 name: arbx-j-j017-advanced-redis-streams-xaddxreadxgroup
 description: "Post-Doc skill alineada al monorepo hefarica/arbitragex-v2 (Database & Storage (Postgres/Redis/Timescale)). Se activa cuando: Lua atomicity. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

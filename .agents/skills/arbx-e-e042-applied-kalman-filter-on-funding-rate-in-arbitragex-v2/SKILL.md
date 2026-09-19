@@ -1,3 +1,4 @@
+---
 name: arbx-e-e042-applied-kalman-filter-on-funding-rate-in-arbitragex-v2
 description: "Staff Engineer skill alineada al monorepo hefarica/arbitragex-v2 (AMM Math & Quantitative DeFi). Se activa cuando: perp-AMM hedge tracker. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

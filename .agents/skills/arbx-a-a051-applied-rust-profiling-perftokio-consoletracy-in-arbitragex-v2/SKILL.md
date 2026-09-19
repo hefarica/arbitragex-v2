@@ -1,3 +1,4 @@
+---
 name: arbx-a-a051-applied-rust-profiling-perftokio-consoletracy-in-arbitragex-v2
 description: "Staff Engineer skill alineada al monorepo hefarica/arbitragex-v2 (Rust Systems & Searcher Engine). Se activa cuando: CI trace artifact iter17. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

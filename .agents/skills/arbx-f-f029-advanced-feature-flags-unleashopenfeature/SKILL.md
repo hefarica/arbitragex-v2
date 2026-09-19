@@ -1,3 +1,4 @@
+---
 name: arbx-f-f029-advanced-feature-flags-unleashopenfeature
 description: "Post-Doc skill alineada al monorepo hefarica/arbitragex-v2 (Backend Services (Node + Rust)). Se activa cuando: experimentation framework. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

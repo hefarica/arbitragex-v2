@@ -1,3 +1,8 @@
+---
+name: searcher-builder-relay-architecture
+description: "Local ArbitrageX specialist skill: searcher-builder-relay-architecture."
+---
+
 # Searcher Builder Relay Architecture
 
 ## Propósito

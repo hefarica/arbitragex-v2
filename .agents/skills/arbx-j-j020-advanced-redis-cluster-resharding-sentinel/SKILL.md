@@ -1,3 +1,4 @@
+---
 name: arbx-j-j020-advanced-redis-cluster-resharding-sentinel
 description: "Post-Doc skill alineada al monorepo hefarica/arbitragex-v2 (Database & Storage (Postgres/Redis/Timescale)). Se activa cuando: split-brain prevention. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

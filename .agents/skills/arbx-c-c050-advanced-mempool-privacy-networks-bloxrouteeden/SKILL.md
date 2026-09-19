@@ -1,3 +1,4 @@
+---
 name: arbx-c-c050-advanced-mempool-privacy-networks-bloxrouteeden
 description: "Post-Doc skill alineada al monorepo hefarica/arbitragex-v2 (MEV, Mempool & Bundle Submission). Se activa cuando: privacy-preserving relays. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

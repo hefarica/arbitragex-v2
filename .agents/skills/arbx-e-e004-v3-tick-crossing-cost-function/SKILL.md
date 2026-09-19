@@ -1,3 +1,4 @@
+---
 name: arbx-e-e004-v3-tick-crossing-cost-function
 description: "PhD/Master skill alineada al monorepo hefarica/arbitragex-v2 (AMM Math & Quantitative DeFi). Se activa cuando: Σ liq·Δsqrt(P). Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

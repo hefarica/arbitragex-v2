@@ -1,3 +1,4 @@
+---
 name: arbx-j-j033-applied-partition-pruning-brin-append-only-in-arbitragex-v2
 description: "Staff Engineer skill alineada al monorepo hefarica/arbitragex-v2 (Database & Storage (Postgres/Redis/Timescale)). Se activa cuando: tx_history pruning. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

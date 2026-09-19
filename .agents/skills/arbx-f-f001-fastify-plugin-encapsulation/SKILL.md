@@ -1,3 +1,4 @@
+---
 name: arbx-f-f001-fastify-plugin-encapsulation
 description: "PhD/Master skill alineada al monorepo hefarica/arbitragex-v2 (Backend Services (Node + Rust)). Se activa cuando: decorators hook order. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

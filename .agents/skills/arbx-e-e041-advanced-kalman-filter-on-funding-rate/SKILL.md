@@ -1,3 +1,4 @@
+---
 name: arbx-e-e041-advanced-kalman-filter-on-funding-rate
 description: "Post-Doc skill alineada al monorepo hefarica/arbitragex-v2 (AMM Math & Quantitative DeFi). Se activa cuando: particle filter research. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

@@ -1,3 +1,4 @@
+---
 name: arbx-c-c026-advanced-cross-domain-mev-l2
 description: "Post-Doc skill alineada al monorepo hefarica/arbitragex-v2 (MEV, Mempool & Bundle Submission). Se activa cuando: decentralized seq research. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

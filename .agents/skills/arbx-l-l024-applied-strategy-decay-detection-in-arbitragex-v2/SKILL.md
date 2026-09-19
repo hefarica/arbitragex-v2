@@ -1,3 +1,4 @@
+---
 name: arbx-l-l024-applied-strategy-decay-detection-in-arbitragex-v2
 description: "Staff Engineer skill alineada al monorepo hefarica/arbitragex-v2 (Risk, Backtesting & Quant Engineering). Se activa cuando: auto-retire decayed strats. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

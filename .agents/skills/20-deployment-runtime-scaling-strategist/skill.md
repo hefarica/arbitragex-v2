@@ -1,3 +1,8 @@
+---
+name: 20-deployment-runtime-scaling-strategist
+description: "Local ArbitrageX specialist skill: 20-deployment-runtime-scaling-strategist."
+---
+
 # Skill 20: Deployment, Runtime & Scaling Strategist
 
 ## 1. Propósito

@@ -1,3 +1,4 @@
+---
 name: arbx-j-j029-advanced-foreign-data-wrappers-materialized-views
 description: "Post-Doc skill alineada al monorepo hefarica/arbitragex-v2 (Database & Storage (Postgres/Redis/Timescale)). Se activa cuando: refresh policies. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

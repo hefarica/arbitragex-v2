@@ -1,3 +1,4 @@
+---
 name: arbx-b-b051-applied-eigenlayer-restaking-in-arbitragex-v2
 description: "Staff Engineer skill alineada al monorepo hefarica/arbitragex-v2 (Smart Contracts, Solidity & Auditing). Se activa cuando: restake yield strategy. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

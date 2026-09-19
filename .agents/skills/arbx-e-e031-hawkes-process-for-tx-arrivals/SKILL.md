@@ -1,3 +1,4 @@
+---
 name: arbx-e-e031-hawkes-process-for-tx-arrivals
 description: "PhD/Master skill alineada al monorepo hefarica/arbitragex-v2 (AMM Math & Quantitative DeFi). Se activa cuando: self-exciting jumps. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

@@ -1,3 +1,4 @@
+---
 name: arbx-g-g036-applied-nextjs-i18n-dynamic-imports-in-arbitragex-v2
 description: "Staff Engineer skill alineada al monorepo hefarica/arbitragex-v2 (Frontend Doctrinal (Next.js + Playwright)). Se activa cuando: arbitragex multi-language UI. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

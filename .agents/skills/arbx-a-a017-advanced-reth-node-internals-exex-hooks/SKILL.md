@@ -1,3 +1,4 @@
+---
 name: arbx-a-a017-advanced-reth-node-internals-exex-hooks
 description: "Post-Doc skill alineada al monorepo hefarica/arbitragex-v2 (Rust Systems & Searcher Engine). Se activa cuando: pruning static files. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

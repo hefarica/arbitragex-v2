@@ -1,3 +1,4 @@
+---
 name: arbx-b-b006-applied-yul-inline-assembly-in-arbitragex-v2
 description: "Staff Engineer skill alineada al monorepo hefarica/arbitragex-v2 (Smart Contracts, Solidity & Auditing). Se activa cuando: gas-shaved router contract. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

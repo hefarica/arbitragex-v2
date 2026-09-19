@@ -1,3 +1,4 @@
+---
 name: arbx-j-j003-applied-postgres-mvcc-vacuum-tuning-in-arbitragex-v2
 description: "Staff Engineer skill alineada al monorepo hefarica/arbitragex-v2 (Database & Storage (Postgres/Redis/Timescale)). Se activa cuando: arbitragex prod tuning. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

@@ -1,3 +1,8 @@
+---
+name: 06-data-fetching-strategist
+description: "Local ArbitrageX specialist skill: 06-data-fetching-strategist."
+---
+
 # Skill 06: Data Fetching Strategist
 
 ## 1. Propósito

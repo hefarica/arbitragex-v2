@@ -1,3 +1,4 @@
+---
 name: arbx-l-l028-regime-aware-ensembling
 description: "PhD/Master skill alineada al monorepo hefarica/arbitragex-v2 (Risk, Backtesting & Quant Engineering). Se activa cuando: per-regime weights. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

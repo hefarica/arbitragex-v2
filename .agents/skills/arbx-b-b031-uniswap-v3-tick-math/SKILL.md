@@ -1,3 +1,4 @@
+---
 name: arbx-b-b031-uniswap-v3-tick-math
 description: "PhD/Master skill alineada al monorepo hefarica/arbitragex-v2 (Smart Contracts, Solidity & Auditing). Se activa cuando: sqrtPriceX96 tick crossing. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

@@ -1,3 +1,4 @@
+---
 name: arbx-a-a055-tower-middleware-stack
 description: "PhD/Master skill alineada al monorepo hefarica/arbitragex-v2 (Rust Systems & Searcher Engine). Se activa cuando: layered service composition. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

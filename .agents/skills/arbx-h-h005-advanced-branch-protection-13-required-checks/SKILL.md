@@ -1,3 +1,4 @@
+---
 name: arbx-h-h005-advanced-branch-protection-13-required-checks
 description: "Post-Doc skill alineada al monorepo hefarica/arbitragex-v2 (CI/CD Doctrinal & DevSecOps). Se activa cuando: rulesets vs classic. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

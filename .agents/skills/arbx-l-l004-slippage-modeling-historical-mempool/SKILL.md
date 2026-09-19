@@ -1,3 +1,4 @@
+---
 name: arbx-l-l004-slippage-modeling-historical-mempool
 description: "PhD/Master skill alineada al monorepo hefarica/arbitragex-v2 (Risk, Backtesting & Quant Engineering). Se activa cuando: realistic execution. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

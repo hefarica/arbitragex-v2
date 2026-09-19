@@ -1,3 +1,4 @@
+---
 name: arbx-k-k020-advanced-owasp-asvs-top-10-coverage
 description: "Post-Doc skill alineada al monorepo hefarica/arbitragex-v2 (Security & Cryptography Applied). Se activa cuando: STRIDE threat model. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---
