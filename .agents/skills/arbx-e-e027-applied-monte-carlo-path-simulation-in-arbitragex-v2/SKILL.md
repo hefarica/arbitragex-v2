@@ -1,3 +1,4 @@
+---
 name: arbx-e-e027-applied-monte-carlo-path-simulation-in-arbitragex-v2
 description: "Staff Engineer skill alineada al monorepo hefarica/arbitragex-v2 (AMM Math & Quantitative DeFi). Se activa cuando: nightly backtest realistic PnL. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

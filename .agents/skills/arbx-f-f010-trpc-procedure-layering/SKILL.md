@@ -1,3 +1,4 @@
+---
 name: arbx-f-f010-trpc-procedure-layering
 description: "PhD/Master skill alineada al monorepo hefarica/arbitragex-v2 (Backend Services (Node + Rust)). Se activa cuando: middleware context. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

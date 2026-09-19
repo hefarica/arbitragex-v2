@@ -1,3 +1,4 @@
+---
 name: arbx-l-l020-advanced-drawdown-control-stop-trading
 description: "Post-Doc skill alineada al monorepo hefarica/arbitragex-v2 (Risk, Backtesting & Quant Engineering). Se activa cuando: Bayesian regime DD. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

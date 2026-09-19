@@ -1,3 +1,8 @@
+---
+name: anti_reincidencia_operativa
+description: "Local ArbitrageX specialist skill: anti_reincidencia_operativa."
+---
+
 # Skill: Prevención de Reincidencia Operativa (Anti-Reincidencia)
 
 > **Versión:** 3.0 — Actualizada 2026-05-03T08:48Z  

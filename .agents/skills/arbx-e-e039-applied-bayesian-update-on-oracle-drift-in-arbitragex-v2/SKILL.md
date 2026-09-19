@@ -1,3 +1,4 @@
+---
 name: arbx-e-e039-applied-bayesian-update-on-oracle-drift-in-arbitragex-v2
 description: "Staff Engineer skill alineada al monorepo hefarica/arbitragex-v2 (AMM Math & Quantitative DeFi). Se activa cuando: oracle staleness probabilistic. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

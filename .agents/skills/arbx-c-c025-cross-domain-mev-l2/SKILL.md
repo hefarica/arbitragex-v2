@@ -1,3 +1,4 @@
+---
 name: arbx-c-c025-cross-domain-mev-l2
 description: "PhD/Master skill alineada al monorepo hefarica/arbitragex-v2 (MEV, Mempool & Bundle Submission). Se activa cuando: L2 sequencer ordering. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

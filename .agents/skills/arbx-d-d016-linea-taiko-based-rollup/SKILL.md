@@ -1,3 +1,4 @@
+---
 name: arbx-d-d016-linea-taiko-based-rollup
 description: "PhD/Master skill alineada al monorepo hefarica/arbitragex-v2 (Multi-Chain, L2 & Bridges). Se activa cuando: sequencer auctions. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

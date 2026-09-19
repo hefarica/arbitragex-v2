@@ -1,3 +1,4 @@
+---
 name: arbx-j-j009-applied-postgres-cte-window-recursive-in-arbitragex-v2
 description: "Staff Engineer skill alineada al monorepo hefarica/arbitragex-v2 (Database & Storage (Postgres/Redis/Timescale)). Se activa cuando: multi-hop arb path queries. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

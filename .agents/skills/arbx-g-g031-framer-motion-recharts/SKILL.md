@@ -1,3 +1,4 @@
+---
 name: arbx-g-g031-framer-motion-recharts
 description: "PhD/Master skill alineada al monorepo hefarica/arbitragex-v2 (Frontend Doctrinal (Next.js + Playwright)). Se activa cuando: physics motion. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

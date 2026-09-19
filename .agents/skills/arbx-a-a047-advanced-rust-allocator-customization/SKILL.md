@@ -1,3 +1,4 @@
+---
 name: arbx-a-a047-advanced-rust-allocator-customization
 description: "Post-Doc skill alineada al monorepo hefarica/arbitragex-v2 (Rust Systems & Searcher Engine). Se activa cuando: NUMA arena allocators. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

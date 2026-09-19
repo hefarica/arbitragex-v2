@@ -1,3 +1,4 @@
+---
 name: arbx-h-h038-advanced-oidc-to-vault-aws-gcp
 description: "Post-Doc skill alineada al monorepo hefarica/arbitragex-v2 (CI/CD Doctrinal & DevSecOps). Se activa cuando: sealed-secrets. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

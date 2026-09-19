@@ -1,3 +1,4 @@
+---
 name: arbx-e-e028-convex-optimization-multi-pool-routing
 description: "PhD/Master skill alineada al monorepo hefarica/arbitragex-v2 (AMM Math & Quantitative DeFi). Se activa cuando: LP/QP clarabel-rs. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

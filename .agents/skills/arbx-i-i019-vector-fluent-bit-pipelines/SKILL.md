@@ -1,3 +1,4 @@
+---
 name: arbx-i-i019-vector-fluent-bit-pipelines
 description: "PhD/Master skill alineada al monorepo hefarica/arbitragex-v2 (Observability & SRE). Se activa cuando: VRL transformations. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

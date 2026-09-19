@@ -1,3 +1,4 @@
+---
 name: arbx-b-b055-chainlink-push-oracle-ccip
 description: "PhD/Master skill alineada al monorepo hefarica/arbitragex-v2 (Smart Contracts, Solidity & Auditing). Se activa cuando: aggregator AnswerUpdated. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

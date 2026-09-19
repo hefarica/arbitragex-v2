@@ -1,3 +1,4 @@
+---
 name: arbx-b-b057-applied-chainlink-push-oracle-ccip-in-arbitragex-v2
 description: "Staff Engineer skill alineada al monorepo hefarica/arbitragex-v2 (Smart Contracts, Solidity & Auditing). Se activa cuando: staleness gate. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

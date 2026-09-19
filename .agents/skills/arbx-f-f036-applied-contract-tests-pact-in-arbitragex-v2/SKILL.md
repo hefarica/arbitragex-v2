@@ -1,3 +1,4 @@
+---
 name: arbx-f-f036-applied-contract-tests-pact-in-arbitragex-v2
 description: "Staff Engineer skill alineada al monorepo hefarica/arbitragex-v2 (Backend Services (Node + Rust)). Se activa cuando: backend↔frontend contract. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

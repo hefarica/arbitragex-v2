@@ -1,3 +1,4 @@
+---
 name: arbx-e-e012-applied-balancer-spot-price-biwi-in-arbitragex-v2
 description: "Staff Engineer skill alineada al monorepo hefarica/arbitragex-v2 (AMM Math & Quantitative DeFi). Se activa cuando: Vault single-tx multi-swap. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

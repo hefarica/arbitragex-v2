@@ -1,3 +1,4 @@
+---
 name: arbx-h-h015-applied-cargo-audit-cargo-deny-policy-in-arbitragex-v2
 description: "Staff Engineer skill alineada al monorepo hefarica/arbitragex-v2 (CI/CD Doctrinal & DevSecOps). Se activa cuando: 14 transitive ignore documented. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

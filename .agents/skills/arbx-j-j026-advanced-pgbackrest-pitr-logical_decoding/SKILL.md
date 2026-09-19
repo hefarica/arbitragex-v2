@@ -1,3 +1,4 @@
+---
 name: arbx-j-j026-advanced-pgbackrest-pitr-logical_decoding
 description: "Post-Doc skill alineada al monorepo hefarica/arbitragex-v2 (Database & Storage (Postgres/Redis/Timescale)). Se activa cuando: outbox pattern. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

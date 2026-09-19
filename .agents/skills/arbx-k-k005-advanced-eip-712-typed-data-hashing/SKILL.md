@@ -1,3 +1,4 @@
+---
 name: arbx-k-k005-advanced-eip-712-typed-data-hashing
 description: "Post-Doc skill alineada al monorepo hefarica/arbitragex-v2 (Security & Cryptography Applied). Se activa cuando: cross-domain replay. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

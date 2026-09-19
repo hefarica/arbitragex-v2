@@ -1,3 +1,4 @@
+---
 name: arbx-a-a059-advanced-hyper-http-internals
 description: "Post-Doc skill alineada al monorepo hefarica/arbitragex-v2 (Rust Systems & Searcher Engine). Se activa cuando: investigación http/3 quic. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

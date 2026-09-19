@@ -1,3 +1,4 @@
+---
 name: arbx-b-b036-applied-uniswap-v4-hooks-architecture-in-arbitragex-v2
 description: "Staff Engineer skill alineada al monorepo hefarica/arbitragex-v2 (Smart Contracts, Solidity & Auditing). Se activa cuando: MEV-resistant hook. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

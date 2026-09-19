@@ -1,3 +1,4 @@
+---
 name: arbx-b-b041-advanced-balancer-v2-weightedstable-pools
 description: "Post-Doc skill alineada al monorepo hefarica/arbitragex-v2 (Smart Contracts, Solidity & Auditing). Se activa cuando: LBP dynamic weights. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

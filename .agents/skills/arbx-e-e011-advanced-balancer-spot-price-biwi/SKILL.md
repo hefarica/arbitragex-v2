@@ -1,3 +1,4 @@
+---
 name: arbx-e-e011-advanced-balancer-spot-price-biwi
 description: "Post-Doc skill alineada al monorepo hefarica/arbitragex-v2 (AMM Math & Quantitative DeFi). Se activa cuando: time-shifted weights. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

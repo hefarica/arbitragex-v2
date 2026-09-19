@@ -1,3 +1,4 @@
+---
 name: arbx-m-m010-doctrine-lexicon-absoluto
 description: "PhD/Master skill alineada al monorepo hefarica/arbitragex-v2 (Doctrine, Process & Release Engineering). Se activa cuando: stable vocabulary. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

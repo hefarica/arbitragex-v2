@@ -1,3 +1,4 @@
+---
 name: arbx-h-h014-advanced-cargo-audit-cargo-deny-policy
 description: "Post-Doc skill alineada al monorepo hefarica/arbitragex-v2 (CI/CD Doctrinal & DevSecOps). Se activa cuando: cargo vet trust cache. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

@@ -1,3 +1,4 @@
+---
 name: arbx-g-g006-applied-react-19-usetransitionuseoptimistic-in-arbitragex-v2
 description: "Staff Engineer skill alineada al monorepo hefarica/arbitragex-v2 (Frontend Doctrinal (Next.js + Playwright)). Se activa cuando: admin panel CSRF-strict. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

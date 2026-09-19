@@ -1,3 +1,4 @@
+---
 name: arbx-m-m013-postmortem-discipline-five-whys-anti
 description: "PhD/Master skill alineada al monorepo hefarica/arbitragex-v2 (Doctrine, Process & Release Engineering). Se activa cuando: blameless evidence. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

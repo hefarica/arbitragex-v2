@@ -1,3 +1,4 @@
+---
 name: arbx-g-g015-applied-playwright-strict-mode-doctrine-in-arbitragex-v2
 description: "Staff Engineer skill alineada al monorepo hefarica/arbitragex-v2 (Frontend Doctrinal (Next.js + Playwright)). Se activa cuando: rpc-down.spec.ts iter18. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

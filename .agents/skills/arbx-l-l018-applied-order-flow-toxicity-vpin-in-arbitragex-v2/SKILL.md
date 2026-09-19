@@ -1,3 +1,4 @@
+---
 name: arbx-l-l018-applied-order-flow-toxicity-vpin-in-arbitragex-v2
 description: "Staff Engineer skill alineada al monorepo hefarica/arbitragex-v2 (Risk, Backtesting & Quant Engineering). Se activa cuando: RiskGate throttle on toxic. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

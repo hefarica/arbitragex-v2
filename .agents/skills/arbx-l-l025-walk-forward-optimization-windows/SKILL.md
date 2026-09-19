@@ -1,3 +1,4 @@
+---
 name: arbx-l-l025-walk-forward-optimization-windows
 description: "PhD/Master skill alineada al monorepo hefarica/arbitragex-v2 (Risk, Backtesting & Quant Engineering). Se activa cuando: rolling reoptimization. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

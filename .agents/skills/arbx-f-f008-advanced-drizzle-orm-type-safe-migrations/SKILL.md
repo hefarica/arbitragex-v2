@@ -1,3 +1,4 @@
+---
 name: arbx-f-f008-advanced-drizzle-orm-type-safe-migrations
 description: "Post-Doc skill alineada al monorepo hefarica/arbitragex-v2 (Backend Services (Node + Rust)). Se activa cuando: cross-DB joins. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

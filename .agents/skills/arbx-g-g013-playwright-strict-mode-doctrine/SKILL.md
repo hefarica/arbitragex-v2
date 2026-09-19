@@ -1,3 +1,4 @@
+---
 name: arbx-g-g013-playwright-strict-mode-doctrine
 description: "PhD/Master skill alineada al monorepo hefarica/arbitragex-v2 (Frontend Doctrinal (Next.js + Playwright)). Se activa cuando: banned .first()/.nth(). Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

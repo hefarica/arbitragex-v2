@@ -1,3 +1,4 @@
+---
 name: arbx-k-k006-applied-eip-712-typed-data-hashing-in-arbitragex-v2
 description: "Staff Engineer skill alineada al monorepo hefarica/arbitragex-v2 (Security & Cryptography Applied). Se activa cuando: admin signed actions. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

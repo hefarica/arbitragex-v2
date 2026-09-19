@@ -1,3 +1,4 @@
+---
 name: arbx-i-i016-mimir-long-term-metrics
 description: "PhD/Master skill alineada al monorepo hefarica/arbitragex-v2 (Observability & SRE). Se activa cuando: multi-tenant. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

@@ -1,3 +1,4 @@
+---
 name: arbx-h-h019-trivy-container-scan-sbom
 description: "PhD/Master skill alineada al monorepo hefarica/arbitragex-v2 (CI/CD Doctrinal & DevSecOps). Se activa cuando: OS+lang+secrets. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

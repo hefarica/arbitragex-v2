@@ -1,3 +1,4 @@
+---
 name: arbx-i-i007-grafana-dashboard-as-code-jsonnet
 description: "PhD/Master skill alineada al monorepo hefarica/arbitragex-v2 (Observability & SRE). Se activa cuando: grafonnet-lib. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

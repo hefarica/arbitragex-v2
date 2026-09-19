@@ -1,3 +1,4 @@
+---
 name: arbx-m-m004-pr-hygiene-forensic-reports
 description: "PhD/Master skill alineada al monorepo hefarica/arbitragex-v2 (Doctrine, Process & Release Engineering). Se activa cuando: evidence-bound merges. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

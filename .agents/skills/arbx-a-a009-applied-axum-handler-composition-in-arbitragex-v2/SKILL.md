@@ -1,3 +1,4 @@
+---
 name: arbx-a-a009-applied-axum-handler-composition-in-arbitragex-v2
 description: "Staff Engineer skill alineada al monorepo hefarica/arbitragex-v2 (Rust Systems & Searcher Engine). Se activa cuando: api-server /status mapper iter18. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

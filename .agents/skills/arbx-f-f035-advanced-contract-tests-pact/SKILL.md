@@ -1,3 +1,4 @@
+---
 name: arbx-f-f035-advanced-contract-tests-pact
 description: "Post-Doc skill alineada al monorepo hefarica/arbitragex-v2 (Backend Services (Node + Rust)). Se activa cuando: provider verification. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

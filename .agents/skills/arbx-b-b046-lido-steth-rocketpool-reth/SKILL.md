@@ -1,3 +1,4 @@
+---
 name: arbx-b-b046-lido-steth-rocketpool-reth
 description: "PhD/Master skill alineada al monorepo hefarica/arbitragex-v2 (Smart Contracts, Solidity & Auditing). Se activa cuando: wrap/unwrap rebase. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

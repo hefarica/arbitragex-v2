@@ -1,3 +1,4 @@
+---
 name: arbx-c-c008-advanced-sandwich-profitability-math
 description: "Post-Doc skill alineada al monorepo hefarica/arbitragex-v2 (MEV, Mempool & Bundle Submission). Se activa cuando: multi-hop victim path. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

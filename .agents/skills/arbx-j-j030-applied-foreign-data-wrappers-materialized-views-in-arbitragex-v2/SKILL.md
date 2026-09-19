@@ -1,3 +1,4 @@
+---
 name: arbx-j-j030-applied-foreign-data-wrappers-materialized-views-in-arbitragex-v2
 description: "Staff Engineer skill alineada al monorepo hefarica/arbitragex-v2 (Database & Storage (Postgres/Redis/Timescale)). Se activa cuando: analytics view refresh. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

@@ -1,3 +1,4 @@
+---
 name: arbx-d-d017-advanced-linea-taiko-based-rollup
 description: "Post-Doc skill alineada al monorepo hefarica/arbitragex-v2 (Multi-Chain, L2 & Bridges). Se activa cuando: based-rollup research. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

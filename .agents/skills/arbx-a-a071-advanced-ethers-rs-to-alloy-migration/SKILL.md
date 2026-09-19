@@ -1,3 +1,4 @@
+---
 name: arbx-a-a071-advanced-ethers-rs-to-alloy-migration
 description: "Post-Doc skill alineada al monorepo hefarica/arbitragex-v2 (Rust Systems & Searcher Engine). Se activa cuando: provider upgrade research. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

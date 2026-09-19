@@ -1,3 +1,4 @@
+---
 name: arbx-d-d034-hop-connext-xcall-stargate
 description: "PhD/Master skill alineada al monorepo hefarica/arbitragex-v2 (Multi-Chain, L2 & Bridges). Se activa cuando: liquidity pools. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

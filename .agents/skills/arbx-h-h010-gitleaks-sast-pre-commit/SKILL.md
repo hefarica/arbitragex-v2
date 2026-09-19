@@ -1,3 +1,4 @@
+---
 name: arbx-h-h010-gitleaks-sast-pre-commit
 description: "PhD/Master skill alineada al monorepo hefarica/arbitragex-v2 (CI/CD Doctrinal & DevSecOps). Se activa cuando: custom rules allowlist. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

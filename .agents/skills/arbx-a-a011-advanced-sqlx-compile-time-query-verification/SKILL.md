@@ -1,3 +1,4 @@
+---
 name: arbx-a-a011-advanced-sqlx-compile-time-query-verification
 description: "Post-Doc skill alineada al monorepo hefarica/arbitragex-v2 (Rust Systems & Searcher Engine). Se activa cuando: cross-DB federation. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

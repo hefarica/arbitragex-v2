@@ -1,3 +1,4 @@
+---
 name: arbx-a-a061-revm-execution-library
 description: "PhD/Master skill alineada al monorepo hefarica/arbitragex-v2 (Rust Systems & Searcher Engine). Se activa cuando: EVM interpreter Rust. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

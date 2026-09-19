@@ -1,3 +1,4 @@
+---
 name: arbx-j-j001-postgres-mvcc-vacuum-tuning
 description: "PhD/Master skill alineada al monorepo hefarica/arbitragex-v2 (Database & Storage (Postgres/Redis/Timescale)). Se activa cuando: bloat autovacuum. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

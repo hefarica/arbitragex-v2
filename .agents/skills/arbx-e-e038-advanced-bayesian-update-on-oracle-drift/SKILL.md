@@ -1,3 +1,4 @@
+---
 name: arbx-e-e038-advanced-bayesian-update-on-oracle-drift
 description: "Post-Doc skill alineada al monorepo hefarica/arbitragex-v2 (AMM Math & Quantitative DeFi). Se activa cuando: online Bayes research. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

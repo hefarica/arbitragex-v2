@@ -1,3 +1,4 @@
+---
 name: arbx-b-b032-advanced-uniswap-v3-tick-math
 description: "Post-Doc skill alineada al monorepo hefarica/arbitragex-v2 (Smart Contracts, Solidity & Auditing). Se activa cuando: piecewise convex approx. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

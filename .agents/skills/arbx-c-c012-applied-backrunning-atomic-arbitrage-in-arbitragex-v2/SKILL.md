@@ -1,3 +1,4 @@
+---
 name: arbx-c-c012-applied-backrunning-atomic-arbitrage-in-arbitragex-v2
 description: "Staff Engineer skill alineada al monorepo hefarica/arbitragex-v2 (MEV, Mempool & Bundle Submission). Se activa cuando: searcher sub-100ms detect→bundle. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

@@ -1,3 +1,4 @@
+---
 name: arbx-i-i029-advanced-chaos-engineering-toxiproxy
 description: "Post-Doc skill alineada al monorepo hefarica/arbitragex-v2 (Observability & SRE). Se activa cuando: CPU/OOM/network partition. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

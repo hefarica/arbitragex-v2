@@ -1,3 +1,4 @@
+---
 name: arbx-l-l016-order-flow-toxicity-vpin
 description: "PhD/Master skill alineada al monorepo hefarica/arbitragex-v2 (Risk, Backtesting & Quant Engineering). Se activa cuando: volume-sync PIN. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

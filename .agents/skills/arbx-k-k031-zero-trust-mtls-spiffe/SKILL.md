@@ -1,3 +1,4 @@
+---
 name: arbx-k-k031-zero-trust-mtls-spiffe
 description: "PhD/Master skill alineada al monorepo hefarica/arbitragex-v2 (Security & Cryptography Applied). Se activa cuando: beyondcorp segmentation. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

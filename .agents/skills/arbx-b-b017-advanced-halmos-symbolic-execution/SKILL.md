@@ -1,3 +1,4 @@
+---
 name: arbx-b-b017-advanced-halmos-symbolic-execution
 description: "Post-Doc skill alineada al monorepo hefarica/arbitragex-v2 (Smart Contracts, Solidity & Auditing). Se activa cuando: symbolic+ZK research. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

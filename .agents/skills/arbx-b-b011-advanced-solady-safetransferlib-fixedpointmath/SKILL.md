@@ -1,3 +1,4 @@
+---
 name: arbx-b-b011-advanced-solady-safetransferlib-fixedpointmath
 description: "Post-Doc skill alineada al monorepo hefarica/arbitragex-v2 (Smart Contracts, Solidity & Auditing). Se activa cuando: brutalized bits research. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

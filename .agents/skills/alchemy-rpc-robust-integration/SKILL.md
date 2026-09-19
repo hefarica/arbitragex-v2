@@ -1,3 +1,8 @@
+---
+name: alchemy-rpc-robust-integration
+description: "Local ArbitrageX specialist skill: alchemy-rpc-robust-integration."
+---
+
 # Integración Robusta de Alchemy RPC
 
 ## Nivel

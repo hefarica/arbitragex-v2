@@ -1,3 +1,4 @@
+---
 name: arbx-a-a027-applied-cargo-workspaces-feature-gates-in-arbitragex-v2
 description: "Staff Engineer skill alineada al monorepo hefarica/arbitragex-v2 (Rust Systems & Searcher Engine). Se activa cuando: release binary <50MB. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

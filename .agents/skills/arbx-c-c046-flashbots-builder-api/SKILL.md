@@ -1,3 +1,4 @@
+---
 name: arbx-c-c046-flashbots-builder-api
 description: "PhD/Master skill alineada al monorepo hefarica/arbitragex-v2 (MEV, Mempool & Bundle Submission). Se activa cuando: bundle simulation. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

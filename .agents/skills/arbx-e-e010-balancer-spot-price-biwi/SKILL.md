@@ -1,3 +1,4 @@
+---
 name: arbx-e-e010-balancer-spot-price-biwi
 description: "PhD/Master skill alineada al monorepo hefarica/arbitragex-v2 (AMM Math & Quantitative DeFi). Se activa cuando: multi-asset weighted. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

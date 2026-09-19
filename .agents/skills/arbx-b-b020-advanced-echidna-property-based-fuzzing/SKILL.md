@@ -1,3 +1,4 @@
+---
 name: arbx-b-b020-advanced-echidna-property-based-fuzzing
 description: "Post-Doc skill alineada al monorepo hefarica/arbitragex-v2 (Smart Contracts, Solidity & Auditing). Se activa cuando: coverage-guided taint. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

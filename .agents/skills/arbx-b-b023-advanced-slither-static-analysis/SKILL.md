@@ -1,3 +1,4 @@
+---
 name: arbx-b-b023-advanced-slither-static-analysis
 description: "Post-Doc skill alineada al monorepo hefarica/arbitragex-v2 (Smart Contracts, Solidity & Auditing). Se activa cuando: custom printers IR. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

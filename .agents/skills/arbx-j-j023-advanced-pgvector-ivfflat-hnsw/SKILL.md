@@ -1,3 +1,4 @@
+---
 name: arbx-j-j023-advanced-pgvector-ivfflat-hnsw
 description: "Post-Doc skill alineada al monorepo hefarica/arbitragex-v2 (Database & Storage (Postgres/Redis/Timescale)). Se activa cuando: hybrid lex+vec. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

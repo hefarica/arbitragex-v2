@@ -1,3 +1,4 @@
+---
 name: arbx-f-f015-applied-openapi-grpc-graphql-codegen-in-arbitragex-v2
 description: "Staff Engineer skill alineada al monorepo hefarica/arbitragex-v2 (Backend Services (Node + Rust)). Se activa cuando: arbitragex public API. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

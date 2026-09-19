@@ -1,3 +1,4 @@
+---
 name: arbx-i-i008-advanced-grafana-dashboard-as-code-jsonnet
 description: "Post-Doc skill alineada al monorepo hefarica/arbitragex-v2 (Observability & SRE). Se activa cuando: provisioning IaC. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

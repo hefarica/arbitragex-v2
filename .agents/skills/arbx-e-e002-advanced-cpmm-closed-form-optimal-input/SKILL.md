@@ -1,3 +1,4 @@
+---
 name: arbx-e-e002-advanced-cpmm-closed-form-optimal-input
 description: "Post-Doc skill alineada al monorepo hefarica/arbitragex-v2 (AMM Math & Quantitative DeFi). Se activa cuando: multi-fee Bellman-Ford. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

@@ -11,7 +11,7 @@ export const dynamic = "force-dynamic";
 async function getInitialOpportunities(): Promise<OpportunitiesSnapshot> {
   const EDGE_URL = process.env.INTERNAL_EDGE_URL || getApiBaseUrl();
   try {
-    const res = await fetch(`${EDGE_URL}/api/opportunities/live`, {
+    const res = await fetch(`${EDGE_URL}/api/opportunities/live?order=profit_usd`, {
       cache: "no-store",
     });
 

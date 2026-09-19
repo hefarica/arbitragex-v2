@@ -1,3 +1,4 @@
+---
 name: arbx-d-d006-applied-arbitrum-nitro-anytrust-dac-in-arbitragex-v2
 description: "Staff Engineer skill alineada al monorepo hefarica/arbitragex-v2 (Multi-Chain, L2 & Bridges). Se activa cuando: Inbox L1→L2 tracking. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

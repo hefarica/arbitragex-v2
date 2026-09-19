@@ -1,3 +1,4 @@
+---
 name: arbx-h-h001-gh-actions-concurrency
 description: "PhD/Master skill alineada al monorepo hefarica/arbitragex-v2 (CI/CD Doctrinal & DevSecOps). Se activa cuando: cancel-in-progress. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

@@ -1,3 +1,4 @@
+---
 name: arbx-m-m019-documentation-as-code-diátaxis-adr
 description: "PhD/Master skill alineada al monorepo hefarica/arbitragex-v2 (Doctrine, Process & Release Engineering). Se activa cuando: tutorial/howto/ref/explain. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

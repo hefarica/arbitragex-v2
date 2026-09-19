@@ -1,3 +1,4 @@
+---
 name: arbx-a-a025-cargo-workspaces-feature-gates
 description: "PhD/Master skill alineada al monorepo hefarica/arbitragex-v2 (Rust Systems & Searcher Engine). Se activa cuando: sed-core LiquidityManifold. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

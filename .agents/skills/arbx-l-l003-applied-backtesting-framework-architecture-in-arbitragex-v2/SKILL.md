@@ -1,3 +1,4 @@
+---
 name: arbx-l-l003-applied-backtesting-framework-architecture-in-arbitragex-v2
 description: "Staff Engineer skill alineada al monorepo hefarica/arbitragex-v2 (Risk, Backtesting & Quant Engineering). Se activa cuando: nightly batch PnL dist. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

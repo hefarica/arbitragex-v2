@@ -1,3 +1,4 @@
+---
 name: arbx-i-i001-opentelemetry-rust-sdk
 description: "PhD/Master skill alineada al monorepo hefarica/arbitragex-v2 (Observability & SRE). Se activa cuando: tonic exporter batch. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

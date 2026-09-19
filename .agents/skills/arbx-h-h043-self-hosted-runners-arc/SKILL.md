@@ -1,3 +1,4 @@
+---
 name: arbx-h-h043-self-hosted-runners-arc
 description: "PhD/Master skill alineada al monorepo hefarica/arbitragex-v2 (CI/CD Doctrinal & DevSecOps). Se activa cuando: autoscaling ARC. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

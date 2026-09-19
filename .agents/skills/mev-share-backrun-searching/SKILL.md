@@ -1,3 +1,8 @@
+---
+name: mev-share-backrun-searching
+description: "Local ArbitrageX specialist skill: mev-share-backrun-searching."
+---
+
 # MEV-Share Backrun Searching
 
 ## Propósito

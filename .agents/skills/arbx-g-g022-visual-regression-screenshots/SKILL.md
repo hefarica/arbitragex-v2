@@ -1,3 +1,4 @@
+---
 name: arbx-g-g022-visual-regression-screenshots
 description: "PhD/Master skill alineada al monorepo hefarica/arbitragex-v2 (Frontend Doctrinal (Next.js + Playwright)). Se activa cuando: pixel diff thresholds. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

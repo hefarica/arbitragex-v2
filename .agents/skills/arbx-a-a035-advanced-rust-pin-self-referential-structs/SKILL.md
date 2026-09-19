@@ -1,3 +1,4 @@
+---
 name: arbx-a-a035-advanced-rust-pin-self-referential-structs
 description: "Post-Doc skill alineada al monorepo hefarica/arbitragex-v2 (Rust Systems & Searcher Engine). Se activa cuando: pin-project stable API. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

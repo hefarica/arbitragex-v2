@@ -1,3 +1,4 @@
+---
 name: arbx-a-a045-applied-rust-lock-free-crossbeam-in-arbitragex-v2
 description: "Staff Engineer skill alineada al monorepo hefarica/arbitragex-v2 (Rust Systems & Searcher Engine). Se activa cuando: opportunity_buffer sub-µs ingest. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

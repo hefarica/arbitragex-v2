@@ -1,3 +1,4 @@
+---
 name: arbx-e-e023-advanced-pre-trade-simulation-revm-fork
 description: "Post-Doc skill alineada al monorepo hefarica/arbitragex-v2 (AMM Math & Quantitative DeFi). Se activa cuando: custom Inspector taint. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

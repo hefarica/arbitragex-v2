@@ -1,3 +1,4 @@
+---
 name: arbx-m-m006-applied-pr-hygiene-forensic-reports-in-arbitragex-v2
 description: "Staff Engineer skill alineada al monorepo hefarica/arbitragex-v2 (Doctrine, Process & Release Engineering). Se activa cuando: RAPTOR Final Report template. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

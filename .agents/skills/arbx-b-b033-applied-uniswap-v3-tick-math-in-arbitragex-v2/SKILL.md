@@ -1,3 +1,4 @@
+---
 name: arbx-b-b033-applied-uniswap-v3-tick-math-in-arbitragex-v2
 description: "Staff Engineer skill alineada al monorepo hefarica/arbitragex-v2 (Smart Contracts, Solidity & Auditing). Se activa cuando: multi-hop V3 router. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

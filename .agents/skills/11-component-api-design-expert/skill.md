@@ -1,3 +1,8 @@
+---
+name: 11-component-api-design-expert
+description: "Local ArbitrageX specialist skill: 11-component-api-design-expert."
+---
+
 # Skill 11: Component API Design Expert
 
 ## 1. Propósito

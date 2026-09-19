@@ -1,3 +1,8 @@
+---
+name: mixed-integer-routing-with-fixed-costs
+description: "Local ArbitrageX specialist skill: mixed-integer-routing-with-fixed-costs."
+---
+
 # Mixed Integer Routing with Fixed Costs
 
 ## Propósito

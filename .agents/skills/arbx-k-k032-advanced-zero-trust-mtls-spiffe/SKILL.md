@@ -1,3 +1,4 @@
+---
 name: arbx-k-k032-advanced-zero-trust-mtls-spiffe
 description: "Post-Doc skill alineada al monorepo hefarica/arbitragex-v2 (Security & Cryptography Applied). Se activa cuando: identity-based access. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

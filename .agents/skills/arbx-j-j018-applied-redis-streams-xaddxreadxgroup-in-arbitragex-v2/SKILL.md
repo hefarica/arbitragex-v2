@@ -1,3 +1,4 @@
+---
 name: arbx-j-j018-applied-redis-streams-xaddxreadxgroup-in-arbitragex-v2
 description: "Staff Engineer skill alineada al monorepo hefarica/arbitragex-v2 (Database & Storage (Postgres/Redis/Timescale)). Se activa cuando: opportunity bus backbone. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

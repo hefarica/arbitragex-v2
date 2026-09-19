@@ -1,3 +1,4 @@
+---
 name: arbx-k-k002-advanced-secp256k1-ecdsa-schnorrbip-340
 description: "Post-Doc skill alineada al monorepo hefarica/arbitragex-v2 (Security & Cryptography Applied). Se activa cuando: MuSig2 threshold. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

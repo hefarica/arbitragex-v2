@@ -1,3 +1,4 @@
+---
 name: arbx-d-d037-bitcoin-stacks-babylon
 description: "PhD/Master skill alineada al monorepo hefarica/arbitragex-v2 (Multi-Chain, L2 & Bridges). Se activa cuando: Bitcoin restaking. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

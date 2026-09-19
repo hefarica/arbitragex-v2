@@ -1,3 +1,4 @@
+---
 name: arbx-e-e003-applied-cpmm-closed-form-optimal-input-in-arbitragex-v2
 description: "Staff Engineer skill alineada al monorepo hefarica/arbitragex-v2 (AMM Math & Quantitative DeFi). Se activa cuando: quoter <50µs. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

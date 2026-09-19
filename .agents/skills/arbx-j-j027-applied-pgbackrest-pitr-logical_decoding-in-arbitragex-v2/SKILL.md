@@ -1,3 +1,4 @@
+---
 name: arbx-j-j027-applied-pgbackrest-pitr-logical_decoding-in-arbitragex-v2
 description: "Staff Engineer skill alineada al monorepo hefarica/arbitragex-v2 (Database & Storage (Postgres/Redis/Timescale)). Se activa cuando: arbitragex DR. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

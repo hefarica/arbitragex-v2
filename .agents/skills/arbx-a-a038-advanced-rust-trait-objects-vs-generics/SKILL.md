@@ -1,3 +1,4 @@
+---
 name: arbx-a-a038-advanced-rust-trait-objects-vs-generics
 description: "Post-Doc skill alineada al monorepo hefarica/arbitragex-v2 (Rust Systems & Searcher Engine). Se activa cuando: GAT HKT emulation. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

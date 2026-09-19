@@ -1,3 +1,4 @@
+---
 name: arbx-c-c057-applied-frontrunning-detection-defensive-in-arbitragex-v2
 description: "Staff Engineer skill alineada al monorepo hefarica/arbitragex-v2 (MEV, Mempool & Bundle Submission). Se activa cuando: arbitragex defensive mode. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

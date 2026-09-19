@@ -1,3 +1,4 @@
+---
 name: arbx-a-a016-reth-node-internals-exex-hooks
 description: "PhD/Master skill alineada al monorepo hefarica/arbitragex-v2 (Rust Systems & Searcher Engine). Se activa cuando: Execution Extensions. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

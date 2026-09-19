@@ -13,6 +13,9 @@ import {
   acceptRuntimeAck,
   acceptTickPayload,
   createRealtimeSlice,
+  restFetchOutcome,
+  runtimeAckJoinAck,
+  runtimeAckRoomError,
   staleChannels,
   type RealtimeChannelState,
 } from "../realtime-slices";
@@ -167,5 +170,89 @@ describe("createRealtimeSlice — initial state + writers", () => {
     expect(store.get().wsConnected).toBe(false);
     store.setWsConnected(true);
     expect(store.get().wsConnected).toBe(true);
+  });
+});
+
+// ─── restFetchOutcome — WO-GAP3 (2026-09-17) ─────────────────────────────────
+//
+// Regression: the provider refreshed only lastMessageAt on a successful REST
+// snapshot and never wrote `status`, so pairs/quote_anchor stayed `connecting`
+// forever while data flowed every 30s — and the WO-08 socket aggregate
+// inherited that worst state (header read `socket CONNECTING · pairs
+// CONNECTING · quote_anchor CONNECTING` permanently with the feed LIVE).
+// The outcome contract: ready ⇒ accepted (caller MUST write a status that
+// leaves `connecting`); error+message ⇒ failed with the REAL error (R8);
+// anything else ⇒ inflight, nothing certified.
+
+describe("restFetchOutcome — REST-pass channel outcome (WO-GAP3)", () => {
+  it("ready ⇒ accepted: an accepted snapshot must be able to leave `connecting`", () => {
+    expect(restFetchOutcome("ready", null)).toEqual({ kind: "accepted" });
+  });
+
+  it("error with a message ⇒ failed, the real error rides verbatim (R8)", () => {
+    expect(restFetchOutcome("error", "edge 503: upstream")).toEqual({
+      kind: "failed",
+      lastError: "edge 503: upstream",
+    });
+  });
+
+  it("idle / loading / error-without-message ⇒ inflight (nothing to certify, no fabrication)", () => {
+    expect(restFetchOutcome("idle", null)).toEqual({ kind: "inflight" });
+    expect(restFetchOutcome("loading", null)).toEqual({ kind: "inflight" });
+    expect(restFetchOutcome("error", null)).toEqual({ kind: "inflight" });
+  });
+});
+
+// ─── runtimeAckJoinAck / runtimeAckRoomError — ROOM-AUTH-01 (2026-09-17) ────
+//
+// Regression: the provider stamped `runtime_ack → live` the moment the shared
+// socket CONNECTED, without waiting for the server's join verdict. The server
+// rejects anonymous joins with 42["error",{"code":"unauthorized",
+// "room":"runtime_ack"}] (QA-WS §5.2), so the header read `runtime_ack LIVE`
+// over a room the socket was never admitted to. The verdict contract:
+// ack ok ⇒ the ONLY path (besides an accepted broadcast) to certify `live`;
+// ack nok / room-scoped error ⇒ lastError verbatim → §34 projection shows
+// ERROR, never LIVE (R8: a refusal is a fact, never masked).
+
+describe("runtimeAckJoinAck — join ack verdict (ROOM-AUTH-01)", () => {
+  it("ok:true ⇒ certified (the caller may write status live)", () => {
+    expect(runtimeAckJoinAck({ ok: true })).toEqual({ ok: true });
+  });
+
+  it("refusal ⇒ lastError carries the server's code verbatim (R8)", () => {
+    const v = runtimeAckJoinAck({ ok: false, code: "unauthorized" });
+    expect(v.ok).toBe(false);
+    if (!v.ok) {
+      expect(v.lastError).toContain("unauthorized");
+      expect(v.lastError).toContain("admin-gated");
+    }
+  });
+
+  it("garbage / missing ack reply ⇒ refused with code unknown, never certified (fail-closed)", () => {
+    expect(runtimeAckJoinAck(undefined).ok).toBe(false);
+    expect(runtimeAckJoinAck(null).ok).toBe(false);
+    const v = runtimeAckJoinAck({});
+    expect(v.ok).toBe(false);
+    if (!v.ok) expect(v.lastError).toContain("unknown");
+  });
+});
+
+describe("runtimeAckRoomError — room-scoped structured error (ROOM-AUTH-01)", () => {
+  it("the exact observed frame maps to an honest lastError", () => {
+    const lastError = runtimeAckRoomError({ code: "unauthorized", room: "runtime_ack" });
+    expect(lastError).not.toBeNull();
+    expect(lastError).toContain("unauthorized");
+  });
+
+  it("errors for OTHER rooms / shapes are ignored (scoped strictly)", () => {
+    expect(runtimeAckRoomError({ code: "unauthorized", room: "opportunities" })).toBeNull();
+    expect(runtimeAckRoomError({ code: "rate_limited" })).toBeNull();
+    expect(runtimeAckRoomError(null)).toBeNull();
+    expect(runtimeAckRoomError("error")).toBeNull();
+  });
+
+  it("room match with a non-string code still fails honest with unknown", () => {
+    const lastError = runtimeAckRoomError({ code: 42, room: "runtime_ack" });
+    expect(lastError).toContain("unknown");
   });
 });

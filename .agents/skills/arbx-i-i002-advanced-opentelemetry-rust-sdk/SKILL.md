@@ -1,3 +1,4 @@
+---
 name: arbx-i-i002-advanced-opentelemetry-rust-sdk
 description: "Post-Doc skill alineada al monorepo hefarica/arbitragex-v2 (Observability & SRE). Se activa cuando: async-aware context. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

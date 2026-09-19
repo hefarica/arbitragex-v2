@@ -1,3 +1,4 @@
+---
 name: arbx-j-j013-timescaledb-hypertables
 description: "PhD/Master skill alineada al monorepo hefarica/arbitragex-v2 (Database & Storage (Postgres/Redis/Timescale)). Se activa cuando: chunk_time tuning. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

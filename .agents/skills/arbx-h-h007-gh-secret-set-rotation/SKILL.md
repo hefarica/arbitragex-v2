@@ -1,3 +1,4 @@
+---
 name: arbx-h-h007-gh-secret-set-rotation
 description: "PhD/Master skill alineada al monorepo hefarica/arbitragex-v2 (CI/CD Doctrinal & DevSecOps). Se activa cuando: --env scoping. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

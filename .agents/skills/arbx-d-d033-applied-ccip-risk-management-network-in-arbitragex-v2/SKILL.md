@@ -1,3 +1,4 @@
+---
 name: arbx-d-d033-applied-ccip-risk-management-network-in-arbitragex-v2
 description: "Staff Engineer skill alineada al monorepo hefarica/arbitragex-v2 (Multi-Chain, L2 & Bridges). Se activa cuando: arbitragex CCIP route. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

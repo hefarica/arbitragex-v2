@@ -1,3 +1,4 @@
+---
 name: arbx-b-b034-uniswap-v4-hooks-architecture
 description: "PhD/Master skill alineada al monorepo hefarica/arbitragex-v2 (Smart Contracts, Solidity & Auditing). Se activa cuando: beforeSwap/afterSwap. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

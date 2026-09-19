@@ -1,3 +1,8 @@
+---
+name: 19-testing-quality-gate-architect
+description: "Local ArbitrageX specialist skill: 19-testing-quality-gate-architect."
+---
+
 # Skill 19: Testing & Quality Gate Architect
 
 ## 1. Propósito

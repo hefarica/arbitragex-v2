@@ -317,7 +317,15 @@ WHERE o.detected_at >= NOW() - ($3::int * INTERVAL '1 second')
   AND ($2::bool = false
        OR (o.status = ANY($4::text[])
            AND o.rejection_reason IS NULL))
-ORDER BY o.detected_at DESC
+ORDER BY
+  -- PC-08 (2026-09-19, doctrina operador): ordenar por Topological Yield USD
+  -- de MAYOR a MENOR cuando order=profit_usd. Default intacto detected_at DESC
+  -- (compatibilidad). net_expected_profit_usd es el yield neto post-gas;
+  -- COALESCE con expected para filas pre-net (R8: NULL no fabricado, ordena al final).
+  CASE WHEN $5::text = 'profit_usd' THEN
+    -(COALESCE(o.net_expected_profit_usd, o.expected_profit_usd))
+  ELSE NULL END NULLS LAST,
+  o.detected_at DESC
 LIMIT $1
 `.trim();
 
@@ -694,12 +702,20 @@ export function mountOpportunitiesLive(
       Math.min(86_400, Number(req.query["max_age_seconds"] ?? 300)),
     );
 
+    // PC-08 (2026-09-19): order=profit_usd sorts by Topological Yield USD
+    // highest→lowest (matches the $5 CASE in LIVE_QUERY). Default detected_at.
+    const order =
+      String(req.query["order"] ?? "detected_at") === "profit_usd"
+        ? "profit_usd"
+        : "detected_at";
+
     try {
       const q = await pool.query<OpportunityLiveRow>(LIVE_QUERY, [
         limit,
         viableOnly,
         maxAgeSeconds,
         [...VIABLE_STATUSES],
+        order,
       ]);
 
       // 2026-05-10 operator request: every token row must surface a symbol

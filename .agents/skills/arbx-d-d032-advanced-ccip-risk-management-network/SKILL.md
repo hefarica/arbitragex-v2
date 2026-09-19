@@ -1,3 +1,4 @@
+---
 name: arbx-d-d032-advanced-ccip-risk-management-network
 description: "Post-Doc skill alineada al monorepo hefarica/arbitragex-v2 (Multi-Chain, L2 & Bridges). Se activa cuando: arm circuit research. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

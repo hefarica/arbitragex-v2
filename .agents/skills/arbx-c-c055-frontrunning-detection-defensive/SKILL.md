@@ -1,3 +1,4 @@
+---
 name: arbx-c-c055-frontrunning-detection-defensive
 description: "PhD/Master skill alineada al monorepo hefarica/arbitragex-v2 (MEV, Mempool & Bundle Submission). Se activa cuando: victim simulation. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

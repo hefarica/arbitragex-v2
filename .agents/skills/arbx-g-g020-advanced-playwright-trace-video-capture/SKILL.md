@@ -1,3 +1,4 @@
+---
 name: arbx-g-g020-advanced-playwright-trace-video-capture
 description: "Post-Doc skill alineada al monorepo hefarica/arbitragex-v2 (Frontend Doctrinal (Next.js + Playwright)). Se activa cuando: forensic flake research. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

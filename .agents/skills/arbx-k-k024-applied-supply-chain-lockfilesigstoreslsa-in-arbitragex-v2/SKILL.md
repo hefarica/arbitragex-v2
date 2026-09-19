@@ -1,3 +1,4 @@
+---
 name: arbx-k-k024-applied-supply-chain-lockfilesigstoreslsa-in-arbitragex-v2
 description: "Staff Engineer skill alineada al monorepo hefarica/arbitragex-v2 (Security & Cryptography Applied). Se activa cuando: arbitragex SBOM in release. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

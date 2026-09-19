@@ -1,3 +1,4 @@
+---
 name: arbx-b-b005-advanced-yul-inline-assembly
 description: "Post-Doc skill alineada al monorepo hefarica/arbitragex-v2 (Smart Contracts, Solidity & Auditing). Se activa cuando: compiler IR research. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

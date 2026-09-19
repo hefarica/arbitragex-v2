@@ -1,0 +1,19 @@
+GANG PhD — pipeline-cartridge-audit-2026-09-19 (re-dispada tras 503 del gateway; el run anterior no produjo salida).
+
+LEE PRIMERO (obligatorio, en orden):
+1. C:/Users/HFRC/.claude/skills/arbitragex-omniscience/LEARNINGS.md
+2. audits/pipeline-cartridge-audit-2026-09-19/GOAL-WORKORDERS.md (BOARD PC-01..PC-12)
+3. audits/pipeline-cartridge-audit-2026-09-19/PC10-CHARTER.md (TU CHARTER, incluye mandato ampliado mid-turn #10)
+4. audits/pipeline-cartridge-audit-2026-09-19/CHECKLIST.md (checklist maestro priorizado)
+5. audits/pipeline-cartridge-audit-2026-09-19/01-CANONICAL-CONTRACT.md (contrato canónico de los Excel)
+
+MISIÓN (por prioridad de incidencia):
+A) PC-03 funnel: auditar por qué 0 viables (83% v3_quote_unavailable, spot_product_le_one, non_positive_profit) vs 07_GATES/13_DETECTOR_POLICY — veredicto por gate: correcto/bug/mal procedimiento, con evidencia file:line.
+B) PC-04 matemática quotes/edges: validar fórmulas vs 04_INDEX_MATH/05_QUOTE_BASE/06_EDGE_MATH con vectores independientes (Python, NUNCA re-ejecutar el Rust como prueba). Incluye fee dual-unit S1 (cdb4c890).
+C) PC-10 certificación: 264 estrategias (backend/searcher-rs/cartridges/strategies/) — implementadas, bien escritas, lenguaje Rhai correcto, pasando pruebas del canon; 32 operadores (backend/math-engine/src/operators/, tests ya 135/135 PASS local) — fórmula Rust vs Excel. Entregable: graphs/strategy/*.md (>=264) + graphs/operator/*.md (32) con veredicto PASS/FAIL/GAP + vector numérico.
+D) PARIDAD DE WORKERS (orden operador mid-turn #11): las 3-4 estrategias tempranas (dex_arb, triangular, etc. en orchestrator engines SIN cartridge_id) NO deben tener prelación sobre las 264 — todas exactamente iguales, todas compitiendo por las ganancias en todos los tokens. Mapear los workers actuales (backend/searcher-rs/src/workers/), verificar igualdad de tratamiento, y si hay prelación: diseñar los workers que igualen (NO implementar sin reportar el diseño — el desarrollo se hace tras el hallazgo).
+E) WORLD RESEARCH (orden operador mid-turn #12): investigar en internet cómo otras plataformas contienen la matemática en cartuchos/estrategias y usan operadores como munición adicional de eficacia (MEV searchers, agent-based strategy engines) — anexar hallazgos aplicables al arsenal.
+
+REGLAS: RULE 00 cero mocks · R8 fail-honest · read-only repo/VPS · cero commit/push/deploy · flips/capital = operador-only · clasificación CANONICAL_WORKBOOK/CANONICAL_REPO/PRIMARY_SOURCE/INFERRED · actualizar el BOARD y el CHECKLIST al cerrar cada bloque · aprobar solo comandos de lectura sobre el workspace.
+
+ENTREGA: archivos bajo audits/pipeline-cartridge-audit-2026-09-19/graphs/ + veredicto final estructurado por bloque A-E con evidencia reproducible.

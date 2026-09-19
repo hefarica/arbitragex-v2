@@ -1,3 +1,4 @@
+---
 name: arbx-h-h035-advanced-dependabot-grouped-renovate
 description: "Post-Doc skill alineada al monorepo hefarica/arbitragex-v2 (CI/CD Doctrinal & DevSecOps). Se activa cuando: conventional commits. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

@@ -1,3 +1,4 @@
+---
 name: arbx-c-c029-advanced-cowswap-solver-competition
 description: "Post-Doc skill alineada al monorepo hefarica/arbitragex-v2 (MEV, Mempool & Bundle Submission). Se activa cuando: CoW solver SDK. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

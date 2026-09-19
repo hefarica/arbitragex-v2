@@ -1,3 +1,4 @@
+---
 name: arbx-i-i025-runbooks-as-code-linked-from-alerts
 description: "PhD/Master skill alineada al monorepo hefarica/arbitragex-v2 (Observability & SRE). Se activa cuando: ADR cross-link. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

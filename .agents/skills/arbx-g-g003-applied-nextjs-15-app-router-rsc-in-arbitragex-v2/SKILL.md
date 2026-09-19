@@ -1,3 +1,4 @@
+---
 name: arbx-g-g003-applied-nextjs-15-app-router-rsc-in-arbitragex-v2
 description: "Staff Engineer skill alineada al monorepo hefarica/arbitragex-v2 (Frontend Doctrinal (Next.js + Playwright)). Se activa cuando: ARBX_BUILD_FOR_LOCAL_E2E iter17. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

@@ -1,3 +1,4 @@
+---
 name: arbx-g-g014-advanced-playwright-strict-mode-doctrine
 description: "Post-Doc skill alineada al monorepo hefarica/arbitragex-v2 (Frontend Doctrinal (Next.js + Playwright)). Se activa cuando: test isolation worker. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

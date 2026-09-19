@@ -1,3 +1,4 @@
+---
 name: arbx-h-h023-advanced-sigstore-cosign-slsa-provenance
 description: "Post-Doc skill alineada al monorepo hefarica/arbitragex-v2 (CI/CD Doctrinal & DevSecOps). Se activa cuando: level-3 builder. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

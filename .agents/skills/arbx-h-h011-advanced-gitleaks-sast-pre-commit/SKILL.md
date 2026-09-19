@@ -1,3 +1,4 @@
+---
 name: arbx-h-h011-advanced-gitleaks-sast-pre-commit
 description: "Post-Doc skill alineada al monorepo hefarica/arbitragex-v2 (CI/CD Doctrinal & DevSecOps). Se activa cuando: CI block PR. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

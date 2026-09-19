@@ -1,3 +1,4 @@
+---
 name: arbx-e-e045-applied-sharpesortinocalmar-strategy-kpis-in-arbitragex-v2
 description: "Staff Engineer skill alineada al monorepo hefarica/arbitragex-v2 (AMM Math & Quantitative DeFi). Se activa cuando: Grafana strategy panel. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

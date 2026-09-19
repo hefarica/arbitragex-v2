@@ -1,3 +1,4 @@
+---
 name: arbx-a-a012-applied-sqlx-compile-time-query-verification-in-arbitragex-v2
 description: "Staff Engineer skill alineada al monorepo hefarica/arbitragex-v2 (Rust Systems & Searcher Engine). Se activa cuando: pool_sync_worker.rs. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

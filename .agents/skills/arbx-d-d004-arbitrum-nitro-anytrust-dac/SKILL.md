@@ -1,3 +1,4 @@
+---
 name: arbx-d-d004-arbitrum-nitro-anytrust-dac
 description: "PhD/Master skill alineada al monorepo hefarica/arbitragex-v2 (Multi-Chain, L2 & Bridges). Se activa cuando: batches fraud proofs. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

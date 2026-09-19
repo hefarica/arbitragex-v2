@@ -1,3 +1,4 @@
+---
 name: arbx-i-i027-applied-runbooks-as-code-linked-from-alerts-in-arbitragex-v2
 description: "Staff Engineer skill alineada al monorepo hefarica/arbitragex-v2 (Observability & SRE). Se activa cuando: arbitragex runbook repo. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

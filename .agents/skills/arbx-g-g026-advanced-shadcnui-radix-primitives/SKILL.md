@@ -1,3 +1,4 @@
+---
 name: arbx-g-g026-advanced-shadcnui-radix-primitives
 description: "Post-Doc skill alineada al monorepo hefarica/arbitragex-v2 (Frontend Doctrinal (Next.js + Playwright)). Se activa cuando: a11y primitives. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

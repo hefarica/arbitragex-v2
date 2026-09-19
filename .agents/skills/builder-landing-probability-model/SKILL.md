@@ -1,3 +1,8 @@
+---
+name: builder-landing-probability-model
+description: "Local ArbitrageX specialist skill: builder-landing-probability-model."
+---
+
 # Builder Landing Probability Model
 
 ## Propósito

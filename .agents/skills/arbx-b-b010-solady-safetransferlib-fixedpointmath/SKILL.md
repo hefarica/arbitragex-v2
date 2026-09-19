@@ -1,3 +1,4 @@
+---
 name: arbx-b-b010-solady-safetransferlib-fixedpointmath
 description: "PhD/Master skill alineada al monorepo hefarica/arbitragex-v2 (Smart Contracts, Solidity & Auditing). Se activa cuando: gas-optimal blocks. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

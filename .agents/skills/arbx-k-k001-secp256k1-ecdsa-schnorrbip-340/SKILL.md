@@ -1,3 +1,4 @@
+---
 name: arbx-k-k001-secp256k1-ecdsa-schnorrbip-340
 description: "PhD/Master skill alineada al monorepo hefarica/arbitragex-v2 (Security & Cryptography Applied). Se activa cuando: EIP-2 low-s. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

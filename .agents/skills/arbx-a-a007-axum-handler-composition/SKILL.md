@@ -1,3 +1,4 @@
+---
 name: arbx-a-a007-axum-handler-composition
 description: "PhD/Master skill alineada al monorepo hefarica/arbitragex-v2 (Rust Systems & Searcher Engine). Se activa cuando: Tower middleware typed routing. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

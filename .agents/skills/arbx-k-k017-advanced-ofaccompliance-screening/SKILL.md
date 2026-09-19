@@ -1,3 +1,4 @@
+---
 name: arbx-k-k017-advanced-ofaccompliance-screening
 description: "Post-Doc skill alineada al monorepo hefarica/arbitragex-v2 (Security & Cryptography Applied). Se activa cuando: TRM/Chainalysis blend. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

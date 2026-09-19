@@ -1,0 +1,36 @@
+# ★ CHECKLIST MAESTRO — arbitrajes reales E2E (orden mayor→menor incidencia)
+
+**Regla de mantenimiento (operador 2026-09-19)**: este es EL checklist único. Todo objetivo
+nuevo del operador entra aquí, re-ordenado por impacto (los de mayor incidencia arriba, sin
+olvidar los otros). El orquestador no descansa hasta que todo quede resuelto. Cada ítem cierra
+solo con evidencia verificable (artefacto reproducible), nunca por afirmación.
+
+**Criterio de incidencia**: impacto directo sobre "arbitrajes reales > 0 en cards con valores
+reales a precios actuales" (PC-12) > corrección de matemática/datos > certificación >
+instrumentación > documentación.
+
+| # | Actividad | Por qué esta posición (incidencia) | Estado | Evidencia de cierre |
+|---|---|---|---|---|
+| 1 | **Desbloquear el funnel de detección**: 703K detecciones/6h → 0 viables (83% v3_quote_unavailable, spot_product_le_one, non_positive_profit). Auditar cada gate vs 07_GATES/13_DETECTOR_POLICY: ¿algún gate mal calibrado/bug mata arbitrages > 0 reales? | Sin quotes V3 y sin gates bien calibrados NO HAY arbitraje real posible — es el bloqueante #1 del objetivo supremo | 🔄 gang Hermes run_e7be3d4f (PC-03) EN CURSO | veredicto por gate con evidencia + fix gated |
+| 2 | **Matemática de quotes/edges exacta**: validar fórmulas vs 04_INDEX_MATH/05_QUOTE_BASE/06_EDGE_MATH + vectores independientes (incluye S1 fee dual-unit ya landed cdb4c890) | Cuotas/pares mal armados = rutas falsas o perdidas — núcleo del reto de las "cuotas bien armadas" | 🔄 gang Hermes (PC-04) EN CURSO | vectores reproducibles PASS por fórmula |
+| 3 | **Torre de precios soberanos completa y fresca** (Redis arbx:token_prices:1): cobertura de símbolos que alimente quotes y ranking Top-N | Precios actuales = input de TODA la ganancia USD; símbolo sin precio = oportunidad invisible | 🔄 #584-587 landed; monitorear cobertura | % cobertura de símbolos del universo cotizable |
+| 4 | **296 grafos de certificación** (264 estrategias + 32 operadores): fórmula Rust vs Excel, aplicabilidad, y garantía de que los operadores aplicables efectivamente potencian la detección (10/10, 32/32) | Certifica que la matemática implementada ES la del canon y que se ejecuta de verdad por cartucho | 🕓 charter listo (PC10-CHARTER.md); espera slot Hermes (max 1 run) | graphs/ con veredictos PASS/FAIL/GAP |
+| 5 | **Resolver delta 31 vs 32 operadores** ✅ | — | ✅ RESUELTO 2026-09-19 (evidencia): Excel canon = 31 (ULTRA_12 ids 1..31); math-engine = 32 porque **op_32 = NSGA-II** se añadió 2026-09-11 como brazo canónico de alta topología (mod.rs:43-48, IDs históricos 1–31 preservados). El número "32" del operador es correcto. **Gap derivado**: strategy_mapping.json cubre exactamente 1..31 → op_32 NSGA-II NO está asignado a ningún cartucho (ver ítem 5b). Distribución real por estrategia: 10 ops=180, 11=31, 12=20, 13=33 — confirma la doctrina del operador ("a esa le apliquen 10"). |
+| 5b | **op_32 NSGA-II sin mapeo a cartuchos** + wiring per-strategy existe (`evaluate_strategy_operators` en searcher-rs/math_evidence.rs, declared_combo publicado a Redis) pero hay que certificar participación real por cartucho | Operador huérfano = potenciamento que no ocurre; es la materialización de PC-11 en detección | 🕓 (lo certifica el gang PC-10; mapear op_32 = decisión de diseño gated) | mapping extendido + evidencia por cartucho |
+| 5c | **Toggles del frontend NO gobiernan el registry embebido de searcher-rs**: math-engine HTTP (donde la UI hace toggle, ApiState.disabled) y el `Arc<OperatorRegistry>` in-process de searcher-rs (que potencia la detección) son instancias SEPARADAS; `OperatorRegistry::dispatch` no consulta ningún set disabled | La doctrina "el subconjunto habilitado es el universo que se aplica" NO se cumple hoy en el path de detección — gap de incidencia ALTA | 🕓 diseño de propagación (canal Redis/pub de disabled-set → searcher-rs) propuesto al operador | mecanismo verificado end-to-end |
+| 5d | **★ Consolidación /opportunities = página oficial ÚNICA** (orden operador 2026-09-19): TODO arbitraje llega a https://arbx.ape-tv.net/opportunities; opportunities-exchange se absorbe. Antes de descartar exchange: inventariar features/cards de ambas páginas, migrar lo que falte a la oficial (nada desarrollado se tira ni se re-desarrolla), unificar cards idénticas | Es LA fuente de información de oportunidades — fragmentación = pérdida de detección visible | 🔄 INVENTARIO EN CURSO (orquestador) | página única sirviendo 100% de las oportunidades + redirect/borrado de exchange sin pérdida |
+| 6 | **Prioridad por USD descendente + búsqueda de rutas exóticas permanente** (doctrina PC-08): verificar que el priorizador (RICH/ULTRA_04) ordena por ganancia USD mayor→menor | Orden correcto = las mejores oportunidades se ven y ejecutan primero | 🔄 3/3 implementado, falta deploy. (a) API live: `order=profit_usd` (tsc 0, 17/17 tests). (b) Frontend: 6 superficies migradas (home page.tsx, opportunities SSR+client, exchange SSR+client, api-client.ts) — tsc 0. (c) Priorizador interno MAPEADO: orchestrator.rs:1019 ordena por **Net_bps desc** (clave canónica 07_INEFFICIENCY). **GAP doctrina-vs-canon**: Net_bps es TASA, no USD absoluto — $2/$10 (2000bps) supera a $500/$50k (10bps). Cambiar la clave del workbook = decisión GATED del operador | mapa del priorizador + gaps vs doctrina |
+| 7 | **Leaderboard de estrategias más ganadoras** por volumen USD desc (PC-09d) + concentrar más rutas sobre las top | Feedback loop de refuerzo sobre lo que SÍ produce | 🕓 OPEN (PC-09) | leaderboard persistido en DB/UI con datos reales |
+| 8 | **Censo 269 estrategias** (264+4) bien armadas + matriz operador→pipeline participando uno a uno (PC-09a/b) | Garantiza cobertura total del arsenal | 🕓 OPEN | censo + matriz con evidencia por estrategia |
+| 9 | **WO-04 hop-econ cards + PC-07 menú Top-N/anti-rug** — deploy al VPS | Ya implementado y verificado local; sin deploy no produce valor en vivo | 🕓 LOCAL LISTO, esperando gate operador para commit+deploy | PR + deploy L4 verde |
+| 10 | **Anomalías abiertas 09-17**: 93 claves sin reparar + SEGUNDO path de quote no instrumentado | Datos sin reparar = señales corruptas; path sin instrumentar = ceguera parcial | 🕓 OPEN | fixes landed + telemetría del segundo path |
+| 11 | **Killswitch semántica GAP** (activación mainnet 09-17) | Requerido para la fase final "dinero real" (con §34 intacto) | 🕓 OPEN | test de semántica + doc |
+| 12 | **CB-02 GAP**: censo CB-01 no publicado → modules:[] + 503 fail-safe; math-engine toggle soft sin auth | Robustez operativa del control de operadores | 🕓 OPEN | censo publicado + auth en toggle |
+| 13 | **Documentación web de la certificación** (PC-09a: "documentándose en la red") | Transparencia y respaldo del arsenal | 🕓 OPEN | docs publicadas con evidencia |
+| 14 | **Limpieza al cierre**: LEARNINGS.md del gang + disco VPS (93%⚠️) | Higiene que sostiene todo lo anterior | 🔄 continuo | LEARNINGS anexado + disco <85% |
+
+## Convenciones
+- 🔄 en curso · 🕓 pendiente · ✅ resuelto (mover abajo con evidencia al cerrar).
+- Nuevos objetivos del operador → INSERTAR aquí re-ordenados por impacto, no crear listas paralelas.
+- Cero commits/push/deploy sin gate del operador. Flips/capital = operador-only (§34).
+- Fuente de detalle por ítem: `GOAL-WORKORDERS.md` (PC-01..PC-12) y sus charters.

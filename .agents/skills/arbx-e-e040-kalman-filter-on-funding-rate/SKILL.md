@@ -1,3 +1,4 @@
+---
 name: arbx-e-e040-kalman-filter-on-funding-rate
 description: "PhD/Master skill alineada al monorepo hefarica/arbitragex-v2 (AMM Math & Quantitative DeFi). Se activa cuando: state-space funding. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

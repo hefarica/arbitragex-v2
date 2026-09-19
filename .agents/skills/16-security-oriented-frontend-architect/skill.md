@@ -1,3 +1,8 @@
+---
+name: 16-security-oriented-frontend-architect
+description: "Local ArbitrageX specialist skill: 16-security-oriented-frontend-architect."
+---
+
 # Skill 16: Security-Oriented Frontend Architect
 
 ## 1. Propósito

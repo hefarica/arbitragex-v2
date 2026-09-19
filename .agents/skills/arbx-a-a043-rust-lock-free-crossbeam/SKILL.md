@@ -1,3 +1,4 @@
+---
 name: arbx-a-a043-rust-lock-free-crossbeam
 description: "PhD/Master skill alineada al monorepo hefarica/arbitragex-v2 (Rust Systems & Searcher Engine). Se activa cuando: ArrayQueue SegQueue epoch GC. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

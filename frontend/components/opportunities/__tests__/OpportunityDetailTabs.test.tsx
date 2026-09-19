@@ -142,7 +142,7 @@ describe("OpportunityDetailTabs (§37)", () => {
       mapToOmniOpportunity(wire({ route_metadata: rm2hopLedger })),
       "ledger",
     );
-    expect(html).toContain("Δ ciclo");
+    expect(html).toContain("P/L cierre");
     expect(html).toContain("0→1");
     expect(html).toContain("1→0");
     // human units from the decimals map (BigInt path, no Intl — R1 safe)
@@ -152,6 +152,12 @@ describe("OpportunityDetailTabs (§37)", () => {
     // the exact wei rides the cell title (full fidelity)
     expect(html).toContain("in_wei=1000000000000000000");
     expect(html).toContain("out_wei=1010000000000000000");
+    // hop-econ-cards: rate column header + honest gap note for tokens without
+    // a wire USD price (R8)
+    expect(html).toContain("Precio (rate)");
+    expect(html).toContain("USD In");
+    expect(html).toContain("USD Out");
+    expect(html).toContain("ratio exacto");
   });
 
   it("Ledger: absent arrays → honest gap paragraph, never fabricated amounts", () => {

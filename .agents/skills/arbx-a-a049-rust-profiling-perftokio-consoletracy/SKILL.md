@@ -1,3 +1,4 @@
+---
 name: arbx-a-a049-rust-profiling-perftokio-consoletracy
 description: "PhD/Master skill alineada al monorepo hefarica/arbitragex-v2 (Rust Systems & Searcher Engine). Se activa cuando: flamegraph interpretation. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

@@ -1,3 +1,4 @@
+---
 name: arbx-e-e014-advanced-impermanent-loss-closed-form
 description: "Post-Doc skill alineada al monorepo hefarica/arbitragex-v2 (AMM Math & Quantitative DeFi). Se activa cuando: optimal rebalance. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

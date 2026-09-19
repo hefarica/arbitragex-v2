@@ -1,3 +1,4 @@
+---
 name: arbx-h-h008-advanced-gh-secret-set-rotation
 description: "Post-Doc skill alineada al monorepo hefarica/arbitragex-v2 (CI/CD Doctrinal & DevSecOps). Se activa cuando: OIDC to Vault short-lived. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

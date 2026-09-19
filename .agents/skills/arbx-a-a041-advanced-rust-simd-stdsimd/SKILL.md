@@ -1,3 +1,4 @@
+---
 name: arbx-a-a041-advanced-rust-simd-stdsimd
 description: "Post-Doc skill alineada al monorepo hefarica/arbitragex-v2 (Rust Systems & Searcher Engine). Se activa cuando: autovectorization. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

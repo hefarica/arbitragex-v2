@@ -1,3 +1,4 @@
+---
 name: arbx-m-m021-applied-documentation-as-code-diátaxis-adr-in-arbitragex-v2
 description: "Staff Engineer skill alineada al monorepo hefarica/arbitragex-v2 (Doctrine, Process & Release Engineering). Se activa cuando: tripartite status ADR iter18. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

@@ -1,3 +1,4 @@
+---
 name: arbx-j-j005-advanced-postgres-indexing-bringinhash
 description: "Post-Doc skill alineada al monorepo hefarica/arbitragex-v2 (Database & Storage (Postgres/Redis/Timescale)). Se activa cuando: partial expression. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

@@ -1,3 +1,8 @@
+---
+name: uniswap-v2-cpmm-math
+description: "Local ArbitrageX specialist skill: uniswap-v2-cpmm-math."
+---
+
 # Uniswap V2 CPMM Math
 
 ## Propósito

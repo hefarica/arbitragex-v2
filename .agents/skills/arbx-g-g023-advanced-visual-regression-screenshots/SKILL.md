@@ -1,3 +1,4 @@
+---
 name: arbx-g-g023-advanced-visual-regression-screenshots
 description: "Post-Doc skill alineada al monorepo hefarica/arbitragex-v2 (Frontend Doctrinal (Next.js + Playwright)). Se activa cuando: perceptual diff research. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

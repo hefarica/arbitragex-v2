@@ -1,3 +1,4 @@
+---
 name: arbx-h-h044-advanced-self-hosted-runners-arc
 description: "Post-Doc skill alineada al monorepo hefarica/arbitragex-v2 (CI/CD Doctrinal & DevSecOps). Se activa cuando: ephemeral hardening. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

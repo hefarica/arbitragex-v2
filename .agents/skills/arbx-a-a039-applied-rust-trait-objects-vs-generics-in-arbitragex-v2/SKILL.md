@@ -1,3 +1,4 @@
+---
 name: arbx-a-a039-applied-rust-trait-objects-vs-generics-in-arbitragex-v2
 description: "Staff Engineer skill alineada al monorepo hefarica/arbitragex-v2 (Rust Systems & Searcher Engine). Se activa cuando: multi-chain Provider trait hierarchy. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

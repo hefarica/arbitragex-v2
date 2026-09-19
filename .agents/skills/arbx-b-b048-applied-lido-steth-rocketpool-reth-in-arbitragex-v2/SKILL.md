@@ -1,3 +1,4 @@
+---
 name: arbx-b-b048-applied-lido-steth-rocketpool-reth-in-arbitragex-v2
 description: "Staff Engineer skill alineada al monorepo hefarica/arbitragex-v2 (Smart Contracts, Solidity & Auditing). Se activa cuando: liquid staking yield route. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

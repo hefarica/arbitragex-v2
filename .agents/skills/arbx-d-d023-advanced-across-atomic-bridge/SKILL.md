@@ -1,3 +1,4 @@
+---
 name: arbx-d-d023-advanced-across-atomic-bridge
 description: "Post-Doc skill alineada al monorepo hefarica/arbitragex-v2 (Multi-Chain, L2 & Bridges). Se activa cuando: relayer economics. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

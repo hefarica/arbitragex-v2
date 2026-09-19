@@ -1,3 +1,8 @@
+---
+name: modified-bellman-ford-arbitrage-detection
+description: "Local ArbitrageX specialist skill: modified-bellman-ford-arbitrage-detection."
+---
+
 # Modified Bellman-Ford Arbitrage Detection
 
 ## Propósito

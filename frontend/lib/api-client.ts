@@ -280,7 +280,7 @@ export function getStatus() {
 }
 
 export function getOpportunitiesLive(limit = 50) {
-  return getValidated(`/api/opportunities/live?limit=${limit}`, S.OpportunitiesLiveSchema);
+  return getValidated(`/api/opportunities/live?limit=${limit}&order=profit_usd`, S.OpportunitiesLiveSchema);
 }
 
 export function getRiskAlerts(hours = 24) {
@@ -763,6 +763,22 @@ export function resolveTokens(
     { "x-arbx-admin-token": adminToken, "x-arbx-actor": actor },
     FE.TokenResolveResponseSchema,
   );
+}
+
+/** PC-07: Top-N preset ranking (TVL on-chain × torre de precios + reglas anti-rug). */
+export function getTopTokens(
+  chainId: number,
+  limit: number,
+  window: "current" | "24h",
+  rules: readonly string[],
+): Promise<Result<FE.TokenTopResponse>> {
+  const qs = new URLSearchParams({
+    chain_id: String(chainId),
+    limit: String(limit),
+    window,
+    rules: rules.join(","),
+  });
+  return getValidated(`/api/tokens/top?${qs.toString()}`, FE.TokenTopResponseSchema);
 }
 
 /** §8 Current Quote Anchor (EMIT-02 Layer-2) — flattened view + §9 token table. */

@@ -1,3 +1,4 @@
+---
 name: arbx-k-k021-applied-owasp-asvs-top-10-coverage-in-arbitragex-v2
 description: "Staff Engineer skill alineada al monorepo hefarica/arbitragex-v2 (Security & Cryptography Applied). Se activa cuando: abuse cases→tests. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

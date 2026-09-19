@@ -1,3 +1,4 @@
+---
 name: arbx-k-k028-hsm-pkcs11-bip-39-safety
 description: "PhD/Master skill alineada al monorepo hefarica/arbitragex-v2 (Security & Cryptography Applied). Se activa cuando: yubikey/cloudHSM. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

@@ -1,3 +1,4 @@
+---
 name: arbx-b-b040-balancer-v2-weightedstable-pools
 description: "PhD/Master skill alineada al monorepo hefarica/arbitragex-v2 (Smart Contracts, Solidity & Auditing). Se activa cuando: Bi/Wi spot price. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

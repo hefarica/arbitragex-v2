@@ -1,3 +1,4 @@
+---
 name: arbx-g-g001-nextjs-15-app-router-rsc
 description: "PhD/Master skill alineada al monorepo hefarica/arbitragex-v2 (Frontend Doctrinal (Next.js + Playwright)). Se activa cuando: server vs client boundary. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

@@ -1,3 +1,4 @@
+---
 name: arbx-c-c047-advanced-flashbots-builder-api
 description: "Post-Doc skill alineada al monorepo hefarica/arbitragex-v2 (MEV, Mempool & Bundle Submission). Se activa cuando: builder mempool research. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

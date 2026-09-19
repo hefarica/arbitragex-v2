@@ -15,6 +15,8 @@ import { OpportunityTicker } from "@/components/OpportunityTicker";
 // FE-MASTER FE-0008: the ONE realtime connection policy owner (WS rooms +
 // REST snapshot cadence). Renders nothing; mounted once at the root.
 import { ArbxRealtimeProvider } from "@/components/providers/ArbxRealtimeProvider";
+// BROWSE-FIX-4.6 (2026-09-17)
+import { NavigationSentinel } from "@/components/NavigationSentinel";
 // FE-MASTER FE-0009 (§34/§35): always-visible runtime posture strip — per-
 // channel connection states over the RealtimeSlice + killswitch/paper-mode
 // real values (both endpoints edge-routed). Slim, normal flow, above content.
@@ -141,6 +143,13 @@ export default async function RootLayout({ children }: { children: ReactNode }) 
         {/* FE-0008 (§33): global realtime policy — WS route_discovery /
             runtime_ack rooms + REST pairs/quote-anchor cadence. Null-render. */}
         <ArbxRealtimeProvider />
+
+        {/* BROWSE-FIX-4.6 (2026-09-17): null-render navigation sentinel —
+            attributes every client-side navigation (mechanism + ms since last
+            user input) so a recurrence of the 1x spontaneous
+            /opportunities → "/" navigation (BROWSE Operador de mesa §4.6,
+            audits/first-understand-20260917) is classifiable. */}
+        <NavigationSentinel />
 
         <Toaster richColors position="top-right" />
       </body>

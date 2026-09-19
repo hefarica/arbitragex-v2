@@ -1,3 +1,4 @@
+---
 name: arbx-h-h003-applied-gh-actions-concurrency-in-arbitragex-v2
 description: "Staff Engineer skill alineada al monorepo hefarica/arbitragex-v2 (CI/CD Doctrinal & DevSecOps). Se activa cuando: iter18 e2e blocking 25m. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

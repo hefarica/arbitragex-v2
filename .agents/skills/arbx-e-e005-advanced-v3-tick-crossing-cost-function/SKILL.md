@@ -1,3 +1,4 @@
+---
 name: arbx-e-e005-advanced-v3-tick-crossing-cost-function
 description: "Post-Doc skill alineada al monorepo hefarica/arbitragex-v2 (AMM Math & Quantitative DeFi). Se activa cuando: piecewise convex. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

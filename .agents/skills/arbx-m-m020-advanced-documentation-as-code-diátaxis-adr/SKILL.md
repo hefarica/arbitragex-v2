@@ -1,3 +1,4 @@
+---
 name: arbx-m-m020-advanced-documentation-as-code-diátaxis-adr
 description: "Post-Doc skill alineada al monorepo hefarica/arbitragex-v2 (Doctrine, Process & Release Engineering). Se activa cuando: decision pedigree. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

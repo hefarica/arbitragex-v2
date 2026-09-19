@@ -1,3 +1,4 @@
+---
 name: arbx-j-j028-foreign-data-wrappers-materialized-views
 description: "PhD/Master skill alineada al monorepo hefarica/arbitragex-v2 (Database & Storage (Postgres/Redis/Timescale)). Se activa cuando: FDW cross-DB. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

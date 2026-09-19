@@ -1,3 +1,4 @@
+---
 name: arbx-i-i010-loki-logql-promtail
 description: "PhD/Master skill alineada al monorepo hefarica/arbitragex-v2 (Observability & SRE). Se activa cuando: label cardinality discipline. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

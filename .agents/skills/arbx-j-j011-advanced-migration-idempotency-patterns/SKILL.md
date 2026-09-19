@@ -1,3 +1,4 @@
+---
 name: arbx-j-j011-advanced-migration-idempotency-patterns
 description: "Post-Doc skill alineada al monorepo hefarica/arbitragex-v2 (Database & Storage (Postgres/Redis/Timescale)). Se activa cuando: additive convergence. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

@@ -1,3 +1,8 @@
+---
+name: curve-stableswap-arbitrage-math
+description: "Local ArbitrageX specialist skill: curve-stableswap-arbitrage-math."
+---
+
 # Curve StableSwap Arbitrage Math
 
 ## Propósito

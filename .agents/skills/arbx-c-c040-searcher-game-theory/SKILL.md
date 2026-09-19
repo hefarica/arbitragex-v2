@@ -1,3 +1,4 @@
+---
 name: arbx-c-c040-searcher-game-theory
 description: "PhD/Master skill alineada al monorepo hefarica/arbitragex-v2 (MEV, Mempool & Bundle Submission). Se activa cuando: optimal tip strategy. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

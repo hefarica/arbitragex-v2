@@ -1,3 +1,4 @@
+---
 name: arbx-b-b003-applied-solidity-08x-custom-errors-viair-in-arbitragex-v2
 description: "Staff Engineer skill alineada al monorepo hefarica/arbitragex-v2 (Smart Contracts, Solidity & Auditing). Se activa cuando: arbitragex executor router. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

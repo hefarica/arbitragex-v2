@@ -1,3 +1,4 @@
+---
 name: arbx-e-e013-impermanent-loss-closed-form
 description: "PhD/Master skill alineada al monorepo hefarica/arbitragex-v2 (AMM Math & Quantitative DeFi). Se activa cuando: IL(p)=2√p/(1+p)−1. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

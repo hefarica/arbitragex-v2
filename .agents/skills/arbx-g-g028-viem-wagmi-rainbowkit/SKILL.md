@@ -1,3 +1,4 @@
+---
 name: arbx-g-g028-viem-wagmi-rainbowkit
 description: "PhD/Master skill alineada al monorepo hefarica/arbitragex-v2 (Frontend Doctrinal (Next.js + Playwright)). Se activa cuando: typed contract reads. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

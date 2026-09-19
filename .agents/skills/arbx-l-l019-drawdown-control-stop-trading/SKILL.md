@@ -1,3 +1,4 @@
+---
 name: arbx-l-l019-drawdown-control-stop-trading
 description: "PhD/Master skill alineada al monorepo hefarica/arbitragex-v2 (Risk, Backtesting & Quant Engineering). Se activa cuando: DD circuit breaker. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

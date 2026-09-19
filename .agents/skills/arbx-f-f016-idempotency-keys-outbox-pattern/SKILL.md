@@ -1,3 +1,4 @@
+---
 name: arbx-f-f016-idempotency-keys-outbox-pattern
 description: "PhD/Master skill alineada al monorepo hefarica/arbitragex-v2 (Backend Services (Node + Rust)). Se activa cuando: dual-write avoidance. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

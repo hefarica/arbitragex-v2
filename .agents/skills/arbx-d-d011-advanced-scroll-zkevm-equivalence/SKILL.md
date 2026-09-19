@@ -1,3 +1,4 @@
+---
 name: arbx-d-d011-advanced-scroll-zkevm-equivalence
 description: "Post-Doc skill alineada al monorepo hefarica/arbitragex-v2 (Multi-Chain, L2 & Bridges). Se activa cuando: blob fee market. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

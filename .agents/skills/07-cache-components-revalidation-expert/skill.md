@@ -1,3 +1,8 @@
+---
+name: 07-cache-components-revalidation-expert
+description: "Local ArbitrageX specialist skill: 07-cache-components-revalidation-expert."
+---
+
 # Skill 07: Cache Components & Revalidation Expert
 
 ## 1. Propósito

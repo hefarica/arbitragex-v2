@@ -1,3 +1,4 @@
+---
 name: arbx-b-b027-applied-certora-cvl-formal-verification-in-arbitragex-v2
 description: "Staff Engineer skill alineada al monorepo hefarica/arbitragex-v2 (Smart Contracts, Solidity & Auditing). Se activa cuando: never-lose-principal invariants. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

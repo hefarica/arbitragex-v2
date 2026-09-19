@@ -1,3 +1,4 @@
+---
 name: arbx-a-a036-applied-rust-pin-self-referential-structs-in-arbitragex-v2
 description: "Staff Engineer skill alineada al monorepo hefarica/arbitragex-v2 (Rust Systems & Searcher Engine). Se activa cuando: mempool dedup stream combinators. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

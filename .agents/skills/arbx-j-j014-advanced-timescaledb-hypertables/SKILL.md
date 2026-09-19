@@ -1,3 +1,4 @@
+---
 name: arbx-j-j014-advanced-timescaledb-hypertables
 description: "Post-Doc skill alineada al monorepo hefarica/arbitragex-v2 (Database & Storage (Postgres/Redis/Timescale)). Se activa cuando: compression policies. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

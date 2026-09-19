@@ -1,3 +1,4 @@
+---
 name: arbx-d-d009-applied-zksync-era-boojum-prover-in-arbitragex-v2
 description: "Staff Engineer skill alineada al monorepo hefarica/arbitragex-v2 (Multi-Chain, L2 & Bridges). Se activa cuando: Era Paymaster gasless. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

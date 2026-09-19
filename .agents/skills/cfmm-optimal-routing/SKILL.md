@@ -1,3 +1,8 @@
+---
+name: cfmm-optimal-routing
+description: "Local ArbitrageX specialist skill: cfmm-optimal-routing."
+---
+
 # CFMM Optimal Routing
 
 ## Propósito

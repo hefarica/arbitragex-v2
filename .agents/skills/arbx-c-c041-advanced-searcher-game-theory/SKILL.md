@@ -1,3 +1,4 @@
+---
 name: arbx-c-c041-advanced-searcher-game-theory
 description: "Post-Doc skill alineada al monorepo hefarica/arbitragex-v2 (MEV, Mempool & Bundle Submission). Se activa cuando: auction equilibria. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

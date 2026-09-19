@@ -120,6 +120,72 @@ function weiToHuman(wei: string, decimals: number | undefined): string | null {
 }
 
 /**
+ * hop-econ-cards (2026-09-19): exact per-leg execution rate from the wei
+ * ledger — BigInt-only display ratio of two wire values (out/in in human
+ * units), never an independent price feed. Null on malformed input or a
+ * zero input amount (R8: a 0-input leg has no computable rate).
+ */
+function legRate(
+  inWei: string,
+  outWei: string,
+  dIn: number | undefined,
+  dOut: number | undefined,
+): string | null {
+  if (
+    dIn == null || dOut == null || !Number.isInteger(dIn) || !Number.isInteger(dOut) ||
+    dIn < 0 || dIn > 78 || dOut < 0 || dOut > 78
+  ) return null;
+  const negI = inWei.startsWith("-"); const negO = outWei.startsWith("-");
+  const di = negI ? inWei.slice(1) : inWei; const doo = negO ? outWei.slice(1) : outWei;
+  if (!/^\d+$/.test(di) || !/^\d+$/.test(doo) || di === "0") return null;
+  try {
+    const num = BigInt(doo) * 10n ** BigInt(dIn);
+    const den = BigInt(di) * 10n ** BigInt(dOut);
+    const scaled = (num * 10n ** 8n) / den; // 8 dp of display precision
+    const s = scaled.toString().padStart(9, "0");
+    const body = `${s.slice(0, -8) || "0"}.${s.slice(-8)}`.replace(/0+$/, "").replace(/\.$/, "");
+    return (negO !== negI ? "-" : "") + body;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * hop-econ-cards: USD anchor for the CYCLE'S OPENING TOKEN — the only honest
+ * per-token USD valuation on the wire (simulated_amount_in_usd ÷ the sized
+ * base amount, §40-style display arithmetic over wire-owned values). Null
+ * when either input is absent/mismatched (R8).
+ */
+function baseUsdAnchor(
+  opp: OmniOpportunity,
+  rm: NonNullable<OmniOpportunity["route_metadata"]>,
+): { usdPerToken: number; baseAddr: string; decimals: number } | null {
+  const amtInUsd = opp.simulated_amount_in_usd;
+  const baseWei = opp.amount_in_wei;
+  const baseAddr = rm.token_addresses[0];
+  if (amtInUsd == null || amtInUsd <= 0 || !baseWei || !baseAddr) return null;
+  const d0 = routeTokenDecimals(rm, baseAddr);
+  if (d0 == null) return null;
+  const neg = baseWei.startsWith("-");
+  const digits = neg ? baseWei.slice(1) : baseWei;
+  if (!/^\d+$/.test(digits) || digits === "0") return null;
+  const human = Number(BigInt(digits)) / 10 ** d0; // display-grade float
+  if (!Number.isFinite(human) || human <= 0) return null;
+  return { usdPerToken: amtInUsd / human, baseAddr: baseAddr.toLowerCase(), decimals: d0 };
+}
+
+/** hop-econ-cards: wei → display-grade USD float via the base-token anchor. */
+function weiToUsd(wei: string, decimals: number | undefined, anchor: number): number | null {
+  if (decimals == null || !Number.isInteger(decimals) || decimals < 0 || decimals > 78) return null;
+  const neg = wei.startsWith("-");
+  const digits = neg ? wei.slice(1) : wei;
+  if (!/^\d+$/.test(digits)) return null;
+  const human = Number(BigInt(digits)) / 10 ** decimals;
+  if (!Number.isFinite(human)) return null;
+  return (neg ? -human : human) * anchor;
+}
+
+/**
  * FE-0035 (§39): the full simulated cost waterfall — every line of the Rust
  * spine's SimulatedCostBreakdown, nothing hidden. Lines are VALUES from the
  * simulated block; the FE never asserts gross − Σcosts = net (§79 — the wire
@@ -289,85 +355,181 @@ export function OpportunityDetailTabs({
           different tokens don't subtract. ── */}
       <TabsContent value="ledger" className="mt-2">
         {ledger != null && rm != null ? (
-          <div className="overflow-x-auto">
-            <table className="mt-2 w-full text-xs font-mono">
-              <thead>
-                <tr className="border-b border-border text-left text-muted-foreground">
-                  <th className="py-1.5 pr-2 font-medium uppercase tracking-wide">Hop</th>
-                  <th
-                    className="py-1.5 pr-2 font-medium uppercase tracking-wide"
-                    title="zero_for_one — convención token0<token1 (hecho de deployment)"
-                  >
-                    Dir
-                  </th>
-                  <th className="py-1.5 pr-2 font-medium uppercase tracking-wide">In (wei)</th>
-                  <th className="py-1.5 pr-2 font-medium uppercase tracking-wide">Out (wei)</th>
-                  <th className="py-1.5 font-medium uppercase tracking-wide">Δ ciclo</th>
-                </tr>
-              </thead>
-              <tbody>
-                {ledger.map((e) => {
-                  const tokIn = rm.token_addresses[e.index] ?? "";
-                  const tokOut = rm.token_addresses[e.index + 1] ?? "";
-                  const openDecimals = routeTokenDecimals(rm, rm.token_addresses[0] ?? "");
-                  const humanIn = weiToHuman(e.amount_in_wei, routeTokenDecimals(rm, tokIn));
-                  const humanOut = weiToHuman(e.amount_out_wei, routeTokenDecimals(rm, tokOut));
-                  const delta = e.cycle_delta_wei;
-                  return (
-                    <tr key={e.index} className="border-b border-border/50 align-top">
-                      <td className="py-1.5 pr-2 whitespace-nowrap">
-                        {e.index + 1}/{ledger.length}
-                      </td>
-                      <td
-                        className="py-1.5 pr-2 whitespace-nowrap"
-                        title={`zero_for_one=${e.zero_for_one}`}
+          (() => {
+            // hop-econ-cards: the only honest per-token USD valuation on the
+            // wire — the base (opening) token priced from simulated_amount_in_usd
+            // ÷ amount_in_wei. Intermediate tokens have no USD price on the
+            // wire → their USD cells render the honest dash (R8).
+            const anchor = baseUsdAnchor(opp, rm);
+            return (
+              <div className="overflow-x-auto">
+                {anchor != null && (
+                  <p className="mt-1 text-[11px] text-muted-foreground">
+                    Ancla USD (token base {legSym(anchor.baseAddr)}):{" "}
+                    <span className="font-mono">
+                      ${anchor.usdPerToken.toPrecision(6)}
+                    </span>{" "}
+                    <span className="italic text-muted-foreground/70">
+                      (derivado: simulated_amount_in_usd ÷ amount_in_wei — §40-style,
+                      aritmética display sobre valores del wire)
+                    </span>
+                  </p>
+                )}
+                <table className="mt-2 w-full text-xs font-mono">
+                  <thead>
+                    <tr className="border-b border-border text-left text-muted-foreground">
+                      <th className="py-1.5 pr-2 font-medium uppercase tracking-wide">Hop</th>
+                      <th
+                        className="py-1.5 pr-2 font-medium uppercase tracking-wide"
+                        title="zero_for_one — convención token0<token1 (hecho de deployment)"
                       >
-                        {e.zero_for_one ? "0→1" : "1→0"}
-                      </td>
-                      <td
-                        className="py-1.5 pr-2 break-all"
-                        title={`${tokIn} · in_wei=${e.amount_in_wei}`}
+                        Dir
+                      </th>
+                      <th className="py-1.5 pr-2 font-medium uppercase tracking-wide">Tokens</th>
+                      <th className="py-1.5 pr-2 font-medium uppercase tracking-wide">In</th>
+                      <th className="py-1.5 pr-2 font-medium uppercase tracking-wide">Out</th>
+                      <th
+                        className="py-1.5 pr-2 font-medium uppercase tracking-wide"
+                        title="Ratio exacto out/in del ledger (precio de ejecución del hop, no feed externo)"
                       >
-                        {humanIn ?? (
-                          <span className="text-muted-foreground">{e.amount_in_wei}</span>
-                        )}
-                      </td>
-                      <td
-                        className="py-1.5 pr-2 break-all"
-                        title={`${tokOut} · out_wei=${e.amount_out_wei}`}
+                        Precio (rate)
+                      </th>
+                      <th
+                        className="py-1.5 pr-2 font-medium uppercase tracking-wide"
+                        title="USD sólo cuando el token del flujo es el token base (ancla derivada); «—» = sin precio en el wire (R8)"
                       >
-                        {humanOut ?? (
-                          <span className="text-muted-foreground">{e.amount_out_wei}</span>
-                        )}
-                      </td>
-                      <td
-                        className="py-1.5 break-all"
-                        title={delta != null ? `cycle_delta_wei=${delta}` : undefined}
-                      >
-                        {delta != null ? (
-                          <span
-                            className={
-                              delta.startsWith("-") ? "text-destructive" : "text-success"
+                        USD In
+                      </th>
+                      <th className="py-1.5 pr-2 font-medium uppercase tracking-wide" title="Ídem USD In">
+                        USD Out
+                      </th>
+                      <th className="py-1.5 font-medium uppercase tracking-wide">P/L cierre</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {ledger.map((e) => {
+                      const tokIn = rm.token_addresses[e.index] ?? "";
+                      const tokOut = rm.token_addresses[e.index + 1] ?? "";
+                      const dIn = routeTokenDecimals(rm, tokIn);
+                      const dOut = routeTokenDecimals(rm, tokOut);
+                      const openDecimals = routeTokenDecimals(rm, rm.token_addresses[0] ?? "");
+                      const humanIn = weiToHuman(e.amount_in_wei, dIn);
+                      const humanOut = weiToHuman(e.amount_out_wei, dOut);
+                      const rate = legRate(e.amount_in_wei, e.amount_out_wei, dIn, dOut);
+                      const usdIn = anchor != null && tokIn.toLowerCase() === anchor.baseAddr
+                        ? weiToUsd(e.amount_in_wei, dIn, anchor.usdPerToken) : null;
+                      const usdOut = anchor != null && tokOut.toLowerCase() === anchor.baseAddr
+                        ? weiToUsd(e.amount_out_wei, dOut, anchor.usdPerToken) : null;
+                      const delta = e.cycle_delta_wei;
+                      const deltaUsd = anchor != null && delta != null
+                        ? weiToUsd(delta, openDecimals, anchor.usdPerToken) : null;
+                      return (
+                        <tr key={e.index} className="border-b border-border/50 align-top">
+                          <td className="py-1.5 pr-2 whitespace-nowrap">
+                            {e.index + 1}/{ledger.length}
+                          </td>
+                          <td
+                            className="py-1.5 pr-2 whitespace-nowrap"
+                            title={`zero_for_one=${e.zero_for_one}`}
+                          >
+                            {e.zero_for_one ? "0→1" : "1→0"}
+                          </td>
+                          <td
+                            className="py-1.5 pr-2 whitespace-nowrap"
+                            title={`${tokIn} → ${tokOut}`}
+                          >
+                            {legSym(tokIn)} → {legSym(tokOut)}
+                          </td>
+                          <td
+                            className="py-1.5 pr-2 break-all"
+                            title={`${tokIn} · in_wei=${e.amount_in_wei}`}
+                          >
+                            {humanIn ?? (
+                              <span className="text-muted-foreground">{e.amount_in_wei}</span>
+                            )}
+                          </td>
+                          <td
+                            className="py-1.5 pr-2 break-all"
+                            title={`${tokOut} · out_wei=${e.amount_out_wei}`}
+                          >
+                            {humanOut ?? (
+                              <span className="text-muted-foreground">{e.amount_out_wei}</span>
+                            )}
+                          </td>
+                          <td
+                            className="py-1.5 pr-2 whitespace-nowrap"
+                            title={
+                              rate != null
+                                ? `1 ${legSym(tokIn)} ≈ ${rate} ${legSym(tokOut)} (ratio exacto del ledger)`
+                                : "sin decimals o monto inválido — rate no computable (R8)"
                             }
                           >
-                            {delta.startsWith("-") ? "" : "+"}
-                            {weiToHuman(delta, openDecimals) ?? delta}
-                          </span>
-                        ) : (
-                          <span className="text-muted-foreground/50 italic">—</span>
-                        )}
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-            <p className="mt-2 text-[11px] italic text-muted-foreground/70">
-              Montos EXACTOS en wei del kernel de sizing (filas Sized); el título
-              de cada celda lleva el wei completo. Δ ciclo = out final − in
-              inicial en wei del token base — sólo el hop de cierre del ciclo.
-            </p>
-          </div>
+                            {rate != null ? (
+                              <span>
+                                1 {legSym(tokIn)} ≈ {rate} {legSym(tokOut)}
+                              </span>
+                            ) : (
+                              <span className="text-muted-foreground/50 italic">—</span>
+                            )}
+                          </td>
+                          <td className="py-1.5 pr-2 whitespace-nowrap">
+                            {usdIn != null ? (
+                              usd4(usdIn)
+                            ) : (
+                              <span className="text-muted-foreground/50 italic">—</span>
+                            )}
+                          </td>
+                          <td className="py-1.5 pr-2 whitespace-nowrap">
+                            {usdOut != null ? (
+                              usd4(usdOut)
+                            ) : (
+                              <span className="text-muted-foreground/50 italic">—</span>
+                            )}
+                          </td>
+                          <td
+                            className="py-1.5 break-all"
+                            title={
+                              delta != null
+                                ? `cycle_delta_wei=${delta}${deltaUsd != null ? ` · ≈${usd4(deltaUsd)}` : ""}`
+                                : undefined
+                            }
+                          >
+                            {delta != null ? (
+                              <span
+                                className={
+                                  delta.startsWith("-") ? "text-destructive" : "text-success"
+                                }
+                              >
+                                {delta.startsWith("-") ? "" : "+"}
+                                {weiToHuman(delta, openDecimals) ?? delta}
+                                {deltaUsd != null && (
+                                  <span className="ml-1">
+                                    ({deltaUsd < 0 ? "" : "+"}
+                                    {usd4(deltaUsd)})
+                                  </span>
+                                )}
+                              </span>
+                            ) : (
+                              <span className="text-muted-foreground/50 italic">—</span>
+                            )}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+                <p className="mt-2 text-[11px] italic text-muted-foreground/70">
+                  Montos EXACTOS en wei del kernel de sizing (filas Sized); el título
+                  de cada celda lleva el wei completo. Precio (rate) = ratio exacto
+                  out/in del ledger (BigInt) — NO un feed externo. USD In/Out sólo
+                  para el token base del ciclo (ancla derivada arriba); tokens
+                  intermedios sin precio en el wire → «—» (R8). P/L: sólo el hop de
+                  cierre del ciclo (out final − in inicial, mismo token); wei de
+                  tokens distintos no se restan.
+                </p>
+              </div>
+            );
+          })()
         ) : (
           <p className="mt-2 text-xs italic text-muted-foreground/70">
             Sin ledger por-leg persistido — los montos exactos por hop se emiten

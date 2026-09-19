@@ -1,3 +1,4 @@
+---
 name: arbx-l-l007-risk-limits-position-sizing-kelly
 description: "PhD/Master skill alineada al monorepo hefarica/arbitragex-v2 (Risk, Backtesting & Quant Engineering). Se activa cuando: fractional Kelly DD-aware. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

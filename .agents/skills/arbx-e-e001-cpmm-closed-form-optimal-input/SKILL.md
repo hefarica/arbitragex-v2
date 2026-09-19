@@ -1,3 +1,4 @@
+---
 name: arbx-e-e001-cpmm-closed-form-optimal-input
 description: "PhD/Master skill alineada al monorepo hefarica/arbitragex-v2 (AMM Math & Quantitative DeFi). Se activa cuando: dx*=sqrt(k·p_t/p_n)−x. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

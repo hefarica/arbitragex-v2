@@ -1,3 +1,4 @@
+---
 name: arbx-h-h031-gh-workflow_dispatch-run-download
 description: "PhD/Master skill alineada al monorepo hefarica/arbitragex-v2 (CI/CD Doctrinal & DevSecOps). Se activa cuando: forensic loop. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

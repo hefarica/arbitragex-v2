@@ -1,3 +1,4 @@
+---
 name: arbx-d-d040-sovereign-rollup-sdk
 description: "PhD/Master skill alineada al monorepo hefarica/arbitragex-v2 (Multi-Chain, L2 & Bridges). Se activa cuando: zk-state transition. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

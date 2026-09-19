@@ -1,3 +1,8 @@
+---
+name: 03-app-router-system-designer
+description: "Local ArbitrageX specialist skill: 03-app-router-system-designer."
+---
+
 # Skill 03: App Router System Designer
 
 ## 1. Propósito

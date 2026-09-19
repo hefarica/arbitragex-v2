@@ -1,3 +1,4 @@
+---
 name: arbx-b-b014-advanced-foundry-forge-test-patterns
 description: "Post-Doc skill alineada al monorepo hefarica/arbitragex-v2 (Smart Contracts, Solidity & Auditing). Se activa cuando: stateful fuzz handlers. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

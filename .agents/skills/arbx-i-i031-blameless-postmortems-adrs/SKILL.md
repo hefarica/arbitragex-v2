@@ -1,3 +1,4 @@
+---
 name: arbx-i-i031-blameless-postmortems-adrs
 description: "PhD/Master skill alineada al monorepo hefarica/arbitragex-v2 (Observability & SRE). Se activa cuando: five-whys anti-pattern. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

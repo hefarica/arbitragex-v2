@@ -7,7 +7,9 @@
  * operator's burning question — "why are there 0 opportunities?" — with the
  * honest reason breakdown (v3_sizing_pending, insufficient_pools, …) rather
  * than a fabricated zero. Polls the public REST snapshot
- * (useRouteDiscoveryOutcomes, 8s) via the edge. R8 fail-honest: 503 → STALE
+ * (useRouteDiscoveryOutcomes, 60s — RDO-503-REASON-UI 2026-09-17: was "8s",
+ * stale since RDO-SUMMARY-HANG raised POLL_MS) via the edge. R8 fail-honest:
+ * 503 → STALE
  * with the upstream reason surfaced verbatim; "—" for null counts; explicit
  * empty state. Shadow / read-only — never writes opportunities or capital.
  */
@@ -164,7 +166,9 @@ export function RouteDiscoveryOutcomesPanel() {
                 </>
               ) : null}
               . api-server returns 503 when Postgres is unreachable; the panel never
-              fabricates a zero. Polling /api/route-discovery-outcomes/summary every 8s.
+              fabricates a zero. Polling /api/route-discovery-outcomes/summary every
+              60s.{/* // RDO-503-REASON-UI (2026-09-17, fixer gang ronda 1): was "every
+              8s" — stale text; the hook polls at POLL_MS=60000 since RDO-SUMMARY-HANG. */}
             </AlertDescription>
           </Alert>
         ) : (

@@ -1,3 +1,4 @@
+---
 name: arbx-b-b016-halmos-symbolic-execution
 description: "PhD/Master skill alineada al monorepo hefarica/arbitragex-v2 (Smart Contracts, Solidity & Auditing). Se activa cuando: Z3-backed property proof. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

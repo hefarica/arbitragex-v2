@@ -1,3 +1,4 @@
+---
 name: arbx-b-b008-advanced-openzeppelin-accesscontrol-uups
 description: "Post-Doc skill alineada al monorepo hefarica/arbitragex-v2 (Smart Contracts, Solidity & Auditing). Se activa cuando: EIP-1967 storage research. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

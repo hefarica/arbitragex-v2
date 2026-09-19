@@ -1,3 +1,4 @@
+---
 name: arbx-b-b043-aave-v3-flashloan-callbacks
 description: "PhD/Master skill alineada al monorepo hefarica/arbitragex-v2 (Smart Contracts, Solidity & Auditing). Se activa cuando: ERC-3156 receiver. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

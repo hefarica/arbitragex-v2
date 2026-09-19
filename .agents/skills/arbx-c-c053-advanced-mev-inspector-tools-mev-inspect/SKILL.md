@@ -1,3 +1,4 @@
+---
 name: arbx-c-c053-advanced-mev-inspector-tools-mev-inspect
 description: "Post-Doc skill alineada al monorepo hefarica/arbitragex-v2 (MEV, Mempool & Bundle Submission). Se activa cuando: inspector schema research. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

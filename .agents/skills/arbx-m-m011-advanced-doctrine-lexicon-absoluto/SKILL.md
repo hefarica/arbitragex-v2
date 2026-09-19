@@ -1,3 +1,4 @@
+---
 name: arbx-m-m011-advanced-doctrine-lexicon-absoluto
 description: "Post-Doc skill alineada al monorepo hefarica/arbitragex-v2 (Doctrine, Process & Release Engineering). Se activa cuando: cross-doc sync. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

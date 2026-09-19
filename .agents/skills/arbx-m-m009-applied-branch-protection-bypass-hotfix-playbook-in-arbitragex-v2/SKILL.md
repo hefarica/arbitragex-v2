@@ -1,3 +1,4 @@
+---
 name: arbx-m-m009-applied-branch-protection-bypass-hotfix-playbook-in-arbitragex-v2
 description: "Staff Engineer skill alineada al monorepo hefarica/arbitragex-v2 (Doctrine, Process & Release Engineering). Se activa cuando: one-button revert. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

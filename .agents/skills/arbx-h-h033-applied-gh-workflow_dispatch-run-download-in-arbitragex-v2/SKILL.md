@@ -1,3 +1,4 @@
+---
 name: arbx-h-h033-applied-gh-workflow_dispatch-run-download-in-arbitragex-v2
 description: "Staff Engineer skill alineada al monorepo hefarica/arbitragex-v2 (CI/CD Doctrinal & DevSecOps). Se activa cuando: RAPTOR re-trigger ergonomics. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

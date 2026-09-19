@@ -1,3 +1,4 @@
+---
 name: arbx-d-d036-applied-hop-connext-xcall-stargate-in-arbitragex-v2
 description: "Staff Engineer skill alineada al monorepo hefarica/arbitragex-v2 (Multi-Chain, L2 & Bridges). Se activa cuando: arbitragex bridge selector. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

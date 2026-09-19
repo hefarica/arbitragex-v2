@@ -1,3 +1,8 @@
+---
+name: private-orderflow-risk-and-opportunity-model
+description: "Local ArbitrageX specialist skill: private-orderflow-risk-and-opportunity-model."
+---
+
 # Private Orderflow Risk and Opportunity Model
 
 ## Propósito

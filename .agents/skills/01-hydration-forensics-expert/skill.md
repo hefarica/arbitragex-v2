@@ -1,3 +1,8 @@
+---
+name: 01-hydration-forensics-expert
+description: "Local ArbitrageX specialist skill: 01-hydration-forensics-expert."
+---
+
 # Skill 01: Hydration Forensics Expert
 
 ## 1. Propósito

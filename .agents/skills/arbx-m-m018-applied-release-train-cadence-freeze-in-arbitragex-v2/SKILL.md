@@ -1,3 +1,4 @@
+---
 name: arbx-m-m018-applied-release-train-cadence-freeze-in-arbitragex-v2
 description: "Staff Engineer skill alineada al monorepo hefarica/arbitragex-v2 (Doctrine, Process & Release Engineering). Se activa cuando: omega/recovery branches. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

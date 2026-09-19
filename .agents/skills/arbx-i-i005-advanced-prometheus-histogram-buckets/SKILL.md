@@ -1,3 +1,4 @@
+---
 name: arbx-i-i005-advanced-prometheus-histogram-buckets
 description: "Post-Doc skill alineada al monorepo hefarica/arbitragex-v2 (Observability & SRE). Se activa cuando: cardinality recording rules. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

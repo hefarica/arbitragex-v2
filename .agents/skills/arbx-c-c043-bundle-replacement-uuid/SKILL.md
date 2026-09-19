@@ -1,3 +1,4 @@
+---
 name: arbx-c-c043-bundle-replacement-uuid
 description: "PhD/Master skill alineada al monorepo hefarica/arbitragex-v2 (MEV, Mempool & Bundle Submission). Se activa cuando: replacement uuid. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

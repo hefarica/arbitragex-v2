@@ -1,3 +1,4 @@
+---
 name: arbx-e-e019-gas-adjusted-profit-threshold
 description: "PhD/Master skill alineada al monorepo hefarica/arbitragex-v2 (AMM Math & Quantitative DeFi). Se activa cuando: profit−gas·basefee·tip. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

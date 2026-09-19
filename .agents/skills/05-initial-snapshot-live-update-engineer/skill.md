@@ -1,3 +1,8 @@
+---
+name: 05-initial-snapshot-live-update-engineer
+description: "Local ArbitrageX specialist skill: 05-initial-snapshot-live-update-engineer."
+---
+
 # Skill 05: Initial Snapshot + Live Update Engineer
 
 ## 1. Propósito

@@ -1,3 +1,4 @@
+---
 name: arbx-l-l029-advanced-regime-aware-ensembling
 description: "Post-Doc skill alineada al monorepo hefarica/arbitragex-v2 (Risk, Backtesting & Quant Engineering). Se activa cuando: ensemble research. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

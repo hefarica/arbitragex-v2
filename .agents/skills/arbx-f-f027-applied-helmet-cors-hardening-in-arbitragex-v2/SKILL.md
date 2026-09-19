@@ -1,3 +1,4 @@
+---
 name: arbx-f-f027-applied-helmet-cors-hardening-in-arbitragex-v2
 description: "Staff Engineer skill alineada al monorepo hefarica/arbitragex-v2 (Backend Services (Node + Rust)). Se activa cuando: admin panel hardening. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

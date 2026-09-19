@@ -1,3 +1,4 @@
+---
 name: arbx-f-f034-contract-tests-pact
 description: "PhD/Master skill alineada al monorepo hefarica/arbitragex-v2 (Backend Services (Node + Rust)). Se activa cuando: consumer-driven. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

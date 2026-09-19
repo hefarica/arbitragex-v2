@@ -1,3 +1,8 @@
+---
+name: vps-automated-deployment-protocol
+description: "Local ArbitrageX specialist skill: vps-automated-deployment-protocol."
+---
+
 # VPS Automated Deployment Protocol
 
 ## Propósito
