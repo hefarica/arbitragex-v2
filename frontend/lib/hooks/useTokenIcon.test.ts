@@ -65,7 +65,10 @@ describe("fetchIconResolution single-flight (ICON-RAIN-20260917)", () => {
     const outcomes = await Promise.all(calls);
 
     expect(fn).toHaveBeenCalledTimes(1);
-    expect(fn.mock.calls[0]![0]).toBe(`/api/v1/token-icon/1/${UNKNOWN}`);
+    // Suffix match: the URL is relative when NEXT_PUBLIC_EDGE_URL is unset and
+    // absolute when CI sets it (edge.ci.invalid) — the contract under test is
+    // single-flight, not the URL form.
+    expect(String(fn.mock.calls[0]![0]).endsWith(`/api/v1/token-icon/1/${UNKNOWN}`)).toBe(true);
     for (const o of outcomes) {
       expect(o.res.iconUrl).toBe("https://x/pepe.png");
       expect(o.error).toBeNull();
