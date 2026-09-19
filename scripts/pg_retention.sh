@@ -53,7 +53,7 @@ VACUUM="${ARBX_RETENTION_VACUUM:-1}"
 # tabla|columna_tiempo|formato(ts|ms)|ventana_días|batch_size|hook
 # hooks: rdo (backfill eager antes del purge) · paper|reserves (upsert rollup diario)
 TABLES=(
-  "route_discovery_outcomes|ts_ms|ms|2|100000|rdo"
+  "route_discovery_outcomes|ts_ms|ms|1|100000|rdo"
   "opportunities|detected_at|ts|60|20000|"
   "pool_reserves|timestamp|ts|30|25000|reserves"
   "risk_events|created_at|ts|90|25000|"

@@ -36,7 +36,7 @@ purge batched del crudo (espacio reutilizable dentro de PG)
 
 | Tabla | Rol | Detalle crudo | Resumen que SOBREVIVE | Origen del resumen |
 |---|---|---|---|---|
-| `route_discovery_outcomes` | telemetría de discovery (29M filas/día, ~15GB/día) | **2 días** | `route_discovery_outcome_rollup_5m` (5 dims: totals/reason/chain/cartridge/pair) — persistente | backfill eager del script + lazy de la API (#511) |
+| `route_discovery_outcomes` | telemetría de discovery (~38M filas/día observadas 2026-09-18, ~18GB/día) | **1 día** (2026-09-19, orden del operador: disco VPS 100% + PG PANIC) | `route_discovery_outcome_rollup_5m` (5 dims: totals/reason/chain/cartridge/pair) — persistente | backfill eager del script + lazy de la API (#511) |
 | `opportunities` | oportunidades detectadas | **60 días** | rollup 5m RDO ya cuenta `is_opportunity`; detail >60d sin valor operativo | `pg_retention.sh` |
 | `pool_reserves` | sink write-only de reservas (runtime lee Redis) | **30 días** | `pool_reserves_daily` (último snapshot por pool/día) — persistente | migración 116 seed + upsert diario |
 | `risk_events` | decisiones del risk engine | **90 días** | los conteos viven en RDO summary (razones) — persistente | `pg_retention.sh` |
