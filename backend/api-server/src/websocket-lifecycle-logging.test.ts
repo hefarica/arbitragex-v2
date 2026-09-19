@@ -62,8 +62,11 @@ describe("WO-NO-WS-LOGS-01 — structured ws.* lifecycle logs", () => {
     expect(typeof connected!.obj["socket_id"]).toBe("string");
     expect(connected!.obj["socket_id"]).not.toBe("");
 
+    // socket.io-client with reconnection:false does not always emit the
+    // client-side "disconnect" event after an explicit disconnect() — waiting
+    // on it hangs (CI 2026-09-19). Settle like the tests below instead.
     client.disconnect();
-    await new Promise<void>((resolve) => client.on("disconnect", () => resolve()));
+    await new Promise<void>((resolve) => setTimeout(resolve, 250));
   });
 
   it("logs ws.disconnected at info with the disconnect reason verbatim (R8)", async () => {
