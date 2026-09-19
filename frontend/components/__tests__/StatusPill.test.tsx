@@ -6,9 +6,11 @@
  *   - StatusPill is a pure component with no hooks, no events.
  *   - renderToStaticMarkup validates label rendering and title attribute.
  *
- * 10 tests total:
+ * 13 tests total:
  *   - 9 via it.each: every OpportunityStatus value renders its label.
  *   - 1 explicit: rejection_reason surfaces in title attribute for status="rejected".
+ *   - 3 GAP1-REJ-REASON-FEED (2026-09-17): reason as visible text; null → label
+ *     only (fail-honest); non-rejected statuses render no reason text.
  */
 import React from "react";
 import { describe, it, expect } from "vitest";
@@ -40,5 +42,32 @@ describe("StatusPill", () => {
       <StatusPill status="rejected" rejection_reason="TokenNotAllowed" />
     );
     expect(html).toMatch(/title="[^"]*TokenNotAllowed/);
+  });
+
+  // GAP1-REJ-REASON-FEED (2026-09-17): the reason must be VISIBLE text, not
+  // only a hover title — document.body.innerText must carry it so the operator
+  // sees WHY a detection was REJECTED without leaving /opportunities.
+  const stripTags = (html: string) => html.replace(/<[^>]*>/g, "");
+
+  it("renders rejection_reason as visible text when status=rejected", () => {
+    const html = renderToStaticMarkup(
+      <StatusPill status="rejected" rejection_reason="v3_quote_unavailable" />
+    );
+    expect(stripTags(html)).toContain("v3_quote_unavailable");
+  });
+
+  it("renders no reason text when rejection_reason is null (fail-honest)", () => {
+    const html = renderToStaticMarkup(
+      <StatusPill status="rejected" rejection_reason={null} />
+    );
+    expect(stripTags(html)).not.toContain("·");
+    expect(stripTags(html).trim()).toBe("REJECTED");
+  });
+
+  it("does not render rejection_reason text for non-rejected statuses", () => {
+    const html = renderToStaticMarkup(
+      <StatusPill status="detected" rejection_reason="v3_quote_unavailable" />
+    );
+    expect(stripTags(html)).not.toContain("v3_quote_unavailable");
   });
 });

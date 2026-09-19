@@ -82,31 +82,17 @@ test.describe("/paper/history", () => {
 });
 
 // ─── /opportunities/by-strategy ──────────────────────────────────────────────
-test.describe("/opportunities/by-strategy", () => {
-  test("page loads with HTTP 200 and renders panel", async ({ page }) => {
-    const response = await page.goto(`${BASE}/opportunities/by-strategy`);
-    expect(response?.status()).toBe(200);
-    const panel = page.locator('[data-testid="opportunities-by-strategy-panel"]');
-    const empty = page.locator('[data-testid="by-strategy-empty"]');
-    await expect(panel.or(empty)).toBeVisible({ timeout: 15_000 });
+// CONSOLIDACIÓN (orden operador 2026-09-19): /opportunities es la página
+// oficial ÚNICA — by-strategy/exchange/live redirigen allí.
+test.describe("/opportunities/by-strategy (redirected to official page)", () => {
+  test("page redirects to /opportunities and renders the official feed", async ({ page }) => {
+    await page.goto(`${BASE}/opportunities/by-strategy`);
+    await expect(page).toHaveURL(/\/opportunities$/, { timeout: 15_000 });
   });
 
   test("page title contains ArbitrageX", async ({ page }) => {
     await page.goto(`${BASE}/opportunities/by-strategy`);
     await expect(page).toHaveTitle(/ArbitrageX/i, { timeout: 15_000 });
-  });
-
-  test("nav link to /opportunities/by-strategy is present in sidebar", async ({ page }) => {
-    await page.goto(`${BASE}/`);
-    const link = page.locator('a[href="/opportunities/by-strategy"]');
-    await expect(link).toBeVisible({ timeout: 10_000 });
-  });
-
-  test("by-strategy summary strip is visible", async ({ page }) => {
-    await page.goto(`${BASE}/opportunities/by-strategy`);
-    const summary = page.locator('[data-testid="by-strategy-summary"]');
-    const empty   = page.locator('[data-testid="by-strategy-empty"]');
-    await expect(summary.or(empty)).toBeVisible({ timeout: 15_000 });
   });
 });
 

@@ -45,9 +45,21 @@ function buildFunnelStages(s: ScannerHeartbeatSnapshot): FunnelStage[] {
 
   return [
     {
+      // WO-FUNNEL-01 (2026-09-17): RU-3 per-block intake first — it is the ACTIVE
+      // detection route while the mempool WS stream delivers nothing. Without
+      // this row the funnel read 0/0/0/0/0 with PG inserting thousands per
+      // minute (R9 false "pipeline quieto").
+      label: "0. Block-scan intents (RU-3)",
+      // Optional field (searchers built before WO-FUNNEL-01 lack it) — absence
+      // renders as an explicit 0, never fabricated.
+      value: s.block_intents_dispatched ?? 0,
+      hint: "Profitable cycles dispatched per block to the canonical pipeline (DetectionSource: new_block)",
+      tone: (s.block_intents_dispatched ?? 0) > 0 ? "emerald" : "muted",
+    },
+    {
       label: "1. Pending received",
       value: s.pending_received,
-      hint: "Mempool tx delivered by Alchemy WS sample (per period)",
+      hint: "Mempool tx delivered by WS subscription (per period). 0 with block-scan > 0 = mempool stream quiet, NOT pipeline idle",
       tone: "muted",
     },
     {
@@ -147,8 +159,10 @@ export function PipelineFunnelCard({ snapshot, error, fetchedAt }: Props) {
           <span suppressHydrationWarning className="font-mono text-xs text-muted-foreground">{fmtAge(fetchedAt)}</span>
         </CardTitle>
         <CardDescription>
-          Mempool funnel across decoder → enrichment → gate → persistence. Shows where throughput
-          converges vs drops. Hot-refreshes every 30s (poll endpoint{" "}
+          Detection funnel across intake (block-scan RU-3 + mempool WS) → decoder → enrichment →
+          gate → persistence. Shows where throughput converges vs drops. {/* WO-FUNNEL-01
+          (2026-09-17): intake is dual-source; mempool-only wording hid the active route. */}
+          Hot-refreshes every 30s (poll endpoint{" "}
           <code className="text-xs">/api/scanner/heartbeat</code>).
         </CardDescription>
       </CardHeader>

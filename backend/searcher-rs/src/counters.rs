@@ -44,6 +44,15 @@ pub const LEGACY_CHAIN_ID: u64 = 0;
 pub struct ScannerCounters {
     /// Pending tx received from WS subscription (one per `process_pending` call).
     pub pending_received: AtomicU64,
+    /// WO-FUNNEL-01 (2026-09-17) — RouteScannerWorker (RU-3): route intents
+    /// dispatched per period from the per-block multi-hop scan (DetectionSource
+    /// ::NewBlock, both canonical `on_route_intent` and cartridge eval forks).
+    /// This is the ACTIVE detection intake when the mempool WS stream delivers
+    /// nothing; without it the heartbeat funnel reads 0 at every intake stage
+    /// while the emitter persists thousands of rows per minute (R9 false
+    /// "pipeline quieto"). Counts dispatches, NOT evaluations: one cycle that
+    /// spawns N cartridge evals still increments this by exactly 1.
+    pub block_intents_dispatched: AtomicU64,
     /// Tx decoded successfully (passed calldata + router lookup).
     pub decoded_ok: AtomicU64,
     /// N-01: Tx decode FAILED in the V2 orchestrator path (route_decoder error).

@@ -18,7 +18,9 @@
  *       tick_summary to the room and the durable snapshot, so the WS push
  *       and GET /api/route-discovery/tick are one shape.
  *     - `subscribe:runtime_ack` → `runtime_ack` broadcasts; the server
- *       re-checks the admin capability on the join (websocket.ts:313-324).
+ *       re-checks the admin capability on the join and answers the ack with
+ *       the verdict (ROOM-AUTH-01: connect alone never certifies the
+ *       channel — a refused join rides lastError → ERROR, never LIVE).
  *       Accepted payloads feed RuntimeAckSlice.recordAck — malformed ones
  *       are dropped with an honest channel error, never recorded.
  *   REST loop (30s + immediate first pass):
@@ -49,10 +51,14 @@ import { io } from "socket.io-client";
 
 import { getAdminToken } from "@/lib/admin-token";
 import { getWsBaseUrl } from "@/lib/api-client";
+import type { FetchStatus } from "@/lib/store/runtime-slices";
 import { useOmniStore } from "@/lib/store/omni-store";
 import {
   acceptRuntimeAck,
   acceptTickPayload,
+  restFetchOutcome,
+  runtimeAckJoinAck,
+  runtimeAckRoomError,
   staleChannels,
 } from "@/lib/store/realtime-slices";
 
@@ -69,30 +75,64 @@ export function ArbxRealtimeProvider({ children }: { children?: ReactNode }) {
     // ── helpers over the store (getState keeps this out of the render) ─────
     const store = useOmniStore;
     const stamp = () => new Date().toISOString();
+    // WO-GAP3 (2026-09-17): an accepted payload must also WRITE the status —
+    // refreshing lastMessageAt alone left REST-native channels `connecting`
+    // forever while their snapshots flowed every 30s (mislabeled header).
     const markFresh = (id: "routes" | "runtime_ack" | "pairs" | "quote_anchor") =>
       store.getState().setChannel(id, {
+        status: "live",
         lastMessageAt: stamp(),
         lastError: null,
       });
+    // WO-GAP3 (2026-09-17): a FAILED snapshot surfaces its real error (R8)
+    // instead of silently staying `connecting` with no lastError.
+    const applyRestOutcome = (
+      id: "routes" | "pairs" | "quote_anchor",
+      status: FetchStatus,
+      error: string | null,
+    ) => {
+      const outcome = restFetchOutcome(status, error);
+      if (outcome.kind === "accepted") markFresh(id);
+      else if (outcome.kind === "failed") {
+        store.getState().setChannel(id, { lastError: outcome.lastError });
+      }
+    };
 
     // ── REST loop: REST-native channels + WS fallback for routes ──────────
     const restPass = async () => {
       const s = store.getState();
       await s.fetchPairs();
-      if (store.getState().pairsStatus === "ready") markFresh("pairs");
+      const afterPairs = store.getState();
+      applyRestOutcome("pairs", afterPairs.pairsStatus, afterPairs.pairsError);
 
       await s.fetchQuoteAnchor();
-      if (store.getState().quoteAnchorStatus === "ready") markFresh("quote_anchor");
+      const afterAnchor = store.getState();
+      applyRestOutcome(
+        "quote_anchor",
+        afterAnchor.quoteAnchorStatus,
+        afterAnchor.quoteAnchorError,
+      );
 
       // Routes: REST only when the socket is not delivering (fallback) —
       // the initial pass runs unconditionally below so data lands first.
+      // WO-GAP3 (2026-09-17): re-check liveness AFTER the awaits — a pass
+      // that started mid-disconnect must not clobber the reconnect handler's
+      // `live` with `polling` (source of the LIVE↔DEGRADED flap while the
+      // socket was actually up).
       if (!wsConnectedRef.current) {
         await s.fetchTick();
-        if (store.getState().tickStatus === "ready") {
+        if (wsConnectedRef.current) return; // socket re-delivering; WS owns routes
+        const afterTick = store.getState();
+        if (afterTick.tickStatus === "ready") {
           markFresh("routes");
           store.getState().setChannel("routes", {
             transport: "rest",
             status: "polling",
+          });
+        } else if (afterTick.tickError !== null) {
+          // WO-GAP3 (2026-09-17): REST fallback failure rides verbatim.
+          store.getState().setChannel("routes", {
+            lastError: afterTick.tickError,
           });
         }
       }
@@ -119,9 +159,42 @@ export function ArbxRealtimeProvider({ children }: { children?: ReactNode }) {
       const s = store.getState();
       s.setWsConnected(true);
       socket.emit("subscribe:route_discovery");
-      socket.emit("subscribe:runtime_ack");
+      // ROOM-AUTH-01 (2026-09-17): runtime_ack is an admin-gated room — the
+      // server re-checks the capability on EVERY join and rejects anonymous
+      // ones (`42["error",{"code":"unauthorized","room":"runtime_ack"}]`,
+      // QA-WS §5.2). Connect alone certifies NOTHING: the channel may only
+      // go `live` on the join verdict (ack below) or an accepted broadcast
+      // (`runtime_ack` handler); a refusal rides lastError → ERROR chip (R8).
+      socket.emit(
+        "subscribe:runtime_ack",
+        (res: unknown) => {
+          const verdict = runtimeAckJoinAck(res);
+          if (verdict.ok) {
+            store.getState().setChannel("runtime_ack", {
+              transport: "ws",
+              status: "live",
+              lastError: null,
+            });
+          } else {
+            store.getState().setChannel("runtime_ack", {
+              transport: "ws",
+              lastError: verdict.lastError,
+            });
+          }
+        },
+      );
       s.setChannel("routes", { transport: "ws", status: "live" });
-      s.setChannel("runtime_ack", { transport: "ws", status: "live" });
+    });
+
+    // ROOM-AUTH-01 (2026-09-17): the server ALSO emits a structured `error`
+    // event on a refused join (the non-ack path — e.g. a server older than
+    // this fix). Scoped strictly to room "runtime_ack"; every other error
+    // emitter on the shared socket is not this channel's business.
+    socket.on("error", (raw: unknown) => {
+      const lastError = runtimeAckRoomError(raw);
+      if (lastError !== null) {
+        store.getState().setChannel("runtime_ack", { lastError });
+      }
     });
 
     socket.on("route_discovery_telemetry", (raw: unknown) => {

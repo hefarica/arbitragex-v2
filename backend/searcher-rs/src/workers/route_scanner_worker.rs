@@ -649,6 +649,16 @@ async fn scan_block(
             tokio::spawn(shadow_evaluate_intent(r.clone(), intent, chain_id));
         }
         dispatched += 1;
+        // WO-FUNNEL-01 (2026-09-17): wire the ACTIVE detection intake into the
+        // heartbeat funnel. This per-block dispatch (DetectionSource::NewBlock)
+        // is the pipeline's live intake when the mempool WS stream delivers
+        // nothing; without this counter the funnel shows 0/0/0 at intake while
+        // the emitter persists thousands of rows per minute (R9 false "pipeline
+        // quieto"). Counts DISPATCHES (1 per admitted cycle, both canonical and
+        // cartridge forks), never evaluations.
+        crate::counters::chain_counters(chain_id)
+            .block_intents_dispatched
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         if cycle_events < cfg.max_cycle_events {
             telemetry::publish(
                 redis,

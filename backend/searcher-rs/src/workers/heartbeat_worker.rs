@@ -53,6 +53,13 @@ pub struct HeartbeatSnapshot {
     pub pg_period_profit_pos: i64,
     #[serde(default)]
     pub pending_received: u64,
+    /// WO-FUNNEL-01 (2026-09-17) — RouteScannerWorker (RU-3) route intents
+    /// dispatched per period (DetectionSource::NewBlock). The ACTIVE detection
+    /// intake when the mempool WS stream delivers nothing: non-zero here with
+    /// zero `pending_received` means the pipeline lives off the per-block
+    /// scan, NOT that it is quiet.
+    #[serde(default)]
+    pub block_intents_dispatched: u64,
     #[serde(default)]
     pub decoded_ok: u64,
     /// N-01: V2 path decode failures (route_decoder errors). Visible so the
@@ -235,6 +242,8 @@ impl HeartbeatWorker {
             // their own HeartbeatWorker instances. Crosstalk eliminated.
             let c = chain_counters(self.chain_id);
             let pending = c.pending_received.swap(0, Ordering::Relaxed);
+            // WO-FUNNEL-01 (2026-09-17): active-route intake (RU-3 per-block scan).
+            let block_intents = c.block_intents_dispatched.swap(0, Ordering::Relaxed);
             let decoded = c.decoded_ok.swap(0, Ordering::Relaxed);
             let decoded_err = c.decoded_err.swap(0, Ordering::Relaxed);
             let enriched_v2 = c.enriched_v2.swap(0, Ordering::Relaxed);
@@ -274,6 +283,8 @@ impl HeartbeatWorker {
                 pg_period_profit_pos = pg_profit_pos,
                 // In-memory pipeline counters (delta this period).
                 pending_received = pending,
+                // WO-FUNNEL-01 (2026-09-17): active-route intake (RU-3).
+                block_intents_dispatched = block_intents,
                 decoded_ok = decoded,
                 decoded_err = decoded_err,
                 enriched_v2 = enriched_v2,
@@ -321,6 +332,8 @@ impl HeartbeatWorker {
                 pg_period_inserted: pg_inserted,
                 pg_period_profit_pos: pg_profit_pos,
                 pending_received: pending,
+                // WO-FUNNEL-01 (2026-09-17): active-route intake (RU-3).
+                block_intents_dispatched: block_intents,
                 decoded_ok: decoded,
                 decoded_err,
                 enriched_v2,

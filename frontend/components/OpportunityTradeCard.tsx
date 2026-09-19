@@ -113,6 +113,8 @@ export interface OpportunityTradeCardProps {
    * R8: null when the endpoint has no entry for this strategy_kind → "—".
    */
   strategyConfig?: StrategyRuntimeConfig | null;
+  /** Effective execution terminus (paper/live) — display-only read from /killswitch state. */
+  modeLabel?: "paper" | "live";
   /** Trigger the shadow simulation (wired to POST .../simulate). */
   onExecute: (opportunityId: string) => Promise<void> | void;
   /** Open the full detail dialog (the old "Inspect details"). */
@@ -125,6 +127,7 @@ function OpportunityTradeCardImpl({
   isMounted,
   simLoading,
   strategyConfig = null,
+  modeLabel = "paper",
   onExecute,
   onInspect,
 }: OpportunityTradeCardProps) {
@@ -499,7 +502,7 @@ function OpportunityTradeCardImpl({
           onClick={handleExecute}
           disabled={simLoading}
           className="w-full py-2.5 rounded-lg bg-primary text-primary-foreground text-xs font-bold uppercase tracking-wide hover:bg-primary/90 active:scale-[0.99] disabled:opacity-60 disabled:cursor-not-allowed transition-all inline-flex items-center justify-center gap-2"
-          title="Execute in shadow mode — POST /api/v1/opportunities/:id/simulate against the sim-ctl + Anvil fork. Read-only, capital $0; returns pass/fail + gas + trace evidence."
+          title={`Execute in shadow mode — POST /api/v1/opportunities/:id/simulate against the sim-ctl + Anvil fork. Read-only, capital $0; returns pass/fail + gas + trace evidence. Effective terminus: ${modeLabel}.`}
         >
           {simLoading ? (
             <>
@@ -507,7 +510,7 @@ function OpportunityTradeCardImpl({
             </>
           ) : (
             <>
-              <Play size={14} /> Execute (shadow)
+              <Play size={14} /> Execute (shadow · {modeLabel === "paper" ? "PAPER" : "LIVE"})
             </>
           )}
         </button>
@@ -576,6 +579,7 @@ export const OpportunityTradeCard = React.memo(
       prev.isMounted === next.isMounted &&
       prev.simLoading === next.simLoading &&
       prev.strategyConfig === next.strategyConfig &&
+      prev.modeLabel === next.modeLabel &&
       prev.onExecute === next.onExecute &&
       prev.onInspect === next.onInspect &&
       Object.is(agePrev, ageNext)

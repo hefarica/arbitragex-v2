@@ -11,9 +11,12 @@ import React from "react";
  *   "detected" | "validated" | "simulated" | "scored" | "executing" |
  *   "executed" | "reconciled" | "rejected" | "failed"
  *
- * R8 fail-honest: rejection_reason is surfaced in the title attribute when
- * status="rejected". React automatically HTML-escapes attribute values, so
- * no manual escaping is needed.
+ * R8 fail-honest: rejection_reason is surfaced BOTH as visible text inside the
+ * pill and in the title attribute when status="rejected" (GAP1-REJ-REASON-FEED
+ * 2026-09-17: title-only was invisible to body text scans and hover-less
+ * operators). React automatically HTML-escapes attribute values and text
+ * nodes, so no manual escaping is needed. Null reason → label only, never
+ * fabricated.
  */
 
 /** Mirrors StatusSchema from shared-ts/src/api-contracts.ts — no cross-package import. */
@@ -119,9 +122,22 @@ export function StatusPill({ status, rejection_reason }: StatusPillProps) {
   return (
     <span
       title={titleAttr}
-      className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-bold tracking-wide ${meta.className}`}
+      className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-bold tracking-wide ${meta.className}`}
     >
       {meta.label}
+      {/* // GAP1-REJ-REASON-FEED (2026-09-17): the reason now renders as VISIBLE
+          text in the pill (title-only was invisible to document.body.innerText —
+          operator saw REJECTED without WHY in /opportunities). Fail-honest: no
+          reason on the wire → no extra text rendered (R8, never fabricated).
+          Truncated for layout; the title attribute keeps the full value. */}
+      {status === "rejected" && rejection_reason ? (
+        <>
+          <span aria-hidden="true" className="opacity-50">·</span>
+          <span className="font-mono font-medium normal-case tracking-normal max-w-[220px] truncate">
+            {rejection_reason}
+          </span>
+        </>
+      ) : null}
     </span>
   );
 }

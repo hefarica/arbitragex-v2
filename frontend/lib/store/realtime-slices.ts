@@ -35,6 +35,7 @@
 import type { StoreApi } from "zustand";
 
 import { RouteDiscoveryTickSummarySchema, type RouteDiscoveryTickSummary } from "@/lib/apex/schemas";
+import type { FetchStatus } from "@/lib/store/runtime-slices";
 import { RuntimeAckBroadcastSchema, type RuntimeAckBroadcast } from "@/lib/statemachine/useRuntimeAckSocket";
 
 // ─── Channel model ──────────────────────────────────────────────────────────
@@ -187,4 +188,83 @@ export function staleChannels(
     if (Number.isFinite(age) && age > STALENESS_BUDGET_MS[id]) stale.push(id);
   }
   return stale;
+}
+
+/**
+ * WO-GAP3 (2026-09-17) — REST-pass outcome for a channel fed by a snapshot
+ * loop (pairs / quote_anchor; routes only while the socket is down).
+ *
+ * Regression this pins: the provider used to refresh only `lastMessageAt` on
+ * a successful REST fetch and NEVER wrote `status`, so REST-native channels
+ * stayed `connecting` forever while data flowed every 30s — and the WO-08
+ * socket aggregate inherited that worst state (header read
+ * `socket CONNECTING · pairs CONNECTING · quote_anchor CONNECTING`
+ * permanently with the feed live). An accepted snapshot must leave
+ * `connecting`; a failed one must surface its REAL error (R8) instead of
+ * staying silently `connecting`.
+ */
+export type RestFetchOutcome =
+  | { kind: "accepted" }
+  | { kind: "failed"; lastError: string }
+  | { kind: "inflight" };
+
+export function restFetchOutcome(
+  status: FetchStatus,
+  error: string | null,
+): RestFetchOutcome {
+  if (status === "ready") return { kind: "accepted" };
+  if (status === "error" && error !== null) {
+    return { kind: "failed", lastError: error };
+  }
+  // idle / loading / error-without-message: nothing to certify yet.
+  return { kind: "inflight" };
+}
+
+/**
+ * ROOM-AUTH-01 (2026-09-17) — runtime_ack join verdict classifiers.
+ *
+ * Regression this pins: the provider used to stamp `runtime_ack → live` the
+ * moment the SHARED socket connected, without waiting for the server's
+ * decision on `subscribe:runtime_ack`. The server re-checks the admin
+ * capability on every join and rejects anonymous ones with
+ * `42["error",{"code":"unauthorized","room":"runtime_ack"}]` (observed in
+ * boot, QA-WS §5.2) — so the header read `runtime_ack LIVE` over a room the
+ * socket was never admitted to. The channel may now only be certified by
+ * (a) the join ack (ok) or (b) an accepted `runtime_ack` broadcast
+ * (markFresh); a refusal rides `lastError` verbatim → the §34 projection
+ * shows ERROR, not LIVE (R8: the refusal is a fact, never masked).
+ */
+export type AckJoinVerdict =
+  | { ok: true }
+  | { ok: false; lastError: string };
+
+/** Normalizes the Socket.IO ack reply of `subscribe:runtime_ack`. */
+export function runtimeAckJoinAck(raw: unknown): AckJoinVerdict {
+  const p = raw as { ok?: unknown; code?: unknown } | null | undefined;
+  if (p !== null && typeof p === "object" && p.ok === true) {
+    return { ok: true };
+  }
+  const code =
+    p !== null && typeof p === "object" && typeof p.code === "string"
+      ? p.code
+      : "unknown";
+  return {
+    ok: false,
+    lastError: `runtime_ack join rejected: ${code} (room is admin-gated)`,
+  };
+}
+
+/**
+ * Normalizes the server's structured `error` event, scoped STRICTLY to the
+ * runtime_ack room — other error emitters on the shared socket are not this
+ * channel's business. Returns the honest lastError string, or null when the
+ * event does not belong to this room (caller ignores it).
+ */
+export function runtimeAckRoomError(raw: unknown): string | null {
+  const p = raw as { code?: unknown; room?: unknown } | null | undefined;
+  if (p === null || typeof p !== "object" || p.room !== "runtime_ack") {
+    return null;
+  }
+  const code = typeof p.code === "string" ? p.code : "unknown";
+  return `runtime_ack join rejected: ${code} (room is admin-gated)`;
 }

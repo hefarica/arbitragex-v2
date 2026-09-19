@@ -44,13 +44,31 @@ import {
 } from "@/components/ui/table";
 import { RuntimeSettingState } from "@/components/RuntimeSettingState";
 import { hasAdminSession } from "@/lib/admin-token";
-import { putTradingConfig, resolveTokens } from "@/lib/api-client";
+import { getTopTokens, putTradingConfig, resolveTokens } from "@/lib/api-client";
 import { shortAddr } from "@/lib/format";
 import { useOmniStore } from "@/lib/store/omni-store";
 import type { TradingConfigConfigured } from "@/lib/schemas";
-import type { TokenResolvePreviewRow, TokenUniverseKpi } from "@/lib/apex/schemas";
+import type { TokenResolvePreviewRow, TokenTopResponse, TokenUniverseKpi } from "@/lib/apex/schemas";
+import type { RugRuleId } from "@/lib/apex/schemas";
 
 const DASH = "—";
+
+/** PC-07 (2026-09-19): mirrors backend RUG_RULES (token-top.ts) — labels are
+ *  display-only; evaluation is server-side against real tables (RULE 00). */
+export const RUG_RULE_CATALOG: { id: RugRuleId; label: string }[] = [
+  { id: "min_safety_score", label: "Safety score ≥ 40" },
+  { id: "validated_status", label: "Estado de validación VERIFIED/VIABLE" },
+  { id: "min_liquidity_usd", label: "Liquidez ≥ $50k" },
+  { id: "vol_liq_ratio_cap", label: "Vol 24h / liquidez ≤ 10 (wash-trade)" },
+  { id: "pump_5m_spike", label: "Vol 5m ≤ 30% del vol 1h (pump repentino)" },
+  { id: "registry_verified", label: "Contrato verificado en registry" },
+  { id: "risk_level_ok", label: "risk_level ∉ {HIGH, BLOCKED}" },
+  { id: "multi_pool", label: "≥ 2 pools activos (concentración)" },
+  { id: "pool_age_24h", label: "Pool más antiguo ≥ 24h" },
+  { id: "exclude_memecoins", label: "Excluir memecoins (heurística)" },
+];
+
+const TOP_LIMITS = [20, 30, 40, 100] as const;
 
 /** Badge variant per resolution status — color is never the only signal. */
 const STATUS_VARIANT: Record<TokenResolvePreviewRow["resolution_status"], "secondary" | "outline" | "destructive"> = {
@@ -94,6 +112,42 @@ export function TokenAllowlistTab({ config, onSaved, adminToken, actor }: Props)
     eventId: null,
     version: null,
   });
+
+  // PC-07: Top-N preset menu state (reflection filter only — discovery stays
+  // universe-wide per operator doctrine 2026-09-19).
+  const [topLimit, setTopLimit] = useState<(typeof TOP_LIMITS)[number]>(20);
+  const [topWindow, setTopWindow] = useState<"current" | "24h">("current");
+  const [rugRules, setRugRules] = useState<Set<RugRuleId>>(new Set(RUG_RULE_CATALOG.map((r) => r.id)));
+  const [topResult, setTopResult] = useState<TokenTopResponse | null>(null);
+  const [topLoading, setTopLoading] = useState(false);
+  const [topError, setTopError] = useState<string | null>(null);
+
+  const toggleRugRule = (id: RugRuleId) =>
+    setRugRules((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+
+  const onLoadTop = async () => {
+    setTopLoading(true);
+    setTopError(null);
+    const res = await getTopTokens(config.chain_id, topLimit, topWindow, [...rugRules]);
+    setTopLoading(false);
+    if (res.ok) {
+      setTopResult(res.data);
+      const syms = res.data.ranked
+        .map((r) => r.symbol?.toUpperCase())
+        .filter((s): s is string => s !== null && s !== undefined && s.length > 0);
+      if (syms.length > 0) {
+        setSymbols(Array.from(new Set(syms)));
+        setPreview(null); // chips changed → §5 exige re-resolve antes de save
+      }
+    } else {
+      setTopError(res.error);
+    }
+  };
 
   const add = () => {
     // Accept multi-symbol input: comma, semicolon, newline, or whitespace separated.
@@ -242,11 +296,175 @@ export function TokenAllowlistTab({ config, onSaved, adminToken, actor }: Props)
           )}
         </CardContent>
       </Card>
+      <TopPresetMenu
+        chainId={config.chain_id}
+        topLimit={topLimit}
+        setTopLimit={setTopLimit}
+        topWindow={topWindow}
+        setTopWindow={setTopWindow}
+        rugRules={rugRules}
+        toggleRugRule={toggleRugRule}
+        onLoadTop={() => void onLoadTop()}
+        loading={topLoading}
+        result={topResult}
+        error={topError}
+      />
       <UniverseKpiCards universe={universe} />
       {preview !== null && (
         <TokenResolvePreviewTable rows={preview} chainId={config.chain_id} />
       )}
     </div>
+  );
+}
+
+// ─── PC-07 · Top-N preset menu + 10 reglas anti-rug (2026-09-19) ───────────
+
+/**
+ * Reflection-filter presets: Top 20/30/40/100 tokens by on-chain pool value,
+ * ranked current OR over the last 24h, screened by toggleable rug rules.
+ * Ranking + rule evaluation are 100% backend (RULE 00); this component only
+ * renders and sends the selected rule IDs. Unverified rules per token are
+ * shown by the backend in `unverified_rules` — never a fabricated pass (R8).
+ */
+export function TopPresetMenu({
+  chainId,
+  topLimit,
+  setTopLimit,
+  topWindow,
+  setTopWindow,
+  rugRules,
+  toggleRugRule,
+  onLoadTop,
+  loading,
+  result,
+  error,
+}: {
+  chainId: number;
+  topLimit: number;
+  setTopLimit: (n: 20 | 30 | 40 | 100) => void;
+  topWindow: "current" | "24h";
+  setTopWindow: (w: "current" | "24h") => void;
+  rugRules: ReadonlySet<RugRuleId>;
+  toggleRugRule: (id: RugRuleId) => void;
+  onLoadTop: () => void;
+  loading: boolean;
+  result: TokenTopResponse | null;
+  error: string | null;
+}) {
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="text-base">
+          Preset Top-N · filtro de reflejo (PC-07)
+          <span className="ml-2 text-sm font-normal text-muted-foreground">
+            ranking = valor on-chain en pools × torre de precios · discovery sigue universo-completo
+          </span>
+        </CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        <div className="flex flex-wrap items-center gap-2">
+          {TOP_LIMITS.map((n) => (
+            <Button
+              key={n}
+              variant={topLimit === n ? "default" : "outline"}
+              size="sm"
+              onClick={() => setTopLimit(n)}
+            >
+              Top {n}
+            </Button>
+          ))}
+          <span className="ml-2 text-xs text-muted-foreground">ventana:</span>
+          <Button variant={topWindow === "current" ? "default" : "outline"} size="sm" onClick={() => setTopWindow("current")}>
+            Capitalización actual
+          </Button>
+          <Button variant={topWindow === "24h" ? "default" : "outline"} size="sm" onClick={() => setTopWindow("24h")}>
+            Últimas 24 horas
+          </Button>
+          <Button size="sm" className="ml-auto" onClick={onLoadTop} disabled={loading}>
+            {loading ? "Cargando…" : `Cargar Top ${topLimit} → chips`}
+          </Button>
+        </div>
+
+        <div>
+          <p className="mb-2 text-xs font-medium text-muted-foreground">
+            Reglas anti-rug / anti-scam (10) — evaluadas server-side contra datos reales:
+          </p>
+          <div className="grid grid-cols-1 gap-1 sm:grid-cols-2">
+            {RUG_RULE_CATALOG.map(({ id, label }) => (
+              <label key={id} className="flex items-center gap-2 text-sm">
+                <input
+                  type="checkbox"
+                  checked={rugRules.has(id)}
+                  onChange={() => toggleRugRule(id)}
+                  className="h-4 w-4"
+                />
+                {label}
+              </label>
+            ))}
+          </div>
+        </div>
+
+        {error && <p className="text-xs text-destructive font-mono" role="alert">{error}</p>}
+
+        {result && (
+          <div className="space-y-2">
+            <p className="text-xs text-muted-foreground font-mono">
+              chain {chainId} · {result.ranked.length}/{result.limit} tokens · cobertura de precios{" "}
+              {result.price_coverage.symbols_priced}/{result.price_coverage.symbols_total}
+              {result.window_note ? ` · ${result.window_note}` : ""}
+            </p>
+            {Object.keys(result.excluded).length > 0 && (
+              <p className="text-xs text-muted-foreground font-mono">
+                excluidos:{" "}
+                {Object.entries(result.excluded)
+                  .map(([k, v]) => `${k}=${v}`)
+                  .join(", ")}
+              </p>
+            )}
+            <div className="overflow-x-auto">
+              <Table>
+                <TableHeader>
+                  <TableRow className="text-left text-muted-foreground">
+                    <TableHead className="font-medium">#</TableHead>
+                    <TableHead className="font-medium">Símbolo</TableHead>
+                    <TableHead className="text-right font-medium">TVL USD</TableHead>
+                    <TableHead className="text-right font-medium">TVL 24h atrás</TableHead>
+                    <TableHead className="text-right font-medium">Pools</TableHead>
+                    <TableHead className="text-right font-medium">Safety</TableHead>
+                    <TableHead className="font-medium">Estado</TableHead>
+                    <TableHead className="text-right font-medium">Vol/Liq</TableHead>
+                    <TableHead className="font-medium">Memecoin</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {result.ranked.map((r, i) => (
+                    <TableRow key={r.address}>
+                      <TableCell className="tabular-nums">{i + 1}</TableCell>
+                      <TableCell className="font-medium" title={r.address}>
+                        {r.symbol ?? DASH}
+                      </TableCell>
+                      <TableCell className="text-right tabular-nums">{r.tvl_usd}</TableCell>
+                      <TableCell className="text-right tabular-nums">{r.tvl_24h_ago_usd ?? DASH}</TableCell>
+                      <TableCell className="text-right tabular-nums">{r.pool_count}</TableCell>
+                      <TableCell className="text-right tabular-nums">{r.safety_score ?? DASH}</TableCell>
+                      <TableCell>{r.final_status ?? DASH}</TableCell>
+                      <TableCell className="text-right tabular-nums">
+                        {r.vol_liq_ratio === null ? DASH : r.vol_liq_ratio.toFixed(2)}
+                      </TableCell>
+                      <TableCell>{r.memecoin_heuristic ? "sí (heurística)" : "—"}</TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </div>
+            <p className="text-xs text-muted-foreground">
+              R8: “—” = no computado (sin precio/sin dato), jamás un guess. Tras cargar, Resolve
+              valida los chips contra el universo antes de poder guardar (§5).
+            </p>
+          </div>
+        )}
+      </CardContent>
+    </Card>
   );
 }
 

@@ -25,7 +25,7 @@ interface HomeData {
 async function getHomeData(): Promise<HomeData> {
   const EDGE_URL = process.env.INTERNAL_EDGE_URL || getApiBaseUrl();
   try {
-    const res = await fetch(`${EDGE_URL}/api/opportunities/live?limit=50`, {
+    const res = await fetch(`${EDGE_URL}/api/opportunities/live?limit=50&order=profit_usd`, {
       cache: "no-store",
       headers: { accept: "application/json" },
     });

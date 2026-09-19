@@ -143,7 +143,8 @@ const TradingConfigSchema = z
     // EVM addresses in `0x`+40-hex form (42 chars) — the canonical TokenKey
     // identity (ARBX-0018). Address entries gate directly at runtime; symbol
     // entries resolve through the chain universe as before.
-    allowed_token_symbols: z.array(z.string().min(1).max(42)).max(64),
+    // PC-07 (2026-09-19): cap raised 64 → 128 so Top-100 presets fit.
+    allowed_token_symbols: z.array(z.string().min(1).max(42)).max(128),
 
     // BUG-2 fix (PriceOracle): per-token USD prices, operator-managed.
     token_prices_usd: z.record(z.string().min(1).max(16), z.number().positive()).default({}),

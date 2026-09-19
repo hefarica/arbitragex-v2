@@ -91,6 +91,7 @@ const app = express();
 // ==========================================
 import { mountDefi } from "./routes/defi.js";
 import { buildTradingConfigRouter, rehydrateTradingConfigMirror, tokenUniverseVersionKey } from "./routes/trading-config.js";
+import { buildTokenTopRouter } from "./routes/token-top.js";
 import { buildCartridgeFiltersRouter } from "./routes/cartridge-filters.js";
 import { mountTokenIconRoutes } from "./routes/token-icon.js";
 import { buildOperationsRouter } from "./routes/operations.js";
@@ -1762,7 +1763,10 @@ app.get("/api/v1/readiness", async (req, res) => {
 // env var was absent.
 const PORT = Number(process.env["API_PORT"] ?? 8080);
 const httpServer = createServer(app);
-const io = setupWebSocketGateway(httpServer, carnotStore);
+// WO-NO-WS-LOGS-01 (2026-09-17): pass the pino logger so socket.io connection
+// lifecycle events surface as structured `ws.*` lines (grep-friendly) instead
+// of bare console.log that the paper_archiver flood drowned (pattern R9).
+const io = setupWebSocketGateway(httpServer, carnotStore, logger);
 
 // Trading Config router — EMIT-04: mounted here (after `io`) because the
 // token_universe runtime_ack POST-INSERT broadcast needs the WSS gateway.
@@ -1775,6 +1779,10 @@ app.use(buildTradingConfigRouter({
   logger,
   io,
 }));
+
+// PC-07 (2026-09-19): Top-N token ranking — feeds the allowlist preset menu
+// (reflection filter only; discovery stays universe-wide per operator doctrine).
+app.use(buildTokenTopRouter({ pool, redis, logger }));
 
 // G-PRICE-1 — snapshot+push price rooms (`subscribe:prices` → `prices:snapshot`
 // + `prices:update`). Additive `io.on('connection')` listener; the gateway's

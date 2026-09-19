@@ -103,6 +103,14 @@ describe("projectChannel — RealtimeChannelState → §34 token", () => {
     }
   });
 
+  it("WO-GAP3: a REST-native channel the provider marked live-on-REST projects LIVE, not CONNECTING", () => {
+    // The state ArbxRealtimeProvider writes on an accepted snapshot since
+    // WO-GAP3 (`status: "live"`, transport `rest`) — the mislabel fix for
+    // pairs/quote_anchor stuck at CONNECTING while their data flowed.
+    expect(projectChannel("pairs", ch({ transport: "rest", status: "live", lastMessageAt: "2026-09-17T00:00:00Z" }))).toBe("LIVE");
+    expect(projectChannel("quote_anchor", ch({ transport: "rest", status: "live", lastMessageAt: "2026-09-17T00:00:00Z" }))).toBe("LIVE");
+  });
+
   it("lastError ⇒ ERROR (cleared only by the next accepted payload)", () => {
     expect(projectChannel("routes", ch({ status: "live", lastError: "schema_reject: x" }))).toBe("ERROR");
   });
