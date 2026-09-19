@@ -61,18 +61,31 @@ run_file() {
     < "$MIG_DIR/$1"
 }
 
+run_pw_sql() {
+  # psql -c does NOT substitute :'var' (verified VPS 2026-09-19: the ALTER
+  # reached the server literally and broke every deploy's migration gate with
+  # `syntax error at or near ":"`). stdin input DOES substitute — same as
+  # run_file — so the password-setting statements must go through stdin.
+  docker exec -i -e PGOPTIONS="$MIG_LOCK_OPTS" "$CONTAINER" psql -U "$PGUSER" -d "$PGDB" \
+    -v ON_ERROR_STOP=1 \
+    -v arbx_migrator_pw="$MIG_PW" \
+    -v arbx_rw_pw="$RW_PW" \
+    -v arbx_ro_pw="$RO_PW" \
+    <<< "$1"
+}
+
 echo "=== Creating roles ==="
 run_sql "CREATE EXTENSION IF NOT EXISTS pgcrypto;"
 run_sql "DO \$\$ BEGIN CREATE ROLE arbx_migrator WITH LOGIN CREATEDB; EXCEPTION WHEN duplicate_object THEN NULL; END \$\$;"
 run_sql "DO \$\$ BEGIN CREATE ROLE arbx_rw WITH LOGIN; EXCEPTION WHEN duplicate_object THEN NULL; END \$\$;"
 run_sql "DO \$\$ BEGIN CREATE ROLE arbx_ro WITH LOGIN; EXCEPTION WHEN duplicate_object THEN NULL; END \$\$;"
 run_sql "GRANT CONNECT ON DATABASE arbitragex TO arbx_migrator, arbx_rw, arbx_ro;"
-# :'var' quoting (psql -v above) — never a literal password in the SQL
+# :'var' quoting (psql -v in run_pw_sql) — never a literal password in the SQL
 # (incident 2026-09-18, flipper #2: hardcoded ALTERs reset production
 # credentials on every migration run).
-run_sql "ALTER ROLE arbx_migrator WITH PASSWORD :'arbx_migrator_pw';"
-run_sql "ALTER ROLE arbx_rw WITH PASSWORD :'arbx_rw_pw';"
-run_sql "ALTER ROLE arbx_ro WITH PASSWORD :'arbx_ro_pw';"
+run_pw_sql "ALTER ROLE arbx_migrator WITH PASSWORD :'arbx_migrator_pw';"
+run_pw_sql "ALTER ROLE arbx_rw WITH PASSWORD :'arbx_rw_pw';"
+run_pw_sql "ALTER ROLE arbx_ro WITH PASSWORD :'arbx_ro_pw';"
 
 echo "=== Running schema migrations (auto-discovered, idempotent) ==="
 # Glob every .sql in numeric order. printf+sort -V gives 002,003,...,099,100,101,102.
