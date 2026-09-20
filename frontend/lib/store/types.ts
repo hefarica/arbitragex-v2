@@ -211,6 +211,17 @@ export interface OmniOpportunity {
   chain_id: number | null;
   strategy_kind: StrategyKind | null;
   detected_at: string | null;
+  /**
+   * CARDS-DEDUP-HOPS (operator order 2026-09-20): route-group aggregates from
+   * the api-server LIVE_QUERY GROUP BY. first_seen_at = MIN(detected_at) of the
+   * group; last_seen_at = MAX(detected_at) (latest ratification of vigency);
+   * confirmations = COUNT(*) of detections in the group (>= 1 on the grouped
+   * REST wire). Null on single WS rows / any payload that does not carry the
+   * aggregates — absence is a state, never a fabricated 1 (R8 / RULE 00).
+   */
+  first_seen_at: string | null;
+  last_seen_at: string | null;
+  confirmations: number | null;
   trace_id: string;
 
   // === Extended Identity (FE-0028 §26 §27 — NO parallel model) ===
@@ -355,6 +366,14 @@ export function mapToOmniOpportunity(raw: Record<string, unknown>): OmniOpportun
     strategy_kind:
       raw.strategy_kind != null ? (raw.strategy_kind as StrategyKind) : null,
     detected_at: raw.detected_at != null ? String(raw.detected_at) : null,
+    // CARDS-DEDUP-HOPS: route-group aggregates pass through verbatim from the
+    // grouped LIVE_QUERY wire; absent on single WS rows → null, honest (R8).
+    first_seen_at:
+      raw.first_seen_at != null ? String(raw.first_seen_at) : null,
+    last_seen_at:
+      raw.last_seen_at != null ? String(raw.last_seen_at) : null,
+    confirmations:
+      raw.confirmations != null ? Number(raw.confirmations) : null,
     trace_id: String(raw.trace_id ?? ""),
 
     // Extended Identity (FE-0028): cartridge_id is a real wire field
