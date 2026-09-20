@@ -29,7 +29,7 @@
 **Interfaces:**
 - Produces: `pub struct TokenBucket`; `TokenBucket::new(per_minute: u32) -> Self`; `pub fn try_acquire(&self) -> bool` (consume 1 token, false si no hay); `pub fn tokens_remaining(&self) -> u64` (enteros, no consume); `fn refill_to_cap(tokens_milli: u64, elapsed_ms: u64, cap_milli: u64, per_minute: u32) -> u64` (pure, pub(crate)); `#[cfg(test)] fn fast_forward(&self, d: Duration)`.
 
-- [ ] **Step 1.1: Escribir el módulo con tests inline**
+- [x] **Step 1.1: Escribir el módulo con tests inline**
 
 ```rust
 //! rate_budget — client-side per-provider token bucket (WO-13 / PERF-STACK).
@@ -166,12 +166,12 @@ En `backend/shared-rs/src/lib.rs`, junto a los demás `pub mod`:
 pub mod rate_budget;
 ```
 
-- [ ] **Step 1.2: Verificar**
+- [x] **Step 1.2: Verificar**
 
 Run: `cargo test -p shared-rs rate_budget` — Expected: 4 PASS.
 Run: `cargo fmt -p shared-rs` + `cargo clippy -p shared-rs -- -D warnings` — Expected: limpio.
 
-- [ ] **Step 1.3: Commit** — `feat(shared-rs): per-provider token bucket for RPC rate budgeting (WO-13)`
+- [x] **Step 1.3: Commit** — `feat(shared-rs): per-provider token bucket for RPC rate budgeting (WO-13)`
 
 ---
 
@@ -183,7 +183,7 @@ Run: `cargo fmt -p shared-rs` + `cargo clippy -p shared-rs -- -D warnings` — E
 **Interfaces:**
 - Produces: `RPC_PROVIDER_REQUESTS_TOTAL: IntCounterVec` labels `[provider, kind, outcome]` (outcome: `success|error`); `RPC_PROVIDER_BUDGET_TOKENS: IntGaugeVec` labels `[provider, kind]`; `RPC_PROVIDER_BUDGET_THROTTLED_TOTAL: IntCounterVec` labels `[provider, kind]`.
 
-- [ ] **Step 2.1: Añadir las 3 métricas con el patrón existente (Lazy + REGISTRY.register)**
+- [x] **Step 2.1: Añadir las 3 métricas con el patrón existente (Lazy + REGISTRY.register)**
 
 ```rust
 pub static RPC_PROVIDER_REQUESTS_TOTAL: Lazy<IntCounterVec> = Lazy::new(|| {
@@ -226,9 +226,9 @@ pub static RPC_PROVIDER_BUDGET_THROTTLED_TOTAL: Lazy<IntCounterVec> = Lazy::new(
 });
 ```
 
-- [ ] **Step 2.2: Verificar export no roto** — `cargo test -p shared-rs` completo (los tests de métricas existentes validan el REGISTRY; un nombre duplicado paniquea en register → cualquier test que toque la métrica lo detecta).
+- [x] **Step 2.2: Verificar export no roto** — `cargo test -p shared-rs` completo (los tests de métricas existentes validan el REGISTRY; un nombre duplicado paniquea en register → cualquier test que toque la métrica lo detecta).
 
-- [ ] **Step 2.3: Commit** — `feat(shared-rs): request/budget Prometheus metrics for the RPC pool (WO-13)`
+- [x] **Step 2.3: Commit** — `feat(shared-rs): request/budget Prometheus metrics for the RPC pool (WO-13)`
 
 ---
 
@@ -241,11 +241,11 @@ pub static RPC_PROVIDER_BUDGET_THROTTLED_TOTAL: Lazy<IntCounterVec> = Lazy::new(
 - Consumes: Task 1 `TokenBucket`, Task 2 métricas.
 - Produces: `HttpEntry.budget: Option<Arc<TokenBucket>>`; `parse_budgets(csv: &str) -> HashMap<String, u32>`; helper `fn budget_has_token(e: &HttpEntry) -> bool` (NO consume); env `RPC_HTTP_RATE_BUDGETS`.
 
-- [ ] **Step 3.1: Pre-verificación de callers y matches exhaustivos**
+- [x] **Step 3.1: Pre-verificación de callers y matches exhaustivos**
 
 Run: `grep -rn "\.pick()\|PoolError::" backend/ --include="*.rs"` — anotar (a) callers de `pick()` y (b) TODO match exhaustivo sobre `PoolError` fuera de shared-rs. `pick()` queda NO-consumidor de tokens (solo consulta); el consumo (`try_acquire`) ocurre EXCLUSIVAMENTE en `with_retry` por intento ejecutado (a8 confirmó: TODO el tráfico del quoter funnela por with_retry — un quote lógico = N intentos = N tokens). Si un match exhaustivo ajeno (p.ej. searcher-rs) no tuviera wildcard `_`, coordinar con su dueño ANTES de pushear la variante nueva.
 
-- [ ] **Step 3.2: Parse de budgets + campo en HttpEntry**
+- [x] **Step 3.2: Parse de budgets + campo en HttpEntry**
 
 En `rpc_failover.rs` (cerca de `parse_csv`):
 
@@ -302,7 +302,7 @@ if let Some(b) = &e.budget {
 }
 ```
 
-- [ ] **Step 3.3: Gate en `pick()` (consulta, no consumo)**
+- [x] **Step 3.3: Gate en `pick()` (consulta, no consumo)**
 
 Helper junto a `is_rate_limit_sticky`:
 ```rust
@@ -334,7 +334,7 @@ BudgetExhausted(u64),
 Semántica de `pick()` al fallar: si `budget_blocked` → `Err(PoolError::BudgetExhausted(self.chain_id))`, si no → `Err(AllUnhealthy)` como hoy. Display: `"rpc pool {0}: rate budget exhausted for all providers"`.
 ```
 
-- [ ] **Step 3.4: Consumo + requests_total en `with_retry()`**
+- [x] **Step 3.4: Consumo + requests_total en `with_retry()`**
 
 En el Try 1 (tras `let first = self.pick()?;`):
 ```rust
@@ -363,7 +363,7 @@ let backup = self.entries.iter().find(|e| {
 ```
 y consume su token igual que Try 1 (con retry del `find` NO — un solo backup como hoy).
 
-- [ ] **Step 3.5: Tests de pool con presupuesto REAL (requisito -61)**
+- [x] **Step 3.5: Tests de pool con presupuesto REAL (requisito -61)**
 
 En `mod tests`, extender `dummy_entry` con budget `None` por defecto (campo nuevo) y añadir:
 
@@ -434,9 +434,9 @@ async fn budget_refill_makes_provider_eligible_again() {
 ```
 NOTA: `fast_forward` es `#[cfg(test)]` en rate_budget → llamarlo desde tests de rpc_failover requiere que ambos módulos estén en el mismo crate (sí: shared-rs). Si `dummy_entry` usa `Arc::new` directo, ajustar `dummy_entry_budgeted` para construir el HttpEntry completo (copiar el cuerpo de dummy_entry añadiendo el campo).
 
-- [ ] **Step 3.6: Verificar** — `cargo test -p shared-rs` (suite completa: ~25 existentes + 5 nuevos PASS), `cargo fmt`, `cargo clippy -p shared-rs -- -D warnings`.
+- [x] **Step 3.6: Verificar** — `cargo test -p shared-rs` (suite completa: ~25 existentes + 5 nuevos PASS), `cargo fmt`, `cargo clippy -p shared-rs -- -D warnings`.
 
-- [ ] **Step 3.7: Commit** — `feat(shared-rs): gate RPC pool picks by client-side rate budget (WO-13)`
+- [x] **Step 3.7: Commit** — `feat(shared-rs): gate RPC pool picks by client-side rate budget (WO-13)`
 
 ---
 
@@ -445,7 +445,7 @@ NOTA: `fast_forward` es `#[cfg(test)]` en rate_budget → llamarlo desde tests d
 **Files:**
 - Modify: `monitoring/grafana/dashboards/rpc-failover.json` (añadir 5 paneles con ids siguientes al máximo existente; `version: 2`)
 
-- [ ] **Step 4.1: Añadir paneles** (mismo datasource `arbx-prometheus`, gridPos continuación):
+- [x] **Step 4.1: Añadir paneles** (mismo datasource `arbx-prometheus`, gridPos continuación):
 
 1. **"Requests / sec by provider & outcome"** (timeseries, stacked): `sum by (provider, outcome) (rate(arbx_rpc_provider_requests_total[1m]))`
 2. **"Availability % by provider (5m)"** (gauge/timeseries): `100 * sum by (provider) (rate(arbx_rpc_provider_requests_total{outcome="success"}[5m])) / clamp_min(sum by (provider) (rate(arbx_rpc_provider_requests_total[5m])), 0.000001)`
@@ -453,16 +453,16 @@ NOTA: `fast_forward` es `#[cfg(test)]` en rate_budget → llamarlo desde tests d
 4. **"Budget throttled events / 5m"** (timeseries): `sum by (provider) (increase(arbx_rpc_provider_budget_throttled_total[5m]))`
 5. **"429-class errors / sec"** (timeseries): `sum by (provider) (rate(arbx_rpc_provider_errors_total{cause="rate_limit"}[1m]))`
 
-- [ ] **Step 4.2: Validar JSON** — `python -c "import json;json.load(open('monitoring/grafana/dashboards/rpc-failover.json',encoding='utf-8'))"` → sin error. Si existe CI/promtool de dashboards, correrlo.
+- [x] **Step 4.2: Validar JSON** — `python -c "import json;json.load(open('monitoring/grafana/dashboards/rpc-failover.json',encoding='utf-8'))"` → sin error. Si existe CI/promtool de dashboards, correrlo.
 
-- [ ] **Step 4.3: Commit** — `feat(monitoring): RPC rate-budget panels in failover dashboard (WO-13)`
+- [x] **Step 4.3: Commit** — `feat(monitoring): RPC rate-budget panels in failover dashboard (WO-13)`
 
 ---
 
 ### Task 5: Entrega
 
-- [ ] **Step 5.1:** `cargo test -p shared-rs && cargo clippy -p shared-rs -- -D warnings && cargo fmt --check -p shared-rs` — todo verde.
-- [ ] **Step 5.2:** Push `perf/rpc-rate-budget` a origin + PR (base main, body con desviación de diseño documentada: CoinGecko/CMC/Etherscan/DexScreener excluidos como fuentes de quote — solo rotación JSON-RPC; budget por env; env VPS ejemplo `RPC_HTTP_1="alchemy=...,publicnode=https://ethereum-rpc.publicnode.com" RPC_HTTP_RATE_BUDGETS="publicnode=60"`). Footer 🤖.
+- [x] **Step 5.1:** `cargo test -p shared-rs && cargo clippy -p shared-rs -- -D warnings && cargo fmt --check -p shared-rs` — todo verde.
+- [x] **Step 5.2:** Push `perf/rpc-rate-budget` a origin + PR (base main, body con desviación de diseño documentada: CoinGecko/CMC/Etherscan/DexScreener excluidos como fuentes de quote — solo rotación JSON-RPC; budget por env; env VPS ejemplo `RPC_HTTP_1="alchemy=...,publicnode=https://ethereum-rpc.publicnode.com" RPC_HTTP_RATE_BUDGETS="publicnode=60"`). Footer 🤖.
 - [ ] **Step 5.3:** Avisar a -61 (review línea-a-línea + cola de merges tras #606) y veredicto Hermes.
 
 ## Self-Review
