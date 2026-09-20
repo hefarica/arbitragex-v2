@@ -57,26 +57,22 @@ impl HotPathEmitter {
         Self { redis }
     }
 
-    /// Emits a detected opportunity to `arbx:hot:detected` stream.
+    /// Builds the detected-emit command set: XADD stream entry + HSET opp
+    /// hash + EXPIRE 300s.
     ///
-    /// Stream fields:
-    ///   - `id`: Opportunity UUID
-    ///   - `chain_id`: Chain ID
-    ///   - `strategy_kind`: Strategy variant (snake_case)
-    ///   - `detected_at_ms`: Unix timestamp millis
-    ///
-    /// Also stores full opportunity data at `arbx:hot:opp:{id}` with 300s TTL.
-    ///
-    /// Latency budget: <5ms (measured at 1-2ms in local benchmarks).
-    pub async fn emit_detected(&self, opp: &Opportunity) -> Result<(), redis::RedisError> {
+    /// WO-7 (PERF-STACK-2026-09-20): the three sequential `query_async`
+    /// round trips collapse into ONE non-atomic pipeline (3 commands,
+    /// 1 RTT). `.atomic()` is deliberately NOT used — without MULTI/EXEC
+    /// the server executes commands as they arrive, so a mid-connection
+    /// drop may leave any prefix applied, exactly as the sequential form
+    /// did. Wire values are byte-identical (see `wo7_tests`).
+    fn detected_pipeline(opp: &Opportunity, timestamp_ms: u64) -> redis::Pipeline {
         let id = opp.id.to_string();
-        let timestamp_ms = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_millis() as u64;
+        let opp_key = format!("arbx:hot:opp:{}", id);
+        let opp_json = serde_json::to_string(opp).unwrap_or_default();
 
-        // XADD arbx:hot:detected with approximate maxlen ~10k
-        let _: () = redis::cmd("XADD")
+        let mut pipe = redis::pipe();
+        pipe.cmd("XADD")
             .arg("arbx:hot:detected")
             .arg("MAXLEN")
             .arg("~")
@@ -90,27 +86,37 @@ impl HotPathEmitter {
             .arg(opp.strategy_kind.as_str())
             .arg("detected_at_ms")
             .arg(timestamp_ms)
-            .query_async(&mut self.redis.clone())
-            .await?;
-
-        // Store full opportunity hash
-        let opp_key = format!("arbx:hot:opp:{}", id);
-        let opp_json = serde_json::to_string(opp).unwrap_or_default();
-
-        let _: () = redis::cmd("HSET")
+            .ignore();
+        pipe.cmd("HSET")
             .arg(&opp_key)
             .arg("data")
             .arg(opp_json)
+            .ignore();
+        pipe.cmd("EXPIRE").arg(&opp_key).arg(300).ignore();
+        pipe
+    }
+
+    /// Emits a detected opportunity to `arbx:hot:detected` stream.
+    ///
+    /// Stream fields:
+    ///   - `id`: Opportunity UUID
+    ///   - `chain_id`: Chain ID
+    ///   - `strategy_kind`: Strategy variant (snake_case)
+    ///   - `detected_at_ms`: Unix timestamp millis
+    ///
+    /// Also stores full opportunity data at `arbx:hot:opp:{id}` with 300s TTL.
+    ///
+    /// Latency budget: <5ms. WO-7: one pipeline RTT (was three sequential).
+    pub async fn emit_detected(&self, opp: &Opportunity) -> Result<(), redis::RedisError> {
+        let timestamp_ms = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_millis() as u64;
+
+        // WO-7: XADD + HSET + EXPIRE in ONE pipeline round trip.
+        let _: () = Self::detected_pipeline(opp, timestamp_ms)
             .query_async(&mut self.redis.clone())
             .await?;
-
-        // 300s TTL covers detect→evaluation→archival window
-        let _: () = redis::cmd("EXPIRE")
-            .arg(&opp_key)
-            .arg(300)
-            .query_async(&mut self.redis.clone())
-            .await?;
-
         Ok(())
     }
 
@@ -245,3 +251,82 @@ impl HotPathEmitter {
 // is itself the canonical identity (cartridge stem, or one of the 5 base
 // families). The local strategy_kind_to_str + its mapping test were removed
 // because that logic moved to shared-rs (StrategyKind::as_str).
+
+#[cfg(test)]
+mod wo7_tests {
+    use super::*;
+    use shared_rs::contracts::StrategyKind;
+    use uuid::Uuid;
+
+    fn fixture_opp() -> Opportunity {
+        Opportunity {
+            id: Uuid::new_v4(),
+            chain_id: 1,
+            strategy_kind: StrategyKind::triangular(),
+            dex_a: "fixture_dex".into(),
+            dex_b: None,
+            pair_symbol: "A/B".into(),
+            token_in: "0x1".into(),
+            token_out: "0x2".into(),
+            amount_in_wei: "1000".into(),
+            expected_profit_usd: Some(10.0),
+            net_expected_profit_usd: None,
+            roi_pct: None,
+            risk_score: None,
+            block_number: None,
+            rejection_reason: None,
+            cartridge_id: None,
+            detector_id: None,
+            pipeline_latency_ms: None,
+            detected_at: chrono::Utc::now(),
+            trace_id: Uuid::new_v4(),
+        }
+    }
+
+    fn contains(haystack: &[u8], needle: &[u8]) -> bool {
+        haystack.windows(needle.len()).any(|w| w == needle)
+    }
+
+    /// WO-7: exactly 3 commands, executed as ONE round trip.
+    #[test]
+    fn detected_pipeline_is_three_commands() {
+        let opp = fixture_opp();
+        let pipe = HotPathEmitter::detected_pipeline(&opp, 1_700_000_000_000u64);
+        assert_eq!(pipe.cmd_iter().count(), 3, "3 commands, 1 RTT");
+    }
+
+    /// WO-7: NOT atomic — an atomic pipeline would prepend MULTI as the
+    /// first RESP command. Its absence proves no MULTI/EXEC wrapping, so
+    /// mid-connection-drop semantics match the old sequential form.
+    #[test]
+    fn detected_pipeline_is_not_atomic() {
+        let opp = fixture_opp();
+        let packed = HotPathEmitter::detected_pipeline(&opp, 0).get_packed_pipeline();
+        assert!(
+            !packed.starts_with(b"*1\r\n$5\r\nMULTI\r\n"),
+            "pipeline must not open with MULTI"
+        );
+    }
+
+    /// WO-7: wire contract byte-identical to the sequential form (stream
+    /// key, MAXLEN ~10000, opp hash key, HSET data, EXPIRE 300, strategy
+    /// kind, timestamp).
+    #[test]
+    fn detected_pipeline_carries_exact_wire_fields() {
+        let opp = fixture_opp();
+        let ts = 1_700_000_000_123u64;
+        let packed = HotPathEmitter::detected_pipeline(&opp, ts).get_packed_pipeline();
+        assert!(contains(&packed, b"XADD"));
+        assert!(contains(&packed, b"arbx:hot:detected"));
+        assert!(contains(&packed, b"MAXLEN"));
+        assert!(contains(&packed, b"10000"));
+        let key = format!("arbx:hot:opp:{}", opp.id).into_bytes();
+        assert!(contains(&packed, &key));
+        assert!(contains(&packed, b"HSET"));
+        assert!(contains(&packed, b"EXPIRE"));
+        assert!(contains(&packed, b"300"));
+        let sk = opp.strategy_kind.as_str().as_bytes().to_vec();
+        assert!(contains(&packed, &sk));
+        assert!(contains(&packed, ts.to_string().as_bytes()));
+    }
+}
