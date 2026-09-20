@@ -21,9 +21,10 @@
 //! short-TTL cache with per-key single-flight, collapsing RPC volume by >10x.
 //! Failures are negative-cached under a shorter TTL to absorb retry storms.
 //! Every outcome is counted in `arbx_v3_quote_total{outcome}` (R8: the
-//! `debug!`-only failure visibility cost the original diagnosis). B1 (batching
-//! N quotes into one multicall) remains open — callers quote one pool at a
-//! time; the cache removes the equivalent duplicate volume.
+//! `debug!`-only failure visibility cost the original diagnosis). B1 closed
+//! 2026-09-19 (V3-QUOTE-BATCH-20260919): `quote_batch` prefetches a tick's
+//! V3 pools in `ARBX_V3_QUOTE_BATCH_SIZE`-wide aggregate3 multicalls before
+//! the per-pair probing loop, so the unary lookups answer from this cache.
 
 use std::collections::HashMap;
 use std::future::Future;
@@ -40,12 +41,69 @@ use shared_rs::rpc_failover::HttpRpcPool;
 
 /// TTL for a successful quote. On-chain state moves every block; Ethereum's
 /// 12s blocks → 8s keeps a cached quote at most one block stale.
-const QUOTE_TTL: Duration = Duration::from_secs(8);
+const DEFAULT_QUOTE_TTL_MS: u64 = 8_000;
 
-/// TTL for a negative cache entry. Shorter than QUOTE_TTL: a failed provider
-/// call is often transient (429 / half-open breaker), so retrying sooner is
-/// cheap once the cache has absorbed the storm.
-const QUOTE_NEG_TTL: Duration = Duration::from_secs(2);
+/// TTL for a negative cache entry. Shorter than the positive TTL: a failed
+/// provider call is often transient (429 / half-open breaker), so retrying
+/// sooner is cheap once the cache has absorbed the storm.
+const DEFAULT_QUOTE_NEG_TTL_MS: u64 = 2_000;
+
+/// Default (and max sane) number of quote sub-calls per aggregate3 multicall.
+/// 100 × ~150k gas per QuoterV2 call ≈ 15M gas, under the 25M hard cap
+/// asserted by the batch gas test (amm_math::v3_tests).
+const DEFAULT_BATCH_SIZE: usize = 100;
+const MAX_BATCH_SIZE: usize = 1_000;
+
+/// V3-QUOTE-BATCH-20260919 (B1): env knobs so the operator can tune cache
+/// TTLs and batch width without a rebuild. Parsed once (OnceLock); unset,
+/// empty or non-numeric values fall back to the defaults above (fail-honest —
+/// a malformed knob never changes behavior silently to garbage).
+fn env_ms(raw: Option<String>, default_ms: u64) -> Duration {
+    raw.and_then(|v| v.trim().parse::<u64>().ok().map(Duration::from_millis))
+        .unwrap_or(Duration::from_millis(default_ms))
+}
+
+fn quote_ttl() -> Duration {
+    static V: std::sync::OnceLock<Duration> = std::sync::OnceLock::new();
+    *V.get_or_init(|| {
+        env_ms(
+            std::env::var("ARBX_V3_QUOTE_TTL_MS").ok(),
+            DEFAULT_QUOTE_TTL_MS,
+        )
+    })
+}
+
+fn quote_neg_ttl() -> Duration {
+    static V: std::sync::OnceLock<Duration> = std::sync::OnceLock::new();
+    *V.get_or_init(|| {
+        env_ms(
+            std::env::var("ARBX_V3_QUOTE_NEG_TTL_MS").ok(),
+            DEFAULT_QUOTE_NEG_TTL_MS,
+        )
+    })
+}
+
+fn quote_batch_size() -> usize {
+    static V: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+    *V.get_or_init(|| {
+        std::env::var("ARBX_V3_QUOTE_BATCH_SIZE")
+            .ok()
+            .and_then(|v| v.trim().parse::<usize>().ok())
+            .map(|n| n.clamp(1, MAX_BATCH_SIZE))
+            .unwrap_or(DEFAULT_BATCH_SIZE)
+    })
+}
+
+/// Pure chunk planner (unit-tested in isolation): how many aggregate3 calls a
+/// set of `len` pending quotes needs at chunk width `max`, and how large the
+/// final partial chunk is.
+fn chunk_plan(len: usize, max: usize) -> (usize, usize) {
+    if len == 0 || max == 0 {
+        return (0, 0);
+    }
+    let chunks = len.div_ceil(max);
+    (chunks, len - (chunks - 1) * max)
+}
 
 /// Rough guard so the cache cannot grow unbounded in a long-lived process
 /// (each entry is ~100 bytes; 4096 keys is far above the per-tick working set
@@ -74,7 +132,7 @@ struct TtlQuoteCache {
 impl TtlQuoteCache {
     fn get_fresh(&self, key: &QuoteKey) -> Option<&QuoteResult> {
         let e = self.map.get(key)?;
-        let ttl = if e.neg { QUOTE_NEG_TTL } else { QUOTE_TTL };
+        let ttl = if e.neg { quote_neg_ttl() } else { quote_ttl() };
         (Instant::now().duration_since(e.stored_at) < ttl).then_some(&e.result)
     }
 
@@ -96,7 +154,7 @@ impl TtlQuoteCache {
             return;
         }
         self.map.retain(|_, e| {
-            let ttl = if e.neg { QUOTE_NEG_TTL } else { QUOTE_TTL };
+            let ttl = if e.neg { quote_neg_ttl() } else { quote_ttl() };
             Instant::now().duration_since(e.stored_at) < ttl
         });
         while self.map.len() > QUOTE_CACHE_MAX {
@@ -170,6 +228,144 @@ impl MulticallV3QuoteProvider {
     fn inflight_clear(&self, key: &QuoteKey) {
         let mut inf = self.inflight.lock().unwrap_or_else(|e| e.into_inner());
         inf.remove(key);
+    }
+
+    /// B1 (V3-QUOTE-BATCH-20260919): prefetch a set of quotes in batched
+    /// aggregate3 multicalls, filling the TTL cache so the per-pool
+    /// `quote_exact_input_single` lookups that follow are cache hits.
+    ///
+    /// One `eth_call` carries up to `ARBX_V3_QUOTE_BATCH_SIZE` (default 100)
+    /// quote sub-calls — ~100x fewer RPC round-trips than the unary path on
+    /// the exact keys detection re-probes every tick.
+    ///
+    /// Semantics (best-effort, unary path stays authoritative):
+    ///   - Duplicate keys are collapsed to one request.
+    ///   - Keys with a fresh cache entry (positive or negative) are skipped
+    ///     (`batch_cached_skip`).
+    ///   - Keys already single-flighted by a concurrent unary caller are
+    ///     skipped (`batch_inflight_skip`) — the batch takes the slot only
+    ///     when free, so it never duplicates an in-flight unary quote.
+    ///   - Per-element outcomes reuse the unary labels (`rpc`, `rpc_ok`,
+    ///     `rpc_tier_revert`, `rpc_error`) so the
+    ///     `arbx_v3_quote_total{outcome}` funnel stays comparable across
+    ///     paths; chunk-level transport health lands in `batch_call`,
+    ///     `batch_call_ok`, `batch_call_error`.
+    ///   - Transport failure of a chunk negative-caches only that chunk's
+    ///     keys (short TTL), exactly like a failed unary attempt.
+    async fn quote_batch_impl(
+        &self,
+        reqs: Vec<V3QuoteRequest>,
+    ) -> Vec<(V3QuoteRequest, QuoteResult)> {
+        let mut out: Vec<(V3QuoteRequest, QuoteResult)> = Vec::new();
+        if reqs.is_empty() {
+            return out;
+        }
+
+        // 1. Dedup by key, skip fresh cache entries, take free single-flight
+        //    slots. Guards are held for the chunk's RPC so a concurrent unary
+        //    caller for the same key waits and then reads the warm cache.
+        let mut pending: Vec<(QuoteKey, V3QuoteRequest, tokio::sync::OwnedMutexGuard<()>)> =
+            Vec::with_capacity(reqs.len());
+        {
+            let mut seen = std::collections::HashSet::<QuoteKey>::with_capacity(reqs.len());
+            for req in reqs {
+                let key: QuoteKey = (
+                    req.pool_addr,
+                    req.token_in,
+                    req.token_out,
+                    req.amount_in,
+                    req.fee_bps,
+                );
+                if !seen.insert(key) {
+                    continue;
+                }
+                if self.cache_get(&key).is_some() {
+                    quote_outcome_metric("batch_cached_skip");
+                    continue;
+                }
+                let slot = self.inflight_slot(&key);
+                match Arc::clone(&slot).try_lock_owned() {
+                    Ok(guard) => pending.push((key, req, guard)),
+                    Err(_) => {
+                        // A unary caller is mid-flight for this key — its
+                        // result will land in the cache; skip (no duplicate).
+                        quote_outcome_metric("batch_inflight_skip");
+                    }
+                }
+            }
+        }
+        if pending.is_empty() {
+            return out;
+        }
+
+        // 2. Dispatch one aggregate3 per chunk of `quote_batch_size()` keys.
+        let size = quote_batch_size();
+        let (n_chunks, last_chunk_len) = chunk_plan(pending.len(), size);
+        tracing::debug!(
+            event = "v3_quote.batch_dispatch",
+            pending = pending.len(),
+            chunks = n_chunks,
+            last_chunk_len,
+            batch_size = size,
+        );
+        let rpc_pool = self.pool.clone();
+        let quoter = self.quoter_addr;
+        let multicall = self.multicall_addr;
+        for chunk in pending.chunks(size) {
+            quote_outcome_metric("batch_call");
+            let chunk_reqs: Vec<V3QuoteRequest> = chunk.iter().map(|(_, r, _)| r.clone()).collect();
+            let rpc_result =
+                rpc_pool
+                    .with_retry(|provider| {
+                        // with_retry may re-run the closure after failover, so the
+                        // request set is rebuilt per attempt (same as the unary path).
+                        let reqs = chunk_reqs.clone();
+                        async move {
+                            v3_quote_exact_in_multicall(provider, quoter, multicall, reqs).await
+                        }
+                    })
+                    .await;
+
+            match rpc_result {
+                Ok(results) => {
+                    quote_outcome_metric("batch_call_ok");
+                    for (i, (key, req, _guard)) in chunk.iter().enumerate() {
+                        quote_outcome_metric("rpc");
+                        let res: QuoteResult = match results.get(i) {
+                            Some(r) if r.success => {
+                                quote_outcome_metric("rpc_ok");
+                                Ok(r.amount_out)
+                            }
+                            // Per-pool revert inside a successful multicall:
+                            // same classification as the unary path (WO-06).
+                            Some(_) => {
+                                quote_outcome_metric("rpc_tier_revert");
+                                Err("v3 quote failed (insufficient liquidity / wrong fee tier / pool revert)".to_string())
+                            }
+                            None => {
+                                quote_outcome_metric("rpc_error");
+                                Err("v3 quote batch returned a short result set".to_string())
+                            }
+                        };
+                        out.push((req.clone(), res.clone()));
+                        self.cache_put(*key, res);
+                        self.inflight_clear(key);
+                    }
+                }
+                Err(e) => {
+                    quote_outcome_metric("batch_call_error");
+                    for (key, req, _guard) in chunk {
+                        quote_outcome_metric("rpc");
+                        quote_outcome_metric("rpc_error");
+                        let res = Err(format!("v3 quote batch rpc failover exhausted: {e}"));
+                        out.push((req.clone(), res.clone()));
+                        self.cache_put(*key, res);
+                        self.inflight_clear(key);
+                    }
+                }
+            }
+        }
+        out
     }
 }
 
@@ -296,6 +492,16 @@ impl V3QuoteProvider for MulticallV3QuoteProvider {
             rpc_result
         })
     }
+
+    /// B1 batching: prefetch a set of quotes in batched multicalls. See
+    /// `MulticallV3QuoteProvider::quote_batch_impl`.
+    fn quote_batch(
+        &self,
+        reqs: Vec<V3QuoteRequest>,
+    ) -> Pin<Box<dyn Future<Output = crate::state_projector::V3BatchQuoteResults> + Send + '_>>
+    {
+        Box::pin(self.quote_batch_impl(reqs))
+    }
 }
 
 #[cfg(test)]
@@ -412,8 +618,8 @@ mod tests {
         c.put(k, Ok(U256::from(42u64)));
         // Fresh hit.
         assert_eq!(c.get_fresh(&k), Some(&Ok(U256::from(42u64))));
-        // Aged beyond QUOTE_TTL → expired (None), even though still stored.
-        age_entry(&mut c, &k, QUOTE_TTL + Duration::from_millis(1));
+        // Aged beyond the positive TTL → expired (None), even though still stored.
+        age_entry(&mut c, &k, quote_ttl() + Duration::from_millis(1));
         assert_eq!(c.get_fresh(&k), None);
         assert_eq!(c.len(), 1, "expired entry is evicted lazily, not dropped");
     }
@@ -428,9 +634,9 @@ mod tests {
             c.get_fresh(&k),
             Some(&Err("rpc failover exhausted".to_string()))
         );
-        // Aged past QUOTE_NEG_TTL but BELOW QUOTE_TTL → already expired:
-        // negatives must not live as long as successes.
-        age_entry(&mut c, &k, QUOTE_NEG_TTL + Duration::from_millis(1));
+        // Aged past the negative TTL but BELOW the positive TTL → already
+        // expired: negatives must not live as long as successes.
+        age_entry(&mut c, &k, quote_neg_ttl() + Duration::from_millis(1));
         assert_eq!(c.get_fresh(&k), None);
     }
 
@@ -446,5 +652,56 @@ mod tests {
         // Surviving entries must still be answerable.
         let any_key = test_key(0);
         let _ = c.get_fresh(&any_key);
+    }
+
+    // ── V3-QUOTE-BATCH-20260919 (B1) ────────────────────────────────────────
+
+    #[test]
+    fn env_ms_parses_and_falls_back() {
+        // Valid value wins.
+        assert_eq!(
+            env_ms(Some("1500".to_string()), 8_000),
+            Duration::from_millis(1_500)
+        );
+        // Default on unset / junk / whitespace-padded junk (fail-honest).
+        assert_eq!(env_ms(None, 8_000), Duration::from_millis(8_000));
+        assert_eq!(
+            env_ms(Some("junk".to_string()), 2_000),
+            Duration::from_millis(2_000)
+        );
+        assert_eq!(
+            env_ms(Some("  ".to_string()), 2_000),
+            Duration::from_millis(2_000)
+        );
+        assert_eq!(
+            env_ms(Some(" 250 ".to_string()), 2_000),
+            Duration::from_millis(250)
+        );
+    }
+
+    #[test]
+    fn batch_size_env_clamps_to_sane_range() {
+        let parse = |raw: Option<String>| {
+            raw.and_then(|v| v.trim().parse::<usize>().ok())
+                .map(|n| n.clamp(1, MAX_BATCH_SIZE))
+                .unwrap_or(DEFAULT_BATCH_SIZE)
+        };
+        assert_eq!(parse(None), DEFAULT_BATCH_SIZE);
+        assert_eq!(parse(Some("50".to_string())), 50);
+        // Degenerate values clamp instead of producing an empty or runaway chunk.
+        assert_eq!(parse(Some("0".to_string())), 1);
+        assert_eq!(parse(Some("999999".to_string())), MAX_BATCH_SIZE);
+        assert_eq!(parse(Some("junk".to_string())), DEFAULT_BATCH_SIZE);
+    }
+
+    #[test]
+    fn chunk_plan_boundaries() {
+        assert_eq!(chunk_plan(0, 100), (0, 0));
+        assert_eq!(chunk_plan(1, 100), (1, 1));
+        assert_eq!(chunk_plan(100, 100), (1, 100));
+        assert_eq!(chunk_plan(101, 100), (2, 1));
+        assert_eq!(chunk_plan(250, 100), (3, 50));
+        // A degenerate width of 0 never loops forever.
+        assert_eq!(chunk_plan(10, 0), (0, 0));
     }
 }

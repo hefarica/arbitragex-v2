@@ -231,6 +231,33 @@ impl DexEngine {
                 continue;
             }
 
+            // B1 (V3-QUOTE-BATCH-20260919): prefetch every V3 pool of this
+            // pair-group in batched aggregate3 multicalls BEFORE the probing
+            // loop. The per-pair `get_pool_quote` below then answers from the
+            // warm TTL cache — one eth_call per ~100 pools instead of one per
+            // pool, which is what kept opening the public RPC circuit breakers
+            // (78% of the funnel rejected as v3_quote_unavailable).
+            if let Some(projector) = self.state_projector.as_ref() {
+                let probe_amount = U256::from(10u128).pow(U256::from(18u32));
+                let v3_pools: Vec<crate::state_projector::PoolRef> = pools
+                    .iter()
+                    .filter(|p| matches!(p.protocol_type, ProtocolType::V3))
+                    .map(|p| crate::state_projector::PoolRef {
+                        address: p.address,
+                        token0: p.token0,
+                        token1: p.token1,
+                        fee_bps: p.fee_bps,
+                    })
+                    .collect();
+                if !v3_pools.is_empty() {
+                    let intent_token_in =
+                        intent.legs.first().map(|l| l.token_in).unwrap_or_default();
+                    projector
+                        .prefetch_v3_quotes(&v3_pools, probe_amount, intent_token_in)
+                        .await;
+                }
+            }
+
             // Every pair of pools in the set: (i, j) for i < j.
             // Both directions of the pair are covered because V2 `amount_out`
             // is direction-aware (reserve_in / reserve_out).

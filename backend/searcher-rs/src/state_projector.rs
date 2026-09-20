@@ -78,6 +78,20 @@ pub trait V3QuoteProvider: Send + Sync {
         amount_in: U256,
         fee_bps: u32,
     ) -> Pin<Box<dyn Future<Output = anyhow::Result<U256>> + Send + '_>>;
+
+    /// B1 batching (V3-QUOTE-BATCH-20260919): prefetch a set of quotes in
+    /// batched multicalls, warming the provider's TTL cache. Returns the
+    /// (request, result) pairs actually dispatched — an empty vec means
+    /// "batching unsupported / nothing to prefetch"; the unary
+    /// `quote_exact_input_single` path remains authoritative either way.
+    /// Default: no-op (test mocks and future impls need no batching).
+    fn quote_batch(
+        &self,
+        reqs: Vec<crate::amm_math::V3QuoteRequest>,
+    ) -> Pin<Box<dyn Future<Output = V3BatchQuoteResults> + Send + '_>> {
+        let _ = reqs;
+        Box::pin(std::future::ready(Vec::new()))
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -369,45 +383,7 @@ impl StateProjector {
             .as_ref()
             .ok_or(ProjectV3Error::ProviderUnavailable)?;
 
-        let fee_pips = match self.fee_catalog.resolve(pool.address, pool.fee_bps) {
-            FeeResolution::Catalog(fee) => {
-                crate::v3_fee_catalog::fee_resolution_metric("catalog");
-                fee
-            }
-            FeeResolution::Mismatch { offered, catalog } => {
-                crate::v3_fee_catalog::fee_resolution_metric("mismatch");
-                warn!(
-                    event = "state_projector.v3_fee_mismatch",
-                    pool = %pool.address,
-                    offered,
-                    catalog,
-                    "offered fee differs from catalog — quoting with catalog tier"
-                );
-                catalog
-            }
-            FeeResolution::NotCatalogued => {
-                if self
-                    .fee_catalog
-                    .tiers_for_pair(pool.token0, pool.token1)
-                    .is_empty()
-                {
-                    crate::v3_fee_catalog::fee_resolution_metric("pair_no_pools");
-                    debug!(
-                        event = "state_projector.v3_pair_no_pools",
-                        pool = %pool.address,
-                        "pair has no known V3 pools — rejecting without RPC (R8)"
-                    );
-                    return Err(ProjectV3Error::PairHasNoV3Pools);
-                }
-                crate::v3_fee_catalog::fee_resolution_metric("not_catalogued");
-                debug!(
-                    event = "state_projector.v3_pool_not_catalogued",
-                    pool = %pool.address,
-                    "pool absent from fee catalog — rejecting without RPC (R8)"
-                );
-                return Err(ProjectV3Error::PoolNotCatalogued);
-            }
-        };
+        let fee_pips = self.resolve_fee_pips(pool)?;
 
         // Orient token_in / token_out from zero_for_one flag.
         let (token_in, token_out) = if zero_for_one {
@@ -468,6 +444,111 @@ impl StateProjector {
         self.project_v3_quote_checked(pool, amount_in, zero_for_one)
             .await
             .ok()
+    }
+
+    /// Resolve the V3 fee tier for a pool from the fee catalog, preserving the
+    /// exact WO-06 semantics (catalog wins over the offered tier; uncatalogued
+    /// pools/pairs are rejected without an RPC). Shared by the unary quote
+    /// path and the B1 batch prefetch so both quote at the same tier.
+    fn resolve_fee_pips(&self, pool: &PoolRef) -> Result<u32, ProjectV3Error> {
+        match self.fee_catalog.resolve(pool.address, pool.fee_bps) {
+            FeeResolution::Catalog(fee) => {
+                crate::v3_fee_catalog::fee_resolution_metric("catalog");
+                Ok(fee)
+            }
+            FeeResolution::Mismatch { offered, catalog } => {
+                crate::v3_fee_catalog::fee_resolution_metric("mismatch");
+                warn!(
+                    event = "state_projector.v3_fee_mismatch",
+                    pool = %pool.address,
+                    offered,
+                    catalog,
+                    "offered fee differs from catalog — quoting with catalog tier"
+                );
+                Ok(catalog)
+            }
+            FeeResolution::NotCatalogued => {
+                if self
+                    .fee_catalog
+                    .tiers_for_pair(pool.token0, pool.token1)
+                    .is_empty()
+                {
+                    crate::v3_fee_catalog::fee_resolution_metric("pair_no_pools");
+                    debug!(
+                        event = "state_projector.v3_pair_no_pools",
+                        pool = %pool.address,
+                        "pair has no known V3 pools — rejecting without RPC (R8)"
+                    );
+                    return Err(ProjectV3Error::PairHasNoV3Pools);
+                }
+                crate::v3_fee_catalog::fee_resolution_metric("not_catalogued");
+                debug!(
+                    event = "state_projector.v3_pool_not_catalogued",
+                    pool = %pool.address,
+                    "pool absent from fee catalog — rejecting without RPC (R8)"
+                );
+                Err(ProjectV3Error::PoolNotCatalogued)
+            }
+        }
+    }
+
+    /// B1 batching (V3-QUOTE-BATCH-20260919): warm the provider's TTL cache
+    /// for every V3 pool in a tick's pair-group BEFORE the per-pair probing
+    /// loop, replacing N unary eth_calls with ⌈N/batch_size⌉ aggregate3
+    /// multicalls. Fee tiers resolve through the same catalog as the unary
+    /// path (`resolve_fee_pips`); uncatalogued pools are silently skipped
+    /// here so their honest per-pair labels (`v3_pool_not_catalogued`, …)
+    /// still surface in `dex_engine`'s unary path — the prefetch never
+    /// fabricates or flattens a rejection reason.
+    ///
+    /// `intent_token_in` orients each pool (same rule as `dex_engine`'s
+    /// `get_pool_quote`: token_in == token0 or unknown → zero_for_one).
+    pub async fn prefetch_v3_quotes(
+        &self,
+        pools: &[PoolRef],
+        amount_in: U256,
+        intent_token_in: Address,
+    ) {
+        if amount_in.is_zero() || pools.is_empty() {
+            return;
+        }
+        let Some(provider) = self.v3_provider.as_ref() else {
+            return;
+        };
+
+        let mut reqs: Vec<crate::amm_math::V3QuoteRequest> = Vec::with_capacity(pools.len());
+        for pool in pools {
+            let fee_pips = match self.resolve_fee_pips(pool) {
+                Ok(f) => f,
+                // R8: skip — the unary path reports the exact label per pair.
+                Err(_) => continue,
+            };
+            let zero_for_one = intent_token_in == pool.token0 || intent_token_in == Address::zero();
+            let (token_in, token_out) = if zero_for_one {
+                (pool.token0, pool.token1)
+            } else {
+                (pool.token1, pool.token0)
+            };
+            reqs.push(crate::amm_math::V3QuoteRequest {
+                pool_addr: pool.address,
+                token_in,
+                token_out,
+                amount_in,
+                fee_bps: fee_pips,
+            });
+        }
+        if reqs.is_empty() {
+            return;
+        }
+
+        let dispatched = provider.quote_batch(reqs).await;
+        let ok_count = dispatched.iter().filter(|(_, r)| r.is_ok()).count();
+        debug!(
+            event = "state_projector.v3_prefetch_batch",
+            pools = pools.len(),
+            dispatched = dispatched.len(),
+            ok = ok_count,
+        );
     }
 
     // -----------------------------------------------------------------------
@@ -625,6 +706,10 @@ pub enum LegQuote {
 /// Protocol-agnostic quoting for sizing. The SizeOptimizer consumes this; it
 /// does NOT know V2 constant-product or V3 tick math. `quote_leg` prices one
 /// leg; `quote_route` composes a route (leg[i].out → leg[i+1].in). Uses
+/// Result of a batched V3 quote prefetch: the (request, outcome) pairs that
+/// were actually dispatched (B1, V3-QUOTE-BATCH-20260919).
+pub type V3BatchQuoteResults = Vec<(crate::amm_math::V3QuoteRequest, Result<U256, String>)>;
+
 /// `Pin<Box<dyn Future>>` for dyn-compatibility (same reason as `V3QuoteProvider`:
 /// RPITIT is not dyn-compatible).
 pub trait RouteQuoteProvider: Send + Sync {
