@@ -260,6 +260,50 @@ pub static RPC_POOL_DRIFT_DETECTED_TOTAL: Lazy<IntCounterVec> = Lazy::new(|| {
     c
 });
 
+// ---- WO-13 rate budget (PERF-STACK 2026-09-20): measure BEFORE the 429 ----
+// requests_total counts POOL ATTEMPTS (one per op executed through
+// with_retry), not logical quotes nor batch elements — callers' per-element
+// counters stay orthogonal.
+
+pub static RPC_PROVIDER_REQUESTS_TOTAL: Lazy<IntCounterVec> = Lazy::new(|| {
+    let c = IntCounterVec::new(
+        prometheus::opts!(
+            "arbx_rpc_provider_requests_total",
+            "RPC provider request attempts through the pool hot path by outcome (health probes excluded)"
+        ),
+        &["provider", "kind", "outcome"],
+    )
+    .expect("metric");
+    REGISTRY.register(Box::new(c.clone())).expect("register");
+    c
+});
+
+pub static RPC_PROVIDER_BUDGET_TOKENS: Lazy<prometheus::IntGaugeVec> = Lazy::new(|| {
+    let g = prometheus::IntGaugeVec::new(
+        prometheus::opts!(
+            "arbx_rpc_provider_budget_tokens",
+            "Client-side rate-budget tokens remaining per provider (only providers with RPC_HTTP_RATE_BUDGETS configured)"
+        ),
+        &["provider", "kind"],
+    )
+    .expect("metric");
+    REGISTRY.register(Box::new(g.clone())).expect("register");
+    g
+});
+
+pub static RPC_PROVIDER_BUDGET_THROTTLED_TOTAL: Lazy<IntCounterVec> = Lazy::new(|| {
+    let c = IntCounterVec::new(
+        prometheus::opts!(
+            "arbx_rpc_provider_budget_throttled_total",
+            "Times a provider was skipped (pick or backup) because its client-side rate budget was exhausted"
+        ),
+        &["provider", "kind"],
+    )
+    .expect("metric");
+    REGISTRY.register(Box::new(c.clone())).expect("register");
+    c
+});
+
 // ---- Credential rotation counters (RunFullSyncCycle FASE 4 — svc_cred) ----
 //
 // `arbx_credential_rotation_total`    — every titular→fallback advance of the
@@ -450,6 +494,9 @@ pub fn init_metrics() {
     let _ = &*RPC_PROVIDER_BLOCK_HEIGHT;
     let _ = &*RPC_POOL_FAILOVERS_TOTAL;
     let _ = &*RPC_POOL_DRIFT_DETECTED_TOTAL;
+    let _ = &*RPC_PROVIDER_REQUESTS_TOTAL;
+    let _ = &*RPC_PROVIDER_BUDGET_TOKENS;
+    let _ = &*RPC_PROVIDER_BUDGET_THROTTLED_TOTAL;
     let _ = &*BUNDLE_INCLUDED_TOTAL;
     let _ = &*BUNDLE_INCLUDED_NO_PROFIT_TOTAL;
     let _ = &*GAS_PRICE_TS_SECONDS;
