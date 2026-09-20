@@ -1090,6 +1090,25 @@ pub async fn run_chain(
         return Ok(ScannerHandle { chain_id });
     }
 
+    // WO-7c — keep the cartridge head/base-fee atomics honest in mempool/auto
+    // mode (block mode already gets them from block_detection_loop above).
+    // Without this the #599 anchor fallback reads head=0 and cartridge-layer
+    // opportunities persist block_number=NULL (100% of cartridge rows).
+    if let Some(runner) = cartridge_runner.as_ref() {
+        let ws_urls: Vec<String> = pool.endpoints.iter().map(|e| e.url.clone()).collect();
+        let gas_sink = crate::block_scanner::GasBlockSink {
+            block_number: runner.host_block_number_handle(),
+            base_fee_milligwei: runner.host_base_fee_handle(),
+        };
+        let head_cancel = cancel.clone();
+        tokio::spawn(crate::block_scanner::head_sink_loop(
+            chain_id,
+            ws_urls,
+            gas_sink,
+            head_cancel,
+        ));
+    }
+
     // Phase 16: spawn the pool_sync_watcher if we have a DB + impact_index handle.
     // The watcher polls PG every 60s for new pools and calls add_pool() with a write lock.
     // Rule: DO NOT modify pool_sync_worker internals — this task is independent.
