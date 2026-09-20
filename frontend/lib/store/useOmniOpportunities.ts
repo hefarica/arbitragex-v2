@@ -19,7 +19,7 @@ import { useEffect, useRef, useCallback, startTransition } from "react";
 import { io } from "socket.io-client";
 import { createOpportunitySocket, type WsStatus } from "@/features/opportunities/socket-lifecycle";
 import { getAdminToken } from "@/lib/admin-token";
-import { getApiBaseUrl, getWsBaseUrl } from "@/lib/api-client";
+import { getPublicEdgeBaseUrl, getWsBaseUrl } from "@/lib/api-client";
 import { useOmniStore } from "./omni-store";
 import { parseSnapshotItems } from "./snapshot-payload";
 import { mapToOmniOpportunity, type OmniOpportunity } from "./types";
@@ -122,8 +122,10 @@ export function useOmniOpportunities({
   const refreshSnapshot = useCallback(async () => {
     try {
       const viable = viableOnlyRef.current;
+      // FE-EDGE-DIRECT-01: snapshot reconcile delivered edge-direct — the cards
+      // feed has ONE origin (public edge), no Next double-hop proxy.
       const res = await fetch(
-        `${getApiBaseUrl()}/api/opportunities/live?viable_only=${viable}&limit=50`,
+        `${getPublicEdgeBaseUrl()}/api/opportunities/live?viable_only=${viable}&limit=50`,
         {
           headers: { accept: "application/json" },
           signal: AbortSignal.timeout(POLL_INTERVAL_MS),

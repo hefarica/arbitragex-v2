@@ -24,7 +24,7 @@ import { useOmniStore } from "@/lib/store/omni-store";
 import { type OmniOpportunity } from "@/lib/store/types";
 import { parseSnapshotItems } from "@/lib/store/snapshot-payload";
 import { routeGroupKeyOf } from "@/lib/store/route-key";
-import { getApiBaseUrl, getTradingConfig } from "@/lib/api-client";
+import { getApiBaseUrl, getPublicEdgeBaseUrl, getTradingConfig } from "@/lib/api-client";
 import type { StrategyRuntimeConfig } from "@/lib/schemas";
 
 // Re-export store types for downstream consumers (FE-0034: the detail dialog
@@ -77,6 +77,10 @@ export default function OpportunitiesClient({
   // ─── Omni-Store Integration ───────────────────────────────────────────────
   // Connect WebSocket stream to the store (replaces useOpportunitiesStream)
   const EDGE_URL = getApiBaseUrl();
+  // FE-EDGE-DIRECT-01: public cards reads go edge-direct (single feed origin).
+  // EDGE_URL stays same-origin for handleSimulate — the POST carries the
+  // host-only admin session cookie, which would not travel cross-origin.
+  const PUBLIC_EDGE_URL = getPublicEdgeBaseUrl();
   const [viableOnly, setViableOnly] = useState(false);
   
   useOmniOpportunities({
@@ -228,7 +232,7 @@ export default function OpportunitiesClient({
   // It clears the store and repopulates via HTTP, then the WS stream continues.
   const fetchOpportunities = useCallback(async () => {
     try {
-      const url = `${EDGE_URL}/api/opportunities/live?viable_only=${viableOnly}&limit=50&order=profit_usd`;
+      const url = `${PUBLIC_EDGE_URL}/api/opportunities/live?viable_only=${viableOnly}&limit=50&order=profit_usd`;
       const res = await fetch(url, {
         headers: { accept: "application/json" },
         signal: AbortSignal.timeout(4000),
@@ -247,7 +251,7 @@ export default function OpportunitiesClient({
     } catch (e) {
       setErrorMsg((e as Error).message);
     }
-  }, [EDGE_URL, viableOnly, setOpportunities]);
+  }, [PUBLIC_EDGE_URL, viableOnly, setOpportunities]);
 
   // R1: localStorage read happens here — never during render (SSR has no localStorage).
   // 2026-05-10: bumped the storage key from "arbx-opps-viable-only" to "-v2" so
@@ -544,7 +548,7 @@ export default function OpportunitiesClient({
       </div>
 
       {/* G-PRICE-1 — cinta de precios en vivo (motor portado del exchange) */}
-      <PriceTicker chainId={primaryChainId} edgeUrl={EDGE_URL} symbols={tickerSymbols} />
+      <PriceTicker chainId={primaryChainId} edgeUrl={PUBLIC_EDGE_URL} symbols={tickerSymbols} />
 
       {/* R8 fail-honest: surface WS disconnection and HTTP errors clearly. */}
       {feedStatus === 'STALE' && (
