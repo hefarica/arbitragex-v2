@@ -14,13 +14,18 @@
 //!   preserves direction); same-direction rotations **dedup** to one route.
 //! - **Bounded**: depth ∈ {2, `max_depth`}, `max_pools_per_pair` caps parallel
 //!   pools between two tokens (keeping the ranked top-K: TVL first, best net
-//!   rate tie-break — RU-2), `max_routes_per_tick` caps total output. When the
-//!   route cap is hit, enumeration stops early and `capped` is set so consumers
-//!   know the result set is **incomplete** (R8 fail-honest — we signal
-//!   truncation rather than implying completeness). `dropped_for_cap` is a
-//!   *lower bound* on suppressed cycles: it counts only cycles dropped at the
-//!   emission point, not the whole unexplored subtrees/start-tokens abandoned
-//!   once the cap is reached.
+//!   rate tie-break — RU-2), `max_routes_per_tick` caps total output. The cap
+//!   is a **best-K selection, not a first-K truncation** (operator directive
+//!   2026-09-19: "clasificar antes de capar"): every enumerated cycle carries
+//!   a gross score (sum of edge `log_weight` = −log product of net rates —
+//!   lower = more profitable gross cycle; unpriced edges = worst rank) and the
+//!   retained set is the ranked top-`max_routes_per_tick` by that score, so a
+//!   cap never discards a more profitable cycle in favor of a DFS-order one.
+//!   Enumeration still explores the whole (work-budgeted) universe, so memory
+//!   stays O(cap) while the selection is order-independent. `capped` is set
+//!   when any unique cycle was emitted but not retained, so consumers know the
+//!   result set is a **selection** over an incomplete-or-complete universe (R8
+//!   fail-honest — truncation is signalled, never implied away).
 //!
 //! Phase 1 is topology-only: candidates carry no sizing/profit, and
 //! `applicable_strategies`/`rejected_strategies` are filled later by the
@@ -31,7 +36,7 @@ use crate::route_discovery::graph_builder::TokenGraph;
 use crate::route_discovery::types::{RouteCandidate, RouteDirection, RouteEdge, RouteKind};
 use crate::route_intent::ProtocolType;
 use ethers::types::Address;
-use std::collections::{HashMap, HashSet};
+use std::collections::{BinaryHeap, HashMap, HashSet};
 use std::rc::Rc;
 use std::time::Instant;
 
@@ -81,6 +86,10 @@ pub struct RouteFinderOutcome {
     /// Lower bound on cycles suppressed by `max_routes_per_tick` — counts only
     /// cycles dropped at the emission point. NOT a complete total: whole
     /// subtrees/start-tokens abandoned once the cap is hit are not counted.
+    /// Exact count of unique cycles emitted but NOT retained: displaced from the
+    /// top-K heap by a better-scoring cycle, or rejected because worse than the
+    /// current K-th. Exact (not a lower bound) under the best-K cap — every
+    /// enumerated unique cycle is accounted for.
     pub dropped_for_cap: usize,
     /// `true` when the route or work cap stopped enumeration early ⇒ the route set is
     /// **incomplete** (R8 fail-honest: signal truncation, don't imply completeness).
@@ -124,6 +133,48 @@ pub struct DiscoveryTimings {
     pub expand_ns: u64,
 }
 
+/// Heap entry for the best-K selection: `score` = Σ edge `log_weight`
+/// (−log product of net rates) — **lower = more profitable gross cycle**.
+/// `BinaryHeap` is a max-heap, so the natural Ord (score asc, hash asc) puts
+/// the WORST retained route on top — exactly what eviction needs to pop.
+/// Deterministic tie-break on `route_hash` keeps selection reproducible.
+struct ScoredRoute {
+    score: f64,
+    route: RouteCandidate,
+}
+
+impl Eq for ScoredRoute {}
+
+impl PartialEq for ScoredRoute {
+    fn eq(&self, other: &Self) -> bool {
+        self.score.total_cmp(&other.score) == std::cmp::Ordering::Equal
+            && self.route.route_hash == other.route.route_hash
+    }
+}
+
+impl Ord for ScoredRoute {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.score
+            .total_cmp(&other.score)
+            .then_with(|| self.route.route_hash.cmp(&other.route.route_hash))
+    }
+}
+
+impl PartialOrd for ScoredRoute {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+/// Gross cycle score for the best-K ranking: Σ −log(net rate) over the hops.
+/// Lower = better (product of net rates > 1 ⇒ negative sum). An unpriced edge
+/// (`log_weight = None`) contributes +∞ — worst rank, never fabricated.
+fn cycle_gross_score(path: &[RouteEdge]) -> f64 {
+    path.iter()
+        .map(|e| e.log_weight.unwrap_or(f64::INFINITY))
+        .sum()
+}
+
 struct FinderState<'g> {
     graph: &'g TokenGraph,
     chain_id: u64,
@@ -132,7 +183,8 @@ struct FinderState<'g> {
     // never quotes or priorities from an earlier graph snapshot.
     outgoing: HashMap<Address, Rc<(Vec<usize>, bool)>>,
     seen: HashSet<String>,
-    results: Vec<RouteCandidate>,
+    /// Best-K by gross cycle score (max-heap ⇒ worst on top for eviction).
+    heap: BinaryHeap<ScoredRoute>,
     dropped_for_cap: usize,
     capped: bool,
     pools_truncated: bool,
@@ -264,10 +316,8 @@ impl<'g> FinderState<'g> {
         pools_used: &mut HashSet<Address>,
         visited_tokens: &mut HashSet<Address>,
     ) {
-        if self.results.len() >= self.cfg.max_routes_per_tick {
-            self.capped = true; // stopped exploring this subtree because the cap is full
-            return;
-        }
+        // Best-K cap: no early stop here — enumeration continues so the heap
+        // can displace worse routes with better ones found later in DFS order.
         let depth = path.len();
         if depth >= self.cfg.max_depth as usize {
             return; // no more edges may be taken
@@ -327,11 +377,6 @@ impl<'g> FinderState<'g> {
     }
 
     fn try_emit(&mut self, path: &[RouteEdge]) {
-        if self.results.len() >= self.cfg.max_routes_per_tick {
-            self.dropped_for_cap += 1;
-            self.capped = true;
-            return;
-        }
         let l = path.len();
         let tokens: Vec<Address> = path.iter().map(|e| e.token_in).collect();
         let pools: Vec<Address> = path.iter().map(|e| e.pool).collect();
@@ -365,7 +410,7 @@ impl<'g> FinderState<'g> {
             return;
         }
 
-        self.results.push(RouteCandidate {
+        let candidate = RouteCandidate {
             chain_id: self.chain_id,
             route_hash: canon.route_hash,
             route_kind,
@@ -378,7 +423,30 @@ impl<'g> FinderState<'g> {
             applicable_strategies: Vec::new(),
             rejected_strategies: Vec::new(),
             mode: self.cfg.mode.clone(),
-        });
+        };
+
+        // Best-K selection (classify BEFORE capping): rank by gross cycle
+        // score; retain the top `max_routes_per_tick`, evicting the worst.
+        let entry = ScoredRoute {
+            score: cycle_gross_score(path),
+            route: candidate,
+        };
+        if self.heap.len() < self.cfg.max_routes_per_tick {
+            self.heap.push(entry);
+        } else {
+            match self.heap.peek() {
+                Some(worst) if entry < *worst => {
+                    self.heap.pop();
+                    self.heap.push(entry);
+                    self.dropped_for_cap += 1; // displaced worse route
+                    self.capped = true; // universe exceeds the cap ⇒ selection
+                }
+                _ => {
+                    self.dropped_for_cap += 1; // worse than the current K-th
+                    self.capped = true;
+                }
+            }
+        }
 
         // ARBX-0010: attribute the segment since the previous emission to
         // this cycle's hop class (2-leg ⇒ Pair). One clock per emitted
@@ -421,7 +489,7 @@ pub fn find_routes_with_work_budget(
         cfg,
         outgoing: HashMap::new(),
         seen: HashSet::new(),
-        results: Vec::new(),
+        heap: BinaryHeap::new(),
         dropped_for_cap: 0,
         capped: false,
         pools_truncated: false,
@@ -462,10 +530,6 @@ pub fn find_routes_with_work_budget(
         if state.work_limited {
             break;
         }
-        if state.results.len() >= cfg.max_routes_per_tick {
-            state.capped = true; // remaining start tokens abandoned — set truncated
-            break;
-        }
         let mut path: Vec<RouteEdge> = Vec::new();
         let mut pools_used: HashSet<Address> = HashSet::new();
         let mut visited: HashSet<Address> = HashSet::new();
@@ -483,8 +547,14 @@ pub fn find_routes_with_work_budget(
             .saturating_sub(u128::from(state.pair_ns)) as u64,
     };
 
+    // Best first (score asc): consumers see the most profitable gross cycles
+    // at the head of the list. Deterministic via the hash tie-break.
+    let mut scored: Vec<ScoredRoute> = state.heap.into_iter().collect();
+    scored.sort_by(|a, b| a.cmp(b));
+    let routes = scored.into_iter().map(|s| s.route).collect();
+
     RouteFinderOutcome {
-        routes: state.results,
+        routes,
         dropped_for_cap: state.dropped_for_cap,
         capped: state.capped,
         pools_truncated: state.pools_truncated,
@@ -690,6 +760,34 @@ mod tests {
             o.capped,
             "cap hit → result set flagged incomplete (R8 fail-honest)"
         );
+    }
+
+    #[test]
+    fn best_k_cap_keeps_most_profitable_cycles_not_first_found() {
+        use ProtocolType::V2;
+        // Three pools over (A,B): the (0x10,0x20) cycles are fully priced
+        // profitable (negative log sum); every cycle touching 0x30 is unpriced
+        // (∞). Cap 2 ⇒ the profitable cycles MUST be retained regardless of
+        // DFS/insertion order, displacing the unpriced ones.
+        let mut g = graph_from(&[(0x10, 1, 2, V2), (0x20, 1, 2, V2), (0x30, 1, 2, V2)]);
+        for e in g.edges.iter_mut() {
+            if e.pool == addr(0x10) || e.pool == addr(0x20) {
+                e.log_weight = Some(-0.05); // net product > 1 ⇒ profitable gross
+            }
+        }
+        let cfg = RouteFinderConfig {
+            max_routes_per_tick: 2,
+            ..Default::default()
+        };
+        let o = find_routes(&g, 1, &cfg);
+        assert_eq!(o.routes.len(), 2);
+        assert!(
+            o.routes
+                .iter()
+                .any(|r| r.pools.contains(&addr(0x10))),
+            "the profitable cycle survives the best-K cap"
+        );
+        assert!(o.capped && o.dropped_for_cap >= 1);
     }
 
     #[test]
