@@ -86,6 +86,7 @@ mod config_reload;
 // applies durable HTTP fallback at cold boot, and swaps RPC/WS clients atomically.
 mod topology_reload;
 // Phase 16: per-strategy Prometheus metrics for the event-driven orchestrator.
+mod beta_priors; // Deuda 4 (2026-09-20): Beta side writer+reader (bayesian_priors).
 mod metrics;
 mod patterns;
 mod persistence;
