@@ -107,16 +107,26 @@ pub fn evaluate_strategy_operators(
         .collect()
 }
 
+/// WO-15: refuerzos agresivos (ops 33-35, fuera de la matriz 264×31). Cuando
+/// su toggle está ENCENDIDO se evalúan y publican en el snapshot de TODAS las
+/// estrategias que publican evidencia (orden del operador 2026-09-20: "aplicar
+/// en donde amerita cuando esté encendido en todas las estrategias encendidas");
+/// apagados (arbx:ops:disabled) se saltan vía el mismo filtro de
+/// `evaluate_strategy_operators`.
+pub const REINFORCEMENT_OPERATOR_IDS: &[u32] = &[33, 34, 35];
+
 /// Pure snapshot builder for a strategy's declared-combo evidence (testable).
 ///
-/// `roles` marks each operator as `"primary"` / `"secondary"` — the strategy's
-/// OWN declaration of which structures apply to it, not a regime or class
-/// guess. R8 fail-honest: an operator that cannot compute keeps `scalar: null`.
+/// `roles` marks each operator as `"primary"` / `"secondary"` /
+/// `"reinforcement"` — the strategy's OWN declaration of which structures apply
+/// to it, plus the toggle-gated reinforcements when ON. R8 fail-honest: an
+/// operator that cannot compute keeps `scalar: null`.
 pub fn declared_combo_snapshot(
     chain_id: u64,
     strategy_key: &str,
     primary: &[(u32, Option<f64>, String)],
     secondary: &[(u32, Option<f64>, String)],
+    reinforcement: &[(u32, Option<f64>, String)],
 ) -> serde_json::Value {
     fn to_values(entries: &[(u32, Option<f64>, String)], role: &str) -> Vec<serde_json::Value> {
         entries
@@ -142,6 +152,7 @@ pub fn declared_combo_snapshot(
         "source": "declared_combo",
         "primary_operators": to_values(primary, "primary"),
         "secondary_operators": to_values(secondary, "secondary"),
+        "reinforcement_operators": to_values(reinforcement, "reinforcement"),
         "operators": primary.len() + secondary.len(),
         "operators_computed": computed,
         "updated_at_ms": std::time::SystemTime::now()
@@ -217,13 +228,27 @@ pub async fn publish_declared_combo_evidence(
 
     let primary = evaluate_strategy_operators(&state, registry, primary_operator_ids);
     let secondary = evaluate_strategy_operators(&state, registry, secondary_operator_ids);
+    // WO-15: refuerzos toggle-gated — cuando ENCENDIDOS se evalúan para TODA
+    // estrategia que publica evidencia (no requieren declaración de cartucho);
+    // apagados, `evaluate_strategy_operators` los filtra (paridad exacta).
+    let declared: Vec<u32> = primary_operator_ids
+        .iter()
+        .chain(secondary_operator_ids.iter())
+        .copied()
+        .collect();
+    let reinforcement_ids: Vec<u32> = REINFORCEMENT_OPERATOR_IDS
+        .iter()
+        .copied()
+        .filter(|id| !declared.contains(id))
+        .collect();
+    let reinforcement = evaluate_strategy_operators(&state, registry, &reinforcement_ids);
     let computed = primary
         .iter()
         .chain(secondary.iter())
         .filter(|(_, s, _)| s.is_some())
         .count();
 
-    let snapshot = declared_combo_snapshot(chain_id, strategy_key, &primary, &secondary);
+    let snapshot = declared_combo_snapshot(chain_id, strategy_key, &primary, &secondary, &reinforcement);
     if let Ok(json) = serde_json::to_string(&snapshot) {
         use redis::AsyncCommands;
         let key = strategy_evidence_key(chain_id, strategy_key);
@@ -488,6 +513,30 @@ mod evidence_tests {
         assert_eq!(out[2].1, Some(0.0), "argmax del split = candidato 0");
     }
 
+    /// El toggle `arbx:ops:disabled` aplica a TODOS los operadores del
+    /// registry, incluidos los 1-31 de la matriz 264×31: un op deshabilitado
+    /// se SALTA en el camino de evidencia (R8: skipped = no computado, no
+    /// fabricado). Orden del operador 2026-09-20: "los ops 1-31 también
+    /// tienen que ser toggleables".
+    #[test]
+    fn matrix_op_toggle_skips_strategy_evidence_dispatch() {
+        crate::operator_toggles::store(&[4u8]); // op_04 von Neumann (matriz)
+        let registry = OperatorRegistry::new();
+        let state = MarketState {
+            price_matrix: vec![],
+            liquidity_reserves: vec![],
+            gas_price_gwei: 20.0,
+            block_timestamp: 0,
+            block_number: 0,
+            features: HashMap::new(),
+        };
+        let out = evaluate_strategy_operators(&state, &registry, &[1, 4]);
+        crate::operator_toggles::store(&[]); // restaurar: set global del proceso
+        assert!(!out.iter().any(|(id, _, _)| *id == 4), "op 4 deshabilitado debe saltarse");
+        assert!(out.iter().any(|(id, _, _)| *id == 1), "op 1 habilitado debe evaluarse");
+        assert!(!crate::operator_toggles::is_disabled(4), "restaurado");
+    }
+
     #[test]
     fn posterior_is_flat_prior_with_empty_calibration() {
         let evidence = vec![0.5; 31];
@@ -518,6 +567,7 @@ mod evidence_tests {
 #[cfg(test)]
 mod combo_tests {
     use super::*;
+    use std::collections::HashMap;
 
     /// STRAT-IDENT-01: the ONE canonical key format — plain strategy identity,
     /// no Debug-wrapped newtype, no RouterKind class.
@@ -541,7 +591,7 @@ mod combo_tests {
             (1u32, None, "op_01".to_string()),
             (22u32, Some(0.7), "op_22".to_string()),
         ];
-        let s = declared_combo_snapshot(1, "mev_01_001", &primary, &secondary);
+        let s = declared_combo_snapshot(1, "mev_01_001", &primary, &secondary, &[]);
         assert_eq!(s["strategy_kind"], "mev_01_001");
         assert_eq!(s["source"], "declared_combo");
         assert_eq!(s["operators"], 3);
@@ -551,5 +601,46 @@ mod combo_tests {
         // R8: un-computable operator keeps scalar null — never fabricated.
         assert!(s["secondary_operators"][0]["scalar"].is_null());
         assert_eq!(s["primary_operators"][0]["scalar"], 0.42);
+        assert_eq!(s["reinforcement_operators"].as_array().map(Vec::len), Some(0));
+    }
+
+    /// WO-15: refuerzos 33-35 ENCENDIDOS fluyen por la evidencia de TODA
+    /// estrategia (sin declaración de cartucho); con el toggle apagado se
+    /// excluyen del snapshot — conectarse/desconectarse per-operator.
+    /// La evaluación usa el MISMO dispatch que cualquier op de matriz.
+    #[test]
+    fn reinforcement_ops_toggle_gates_snapshot_inclusion() {
+        let registry = OperatorRegistry::new();
+        let state = MarketState {
+            price_matrix: vec![],
+            liquidity_reserves: vec![],
+            gas_price_gwei: 20.0,
+            block_timestamp: 0,
+            block_number: 0,
+            features: HashMap::new(),
+        };
+
+        // ON: nada deshabilitado → los tres refuerzos aparecen (scalar null
+        // con features vacías = R8 no computado, jamás fabricado).
+        let on = evaluate_strategy_operators(&state, &registry, REINFORCEMENT_OPERATOR_IDS);
+        let s_on = declared_combo_snapshot(1, "mev_01_001", &[], &[], &on);
+        assert_eq!(
+            s_on["reinforcement_operators"].as_array().map(Vec::len),
+            Some(3),
+            "toggle ON ⇒ los 3 refuerzos publican en la estrategia"
+        );
+        assert!(
+            s_on["reinforcement_operators"][0]["scalar"].is_null(),
+            "sin features ⇒ scalar null honesto"
+        );
+
+        // OFF: 34 deshabilitado → excluido; los otros dos siguen.
+        crate::operator_toggles::store(&[34u8]);
+        let mixed = evaluate_strategy_operators(&state, &registry, REINFORCEMENT_OPERATOR_IDS);
+        crate::operator_toggles::store(&[]); // restaurar: set global del proceso
+        assert_eq!(mixed.len(), 2);
+        assert!(!mixed.iter().any(|(id, _, _)| *id == 34));
+        assert!(mixed.iter().any(|(id, _, _)| *id == 33));
+        assert!(mixed.iter().any(|(id, _, _)| *id == 35));
     }
 }

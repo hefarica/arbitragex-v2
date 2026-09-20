@@ -44,7 +44,7 @@ pub fn is_disabled(id: u8) -> bool {
         .contains(&id)
 }
 
-fn store(ids: &[u8]) {
+pub(crate) fn store(ids: &[u8]) {
     let mut set = global().set.write().expect("disabled-ops lock poisoned");
     let before = set.len();
     *set = ids.iter().copied().collect();
