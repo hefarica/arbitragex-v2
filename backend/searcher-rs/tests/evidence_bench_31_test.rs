@@ -37,10 +37,12 @@ fn rich_state() -> MarketState {
 
 #[test]
 fn measured_evidence_cost_and_coverage_for_declared_ops() {
-    let dir =
-        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("cartridges/strategies");
+    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("cartridges/strategies");
     let mut declared_sets: Vec<(String, Vec<u8>)> = Vec::new();
-    for entry in std::fs::read_dir(&dir).expect("cartridges/strategies legible").flatten() {
+    for entry in std::fs::read_dir(&dir)
+        .expect("cartridges/strategies legible")
+        .flatten()
+    {
         let name = entry.file_name().to_string_lossy().into_owned();
         if !name.starts_with("mev_") || !name.ends_with(".rhai") {
             continue;
@@ -51,7 +53,11 @@ fn measured_evidence_cost_and_coverage_for_declared_ops() {
             if let Some(i) = src.find(pat) {
                 let rest = &src[i + pat.len()..];
                 if let Some(j) = rest.find(']') {
-                    ops.extend(rest[..j].split(',').filter_map(|t| t.trim().parse::<u8>().ok()));
+                    ops.extend(
+                        rest[..j]
+                            .split(',')
+                            .filter_map(|t| t.trim().parse::<u8>().ok()),
+                    );
                 }
             }
         }
@@ -94,20 +100,34 @@ fn measured_evidence_cost_and_coverage_for_declared_ops() {
     }
     let off_us = start.elapsed().as_micros() as f64 / (PASSES * declared_sets.len()) as f64;
 
-    let avg_declared =
-        declared_sets.iter().map(|(_, o)| o.len()).sum::<usize>() as f64 / declared_sets.len() as f64;
+    let avg_declared = declared_sets.iter().map(|(_, o)| o.len()).sum::<usize>() as f64
+        / declared_sets.len() as f64;
     let compute_rate = total_computed as f64 / total_declared.max(1) as f64;
 
-    println!("=== Evidencia ops 1-31 por estrategia (264 cartuchos, {} pasadas) ===", PASSES);
+    println!(
+        "=== Evidencia ops 1-31 por estrategia (264 cartuchos, {} pasadas) ===",
+        PASSES
+    );
     println!("ops declarados por estrategia: avg {avg_declared:.1}");
-    println!("tasa de cómputo sobre estado rico: {:.1}% ({}/{})", 100.0 * compute_rate, total_computed, total_declared);
+    println!(
+        "tasa de cómputo sobre estado rico: {:.1}% ({}/{})",
+        100.0 * compute_rate,
+        total_computed,
+        total_declared
+    );
     println!("costo ON  (declared set completo): {on_us:.1} µs/estrategia");
     println!("costo OFF (conjunto vacío):        {off_us:.2} µs/estrategia");
 
     // Vectores independientes: el estado rico satisface los prerrequisitos de
     // todos los ops (mismo fixture del smoke all_31), así que la mayoría debe
     // computar; el costo debe ser acotado (evidencia NO puede dominar el ciclo).
-    assert!(compute_rate > 0.5, "con estado rico la mayoría de ops deben computar: {compute_rate:.2}");
+    assert!(
+        compute_rate > 0.5,
+        "con estado rico la mayoría de ops deben computar: {compute_rate:.2}"
+    );
     assert!(avg_declared >= 3.0, "avg declarados: {avg_declared}");
-    assert!(on_us < 5_000.0, "evidencia debe costar <5ms/estrategia: {on_us:.0}µs");
+    assert!(
+        on_us < 5_000.0,
+        "evidencia debe costar <5ms/estrategia: {on_us:.0}µs"
+    );
 }
