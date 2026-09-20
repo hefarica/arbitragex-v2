@@ -120,43 +120,26 @@ impl HotPathEmitter {
         Ok(())
     }
 
-    /// Emits a simulation result to `arbx:hot:simulated` stream.
+    /// Builds the simulated-emit command set: XADD stream entry + (on
+    /// `passed`) HSET sim hash + EXPIRE 300s.
     ///
-    /// WO-02 (2026-09-06): takes the full `Opportunity` so the XADD carries
-    /// the fields BOTH consumers require — `OpportunityHotStreamer`
-    /// (api-server websocket.ts → room `opportunities`, event
-    /// `opportunity:validated`) and the dormant `PaperExecutor`
-    /// (api-server paper/executor.ts), whose `parseSimulatedOpportunity`
-    /// drops entries without `id`+`status` and skips (`skip_incomplete`)
-    /// entries without `opportunity_id`+`chain_id`+`strategy_kind`.
-    ///
-    /// Stream fields:
-    ///   - `id`: Opportunity UUID (stream-message correlation)
-    ///   - `opportunity_id`: same UUID — PaperExecutor FK into opportunities.id
-    ///   - `status`: "passed" | "failed" — REVM verdict, VERBATIM (R8: the
-    ///     emitter never re-classifies; downstream gates apply their own)
-    ///   - `net_profit_wei`: decimal string (see SimulationResult)
-    ///   - `gas_used`: gas consumed by the REVM round trip
-    ///   - `gas_price_wei`: decimal string (gas price the simulator used)
-    ///   - `chain_id`, `strategy_kind`, `token_pair`: correlation fields
-    ///   - `timestamp_ms`: Unix timestamp millis
-    ///
-    /// On `passed=true`, also stores full result at `arbx:hot:sim:{id}` with 300s TTL.
-    pub async fn emit_simulated(
-        &self,
+    /// WO-7b (PERF-STACK-2026-09-20): the sequential XADD → HSET → EXPIRE
+    /// round trips collapse into ONE non-atomic pipeline (3 commands on
+    /// passed, 1 on failed). `.atomic()` is deliberately NOT used — without
+    /// MULTI/EXEC the server executes commands as they arrive, so a
+    /// mid-connection drop may leave any prefix applied, exactly as the
+    /// sequential form did (mirrors WO-7 `detected_pipeline`). Wire values
+    /// are byte-identical (see `wo7b_tests`).
+    fn simulated_pipeline(
         opp: &Opportunity,
         result: &SimulationResult,
-    ) -> Result<(), redis::RedisError> {
-        let timestamp_ms = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_millis() as u64;
-
+        timestamp_ms: u64,
+    ) -> redis::Pipeline {
         let status = if result.passed { "passed" } else { "failed" };
         let id = opp.id.to_string();
 
-        // XADD arbx:hot:simulated with approximate maxlen ~5k
-        let _: () = redis::cmd("XADD")
+        let mut pipe = redis::pipe();
+        pipe.cmd("XADD")
             .arg("arbx:hot:simulated")
             .arg("MAXLEN")
             .arg("~")
@@ -182,28 +165,65 @@ impl HotPathEmitter {
             .arg(&opp.pair_symbol)
             .arg("timestamp_ms")
             .arg(timestamp_ms)
-            .query_async(&mut self.redis.clone())
-            .await?;
+            .ignore();
 
         // Store full result only on passed simulations
         if result.passed {
             let sim_key = format!("arbx:hot:sim:{}", id);
             let result_json = serde_json::to_string(result).unwrap_or_default();
-
-            let _: () = redis::cmd("HSET")
+            pipe.cmd("HSET")
                 .arg(&sim_key)
                 .arg("result")
                 .arg(result_json)
-                .query_async(&mut self.redis.clone())
-                .await?;
-
-            let _: () = redis::cmd("EXPIRE")
-                .arg(&sim_key)
-                .arg(300)
-                .query_async(&mut self.redis.clone())
-                .await?;
+                .ignore();
+            pipe.cmd("EXPIRE").arg(&sim_key).arg(300).ignore();
         }
+        pipe
+    }
 
+    /// Emits a simulation result to `arbx:hot:simulated` stream.
+    ///
+    /// WO-02 (2026-09-06): takes the full `Opportunity` so the XADD carries
+    /// the fields BOTH consumers require — `OpportunityHotStreamer`
+    /// (api-server websocket.ts → room `opportunities`, event
+    /// `opportunity:validated`) and the dormant `PaperExecutor`
+    /// (api-server paper/executor.ts), whose `parseSimulatedOpportunity`
+    /// drops entries without `id`+`status` and skips (`skip_incomplete`)
+    /// entries without `opportunity_id`+`chain_id`+`strategy_kind`.
+    ///
+    /// Stream fields:
+    ///   - `id`: Opportunity UUID (stream-message correlation)
+    ///   - `opportunity_id`: same UUID — PaperExecutor FK into opportunities.id
+    ///   - `status`: "passed" | "failed" — REVM verdict, VERBATIM (R8: the
+    ///     emitter never re-classifies; downstream gates apply their own)
+    ///   - `net_profit_wei`: decimal string (see SimulationResult)
+    ///   - `gas_used`: gas consumed by the REVM round trip
+    ///   - `gas_price_wei`: decimal string (gas price the simulator used)
+    ///   - `chain_id`, `strategy_kind`, `token_pair`: correlation fields
+    ///   - `timestamp_ms`: Unix timestamp millis
+    ///
+    /// On `passed=true`, also stores full result at `arbx:hot:sim:{id}` with 300s TTL.
+    ///
+    /// WO-7b (PERF-STACK-2026-09-20): the sequential XADD → HSET → EXPIRE
+    /// round trips collapse into ONE non-atomic pipeline (3 commands on
+    /// passed, 1 on failed). `.atomic()` is deliberately NOT used — same
+    /// prefix-on-mid-connection-drop semantics as the sequential form
+    /// (mirrors WO-7 `detected_pipeline`). Wire values are byte-identical
+    /// (see `wo7b_tests`).
+    pub async fn emit_simulated(
+        &self,
+        opp: &Opportunity,
+        result: &SimulationResult,
+    ) -> Result<(), redis::RedisError> {
+        let timestamp_ms = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_millis() as u64;
+
+        // WO-7b: XADD (+ HSET + EXPIRE on passed) in ONE pipeline round trip.
+        let _: () = Self::simulated_pipeline(opp, result, timestamp_ms)
+            .query_async(&mut self.redis.clone())
+            .await?;
         Ok(())
     }
 
@@ -328,5 +348,115 @@ mod wo7_tests {
         let sk = opp.strategy_kind.as_str().as_bytes().to_vec();
         assert!(contains(&packed, &sk));
         assert!(contains(&packed, ts.to_string().as_bytes()));
+    }
+}
+
+#[cfg(test)]
+mod wo7b_tests {
+    use super::*;
+    use shared_rs::contracts::StrategyKind;
+    use uuid::Uuid;
+
+    fn fixture_opp() -> Opportunity {
+        Opportunity {
+            id: Uuid::new_v4(),
+            chain_id: 1,
+            strategy_kind: StrategyKind::triangular(),
+            dex_a: "fixture_dex".into(),
+            dex_b: None,
+            pair_symbol: "A/B".into(),
+            token_in: "0x1".into(),
+            token_out: "0x2".into(),
+            amount_in_wei: "1000".into(),
+            expected_profit_usd: Some(10.0),
+            net_expected_profit_usd: None,
+            roi_pct: None,
+            risk_score: None,
+            block_number: None,
+            rejection_reason: None,
+            cartridge_id: None,
+            detector_id: None,
+            pipeline_latency_ms: None,
+            detected_at: chrono::Utc::now(),
+            trace_id: Uuid::new_v4(),
+        }
+    }
+
+    fn fixture_result(passed: bool) -> SimulationResult {
+        SimulationResult {
+            passed,
+            net_profit_wei: "123456789".into(),
+            gas_used: 21000,
+            gas_price_wei: "1500000000".into(),
+        }
+    }
+
+    fn contains(haystack: &[u8], needle: &[u8]) -> bool {
+        haystack.windows(needle.len()).any(|w| w == needle)
+    }
+
+    /// WO-7b: 3 commands on passed, exactly 1 on failed — each in ONE RTT
+    /// (was 3 sequential on passed).
+    #[test]
+    fn simulated_pipeline_command_count_by_verdict() {
+        let opp = fixture_opp();
+        let passed = HotPathEmitter::simulated_pipeline(&opp, &fixture_result(true), 0);
+        assert_eq!(passed.cmd_iter().count(), 3, "passed: 3 commands, 1 RTT");
+        let failed = HotPathEmitter::simulated_pipeline(&opp, &fixture_result(false), 0);
+        assert_eq!(failed.cmd_iter().count(), 1, "failed: XADD only");
+    }
+
+    /// WO-7b: NOT atomic — no MULTI/EXEC wrapping, so mid-connection-drop
+    /// semantics match the old sequential form (same proof as WO-7).
+    #[test]
+    fn simulated_pipeline_is_not_atomic() {
+        let opp = fixture_opp();
+        let packed = HotPathEmitter::simulated_pipeline(&opp, &fixture_result(true), 0)
+            .get_packed_pipeline();
+        assert!(
+            !packed.starts_with(b"*1\r\n$5\r\nMULTI\r\n"),
+            "pipeline must not open with MULTI"
+        );
+    }
+
+    /// WO-7b: wire contract byte-identical to the sequential form — stream
+    /// key, MAXLEN ~5000, REVM verdict verbatim, correlation fields, and
+    /// the sim hash + EXPIRE 300 ONLY on passed (failed never writes the
+    /// hash — R8: no fabricated result store).
+    #[test]
+    fn simulated_pipeline_carries_exact_wire_fields() {
+        let opp = fixture_opp();
+        let ts = 1_700_000_000_456u64;
+        let sim_key = format!("arbx:hot:sim:{}", opp.id).into_bytes();
+
+        let passed = HotPathEmitter::simulated_pipeline(&opp, &fixture_result(true), ts)
+            .get_packed_pipeline();
+        assert!(contains(&passed, b"XADD"));
+        assert!(contains(&passed, b"arbx:hot:simulated"));
+        assert!(contains(&passed, b"MAXLEN"));
+        assert!(contains(&passed, b"5000"));
+        assert!(contains(&passed, b"passed"));
+        assert!(contains(&passed, b"net_profit_wei"));
+        assert!(contains(&passed, b"123456789"));
+        assert!(contains(&passed, b"gas_used"));
+        assert!(contains(&passed, b"21000"));
+        assert!(contains(&passed, b"gas_price_wei"));
+        assert!(contains(&passed, b"1500000000"));
+        assert!(contains(&passed, b"opportunity_id"));
+        assert!(contains(&passed, b"A/B"));
+        assert!(contains(&passed, ts.to_string().as_bytes()));
+        assert!(contains(&passed, &sim_key), "passed stores the sim hash");
+        assert!(contains(&passed, b"HSET"));
+        assert!(contains(&passed, b"EXPIRE"));
+        assert!(contains(&passed, b"300"));
+
+        let failed = HotPathEmitter::simulated_pipeline(&opp, &fixture_result(false), ts)
+            .get_packed_pipeline();
+        assert!(contains(&failed, b"failed"));
+        assert!(
+            !contains(&failed, &sim_key),
+            "failed never writes the sim hash"
+        );
+        assert!(!contains(&failed, b"EXPIRE"));
     }
 }
