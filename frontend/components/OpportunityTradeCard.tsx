@@ -244,6 +244,25 @@ function OpportunityTradeCardImpl({
   };
   const hasSyntheticLegs = legs.some((l) => l.synthetic === true);
 
+  // ── CARDS-TOKENPATH-01: full participating-token sequence (2..7 tokens) ────
+  // deriveLegs already carries the persisted topology; the ordered token path
+  // is first-in + every leg out. A closed cycle repeats the opener as the final
+  // out — drop it so N hops render exactly N tokens (the operator's chip-count
+  // contract). Fail-honest fallback when no topology persisted: in→out pair.
+  const tokenPathAddrs: string[] = (() => {
+    if (legs.length > 0) {
+      const seq = [legs[0]!.token_in, ...legs.map((l) => l.token_out)];
+      if (
+        seq.length > 2 &&
+        seq[seq.length - 1]!.toLowerCase() === seq[0]!.toLowerCase()
+      ) {
+        seq.pop();
+      }
+      if (seq.every((a) => a.length > 0)) return seq;
+    }
+    return [opp.token_in, opp.token_out];
+  })();
+
   const handleExecute = async (e: React.MouseEvent) => {
     e.stopPropagation();
     setEvidence(null);
@@ -381,17 +400,35 @@ function OpportunityTradeCardImpl({
         </span>
       </div>
 
-      {/* ── TOKEN PAIR ── */}
-      <div className="flex items-center gap-2 mb-3 min-w-0">
-        <div className="min-w-0 flex-1">
-          <TokenChip token_address={opp.token_in} chain_id={opp.chain_id} info={opp.token_in_info} />
-        </div>
-        <span className="text-muted-foreground/60 shrink-0" aria-hidden="true">
-          →
-        </span>
-        <div className="min-w-0 flex-1">
-          <TokenChip token_address={opp.token_out} chain_id={opp.chain_id_out ?? opp.chain_id} info={opp.token_out_info} />
-        </div>
+      {/* ── TOKEN PATH — every participating token (2..7), same chip element the
+            operator validated: logo + contract shortAddr + symbol. CARDS-TOKENPATH-01:
+            chips keep natural size and wrap to a new line only under overflow threat
+            (flex-wrap); each chip truncates internally via min-w-0 max-w-full. ── */}
+      <div className="flex flex-wrap items-center gap-x-1.5 gap-y-1 mb-3 min-w-0">
+        {tokenPathAddrs.map((addr, i) => {
+          const lc = addr.toLowerCase();
+          const isEndpointIn = lc === opp.token_in.toLowerCase();
+          const isEndpointOut = !isEndpointIn && lc === opp.token_out.toLowerCase();
+          return (
+            <React.Fragment key={`${i}-${lc}`}>
+              {i > 0 && (
+                <span className="text-muted-foreground/60 shrink-0" aria-hidden="true">
+                  →
+                </span>
+              )}
+              <div className="min-w-0 max-w-full">
+                <TokenChip
+                  token_address={addr}
+                  chain_id={isEndpointOut ? (opp.chain_id_out ?? opp.chain_id) : opp.chain_id}
+                  info={isEndpointIn ? opp.token_in_info : isEndpointOut ? opp.token_out_info : null}
+                  fallbackSymbol={
+                    isEndpointIn || isEndpointOut ? null : (opp.leg_symbols?.[lc] ?? null)
+                  }
+                />
+              </div>
+            </React.Fragment>
+          );
+        })}
       </div>
 
       {/* ── FE-0033 (§36): canonical summary grid — ruta/strategy/detector/

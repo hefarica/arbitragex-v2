@@ -19,8 +19,9 @@ import { useEffect, useRef, useCallback, startTransition } from "react";
 import { io } from "socket.io-client";
 import { createOpportunitySocket, type WsStatus } from "@/features/opportunities/socket-lifecycle";
 import { getAdminToken } from "@/lib/admin-token";
-import { getApiBaseUrl, getWsBaseUrl } from "@/lib/api-client";
+import { getPublicEdgeBaseUrl, getWsBaseUrl } from "@/lib/api-client";
 import { useOmniStore } from "./omni-store";
+import { parseSnapshotItems } from "./snapshot-payload";
 import { mapToOmniOpportunity, type OmniOpportunity } from "./types";
 // FE-0047: the MEM-RENDER-01 buffer as a pure seam (dedup/out-of-order are
 // §33 semantics — now testable without renderHook; behavior identical).
@@ -32,6 +33,14 @@ import { createWsIngestBuffer, type WsIngestBuffer } from "./ws-ingest-buffer";
 
 const MAX_WS_ERRORS = 3;
 const POLL_INTERVAL_MS = 5000;
+
+// FE-SNAPSHOT-01: guaranteed refresh cadence for the LIVE (WS) mode too. WS
+// events update a card only when the route is re-detected; without a
+// source-of-truth reconcile a card's values (and any api-server-side stamping, e.g.
+// simulated_*) can freeze indefinitely while the socket stays healthy. This
+// snapshot loop guarantees every card reflects /api/opportunities/live at
+// least every 5s, event flow or not.
+const SNAPSHOT_INTERVAL_MS = 5000;
 
 // MEM-RENDER-01: the WS path used to call addOpportunity PER MESSAGE (one
 // Zustand update + new 200-item array + full grid reconciliation per event —
@@ -107,46 +116,46 @@ export function useOmniOpportunities({
     }
   }, [initialOpportunities, setOpportunities]);
 
+  // FE-SNAPSHOT-01: one fetch+apply used by BOTH the degraded polling loop and
+  // the always-on LIVE-mode reconcile. Never touches wsStatus — cadence/status
+  // ownership stays with the caller.
+  const refreshSnapshot = useCallback(async () => {
+    try {
+      const viable = viableOnlyRef.current;
+      // FE-EDGE-DIRECT-01: snapshot reconcile delivered edge-direct — the cards
+      // feed has ONE origin (public edge), no Next double-hop proxy.
+      const res = await fetch(
+        `${getPublicEdgeBaseUrl()}/api/opportunities/live?viable_only=${viable}&limit=50`,
+        {
+          headers: { accept: "application/json" },
+          signal: AbortSignal.timeout(POLL_INTERVAL_MS),
+          cache: "no-store",
+        },
+      );
+      if (!res.ok) return;
+      const data: unknown = await res.json();
+
+      // PERF: one batch replacement instead of clear + N addOpportunity calls.
+      // Each addOpportunity triggered a separate Zustand update + devtools
+      // serialization; with 50 items every 4-5s that caused severe memory churn.
+      setOpportunities(parseSnapshotItems(data));
+      // MEM-RENDER-01: vigency applies on every path, not only the WS flush —
+      // a stale row inside the server snapshot must not resurrect a card.
+      pruneStale(OPP_TTL_MS);
+    } catch {
+      // Swallow — R8: the status badge (LIVE/POLLING/STALE) owns surfacing.
+    }
+  }, [setOpportunities, pruneStale]);
+
   // HTTP polling fallback
   const startPolling = useCallback(() => {
     if (usingPollingRef.current) return;
     usingPollingRef.current = true;
     setWsStatus("POLLING");
 
-    const poll = async () => {
-      try {
-        const viable = viableOnlyRef.current;
-        const res = await fetch(
-          `${getApiBaseUrl()}/api/opportunities/live?viable_only=${viable}&limit=50`,
-          {
-            headers: { accept: "application/json" },
-            signal: AbortSignal.timeout(POLL_INTERVAL_MS),
-            cache: "no-store",
-          },
-        );
-        if (!res.ok) return;
-        const data: unknown = await res.json();
-        const rawItems: unknown[] = Array.isArray((data as { items?: unknown }).items)
-          ? ((data as { items: unknown[] }).items)
-          : Array.isArray(data)
-          ? (data as unknown[])
-          : [];
-
-        // PERF: one batch replacement instead of clear + N addOpportunity calls.
-        // Each addOpportunity triggered a separate Zustand update + devtools
-        // serialization; with 50 items every 4-5s that caused severe memory churn.
-        setOpportunities(rawItems.map((raw) => mapToOmniOpportunity(raw as Record<string, unknown>)));
-        // MEM-RENDER-01: vigency applies on every path, not only the WS flush —
-        // a stale row inside the server snapshot must not resurrect a card.
-        pruneStale(OPP_TTL_MS);
-      } catch {
-        // Swallow — status badge already shows "POLLING" (degraded)
-      }
-    };
-
-    poll();
-    pollingTimerRef.current = setInterval(poll, POLL_INTERVAL_MS);
-  }, [setWsStatus, setOpportunities, pruneStale]);
+    refreshSnapshot();
+    pollingTimerRef.current = setInterval(refreshSnapshot, POLL_INTERVAL_MS);
+  }, [setWsStatus, refreshSnapshot]);
 
   // WebSocket lifecycle
   useEffect(() => {
@@ -184,6 +193,22 @@ export function useOmniOpportunities({
     };
     const flushTimer = setInterval(flushPending, WS_FLUSH_MS);
 
+    // FE-SNAPSHOT-01: guaranteed ≤5s source-of-truth refresh in LIVE mode.
+    // Runs alongside the WS stream: events keep arrival-time updates, this
+    // loop guarantees the snapshot contract even when no event fires. Stopped
+    // on degrade — startPolling takes the cadence over with the same interval.
+    refreshSnapshot();
+    let snapshotTimer: ReturnType<typeof setInterval> | null = setInterval(
+      refreshSnapshot,
+      SNAPSHOT_INTERVAL_MS,
+    );
+    const stopSnapshotLoop = () => {
+      if (snapshotTimer !== null) {
+        clearInterval(snapshotTimer);
+        snapshotTimer = null;
+      }
+    };
+
     const handle = createOpportunitySocket({
       url: wsUrl,
       ioFactory: (url, opts) => io(url, opts),
@@ -199,6 +224,7 @@ export function useOmniOpportunities({
             handle.dispose();
             clearInterval(flushTimer);
             flushPending();
+            stopSnapshotLoop();
             startPolling();
           }
         } else if (status === "LIVE") {
@@ -215,6 +241,7 @@ export function useOmniOpportunities({
 
     return () => {
       clearInterval(flushTimer);
+      stopSnapshotLoop();
       buffer.clear();
       handle.dispose();
       if (pollingTimerRef.current !== null) {
@@ -227,7 +254,7 @@ export function useOmniOpportunities({
       usingPollingRef.current = false;
       setWsStatus("DISCONNECTED");
     };
-  }, [startPolling, setWsStatus, setOpportunities, pruneStale]);
+  }, [startPolling, setWsStatus, refreshSnapshot]);
 
   // Return nothing — consumers read directly from store
   // This enforces SSOT pattern
