@@ -166,3 +166,103 @@ describe("OpportunityTradeCard — HOPS-CARD-03 step ladder", () => {
     expect(card(opp)).toBe(card(opp));
   });
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// CARDS-TOKENPATH-01 — full token path in the chip row (operator order
+// 2026-09-20): N hops ⇒ N chips (cycle closure popped), each chip = logo +
+// contract shortAddr + symbol (intermediates via leg_symbols fallback).
+// ─────────────────────────────────────────────────────────────────────────────
+const ARROW_RE = /<span class="text-muted-foreground\/60 shrink-0" aria-hidden="true">→<\/span>/g;
+const countArrows = (html: string): number => (html.match(ARROW_RE) ?? []).length;
+
+describe("OpportunityTradeCard — CARDS-TOKENPATH-01 token path chips", () => {
+  it("3-hop route renders exactly 3 token chips (cycle close popped) with endpoint + leg_symbols symbols", () => {
+    const info = { symbol: "WETH", decimals: 18, logo_url: null, resolved_via: "onchain_full" };
+    const opp = {
+      ...mapToOmniOpportunity(
+        wire({
+          token_in: A,
+          token_out: A,
+          token_in_info: info,
+          token_out_info: info,
+          route_metadata: {
+            dex_adapters: ["uniswap_v2_router", "sushiswap", "uniswap_v2_router"],
+            token_addresses: [A, B, C, A],
+            pool_addresses: ["0xpool1", "0xpool2", "0xpool3"],
+          },
+        }),
+      ),
+      leg_symbols: { [B.toLowerCase()]: "USDC", [C.toLowerCase()]: "PEPE" },
+    };
+    const html = card(opp);
+    // 3 tokens ⇒ 2 arrows in the chip row (ladder arrows are separate glyphs)
+    expect(countArrows(html)).toBe(2);
+    // every participating token shows symbol + contract shortAddr
+    expect(html).toContain("WETH");
+    expect(html).toContain("USDC");
+    expect(html).toContain("PEPE");
+    expect(html.toLowerCase()).toContain(A.toLowerCase());
+    expect(html.toLowerCase()).toContain(B.toLowerCase());
+    expect(html.toLowerCase()).toContain(C.toLowerCase());
+  });
+
+  it("7-hop route renders 7 chips — the full path up to the operator's max", () => {
+    const addrs = Array.from({ length: 7 }, (_, i) => "0x" + String.fromCharCode(97 + i).repeat(40));
+    const closed = [...addrs, addrs[0]!]; // 7 hops, cycle closes on token 0
+    const leg_symbols: Record<string, string> = {};
+    for (const a of addrs.slice(1)) leg_symbols[a.toLowerCase()] = "TKN" + a.slice(2, 4);
+    const opp = {
+      ...mapToOmniOpportunity(
+        wire({
+          token_in: addrs[0]!,
+          token_out: addrs[0]!,
+          route_metadata: {
+            dex_adapters: Array.from({ length: 7 }, () => "uniswap-v2"),
+            token_addresses: closed,
+            pool_addresses: Array.from({ length: 7 }, (_, i) => "0xpool" + i),
+          },
+        }),
+      ),
+      leg_symbols,
+    };
+    const html = card(opp);
+    // 7 tokens ⇒ 6 arrows; each intermediate symbol surfaced via fallback
+    expect(countArrows(html)).toBe(6);
+    for (const a of addrs.slice(1)) {
+      expect(html).toContain("TKN" + a.slice(2, 4));
+    }
+  });
+
+  it("no route_metadata ⇒ honest 2-chip in→out fallback row", () => {
+    const opp = mapToOmniOpportunity(
+      wire({ route_metadata: null, token_in: "0xa", token_out: "0xb" }),
+    );
+    const html = card(opp);
+    expect(countArrows(html)).toBe(1);
+    expect(html).toContain("0xa");
+    expect(html).toContain("0xb");
+  });
+
+  it("intermediate without leg_symbols entry still renders contract shortAddr (R8 — no fabrication)", () => {
+    const opp = {
+      ...mapToOmniOpportunity(
+        wire({
+          token_in: A,
+          token_out: A,
+          route_metadata: {
+            dex_adapters: ["uniswap_v2_router", "sushiswap", "uniswap_v2_router"],
+            token_addresses: [A, B, C, A],
+            pool_addresses: ["0xpool1", "0xpool2", "0xpool3"],
+          },
+        }),
+      ),
+      // leg_symbols EMPTY — B and C fall back to their contract address chip
+      leg_symbols: {},
+    };
+    const html = card(opp);
+    expect(countArrows(html)).toBe(2);
+    // shortAddr of B rendered as the symbol line ("0xbb…bbbb" style truncation
+    // is shortAddr's business — assert the raw chip contract line exists)
+    expect(html.toLowerCase()).toContain(B.toLowerCase());
+  });
+});
