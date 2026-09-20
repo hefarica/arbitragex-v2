@@ -1,4 +1,5 @@
--- 122_bayesian_priors_token_pair_nullable.sql
+-- 123_bayesian_priors_token_pair_nullable.sql
+-- (renumbered from 122: #610 takes 122_route_discovery_outcomes_partitioned)
 -- Deuda 4 / STRAT-IDENT-01 follow-up: bayesian_priors rows are keyed by
 -- strategy_key (unique partial index uq_bayesian_priors_strategy, migration
 -- 108). token_pair is legacy identity from migration 097 (its UNIQUE

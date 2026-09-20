@@ -233,3 +233,22 @@ invariant is code-enforced and asserted at every boot (design D5).
 **Deploy note:** shipping 120 + code WITHOUT provisioning the key is a zero-
 behavior-change deploy (legacy plaintext mode, warned at boot). Provisioning
 the key activates envelope writes + the boot conversion on next restart.
+
+## `123_bayesian_priors_token_pair_nullable.sql` — Deuda 4 (2026-09-20)
+
+`bayesian_priors` rows are keyed by `strategy_key` (partial unique index
+`uq_bayesian_priors_strategy`, migration 108). `token_pair` is legacy
+identity from migration 097; strategy-keyed rows written by the searcher-rs
+`beta_priors` consolidator have no honest pair value (R8 — the pair stays as
+context in the record, never as the calibration bucket). This migration makes
+`token_pair` NULLable and documents `strategy_key` via COMMENT.
+
+Table verified EMPTY on every environment (no writer existed as of
+2026-09-20) — no data implications. Idempotent: `DROP NOT NULL` on an
+already-nullable column is a no-op.
+
+**Deploy note:** ships inert. The consolidator is gated by
+`ARBX_BETA_PRIORS_MODE` (default OFF ⇒ no writes, flat Beta(1,1) priors —
+byte-parity with pre-Deuda-4 behavior). Renumbered from 122 (collision with
+#610's `122_route_discovery_outcomes_partitioned`).
+
