@@ -14,8 +14,11 @@
  * process.env + two RedisKV shim instances and serves via @hono/node-server.
  *
  * ARBX_TELEMETRY (D1) is intentionally left undefined — the worker guards it
- * with `if (c.env.ARBX_TELEMETRY)`, so the one executionCtx.waitUntil
- * reference is unreachable and the missing CF executionCtx cannot crash.
+ * with `if (c.env.ARBX_TELEMETRY)`, so the D1 waitUntil reference stays
+ * unreachable here. PERF-STACK WO-10 (2026-09-20) added deferred KV writes
+ * (cache fill + rate-limit counters): `deferWrite()` in index.ts try/catches
+ * c.executionCtx, so in this node entry (no ExecutionContext passed to
+ * app.fetch) they degrade to fire-and-forget with a logged .catch — no crash.
  */
 import { serve } from "@hono/node-server";
 import { Redis } from "ioredis";

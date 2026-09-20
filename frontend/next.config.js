@@ -90,6 +90,11 @@ const INTERNAL_API = process.env.INTERNAL_API_URL || "http://api-server:8080";
 const nextConfig = {
   reactStrictMode: true,
   poweredByHeader: false,
+  // PERF-STACK WO-9 (2026-09-20): standalone output — `next build` traces the
+  // minimal runtime (server.js + pruned node_modules) into .next/standalone so
+  // the Docker runtime stage ships a fraction of the current full
+  // node_modules + next start layout (see frontend/Dockerfile).
+  output: "standalone",
   // FE-0053: two `next dev` instances on the same tree SHARE .next and evict
   // each other's route manifests (parallel E2E stacks started 404ing routes
   // mid-session). Set NEXT_DIST_DIR per instance (e.g. .next-3006) to

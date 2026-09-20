@@ -89,13 +89,39 @@ const LOCKOUT_THRESHOLD = 10;     // 10 consecutive 401s → lockout
 const LOCKOUT_WINDOW_S = 15 * 60; // 15 min
 
 /**
+ * PERF-STACK WO-10 (2026-09-20): defer a non-critical KV write off the response
+ * critical path. On Cloudflare (executionCtx available) waitUntil keeps the
+ * promise alive past the response. On the node-server production entry
+ * (app.fetch(req, env) with no ExecutionContext) Hono's c.executionCtx getter
+ * throws, so we fall back to fire-and-forget: node keeps the pending Redis I/O
+ * alive and the attached catch prevents unhandled rejections. Write failures
+ * are logged, never crash the request.
+ */
+function deferWrite(
+  c: import("hono").Context<{ Bindings: Env }>,
+  p: Promise<unknown>,
+): void {
+  const guarded = p.catch((err: unknown) => {
+    console.warn(`[edge] deferred write failed: ${(err as Error)?.message ?? err}`);
+  });
+  try {
+    c.executionCtx.waitUntil(guarded);
+  } catch {
+    // No ExecutionContext (node-server production entry) — fire-and-forget.
+  }
+}
+
+/**
  * Bucketed rate-limit check via KV.
  * Returns { ok, remaining }. `prefix` namespaces the keyspace (rl / admin_rl).
  * The bucket key is `${prefix}:${ip}:${floor(now/window)}` so each window has its
  * own counter; we set TTL = 2× window so old buckets self-evict.
+ * WO-10: the decision `get` stays blocking; the counter `put` is deferred —
+ * same bounded race as before (burst may over-count slightly), one less Redis
+ * RTT on the response path.
  */
 async function checkRl(
-  env: Env,
+  c: import("hono").Context<{ Bindings: Env }>,
   ip: string,
   max: number,
   windowS: number,
@@ -103,9 +129,9 @@ async function checkRl(
 ): Promise<{ ok: boolean; remaining: number }> {
   const bucket = Math.floor(Date.now() / (windowS * 1000));
   const key = `${prefix}:${ip}:${bucket}`;
-  const current = await env.RATE_LIMIT.get(key);
+  const current = await c.env.RATE_LIMIT.get(key);
   const count = parseInt(current || "0", 10) + 1;
-  await env.RATE_LIMIT.put(key, count.toString(), { expirationTtl: windowS * 2 });
+  deferWrite(c, c.env.RATE_LIMIT.put(key, count.toString(), { expirationTtl: windowS * 2 }));
   if (count > max) return { ok: false, remaining: 0 };
   return { ok: true, remaining: max - count };
 }
@@ -384,7 +410,7 @@ app.use("*", async (c, next) => {
     const isAuditor = !!auditSecret && !!auditToken && auditToken === auditSecret;
     if (isAuditor) {
       const rl = await checkRl(
-        c.env,
+        c,
         `audit:${ip}`,
         RL_AUDIT_MAX,
         RL_GENERAL_WINDOW_S,
@@ -393,7 +419,7 @@ app.use("*", async (c, next) => {
       c.header("x-ratelimit-remaining", String(rl.remaining));
       if (!rl.ok) return c.json({ error: "rate_limited" }, 429);
     } else {
-      const rl = await checkRl(c.env, ip, RL_GENERAL_MAX, RL_GENERAL_WINDOW_S, "rl");
+      const rl = await checkRl(c, ip, RL_GENERAL_MAX, RL_GENERAL_WINDOW_S, "rl");
       c.header("x-ratelimit-remaining", String(rl.remaining));
       if (!rl.ok) return c.json({ error: "rate_limited" }, 429);
     }
@@ -466,7 +492,8 @@ async function proxy(c: import("hono").Context<{ Bindings: Env }>, path: string,
   });
   const body = await upstream.text();
   if (fullCacheKey && upstream.ok) {
-    await c.env.ARBX_CACHE.put(fullCacheKey, body, { expirationTtl: ttl });
+    // WO-10: populate the cache off the response path (one less RTT on MISS).
+    deferWrite(c, c.env.ARBX_CACHE.put(fullCacheKey, body, { expirationTtl: ttl }));
   }
   c.header("x-arbx-cache", "MISS");
   c.header("content-type", upstream.headers.get("content-type") ?? "application/json");
@@ -861,7 +888,7 @@ app.post("/admin/session", async (c) => {
     return c.json({ error: "locked_out", retry_after_s: LOCKOUT_WINDOW_S }, 429);
   }
   // SEC-1: KV-backed admin-session brute-force gate.
-  const rate = await checkRl(c.env, ip, RL_ADMIN_MAX, RL_ADMIN_WINDOW_S, "admin_rl");
+  const rate = await checkRl(c, ip, RL_ADMIN_MAX, RL_ADMIN_WINDOW_S, "admin_rl");
   c.header("x-ratelimit-admin-session-remaining", String(rate.remaining));
   if (!rate.ok) return c.json({ error: "rate_limited" }, 429);
 
@@ -1293,7 +1320,7 @@ app.get("/api/pools", async (c) => {
       // not JSON → verbatim
     }
   }
-  if (upstream.ok) await c.env.ARBX_CACHE.put(cacheKey, body, { expirationTtl: 30 });
+  if (upstream.ok) deferWrite(c, c.env.ARBX_CACHE.put(cacheKey, body, { expirationTtl: 30 }));
   c.header("x-arbx-cache", "MISS");
   c.header("content-type", "application/json");
   return c.body(body, upstream.status as 200 | 501 | 502);

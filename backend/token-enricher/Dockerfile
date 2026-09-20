@@ -11,6 +11,9 @@
 # MSRV 1.75 declared in backend/Cargo.toml).
 
 FROM rust:1.91-bookworm AS builder
+# PERF-STACK WO-8 (2026-09-20): EPYC-Rome soporta x86-64-v3 (avx2+bmi2+fma
+# verificado en VPS). Release SOLO se buildea en VPS (RULE 01).
+ENV RUSTFLAGS="-C target-cpu=x86-64-v3"
 WORKDIR /build
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
