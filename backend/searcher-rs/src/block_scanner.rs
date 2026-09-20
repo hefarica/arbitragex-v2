@@ -64,6 +64,23 @@ pub struct GasBlockSink {
     pub base_fee_milligwei: Arc<std::sync::atomic::AtomicU64>,
 }
 
+/// WO-7c — publish chain context (head + base fee) into the cartridge
+/// `HostContext` atomics. Shared by the block-mode subscription and the
+/// mempool/auto `head_sink_loop` so both writers keep identical semantics.
+/// Ordering::Release pairs with the cartridge's Relaxed loads — the values
+/// are advisory, not a lock.
+pub(crate) fn publish_head(sink: &GasBlockSink, block_number: u64, base_fee_wei: Option<U256>) {
+    sink.block_number
+        .store(block_number, std::sync::atomic::Ordering::Release);
+    if let Some(base_fee_wei) = base_fee_wei {
+        // get_base_fee() decodes the atomic as gwei×1000 (milli-gwei); wei / 1e6
+        // = milli-gwei. Skipped when absent: pre-EIP-1559 chains have no base fee.
+        let milligwei = (base_fee_wei / U256::from(1_000_000u64)).as_u64();
+        sink.base_fee_milligwei
+            .store(milligwei, std::sync::atomic::Ordering::Release);
+    }
+}
+
 /// Backrunning detection loop: subscribe to new blocks and turn confirmed V2 swaps on
 /// watched pools into `RouteIntent`s fed to the orchestrator. Long-running; honors
 /// `cancel`. Reconnects on WS error with exponential backoff. Never panics.
@@ -213,18 +230,9 @@ async fn run_block_subscription(
 
                 // Publish chain context to the cartridge HostContext atomics on EVERY head, so
                 // get_block_number()/get_base_fee() return real values. Without this the cartridge
-                // net-profit gate is unsatisfiable (gas reads as 0). Ordering::Release pairs with
-                // the cartridge's Relaxed loads — the values are advisory, not a lock.
+                // net-profit gate is unsatisfiable (gas reads as 0).
                 if let Some(sink) = gas_sink {
-                    sink.block_number
-                        .store(block_num.as_u64(), std::sync::atomic::Ordering::Release);
-                    if let Some(base_fee_wei) = block.base_fee_per_gas {
-                        // get_base_fee() decodes the atomic as gwei×1000 (milli-gwei); wei / 1e6
-                        // = milli-gwei. Saturating: pre-EIP-1559 chains have no base fee → skipped.
-                        let milligwei = (base_fee_wei / U256::from(1_000_000u64)).as_u64();
-                        sink.base_fee_milligwei
-                            .store(milligwei, std::sync::atomic::Ordering::Release);
-                    }
+                    publish_head(sink, block_num.as_u64(), block.base_fee_per_gas);
                 }
 
                 // ── Observer divergence telemetry (best-effort, read-only) ────────────────
@@ -280,6 +288,92 @@ async fn run_block_subscription(
                 }
 
                 process_block(chain_id, block_num.as_u64(), &provider, orch, idx).await;
+            }
+        }
+    }
+}
+
+/// WO-7c — minimal head-only sink loop for mempool/auto mode: subscribe to
+/// `newHeads` and publish chain context (block height + base fee) into the
+/// cartridge `HostContext` atomics. In `MempoolMode::Block` the full
+/// `block_detection_loop` already does this; in `auto`/`mempool` nothing wrote
+/// the atomics, so the #599 anchor fallback (`host_block_number_handle`)
+/// always read 0 and every cartridge-layer opportunity was persisted with
+/// `block_number: NULL` (100% of cartridge rows, forensics 2026-09-20).
+/// This loop deliberately does NOT consume intents — no orchestrator, no
+/// impact index, no getLogs — it only keeps the head atomics honest (R8).
+pub async fn head_sink_loop(
+    chain_id: u64,
+    ws_urls: Vec<String>,
+    sink: GasBlockSink,
+    cancel: CancellationToken,
+) {
+    if ws_urls.is_empty() {
+        warn!(
+            event = "head_sink.no_ws",
+            chain_id, "no WS endpoints; cartridge head anchor stays 0 (R8 honest)"
+        );
+        cancel.cancelled().await;
+        return;
+    }
+    info!(
+        event = "head_sink.start",
+        chain_id,
+        endpoints = ws_urls.len(),
+        "anchor-only head sink starting (cartridge block_number context)"
+    );
+    let mut backoff_ms: u64 = 1_000;
+    let max_backoff_ms: u64 = 30_000;
+    let mut url_idx = 0usize;
+    loop {
+        if cancel.is_cancelled() {
+            return;
+        }
+        let url = &ws_urls[url_idx % ws_urls.len()];
+        match run_head_subscription(chain_id, url, &sink, &cancel).await {
+            Ok(()) => return, // clean exit (cancelled)
+            Err(e) => {
+                warn!(
+                    event = "head_sink.reconnect",
+                    chain_id,
+                    error = %e,
+                    backoff_ms,
+                    next_endpoint = (url_idx + 1) % ws_urls.len(),
+                    "head subscription dropped; rotating endpoint + backing off"
+                );
+                url_idx = url_idx.wrapping_add(1);
+                tokio::time::sleep(Duration::from_millis(backoff_ms)).await;
+                backoff_ms = (backoff_ms * 2).min(max_backoff_ms);
+            }
+        }
+    }
+}
+
+/// One WS connection for the anchor-only sink: subscribe to blocks, publish
+/// head + base fee on each. Returns `Ok(())` on cancellation, `Err` on
+/// disconnect (caller reconnects). Mirrors `run_block_subscription` minus the
+/// orchestrator/getLogs machinery.
+async fn run_head_subscription(
+    chain_id: u64,
+    url: &str,
+    sink: &GasBlockSink,
+    cancel: &CancellationToken,
+) -> anyhow::Result<()> {
+    let client = WsChainClient::connect(chain_id, url).await?;
+    let mut blocks = client.subscribe_blocks().await?;
+    info!(
+        event = "head_sink.connected",
+        chain_id, "subscribed to newHeads (anchor-only)"
+    );
+    loop {
+        tokio::select! {
+            _ = cancel.cancelled() => return Ok(()),
+            blk = blocks.next() => {
+                let Some(block) = blk else {
+                    return Err(anyhow::anyhow!("newHeads stream ended"));
+                };
+                let Some(block_num) = block.number else { continue };
+                publish_head(sink, block_num.as_u64(), block.base_fee_per_gas);
             }
         }
     }
@@ -684,5 +778,62 @@ mod tests {
             "0xc42079f94a6350d7e6235f29174924f928cc2ac818eb64fed8004e115fbcca67",
             "Uniswap V3 Swap topic0"
         );
+    }
+
+    // ---- WO-7c head sink ----------------------------------------------------
+
+    fn head_sink() -> GasBlockSink {
+        GasBlockSink {
+            block_number: Arc::new(std::sync::atomic::AtomicU64::new(0)),
+            base_fee_milligwei: Arc::new(std::sync::atomic::AtomicU64::new(0)),
+        }
+    }
+
+    #[test]
+    fn publish_head_stores_block_number() {
+        let s = head_sink();
+        publish_head(&s, 12_345, None);
+        assert_eq!(
+            s.block_number.load(std::sync::atomic::Ordering::Acquire),
+            12_345
+        );
+    }
+
+    #[test]
+    fn publish_head_stores_base_fee_milligwei() {
+        // 1.5 gwei = 1_500_000_000 wei → 1500 milli-gwei (get_base_fee decodifica ÷1000).
+        let s = head_sink();
+        publish_head(&s, 1, Some(U256::from(1_500_000_000u64)));
+        assert_eq!(
+            s.base_fee_milligwei
+                .load(std::sync::atomic::Ordering::Acquire),
+            1500
+        );
+    }
+
+    #[test]
+    fn publish_head_none_base_fee_keeps_previous() {
+        // Cadena pre-EIP-1559 (sin base fee): no debe resetear el valor previo.
+        let s = head_sink();
+        publish_head(&s, 1, Some(U256::from(2_000_000_000u64)));
+        publish_head(&s, 2, None);
+        assert_eq!(
+            s.base_fee_milligwei
+                .load(std::sync::atomic::Ordering::Acquire),
+            2000
+        );
+        assert_eq!(s.block_number.load(std::sync::atomic::Ordering::Acquire), 2);
+    }
+
+    #[tokio::test]
+    async fn head_sink_loop_empty_urls_idles_honestly() {
+        // R8: sin WS endpoints NO fabricamos head — warn + idle hasta cancel.
+        let s = head_sink();
+        let cancel = CancellationToken::new();
+        let c = cancel.clone();
+        let task = tokio::spawn(head_sink_loop(1, vec![], s, cancel));
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        c.cancel();
+        task.await.expect("head_sink_loop exits cleanly on cancel");
     }
 }
