@@ -120,7 +120,8 @@ impl HotPathEmitter {
         Ok(())
     }
 
-    /// Emits a simulation result to `arbx:hot:simulated` stream.
+    /// Builds the simulated-emit command set for `arbx:hot:simulated`.
+    ///
     ///
     /// WO-02 (2026-09-06): takes the full `Opportunity` so the XADD carries
     /// the fields BOTH consumers require — `OpportunityHotStreamer`
@@ -142,21 +143,31 @@ impl HotPathEmitter {
     ///   - `timestamp_ms`: Unix timestamp millis
     ///
     /// On `passed=true`, also stores full result at `arbx:hot:sim:{id}` with 300s TTL.
-    pub async fn emit_simulated(
-        &self,
+    ///
+    /// WO-7b (PERF-STACK-2026-09-20): the sequential `query_async` round trips
+    /// collapse into ONE non-atomic pipeline — 1 command when failed (XADD
+    /// only), 3 when passed (XADD + HSET + EXPIRE), 1 RTT either way.
+    /// `.atomic()` is deliberately NOT used — mid-connection-drop semantics
+    /// stay exactly as the sequential form (any prefix may be applied; a
+    /// dropped HSET/EXPIRE only costs the 300s hash, never the stream entry).
+    /// KNOWN DELTA vs sequential (a8 review): in the sequential form an XADD
+    /// Err returned early and HSET/EXPIRE were never SENT; server-side, a
+    /// pipeline executes every buffered command even if XADD errors, so HSET
+    /// may land on a degenerate XADD-Err + passed=true. More permissive, never
+    /// lossy; the caller surfaces the FIRST reply error (XADD→HSET→EXPIRE
+    /// order) via `query_async(...)?`, same as #605.
+    /// Wire values are byte-identical (see `wo7b_tests`).
+    fn simulated_pipeline(
         opp: &Opportunity,
         result: &SimulationResult,
-    ) -> Result<(), redis::RedisError> {
-        let timestamp_ms = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_millis() as u64;
-
+        timestamp_ms: u64,
+    ) -> redis::Pipeline {
         let status = if result.passed { "passed" } else { "failed" };
         let id = opp.id.to_string();
 
+        let mut pipe = redis::pipe();
         // XADD arbx:hot:simulated with approximate maxlen ~5k
-        let _: () = redis::cmd("XADD")
+        pipe.cmd("XADD")
             .arg("arbx:hot:simulated")
             .arg("MAXLEN")
             .arg("~")
@@ -182,28 +193,40 @@ impl HotPathEmitter {
             .arg(&opp.pair_symbol)
             .arg("timestamp_ms")
             .arg(timestamp_ms)
-            .query_async(&mut self.redis.clone())
-            .await?;
+            .ignore();
 
         // Store full result only on passed simulations
         if result.passed {
             let sim_key = format!("arbx:hot:sim:{}", id);
             let result_json = serde_json::to_string(result).unwrap_or_default();
 
-            let _: () = redis::cmd("HSET")
+            pipe.cmd("HSET")
                 .arg(&sim_key)
                 .arg("result")
                 .arg(result_json)
-                .query_async(&mut self.redis.clone())
-                .await?;
-
-            let _: () = redis::cmd("EXPIRE")
-                .arg(&sim_key)
-                .arg(300)
-                .query_async(&mut self.redis.clone())
-                .await?;
+                .ignore();
+            pipe.cmd("EXPIRE").arg(&sim_key).arg(300).ignore();
         }
+        pipe
+    }
 
+    /// See `simulated_pipeline` for the stream field contract.
+    ///
+    /// Latency budget: <5ms. WO-7b: one pipeline RTT (was 1–3 sequential).
+    pub async fn emit_simulated(
+        &self,
+        opp: &Opportunity,
+        result: &SimulationResult,
+    ) -> Result<(), redis::RedisError> {
+        let timestamp_ms = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_millis() as u64;
+
+        // WO-7b: XADD (+ HSET + EXPIRE on passed) in ONE pipeline round trip.
+        let _: () = Self::simulated_pipeline(opp, result, timestamp_ms)
+            .query_async(&mut self.redis.clone())
+            .await?;
         Ok(())
     }
 
@@ -328,5 +351,138 @@ mod wo7_tests {
         let sk = opp.strategy_kind.as_str().as_bytes().to_vec();
         assert!(contains(&packed, &sk));
         assert!(contains(&packed, ts.to_string().as_bytes()));
+    }
+}
+
+#[cfg(test)]
+mod wo7b_tests {
+    use super::*;
+    use shared_rs::contracts::StrategyKind;
+    use uuid::Uuid;
+
+    fn fixture_opp() -> Opportunity {
+        Opportunity {
+            id: Uuid::new_v4(),
+            chain_id: 1,
+            strategy_kind: StrategyKind::triangular(),
+            dex_a: "fixture_dex".into(),
+            dex_b: None,
+            pair_symbol: "A/B".into(),
+            token_in: "0x1".into(),
+            token_out: "0x2".into(),
+            amount_in_wei: "1000".into(),
+            expected_profit_usd: Some(10.0),
+            net_expected_profit_usd: None,
+            roi_pct: None,
+            risk_score: None,
+            block_number: None,
+            rejection_reason: None,
+            cartridge_id: None,
+            detector_id: None,
+            pipeline_latency_ms: None,
+            detected_at: chrono::Utc::now(),
+            trace_id: Uuid::new_v4(),
+        }
+    }
+
+    fn fixture_result(passed: bool) -> SimulationResult {
+        SimulationResult {
+            passed,
+            net_profit_wei: "123456789012345678901".into(),
+            gas_used: 424242,
+            gas_price_wei: "1500000000".into(),
+        }
+    }
+
+    fn contains(haystack: &[u8], needle: &[u8]) -> bool {
+        haystack.windows(needle.len()).any(|w| w == needle)
+    }
+
+    /// WO-7b: failed → exactly 1 command (XADD only), ONE round trip.
+    #[test]
+    fn simulated_pipeline_failed_is_one_command() {
+        let opp = fixture_opp();
+        let pipe =
+            HotPathEmitter::simulated_pipeline(&opp, &fixture_result(false), 1_700_000_000_000u64);
+        assert_eq!(pipe.cmd_iter().count(), 1, "failed = XADD only, 1 RTT");
+    }
+
+    /// WO-7b: passed → exactly 3 commands (XADD + HSET + EXPIRE), ONE round
+    /// trip (was 3 sequential — the failed path was already 1).
+    #[test]
+    fn simulated_pipeline_passed_is_three_commands() {
+        let opp = fixture_opp();
+        let pipe =
+            HotPathEmitter::simulated_pipeline(&opp, &fixture_result(true), 1_700_000_000_000u64);
+        assert_eq!(pipe.cmd_iter().count(), 3, "passed = 3 cmds, 1 RTT");
+    }
+
+    /// WO-7b: NOT atomic — an atomic pipeline would prepend MULTI as the
+    /// first RESP command. Its absence proves no MULTI/EXEC wrapping, so
+    /// mid-connection-drop semantics match the old sequential form.
+    #[test]
+    fn simulated_pipeline_is_not_atomic() {
+        let opp = fixture_opp();
+        for passed in [false, true] {
+            let packed = HotPathEmitter::simulated_pipeline(&opp, &fixture_result(passed), 0)
+                .get_packed_pipeline();
+            assert!(
+                !packed.starts_with(b"*1\r\n$5\r\nMULTI\r\n"),
+                "pipeline must not open with MULTI (passed={passed})"
+            );
+        }
+    }
+
+    /// WO-7b: wire contract byte-identical to the sequential form — stream
+    /// key, MAXLEN ~5000, status verbatim, profit/gas fields, correlation
+    /// fields, timestamp; passed adds sim hash key + HSET + EXPIRE 300.
+    #[test]
+    fn simulated_pipeline_carries_exact_wire_fields() {
+        let opp = fixture_opp();
+        let ts = 1_700_000_000_123u64;
+        let result = fixture_result(true);
+        let packed = HotPathEmitter::simulated_pipeline(&opp, &result, ts).get_packed_pipeline();
+
+        assert!(contains(&packed, b"XADD"));
+        assert!(contains(&packed, b"arbx:hot:simulated"));
+        assert!(contains(&packed, b"MAXLEN"));
+        assert!(contains(&packed, b"5000"));
+        assert!(contains(&packed, b"passed"));
+        assert!(contains(&packed, b"net_profit_wei"));
+        assert!(contains(&packed, result.net_profit_wei.as_bytes()));
+        assert!(contains(&packed, b"gas_used"));
+        assert!(contains(&packed, b"424242"));
+        assert!(contains(&packed, b"gas_price_wei"));
+        assert!(contains(&packed, result.gas_price_wei.as_bytes()));
+        assert!(contains(&packed, b"opportunity_id"));
+        let id = opp.id.to_string().into_bytes();
+        assert!(contains(&packed, &id));
+        assert!(contains(&packed, b"chain_id"));
+        let sk = opp.strategy_kind.as_str().as_bytes().to_vec();
+        assert!(contains(&packed, &sk));
+        assert!(contains(&packed, opp.pair_symbol.as_bytes()));
+        assert!(contains(&packed, ts.to_string().as_bytes()));
+
+        // passed-only: full-result hash with 300s TTL
+        let sim_key = format!("arbx:hot:sim:{}", opp.id).into_bytes();
+        assert!(contains(&packed, &sim_key));
+        assert!(contains(&packed, b"HSET"));
+        assert!(contains(&packed, b"result"));
+        assert!(contains(&packed, b"EXPIRE"));
+        assert!(contains(&packed, b"300"));
+    }
+
+    /// WO-7b: the failed path never carries the sim hash — HSET/EXPIRE are
+    /// conditional on the REVM verdict, exactly as the sequential form.
+    #[test]
+    fn simulated_pipeline_failed_has_no_sim_hash() {
+        let opp = fixture_opp();
+        let packed = HotPathEmitter::simulated_pipeline(&opp, &fixture_result(false), 0)
+            .get_packed_pipeline();
+
+        assert!(contains(&packed, b"failed"));
+        let sim_key = format!("arbx:hot:sim:{}", opp.id).into_bytes();
+        assert!(!contains(&packed, &sim_key), "no hash write on failed");
+        assert!(!contains(&packed, b"EXPIRE"));
     }
 }
