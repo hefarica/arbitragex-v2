@@ -782,9 +782,7 @@ mod tests {
         let o = find_routes(&g, 1, &cfg);
         assert_eq!(o.routes.len(), 2);
         assert!(
-            o.routes
-                .iter()
-                .any(|r| r.pools.contains(&addr(0x10))),
+            o.routes.iter().any(|r| r.pools.contains(&addr(0x10))),
             "the profitable cycle survives the best-K cap"
         );
         assert!(o.capped && o.dropped_for_cap >= 1);
