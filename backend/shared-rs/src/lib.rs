@@ -23,6 +23,7 @@ pub mod logging;
 pub mod metrics;
 pub mod oracle_snapshot;
 pub mod paper_mode;
+pub mod price_bus;
 pub mod pre_execute_checklist;
 pub mod price_oracle;
 pub mod rate_budget;
