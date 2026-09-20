@@ -382,7 +382,7 @@ async fn process_block(
         };
 
         let tx_hash = log.transaction_hash.unwrap_or_default();
-        let intent = match RouteIntent::new(
+        let mut intent = match RouteIntent::new(
             chain_id,
             tx_hash,
             pool, // router slot carries the source pool for backrun intents
@@ -404,6 +404,11 @@ async fn process_block(
             Some(i) => i,
             None => continue,
         };
+        // §30 contract: every detected row must anchor to a block. The scan
+        // block is known HERE — leaving it None propagated to NULL
+        // opportunities.block_number and the FE quarantined the row as
+        // `missing_block` (mirrors route_scanner_worker.rs:429).
+        intent.observed_block_number = Some(scan_block);
 
         // Validation probe (info, low volume): make each newly-assimilated V3 intent
         // explicit in production so the V3 path is auditable end-to-end. Demote to debug
