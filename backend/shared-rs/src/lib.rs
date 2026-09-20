@@ -25,6 +25,7 @@ pub mod oracle_snapshot;
 pub mod paper_mode;
 pub mod pre_execute_checklist;
 pub mod price_oracle;
+pub mod rate_budget;
 pub mod risk_ledger;
 pub mod rpc_failover;
 pub mod settlement_risk;
