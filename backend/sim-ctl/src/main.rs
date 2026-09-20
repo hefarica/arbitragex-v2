@@ -8,6 +8,11 @@
 //! When ANVIL_URL unset or anvil unreachable, /simulate keeps responding 501
 //! and the consumer logs idle; never fabricates results.
 
+// PERF-STACK WO-2 (2026-09-20): mimalloc (linux prod).
+#[cfg(target_os = "linux")]
+#[global_allocator]
+static GLOBAL_ALLOC: mimalloc::MiMalloc = mimalloc::MiMalloc;
+
 mod anvil_backend;
 mod canonical_plan_consumer;
 mod consumer;

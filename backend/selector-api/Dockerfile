@@ -9,6 +9,8 @@ COPY backend/selector-api ./backend/selector-api
 RUN npm install --workspaces --include-workspace-root --silent
 RUN npm run -w @arbx/shared build \
  && npm run -w @arbx/selector-api build
+# PERF-STACK WO-3 (2026-09-20): runtime sin dev-deps (node_modules ~60-70% menor).
+RUN npm prune --workspaces --include-workspace-root --omit=dev
 
 FROM node:20-bookworm-slim AS runtime
 WORKDIR /app
@@ -23,6 +25,8 @@ COPY --from=builder /build/backend/selector-api/package.json /app/backend/select
 COPY configs /app/configs
 USER arbx
 ENV ARBX_CONFIG_PATH=/app/configs/app.toml
+# PERF-STACK WO-3 (2026-09-20): semántica runtime prod (mensajes/overhead, no datos).
+ENV NODE_ENV=production
 EXPOSE 3002
 ENTRYPOINT ["/usr/bin/tini","--"]
 CMD ["node","/app/backend/selector-api/dist/index.js"]

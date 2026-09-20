@@ -8,6 +8,9 @@ COPY backend/api-server ./backend/api-server
 RUN npm install --workspaces --include-workspace-root
 RUN npm run -w @arbx/shared build \
  && npm run -w @arbx/api-server build
+# PERF-STACK WO-3 (2026-09-20): runtime sin dev-deps (node_modules ~60-70% menor).
+# dist/ queda intacto; verificación de arranque post-deploy obligatoria.
+RUN npm prune --workspaces --include-workspace-root --omit=dev
 
 FROM node:20-bookworm-slim AS runtime
 WORKDIR /app
@@ -22,6 +25,8 @@ COPY --from=builder /build/backend/api-server/package.json /app/backend/api-serv
 COPY configs /app/configs
 USER arbx
 ENV ARBX_CONFIG_PATH=/app/configs/app.toml
+# PERF-STACK WO-3 (2026-09-20): semántica runtime prod (mensajes/overhead, no datos).
+ENV NODE_ENV=production
 EXPOSE 8080
 ENTRYPOINT ["/usr/bin/tini","--"]
 CMD ["node","/app/backend/api-server/dist/index.js"]

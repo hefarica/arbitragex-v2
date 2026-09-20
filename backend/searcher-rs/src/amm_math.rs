@@ -774,6 +774,196 @@ mod v3_tests {
             msg
         );
     }
+
+    // ── V3-QUOTE-BATCH-20260919 (B1): equivalence + gas cap ────────────────
+    //
+    // Network tests, run on demand (the operator gate evidence) via:
+    //   ARBX_V3_QUOTE_TEST_RPC=https://eth.drpc.org \
+    //     cargo test -p searcher-rs --test-threads=1 batch_vs_unary -- --ignored
+    // Unset env → skipped (R8: no fabricated results without a real RPC).
+
+    /// Well-known mainnet V3 pools (canonical, on-chain constants — fixtures,
+    /// not mocks). (pool, token_in, token_out, fee_pips) with token_in = WETH.
+    fn batch_test_pools() -> Vec<(Address, Address, Address, u32)> {
+        let weth = Address::from_str("0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2").unwrap();
+        let usdc = Address::from_str("0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48").unwrap();
+        let usdt = Address::from_str("0xdac17f958d2ee523a2206206994597c13d831ec7").unwrap();
+        let dai = Address::from_str("0x6b175474e89094c44da98b954eedeac495271d0f").unwrap();
+        vec![
+            // USDC/WETH 0.05% (token0=USDC, token1=WETH) — WETH in = one_for_zero.
+            (
+                Address::from_str("0x88e6A0c2dDD26FEEb64F039a2c41296FcB3f5640").unwrap(),
+                weth,
+                usdc,
+                500,
+            ),
+            // USDC/WETH 0.3%.
+            (
+                Address::from_str("0x8ad599c3A0ff1De082011EFDDc4f1866E3a4CD31").unwrap(),
+                weth,
+                usdc,
+                3000,
+            ),
+            // USDC/WETH 1%.
+            (
+                Address::from_str("0x7BeA39867e4169DBe237d55C8242a8f2fcDcc387").unwrap(),
+                weth,
+                usdc,
+                10_000,
+            ),
+            // WETH/USDT 0.05% (token0=WETH).
+            (
+                Address::from_str("0x11b815efB8f581194ae79006d24E0d814B7697F6").unwrap(),
+                weth,
+                usdt,
+                500,
+            ),
+            // DAI/WETH 0.3%.
+            (
+                Address::from_str("0xC2E9f25Be6257c210d7Adf0D4Cd6E3E881ba25f8").unwrap(),
+                weth,
+                dai,
+                3000,
+            ),
+        ]
+    }
+
+    fn test_rpc_provider() -> Option<Arc<AlloyHttpProvider>> {
+        let url = std::env::var("ARBX_V3_QUOTE_TEST_RPC").ok()?;
+        let trimmed = url.trim().to_string();
+        if trimmed.is_empty() {
+            return None;
+        }
+        Some(Arc::new(
+            ProviderBuilder::new()
+                .disable_recommended_fillers()
+                .connect_http(trimmed.parse().ok()?),
+        ))
+    }
+
+    /// Equivalence: a pool quoted inside a batched aggregate3 must return the
+    /// EXACT same amount_out as the same pool quoted through a single-element
+    /// multicall (the unary path's transport shape).
+    #[test]
+    #[ignore = "network: requires ARBX_V3_QUOTE_TEST_RPC (real mainnet RPC)"]
+    fn batch_vs_unary_equivalence() {
+        let Some(provider) = test_rpc_provider() else {
+            eprintln!("skipped: ARBX_V3_QUOTE_TEST_RPC unset");
+            return;
+        };
+        let pools = batch_test_pools();
+        let (quoter, multicall) =
+            crate::v3_quote_provider::resolve_quoter_multicall(1).expect("chain 1 resolves");
+        let amount_in = U256::from(10).pow(U256::from(18));
+
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        rt.block_on(async {
+            let to_req =
+                |(pool, t_in, t_out, fee): &(Address, Address, Address, u32)| V3QuoteRequest {
+                    pool_addr: *pool,
+                    token_in: *t_in,
+                    token_out: *t_out,
+                    amount_in,
+                    fee_bps: *fee,
+                };
+            // Unary: the target pool alone (transport shape of the per-pool path).
+            let unary = v3_quote_exact_in_multicall(
+                provider.clone(),
+                quoter,
+                multicall,
+                vec![to_req(&pools[0])],
+            )
+            .await
+            .expect("unary quote must succeed");
+            // Batch: every pool at once (transport shape of the B1 prefetch).
+            let batch = v3_quote_exact_in_multicall(
+                provider.clone(),
+                quoter,
+                multicall,
+                pools.iter().map(to_req).collect(),
+            )
+            .await
+            .expect("batched quote must succeed");
+
+            assert_eq!(unary.len(), 1);
+            assert_eq!(batch.len(), pools.len());
+            assert!(
+                unary[0].success && batch[0].success,
+                "both paths must succeed (unary={} batch={})",
+                unary[0].success,
+                batch[0].success
+            );
+            assert_eq!(
+                unary[0].amount_out, batch[0].amount_out,
+                "batched amount_out must equal unary amount_out"
+            );
+            // Every other batch element must also have answered (success or a
+            // per-pool revert — but these canonical pools must succeed).
+            for (i, r) in batch.iter().enumerate() {
+                assert!(r.success, "canonical pool #{i} failed in batch");
+            }
+        });
+    }
+
+    /// Gas: a DEFAULT_BATCH_SIZE-wide aggregate3 of QuoterV2 calls must
+    /// execute under a 25M gas cap. Verified by issuing the eth_call WITH the
+    /// cap — an execution needing more gas returns an error at the RPC.
+    #[test]
+    #[ignore = "network: requires ARBX_V3_QUOTE_TEST_RPC (real mainnet RPC)"]
+    fn batch_gas_under_25m_cap() {
+        let Some(provider) = test_rpc_provider() else {
+            eprintln!("skipped: ARBX_V3_QUOTE_TEST_RPC unset");
+            return;
+        };
+        let pools = batch_test_pools();
+        let (quoter, multicall) =
+            crate::v3_quote_provider::resolve_quoter_multicall(1).expect("chain 1 resolves");
+        let width = 100usize; // searcher default: ARBX_V3_QUOTE_BATCH_SIZE=100
+        let amount_in = U256::from(10).pow(U256::from(18));
+
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        rt.block_on(async {
+            // 100 sub-calls cycling the canonical pools (dedup is irrelevant
+            // for gas: the calldata width is what costs).
+            let calls: Vec<multicall3::Call3> = (0..width)
+                .map(|i| {
+                    let (pool, t_in, t_out, fee) = &pools[i % pools.len()];
+                    let calldata = encode_quote_calldata(&V3QuoteRequest {
+                        pool_addr: *pool,
+                        token_in: *t_in,
+                        token_out: *t_out,
+                        amount_in,
+                        fee_bps: *fee,
+                    })
+                    .expect("encode");
+                    multicall3::Call3 {
+                        target: AlloyAddress::from_slice(quoter.as_bytes()),
+                        allowFailure: true,
+                        callData: calldata.to_vec().into(),
+                    }
+                })
+                .collect();
+            let calldata = multicall3::aggregate3Call { calls }.abi_encode();
+            let mut tx = TransactionRequest::default()
+                .to(AlloyAddress::from_slice(multicall.as_bytes()))
+                .input(TransactionInput::new(calldata.into()));
+            tx.gas = Some(25_000_000u64);
+            let raw = provider
+                .call(tx)
+                .await
+                .expect("100-wide aggregate3 must execute under a 25M gas cap");
+            // The aggregate must also decode cleanly at that width.
+            let results = multicall3::aggregate3Call::abi_decode_returns(&raw)
+                .expect("aggregate3 decode at width 100");
+            assert_eq!(results.len(), width);
+        });
+    }
 }
 
 #[cfg(test)]
