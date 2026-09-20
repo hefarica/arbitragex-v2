@@ -550,7 +550,7 @@ pub fn find_routes_with_work_budget(
     // Best first (score asc): consumers see the most profitable gross cycles
     // at the head of the list. Deterministic via the hash tie-break.
     let mut scored: Vec<ScoredRoute> = state.heap.into_iter().collect();
-    scored.sort_by(|a, b| a.cmp(b));
+    scored.sort();
     let routes = scored.into_iter().map(|s| s.route).collect();
 
     RouteFinderOutcome {
