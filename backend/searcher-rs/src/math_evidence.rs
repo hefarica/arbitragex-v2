@@ -443,6 +443,51 @@ mod evidence_tests {
         assert!(e.iter().all(|&v| v == 0.0), "degenerate state → all zeros");
     }
 
+    /// WO-15: los refuerzos 33-35 fluyen por el MISMO camino que cualquier
+    /// operador declarado por un cartucho (las 264 estrategias): dispatch vía
+    /// evaluate_strategy_operators con features candidatas reales.
+    #[test]
+    fn reinforcement_ops_33_35_flow_through_strategy_evidence_path() {
+        let registry = OperatorRegistry::new();
+        let mut features = HashMap::new();
+        // op_33: dos brazos 90/10 vs 10/90.
+        features.insert("ts.count".to_string(), 2.0);
+        features.insert("ts.0.successes".to_string(), 90.0);
+        features.insert("ts.0.failures".to_string(), 10.0);
+        features.insert("ts.1.successes".to_string(), 10.0);
+        features.insert("ts.1.failures".to_string(), 90.0);
+        // op_34: un canal degradado (4/10 adversos, γ=0.5 explícito).
+        features.insert("hazard.count".to_string(), 1.0);
+        features.insert("hazard.gamma".to_string(), 0.5);
+        features.insert("hazard.0.adverse_events".to_string(), 4.0);
+        features.insert("hazard.0.total_events".to_string(), 10.0);
+        // op_35: split 2:1.
+        features.insert("alloc.count".to_string(), 2.0);
+        features.insert("alloc.0.quota_remaining".to_string(), 10.0);
+        features.insert("alloc.0.posterior_mean".to_string(), 0.8);
+        features.insert("alloc.0.hazard".to_string(), 0.0);
+        features.insert("alloc.1.quota_remaining".to_string(), 10.0);
+        features.insert("alloc.1.posterior_mean".to_string(), 0.4);
+        features.insert("alloc.1.hazard".to_string(), 0.0);
+        let state = MarketState {
+            price_matrix: vec![],
+            liquidity_reserves: vec![],
+            gas_price_gwei: 20.0,
+            block_timestamp: 0,
+            block_number: 0,
+            features,
+        };
+        let out = evaluate_strategy_operators(&state, &registry, &[33, 34, 35]);
+        assert_eq!(out.len(), 3, "ningún refuerzo debe ser filtrado");
+        assert_eq!(out[0].0, 33);
+        assert_eq!(out[0].1, Some(0.0), "argmax del bandit = brazo 0");
+        assert_eq!(out[1].0, 34);
+        let lambda = out[1].1.expect("hazard computado");
+        assert!(lambda > 0.39 && lambda < 0.40, "λ≈0.3996, got {lambda}");
+        assert_eq!(out[2].0, 35);
+        assert_eq!(out[2].1, Some(0.0), "argmax del split = candidato 0");
+    }
+
     #[test]
     fn posterior_is_flat_prior_with_empty_calibration() {
         let evidence = vec![0.5; 31];

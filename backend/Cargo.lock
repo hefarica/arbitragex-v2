@@ -7410,6 +7410,8 @@ dependencies = [
  "jsonschema",
  "once_cell",
  "prometheus",
+ "rand 0.8.7",
+ "rand_distr 0.4.3",
  "redis",
  "reqwest 0.12.28",
  "serde",

@@ -159,4 +159,118 @@ mod tests {
         assert_eq!(w[0], 0.0);
         assert!((w[1] - 1.0).abs() < 1e-9);
     }
+
+    /// WO-14/WO-15 — benchmark MEDIDO (fixture de test explícita, semilla
+    /// fija, RULE 00: esto es evidencia de simulación, NO telemetría de
+    /// producción; la ventaja en vivo se mide post-deploy vs baseline).
+    ///
+    /// Escenario: 3 proveedores con calidad heterogénea; el mejor degrada a
+    /// mitad de la corrida (429s en cadena). Política OFF = uniforme (status
+    /// quo). Política ON = Thompson (rpc_bandit) + hazard EWMA + asignación
+    /// proporcional (esta crate). Métrica = rendimiento neto por intento:
+    /// éxito +1, fallo −1 (cuota/gas desperdiciados).
+    #[test]
+    fn measured_reinforcement_advantage_offline_benchmark() {
+        use super::super::rpc_bandit::{ArmObservation, HazardEwma429, ThompsonSamplingSelector};
+        use rand::rngs::StdRng;
+        use rand::{Rng, SeedableRng};
+
+        struct Provider {
+            success_p: f64,
+            latency_ms: f64,
+            is_429_prone: bool,
+        }
+        let providers_at = |half: u32| {
+            vec![
+                // A: rápido y sano… hasta que su free-tier colapsa (hora pico).
+                Provider {
+                    success_p: if half == 0 { 0.98 } else { 0.30 },
+                    latency_ms: if half == 0 { 60.0 } else { 400.0 },
+                    is_429_prone: true,
+                },
+                // B: estable, algo más lento.
+                Provider { success_p: 0.85, latency_ms: 120.0, is_429_prone: false },
+                // C: marginal.
+                Provider { success_p: 0.60, latency_ms: 90.0, is_429_prone: false },
+            ]
+        };
+
+        const ROUNDS: usize = 20_000;
+
+        // ── OFF: elección uniforme (baseline status quo) ─────────────────────
+        let mut rng = StdRng::seed_from_u64(20260920);
+        let (mut off_net, mut off_429) = (0.0f64, 0usize);
+        for r in 0..ROUNDS {
+            let half = (r < ROUNDS / 2) as u32;
+            let provs = providers_at(half);
+            let i = rng.gen_range(0..provs.len());
+            let ok = rng.gen::<f64>() < provs[i].success_p;
+            off_net += if ok { 1.0 } else { -1.0 };
+            if !ok && provs[i].is_429_prone {
+                off_429 += 1;
+            }
+        }
+
+        // ── ON: bandit + hazard + asignación proporcional ────────────────────
+        let mut rng = StdRng::seed_from_u64(20260920);
+        let mut bandit = ThompsonSamplingSelector::new(3);
+        let mut hazards: Vec<HazardEwma429> = (0..3)
+            .map(|_| HazardEwma429::new(0.3, 60_000))
+            .collect();
+        let mut now_ms = 0u64;
+        let (mut on_net, mut on_429) = (0.0f64, 0usize);
+        for r in 0..ROUNDS {
+            now_ms += 50;
+            let half = (r < ROUNDS / 2) as u32;
+            let provs = providers_at(half);
+
+            let posteriors: Vec<f64> = (0..3)
+                .map(|i| bandit.posterior_mean(i).unwrap_or(0.0))
+                .collect();
+            let hz: Vec<f64> = hazards.iter().map(|h| h.hazard()).collect();
+            let w = constrained_proportional_allocation(&[1.0, 1.0, 1.0], &posteriors, &hz);
+            let pick = {
+                let u: f64 = rng.gen();
+                let mut acc = 0.0;
+                let mut chosen = 2usize;
+                for (i, wi) in w.iter().enumerate() {
+                    acc += wi;
+                    if u < acc {
+                        chosen = i;
+                        break;
+                    }
+                }
+                chosen
+            };
+
+            let ok = rng.gen::<f64>() < provs[pick].success_p;
+            let latency = provs[pick].latency_ms;
+            bandit.update(
+                pick,
+                ArmObservation { success: ok, latency_ms: latency },
+            );
+            hazards[pick].record(!ok && provs[pick].is_429_prone, now_ms);
+            on_net += if ok { 1.0 } else { -1.0 };
+            if !ok && provs[pick].is_429_prone {
+                on_429 += 1;
+            }
+        }
+
+        // Métricas medidas (visibles con --nocapture).
+        println!("OFF (uniforme):   net={off_net:.0}/{ROUNDS}  rate={:.3}  429-waste={off_429}", off_net / ROUNDS as f64);
+        println!("ON  (refuerzos):  net={on_net:.0}/{ROUNDS}  rate={:.3}  429-waste={on_429}", on_net / ROUNDS as f64);
+        println!("mejora neta: {:.1}%  |  429 evitados: {:.0}%", {
+            100.0 * (on_net - off_net) / off_net.abs().max(1.0)
+        }, {
+            100.0 * (1.0 - on_429 as f64 / off_429.max(1) as f64)
+        });
+
+        // Vectores independientes del ESCENARIO (no de la fórmula): el baseline
+        // uniforme promedia ≈0.70 de tasa (0.81 y 0.583 por mitades ⇒ net
+        // ≈ +0.40·R); la política con refuerzos debe superar por ≥40% el neto
+        // y reducir los desperdicios 429 a menos de la mitad.
+        assert!(off_net > 0.30 * ROUNDS as f64, "sanity OFF: net={off_net}");
+        assert!(on_net > 1.4 * off_net, "ON debe superar OFF por ≥40%: on={on_net} off={off_net}");
+        assert!(on_429 * 2 < off_429, "429-waste debe caer >50%: on={on_429} off={off_429}");
+    }
 }

@@ -549,4 +549,81 @@ mod tests {
             }
         }
     }
+
+    // ── WO-15 (2026-09-20): refuerzos agresivos 33-35 — contrato del registry ─
+    // Fuera de la matriz 264×31 (precedente op_32). Paridad por defecto: ninguna
+    // estrategia los invoca hasta declararlos en el cartucho; este test fija el
+    // contrato del registry (dispatch + fail-honest + vectores independientes).
+    #[test]
+    fn registry_dispatches_reinforcement_ops_33_35() {
+        let registry = OperatorRegistry::new();
+        assert_eq!(
+            registry.all().iter().map(|op| op.id()).collect::<Vec<_>>(),
+            (1..=crate::operators::OPERATOR_COUNT).collect::<Vec<_>>(),
+            "ids contiguos 1..=OPERATOR_COUNT"
+        );
+        assert_eq!(registry.get(33).unwrap().name(), "Thompson Sampling");
+        assert_eq!(registry.get(34).unwrap().name(), "Hazard EWMA");
+        assert_eq!(registry.get(35).unwrap().name(), "Asignación Proporcional Adaptativa");
+
+        // op_33: dos brazos 90/10 vs 10/90 ⇒ argmax 0 (vector independiente).
+        let mut ts_features = HashMap::new();
+        ts_features.insert("ts.count".to_string(), 2.0);
+        ts_features.insert("ts.0.successes".to_string(), 90.0);
+        ts_features.insert("ts.0.failures".to_string(), 10.0);
+        ts_features.insert("ts.1.successes".to_string(), 10.0);
+        ts_features.insert("ts.1.failures".to_string(), 90.0);
+        let ts = registry
+            .dispatch(33, &market_state_with(ts_features))
+            .unwrap();
+        assert_eq!(ts.scalar_value, Some(0.0));
+        assert_eq!(ts.metadata.get("computed"), Some(&1.0));
+
+        // op_34: γ=0.5, 4/10 adversos ⇒ λ = (1−0.5^10)·0.4 (vector independiente).
+        let mut hz_features = HashMap::new();
+        hz_features.insert("hazard.count".to_string(), 1.0);
+        hz_features.insert("hazard.gamma".to_string(), 0.5);
+        hz_features.insert("hazard.0.adverse_events".to_string(), 4.0);
+        hz_features.insert("hazard.0.total_events".to_string(), 10.0);
+        let hz = registry
+            .dispatch(34, &market_state_with(hz_features))
+            .unwrap();
+        let expected = (1.0 - 0.5f64.powi(10)) * 0.4;
+        assert!((hz.scalar_value.unwrap() - expected).abs() < 1e-12);
+
+        // op_35: scores 2:1 ⇒ pesos 2/3 y 1/3 (pin compartido con shared-rs).
+        let mut al_features = HashMap::new();
+        al_features.insert("alloc.count".to_string(), 2.0);
+        al_features.insert("alloc.0.quota_remaining".to_string(), 10.0);
+        al_features.insert("alloc.0.posterior_mean".to_string(), 0.8);
+        al_features.insert("alloc.0.hazard".to_string(), 0.0);
+        al_features.insert("alloc.1.quota_remaining".to_string(), 10.0);
+        al_features.insert("alloc.1.posterior_mean".to_string(), 0.4);
+        al_features.insert("alloc.1.hazard".to_string(), 0.0);
+        let al = registry
+            .dispatch(35, &market_state_with(al_features))
+            .unwrap();
+        let w = al.vector_result.unwrap();
+        assert!((w[0] - 2.0 / 3.0).abs() < 1e-9, "w0={}", w[0]);
+        assert!((w[1] - 1.0 / 3.0).abs() < 1e-9, "w1={}", w[1]);
+
+        // Fail-honest por registry: sin features ⇒ computed=0, sin escalar.
+        let empty = market_state_with(HashMap::new());
+        for id in [33u8, 34, 35] {
+            let honest = registry.dispatch(id, &empty).unwrap();
+            assert!(honest.scalar_value.is_none(), "op {id} sin features ⇒ sin escalar");
+            assert_eq!(honest.metadata.get("computed"), Some(&0.0), "op {id} computed=0");
+        }
+    }
+
+    fn market_state_with(features: HashMap<String, f64>) -> MarketState {
+        MarketState {
+            price_matrix: vec![vec![1.0, 2.0], vec![2.0, 3.0]],
+            liquidity_reserves: Vec::new(),
+            gas_price_gwei: 20.0,
+            block_timestamp: 1_700_000_000,
+            block_number: 18_000_000,
+            features,
+        }
+    }
 }

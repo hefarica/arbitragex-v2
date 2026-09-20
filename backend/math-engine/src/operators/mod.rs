@@ -46,6 +46,13 @@ pub mod op_31_drl_agent;
 // de referencia; SOLO nsga2 está registrado en el OperatorRegistry.
 pub mod op_32_multi_objective;
 pub mod op_32_nsga2;
+// WO-15 (2026-09-20): refuerzos agresivos toggle-gated. Viven FUERA de la
+// matriz 264×31 (precedente op_32): ninguna estrategia los invoca hasta que
+// un cartucho los declara en primary/secondary_operators — paridad exacta por
+// defecto; activados por toggle arbx:ops:disabled + declaración de cartucho.
+pub mod op_33_thompson_sampling;
+pub mod op_34_hazard_ewma;
+pub mod op_35_adaptive_allocation;
 
 #[cfg(test)]
 mod real_ops_tests;
@@ -54,7 +61,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 /// Number of registered operators; strategy projection dimensions are separate.
-pub const OPERATOR_COUNT: u8 = 32;
+pub const OPERATOR_COUNT: u8 = 35;
 
 /// Estado de mercado normalizado — input universal para todos los operadores
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -170,6 +177,11 @@ impl OperatorRegistry {
             31 => Box::new(crate::operators::op_31_drl_agent::DrlAgentOperator::new()),
             // Op 32 canónico: NSGA-II (alta topología). Un solo brazo registrado.
             32 => Box::new(crate::operators::op_32_nsga2::Nsga2Operator::new()),
+            // WO-15: refuerzos agresivos (Thompson/hazard/asignación) — fuera
+            // de la matriz 264×31, solo consumidos si un cartucho los declara.
+            33 => Box::new(crate::operators::op_33_thompson_sampling::ThompsonSamplingOperator::new()),
+            34 => Box::new(crate::operators::op_34_hazard_ewma::HazardEwmaOperator::new()),
+            35 => Box::new(crate::operators::op_35_adaptive_allocation::AdaptiveAllocationOperator::new()),
         }
     }
 

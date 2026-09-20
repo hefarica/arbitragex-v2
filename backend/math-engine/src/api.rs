@@ -466,8 +466,14 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_nsga2_registered_and_next_id_rejected() {
-        for (id, expected) in [(32, StatusCode::OK), (33, StatusCode::BAD_REQUEST)] {
+    async fn test_last_registered_id_ok_and_next_id_rejected() {
+        // WO-15: techo del registry = OPERATOR_COUNT (35 con los refuerzos
+        // 33-35); el id siguiente debe seguir siendo BAD_REQUEST.
+        let last = crate::operators::OPERATOR_COUNT;
+        for (id, expected) in [
+            (last, StatusCode::OK),
+            (last + 1, StatusCode::BAD_REQUEST),
+        ] {
             let response = test_app()
                 .oneshot(
                     Request::builder()
