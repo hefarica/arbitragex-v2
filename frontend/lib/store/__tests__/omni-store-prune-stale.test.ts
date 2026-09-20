@@ -22,7 +22,9 @@ function makeOpp(id: string, over: Partial<OmniOpportunity> = {}): OmniOpportuni
     dex_a: "uniswap_v2",
     dex_b: null,
     pair_symbol: null,
-    token_in: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    // CARDS-DEDUP-HOPS: distinct route per fixture id — the store merges by
+    // route group key, and these tests are about vigency/order, not grouping.
+    token_in: `0xroute-${id}`,
     token_out: "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
     amount_in_wei: "0",
     token_in_info: null,

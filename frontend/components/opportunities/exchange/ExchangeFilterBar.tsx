@@ -43,6 +43,8 @@ export interface ExchangeFilters {
   search: string;
   viableOnly: boolean;
   minYieldUsd: number | null;
+  /** Exact hop count (2/3/4/…) or "all" (operator order 2026-09-20). */
+  hops: number | "all";
 }
 
 export const DEFAULT_FILTERS: ExchangeFilters = {
@@ -51,6 +53,7 @@ export const DEFAULT_FILTERS: ExchangeFilters = {
   search: "",
   viableOnly: false,
   minYieldUsd: null,
+  hops: "all",
 };
 
 export interface ExchangeFilterBarProps {
@@ -206,6 +209,9 @@ export function applyExchangeFilters(
     if (!allEnabled && (o.strategy_kind == null || !filters.enabledFamilies.has(familyOf(o.strategy_kind))))
       return false;
     if (filters.chainId !== "all" && o.chain_id !== filters.chainId) return false;
+    // Hops filter (operator order 2026-09-20). hop_count null = legacy row
+    // without route_metadata — it belongs to NO hop bucket (R8 fail-honest).
+    if (filters.hops !== "all" && o.hop_count !== filters.hops) return false;
     if (search && (o.strategy_kind == null || !o.strategy_kind.toLowerCase().includes(search)))
       return false;
     // Fail-safe: viableOnly cannot assert "not rejected" for an unstatused row.

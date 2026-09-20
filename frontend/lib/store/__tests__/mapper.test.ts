@@ -84,4 +84,37 @@ describe("mapToOmniOpportunity — R8 fail-honest + route_metadata", () => {
     expect(mapToOmniOpportunity({ ...base }).leg_symbols).toBeNull();
     expect(mapToOmniOpportunity({ ...base, leg_symbols: null }).leg_symbols).toBeNull();
   });
+
+  // CARDS-DEDUP-HOPS: route-group aggregates pass through verbatim from the
+  // grouped LIVE_QUERY wire; single WS rows (no aggregates) stay null — the
+  // mapper NEVER fabricates a first_seen/confirmations=1 (R8 / RULE 00).
+  const aggBase = {
+    id: "agg",
+    chain_id: 1,
+    strategy_kind: "dex_arb",
+    detected_at: "2026-09-20T12:00:00Z",
+    trace_id: "t",
+    dex_a: "uniswap-v2",
+    dex_b: null,
+    token_in: "0xa",
+    token_out: "0xb",
+  } as Record<string, unknown>;
+  it("passes route-group aggregates (first_seen/last_seen/confirmations) through verbatim", () => {
+    const o = mapToOmniOpportunity({
+      ...aggBase,
+      first_seen_at: "2026-09-20T09:00:00Z",
+      last_seen_at: "2026-09-20T12:00:01Z",
+      confirmations: 7,
+    });
+    expect(o.first_seen_at).toBe("2026-09-20T09:00:00Z");
+    expect(o.last_seen_at).toBe("2026-09-20T12:00:01Z");
+    expect(o.confirmations).toBe(7);
+  });
+
+  it("keeps route-group aggregates null on single WS rows (no fabrication)", () => {
+    const o = mapToOmniOpportunity({ ...aggBase });
+    expect(o.first_seen_at).toBeNull();
+    expect(o.last_seen_at).toBeNull();
+    expect(o.confirmations).toBeNull();
+  });
 });

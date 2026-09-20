@@ -81,4 +81,41 @@ describe("applyExchangeFilters", () => {
       applyExchangeFilters(opps, { ...DEFAULT_FILTERS, search: "mev_01" }),
     ).toHaveLength(1);
   });
+
+  // Hops filter (operator order 2026-09-20). hop_count null = legacy row
+  // without route_metadata — it belongs to NO hop bucket (R8 fail-honest).
+  // hop_count derives from route_metadata (deriveHopCount), so fixtures carry
+  // topology instead of a raw hop_count field.
+  const rm2 = {
+    token_addresses: ["0xa", "0xb", "0xc"],
+    pool_addresses: ["0xp1", "0xp2"],
+    dex_adapters: ["uniswap_v2", "sushiswap"],
+  };
+  const rm3 = {
+    token_addresses: ["0xa", "0xb", "0xc", "0xd"],
+    pool_addresses: ["0xp1", "0xp2", "0xp3"],
+    dex_adapters: ["uniswap_v2", "sushiswap", "curve"],
+  };
+  const hopOpps = [
+    mk({ id: "h1", route_metadata: rm2, status: "detected" }),
+    mk({ id: "h2", route_metadata: rm3, status: "detected" }),
+    mk({ id: "h3", route_metadata: null, status: "detected" }), // legacy row
+  ];
+
+  it("hops=2 keeps only hop_count 2", () => {
+    const out = applyExchangeFilters(hopOpps, { ...DEFAULT_FILTERS, hops: 2 });
+    expect(out.map((o) => o.id)).toEqual(["h1"]);
+  });
+
+  it("hops filter drops mismatched and null hop_count rows", () => {
+    const out = applyExchangeFilters(hopOpps, { ...DEFAULT_FILTERS, hops: 3 });
+    expect(out.map((o) => o.id)).toEqual(["h2"]);
+  });
+
+  it('hops="all" keeps every row including null hop_count (legacy)', () => {
+    expect(
+      applyExchangeFilters(hopOpps, { ...DEFAULT_FILTERS, hops: "all" }),
+    ).toHaveLength(3);
+    expect(DEFAULT_FILTERS.hops).toBe("all");
+  });
 });
