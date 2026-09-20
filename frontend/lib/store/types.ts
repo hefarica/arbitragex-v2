@@ -368,6 +368,11 @@ export function mapToOmniOpportunity(raw: Record<string, unknown>): OmniOpportun
     detected_at: raw.detected_at != null ? String(raw.detected_at) : null,
     // CARDS-DEDUP-HOPS: route-group aggregates pass through verbatim from the
     // grouped LIVE_QUERY wire; absent on single WS rows → null, honest (R8).
+    // CONTRACT: the PRESENCE of these fields is the omni-store's SSOT
+    // heuristic (a snapshot row wins verbatim over local state). Only the
+    // grouped REST query may emit them — if a WS channel ever starts carrying
+    // confirmations/first_seen, the store heuristic must be revisited, not
+    // silently violated (NOTE-3, adversarial review 2026-09-20).
     first_seen_at:
       raw.first_seen_at != null ? String(raw.first_seen_at) : null,
     last_seen_at:

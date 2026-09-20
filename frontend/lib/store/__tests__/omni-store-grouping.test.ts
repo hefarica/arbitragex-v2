@@ -150,6 +150,25 @@ describe("omni-store — CARDS-DEDUP-HOPS route-group merge", () => {
     expect(card.confirmations).toBe(9); // server COUNT(*), not the local tally
   });
 
+  it("setOpportunities: OLDEST-first batch (ws-ingest-buffer flush order) still picks the LATEST detection's economics — WARN-1, adversarial review 2026-09-20", () => {
+    const { setOpportunities } = useOmniStore.getState();
+    // Same group as the intra-batch test above but ARRIVAL-ordered: the flush
+    // of ws-ingest-buffer is a Map in insertion order = oldest-first. Array
+    // position must never decide the economics.
+    setOpportunities([
+      makeOpp("det-1", { ...ROUTE, detected_at: T1, net_expected_profit_usd: 1 }),
+      makeOpp("det-2", { ...ROUTE, detected_at: T2, net_expected_profit_usd: 2 }),
+      makeOpp("det-3", { ...ROUTE, detected_at: T3, net_expected_profit_usd: 3 }),
+    ]);
+
+    const card = useOmniStore.getState().opportunities[0]!;
+    expect(card.id).toBe("det-3"); // T3 (latest detected_at) wins, not rows[0]
+    expect(card.net_expected_profit_usd).toBe(3);
+    expect(card.first_seen_at).toBe(T1);
+    expect(card.last_seen_at).toBe(T3);
+    expect(card.confirmations).toBe(3);
+  });
+
   it("setOpportunities: a WS push after a snapshot builds on the server aggregates", () => {
     const { setOpportunities } = useOmniStore.getState();
     setOpportunities([

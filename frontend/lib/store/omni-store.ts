@@ -213,6 +213,12 @@ function laterIso(a: string | null, b: string | null): string | null {
  * A row that CARRIES server-side aggregates (grouped snapshot from WO-3's
  * LIVE_QUERY) is authoritative as-is — the server's GROUP BY is the single
  * source of truth and overwrites any locally-rolled counters.
+ *
+ * NOTE (adversarial review 2026-09-20): the locally-rolled count is only
+ * reconciled with the server's COUNT(*) when a snapshot actually runs. In
+ * LIVE mode the snapshot fires on mount / manual refresh only (the periodic
+ * poll is a degraded-mode fallback), so the local count stands in between —
+ * bounded by pruneStale's TTL, never silently replaced.
  */
 function mergeRedetection(
   prev: OmniOpportunity,
@@ -446,9 +452,13 @@ function storeFactory(
           // detection of it. Snapshot rows (grouped LIVE_QUERY) carry server
           // aggregates and are authoritative (SSOT, mergeRedetection returns
           // them verbatim); plain rows roll the local confirmation count
-          // forward, and the next snapshot reconciles it. Batch input is
-          // newest-first: the FIRST row of a group keeps the card's economics
-          // (latest detection), later rows of the same group only add hits.
+          // forward, reconciled by the next snapshot when one runs (LIVE mode
+          // snapshots on mount/manual refresh only — the local count stands
+          // in between, bounded by pruneStale's TTL). Batch order is NOT an
+          // invariant: the dominant WS caller (ws-ingest-buffer flush)
+          // delivers ARRIVAL order (oldest-first), so a group's economics are
+          // picked by LATEST detected_at, never by array position (WARN-1,
+          // adversarial review 2026-09-20).
           const batchBy = new Map<string, OmniOpportunity[]>();
           for (const opp of opps) {
             const key = routeGroupKeyOf(opp);
@@ -468,13 +478,28 @@ function storeFactory(
           const emitted = new Set<string>();
           // Batch groups first (prepend, newest at top, first-appearance order).
           for (const [key, rows] of batchBy) {
-            // Economics row: the first (newest) row wins, unless a later row
-            // carries server aggregates — the grouped snapshot is SSOT.
-            let econ = rows[0]!;
+            // Economics row: a row carrying server aggregates is SSOT; among
+            // plain rows the LATEST detected_at wins (tie → last in array) —
+            // order-independent (the WS caller flushes oldest-first).
+            let econ: OmniOpportunity | null = null;
             for (const r of rows) {
               if (r.first_seen_at != null || r.confirmations != null) {
                 econ = r;
                 break;
+              }
+            }
+            if (econ == null) {
+              econ = rows[0]!;
+              let best = Date.parse(econ.detected_at ?? "");
+              for (let i = 1; i < rows.length; i++) {
+                const r = rows[i]!;
+                const ts = Date.parse(r.detected_at ?? "");
+                // Unparseable rows never win (R8); a parseable row only needs
+                // >= so same-timestamp bursts resolve to the LAST one seen.
+                if (Number.isNaN(best) || (!Number.isNaN(ts) && ts >= best)) {
+                  econ = r;
+                  best = ts;
+                }
               }
             }
             const idx = stateIdx.get(key);
