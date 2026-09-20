@@ -16,7 +16,8 @@
  * ## Sources
  * - `scored_opportunities` (archiver consumes `arbx:scoring:scored`): per-
  *   strategy score aggregates.
- * - `bayesian_priors` (per-strategy calibration store; writer is a follow-up):
+ * - `bayesian_priors` (per-strategy calibration store; writer = searcher-rs
+ *   beta_priors consolidator, gated by ARBX_BETA_PRIORS_MODE):
  *   calibrated-strategy count.
  */
 import type { Application, Request, Response } from "express";
@@ -106,7 +107,7 @@ export function mountSimPipeline(
         // scoring_pipeline.rs) — advisory only, never gates emission.
         posture: "observe_only_advisory",
         calibration_identity: "strategy (STRAT-IDENT-01)",
-        prior_source: "bayesian_priors (per-strategy; writer pending follow-up)",
+        prior_source: "bayesian_priors (per-strategy; writer = beta_priors, ARBX_BETA_PRIORS_MODE)",
       },
       strategy_count: identified ? identified.length : null,
       calibrated_strategies,

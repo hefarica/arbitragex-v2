@@ -82,6 +82,7 @@ pub mod pool_discovery;
 pub mod pool_sources;
 // Stage 2c (§IV read side): per-operator log-LR cache + the posterior fold.
 // BR-05 (2026-09-07): WO-07 port-back.
+pub mod beta_priors;
 pub mod priors_cache;
 pub mod publisher;
 // QUOTEBASE-264 05_QUOTE_BASE: QuoteScore weighted form + workbook fixtures
