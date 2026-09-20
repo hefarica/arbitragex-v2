@@ -52,10 +52,10 @@ interface EntropyResponse {
 }
 
 interface TelemetryEvent {
-  entropy?: number;
-  convergence_rate?: number;
-  timestamp?: string;
-  type?: string;
+  cartridge_id?: string;
+  level?: string;
+  message?: string;
+  [k: string]: unknown;
 }
 
 test.describe('OMEGA SYSTEM AUDIT: Full Stack Integrity', () => {
@@ -216,12 +216,14 @@ test.describe('OMEGA SYSTEM AUDIT: Full Stack Integrity', () => {
 
     socket.on('connect', () => {
       console.log('[AUDIT] Socket.IO connected');
-      // Suscribirse a room de métricas
-      socket.emit('subscribe:metrics');
+      // WO-D5 (schema-drift-2026-09-20): the `metrics` room was a dead wire
+      // (handler with no producer/consumer) and was removed — audit the LIVE
+      // cartridge-telemetry room instead.
+      socket.emit('subscribe:telemetry');
     });
 
-    socket.on('metrics', (data: TelemetryEvent) => {
-      console.log('[AUDIT] Received metrics event:', data);
+    socket.on('telemetry', (data: TelemetryEvent) => {
+      console.log('[AUDIT] Received telemetry event:', data);
       receivedEvent = true;
       receivedData = data;
     });
@@ -237,7 +239,7 @@ test.describe('OMEGA SYSTEM AUDIT: Full Stack Integrity', () => {
         resolve();
       }, CONFIG.maxWebSocketWaitMs);
 
-      socket.on('metrics', () => {
+      socket.on('telemetry', () => {
         clearTimeout(timeout);
         resolve();
       });
@@ -250,7 +252,7 @@ test.describe('OMEGA SYSTEM AUDIT: Full Stack Integrity', () => {
     if (connectionError || (!socket.connected && !receivedEvent)) {
       const reason = connectionError
         ? connectionError.message
-        : 'no connect and no metrics event within wait window';
+        : 'no connect and no telemetry event within wait window';
       console.log(`[AUDIT] WebSocket unavailable: ${reason}`);
       test.skip(true, `WebSocket telemetry unavailable: ${reason} — VALIDATION_PENDING_INFRASTRUCTURE`);
       return;
@@ -259,7 +261,9 @@ test.describe('OMEGA SYSTEM AUDIT: Full Stack Integrity', () => {
     expect(socket.connected || receivedEvent, 'Socket should connect or have received events').toBeTruthy();
 
     if (receivedData) {
-      expect(receivedData).toHaveProperty('type');
+      // CartridgeTelemetry is a loose, cartridge-authored shape — assert it is
+      // a non-empty object rather than a fixed field contract.
+      expect(Object.keys(receivedData).length, 'Telemetry payload should be a non-empty object').toBeGreaterThan(0);
       console.log(`[AUDIT] WebSocket telemetry received: ${JSON.stringify(receivedData)}`);
     }
   });
