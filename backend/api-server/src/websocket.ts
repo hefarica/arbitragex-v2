@@ -258,7 +258,7 @@ function parseAllowedOrigins(): string[] {
 
 // A1 fix (audit 2026-05-10): WebSocket handshake authentication.
 // Without this gate, ANY client could subscribe to `subscribe:opportunities`
-// and `subscribe:metrics`, leaking real-time MEV alpha to competitors.
+// and `subscribe:telemetry`, leaking real-time MEV alpha to competitors.
 // The token can be supplied via three sources, in priority order:
 //   1. auth payload — io.connect(URL, { auth: { token: "..." } })  (preferred)
 //   2. query param  — io.connect(URL + "?token=...")               (browser fallback)
@@ -412,10 +412,10 @@ export function setupWebSocketGateway(server: HttpServer, carnotStore?: CarnotSt
             socket.join('opportunities');
         });
 
-        socket.on('subscribe:metrics', () => {
-            log.debug?.({ event: 'ws.subscribed', socket_id: socket.id, room: 'metrics' }, 'room subscription');
-            socket.join('metrics');
-        });
+        // WO-D5 (schema-drift-2026-09-20): the `metrics` room had a handler but
+        // NO producer (zero `io.to('metrics').emit` in the codebase) and NO
+        // frontend consumer — a dead wire that let clients join a room which
+        // could never deliver anything. Removed rather than left dormant (R10).
 
         // Arteria WSS — OMEGA-v2: suscripción a señales de convergencia del
         // motor SED (Rust).  Los clientes frontend reciben en tiempo real el
