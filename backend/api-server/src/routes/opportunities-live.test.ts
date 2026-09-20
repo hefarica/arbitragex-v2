@@ -231,7 +231,11 @@ describe("CARDS-DEDUP-HOPS — grouped CTE + route-group aggregates on the wire"
     expect(text).toContain("MIN(o.detected_at) AS first_seen_at");
     expect(text).toContain("MAX(o.detected_at) AS last_seen_at");
     expect(text).toContain("COUNT(*)::int      AS confirmations");
-    expect(text).toContain("(ARRAY_AGG(o.id ORDER BY o.detected_at DESC))[1] AS latest_id");
+    // id DESC tiebreaker: same-burst detections must resolve to the same
+    // latest row every poll (economics stability, WARN-1 review WO-3).
+    expect(text).toContain(
+      "(ARRAY_AGG(o.id ORDER BY o.detected_at DESC, o.id DESC))[1] AS latest_id",
+    );
     expect(text).toContain("GROUP BY 1");
     expect(text).toContain("JOIN opportunities o");
     expect(text).toContain("o.id = g.latest_id");

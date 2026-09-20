@@ -298,7 +298,9 @@ WITH grouped AS (
     MAX(o.detected_at) AS last_seen_at,
     COUNT(*)::int      AS confirmations,
     -- Latest detection per group: its economics become the card's values.
-    (ARRAY_AGG(o.id ORDER BY o.detected_at DESC))[1] AS latest_id
+    -- id DESC tiebreaker: bursts sharing one detected_at must pick the same
+    -- latest row every poll, or the card's economics flicker between polls.
+    (ARRAY_AGG(o.id ORDER BY o.detected_at DESC, o.id DESC))[1] AS latest_id
   FROM opportunities o
   -- Same window + viability filter as the pre-grouping query, applied INSIDE
   -- the CTE so both the aggregates and the outer row set share one boundary.

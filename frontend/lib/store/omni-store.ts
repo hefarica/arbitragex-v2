@@ -25,6 +25,7 @@ import { devtools } from "zustand/middleware";
 
 import type { Chain, DEX, Pool } from "@/lib/registries/types";
 import type { OmniOpportunity } from "./types";
+import { routeGroupKeyOf } from "./route-key";
 import type { WalletRow } from "@/lib/api/wallets";
 import { getApiBaseUrl } from "@/lib/api-client";
 import {
@@ -186,6 +187,49 @@ type OmniStoreState = RegistrySlice &
 /** Maximum opportunities to keep in memory (prevents memory leak) */
 const MAX_OPPORTUNITIES = 200;
 
+// CARDS-DEDUP-HOPS (2026-09-20): ISO min/max helpers for rolling the vigency
+// aggregates when a re-detection of the same route arrives. null-safe — a row
+// without a parseable timestamp keeps null (R8: undated ≠ epoch).
+function earlierIso(a: string | null, b: string | null): string | null {
+  if (a == null) return b;
+  if (b == null) return a;
+  return Date.parse(b) < Date.parse(a) ? b : a;
+}
+function laterIso(a: string | null, b: string | null): string | null {
+  if (a == null) return b;
+  if (b == null) return a;
+  return Date.parse(b) > Date.parse(a) ? b : a;
+}
+
+/**
+ * CARDS-DEDUP-HOPS: merge a re-detection of an EXISTING route card
+ * (same routeGroupKeyOf, different row id — the WS path delivers raw
+ * re-detections). The incoming economics REPLACE the card's values in place
+ * (streaming-snapshot refresh, operator order 2026-09-20 — trade values
+ * change over time; the card must update without remounting or duplicating),
+ * while the vigency aggregates roll forward: one more observed detection,
+ * earliest first_seen, latest last_seen.
+ *
+ * A row that CARRIES server-side aggregates (grouped snapshot from WO-3's
+ * LIVE_QUERY) is authoritative as-is — the server's GROUP BY is the single
+ * source of truth and overwrites any locally-rolled counters.
+ */
+function mergeRedetection(
+  prev: OmniOpportunity,
+  incoming: OmniOpportunity,
+  hits: number,
+): OmniOpportunity {
+  if (incoming.first_seen_at != null || incoming.confirmations != null) {
+    return incoming; // grouped snapshot row — server aggregates win
+  }
+  return {
+    ...incoming,
+    first_seen_at: prev.first_seen_at ?? earlierIso(prev.detected_at, incoming.detected_at),
+    last_seen_at: laterIso(prev.last_seen_at ?? prev.detected_at, incoming.detected_at),
+    confirmations: (prev.confirmations ?? 0) + hits,
+  };
+}
+
 // =============================================================================
 // Omni-Store Implementation
 // =============================================================================
@@ -340,8 +384,36 @@ function storeFactory(
           const idx = state.opportunities.findIndex((o) => o.id === opp.id);
           if (idx !== -1) {
             if (state.opportunities[idx] === opp) return state;
+            const prev = state.opportunities[idx]!;
+            // CARDS-DEDUP-HOPS: a same-id row UPDATE is not a new detection —
+            // keep the card's rolled vigency aggregates when the incoming row
+            // doesn't carry them (single WS rows never do, R8).
             const next = state.opportunities.slice();
-            next[idx] = opp;
+            next[idx] = {
+              ...opp,
+              first_seen_at: opp.first_seen_at ?? prev.first_seen_at,
+              last_seen_at: opp.last_seen_at ?? prev.last_seen_at,
+              confirmations: opp.confirmations ?? prev.confirmations,
+            };
+            return {
+              opportunities: next,
+              lastUpdate: new Date().toISOString(),
+            };
+          }
+          // CARDS-DEDUP-HOPS (operator order 2026-09-20): a NEW id for an
+          // EXISTING route group is a RE-DETECTION, not a new card — the
+          // dashboard used to duplicate the card on every re-detection. The
+          // card stays where it is (position preserved, stable React key =
+          // routeGroupKeyOf → no remount/flicker) and only its economics
+          // refresh in place while the aggregates roll forward.
+          const key = routeGroupKeyOf(opp);
+          const gIdx = state.opportunities.findIndex(
+            (o) => o.id !== opp.id && routeGroupKeyOf(o) === key,
+          );
+          if (gIdx !== -1) {
+            const prev = state.opportunities[gIdx]!;
+            const next = state.opportunities.slice();
+            next[gIdx] = mergeRedetection(prev, opp, 1);
             return {
               opportunities: next,
               lastUpdate: new Date().toISOString(),
@@ -369,26 +441,76 @@ function storeFactory(
       // efficient by only touching what changed.
       setOpportunities: (opps: OmniOpportunity[]) =>
         set((state) => {
-          const existing = new Map(state.opportunities.map((o) => [o.id, o]));
-          const result: OmniOpportunity[] = [];
-          // New/updated opps first (prepend, newest at top)
-          const newOnes: OmniOpportunity[] = [];
+          // CARDS-DEDUP-HOPS (operator order 2026-09-20): merge by ROUTE GROUP
+          // KEY, not by id. Identity on the wire is the ROUTE — the id is one
+          // detection of it. Snapshot rows (grouped LIVE_QUERY) carry server
+          // aggregates and are authoritative (SSOT, mergeRedetection returns
+          // them verbatim); plain rows roll the local confirmation count
+          // forward, and the next snapshot reconciles it. Batch input is
+          // newest-first: the FIRST row of a group keeps the card's economics
+          // (latest detection), later rows of the same group only add hits.
+          const batchBy = new Map<string, OmniOpportunity[]>();
           for (const opp of opps) {
-            if (existing.has(opp.id)) {
-              // Update in place — only if reference changed
-              const old = existing.get(opp.id)!;
-              if (old !== opp) {
-                existing.set(opp.id, opp);
-              }
-            } else {
-              newOnes.push(opp);
-            }
+            const key = routeGroupKeyOf(opp);
+            const rows = batchBy.get(key);
+            if (rows == null) batchBy.set(key, [opp]);
+            else rows.push(opp);
           }
-          // Build: new ones at top, then existing in their original order
-          result.push(...newOnes);
+          // Index existing state rows by FIRST occurrence of their group key —
+          // state rows are NEVER dropped here (pruneStale owns eviction) and
+          // legacy duplicate cards in state collapse to their first entry.
+          const stateIdx = new Map<string, number>();
+          for (let i = 0; i < state.opportunities.length; i++) {
+            const k = routeGroupKeyOf(state.opportunities[i]!);
+            if (!stateIdx.has(k)) stateIdx.set(k, i);
+          }
+          const result: OmniOpportunity[] = [];
+          const emitted = new Set<string>();
+          // Batch groups first (prepend, newest at top, first-appearance order).
+          for (const [key, rows] of batchBy) {
+            // Economics row: the first (newest) row wins, unless a later row
+            // carries server aggregates — the grouped snapshot is SSOT.
+            let econ = rows[0]!;
+            for (const r of rows) {
+              if (r.first_seen_at != null || r.confirmations != null) {
+                econ = r;
+                break;
+              }
+            }
+            const idx = stateIdx.get(key);
+            if (idx != null) {
+              result.push(mergeRedetection(state.opportunities[idx]!, econ, rows.length));
+            } else if (
+              econ.first_seen_at != null ||
+              econ.confirmations != null ||
+              rows.length === 1
+            ) {
+              result.push(econ);
+            } else {
+              // Pure-WS batch group with re-detections: roll the aggregates
+              // locally — honest counting, next snapshot reconciles.
+              let first: string | null = null;
+              let last: string | null = null;
+              for (const r of rows) {
+                first = earlierIso(first, r.detected_at);
+                last = laterIso(last, r.detected_at);
+              }
+              result.push({
+                ...econ,
+                first_seen_at: first,
+                last_seen_at: last,
+                confirmations: rows.length,
+              });
+            }
+            emitted.add(key);
+          }
+          // Remaining state rows keep their relative order at the tail.
           for (const opp of state.opportunities) {
-            const updated = existing.get(opp.id);
-            if (updated) result.push(updated);
+            const k = routeGroupKeyOf(opp);
+            if (!emitted.has(k)) {
+              result.push(opp);
+              emitted.add(k);
+            }
           }
           return {
             opportunities: result.slice(0, MAX_OPPORTUNITIES),
@@ -406,11 +528,15 @@ function storeFactory(
       // we never silently drop data we cannot date. (FE-0029: detected_at is
       // now honestly null on malformed payloads instead of a fabricated now()
       // that made such cards immortal with age 0.)
+      // CARDS-DEDUP-HOPS: the card's vigency clock is its LAST RATIFICATION
+      // (last_seen_at) — a route re-detected seconds ago is alive even if its
+      // first detection is hours old. last_seen_at ?? detected_at.
       pruneStale: (maxAgeMs: number) =>
         set((state) => {
           const cutoff = Date.now() - maxAgeMs;
           const next = state.opportunities.filter((o) => {
-            const t = o.detected_at == null ? NaN : Date.parse(o.detected_at);
+            const ts = o.last_seen_at ?? o.detected_at;
+            const t = ts == null ? NaN : Date.parse(ts);
             return Number.isNaN(t) || t >= cutoff;
           });
           if (next.length === state.opportunities.length) return state;
