@@ -40,21 +40,10 @@ RUN npm ci --no-audit --no-fund
 
 # App sources after install so dependency layer stays cacheable.
 COPY frontend ./frontend
-RUN npm run -w @arbx/frontend build \
- && NEXT_BIN="$(find /build/frontend/node_modules /build/node_modules -path '*/next/dist/bin/next' -type f 2>/dev/null | head -n1)" \
- && echo "resolved next binary: ${NEXT_BIN}" \
- && test -n "${NEXT_BIN}" \
- # Guarantee a stable layout for the runtime stage:
- #   /build/frontend/node_modules/next  → full package + peer graph siblings
- # so Node can resolve '../server/require-hook' and '@swc/helpers/*'.
- && if [ ! -e /build/frontend/node_modules/next ]; then \
-      mkdir -p /build/frontend/node_modules; \
-      NEXT_PKG="$(dirname "$(dirname "$(dirname "${NEXT_BIN}")")")"; \
-      cp -a "${NEXT_PKG}" /build/frontend/node_modules/next; \
-    fi \
- && test -f /build/frontend/node_modules/next/dist/bin/next \
- && printf '%s\n' '#!/bin/sh' 'exec node /app/frontend/node_modules/next/dist/bin/next "$@"' > /build/frontend-next-entrypoint.sh \
- && chmod 755 /build/frontend-next-entrypoint.sh
+# PERF-STACK WO-9 (2026-09-20): output: "standalone" (next.config.js) makes the
+# build trace the minimal runtime into frontend/.next/standalone — no more
+# full-node_modules layout + `next start` in the runtime stage.
+RUN npm run -w @arbx/frontend build
 
 FROM node:20-bookworm-slim AS runtime
 WORKDIR /app
@@ -62,18 +51,17 @@ RUN apt-get update && apt-get install -y --no-install-recommends tini ca-certifi
     && rm -rf /var/lib/apt/lists/* \
     && groupadd -r arbx && useradd -r -g arbx arbx
 ENV NODE_ENV=production
-# Root hoist (shared deps) + workspace-local node_modules (next + @swc/helpers…).
-COPY --from=builder /build/node_modules /app/node_modules
-COPY --from=builder /build/frontend/node_modules /app/frontend/node_modules
-COPY --from=builder /build/frontend/.next /app/frontend/.next
-COPY --from=builder /build/frontend/package.json /app/frontend/package.json
-COPY --from=builder /build/frontend/next.config.js /app/frontend/next.config.js
-COPY --from=builder /build/frontend/public /app/frontend/public
-COPY --from=builder /build/frontend-next-entrypoint.sh /app/frontend-next-entrypoint.sh
+# Standalone tree: the build ran from the workspace root (/build), so Next
+# nests the app at ./frontend/ inside .next/standalone (monorepo layout).
+# server.js + traced node_modules come from the standalone copy; static assets
+# and public/ are NOT traced and must be copied alongside (Next docs pattern).
+COPY --from=builder --chown=arbx:arbx /build/frontend/.next/standalone ./
+COPY --from=builder --chown=arbx:arbx /build/frontend/.next/static ./frontend/.next/static
+COPY --from=builder --chown=arbx:arbx /build/frontend/public ./frontend/public
 USER arbx
 WORKDIR /app/frontend
 EXPOSE 5173
-# NODE_PATH lets nested next see root-hoisted packages when needed.
-ENV NODE_PATH=/app/node_modules
+# server.js reads HOSTNAME/PORT from env (defaults 0.0.0.0/3000).
+ENV HOSTNAME=0.0.0.0 PORT=5173
 ENTRYPOINT ["/usr/bin/tini","--"]
-CMD ["/app/frontend-next-entrypoint.sh","start","-p","5173"]
+CMD ["node", "server.js"]
