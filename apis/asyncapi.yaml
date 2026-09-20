@@ -79,15 +79,6 @@ channels:
       summary: Join the runtime_ack room (admin only)
       message:
         $ref: '#/components/messages/EmptyControl'
-  'subscribe:metrics':
-    description: >
-      Control message — join the `metrics` room. NOTE: this room is currently
-      DORMANT — clients may join, but the server emits nothing to it.
-    publish:
-      operationId: joinMetrics
-      summary: Join the (dormant) metrics room
-      message:
-        $ref: '#/components/messages/EmptyControl'
 
   # ───────────────────────── Server → client data events ─────────────────────────
   'new_opportunity':
