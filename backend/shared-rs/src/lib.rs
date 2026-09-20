@@ -26,6 +26,7 @@ pub mod paper_mode;
 pub mod pre_execute_checklist;
 pub mod price_oracle;
 pub mod risk_ledger;
+pub mod rpc_bandit;
 pub mod rpc_failover;
 pub mod settlement_risk;
 pub mod sim_taxonomy;
