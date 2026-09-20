@@ -24,6 +24,12 @@
 //!   5. Serve `/health` + `/metrics` on SEARCHER_HEALTH_PORT.
 //!   6. Await ctrl-c.
 
+// PERF-STACK WO-2 (2026-09-20): mimalloc — asignaciones del hot-path más
+// rápidas que glibc malloc. cfg linux: el binario prod corre en Debian VPS.
+#[cfg(target_os = "linux")]
+#[global_allocator]
+static GLOBAL_ALLOC: mimalloc::MiMalloc = mimalloc::MiMalloc;
+
 mod amm_math;
 mod calldata;
 mod canonical_knobs;
