@@ -55,12 +55,12 @@
 - Consumes: schema left by migrations 097 + 108.
 - Produces: `bayesian_priors.token_pair` nullable — the strategy-keyed writer can INSERT `token_pair = NULL` (or omit it). No other task touches DDL.
 
-- [ ] **Step 1: Verify the next free migration number**
+- [x] **Step 1: Verify the next free migration number**
 
 Run: `ls database/migrations | sort | tail -3`
 Expected: `120_service_credentials_envelope_encryption.sql` and `121_opportunities_detector_id_pipeline_latency.sql` are the last two. If a `122_*` already exists (another branch landed one), renumber THIS file to the next free slot and use that number everywhere in this plan.
 
-- [ ] **Step 2: Write the migration**
+- [x] **Step 2: Write the migration**
 
 ```sql
 -- 122_bayesian_priors_token_pair_nullable.sql
@@ -82,11 +82,11 @@ COMMENT ON COLUMN bayesian_priors.strategy_key IS
     'STRAT-IDENT-01 identity (cartridge stem / engine kind). Unique via uq_bayesian_priors_strategy (partial). Writer: searcher-rs beta_priors consolidator (ARBX_BETA_PRIORS_MODE).';
 ```
 
-- [ ] **Step 3: Sanity-check the SQL against a scratch PG (optional but preferred)**
+- [x] **Step 3: Sanity-check the SQL against a scratch PG (optional but preferred)**
 
 If any local PG is reachable (e.g. via the Postgres MCP, read-only will NOT work for DDL — skip instead), verify syntax mentally against migration 097's style. No local Docker (RULE 01). The real verification is -61's VPS migration run (disk-gated, their sequence).
 
-- [ ] **Step 4: Commit** (only after the #606-merged gate — see Global Constraints / Task 5 Step 0b)
+- [x] **Step 4: Commit** (only after the #606-merged gate — see Global Constraints / Task 5 Step 0b)
 
 ```bash
 git fetch origin
@@ -115,7 +115,7 @@ EOF
   - `pub(crate) fn mode_enabled(v: Option<&str>) -> bool` and `pub(crate) fn build_map(rows: Vec<(String, i64, i64)>) -> HashMap<String, PriorState>` (pure, unit-tested).
   - Task 3 relies on: `BetaPriorsCache::spawn_opt(&pool)` in `OpportunityEmitter::new`, `BetaPriorsCache::disabled()` in `new_dry_run`, `self.beta_priors.get(&strategy_key)` at the scoring call site.
 
-- [ ] **Step 1: Write the failing tests (new file with tests first, impl stubs)**
+- [x] **Step 1: Write the failing tests (new file with tests first, impl stubs)**
 
 Create `backend/searcher-rs/src/beta_priors.rs` containing ONLY the test module plus minimal stubs so it compiles and the tests FAIL (functions return wrong/empty values):
 
@@ -220,7 +220,7 @@ use tracing::{debug, info};
 
 Wire the module: add `pub mod beta_priors;` next to `mod priors_cache;` in the crate root (`grep -n "mod priors_cache" backend/searcher-rs/src/lib.rs backend/searcher-rs/src/main.rs`).
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
 Run (from `backend/searcher-rs`, Bash):
 ```bash
@@ -228,7 +228,7 @@ CARGO_TARGET_DIR="C:/Users/HFRC/Desktop/arbitragex-v2-main (17)/backend/target" 
 ```
 Expected: COMPILE FAIL or test FAILURES (`mode_off_by_default_and_truthy_values_only` fails because stub returns true; `build_map_*` fail on empty map). If compile errors point at your stubs, fix the stubs (not the tests) until it compiles and fails on assertions.
 
-- [ ] **Step 3: Write the real implementation**
+- [x] **Step 3: Write the real implementation**
 
 Replace the stubs with the full module (keep the tests untouched):
 
@@ -439,14 +439,14 @@ async fn refresh_once(pool: &PgPool, cache: &BetaPriorsCache) -> anyhow::Result<
 
 (`build_map` uses `prof.clamp(0, obs)` — for `i64` prof against `i64 obs` before the `as u64` cast; write it as `let prof = prof.clamp(0, obs);` on i64 values then cast both. Adjust the exact expression if clippy complains — semantics must hold: 0 ≤ profitable ≤ observation.)
 
-- [ ] **Step 4: Run tests to verify they pass**
+- [x] **Step 4: Run tests to verify they pass**
 
 ```bash
 CARGO_TARGET_DIR="C:/Users/HFRC/Desktop/arbitragex-v2-main (17)/backend/target" cargo test -p searcher-rs beta_priors 2>&1 | tail -15
 ```
 Expected: 6 passed, 0 failed.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/beta_priors.rs src/lib.rs
@@ -477,7 +477,7 @@ EOF
 - Consumes: `BetaPriorsCache::{spawn_opt, disabled, get}` (Task 2 exact signatures).
 - Produces: `OpportunityEmitter` with a `beta_priors: BetaPriorsCache` field; `score_and_publish` passes `self.beta_priors.get(&strategy_key)` as the `prior` argument of `evaluate_paper_opportunity`. Downstream observable effect: emitted score records flip `source_context: "flat_prior" → "calibrated"` once the store has ≥1 observation for the strategy and the mode is ON.
 
-- [ ] **Step 1: Add the field + constructors**
+- [x] **Step 1: Add the field + constructors**
 
 In `opportunity_emitter.rs`:
 
@@ -506,7 +506,7 @@ In `new_dry_run()` (~:196), after `priors: PriorsCache::disabled(),`:
             beta_priors: BetaPriorsCache::disabled(),
 ```
 
-- [ ] **Step 2: Replace the hardcoded None at the scoring call site**
+- [x] **Step 2: Replace the hardcoded None at the scoring call site**
 
 Find the block (~:589-596) that currently reads:
 
@@ -542,7 +542,7 @@ Then in the `evaluate_paper_opportunity(...)` call right below, replace the trai
 
 (The call currently ends `Some(chain_id_i64),\n            None,\n        )` — the replaced argument is that final `None`.)
 
-- [ ] **Step 3: Fix the stale §"NOT here" comment in priors_cache.rs**
+- [x] **Step 3: Fix the stale §"NOT here" comment in priors_cache.rs**
 
 Replace lines 29-38 of `priors_cache.rs` (the whole `//! ## NOT here` block) with:
 
@@ -558,7 +558,7 @@ Replace lines 29-38 of `priors_cache.rs` (the whole `//! ## NOT here` block) wit
 //! stage2_calibration job — Stage 2b).
 ```
 
-- [ ] **Step 4: Verify — full searcher-rs suite + clippy + fmt**
+- [x] **Step 4: Verify — full searcher-rs suite + clippy + fmt**
 
 ```bash
 CARGO_TARGET_DIR="C:/Users/HFRC/Desktop/arbitragex-v2-main (17)/backend/target" cargo test -p searcher-rs 2>&1 | tail -8
@@ -569,7 +569,7 @@ Expected: all tests pass (existing emitter tests at `opportunity_emitter.rs:1035
 
 Note on wiring test coverage: `score_and_publish` requires a live Redis `ConnectionManager`, so the wiring (get + pass-through) has no unit test — same as the §IV fold wiring at :645 (covered by priors_cache tests + compiler). The `source_context` flip itself is already unit-covered by `scoring_pipeline.rs` test `calibrated_profitable_history_shifts_posterior_up`. This is the established precedent, not an omission.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/opportunity_emitter.rs src/priors_cache.rs
@@ -597,7 +597,7 @@ EOF
 - Consumes: nothing from Tasks 2-3 at runtime (this route only COUNTS rows).
 - Produces: accurate operator-facing copy. No schema/type change; `sim-pipeline.test.ts` does not assert `prior_source` (verified).
 
-- [ ] **Step 1: Edit the two lines**
+- [x] **Step 1: Edit the two lines**
 
 Line ~:19, replace:
 ```typescript
@@ -618,7 +618,7 @@ with:
         prior_source: "bayesian_priors (per-strategy; writer = beta_priors, ARBX_BETA_PRIORS_MODE)",
 ```
 
-- [ ] **Step 2: Run the route's tests + typecheck**
+- [x] **Step 2: Run the route's tests + typecheck**
 
 From `backend/api-server` (Bash):
 ```bash
@@ -627,7 +627,7 @@ npx vitest run test/sim-pipeline-route.test.ts 2>/dev/null || npx vitest run src
 (Use whichever path matches the repo layout: `ls src/routes/sim-pipeline.test.ts test/ | head`.)
 Expected: all pass. Then typecheck per repo convention (`npx tsc --noEmit` if a tsconfig covers routes; if the FE/BE typecheck script differs, run `npm run -s typecheck` if defined).
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 
 ```bash
 git add src/routes/sim-pipeline.ts
@@ -653,7 +653,7 @@ Also captured: `COUNT(*) = 4,769,123` (30h retention) → cadence decision "Refr
 
 - [x] **Step 0b: Confirm -61 merged #606 — EXECUTED 2026-09-20: MERGED** (confirmed by -61 in session). Branch creation is unblocked.
 
-- [ ] **Step 1: Full workspace gate (Rust + fmt + clippy)**
+- [x] **Step 1: Full workspace gate (Rust + fmt + clippy)**
 
 From `backend/searcher-rs` (Bash):
 ```bash
@@ -663,7 +663,7 @@ CARGO_TARGET_DIR="C:/Users/HFRC/Desktop/arbitragex-v2-main (17)/backend/target" 
 ```
 Expected: tests pass (incl. WO-7/WO-7b suites from #605/#611 — the branch is cut from `origin/main` AFTER those merged; if #611 has NOT merged yet, its tests simply aren't here — fine), clippy clean, fmt clean.
 
-- [ ] **Step 2: Verify branch discipline (§36)**
+- [x] **Step 2: Verify branch discipline (§36)**
 
 ```bash
 git branch --show-current   # MUST print feat/deuda4-beta-prior-writer
@@ -671,7 +671,7 @@ git log --oneline origin/main..HEAD
 ```
 Expected: exactly the 4 commits from Tasks 1-4.
 
-- [ ] **Step 3: Push + PR**
+- [x] **Step 3: Push + PR**
 
 ```bash
 git push -u origin feat/deuda4-beta-prior-writer
@@ -682,9 +682,11 @@ PR body: summary (writer/reader/migration/gate), label semantics (operator decis
 🤖 Generated with [Claude Code](https://github.com/anthropic.com/claude-code)
 ```
 
-- [ ] **Step 4: Avisos (claims discipline)**
+- [x] **Step 4: Avisos (claims discipline)**
 
-Send a8 the PR link + offer line-by-line review of the real commit (same pact as WO-7b). Send -61 the PR link + the two deploy-side items they own: run migration 122 (disk-gated, their sequence) and flip `ARBX_BETA_PRIORS_MODE=on` after their Stage 2 flips land. Wait for a8's review verdict before considering the loop closed; fix anything found in a follow-up commit on the same branch.
+Send a8 the PR link + offer line-by-line review of the real commit (same pact as WO-7b). Send -61 the PR link + the two deploy-side items they own: run migration 123 (disk-gated, their sequence) and flip `ARBX_BETA_PRIORS_MODE=on` after their Stage 2 flips land. Wait for a8's review verdict before considering the loop closed; fix anything found in a follow-up commit on the same branch.
+
+> **Execution log (2026-09-20):** all tasks 1-5 Steps 1-4 landed on branch `feat/deuda4-beta-prior-writer` → PR #618. The 122-slot escape hatch (Task 1 Step 1) fired: #610 (open, unmerged) took `122_route_discovery_outcomes_partitioned`, so the migration was renumbered to **123** in commit 028252cd after PR creation (-61 blocker). Post-merge Step 5 remains deferred to -61's deploy + operator mode flip.
 
 - [ ] **Step 5: Post-merge verification checklist (deferred to -61's deploy; this session VERIFIES, never deploys)**
 
