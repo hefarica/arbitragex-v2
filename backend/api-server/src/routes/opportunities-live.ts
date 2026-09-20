@@ -232,8 +232,20 @@ interface OpportunityLiveRow extends QueryResultRow {
   // full A→B cycle (2..N legs) per opportunity (R8: empty {} = no topology,
   // caller falls back to dex_a/dex_b).
   route_metadata: Record<string, unknown> | null;
+  // CARDS-DEDUP-HOPS (2026-09-20): route-group aggregates from the `grouped`
+  // CTE — exact GROUP BY outputs (R8, never synthesised). first/last_seen_at
+  // are TIMESTAMPTZ (node-postgres → Date); confirmations = COUNT(*) >= 1 by
+  // construction. route_group_key is the SQL twin of the frontend's
+  // routeGroupKeyOf() (frontend/lib/store/route-key.ts) — bit-for-bit
+  // identical or client and server disagree on route identity (-61 condition,
+  // pinned by route-key.test.ts).
+  first_seen_at: Date | string;
+  last_seen_at: Date | string;
+  confirmations: number;
+  route_group_key: string;
   // WO-H4 (2026-09-07): COUNT(*) OVER () — total rows matching the window
   // WHERE (pre-LIMIT). Same value on every row; absent when 0 rows match.
+  // CARDS-DEDUP-HOPS: counts route GROUPS, not raw detections.
   window_total: number;
   // LEFT JOIN tokens ti (token_in side)
   token_in_symbol: string | null;
@@ -249,8 +261,58 @@ interface OpportunityLiveRow extends QueryResultRow {
 
 // ── Query ────────────────────────────────────────────────────────────────────
 
+// CARDS-DEDUP-HOPS (2026-09-20, operador): the exchange dashboard used to
+// render one card per re-detection of the SAME route — identical economics,
+// only detected_at moved. The `grouped` CTE collapses every re-detection of
+// the same route identity into ONE row: MIN/MAX detected_at become
+// first_seen_at/last_seen_at ("time since first detection" + "time since last
+// vigency ratification") and COUNT(*) becomes `confirmations`. The wire row
+// carries the LATEST detection's economics (ARRAY_AGG ... ORDER BY
+// detected_at DESC)[1] — trade values refresh in place on the existing card,
+// the card never duplicates per re-detection.
+//
+// route_group_key is the SQL twin of the frontend's routeGroupKeyOf()
+// (frontend/lib/store/route-key.ts) — BIT-FOR-BIT identical or client and
+// server disagree on identity (condition imposed by -61, pinned by
+// route-key.test.ts). The key is DIRECTIONAL by design (debate 2026-09-20,
+// -89): dex_a/dex_b are NOT normalised because token_in/token_out define the
+// economics — A→B and B→A are different trades. concat_ws skips NULLs, hence
+// the COALESCE-to-'' on every nullable segment.
+//
+// R8 fail-honest: aggregates are exact GROUP BY outputs — nothing is
+// synthesised; a group of one still reports first_seen=last_seen=detected_at
+// and confirmations=1 (COUNT(*) >= 1 by construction).
 const LIVE_QUERY = `
+WITH grouped AS (
+  SELECT
+    concat_ws('|',
+      o.chain_id::text,
+      COALESCE(o.chain_id_out::text, ''),
+      COALESCE(o.strategy_kind, ''),
+      o.token_in,
+      o.token_out,
+      o.dex_a,
+      COALESCE(o.dex_b, '')
+    ) AS route_group_key,
+    MIN(o.detected_at) AS first_seen_at,
+    MAX(o.detected_at) AS last_seen_at,
+    COUNT(*)::int      AS confirmations,
+    -- Latest detection per group: its economics become the card's values.
+    (ARRAY_AGG(o.id ORDER BY o.detected_at DESC))[1] AS latest_id
+  FROM opportunities o
+  -- Same window + viability filter as the pre-grouping query, applied INSIDE
+  -- the CTE so both the aggregates and the outer row set share one boundary.
+  WHERE o.detected_at >= NOW() - ($3::int * INTERVAL '1 second')
+    AND ($2::bool = false
+         OR (o.status = ANY($4::text[])
+             AND o.rejection_reason IS NULL))
+  GROUP BY 1
+)
 SELECT
+  g.first_seen_at,
+  g.last_seen_at,
+  g.confirmations,
+  g.route_group_key,
   o.id,
   o.chain_id,
   o.strategy_kind,
@@ -286,37 +348,31 @@ SELECT
   o.bridge,
   o.bridge_fee_usd::float               AS bridge_fee_usd,
   o.route_metadata                       AS route_metadata,
-  -- WO-H4 (2026-09-07): real total of the live window, UNBOUNDED by LIMIT.
+  -- WO-H4 (2026-09-17): real total of the live window, UNBOUNDED by LIMIT.
   -- Window functions evaluate before LIMIT, so COUNT(*) OVER () counts every
   -- row matching the WHERE (time window + viable_only filter) even when only
   -- the top-N are returned — the dashboard can show the true detection count
   -- instead of the fetch-window length. ::int because COUNT is bigint and
   -- node-postgres returns int8 as string. Tokens PK (chain_id, address)
   -- cannot fan out the LEFT JOINs, so the count equals opportunities rows.
+  -- CARDS-DEDUP-HOPS: the row set is now the GROUPED set (one row per route
+  -- identity), so window_total counts DISTINCT ROUTES in the window, not raw
+  -- detections — the honest "how many different opportunities are live" number.
   (COUNT(*) OVER ())::int                  AS window_total
-FROM opportunities o
+-- One row per route group: the latest detection carries the economics, the
+-- group's aggregates ride alongside. The time-window + viable_only filter
+-- (2026-05-10 hotfix, operator-tunable via ?max_age_seconds=N default 300s;
+-- fail-honest empty response when nothing fresh) now lives INSIDE the CTE so
+-- the aggregates and the row set share one boundary.
+FROM grouped g
+JOIN opportunities o
+  ON  o.id = g.latest_id
 LEFT JOIN tokens ti
   ON  ti.chain_id = o.chain_id
   AND ti.address  = LOWER(o.token_in)
 LEFT JOIN tokens to_
   ON  to_.chain_id = COALESCE(o.chain_id_out, o.chain_id)
   AND to_.address  = LOWER(o.token_out)
--- 2026-05-10 hotfix: bound the "live" window so the SSR snapshot does not
--- surface opportunities from days ago when no fresh viable rows exist.
--- Without this, the page rendered May-6 rows on May-10 because the query
--- only ordered by detected_at DESC LIMIT N — historical rows could fill the
--- frame. The window is operator-tunable via ?max_age_seconds=N (default
--- 300s = 5 minutes); the empty result is rendered as "No live opportunities
--- right now" by the dashboard, which is fail-honest.
---
--- viable_only=true: only show non-rejected opps in a viable lifecycle state.
--- viable_only=false: show ALL recent opps including rejected ones so the
---                    operator sees real-time pipeline activity, not just
---                    historical viable rows.
-WHERE o.detected_at >= NOW() - ($3::int * INTERVAL '1 second')
-  AND ($2::bool = false
-       OR (o.status = ANY($4::text[])
-           AND o.rejection_reason IS NULL))
 ORDER BY
   -- PC-08 (2026-09-19, doctrina operador): ordenar por Topological Yield USD
   -- de MAYOR a MENOR cuando order=profit_usd. Default intacto detected_at DESC
@@ -617,6 +673,19 @@ function rowToOpportunity(
                                 ? row.detected_at.toISOString()
                                 : row.detected_at,
     trace_id:                 row.trace_id,
+    // CARDS-DEDUP-HOPS (2026-09-20): route-group aggregates forwarded verbatim
+    // from the `grouped` CTE. first/last_seen normalized like detected_at
+    // (TIMESTAMPTZ Date → ISO); confirmations is an exact int; the key is the
+    // SQL twin of routeGroupKeyOf(). The frontend Zod schema/mapper treats
+    // these as optional — the WS single-row path never carries them (R8).
+    first_seen_at:            row.first_seen_at instanceof Date
+                                ? row.first_seen_at.toISOString()
+                                : row.first_seen_at,
+    last_seen_at:             row.last_seen_at instanceof Date
+                                ? row.last_seen_at.toISOString()
+                                : row.last_seen_at,
+    confirmations:            row.confirmations,
+    route_group_key:          row.route_group_key,
     // WO-CARDS-COMPLETE-01 (2026-09-17): passed through verbatim (null on
     // legacy rows); latency normalized from the int8 string like block_number.
     detector_id:              row.detector_id,

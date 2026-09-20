@@ -213,6 +213,62 @@ describe("opportunity evidence provenance — constructed unit inputs, not produ
   });
 });
 
+// CARDS-DEDUP-HOPS (2026-09-20, WO-3): LIVE_QUERY now collapses re-detections
+// of the same route identity into ONE row via the `grouped` CTE —
+// MIN/MAX(detected_at) → first_seen_at/last_seen_at, COUNT(*) → confirmations,
+// latest detection's economics on the wire. These tests pin (1) the CTE shape
+// (dropping it while fixtures keep injecting aggregates = silent identity
+// regression) and (2) the wire forwarding incl. TIMESTAMPTZ Date → ISO.
+describe("CARDS-DEDUP-HOPS — grouped CTE + route-group aggregates on the wire", () => {
+  it("(f) LIVE_QUERY pins the grouped CTE and the route_group_key twin expression", async () => {
+    const pool = fakePool({ rows: [] });
+    const app = await buildApp(pool);
+    await request(app).get("/api/v1/opportunities/live?limit=50");
+    const firstCall = (pool.query as ReturnType<typeof vi.fn>).mock.calls[0]?.[0];
+    const text =
+      typeof firstCall === "string" ? firstCall : ((firstCall as { text?: string })?.text ?? "");
+    expect(text).toContain("WITH grouped AS");
+    expect(text).toContain("MIN(o.detected_at) AS first_seen_at");
+    expect(text).toContain("MAX(o.detected_at) AS last_seen_at");
+    expect(text).toContain("COUNT(*)::int      AS confirmations");
+    expect(text).toContain("(ARRAY_AGG(o.id ORDER BY o.detected_at DESC))[1] AS latest_id");
+    expect(text).toContain("GROUP BY 1");
+    expect(text).toContain("JOIN opportunities o");
+    expect(text).toContain("o.id = g.latest_id");
+    // The bit-for-bit twin of routeGroupKeyOf() (frontend route-key.test.ts).
+    // concat_ws skips NULLs → every nullable segment must be COALESCE'd to ''.
+    expect(text).toContain(
+      "concat_ws('|',\n      o.chain_id::text,\n      COALESCE(o.chain_id_out::text, ''),\n      COALESCE(o.strategy_kind, ''),\n      o.token_in,\n      o.token_out,\n      o.dex_a,\n      COALESCE(o.dex_b, '')\n    ) AS route_group_key",
+    );
+  });
+
+  it("(g) route-group aggregates forward verbatim; TIMESTAMPTZ Date → ISO string", async () => {
+    const rows = [fixtureRow({
+      first_seen_at: new Date("2026-09-20T09:00:00Z"),
+      last_seen_at: new Date("2026-09-20T12:00:01Z"),
+      confirmations: 7,
+      route_group_key: "1||dex_arb|0x…1|0x…2|uniswap_v2|sushiswap",
+    })];
+    const app = await buildApp(fakePool({ rows }));
+    const r = await request(app).get("/api/v1/opportunities/live?limit=50");
+    expect(r.status).toBe(200);
+    const item = r.body.items[0];
+    expect(item.first_seen_at).toBe("2026-09-20T09:00:00.000Z");
+    expect(item.last_seen_at).toBe("2026-09-20T12:00:01.000Z");
+    expect(item.confirmations).toBe(7);
+    expect(item.route_group_key).toBe("1||dex_arb|0x…1|0x…2|uniswap_v2|sushiswap");
+  });
+
+  it("(h) rows without aggregates (WS-shaped) emit undefined, never fabricated 1s (R8)", async () => {
+    const app = await buildApp(fakePool({ rows: [fixtureRow()] }));
+    const r = await request(app).get("/api/v1/opportunities/live?limit=50");
+    expect(r.status).toBe(200);
+    expect(r.body.items[0].first_seen_at).toBeUndefined();
+    expect(r.body.items[0].confirmations).toBeUndefined();
+  });
+});
+
+
 // WO-G2-PARITY (2026-09-17): regression for FEED-SCHEMA-01 — opportunities
 // .block_number is BIGINT (migration 003) and node-postgres returns int8 as a
 // STRING, so rowToOpportunity shipped "25995384" on the wire while its own
