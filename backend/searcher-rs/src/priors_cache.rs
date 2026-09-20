@@ -26,16 +26,15 @@
 //! - Read-only: emits nothing, gates nothing, takes no risk — a pure mirror
 //!   of a store that recon owns. No kill-switch needed.
 //!
-//! ## NOT here (audited gap, deliberately excluded)
+//! ## NOT here (lives in `beta_priors` since Deuda 4, 2026-09-20)
 //!
 //! The per-STRATEGY Beta prior (`bayesian_priors` → `PriorState`) is NOT
-//! cached: the table is keyed `token_pair UNIQUE` (pre-STRAT-IDENT-01 schema)
-//! while `PriorState` is per-STRATEGY — "the pair stays as context in the
-//! record, never as the calibration bucket". Feeding pair-keyed priors would
-//! re-introduce the identity collapse STRAT-IDENT-01 fixed. Until the table
-//! gains `strategy_key` + a writer, the Beta side honestly stays `None`
-//! (flat) at the `evaluate_paper_opportunity` call site. The §IV fold below
-//! is the calibration surface that DOES have a writer (Stage 2b, this repo).
+//! cached HERE: this module owns the §IV operator log-LR slice only. The Beta
+//! side has its own writer+reader twin, `crate::beta_priors` (consolidator
+//! over `scored_opportunities` Gate-C labels + in-memory reader, gated by
+//! `ARBX_BETA_PRIORS_MODE`, default OFF ⇒ flat prior, R8). The pair never
+//! enters the key (STRAT-IDENT-01: context in the record, never the
+//! calibration bucket).
 
 use std::sync::{Arc, RwLock};
 use std::time::Duration;

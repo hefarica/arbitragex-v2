@@ -108,6 +108,16 @@ pub enum OptimizeRejectReason {
     /// The token pair has no known V3 pools at all (WO-06) — no fee tier can
     /// exist, so the candidate is rejected WITHOUT an RPC.
     V3PairNoPools,
+    /// Route leg count exceeds the canonical hard cap (min(7, Max_Legs),
+    /// workbook `08_HOPS_2_7` ADMISSIBILITY). No sizing exists beyond the cap —
+    /// fail closed rather than truncating the route (CARDS-HOPS 2026-09-20).
+    UnsupportedLegCount,
+    /// A route with MORE than 2 legs containing a V3 leg: the N-leg cycle
+    /// kernel is all-V2 (constant-product composition) and the V3 kernel is
+    /// 2-leg only, so no honest sizing exists. Rejected explicitly instead of
+    /// falling into a 2-leg kernel that would size a fabricated 2-of-N slice
+    /// (CARDS-HOPS 2026-09-20).
+    V3MultilegUnsupported,
 }
 
 impl OptimizeRejectReason {
@@ -133,6 +143,8 @@ impl OptimizeRejectReason {
             Self::V3QuoteUnavailable => "v3_quote_unavailable",
             Self::V3PoolNotCatalogued => "v3_pool_not_catalogued",
             Self::V3PairNoPools => "v3_pair_no_pools",
+            Self::UnsupportedLegCount => "unsupported_leg_count",
+            Self::V3MultilegUnsupported => "v3_multileg_unsupported",
         }
     }
 
@@ -179,7 +191,13 @@ pub enum OptimizeOutcome {
     /// A profitable size was found.
     Sized(Box<SizedCandidate>),
     /// No profitable size exists; the explicit reason is provided.
-    Rejected(OptimizeRejectReason),
+    ///
+    /// R8 contract on the payload: `None` = no USD value was computed on this
+    /// path (infrastructure error, missing reserves, upper-bound early exit);
+    /// `Some(v)` = the kernel computed exactly `v` USD — typically `v <= 0`
+    /// for the non-positive gates, or a positive net below the gas floor for
+    /// `GasFloorBreach` / `KellyNegativeEdge`.
+    Rejected(OptimizeRejectReason, Option<f64>),
 }
 
 impl OptimizeOutcome {
@@ -187,7 +205,7 @@ impl OptimizeOutcome {
     pub fn reason_str(&self) -> Option<&'static str> {
         match self {
             Self::Sized(_) => None,
-            Self::Rejected(r) => Some(r.as_str()),
+            Self::Rejected(r, _) => Some(r.as_str()),
         }
     }
 
@@ -195,15 +213,17 @@ impl OptimizeOutcome {
     pub fn gross_profit_usd(&self) -> Option<f64> {
         match self {
             Self::Sized(s) => Some(s.gross_profit_usd),
-            Self::Rejected(_) => None,
+            Self::Rejected(_, _) => None,
         }
     }
 
-    /// Returns the net profit in USD, or `None` for `Rejected`.
+    /// Returns the net profit in USD. For `Rejected`, this is the kernel's
+    /// computed value when the rejecting path had one (R8: `None` = not
+    /// computed, `Some(v)` = computed and exactly `v`, usually `v <= 0`).
     pub fn net_profit_usd(&self) -> Option<f64> {
         match self {
             Self::Sized(s) => Some(s.estimated_net_profit_usd),
-            Self::Rejected(_) => None,
+            Self::Rejected(_, net) => *net,
         }
     }
 
@@ -211,7 +231,7 @@ impl OptimizeOutcome {
     pub fn optimal_amount_in(&self) -> Option<U256> {
         match self {
             Self::Sized(s) => Some(s.optimal_amount_in),
-            Self::Rejected(_) => None,
+            Self::Rejected(_, _) => None,
         }
     }
 }
@@ -375,7 +395,10 @@ impl SizeOptimizer {
                 label = candidate.label.as_str(),
                 "no TradingConfigState — cannot size"
             );
-            return Ok(OptimizeOutcome::Rejected(OptimizeRejectReason::NoConfig));
+            return Ok(OptimizeOutcome::Rejected(
+                OptimizeRejectReason::NoConfig,
+                None,
+            ));
         };
 
         // Step 2: determine token_in symbol (for capital cap lookup).
@@ -399,6 +422,7 @@ impl SizeOptimizer {
             );
             return Ok(OptimizeOutcome::Rejected(
                 OptimizeRejectReason::ZeroCapitalCap,
+                None,
             ));
         }
 
@@ -413,6 +437,7 @@ impl SizeOptimizer {
             );
             return Ok(OptimizeOutcome::Rejected(
                 OptimizeRejectReason::UnknownTokenPrice,
+                None,
             ));
         };
 
@@ -425,6 +450,7 @@ impl SizeOptimizer {
             None => {
                 return Ok(OptimizeOutcome::Rejected(
                     OptimizeRejectReason::CapClampFailed,
+                    None,
                 ))
             }
         };
@@ -432,6 +458,7 @@ impl SizeOptimizer {
         if cap_wei.is_zero() {
             return Ok(OptimizeOutcome::Rejected(
                 OptimizeRejectReason::ZeroCapitalCap,
+                None,
             ));
         }
 
@@ -452,14 +479,38 @@ impl SizeOptimizer {
             // Triangular V3 cycles are handled by the triangular kernel above;
             // this is the 2-leg DEX-arb path that previously had no V3 sizer.
             _ if route_has_v3(&candidate) => {
-                self.size_two_leg_v3_with_reason(
+                // N-leg V3 routes (QuoterV2 arms are strictly 2-leg) have no
+                // honest kernel: reject explicitly instead of falling into a
+                // 2-leg truncation that fabricates the economics.
+                if candidate.route_plan.legs.len() > 2 {
+                    debug!(
+                        event = "size_optimizer.v3_multileg_unsupported",
+                        legs = candidate.route_plan.legs.len(),
+                    );
+                    OptimizeOutcome::Rejected(OptimizeRejectReason::V3MultilegUnsupported, None)
+                } else {
+                    self.size_two_leg_v3_with_reason(
+                        &candidate,
+                        intent,
+                        cap_wei,
+                        cap_usd,
+                        token_price_usd,
+                        decimals,
+                        state,
+                    )
+                    .await
+                }
+            }
+            // WO-13: N-leg (4..7) all-V2 cycles size through the generic
+            // cycle kernel — same math as triangular, arbitrary hop count.
+            // (Discovery's min(7, Max_Legs) already bounds legs at 7.)
+            _ if candidate.route_plan.legs.len() != 2 => {
+                self.size_triangular_with_reason(
                     &candidate,
-                    intent,
-                    cap_wei,
+                    state,
                     cap_usd,
                     token_price_usd,
                     decimals,
-                    state,
                 )
                 .await
             }
@@ -522,8 +573,9 @@ impl SizeOptimizer {
     ) -> OptimizeOutcome {
         let mut sized = match outcome {
             OptimizeOutcome::Sized(boxed) => *boxed,
-            // Rejected outcomes pass through — kernel already named the reason.
-            OptimizeOutcome::Rejected(r) => return OptimizeOutcome::Rejected(r),
+            // Rejected outcomes pass through — kernel already named the reason
+            // and computed whatever USD value it could (R8 payload).
+            OptimizeOutcome::Rejected(r, net) => return OptimizeOutcome::Rejected(r, net),
         };
 
         let gross_usd = sized.gross_profit_usd;
@@ -552,7 +604,8 @@ impl SizeOptimizer {
                 cost_proxy_usd,
                 multiplier = state.kelly_gas_safety_multiplier,
             );
-            return OptimizeOutcome::Rejected(OptimizeRejectReason::GasFloorBreach);
+            // Payload = the computed net (positive but below the floor).
+            return OptimizeOutcome::Rejected(OptimizeRejectReason::GasFloorBreach, Some(net_usd));
         }
 
         // Constrained Fractional Kelly (operator directive #1).
@@ -578,7 +631,11 @@ impl SizeOptimizer {
                 p,
                 w_ratio,
             );
-            return OptimizeOutcome::Rejected(OptimizeRejectReason::KellyNegativeEdge);
+            // Payload = the computed net the edge test rejected.
+            return OptimizeOutcome::Rejected(
+                OptimizeRejectReason::KellyNegativeEdge,
+                Some(net_usd),
+            );
         }
 
         // Apply config-sourced multiplier and per-trade cap (operator
@@ -598,7 +655,7 @@ impl SizeOptimizer {
                 let wei_f = tokens_capped * 10f64.powi(i32::from(decimals));
                 if !wei_f.is_finite() || wei_f <= 0.0 {
                     // Kelly cap rounds to zero wei — too small to bet at all.
-                    return OptimizeOutcome::Rejected(OptimizeRejectReason::ZeroCapitalCap);
+                    return OptimizeOutcome::Rejected(OptimizeRejectReason::ZeroCapitalCap, None);
                 }
                 f64_to_u256_clamped(wei_f.floor())
             } else {
@@ -650,7 +707,8 @@ impl SizeOptimizer {
         // profit below the floor means the size we were forced down to is
         // not worth running at all.
         if new_net < cost_proxy_usd * state.kelly_gas_safety_multiplier {
-            return OptimizeOutcome::Rejected(OptimizeRejectReason::GasFloorBreach);
+            // Payload = the Kelly-capped net (positive but below the floor).
+            return OptimizeOutcome::Rejected(OptimizeRejectReason::GasFloorBreach, Some(new_net));
         }
 
         sized.optimal_amount_in = kelly_cap_wei;
@@ -684,12 +742,12 @@ impl SizeOptimizer {
     ) -> anyhow::Result<Option<SizedCandidate>> {
         match self.optimize_with_reason(candidate, intent, cfg).await? {
             OptimizeOutcome::Sized(s) => Ok(Some(*s)),
-            OptimizeOutcome::Rejected(_) => Ok(None),
+            OptimizeOutcome::Rejected(_, _) => Ok(None),
         }
     }
 
     // -----------------------------------------------------------------------
-    // 3-leg triangular sizing — with explicit reason (TASK 2)
+    // N-leg cycle sizing (triangular + 4..7-hop) — with explicit reason
     // -----------------------------------------------------------------------
 
     async fn size_triangular_with_reason(
@@ -702,29 +760,48 @@ impl SizeOptimizer {
     ) -> OptimizeOutcome {
         // Extract hop reserves from the route plan legs.
         let legs = &candidate.route_plan.legs;
-        if legs.len() < 3 {
-            return OptimizeOutcome::Rejected(OptimizeRejectReason::MissingRouteLegs);
+        // WO-13: the cycle kernel is generic in N; admissibility follows the
+        // canonical workbook rule h ∈ [2, min(7, Max_Legs)] — discovery already
+        // clamps, this guard fails closed on anything beyond the canonical cap.
+        if legs.len() < 2 {
+            return OptimizeOutcome::Rejected(OptimizeRejectReason::MissingRouteLegs, None);
+        }
+        if legs.len() > 7 {
+            return OptimizeOutcome::Rejected(OptimizeRejectReason::UnsupportedLegCount, None);
         }
 
         // Build (reserve_in, reserve_out) for each hop from the reserves cache.
-        let mut hop_reserves: Vec<(U256, U256)> = Vec::with_capacity(3);
-        for (leg_idx, leg) in legs.iter().take(3).enumerate() {
+        let mut hop_reserves: Vec<(U256, U256)> = Vec::with_capacity(legs.len());
+        for (leg_idx, leg) in legs.iter().enumerate() {
             let pool_addr_str = match leg.pool_address.as_deref() {
                 Some(s) => s,
-                None => return OptimizeOutcome::Rejected(OptimizeRejectReason::MissingPoolAddress),
+                None => {
+                    return OptimizeOutcome::Rejected(
+                        OptimizeRejectReason::MissingPoolAddress,
+                        None,
+                    )
+                }
             };
             let pool_addr: ethers::types::Address = match pool_addr_str.parse().ok() {
                 Some(a) => a,
-                None => return OptimizeOutcome::Rejected(OptimizeRejectReason::MissingPoolAddress),
+                None => {
+                    return OptimizeOutcome::Rejected(
+                        OptimizeRejectReason::MissingPoolAddress,
+                        None,
+                    )
+                }
             };
             let (r0, r1) = match self.state_projector.reserves_cache.get(&pool_addr).await {
                 Some(pair) => pair,
                 None => {
-                    return OptimizeOutcome::Rejected(if leg_idx == 0 {
-                        OptimizeRejectReason::MissingReservesPoolA
-                    } else {
-                        OptimizeRejectReason::MissingReservesPoolB
-                    })
+                    return OptimizeOutcome::Rejected(
+                        if leg_idx == 0 {
+                            OptimizeRejectReason::MissingReservesPoolA
+                        } else {
+                            OptimizeRejectReason::MissingReservesPoolB
+                        },
+                        None,
+                    )
                 }
             };
             let token_in_str = &leg.token_in;
@@ -747,30 +824,30 @@ impl SizeOptimizer {
 
         let eval_result = match evaluate_cycle(&eval_input) {
             Some(r) => r,
-            None => return OptimizeOutcome::Rejected(OptimizeRejectReason::NonPositiveProfit),
+            // R8: evaluate_cycle computed nothing — no value to stamp.
+            None => {
+                return OptimizeOutcome::Rejected(OptimizeRejectReason::NonPositiveProfit, None)
+            }
         };
 
         // WO-LEGS-TRIANGULAR-01: exact per-leg wei from the POST-CLAMP
         // re-evaluation inside `evaluate_cycle` — the same hop chain whose
         // final amount_out the reported profit consumed (Sancho condition 1).
-        // leg_outputs = [out0, out1, out2]; the honest input chain is
-        // [x, out0, out1] (leg i+1's input IS leg i's output). Same shape the
+        // leg_outputs = [out0..outN]; the honest input chain is
+        // [x, out0..outN-1] (leg i+1's input IS leg i's output). Same shape the
         // 2-leg kernel emits (see `leg_amounts_in` in size_two_leg_with_reason).
         // R8: any missing link → no ledger at all (all-or-nothing).
         let (leg_amounts_in, leg_amounts_out) = match eval_result.leg_outputs.as_ref() {
-            Some(outs) if outs.len() == 3 => {
+            Some(outs) if outs.len() == legs.len() => {
                 let x = eval_result.amount_in_wei;
+                let mut ins = Vec::with_capacity(outs.len());
+                ins.push(x.to_string());
+                for out in outs.iter().take(outs.len().saturating_sub(1)) {
+                    ins.push(out.to_string());
+                }
                 (
-                    Some(vec![
-                        x.to_string(),
-                        outs[0].to_string(),
-                        outs[1].to_string(),
-                    ]),
-                    Some(vec![
-                        outs[0].to_string(),
-                        outs[1].to_string(),
-                        outs[2].to_string(),
-                    ]),
+                    Some(ins),
+                    Some(outs.iter().map(|o| o.to_string()).collect::<Vec<_>>()),
                 )
             }
             _ => (None, None),
@@ -778,7 +855,14 @@ impl SizeOptimizer {
 
         let gross_usd = match eval_result.expected_profit_usd {
             Some(g) if g > 0.0 => g,
-            _ => return OptimizeOutcome::Rejected(OptimizeRejectReason::NonPositiveGrossUsd),
+            // R8: pass the computed gross through verbatim (Some(<=0)); None
+            // stays None — `evaluate_cycle` computed nothing.
+            _ => {
+                return OptimizeOutcome::Rejected(
+                    OptimizeRejectReason::NonPositiveGrossUsd,
+                    eval_result.expected_profit_usd,
+                )
+            }
         };
 
         let gas_cost = state.gas_cost_usd();
@@ -870,7 +954,7 @@ impl SizeOptimizer {
             .await
         {
             OptimizeOutcome::Sized(s) => Some(*s),
-            OptimizeOutcome::Rejected(_) => None,
+            OptimizeOutcome::Rejected(_, _) => None,
         }
     }
 
@@ -892,35 +976,53 @@ impl SizeOptimizer {
         // Extract pool addresses and orientations from the 2-leg route plan.
         let legs = &candidate.route_plan.legs;
         if legs.len() < 2 {
-            return OptimizeOutcome::Rejected(OptimizeRejectReason::MissingRouteLegs);
+            return OptimizeOutcome::Rejected(OptimizeRejectReason::MissingRouteLegs, None);
+        }
+        // Defensive fail-closed: this kernel only models exactly 2 legs —
+        // a >2-leg candidate here would silently truncate to legs[0..2] and
+        // fabricate the economics (the "cards show only 2 hops" root cause).
+        if legs.len() > 2 {
+            return OptimizeOutcome::Rejected(OptimizeRejectReason::UnsupportedLegCount, None);
         }
 
         // Pool A reserves (leg 0).
         let pool_a_addr_str = match legs[0].pool_address.as_deref() {
             Some(s) => s,
-            None => return OptimizeOutcome::Rejected(OptimizeRejectReason::MissingPoolAddress),
+            None => {
+                return OptimizeOutcome::Rejected(OptimizeRejectReason::MissingPoolAddress, None)
+            }
         };
         let pool_a_addr: ethers::types::Address = match pool_a_addr_str.parse().ok() {
             Some(a) => a,
-            None => return OptimizeOutcome::Rejected(OptimizeRejectReason::MissingPoolAddress),
+            None => {
+                return OptimizeOutcome::Rejected(OptimizeRejectReason::MissingPoolAddress, None)
+            }
         };
         let (r0_a, r1_a) = match self.state_projector.reserves_cache.get(&pool_a_addr).await {
             Some(pair) => pair,
-            None => return OptimizeOutcome::Rejected(OptimizeRejectReason::MissingReservesPoolA),
+            None => {
+                return OptimizeOutcome::Rejected(OptimizeRejectReason::MissingReservesPoolA, None)
+            }
         };
 
         // Pool B reserves (leg 1).
         let pool_b_addr_str = match legs[1].pool_address.as_deref() {
             Some(s) => s,
-            None => return OptimizeOutcome::Rejected(OptimizeRejectReason::MissingPoolAddress),
+            None => {
+                return OptimizeOutcome::Rejected(OptimizeRejectReason::MissingPoolAddress, None)
+            }
         };
         let pool_b_addr: ethers::types::Address = match pool_b_addr_str.parse().ok() {
             Some(a) => a,
-            None => return OptimizeOutcome::Rejected(OptimizeRejectReason::MissingPoolAddress),
+            None => {
+                return OptimizeOutcome::Rejected(OptimizeRejectReason::MissingPoolAddress, None)
+            }
         };
         let (r0_b, r1_b) = match self.state_projector.reserves_cache.get(&pool_b_addr).await {
             Some(pair) => pair,
-            None => return OptimizeOutcome::Rejected(OptimizeRejectReason::MissingReservesPoolB),
+            None => {
+                return OptimizeOutcome::Rejected(OptimizeRejectReason::MissingReservesPoolB, None)
+            }
         };
 
         // Orient reserves for each leg.
@@ -934,7 +1036,7 @@ impl SizeOptimizer {
             || reserve_in_b.is_zero()
             || reserve_out_b.is_zero()
         {
-            return OptimizeOutcome::Rejected(OptimizeRejectReason::ZeroReserves);
+            return OptimizeOutcome::Rejected(OptimizeRejectReason::ZeroReserves, None);
         }
 
         let fee_a = legs[0].fee_bps.unwrap_or(30);
@@ -969,13 +1071,18 @@ impl SizeOptimizer {
         );
 
         if profit_wei <= 0 {
-            return OptimizeOutcome::Rejected(OptimizeRejectReason::NonPositiveProfit);
+            // Payload = the golden-section profit converted to USD (<= 0).
+            let profit_usd = (profit_wei as f64) / 10f64.powi(decimals as i32) * token_price_usd;
+            return OptimizeOutcome::Rejected(
+                OptimizeRejectReason::NonPositiveProfit,
+                Some(profit_usd),
+            );
         }
 
         // Anti-BUG-3: clamp to cap.
         let amount_in = match clamp_to_cap_wei(x_star, cap_usd, token_price_usd, decimals) {
             Some(v) => v,
-            None => return OptimizeOutcome::Rejected(OptimizeRejectReason::CapClampFailed),
+            None => return OptimizeOutcome::Rejected(OptimizeRejectReason::CapClampFailed, None),
         };
 
         // Re-evaluate at clamped amount.
@@ -988,7 +1095,13 @@ impl SizeOptimizer {
         };
 
         if profit_at_clamped <= 0 {
-            return OptimizeOutcome::Rejected(OptimizeRejectReason::NonPositiveProfit);
+            // Payload = the clamped-size profit converted to USD (<= 0).
+            let profit_usd =
+                (profit_at_clamped as f64) / 10f64.powi(decimals as i32) * token_price_usd;
+            return OptimizeOutcome::Rejected(
+                OptimizeRejectReason::NonPositiveProfit,
+                Some(profit_usd),
+            );
         }
 
         // HOPS-LEDGER-04: exact per-leg wei at the reported (clamped) size —
@@ -1001,7 +1114,10 @@ impl SizeOptimizer {
         let gross_usd = profit_token_units * token_price_usd;
 
         if gross_usd <= 0.0 {
-            return OptimizeOutcome::Rejected(OptimizeRejectReason::NonPositiveGrossUsd);
+            return OptimizeOutcome::Rejected(
+                OptimizeRejectReason::NonPositiveGrossUsd,
+                Some(gross_usd),
+            );
         }
 
         let gas_cost = state.gas_cost_usd();
@@ -1147,7 +1263,12 @@ impl SizeOptimizer {
     ) -> OptimizeOutcome {
         let legs = &candidate.route_plan.legs;
         if legs.len() < 2 {
-            return OptimizeOutcome::Rejected(OptimizeRejectReason::MissingRouteLegs);
+            return OptimizeOutcome::Rejected(OptimizeRejectReason::MissingRouteLegs, None);
+        }
+        // Defensive fail-closed: the V3 mixed kernel models exactly 2 legs
+        // (QuoterV2 arms). >2-leg V3 routes must be rejected, never truncated.
+        if legs.len() > 2 {
+            return OptimizeOutcome::Rejected(OptimizeRejectReason::UnsupportedLegCount, None);
         }
 
         // Resolve a per-leg evaluator once (V2 → oriented cached reserves;
@@ -1158,14 +1279,14 @@ impl SizeOptimizer {
             .await
         {
             Ok(e) => e,
-            Err(r) => return OptimizeOutcome::Rejected(r),
+            Err(r) => return OptimizeOutcome::Rejected(r, None),
         };
         let eval1 = match self
             .build_leg_eval(&legs[1], OptimizeRejectReason::MissingReservesPoolB)
             .await
         {
             Ok(e) => e,
-            Err(r) => return OptimizeOutcome::Rejected(r),
+            Err(r) => return OptimizeOutcome::Rejected(r, None),
         };
 
         let leg0_v3 = matches!(eval0, LegEval::V3 { .. });
@@ -1191,7 +1312,8 @@ impl SizeOptimizer {
                 probe_count = probes.len(),
                 "within-tick upper bound ≤ 0 across probes — skipping QuoterV2 grid"
             );
-            return OptimizeOutcome::Rejected(OptimizeRejectReason::NonPositiveProfit);
+            // R8: upper bound, not a quoted profit — no value to stamp.
+            return OptimizeOutcome::Rejected(OptimizeRejectReason::NonPositiveProfit, None);
         }
 
         let mut best: Option<(U256, U256, U256, i128)> = None; // (amount_in, out_a, out_b, profit_wei)
@@ -1263,9 +1385,16 @@ impl SizeOptimizer {
                     let reason = v3_unavailable_label
                         .map(OptimizeRejectReason::from_v3_unavailable_label)
                         .unwrap_or(OptimizeRejectReason::V3QuoteUnavailable);
-                    return OptimizeOutcome::Rejected(reason);
+                    return OptimizeOutcome::Rejected(reason, None);
                 }
-                return OptimizeOutcome::Rejected(OptimizeRejectReason::NonPositiveProfit);
+                // R8: payload only when a probe actually computed a profit
+                // (best = Some with profit_wei <= 0); no probe answered → None.
+                let computed_usd =
+                    best.map(|b| (b.3 as f64) / 10f64.powi(decimals as i32) * token_price_usd);
+                return OptimizeOutcome::Rejected(
+                    OptimizeRejectReason::NonPositiveProfit,
+                    computed_usd,
+                );
             }
         };
 
@@ -1274,7 +1403,10 @@ impl SizeOptimizer {
         let profit_token_units = (profit_wei as f64) / 10f64.powi(decimals as i32);
         let gross_usd = profit_token_units * token_price_usd;
         if gross_usd <= 0.0 {
-            return OptimizeOutcome::Rejected(OptimizeRejectReason::NonPositiveGrossUsd);
+            return OptimizeOutcome::Rejected(
+                OptimizeRejectReason::NonPositiveGrossUsd,
+                Some(gross_usd),
+            );
         }
 
         // HOPS-LEDGER-04: exact per-leg wei at the chosen grid point — the
@@ -1572,7 +1704,7 @@ impl SizeOptimizer {
             .await
         {
             OptimizeOutcome::Sized(s) => Some(*s),
-            OptimizeOutcome::Rejected(_) => None,
+            OptimizeOutcome::Rejected(_, _) => None,
         }
     }
 }
@@ -2197,6 +2329,296 @@ mod tests {
         assert!(
             result.is_none(),
             "symmetric pools produce no profit — must return None"
+        );
+    }
+
+    // ── N-LEG CYCLE DISPATCH (CARDS-HOPS 2026-09-20) ─────────────────────────
+    //
+    // Root cause of "only 2 hops in the cards": route_graph/amm_curve engines
+    // emit 4..7-leg candidates labelled DexArbV2V2, which fell into the
+    // 2-leg kernels — legs[1] of a multi-leg route is a different pool than
+    // the route's actual second pool, producing the `missing_reserves_pool_b`
+    // wall (and, when legs[0..2] happened to be cacheable, a FABRICATED
+    // 2-of-N-leg sizing). The dispatch must size all-V2 cycles of ANY leg
+    // count (2..=7) with the N-leg cycle kernel and reject mixed V3 multi-leg
+    // routes honestly instead of truncating.
+
+    /// 4-leg all-V2 cycle candidate: WETH → T1 → T2 → T3 → WETH.
+    /// T1/T2/T3 are low addresses (0x..01/02/03) so string-orientation is
+    /// deterministic: leg0 flips (WETH > T1), legs 1..3 keep (r0, r1).
+    fn make_multileg_candidate(
+        pools: &[Address],
+        protocols: &[&str],
+        label: StrategyLabel,
+    ) -> StrategyCandidate {
+        assert_eq!(pools.len(), 4);
+        assert_eq!(protocols.len(), 4);
+        let weth = "0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2";
+        let t1 = "0x0000000000000000000000000000000000000001";
+        let t2 = "0x0000000000000000000000000000000000000002";
+        let t3 = "0x0000000000000000000000000000000000000003";
+        let cycle = [weth, t1, t2, t3, weth];
+
+        let id = Uuid::new_v4();
+        let opp = Opportunity {
+            id,
+            chain_id: 1,
+            strategy_kind: StrategyKind::dex_arb(),
+            dex_a: "uniswap-v2".to_string(),
+            dex_b: Some("sushi".to_string()),
+            pair_symbol: "WETH/MULTIHOP".to_string(),
+            token_in: weth.to_string(),
+            token_out: weth.to_string(),
+            amount_in_wei: unit(1).to_string(),
+            expected_profit_usd: Some(1.0),
+            net_expected_profit_usd: None,
+            roi_pct: None,
+            risk_score: None,
+            block_number: None,
+            rejection_reason: None,
+            cartridge_id: None,
+            detector_id: None,
+            pipeline_latency_ms: None,
+            detected_at: Utc::now(),
+            trace_id: Uuid::new_v4(),
+        };
+
+        let candidate_inner = OpportunityCandidate {
+            route_fingerprint: "test-multileg".to_string(),
+            pool_addresses: pools.iter().map(|p| format!("0x{:040x}", p)).collect(),
+            token_addresses: cycle.iter().map(|s| s.to_string()).collect(),
+            dex_adapters: vec!["uniswap-v2".to_string(); 4],
+            amount_in: 1.0,
+            expected_amount_out: 1.001,
+            gross_profit: 1.0,
+        };
+
+        let legs = (0..4)
+            .map(|i| RouteLeg {
+                dex_id: "uniswap-v2".to_string(),
+                dex_name: "uniswap-v2".to_string(),
+                protocol_type: protocols[i].to_string(),
+                factory_address: String::new(),
+                pool_id: None,
+                pool_address: Some(format!("0x{:040x}", pools[i])),
+                token_in: cycle[i].to_string(),
+                token_out: cycle[i + 1].to_string(),
+                fee_bps: Some(30),
+                amount_in: Some(1.0),
+                amount_out: None,
+                tvl_usd: None,
+                volume_24h_usd: None,
+                pool_is_active: true,
+            })
+            .collect::<Vec<_>>();
+
+        let route_plan = RoutePlan {
+            route_id: Some("test-multileg-route".to_string()),
+            strategy_kind: label.as_str().to_string(),
+            chain_id: 1,
+            legs,
+            atomic: true,
+            estimated_slippage_pct: None,
+            price_impact_pct: None,
+        };
+
+        StrategyCandidate {
+            label,
+            opportunity: opp,
+            candidate: candidate_inner,
+            route_plan,
+            gross_profit_usd: Some(1.0),
+            net_expected_profit_usd: None,
+            rejection_reason: None,
+            source_intent_hash: H256::zero(),
+            base_strategy: None,
+        }
+    }
+
+    /// Insert oriented (Rin, Rout) for one leg, honouring the kernel's
+    /// string-orientation rule (token_in <= token_out → (r0, r1)).
+    async fn insert_oriented(
+        cache: &Arc<ReservesCache>,
+        pool: Address,
+        token_in: &str,
+        token_out: &str,
+        r_in: U256,
+        r_out: U256,
+    ) {
+        if token_in <= token_out {
+            cache.insert(pool, r_in, r_out).await;
+        } else {
+            cache.insert(pool, r_out, r_in).await;
+        }
+    }
+
+    const WETH_T: &str = "0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2";
+    const T1: &str = "0x0000000000000000000000000000000000000001";
+    const T2: &str = "0x0000000000000000000000000000000000000002";
+    const T3: &str = "0x0000000000000000000000000000000000000003";
+
+    #[tokio::test]
+    async fn multileg_all_v2_route_sizes_via_cycle_kernel() {
+        // Legs 0+1 alone are UNPROFITABLE (spot 0.855 < 1) — the old 2-leg
+        // dispatch rejected here. The full 4-hop cycle is profitable
+        // (0.855 × 2.25 × 0.997⁴ ≈ 1.894 > 1) — only the N-leg kernel finds it.
+        let pools = [addr(0x20), addr(0x21), addr(0x22), addr(0x23)];
+        let cache = Arc::new(ReservesCache::new());
+        insert_oriented(&cache, pools[0], WETH_T, T1, unit(100), unit(90)).await;
+        insert_oriented(&cache, pools[1], T1, T2, unit(100), unit(95)).await;
+        insert_oriented(&cache, pools[2], T2, T3, unit(100), unit(150)).await;
+        insert_oriented(&cache, pools[3], T3, WETH_T, unit(100), unit(150)).await;
+
+        let projector = Arc::new(StateProjector::new(cache, None, empty_v3_fee_catalog()));
+        let optimizer = SizeOptimizer::new(projector);
+
+        let candidate = make_multileg_candidate(
+            &pools,
+            &["uniswap-v2", "uniswap-v2", "uniswap-v2", "uniswap-v2"],
+            StrategyLabel::DexArbV2V2,
+        );
+        let intent = make_intent(addr(0xAAAA), addr(0xBBBB));
+        let cfg = make_cfg(100_000.0);
+
+        let outcome = optimizer
+            .optimize_with_reason(candidate, &intent, Some(&cfg))
+            .await
+            .expect("optimize must not error");
+
+        match outcome {
+            OptimizeOutcome::Sized(s) => {
+                assert!(
+                    s.gross_profit_usd > 0.0,
+                    "4-hop profitable cycle must size with positive gross, got {}",
+                    s.gross_profit_usd
+                );
+            }
+            other => panic!(
+                "4-leg all-V2 route must reach the cycle kernel, got {}",
+                matches!(other, OptimizeOutcome::Sized(_))
+            ),
+        }
+    }
+
+    #[tokio::test]
+    async fn multileg_v3_route_rejects_honestly() {
+        // Mixed V2/V3 routes of >2 legs have no kernel (N-leg quoter
+        // composition unimplemented) — the honest reject is
+        // v3_multileg_unsupported, NOT the misleading missing_reserves_pool_b
+        // (nor a fabricated 2-leg sizing).
+        let pools = [addr(0x20), addr(0x21), addr(0x22), addr(0x23)];
+        let cache = Arc::new(ReservesCache::new());
+        insert_oriented(&cache, pools[0], WETH_T, T1, unit(100), unit(90)).await;
+
+        let projector = Arc::new(StateProjector::new(cache, None, empty_v3_fee_catalog()));
+        let optimizer = SizeOptimizer::new(projector);
+
+        let candidate = make_multileg_candidate(
+            &pools,
+            &["uniswap-v2", "uniswap-v3", "uniswap-v2", "uniswap-v2"],
+            StrategyLabel::DexArbV2V2,
+        );
+        let intent = make_intent(addr(0xAAAA), addr(0xBBBB));
+        let cfg = make_cfg(100_000.0);
+
+        let outcome = optimizer
+            .optimize_with_reason(candidate, &intent, Some(&cfg))
+            .await
+            .expect("optimize must not error");
+
+        assert!(
+            matches!(
+                outcome,
+                OptimizeOutcome::Rejected(OptimizeRejectReason::V3MultilegUnsupported, None)
+            ),
+            "mixed V3 multi-leg must reject with v3_multileg_unsupported"
+        );
+    }
+
+    #[tokio::test]
+    async fn triangular_4leg_sizes_all_legs_no_truncation() {
+        // The old kernel did legs.iter().take(3) — a 4-leg TriangularArb
+        // candidate was sized on 3 of 4 legs (fabricated economics) and the
+        // ledger came back with 3 entries. The generalized kernel must size
+        // ALL legs and emit a 4-entry ledger chained to the reported amounts.
+        let pools = [addr(0x20), addr(0x21), addr(0x22), addr(0x23)];
+        let cache = Arc::new(ReservesCache::new());
+        insert_oriented(&cache, pools[0], WETH_T, T1, unit(100), unit(120)).await;
+        insert_oriented(&cache, pools[1], T1, T2, unit(100), unit(110)).await;
+        insert_oriented(&cache, pools[2], T2, T3, unit(100), unit(90)).await;
+        insert_oriented(&cache, pools[3], T3, WETH_T, unit(100), unit(200)).await;
+
+        let projector = Arc::new(StateProjector::new(cache, None, empty_v3_fee_catalog()));
+        let optimizer = SizeOptimizer::new(projector);
+
+        let candidate = make_multileg_candidate(
+            &pools,
+            &["uniswap-v2", "uniswap-v2", "uniswap-v2", "uniswap-v2"],
+            StrategyLabel::TriangularArb,
+        );
+        let cfg = make_cfg(100_000.0);
+
+        let outcome = optimizer
+            .size_triangular_with_reason(&candidate, &cfg, 100_000.0, 3000.0, 18)
+            .await;
+
+        match outcome {
+            OptimizeOutcome::Sized(s) => {
+                let outs = s
+                    .leg_amounts_out
+                    .as_ref()
+                    .expect("profitable 4-leg cycle must carry a ledger (R8 all-or-nothing)");
+                assert_eq!(outs.len(), 4, "ledger must cover ALL 4 legs, not take(3)");
+                let ins = s
+                    .leg_amounts_in
+                    .as_ref()
+                    .expect("ledger inputs must be present with outputs");
+                assert_eq!(ins.len(), 4);
+                // Chain invariant: leg i+1 input == leg i output.
+                for i in 0..3 {
+                    assert_eq!(ins[i + 1], outs[i], "leg chain broken at hop {i}");
+                }
+                assert_eq!(ins[0], s.optimal_amount_in.to_string());
+                assert!(s.gross_profit_usd > 0.0);
+            }
+            other => panic!(
+                "4-leg TriangularArb must size via the cycle kernel, got sized={}",
+                matches!(other, OptimizeOutcome::Sized(_))
+            ),
+        }
+    }
+
+    #[tokio::test]
+    async fn two_leg_kernel_rejects_extra_legs_defensively() {
+        // Fund-path defensive check (CLAUDE.md §2): a >2-leg candidate that
+        // ever reaches a 2-leg kernel must fail CLOSED — never size a
+        // truncated 2-of-N slice.
+        let pools = [addr(0x20), addr(0x21), addr(0x22), addr(0x23)];
+        let cache = Arc::new(ReservesCache::new());
+        insert_oriented(&cache, pools[0], WETH_T, T1, unit(100), unit(120)).await;
+        insert_oriented(&cache, pools[1], T1, T2, unit(100), unit(110)).await;
+
+        let projector = Arc::new(StateProjector::new(cache, None, empty_v3_fee_catalog()));
+        let optimizer = SizeOptimizer::new(projector);
+
+        let candidate = make_multileg_candidate(
+            &pools,
+            &["uniswap-v2", "uniswap-v2", "uniswap-v2", "uniswap-v2"],
+            StrategyLabel::DexArbV2V2,
+        );
+        let intent = make_intent(addr(0xAAAA), addr(0xBBBB));
+        let cfg = make_cfg(100_000.0);
+
+        let outcome = optimizer
+            .size_two_leg_with_reason(&candidate, &intent, unit(10), 100_000.0, 3000.0, 18, &cfg)
+            .await;
+
+        assert!(
+            matches!(
+                outcome,
+                OptimizeOutcome::Rejected(OptimizeRejectReason::UnsupportedLegCount, None)
+            ),
+            "2-leg kernel must fail closed on a 4-leg candidate"
         );
     }
 
@@ -2893,7 +3315,7 @@ mod tests {
         assert!(
             matches!(
                 outcome,
-                OptimizeOutcome::Rejected(OptimizeRejectReason::NoConfig)
+                OptimizeOutcome::Rejected(OptimizeRejectReason::NoConfig, _)
             ),
             "cfg=None must produce Rejected(NoConfig)"
         );
@@ -2938,7 +3360,7 @@ mod tests {
             assert!(
                 matches!(
                     outcome,
-                    OptimizeOutcome::Rejected(OptimizeRejectReason::MissingReservesPoolA)
+                    OptimizeOutcome::Rejected(OptimizeRejectReason::MissingReservesPoolA, _)
                 ),
                 "missing pool_a reserves must produce Rejected(MissingReservesPoolA)"
             );
@@ -2971,7 +3393,7 @@ mod tests {
             assert!(
                 matches!(
                     outcome,
-                    OptimizeOutcome::Rejected(OptimizeRejectReason::MissingReservesPoolB)
+                    OptimizeOutcome::Rejected(OptimizeRejectReason::MissingReservesPoolB, _)
                 ),
                 "missing pool_b reserves must produce Rejected(MissingReservesPoolB)"
             );
@@ -3048,13 +3470,14 @@ mod tests {
                 OptimizeRejectReason::NonPositiveProfit
                 | OptimizeRejectReason::NonPositiveNetUsd
                 | OptimizeRejectReason::NonPositiveGrossUsd,
+                _,
             ) => {
                 // Expected: gas destroys any micro-profit.
             }
             other => {
                 let reason = match other {
                     OptimizeOutcome::Sized(_) => "Sized (unexpected — profit survived high gas)",
-                    OptimizeOutcome::Rejected(r) => r.as_str(),
+                    OptimizeOutcome::Rejected(r, _) => r.as_str(),
                 };
                 panic!("unexpected outcome: {reason}");
             }
@@ -3225,16 +3648,34 @@ mod tests {
     fn kelly_passes_rejected_through_unchanged() {
         let cfg = make_cfg(1000.0);
         let result = SizeOptimizer::apply_kelly_constraints(
-            OptimizeOutcome::Rejected(OptimizeRejectReason::NoConfig),
+            OptimizeOutcome::Rejected(OptimizeRejectReason::NoConfig, None),
             &cfg,
             1000.0,
             3000.0,
             18,
         );
         match result {
-            OptimizeOutcome::Rejected(OptimizeRejectReason::NoConfig) => {}
+            OptimizeOutcome::Rejected(OptimizeRejectReason::NoConfig, payload) => {
+                assert!(payload.is_none(), "None payload must pass through as None");
+            }
             _ => panic!("expected pass-through Rejected(NoConfig)"),
         }
+    }
+
+    /// Deuda 4-(B): R8 contract on the `Rejected` payload — `None` = not
+    /// computed (infra/Err-path), `Some(v)` = computed and exactly `v`.
+    #[test]
+    fn rejected_net_profit_usd_payload_contract() {
+        let none_case = OptimizeOutcome::Rejected(OptimizeRejectReason::NonPositiveProfit, None);
+        assert!(none_case.net_profit_usd().is_none());
+
+        let some_case = OptimizeOutcome::Rejected(OptimizeRejectReason::GasFloorBreach, Some(1.25));
+        assert_eq!(some_case.net_profit_usd(), Some(1.25));
+
+        // Negative values are valid computed results — must survive verbatim.
+        let negative_case =
+            OptimizeOutcome::Rejected(OptimizeRejectReason::NonPositiveProfit, Some(-0.42));
+        assert_eq!(negative_case.net_profit_usd(), Some(-0.42));
     }
 
     #[test]
@@ -3262,7 +3703,7 @@ mod tests {
                 assert_eq!(s.gross_profit_usd, sized.gross_profit_usd);
                 assert_eq!(s.estimated_net_profit_usd, sized.estimated_net_profit_usd);
             }
-            OptimizeOutcome::Rejected(r) => panic!("unexpected reject {:?}", r),
+            OptimizeOutcome::Rejected(r, _) => panic!("unexpected reject {:?}", r),
         }
     }
 
@@ -3297,7 +3738,7 @@ mod tests {
                     "gross should scale down when amount caps down",
                 );
             }
-            OptimizeOutcome::Rejected(r) => {
+            OptimizeOutcome::Rejected(r, _) => {
                 // The scaled net may drop below gas floor at very tight caps;
                 // both Sized-with-smaller-amount and Rejected(GasFloorBreach
                 // / NonPositiveNetUsd) are doctrinally correct outcomes.
@@ -3328,7 +3769,11 @@ mod tests {
             18,
         );
         match result {
-            OptimizeOutcome::Rejected(OptimizeRejectReason::GasFloorBreach) => {}
+            OptimizeOutcome::Rejected(OptimizeRejectReason::GasFloorBreach, payload) => {
+                // Deuda 4-(B): the computed net (4.0, positive but below the
+                // floor) must travel on the reject — R8 Some = computed.
+                assert_eq!(payload, Some(4.0), "GasFloorBreach must stamp net_usd");
+            }
             other => panic!("expected GasFloorBreach, got {:?}", other.reason_str()),
         }
     }
@@ -3368,7 +3813,7 @@ mod tests {
             18,
         );
         match result {
-            OptimizeOutcome::Rejected(OptimizeRejectReason::KellyNegativeEdge) => {}
+            OptimizeOutcome::Rejected(OptimizeRejectReason::KellyNegativeEdge, _) => {}
             other => panic!("expected KellyNegativeEdge, got {:?}", other.reason_str()),
         }
     }
@@ -3449,7 +3894,7 @@ mod tests {
                     "triangular ledger must be absent after Kelly rescale (R8)"
                 );
             }
-            OptimizeOutcome::Rejected(r) => panic!("unexpected reject {:?}", r),
+            OptimizeOutcome::Rejected(r, _) => panic!("unexpected reject {:?}", r),
         }
     }
 
@@ -3481,7 +3926,7 @@ mod tests {
                 assert!(s.leg_amounts_in.is_some(), "ledger must survive");
                 assert!(s.leg_amounts_out.is_some(), "ledger must survive");
             }
-            OptimizeOutcome::Rejected(r) => panic!("unexpected reject {:?}", r),
+            OptimizeOutcome::Rejected(r, _) => panic!("unexpected reject {:?}", r),
         }
     }
 
@@ -3631,7 +4076,7 @@ mod tests {
                 assert!(s.gross_profit_usd > 0.0, "gross must be positive");
                 assert!(s.estimated_net_profit_usd > 0.0, "net must be positive");
             }
-            OptimizeOutcome::Rejected(r) => {
+            OptimizeOutcome::Rejected(r, _) => {
                 panic!(
                     "expected Sized for a profitable V3 route, got {}",
                     r.as_str()
@@ -3659,7 +4104,7 @@ mod tests {
         assert!(
             matches!(
                 outcome,
-                OptimizeOutcome::Rejected(OptimizeRejectReason::V3QuoteUnavailable)
+                OptimizeOutcome::Rejected(OptimizeRejectReason::V3QuoteUnavailable, _)
             ),
             "no V3 provider must yield V3QuoteUnavailable, got {:?}",
             outcome.reason_str()
@@ -3691,11 +4136,21 @@ mod tests {
         assert!(
             matches!(
                 outcome,
-                OptimizeOutcome::Rejected(OptimizeRejectReason::NonPositiveProfit)
+                OptimizeOutcome::Rejected(OptimizeRejectReason::NonPositiveProfit, _)
             ),
             "answered-but-unprofitable must be NonPositiveProfit, got {:?}",
             outcome.reason_str()
         );
+        // Deuda 4-(B): when the quoter answered, the grid computed a real
+        // (negative) profit — it must travel as Some(<= 0), never be dropped
+        // back to None (R8).
+        if let OptimizeOutcome::Rejected(_, payload) = outcome {
+            let n = payload.expect("answered-but-unprofitable must stamp the computed USD");
+            assert!(
+                n <= 0.0 && n.is_finite(),
+                "computed reject payload must be finite and <= 0, got {n}"
+            );
+        }
     }
 
     // R8 honesty (adversarial-review fix): when the quoter ANSWERS with 0 (a
@@ -3724,7 +4179,7 @@ mod tests {
         assert!(
             matches!(
                 outcome,
-                OptimizeOutcome::Rejected(OptimizeRejectReason::NonPositiveProfit)
+                OptimizeOutcome::Rejected(OptimizeRejectReason::NonPositiveProfit, _)
             ),
             "quoter-answered-zero must be NonPositiveProfit (not V3QuoteUnavailable), got {:?}",
             outcome.reason_str()
@@ -3907,7 +4362,7 @@ mod tests {
                 assert!(s.gross_profit_usd > 0.0, "gross must be positive");
                 assert!(s.estimated_net_profit_usd > 0.0, "net must be positive");
             }
-            OptimizeOutcome::Rejected(r) => {
+            OptimizeOutcome::Rejected(r, _) => {
                 panic!(
                     "expected Sized for spA>spB profitable curve, got {}",
                     r.as_str()
@@ -3955,7 +4410,7 @@ mod tests {
         assert!(
             matches!(
                 outcome,
-                OptimizeOutcome::Rejected(OptimizeRejectReason::NonPositiveProfit)
+                OptimizeOutcome::Rejected(OptimizeRejectReason::NonPositiveProfit, _)
             ),
             "negative-spread V3 curve must be NonPositiveProfit, got {:?}",
             outcome.reason_str()
@@ -4023,7 +4478,7 @@ mod tests {
         assert!(
             matches!(
                 outcome,
-                OptimizeOutcome::Rejected(OptimizeRejectReason::NonPositiveProfit)
+                OptimizeOutcome::Rejected(OptimizeRejectReason::NonPositiveProfit, _)
             ),
             "within-tick early-reject must yield NonPositiveProfit, got {:?}",
             outcome.reason_str()

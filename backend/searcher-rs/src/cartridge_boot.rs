@@ -1464,7 +1464,8 @@ pub async fn active_evaluate_and_emit(
                                 error = %e,
                                 "size_optimizer returned Err — treating as no profit"
                             );
-                            OptimizeOutcome::Rejected(OptimizeRejectReason::NonPositiveProfit)
+                            // R8: infra error, no economic value was computed — None.
+                            OptimizeOutcome::Rejected(OptimizeRejectReason::NonPositiveProfit, None)
                         }
                     };
 
@@ -1491,16 +1492,20 @@ pub async fn active_evaluate_and_emit(
                             };
                             (c, legs)
                         }
-                        OptimizeOutcome::Rejected(reason) => {
+                        OptimizeOutcome::Rejected(reason, rejected_net) => {
                             let reason_str = reason.as_str().to_owned();
                             REJECTED_NO_PROFIT_TOTAL
                                 .with_label_values(&[&chain_str, label.as_str(), &reason_str])
                                 .inc();
                             // R8: expected_profit_usd=None — never a fabricated figure
-                            // on a rejected candidate.
+                            // on a rejected candidate. Deuda 4-(B): the kernel's
+                            // computed net DOES travel (Some = computed, usually
+                            // <= 0) so the emitter does not fall back to the raw
+                            // detection estimate.
                             let mut opp = strategy_candidate.opportunity.clone();
                             opp.rejection_reason = Some(reason_str.clone());
                             opp.expected_profit_usd = None;
+                            opp.net_expected_profit_usd = rejected_net;
                             if let Err(e) = emitter
                                 .emit_rejected(&opp, label, &reason_str, route_ref)
                                 .await

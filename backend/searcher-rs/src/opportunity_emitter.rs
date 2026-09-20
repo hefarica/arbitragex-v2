@@ -37,6 +37,7 @@ use crate::dedup::OppDedup;
 use crate::persistence;
 // BR-05 (2026-09-07): Stage 2c read side — the §IV posterior fold over the
 // per-operator log-LR slice mirrored from `math_operator_calibration`.
+use crate::beta_priors::BetaPriorsCache;
 use crate::priors_cache::{section_iv_fold, PriorsCache};
 use crate::publisher;
 use crate::scoring_pipeline::ScoringPipeline;
@@ -142,6 +143,11 @@ pub struct OpportunityEmitter {
     /// PG is not configured — honest flat prior.
     /// BR-05 (2026-09-07): WO-07 port-back.
     priors: PriorsCache,
+    /// Deuda 4 Beta side: per-STRATEGY prior state mirrored from
+    /// `bayesian_priors` (strategy-keyed since migration 108; the
+    /// consolidator writer + this reader both live in `beta_priors`,
+    /// gated by ARBX_BETA_PRIORS_MODE — default off ⇒ flat prior).
+    beta_priors: BetaPriorsCache,
 }
 
 impl OpportunityEmitter {
@@ -166,6 +172,7 @@ impl OpportunityEmitter {
         // BR-05 (2026-09-07): mirror the §IV calibration store (spawn a
         // refresh task when PG is configured; disabled() otherwise).
         let priors = PriorsCache::spawn_opt(&pool);
+        let beta_priors = BetaPriorsCache::spawn_opt(&pool);
         Self {
             pool,
             redis,
@@ -174,6 +181,7 @@ impl OpportunityEmitter {
             recorded: Mutex::new(Vec::new()),
             scoring,
             priors,
+            beta_priors,
         }
     }
 
@@ -194,6 +202,7 @@ impl OpportunityEmitter {
             // BR-05 (2026-09-07): No PG in dry-run (shadow) mode — the §IV
             // fold stays honest-null.
             priors: PriorsCache::disabled(),
+            beta_priors: BetaPriorsCache::disabled(),
         }
     }
 
@@ -586,15 +595,13 @@ impl OpportunityEmitter {
             .cartridge_id
             .clone()
             .unwrap_or_else(|| opp.strategy_kind.as_str().to_string());
-        // Beta-side prior stays None — HONEST, audited 2026-08-29:
-        // `bayesian_priors` has no writer AND is keyed `token_pair UNIQUE`
-        // (pre-STRAT-IDENT-01 schema) while `PriorState` is per-STRATEGY.
-        // Feeding pair-keyed priors would re-introduce the identity collapse
-        // STRAT-IDENT-01 fixed ("the pair stays as context in the record —
-        // never as the calibration bucket"). A `strategy_key` column + writer
-        // is the follow-up; until then None is the wired-but-not-calibrated
-        // truth. The §IV calibration surface (per-operator log-LR) IS live —
-        // see the fold below. (BR-05 (2026-09-07): WO-07 port-back.)
+        // Beta-side prior: per-STRATEGY state mirrored from `bayesian_priors`
+        // (strategy-keyed since migration 108; writer + reader = beta_priors
+        // module, gated by ARBX_BETA_PRIORS_MODE — default OFF). Absent ⇒
+        // None ⇒ flat Beta(1,1), the honest uncalibrated state (R8). The pair
+        // never enters the key (STRAT-IDENT-01: context in the record, never
+        // the calibration bucket). The §IV fold below is the orthogonal
+        // per-operator surface (BR-05, WO-07 port-back).
         let score = match self
             .scoring
             .evaluate_paper_opportunity(
@@ -602,7 +609,7 @@ impl OpportunityEmitter {
                 &strategy_key,
                 net_profit_usd,
                 Some(chain_id_i64),
-                None,
+                self.beta_priors.get(&strategy_key),
             )
             .await
         {
@@ -1094,6 +1101,33 @@ mod tests {
             "NegativeNetProfit:gas_floor_breach"
         );
         assert!(rec["net_profit_usd"].is_null());
+    }
+
+    /// Deuda 4-(B): a reject stamped with the kernel's computed net must NOT
+    /// fall back to the raw detection estimate at the `net.or(expected)`
+    /// build site — this is the 99.5% "profitable label on rejected row"
+    /// mislabel fix.
+    #[test]
+    fn score_record_rejected_stamped_net_beats_stale_estimate() {
+        let mut opp = make_opp(Uuid::new_v4(), Some(5.0), None);
+        opp.net_expected_profit_usd = Some(-1.25);
+        let rec = build_score_record(
+            &opp,
+            "MEV-01-001",
+            &flat_score(),
+            None,
+            "rejected",
+            Some("NonPositiveProfit"),
+            crate::priors_cache::SectionIvFold {
+                posterior_log_odds: None,
+                calibration_applied: false,
+            },
+        );
+        assert_eq!(rec["emission_outcome"], "rejected");
+        assert_eq!(
+            rec["net_profit_usd"], -1.25,
+            "stamped computed net must win over the stale positive estimate"
+        );
     }
 
     // ── opportunity_emitter::tests::accepted_dedupe_hit_skips_io ────────────

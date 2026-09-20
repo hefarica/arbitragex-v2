@@ -922,7 +922,8 @@ impl Orchestrator {
                         error = %e,
                         "size_optimizer returned Err — treating as no profit"
                     );
-                    OptimizeOutcome::Rejected(OptimizeRejectReason::NonPositiveProfit)
+                    // R8: infra error, no economic value was computed — None.
+                    OptimizeOutcome::Rejected(OptimizeRejectReason::NonPositiveProfit, None)
                 }
             };
 
@@ -934,7 +935,7 @@ impl Orchestrator {
                 strategy = candidate.label.as_str(),
                 result = match &outcome {
                     OptimizeOutcome::Sized(_) => "sized",
-                    OptimizeOutcome::Rejected(_) => "rejected",
+                    OptimizeOutcome::Rejected(_, _) => "rejected",
                 },
                 reason = ?outcome.reason_str(),
                 gross_profit_usd = ?outcome.gross_profit_usd(),
@@ -968,7 +969,7 @@ impl Orchestrator {
                     };
                     (c, s.net_economics, legs)
                 }
-                OptimizeOutcome::Rejected(reason) => {
+                OptimizeOutcome::Rejected(reason, rejected_net) => {
                     // Route optimizer rejection to REJECTED_NO_PROFIT_TOTAL
                     // (not SIMULATION_FAILED_TOTAL — sizing is not simulation).
                     // The Prometheus label stays the BARE reason (a suffixed
@@ -993,6 +994,14 @@ impl Orchestrator {
                     };
                     let mut c = candidate;
                     c.rejection_reason = Some(rejection);
+                    // Deuda 4-(B): stamp the kernel's computed net when the
+                    // rejecting path had one (R8). Without this the emitter
+                    // falls back to the raw detection estimate and the DB
+                    // labels unprofitable rejects as "profitable".
+                    if let Some(net) = rejected_net {
+                        c.net_expected_profit_usd = Some(net);
+                        c.opportunity.net_expected_profit_usd = Some(net);
+                    }
                     // HARDENING: NO vaciar expected_profit_usd. Mantener el valor
                     // que el SizeOptimizer calculó (gross) para que la tarjeta lo
                     // muestre. El gate de net-positive es de EJECUCIÓN, no de
