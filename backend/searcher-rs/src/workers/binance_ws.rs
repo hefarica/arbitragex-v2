@@ -58,10 +58,7 @@ pub fn pairs_from_env() -> Vec<String> {
         .filter(|p| !p.is_empty() && p.len() <= 20 && p.bytes().all(|b| b.is_ascii_alphanumeric()))
         .collect();
     if pairs.is_empty() {
-        DEFAULT_PAIRS
-            .split(',')
-            .map(|p| p.to_string())
-            .collect()
+        DEFAULT_PAIRS.split(',').map(|p| p.to_string()).collect()
     } else {
         pairs
     }
@@ -169,7 +166,10 @@ pub async fn run(bus: Arc<PriceBus>, redis: redis::aio::ConnectionManager) {
         stats.reconnects += 1;
         match session {
             SessionEnd::NaturalReconnect => {
-                info!(event = "binance_ws.reconnect_scheduled", "23h horizon reached — proactive reconnect");
+                info!(
+                    event = "binance_ws.reconnect_scheduled",
+                    "23h horizon reached — proactive reconnect"
+                );
                 backoff = BACKOFF_START; // healthy connection, no penalty
             }
             SessionEnd::Error(e) => {
@@ -288,7 +288,10 @@ async fn connect_and_stream(
             Some(v) => v,
             None => {
                 stats.parse_failures += 1;
-                debug!(event = "binance_ws.frame_unparseable", "dropping frame (R8)");
+                debug!(
+                    event = "binance_ws.frame_unparseable",
+                    "dropping frame (R8)"
+                );
                 continue;
             }
         };
@@ -334,7 +337,10 @@ mod tests {
         // No env set → canonical five (test hermeticity: clear if present).
         std::env::remove_var("ARBX_BINANCE_PAIRS");
         let pairs = pairs_from_env();
-        assert_eq!(pairs, vec!["ethusdc", "btcusdt", "ethusdt", "usdcusdt", "wbtcusdt"]);
+        assert_eq!(
+            pairs,
+            vec!["ethusdc", "btcusdt", "ethusdt", "usdcusdt", "wbtcusdt"]
+        );
     }
 
     #[test]

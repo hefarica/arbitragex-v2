@@ -289,8 +289,11 @@ impl PriceBus {
     /// whole frame (a half-parsed book is worse than the previous one only
     /// if trusted — R8: prefer the last good frame).
     pub fn update_depth(&self, pair_upper: &str, d: Depth5) {
-        let ok = |l: &DepthLevel| l.price.is_finite() && l.price > 0.0 && l.qty.is_finite() && l.qty >= 0.0;
-        if d.bids.len() > 5 || d.asks.len() > 5 || !d.bids.iter().all(ok) || !d.asks.iter().all(ok) {
+        let ok = |l: &DepthLevel| {
+            l.price.is_finite() && l.price > 0.0 && l.qty.is_finite() && l.qty >= 0.0
+        };
+        if d.bids.len() > 5 || d.asks.len() > 5 || !d.bids.iter().all(ok) || !d.asks.iter().all(ok)
+        {
             return;
         }
         self.updates_depth.fetch_add(1, Ordering::Relaxed);
@@ -685,12 +688,43 @@ mod tests {
     #[test]
     fn junk_frames_are_dropped() {
         let b = bus();
-        b.update_binance("ETHUSDC", BookTicker { bid: 0.0, ask: 1.0, event_ms: 0, recv_ns: 1 });
-        b.update_binance("ETHUSDC", BookTicker { bid: 2.0, ask: 1.0, event_ms: 0, recv_ns: 1 }); // crossed
-        b.update_binance("ETHUSDC", BookTicker { bid: f64::NAN, ask: 1.0, event_ms: 0, recv_ns: 1 });
+        b.update_binance(
+            "ETHUSDC",
+            BookTicker {
+                bid: 0.0,
+                ask: 1.0,
+                event_ms: 0,
+                recv_ns: 1,
+            },
+        );
+        b.update_binance(
+            "ETHUSDC",
+            BookTicker {
+                bid: 2.0,
+                ask: 1.0,
+                event_ms: 0,
+                recv_ns: 1,
+            },
+        ); // crossed
+        b.update_binance(
+            "ETHUSDC",
+            BookTicker {
+                bid: f64::NAN,
+                ask: 1.0,
+                event_ms: 0,
+                recv_ns: 1,
+            },
+        );
         assert!(b.view().snapshot().binance.is_empty());
         assert_eq!(b.updates_binance.load(Ordering::Relaxed), 0);
-        b.update_anchor("ETH", Anchor { answer: -5.0, updated_at: now_secs(), recv_ns: 1 });
+        b.update_anchor(
+            "ETH",
+            Anchor {
+                answer: -5.0,
+                updated_at: now_secs(),
+                recv_ns: 1,
+            },
+        );
         assert!(b.view().snapshot().chainlink.is_empty());
     }
 
@@ -709,14 +743,32 @@ mod tests {
     fn depth() -> Depth5 {
         Depth5 {
             bids: vec![
-                DepthLevel { price: 100.0, qty: 1.0 },
-                DepthLevel { price: 99.0, qty: 2.0 },
-                DepthLevel { price: 98.0, qty: 3.0 },
+                DepthLevel {
+                    price: 100.0,
+                    qty: 1.0,
+                },
+                DepthLevel {
+                    price: 99.0,
+                    qty: 2.0,
+                },
+                DepthLevel {
+                    price: 98.0,
+                    qty: 3.0,
+                },
             ],
             asks: vec![
-                DepthLevel { price: 101.0, qty: 1.0 },
-                DepthLevel { price: 102.0, qty: 2.0 },
-                DepthLevel { price: 103.0, qty: 3.0 },
+                DepthLevel {
+                    price: 101.0,
+                    qty: 1.0,
+                },
+                DepthLevel {
+                    price: 102.0,
+                    qty: 2.0,
+                },
+                DepthLevel {
+                    price: 103.0,
+                    qty: 3.0,
+                },
             ],
             event_ms: 0,
         }
@@ -761,8 +813,14 @@ mod tests {
         b.update_depth(
             "ETHUSDC",
             Depth5 {
-                bids: vec![DepthLevel { price: 2600.0, qty: 2.0 }],
-                asks: vec![DepthLevel { price: 2601.0, qty: 2.0 }],
+                bids: vec![DepthLevel {
+                    price: 2600.0,
+                    qty: 2.0,
+                }],
+                asks: vec![DepthLevel {
+                    price: 2601.0,
+                    qty: 2.0,
+                }],
                 event_ms: 0,
             },
         );
@@ -782,7 +840,10 @@ mod tests {
         b.update_depth(
             "ETHUSDC",
             Depth5 {
-                bids: vec![DepthLevel { price: -1.0, qty: 1.0 }],
+                bids: vec![DepthLevel {
+                    price: -1.0,
+                    qty: 1.0,
+                }],
                 asks: vec![],
                 event_ms: 0,
             },
@@ -790,7 +851,12 @@ mod tests {
         assert!(b.view().snapshot().depth.is_empty());
         // >5 levels rejected.
         let six = Depth5 {
-            bids: (0..6).map(|i| DepthLevel { price: 100.0 - i as f64, qty: 1.0 }).collect(),
+            bids: (0..6)
+                .map(|i| DepthLevel {
+                    price: 100.0 - i as f64,
+                    qty: 1.0,
+                })
+                .collect(),
             asks: vec![],
             event_ms: 0,
         };
