@@ -71,6 +71,7 @@ pub mod token_resolve_signal;
 pub mod impact_index;
 pub mod metrics;
 pub mod models;
+pub mod operator_toggles;
 pub mod opportunity_emitter;
 pub mod pair_alpha_runtime;
 pub mod pair_index;

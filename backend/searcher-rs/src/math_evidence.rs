@@ -99,6 +99,7 @@ pub fn evaluate_strategy_operators(
 ) -> Vec<(u32, Option<f64>, String)> {
     operator_ids
         .iter()
+        .filter(|&id| !crate::operator_toggles::is_disabled(*id as u8))
         .filter_map(|&id| {
             let out = registry.dispatch(id as u8, state)?;
             Some((id, out.scalar_value, out.operator_name))
@@ -291,6 +292,9 @@ pub async fn evaluate_math_evidence(
     let mut computed = 0usize;
     let mut op_values: Vec<serde_json::Value> = Vec::new();
     for id in &op_ids {
+        if crate::operator_toggles::is_disabled(*id) {
+            continue;
+        }
         if let Some(out) = registry.dispatch(*id, &state) {
             if out.scalar_value.is_some() {
                 computed += 1;
@@ -373,6 +377,9 @@ pub async fn evaluate_math_evidence(
 pub fn build_evidence_vector(state: &MarketState, registry: &OperatorRegistry) -> Vec<f64> {
     let mut e = vec![0.0_f64; 31];
     for id in 1u8..=31u8 {
+        if crate::operator_toggles::is_disabled(id) {
+            continue;
+        }
         if let Some(out) = registry.dispatch(id, state) {
             let idx = usize::from(id).wrapping_sub(1);
             if idx < 31 {
