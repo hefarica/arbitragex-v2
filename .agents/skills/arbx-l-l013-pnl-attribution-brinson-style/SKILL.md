@@ -1,3 +1,4 @@
+---
 name: arbx-l-l013-pnl-attribution-brinson-style
 description: "PhD/Master skill alineada al monorepo hefarica/arbitragex-v2 (Risk, Backtesting & Quant Engineering). Se activa cuando: gas+slippage+alpha+fees. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

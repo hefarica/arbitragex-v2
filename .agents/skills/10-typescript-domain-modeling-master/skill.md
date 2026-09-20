@@ -1,3 +1,8 @@
+---
+name: 10-typescript-domain-modeling-master
+description: "Local ArbitrageX specialist skill: 10-typescript-domain-modeling-master."
+---
+
 # Skill 10: TypeScript Domain Modeling Master
 
 ## 1. Propósito

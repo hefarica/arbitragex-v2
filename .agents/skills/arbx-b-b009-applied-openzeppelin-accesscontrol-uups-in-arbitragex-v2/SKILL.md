@@ -1,3 +1,4 @@
+---
 name: arbx-b-b009-applied-openzeppelin-accesscontrol-uups-in-arbitragex-v2
 description: "Staff Engineer skill alineada al monorepo hefarica/arbitragex-v2 (Smart Contracts, Solidity & Auditing). Se activa cuando: admin contract upgrade flow. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

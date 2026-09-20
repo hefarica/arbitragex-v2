@@ -1,3 +1,4 @@
+---
 name: arbx-c-c003-applied-mempool-websocket-subscription-in-arbitragex-v2
 description: "Staff Engineer skill alineada al monorepo hefarica/arbitragex-v2 (MEV, Mempool & Bundle Submission). Se activa cuando: mempool-listener multi-RPC quorum. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

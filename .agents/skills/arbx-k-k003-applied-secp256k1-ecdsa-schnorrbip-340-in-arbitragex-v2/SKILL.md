@@ -1,3 +1,4 @@
+---
 name: arbx-k-k003-applied-secp256k1-ecdsa-schnorrbip-340-in-arbitragex-v2
 description: "Staff Engineer skill alineada al monorepo hefarica/arbitragex-v2 (Security & Cryptography Applied). Se activa cuando: KMS/local/hardware abstraction. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

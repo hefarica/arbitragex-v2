@@ -1,11 +1,22 @@
 "use client";
-import React, { useEffect, useState, useCallback, useRef } from "react";
-import { Zap, WifiOff, ShieldAlert, RefreshCw, Radio, EyeOff, Eye } from "lucide-react";
+import React, { useEffect, useState, useCallback, useRef, useMemo } from "react";
+import { Zap, WifiOff, ShieldAlert, RefreshCw, Radio, EyeOff, Eye, ChevronDown, Search } from "lucide-react";
 import { sanitizeForDisplay } from "@/lib/omega-lexicon";
 import { toast } from "sonner";
 import { OpportunityDetailDialog } from "@/components/OpportunityDetailDialog";
 import { OpportunityTradeCard } from "@/components/OpportunityTradeCard";
 import { QuarantinedEventsAuditTrail } from "@/components/opportunities/QuarantinedEventsAuditTrail";
+// CONSOLIDACIÓN 2026-09-19 (orden operador): los MOTORES de la página exchange
+// (filtro familiar/cadena/yield, price ticker G-PRICE-1, badge paper/live, cap
+// de memoria) se portan aquí SIN cambiar el estilo visual de esta página.
+import { PriceTicker } from "@/components/opportunities/exchange/PriceTicker";
+import {
+  applyExchangeFilters,
+  DEFAULT_FILTERS,
+  type ExchangeFilters,
+} from "@/components/opportunities/exchange/ExchangeFilterBar";
+import { familyOf } from "@/lib/strategy-kinds";
+import { usePaperModeState } from "@/hooks/usePaperModeState";
 
 // ─── Omni-Store Integration ───────────────────────────────────────────────────
 import { useOmniOpportunities } from "@/lib/store/useOmniOpportunities";
@@ -56,6 +67,10 @@ function routeKeyOf(opp: OmniOpportunity): string {
 
 const POLL_INTERVAL_MS = 4_000;
 
+/** Hard cap on simultaneously mounted cards — memory-discipline bound
+ *  (portado del motor de la página exchange, sin cambio de estilo). */
+const VISIBLE_CAP = 60;
+
 export type OpportunitiesSnapshot = {
   opportunities: OmniOpportunity[];
   serverTime: string | null;
@@ -91,6 +106,17 @@ export default function OpportunitiesClient({
   const [lastRefresh, setLastRefresh] = useState<Date | null>(
     initialSnapshot.serverTime ? new Date(initialSnapshot.serverTime) : null
   );
+  const [filters, setFilters] = useState<ExchangeFilters>(DEFAULT_FILTERS);
+  const [cap, setCap] = useState<number>(VISIBLE_CAP);
+
+  // ── Motor badge paper/live (display-only, fail-safe) — portado del exchange ──
+  const primaryChainId = initialSnapshot.opportunities[0]?.chain_id ?? 1;
+  const paperMode = usePaperModeState(primaryChainId);
+  const modeLabel: "paper" | "live" = paperMode.data.enabled
+    ? "paper"
+    : paperMode.data.confidence !== "default_safe"
+      ? "live"
+      : "paper";
 
   // FE-6: Track IDs already notified to avoid duplicate toasts across polls.
   // R1: useRef is SSR-safe — no access to window or localStorage.
@@ -210,7 +236,7 @@ export default function OpportunitiesClient({
   // It clears the store and repopulates via HTTP, then the WS stream continues.
   const fetchOpportunities = useCallback(async () => {
     try {
-      const url = `${EDGE_URL}/api/opportunities/live?viable_only=${viableOnly}&limit=50`;
+      const url = `${EDGE_URL}/api/opportunities/live?viable_only=${viableOnly}&limit=50&order=profit_usd`;
       const res = await fetch(url, {
         headers: { accept: "application/json" },
         signal: AbortSignal.timeout(4000),
@@ -288,6 +314,54 @@ export default function OpportunitiesClient({
   // FE-1: Opportunities come from Omni-Store (SSOT).
   const viableCount = opportunities.filter((o) => o.status !== "rejected" && o.status !== "failed").length;
   const rejectedCount = opportunities.filter((o) => o.status === "rejected").length;
+
+  // ── Motor de filtros (portado del exchange: familia/cadena/búsqueda/yield) ──
+  const filtered = useMemo(
+    () => applyExchangeFilters(opportunities, filters),
+    [opportunities, filters],
+  );
+  const visible = useMemo(() => filtered.slice(0, cap), [filtered, cap]);
+
+  // Familias presentes en el feed (motor del exchange, sin estilos atlas).
+  const families = useMemo(() => {
+    const set = new Set<string>(["triangular", "cross_chain", "liquidation", "flashloan_arb"]);
+    for (const o of opportunities) {
+      if (o.strategy_kind != null) set.add(familyOf(o.strategy_kind));
+    }
+    return Array.from(set).sort((a, b) => a.localeCompare(b));
+  }, [opportunities]);
+  const allFamiliesEnabled = filters.enabledFamilies.size === 0;
+  const toggleFamily = (fam: string) => {
+    const next = new Set<string>(allFamiliesEnabled ? families : filters.enabledFamilies);
+    if (next.has(fam)) next.delete(fam);
+    else next.add(fam);
+    setFilters({ ...filters, enabledFamilies: next });
+  };
+  const feedChains = useMemo(() => {
+    const m = new Map<number, number>();
+    for (const o of opportunities) {
+      if (o.chain_id == null) continue; // R8: malformed row joins no chain bucket
+      m.set(o.chain_id, (m.get(o.chain_id) ?? 0) + 1);
+    }
+    return Array.from(m.entries()).sort((a, b) => b[1] - a[1]);
+  }, [opportunities]);
+
+  // ── G-PRICE-1: símbolos del feed para la cinta de precios ──
+  const tickerSymbols = useMemo(() => {
+    const syms = new Set<string>();
+    for (const opp of visible) {
+      for (const leg of (opp.pair_symbol ?? "").split(/[/\-]+/)) {
+        const s = leg.trim().toUpperCase();
+        if (s) syms.add(s);
+      }
+    }
+    return Array.from(syms);
+  }, [visible]);
+
+  // Reset del cap al cambiar filtros (motor de memoria del exchange).
+  useEffect(() => {
+    setCap(VISIBLE_CAP);
+  }, [filters]);
 
   const isError = feedStatus === 'STALE';
 
@@ -371,6 +445,84 @@ export default function OpportunitiesClient({
         </div>
       </div>
 
+      {/* ── Motor de filtros (estilo propio de esta página, no atlas) ── */}
+      <div className="mb-6 flex flex-wrap items-center gap-2 text-xs">
+        <span className="text-muted-foreground font-semibold uppercase tracking-wide">Filters</span>
+        {families.map((fam) => {
+          const enabled = allFamiliesEnabled || filters.enabledFamilies.has(fam);
+          return (
+            <button
+              key={fam}
+              type="button"
+              onClick={() => toggleFamily(fam)}
+              className={`px-2.5 py-1 rounded-lg border font-semibold transition-colors ${
+                enabled
+                  ? "bg-primary/10 border-primary/40 text-primary hover:bg-primary/20"
+                  : "bg-muted border-border text-muted-foreground hover:bg-accent"
+              }`}
+            >
+              {fam}
+            </button>
+          );
+        })}
+        <select
+          value={filters.chainId}
+          onChange={(e) =>
+            setFilters({
+              ...filters,
+              chainId: e.target.value === "all" ? "all" : Number(e.target.value),
+            })
+          }
+          className="px-2.5 py-1 rounded-lg border border-border bg-muted text-foreground"
+          title="Filter by chain"
+        >
+          <option value="all">All chains</option>
+          {feedChains.map(([chainId, count]) => (
+            <option key={chainId} value={chainId}>
+              chain {chainId} ({count})
+            </option>
+          ))}
+        </select>
+        <div className="relative">
+          <Search size={12} className="absolute left-2 top-1/2 -translate-y-1/2 text-muted-foreground" />
+          <input
+            type="text"
+            value={filters.search}
+            onChange={(e) => setFilters({ ...filters, search: e.target.value })}
+            placeholder="token / dex / strategy"
+            className="pl-7 pr-2.5 py-1 rounded-lg border border-border bg-muted text-foreground w-44"
+          />
+        </div>
+        <input
+          type="number"
+          min={0}
+          step="0.5"
+          value={filters.minYieldUsd ?? ""}
+          onChange={(e) =>
+            setFilters({
+              ...filters,
+              minYieldUsd: e.target.value === "" ? null : Number(e.target.value),
+            })
+          }
+          placeholder="min yield $"
+          className="px-2.5 py-1 rounded-lg border border-border bg-muted text-foreground w-28"
+          title="Minimum expected yield (USD)"
+        />
+        <span className={`px-2.5 py-1 rounded-full border font-bold ${
+          modeLabel === "paper"
+            ? "bg-info/10 border-info/40 text-info"
+            : "bg-destructive/10 border-destructive/40 text-destructive"
+        }`} title={`Effective execution terminus (read-only): ${modeLabel} · confidence ${paperMode.data.confidence}`}>
+          TERMINUS: {modeLabel.toUpperCase()}
+        </span>
+        <span className="text-muted-foreground">
+          <span className="text-foreground font-semibold">{filtered.length}</span> matching
+        </span>
+      </div>
+
+      {/* G-PRICE-1 — cinta de precios en vivo (motor portado del exchange) */}
+      <PriceTicker chainId={primaryChainId} edgeUrl={EDGE_URL} symbols={tickerSymbols} />
+
       {/* R8 fail-honest: surface WS disconnection and HTTP errors clearly. */}
       {feedStatus === 'STALE' && (
         <div className="mb-8 p-4 bg-warning/10 border border-warning/30 rounded-xl flex items-center gap-4 text-warning">
@@ -433,7 +585,7 @@ export default function OpportunitiesClient({
           cards that accumulated nodes/memory. Items still animate on enter via
           motion.div initial/animate. */}
       <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
-        {opportunities.map((opp) => (
+        {visible.map((opp) => (
           <OpportunityTradeCard
             key={routeKeyOf(opp)}
             opp={opp}
@@ -443,11 +595,30 @@ export default function OpportunitiesClient({
               strategyConfig={
                 opp.strategy_kind != null ? (strategyConfigs[opp.strategy_kind] ?? null) : null
               }
+              modeLabel={modeLabel}
               onExecute={onExecute}
               onInspect={onInspect}
             />
           ))}
       </div>
+
+      {/* Motor de memoria (portado del exchange): revelar lo diferido + cargar más */}
+      {filtered.length > visible.length && (
+        <div className="mt-6 flex flex-col items-center gap-2">
+          <p className="text-xs text-muted-foreground">
+            Showing <span className="text-foreground font-semibold">{visible.length}</span> of{" "}
+            <span className="text-foreground font-semibold">{filtered.length}</span> matching — the rest are
+            deferred (memory-discipline cap).
+          </p>
+          <button
+            type="button"
+            onClick={() => setCap((c) => c + VISIBLE_CAP)}
+            className="flex items-center gap-2 px-3 py-1.5 rounded-lg border border-border bg-muted hover:bg-accent transition-colors text-xs font-semibold"
+          >
+            <ChevronDown size={12} /> Show {Math.min(VISIBLE_CAP, filtered.length - visible.length)} more
+          </button>
+        </div>
+      )}
 
       {/* FE-0032 (§31): Audit Trail — the quarantined rows of THIS snapshot in
           the §31 columns (pure aggregation of the same store data, no second

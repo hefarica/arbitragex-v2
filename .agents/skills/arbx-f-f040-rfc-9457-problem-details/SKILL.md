@@ -1,3 +1,4 @@
+---
 name: arbx-f-f040-rfc-9457-problem-details
 description: "PhD/Master skill alineada al monorepo hefarica/arbitragex-v2 (Backend Services (Node + Rust)). Se activa cuando: application/problem+json. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

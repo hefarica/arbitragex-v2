@@ -1,3 +1,4 @@
+---
 name: arbx-b-b012-applied-solady-safetransferlib-fixedpointmath-in-arbitragex-v2
 description: "Staff Engineer skill alineada al monorepo hefarica/arbitragex-v2 (Smart Contracts, Solidity & Auditing). Se activa cuando: -2k gas per swap. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

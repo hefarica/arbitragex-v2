@@ -1,3 +1,4 @@
+---
 name: arbx-a-a031-procedural-macros-proc-macro2synquote
 description: "PhD/Master skill alineada al monorepo hefarica/arbitragex-v2 (Rust Systems & Searcher Engine). Se activa cuando: custom derive attribute. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

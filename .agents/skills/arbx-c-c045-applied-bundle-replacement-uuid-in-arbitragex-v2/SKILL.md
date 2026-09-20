@@ -1,3 +1,4 @@
+---
 name: arbx-c-c045-applied-bundle-replacement-uuid-in-arbitragex-v2
 description: "Staff Engineer skill alineada al monorepo hefarica/arbitragex-v2 (MEV, Mempool & Bundle Submission). Se activa cuando: cancel/replace ergonomics. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

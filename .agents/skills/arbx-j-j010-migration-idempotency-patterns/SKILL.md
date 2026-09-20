@@ -1,3 +1,4 @@
+---
 name: arbx-j-j010-migration-idempotency-patterns
 description: "PhD/Master skill alineada al monorepo hefarica/arbitragex-v2 (Database & Storage (Postgres/Redis/Timescale)). Se activa cuando: IF NOT EXISTS. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

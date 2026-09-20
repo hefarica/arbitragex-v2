@@ -1,3 +1,8 @@
+---
+name: 18-observability-production-debugging-specialist
+description: "Local ArbitrageX specialist skill: 18-observability-production-debugging-specialist."
+---
+
 # Skill 18: Observability & Production Debugging Specialist
 
 ## 1. Propósito

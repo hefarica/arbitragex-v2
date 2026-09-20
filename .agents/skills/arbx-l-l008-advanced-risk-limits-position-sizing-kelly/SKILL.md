@@ -1,3 +1,4 @@
+---
 name: arbx-l-l008-advanced-risk-limits-position-sizing-kelly
 description: "Post-Doc skill alineada al monorepo hefarica/arbitragex-v2 (Risk, Backtesting & Quant Engineering). Se activa cuando: estimation risk shrinkage. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

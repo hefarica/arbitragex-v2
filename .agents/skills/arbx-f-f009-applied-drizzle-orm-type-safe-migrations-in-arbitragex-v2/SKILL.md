@@ -1,3 +1,4 @@
+---
 name: arbx-f-f009-applied-drizzle-orm-type-safe-migrations-in-arbitragex-v2
 description: "Staff Engineer skill alineada al monorepo hefarica/arbitragex-v2 (Backend Services (Node + Rust)). Se activa cuando: compile-time DB shape. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

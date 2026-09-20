@@ -1,3 +1,4 @@
+---
 name: arbx-c-c007-sandwich-profitability-math
 description: "PhD/Master skill alineada al monorepo hefarica/arbitragex-v2 (MEV, Mempool & Bundle Submission). Se activa cuando: optimal frontrun amount. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

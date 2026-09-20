@@ -1,3 +1,4 @@
+---
 name: arbx-k-k025-post-quantum-migration-prep
 description: "PhD/Master skill alineada al monorepo hefarica/arbitragex-v2 (Security & Cryptography Applied). Se activa cuando: Kyber/Dilithium hybrids. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

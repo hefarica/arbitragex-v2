@@ -1,0 +1,10 @@
+{
+ "object": "hermes.run",
+ "run_id": "run_fc3ccdc9d5804bc5b5f4eb1125fb147d",
+ "status": "running",
+ "updated_at": 1789795018.0304942,
+ "created_at": 1789794164.8689365,
+ "session_id": "run_fc3ccdc9d5804bc5b5f4eb1125fb147d",
+ "model": "zai-coding-1-2-glm-5.3-hermes-agent-glm-5.3",
+ "last_event": "tool.started"
+}

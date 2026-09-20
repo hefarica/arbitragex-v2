@@ -1,3 +1,4 @@
+---
 name: arbx-a-a004-tokio-async-runtime-engineering
 description: "PhD/Master skill alineada al monorepo hefarica/arbitragex-v2 (Rust Systems & Searcher Engine). Se activa cuando: work-stealing scheduler. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

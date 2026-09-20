@@ -65,6 +65,11 @@ export const ScannerHeartbeatSnapshotSchema = z.object({
   pg_period_inserted: z.number().int().nonnegative(),
   pg_period_profit_pos: z.number().int().nonnegative(),
   pending_received: z.number().int().nonnegative(),
+  // WO-FUNNEL-01 (2026-09-17): RU-3 per-block route-intent dispatches. Optional
+  // so snapshots from searchers built before this field (e.g. the
+  // prod_20260824 fixture) stay valid — absence means "counter did not exist";
+  // the funnel card renders absence as 0 explicitly, never fabricates.
+  block_intents_dispatched: z.number().int().nonnegative().optional(),
   decoded_ok: z.number().int().nonnegative(),
   enriched_v2: z.number().int().nonnegative(),
   enriched_v3: z.number().int().nonnegative(),

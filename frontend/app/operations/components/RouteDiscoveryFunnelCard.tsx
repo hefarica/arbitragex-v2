@@ -39,7 +39,18 @@ export function RouteDiscoveryFunnelCard() {
   const tick = useRouteTick();
   // Distinct window ⇒ distinct datum: this poll is not a duplicate of the
   // /route-outcomes page's (different surface, same read-only endpoint).
-  const { totals: outcomeTotals } = useRouteDiscoveryOutcomes(24);
+  // RDO-503-REASON-UI (2026-09-17, fixer gang ronda 1 — BROWSE gap 4.2): this
+  // card used to destructure ONLY `totals`, so an upstream 503 (db_unavailable /
+  // rollup_backfilling / query_failed — api-server route-discovery-outcomes-api.ts)
+  // left the "outcomes resueltos"/"opportunities" stages as SILENT dashes with the
+  // reason already captured by the hook but discarded here. Surface it verbatim
+  // (R8 fail-honest), mirroring the recon error line below.
+  const {
+    totals: outcomeTotals,
+    status: outcomesStatus,
+    unavailableReason: outcomesReason,
+  } = useRouteDiscoveryOutcomes(24);
+  const outcomesDown = outcomesStatus === "STALE" && outcomeTotals === null;
 
   const [recon, setRecon] = React.useState<{
     included: number | null;
@@ -77,9 +88,22 @@ export function RouteDiscoveryFunnelCard() {
           Route Discovery Funnel · Market Events → Reconciled (§46)
         </CardTitle>
         <CardDescription>
-          {recon.error ? (
-            <span className="font-mono text-xs text-warning">
-              recon unavailable: {recon.error} — la etapa Reconciled queda en guion honesto
+          {outcomesDown || recon.error ? (
+            <span className="flex flex-col gap-0.5 font-mono text-xs text-warning">
+              {/* // RDO-503-REASON-UI (2026-09-17): verbatim upstream 503 reason. */}
+              {outcomesDown ? (
+                <span>
+                  outcomes sink unavailable
+                  {outcomesReason ? `: ${outcomesReason}` : ""} — las etapas outcomes
+                  resueltos / opportunities quedan en guion honesto (upstream 503, razón
+                  verbatim; jamás un cero)
+                </span>
+              ) : null}
+              {recon.error ? (
+                <span>
+                  recon unavailable: {recon.error} — la etapa Reconciled queda en guion honesto
+                </span>
+              ) : null}
             </span>
           ) : (
             "Upstream = último tick (provider-fed); downstream = ventanas 24h del sink de outcomes y del recon."

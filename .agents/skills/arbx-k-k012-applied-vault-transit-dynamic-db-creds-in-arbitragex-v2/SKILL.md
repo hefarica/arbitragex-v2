@@ -1,3 +1,4 @@
+---
 name: arbx-k-k012-applied-vault-transit-dynamic-db-creds-in-arbitragex-v2
 description: "Staff Engineer skill alineada al monorepo hefarica/arbitragex-v2 (Security & Cryptography Applied). Se activa cuando: arbitragex DB role. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

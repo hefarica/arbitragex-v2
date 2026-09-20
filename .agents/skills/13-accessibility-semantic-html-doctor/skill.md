@@ -1,3 +1,8 @@
+---
+name: 13-accessibility-semantic-html-doctor
+description: "Local ArbitrageX specialist skill: 13-accessibility-semantic-html-doctor."
+---
+
 # Skill 13: Accessibility & Semantic HTML Doctor
 
 ## 1. Propósito

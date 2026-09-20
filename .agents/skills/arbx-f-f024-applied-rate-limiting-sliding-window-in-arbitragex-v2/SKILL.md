@@ -1,3 +1,4 @@
+---
 name: arbx-f-f024-applied-rate-limiting-sliding-window-in-arbitragex-v2
 description: "Staff Engineer skill alineada al monorepo hefarica/arbitragex-v2 (Backend Services (Node + Rust)). Se activa cuando: admin-rpc throttle. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

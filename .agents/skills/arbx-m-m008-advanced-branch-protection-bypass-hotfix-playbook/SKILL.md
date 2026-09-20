@@ -1,3 +1,4 @@
+---
 name: arbx-m-m008-advanced-branch-protection-bypass-hotfix-playbook
 description: "Post-Doc skill alineada al monorepo hefarica/arbitragex-v2 (Doctrine, Process & Release Engineering). Se activa cuando: after-action audit. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

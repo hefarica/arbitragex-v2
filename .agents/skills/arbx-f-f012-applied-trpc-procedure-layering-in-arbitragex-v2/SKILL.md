@@ -1,3 +1,4 @@
+---
 name: arbx-f-f012-applied-trpc-procedure-layering-in-arbitragex-v2
 description: "Staff Engineer skill alineada al monorepo hefarica/arbitragex-v2 (Backend Services (Node + Rust)). Se activa cuando: type-safe end-to-end. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

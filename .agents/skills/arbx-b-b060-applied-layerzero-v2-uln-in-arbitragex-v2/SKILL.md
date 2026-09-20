@@ -1,3 +1,4 @@
+---
 name: arbx-b-b060-applied-layerzero-v2-uln-in-arbitragex-v2
 description: "Staff Engineer skill alineada al monorepo hefarica/arbitragex-v2 (Smart Contracts, Solidity & Auditing). Se activa cuando: cross-chain message bus. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

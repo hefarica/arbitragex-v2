@@ -1,3 +1,4 @@
+---
 name: arbx-i-i011-advanced-loki-logql-promtail
 description: "Post-Doc skill alineada al monorepo hefarica/arbitragex-v2 (Observability & SRE). Se activa cuando: pattern parsing. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

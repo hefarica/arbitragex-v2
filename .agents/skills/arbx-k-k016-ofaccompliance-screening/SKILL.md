@@ -1,3 +1,4 @@
+---
 name: arbx-k-k016-ofaccompliance-screening
 description: "PhD/Master skill alineada al monorepo hefarica/arbitragex-v2 (Security & Cryptography Applied). Se activa cuando: LRU sanctioned cache. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

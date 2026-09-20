@@ -1,3 +1,4 @@
+---
 name: arbx-a-a072-applied-ethers-rs-to-alloy-migration-in-arbitragex-v2
 description: "Staff Engineer skill alineada al monorepo hefarica/arbitragex-v2 (Rust Systems & Searcher Engine). Se activa cuando: searcher-rs migration finalize. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

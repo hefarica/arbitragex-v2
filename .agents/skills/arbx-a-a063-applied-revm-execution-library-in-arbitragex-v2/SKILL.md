@@ -1,3 +1,4 @@
+---
 name: arbx-a-a063-applied-revm-execution-library-in-arbitragex-v2
 description: "Staff Engineer skill alineada al monorepo hefarica/arbitragex-v2 (Rust Systems & Searcher Engine). Se activa cuando: sim-ctl pre-trade simulation. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

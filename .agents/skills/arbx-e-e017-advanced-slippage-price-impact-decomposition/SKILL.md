@@ -1,3 +1,4 @@
+---
 name: arbx-e-e017-advanced-slippage-price-impact-decomposition
 description: "Post-Doc skill alineada al monorepo hefarica/arbitragex-v2 (AMM Math & Quantitative DeFi). Se activa cuando: Kyle's lambda. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

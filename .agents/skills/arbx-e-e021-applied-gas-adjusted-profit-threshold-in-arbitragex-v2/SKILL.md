@@ -1,3 +1,4 @@
+---
 name: arbx-e-e021-applied-gas-adjusted-profit-threshold-in-arbitragex-v2
 description: "Staff Engineer skill alineada al monorepo hefarica/arbitragex-v2 (AMM Math & Quantitative DeFi). Se activa cuando: executor-rs gas oracle. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

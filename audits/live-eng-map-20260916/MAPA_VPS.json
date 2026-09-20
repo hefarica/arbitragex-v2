@@ -1,0 +1,158 @@
+{
+  "schema_version": 1,
+  "snapshot_id": "live-eng-map-20260916-0210Z",
+  "captured_at_utc": "2026-09-16T02:25:00Z",
+  "target": {
+    "ssh_alias": "arbx",
+    "identity": "arbx-v2-clean (195.201.235.70)",
+    "project_path": "/opt/arbitragex-v2",
+    "identity_evidence_id": "E4"
+  },
+  "domains": [
+    { "id": "identidad_acceso", "enumeration_complete": true, "enumeration_evidence_ids": ["E4"], "asset_ids": ["host-arbx-v2-clean"], "absence_reason": null,
+      "checks": [
+        { "id": "host_y_huella", "status": "verified", "finding": "Ubuntu 6.8.0-136 KVM, hostname arbx-v2-clean; host keys ed25519/rsa/ecdsa en known_hosts bajo la IP", "evidence_ids": ["E4"] },
+        { "id": "usuario_y_alcance", "status": "verified", "finding": "root uid=0, sudo passwordless — alcance total", "evidence_ids": ["E4"] },
+        { "id": "ruta_y_frontera", "status": "verified", "finding": "/opt/arbitragex-v2 existe; docker-first NO docker-only (nginx, cloudflared, cron en host; PID1 systemd running)", "evidence_ids": ["E4"] }
+      ] },
+    { "id": "recursos", "enumeration_complete": true, "enumeration_evidence_ids": ["E4"], "asset_ids": ["cpu-8vcpu-epyc", "ram-15gi"], "absence_reason": null,
+      "checks": [
+        { "id": "cpu_memoria_swap", "status": "verified", "finding": "8 vCPU EPYC-Rome; RAM 15Gi (11Gi avail); swap 0B (sin swap)", "evidence_ids": ["E4"] },
+        { "id": "carga_y_procesos", "status": "verified", "finding": "uptime 49d; load 0.44; 316 tasks, 0 zombie; CPU 87% idle", "evidence_ids": ["E4"] },
+        { "id": "limites_y_oom", "status": "verified", "finding": "0 OOM en ring buffer (evidencia acotada: buffer rota con 49d); NOFILE 524288; 24/24 contenedores OOMKilled=false", "evidence_ids": ["E4"] }
+      ] },
+    { "id": "almacenamiento", "enumeration_complete": true, "enumeration_evidence_ids": ["E4"], "asset_ids": ["fs-sda1-150g", "docker-buildcache", "volumes-15"], "absence_reason": null,
+      "checks": [
+        { "id": "filesystems_espacio_inodos", "status": "verified", "finding": "sda1 103G/150G usados (72%, 42G libres) > guard 30G; inodos 12%; +24 overlays mismo backing device (no sumados como discos)", "evidence_ids": ["E4"] },
+        { "id": "volumenes_y_mounts", "status": "verified", "finding": "sin NFS/LVM/ZFS; images 23 (34.5GB), build cache 24.68GB (20.96GB reclaimable), volumes 15 (59.44GB); 4 dangling (arbx_vault_data sin consumidor + 3 arbx-frontend-devcontainer ajenos + 2 anónimos)", "evidence_ids": ["E4"] },
+        { "id": "crecimiento_y_picos", "status": "verified", "finding": "pico real en volumen PG (dentro de 59.44GB); /opt top: backend 333M, repo-vps-audits 166M, audits 48M (du top-10 por diseño; directorio total ≪ volumen PG)", "evidence_ids": ["E4"] }
+      ] },
+    { "id": "servicios", "enumeration_complete": true, "enumeration_evidence_ids": ["E4"], "asset_ids": ["svc-frontend", "svc-edge", "svc-api-server", "svc-searcher-rs", "svc-sim-ctl", "svc-relays-client", "svc-selector-api", "svc-token-enricher", "svc-recon", "svc-math-engine", "svc-postgres", "svc-redis", "svc-prometheus", "svc-loki", "svc-promtail", "svc-grafana", "svc-alertmanager", "svc-thanos-query", "svc-thanos-sidecar", "svc-thanos-store", "svc-minio", "svc-vault", "svc-anvil", "svc-socket-proxy"], "absence_reason": null,
+      "checks": [
+        { "id": "sistema_y_contenedores", "status": "verified", "finding": "24/24 Up, 0 exited; conciliación 1:1 compose.prod.yml↔contenedores (label com.docker.compose.service); host: nginx, cloudflared, cron, ssh, rsyslog", "evidence_ids": ["E4"] },
+        { "id": "salud_y_reinicios", "status": "verified", "finding": "todos healthy, RestartCount=0, OOMKilled=false; 21 arrancados 2026-09-15T22:57Z (deploy), trío thanos desde 08-19", "evidence_ids": ["E4"] },
+        { "id": "dependencias_y_procesos", "status": "verified", "finding": "depends_on de compose.prod.yml mapeado (searcher→redis+postgres; sim-ctl→pg+redis; api-server→redis+socket-proxy; edge→api-server; frontend→edge; thanos→prometheus+minio; promtail→loki); red única arbx-net", "evidence_ids": ["E4"] }
+      ] },
+    { "id": "datos", "enumeration_complete": true, "enumeration_evidence_ids": ["E4"], "asset_ids": ["pg-arbitragex-46gb", "pg-arb-drill-5gb", "redis-db0"], "absence_reason": null,
+      "checks": [
+        { "id": "catalogos_y_tamanos", "status": "verified", "finding": "PG 15.18 db arbitragex 46GB/83 tablas (opportunities 19G, scored_opportunities 10G, route_discovery_outcomes 6.9G, pool_reserves 5.1G, risk_events 3.2G, simulations 687MB) + db arb_drill 5.7GB; redis db0 3324 keys (725 con TTL)", "evidence_ids": ["E4"] },
+        { "id": "persistencia_y_durabilidad", "status": "verified", "finding": "Redis AOF enabled/ok, RDB ok (changes_since_save 4.2M); PG max_wal_size 1024MB, checkpoint_timeout 300s, archive_mode=off, wal_level=replica", "evidence_ids": ["E4"] },
+        { "id": "locks_slots_y_archivado", "status": "verified", "finding": "pg_locks=2 (mínimo); replication_slots=0; archivado WAL off (consistente con archive_mode)", "evidence_ids": ["E4"] }
+      ] },
+    { "id": "retencion_backups", "enumeration_complete": true, "enumeration_evidence_ids": ["E4"], "asset_ids": ["cron-pg-retention", "cron-builder-prune", "cron-disk-guard-roto", "cron-watchdog", "cron-firewall-monitor", "backup-pre-xen-4g", "backup-predeploy-jul"], "absence_reason": null,
+      "checks": [
+        { "id": "jobs_y_politicas", "status": "verified", "finding": "crontab root: pg_retention.sh diario 04:17, builder-prune semanal, disk_guard.sh horario (ROTO: 0644, Permission denied ×140); /etc/cron.d: arbx-watchdog (cada minuto), arbx-firewall-monitor (*/5), arbx-retention deshabilitado 09-04; 18 systemd timers (lista completa, todos distro)", "evidence_ids": ["E4"] },
+        { "id": "historial_y_crecimiento", "status": "verified", "finding": "/opt/backups: 2 artefactos one-off — pre-deploy-20260715 (incluye backup_.sql de 0 bytes) y pre_xen_excl_20260915.sql.gz 4.0G (01:04Z, sha256 09451f5a…); SIN job de backup automatizado en ningún scheduler", "evidence_ids": ["E4"] },
+        { "id": "copias_y_restauracion", "status": "verified", "finding": "VERIFICADA AUSENCIA de restore-test o runbook (búsqueda maxdepth 2 en /opt/backups) — hallazgo, no suposición; plan A3 lo remedia tras autorización", "evidence_ids": ["E4"] }
+      ] },
+    { "id": "red_seguridad", "enumeration_complete": true, "enumeration_evidence_ids": ["E4"], "asset_ids": ["listeners-26", "cloudflared-tunnel", "nginx-80"], "absence_reason": null,
+      "checks": [
+        { "id": "listeners_y_firewall", "status": "verified", "finding": "26 listeners: públicos 22/80(v4+v6)/5173/8787; 18 loopback; iptables INPUT ACCEPT (ufw no instalado), FORWARD DROP con DOCKER-USER, nft raw anti-spoof del bridge docker", "evidence_ids": ["E4"] },
+        { "id": "rutas_tls_y_tuneles", "status": "verified", "finding": "cloudflared 48d token-based (token expuesto en cmdline del proceso — hallazgo, redactado); ingress→localhost:5173; TLS termina en Cloudflare; dominio arbx.ape-tv.net; nginx :80 fuera del camino del dominio público", "evidence_ids": ["E4"] },
+        { "id": "acceso_y_exposicion", "status": "verified", "finding": "superficie pública mínima (4 puertos); 18 servicios internos bind exclusivo loopback", "evidence_ids": ["E4"] }
+      ] },
+    { "id": "despliegue", "enumeration_complete": true, "enumeration_evidence_ids": ["E4"], "asset_ids": ["git-2cdbce35", "img-searcher-043076d", "lock-deploy-tmp"], "absence_reason": null,
+      "checks": [
+        { "id": "repo_y_cambios", "status": "verified", "finding": "HEAD 2cdbce35 (main, PR #571 22:05Z); working tree limpio salvo untracked archives/; único remoto origin (GitHub)", "evidence_ids": ["E4"] },
+        { "id": "imagenes_y_revision", "status": "verified", "finding": "11 imágenes del proyecto rebuild 3-4h; searcher corre imagen sha256:043076d… = imagen actual (consistente con HEAD); VERIFICADA AUSENCIA de labels git-rev y de artefacto de attestation en artifacts/ — binding imagen↔commit por consistencia, no por firma (PR #571 añade el gate de attestation al flujo)", "evidence_ids": ["E4"] },
+        { "id": "ci_locks_y_watchdogs", "status": "verified", "finding": "/tmp/arbx-deploy.lock VIVO y re-tocado (mtime 02:10Z→02:25Z; 0666); watchdog loggeó 'deploy lock held — deferring' durante el deploy 22:55-22:57Z del 09-15; el lock sigue tomado — PRECONDICIÓN para cualquier deploy futuro", "evidence_ids": ["E4"] }
+      ] },
+    { "id": "configuracion", "enumeration_complete": true, "enumeration_evidence_ids": ["E4"], "asset_ids": ["env-130-vars", "env-baks-5", "compose-prod"], "absence_reason": null,
+      "checks": [
+        { "id": "nombres_y_requisitos", "status": "verified", "finding": ".env: 130 asignaciones / 119 nombres únicos / 11 DUPLICADOS (ARBX_EDGE_TOKEN, ARBX_MIGRATOR/RW/RO_PASSWORD, ARBX_SERVICE_TOKEN, ARBX_SIMULATOR_V2_READY, ARBX_USE_SIMULATOR_V2, FLASHLOAN_EXECUTOR_1, GRAFANA_ADMIN_PASSWORD, MINIO_ROOT_PASSWORD, MINIO_ROOT_USER); solo nombres leídos, cero valores", "evidence_ids": ["E4"] },
+        { "id": "origen_y_precedencia", "status": "verified", "finding": "compose activo = /opt/arbitragex-v2/docker/compose.prod.yml (label com.docker.compose.project.config_files); 6 YAML en docker/ (prod activo + dev + hotpath-test + 3 overrides)", "evidence_ids": ["E4"] },
+        { "id": "permisos_y_referencias", "status": "verified", "finding": ".env 0644 world-readable con nombres de secretos críticos (JWT_SECRET, POSTGRES_PASSWORD, tokens) + 5 .env.bak también 644; único bien restringido .env.crucible 0600", "evidence_ids": ["E4"] }
+      ] },
+    { "id": "observabilidad", "enumeration_complete": true, "enumeration_evidence_ids": ["E4"], "asset_ids": ["prometheus", "loki", "grafana", "alertmanager", "promtail", "thanos"], "absence_reason": null,
+      "checks": [
+        { "id": "metricas_y_logs", "status": "verified", "finding": "stack completo (prom/loki/grafana/alertmanager/promtail/thanos); prom retention default 15d blocks 2h + web.enable-lifecycle; LogConfig json-file 5×10m en 23/24 — anvil-1 SIN límite (excepción a R9)", "evidence_ids": ["E4"] },
+        { "id": "alertas_y_silencios", "status": "verified", "finding": "reglas monitoring/alerts.rules.yml (22KB) + alertmanager.yml; GET /api/v2/silences @02:25Z = [] — CERO silencios activos", "evidence_ids": ["E4"] },
+        { "id": "salud_extremo_a_extremo", "status": "verified", "finding": "GETs de salud (semántica inspeccionada, healthchecks del propio compose): 8787/health 200 · 8080/api/health 200 · 9090/-/healthy 200 · 3100/ready 200; contador pending_received del heartbeat del searcher verificado ROTO (0 pre y post flood) — hallazgo", "evidence_ids": ["E4", "E2"] }
+      ] },
+    { "id": "blockchain", "enumeration_complete": true, "enumeration_evidence_ids": ["E4"], "asset_ids": ["rpc-17-chains", "pools-chain1", "tokens-4266"], "absence_reason": null,
+      "checks": [
+        { "id": "redes_y_rpc", "status": "verified", "finding": "17 chains con RPC_HTTP_* y las mismas 17 con RPC_WS_* (34 vars, solo nombres): 1,10,100,56,137,8453,84532,42161,421614,43114,560048,59144,81457,534352,11155111,11155420,17000", "evidence_ids": ["E4"] },
+        { "id": "dex_y_pools", "status": "verified", "finding": "tabla pools SOLO chain 1: 237 activos + 961 inactivos = 1198 (CERO pools en las otras 16 chains — catálogo multichain no poblado); tokens 4266; universo activo mayormente dormido (dirty_marked:0 en todos los ticks de pool_sync)", "evidence_ids": ["E4", "E2"] },
+        { "id": "firmantes_y_limites", "status": "verified", "finding": "SIM_SIGNER_ADDRESS presente (len 42, valor no leído); EXECUTOR_1 len 42; ARBITRAGE_EXECUTOR presente (len 42); FLASHLOAN_EXECUTOR_1 presente (duplicado); FLASHBOTS_SIGNER_KEY AUSENTE (consistente con paper)", "evidence_ids": ["E4"] }
+      ] },
+    { "id": "dependencias", "enumeration_complete": true, "enumeration_evidence_ids": ["E4"], "asset_ids": ["grafo-compose"], "absence_reason": null,
+      "checks": [
+        { "id": "grafo_y_propietarios", "status": "verified", "finding": "proyecto docker-compose arbitragex-v2 dueño de los 24 contenedores; grafo depends_on completo en E4; responsable técnico = operador (dueño único)", "evidence_ids": ["E4"] },
+        { "id": "activos_huerfanos", "status": "verified", "finding": "0 contenedores huérfanos / 0 servicios sin contenedor (conciliación 1:1); volúmenes dangling: arbx_vault_data (declarado, sin consumidor en compose activo) + 3 arbx-frontend-devcontainer (proyecto ajeno) + 2 anónimos; imagen rust:1.91 sin contenedor (usada hoy para verificación #567)", "evidence_ids": ["E4"] },
+        { "id": "conciliacion_y_paginacion", "status": "verified", "finding": "docker ps -a completo 24/24; ss -tln completo 26/26; list-timers completo 18; truncamientos DECLARADOS y suplidos: du top-10 (por diseño), docker system df -v tabla contenedores (suplida con docker ps -a), ps aux filtrado a procesos no-kernel", "evidence_ids": ["E4"] }
+      ] }
+  ],
+  "assets": [
+    { "id": "host-arbx-v2-clean", "domain_id": "identidad_acceso", "label": "Host KVM arbx-v2-clean (Ubuntu 6.8, 195.201.235.70)", "verified": true, "evidence_ids": ["E4"], "depends_on": [] },
+    { "id": "cpu-8vcpu-epyc", "domain_id": "recursos", "label": "8 vCPU AMD EPYC-Rome", "verified": true, "evidence_ids": ["E4"], "depends_on": [] },
+    { "id": "ram-15gi", "domain_id": "recursos", "label": "RAM 15Gi (sin swap)", "verified": true, "evidence_ids": ["E4"], "depends_on": [] },
+    { "id": "fs-sda1-150g", "domain_id": "almacenamiento", "label": "/dev/sda1 ext4 150G (103G usados, 42G libres)", "verified": true, "evidence_ids": ["E4"], "depends_on": [] },
+    { "id": "docker-buildcache", "domain_id": "almacenamiento", "label": "Build cache Docker 24.68GB (20.96GB reclaimable)", "verified": true, "evidence_ids": ["E4"], "depends_on": ["fs-sda1-150g"] },
+    { "id": "volumes-15", "domain_id": "almacenamiento", "label": "15 volúmenes docker (59.44GB; 4 dangling)", "verified": true, "evidence_ids": ["E4"], "depends_on": ["fs-sda1-150g"] },
+    { "id": "svc-frontend", "domain_id": "servicios", "label": "frontend-1 (Next.js, 0.0.0.0:5173)", "verified": true, "evidence_ids": ["E4"], "depends_on": ["svc-edge"] },
+    { "id": "svc-edge", "domain_id": "servicios", "label": "edge-1 (Hono worker, 0.0.0.0:8787)", "verified": true, "evidence_ids": ["E4"], "depends_on": ["svc-api-server"] },
+    { "id": "svc-api-server", "domain_id": "servicios", "label": "api-server-1 (127.0.0.1:8080)", "verified": true, "evidence_ids": ["E4"], "depends_on": ["svc-redis", "svc-socket-proxy"] },
+    { "id": "svc-searcher-rs", "domain_id": "servicios", "label": "searcher-rs-1 (detección; imagen sha256:043076d)", "verified": true, "evidence_ids": ["E4"], "depends_on": ["svc-redis", "svc-postgres"] },
+    { "id": "svc-sim-ctl", "domain_id": "servicios", "label": "sim-ctl-1 (S4, 127.0.0.1:3003)", "verified": true, "evidence_ids": ["E4"], "depends_on": ["svc-postgres", "svc-redis"] },
+    { "id": "svc-relays-client", "domain_id": "servicios", "label": "relays-client-1 (terminus de ejecución, 127.0.0.1:3005)", "verified": true, "evidence_ids": ["E4"], "depends_on": ["svc-redis"] },
+    { "id": "svc-selector-api", "domain_id": "servicios", "label": "selector-api-1 (127.0.0.1:3002)", "verified": true, "evidence_ids": ["E4"], "depends_on": ["svc-postgres", "svc-redis"] },
+    { "id": "svc-token-enricher", "domain_id": "servicios", "label": "token-enricher-1 (127.0.0.1:9004)", "verified": true, "evidence_ids": ["E4"], "depends_on": ["svc-postgres", "svc-redis"] },
+    { "id": "svc-recon", "domain_id": "servicios", "label": "recon-1 (drift/calibración, 127.0.0.1:3004)", "verified": true, "evidence_ids": ["E4"], "depends_on": ["svc-postgres"] },
+    { "id": "svc-math-engine", "domain_id": "servicios", "label": "math-engine-1 (127.0.0.1:3006)", "verified": true, "evidence_ids": ["E4"], "depends_on": [] },
+    { "id": "svc-postgres", "domain_id": "servicios", "label": "postgres-1 (PG 15.18, 127.0.0.1:5432)", "verified": true, "evidence_ids": ["E4"], "depends_on": [] },
+    { "id": "svc-redis", "domain_id": "servicios", "label": "redis-1 (127.0.0.1:6379, AOF on)", "verified": true, "evidence_ids": ["E4"], "depends_on": [] },
+    { "id": "svc-prometheus", "domain_id": "servicios", "label": "prometheus-1 (127.0.0.1:9090)", "verified": true, "evidence_ids": ["E4"], "depends_on": [] },
+    { "id": "svc-loki", "domain_id": "servicios", "label": "loki-1 (127.0.0.1:3100)", "verified": true, "evidence_ids": ["E4"], "depends_on": [] },
+    { "id": "svc-promtail", "domain_id": "servicios", "label": "promtail-1", "verified": true, "evidence_ids": ["E4"], "depends_on": ["svc-loki"] },
+    { "id": "svc-grafana", "domain_id": "servicios", "label": "grafana-1 (127.0.0.1:3000)", "verified": true, "evidence_ids": ["E4"], "depends_on": ["svc-prometheus"] },
+    { "id": "svc-alertmanager", "domain_id": "servicios", "label": "alertmanager-1 (127.0.0.1:9093, 0 silencios)", "verified": true, "evidence_ids": ["E4"], "depends_on": [] },
+    { "id": "svc-thanos-query", "domain_id": "servicios", "label": "thanos-query-1", "verified": true, "evidence_ids": ["E4"], "depends_on": [] },
+    { "id": "svc-thanos-sidecar", "domain_id": "servicios", "label": "thanos-sidecar-1", "verified": true, "evidence_ids": ["E4"], "depends_on": ["svc-prometheus", "svc-minio"] },
+    { "id": "svc-thanos-store", "domain_id": "servicios", "label": "thanos-store-1", "verified": true, "evidence_ids": ["E4"], "depends_on": ["svc-minio"] },
+    { "id": "svc-minio", "domain_id": "servicios", "label": "minio-1 (127.0.0.1:9000-9001)", "verified": true, "evidence_ids": ["E4"], "depends_on": [] },
+    { "id": "svc-vault", "domain_id": "servicios", "label": "vault-1 (127.0.0.1:8200)", "verified": true, "evidence_ids": ["E4"], "depends_on": [] },
+    { "id": "svc-anvil", "domain_id": "servicios", "label": "anvil-1 (foundry; sin log-rotation)", "verified": true, "evidence_ids": ["E4"], "depends_on": [] },
+    { "id": "svc-socket-proxy", "domain_id": "servicios", "label": "socket-proxy-1 (docker.sock ro)", "verified": true, "evidence_ids": ["E4"], "depends_on": [] },
+    { "id": "pg-arbitragex-46gb", "domain_id": "datos", "label": "db arbitragex 46GB, 83 tablas", "verified": true, "evidence_ids": ["E4"], "depends_on": ["svc-postgres"] },
+    { "id": "pg-arb-drill-5gb", "domain_id": "datos", "label": "db arb_drill_20260705 5.7GB", "verified": true, "evidence_ids": ["E4"], "depends_on": ["svc-postgres"] },
+    { "id": "redis-db0", "domain_id": "datos", "label": "redis db0: 3324 keys (725 con TTL)", "verified": true, "evidence_ids": ["E4"], "depends_on": ["svc-redis"] },
+    { "id": "cron-pg-retention", "domain_id": "retencion_backups", "label": "cron pg_retention.sh diario 04:17", "verified": true, "evidence_ids": ["E4"], "depends_on": ["pg-arbitragex-46gb"] },
+    { "id": "cron-builder-prune", "domain_id": "retencion_backups", "label": "cron docker builder prune semanal", "verified": true, "evidence_ids": ["E4"], "depends_on": ["docker-buildcache"] },
+    { "id": "cron-disk-guard-roto", "domain_id": "retencion_backups", "label": "cron disk_guard.sh horario — ROTO (0644, 140 Permission denied)", "verified": true, "evidence_ids": ["E4"], "depends_on": ["fs-sda1-150g"] },
+    { "id": "cron-watchdog", "domain_id": "retencion_backups", "label": "cron.d arbx-watchdog (cada minuto; respeta deploy-lock)", "verified": true, "evidence_ids": ["E4"], "depends_on": ["lock-deploy-tmp"] },
+    { "id": "cron-firewall-monitor", "domain_id": "retencion_backups", "label": "cron.d arbx-firewall-monitor (*/5)", "verified": true, "evidence_ids": ["E4"], "depends_on": [] },
+    { "id": "backup-pre-xen-4g", "domain_id": "retencion_backups", "label": "dump manual pre_xen_excl_20260915.sql.gz 4.0G (sha256 09451f5a…)", "verified": true, "evidence_ids": ["E4"], "depends_on": ["fs-sda1-150g"] },
+    { "id": "backup-predeploy-jul", "domain_id": "retencion_backups", "label": "dir pre-deploy-20260715 (backup_.sql de 0 bytes)", "verified": true, "evidence_ids": ["E4"], "depends_on": ["fs-sda1-150g"] },
+    { "id": "listeners-26", "domain_id": "red_seguridad", "label": "26 listeners TCP (4 públicos: 22/80/5173/8787; 18 loopback)", "verified": true, "evidence_ids": ["E4"], "depends_on": [] },
+    { "id": "cloudflared-tunnel", "domain_id": "red_seguridad", "label": "cloudflared.service 48d (token en cmdline — hallazgo)", "verified": true, "evidence_ids": ["E4"], "depends_on": ["svc-frontend"] },
+    { "id": "nginx-80", "domain_id": "red_seguridad", "label": "nginx.service :80 (fuera del camino del dominio público)", "verified": true, "evidence_ids": ["E4"], "depends_on": [] },
+    { "id": "git-2cdbce35", "domain_id": "despliegue", "label": "HEAD 2cdbce35 (main, PR #571)", "verified": true, "evidence_ids": ["E4"], "depends_on": [] },
+    { "id": "img-searcher-043076d", "domain_id": "despliegue", "label": "imagen searcher sha256:043076d (consistente con HEAD; sin label git-rev)", "verified": true, "evidence_ids": ["E4"], "depends_on": ["git-2cdbce35"] },
+    { "id": "lock-deploy-tmp", "domain_id": "despliegue", "label": "/tmp/arbx-deploy.lock VIVO re-tocado (02:10→02:25Z)", "verified": true, "evidence_ids": ["E4"], "depends_on": [] },
+    { "id": "env-130-vars", "domain_id": "configuracion", "label": ".env 130 asignaciones / 119 únicas / 11 duplicadas (0644)", "verified": true, "evidence_ids": ["E4"], "depends_on": [] },
+    { "id": "env-baks-5", "domain_id": "configuracion", "label": "5 backups .env.bak (todos 0644)", "verified": true, "evidence_ids": ["E4"], "depends_on": ["env-130-vars"] },
+    { "id": "compose-prod", "domain_id": "configuracion", "label": "docker/compose.prod.yml (activo; +5 YAML inactivos)", "verified": true, "evidence_ids": ["E4"], "depends_on": ["env-130-vars"] },
+    { "id": "prometheus", "domain_id": "observabilidad", "label": "prometheus (retention 15d, blocks 2h)", "verified": true, "evidence_ids": ["E4"], "depends_on": ["svc-prometheus"] },
+    { "id": "loki", "domain_id": "observabilidad", "label": "loki (logs)", "verified": true, "evidence_ids": ["E4"], "depends_on": ["svc-loki"] },
+    { "id": "grafana", "domain_id": "observabilidad", "label": "grafana 11.4.0", "verified": true, "evidence_ids": ["E4"], "depends_on": ["svc-grafana"] },
+    { "id": "alertmanager", "domain_id": "observabilidad", "label": "alertmanager (0 silencios activos)", "verified": true, "evidence_ids": ["E4"], "depends_on": ["svc-alertmanager"] },
+    { "id": "promtail", "domain_id": "observabilidad", "label": "promtail (docker.sock ro)", "verified": true, "evidence_ids": ["E4"], "depends_on": ["svc-promtail"] },
+    { "id": "thanos", "domain_id": "observabilidad", "label": "thanos query/sidecar/store (retención en MinIO)", "verified": true, "evidence_ids": ["E4"], "depends_on": ["svc-thanos-sidecar", "svc-thanos-store", "svc-thanos-query"] },
+    { "id": "rpc-17-chains", "domain_id": "blockchain", "label": "17 chains con RPC_HTTP+RPC_WS (solo nombres)", "verified": true, "evidence_ids": ["E4"], "depends_on": [] },
+    { "id": "pools-chain1", "domain_id": "blockchain", "label": "pools: solo chain 1 (237 activos + 961 inactivos; mayormente dormidos)", "verified": true, "evidence_ids": ["E4"], "depends_on": ["pg-arbitragex-46gb"] },
+    { "id": "tokens-4266", "domain_id": "blockchain", "label": "tokens: 4266 filas", "verified": true, "evidence_ids": ["E4"], "depends_on": ["pg-arbitragex-46gb"] },
+    { "id": "grafo-compose", "domain_id": "dependencias", "label": "grafo depends_on del compose (dueño: proyecto arbitragex-v2)", "verified": true, "evidence_ids": ["E4"], "depends_on": ["compose-prod"] }
+  ],
+  "evidence": [
+    { "id": "E1", "kind": "pg-forensics", "target_identity": "arbx-v2-clean (195.201.235.70)", "captured_at_utc": "2026-09-16T02:03:49Z", "path": "EVIDENCE/E1-data-forensics.md", "sha256": "aca5d90dc1ea16a25bb77ccb355d95ed492d5ed297eedaa0efcd781d0b5ed7e4", "note": "timeline por minuto, composición, dependencia XEN, simulations paralelas" },
+    { "id": "E2", "kind": "vps-logs-forensics", "target_identity": "arbx-v2-clean (195.201.235.70)", "captured_at_utc": "2026-09-16T02:10:57Z", "path": "EVIDENCE/E2-vps-forensics.md", "sha256": "cfd67e3e5252fda38deed3f3250dc78d80b1038cf3a394f53a8fd692ef87fa87", "note": "logs searcher ventana stall, redis streams/keys, infra HP-06" },
+    { "id": "E3", "kind": "code-map", "target_identity": "arbx-v2-clean (195.201.235.70)", "captured_at_utc": "2026-09-16T02:20:00Z", "path": "EVIDENCE/E3-code-path.md", "sha256": "03cf34aafda0921b8678ba3e2663dcde5ba214d65b9a62e0ff519cf9b301b0d0", "note": "mecanismo is_active→detección, gates HP-06, causas alternativas" },
+    { "id": "E4", "kind": "vps-inventory", "target_identity": "arbx-v2-clean (195.201.235.70)", "captured_at_utc": "2026-09-16T02:25:00Z", "path": "EVIDENCE/E4-vps-inventory.md", "sha256": "fccb72babebdc0ff11ee1141d73654359a6ec6425cb66cf711799c70aac8e826", "note": "12 dominios 36 checks, hallazgos H1-H8; silences=[] y timers=18 completados 02:25Z" }
+  ],
+  "open_gaps": [],
+  "mapper_attestation": {
+    "inventory_sources_reconciled": true,
+    "secrets_excluded": true,
+    "no_intentional_remote_mutations": true
+  }
+}

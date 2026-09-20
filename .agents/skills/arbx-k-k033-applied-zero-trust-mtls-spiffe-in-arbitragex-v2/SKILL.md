@@ -1,3 +1,4 @@
+---
 name: arbx-k-k033-applied-zero-trust-mtls-spiffe-in-arbitragex-v2
 description: "Staff Engineer skill alineada al monorepo hefarica/arbitragex-v2 (Security & Cryptography Applied). Se activa cuando: arbitragex zero-trust mesh. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

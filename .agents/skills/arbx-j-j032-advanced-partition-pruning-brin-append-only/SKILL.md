@@ -1,3 +1,4 @@
+---
 name: arbx-j-j032-advanced-partition-pruning-brin-append-only
 description: "Post-Doc skill alineada al monorepo hefarica/arbitragex-v2 (Database & Storage (Postgres/Redis/Timescale)). Se activa cuando: columnar BRIN. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

@@ -1,3 +1,4 @@
+---
 name: arbx-d-d043-l2-sequencer-decentralization
 description: "PhD/Master skill alineada al monorepo hefarica/arbitragex-v2 (Multi-Chain, L2 & Bridges). Se activa cuando: shared sequencing. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

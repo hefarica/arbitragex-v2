@@ -1,3 +1,4 @@
+---
 name: arbx-b-b059-advanced-layerzero-v2-uln
 description: "Post-Doc skill alineada al monorepo hefarica/arbitragex-v2 (Smart Contracts, Solidity & Auditing). Se activa cuando: unified semantics research. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

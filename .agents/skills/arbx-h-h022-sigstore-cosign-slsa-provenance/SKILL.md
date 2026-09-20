@@ -1,3 +1,4 @@
+---
 name: arbx-h-h022-sigstore-cosign-slsa-provenance
 description: "PhD/Master skill alineada al monorepo hefarica/arbitragex-v2 (CI/CD Doctrinal & DevSecOps). Se activa cuando: keyless OIDC sign. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

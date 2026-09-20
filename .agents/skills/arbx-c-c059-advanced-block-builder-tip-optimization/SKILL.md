@@ -1,3 +1,4 @@
+---
 name: arbx-c-c059-advanced-block-builder-tip-optimization
 description: "Post-Doc skill alineada al monorepo hefarica/arbitragex-v2 (MEV, Mempool & Bundle Submission). Se activa cuando: tip vs profit research. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

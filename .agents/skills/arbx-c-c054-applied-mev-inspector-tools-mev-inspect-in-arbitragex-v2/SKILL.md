@@ -1,3 +1,4 @@
+---
 name: arbx-c-c054-applied-mev-inspector-tools-mev-inspect-in-arbitragex-v2
 description: "Staff Engineer skill alineada al monorepo hefarica/arbitragex-v2 (MEV, Mempool & Bundle Submission). Se activa cuando: nightly retro analysis. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

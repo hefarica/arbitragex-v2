@@ -1,3 +1,8 @@
+---
+name: golden-section-trade-size-optimizer
+description: "Local ArbitrageX specialist skill: golden-section-trade-size-optimizer."
+---
+
 # Golden Section Trade Size Optimizer
 
 ## Propósito

@@ -1,3 +1,4 @@
+---
 name: arbx-a-a023-advanced-rust-error-handling-thiserroranyhow
 description: "Post-Doc skill alineada al monorepo hefarica/arbitragex-v2 (Rust Systems & Searcher Engine). Se activa cuando: typed error layers. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

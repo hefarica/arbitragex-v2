@@ -1,3 +1,4 @@
+---
 name: arbx-d-d014-advanced-polygon-zkevm-plonky2
 description: "Post-Doc skill alineada al monorepo hefarica/arbitragex-v2 (Multi-Chain, L2 & Bridges). Se activa cuando: recursive SNARK research. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

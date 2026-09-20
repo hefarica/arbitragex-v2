@@ -1,3 +1,4 @@
+---
 name: arbx-e-e035-advanced-hmm-regime-detection
 description: "Post-Doc skill alineada al monorepo hefarica/arbitragex-v2 (AMM Math & Quantitative DeFi). Se activa cuando: switching HMM research. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

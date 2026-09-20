@@ -1,3 +1,4 @@
+---
 name: arbx-c-c033-applied-oneinch-fusion-hashflow-bebop-rfq-in-arbitragex-v2
 description: "Staff Engineer skill alineada al monorepo hefarica/arbitragex-v2 (MEV, Mempool & Bundle Submission). Se activa cuando: aggregator integration. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

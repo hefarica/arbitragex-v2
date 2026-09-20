@@ -1,3 +1,8 @@
+---
+name: cloud-low-latency-infrastructure
+description: "Local ArbitrageX specialist skill: cloud-low-latency-infrastructure."
+---
+
 # Arquitectura Cloud de Ultra Baja Latencia
 
 ## Nivel

@@ -1,3 +1,4 @@
+---
 name: arbx-c-c038-advanced-private-orderflow-auctions-ofa
 description: "Post-Doc skill alineada al monorepo hefarica/arbitragex-v2 (MEV, Mempool & Bundle Submission). Se activa cuando: builder economics research. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

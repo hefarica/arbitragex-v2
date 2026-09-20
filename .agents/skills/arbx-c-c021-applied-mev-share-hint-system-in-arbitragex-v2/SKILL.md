@@ -1,3 +1,4 @@
+---
 name: arbx-c-c021-applied-mev-share-hint-system-in-arbitragex-v2
 description: "Staff Engineer skill alineada al monorepo hefarica/arbitragex-v2 (MEV, Mempool & Bundle Submission). Se activa cuando: hint-aware quoter. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

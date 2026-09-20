@@ -1,3 +1,4 @@
+---
 name: arbx-a-a037-rust-trait-objects-vs-generics
 description: "PhD/Master skill alineada al monorepo hefarica/arbitragex-v2 (Rust Systems & Searcher Engine). Se activa cuando: static vs dynamic dispatch. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

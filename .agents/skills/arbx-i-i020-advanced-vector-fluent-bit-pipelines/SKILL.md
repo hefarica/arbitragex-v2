@@ -1,3 +1,4 @@
+---
 name: arbx-i-i020-advanced-vector-fluent-bit-pipelines
 description: "Post-Doc skill alineada al monorepo hefarica/arbitragex-v2 (Observability & SRE). Se activa cuando: parser ergonomics. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

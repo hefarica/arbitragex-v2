@@ -1,3 +1,4 @@
+---
 name: arbx-h-h039-applied-oidc-to-vault-aws-gcp-in-arbitragex-v2
 description: "Staff Engineer skill alineada al monorepo hefarica/arbitragex-v2 (CI/CD Doctrinal & DevSecOps). Se activa cuando: sops with age recipients. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

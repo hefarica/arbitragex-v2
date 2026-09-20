@@ -1,3 +1,4 @@
+---
 name: arbx-d-d025-layerzero-v2-uln-end-to-end
 description: "PhD/Master skill alineada al monorepo hefarica/arbitragex-v2 (Multi-Chain, L2 & Bridges). Se activa cuando: DVN executor pair. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

@@ -1,3 +1,4 @@
+---
 name: arbx-d-d012-applied-scroll-zkevm-equivalence-in-arbitragex-v2
 description: "Staff Engineer skill alineada al monorepo hefarica/arbitragex-v2 (Multi-Chain, L2 & Bridges). Se activa cuando: L1↔L2 bridge monitor. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

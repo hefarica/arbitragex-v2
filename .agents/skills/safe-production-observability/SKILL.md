@@ -1,3 +1,8 @@
+---
+name: safe-production-observability
+description: "Local ArbitrageX specialist skill: safe-production-observability."
+---
+
 # Observabilidad y Producción Segura
 
 ## Nivel

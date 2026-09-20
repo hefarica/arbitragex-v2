@@ -1,3 +1,4 @@
+---
 name: arbx-l-l022-strategy-decay-detection
 description: "PhD/Master skill alineada al monorepo hefarica/arbitragex-v2 (Risk, Backtesting & Quant Engineering). Se activa cuando: alpha half-life. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

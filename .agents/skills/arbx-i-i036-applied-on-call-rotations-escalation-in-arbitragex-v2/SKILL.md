@@ -1,3 +1,4 @@
+---
 name: arbx-i-i036-applied-on-call-rotations-escalation-in-arbitragex-v2
 description: "Staff Engineer skill alineada al monorepo hefarica/arbitragex-v2 (Observability & SRE). Se activa cuando: arbitragex 24x7 readiness. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

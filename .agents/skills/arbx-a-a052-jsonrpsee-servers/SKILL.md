@@ -1,3 +1,4 @@
+---
 name: arbx-a-a052-jsonrpsee-servers
 description: "PhD/Master skill alineada al monorepo hefarica/arbitragex-v2 (Rust Systems & Searcher Engine). Se activa cuando: WS+HTTP subscription model. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

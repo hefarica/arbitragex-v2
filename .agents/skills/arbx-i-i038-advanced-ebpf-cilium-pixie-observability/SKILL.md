@@ -1,3 +1,4 @@
+---
 name: arbx-i-i038-advanced-ebpf-cilium-pixie-observability
 description: "Post-Doc skill alineada al monorepo hefarica/arbitragex-v2 (Observability & SRE). Se activa cuando: CO-RE programs. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

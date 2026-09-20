@@ -1,3 +1,4 @@
+---
 name: arbx-k-k023-advanced-supply-chain-lockfilesigstoreslsa
 description: "Post-Doc skill alineada al monorepo hefarica/arbitragex-v2 (Security & Cryptography Applied). Se activa cuando: provenance attestation. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

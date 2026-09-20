@@ -1,3 +1,4 @@
+---
 name: arbx-a-a040-rust-simd-stdsimd
 description: "PhD/Master skill alineada al monorepo hefarica/arbitragex-v2 (Rust Systems & Searcher Engine). Se activa cuando: AVX2/AVX-512 lane ops. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

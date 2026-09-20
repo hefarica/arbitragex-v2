@@ -1,3 +1,4 @@
+---
 name: arbx-a-a056-advanced-tower-middleware-stack
 description: "Post-Doc skill alineada al monorepo hefarica/arbitragex-v2 (Rust Systems & Searcher Engine). Se activa cuando: trace+timeout+retry chains. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

@@ -1,3 +1,4 @@
+---
 name: arbx-f-f038-advanced-property-tests-fast-check
 description: "Post-Doc skill alineada al monorepo hefarica/arbitragex-v2 (Backend Services (Node + Rust)). Se activa cuando: stateful properties. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

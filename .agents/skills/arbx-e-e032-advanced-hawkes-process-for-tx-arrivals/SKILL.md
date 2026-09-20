@@ -1,3 +1,4 @@
+---
 name: arbx-e-e032-advanced-hawkes-process-for-tx-arrivals
 description: "Post-Doc skill alineada al monorepo hefarica/arbitragex-v2 (AMM Math & Quantitative DeFi). Se activa cuando: mutually exciting research. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

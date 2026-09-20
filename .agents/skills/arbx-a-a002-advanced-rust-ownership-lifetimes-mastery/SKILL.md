@@ -1,3 +1,4 @@
+---
 name: arbx-a-a002-advanced-rust-ownership-lifetimes-mastery
 description: "Post-Doc skill alineada al monorepo hefarica/arbitragex-v2 (Rust Systems & Searcher Engine). Se activa cuando: investigación lifetimes elididos. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

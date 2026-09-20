@@ -1,3 +1,4 @@
+---
 name: arbx-e-e036-applied-hmm-regime-detection-in-arbitragex-v2
 description: "Staff Engineer skill alineada al monorepo hefarica/arbitragex-v2 (AMM Math & Quantitative DeFi). Se activa cuando: strategy throttle on regime. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

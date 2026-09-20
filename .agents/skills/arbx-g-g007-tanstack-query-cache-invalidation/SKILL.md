@@ -1,3 +1,4 @@
+---
 name: arbx-g-g007-tanstack-query-cache-invalidation
 description: "PhD/Master skill alineada al monorepo hefarica/arbitragex-v2 (Frontend Doctrinal (Next.js + Playwright)). Se activa cuando: query key factories. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

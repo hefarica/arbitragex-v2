@@ -1,3 +1,4 @@
+---
 name: arbx-c-c020-advanced-mev-share-hint-system
 description: "Post-Doc skill alineada al monorepo hefarica/arbitragex-v2 (MEV, Mempool & Bundle Submission). Se activa cuando: SUAVE programmable privacy. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

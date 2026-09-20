@@ -1,3 +1,4 @@
+---
 name: arbx-f-f006-applied-zod-schema-composition-in-arbitragex-v2
 description: "Staff Engineer skill alineada al monorepo hefarica/arbitragex-v2 (Backend Services (Node + Rust)). Se activa cuando: StatusResponseSchema parity. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

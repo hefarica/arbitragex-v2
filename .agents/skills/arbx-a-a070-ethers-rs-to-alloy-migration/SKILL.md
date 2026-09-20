@@ -1,3 +1,4 @@
+---
 name: arbx-a-a070-ethers-rs-to-alloy-migration
 description: "PhD/Master skill alineada al monorepo hefarica/arbitragex-v2 (Rust Systems & Searcher Engine). Se activa cuando: transport abstraction shift. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

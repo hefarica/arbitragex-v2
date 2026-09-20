@@ -1,3 +1,4 @@
+---
 name: arbx-b-b029-advanced-uniswap-v2-cpmm-xyk-math
 description: "Post-Doc skill alineada al monorepo hefarica/arbitragex-v2 (Smart Contracts, Solidity & Auditing). Se activa cuando: multi-fee Bellman-Ford. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

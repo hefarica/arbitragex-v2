@@ -1,3 +1,4 @@
+---
 name: arbx-a-a026-advanced-cargo-workspaces-feature-gates
 description: "Post-Doc skill alineada al monorepo hefarica/arbitragex-v2 (Rust Systems & Searcher Engine). Se activa cuando: profile tuning LTO. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

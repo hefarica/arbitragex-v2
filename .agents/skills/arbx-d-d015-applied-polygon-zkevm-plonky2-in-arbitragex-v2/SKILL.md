@@ -1,3 +1,4 @@
+---
 name: arbx-d-d015-applied-polygon-zkevm-plonky2-in-arbitragex-v2
 description: "Staff Engineer skill alineada al monorepo hefarica/arbitragex-v2 (Multi-Chain, L2 & Bridges). Se activa cuando: arbitragex Polygon integration. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

@@ -1,3 +1,4 @@
+---
 name: arbx-b-b035-advanced-uniswap-v4-hooks-architecture
 description: "Post-Doc skill alineada al monorepo hefarica/arbitragex-v2 (Smart Contracts, Solidity & Auditing). Se activa cuando: flash accounting research. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

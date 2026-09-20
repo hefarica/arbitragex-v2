@@ -1,3 +1,4 @@
+---
 name: arbx-f-f005-advanced-zod-schema-composition
 description: "Post-Doc skill alineada al monorepo hefarica/arbitragex-v2 (Backend Services (Node + Rust)). Se activa cuando: phantom types research. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

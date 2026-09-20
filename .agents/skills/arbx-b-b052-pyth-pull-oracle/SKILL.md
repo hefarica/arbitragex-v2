@@ -1,3 +1,4 @@
+---
 name: arbx-b-b052-pyth-pull-oracle
 description: "PhD/Master skill alineada al monorepo hefarica/arbitragex-v2 (Smart Contracts, Solidity & Auditing). Se activa cuando: wormhole VAA verification. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

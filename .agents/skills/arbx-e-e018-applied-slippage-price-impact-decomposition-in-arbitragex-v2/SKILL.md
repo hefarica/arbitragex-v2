@@ -1,3 +1,4 @@
+---
 name: arbx-e-e018-applied-slippage-price-impact-decomposition-in-arbitragex-v2
 description: "Staff Engineer skill alineada al monorepo hefarica/arbitragex-v2 (AMM Math & Quantitative DeFi). Se activa cuando: RiskGate slippage bands. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

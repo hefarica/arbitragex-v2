@@ -1,3 +1,4 @@
+---
 name: arbx-h-h032-advanced-gh-workflow_dispatch-run-download
 description: "Post-Doc skill alineada al monorepo hefarica/arbitragex-v2 (CI/CD Doctrinal & DevSecOps). Se activa cuando: artifact trace iter17. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

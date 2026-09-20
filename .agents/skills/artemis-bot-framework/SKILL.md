@@ -1,3 +1,8 @@
+---
+name: artemis-bot-framework
+description: "Local ArbitrageX specialist skill: artemis-bot-framework."
+---
+
 # Artemis Bot Framework
 
 ## Nivel

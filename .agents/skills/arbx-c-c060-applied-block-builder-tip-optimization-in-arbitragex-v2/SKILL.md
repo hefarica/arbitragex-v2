@@ -1,3 +1,4 @@
+---
 name: arbx-c-c060-applied-block-builder-tip-optimization-in-arbitragex-v2
 description: "Staff Engineer skill alineada al monorepo hefarica/arbitragex-v2 (MEV, Mempool & Bundle Submission). Se activa cuando: executor-rs adaptive tip. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

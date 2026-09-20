@@ -1,3 +1,4 @@
+---
 name: arbx-g-g019-playwright-trace-video-capture
 description: "PhD/Master skill alineada al monorepo hefarica/arbitragex-v2 (Frontend Doctrinal (Next.js + Playwright)). Se activa cuando: trace on-first-retry. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

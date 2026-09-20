@@ -1,3 +1,4 @@
+---
 name: arbx-f-f013-openapi-grpc-graphql-codegen
 description: "PhD/Master skill alineada al monorepo hefarica/arbitragex-v2 (Backend Services (Node + Rust)). Se activa cuando: client/server parity. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

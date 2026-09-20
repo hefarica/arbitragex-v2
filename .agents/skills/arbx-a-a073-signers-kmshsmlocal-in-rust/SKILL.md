@@ -1,3 +1,4 @@
+---
 name: arbx-a-a073-signers-kmshsmlocal-in-rust
 description: "PhD/Master skill alineada al monorepo hefarica/arbitragex-v2 (Rust Systems & Searcher Engine). Se activa cuando: aws-kms-rust signer. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

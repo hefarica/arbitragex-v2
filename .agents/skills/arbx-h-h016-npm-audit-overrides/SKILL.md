@@ -1,3 +1,4 @@
+---
 name: arbx-h-h016-npm-audit-overrides
 description: "PhD/Master skill alineada al monorepo hefarica/arbitragex-v2 (CI/CD Doctrinal & DevSecOps). Se activa cuando: postcss override. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

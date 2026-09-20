@@ -1,3 +1,4 @@
+---
 name: arbx-g-g024-applied-visual-regression-screenshots-in-arbitragex-v2
 description: "Staff Engineer skill alineada al monorepo hefarica/arbitragex-v2 (Frontend Doctrinal (Next.js + Playwright)). Se activa cuando: critical pages baseline. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

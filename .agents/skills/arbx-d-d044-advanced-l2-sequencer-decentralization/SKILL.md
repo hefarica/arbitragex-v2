@@ -1,3 +1,4 @@
+---
 name: arbx-d-d044-advanced-l2-sequencer-decentralization
 description: "Post-Doc skill alineada al monorepo hefarica/arbitragex-v2 (Multi-Chain, L2 & Bridges). Se activa cuando: rollup interop research. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

@@ -1,3 +1,4 @@
+---
 name: arbx-a-a001-rust-ownership-lifetimes-mastery
 description: "PhD/Master skill alineada al monorepo hefarica/arbitragex-v2 (Rust Systems & Searcher Engine). Se activa cuando: zero-cost design, borrowing. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

@@ -1,3 +1,8 @@
+---
+name: 04-rendering-strategy-master
+description: "Local ArbitrageX specialist skill: 04-rendering-strategy-master."
+---
+
 # Skill 04: Rendering Strategy Master
 
 ## 1. Propósito

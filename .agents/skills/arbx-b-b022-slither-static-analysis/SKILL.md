@@ -1,3 +1,4 @@
+---
 name: arbx-b-b022-slither-static-analysis
 description: "PhD/Master skill alineada al monorepo hefarica/arbitragex-v2 (Smart Contracts, Solidity & Auditing). Se activa cuando: detector authoring. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

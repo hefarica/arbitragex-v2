@@ -1,3 +1,4 @@
+---
 name: arbx-i-i033-applied-blameless-postmortems-adrs-in-arbitragex-v2
 description: "Staff Engineer skill alineada al monorepo hefarica/arbitragex-v2 (Observability & SRE). Se activa cuando: iter12-13 tokens postmortem. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

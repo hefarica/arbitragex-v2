@@ -1,3 +1,4 @@
+---
 name: arbx-d-d027-applied-layerzero-v2-uln-end-to-end-in-arbitragex-v2
 description: "Staff Engineer skill alineada al monorepo hefarica/arbitragex-v2 (Multi-Chain, L2 & Bridges). Se activa cuando: arbitragex multi-bridge router. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

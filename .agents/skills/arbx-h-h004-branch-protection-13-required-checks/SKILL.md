@@ -1,3 +1,4 @@
+---
 name: arbx-h-h004-branch-protection-13-required-checks
 description: "PhD/Master skill alineada al monorepo hefarica/arbitragex-v2 (CI/CD Doctrinal & DevSecOps). Se activa cuando: gh api PUT contexts. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

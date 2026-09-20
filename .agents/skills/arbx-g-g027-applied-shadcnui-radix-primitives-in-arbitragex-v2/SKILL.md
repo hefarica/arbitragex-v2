@@ -1,3 +1,4 @@
+---
 name: arbx-g-g027-applied-shadcnui-radix-primitives-in-arbitragex-v2
 description: "Staff Engineer skill alineada al monorepo hefarica/arbitragex-v2 (Frontend Doctrinal (Next.js + Playwright)). Se activa cuando: arbitragex design system. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

@@ -1,3 +1,4 @@
+---
 name: arbx-a-a064-alloy-trie-mpt-internals
 description: "PhD/Master skill alineada al monorepo hefarica/arbitragex-v2 (Rust Systems & Searcher Engine). Se activa cuando: Merkle Patricia proof verification. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

@@ -1,3 +1,8 @@
+---
+name: rust-mev-architecture
+description: "Local ArbitrageX specialist skill: rust-mev-architecture."
+---
+
 # Arquitectura MEV Bot en Rust
 
 ## Nivel

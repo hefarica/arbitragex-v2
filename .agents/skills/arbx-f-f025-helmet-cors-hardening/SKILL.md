@@ -1,3 +1,4 @@
+---
 name: arbx-f-f025-helmet-cors-hardening
 description: "PhD/Master skill alineada al monorepo hefarica/arbitragex-v2 (Backend Services (Node + Rust)). Se activa cuando: secure-by-default. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

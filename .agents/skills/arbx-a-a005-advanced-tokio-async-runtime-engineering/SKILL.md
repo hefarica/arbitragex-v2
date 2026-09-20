@@ -1,3 +1,4 @@
+---
 name: arbx-a-a005-advanced-tokio-async-runtime-engineering
 description: "Post-Doc skill alineada al monorepo hefarica/arbitragex-v2 (Rust Systems & Searcher Engine). Se activa cuando: runtime sharding research. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

@@ -1,3 +1,4 @@
+---
 name: arbx-b-b042-applied-balancer-v2-weightedstable-pools-in-arbitragex-v2
 description: "Staff Engineer skill alineada al monorepo hefarica/arbitragex-v2 (Smart Contracts, Solidity & Auditing). Se activa cuando: single-vault multi-swap. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

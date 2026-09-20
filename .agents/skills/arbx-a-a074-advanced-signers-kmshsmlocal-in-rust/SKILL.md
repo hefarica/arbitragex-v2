@@ -1,3 +1,4 @@
+---
 name: arbx-a-a074-advanced-signers-kmshsmlocal-in-rust
 description: "Post-Doc skill alineada al monorepo hefarica/arbitragex-v2 (Rust Systems & Searcher Engine). Se activa cuando: threshold signature MuSig2. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

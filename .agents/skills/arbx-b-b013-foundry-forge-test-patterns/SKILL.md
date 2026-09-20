@@ -1,3 +1,4 @@
+---
 name: arbx-b-b013-foundry-forge-test-patterns
 description: "PhD/Master skill alineada al monorepo hefarica/arbitragex-v2 (Smart Contracts, Solidity & Auditing). Se activa cuando: fuzz invariant fork. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

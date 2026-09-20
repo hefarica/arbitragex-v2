@@ -1,3 +1,4 @@
+---
 name: arbx-g-g018-applied-data-testid-naming-convention-in-arbitragex-v2
 description: "Staff Engineer skill alineada al monorepo hefarica/arbitragex-v2 (Frontend Doctrinal (Next.js + Playwright)). Se activa cuando: ServicesTable+ControlPanel iter18. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

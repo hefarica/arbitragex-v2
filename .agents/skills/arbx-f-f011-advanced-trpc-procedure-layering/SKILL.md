@@ -1,3 +1,4 @@
+---
 name: arbx-f-f011-advanced-trpc-procedure-layering
 description: "Post-Doc skill alineada al monorepo hefarica/arbitragex-v2 (Backend Services (Node + Rust)). Se activa cuando: RSC integration. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

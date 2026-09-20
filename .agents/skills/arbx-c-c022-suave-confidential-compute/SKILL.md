@@ -1,3 +1,4 @@
+---
 name: arbx-c-c022-suave-confidential-compute
 description: "PhD/Master skill alineada al monorepo hefarica/arbitragex-v2 (MEV, Mempool & Bundle Submission). Se activa cuando: TEE off-chain ordering. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

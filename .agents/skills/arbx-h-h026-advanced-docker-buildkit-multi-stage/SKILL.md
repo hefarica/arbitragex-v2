@@ -1,3 +1,4 @@
+---
 name: arbx-h-h026-advanced-docker-buildkit-multi-stage
 description: "Post-Doc skill alineada al monorepo hefarica/arbitragex-v2 (CI/CD Doctrinal & DevSecOps). Se activa cuando: frontend syntax 1.6. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

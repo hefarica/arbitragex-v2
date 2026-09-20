@@ -1,3 +1,4 @@
+---
 name: arbx-h-h047-advanced-runner-hardening-stride
 description: "Post-Doc skill alineada al monorepo hefarica/arbitragex-v2 (CI/CD Doctrinal & DevSecOps). Se activa cuando: supply chain drills. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

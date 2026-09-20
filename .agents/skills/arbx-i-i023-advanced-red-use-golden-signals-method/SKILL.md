@@ -1,3 +1,4 @@
+---
 name: arbx-i-i023-advanced-red-use-golden-signals-method
 description: "Post-Doc skill alineada al monorepo hefarica/arbitragex-v2 (Observability & SRE). Se activa cuando: SLO error budgets. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

@@ -1,3 +1,4 @@
+---
 name: arbx-f-f020-advanced-structured-logging-pino-correlation-ids
 description: "Post-Doc skill alineada al monorepo hefarica/arbitragex-v2 (Backend Services (Node + Rust)). Se activa cuando: W3C trace propagation. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

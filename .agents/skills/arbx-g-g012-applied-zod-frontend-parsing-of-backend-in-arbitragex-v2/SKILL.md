@@ -1,3 +1,4 @@
+---
 name: arbx-g-g012-applied-zod-frontend-parsing-of-backend-in-arbitragex-v2
 description: "Staff Engineer skill alineada al monorepo hefarica/arbitragex-v2 (Frontend Doctrinal (Next.js + Playwright)). Se activa cuando: schemas.ts iter18 +8 lines. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

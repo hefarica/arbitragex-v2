@@ -1,3 +1,4 @@
+---
 name: arbx-b-b030-applied-uniswap-v2-cpmm-xyk-math-in-arbitragex-v2
 description: "Staff Engineer skill alineada al monorepo hefarica/arbitragex-v2 (Smart Contracts, Solidity & Auditing). Se activa cuando: CPMM quoter <50µs. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

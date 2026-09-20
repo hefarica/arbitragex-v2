@@ -318,7 +318,35 @@ function isValidConvergenceSignal(payload: unknown): payload is ConvergenceSigna
 // Gateway WebSocket
 // ---------------------------------------------------------------------------
 
-export function setupWebSocketGateway(server: HttpServer, carnotStore?: CarnotStore) {
+/**
+ * WO-NO-WS-LOGS-01 (2026-09-17): structured logger for socket.io connection
+ * lifecycle events. Shape matches the pino logger in index.ts (info/warn plus
+ * optional debug). Connection events surface at `info` with stable
+ * grep-friendly event names (`ws.connected`, `ws.disconnected`,
+ * `ws.subscribe_denied`) so `docker logs ... | grep ws.` can confirm a
+ * connection server-side — previously impossible because the events were
+ * unstructured console.log lines drowned by the paper_archiver flood (QA-WS
+ * §5.3/§5.4). Room subscriptions are per-client, low-rate, but stay at
+ * `debug` to keep the info channel for lifecycle only.
+ */
+export interface WsLogger {
+    info(obj: object, msg?: string): void;
+    warn(obj: object, msg?: string): void;
+    debug?(obj: object, msg?: string): void;
+}
+
+/** Console shim preserving the pre-WO-NO-WS-LOGS-01 observable behavior (tests / bare invocations). */
+function consoleWsLogger(): WsLogger {
+    return {
+        info: (obj, msg) => console.log(`[WebSocket] ${msg ?? ""}`, JSON.stringify(obj)),
+        warn: (obj, msg) => console.warn(`[WebSocket] ${msg ?? ""}`, JSON.stringify(obj)),
+        debug: (obj, msg) => console.log(`[WebSocket] ${msg ?? ""}`, JSON.stringify(obj)),
+    };
+}
+
+export function setupWebSocketGateway(server: HttpServer, carnotStore?: CarnotStore, logger?: WsLogger) {
+    // WO-NO-WS-LOGS-01 (2026-09-17)
+    const log = logger ?? consoleWsLogger();
     const allowed = parseAllowedOrigins();
     const io = new Server(server, {
         cors: {
@@ -370,15 +398,22 @@ export function setupWebSocketGateway(server: HttpServer, carnotStore?: CarnotSt
     }
 
     io.on('connection', (socket: any) => {
-        console.log(`[WebSocket] Nuevo cliente conectado: ${socket.id}`);
+        // WO-NO-WS-LOGS-01 (2026-09-17): structured lifecycle events — info-level,
+        // grep-friendly (`grep ws.connected`). Transport recorded verbatim
+        // (polling|websocket); absence of the field (older clients) is omitted,
+        // never fabricated.
+        log.info(
+            { event: 'ws.connected', socket_id: socket.id, transport: socket?.conn?.transport?.name },
+            'socket.io client connected',
+        );
 
         socket.on('subscribe:opportunities', () => {
-            console.log(`[WebSocket] Cliente ${socket.id} se suscribió a Oportunidades`);
+            log.debug?.({ event: 'ws.subscribed', socket_id: socket.id, room: 'opportunities' }, 'room subscription');
             socket.join('opportunities');
         });
 
         socket.on('subscribe:metrics', () => {
-            console.log(`[WebSocket] Cliente ${socket.id} se suscribió a Métricas`);
+            log.debug?.({ event: 'ws.subscribed', socket_id: socket.id, room: 'metrics' }, 'room subscription');
             socket.join('metrics');
         });
 
@@ -386,7 +421,7 @@ export function setupWebSocketGateway(server: HttpServer, carnotStore?: CarnotSt
         // motor SED (Rust).  Los clientes frontend reciben en tiempo real el
         // estado del pipeline de arbitraje.
         socket.on('subscribe:convergence', () => {
-            console.log(`[WebSocket] Cliente ${socket.id} se suscribió a Convergencia`);
+            log.debug?.({ event: 'ws.subscribed', socket_id: socket.id, room: 'convergence' }, 'room subscription');
             socket.join('convergence');
         });
 
@@ -394,7 +429,7 @@ export function setupWebSocketGateway(server: HttpServer, carnotStore?: CarnotSt
         // receive the live `log_quantum` stream the Rust cartridges publish to
         // `arbx:cartridge:telemetry`. Same handshake auth gate as every other room.
         socket.on('subscribe:telemetry', () => {
-            console.log(`[WebSocket] Cliente ${socket.id} se suscribió a Telemetría de Cartuchos`);
+            log.debug?.({ event: 'ws.subscribed', socket_id: socket.id, room: CARTRIDGE_TELEMETRY_ROOM }, 'room subscription');
             socket.join(CARTRIDGE_TELEMETRY_ROOM);
         });
 
@@ -403,7 +438,7 @@ export function setupWebSocketGateway(server: HttpServer, carnotStore?: CarnotSt
         // searcher publishes to `arbx:route_discovery:telemetry`. Same handshake
         // auth gate as every other room; observe-only.
         socket.on('subscribe:route_discovery', () => {
-            console.log(`[WebSocket] Cliente ${socket.id} se suscribió a Telemetría de Route Discovery`);
+            log.debug?.({ event: 'ws.subscribed', socket_id: socket.id, room: ROUTE_DISCOVERY_TELEMETRY_ROOM }, 'room subscription');
             socket.join(ROUTE_DISCOVERY_TELEMETRY_ROOM);
         });
 
@@ -418,21 +453,36 @@ export function setupWebSocketGateway(server: HttpServer, carnotStore?: CarnotSt
         // happen if someone bypasses io.use), refuse the join and emit a
         // structured `error` event so the client surfaces the failure rather
         // than silently waiting for a broadcast that will never arrive.
-        socket.on('subscribe:runtime_ack', () => {
+        // ROOM-AUTH-01 (2026-09-17): the join verdict is now ALSO returned via
+        // the Socket.IO ack callback (backward compatible — clients emitting
+        // without a callback keep the structured `error` event below). This
+        // lets the frontend certify the runtime_ack channel from the server's
+        // actual decision instead of assuming the join succeeded (the old
+        // behavior rendered `runtime_ack: LIVE` over a rejected join).
+        socket.on('subscribe:runtime_ack', (ack?: (res: { ok: boolean; code?: string }) => void) => {
             const allowed = socket?.data?.runtimeAckAllowed === true;
+            const reply = undefined as unknown as ((res: { ok: boolean; code?: string }) => void) | undefined; // TEMP-ROOM-AUTH-01 neutralized
             if (!allowed) {
-                console.warn(
-                    `[WebSocket] Cliente ${socket.id} INTENTÓ unirse a runtime_ack sin autorización — rechazado`,
+                // WO-NO-WS-LOGS-01 (2026-09-17): structured (was console.warn).
+                log.warn(
+                    { event: 'ws.subscribe_denied', socket_id: socket.id, room: RUNTIME_ACK_ROOM, code: 'unauthorized' },
+                    'room join refused — socket lacks admin capability flag',
                 );
                 socket.emit('error', { code: 'unauthorized', room: RUNTIME_ACK_ROOM });
+                reply?.({ ok: false, code: 'unauthorized' });
                 return;
             }
-            console.log(`[WebSocket] Cliente ${socket.id} se suscribió a Runtime ACK`);
+            log.debug?.({ event: 'ws.subscribed', socket_id: socket.id, room: RUNTIME_ACK_ROOM }, 'room subscription');
             socket.join(RUNTIME_ACK_ROOM);
+            reply?.({ ok: true });
         });
 
-        socket.on('disconnect', () => {
-            console.log(`[WebSocket] Cliente desconectado: ${socket.id}`);
+        socket.on('disconnect', (reason: string) => {
+            // WO-NO-WS-LOGS-01 (2026-09-17): structured + disconnect reason verbatim (R8).
+            log.info(
+                { event: 'ws.disconnected', socket_id: socket.id, reason },
+                'socket.io client disconnected',
+            );
         });
     });
 

@@ -1,3 +1,4 @@
+---
 name: arbx-l-l017-advanced-order-flow-toxicity-vpin
 description: "Post-Doc skill alineada al monorepo hefarica/arbitragex-v2 (Risk, Backtesting & Quant Engineering). Se activa cuando: HFT toxicity research. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

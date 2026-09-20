@@ -1,3 +1,4 @@
+---
 name: arbx-i-i021-applied-vector-fluent-bit-pipelines-in-arbitragex-v2
 description: "Staff Engineer skill alineada al monorepo hefarica/arbitragex-v2 (Observability & SRE). Se activa cuando: JSON envelope normalization. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

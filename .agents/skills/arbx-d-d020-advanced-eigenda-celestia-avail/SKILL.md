@@ -1,3 +1,4 @@
+---
 name: arbx-d-d020-advanced-eigenda-celestia-avail
 description: "Post-Doc skill alineada al monorepo hefarica/arbitragex-v2 (Multi-Chain, L2 & Bridges). Se activa cuando: DAS light client. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

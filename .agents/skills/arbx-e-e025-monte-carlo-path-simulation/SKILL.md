@@ -1,3 +1,4 @@
+---
 name: arbx-e-e025-monte-carlo-path-simulation
 description: "PhD/Master skill alineada al monorepo hefarica/arbitragex-v2 (AMM Math & Quantitative DeFi). Se activa cuando: latency-weighted inclusion. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

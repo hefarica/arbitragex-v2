@@ -1,3 +1,4 @@
+---
 name: arbx-c-c017-advanced-flashbots-eth_sendbundle
 description: "Post-Doc skill alineada al monorepo hefarica/arbitragex-v2 (MEV, Mempool & Bundle Submission). Se activa cuando: bundle merging market. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

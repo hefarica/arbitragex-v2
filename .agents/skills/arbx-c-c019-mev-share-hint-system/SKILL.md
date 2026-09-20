@@ -1,3 +1,4 @@
+---
 name: arbx-c-c019-mev-share-hint-system
 description: "PhD/Master skill alineada al monorepo hefarica/arbitragex-v2 (MEV, Mempool & Bundle Submission). Se activa cuando: selective hint refund. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

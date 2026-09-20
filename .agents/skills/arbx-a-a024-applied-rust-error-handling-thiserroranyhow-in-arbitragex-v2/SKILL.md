@@ -1,3 +1,4 @@
+---
 name: arbx-a-a024-applied-rust-error-handling-thiserroranyhow-in-arbitragex-v2
 description: "Staff Engineer skill alineada al monorepo hefarica/arbitragex-v2 (Rust Systems & Searcher Engine). Se activa cuando: RiskGate Terminal fail-closed. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

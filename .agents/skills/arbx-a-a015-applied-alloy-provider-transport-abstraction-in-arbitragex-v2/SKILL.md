@@ -1,3 +1,4 @@
+---
 name: arbx-a-a015-applied-alloy-provider-transport-abstraction-in-arbitragex-v2
 description: "Staff Engineer skill alineada al monorepo hefarica/arbitragex-v2 (Rust Systems & Searcher Engine). Se activa cuando: mempool-listener-rs. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

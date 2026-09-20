@@ -16,7 +16,16 @@
  *
  * R1: client-only data fetching (useEffect + 30s poll); no SSR snapshot, no
  * hydration-sensitive values rendered before mount.
+ *
+ * // WO-ARCHIVE-401 (2026-09-17): a failed status fetch (e.g. edge 401
+ * missing_admin_token for a visitor without an admin session) must transition
+ * the retention table and the file list to an explicit error state — never a
+ * perpetual "Cargando…" row nor a fabricated "Sin archivos aún." (RULE 00 /
+ * R8: unknown is declared, never dressed as loading or as empty).
  */
+// Classic-JSX runtime import for the vitest (esbuild) path — repo pattern
+// (RejectionBreakdownPanel.tsx).
+import * as React from "react";
 import { useCallback, useEffect, useState } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Progress } from "@/components/ui/progress";
@@ -31,6 +40,22 @@ import {
 } from "@/lib/api-client";
 
 const POLL_MS = 30_000;
+
+// WO-ARCHIVE-401 (2026-09-17) — fail-honest state labels (pure, unit-tested):
+// no status + error ⇒ error state; no status + no error ⇒ loading. Unknown is
+// never presented as "empty archive".
+export function retentionStateLabel(error: string | null): string {
+  return error ? `Estado de archivo no disponible: ${error}` : "Cargando estado de archivo…";
+}
+
+export function filesStateLabel(status: ArchiveStatus | null, error: string | null): string {
+  if (!status) {
+    return error
+      ? "Listado de archivos no disponible: estado de archivo inaccesible."
+      : "Cargando listado de archivos…";
+  }
+  return "Sin archivos aún.";
+}
 
 function fmtBytes(bytes: number | null | undefined): string {
   if (bytes === null || bytes === undefined || !Number.isFinite(bytes)) return "—";
@@ -106,6 +131,30 @@ export function ArchivePanel() {
     setBusy(false);
   };
 
+  return (
+    <ArchivePanelView
+      status={status}
+      error={error}
+      busy={busy}
+      actionMsg={actionMsg}
+      onToggleAuto={onToggleAuto}
+      onExport={onExport}
+    />
+  );
+}
+
+// WO-ARCHIVE-401 (2026-09-17): presentational view extracted (repo pattern:
+// RejectionBreakdownView) so the loading/error/data branches are statically
+// testable without jsdom.
+export function ArchivePanelView(props: {
+  status: ArchiveStatus | null;
+  error: string | null;
+  busy: boolean;
+  actionMsg: string | null;
+  onToggleAuto: (next: boolean) => void;
+  onExport: (table: string) => void;
+}) {
+  const { status, error, busy, actionMsg, onToggleAuto, onExport } = props;
   const disk = status?.disk;
   const usedPct = disk && "used_pct" in disk ? disk.used_pct : null;
   const freeBytes = disk && "free_bytes" in disk ? disk.free_bytes : null;
@@ -200,8 +249,13 @@ export function ArchivePanel() {
               ))}
               {!status && (
                 <tr>
-                  <td colSpan={4} className="py-3 text-muted-foreground">
-                    Cargando estado de archivo…
+                  <td
+                    colSpan={4}
+                    className="py-3 text-muted-foreground"
+                    role={error ? "alert" : undefined}
+                  >
+                    {/* WO-ARCHIVE-401 (2026-09-17): error state, not perpetual loading */}
+                    {retentionStateLabel(error)}
                   </td>
                 </tr>
               )}
@@ -220,7 +274,10 @@ export function ArchivePanel() {
             </span>
           </div>
           {(status?.archives?.files ?? []).length === 0 ? (
-            <div className="text-xs text-muted-foreground">Sin archivos aún.</div>
+            <div className="text-xs text-muted-foreground">
+              {/* WO-ARCHIVE-401 (2026-09-17): unknown ≠ empty — no status means no "Sin archivos aún." */}
+              {filesStateLabel(status, error)}
+            </div>
           ) : (
             <ul className="space-y-0.5 font-mono text-[11px] text-muted-foreground">
               {(status?.archives?.files ?? []).slice(0, 8).map((f) => (

@@ -1,3 +1,4 @@
+---
 name: arbx-c-c005-advanced-tx-decoding-selector-matching
 description: "Post-Doc skill alineada al monorepo hefarica/arbitragex-v2 (MEV, Mempool & Bundle Submission). Se activa cuando: proxy detection ABI. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

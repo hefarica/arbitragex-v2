@@ -1,3 +1,4 @@
+---
 name: arbx-l-l014-advanced-pnl-attribution-brinson-style
 description: "Post-Doc skill alineada al monorepo hefarica/arbitragex-v2 (Risk, Backtesting & Quant Engineering). Se activa cuando: multi-factor decomp. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

@@ -1,3 +1,4 @@
+---
 name: arbx-h-h041-advanced-sigstore-policy-controllers
 description: "Post-Doc skill alineada al monorepo hefarica/arbitragex-v2 (CI/CD Doctrinal & DevSecOps). Se activa cuando: co-sign with Rekor. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

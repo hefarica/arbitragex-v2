@@ -1,3 +1,4 @@
+---
 name: arbx-d-d003-applied-op-stack-op-nodebatcherproposer-in-arbitragex-v2
 description: "Staff Engineer skill alineada al monorepo hefarica/arbitragex-v2 (Multi-Chain, L2 & Bridges). Se activa cuando: Base/Optimism integration. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

@@ -1,3 +1,4 @@
+---
 name: arbx-i-i014-advanced-tempo-tail-based-sampling
 description: "Post-Doc skill alineada al monorepo hefarica/arbitragex-v2 (Observability & SRE). Se activa cuando: exemplar links. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

@@ -1,3 +1,4 @@
+---
 name: arbx-l-l005-advanced-slippage-modeling-historical-mempool
 description: "Post-Doc skill alineada al monorepo hefarica/arbitragex-v2 (Risk, Backtesting & Quant Engineering). Se activa cuando: adverse selection. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

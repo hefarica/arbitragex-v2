@@ -1,3 +1,4 @@
+---
 name: arbx-c-c031-oneinch-fusion-hashflow-bebop-rfq
 description: "PhD/Master skill alineada al monorepo hefarica/arbitragex-v2 (MEV, Mempool & Bundle Submission). Se activa cuando: RFQ quote sourcing. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

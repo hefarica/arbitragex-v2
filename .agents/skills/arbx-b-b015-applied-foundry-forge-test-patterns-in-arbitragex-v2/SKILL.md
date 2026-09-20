@@ -1,3 +1,4 @@
+---
 name: arbx-b-b015-applied-foundry-forge-test-patterns-in-arbitragex-v2
 description: "Staff Engineer skill alineada al monorepo hefarica/arbitragex-v2 (Smart Contracts, Solidity & Auditing). Se activa cuando: mainnet vs Arbitrum fork tests. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

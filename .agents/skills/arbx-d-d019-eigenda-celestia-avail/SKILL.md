@@ -1,3 +1,4 @@
+---
 name: arbx-d-d019-eigenda-celestia-avail
 description: "PhD/Master skill alineada al monorepo hefarica/arbitragex-v2 (Multi-Chain, L2 & Bridges). Se activa cuando: DA blob retrieval. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

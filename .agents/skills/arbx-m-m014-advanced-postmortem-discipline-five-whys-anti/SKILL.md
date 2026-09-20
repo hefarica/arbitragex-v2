@@ -1,3 +1,4 @@
+---
 name: arbx-m-m014-advanced-postmortem-discipline-five-whys-anti
 description: "Post-Doc skill alineada al monorepo hefarica/arbitragex-v2 (Doctrine, Process & Release Engineering). Se activa cuando: systemic causes. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

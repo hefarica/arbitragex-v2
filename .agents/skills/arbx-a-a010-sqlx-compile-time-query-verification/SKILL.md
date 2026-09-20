@@ -1,3 +1,4 @@
+---
 name: arbx-a-a010-sqlx-compile-time-query-verification
 description: "PhD/Master skill alineada al monorepo hefarica/arbitragex-v2 (Rust Systems & Searcher Engine). Se activa cuando: query! macro offline mode. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

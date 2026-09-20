@@ -1,3 +1,4 @@
+---
 name: arbx-d-d035-advanced-hop-connext-xcall-stargate
 description: "Post-Doc skill alineada al monorepo hefarica/arbitragex-v2 (Multi-Chain, L2 & Bridges). Se activa cuando: STG composability. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

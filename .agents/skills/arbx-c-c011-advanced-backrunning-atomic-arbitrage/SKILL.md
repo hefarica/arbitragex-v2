@@ -1,3 +1,4 @@
+---
 name: arbx-c-c011-advanced-backrunning-atomic-arbitrage
 description: "Post-Doc skill alineada al monorepo hefarica/arbitragex-v2 (MEV, Mempool & Bundle Submission). Se activa cuando: cycle DAG detection. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

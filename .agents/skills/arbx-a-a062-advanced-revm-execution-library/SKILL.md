@@ -1,3 +1,4 @@
+---
 name: arbx-a-a062-advanced-revm-execution-library
 description: "Post-Doc skill alineada al monorepo hefarica/arbitragex-v2 (Rust Systems & Searcher Engine). Se activa cuando: custom Inspector hooks. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

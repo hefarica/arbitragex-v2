@@ -1,3 +1,4 @@
+---
 name: arbx-a-a032-advanced-procedural-macros-proc-macro2synquote
 description: "Post-Doc skill alineada al monorepo hefarica/arbitragex-v2 (Rust Systems & Searcher Engine). Se activa cuando: hygiene span manipulation. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

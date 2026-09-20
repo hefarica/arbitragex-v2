@@ -1,3 +1,8 @@
+---
+name: 14-performance-budget-commander
+description: "Local ArbitrageX specialist skill: 14-performance-budget-commander."
+---
+
 # Skill 14: Performance Budget Commander
 
 ## 1. Propósito

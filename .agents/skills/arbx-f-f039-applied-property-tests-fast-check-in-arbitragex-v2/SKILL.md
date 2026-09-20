@@ -1,3 +1,4 @@
+---
 name: arbx-f-f039-applied-property-tests-fast-check-in-arbitragex-v2
 description: "Staff Engineer skill alineada al monorepo hefarica/arbitragex-v2 (Backend Services (Node + Rust)). Se activa cuando: schema invariants. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

@@ -1,3 +1,4 @@
+---
 name: arbx-d-d028-wormhole-ntt
 description: "PhD/Master skill alineada al monorepo hefarica/arbitragex-v2 (Multi-Chain, L2 & Bridges). Se activa cuando: native token transfers. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

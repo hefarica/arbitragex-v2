@@ -1,3 +1,4 @@
+---
 name: arbx-k-k008-advanced-timingsafeequal-subtle-crate
 description: "Post-Doc skill alineada al monorepo hefarica/arbitragex-v2 (Security & Cryptography Applied). Se activa cuando: compiler timing leaks. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

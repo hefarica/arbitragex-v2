@@ -1,3 +1,4 @@
+---
 name: arbx-l-l010-stress-reverse-stress-testing
 description: "PhD/Master skill alineada al monorepo hefarica/arbitragex-v2 (Risk, Backtesting & Quant Engineering). Se activa cuando: 2008/Mar2020 replay. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

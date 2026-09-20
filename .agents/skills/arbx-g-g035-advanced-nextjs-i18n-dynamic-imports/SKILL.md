@@ -1,3 +1,4 @@
+---
 name: arbx-g-g035-advanced-nextjs-i18n-dynamic-imports
 description: "Post-Doc skill alineada al monorepo hefarica/arbitragex-v2 (Frontend Doctrinal (Next.js + Playwright)). Se activa cuando: RSC suspense waterfalls. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

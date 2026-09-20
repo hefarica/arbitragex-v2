@@ -1,7 +1,9 @@
 ---
 name: arbx-live-engineering
 description: Ingeniería integral de ArbitrageX para testnet live y mainnet live, evolución de .claude, agregación de blockchains/DEX/pools, mapeo VPS read-only antes de cambios y pruebas reales mediante Desktop Commander y herramientas verificadas.
-disable-model-invocation: true
+# disable-model-invocation retirado por orden explícita del operador (hefarica, 2026-09-17):
+# "ese puto .claude restringido me tiene mamado, arregla eso". La máquina de estados §4 y
+# todos los gates internos permanecen INTACTOS — esto solo habilita la invocación por el modelo.
 argument-hint: "[mapear | implementar | probar | preparar-testnet | preparar-mainnet] [alcance]"
 ---
 
@@ -254,3 +256,117 @@ largas comunica avances breves con resultados, no operaciones de bajo nivel repe
 No prometas trabajo en segundo plano: conserva estado y termina cada ejecución con
 el resultado obtenido y sus límites. Una tarea no termina en un plan si aún puedes
 implementar y verificar trabajo autorizado dentro de la sesión.
+
+## 15. Biblioteca de conocimiento de ingeniería (`references/biblioteca/`)
+
+Cuerpo de conocimiento técnico profundo que extiende esta skill: 13 referencias
+(núcleo v1.0.0 + 11-22) redactadas por autores especialistas y auditadas
+adversarialmente por verificadores técnicos independientes, más un crítico de
+completitud (producción 2026-09-15; ~3.7M tokens de elaboración multi-agente).
+
+**Carga progresiva**: esta SKILL.md (el encargo y su máquina de estados §4) gobierna
+siempre. La biblioteca se lee POR REFERENCIA según la situación, nunca de corrido.
+Ante conflicto núcleo-vs-referencia, gana la referencia 11-22 (verificada contra
+fuentes primarias); las erratas conocidas del núcleo están listadas al pie del 00.
+
+**GOBERNANZA**: todo el conocimiento de la biblioteca está subordinado a los gates
+`arbx-*` (paper-trade-first, simulation-mandatory, risk-limits-enforcement,
+pre-execute-checklist) y a CLAUDE.md §34 (LIVE_MAINNET gated, default-deny en el
+terminus de ejecución). Nada de la biblioteca autoriza un flip a live, broadcast con
+capital real, ni sobreescribe la máquina de estados de esta skill.
+
+### Matriz de activación
+
+| Situación | Referencia |
+|---|---|
+| Quotes exactas V2/V3/V4, Curve, Balancer, TWAP, oráculos, sizing óptimo | `11-amm-dex-math.md` |
+| Grafo de liquidez, ciclos negativos (Bellman-Ford/SPFA), poda, scoring EV, split | `12-route-search-optimization.md` |
+| Bundles Flashbots/MEV-Share, builders, bidding, liquidaciones, física L2, Jito | `13-mev-orderflow-bundles.md` |
+| Contrato ejecutor, callbacks flash loan, gas golfing, approvals, UUPS, invariantes | `14-onchain-execution-contracts.md` |
+| Nodos (reth/erigon), suscripciones, forks anvil/revm, tracing, fees, reorgs | `15-node-infra-estado.md` |
+| p99/p999, teoría de colas, io_uring, allocators, TCP/colo, lock-free, benchmarks | `16-latency-engineering.md` |
+| CEX-DEX, books L2/L3, delta-neutral, puentes cross-chain, Solana, depegs, órdenes firmadas | `17-cross-domain-arbitrage.md` |
+| Kelly, VPIN, drawdown, EVT, stress, oráculos, backtesting honesto | `18-risk-management-quant.md` |
+| Pirámide de tests, foundry invariants, fork pineado, replay, CI gating | `19-testing-fuzzing-invariantes.md` |
+| REST/WS/gRPC/webhooks, Kafka/Streams/NATS, CDC, indexación blockchain, auth | `20-system-integration-patterns.md` |
+| Desbloqueo de apps: hipótesis-driven, bisección, árboles de triage, escalera >1h | `21-unstick-any-app.md` |
+| Go-live cero→producción: gates, staged rollout, SLOs, incidentes, DR, drills | `22-golive-playbook.md` |
+
+### Índice de la biblioteca
+
+- **`00-nucleo-ingenieria-mev.md`** — Núcleo v1.0.0 (10 secciones): pipeline MEV, executor
+  UUPS, backend Rust/PG/Redis, DevOps, observabilidad, seguridad, performance. Erratas
+  auditadas al pie (guarda de solvencia, k8s→compose).
+- **`11-amm-dex-math.md`** — Quotes CPMM con fee sobre input y redondeo direccional |
+  swap-step loop V3 (ticks, sqrtPriceX96, liquidityNet) | Newton-Raphson del invariante D
+  de Curve | Balancer ponderado | **V4: PoolManager singleton, hooks, flash accounting
+  settle/take** (hook desconocido = simulación revm obligatoria) | TWAP ∝ L·T | closed-form
+  del sizing óptimo 2-pool | aritmética U256/Q64.96 sin flotantes.
+- **`12-route-search-optimization.md`** — Grafo -log(rate) y teorema de ciclo negativo |
+  Bellman-Ford/SPFA con reconstrucción anti-falsos-ciclos | multi-ciclo por ban de arista |
+  Yen/DFS con cotas | poda capacity/gas/hop (lección XEN) | scoring EV post-gas con dedup
+  Jaccard | incremental Sync + warm-start con presupuesto por bloque | split waterfilling |
+  hot loop CSR + rayon + criterion.
+- **`13-mev-orderflow-bundles.md`** — Supply chain searcher→builder→relay→proposer y
+  timeline del slot | `eth_sendBundle`/`eth_callBundle` campo a campo | pricing
+  coinbase-transfer vs priority fees | MEV-Share (hints, bids, pago al originador) |
+  winner curse y bid shading por builder | **liquidaciones como estrategia** (HF, ventana
+  de oráculo ajeno, ejecución atómica, JIT) | **física L2** (FCFS/Timeboost, priority fee
+  OP-Stack, fees de dos pisos) | defensa sandwich/reorg/censoring | Jito | gestión de
+  nonces bajo concurrencia.
+- **`14-onchain-execution-contracts.md`** — Ejecutor minimalista sin custodia con
+  delta-check de solvencia | dispatcher seguro de callbacks (Aave V3, Balancer V2, Uniswap
+  V3) | gas golfing EIP-2929/3529 + calldata packing 25 B/hop | permit/Permit2 |
+  Multicall3 atómico | MEV-resistencia (minOut simulado, deadline, roles, pausa) |
+  UUPS + timelock | ciclo de despliegue inicial | 9 invariantes con tests Foundry.
+- **`15-node-infra-estado.md`** — Matriz reth/erigon/geth | backfill+live-tail idempotente
+  con head dual hot/stable | tiers de simulación (revm CacheDB → eth_call → anvil pineado →
+  callBundle) | reserves desde logs Sync con preload warm | ladder de ticks V3 local |
+  receta revm contra la versión pineada del workspace | bidding desde feeHistory (techo
+  1.125³) | runbook de señales RPC (drift, 429, circuit breaker).
+- **`16-latency-engineering.md`** — Presupuesto SLO por etapa + deadline propagation |
+  amplificación de tail (ρ≤0.7, coordinated omission) | criterion/flamegraph/tokio-console/
+  HdrHistogram | drain batching y bounded channels | mimalloc/jemalloc + arenas + arc-swap
+  (RCU) | TCP_NODELAY, TLS resumption, selección de región | auditoría final por capa.
+- **`17-cross-domain-arbitrage.md`** — Feeds WS por venue con snapshot+update y checksum |
+  fees reales por endpoint (nunca asumidos) | microprice/OFI | delta-neutral spot-perp con
+  funding | puentes sin atomicidad → pre-funding bilateral (Q_max = E_max/(z·σ_Δt)) |
+  Solana/Jito | depegs como trampa de cola | **ciclo de órdenes firmadas** (auth por venue,
+  clientOrderId como idempotencia, user-data streams, reconciliación con trial balance).
+- **`18-risk-management-quant.md`** — Matriz capa→riesgo→señal→acción con caps anidados |
+  Kelly asimétrico + fractional 0.25-0.5× | EV de bundle con P_incl medida (bid shading) |
+  cota de ruina q^(ln r/ln(1−c)) | VPIN adaptado a AMM | EVT-POT + stress obligatorio
+  (gas 10×, depeg, exploit) | screening de contratos | runbook key-compromise
+  kill→revoke→rotate | backtesting walk-forward con descomposición del gap sim-vs-real.
+- **`19-testing-fuzzing-invariantes.md`** — Pirámide L1-L6 (qué capa atrapa qué bug) |
+  invariant handlers + ghost variables + allowlist de reverts | fork pineado = cero
+  flakiness | generated-table+probe con regla anti-circularidad | proptest U256 |
+  divergencia sim-vs-chain y golden blocks (prohibido re-etiquetar) | CI merge vs nightly |
+  testing del control-plane TS/edge | anti-flaky.
+- **`20-system-integration-patterns.md`** — Outbox transaccional SKIP LOCKED |
+  snapshot+delta con resync por gap y dead-man switch (R8) | exactly-once como mito del
+  consumidor + XAUTOCLAIM/PEL | unwind idempotente de reorgs con checkpoint | token bucket
+  por host (lecciones 429) | webhooks HMAC raw-body anti-replay | DLQ | traceparent
+  propagado | flags runtime vs horneadas en build | matriz mapeada al stack del repo.
+- **`21-unstick-any-app.md`** — Orden sagrado observar→hipotetizar→predecir→experimentar→
+  registrar | bitácora 1-variable con predicciones falsables | bisección (git bisect, cargo
+  tree -d, config halves) | 6 árboles de triage (build/boot/vacíos-R7/hang/perf/flaky) |
+  forense de logs con retención (LOGFLOOD-01) | red eslabón-por-eslabón | PostgreSQL
+  plan-primero | escalera de 8 peldaños >1h | anti-patrones | cierre con test de regresión.
+- **`22-golive-playbook.md`** — Pipeline de 12 pasos con freeze window T-48h | RESTORE DRILL
+  obligatorio (backup no probado = no backup) | deploy veraz (SHA CI == git rev-parse HEAD,
+  L4) | artefactos por digest con rollback N=3 | SLO multiburn 14.4×/6×/1× con freeze de
+  error budget | SEV1-3 + evidencia forense antes de reiniciar | canary con abort pre-escrito |
+  drills con cadencia + RTO/RPO | regla revert + gate nuevo.
+
+## 16. Doctrina de validación cruzada Hermes (orden del operador 2026-09-17)
+
+Toda criptografía y matemática del encargo (slots de storage, abi encode, aritmética
+de importes, quotes, sizing) se valida con vector de referencia independiente +
+Hermes (run durable: `hermes_run_start` + `hermes_run_status`; la llamada bloqueante
+expira). Todas las estrategias y OPS (generación, implementación, edición, creación,
+adaptación) se testean, prueban y ponen en marcha por Hermes y un grupo especializado
+en arbitrajes de todo tipo — el autor nunca certifica su propia pieza. Canónico:
+`arbitragex-omniscience` §12. Los gates de esta skill (§4, §11) quedan intactos.
+Precedente: SIM-FUND-01b — 12 bytes de padeo erróneo, 706/706 fundings muertos,
+certificados por un test que re-computaba la fórmula defectuosa.

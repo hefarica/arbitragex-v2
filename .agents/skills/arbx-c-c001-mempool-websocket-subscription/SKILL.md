@@ -1,3 +1,4 @@
+---
 name: arbx-c-c001-mempool-websocket-subscription
 description: "PhD/Master skill alineada al monorepo hefarica/arbitragex-v2 (MEV, Mempool & Bundle Submission). Se activa cuando: pendingTx filter. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

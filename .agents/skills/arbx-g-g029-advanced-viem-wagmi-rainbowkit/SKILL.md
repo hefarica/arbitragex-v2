@@ -1,3 +1,4 @@
+---
 name: arbx-g-g029-advanced-viem-wagmi-rainbowkit
 description: "Post-Doc skill alineada al monorepo hefarica/arbitragex-v2 (Frontend Doctrinal (Next.js + Playwright)). Se activa cuando: wallet connector chain. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

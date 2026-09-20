@@ -1,3 +1,4 @@
+---
 name: arbx-g-g002-advanced-nextjs-15-app-router-rsc
 description: "Post-Doc skill alineada al monorepo hefarica/arbitragex-v2 (Frontend Doctrinal (Next.js + Playwright)). Se activa cuando: streaming SSR Suspense. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

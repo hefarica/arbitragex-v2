@@ -1,3 +1,4 @@
+---
 name: arbx-c-c016-flashbots-eth_sendbundle
 description: "PhD/Master skill alineada al monorepo hefarica/arbitragex-v2 (MEV, Mempool & Bundle Submission). Se activa cuando: targetBlock minTimestamp. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

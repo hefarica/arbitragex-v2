@@ -123,3 +123,54 @@ export const TokenResolveResponseSchema = z.object({
   universe: TokenUniverseKpiSchema,
 }).strict();
 export type TokenResolveResponse = z.infer<typeof TokenResolveResponseSchema>;
+
+// ─── Top-N ranking (PC-07, 2026-09-19) — allowlist preset menu ────────────
+/** Rug-rule IDs are the wire contract with backend RUG_RULES (token-top.ts). */
+export const RugRuleIdSchema = z.enum([
+  "min_safety_score",
+  "validated_status",
+  "min_liquidity_usd",
+  "vol_liq_ratio_cap",
+  "pump_5m_spike",
+  "registry_verified",
+  "risk_level_ok",
+  "multi_pool",
+  "pool_age_24h",
+  "exclude_memecoins",
+]);
+export type RugRuleId = z.infer<typeof RugRuleIdSchema>;
+
+export const TopTokenRowSchema = z.object({
+  symbol: z.string().nullable(),
+  address: z.string(),
+  tvl_usd: z.string(),
+  tvl_24h_ago_usd: z.string().nullable(),
+  pool_count: z.number().int().min(0),
+  safety_score: z.number().nullable(),
+  validation_score: z.number().nullable(),
+  final_status: z.string().nullable(),
+  liquidity_usd: z.string().nullable(),
+  volume_24h_usd: z.string().nullable(),
+  vol_liq_ratio: z.number().nullable(),
+  registry_verified: z.boolean().nullable(),
+  oldest_pool_age_hours: z.number().nullable(),
+  risk_level: z.string().nullable(),
+  is_stablecoin: z.boolean(),
+  memecoin_heuristic: z.boolean(),
+  failed_rules: z.array(RugRuleIdSchema),
+  unverified_rules: z.array(RugRuleIdSchema),
+}).strict();
+export type TopTokenRow = z.infer<typeof TopTokenRowSchema>;
+
+export const TokenTopResponseSchema = z.object({
+  chain_id: z.number().int().positive(),
+  window: z.enum(["current", "24h"]),
+  limit: z.number().int().positive(),
+  ranked: z.array(TopTokenRowSchema),
+  excluded: z.record(z.string(), z.number().int()),
+  price_coverage: z.object({ symbols_priced: z.number().int(), symbols_total: z.number().int() }),
+  window_note: z.string().nullable(),
+  rules_applied: z.array(RugRuleIdSchema),
+  rule_catalog: z.array(z.object({ id: RugRuleIdSchema, label: z.string() }).strict()),
+}).strict();
+export type TokenTopResponse = z.infer<typeof TokenTopResponseSchema>;

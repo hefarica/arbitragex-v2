@@ -1,3 +1,4 @@
+---
 name: arbx-h-h040-sigstore-policy-controllers
 description: "PhD/Master skill alineada al monorepo hefarica/arbitragex-v2 (CI/CD Doctrinal & DevSecOps). Se activa cuando: admission verify. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

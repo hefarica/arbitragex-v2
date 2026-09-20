@@ -1,3 +1,4 @@
+---
 name: arbx-d-d026-advanced-layerzero-v2-uln-end-to-end
 description: "Post-Doc skill alineada al monorepo hefarica/arbitragex-v2 (Multi-Chain, L2 & Bridges). Se activa cuando: unified mappings. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

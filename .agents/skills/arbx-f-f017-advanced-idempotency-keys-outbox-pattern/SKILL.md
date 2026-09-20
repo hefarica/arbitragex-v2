@@ -1,3 +1,4 @@
+---
 name: arbx-f-f017-advanced-idempotency-keys-outbox-pattern
 description: "Post-Doc skill alineada al monorepo hefarica/arbitragex-v2 (Backend Services (Node + Rust)). Se activa cuando: sagas state machines. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

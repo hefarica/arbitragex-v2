@@ -1,3 +1,4 @@
+---
 name: arbx-e-e022-pre-trade-simulation-revm-fork
 description: "PhD/Master skill alineada al monorepo hefarica/arbitragex-v2 (AMM Math & Quantitative DeFi). Se activa cuando: state override trace. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

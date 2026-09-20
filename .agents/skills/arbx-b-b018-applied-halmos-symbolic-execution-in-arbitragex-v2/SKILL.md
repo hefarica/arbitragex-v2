@@ -1,3 +1,4 @@
+---
 name: arbx-b-b018-applied-halmos-symbolic-execution-in-arbitragex-v2
 description: "Staff Engineer skill alineada al monorepo hefarica/arbitragex-v2 (Smart Contracts, Solidity & Auditing). Se activa cuando: arbitragex Settlement profit-positive proof. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

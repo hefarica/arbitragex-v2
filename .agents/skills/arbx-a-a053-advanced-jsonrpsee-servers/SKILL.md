@@ -1,3 +1,4 @@
+---
 name: arbx-a-a053-advanced-jsonrpsee-servers
 description: "Post-Doc skill alineada al monorepo hefarica/arbitragex-v2 (Rust Systems & Searcher Engine). Se activa cuando: custom subscription sinks. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

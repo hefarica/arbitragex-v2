@@ -1,3 +1,4 @@
+---
 name: arbx-b-b047-advanced-lido-steth-rocketpool-reth
 description: "Post-Doc skill alineada al monorepo hefarica/arbitragex-v2 (Smart Contracts, Solidity & Auditing). Se activa cuando: slashing risk research. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

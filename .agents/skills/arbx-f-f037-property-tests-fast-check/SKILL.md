@@ -1,3 +1,4 @@
+---
 name: arbx-f-f037-property-tests-fast-check
 description: "PhD/Master skill alineada al monorepo hefarica/arbitragex-v2 (Backend Services (Node + Rust)). Se activa cuando: shrinking strategies. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

@@ -1,3 +1,4 @@
+---
 name: arbx-e-e043-sharpesortinocalmar-strategy-kpis
 description: "PhD/Master skill alineada al monorepo hefarica/arbitragex-v2 (AMM Math & Quantitative DeFi). Se activa cuando: risk-adjusted returns. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

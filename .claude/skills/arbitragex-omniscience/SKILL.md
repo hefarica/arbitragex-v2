@@ -457,3 +457,19 @@ No necesitas un comando especial — solo pregunta.
 4. **Gangs con /goal live**: todo charter de agente lleva este mandato inyectado cuando el
    /goal toque modos live; los agentes NO activan capital ni firman — preparan, prueban y
    entregan el paquete de activación (`templates/ACTA_CAPACIDAD_LIVE.template.md`).
+
+## 12 — DOCTRINA DE VALIDACIÓN: CRIPTO/MATEMÁTICA + CICLO DE VIDA DE ESTRATEGIAS/OPS VÍA HERMES (orden del operador 2026-09-17)
+
+> Espejo de la §12 del canon global (`~/.claude/skills/arbitragex-omniscience/SKILL.md`),
+> fuente canónica. Resumen operativo:
+
+1. **Cripto/matemática** (keccak, abi, U256/Q64.96, fees, sizing, quotes): vector de
+   referencia INDEPENDIENTE (cast/python) + Hermes run durable (`hermes_run_start`,
+   jamás `hermes_copilot_review`) + agentes convocados desde Hermes. Ningún test que
+   re-compute la propia fórmula cuenta como validación.
+2. **Estrategias y OPS** — generación, implementación, edición, creación, adaptación —
+   TODAS testeadas, probadas y puestas en marcha por Hermes + grupo especializado en
+   arbitrajes de todo tipo. El autor nunca certifica su pieza.
+3. Frontera intacta: el gang testea y prueba; flips de modo/capital = operador (§34).
+
+Precedente: SIM-FUND-01b (706/706 slot_unresolved por padeo erróneo auto-certificado).

@@ -1,3 +1,4 @@
+---
 name: arbx-f-f023-advanced-rate-limiting-sliding-window
 description: "Post-Doc skill alineada al monorepo hefarica/arbitragex-v2 (Backend Services (Node + Rust)). Se activa cuando: distributed rate limit. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

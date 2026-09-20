@@ -1,3 +1,4 @@
+---
 name: arbx-d-d041-advanced-sovereign-rollup-sdk
 description: "Post-Doc skill alineada al monorepo hefarica/arbitragex-v2 (Multi-Chain, L2 & Bridges). Se activa cuando: interop research. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

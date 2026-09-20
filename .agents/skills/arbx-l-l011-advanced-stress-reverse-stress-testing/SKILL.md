@@ -1,3 +1,4 @@
+---
 name: arbx-l-l011-advanced-stress-reverse-stress-testing
 description: "Post-Doc skill alineada al monorepo hefarica/arbitragex-v2 (Risk, Backtesting & Quant Engineering). Se activa cuando: breaking-point search. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

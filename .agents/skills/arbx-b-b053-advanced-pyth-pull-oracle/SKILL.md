@@ -1,3 +1,4 @@
+---
 name: arbx-b-b053-advanced-pyth-pull-oracle
 description: "Post-Doc skill alineada al monorepo hefarica/arbitragex-v2 (Smart Contracts, Solidity & Auditing). Se activa cuando: Pyth lazer research. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

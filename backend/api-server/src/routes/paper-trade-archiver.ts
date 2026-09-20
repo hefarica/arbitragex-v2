@@ -30,11 +30,21 @@ const STREAM_IN = "arbx:opps:detected";
 const GROUP = "paper-archiver-g0";
 const CONSUMER = process.env["HOSTNAME"] ?? "paper-archiver-1";
 
+// WO-NO-WS-LOGS-01 (2026-09-17): R9 aggregation window for the rejected-skip
+// flood. In production the detected stream is ~100% rejected (see the QA-WS
+// §5.4 measurement: ~30 skip_rejected info-lines/s drowned every other log,
+// including socket.io connection events). Per-item skip goes to debug; ONE
+// info summary per window carries the reason histogram. Exported for tests.
+export const SKIP_REJECTED_SUMMARY_WINDOW_MS = 60_000;
+
 /** Minimal structural logger — satisfied by the pino logger in index.ts. */
 export interface ArchiverLogger {
   info(obj: object, msg?: string): void;
   warn(obj: object, msg?: string): void;
   error(obj: object, msg?: string): void;
+  // WO-NO-WS-LOGS-01 (2026-09-17): R9 — per-item skip logs move to debug.
+  // Optional so older logger shims keep compiling; pino satisfies it.
+  debug?(obj: object, msg?: string): void;
 }
 
 export interface PaperTradeArchiverDeps {
@@ -120,6 +130,15 @@ export class PaperTradeArchiver {
    * reload). 0/unset → isOutlierProfit falls back to the floor.
    */
   private capitalUsd = 0;
+  /**
+   * WO-NO-WS-LOGS-01 (2026-09-17): R9 reason histogram for skip_rejected.
+   * Window semantics mirror Wo10LatencyWindow (websocket.ts): the first skip
+   * anchors the window; the summary flushes on the first skip AFTER the window
+   * elapses (no timer, no empty-window noise). stop() flushes the partial
+   * final window so a shutdown never loses counts.
+   */
+  private skipRejectedCounts = new Map<string, number>();
+  private lastSkipSummaryAt = 0;
 
   constructor(private readonly deps: PaperTradeArchiverDeps) {}
 
@@ -145,6 +164,56 @@ export class PaperTradeArchiver {
     this.running = false;
     if (this.stopPromise) await this.stopPromise.catch(() => {});
     if (this.redis) await this.redis.quit().catch(() => {});
+    // WO-NO-WS-LOGS-01 (2026-09-17): flush the partial final R9 window.
+    this.flushSkipRejectedSummary(Date.now());
+  }
+
+  /**
+   * WO-NO-WS-LOGS-01 (2026-09-17): R9 recorder for rejected skips.
+   * Per-item line at debug (when the logger supports it — pino does; a shim
+   * without debug simply omits the detail, never crashes); ONE info summary
+   * with the reason histogram per window.
+   */
+  private recordSkipRejected(reason: string, opportunityId: string): void {
+    this.deps.logger.debug?.(
+      {
+        event: "paper_archiver.skip_rejected",
+        opportunity_id: opportunityId,
+        reason,
+      },
+      "rejected opportunity — not a paper trade (R-0001)",
+    );
+    const now = Date.now();
+    if (this.lastSkipSummaryAt === 0) {
+      this.lastSkipSummaryAt = now; // anchor the first window (no near-empty summary)
+    } else if (now - this.lastSkipSummaryAt >= SKIP_REJECTED_SUMMARY_WINDOW_MS) {
+      // Flush BEFORE counting: the skip that opens the new window belongs to
+      // it, not to the one being closed.
+      this.flushSkipRejectedSummary(now);
+    }
+    this.skipRejectedCounts.set(reason, (this.skipRejectedCounts.get(reason) ?? 0) + 1);
+  }
+
+  /** WO-NO-WS-LOGS-01 (2026-09-17): emit + clear the R9 histogram (no-op when empty). */
+  private flushSkipRejectedSummary(now: number): void {
+    if (this.skipRejectedCounts.size === 0) return;
+    const reasons: Record<string, number> = {};
+    let total = 0;
+    for (const [reason, count] of this.skipRejectedCounts) {
+      reasons[reason] = count;
+      total += count;
+    }
+    this.skipRejectedCounts.clear();
+    this.lastSkipSummaryAt = now;
+    this.deps.logger.info(
+      {
+        event: "paper_archiver.skip_rejected_summary",
+        window_ms: SKIP_REJECTED_SUMMARY_WINDOW_MS,
+        total,
+        reasons,
+      },
+      "rejected opportunities skipped (R-0001) — reason histogram",
+    );
   }
 
   private async ensureGroup(): Promise<void> {
@@ -205,14 +274,12 @@ export class PaperTradeArchiver {
     // of paper_trade_runs gate identically. Skip + XACK.
     const rejectionReason = archiverRejectionSkip(opp);
     if (rejectionReason !== null) {
-      this.deps.logger.info(
-        {
-          event: "paper_archiver.skip_rejected",
-          opportunity_id: opp.id,
-          reason: rejectionReason,
-        },
-        "rejected opportunity — not a paper trade (R-0001)",
-      );
+      // WO-NO-WS-LOGS-01 (2026-09-17): R9 — the per-item info line flooded the
+      // api-server log at ~30 lines/s in production (pattern R9 / LOGFLOOD-01).
+      // Per-item detail moves to debug; the reason histogram surfaces at info
+      // once per SKIP_REJECTED_SUMMARY_WINDOW_MS. The reason string stays
+      // VERBATIM (never relabeled, R8).
+      this.recordSkipRejected(rejectionReason, opp.id);
       await this.redis.xack(STREAM_IN, GROUP, id).catch(() => {});
       return;
     }

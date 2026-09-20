@@ -1,3 +1,4 @@
+---
 name: arbx-a-a029-advanced-unsafe-rust-ffi
 description: "Post-Doc skill alineada al monorepo hefarica/arbitragex-v2 (Rust Systems & Searcher Engine). Se activa cuando: MIRI Stacked Borrows. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

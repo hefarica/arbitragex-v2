@@ -1,3 +1,4 @@
+---
 name: arbx-d-d010-scroll-zkevm-equivalence
 description: "PhD/Master skill alineada al monorepo hefarica/arbitragex-v2 (Multi-Chain, L2 & Bridges). Se activa cuando: bus mapping circuits. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

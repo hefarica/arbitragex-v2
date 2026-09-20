@@ -1,3 +1,4 @@
+---
 name: arbx-j-j012-applied-migration-idempotency-patterns-in-arbitragex-v2
 description: "Staff Engineer skill alineada al monorepo hefarica/arbitragex-v2 (Database & Storage (Postgres/Redis/Timescale)). Se activa cuando: 034 reconciliation iter12-13. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

@@ -1,3 +1,4 @@
+---
 name: arbx-c-c015-applied-jit-liquidity-uni-v3-in-arbitragex-v2
 description: "Staff Engineer skill alineada al monorepo hefarica/arbitragex-v2 (MEV, Mempool & Bundle Submission). Se activa cuando: JIT with revert protection. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

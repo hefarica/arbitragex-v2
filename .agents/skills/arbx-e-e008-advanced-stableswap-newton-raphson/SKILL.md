@@ -1,3 +1,4 @@
+---
 name: arbx-e-e008-advanced-stableswap-newton-raphson
 description: "Post-Doc skill alineada al monorepo hefarica/arbitragex-v2 (AMM Math & Quantitative DeFi). Se activa cuando: imbalance fee skew. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

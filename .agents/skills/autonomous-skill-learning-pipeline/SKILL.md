@@ -1,3 +1,8 @@
+---
+name: autonomous-skill-learning-pipeline
+description: "Local ArbitrageX specialist skill: autonomous-skill-learning-pipeline."
+---
+
 # Autonomous Skill Learning Pipeline
 
 ## Propósito

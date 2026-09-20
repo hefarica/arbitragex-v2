@@ -1,3 +1,4 @@
+---
 name: arbx-j-j007-postgres-cte-window-recursive
 description: "PhD/Master skill alineada al monorepo hefarica/arbitragex-v2 (Database & Storage (Postgres/Redis/Timescale)). Se activa cuando: analytic queries. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

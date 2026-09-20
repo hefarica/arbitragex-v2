@@ -1,3 +1,4 @@
+---
 name: arbx-k-k009-applied-timingsafeequal-subtle-crate-in-arbitragex-v2
 description: "Staff Engineer skill alineada al monorepo hefarica/arbitragex-v2 (Security & Cryptography Applied). Se activa cuando: require-service-token RAPTOR. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

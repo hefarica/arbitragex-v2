@@ -1,3 +1,4 @@
+---
 name: arbx-h-h017-advanced-npm-audit-overrides
 description: "Post-Doc skill alineada al monorepo hefarica/arbitragex-v2 (CI/CD Doctrinal & DevSecOps). Se activa cuando: pnpm signature provenance. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

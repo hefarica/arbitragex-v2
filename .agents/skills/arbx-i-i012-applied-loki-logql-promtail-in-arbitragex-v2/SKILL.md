@@ -1,3 +1,4 @@
+---
 name: arbx-i-i012-applied-loki-logql-promtail-in-arbitragex-v2
 description: "Staff Engineer skill alineada al monorepo hefarica/arbitragex-v2 (Observability & SRE). Se activa cuando: centralized VPS log shipping. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

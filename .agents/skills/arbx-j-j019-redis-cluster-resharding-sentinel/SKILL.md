@@ -1,3 +1,4 @@
+---
 name: arbx-j-j019-redis-cluster-resharding-sentinel
 description: "PhD/Master skill alineada al monorepo hefarica/arbitragex-v2 (Database & Storage (Postgres/Redis/Timescale)). Se activa cuando: slot migration live. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

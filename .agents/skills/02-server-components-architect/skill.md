@@ -1,3 +1,8 @@
+---
+name: 02-server-components-architect
+description: "Local ArbitrageX specialist skill: 02-server-components-architect."
+---
+
 # Skill 02: Server Components Architect
 
 ## 1. Propósito

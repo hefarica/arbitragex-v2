@@ -1,3 +1,4 @@
+---
 name: arbx-l-l015-applied-pnl-attribution-brinson-style-in-arbitragex-v2
 description: "Staff Engineer skill alineada al monorepo hefarica/arbitragex-v2 (Risk, Backtesting & Quant Engineering). Se activa cuando: Grafana per-strategy attribution. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

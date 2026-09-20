@@ -1,3 +1,4 @@
+---
 name: arbx-g-g017-advanced-data-testid-naming-convention
 description: "Post-Doc skill alineada al monorepo hefarica/arbitragex-v2 (Frontend Doctrinal (Next.js + Playwright)). Se activa cuando: testid taxonomy. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

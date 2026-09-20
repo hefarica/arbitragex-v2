@@ -1,3 +1,4 @@
+---
 name: arbx-c-c036-applied-validator-mev-boost-adoption-in-arbitragex-v2
 description: "Staff Engineer skill alineada al monorepo hefarica/arbitragex-v2 (MEV, Mempool & Bundle Submission). Se activa cuando: relay set rotation policy. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

@@ -1,3 +1,4 @@
+---
 name: arbx-l-l002-advanced-backtesting-framework-architecture
 description: "Post-Doc skill alineada al monorepo hefarica/arbitragex-v2 (Risk, Backtesting & Quant Engineering). Se activa cuando: point-in-time data. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

@@ -1,3 +1,4 @@
+---
 name: arbx-c-c042-applied-searcher-game-theory-in-arbitragex-v2
 description: "Staff Engineer skill alineada al monorepo hefarica/arbitragex-v2 (MEV, Mempool & Bundle Submission). Se activa cuando: tip oracle adaptive. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

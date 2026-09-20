@@ -1,3 +1,4 @@
+---
 name: arbx-f-f007-drizzle-orm-type-safe-migrations
 description: "PhD/Master skill alineada al monorepo hefarica/arbitragex-v2 (Backend Services (Node + Rust)). Se activa cuando: push vs generate. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

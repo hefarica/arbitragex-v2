@@ -1,3 +1,4 @@
+---
 name: arbx-i-i024-applied-red-use-golden-signals-method-in-arbitragex-v2
 description: "Staff Engineer skill alineada al monorepo hefarica/arbitragex-v2 (Observability & SRE). Se activa cuando: burn-rate alerts. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

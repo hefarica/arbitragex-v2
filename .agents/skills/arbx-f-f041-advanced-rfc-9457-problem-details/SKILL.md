@@ -1,3 +1,4 @@
+---
 name: arbx-f-f041-advanced-rfc-9457-problem-details
 description: "Post-Doc skill alineada al monorepo hefarica/arbitragex-v2 (Backend Services (Node + Rust)). Se activa cuando: extension members. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

@@ -1,3 +1,4 @@
+---
 name: arbx-m-m002-advanced-conventional-commits-atomic-splits
 description: "Post-Doc skill alineada al monorepo hefarica/arbitragex-v2 (Doctrine, Process & Release Engineering). Se activa cuando: commit minimality. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---

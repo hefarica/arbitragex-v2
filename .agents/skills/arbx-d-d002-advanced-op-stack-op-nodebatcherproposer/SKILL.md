@@ -1,3 +1,4 @@
+---
 name: arbx-d-d002-advanced-op-stack-op-nodebatcherproposer
 description: "Post-Doc skill alineada al monorepo hefarica/arbitragex-v2 (Multi-Chain, L2 & Bridges). Se activa cuando: alt-DA gas token. Doctrina OMEGA Zero-Mocks · Fail-Closed · El Remoto Manda."
 ---
