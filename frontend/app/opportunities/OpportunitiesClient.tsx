@@ -22,6 +22,7 @@ import { usePaperModeState } from "@/hooks/usePaperModeState";
 import { useOmniOpportunities } from "@/lib/store/useOmniOpportunities";
 import { useOmniStore } from "@/lib/store/omni-store";
 import { mapToOmniOpportunity, type OmniOpportunity } from "@/lib/store/types";
+import { routeGroupKeyOf } from "@/lib/store/route-key";
 import { getApiBaseUrl, getTradingConfig } from "@/lib/api-client";
 import type { StrategyRuntimeConfig } from "@/lib/schemas";
 
@@ -41,24 +42,14 @@ export type {
 import { DegradedBanner } from "@/components/DegradedBanner";
 import { useUserPrefs } from "@/lib/user-prefs";
 
-/**
- * Stable route identity for the card grid key. A re-detected route (same
- * chain + strategy + token pair + DEX path) must update the SAME card in place
- * rather than remount a new one — so we key on the route identity, not the
- * per-detection row id. This is what stops the enter-animation flash each poll
- * and what makes a card disappear the moment its route drops from the snapshot.
- */
-function routeKeyOf(opp: OmniOpportunity): string {
-  return [
-    opp.chain_id,
-    opp.chain_id_out ?? "",
-    opp.strategy_kind,
-    opp.token_in,
-    opp.token_out,
-    opp.dex_a,
-    opp.dex_b ?? "",
-  ].join("|");
-}
+// Stable route identity for the card grid key. A re-detected route (same
+// chain + strategy + token pair + DEX path) must update the SAME card in place
+// rather than remount a new one — so we key on the route identity, not the
+// per-detection row id. This is what stops the enter-animation flash each poll
+// and what makes a card disappear the moment its route drops from the snapshot.
+// CARDS-DEDUP-HOPS: the shared bit-exact key (same as the api-server GROUP BY
+// twin) so REST and WS dedup identically, and re-detections refresh the card's
+// economics in place with zero remount (operator order 2026-09-20).
 
 // FE-1: WS statuses. "LIVE" = WS connected. "STALE" = WS disconnected.
 // "POLLING" = WS failed 3×, degraded to HTTP polling. "CONNECTING" = initial.
@@ -345,6 +336,15 @@ export default function OpportunitiesClient({
     }
     return Array.from(m.entries()).sort((a, b) => b[1] - a[1]);
   }, [opportunities]);
+  // Distinct hop counts in the live feed for the hops filter (operator order
+  // 2026-09-20). hop_count null = legacy row without route_metadata — no bucket.
+  const feedHops = useMemo(() => {
+    const set = new Set<number>();
+    for (const o of opportunities) {
+      if (o.hop_count != null) set.add(o.hop_count);
+    }
+    return Array.from(set).sort((a, b) => a - b);
+  }, [opportunities]);
 
   // ── G-PRICE-1: símbolos del feed para la cinta de precios ──
   const tickerSymbols = useMemo(() => {
@@ -483,6 +483,26 @@ export default function OpportunitiesClient({
             </option>
           ))}
         </select>
+        {/* Hops filter (operator order 2026-09-20) — exact hop count from
+            route_metadata; options derived from the live feed. */}
+        <select
+          value={String(filters.hops)}
+          onChange={(e) =>
+            setFilters({
+              ...filters,
+              hops: e.target.value === "all" ? "all" : Number(e.target.value),
+            })
+          }
+          className="px-2.5 py-1 rounded-lg border border-border bg-muted text-foreground"
+          title="Filter by hop count"
+        >
+          <option value="all">All hops</option>
+          {feedHops.map((h) => (
+            <option key={h} value={h}>
+              {h} hops
+            </option>
+          ))}
+        </select>
         <div className="relative">
           <Search size={12} className="absolute left-2 top-1/2 -translate-y-1/2 text-muted-foreground" />
           <input
@@ -587,7 +607,7 @@ export default function OpportunitiesClient({
       <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
         {visible.map((opp) => (
           <OpportunityTradeCard
-            key={routeKeyOf(opp)}
+            key={routeGroupKeyOf(opp)}
             opp={opp}
             now={now}
             isMounted={isMounted}
