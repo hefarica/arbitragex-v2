@@ -23,6 +23,23 @@ services:
   postgres:
     logging: *id001
     image: postgres:15
+    # PERF-STACK WO-4 (2026-09-20): tuned for the 8-core/16GB VPS running the
+    # full stack. synchronous_commit stays ON (locked decision — durability of
+    # the opportunities ledger is not traded for throughput).
+    command:
+    - postgres
+    - -c
+    - shared_buffers=1GB
+    - -c
+    - work_mem=32MB
+    - -c
+    - effective_cache_size=3GB
+    - -c
+    - wal_compression=on
+    - -c
+    - max_connections=150
+    - -c
+    - maintenance_work_mem=512MB
     environment:
       POSTGRES_DB: arbitragex
       POSTGRES_USER: postgres
@@ -47,6 +64,13 @@ services:
     restart: unless-stopped
     networks:
     - arbx-net
+    deploy:
+      resources:
+        limits:
+          memory: 4G
+          cpus: '2.0'
+        reservations:
+          memory: 512M
   redis:
     logging: *id001
     image: redis:7.2
@@ -62,6 +86,14 @@ services:
     - ''
     - --appendonly
     - 'yes'
+    # PERF-STACK WO-5 (2026-09-20): bounded heap. noeviction makes writes FAIL
+    # loudly instead of silently evicting control-plane keys (killswitch,
+    # papermode). AOF stays ON above; hot-path streams are MAXLEN-trimmed by
+    # producers, so the 1gb cap bounds only the untracked tail.
+    - --maxmemory
+    - 1gb
+    - --maxmemory-policy
+    - noeviction
     ports:
     - 127.0.0.1:6379:6379
     volumes:
@@ -77,6 +109,13 @@ services:
     restart: unless-stopped
     networks:
     - arbx-net
+    deploy:
+      resources:
+        limits:
+          memory: 1536M
+          cpus: '1.0'
+        reservations:
+          memory: 256M
   searcher-rs:
     logging: *id001
     build:
@@ -117,7 +156,10 @@ services:
         reservations:
           memory: 512M
   anvil:
-    image: ghcr.io/foundry-rs/foundry:latest
+    # PERF-STACK WO-6 (2026-09-20): pinned to the digest currently running on
+    # the VPS (captured 2026-09-20 via docker image inspect). `latest` made
+    # every stack `up` a silent, untested foundry upgrade.
+    image: ghcr.io/foundry-rs/foundry@sha256:8347b728d5d393dac1c018691b36f506d23b9dcd78341d40ea0fcb11c3a19cdd
     env_file:
     - ../.env
     entrypoint:
@@ -142,6 +184,7 @@ services:
       resources:
         limits:
           memory: 2G
+          cpus: '2.0'
   sim-ctl:
     logging: *id001
     build:
