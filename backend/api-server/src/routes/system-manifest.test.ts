@@ -41,6 +41,8 @@ interface MockState {
   insertedOnConflict: boolean;
   getRows: Array<Record<string, unknown>>;
   queries: Array<{ sql: string; params: unknown[] | undefined }>;
+  driftTotal?: number;
+  driftRows?: Array<Record<string, unknown>>;
 }
 
 function buildMockPool(state: MockState): Pool {
@@ -49,6 +51,13 @@ function buildMockPool(state: MockState): Pool {
       state.queries.push({ sql, params });
       if (sql === "BEGIN" || sql === "COMMIT" || sql === "ROLLBACK") {
         return { rows: [], rowCount: 0 };
+      }
+      if (sql.includes("COUNT(*)::int AS total FROM drift_observations")) {
+        return { rows: [{ total: state.driftTotal ?? 0 }], rowCount: 1 };
+      }
+      if (sql.includes("FROM drift_observations")) {
+        const rows = state.driftRows ?? [];
+        return { rows, rowCount: rows.length };
       }
       if (sql.includes("pg_advisory_xact_lock")) {
         return { rows: [], rowCount: 0 };
@@ -196,6 +205,65 @@ describe("OMEGA-8/M3 P1-1: ON CONFLICT (event_id, layer) DO NOTHING dedup", () =
     // Wrapped in BEGIN/COMMIT.
     expect(state.queries[0].sql).toBe("BEGIN");
     expect(state.queries[state.queries.length - 1].sql).toBe("COMMIT");
+  });
+});
+
+describe("R10 E2E-COMPUTE GUARD: GET /api/system/drift nunca fabrica COHERENT", () => {
+  it("tabla con cero observaciones históricas (sin productor) → reason drift_observations_no_producer", async () => {
+    const state: MockState = {
+      insertedOnConflict: true,
+      getRows: [],
+      queries: [],
+      driftTotal: 0,
+      driftRows: [],
+    };
+    const { app } = buildApp(state);
+    const res = await request(app).get("/api/system/drift");
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ drift: [], count: 0, reason: "drift_observations_no_producer" });
+    // Short-circuit: el SELECT de unresolved ni siquiera corre.
+    expect(state.queries.filter((q) => q.sql.includes("resolved_at")).length).toBe(0);
+  });
+
+  it("con observaciones históricas (productor existió) y 0 unresolved → respuesta SIN reason (coherencia genuina)", async () => {
+    const state: MockState = {
+      insertedOnConflict: true,
+      getRows: [],
+      queries: [],
+      driftTotal: 3,
+      driftRows: [],
+    };
+    const { app } = buildApp(state);
+    const res = await request(app).get("/api/system/drift");
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ drift: [], count: 0 });
+    expect(res.body.reason).toBeUndefined();
+  });
+
+  it("observaciones unresolved se devuelven verbatim", async () => {
+    const obs = {
+      id: "obs-1",
+      resource: "pools",
+      layer_a: "postgresql",
+      layer_b: "redis",
+      hash_a: "a".repeat(64),
+      hash_b: "b".repeat(64),
+      diff_count: 2,
+      severity: "warn",
+    };
+    const state: MockState = {
+      insertedOnConflict: true,
+      getRows: [],
+      queries: [],
+      driftTotal: 1,
+      driftRows: [obs],
+    };
+    const { app } = buildApp(state);
+    const res = await request(app).get("/api/system/drift");
+    expect(res.status).toBe(200);
+    expect(res.body.count).toBe(1);
+    expect(res.body.drift[0]).toMatchObject({ resource: "pools", severity: "warn" });
+    expect(res.body.reason).toBeUndefined();
   });
 });
 
