@@ -91,6 +91,13 @@ export interface TokenChipProps {
   chain_id: number | null;
   /** Nullable per R8: enricher may not have resolved metadata yet. */
   info: TokenInfo | null;
+  /**
+   * CARDS-TOKENPATH-01: symbol for intermediate route tokens that carry no
+   * TokenInfo (only endpoints are enriched). Comes from the server-hydrated
+   * leg_symbols map (lowercased address → symbol). Lowest-priority source:
+   * used only when neither info.symbol nor info.registry_symbol resolved.
+   */
+  fallbackSymbol?: string | null;
 }
 
 /**
@@ -280,7 +287,7 @@ function SymbolPlusAddress({
   );
 }
 
-export function TokenChip({ token_address, chain_id, info }: TokenChipProps) {
+export function TokenChip({ token_address, chain_id, info, fallbackSymbol }: TokenChipProps) {
   const hasLogo = info?.logo_url != null && info.logo_url.length > 0;
   const hasSymbol = info?.symbol != null && info.symbol.length > 0;
   // F1 (audit §11 RC2): registry_symbol is REAL curated-list data resolved
@@ -293,7 +300,9 @@ export function TokenChip({ token_address, chain_id, info }: TokenChipProps) {
     ? info!.symbol
     : hasRegistrySymbol
       ? info!.registry_symbol!
-      : null;
+      : fallbackSymbol != null && fallbackSymbol.length > 0
+        ? fallbackSymbol
+        : null;
 
   // Case A: payload logo — <img> layered over a DeterministicAvatar base. The
   // logo shows when the external URL loads; onError hides only the <img>,
