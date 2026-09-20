@@ -232,6 +232,117 @@ if [ "$DRY_RUN" = "0" ]; then
 fi
 
 # ----------------------------------------------------------------------------
+# 2b. RDO particionado (migración 122): CREATE futuras + DROP PARTITION en vez
+#     de DELETE batcheado. DROP de partición = unlink de metadatos: el espacio
+#     vuelve al SO al instante y sin la ráfaga de WAL del incidente
+#     2026-09-04 13:36Z. Si la tabla NO está particionada (VPS pre-122, CI),
+#     este bloque entero es no-op y el flujo v2 (§3) sigue siendo el dueño.
+# ----------------------------------------------------------------------------
+RDO_PARTITIONED=0
+if psql_q "SELECT count(*) FROM pg_partitioned_table pt JOIN pg_class c ON c.oid = pt.partrelid WHERE c.relname = 'route_discovery_outcomes'" | grep -qv '^0$'; then
+  RDO_PARTITIONED=1
+fi
+
+if [ "$RDO_PARTITIONED" = "1" ]; then
+  # Ventana cruda idéntica a la entrada RDO de TABLES (§3): 1 día.
+  RDO_WINDOW_DAYS=1
+  rdo_parts_dropped=0
+  rdo_parts_archived=0
+  rdo_parts_skipped=0
+
+  # 2b.1 — crear las particiones de mañana y +2 (mismo formato y bounds
+  # UTC-día exactos que la migración 122). Sin esto, el primer INSERT tras
+  # medianoche falla con "no partition of relation" y el sink acumula
+  # persist_err (at-least-once lo recupera, pero mejor no tocar el borde).
+  if ! psql_batch "
+    DO \$\$
+    DECLARE
+      today_lo bigint;
+      p_lo     bigint;
+      hi_ms    bigint;
+      daytag   text;
+    BEGIN
+      today_lo := (extract(epoch FROM clock_timestamp())::bigint * 1000) / 86400000 * 86400000;
+      hi_ms    := (today_lo / 86400000 + 2) * 86400000;
+      p_lo     := today_lo + 86400000;
+      WHILE p_lo <= hi_ms LOOP
+        daytag := to_char(to_timestamp(p_lo / 1000.0) AT TIME ZONE 'UTC', 'YYYYMMDD');
+        IF to_regclass(format('route_discovery_outcomes_p%s', daytag)) IS NULL THEN
+          EXECUTE format('CREATE TABLE route_discovery_outcomes_p%s PARTITION OF route_discovery_outcomes FOR VALUES FROM (%s) TO (%s)', daytag, p_lo, p_lo + 86400000);
+        END IF;
+        p_lo := p_lo + 86400000;
+      END LOOP;
+    END \$\$" >/dev/null; then
+    log "rdo.partitions ERROR creating future partitions (next run retries — see migration 122 runbook)"
+  fi
+
+  # 2b.2 — DROP de particiones ÍNTEGRAMENTE más viejas que la ventana. La del
+  # borde (parcialmente dentro de la ventana) nunca se toca, así que en
+  # producción conviven ~2 particiones — unos GB más que la ventana exacta de
+  # filas del v2, a cambio de cero DELETE.
+  cutoff_ms=$(psql_q "SELECT (extract(epoch FROM now() - interval '$RDO_WINDOW_DAYS days') * 1000)::bigint")
+  parts=$(psql_q "SELECT c.relname FROM pg_inherits i JOIN pg_class c ON c.oid = i.inhrelid WHERE i.inhparent = 'route_discovery_outcomes'::regclass AND c.relname ~ '^route_discovery_outcomes_p[0-9]{8}\$' ORDER BY 1")
+  for part in $parts; do
+    daytag=${part##*_p}
+    day_start_ms=$(( $(date -u -d "${daytag:0:4}-${daytag:4:2}-${daytag:6:2}T00:00:00Z" +%s) * 1000 ))
+    day_end_ms=$(( day_start_ms + 86400000 ))
+    [ "$day_end_ms" -le "$cutoff_ms" ] || continue
+
+    if [ "$DRY_RUN" = "1" ]; then
+      summary+=("rdo_partition:$daytag:dryrun_drop")
+      log "retention.dry-run partition=$part would_drop"
+      continue
+    fi
+
+    # Guard de rollup (misma política que §3 rdo): jamás borrar un día que el
+    # rollup 5m aún no materializó — el backfill EAGER de §1 corre ANTES de
+    # este bloque. Partición vacía (día sin datos) no necesita rollup.
+    nrows=$(psql_q "SELECT count(*) FROM $part")
+    if [ "$nrows" != "0" ]; then
+      missing=$(psql_q "
+        SELECT count(*) FROM generate_series($day_start_ms, $day_end_ms - 300000, 300000) g(bucket)
+        WHERE NOT EXISTS (SELECT 1 FROM route_discovery_outcome_rollup_5m rr
+                          WHERE rr.dim = '__totals__' AND rr.bucket_ms = g.bucket)") || missing="err"
+      if [ "$missing" != "0" ]; then
+        rdo_parts_skipped=$((rdo_parts_skipped + 1))
+        log "retention.skip partition=$part reason=rollup_backfill_pending buckets_missing=$missing"
+        continue
+      fi
+    fi
+
+    # Archivo opt-in: snapshot zstd de la partición ANTES de borrarla.
+    if [ "$DO_ARCHIVE" = "1" ]; then
+      arch="$ARCHIVES_DIR/route_discovery_outcomes/$part.tsv.zst"
+      if [ -e "$arch" ]; then
+        log "retention.archive partition=$part reuse=$arch"
+      else
+        mkdir -p "$ARCHIVES_DIR/route_discovery_outcomes"
+        if docker exec -i "$PG_CONTAINER" psql -U postgres -d arbitragex -X -qAt \
+            -c "COPY (SELECT * FROM $part) TO STDOUT" \
+            | zstd -q -T0 -o "$arch" 2>/dev/null; then
+          rdo_parts_archived=$((rdo_parts_archived + 1))
+          log "retention.archive partition=$part file=$arch bytes=$(stat -c%s "$arch" 2>/dev/null || echo '?')"
+        else
+          rm -f "$arch"
+          log "retention.archive partition=$part FAILED — drop SKIPPED (fail-honest: sin archivo no se borra)"
+          rdo_parts_skipped=$((rdo_parts_skipped + 1))
+          continue
+        fi
+      fi
+    fi
+
+    if out=$(psql_batch "DROP TABLE $part"); then
+      rdo_parts_dropped=$((rdo_parts_dropped + 1))
+      log "retention.partition drop=$part rows=$nrows"
+    else
+      rdo_parts_skipped=$((rdo_parts_skipped + 1))
+      log "retention.partition drop=$part FAILED: $(printf '%s' "$out" | head -c 200 | tr '\n' ' ')"
+    fi
+  done
+  summary+=("route_discovery_outcomes:dropped_partitions=${rdo_parts_dropped}:archived=${rdo_parts_archived}:skipped=${rdo_parts_skipped}")
+fi
+
+# ----------------------------------------------------------------------------
 # 3. Purge por tabla — batched, guard por índice, skip != error
 # ----------------------------------------------------------------------------
 summary=()
@@ -242,6 +353,12 @@ for spec in "${TABLES[@]}"; do
   IFS='|' read -r tbl col fmt days batch hook <<<"$spec"
   t0=$SECONDS
   reason=""
+
+  # Migración 122: RDO particionado se mantiene por DROP PARTITION (§2b) —
+  # el DELETE batcheado de §3 ya no aplica a esa tabla.
+  if [ "$tbl" = "route_discovery_outcomes" ] && [ "$RDO_PARTITIONED" = "1" ]; then
+    continue
+  fi
 
   # Guard: índice con la columna de corte en posición leading — acepta
   # "(col)", "(col, ...)" y "(col DESC)". replace(...) quita las comillas de
