@@ -105,4 +105,39 @@ describe("TokenChip", () => {
     // the honest-pending "—" placeholder must NOT mask a known registry symbol
     expect(html).not.toContain(">—<");
   });
+
+  // CARDS-TOKENPATH-01: intermediate route tokens carry no TokenInfo — the
+  // card passes leg_symbols via fallbackSymbol. It must surface ONLY after
+  // symbol and registry_symbol both miss (priority preserved).
+  it("falls back to fallbackSymbol when info=null and no registry symbol (case F)", () => {
+    const html = renderToStaticMarkup(
+      <TokenChip
+        token_address={ADDR}
+        chain_id={1}
+        info={null}
+        fallbackSymbol="USDC"
+      />
+    );
+    expect(html).toContain("USDC");
+    expect(html).not.toContain(">—<");
+  });
+
+  it("registry_symbol outranks fallbackSymbol (priority: symbol > registry > fallback)", () => {
+    const html = renderToStaticMarkup(
+      <TokenChip
+        token_address={ADDR}
+        chain_id={1}
+        info={{
+          symbol: null,
+          decimals: null,
+          logo_url: null,
+          resolved_via: "failed",
+          registry_symbol: "WETH",
+        }}
+        fallbackSymbol="USDC"
+      />
+    );
+    expect(html).toContain("WETH");
+    expect(html).not.toContain("USDC");
+  });
 });
