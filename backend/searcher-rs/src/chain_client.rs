@@ -62,9 +62,14 @@ impl WsChainClient {
         let provider = timeout(Duration::from_secs(10), Provider::<Ws>::connect(url))
             .await
             .context("ws connect timeout")??;
-        let observed_chain = provider
-            .get_chainid()
+        // SCANNER-STALL-01 (2026-09-20): `get_chainid` on a connected-but-dead
+        // WS never resolves (the ethers internal reconnect manager was already
+        // exhausted), freezing detection_loop's rotation forever — zero logs
+        // from 20:20:08 until a manual restart. Every await in the connect
+        // path must be bounded so rotation always proceeds.
+        let observed_chain = timeout(Duration::from_secs(10), provider.get_chainid())
             .await
+            .map_err(|_| anyhow::anyhow!("get_chainid timeout"))?
             .context("get_chainid")?
             .as_u64();
         if observed_chain != chain_id {
@@ -190,11 +195,13 @@ impl WsChainClient {
                 "hashesOnly": false
             }
         ]);
-        let sub: SubscriptionStream<'_, Ws, Transaction> = self
-            .provider
-            .subscribe(params)
-            .await
-            .context("subscribe alchemy_pendingTransactions")?;
+        let sub: SubscriptionStream<'_, Ws, Transaction> = timeout(
+            Duration::from_secs(15),
+            self.provider.subscribe(params),
+        )
+        .await
+        .map_err(|_| anyhow::anyhow!("subscribe timeout 15s"))?
+        .context("subscribe alchemy_pendingTransactions")?;
         info!(
             event = "chain_client.subscribed_filtered",
             chain_id = self.chain_id,
@@ -214,10 +221,9 @@ impl WsChainClient {
     pub async fn subscribe_blocks(
         &self,
     ) -> anyhow::Result<SubscriptionStream<'_, Ws, ethers::types::Block<H256>>> {
-        let sub = self
-            .provider
-            .subscribe_blocks()
+        let sub = timeout(Duration::from_secs(15), self.provider.subscribe_blocks())
             .await
+            .map_err(|_| anyhow::anyhow!("subscribe timeout 15s"))?
             .context("subscribe_blocks (newHeads)")?;
         info!(
             event = "chain_client.subscribed_blocks",
@@ -348,6 +354,51 @@ pub fn parse_extra_allowlist_from_env() -> Vec<String> {
     out
 }
 
+/// SCANNER-STALL-01 (2026-09-20): how long the pending-tx consume loops may
+/// see NO item before the subscription is considered dead and rotation forced.
+/// Rationale: the ethers internal WS manager retries its own reconnects at
+/// 5-minute intervals for up to ~30 minutes before closing the stream — during
+/// that window `stream.next()` stays pending and the scanner is blind. The
+/// watchdog converts that 30-minute silent stall into a bounded rotation.
+/// Default 60s (mainnet firehose and router-filtered streams deliver far more
+/// often than once a minute); operator-tunable via
+/// `ARBX_SCANNER_IDLE_TIMEOUT_SECS` (no-hardcode doctrine).
+pub const DEFAULT_SCANNER_IDLE_TIMEOUT_SECS: u64 = 60;
+
+pub fn parse_idle_timeout_secs(raw: Option<&str>) -> Result<u64, String> {
+    match raw {
+        None | Some("") => Ok(DEFAULT_SCANNER_IDLE_TIMEOUT_SECS),
+        Some(s) => {
+            let v: u64 = s
+                .trim()
+                .parse()
+                .map_err(|_| format!("invalid ARBX_SCANNER_IDLE_TIMEOUT_SECS: {s:?}"))?;
+            if v == 0 {
+                return Err("ARBX_SCANNER_IDLE_TIMEOUT_SECS must be >= 1 (0 would spin-rotate)".to_string());
+            }
+            if v > 3600 {
+                return Err("ARBX_SCANNER_IDLE_TIMEOUT_SECS must be <= 3600 (defeats the watchdog otherwise)".to_string());
+            }
+            Ok(v)
+        }
+    }
+}
+
+pub fn idle_timeout_from_env() -> Duration {
+    let raw = std::env::var("ARBX_SCANNER_IDLE_TIMEOUT_SECS").ok();
+    match parse_idle_timeout_secs(raw.as_deref()) {
+        Ok(secs) => Duration::from_secs(secs),
+        Err(err) => {
+            warn!(
+                event = "chain_client.idle_timeout_invalid",
+                error = %err,
+                "falling back to default"
+            );
+            Duration::from_secs(DEFAULT_SCANNER_IDLE_TIMEOUT_SECS)
+        }
+    }
+}
+
 #[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
@@ -428,5 +479,19 @@ mod tests {
         std::env::remove_var("ARBX_MEMPOOL_ALLOWLIST");
         assert_eq!(v.len(), 1);
         assert_eq!(v[0], "0x111111125421ca6dc452d289314280a0f8842a65");
+    }
+
+    #[test]
+    fn idle_timeout_defaults_and_bounds() {
+        assert_eq!(
+            parse_idle_timeout_secs(None),
+            Ok(DEFAULT_SCANNER_IDLE_TIMEOUT_SECS)
+        );
+        assert_eq!(parse_idle_timeout_secs(Some("")), Ok(DEFAULT_SCANNER_IDLE_TIMEOUT_SECS));
+        assert_eq!(parse_idle_timeout_secs(Some("90")), Ok(90));
+        assert_eq!(parse_idle_timeout_secs(Some(" 45 ")), Ok(45));
+        assert!(parse_idle_timeout_secs(Some("0")).is_err());
+        assert!(parse_idle_timeout_secs(Some("7200")).is_err());
+        assert!(parse_idle_timeout_secs(Some("abc")).is_err());
     }
 }
