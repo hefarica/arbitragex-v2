@@ -157,6 +157,9 @@ Antes de diagnosticar "el evento X nunca ocurriÃ³" desde `docker logs`:
 2. Comparar `State.StartedAt` vs el timestamp de la PRIMERA lÃ­nea retenida (`docker logs <c> 2>&1 | head -1`). Si hay brecha â†’ la ventana estÃ¡ rotada y la "ausencia" es un artefacto, no evidencia.
 3. Regla de logging en hot-loops: logs per-Ã­tem a `debug!` + UN summary agregado a `info!` (histograma de razones, R8). Un loop honesto que emite 183 lÃ­neas/s destruye la observabilidad del resto del sistema (llenÃ³ 50MB en ~10 min y causÃ³ un falso diagnÃ³stico de deadlock). Detalle completo: `docs/incidents/2026-08-15-LOGFLOOD-01.md`.
 
+### R10 â€” E2E-COMPUTE GUARD (orden del operador 2026-09-20)
+NingÃºn campo puede presentarse como computado si no estÃ¡ siendo procesado en TODAS y cada una de las capas end-to-end (productor â†’ canal/PG â†’ API â†’ frontend). Un wire sin productor (tabla siempre vacÃ­a, stream XLEN=0, canal declarado-never-created) NO es evidencia de valor cero ni de coherencia: el veredicto en pantalla debe degradarse a **NO COMPUTADO** con `reason` explÃ­cito (ej. `drift_observations_no_producer`, ver `system-manifest.ts` GET /drift y su test de contrato). Extiende R8/RULE 00 al eje productorâ†’consumidor: la ausencia de cÃ³mputo jamÃ¡s se viste de Ã©xito. Precedente: `drift_observations` mostraba "COHERENT — 0 observaciones" sobre una tabla SIN escritor (schema-drift-2026-09-20, DRIFT-REPORT Â§2.3).
+
 ## 4. OMEGA ARCHITECTURAL FIDELITY
 
 ### Reglas Inmutables de CÃ³digo (Top 1% Standards)
