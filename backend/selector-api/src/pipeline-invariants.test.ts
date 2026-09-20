@@ -90,3 +90,57 @@ describe("OMEGA-8/M4 Fase 11 — Redis Streams pipeline invariants", () => {
     expect(CONSUMER_SRC).toMatch(/lagGauge/);
   });
 });
+
+describe("WO-D8 (schema-drift-2026-09-20) — orphan consumer hygiene invariants", () => {
+  it("maintenance sweep exists with XAUTOCLAIM reclaim and bounded cursor loop", () => {
+    expect(CONSUMER_SRC).toMatch(/maintenanceLoop/);
+    expect(CONSUMER_SRC).toMatch(/xautoclaim\(/);
+    expect(CONSUMER_SRC).toMatch(/RECLAIM_MIN_IDLE_MS/);
+    expect(CONSUMER_SRC).toMatch(/ORPHAN_PURGE_IDLE_MS/);
+    // Bounded loop: the XAUTOCLAIM cursor iteration must be capped.
+    expect(CONSUMER_SRC).toMatch(/iterations < 100/);
+  });
+
+  it("zero-loss ordering: reclaim runs BEFORE DELCONSUMER inside the sweep", () => {
+    const purgeIdx = CONSUMER_SRC.indexOf("private async purgeOrphanConsumers");
+    expect(purgeIdx).toBeGreaterThan(0);
+    const purgeBody = CONSUMER_SRC.slice(purgeIdx, CONSUMER_SRC.indexOf("private async reclaimPending"));
+    const reclaimCallIdx = purgeBody.indexOf("await this.reclaimPending()");
+    const delconsumerIdx = purgeBody.indexOf('"DELCONSUMER"');
+    expect(reclaimCallIdx).toBeGreaterThan(-1);
+    expect(delconsumerIdx).toBeGreaterThan(reclaimCallIdx);
+    // DELCONSUMER is gated on the orphan having pending > 0 reclaimed first.
+    expect(purgeBody).toMatch(/if \(pending > 0\)/);
+  });
+
+  it("sweep skips while kill-switch is armed (reclaim must not bypass the halt)", () => {
+    const sweepIdx = CONSUMER_SRC.indexOf("private async maintenanceLoop");
+    const sweepBody = CONSUMER_SRC.slice(sweepIdx, CONSUMER_SRC.indexOf("private async purgeOrphanConsumers"));
+    expect(sweepBody).toMatch(/killSwitch\.isEnabled\(\)/);
+    expect(sweepBody.indexOf("killSwitch.isEnabled()")).toBeLessThan(
+      sweepBody.indexOf("purgeOrphanConsumers()"),
+    );
+  });
+
+  it("self is never purged; own PEL entries are never dropped by DELCONSUMER", () => {
+    const purgeIdx = CONSUMER_SRC.indexOf("private async purgeOrphanConsumers");
+    const purgeBody = CONSUMER_SRC.slice(purgeIdx, CONSUMER_SRC.indexOf("private async reclaimPending"));
+    expect(purgeBody).toMatch(/name === CONSUMER\) continue/);
+    // stop() deregisters self ONLY when its pending count is zero.
+    const stopIdx = CONSUMER_SRC.indexOf("async stop(");
+    const stopBody = CONSUMER_SRC.slice(stopIdx, stopIdx + 1400);
+    expect(stopBody).toMatch(/pending \?\? 0\) === 0/);
+  });
+
+  it("XINFO CONSUMERS raw-array shape is normalized (WO-15 hotfix invariant)", () => {
+    expect(CONSUMER_SRC).toMatch(/function normalizeConsumer/);
+    expect(CONSUMER_SRC).toMatch(/Array\.isArray\(c\)/);
+  });
+
+  it("trimmed entries still in the PEL are XACKed during reclaim", () => {
+    const reclaimIdx = CONSUMER_SRC.indexOf("private async reclaimPending");
+    const reclaimBody = CONSUMER_SRC.slice(reclaimIdx);
+    expect(reclaimBody).toMatch(/if \(!kv\)/);
+    expect(reclaimBody).toMatch(/xack\(STREAM_IN,\s*GROUP,\s*id\)/);
+  });
+});
