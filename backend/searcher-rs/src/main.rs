@@ -202,6 +202,7 @@ mod engines;
 // Fix B — math evidence (observe-only): builds MarketState from reserves and
 // evaluates RegimeRouter-recommended operators. Called from orchestrator.
 mod math_evidence;
+mod operator_toggles;
 // FASE OMEGA: Gate subsystem (MacroMevGate / Operador Energético). The binary
 // compiles orchestrator.rs as part of THIS crate (crate root = main.rs), so it
 // must declare `shared` + `gates` itself — the lib (lib.rs) declares them too,

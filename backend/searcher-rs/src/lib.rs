@@ -72,6 +72,7 @@ pub mod impact_index;
 pub mod metrics;
 pub mod models;
 pub mod opportunity_emitter;
+pub mod operator_toggles;
 pub mod pair_alpha_runtime;
 pub mod pair_index;
 pub mod patterns;

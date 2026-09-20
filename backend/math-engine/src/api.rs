@@ -75,6 +75,14 @@ impl ApiState {
         }
     }
 
+    /// Snapshot of the disabled-set (toggle propagation, item 5c).
+    fn disabled_ids(&self) -> Vec<u8> {
+        let disabled = self.disabled.read().expect("disabled lock poisoned");
+        let mut ids: Vec<u8> = disabled.iter().copied().collect();
+        ids.sort_unstable();
+        ids
+    }
+
     /// List all operators with their current availability.
     fn list_operators(&self) -> Vec<OperatorInfo> {
         let registry = self.registry.read().expect("registry lock poisoned");
@@ -275,6 +283,7 @@ async fn toggle_operator_handler(
             .into_response();
     }
     st.set_enabled(id, body.enabled);
+    publish_disabled_set(&st).await;
     (
         StatusCode::OK,
         Json(ToggleResponse {
@@ -283,6 +292,42 @@ async fn toggle_operator_handler(
         }),
     )
         .into_response()
+}
+
+/// Operator-toggle propagation (item 5c): after every toggle, persist the
+/// disabled-set to `arbx:ops:disabled` so the searcher-rs embedded registry
+/// (a SEPARATE OperatorRegistry instance from this ApiState) honors the same
+/// toggles. Best-effort: no REDIS_URL or a Redis error logs a warning and
+/// never fails the toggle response (the HTTP toggle itself is source of truth
+/// for this process; Redis is the propagation channel for other processes).
+async fn publish_disabled_set(st: &ApiState) {
+    let url = match std::env::var("REDIS_URL") {
+        Ok(u) if !u.is_empty() => u,
+        _ => {
+            tracing::warn!(event = "ops_toggle.propagation_skipped", reason = "REDIS_URL unset");
+            return;
+        }
+    };
+    let disabled = st.disabled_ids();
+    let payload = serde_json::to_vec(&disabled).unwrap_or_default();
+    let result: Result<(), String> = async {
+        let client = redis::Client::open(url).map_err(|e| e.to_string())?;
+        let mut conn = client
+            .get_connection_manager()
+            .await
+            .map_err(|e| e.to_string())?;
+        redis::cmd("SET")
+            .arg("arbx:ops:disabled")
+            .arg(payload)
+            .query_async(&mut conn)
+            .await
+            .map_err(|e| e.to_string())
+    }
+    .await;
+    match result {
+        Ok(()) => tracing::info!(event = "ops_toggle.propagated", count = disabled.len()),
+        Err(e) => tracing::warn!(event = "ops_toggle.propagation_failed", error = %e),
+    }
 }
 
 /// POST /api/compute — dispatch operators on a market state.
