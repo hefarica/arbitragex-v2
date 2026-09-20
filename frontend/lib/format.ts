@@ -91,3 +91,49 @@ export function shortAddr(addr: string): string {
   if (addr.length <= 10) return addr;
   return `${addr.slice(0, 6)}…${addr.slice(-4)}`;
 }
+
+/**
+ * CARDS-DEDUP-HOPS: ages for the card's dual vigency line — "time since the
+ * FIRST detection" (1ª) and "time since the LAST vigency ratification" (✓),
+ * in DISCRETE units (s < 60, m < 60, h < 24, else d) so the text does not
+ * churn continuously (anti-saturation convention, operator order 2026-09-20).
+ *
+ * R8: null inputs → null ages (sin fecha), never a fabricated 0s. When the
+ * row carries no aggregates (plain WS detection) both ages fall back to
+ * detected_at and `confirmed` is false — the card then renders the legacy
+ * single-age view.
+ * Pure: `now` is injected (no Date.now() here — SSR-safe).
+ */
+export interface VigencyAges {
+  firstAge: string | null;
+  lastAge: string | null;
+  confirmed: boolean;
+}
+
+function discreteAge(ms: number): string {
+  const s = Math.max(0, Math.floor(ms / 1000));
+  if (s < 60) return `${s}s`;
+  const m = Math.floor(s / 60);
+  if (m < 60) return `${m}m`;
+  const h = Math.floor(m / 60);
+  if (h < 24) return `${h}h`;
+  return `${Math.floor(h / 24)}d`;
+}
+
+export function formatVigency(
+  firstSeenAt: string | null,
+  lastSeenAt: string | null,
+  detectedAt: string | null,
+  now: number,
+): VigencyAges {
+  const parse = (v: string | null) => (v == null ? NaN : Date.parse(v));
+  const firstTs = firstSeenAt ?? detectedAt;
+  const lastTs = lastSeenAt ?? detectedAt;
+  const f = parse(firstTs);
+  const l = parse(lastTs);
+  return {
+    firstAge: Number.isNaN(f) ? null : discreteAge(now - f),
+    lastAge: Number.isNaN(l) ? null : discreteAge(now - l),
+    confirmed: firstSeenAt != null,
+  };
+}

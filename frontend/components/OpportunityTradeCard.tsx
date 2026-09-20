@@ -62,6 +62,7 @@ import { StatusPill } from "@/components/StatusPill";
 import {
   formatPctOrDash,
   formatProfitUSD,
+  formatVigency,
   shortAddr,
 } from "@/lib/format";
 import {
@@ -137,16 +138,30 @@ function OpportunityTradeCardImpl({
   // FE-0029 (§28): detected_at is null on malformed payloads — the mapper no
   // longer fabricates now(). An undated row claims neither freshness nor
   // staleness (isStale null = "sin fecha").
+  // CARDS-DEDUP-HOPS: dual vigency — age since the FIRST detection (1ª) and
+  // since the LAST ratification (✓), in discrete anti-saturation units.
+  // Staleness now keys on the LAST ratification: a route re-detected seconds
+  // ago stays VIGENTE even if first detected hours ago.
   const detectedTime =
     opp.detected_at == null ? NaN : new Date(opp.detected_at).getTime();
-  const ageSecs =
-    opp.detected_at == null
+  const vigency = formatVigency(
+    opp.first_seen_at ?? null,
+    opp.last_seen_at ?? null,
+    opp.detected_at ?? null,
+    now,
+  );
+  const lastSeenTime =
+    opp.last_seen_at == null
+      ? detectedTime
+      : new Date(opp.last_seen_at).getTime();
+  const lastAgeSecs =
+    opp.detected_at == null && opp.last_seen_at == null
       ? null
       : isMounted
-        ? Math.max(0, Math.floor((now - detectedTime) / 1000))
+        ? Math.max(0, Math.floor((now - lastSeenTime) / 1000))
         : 0;
   const isStale: boolean | null =
-    opp.detected_at == null ? null : (ageSecs as number) > STALE_SECS;
+    lastAgeSecs == null ? null : lastAgeSecs > STALE_SECS;
 
   // ── Net priority: canonical spine → TS simulated → "—" ─────────────────────
   const gross = formatProfitUSD(opp.expected_profit_usd);
@@ -277,6 +292,14 @@ function OpportunityTradeCardImpl({
           <ChainBadge chain_id={opp.chain_id} />
           <StrategyBadge strategy_kind={opp.strategy_kind} />
           <StatusPill status={opp.status} rejection_reason={opp.rejection_reason} />
+          {opp.confirmations != null && opp.confirmations > 1 && (
+            <span
+              title={`Ruta re-detectada ${opp.confirmations} veces en la ventana (confirmaciones)`}
+              className="text-[10px] px-1.5 py-0.5 rounded bg-muted/50 text-muted-foreground/90 border border-border/60 font-mono"
+            >
+              ×{opp.confirmations}
+            </span>
+          )}
           {opp.chain_base_token_symbol && (
             <span className="text-[10px] px-1.5 py-0.5 rounded bg-muted/50 text-muted-foreground/90 border border-border/60 font-mono uppercase tracking-wide">
               {opp.chain_base_token_symbol}
@@ -311,8 +334,26 @@ function OpportunityTradeCardImpl({
               : "--:--:--"}
           </span>
           <span className="text-muted-foreground/60">·</span>
-          <span suppressHydrationWarning>
-            {isMounted ? (ageSecs == null ? "—" : `${ageSecs}s`) : "--"}
+          <span
+            suppressHydrationWarning
+            title="Tiempo desde la primera detección"
+          >
+            {isMounted
+              ? vigency.firstAge == null
+                ? "—"
+                : `1ª ${vigency.firstAge}`
+              : "--"}
+          </span>
+          <span className="text-muted-foreground/60">·</span>
+          <span
+            suppressHydrationWarning
+            title="Última ratificación de vigencia por el sistema"
+          >
+            {isMounted
+              ? vigency.lastAge == null
+                ? "—"
+                : `✓ ${vigency.lastAge}`
+              : "--"}
           </span>
         </div>
         <span
@@ -555,6 +596,21 @@ export const OpportunityTradeCard = React.memo(
       );
     const agePrev = ageOf(p, prev.now);
     const ageNext = ageOf(n, next.now);
+    // CARDS-DEDUP-HOPS: the dual vigency line keys on last_seen (✓ age renders
+    // seconds while < 60s), and the ×N badge keys on confirmations — a merged
+    // re-detection must re-render its card even when detected_at is unchanged.
+    const lastAgeOf = (o: typeof p, now: number) =>
+      Math.floor(
+        (now -
+          (o.last_seen_at == null
+            ? o.detected_at == null
+              ? NaN
+              : new Date(o.detected_at).getTime()
+            : new Date(o.last_seen_at).getTime())) /
+          1000,
+      );
+    const lastAgePrev = lastAgeOf(p, prev.now);
+    const lastAgeNext = lastAgeOf(n, next.now);
     // HOPS-CARD-03: the ladder now renders route_metadata/leg_symbols (and the
     // §29 fallback keys off dex_a/dex_b), so a batch that only changes the
     // topology MUST re-render — same sameJson discipline the exchange card's
@@ -568,6 +624,9 @@ export const OpportunityTradeCard = React.memo(
       p.net_expected_profit_usd === n.net_expected_profit_usd &&
       p.roi_pct === n.roi_pct &&
       p.detected_at === n.detected_at &&
+      p.first_seen_at === n.first_seen_at &&
+      p.last_seen_at === n.last_seen_at &&
+      p.confirmations === n.confirmations &&
       sameJson(p.route_metadata, n.route_metadata) &&
       sameJson(p.leg_symbols, n.leg_symbols) &&
       p.dex_a === n.dex_a &&
@@ -582,7 +641,8 @@ export const OpportunityTradeCard = React.memo(
       prev.modeLabel === next.modeLabel &&
       prev.onExecute === next.onExecute &&
       prev.onInspect === next.onInspect &&
-      Object.is(agePrev, ageNext)
+      Object.is(agePrev, ageNext) &&
+      Object.is(lastAgePrev, lastAgeNext)
     );
   },
 );
