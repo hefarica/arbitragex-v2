@@ -30,6 +30,10 @@ const csp = () => {
     "'self'",
     "ws:",
     "wss:",
+    // FE-EDGE-DIRECT-01: the opportunities page's public reads go DIRECT to
+    // the public edge (NEXT_PUBLIC_EDGE_URL). Report-Only today, but keep the
+    // policy truthful so the ARBX_CSP_ENFORCE flip cannot break the feed.
+    ...(EDGE_URL ? [EDGE_URL.replace(/\/$/, "")] : []),
     // Reown AppKit (WalletConnect) cloud endpoints — required by the
     // @rainbow-me/rainbowkit / AppKit SDK for remote config + telemetry
     // when NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID is set. The wss: entry

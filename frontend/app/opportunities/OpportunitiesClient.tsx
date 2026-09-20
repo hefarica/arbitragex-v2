@@ -21,9 +21,10 @@ import { usePaperModeState } from "@/hooks/usePaperModeState";
 // ─── Omni-Store Integration ───────────────────────────────────────────────────
 import { useOmniOpportunities } from "@/lib/store/useOmniOpportunities";
 import { useOmniStore } from "@/lib/store/omni-store";
-import { mapToOmniOpportunity, type OmniOpportunity } from "@/lib/store/types";
+import { type OmniOpportunity } from "@/lib/store/types";
+import { parseSnapshotItems } from "@/lib/store/snapshot-payload";
 import { routeGroupKeyOf } from "@/lib/store/route-key";
-import { getApiBaseUrl, getTradingConfig } from "@/lib/api-client";
+import { getApiBaseUrl, getPublicEdgeBaseUrl, getTradingConfig } from "@/lib/api-client";
 import type { StrategyRuntimeConfig } from "@/lib/schemas";
 
 // Re-export store types for downstream consumers (FE-0034: the detail dialog
@@ -76,6 +77,10 @@ export default function OpportunitiesClient({
   // ─── Omni-Store Integration ───────────────────────────────────────────────
   // Connect WebSocket stream to the store (replaces useOpportunitiesStream)
   const EDGE_URL = getApiBaseUrl();
+  // FE-EDGE-DIRECT-01: public cards reads go edge-direct (single feed origin).
+  // EDGE_URL stays same-origin for handleSimulate — the POST carries the
+  // host-only admin session cookie, which would not travel cross-origin.
+  const PUBLIC_EDGE_URL = getPublicEdgeBaseUrl();
   const [viableOnly, setViableOnly] = useState(false);
   
   useOmniOpportunities({
@@ -227,7 +232,7 @@ export default function OpportunitiesClient({
   // It clears the store and repopulates via HTTP, then the WS stream continues.
   const fetchOpportunities = useCallback(async () => {
     try {
-      const url = `${EDGE_URL}/api/opportunities/live?viable_only=${viableOnly}&limit=50&order=profit_usd`;
+      const url = `${PUBLIC_EDGE_URL}/api/opportunities/live?viable_only=${viableOnly}&limit=50&order=profit_usd`;
       const res = await fetch(url, {
         headers: { accept: "application/json" },
         signal: AbortSignal.timeout(4000),
@@ -237,16 +242,16 @@ export default function OpportunitiesClient({
         setErrorMsg(`Edge returned ${res.status}`);
         return;
       }
-      const data = await res.json();
-      const items = Array.isArray(data?.items) ? data.items : Array.isArray(data) ? data : [];
+      const data: unknown = await res.json();
       // PERF: batch store update instead of clear + 50 addOpportunity calls.
-      setOpportunities(items.map((raw: Record<string, unknown>) => mapToOmniOpportunity(raw)));
+      // FE-SNAPSHOT-01: same parser seam as the 5s reconcile loop.
+      setOpportunities(parseSnapshotItems(data));
       setLastRefresh(new Date());
       setErrorMsg(null);
     } catch (e) {
       setErrorMsg((e as Error).message);
     }
-  }, [EDGE_URL, viableOnly, setOpportunities]);
+  }, [PUBLIC_EDGE_URL, viableOnly, setOpportunities]);
 
   // R1: localStorage read happens here — never during render (SSR has no localStorage).
   // 2026-05-10: bumped the storage key from "arbx-opps-viable-only" to "-v2" so
@@ -291,14 +296,16 @@ export default function OpportunitiesClient({
     setNow(Date.now());
   }, []);
 
-  // PERF (2026-08-09): the age ticker previously ran every 1000ms, re-rendering
-  // all ~200 OpportunityTradeCards every second — a real CPU/memory churner on a
-  // live feed. The "Last refresh" label already ticks off `lastRefresh` (independent
-  // state), so `now` only feeds each card's relative-age text. 30s is plenty for a
-  // human-readable age; combined with the card's React.memo this collapses the
-  // per-second full-list re-render to near zero.
+  // FE-SNAPSHOT-01 (2026-09-20): back to 1000ms. The 2026-08-09 note below
+  // demoted this to 30s because a 1s tick re-rendered every card; since then
+  // OpportunityTradeCard's React.memo comparator (CARDS-DEDUP-HOPS) bails
+  // unless the card's OWN data or its DISPLAYED age-second changed, so a 1s
+  // tick now costs N comparator calls and only re-renders cards whose "hace Xs"
+  // label actually moved. 1s is the operator requirement: the vigency line is
+  // the live "still available?" signal — a 30s tick froze it and made a dead
+  // route indistinguishable from a stable one for half a minute.
   useEffect(() => {
-    const ticker = setInterval(() => setNow(Date.now()), 30000);
+    const ticker = setInterval(() => setNow(Date.now()), 1000);
     return () => clearInterval(ticker);
   }, []);
 
@@ -541,7 +548,7 @@ export default function OpportunitiesClient({
       </div>
 
       {/* G-PRICE-1 — cinta de precios en vivo (motor portado del exchange) */}
-      <PriceTicker chainId={primaryChainId} edgeUrl={EDGE_URL} symbols={tickerSymbols} />
+      <PriceTicker chainId={primaryChainId} edgeUrl={PUBLIC_EDGE_URL} symbols={tickerSymbols} />
 
       {/* R8 fail-honest: surface WS disconnection and HTTP errors clearly. */}
       {feedStatus === 'STALE' && (

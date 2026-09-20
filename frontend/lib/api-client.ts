@@ -64,6 +64,25 @@ export function getApiBaseUrl(): string {
   return "";
 }
 
+// FE-EDGE-DIRECT-01 (operator order 2026-09-20): PUBLIC read endpoints on the
+// opportunities page go DIRECT to the public edge (NEXT_PUBLIC_EDGE_URL,
+// e.g. https://edge-arbx.ape-tv.net) instead of the double-hop Next rewrite
+// proxy (browser → Next server → edge). The edge serves these routes with
+// per-IP rate limits + full CORS for the app origin (verified live), so the
+// cards feed has ONE delivery origin. Scope: public GETs ONLY — authenticated
+// mutations keep getApiBaseUrl() because the arbx_admin_session cookie is
+// host-only (no Domain attr) and would not travel cross-origin.
+export function getPublicEdgeBaseUrl(): string {
+  if (isBrowser) {
+    const envUrl = process.env.NEXT_PUBLIC_EDGE_URL;
+    if (envUrl && envUrl.trim().length > 0) {
+      return envUrl.replace(/\/$/, "");
+    }
+    return ""; // dev without NEXT_PUBLIC_EDGE_URL: same-origin rewrite proxy
+  }
+  return getApiBaseUrl();
+}
+
 export function getWsBaseUrl(): string {
   // FASE 0.5 (R6-01): BROWSER always same-origin. nginx /socket.io/ proxies
   // the WS upgrade to api-server:8080. NEVER use the cross-origin env URL.
@@ -143,11 +162,11 @@ async function getValidated<T>(
   // string coercion) still infer T from the schema's OUTPUT type instead of
   // collapsing the field to `unknown` when Input ≠ Output.
   schema: z.ZodType<T, z.ZodTypeDef, unknown>,
-  opts: { timeoutMs?: number; retries?: number; extraHeaders?: Record<string, string> } = {},
+  opts: { timeoutMs?: number; retries?: number; extraHeaders?: Record<string, string>; baseUrl?: string } = {},
 ): Promise<Result<T>> {
   const timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   const retries = opts.retries ?? DEFAULT_RETRIES;
-  const url = `${getApiBaseUrl()}${path}`;
+  const url = `${opts.baseUrl ?? getApiBaseUrl()}${path}`;
   const init: RequestInit = {
     next: { revalidate: 0 },
     headers: { accept: "application/json", ...ssrEdgeTokenHeader(), ...(opts.extraHeaders ?? {}) },
@@ -280,7 +299,12 @@ export function getStatus() {
 }
 
 export function getOpportunitiesLive(limit = 50) {
-  return getValidated(`/api/opportunities/live?limit=${limit}&order=profit_usd`, S.OpportunitiesLiveSchema);
+  // FE-EDGE-DIRECT-01: cards feed delivered edge-direct (single origin).
+  return getValidated(
+    `/api/opportunities/live?limit=${limit}&order=profit_usd`,
+    S.OpportunitiesLiveSchema,
+    { baseUrl: getPublicEdgeBaseUrl() },
+  );
 }
 
 export function getRiskAlerts(hours = 24) {
@@ -532,7 +556,10 @@ export async function probeAdminChain(
 }
 
 export function getTradingConfig(chainId: number) {
-  return getValidated(`/api/trading-config?chain_id=${chainId}`, S.TradingConfigResponseSchema);
+  // FE-EDGE-DIRECT-01: public read, edge-direct.
+  return getValidated(`/api/trading-config?chain_id=${chainId}`, S.TradingConfigResponseSchema, {
+    baseUrl: getPublicEdgeBaseUrl(),
+  });
 }
 
 // PUT helper — mutations skip the GET retry path; mirror postValidated semantics.
@@ -783,7 +810,10 @@ export function getTopTokens(
 
 /** §8 Current Quote Anchor (EMIT-02 Layer-2) — flattened view + §9 token table. */
 export function getQuoteAnchor(chainId: number): Promise<Result<FE.QuoteAnchorResponse>> {
-  return getValidated(`/api/quote/anchor?chain_id=${chainId}`, FE.QuoteAnchorResponseSchema);
+  // FE-EDGE-DIRECT-01: public read, edge-direct.
+  return getValidated(`/api/quote/anchor?chain_id=${chainId}`, FE.QuoteAnchorResponseSchema, {
+    baseUrl: getPublicEdgeBaseUrl(),
+  });
 }
 
 /** §10 preview-before-apply — deterministic recompute, NEVER a mutation.
