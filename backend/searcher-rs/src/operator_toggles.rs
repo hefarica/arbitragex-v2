@@ -60,7 +60,10 @@ fn store(ids: &[u8]) {
 /// Boot-load + poll loop. Spawned once per process (scanner::run). Toggles are
 /// human-rate actions, so a 5s poll is eventual-consistent by design — no
 /// pub/sub fan-out complexity on the detection hot path.
-pub async fn run_poll_loop(redis: redis::aio::ConnectionManager, cancel: tokio_util::sync::CancellationToken) {
+pub async fn run_poll_loop(
+    redis: redis::aio::ConnectionManager,
+    cancel: tokio_util::sync::CancellationToken,
+) {
     loop {
         let raw: Result<Vec<u8>, _> = redis::cmd("GET")
             .arg(DISABLED_OPS_KEY)

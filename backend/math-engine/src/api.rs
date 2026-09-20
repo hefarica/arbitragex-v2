@@ -304,7 +304,10 @@ async fn publish_disabled_set(st: &ApiState) {
     let url = match std::env::var("REDIS_URL") {
         Ok(u) if !u.is_empty() => u,
         _ => {
-            tracing::warn!(event = "ops_toggle.propagation_skipped", reason = "REDIS_URL unset");
+            tracing::warn!(
+                event = "ops_toggle.propagation_skipped",
+                reason = "REDIS_URL unset"
+            );
             return;
         }
     };
