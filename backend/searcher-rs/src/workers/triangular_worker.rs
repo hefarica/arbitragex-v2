@@ -787,7 +787,7 @@ pub struct EvalResult {
 ///   3. golden-section finds a strictly positive profit in token-a units
 ///      hold simultaneously. Otherwise returns None and the caller skips.
 pub fn evaluate_cycle(input: &EvalInput) -> Option<EvalResult> {
-    if input.hop_reserves.len() != 3 {
+    if input.hop_reserves.len() < 2 {
         return None;
     }
     // Spot check (closed form — necessary condition for ANY profit).
@@ -2771,6 +2771,99 @@ mod tests {
             "final amount_out must equal the last leg output"
         );
         assert_eq!(profit, 1_527_886_585_228_387_775i128);
+    }
+
+    #[test]
+    fn cycle_profit_with_ledger_wei_exact_independent_vector_4hop() {
+        // Independent 4-hop vector (Python, same generator discipline as the
+        // 3-hop vector above — the kernel math is generic in N; this test pins
+        // that the generic path stays exact at N=4, CARDS-HOPS 2026-09-20):
+        //
+        //   hops = [(100E18,120E18), (100E18,110E18), (100E18,90E18), (100E18,200E18)]
+        //
+        //   leg_out_0 = 1184589641276473558
+        //   leg_out_1 = 1283975251278183205
+        //   leg_out_2 = 1137548963352774498
+        //   leg_out_3 = 2242835817401646860
+        //   profit    = 1242835817401646860
+        let x = U256::from(10u64).pow(U256::from(18u64));
+        let hops = vec![
+            (
+                U256::from(100u128) * U256::exp10(18),
+                U256::from(120u128) * U256::exp10(18),
+            ),
+            (
+                U256::from(100u128) * U256::exp10(18),
+                U256::from(110u128) * U256::exp10(18),
+            ),
+            (
+                U256::from(100u128) * U256::exp10(18),
+                U256::from(90u128) * U256::exp10(18),
+            ),
+            (
+                U256::from(100u128) * U256::exp10(18),
+                U256::from(200u128) * U256::exp10(18),
+            ),
+        ];
+        let (out, profit, legs) = cycle_profit_with_ledger(x, &hops, 30);
+        let expect: Vec<U256> = [
+            "1184589641276473558",
+            "1283975251278183205",
+            "1137548963352774498",
+            "2242835817401646860",
+        ]
+        .iter()
+        .map(|s| U256::from_dec_str(s).unwrap())
+        .collect();
+        assert_eq!(
+            legs, expect,
+            "per-leg wei must match the Python 4-hop vector"
+        );
+        assert_eq!(out, expect[3], "final amount_out = last leg output");
+        assert_eq!(profit, 1_242_835_817_401_646_860i128);
+    }
+
+    #[test]
+    fn evaluate_cycle_sizes_4hop_cycle() {
+        // evaluate_cycle historically hard-rejected anything with
+        // hop_reserves.len() != 3 — the direct cause of the 4..7-leg routes
+        // dying at sizing. The generic kernel must size a profitable 4-hop
+        // cycle (same reserves as the Python 4-hop vector, spot ≈ 2.348).
+        let input = EvalInput {
+            hop_reserves: vec![
+                (
+                    U256::from(100u128) * U256::exp10(18),
+                    U256::from(120u128) * U256::exp10(18),
+                ),
+                (
+                    U256::from(100u128) * U256::exp10(18),
+                    U256::from(110u128) * U256::exp10(18),
+                ),
+                (
+                    U256::from(100u128) * U256::exp10(18),
+                    U256::from(90u128) * U256::exp10(18),
+                ),
+                (
+                    U256::from(100u128) * U256::exp10(18),
+                    U256::from(200u128) * U256::exp10(18),
+                ),
+            ],
+            token_a_price_usd: Some(3000.0),
+            token_a_decimals: 18,
+            cap_usd: 1_000_000.0,
+            fee_bps: 30,
+        };
+        let result = evaluate_cycle(&input)
+            .expect("4-hop profitable cycle must size (was None under the !=3 guard)");
+        assert_eq!(
+            result.leg_outputs.as_ref().map(|o| o.len()),
+            Some(4),
+            "ledger must cover all 4 hops"
+        );
+        assert!(
+            result.expected_profit_usd.unwrap_or(0.0) > 0.0,
+            "gross USD must be positive at the found optimum"
+        );
     }
 
     #[test]

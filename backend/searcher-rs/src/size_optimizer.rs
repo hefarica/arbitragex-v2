@@ -108,6 +108,16 @@ pub enum OptimizeRejectReason {
     /// The token pair has no known V3 pools at all (WO-06) — no fee tier can
     /// exist, so the candidate is rejected WITHOUT an RPC.
     V3PairNoPools,
+    /// Route leg count exceeds the canonical hard cap (min(7, Max_Legs),
+    /// workbook `08_HOPS_2_7` ADMISSIBILITY). No sizing exists beyond the cap —
+    /// fail closed rather than truncating the route (CARDS-HOPS 2026-09-20).
+    UnsupportedLegCount,
+    /// A route with MORE than 2 legs containing a V3 leg: the N-leg cycle
+    /// kernel is all-V2 (constant-product composition) and the V3 kernel is
+    /// 2-leg only, so no honest sizing exists. Rejected explicitly instead of
+    /// falling into a 2-leg kernel that would size a fabricated 2-of-N slice
+    /// (CARDS-HOPS 2026-09-20).
+    V3MultilegUnsupported,
 }
 
 impl OptimizeRejectReason {
@@ -133,6 +143,8 @@ impl OptimizeRejectReason {
             Self::V3QuoteUnavailable => "v3_quote_unavailable",
             Self::V3PoolNotCatalogued => "v3_pool_not_catalogued",
             Self::V3PairNoPools => "v3_pair_no_pools",
+            Self::UnsupportedLegCount => "unsupported_leg_count",
+            Self::V3MultilegUnsupported => "v3_multileg_unsupported",
         }
     }
 
@@ -467,14 +479,38 @@ impl SizeOptimizer {
             // Triangular V3 cycles are handled by the triangular kernel above;
             // this is the 2-leg DEX-arb path that previously had no V3 sizer.
             _ if route_has_v3(&candidate) => {
-                self.size_two_leg_v3_with_reason(
+                // N-leg V3 routes (QuoterV2 arms are strictly 2-leg) have no
+                // honest kernel: reject explicitly instead of falling into a
+                // 2-leg truncation that fabricates the economics.
+                if candidate.route_plan.legs.len() > 2 {
+                    debug!(
+                        event = "size_optimizer.v3_multileg_unsupported",
+                        legs = candidate.route_plan.legs.len(),
+                    );
+                    OptimizeOutcome::Rejected(OptimizeRejectReason::V3MultilegUnsupported, None)
+                } else {
+                    self.size_two_leg_v3_with_reason(
+                        &candidate,
+                        intent,
+                        cap_wei,
+                        cap_usd,
+                        token_price_usd,
+                        decimals,
+                        state,
+                    )
+                    .await
+                }
+            }
+            // WO-13: N-leg (4..7) all-V2 cycles size through the generic
+            // cycle kernel — same math as triangular, arbitrary hop count.
+            // (Discovery's min(7, Max_Legs) already bounds legs at 7.)
+            _ if candidate.route_plan.legs.len() != 2 => {
+                self.size_triangular_with_reason(
                     &candidate,
-                    intent,
-                    cap_wei,
+                    state,
                     cap_usd,
                     token_price_usd,
                     decimals,
-                    state,
                 )
                 .await
             }
@@ -711,7 +747,7 @@ impl SizeOptimizer {
     }
 
     // -----------------------------------------------------------------------
-    // 3-leg triangular sizing — with explicit reason (TASK 2)
+    // N-leg cycle sizing (triangular + 4..7-hop) — with explicit reason
     // -----------------------------------------------------------------------
 
     async fn size_triangular_with_reason(
@@ -724,13 +760,19 @@ impl SizeOptimizer {
     ) -> OptimizeOutcome {
         // Extract hop reserves from the route plan legs.
         let legs = &candidate.route_plan.legs;
-        if legs.len() < 3 {
+        // WO-13: the cycle kernel is generic in N; admissibility follows the
+        // canonical workbook rule h ∈ [2, min(7, Max_Legs)] — discovery already
+        // clamps, this guard fails closed on anything beyond the canonical cap.
+        if legs.len() < 2 {
             return OptimizeOutcome::Rejected(OptimizeRejectReason::MissingRouteLegs, None);
+        }
+        if legs.len() > 7 {
+            return OptimizeOutcome::Rejected(OptimizeRejectReason::UnsupportedLegCount, None);
         }
 
         // Build (reserve_in, reserve_out) for each hop from the reserves cache.
-        let mut hop_reserves: Vec<(U256, U256)> = Vec::with_capacity(3);
-        for (leg_idx, leg) in legs.iter().take(3).enumerate() {
+        let mut hop_reserves: Vec<(U256, U256)> = Vec::with_capacity(legs.len());
+        for (leg_idx, leg) in legs.iter().enumerate() {
             let pool_addr_str = match leg.pool_address.as_deref() {
                 Some(s) => s,
                 None => {
@@ -791,24 +833,21 @@ impl SizeOptimizer {
         // WO-LEGS-TRIANGULAR-01: exact per-leg wei from the POST-CLAMP
         // re-evaluation inside `evaluate_cycle` — the same hop chain whose
         // final amount_out the reported profit consumed (Sancho condition 1).
-        // leg_outputs = [out0, out1, out2]; the honest input chain is
-        // [x, out0, out1] (leg i+1's input IS leg i's output). Same shape the
+        // leg_outputs = [out0..outN]; the honest input chain is
+        // [x, out0..outN-1] (leg i+1's input IS leg i's output). Same shape the
         // 2-leg kernel emits (see `leg_amounts_in` in size_two_leg_with_reason).
         // R8: any missing link → no ledger at all (all-or-nothing).
         let (leg_amounts_in, leg_amounts_out) = match eval_result.leg_outputs.as_ref() {
-            Some(outs) if outs.len() == 3 => {
+            Some(outs) if outs.len() == legs.len() => {
                 let x = eval_result.amount_in_wei;
+                let mut ins = Vec::with_capacity(outs.len());
+                ins.push(x.to_string());
+                for out in outs.iter().take(outs.len().saturating_sub(1)) {
+                    ins.push(out.to_string());
+                }
                 (
-                    Some(vec![
-                        x.to_string(),
-                        outs[0].to_string(),
-                        outs[1].to_string(),
-                    ]),
-                    Some(vec![
-                        outs[0].to_string(),
-                        outs[1].to_string(),
-                        outs[2].to_string(),
-                    ]),
+                    Some(ins),
+                    Some(outs.iter().map(|o| o.to_string()).collect::<Vec<_>>()),
                 )
             }
             _ => (None, None),
@@ -938,6 +977,12 @@ impl SizeOptimizer {
         let legs = &candidate.route_plan.legs;
         if legs.len() < 2 {
             return OptimizeOutcome::Rejected(OptimizeRejectReason::MissingRouteLegs, None);
+        }
+        // Defensive fail-closed: this kernel only models exactly 2 legs —
+        // a >2-leg candidate here would silently truncate to legs[0..2] and
+        // fabricate the economics (the "cards show only 2 hops" root cause).
+        if legs.len() > 2 {
+            return OptimizeOutcome::Rejected(OptimizeRejectReason::UnsupportedLegCount, None);
         }
 
         // Pool A reserves (leg 0).
@@ -1219,6 +1264,11 @@ impl SizeOptimizer {
         let legs = &candidate.route_plan.legs;
         if legs.len() < 2 {
             return OptimizeOutcome::Rejected(OptimizeRejectReason::MissingRouteLegs, None);
+        }
+        // Defensive fail-closed: the V3 mixed kernel models exactly 2 legs
+        // (QuoterV2 arms). >2-leg V3 routes must be rejected, never truncated.
+        if legs.len() > 2 {
+            return OptimizeOutcome::Rejected(OptimizeRejectReason::UnsupportedLegCount, None);
         }
 
         // Resolve a per-leg evaluator once (V2 → oriented cached reserves;
@@ -2279,6 +2329,296 @@ mod tests {
         assert!(
             result.is_none(),
             "symmetric pools produce no profit — must return None"
+        );
+    }
+
+    // ── N-LEG CYCLE DISPATCH (CARDS-HOPS 2026-09-20) ─────────────────────────
+    //
+    // Root cause of "only 2 hops in the cards": route_graph/amm_curve engines
+    // emit 4..7-leg candidates labelled DexArbV2V2, which fell into the
+    // 2-leg kernels — legs[1] of a multi-leg route is a different pool than
+    // the route's actual second pool, producing the `missing_reserves_pool_b`
+    // wall (and, when legs[0..2] happened to be cacheable, a FABRICATED
+    // 2-of-N-leg sizing). The dispatch must size all-V2 cycles of ANY leg
+    // count (2..=7) with the N-leg cycle kernel and reject mixed V3 multi-leg
+    // routes honestly instead of truncating.
+
+    /// 4-leg all-V2 cycle candidate: WETH → T1 → T2 → T3 → WETH.
+    /// T1/T2/T3 are low addresses (0x..01/02/03) so string-orientation is
+    /// deterministic: leg0 flips (WETH > T1), legs 1..3 keep (r0, r1).
+    fn make_multileg_candidate(
+        pools: &[Address],
+        protocols: &[&str],
+        label: StrategyLabel,
+    ) -> StrategyCandidate {
+        assert_eq!(pools.len(), 4);
+        assert_eq!(protocols.len(), 4);
+        let weth = "0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2";
+        let t1 = "0x0000000000000000000000000000000000000001";
+        let t2 = "0x0000000000000000000000000000000000000002";
+        let t3 = "0x0000000000000000000000000000000000000003";
+        let cycle = [weth, t1, t2, t3, weth];
+
+        let id = Uuid::new_v4();
+        let opp = Opportunity {
+            id,
+            chain_id: 1,
+            strategy_kind: StrategyKind::dex_arb(),
+            dex_a: "uniswap-v2".to_string(),
+            dex_b: Some("sushi".to_string()),
+            pair_symbol: "WETH/MULTIHOP".to_string(),
+            token_in: weth.to_string(),
+            token_out: weth.to_string(),
+            amount_in_wei: unit(1).to_string(),
+            expected_profit_usd: Some(1.0),
+            net_expected_profit_usd: None,
+            roi_pct: None,
+            risk_score: None,
+            block_number: None,
+            rejection_reason: None,
+            cartridge_id: None,
+            detector_id: None,
+            pipeline_latency_ms: None,
+            detected_at: Utc::now(),
+            trace_id: Uuid::new_v4(),
+        };
+
+        let candidate_inner = OpportunityCandidate {
+            route_fingerprint: "test-multileg".to_string(),
+            pool_addresses: pools.iter().map(|p| format!("0x{:040x}", p)).collect(),
+            token_addresses: cycle.iter().map(|s| s.to_string()).collect(),
+            dex_adapters: vec!["uniswap-v2".to_string(); 4],
+            amount_in: 1.0,
+            expected_amount_out: 1.001,
+            gross_profit: 1.0,
+        };
+
+        let legs = (0..4)
+            .map(|i| RouteLeg {
+                dex_id: "uniswap-v2".to_string(),
+                dex_name: "uniswap-v2".to_string(),
+                protocol_type: protocols[i].to_string(),
+                factory_address: String::new(),
+                pool_id: None,
+                pool_address: Some(format!("0x{:040x}", pools[i])),
+                token_in: cycle[i].to_string(),
+                token_out: cycle[i + 1].to_string(),
+                fee_bps: Some(30),
+                amount_in: Some(1.0),
+                amount_out: None,
+                tvl_usd: None,
+                volume_24h_usd: None,
+                pool_is_active: true,
+            })
+            .collect::<Vec<_>>();
+
+        let route_plan = RoutePlan {
+            route_id: Some("test-multileg-route".to_string()),
+            strategy_kind: label.as_str().to_string(),
+            chain_id: 1,
+            legs,
+            atomic: true,
+            estimated_slippage_pct: None,
+            price_impact_pct: None,
+        };
+
+        StrategyCandidate {
+            label,
+            opportunity: opp,
+            candidate: candidate_inner,
+            route_plan,
+            gross_profit_usd: Some(1.0),
+            net_expected_profit_usd: None,
+            rejection_reason: None,
+            source_intent_hash: H256::zero(),
+            base_strategy: None,
+        }
+    }
+
+    /// Insert oriented (Rin, Rout) for one leg, honouring the kernel's
+    /// string-orientation rule (token_in <= token_out → (r0, r1)).
+    async fn insert_oriented(
+        cache: &Arc<ReservesCache>,
+        pool: Address,
+        token_in: &str,
+        token_out: &str,
+        r_in: U256,
+        r_out: U256,
+    ) {
+        if token_in <= token_out {
+            cache.insert(pool, r_in, r_out).await;
+        } else {
+            cache.insert(pool, r_out, r_in).await;
+        }
+    }
+
+    const WETH_T: &str = "0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2";
+    const T1: &str = "0x0000000000000000000000000000000000000001";
+    const T2: &str = "0x0000000000000000000000000000000000000002";
+    const T3: &str = "0x0000000000000000000000000000000000000003";
+
+    #[tokio::test]
+    async fn multileg_all_v2_route_sizes_via_cycle_kernel() {
+        // Legs 0+1 alone are UNPROFITABLE (spot 0.855 < 1) — the old 2-leg
+        // dispatch rejected here. The full 4-hop cycle is profitable
+        // (0.855 × 2.25 × 0.997⁴ ≈ 1.894 > 1) — only the N-leg kernel finds it.
+        let pools = [addr(0x20), addr(0x21), addr(0x22), addr(0x23)];
+        let cache = Arc::new(ReservesCache::new());
+        insert_oriented(&cache, pools[0], WETH_T, T1, unit(100), unit(90)).await;
+        insert_oriented(&cache, pools[1], T1, T2, unit(100), unit(95)).await;
+        insert_oriented(&cache, pools[2], T2, T3, unit(100), unit(150)).await;
+        insert_oriented(&cache, pools[3], T3, WETH_T, unit(100), unit(150)).await;
+
+        let projector = Arc::new(StateProjector::new(cache, None, empty_v3_fee_catalog()));
+        let optimizer = SizeOptimizer::new(projector);
+
+        let candidate = make_multileg_candidate(
+            &pools,
+            &["uniswap-v2", "uniswap-v2", "uniswap-v2", "uniswap-v2"],
+            StrategyLabel::DexArbV2V2,
+        );
+        let intent = make_intent(addr(0xAAAA), addr(0xBBBB));
+        let cfg = make_cfg(100_000.0);
+
+        let outcome = optimizer
+            .optimize_with_reason(candidate, &intent, Some(&cfg))
+            .await
+            .expect("optimize must not error");
+
+        match outcome {
+            OptimizeOutcome::Sized(s) => {
+                assert!(
+                    s.gross_profit_usd > 0.0,
+                    "4-hop profitable cycle must size with positive gross, got {}",
+                    s.gross_profit_usd
+                );
+            }
+            other => panic!(
+                "4-leg all-V2 route must reach the cycle kernel, got {}",
+                matches!(other, OptimizeOutcome::Sized(_))
+            ),
+        }
+    }
+
+    #[tokio::test]
+    async fn multileg_v3_route_rejects_honestly() {
+        // Mixed V2/V3 routes of >2 legs have no kernel (N-leg quoter
+        // composition unimplemented) — the honest reject is
+        // v3_multileg_unsupported, NOT the misleading missing_reserves_pool_b
+        // (nor a fabricated 2-leg sizing).
+        let pools = [addr(0x20), addr(0x21), addr(0x22), addr(0x23)];
+        let cache = Arc::new(ReservesCache::new());
+        insert_oriented(&cache, pools[0], WETH_T, T1, unit(100), unit(90)).await;
+
+        let projector = Arc::new(StateProjector::new(cache, None, empty_v3_fee_catalog()));
+        let optimizer = SizeOptimizer::new(projector);
+
+        let candidate = make_multileg_candidate(
+            &pools,
+            &["uniswap-v2", "uniswap-v3", "uniswap-v2", "uniswap-v2"],
+            StrategyLabel::DexArbV2V2,
+        );
+        let intent = make_intent(addr(0xAAAA), addr(0xBBBB));
+        let cfg = make_cfg(100_000.0);
+
+        let outcome = optimizer
+            .optimize_with_reason(candidate, &intent, Some(&cfg))
+            .await
+            .expect("optimize must not error");
+
+        assert!(
+            matches!(
+                outcome,
+                OptimizeOutcome::Rejected(OptimizeRejectReason::V3MultilegUnsupported, None)
+            ),
+            "mixed V3 multi-leg must reject with v3_multileg_unsupported"
+        );
+    }
+
+    #[tokio::test]
+    async fn triangular_4leg_sizes_all_legs_no_truncation() {
+        // The old kernel did legs.iter().take(3) — a 4-leg TriangularArb
+        // candidate was sized on 3 of 4 legs (fabricated economics) and the
+        // ledger came back with 3 entries. The generalized kernel must size
+        // ALL legs and emit a 4-entry ledger chained to the reported amounts.
+        let pools = [addr(0x20), addr(0x21), addr(0x22), addr(0x23)];
+        let cache = Arc::new(ReservesCache::new());
+        insert_oriented(&cache, pools[0], WETH_T, T1, unit(100), unit(120)).await;
+        insert_oriented(&cache, pools[1], T1, T2, unit(100), unit(110)).await;
+        insert_oriented(&cache, pools[2], T2, T3, unit(100), unit(90)).await;
+        insert_oriented(&cache, pools[3], T3, WETH_T, unit(100), unit(200)).await;
+
+        let projector = Arc::new(StateProjector::new(cache, None, empty_v3_fee_catalog()));
+        let optimizer = SizeOptimizer::new(projector);
+
+        let candidate = make_multileg_candidate(
+            &pools,
+            &["uniswap-v2", "uniswap-v2", "uniswap-v2", "uniswap-v2"],
+            StrategyLabel::TriangularArb,
+        );
+        let cfg = make_cfg(100_000.0);
+
+        let outcome = optimizer
+            .size_triangular_with_reason(&candidate, &cfg, 100_000.0, 3000.0, 18)
+            .await;
+
+        match outcome {
+            OptimizeOutcome::Sized(s) => {
+                let outs = s
+                    .leg_amounts_out
+                    .as_ref()
+                    .expect("profitable 4-leg cycle must carry a ledger (R8 all-or-nothing)");
+                assert_eq!(outs.len(), 4, "ledger must cover ALL 4 legs, not take(3)");
+                let ins = s
+                    .leg_amounts_in
+                    .as_ref()
+                    .expect("ledger inputs must be present with outputs");
+                assert_eq!(ins.len(), 4);
+                // Chain invariant: leg i+1 input == leg i output.
+                for i in 0..3 {
+                    assert_eq!(ins[i + 1], outs[i], "leg chain broken at hop {i}");
+                }
+                assert_eq!(ins[0], s.optimal_amount_in.to_string());
+                assert!(s.gross_profit_usd > 0.0);
+            }
+            other => panic!(
+                "4-leg TriangularArb must size via the cycle kernel, got sized={}",
+                matches!(other, OptimizeOutcome::Sized(_))
+            ),
+        }
+    }
+
+    #[tokio::test]
+    async fn two_leg_kernel_rejects_extra_legs_defensively() {
+        // Fund-path defensive check (CLAUDE.md §2): a >2-leg candidate that
+        // ever reaches a 2-leg kernel must fail CLOSED — never size a
+        // truncated 2-of-N slice.
+        let pools = [addr(0x20), addr(0x21), addr(0x22), addr(0x23)];
+        let cache = Arc::new(ReservesCache::new());
+        insert_oriented(&cache, pools[0], WETH_T, T1, unit(100), unit(120)).await;
+        insert_oriented(&cache, pools[1], T1, T2, unit(100), unit(110)).await;
+
+        let projector = Arc::new(StateProjector::new(cache, None, empty_v3_fee_catalog()));
+        let optimizer = SizeOptimizer::new(projector);
+
+        let candidate = make_multileg_candidate(
+            &pools,
+            &["uniswap-v2", "uniswap-v2", "uniswap-v2", "uniswap-v2"],
+            StrategyLabel::DexArbV2V2,
+        );
+        let intent = make_intent(addr(0xAAAA), addr(0xBBBB));
+        let cfg = make_cfg(100_000.0);
+
+        let outcome = optimizer
+            .size_two_leg_with_reason(&candidate, &intent, unit(10), 100_000.0, 3000.0, 18, &cfg)
+            .await;
+
+        assert!(
+            matches!(
+                outcome,
+                OptimizeOutcome::Rejected(OptimizeRejectReason::UnsupportedLegCount, None)
+            ),
+            "2-leg kernel must fail closed on a 4-leg candidate"
         );
     }
 
