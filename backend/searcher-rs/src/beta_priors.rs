@@ -26,9 +26,12 @@
 //!    gate's verdict on exactly those. The economic set is deliberately
 //!    BROADER than `is_net_dependent()` (which omits non_positive_gross_usd):
 //!    a labeling choice, not a derivation — do not "derive" it from that
-//!    flag. Full recompute beats incremental deltas: drift-proof, bounded by
-//!    the scored_opportunities retention window + the 108 strategy index
-//!    (4.77M rows @ 2026-09-20 ⇒ refresh default 300s, operator-set).
+//!    flag. Full recompute of whatever `scored_opportunities` still retains,
+//!    plus a PRUNE of strategies whose rows aged out of retention (a frozen
+//!    count would be stale-but-fake — a8 review WARN 2026-09-20: the UPSERT
+//!    alone never deletes). Cost: one scan of the retained set (4.77M rows @
+//!    2026-09-20) per pass — UNMEASURED against PG capacity; mitigated by the
+//!    default-OFF gate and the operator-set cadence (refresh default 300s).
 //! 2. READ back the table into `HashMap<String, PriorState>`. Strategies with
 //!    zero observations are dropped — `get()` returning None ⇒ flat prior
 //!    (identical to pre-module behavior, the honest uncalibrated state).
@@ -48,7 +51,7 @@ use sqlx::PgPool;
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 use std::time::Duration;
-use tracing::{debug, info};
+use tracing::{info, warn};
 
 /// Consolidator + reader SQL. The label CASE encodes the review-locked
 /// taxonomy: the economic verdict OVERRIDES the archived net (which is the
@@ -57,14 +60,16 @@ use tracing::{debug, info};
 /// non-economic rows (NULL net ⇒ NULL y ⇒ excluded from both counts).
 /// `COUNT(y)` counts non-NULL labels only. The ON CONFLICT target must
 /// repeat the partial index predicate (`WHERE strategy_key IS NOT NULL`) to
-/// infer `uq_bayesian_priors_strategy` (migration 108).
+/// infer `uq_bayesian_priors_strategy` (migration 108). `id DESC` breaks
+/// created_at ties (same-archiver-tx batches) so the DISTINCT ON pick is
+/// deterministic (a8 review NOTE 2026-09-20).
 const CONSOLIDATE_SQL: &str = r#"
 WITH latest AS (
     SELECT DISTINCT ON (opportunity_id)
            opportunity_id, strategy_key, net_profit_usd, rejection_reason
     FROM scored_opportunities
     WHERE strategy_key IS NOT NULL
-    ORDER BY opportunity_id, created_at DESC
+    ORDER BY opportunity_id, created_at DESC, id DESC
 ),
 labeled AS (
     SELECT strategy_key,
@@ -98,6 +103,20 @@ const READ_SQL: &str = r#"
 SELECT strategy_key, observation_count, profitable_count
 FROM bayesian_priors
 WHERE strategy_key IS NOT NULL AND observation_count > 0
+"#;
+
+/// Prune strategy-keyed rows whose source rows aged out of retention: the
+/// UPSERT alone never deletes, so without this a strategy's counts would
+/// FREEZE forever at their last value once scored_opportunities drops its
+/// rows (a8 review WARN 2026-09-20). Legacy token_pair-keyed rows
+/// (strategy_key IS NULL) are not this writer's business.
+const PRUNE_SQL: &str = r#"
+DELETE FROM bayesian_priors bp
+WHERE bp.strategy_key IS NOT NULL
+  AND NOT EXISTS (
+      SELECT 1 FROM scored_opportunities so
+      WHERE so.strategy_key = bp.strategy_key
+  )
 "#;
 
 /// Writer gate (stage2_calibration precedent: PG mutations are
@@ -166,7 +185,9 @@ impl BetaPriorsCache {
         let refresh = cache.clone();
         // Operator decision 2026-09-20 ("Refresh 300s"): scored_opportunities
         // measured at 4.77M retained rows (~162K/h) — a full-recompute
-        // aggregate every 300s keeps PG load <1% while staying drift-proof.
+        // aggregate every 300s; per-pass PG cost is UNMEASURED (a8 review
+        // NOTE 2026-09-20) — bounded by retention, gated OFF by default,
+        // cadence operator-tunable.
         let refresh_secs = std::env::var("ARBX_BETA_PRIORS_REFRESH_SECS")
             .ok()
             .and_then(|v| v.parse::<u64>().ok())
@@ -179,7 +200,11 @@ impl BetaPriorsCache {
             loop {
                 ticker.tick().await;
                 if let Err(e) = refresh_once(&pool, &refresh).await {
-                    debug!(event = "beta_priors.refresh_failed", error = %e);
+                    // warn (not debug): a failed refresh means the map goes
+                    // stale (get() silently serves last-good / flat priors) —
+                    // one line per refresh period max, R9-safe (a8 review
+                    // NOTE 2026-09-20: silent degradation was invisible).
+                    warn!(event = "beta_priors.refresh_failed", error = %e);
                 }
             }
         });
@@ -219,10 +244,11 @@ impl BetaPriorsCache {
     }
 }
 
-/// One cycle: consolidate (write) then read back. Overwrite the map only when
-/// content changed (change-detect, priors_cache pattern).
+/// One cycle: consolidate (upsert + prune) then read back. Overwrite the map
+/// only when content changed (change-detect, priors_cache pattern).
 async fn refresh_once(pool: &PgPool, cache: &BetaPriorsCache) -> anyhow::Result<()> {
     sqlx::query(CONSOLIDATE_SQL).execute(pool).await?;
+    sqlx::query(PRUNE_SQL).execute(pool).await?;
 
     let rows: Vec<(String, i64, i64)> = sqlx::query_as(READ_SQL).fetch_all(pool).await?;
     let next = build_map(rows);
