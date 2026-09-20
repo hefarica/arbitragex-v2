@@ -215,6 +215,7 @@ impl DexEngine {
                         pool,
                         pool,
                         StrategyLabel::DexArbV2V2,
+                        intent.observed_block(),
                     );
                     candidates.push(StrategyCandidate {
                         label: StrategyLabel::DexArbV2V2,
@@ -273,8 +274,14 @@ impl DexEngine {
 
                     // If both pools are V2 and EITHER has missing reserves → reserves_cache_miss.
                     if a_is_v2 && b_is_v2 && (reserves_a.is_none() || reserves_b.is_none()) {
-                        let (opp, cand, rp) =
-                            build_rejected_opportunity(chain_id, tx_hash, pool_a, pool_b, label);
+                        let (opp, cand, rp) = build_rejected_opportunity(
+                            chain_id,
+                            tx_hash,
+                            pool_a,
+                            pool_b,
+                            label,
+                            intent.observed_block(),
+                        );
                         candidates.push(StrategyCandidate {
                             label,
                             opportunity: opp,
@@ -366,8 +373,14 @@ impl DexEngine {
                             // ⇒ !can_price_v2 false or cfg absent) — honest fallback.
                             _ => "no_price_oracle",
                         };
-                        let (opp, cand, rp) =
-                            build_rejected_opportunity(chain_id, tx_hash, pool_a, pool_b, label);
+                        let (opp, cand, rp) = build_rejected_opportunity(
+                            chain_id,
+                            tx_hash,
+                            pool_a,
+                            pool_b,
+                            label,
+                            intent.observed_block(),
+                        );
                         candidates.push(StrategyCandidate {
                             label,
                             opportunity: opp,
@@ -391,6 +404,7 @@ impl DexEngine {
                         label,
                         gross_profit_usd,
                         intent.amount_in,
+                        intent.observed_block(),
                     );
 
                     debug!(
@@ -770,6 +784,7 @@ fn canonical_token_decimals(token: Option<Address>) -> u32 {
 
 /// Builds an `Opportunity`, `OpportunityCandidate`, and `RoutePlan` for
 /// an accepted (engine-level) DEX arb candidate.
+#[allow(clippy::too_many_arguments)]
 fn build_accepted_opportunity(
     chain_id: u64,
     tx_hash: H256,
@@ -778,6 +793,7 @@ fn build_accepted_opportunity(
     label: StrategyLabel,
     gross_profit_usd: Option<f64>,
     amount_in_wei: U256,
+    block_number: Option<u64>,
 ) -> (Opportunity, OpportunityCandidate, RoutePlan) {
     let strategy_kind: StrategyKind = label.to_contract_strategy_kind();
     let id = Uuid::new_v4();
@@ -804,7 +820,9 @@ fn build_accepted_opportunity(
         net_expected_profit_usd: None, // filled by evaluator
         roi_pct: None,
         risk_score: None,
-        block_number: None,
+        // §30 contract: anchor the row to the intent's observed block so the
+        // FE semantic gate never flags `missing_block` when the block IS known.
+        block_number,
         rejection_reason: None,
         cartridge_id: None,
         // WO-CARDS-COMPLETE-01 (2026-09-17): detector identity at construction;
@@ -856,6 +874,7 @@ fn build_rejected_opportunity(
     pool_a: &PoolRef,
     pool_b: &PoolRef,
     label: StrategyLabel,
+    block_number: Option<u64>,
 ) -> (Opportunity, OpportunityCandidate, RoutePlan) {
     build_accepted_opportunity(
         chain_id,
@@ -865,6 +884,7 @@ fn build_rejected_opportunity(
         label,
         None,                                      // R8: no profit for rejected candidates
         U256::from(10u128).pow(U256::from(18u32)), // unit probe
+        block_number,
     )
 }
 
@@ -1008,6 +1028,63 @@ mod tests {
         ImpactSet {
             impacted_pools: pools,
             ..Default::default()
+        }
+    }
+
+    // ── dex_engine::tests::candidates_anchor_observed_block ─────────────────
+    // §30 regression: an intent with a known observed block must propagate it
+    // to EVERY emitted Opportunity (accepted AND rejected). Before the fix both
+    // constructors hardcoded block_number: None → persisted NULL → the FE
+    // semantic gate quarantined the row as `missing_block`.
+
+    #[tokio::test]
+    async fn candidates_anchor_observed_block() {
+        let tok_a = addr(0x1);
+        let tok_b = addr(0x2);
+        let pool1 = make_pool(addr(0x10), tok_a, tok_b, ProtocolType::V2);
+        let pool2 = make_pool(addr(0x11), tok_a, tok_b, ProtocolType::V2);
+        let mut intent = make_intent(tok_a, tok_b);
+        // §30: `observed_block()` only surfaces a height for NewBlock-sourced
+        // intents (mempool intents honestly carry none) — mirror block_scanner.
+        intent.source_event = crate::route_intent::DetectionSource::NewBlock;
+        intent.observed_block_number = Some(12_345);
+        let impact = make_impact(vec![pool1, pool2]);
+        // Empty reserves cache → reserves_cache_miss rejection path.
+        let engine = make_engine();
+
+        let candidates = engine
+            .build_from_impacted_pairs(&intent, &impact, None)
+            .await
+            .expect("engine must not error");
+
+        assert!(!candidates.is_empty(), "must produce candidates");
+        for c in &candidates {
+            assert_eq!(
+                c.opportunity.block_number,
+                Some(12_345),
+                "rejected candidate must anchor the intent's observed block (§30 missing_block regression)"
+            );
+        }
+
+        // Accepted path: real reserves → candidate reaches the optimizer.
+        let unit = U256::from(10u128).pow(U256::from(18u32)) * U256::from(1_000u32);
+        let engine_ok =
+            make_engine_with_reserves(vec![(addr(0x10), unit, unit), (addr(0x11), unit, unit)])
+                .await;
+        let candidates_ok = engine_ok
+            .build_from_impacted_pairs(&intent, &impact, None)
+            .await
+            .expect("engine must not error");
+        assert!(
+            !candidates_ok.is_empty(),
+            "must produce accepted candidates"
+        );
+        for c in &candidates_ok {
+            assert_eq!(
+                c.opportunity.block_number,
+                Some(12_345),
+                "accepted candidate must anchor the intent's observed block (§30 missing_block regression)"
+            );
         }
     }
 

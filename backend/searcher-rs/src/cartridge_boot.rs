@@ -1198,7 +1198,17 @@ pub async fn active_evaluate_and_emit(
                     net_expected_profit_usd: None, // Filled by spine evaluator
                     roi_pct: None,
                     risk_score: None,
-                    block_number: intent.observed_block(),
+                    // §30 contract: prefer the intent's observed block; fall
+                    // back to the cartridge host's live head atomic (the same
+                    // handle the §IV evidence publisher below reads) so the row
+                    // is never persisted without a block anchor when a head is
+                    // known. 0 = genuinely no head observed yet (R8: keep None).
+                    block_number: intent.observed_block().or_else(|| {
+                        let head = runner
+                            .host_block_number_handle()
+                            .load(std::sync::atomic::Ordering::Relaxed);
+                        (head > 0).then_some(head)
+                    }),
                     rejection_reason: None,
                     cartridge_id: Some(cartridge_id.clone()),
                     // WO-CARDS-COMPLETE-01 (2026-09-17): cartridge detector
