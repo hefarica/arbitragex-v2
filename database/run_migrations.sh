@@ -4,7 +4,8 @@
 # Discovers every database/migrations/*.sql in numeric order and applies it.
 # Each file MUST be idempotent (ADD COLUMN IF NOT EXISTS, CREATE INDEX IF NOT
 # EXISTS, DO $$ BEGIN ... EXCEPTION WHEN duplicate_object). This makes the
-# script safe to re-run on every deploy without tracking applied state.
+# script safe to re-run on every deploy; each processed file is registered in
+# schema_migrations (version + sha256) so the ledger reflects reality.
 #
 # Replaces the legacy hand-enumerated list (which stopped at 024 and silently
 # dropped 025..102). The init container (database/init/001_init.sql) only runs
@@ -143,6 +144,15 @@ for f in "${FILES[@]}"; do
   if [ "$succeeded" -eq 1 ]; then
     echo "  -> OK   $f"
     APPLIED=$((APPLIED + 1))
+    # Keep schema_migrations truthful (drift 2026-09-20: ledger ended at 099 while
+    # this deploy path had applied 100-121 unregistered — the only ledger-tracked
+    # runner, automation/scripts/migrate.sh, stopped being the canonical path).
+    # Registration is metadata: a failure must not abort a deploy whose DDL succeeded.
+    if ! run_sql "INSERT INTO schema_migrations (version, checksum)
+                  VALUES ('${f%.sql}', '$(sha256sum "$MIG_DIR/$f" | cut -d' ' -f1)')
+                  ON CONFLICT (version) DO UPDATE SET checksum = EXCLUDED.checksum;" >/dev/null 2>&1; then
+      echo "  -> WARN ledger registration failed for $f (schema applied; ledger entry missing)"
+    fi
   else
     # Re-run of an idempotent migration should never fail. A real failure here
     # means a non-idempotent migration OR a genuine schema error — either way
