@@ -4647,6 +4647,7 @@ dependencies = [
  "nalgebra 0.33.3",
  "rand 0.8.7",
  "rand_distr 0.4.3",
+ "redis",
  "reqwest 0.12.28",
  "serde",
  "serde_json",

@@ -16,6 +16,9 @@ tracing-subscriber.workspace = true
 
 # HTTP API (gated by `api` feature)
 axum = { workspace = true, optional = true }
+# Operator-toggle propagation (item 5c): the API publishes the disabled-set to
+# Redis so the searcher-rs embedded registry honors the same toggles.
+redis = { workspace = true, optional = true }
 # `util` feature exposes tower::util::ServiceExt (.oneshot) used by the api.rs
 # test module. Without it the lib tests fail to compile (E0432/E0599) — a
 # latent break that cargo test --workspace --lib would hit in CI.
@@ -33,7 +36,7 @@ candle-nn = { version = "0.4", optional = true }
 
 [features]
 default = []
-api = ["dep:axum", "dep:tower"]
+api = ["dep:axum", "dep:tower", "dep:redis"]
 ml = ["dep:candle-core", "dep:candle-nn"]
 
 [[bin]]

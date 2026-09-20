@@ -1105,6 +1105,21 @@ pub async fn run_chain(
         );
     }
 
+    // Operator-toggle propagation (item 5c): poll `arbx:ops:disabled` so the
+    // embedded math_registry honors the math-engine HTTP toggles.
+    {
+        let toggle_redis = redis.clone();
+        let toggle_cancel = cancel.clone();
+        tokio::spawn(crate::operator_toggles::run_poll_loop(
+            toggle_redis,
+            toggle_cancel,
+        ));
+        info!(
+            event = "scanner.ops_toggle_poll_started",
+            chain_id, "operator disabled-set poll loop spawned (arbx:ops:disabled)"
+        );
+    }
+
     // Spawn the detection loop with the full endpoint list.
     tokio::spawn(detection_loop(
         chain_id,
