@@ -113,6 +113,12 @@ pub enum PoolError {
     Empty(u64),
     #[error("all providers unhealthy for chain_id={0}")]
     AllUnhealthy(u64),
+    /// WO-13: every eligible provider is blocked by the client-side rate
+    /// budget (`RPC_HTTP_RATE_BUDGETS`). This is NOT a provider failure —
+    /// the breaker is never touched and callers must NOT negative-cache it
+    /// (a valid quote would be cached as failed for a throttle we imposed).
+    #[error("rate budget exhausted for all providers on chain_id={0}")]
+    BudgetExhausted(u64),
     #[error("invalid url for provider {name}: {detail}")]
     InvalidUrl { name: String, detail: String },
     #[error("chain id mismatch for {name}: expected {expected} got {observed}")]
@@ -184,6 +190,11 @@ pub struct HttpEntry {
     pub last_block: AtomicU64,
     pub latency_ms_ewma: AtomicU64,
     pub circuit: RwLock<CircuitState>,
+    /// WO-13: client-side rate budget. `None` = no budget configured
+    /// (current behavior, unlimited). Consumption happens per ATTEMPT in
+    /// `with_retry` — `pick()` only consults (never consumes) so external
+    /// pick() callers are unaffected.
+    pub budget: Option<Arc<crate::rate_budget::TokenBucket>>,
 }
 
 impl HttpEntry {
@@ -239,6 +250,9 @@ impl HttpRpcPool {
         }
 
         let mut alive: Vec<Arc<HttpEntry>> = Vec::with_capacity(raw_entries.len());
+        // WO-13: per-provider client-side rate budgets. Env absent/empty =
+        // no budgets (backward compatible). Parsed once, matched by entry name.
+        let budgets = parse_budgets(&std::env::var("RPC_HTTP_RATE_BUDGETS").unwrap_or_default());
         for (name, url) in raw_entries {
             let parsed_url = match url.parse::<reqwest::Url>() {
                 Ok(u) => u,
@@ -321,6 +335,17 @@ impl HttpRpcPool {
             if !admitted {
                 continue;
             }
+            // WO-13: compute the budget BEFORE the struct moves `name`.
+            let budget = budgets.get(name.as_str()).map(|rpm| {
+                info!(
+                    event = "rpc_pool.rate_budget_set",
+                    chain_id,
+                    name = name.as_str(),
+                    calls_per_min = rpm,
+                    "client-side rate budget active for provider"
+                );
+                Arc::new(crate::rate_budget::TokenBucket::new(*rpm))
+            });
             alive.push(Arc::new(HttpEntry {
                 name,
                 url,
@@ -329,6 +354,7 @@ impl HttpRpcPool {
                 last_block: AtomicU64::new(0),
                 latency_ms_ewma: AtomicU64::new(0),
                 circuit: RwLock::new(CircuitState::default()),
+                budget,
             }));
         }
 
@@ -361,6 +387,11 @@ impl HttpRpcPool {
             crate::metrics::RPC_PROVIDER_BLOCK_HEIGHT
                 .with_label_values(&[e.name.as_str(), "http"])
                 .set(0);
+            if let Some(b) = &e.budget {
+                crate::metrics::RPC_PROVIDER_BUDGET_TOKENS
+                    .with_label_values(&[e.name.as_str(), "http"])
+                    .set(b.tokens_remaining() as i64);
+            }
         }
 
         Ok(Self {
@@ -381,8 +412,21 @@ impl HttpRpcPool {
         let mut best_clean: Option<&Arc<HttpEntry>> = None;
         let mut best_sticky: Option<&Arc<HttpEntry>> = None;
         let mut best_degraded: Option<&Arc<HttpEntry>> = None;
+        // WO-13: a pick failure where at least one entry was blocked by its
+        // client-side budget reports BudgetExhausted (not AllUnhealthy) so
+        // callers can distinguish a local throttle from provider failures.
+        let mut budget_blocked = false;
 
         for e in &self.entries {
+            // Budget gate: consultative (does NOT consume). Consumption is
+            // per-attempt in with_retry only.
+            if !budget_has_token(e) {
+                crate::metrics::RPC_PROVIDER_BUDGET_THROTTLED_TOTAL
+                    .with_label_values(&[e.name.as_str(), "http"])
+                    .inc();
+                budget_blocked = true;
+                continue;
+            }
             match e.snapshot_state() {
                 ProviderState::Open => continue,
                 ProviderState::Healthy => {
@@ -413,6 +457,7 @@ impl HttpRpcPool {
 
         match best_clean.or(best_sticky).or(best_degraded) {
             Some(e) => Ok(Arc::clone(e)),
+            None if budget_blocked => Err(PoolError::BudgetExhausted(self.chain_id)),
             None => Err(PoolError::AllUnhealthy(self.chain_id)),
         }
     }
@@ -426,48 +471,119 @@ impl HttpRpcPool {
         F: Fn(Arc<AlloyHttpProvider>) -> Fut,
         Fut: std::future::Future<Output = anyhow::Result<R>>,
     {
-        // Try 1: best provider.
+        // Try 1: best provider. WO-13: consume one budget token per ATTEMPT.
+        // A budget rejection is NOT a provider failure — no report_failure,
+        // no breaker trip, no error counter; we fall through to the backup.
         let first = self.pick()?;
-        let started = Instant::now();
-        match op(first.provider.clone()).await {
-            Ok(v) => {
-                self.report_success(&first, started.elapsed()).await;
-                return Ok(v);
-            }
-            Err(e) => {
-                let msg = format!("{e}");
-                self.report_failure(&first, &msg).await;
-                // R-0003: a rate-limited provider is screaming backpressure —
-                // back off briefly before the backup attempt instead of
-                // firing it from the same hot instant.
-                let backoff = retry_backoff_for(&msg);
-                if !backoff.is_zero() {
-                    tokio::time::sleep(backoff).await;
+        let mut provider_error_seen = false;
+        let first_acquired = match &first.budget {
+            Some(b) => {
+                let ok = b.try_acquire();
+                if ok {
+                    crate::metrics::RPC_PROVIDER_BUDGET_TOKENS
+                        .with_label_values(&[first.name.as_str(), "http"])
+                        .set(b.tokens_remaining() as i64);
+                } else {
+                    crate::metrics::RPC_PROVIDER_BUDGET_THROTTLED_TOTAL
+                        .with_label_values(&[first.name.as_str(), "http"])
+                        .inc();
+                    debug!(
+                        event = "rpc_pool.budget_throttled_attempt",
+                        chain_id = self.chain_id,
+                        name = first.name.as_str(),
+                        "try-1 skipped: client-side rate budget exhausted"
+                    );
                 }
+                ok
             }
-        }
-
-        // Try 2: any other Healthy/Degraded provider that isn't `first`.
-        let backup = self.entries.iter().find(|e| {
-            !Arc::ptr_eq(e, &first) && !matches!(e.snapshot_state(), ProviderState::Open)
-        });
-        if let Some(bk) = backup {
-            crate::metrics::RPC_POOL_FAILOVERS_TOTAL
-                .with_label_values(&[&self.chain_id.to_string()])
-                .inc();
+            None => true,
+        };
+        if first_acquired {
             let started = Instant::now();
-            match op(bk.provider.clone()).await {
+            match op(first.provider.clone()).await {
                 Ok(v) => {
-                    self.report_success(bk, started.elapsed()).await;
+                    crate::metrics::RPC_PROVIDER_REQUESTS_TOTAL
+                        .with_label_values(&[first.name.as_str(), "http", "success"])
+                        .inc();
+                    self.report_success(&first, started.elapsed()).await;
                     return Ok(v);
                 }
                 Err(e) => {
-                    self.report_failure(bk, &format!("{e}")).await;
+                    crate::metrics::RPC_PROVIDER_REQUESTS_TOTAL
+                        .with_label_values(&[first.name.as_str(), "http", "error"])
+                        .inc();
+                    provider_error_seen = true;
+                    let msg = format!("{e}");
+                    self.report_failure(&first, &msg).await;
+                    // R-0003: a rate-limited provider is screaming backpressure —
+                    // back off briefly before the backup attempt instead of
+                    // firing it from the same hot instant.
+                    let backoff = retry_backoff_for(&msg);
+                    if !backoff.is_zero() {
+                        tokio::time::sleep(backoff).await;
+                    }
                 }
             }
         }
 
-        Err(PoolError::AllUnhealthy(self.chain_id))
+        // Try 2: any other Healthy/Degraded provider that isn't `first`
+        // and still has budget (consultative check; acquire right after).
+        let backup = self.entries.iter().find(|e| {
+            !Arc::ptr_eq(e, &first)
+                && !matches!(e.snapshot_state(), ProviderState::Open)
+                && budget_has_token(e)
+        });
+        if let Some(bk) = backup {
+            let bk_acquired = match &bk.budget {
+                Some(b) => {
+                    let ok = b.try_acquire();
+                    if ok {
+                        crate::metrics::RPC_PROVIDER_BUDGET_TOKENS
+                            .with_label_values(&[bk.name.as_str(), "http"])
+                            .set(b.tokens_remaining() as i64);
+                    } else {
+                        // Race: the consultative check above just lost the
+                        // last token. Skip without touching the breaker.
+                        crate::metrics::RPC_PROVIDER_BUDGET_THROTTLED_TOTAL
+                            .with_label_values(&[bk.name.as_str(), "http"])
+                            .inc();
+                    }
+                    ok
+                }
+                None => true,
+            };
+            if bk_acquired {
+                crate::metrics::RPC_POOL_FAILOVERS_TOTAL
+                    .with_label_values(&[&self.chain_id.to_string()])
+                    .inc();
+                let started = Instant::now();
+                match op(bk.provider.clone()).await {
+                    Ok(v) => {
+                        crate::metrics::RPC_PROVIDER_REQUESTS_TOTAL
+                            .with_label_values(&[bk.name.as_str(), "http", "success"])
+                            .inc();
+                        self.report_success(bk, started.elapsed()).await;
+                        return Ok(v);
+                    }
+                    Err(e) => {
+                        crate::metrics::RPC_PROVIDER_REQUESTS_TOTAL
+                            .with_label_values(&[bk.name.as_str(), "http", "error"])
+                            .inc();
+                        provider_error_seen = true;
+                        self.report_failure(bk, &format!("{e}")).await;
+                    }
+                }
+            }
+        }
+
+        // WO-13: if the only blocker was our own rate budget (no provider
+        // actually errored), say so — callers must not negative-cache a
+        // local throttle as a provider failure.
+        if provider_error_seen {
+            Err(PoolError::AllUnhealthy(self.chain_id))
+        } else {
+            Err(PoolError::BudgetExhausted(self.chain_id))
+        }
     }
 
     /// Mark a successful call: bump EWMA latency, possibly close half-open.
@@ -983,6 +1099,48 @@ pub fn half_open_probe_is_load(cb: &CircuitState) -> bool {
     cb.half_open_pending && cb.opened_by_rate_limit
 }
 
+/// WO-13: consultative budget check — true if the entry has no budget or
+/// at least 1 token left. Does NOT consume; consumption is per-attempt in
+/// `with_retry` only.
+pub fn budget_has_token(e: &HttpEntry) -> bool {
+    e.budget
+        .as_ref()
+        .map(|b| b.tokens_remaining() >= 1)
+        .unwrap_or(true)
+}
+
+/// WO-13: parse `RPC_HTTP_RATE_BUDGETS` CSV (`name=30,other=60`, calls/min).
+/// Malformed tokens are skipped with a warn — one typo must not disarm the
+/// remaining budgets (same criterion as `parse_csv`, MC-RPC-1).
+pub fn parse_budgets(csv: &str) -> std::collections::HashMap<String, u32> {
+    let mut out = std::collections::HashMap::new();
+    for tok in csv.split(',') {
+        let tok = tok.trim();
+        if tok.is_empty() {
+            continue;
+        }
+        let Some((name, rpm)) = tok.split_once('=') else {
+            warn!(
+                event = "rpc_pool.budget_malformed",
+                token = %tok,
+                "expected name=calls_per_min"
+            );
+            continue;
+        };
+        match rpm.trim().parse::<u32>() {
+            Ok(n) if n >= 1 => {
+                out.insert(name.trim().to_string(), n);
+            }
+            _ => warn!(
+                event = "rpc_pool.budget_invalid_rpm",
+                token = %tok,
+                "calls_per_min must be an integer >= 1"
+            ),
+        }
+    }
+    out
+}
+
 /// ARBX-R-0003: the load-probe transaction — a read-only `eth_call` of
 /// `Multicall3.aggregate3([])` (`0x82ad56cb` + no args), the cheapest call
 /// that still exercises the provider's eth_call quota the same way the quoter
@@ -1148,7 +1306,16 @@ mod tests {
             last_block: AtomicU64::new(0),
             latency_ms_ewma: AtomicU64::new(0),
             circuit: RwLock::new(CircuitState::default()),
+            budget: None,
         })
+    }
+
+    /// WO-13: dummy con presupuesto agotable (2 calls/min → burst 2 tokens).
+    fn dummy_entry_budgeted(name: &str, per_minute: u32) -> Arc<HttpEntry> {
+        let e = dummy_entry(name);
+        let mut inner = Arc::try_unwrap(e).ok().unwrap();
+        inner.budget = Some(Arc::new(crate::rate_budget::TokenBucket::new(per_minute)));
+        Arc::new(inner)
     }
 
     #[tokio::test]
@@ -1187,6 +1354,102 @@ mod tests {
         pool.entries[1].set_state(ProviderState::Open);
         let err = pool.pick().unwrap_err();
         assert!(matches!(err, PoolError::AllUnhealthy(1)));
+    }
+
+    #[tokio::test]
+    async fn pick_skips_budget_exhausted_provider() {
+        // WO-13: budget agotado en "a" → pick elige "b" aunque "a" tenga
+        // mejor latencia. El breaker de "a" NO se toca (budget ≠ falla).
+        let a = dummy_entry_budgeted("a", 2);
+        let b = dummy_entry("b");
+        assert!(a.budget.as_ref().unwrap().try_acquire());
+        assert!(a.budget.as_ref().unwrap().try_acquire());
+        assert!(!a.budget.as_ref().unwrap().try_acquire());
+        let pool = HttpRpcPool {
+            chain_id: 1,
+            entries: vec![a, b],
+        };
+        pool.entries[0].latency_ms_ewma.store(10, Ordering::Relaxed);
+        pool.entries[1]
+            .latency_ms_ewma
+            .store(500, Ordering::Relaxed);
+        let picked = pool.pick().unwrap();
+        assert_eq!(picked.name, "b");
+        assert_eq!(pool.entries[0].snapshot_state(), ProviderState::Healthy);
+    }
+
+    #[tokio::test]
+    async fn pick_all_budgets_exhausted_returns_budget_exhausted() {
+        // WO-13: TODOS los proveedores con presupuesto agotado → BudgetExhausted
+        // (no AllUnhealthy): distinción que evita negative-cache y breaker-trip
+        // en los callers (contrato con WO-14).
+        let entries: Vec<_> = (0..2)
+            .map(|i| dummy_entry_budgeted(&format!("p{i}"), 1))
+            .collect();
+        for e in &entries {
+            assert!(e.budget.as_ref().unwrap().try_acquire());
+            assert!(!e.budget.as_ref().unwrap().try_acquire());
+        }
+        let pool = HttpRpcPool {
+            chain_id: 1,
+            entries,
+        };
+        let err = pool.pick().unwrap_err();
+        assert!(
+            matches!(err, PoolError::BudgetExhausted(1)),
+            "expected BudgetExhausted, got {err:?}"
+        );
+    }
+
+    #[test]
+    fn parse_budgets_valid_and_malformed() {
+        let m = parse_budgets("alchemy=60, drpc=300,,nope,zero=0,bad=abc,neg=-5");
+        assert_eq!(m.len(), 2, "only well-formed tokens survive");
+        assert_eq!(m.get("alchemy"), Some(&60));
+        assert_eq!(m.get("drpc"), Some(&300));
+        assert!(!m.contains_key("zero"));
+        assert!(!m.contains_key("bad"));
+        assert!(!m.contains_key("nope"));
+        assert!(parse_budgets("").is_empty());
+    }
+
+    #[tokio::test]
+    async fn budget_none_means_unlimited_backward_compatible() {
+        // Sin RPC_HTTP_RATE_BUDGETS los entries nacen con budget: None y pick
+        // los trata como ilimitados (backward compatibility, #600 despliegue
+        // actual sin la env).
+        let pool = HttpRpcPool {
+            chain_id: 1,
+            entries: vec![dummy_entry("a"), dummy_entry("b")],
+        };
+        for e in &pool.entries {
+            assert!(e.budget.is_none());
+            assert!(budget_has_token(e));
+        }
+        assert!(pool.pick().is_ok());
+    }
+
+    #[tokio::test]
+    async fn budget_refill_makes_provider_eligible_again() {
+        // PREVENCIÓN (requisito -61): sin ningún 429, el refill del budget
+        // devuelve al proveedor al pool — el bucket es el que gobierna, no la
+        // reacción al proveedor.
+        let a = dummy_entry_budgeted("a", 2); // 2/min → 1 token cada 30s
+        assert!(a.budget.as_ref().unwrap().try_acquire());
+        assert!(a.budget.as_ref().unwrap().try_acquire());
+        assert!(!a.budget.as_ref().unwrap().try_acquire());
+        assert!(!budget_has_token(&a));
+        a.budget
+            .as_ref()
+            .unwrap()
+            .fast_forward(Duration::from_millis(31_000));
+        assert!(budget_has_token(&a), "refill must restore eligibility");
+        let pool = HttpRpcPool {
+            chain_id: 1,
+            entries: vec![a],
+        };
+        let picked = pool.pick().unwrap();
+        assert_eq!(picked.name, "a");
     }
 
     #[tokio::test]
