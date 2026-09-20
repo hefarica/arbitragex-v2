@@ -195,13 +195,11 @@ impl WsChainClient {
                 "hashesOnly": false
             }
         ]);
-        let sub: SubscriptionStream<'_, Ws, Transaction> = timeout(
-            Duration::from_secs(15),
-            self.provider.subscribe(params),
-        )
-        .await
-        .map_err(|_| anyhow::anyhow!("subscribe timeout 15s"))?
-        .context("subscribe alchemy_pendingTransactions")?;
+        let sub: SubscriptionStream<'_, Ws, Transaction> =
+            timeout(Duration::from_secs(15), self.provider.subscribe(params))
+                .await
+                .map_err(|_| anyhow::anyhow!("subscribe timeout 15s"))?
+                .context("subscribe alchemy_pendingTransactions")?;
         info!(
             event = "chain_client.subscribed_filtered",
             chain_id = self.chain_id,
@@ -374,7 +372,9 @@ pub fn parse_idle_timeout_secs(raw: Option<&str>) -> Result<u64, String> {
                 .parse()
                 .map_err(|_| format!("invalid ARBX_SCANNER_IDLE_TIMEOUT_SECS: {s:?}"))?;
             if v == 0 {
-                return Err("ARBX_SCANNER_IDLE_TIMEOUT_SECS must be >= 1 (0 would spin-rotate)".to_string());
+                return Err(
+                    "ARBX_SCANNER_IDLE_TIMEOUT_SECS must be >= 1 (0 would spin-rotate)".to_string(),
+                );
             }
             if v > 3600 {
                 return Err("ARBX_SCANNER_IDLE_TIMEOUT_SECS must be <= 3600 (defeats the watchdog otherwise)".to_string());
@@ -487,7 +487,10 @@ mod tests {
             parse_idle_timeout_secs(None),
             Ok(DEFAULT_SCANNER_IDLE_TIMEOUT_SECS)
         );
-        assert_eq!(parse_idle_timeout_secs(Some("")), Ok(DEFAULT_SCANNER_IDLE_TIMEOUT_SECS));
+        assert_eq!(
+            parse_idle_timeout_secs(Some("")),
+            Ok(DEFAULT_SCANNER_IDLE_TIMEOUT_SECS)
+        );
         assert_eq!(parse_idle_timeout_secs(Some("90")), Ok(90));
         assert_eq!(parse_idle_timeout_secs(Some(" 45 ")), Ok(45));
         assert!(parse_idle_timeout_secs(Some("0")).is_err());
