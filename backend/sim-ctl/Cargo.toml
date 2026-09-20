@@ -35,6 +35,10 @@ simulator-v2 = { path = "../simulator-v2" }
 sim-core = { path = "../sim-core" }
 prioritization-spine = { workspace = true }
 
+# PERF-STACK WO-2 (2026-09-20): allocator de hot-path (linux prod).
+[target.'cfg(target_os = "linux")'.dependencies]
+mimalloc = "0.1"
+
 [dev-dependencies]
 # `util` exposes tower::util::ServiceExt (.oneshot) used by the /capabilities
 # handler tests in src/capabilities.rs (same pattern as math-engine's api.rs).

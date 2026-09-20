@@ -101,3 +101,13 @@ sha2          = "0.10"
 unwrap_used = "warn"
 expect_used = "warn"
 
+# ---------------------------------------------------------------------------
+# PERF-STACK WO-1 (2026-09-20): release profile canónico. lto thin + cgu 1
+# mejoran inlining del hot-path. panic=abort PROHIBIDO: tonic/tokio usan
+# catch_unwind en tests (decisión audit PERF-STACK).
+# ---------------------------------------------------------------------------
+[profile.release]
+lto = "thin"
+codegen-units = 1
+opt-level = 3
+

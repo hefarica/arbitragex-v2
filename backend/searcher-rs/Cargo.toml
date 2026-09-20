@@ -105,6 +105,11 @@ simulator-v2 = { path = "../simulator-v2" }
 # (no criterion dep): the percentile statistic IS the live telemetry kernel
 # (`latency_budget::nearest_rank`), so a bench p95 and a wire p95 are the
 # same number-shape. Run: `cargo bench --bench amount_matrix`.
+# PERF-STACK WO-2 (2026-09-20): allocator de hot-path. Solo linux (binario
+# prod corre en Debian VPS); en dev Windows no se compila.
+[target.'cfg(target_os = "linux")'.dependencies]
+mimalloc = "0.1"
+
 [[bench]]
 name = "amount_matrix"
 harness = false
