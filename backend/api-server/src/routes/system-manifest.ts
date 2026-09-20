@@ -110,6 +110,17 @@ export function mountSystemManifest(
 
   r.get("/drift", async (_req: Request, res: Response) => {
     try {
+      // R8: an empty unresolved list is only coherence if a drift engine has
+      // EVER written anything. A permanently-empty table means no producer
+      // exists (schema-drift-2026-09-20: zero writers in the codebase) — the
+      // honest verdict is NO COMPUTED, not COHERENT.
+      const c = await db.query(
+        `SELECT COUNT(*)::int AS total FROM drift_observations`,
+      );
+      if ((c.rows[0]?.total ?? 0) === 0) {
+        res.status(200).json({ drift: [], count: 0, reason: "drift_observations_no_producer" });
+        return;
+      }
       const q = await db.query(
         `SELECT *
            FROM drift_observations
