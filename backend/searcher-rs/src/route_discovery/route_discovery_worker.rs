@@ -1547,11 +1547,21 @@ async fn run_loop(
         // shadow_evaluate_intent (observe-only, never writes opps:detected) when
         // no active orchestrator is present.
         if let Some(orch) = &orchestrator {
-            for intent in tick.dispatch_intents {
+            for mut intent in tick.dispatch_intents {
+                // §30 contract: dispatcher-built intents carry no block
+                // (route_intent_dispatcher::build_intent has none) — anchor the
+                // tick's current chain block so persisted rows are never NULL
+                // and the FE semantic gate doesn't flag `missing_block`.
+                if intent.observed_block_number.is_none() && current_block > 0 {
+                    intent.observed_block_number = Some(current_block);
+                }
                 orch.spawn_cartridge_eval(intent);
             }
         } else if let Some(r) = &runner {
-            for intent in tick.dispatch_intents {
+            for mut intent in tick.dispatch_intents {
+                if intent.observed_block_number.is_none() && current_block > 0 {
+                    intent.observed_block_number = Some(current_block);
+                }
                 tokio::spawn(shadow_evaluate_intent(r.clone(), intent, chain_id));
             }
         }
