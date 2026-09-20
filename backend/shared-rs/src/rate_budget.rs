@@ -27,6 +27,7 @@ pub(crate) fn refill_to_cap(
     tokens_milli.saturating_add(refill).min(cap_milli)
 }
 
+#[derive(Debug)]
 pub struct TokenBucket {
     cap_milli: u64,
     per_minute: u32,
