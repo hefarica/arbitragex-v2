@@ -30,6 +30,18 @@ MIG_DIR="${MIGRATIONS_DIR:-/opt/arbitragex-v2/database/migrations}"
 # dev defaults only for local bootstrapping. NEVER hardcode these in an ALTER —
 # incident 2026-09-18 (flipper #2): the hardcoded ALTERs below reset arbx_rw to
 # the dev password on EVERY migration run and took the pipeline down for hours.
+# The deploy workflow invokes this script with a bare shell (no exported
+# ARBX_*_PASSWORD), while compose injects them from .env — so the ALTERs would
+# reset roles to the dev defaults and crash-loop every DB consumer (2026-09-19
+# outage, flipper #3). When the vars are unset, source the same .env compose
+# reads so migrations and services always agree on the credentials.
+if [ -z "${ARBX_RW_PASSWORD:-}" ] && [ -z "${ARBX_RW_PW:-}" ]; then
+  ENV_FILE="${ARBX_ENV_FILE:-$(cd "$(dirname "$0")/.." && pwd)/.env}"
+  if [ -f "$ENV_FILE" ]; then
+    set -a; . "$ENV_FILE"; set +a
+  fi
+fi
+
 # Variable names MUST match docker/compose.dev.yml (`ARBX_*_PASSWORD`); the
 # shorter `ARBX_*_PW` spelling stays as fallback. The 2026-09-19 outage: the
 # script read only ARBX_*_PW (unset in the deploy env) while compose injected
