@@ -1103,6 +1103,33 @@ mod tests {
         assert!(rec["net_profit_usd"].is_null());
     }
 
+    /// Deuda 4-(B): a reject stamped with the kernel's computed net must NOT
+    /// fall back to the raw detection estimate at the `net.or(expected)`
+    /// build site — this is the 99.5% "profitable label on rejected row"
+    /// mislabel fix.
+    #[test]
+    fn score_record_rejected_stamped_net_beats_stale_estimate() {
+        let mut opp = make_opp(Uuid::new_v4(), Some(5.0), None);
+        opp.net_expected_profit_usd = Some(-1.25);
+        let rec = build_score_record(
+            &opp,
+            "MEV-01-001",
+            &flat_score(),
+            None,
+            "rejected",
+            Some("NonPositiveProfit"),
+            crate::priors_cache::SectionIvFold {
+                posterior_log_odds: None,
+                calibration_applied: false,
+            },
+        );
+        assert_eq!(rec["emission_outcome"], "rejected");
+        assert_eq!(
+            rec["net_profit_usd"], -1.25,
+            "stamped computed net must win over the stale positive estimate"
+        );
+    }
+
     // ── opportunity_emitter::tests::accepted_dedupe_hit_skips_io ────────────
 
     /// The second emit with the same fingerprint must return `Deduped` and must

@@ -3,7 +3,7 @@
  *
  * setupWebSocketGateway in websocket.ts mounts an `io.use` middleware that
  * requires a valid admin token in the handshake. That means EVERY room
- * (`runtime_ack`, `convergence`, `opportunities`, `metrics`) is implicitly
+ * (`runtime_ack`, `convergence`, `opportunities`, `telemetry`) is implicitly
  * gated — a client without the token cannot even open a Socket.IO
  * connection.
  *
@@ -50,9 +50,6 @@ function startServer(): Promise<{ httpServer: HttpServer; io: IoServer; port: nu
     io.on("connection", (socket: ServerSocket) => {
       socket.on("subscribe:opportunities", () => {
         socket.join("opportunities");
-      });
-      socket.on("subscribe:metrics", () => {
-        socket.join("metrics");
       });
       socket.on("subscribe:convergence", () => {
         socket.join("convergence");
@@ -119,7 +116,6 @@ describe("OMEGA-8/M4 Fase 10 — WSS rooms admin-gate regression", () => {
       });
     });
     client.emit("subscribe:opportunities");
-    client.emit("subscribe:metrics");
     client.emit("subscribe:convergence");
     client.emit("subscribe:telemetry");
     client.emit("subscribe:route_discovery");
