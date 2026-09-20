@@ -170,9 +170,14 @@ export class RouteDiscoveryOutcomeSink {
             source_event, pool_hint, token_in, token_out, is_opportunity,
             estimated_profit, confidence, urgency, had_reserves, mode, reason)
          VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)
-         ON CONFLICT (stream_id) DO NOTHING`,
+         ON CONFLICT (stream_id, ts_ms) DO NOTHING`,
         [
           id,                       // stream_id (XADD id) — the idempotency key
+          // ts_ms (o.ts_ms) is part of the conflict target because migration 122
+          // partitions the table by ts_ms and PG requires the partition key in
+          // any UNIQUE constraint. A redelivered message replays the SAME
+          // stream_id AND ts_ms (both come from the Redis message), so
+          // at-least-once idempotency is preserved exactly.
           o.ts_ms,
           o.schema,
           o.chain_id,

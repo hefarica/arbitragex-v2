@@ -234,6 +234,32 @@ invariant is code-enforced and asserted at every boot (design D5).
 behavior-change deploy (legacy plaintext mode, warned at boot). Provisioning
 the key activates envelope writes + the boot conversion on next restart.
 
+## `122_route_discovery_outcomes_partitioned.sql` — DEUDA-3 / PERF-STACK-2026-09-20 (2026-09-20)
+
+Converts `route_discovery_outcomes` (~1.32M rows/h) to daily RANGE partitions
+on `ts_ms` (`route_discovery_outcomes_pYYYYMMDD`, exact UTC-day bounds), so
+retention becomes `DROP PARTITION` instead of WAL-heavy batched DELETEs (the
+2026-09-04 13:36Z WAL-burst incident class) and disk space returns immediately.
+
+- **Idempotency:** PG requires the partition key in any UNIQUE constraint →
+  `UNIQUE (stream_id, ts_ms)`; the sink's `ON CONFLICT` target changes to
+  `(stream_id, ts_ms)` in the same deploy (a redelivery replays both values,
+  so at-least-once semantics are preserved exactly).
+- **Conversion** (precedent `scripts/rdo_table_swap.sh`, ARBX-RETENTION-01):
+  empty partitioned clone `_p` → bounded tail copy (default 3h, tunable
+  `-v rdo_copy_tail_ms=…`) + `CHECKPOINT` pacing → atomic swap under
+  `ACCESS EXCLUSIVE` (lock_timeout from the runner's FREEZE-01 lockguard,
+  sequence detached with `OWNED BY NONE`). Legacy rows stay in
+  `route_discovery_outcomes_pre122` for operator verification, then a manual
+  `DROP TABLE` frees the disk.
+- **Rerun-safe:** `\if` gate on `pg_partitioned_table` → full no-op after
+  success; a mid-flight failure is recovered by dropping the stale `_p` clone
+  (the legacy table was never renamed — the swap is transactional).
+- **Retention:** `scripts/pg_retention.sh` §2b detects the partitioned shape,
+  pre-creates tomorrow/+2 partitions, and drops fully-expired partitions with
+  the same rollup-materialization guard as the v2 purge path (plus optional
+  zstd archive). The generic RDO DELETE loop is skipped when partitioned.
+
 ## `123_bayesian_priors_token_pair_nullable.sql` — Deuda 4 (2026-09-20)
 
 `bayesian_priors` rows are keyed by `strategy_key` (partial unique index
