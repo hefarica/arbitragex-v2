@@ -76,6 +76,37 @@ describe("applyPriceEvent (G-PRICE-1 pure transitions)", () => {
     expect(s2.seq).toBe(7);
     expect(s2.ttlSecs).toBeNull();
   });
+
+  it("applies the CEX map (BE-3.2): valid entries uppercased, garbage dropped", () => {
+    const s = applyPriceEvent(baseState, {
+      chain_id: 1,
+      prices: { WETH: 2500 },
+      count: 1,
+      ttl_secs: 60,
+      ts: "t",
+      seq: 1,
+      cex: {
+        eth: { price: 2510.25, ts_ms: 1690000000000, quote: "USDT", source: "binance_ws" },
+        bad_price: { price: -5, ts_ms: 1, quote: "USDT", source: "binance_ws" },
+        bad_shape: { price: "x" as unknown as number, ts_ms: 1, quote: "USDT", source: "binance_ws" },
+        bad_null: null,
+      },
+    });
+    expect(Object.keys(s.cex)).toEqual(["ETH"]);
+    expect(s.cex["ETH"]).toEqual({ price: 2510.25, ts_ms: 1690000000000, quote: "USDT", source: "binance_ws" });
+  });
+
+  it("keeps cex empty when the frame omits it (R10: no feed = no value, never zero)", () => {
+    const s = applyPriceEvent(baseState, {
+      chain_id: 1,
+      prices: { WETH: 2500 },
+      count: 1,
+      ttl_secs: 60,
+      ts: "t",
+      seq: 1,
+    });
+    expect(s.cex).toEqual({});
+  });
 });
 
 describe("silenceAction (EDGE-HARD-1 watchdog)", () => {

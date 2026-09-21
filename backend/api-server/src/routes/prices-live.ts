@@ -10,9 +10,11 @@
  * Contract:
  *   - `?chain_id=` REQUIRED, positive integer. Anything else → 400
  *     (fail-fast, no silent mainnet default — RULE 02 mindset).
- *   - 200 `{ chain_id, prices, count, ttl_secs, ts }` — `prices` maps
+ *   - 200 `{ chain_id, prices, count, ttl_secs, ts, cex }` — `prices` maps
  *     uppercase symbol → USD price. Empty object = hash absent/empty (R8
- *     honest: worker hasn't ticked yet, NOT a fabricated feed).
+ *     honest: worker hasn't ticked yet, NOT a fabricated feed). `cex` maps
+ *     uppercase BASE asset → Binance WS mid `{price, ts_ms, quote, source}`
+ *     (BE-3.2; `{}` = feed absent/down — never fabricated).
  *   - 503 `{ error: "redis_unavailable" }` when Redis is not configured.
  *
  * Proxied through the edge worker as GET /api/prices/live (pass-through,
@@ -37,17 +39,38 @@ export function mountPricesLive(app: Application, redis: Redis | null, logger?: 
             return;
         }
         const key = `arbx:token_prices:${rawChain}`;
+        const cexKey = `arbx:cex_prices:${rawChain}`;
         try {
             // TTL first: on a missing key HGETALL returns {} and TTL -2 — reading
             // TTL after a possible EXPIRE-refresh race would just be slightly
             // stale, which is acceptable for a worst-case staleness bound.
-            const ttl = await redis.ttl(key);
-            const raw = (await redis.hgetall(key)) as unknown as Record<string, string>;
+            const [ttl, raw, rawCex] = await Promise.all([
+                redis.ttl(key),
+                redis.hgetall(key) as unknown as Promise<Record<string, string>>,
+                redis.hgetall(cexKey) as unknown as Promise<Record<string, string>>,
+            ]);
             const prices: Record<string, number> = {};
             for (const [sym, valStr] of Object.entries(raw)) {
                 const v = Number(valStr);
                 if (Number.isFinite(v) && v > 0) {
                     prices[sym.toUpperCase()] = v;
+                }
+            }
+            // Same validation discipline as the WS bridge (prices-stream.ts).
+            const cex: Record<string, { price: number; ts_ms: number; quote: string; source: string }> = {};
+            for (const [base, jsonStr] of Object.entries(rawCex)) {
+                try {
+                    const e = JSON.parse(jsonStr) as Partial<{ price: number; ts_ms: number; quote: string; source: string }>;
+                    if (
+                        typeof e.price === "number" && Number.isFinite(e.price) && e.price > 0 &&
+                        typeof e.ts_ms === "number" && Number.isFinite(e.ts_ms) && e.ts_ms >= 0 &&
+                        typeof e.quote === "string" && e.quote.length > 0 &&
+                        typeof e.source === "string" && e.source.length > 0
+                    ) {
+                        cex[base.toUpperCase()] = { price: e.price, ts_ms: e.ts_ms, quote: e.quote, source: e.source };
+                    }
+                } catch {
+                    // Non-JSON CEX value — drop, never surface.
                 }
             }
             res.status(200).json({
@@ -56,6 +79,7 @@ export function mountPricesLive(app: Application, redis: Redis | null, logger?: 
                 count: Object.keys(prices).length,
                 ttl_secs: ttl > 0 ? ttl : null,
                 ts: new Date().toISOString(),
+                cex,
             });
         } catch (e) {
             logger?.error({ event: "prices_live.read_failed", err: (e as Error).message, chain_id: rawChain }, "prices/live Redis read failed");

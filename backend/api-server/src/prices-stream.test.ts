@@ -17,9 +17,10 @@ import { io as ioClient } from "socket.io-client";
 import type { Redis } from "ioredis";
 import { attachPriceRooms } from "./prices-stream.js";
 
-function fakeRedisFor(hash: Record<string, string>, ttl: number): Redis {
+function fakeRedisFor(hash: Record<string, string>, ttl: number, cexHash: Record<string, string> = {}): Redis {
     return {
-        hgetall: async (_key: string) => ({ ...hash }),
+        hgetall: async (key: string) =>
+            key.startsWith("arbx:cex_prices:") ? { ...cexHash } : { ...hash },
         ttl: async (_key: string) => ttl,
     } as unknown as Redis;
 }
@@ -80,6 +81,62 @@ describe("G-PRICE-1 — prices room (snapshot on subscribe)", () => {
         expect(prices["WETH"]).toBe(2500.5);
         expect(prices["USDC"]).toBe(1.0001);
         sock.close();
+    });
+
+    it("carries the CEX map validated (BE-3.2): valid entries uppercased, garbage dropped", async () => {
+        const cexHash = {
+            eth: JSON.stringify({ price: 2510.25, ts_ms: 1690000000000, quote: "USDT", source: "binance_ws" }),
+            BAD_NOT_JSON: "not-json-at-all",
+            BAD_NON_OBJECT: "12345",
+            BAD_NEG_PRICE: JSON.stringify({ price: -1, ts_ms: 1, quote: "USDT", source: "binance_ws" }),
+            BAD_MISSING_SOURCE: JSON.stringify({ price: 1.0, ts_ms: 1, quote: "USDT" }),
+        };
+        const hs = createServer();
+        const io2 = new IoServer(hs);
+        attachPriceRooms(io2, fakeRedisFor(GOOD_HASH, 42, cexHash));
+        const p2 = await new Promise<number>((resolve) => {
+            hs.listen(0, () => {
+                const addr = hs.address();
+                resolve(typeof addr === "object" && addr ? addr.port : 0);
+            });
+        });
+        const sock = ioClient(`http://127.0.0.1:${p2}`, { transports: ["websocket"] });
+        await new Promise<void>((r) => sock.on("connect", () => r()));
+        const snap = await new Promise<Record<string, unknown>>((resolve, reject) => {
+            sock.on("prices:snapshot", (e: Record<string, unknown>) => resolve(e));
+            sock.on("prices:error", (e: Record<string, unknown>) => reject(new Error(JSON.stringify(e))));
+            sock.emit("subscribe:prices", { chain_id: 1 });
+        });
+        const cex = snap["cex"] as Record<string, { price: number; ts_ms: number; quote: string; source: string }>;
+        // R8: only the valid entry survives, key uppercased.
+        expect(Object.keys(cex)).toEqual(["ETH"]);
+        expect(cex["ETH"]).toEqual({ price: 2510.25, ts_ms: 1690000000000, quote: "USDT", source: "binance_ws" });
+        sock.close();
+        await new Promise<void>((r) => io2.close(() => r()));
+        await new Promise<void>((r) => hs.close(() => r()));
+    });
+
+    it("emits cex: {} honestly when the CEX hash is absent (R8 — feed down, not fabricated)", async () => {
+        const hs = createServer();
+        const io2 = new IoServer(hs);
+        attachPriceRooms(io2, fakeRedisFor(GOOD_HASH, 42));
+        const p2 = await new Promise<number>((resolve) => {
+            hs.listen(0, () => {
+                const addr = hs.address();
+                resolve(typeof addr === "object" && addr ? addr.port : 0);
+            });
+        });
+        const sock = ioClient(`http://127.0.0.1:${p2}`, { transports: ["websocket"] });
+        await new Promise<void>((r) => sock.on("connect", () => r()));
+        const snap = await new Promise<Record<string, unknown>>((resolve, reject) => {
+            sock.on("prices:snapshot", (e: Record<string, unknown>) => resolve(e));
+            sock.on("prices:error", (e: Record<string, unknown>) => reject(new Error(JSON.stringify(e))));
+            sock.emit("subscribe:prices", { chain_id: 1 });
+        });
+        expect(snap["cex"]).toEqual({});
+        sock.close();
+        await new Promise<void>((r) => io2.close(() => r()));
+        await new Promise<void>((r) => hs.close(() => r()));
     });
 
     it("rejects a subscribe without chain_id (prices:error, no snapshot)", async () => {

@@ -18,9 +18,15 @@
  *
  * Wire contract:
  *   client → server : `subscribe:prices`  payload `{ chain_id: number }`
- *   server → client : `prices:snapshot`   `{ chain_id, prices, count, ttl_secs, ts, seq }`
+ *   server → client : `prices:snapshot`   `{ chain_id, prices, count, ttl_secs, ts, seq, cex }`
  *   server → client : `prices:update`     same shape (full-map replace)
  *   server → client : `prices:error`      `{ code, chain_id? }`
+ *
+ * BE-3.2 — `cex` carries the Binance WS bookTicker feed (separate hash
+ * `arbx:cex_prices:<chain_id>`, writer = searcher-rs binance_stream_worker).
+ * It is ADDITIVE: `prices` (on-chain tower) stays untouched and keeps on-chain
+ * precedence; `cex` maps uppercase BASE asset → mid/quote/source. An absent or
+ * empty CEX hash yields `cex: {}` (R8 honest — feed down, not fabricated).
  *
  * `seq` is a per-chain monotonic counter incremented on every broadcast —
  * clients can detect missed frames after a reconnect (snapshot resets it).
@@ -33,6 +39,8 @@ const PRICES_ROOM_PREFIX = "prices:";
 const PRICES_UPDATED_CHANNEL_PATTERN = "arbx:prices:updated:*";
 /** Redis hash key — MUST match `sharedRs::price_oracle::redis_token_prices_key`. */
 const tokenPricesKey = (chainId: number): string => `arbx:token_prices:${chainId}`;
+/** CEX feed hash — MUST match `sharedRs::price_oracle::redis_cex_prices_key`. */
+const cexPricesKey = (chainId: number): string => `arbx:cex_prices:${chainId}`;
 const roomFor = (chainId: number): string => `${PRICES_ROOM_PREFIX}${chainId}`;
 
 /** Per-chain monotonic sequence stamped on every broadcast. */
@@ -42,6 +50,16 @@ const nextSeq = (chainId: number): number => {
     seqByChain.set(chainId, n);
     return n;
 };
+
+/** Wire mirror of `sharedRs::price_oracle::CexPriceEntry`. `price` is the
+ * bookTicker mid in QUOTE units per 1 base — USDT≠USD is left explicit via
+ * `quote` (never silently converted; the reader decides). */
+export interface CexPriceWire {
+    price: number;
+    ts_ms: number;
+    quote: string;
+    source: string;
+}
 
 export interface PricesSnapshot {
     chain_id: number;
@@ -53,6 +71,8 @@ export interface PricesSnapshot {
     /** Server wall-clock ISO timestamp of the read. */
     ts: string;
     seq: number;
+    /** Uppercase BASE asset → CEX mid (Binance WS). `{}` = feed absent/down (R8). */
+    cex: Record<string, CexPriceWire>;
 }
 
 /** Parse + validate a raw `{ symbol: string }` hash into `{ symbol: number }`.
@@ -69,12 +89,37 @@ function parsePricesHash(raw: Record<string, string>): Record<string, number> {
     return out;
 }
 
+/** Parse + validate the CEX hash. Fields are `CexPriceEntry` JSON — malformed
+ * or non-finite entries are dropped (same discipline as parsePricesHash). */
+function parseCexHash(raw: Record<string, string>): Record<string, CexPriceWire> {
+    const out: Record<string, CexPriceWire> = {};
+    for (const [base, jsonStr] of Object.entries(raw)) {
+        try {
+            const e = JSON.parse(jsonStr) as Partial<CexPriceWire>;
+            if (
+                typeof e.price === "number" && Number.isFinite(e.price) && e.price > 0 &&
+                typeof e.ts_ms === "number" && Number.isFinite(e.ts_ms) && e.ts_ms >= 0 &&
+                typeof e.quote === "string" && e.quote.length > 0 &&
+                typeof e.source === "string" && e.source.length > 0
+            ) {
+                out[base.toUpperCase()] = { price: e.price, ts_ms: e.ts_ms, quote: e.quote, source: e.source };
+            }
+        } catch {
+            // Non-JSON value in the CEX hash — drop, never surface.
+        }
+    }
+    return out;
+}
+
 /** Read the canonical hash and build the snapshot payload. `null` ttl means
  * the key does not exist (worker hasn't ticked yet / expired). */
 async function buildSnapshot(cmdRedis: Redis, chainId: number): Promise<PricesSnapshot> {
     const key = tokenPricesKey(chainId);
-    const raw = (await cmdRedis.hgetall(key)) as unknown as Record<string, string>;
-    const ttl = await cmdRedis.ttl(key);
+    const [raw, ttl, rawCex] = await Promise.all([
+        cmdRedis.hgetall(key) as unknown as Promise<Record<string, string>>,
+        cmdRedis.ttl(key),
+        cmdRedis.hgetall(cexPricesKey(chainId)) as unknown as Promise<Record<string, string>>,
+    ]);
     const prices = parsePricesHash(raw);
     return {
         chain_id: chainId,
@@ -83,6 +128,7 @@ async function buildSnapshot(cmdRedis: Redis, chainId: number): Promise<PricesSn
         ttl_secs: ttl > 0 ? ttl : null,
         ts: new Date().toISOString(),
         seq: nextSeq(chainId),
+        cex: parseCexHash(rawCex),
     };
 }
 

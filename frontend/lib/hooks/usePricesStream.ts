@@ -23,6 +23,15 @@ import { useEffect, useRef, useState, useCallback, startTransition } from "react
 import { io } from "socket.io-client";
 import { getWsBaseUrl } from "@/lib/api-client";
 
+/** CEX mid entry — wire mirror of api-server `CexPriceWire` (Binance WS
+ * bookTicker). `price` is in QUOTE units per 1 base (USDT≠USD stays explicit). */
+export interface CexPriceEntry {
+  price: number;
+  ts_ms: number;
+  quote: string;
+  source: string;
+}
+
 /** Server wire shape — must match api-server `PricesSnapshot` (prices-stream.ts). */
 export interface PricesEvent {
   chain_id: number;
@@ -31,6 +40,8 @@ export interface PricesEvent {
   ttl_secs: number | null;
   ts: string;
   seq: number;
+  /** Optional: older servers / degraded frames omit it (R8 → stays empty). */
+  cex?: Record<string, CexPriceEntry>;
 }
 
 export type PricesStatus = "CONNECTING" | "LIVE" | "STALE" | "POLLING";
@@ -39,6 +50,9 @@ export interface PricesState {
   prices: Record<string, number>;
   /** Previous map — lets the ticker paint per-symbol direction (▲/▼). */
   prevPrices: Record<string, number>;
+  /** Uppercase BASE asset → CEX mid (Binance WS). `{}` = no CEX feed (R10:
+   * callers render NO value, never zero). */
+  cex: Record<string, CexPriceEntry>;
   ts: string | null;
   ttlSecs: number | null;
   seq: number;
@@ -47,6 +61,7 @@ export interface PricesState {
 export const EMPTY_PRICES_STATE: PricesState = {
   prices: {},
   prevPrices: {},
+  cex: {},
   ts: null,
   ttlSecs: null,
   seq: 0,
@@ -70,9 +85,32 @@ export function applyPriceEvent(prev: PricesState, evt: unknown): PricesState {
       clean[sym.toUpperCase()] = v;
     }
   }
+  // CEX map: optional field — absent/invalid entries are dropped, never
+  // defaulted. R10: no feed = empty object, the caller renders nothing.
+  const cex: Record<string, CexPriceEntry> = {};
+  if (e.cex !== null && typeof e.cex === "object") {
+    for (const [base, raw] of Object.entries(e.cex)) {
+      const entry = raw as Partial<CexPriceEntry> | null;
+      if (
+        entry !== null && typeof entry === "object" &&
+        typeof entry.price === "number" && Number.isFinite(entry.price) && entry.price > 0 &&
+        typeof entry.ts_ms === "number" && Number.isFinite(entry.ts_ms) && entry.ts_ms >= 0 &&
+        typeof entry.quote === "string" && entry.quote.length > 0 &&
+        typeof entry.source === "string" && entry.source.length > 0
+      ) {
+        cex[base.toUpperCase()] = {
+          price: entry.price,
+          ts_ms: entry.ts_ms,
+          quote: entry.quote,
+          source: entry.source,
+        };
+      }
+    }
+  }
   return {
     prices: clean,
     prevPrices: prev.prices,
+    cex,
     ts: typeof e.ts === "string" ? e.ts : prev.ts,
     ttlSecs: typeof e.ttl_secs === "number" ? e.ttl_secs : null,
     seq: typeof e.seq === "number" ? e.seq : prev.seq,
