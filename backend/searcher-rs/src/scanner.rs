@@ -2270,8 +2270,9 @@ async fn decode_and_score_tx<'a>(
     // Cascade price oracle: fetch the latest live snapshot from Redis hash
     // `arbx:token_prices:<chain>` (populated every 30s by `price_worker`).
     // The cascade then resolves token USD prices in this priority:
+    //   tier 0: fused PriceBus (Binance WS + Chainlink anchors, WO-PC7(c))
     //   tier 1: this snapshot (Alchemy → Coingecko fallback, sub-30s old)
-    //   tier 2: ConfigPriceOracle (operator manual + stables + base)
+    //   tier 2: ConfigPriceOracle (operator manual + base)
     //   miss   → None → RejectReason::UnknownTokenPrice (R8 fail-honest)
     //
     // Empty snapshot (Redis miss / worker not yet ticked) is fine — cascade
@@ -2301,13 +2302,19 @@ async fn decode_and_score_tx<'a>(
         use shared_rs::price_oracle::{
             CascadePriceOracle, ConfigPriceOracle, PriceOracle, RedisCachedPriceOracle,
         };
-        // The two oracles are different concrete types, so each box must be
-        // coerced to the trait object explicitly (the `vec!` element type is
-        // fixed by the first element otherwise).
-        let live: Box<dyn PriceOracle + Send + Sync> =
-            Box::new(RedisCachedPriceOracle::from_snapshot(snapshot_map.clone()));
-        let cfg_oracle: Box<dyn PriceOracle + Send + Sync> = Box::new(ConfigPriceOracle::new(&cfg));
-        let cascade = CascadePriceOracle::new(vec![live, cfg_oracle]);
+        // WO-PC7(c) — tier 0: the fused price bus (Binance bookTicker speed
+        // verified against Chainlink anchors; frozen pairs serve None so the
+        // cascade falls through fail-honest). Tiers are different concrete
+        // types, so each box is coerced to the trait object explicitly.
+        let mut tiers: Vec<Box<dyn PriceOracle + Send + Sync>> = Vec::new();
+        if let Some(bus) = crate::price_bus_global::get() {
+            tiers.push(Box::new(shared_rs::price_bus::BusPriceOracle(bus)));
+        }
+        tiers.push(Box::new(RedisCachedPriceOracle::from_snapshot(
+            snapshot_map.clone(),
+        )));
+        tiers.push(Box::new(ConfigPriceOracle::new(&cfg)));
+        let cascade = CascadePriceOracle::new(tiers);
         let token_in_price = cascade.price_usd(&token_in_for_gate);
         // ETH price for gas-cost conversion. `WETH`/`ETH` resolve via the cascade
         // (live snapshot, then the operator's base token price).

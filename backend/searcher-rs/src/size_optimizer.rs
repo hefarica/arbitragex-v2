@@ -1997,7 +1997,9 @@ fn resolve_token_price(state: &TradingConfigState, symbol: &str) -> Option<f64> 
             return Some(p);
         }
     }
-    // Fall back to base_token_price_usd for WETH.
+    // Fall back to base_token_price_usd for WETH. Stables have NO $1.00
+    // shortcut (WO-PC4): the map lookup above already covered them — an
+    // unpriced stable is None (R8), never parity.
     match sym_upper.as_str() {
         "WETH" => {
             if state.base_token_price_usd > 0.0 {
@@ -2006,7 +2008,6 @@ fn resolve_token_price(state: &TradingConfigState, symbol: &str) -> Option<f64> 
                 None
             }
         }
-        "USDC" | "USDT" | "DAI" => Some(1.0),
         _ => None,
     }
 }

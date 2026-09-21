@@ -131,6 +131,7 @@ mod hot_seed_mask;
 mod latency_budget;
 #[allow(dead_code)]
 mod pair_index;
+mod price_bus_global;
 #[allow(dead_code)]
 mod quote_anchor_runtime;
 #[allow(dead_code)]
@@ -824,6 +825,18 @@ async fn main() -> anyhow::Result<()> {
     // before (Alchemy/Coingecko/Config cascade). Read-only; no signing.
     let price_db = db_pool.clone();
     let price_rpc_url = workers::price_worker::rpc_http_url_from_env(primary_chain);
+    // WO-PC7(a) — process price bus (fused Binance bookTicker + Chainlink
+    // anchors). One connection to Binance combined streams (bookTicker always;
+    // depth5@100ms application gated by the `binance_depth5` runtime toggle,
+    // default ON). The bus becomes tier 0 of the scanner cascade and its fused
+    // prices take max precedence in the worker's persisted snapshot (PC7(b)).
+    let price_bus = price_bus_global::init();
+    let binance_ws_redis = redis_conn.clone();
+    let binance_ws_bus = price_bus.clone();
+    tokio::spawn(async move {
+        workers::binance_ws::run(binance_ws_bus, binance_ws_redis).await;
+    });
+    let price_bus_for_worker = price_bus;
     tokio::spawn(async move {
         let mut cfg = workers::price_worker::PriceWorkerConfig::new(
             price_chain,
@@ -847,6 +860,7 @@ async fn main() -> anyhow::Result<()> {
             );
         }
         cfg.coingecko_api_key = price_coingecko_key;
+        cfg = cfg.with_price_bus(price_bus_for_worker);
         match workers::price_worker::PriceWorker::new(cfg) {
             Ok(worker) => worker.run(price_redis).await,
             Err(e) => warn!(event = "price_worker.boot_failed", chain_id = price_chain, error = %e),

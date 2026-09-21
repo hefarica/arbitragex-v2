@@ -112,6 +112,14 @@ fn unix_now_ms() -> u64 {
         .unwrap_or(0)
 }
 
+/// Wall-clock epoch nanoseconds for bus `recv_ns` fields.
+fn unix_now_ns() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos() as u64)
+        .unwrap_or(0)
+}
+
 /// Exponential backoff circuit breaker for ONE price provider
 /// (WO-PRICE-SOVEREIGN-01 f1). Replaces the fixed CG429-01 Coingecko window
 /// and extends the same protection to Alchemy, whose 429s were being
@@ -405,7 +413,7 @@ pub fn rpc_http_url_from_env(chain_id: u64) -> Option<String> {
 }
 
 /// Configuration. Operator-tunable knobs at boot; nothing varies per tick.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct PriceWorkerConfig {
     pub chain_id: u64,
     pub period: Duration,
@@ -426,6 +434,11 @@ pub struct PriceWorkerConfig {
     /// otherwise it is skipped (Chainlink prices = none, cascade falls through).
     pub db_pool: Option<sqlx::postgres::PgPool>,
     pub rpc_http_url: Option<String>,
+    /// WO-PC3/WO-PC7(b) — process price bus. When attached, `fetch_chainlink`
+    /// publishes each anchor to the bus (fused with Binance bookTicker), and
+    /// `run_one_tick` lets fused bus prices override the provider cascade
+    /// before persisting. `None` in tests / when the bus is not booted.
+    pub price_bus: Option<std::sync::Arc<shared_rs::price_bus::PriceBus>>,
 }
 
 impl PriceWorkerConfig {
@@ -439,6 +452,7 @@ impl PriceWorkerConfig {
             coingecko_api_key: None,
             db_pool: None,
             rpc_http_url: None,
+            price_bus: None,
         }
     }
 
@@ -447,6 +461,34 @@ impl PriceWorkerConfig {
         self.db_pool = Some(db_pool);
         self.rpc_http_url = Some(rpc_http_url);
         self
+    }
+
+    /// WO-PC3 — attach the process price bus for anchor publication and
+    /// fused-price precedence (WO-PC7(b)).
+    pub fn with_price_bus(mut self, bus: std::sync::Arc<shared_rs::price_bus::PriceBus>) -> Self {
+        self.price_bus = Some(bus);
+        self
+    }
+}
+
+impl std::fmt::Debug for PriceWorkerConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // PriceBus is not Debug (lock-free internals); print presence only.
+        f.debug_struct("PriceWorkerConfig")
+            .field("chain_id", &self.chain_id)
+            .field("period", &self.period)
+            .field(
+                "alchemy_api_key",
+                &self.alchemy_api_key.as_ref().map(|_| "<redacted>"),
+            )
+            .field(
+                "coingecko_api_key",
+                &self.coingecko_api_key.as_ref().map(|_| "<redacted>"),
+            )
+            .field("db_pool", &self.db_pool.as_ref().map(|_| "<set>"))
+            .field("rpc_http_url", &self.rpc_http_url)
+            .field("price_bus", &self.price_bus.as_ref().map(|_| "<attached>"))
+            .finish()
     }
 }
 
@@ -599,6 +641,7 @@ impl PriceWorker {
                         chainlink_hits = stats.chainlink_hits,
                         alchemy_hits = stats.alchemy_hits,
                         coingecko_hits = stats.coingecko_hits,
+                        bus_fused_hits = stats.bus_fused_hits,
                         cache_misses = stats.cache_misses,
                         attempted = stats.attempted,
                         elapsed_ms = stats.elapsed_ms,
@@ -636,6 +679,7 @@ impl PriceWorker {
             // No allowlist tokens for the external APIs, but Chainlink prices (if
             // any) are still worth persisting so the cascade can serve them.
             if !prices.is_empty() {
+                self.fuse_bus_prices(&mut prices);
                 self.persist_prices(redis, &prices).await?;
             } else {
                 debug!(
@@ -772,6 +816,10 @@ impl PriceWorker {
             .price_cache_misses
             .fetch_add(cache_misses as u64, Ordering::Relaxed);
 
+        // WO-PC7(b): fused bus prices (Binance + Chainlink) override the
+        // provider cascade before persistence (R8 as in the empty-tokens path).
+        let bus_fused_hits = self.fuse_bus_prices(&mut prices);
+
         // Persist whatever we have (R8: empty results are NOT written; tokens
         // missing from `prices` simply don't get a Redis entry, letting the
         // cascade fall through honestly).
@@ -784,6 +832,7 @@ impl PriceWorker {
             chainlink_hits,
             alchemy_hits,
             coingecko_hits,
+            bus_fused_hits,
             cache_misses,
             elapsed_ms: started.elapsed().as_millis() as u64,
         })
@@ -1110,7 +1159,7 @@ impl PriceWorker {
             }
         };
         for (token_addr, oracle_addr, decimals) in rows {
-            let raw = match self.eth_call_latest_answer(rpc_url, &oracle_addr).await {
+            let (raw, updated_at) = match self.eth_call_latest_answer(rpc_url, &oracle_addr).await {
                 Some(v) => v,
                 None => continue,
             };
@@ -1133,6 +1182,18 @@ impl PriceWorker {
                     continue;
                 }
             };
+            // WO-PC3 — publish the anchor to the price bus so the fuser can
+            // verify Binance bookTicker against it (freeze latch on divergence).
+            if let Some(bus) = self.cfg.price_bus.as_ref() {
+                bus.update_anchor(
+                    &symbol,
+                    shared_rs::price_bus::Anchor {
+                        answer: price,
+                        updated_at,
+                        recv_ns: unix_now_ns(),
+                    },
+                );
+            }
             out.insert(symbol, price);
         }
         if !out.is_empty() {
@@ -1146,10 +1207,50 @@ impl PriceWorker {
         out
     }
 
+    /// WO-PC7(b) — let fused bus prices (Binance speed + Chainlink truth)
+    /// take MAX precedence over the provider cascade before persistence.
+    /// Verdict handling (R8 fail-honest):
+    ///   - fused `Some(p)`  → overwrite the provider price with `p`
+    ///   - `DivergenceFrozen` → the pair is frozen (band breach); WITHDRAW the
+    ///     symbol from this tick's snapshot entirely — persisting an
+    ///     unverified provider value while the fuser distrusts the market
+    ///     would be silent fabrication, so the cascade must reject instead
+    ///   - other `None` verdicts → bus has no view; keep the provider price
+    ///
+    /// Returns the number of symbols the bus overrode.
+    fn fuse_bus_prices(&self, prices: &mut HashMap<String, f64>) -> usize {
+        let Some(bus) = self.cfg.price_bus.as_ref() else {
+            return 0;
+        };
+        let view = bus.view();
+        let mut fused = 0usize;
+        let symbols: Vec<String> = prices.keys().cloned().collect();
+        for sym in symbols {
+            match view.price_with_verdict(&sym) {
+                (Some(p), _) => {
+                    prices.insert(sym, p);
+                    fused += 1;
+                }
+                (None, shared_rs::price_bus::Verdict::DivergenceFrozen) => {
+                    prices.remove(&sym);
+                    debug!(
+                        event = "price_worker.bus_frozen",
+                        chain_id = self.cfg.chain_id,
+                        symbol = %sym,
+                        "divergence band frozen — symbol withheld from snapshot this tick (R8)"
+                    );
+                }
+                (None, _) => {}
+            }
+        }
+        fused
+    }
+
     /// `eth_call latestRoundData()` on a Chainlink aggregator; returns the raw
-    /// `answer` (feed units, pre-decimals) as f64. Read-only JSON-RPC via the
-    /// worker's reqwest client. `None` on any RPC / parse failure (fail-honest).
-    async fn eth_call_latest_answer(&self, rpc_url: &str, oracle_addr: &str) -> Option<f64> {
+    /// `answer` (feed units, pre-decimals) and the round's `updated_at`
+    /// (epoch seconds). Read-only JSON-RPC via the worker's reqwest client.
+    /// `None` on any RPC / parse failure (fail-honest).
+    async fn eth_call_latest_answer(&self, rpc_url: &str, oracle_addr: &str) -> Option<(f64, u64)> {
         let body = serde_json::json!({
             "jsonrpc": "2.0",
             "id": 1,
@@ -1175,15 +1276,19 @@ impl PriceWorker {
         };
         let result_hex = parsed.get("result")?.as_str()?;
         let hex = result_hex.strip_prefix("0x").unwrap_or(result_hex);
-        // 5 × 32-byte words; `answer` = word[1] (hex chars 64..128). The USD price
-        // fits within u128, so parse its low 16 bytes (chars 96..128). Chainlink USD
-        // answers are positive, so treating the word as unsigned is correct here.
-        if hex.len() < 128 {
+        // 5 × 32-byte words; `answer` = word[1] (hex chars 64..128), `updatedAt`
+        // = word[3] (hex chars 192..256). The USD price fits within u128, so
+        // parse the low 16 bytes of each word (chars 96..128 / 224..256).
+        // Chainlink USD answers are positive and timestamps are unsigned, so
+        // treating the words as unsigned is correct here.
+        if hex.len() < 256 {
             return None;
         }
         let answer_low = &hex[96..128];
         let raw = u128::from_str_radix(answer_low, 16).ok()?;
-        Some(raw as f64)
+        let updated_low = &hex[224..256];
+        let updated_at = u128::from_str_radix(updated_low, 16).ok()? as u64;
+        Some((raw as f64, updated_at))
     }
 
     async fn persist_prices(
@@ -1233,6 +1338,9 @@ pub struct TickStats {
     pub chainlink_hits: usize,
     pub alchemy_hits: usize,
     pub coingecko_hits: usize,
+    /// WO-PC7(b) — symbols whose persisted price came from the fused bus
+    /// (Binance bookTicker verified against the Chainlink anchor).
+    pub bus_fused_hits: usize,
     pub cache_misses: usize,
     pub elapsed_ms: u64,
 }
