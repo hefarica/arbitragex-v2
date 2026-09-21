@@ -94,7 +94,8 @@ use std::{sync::Arc, time::Duration};
 use tracing::{debug, error, info, warn};
 
 use crate::chain_client::{
-    is_alchemy_endpoint, parse_extra_allowlist_from_env, MempoolMode, WsChainClient,
+    idle_timeout_from_env, is_alchemy_endpoint, parse_extra_allowlist_from_env, MempoolMode,
+    WsChainClient,
 };
 use crate::engines::cross_chain_bridge_engine::CrossChainBridgeEngine;
 use crate::engines::dex_engine::DexEngine;
@@ -1221,6 +1222,17 @@ async fn detection_loop(
         "mempool coverage mode resolved from ARBX_MEMPOOL_MODE"
     );
 
+    // SCANNER-STALL-01 (2026-09-20): the pending-tx loops consume through
+    // `next_item_with_idle` so a silently-dead WS subscription surfaces as a
+    // bounded error (rotation) instead of an eternal blind stall.
+    let idle_timeout = idle_timeout_from_env();
+    info!(
+        event = "scanner.idle_watchdog_armed",
+        chain_id,
+        idle_timeout_secs = idle_timeout.as_secs(),
+        "subscription idle watchdog armed (ARBX_SCANNER_IDLE_TIMEOUT_SECS)"
+    );
+
     // `Disabled` short-circuits the WS connect loop entirely — block-based
     // workers (PoolSync / Triangular / Flashloan / Liquidation) carry detection.
     if mempool_mode == MempoolMode::Disabled {
@@ -1312,6 +1324,7 @@ async fn detection_loop(
             orch_mode,
             simulator_v2.as_ref(),
             decimals_provider.as_ref(),
+            idle_timeout,
         )
         .await
         {
@@ -1342,6 +1355,70 @@ async fn sleep_with_backoff(backoff_ms: &mut u64) {
     *backoff_ms = (*backoff_ms * 2).min(30_000);
 }
 
+/// SCANNER-STALL-01 (2026-09-20): race `stream.next()` against an idle
+/// deadline. The ethers internal WS manager retries its own reconnects at
+/// 5-minute intervals for ~30 minutes before closing the stream — during that
+/// window `stream.next()` stays pending forever and detection_loop is blind
+/// (pending_received=0, no error, no rotation; incident 19:20→20:31). This
+/// converts the silent stall into a bounded `Err` so the existing provider
+/// rotation takes over. `Ok(None)` = stream genuinely ended (caller bails with
+/// its usual "stream ended" error).
+async fn next_item_with_idle<S, T>(stream: &mut S, idle: Duration) -> anyhow::Result<Option<T>>
+where
+    S: futures_util::Stream<Item = T> + Unpin,
+{
+    match tokio::time::timeout(idle, stream.next()).await {
+        Err(_) => {
+            warn!(
+                event = "scanner.subscription_idle",
+                idle_secs = idle.as_secs(),
+                "pending-tx stream silent beyond watchdog; forcing provider rotation"
+            );
+            anyhow::bail!("pending tx stream idle watchdog fired")
+        }
+        Ok(v) => Ok(v),
+    }
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used)]
+mod watchdog_tests {
+    use super::*;
+    use futures_util::stream;
+
+    #[tokio::test]
+    async fn idle_watchdog_fires_on_silent_stream() {
+        let mut s = stream::pending::<u32>();
+        let started = std::time::Instant::now();
+        let res: anyhow::Result<Option<u32>> =
+            next_item_with_idle(&mut s, Duration::from_millis(50)).await;
+        assert!(res.is_err());
+        assert!(started.elapsed() < Duration::from_secs(1));
+    }
+
+    #[tokio::test]
+    async fn idle_watchdog_passes_items_through() {
+        let mut s = stream::iter(vec![1u32, 2, 3]);
+        let a = next_item_with_idle(&mut s, Duration::from_secs(5))
+            .await
+            .unwrap();
+        let b = next_item_with_idle(&mut s, Duration::from_secs(5))
+            .await
+            .unwrap();
+        assert_eq!(a, Some(1));
+        assert_eq!(b, Some(2));
+    }
+
+    #[tokio::test]
+    async fn idle_watchdog_reports_ended_stream() {
+        let mut s = stream::empty::<u32>();
+        let res = next_item_with_idle(&mut s, Duration::from_secs(5))
+            .await
+            .unwrap();
+        assert_eq!(res, None);
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 async fn run_subscription<'a>(
     client: &WsChainClient,
@@ -1357,6 +1434,7 @@ async fn run_subscription<'a>(
     orch_mode: OrchestratorMode,
     simulator_v2: ScannerSimulatorV2Ref<'a>,
     decimals_provider: ScannerDecimalsProviderRef<'a>,
+    idle_timeout: Duration,
 ) -> anyhow::Result<()> {
     let _ = killswitch; // reserved: kill-switch only blocks downstream execution
 
@@ -1418,7 +1496,13 @@ async fn run_subscription<'a>(
                         chain_id = client.chain_id,
                         allowlist_size = allowlist.len()
                     );
-                    while let Some(tx) = stream.next().await {
+                    // SCANNER-STALL-01: never consume without the idle watchdog.
+                    loop {
+                        let tx = match next_item_with_idle(&mut stream, idle_timeout).await {
+                            Ok(Some(tx)) => tx,
+                            Ok(None) => anyhow::bail!("filtered pending tx stream ended"),
+                            Err(e) => return Err(e),
+                        };
                         if let Err(e) = process_pending_tx(
                             client,
                             tx,
@@ -1438,7 +1522,6 @@ async fn run_subscription<'a>(
                             debug!(event = "scanner.process_err", error = %e);
                         }
                     }
-                    anyhow::bail!("filtered pending tx stream ended");
                 }
                 Err(e) => {
                     warn!(
@@ -1463,7 +1546,13 @@ async fn run_subscription<'a>(
         mode = "firehose"
     );
 
-    while let Some(hash) = stream.next().await {
+    // SCANNER-STALL-01: never consume without the idle watchdog.
+    loop {
+        let hash = match next_item_with_idle(&mut stream, idle_timeout).await {
+            Ok(Some(hash)) => hash,
+            Ok(None) => anyhow::bail!("pending tx stream ended"),
+            Err(e) => return Err(e),
+        };
         if let Err(e) = process_pending(
             client,
             hash,
@@ -1483,7 +1572,6 @@ async fn run_subscription<'a>(
             debug!(event = "scanner.process_err", hash = %hash, error = %e);
         }
     }
-    anyhow::bail!("pending tx stream ended")
 }
 
 #[allow(clippy::too_many_arguments)]
