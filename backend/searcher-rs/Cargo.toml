@@ -45,6 +45,9 @@ sim-core = { workspace = true, default-features = false }
 math-engine = { workspace = true }
 async-trait.workspace = true
 arc-swap = "1"
+# PRECIO-CANONICO-CEX WO-PC2: Binance combined-streams WS client. 0.20.x
+# unifies with the tungstenite 0.20.1 already in the lockfile (via ethers).
+tokio-tungstenite = { version = "0.20", features = ["rustls-tls-webpki-roots"] }
 # Phase 1 route-discovery: parse config/strategies/route_applicability.yaml at
 # boot (fail-safe to embedded safe defaults when absent/invalid).
 serde_yaml = "0.9"
