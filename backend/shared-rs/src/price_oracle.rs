@@ -2,13 +2,14 @@
 //!
 //! Replaces the buggy `TradingConfigState::profit_token_to_usd(amount)` which
 //! treated every token as base-token-priced (BUG-2, see anti_reincidencia.md
-//! Incidente #7). The oracle resolves prices by token symbol with three
+//! Incidente #7). The oracle resolves prices by token symbol with two
 //! priority tiers, then fails honestly:
 //!
 //!   1. Match `config.base_token_symbol` (case-insensitive) → `base_token_price_usd`
 //!   2. Lookup in `config.token_prices_usd` map (operator-managed override)
-//!   3. Hardcoded consensus stablecoin list → $1.00
-//!   4. Otherwise → `None` (caller MUST reject — no fabricated default)
+//!   3. Otherwise → `None` (caller MUST reject — no fabricated default, and
+//!      NO stablecoin $1.00 shortcut: stables resolve through the same live
+//!      cascade as everything else, WO-PC4)
 //!
 //! The trait abstraction lets future implementations swap to Chainlink,
 //! TWAP, or external feeds without touching callers in the spine.
@@ -21,7 +22,8 @@
 use crate::trading_config::TradingConfigState;
 use std::collections::HashMap;
 
-/// Hard-coded set of widely-trusted stablecoins valued at $1.00 by default.
+/// Widely-trusted stablecoins. NO default $1.00 is attached to membership
+/// (WO-PC4); classification only drives staleness windows and risk filters.
 /// Matching is case-insensitive. The set itself lives in ONE place —
 /// `chains::STABLECOINS_MAINNET` — and this fn delegates to
 /// `chains::is_stablecoin_symbol` (STABLEARR-11: no scattered per-site
@@ -53,8 +55,8 @@ pub trait PriceOracle {
 }
 
 /// Default oracle backed by `TradingConfigState`. Resolves base token, then
-/// operator-supplied token prices, then hardcoded stablecoin defaults.
-/// Returns `None` for any unknown symbol or hex address.
+/// operator-supplied token prices. Returns `None` for any unknown symbol or
+/// hex address — stablecoins included (no $1.00 default, WO-PC4).
 pub struct ConfigPriceOracle<'a> {
     config: &'a TradingConfigState,
 }
@@ -79,20 +81,16 @@ impl<'a> PriceOracle for ConfigPriceOracle<'a> {
 
         // Tier 2 — operator-managed map. Case-insensitive lookup; the operator
         // may store keys in any case ("WBTC", "wbtc", "WbTc") — all match.
+        // Stables resolve here too when the operator supplies a price — they
+        // are NEVER hardcoded (WO-PC4): a stable pegged at $0.97 must be
+        // rejected/priced as such, not silently served as $1.00.
         for (sym, price) in self.config.token_prices_usd.iter() {
             if sym.to_ascii_uppercase() == upper {
                 return Some(*price);
             }
         }
 
-        // Tier 3 — hardcoded stablecoin defaults at $1.00. Operator can
-        // override any of these by adding the symbol to `token_prices_usd`
-        // (Tier 2 takes precedence — checked above).
-        if is_known_stablecoin(&upper) {
-            return Some(1.0);
-        }
-
-        // Tier 4 — fail-honest. No fabricated default.
+        // Tier 3 — fail-honest. No fabricated default (not even for stables).
         None
     }
 }
@@ -106,10 +104,10 @@ impl<'a> PriceOracle for ConfigPriceOracle<'a> {
 ///   1. `RedisCachedPriceOracle` — sub-ms snapshot of `arbx:token_prices:1`,
 ///      populated every 30s by `searcher-rs::workers::price_worker` from
 ///      Alchemy Token Prices + Coingecko fallback.
-///   2. `ConfigPriceOracle` — operator's manual overrides + base token +
-///      hardcoded stablecoins. Last-resort fallback when no live source
-///      has a price (e.g. brand-new token, both feeds down, boot before
-///      first worker tick).
+///   2. `ConfigPriceOracle` — operator's manual overrides + base token.
+///      Last-resort fallback when no live source has a price (e.g. brand-new
+///      token, both feeds down, boot before first worker tick). Stablecoins
+///      are NOT special-cased here (WO-PC4).
 ///   3. (no third tier) — falls through to `None` → `RejectReason::UnknownTokenPrice`.
 ///
 /// **Doctrine**: cascading does NOT hide failure. If every tier returns
@@ -367,23 +365,25 @@ mod tests {
     }
 
     #[test]
-    fn defaults_known_stablecoins_to_one_dollar() {
+    fn stablecoins_have_no_hardcoded_default() {
+        // WO-PC4: stables resolve through the SAME multi-source cascade as
+        // everything else — never a fabricated $1.00 (a depegging stable must
+        // surface as unpriced/rejected, not as parity).
         let c = cfg_with_prices(HashMap::new());
         let oracle = ConfigPriceOracle::new(&c);
-        assert_eq!(oracle.price_usd("USDC"), Some(1.0));
-        assert_eq!(oracle.price_usd("usdt"), Some(1.0));
-        assert_eq!(oracle.price_usd("DAI"), Some(1.0));
-        assert_eq!(oracle.price_usd("FRAX"), Some(1.0));
-        assert_eq!(oracle.price_usd("PYUSD"), Some(1.0));
-        assert_eq!(oracle.price_usd("LUSD"), Some(1.0));
+        assert_eq!(oracle.price_usd("USDC"), None);
+        assert_eq!(oracle.price_usd("usdt"), None);
+        assert_eq!(oracle.price_usd("DAI"), None);
+        assert_eq!(oracle.price_usd("FRAX"), None);
+        assert_eq!(oracle.price_usd("PYUSD"), None);
+        assert_eq!(oracle.price_usd("LUSD"), None);
     }
 
     #[test]
-    fn operator_override_takes_precedence_over_stablecoin_default() {
+    fn operator_override_prices_stables_explicitly() {
         // Defensive use case: operator wants to model a temporary depeg.
         // E.g. FRAX trading at $0.985 during stress — operator sets it
-        // explicitly so opportunity sizing reflects reality, not the
-        // optimistic $1 default.
+        // explicitly so opportunity sizing reflects reality.
         let mut prices = HashMap::new();
         prices.insert("FRAX".into(), 0.985);
         let c = cfg_with_prices(prices);
@@ -510,8 +510,8 @@ mod tests {
     #[test]
     fn cascade_preserves_config_oracle_internal_priority() {
         // The cascade does NOT flatten internal priorities of its inner oracles.
-        // ConfigPriceOracle's tier 2 (operator override) wins over tier 3
-        // (stablecoin default) INSIDE that oracle — cascade just composes oracles.
+        // ConfigPriceOracle's tier 2 (operator override) is the last tier INSIDE
+        // that oracle — cascade just composes oracles.
         let mut prices = HashMap::new();
         prices.insert("FRAX".into(), 0.985); // operator depeg override
         let cfg = cfg_with_prices(prices);
@@ -523,9 +523,9 @@ mod tests {
     #[test]
     fn cascade_with_realistic_two_tier_layout() {
         // Production layout: tier 1 = cache snapshot (background-fetched live
-        // prices), tier 2 = ConfigPriceOracle (operator overrides + stablecoins
-        // + base token). The cache wins when populated; falls through to
-        // operator config when the cache misses.
+        // prices), tier 2 = ConfigPriceOracle (operator overrides + base
+        // token). The cache wins when populated; falls through to operator
+        // config when the cache misses.
         let mut cache = HashMap::new();
         cache.insert("WETH".to_string(), 2517.42); // live price beats config base price
         let cache_oracle = RedisCachedPriceOracle::from_snapshot(cache);
@@ -538,8 +538,9 @@ mod tests {
 
         // WETH: cache hits with the LIVE price, beating ConfigPriceOracle's $2500 base.
         assert_eq!(cascade.price_usd("WETH"), Some(2517.42));
-        // USDC: cache miss → falls through to ConfigPriceOracle stablecoin default.
-        assert_eq!(cascade.price_usd("USDC"), Some(1.0));
+        // USDC: cache miss → no hardcoded default anymore (WO-PC4) → None,
+        // caller rejects with UnknownTokenPrice until a live source prices it.
+        assert_eq!(cascade.price_usd("USDC"), None);
         // PEPE: cache miss + config miss → None (R8 fail-honest).
         assert_eq!(cascade.price_usd("PEPE"), None);
     }

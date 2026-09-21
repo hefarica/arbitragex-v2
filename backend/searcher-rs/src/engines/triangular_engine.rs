@@ -686,20 +686,19 @@ fn extract_pricing(
     let Some(cfg) = cfg_opt else {
         return (None, None);
     };
-    // Price: use base_token_price_usd if token_a is WETH, otherwise None.
-    // This matches the triangular_worker's cascade: it queries Redis for the
-    // price; when WETH is token_a, the base price is a valid proxy. For other
-    // tokens (USDC, DAI, USDT) the price is 1.0 USD (stablecoin).
-    let price = match token_a_symbol.to_ascii_uppercase().as_str() {
-        "WETH" => {
-            if cfg.base_token_price_usd > 0.0 {
-                Some(cfg.base_token_price_usd)
-            } else {
-                None
-            }
-        }
-        "USDC" | "USDT" | "DAI" => Some(1.0),
-        _ => None,
+    // Price: use base_token_price_usd if token_a is WETH, otherwise check the
+    // operator's token_prices_usd map. This matches the triangular_worker's
+    // cascade: it queries Redis for the price; when WETH is token_a, the base
+    // price is a valid proxy. Stables have NO $1.00 shortcut (WO-PC4): an
+    // unpriced stable is None (R8), never parity.
+    let sym_upper = token_a_symbol.to_ascii_uppercase();
+    let price = match sym_upper.as_str() {
+        "WETH" if cfg.base_token_price_usd > 0.0 => Some(cfg.base_token_price_usd),
+        _ => cfg
+            .token_prices_usd
+            .get(&sym_upper)
+            .copied()
+            .filter(|p| *p > 0.0),
     };
     let cap = Some(cfg.effective_capital_for(token_a_symbol, "triangular_arb"));
     (price, cap)
@@ -1487,16 +1486,17 @@ mod tests {
         }
     }
 
-    /// T1 — USDC scale: `extract_pricing` resolves USDC to $1.0 (stablecoin
-    /// match arm), so a $6.0 profit on a 100.0 USDC input MUST yield
-    /// expected_amount_out = 100.0 + 6.0/1.0 = **106.0** exactly.
+    /// T1 — USDC scale: with the operator supplying USDC at $1.0 in
+    /// `token_prices_usd` (WO-PC4: no hardcoded stable shortcut), a $6.0
+    /// profit on a 100.0 USDC input MUST yield expected_amount_out =
+    /// 100.0 + 6.0/1.0 = **106.0** exactly.
     /// (Old code: 100.0 + 6.0/3000.0 = 100.002 — 3000x scale error.)
     #[test]
     fn price_scale_t1_usdc_cycle_uses_real_price() {
-        // Pin the pricing source first: USDC resolves to $1.0 via the
-        // stablecoin match arm in extract_pricing, independent of
-        // base_token_price_usd.
-        let cfg = make_cfg(3000.0, 50_000.0);
+        // Pin the pricing source first: USDC resolves via the operator's
+        // token_prices_usd entry, independent of base_token_price_usd.
+        let mut cfg = make_cfg(3000.0, 50_000.0);
+        cfg.token_prices_usd.insert("USDC".into(), 1.0);
         let (usdc_price, _cap) = extract_pricing(&Some(cfg), "USDC");
         assert_eq!(usdc_price, Some(1.0), "USDC must resolve to $1.0");
 

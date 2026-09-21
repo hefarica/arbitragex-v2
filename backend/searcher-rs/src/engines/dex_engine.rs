@@ -711,9 +711,10 @@ fn compute_gross_usd(
     // Price by the ACTUAL denomination token (token_out), NOT a blanket
     // base_token_price_usd. The prior code multiplied EVERY token's spread by
     // the WETH price (~$3000), inflating stablecoin spreads ~3000× (e.g. a
-    // 3578 USDC spread → $10.7M). Stables ≈ $1; WETH = operator base price;
-    // any other token → None (R8) so the SizeOptimizer/evaluator re-prices it
-    // from live Redis downstream. This is a fast-filter proxy only.
+    // 3578 USDC spread → $10.7M). Stables resolve through the same live price
+    // lookup; WETH = operator base price; any unpriced token → None (R8) so
+    // the SizeOptimizer/evaluator re-prices it from live Redis downstream.
+    // This is a fast-filter proxy only.
     let price_usd =
         canonical_token_price_usd(token_out, cfg.base_token_price_usd, &cfg.token_prices_usd)?;
     Some(spread_f64 * price_usd)
@@ -721,11 +722,12 @@ fn compute_gross_usd(
 
 /// Canonical verified USD price for a known mainnet token, for the
 /// `compute_gross_usd` / `compute_v3_gross_usd` fast-filter. Checks:
-/// 1. Stables (USDC/USDT/DAI) → $1 (canonical, no lookup).
-/// 2. Canonical tokens → LIVE Redis price (DexScreener/Chainlink/GeckoTerminal)
-///    from `token_prices_usd` (merged by the orchestrator before engine fan-out).
-/// 3. WETH fallback → `base_token_price_usd` if configured.
-/// 4. Else → None (R8: unpriced, NEVER fabricate).
+/// 1. Canonical tokens (stables included) → LIVE Redis price
+///    (DexScreener/Chainlink/GeckoTerminal) from `token_prices_usd` (merged by
+///    the orchestrator before engine fan-out). NO $1.00 stable shortcut
+///    (WO-PC4) — an unpriced stable is a reject, not parity.
+/// 2. WETH fallback → `base_token_price_usd` if configured.
+/// 3. Else → None (R8: unpriced, NEVER fabricate).
 fn canonical_token_price_usd(
     token: Option<Address>,
     base_token_price_usd: f64,
@@ -733,13 +735,9 @@ fn canonical_token_price_usd(
 ) -> Option<f64> {
     let addr = token?;
     let addr_str = format!("0x{:040x}", addr);
-    // Stables = $1 (canonical, no lookup needed).
-    match addr_str.as_str() {
-        USDC_MAINNET_LC | // USDC
-        USDT_MAINNET_LC | // USDT
-        DAI_MAINNET_LC => return Some(1.0), // DAI
-        _ => {}
-    }
+    // WO-PC4: stables have NO $1.00 shortcut — they resolve through the SAME
+    // live price lookup below (Chainlink anchors / bus-fused snapshot in
+    // `token_prices_usd`). An unpriced stable → None → R8 reject, never parity.
     // Canonical tokens: look up the LIVE Redis price (DexScreener/Chainlink/
     // GeckoTerminal) merged into token_prices_usd. Uses REAL market price.
     if let Some(sym) = canonical_token_symbol(&addr_str) {
@@ -761,6 +759,10 @@ fn canonical_token_price_usd(
 fn canonical_token_symbol(addr: &str) -> Option<&'static str> {
     match addr {
         "0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2" => Some("WETH"),
+        // Stables mapped for the LIVE price lookup (WO-PC4: no $1 shortcut).
+        "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48" => Some("USDC"),
+        "0xdac17f958d2ee523a2206206994597c13d831ec7" => Some("USDT"),
+        "0x6b175474e8f94a44ad05d02b745dcc163a999080" => Some("DAI"),
         "0x2260fac5e5542a773aa44fbcfedf7c193bc2c599" => Some("WBTC"),
         "0x1f9840a85d5af5bf1d1762f925bdaddc4201f984" => Some("UNI"),
         "0x514910771af9ca656af840dff83e8264ecf986ca" => Some("LINK"),
