@@ -787,8 +787,32 @@ pub struct EvalResult {
 ///   3. golden-section finds a strictly positive profit in token-a units
 ///      hold simultaneously. Otherwise returns None and the caller skips.
 pub fn evaluate_cycle(input: &EvalInput) -> Option<EvalResult> {
+    match evaluate_cycle_detailed(input) {
+        CycleEvalOutcome::Profitable(r) => Some(r),
+        _ => None,
+    }
+}
+
+/// Detailed outcome of [`evaluate_cycle`]: separates a COMPUTED non-positive
+/// profit (which the size optimizer stamps as the #617 USD payload) from
+/// paths where no value was computed at all (R8 honest absent).
+#[derive(Debug, Clone)]
+pub enum CycleEvalOutcome {
+    Profitable(EvalResult),
+    /// The clamped-size profit was computed and is ≤ 0 (capital cap pushed
+    /// the size below break-even, or the search found no profit anywhere).
+    /// `profit_usd` is that computed value (≤ 0).
+    NonPositive {
+        profit_usd: f64,
+    },
+    /// Nothing was computed: <2 hops, spot product ≤ 1, unpriced token, or
+    /// cap computation failed (R8: absent = not computed).
+    NotComputed,
+}
+
+pub fn evaluate_cycle_detailed(input: &EvalInput) -> CycleEvalOutcome {
     if input.hop_reserves.len() < 2 {
-        return None;
+        return CycleEvalOutcome::NotComputed;
     }
     // Spot check (closed form — necessary condition for ANY profit).
     let r_f64: Vec<(f64, f64)> = input
@@ -798,19 +822,24 @@ pub fn evaluate_cycle(input: &EvalInput) -> Option<EvalResult> {
         .collect();
     let s = spot_product(&r_f64, input.fee_bps);
     if s <= 1.0 {
-        return None;
+        return CycleEvalOutcome::NotComputed;
     }
 
     // Compute capital cap in wei. Skip if we can't price token_a (no cap).
-    let token_a_price = input.token_a_price_usd?;
+    let Some(token_a_price) = input.token_a_price_usd else {
+        return CycleEvalOutcome::NotComputed;
+    };
     // Initial search ceiling: cap_wei. Worst case the cap is so small that
     // x_lo == x_hi — the search degenerates to evaluating one point.
-    let cap_wei = clamp_to_cap_wei(
+    let cap_wei = match clamp_to_cap_wei(
         U256::MAX, // sentinel — clamp_to_cap_wei returns the cap itself
         input.cap_usd,
         token_a_price,
         input.token_a_decimals,
-    )?;
+    ) {
+        Some(v) => v,
+        None => return CycleEvalOutcome::NotComputed,
+    };
     let x_lo = min_search_input();
 
     // Tighten the search ceiling to `min(cap_wei, R_in_first_hop)`. The profit
@@ -840,7 +869,11 @@ pub fn evaluate_cycle(input: &EvalInput) -> Option<EvalResult> {
 
     // Defensive cap re-application (anti-BUG-3): no matter what the search
     // found, never exceed the cap.
-    let amount_in = clamp_to_cap_wei(x_star, input.cap_usd, token_a_price, input.token_a_decimals)?;
+    let amount_in =
+        match clamp_to_cap_wei(x_star, input.cap_usd, token_a_price, input.token_a_decimals) {
+            Some(v) => v,
+            None => return CycleEvalOutcome::NotComputed,
+        };
     debug_assert!(
         amount_in <= cap_wei,
         "evaluate_cycle: amount_in ({amount_in}) exceeds cap_wei ({cap_wei})"
@@ -855,17 +888,21 @@ pub fn evaluate_cycle(input: &EvalInput) -> Option<EvalResult> {
         cycle_profit_with_ledger(amount_in, &input.hop_reserves, input.fee_bps);
     if profit_at_clamped <= 0 {
         // Capital cap pushed us below break-even (the unconstrained optimum
-        // was higher than the operator allows). Honest skip — emitting a
-        // zero-or-negative-profit candidate would just waste downstream work.
+        // was higher than the operator allows), or the search found no
+        // profit anywhere. The clamped profit WAS computed — surface it as
+        // the #617 stamp payload instead of discarding it (Deuda 4-B).
         let _ = profit_wei; // silence unused-var when assertion is off
-        return None;
+        let profit_tokens = (profit_at_clamped as f64) / 10f64.powi(input.token_a_decimals as i32);
+        return CycleEvalOutcome::NonPositive {
+            profit_usd: profit_tokens * token_a_price,
+        };
     }
 
     // USD profit: profit_token_a_wei * price / 10^decimals.
     let profit_tokens = (profit_at_clamped as f64) / 10f64.powi(input.token_a_decimals as i32);
     let expected_profit_usd = Some(profit_tokens * token_a_price);
 
-    Some(EvalResult {
+    CycleEvalOutcome::Profitable(EvalResult {
         amount_in_wei: amount_in,
         amount_out_wei: amount_out,
         profit_token_a_wei: profit_at_clamped,
@@ -2994,6 +3031,66 @@ mod tests {
             // It's also acceptable for the cap to push us below break-even
             // (if so, evaluate_cycle returns None — also correct).
         }
+    }
+
+    #[test]
+    fn evaluate_cycle_detailed_stamps_computed_nonpositive_profit() {
+        // Deuda 4-B: with a capital cap so tight that the only feasible size
+        // (1 base unit, decimals=0, price=$1, cap=$1 → cap_wei=1, range [1,1])
+        // round-trips to 0, the clamped profit IS computed — exactly 0 by the
+        // integer floor kernel:
+        //   hop1 out(1) = floor(1·997·2000 / (1000·1000 + 1·997)) = 1
+        //   hop2 out(1) = floor(1·997·4000 / (2000·1000 + 1·997)) = 1
+        //   hop3 out(1) = floor(1·997·3000 / (4000·1000 + 1·997)) = 0
+        //   → cycle_profit_with_ledger early-returns profit 0 (the zero hop
+        //     short-circuits before the saturating sub).
+        // Some(0.0) = computed and exactly zero (R8) — the point of the stamp:
+        // it now distinguishes "evaluated, nothing there" from NotComputed.
+        let reserves = vec![
+            (U256::from(1_000u64), U256::from(2_000u64)),
+            (U256::from(2_000u64), U256::from(4_000u64)),
+            (U256::from(4_000u64), U256::from(3_000u64)),
+        ];
+        let inp = EvalInput {
+            hop_reserves: reserves,
+            token_a_price_usd: Some(1.0),
+            token_a_decimals: 0,
+            cap_usd: 1.0,
+            fee_bps: 30,
+        };
+        match evaluate_cycle_detailed(&inp) {
+            CycleEvalOutcome::NonPositive { profit_usd } => {
+                assert!(
+                    (profit_usd - 0.0).abs() < 1e-9,
+                    "expected stamped profit_usd 0.0 (computed, exactly zero), got {profit_usd}"
+                );
+            }
+            other => panic!("expected NonPositive, got {other:?}"),
+        }
+        // The legacy wrapper keeps its contract: None on the same input.
+        assert!(evaluate_cycle(&inp).is_none());
+    }
+
+    #[test]
+    fn evaluate_cycle_detailed_not_computed_when_spot_product_leq_one() {
+        // Flat cycle (out/in product 1) with 30 bps fees → spot ≤ 1: nothing
+        // was computed, so the payload source must be NotComputed (R8).
+        let reserves = vec![
+            (U256::from(1_000_000u64), U256::from(1_000_000u64)),
+            (U256::from(1_000_000u64), U256::from(1_000_000u64)),
+            (U256::from(1_000_000u64), U256::from(1_000_000u64)),
+        ];
+        let inp = EvalInput {
+            hop_reserves: reserves,
+            token_a_price_usd: Some(1.0),
+            token_a_decimals: 0,
+            cap_usd: 1_000_000.0,
+            fee_bps: 30,
+        };
+        assert!(matches!(
+            evaluate_cycle_detailed(&inp),
+            CycleEvalOutcome::NotComputed
+        ));
     }
 
     #[test]

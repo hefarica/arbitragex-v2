@@ -34,7 +34,9 @@ use crate::engines::StrategyCandidate;
 use crate::route_intent::RouteIntent;
 use crate::state_projector::{LegEval, LegQuote, PoolRef, RouteQuoteProvider, StateProjector};
 use crate::strategy_label::StrategyLabel;
-use crate::workers::triangular_worker::{clamp_to_cap_wei, evaluate_cycle, EvalInput};
+use crate::workers::triangular_worker::{
+    clamp_to_cap_wei, evaluate_cycle_detailed, CycleEvalOutcome, EvalInput,
+};
 use ethers::types::{Address, U256};
 use prioritization_spine::route_plan::RouteLeg;
 use shared_rs::chains::USDT_MAINNET_LC;
@@ -193,10 +195,16 @@ pub enum OptimizeOutcome {
     /// No profitable size exists; the explicit reason is provided.
     ///
     /// R8 contract on the payload: `None` = no USD value was computed on this
-    /// path (infrastructure error, missing reserves, upper-bound early exit);
-    /// `Some(v)` = the kernel computed exactly `v` USD — typically `v <= 0`
-    /// for the non-positive gates, or a positive net below the gas floor for
-    /// `GasFloorBreach` / `KellyNegativeEdge`.
+    /// path (infrastructure error, missing reserves, spot check failed, cap
+    /// uncomputable); `Some(v)` = the kernel computed exactly `v` USD —
+    /// typically `v <= 0` for the non-positive gates, or a positive net below
+    /// the gas floor for `GasFloorBreach` / `KellyNegativeEdge`.
+    ///
+    /// Deuda 4-B sources of `Some(v)` on `NonPositiveProfit`: (a) the
+    /// triangular clamped-size profit from `evaluate_cycle_detailed`
+    /// (`CycleEvalOutcome::NonPositive`), and (b) the within-tick OPTIMISTIC
+    /// UPPER BOUND best profit on the V3 0-RPC early-reject — a provable
+    /// bound on the real grid's max, not a QuoterV2 quote.
     Rejected(OptimizeRejectReason, Option<f64>),
 }
 
@@ -822,10 +830,18 @@ impl SizeOptimizer {
             fee_bps: 30,
         };
 
-        let eval_result = match evaluate_cycle(&eval_input) {
-            Some(r) => r,
+        let eval_result = match evaluate_cycle_detailed(&eval_input) {
+            CycleEvalOutcome::Profitable(r) => r,
+            // Deuda 4-B: the kernel DID compute a clamped-size profit ≤ 0 —
+            // stamp it (the #617 USD payload contract).
+            CycleEvalOutcome::NonPositive { profit_usd } => {
+                return OptimizeOutcome::Rejected(
+                    OptimizeRejectReason::NonPositiveProfit,
+                    Some(profit_usd),
+                )
+            }
             // R8: evaluate_cycle computed nothing — no value to stamp.
-            None => {
+            CycleEvalOutcome::NotComputed => {
                 return OptimizeOutcome::Rejected(OptimizeRejectReason::NonPositiveProfit, None)
             }
         };
@@ -1302,7 +1318,7 @@ impl SizeOptimizer {
         // profit either → honest reject `NonPositiveProfit`, skipping all ≤ 8
         // QuoterV2 probes (R8). A missing slot0 entry → None → fall through to
         // the grid unchanged. Do NOT alter the grid below when it runs.
-        if let Some(true) = self
+        if let Some((true, bound_profit_wei)) = self
             .v3_within_tick_upper_bound_nonpositive(&eval0, &eval1, &probes)
             .await
         {
@@ -1312,8 +1328,15 @@ impl SizeOptimizer {
                 probe_count = probes.len(),
                 "within-tick upper bound ≤ 0 across probes — skipping QuoterV2 grid"
             );
-            // R8: upper bound, not a quoted profit — no value to stamp.
-            return OptimizeOutcome::Rejected(OptimizeRejectReason::NonPositiveProfit, None);
+            // Deuda 4-B: stamp the optimistic within-tick best profit (≤ 0) in
+            // USD. It is a provable UPPER BOUND on the real grid's max, not a
+            // QuoterV2 quote — the payload contract documents this.
+            let bound_usd =
+                (bound_profit_wei as f64) / 10f64.powi(decimals as i32) * token_price_usd;
+            return OptimizeOutcome::Rejected(
+                OptimizeRejectReason::NonPositiveProfit,
+                Some(bound_usd),
+            );
         }
 
         let mut best: Option<(U256, U256, U256, i128)> = None; // (amount_in, out_a, out_b, profit_wei)
@@ -1509,19 +1532,22 @@ impl SizeOptimizer {
     /// monotone ⇒ `wtb(wta(x)) ≥ rb(ra(x))`), the optimistic max profit over
     /// the probe grid is a provable upper bound on the real grid's max.
     ///
-    /// Returns `Some(true)` when that upper bound is ≤ 0 → the real grid cannot
-    /// find a profit either, so the caller early-rejects `NonPositiveProfit`
-    /// and skips all QuoterV2 probes (saves ≤ 8 RPC). Returns `Some(false)`
-    /// when the optimistic bound shows possible profit → fall through to the
-    /// grid. Returns `None` (→ fall through) whenever a V3 leg lacks a slot0
-    /// snapshot or no probe could be priced — a missing cache NEVER fabricates
-    /// a rejection (R8 fail-safe).
+    /// Returns `Some((nonpositive, best_profit_wei))` where `nonpositive` is
+    /// true when that upper bound is ≤ 0 → the real grid cannot find a profit
+    /// either, so the caller early-rejects `NonPositiveProfit` and skips all
+    /// QuoterV2 probes (saves ≤ 8 RPC). `best_profit_wei` is the optimistic
+    /// max profit across the probe grid (token-in wei) — the Deuda 4-B stamp
+    /// payload source (≤ 0 when `nonpositive`, an upper bound not a quote).
+    /// Returns `Some((false, _))` when the optimistic bound shows possible
+    /// profit → fall through to the grid. Returns `None` (→ fall through)
+    /// whenever a V3 leg lacks a slot0 snapshot or no probe could be priced —
+    /// a missing cache NEVER fabricates a rejection (R8 fail-safe).
     async fn v3_within_tick_upper_bound_nonpositive(
         &self,
         eval0: &LegEval,
         eval1: &LegEval,
         probes: &[U256],
-    ) -> Option<bool> {
+    ) -> Option<(bool, i128)> {
         let cache = self.slot0_cache.as_ref()?;
 
         // Resolve slot0 once per V3 leg up front. A cache miss on any V3 leg
@@ -1593,10 +1619,8 @@ impl SizeOptimizer {
         // No probe priced (degenerate slot0 / all-zero output) → fall through.
         if !any_priced {
             None
-        } else if best_profit <= 0 {
-            Some(true)
         } else {
-            Some(false)
+            Some((best_profit <= 0, best_profit))
         }
     }
 
@@ -4482,6 +4506,14 @@ mod tests {
             ),
             "within-tick early-reject must yield NonPositiveProfit, got {:?}",
             outcome.reason_str()
+        );
+        // Deuda 4-B: the payload is the within-tick UPPER-BOUND best profit in
+        // USD — computed and stamped (≤ 0), not an honest None.
+        let payload = outcome.net_profit_usd();
+        assert!(
+            matches!(payload, Some(v) if v <= 0.0),
+            "within-tick early-reject must stamp the upper-bound USD payload, got {:?}",
+            payload
         );
         // The grid was SKIPPED: the QuoterV2 mock was never called.
         assert_eq!(
