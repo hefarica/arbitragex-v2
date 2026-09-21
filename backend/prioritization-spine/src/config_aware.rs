@@ -1229,7 +1229,9 @@ mod tests {
             base_token_symbol: "WETH".into(),
             base_token_price_usd: 2000.0,
             allowed_token_symbols: vec!["WETH".into(), "USDC".into()],
-            token_prices_usd: HashMap::new(),
+            // WO-PC4: stables have NO implicit $1 default anymore — the test
+            // config supplies USDC explicitly (operator-priced, honest).
+            token_prices_usd: HashMap::from([("USDC".into(), 1.0)]),
             simulation_capital_usd: None,
             simulation_per_token_amounts_usd: HashMap::new(),
             simulation_per_strategy_caps_usd: HashMap::new(),
