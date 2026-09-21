@@ -187,7 +187,6 @@ impl RedisCachedPriceOracle {
         Self { snapshot: clean }
     }
 
-    /// Fetch the entire `arbx:token_prices:<chain_id>` hash from Redis and
     /// return a fresh oracle wrapping the snapshot.
     ///
     /// Returns an oracle with an EMPTY snapshot (never an error) when:
@@ -239,6 +238,7 @@ impl RedisCachedPriceOracle {
                 }
             }
         }
+        merge_cex_fallback(redis, chain_id, &mut parsed).await;
         Self::from_snapshot(parsed)
     }
 
@@ -284,6 +284,96 @@ impl PriceOracle for RedisCachedPriceOracle {
 /// `RedisCachedPriceOracle::snapshot_from_redis`.
 pub fn redis_token_prices_key(chain_id: u64) -> String {
     format!("arbx:token_prices:{chain_id}")
+}
+
+/// Redis key holding the CEX (Binance WS) price snapshot for a chain.
+/// Additive to `arbx:token_prices:<chain_id>` — a SEPARATE hash so the CEX
+/// writer never overwrites on-chain fields. Hash schema: field = uppercase
+/// BASE asset of the CEX symbol (e.g. `ETH` for `ETHUSDT`), value = JSON
+/// `CexPriceEntry` (price / ts_ms / quote / source).
+/// Populated by `searcher-rs::workers::binance_stream_worker`; merged (with
+/// on-chain precedence) by `RedisCachedPriceOracle::snapshot_from_redis` and
+/// read directly by the api-server prices-stream bridge for the `cex` map.
+pub fn redis_cex_prices_key(chain_id: u64) -> String {
+    format!("arbx:cex_prices:{chain_id}")
+}
+
+/// One CEX price entry as persisted in the `arbx:cex_prices:<chain_id>` hash.
+/// `quote` is preserved verbatim ("USDT" ≠ USD — documented, never silently
+/// converted; the operator decides if/when a USDT depeg adjustment applies).
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq)]
+pub struct CexPriceEntry {
+    /// Best bid/ask mid price, in quote units per 1 base asset.
+    pub price: f64,
+    /// Wall-clock ms of the WS frame that produced this entry.
+    pub ts_ms: u64,
+    /// Quote asset of the CEX symbol ("USDT" for ETHUSDT).
+    pub quote: String,
+    /// Feed identity — "binance_ws" today; lets readers attribute the source.
+    pub source: String,
+}
+
+/// Map a CEX base asset to the oracle/on-chain symbol convention. On-chain
+/// ether is represented as WETH and bitcoin as WBTC in pools/prices; the CEX
+/// convention is the native asset. Everything else maps to itself (BNB, SOL,
+/// AVAX trade unwrapped on mainnet). Unknown bases also map to themselves —
+/// an identity mapping is honest: it just means the CEX hash holds a symbol
+/// no on-chain source has produced, which the merge only uses as a fallback.
+pub fn cex_base_to_oracle_symbol(base: &str) -> String {
+    match base.trim().to_ascii_uppercase().as_str() {
+        "ETH" => "WETH".to_string(),
+        "BTC" => "WBTC".to_string(),
+        other => other.to_string(),
+    }
+}
+
+/// Fill `parsed` with CEX (Binance WS) prices for symbols the on-chain tower
+/// has NOT produced (on-chain Chainlink/price_worker precedence is absolute —
+/// a CEX value is inserted only via `entry().or_insert`, never overwriting).
+/// Malformed entries are dropped at debug level (R8: cache miss falls through
+/// honestly rather than poisoning the snapshot). CEX hash absent (feed off or
+/// worker hasn't ticked) is a normal state — silent no-op.
+async fn merge_cex_fallback(
+    redis: &mut redis::aio::ConnectionManager,
+    chain_id: u64,
+    parsed: &mut HashMap<String, f64>,
+) {
+    use redis::AsyncCommands;
+    let cex_key = redis_cex_prices_key(chain_id);
+    let raw: Result<HashMap<String, String>, redis::RedisError> = redis.hgetall(&cex_key).await;
+    let map = match raw {
+        Ok(m) => m,
+        Err(e) => {
+            tracing::debug!(
+                event = "price_oracle.cex_hgetall_failed",
+                chain_id,
+                key = %cex_key,
+                error = %e,
+                "cex fallback unavailable this tick — on-chain snapshot stands as-is"
+            );
+            return;
+        }
+    };
+    for (base, val_str) in map {
+        let entry: CexPriceEntry = match serde_json::from_str(&val_str) {
+            Ok(e) => e,
+            Err(e) => {
+                tracing::debug!(
+                    event = "price_oracle.cex_parse_failed",
+                    chain_id,
+                    base = %base,
+                    error = %e,
+                    "dropping malformed CEX price"
+                );
+                continue;
+            }
+        };
+        if !entry.price.is_finite() || entry.price <= 0.0 {
+            continue;
+        }
+        let oracle_sym = cex_base_to_oracle_symbol(&base);
+        parsed.entry(oracle_sym).or_insert(entry.price);
+    }
 }
 
 /// Pub/sub channel notified whenever a writer persists prices into
@@ -607,5 +697,38 @@ mod tests {
         assert_eq!(oracle.price_usd("BAD2"), None);
         assert_eq!(oracle.price_usd("BAD3"), None);
         assert_eq!(oracle.price_usd("BAD4"), None);
+    }
+
+    // ----------------------------------------------------------------
+    // CEX additive tower (BE-3.2 Phase 2 feed — Binance WS)
+    // ----------------------------------------------------------------
+
+    #[test]
+    fn cex_key_is_separate_from_on_chain_hash() {
+        // The CEX writer MUST live in its own hash — never `arbx:token_prices:*`.
+        assert_eq!(redis_cex_prices_key(1), "arbx:cex_prices:1");
+        assert_ne!(redis_cex_prices_key(1), redis_token_prices_key(1));
+    }
+
+    #[test]
+    fn cex_entry_round_trips_through_json() {
+        let e = CexPriceEntry {
+            price: 2517.42,
+            ts_ms: 1_700_000_000_000,
+            quote: "USDT".to_string(),
+            source: "binance_ws".to_string(),
+        };
+        let s = serde_json::to_string(&e).expect("serialize");
+        let back: CexPriceEntry = serde_json::from_str(&s).expect("deserialize");
+        assert_eq!(back, e);
+    }
+
+    #[test]
+    fn cex_base_maps_wrapped_onchain_conventions() {
+        assert_eq!(cex_base_to_oracle_symbol("ETH"), "WETH");
+        assert_eq!(cex_base_to_oracle_symbol("btc"), "WBTC");
+        assert_eq!(cex_base_to_oracle_symbol("BNB"), "BNB");
+        assert_eq!(cex_base_to_oracle_symbol(" sol "), "SOL");
+        assert_eq!(cex_base_to_oracle_symbol("AVAX"), "AVAX");
     }
 }

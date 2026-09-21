@@ -5,6 +5,7 @@
 
 #[cfg(feature = "experimental-engines")]
 pub mod backrun_worker;
+pub mod binance_stream_worker;
 pub mod cex_dex_worker;
 pub mod execution_worker;
 pub mod flashloan_arb_worker;

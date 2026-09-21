@@ -452,6 +452,65 @@ pub static SIM_STREAM_GHOST_ACKED: Lazy<IntCounter> = Lazy::new(|| {
     c
 });
 
+// ---- Binance WS feed metrics (BE-3.2 Phase 2 feed, 2026-09-21) ----
+//
+// Backed by searcher-rs `binance_stream_worker`. The feed is a best-effort
+// CEX price source: when it drops (geo-block 451, network), the system
+// degrades to the on-chain price tower WITHOUT fabricating anything —
+// `arbx_binance_ws_feed_healthy` going to 0 is the honest signal.
+
+pub static BINANCE_WS_MESSAGES_TOTAL: Lazy<IntCounterVec> = Lazy::new(|| {
+    let c = IntCounterVec::new(
+        prometheus::opts!(
+            "arbx_binance_ws_messages_total",
+            "Binance bookTicker WS frames received (combined stream, all symbols)"
+        ),
+        &["chain_id"],
+    )
+    .expect("metric");
+    REGISTRY.register(Box::new(c.clone())).expect("register");
+    c
+});
+
+pub static BINANCE_WS_RECONNECTS_TOTAL: Lazy<IntCounterVec> = Lazy::new(|| {
+    let c = IntCounterVec::new(
+        prometheus::opts!(
+            "arbx_binance_ws_reconnects_total",
+            "Binance WS reconnection attempts (endpoint rotation + backoff)"
+        ),
+        &["chain_id"],
+    )
+    .expect("metric");
+    REGISTRY.register(Box::new(c.clone())).expect("register");
+    c
+});
+
+pub static BINANCE_WS_CHANGE_EVENTS_TOTAL: Lazy<IntCounterVec> = Lazy::new(|| {
+    let c = IntCounterVec::new(
+        prometheus::opts!(
+            "arbx_binance_ws_change_events_total",
+            "Significant mid-price changes that crossed the detector threshold and were written to the CEX price hash"
+        ),
+        &["chain_id", "symbol"],
+    )
+    .expect("metric");
+    REGISTRY.register(Box::new(c.clone())).expect("register");
+    c
+});
+
+pub static BINANCE_WS_FEED_HEALTHY: Lazy<prometheus::IntGaugeVec> = Lazy::new(|| {
+    let g = prometheus::IntGaugeVec::new(
+        prometheus::opts!(
+            "arbx_binance_ws_feed_healthy",
+            "1 = Binance WS feed connected and writing; 0 = degraded (on-chain tower takes over)"
+        ),
+        &["chain_id"],
+    )
+    .expect("metric");
+    REGISTRY.register(Box::new(g.clone())).expect("register");
+    g
+});
+
 /// Record a bundle inclusion event.
 ///
 /// `profitable` is `true` when the opportunity carried a positive
@@ -507,6 +566,10 @@ pub fn init_metrics() {
     let _ = &*SIM_STREAM_CLAIMED_COUNT;
     let _ = &*SIM_STREAM_CLAIM_FAILURES;
     let _ = &*SIM_STREAM_GHOST_ACKED;
+    let _ = &*BINANCE_WS_MESSAGES_TOTAL;
+    let _ = &*BINANCE_WS_RECONNECTS_TOTAL;
+    let _ = &*BINANCE_WS_CHANGE_EVENTS_TOTAL;
+    let _ = &*BINANCE_WS_FEED_HEALTHY;
     SERVICE_UP.set(1);
 }
 

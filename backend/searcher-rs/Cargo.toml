@@ -30,6 +30,7 @@ ethers = { workspace = true, features = ["abigen", "rustls"] }
 alloy.workspace = true
 alloy-sol-types.workspace = true
 futures-util.workspace = true
+tokio-tungstenite.workspace = true
 lru.workspace = true
 hex.workspace = true
 bigdecimal.workspace = true

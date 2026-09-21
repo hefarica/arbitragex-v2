@@ -1113,6 +1113,38 @@ async fn main() -> anyhow::Result<()> {
         }
     });
 
+    // Binance WS bookTicker feed (BE-3.2 Phase 2 source) — writes the additive
+    // CEX tower `arbx:cex_prices:<chain_id>` (separate hash; NEVER overwrites
+    // on-chain `arbx:token_prices:*` fields). Default ON (data takes active
+    // from boot, operator order 2026-09-20); geo-block/network failure
+    // degrades honestly (gauge 0 + reconnect backoff, on-chain tower stands).
+    // Env: ARBX_BINANCE_WS_ENABLED / ARBX_BINANCE_WS_SYMBOLS /
+    // ARBX_BINANCE_WS_CHANGE_THRESHOLD_PCT.
+    if workers::binance_stream_worker::BinanceStreamWorkerConfig::enabled_from_env() {
+        let binance_ws_cfg =
+            workers::binance_stream_worker::BinanceStreamWorkerConfig::from_env(primary_chain);
+        let binance_ws_redis = redis_conn.clone();
+        info!(
+            event = "binance_ws.spawn",
+            chain_id = binance_ws_cfg.chain_id,
+            symbols = binance_ws_cfg.symbols.len(),
+            "spawning BinanceStreamWorker (CEX price tower)"
+        );
+        tokio::spawn(async move {
+            workers::binance_stream_worker::BinanceStreamWorker::new(
+                binance_ws_cfg,
+                binance_ws_redis,
+            )
+            .run()
+            .await;
+        });
+    } else {
+        info!(
+            event = "binance_ws.disabled",
+            "ARBX_BINANCE_WS_ENABLED=false — CEX tower feed not spawned (on-chain tower unaffected)"
+        );
+    }
+
     // B1.d: Chain Task Supervisor
     // Consumes `seen_hashes` events to orchestrate hot-reloads without blocking.
     let supervisor = chain_supervisor::ChainSupervisor::new(

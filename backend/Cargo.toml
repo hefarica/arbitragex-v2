@@ -71,6 +71,9 @@ ethers        = { version = "2", default-features = false, features = ["ws","rus
 alloy         = { version = "1", features = ["providers", "transport-http", "rpc-types-eth", "network", "sol-types", "rlp"] }
 alloy-sol-types = { version = "1" }
 futures-util  = "0.3"
+# 0.28 already in Cargo.lock (alloy transitive) — pinning with rustls adds no
+# new crate fetch (FUSILE discipline). Used by searcher-rs binance_stream_worker.
+tokio-tungstenite = { version = "0.28", features = ["rustls-tls-webpki-roots"] }
 async-trait   = "0.1"
 lru           = "0.12"
 hex           = "0.4"
