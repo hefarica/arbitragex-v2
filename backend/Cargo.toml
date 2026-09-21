@@ -74,6 +74,13 @@ futures-util  = "0.3"
 # 0.28 already in Cargo.lock (alloy transitive) — pinning with rustls adds no
 # new crate fetch (FUSILE discipline). Used by searcher-rs binance_stream_worker.
 tokio-tungstenite = { version = "0.28", features = ["rustls-tls-webpki-roots"] }
+# rustls 0.23 is already in Cargo.lock (transitive via tokio-tungstenite,
+# reqwest rustls-tls, sqlx tls-rustls). searcher-rs/main.rs installs the
+# process-level CryptoProvider explicitly (audit t_ade4fcb6 R1): the lock
+# resolves BOTH `ring` and `aws-lc-rs` features, so auto-detection panics on
+# the first connect_async. Explicit `ring` feature so
+# `rustls::crypto::ring::default_provider()` is nameable from the bin.
+rustls         = { version = "0.23", features = ["ring", "logging"] }
 async-trait   = "0.1"
 lru           = "0.12"
 hex           = "0.4"

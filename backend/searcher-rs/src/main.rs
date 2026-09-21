@@ -240,12 +240,12 @@ use shared_rs::{
     health::{build_health_router, ServiceInfo},
     killswitch::KillSwitchClient,
     logging::init_tracing,
-    metrics::init_metrics,
+    metrics::{init_metrics, BINANCE_WS_FEED_HEALTHY, BINANCE_WS_RECONNECTS_TOTAL},
     rpc_failover::HttpRpcPool,
     trading_config::TradingConfigClient,
 };
 use std::{collections::HashMap, net::SocketAddr, sync::Arc, time::Duration};
-use tracing::{info, warn};
+use tracing::{error, info, warn};
 
 const SERVICE_NAME: &str = "searcher-rs";
 const SERVICE_VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -301,6 +301,34 @@ use crate::metrics::{
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
+    // Audit t_ade4fcb6 R1 (CRITICAL, 2026-09-21): Cargo.lock resolves rustls
+    // 0.23.45 with BOTH crypto providers enabled (aws-lc-rs via alloy→reqwest
+    // `__rustls-aws-lc-rs`, ring via sqlx `tls-rustls`→`_tls-rustls-ring` and
+    // reqwest `__rustls-ring`). rustls cannot auto-detect the process-level
+    // CryptoProvider in that state, so the FIRST TLS handshake — the Binance
+    // WS feed's `connect_async` — panicked:
+    // "Could not automatically determine the process-level CryptoProvider from
+    //  Rustls crate features" (rustls-0.23.45 crypto/mod.rs:249).
+    //
+    // Fix: install `ring` explicitly, once, before ANY network task is
+    // spawned. `ring` is the provider sqlx/reqwest already pull into the
+    // graph; aws-lc-rs stays compiled in via alloy but is no longer ambiguous
+    // at process level. MUST run before the first `tokio::spawn` of a
+    // networked worker (Redis connect below included). install_default()
+    // fails only if another provider was installed first — impossible this
+    // early in `main`; surfaced as a boot Err (M11: no new panicking path,
+    // keeps the CI clippy `-D warnings` gate green).
+    if rustls::crypto::ring::default_provider()
+        .install_default()
+        .is_err()
+    {
+        return Err(anyhow::anyhow!(
+            "failed to install rustls ring CryptoProvider — a process-level \
+             provider was already installed before searcher-rs main() (must be \
+             set exactly once, before any TLS client is built)"
+        ));
+    }
+
     let cfg = Arc::new(AppConfig::load()?);
     init_tracing(SERVICE_NAME, &cfg.observability.log_level)?;
     init_metrics();
@@ -1130,13 +1158,40 @@ async fn main() -> anyhow::Result<()> {
             symbols = binance_ws_cfg.symbols.len(),
             "spawning BinanceStreamWorker (CEX price tower)"
         );
+        // R3 (audit t_ade4fcb6): a PANIC inside the spawned feed task (e.g.
+        // the rustls CryptoProvider panic this fix removes) killed the task
+        // silently — `arbx_binance_ws_reconnects_total` never incremented and
+        // `feed_healthy` never went 0. Wrap the worker future with
+        // catch_unwind: a panicking feed surfaces BOTH gauges and an error
+        // log instead of dying quietly (RULE 00/R8 fail-honest).
         tokio::spawn(async move {
-            workers::binance_stream_worker::BinanceStreamWorker::new(
-                binance_ws_cfg,
-                binance_ws_redis,
-            )
-            .run()
-            .await;
+            let chain_id = binance_ws_cfg.chain_id;
+            let feed = std::panic::AssertUnwindSafe(
+                workers::binance_stream_worker::BinanceStreamWorker::new(
+                    binance_ws_cfg,
+                    binance_ws_redis,
+                )
+                .run(),
+            );
+            if let Err(panic) = futures_util::FutureExt::catch_unwind(feed).await {
+                let msg = panic
+                    .downcast_ref::<&str>()
+                    .map(|s| (*s).to_string())
+                    .or_else(|| panic.downcast_ref::<String>().cloned())
+                    .unwrap_or_else(|| "unknown panic payload".to_string());
+                let chain = chain_id.to_string();
+                BINANCE_WS_FEED_HEALTHY.with_label_values(&[&chain]).set(0);
+                BINANCE_WS_RECONNECTS_TOTAL
+                    .with_label_values(&[&chain])
+                    .inc();
+                error!(
+                    event = "binance_ws.panic",
+                    chain_id,
+                    panic = %msg,
+                    "Binance WS feed task PANICKED — feed down, gauges exposed, \
+                     on-chain price tower stands (RULE 00/R8)"
+                );
+            }
         });
     } else {
         info!(

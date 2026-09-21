@@ -31,6 +31,10 @@ alloy.workspace = true
 alloy-sol-types.workspace = true
 futures-util.workspace = true
 tokio-tungstenite.workspace = true
+# Audit t_ade4fcb6 R1: install the process-level rustls CryptoProvider (ring)
+# at the very top of main() — the lock resolves BOTH ring and aws-lc-rs, so
+# rustls auto-detection panics on the first TLS handshake (Binance WS feed).
+rustls.workspace = true
 lru.workspace = true
 hex.workspace = true
 bigdecimal.workspace = true

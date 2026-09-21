@@ -50,9 +50,7 @@ use shared_rs::metrics::{
     BINANCE_WS_CHANGE_EVENTS_TOTAL, BINANCE_WS_FEED_HEALTHY, BINANCE_WS_MESSAGES_TOTAL,
     BINANCE_WS_RECONNECTS_TOTAL,
 };
-use shared_rs::price_oracle::{
-    prices_updated_channel, redis_cex_prices_key, CexPriceEntry,
-};
+use shared_rs::price_oracle::{prices_updated_channel, redis_cex_prices_key, CexPriceEntry};
 use std::collections::HashMap;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tokio_tungstenite::connect_async;
@@ -297,13 +295,8 @@ impl ChangeDetector {
             }
         };
         if emit {
-            self.last.insert(
-                base.clone(),
-                SymbolState {
-                    mid,
-                    ts_ms: now_ms,
-                },
-            );
+            self.last
+                .insert(base.clone(), SymbolState { mid, ts_ms: now_ms });
             Some(base)
         } else {
             None
@@ -338,7 +331,8 @@ async fn persist_cex_entries(
     let mut pipe = redis::pipe();
     pipe.atomic();
     for (base, entry) in entries {
-        pipe.hset(&key, base, serde_json::to_string(entry)?).ignore();
+        pipe.hset(&key, base, serde_json::to_string(entry)?)
+            .ignore();
     }
     pipe.expire(&key, CACHE_TTL_SECS as i64).ignore();
     pipe.cmd("PUBLISH")
@@ -390,18 +384,22 @@ impl BinanceStreamWorker {
         let mut backoff_ms: u64 = 1_000;
         const MAX_BACKOFF_MS: u64 = 30_000;
         let mut url_idx = 0usize;
-        let mut detector =
-            ChangeDetector::new(self.cfg.change_threshold_pct, FORCE_REWRITE_MS);
+        let mut detector = ChangeDetector::new(self.cfg.change_threshold_pct, FORCE_REWRITE_MS);
 
         loop {
             let url = build_stream_url(&endpoints[url_idx % endpoints.len()], &self.cfg.symbols);
-            match run_stream(&url, &self.cfg, &mut detector, &mut self.redis.clone(), &chain).await
+            match run_stream(
+                &url,
+                &self.cfg,
+                &mut detector,
+                &mut self.redis.clone(),
+                &chain,
+            )
+            .await
             {
                 Ok(()) => return, // unreachable today (no cancel token wired)
                 Err(e) => {
-                    BINANCE_WS_FEED_HEALTHY
-                        .with_label_values(&[&chain])
-                        .set(0);
+                    BINANCE_WS_FEED_HEALTHY.with_label_values(&[&chain]).set(0);
                     BINANCE_WS_RECONNECTS_TOTAL
                         .with_label_values(&[&chain])
                         .inc();
@@ -634,10 +632,7 @@ mod tests {
         let mut d = ChangeDetector::new(0.01, 30_000);
         d.on_mid("ETHUSDT", 2500.0, 1_000);
         // 0.02% move — above threshold.
-        assert_eq!(
-            d.on_mid("ETHUSDT", 2500.5, 1_100),
-            Some("ETH".to_string())
-        );
+        assert_eq!(d.on_mid("ETHUSDT", 2500.5, 1_100), Some("ETH".to_string()));
     }
 
     #[test]
@@ -645,10 +640,7 @@ mod tests {
         let mut d = ChangeDetector::new(0.01, 30_000);
         d.on_mid("ETHUSDT", 2500.0, 1_000);
         // Identical price but 30 s later → TTL keepalive rewrite.
-        assert_eq!(
-            d.on_mid("ETHUSDT", 2500.0, 31_000),
-            Some("ETH".to_string())
-        );
+        assert_eq!(d.on_mid("ETHUSDT", 2500.0, 31_000), Some("ETH".to_string()));
         // Fresh identical price → no write.
         assert_eq!(d.on_mid("ETHUSDT", 2500.0, 31_100), None);
     }
@@ -680,5 +672,29 @@ mod tests {
         if std::env::var("ARBX_BINANCE_WS_ENABLED").is_err() {
             assert!(BinanceStreamWorkerConfig::enabled_from_env());
         }
+    }
+
+    // ── R3 panic containment (audit t_ade4fcb6) ────────────────────────────
+
+    #[tokio::test]
+    async fn catch_unwind_wrapper_contains_feed_panic() {
+        // R3 regression: a panic inside the spawned feed task (the rustls
+        // CryptoProvider panic this fix removes) used to kill the task
+        // silently — the Err branch that increments
+        // `arbx_binance_ws_reconnects_total` never ran. main.rs now wraps the
+        // worker future with AssertUnwindSafe + FutureExt::catch_unwind. This
+        // pins the exact wrapper semantics: a panicking feed future resolves
+        // to Err (contained, not a silent task death) and the fail-honest
+        // gauges are writable from that path (same Lazy statics).
+        let feed = std::panic::AssertUnwindSafe(async {
+            panic!("Could not automatically determine the process-level CryptoProvider");
+        });
+        let caught = futures_util::FutureExt::catch_unwind(feed).await;
+        assert!(caught.is_err(), "catch_unwind must contain a feed panic");
+        let chain = "1";
+        BINANCE_WS_FEED_HEALTHY.with_label_values(&[chain]).set(0);
+        BINANCE_WS_RECONNECTS_TOTAL
+            .with_label_values(&[chain])
+            .inc();
     }
 }
