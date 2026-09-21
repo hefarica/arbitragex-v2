@@ -339,6 +339,11 @@ impl TriangularEngine {
 
         let chain_id = intent.chain_id;
         let tx_hash = intent.tx_hash;
+        // §30 residual fix: thread the intent's observed block (if any) into
+        // every Opportunity this engine constructs — same anchoring shape as
+        // dex_engine's 4 call sites. `observed_block()` is the honest gate:
+        // Some(height) only for NewBlock-sourced intents.
+        let observed_block = intent.observed_block();
 
         let cfg_opt: Option<TradingConfigState> = cfg.cloned();
 
@@ -369,8 +374,14 @@ impl TriangularEngine {
             };
 
             // Attempt evaluation.
-            let cands =
-                self.evaluate_one_cycle(cycle_def, &hop_reserves, &cfg_opt, chain_id, tx_hash);
+            let cands = self.evaluate_one_cycle(
+                cycle_def,
+                &hop_reserves,
+                &cfg_opt,
+                chain_id,
+                tx_hash,
+                observed_block,
+            );
             candidates.extend(cands);
         }
 
@@ -411,6 +422,7 @@ impl TriangularEngine {
         cfg_opt: &Option<TradingConfigState>,
         chain_id: u64,
         tx_hash: H256,
+        observed_block: Option<u64>,
     ) -> Vec<StrategyCandidate> {
         // Derive token_a pricing and capital from config.
         let (token_a_price_usd, cap_usd) = extract_pricing(cfg_opt, &cycle_def.token_a_symbol);
@@ -447,6 +459,7 @@ impl TriangularEngine {
                     None,
                     token_a_price_usd,
                     eval_input.cap_usd,
+                    observed_block,
                 );
                 vec![StrategyCandidate {
                     label: StrategyLabel::TriangularArb,
@@ -472,6 +485,7 @@ impl TriangularEngine {
                             Some(result.amount_in_wei),
                             token_a_price_usd,
                             eval_input.cap_usd,
+                            observed_block,
                         );
                         return vec![StrategyCandidate {
                             label: StrategyLabel::TriangularArb,
@@ -495,6 +509,7 @@ impl TriangularEngine {
                         Some(result.amount_in_wei),
                         token_a_price_usd,
                         eval_input.cap_usd,
+                        observed_block,
                     );
                     opp.expected_profit_usd = Some(profit_usd);
 
@@ -534,6 +549,7 @@ impl TriangularEngine {
                         Some(result.amount_in_wei),
                         token_a_price_usd,
                         eval_input.cap_usd,
+                        observed_block,
                     );
                     vec![StrategyCandidate {
                         label: StrategyLabel::TriangularArb,
@@ -558,6 +574,10 @@ impl TriangularEngine {
 
 /// Build the `(Opportunity, OpportunityCandidate, RoutePlan)` triple for
 /// a triangular candidate.
+// §30: the 9th argument (`observed_block`) threads the intent's honest
+// anchor through — same justification as `RouteIntent::new`'s attribute:
+// flat data model, no natural grouping that would reduce coupling.
+#[allow(clippy::too_many_arguments)]
 fn build_opportunity(
     chain_id: u64,
     tx_hash: H256,
@@ -566,6 +586,7 @@ fn build_opportunity(
     amount_in_wei: Option<U256>,
     token_a_price_usd: Option<f64>,
     _cap_usd: f64,
+    observed_block: Option<u64>,
 ) -> (Opportunity, OpportunityCandidate, RoutePlan) {
     let id = Uuid::new_v4();
     let trace_id = Uuid::new_v4();
@@ -596,7 +617,10 @@ fn build_opportunity(
         net_expected_profit_usd: None,
         roi_pct: None,
         risk_score: None,
-        block_number: None,
+        // §30 residual fix: anchor to the intent's observed block (None for
+        // mempool intents — honest, never a fabricated head height). Previously
+        // hardcoded `None`, so even NewBlock-sourced cycles persisted NULL.
+        block_number: observed_block,
         rejection_reason: None,
         cartridge_id: None,
         // WO-CARDS-COMPLETE-01 (2026-09-17): detector identity at construction.
@@ -985,6 +1009,139 @@ mod tests {
         }
 
         (engine, cache)
+    }
+
+    // ── triangular_engine::tests::triangular_anchor_observed_block ───────────
+    // §30 residual regression (mirror of dex_engine::candidates_anchor_observed_block):
+    // an intent with a known observed block must propagate it to EVERY emitted
+    // Opportunity (accepted AND rejected). Before the fix the constructor
+    // hardcoded block_number: None — even NewBlock-sourced cycles persisted NULL.
+
+    #[tokio::test]
+    async fn triangular_anchor_observed_block() {
+        let unit = U256::from(10u128).pow(U256::from(18u32));
+        let pool_a = addr(0x100);
+        let pool_b = addr(0x200);
+        let pool_c = addr(0x300);
+        let tok_a = addr(0x10);
+        let tok_b = addr(0x20);
+        let tok_c = addr(0x30);
+
+        let (engine, _cache) = make_engine_with_cycle(
+            pool_a,
+            pool_b,
+            pool_c,
+            tok_a,
+            tok_b,
+            tok_c,
+            // Equal reserves → spot_product = γ³ < 1 → rejected path.
+            Some(vec![
+                (
+                    pool_a,
+                    unit * U256::from(1_000u32),
+                    unit * U256::from(1_000u32),
+                ),
+                (
+                    pool_b,
+                    unit * U256::from(1_000u32),
+                    unit * U256::from(1_000u32),
+                ),
+                (
+                    pool_c,
+                    unit * U256::from(1_000u32),
+                    unit * U256::from(1_000u32),
+                ),
+            ]),
+        )
+        .await;
+
+        let mut intent = make_intent();
+        // §30: `observed_block()` only surfaces a height for NewBlock-sourced
+        // intents (mempool intents honestly carry none) — mirror block_scanner.
+        intent.source_event = crate::route_intent::DetectionSource::NewBlock;
+        intent.observed_block_number = Some(12_345);
+        let impact = ImpactSet {
+            impacted_cycles: vec![0],
+            ..Default::default()
+        };
+
+        // Rejected path (spot_product ≤ 1, no config) must still anchor.
+        let rejected = engine
+            .build_from_impacted_cycles(&intent, &impact, None)
+            .await
+            .expect("must not error");
+        assert_eq!(
+            rejected.len(),
+            1,
+            "must emit exactly one rejected candidate"
+        );
+        assert_eq!(
+            rejected[0].rejection_reason.as_deref(),
+            Some("spot_product_le_one"),
+            "must reject with reason 'spot_product_le_one'"
+        );
+        assert_eq!(
+            rejected[0].opportunity.block_number,
+            Some(12_345),
+            "rejected candidate must anchor the intent's observed block (§30 missing_block regression)"
+        );
+
+        // Accepted path: profitable reserves + WETH pricing config.
+        let r_hop0_r0 = unit * U256::from(100u32);
+        let r_hop0_r1 = unit * U256::from(120u32);
+        let r_hop1_r0 = unit * U256::from(100u32);
+        let r_hop1_r1 = unit * U256::from(110u32);
+        let r_hop2_r0 = unit * U256::from(200u32);
+        let r_hop2_r1 = unit * U256::from(100u32);
+        let cache = Arc::new(ReservesCache::new());
+        cache.insert(pool_a, r_hop0_r0, r_hop0_r1).await;
+        cache.insert(pool_b, r_hop1_r0, r_hop1_r1).await;
+        cache.insert(pool_c, r_hop2_r0, r_hop2_r1).await;
+        let seed = CycleSeed {
+            cycle_id: 0,
+            token_a_symbol: "WETH".to_string(),
+            pool_addresses: [pool_a, pool_b, pool_c],
+            token_ins: [tok_a, tok_b, tok_c],
+            token_outs: [tok_b, tok_c, tok_a],
+            swap_in_is_token0: [tok_a < tok_b, tok_b < tok_c, tok_c < tok_a],
+        };
+        let engine_ok = TriangularEngine::new(cache, vec![seed]);
+        let cfg_state = make_cfg(3000.0, 50_000.0);
+
+        let result = engine_ok
+            .build_from_impacted_cycles(&intent, &impact, Some(&cfg_state))
+            .await
+            .expect("must not error");
+        let accepted: Vec<_> = result
+            .iter()
+            .filter(|c| c.rejection_reason.is_none())
+            .collect();
+        assert!(
+            !accepted.is_empty(),
+            "must produce at least one accepted candidate"
+        );
+        for c in &accepted {
+            assert_eq!(
+                c.opportunity.block_number,
+                Some(12_345),
+                "accepted candidate must anchor the intent's observed block (§30 missing_block regression)"
+            );
+        }
+
+        // Honest gate: a mempool-sourced intent must NEVER carry a fabricated
+        // block — observed_block() is None even if a stale height is present.
+        let mut mempool_intent = make_intent();
+        mempool_intent.source_event = crate::route_intent::DetectionSource::PublicMempool;
+        mempool_intent.observed_block_number = Some(12_345); // stale/ignored for mempool
+        let mempool_result = engine
+            .build_from_impacted_cycles(&mempool_intent, &impact, None)
+            .await
+            .expect("must not error");
+        assert_eq!(mempool_result.len(), 1);
+        assert!(
+            mempool_result[0].opportunity.block_number.is_none(),
+            "mempool-sourced candidate must stay unanchored (honest None, §30)"
+        );
     }
 
     // ── triangular_engine::tests::empty_impacted_cycles_returns_empty ────────
@@ -1510,6 +1667,7 @@ mod tests {
             Some(amount_in_wei),
             usdc_price,
             1000.0,
+            None, // §30: no intent context in unit tests — honest None
         );
 
         assert_eq!(cand.amount_in, 100.0, "amount_in must be 100.0 USDC");
@@ -1535,6 +1693,7 @@ mod tests {
             Some(amount_in_wei),
             Some(3000.0),
             1000.0,
+            None,
         );
 
         assert_eq!(cand.amount_in, 1.0, "amount_in must be 1.0 WETH");
@@ -1566,6 +1725,7 @@ mod tests {
             Some(amount_in_wei),
             None, // no price oracle
             1000.0,
+            None,
         );
         assert_eq!(cand.amount_in, 100.0);
         assert_eq!(
@@ -1582,6 +1742,7 @@ mod tests {
             Some(amount_in_wei),
             Some(0.0),
             1000.0,
+            None,
         );
         assert_eq!(
             cand0.expected_amount_out, 100.0,

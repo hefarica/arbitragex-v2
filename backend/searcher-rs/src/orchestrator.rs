@@ -55,7 +55,7 @@ use crate::impact_index::ImpactIndex;
 use crate::metrics::{
     CANDIDATES_TOTAL, DECODED_INTENTS_TOTAL, ENGINE_ERRORS_TOTAL, IMPACTED_ROUTES_TOTAL,
     OPPORTUNITIES_PUBLISHED_TOTAL, REJECTED_CONFIG_TOTAL, REJECTED_NO_PROFIT_TOTAL,
-    SIMULATION_FAILED_TOTAL,
+    SIMULATION_FAILED_TOTAL, UNANCHORED_REJECTED_DROPPED_TOTAL,
 };
 use crate::opportunity_emitter::{EmitOutcome, OpportunityEmitter};
 use crate::route_intent::RouteIntent;
@@ -861,11 +861,8 @@ impl Orchestrator {
         };
         // HOPS-LEDGER-04: per-leg wei (in, out) from the sizing kernel,
         // threaded alongside the candidate to process_candidate.
-        type SizedBatchEntry = (
-            crate::net_bps_ranking::RankedRoute,
-            StrategyCandidate,
-            Option<(Vec<String>, Vec<String>)>,
-        );
+        // (Type alias `SizedBatchEntry` lives at module level — shared with
+        // the §30 layer-3.5 pre-emit guard.)
         let mut sized_batch: Vec<SizedBatchEntry> = Vec::new();
         for mut candidate in all_candidates {
             // Preserve the observed block without overwriting engine evidence.
@@ -876,7 +873,7 @@ impl Orchestrator {
                 .or(intent.observed_block());
             // Skip sizing for already-rejected candidates (engine rejection).
             if candidate.rejection_reason.is_some() {
-                sized_batch.push((
+                let entry = (
                     crate::net_bps_ranking::RankedRoute {
                         route_key: route_key_of(&candidate),
                         economics: crate::net_bps_ranking::RouteNetEconomics::not_computable(),
@@ -885,7 +882,10 @@ impl Orchestrator {
                     // HOPS-LEDGER-04: engine-rejected rows never reached the
                     // sizing kernel — no per-leg wei exists (R8 absence).
                     None,
-                ));
+                );
+                if let Some(entry) = reject_unanchored_or_keep(entry, chain_id) {
+                    sized_batch.push(entry);
+                }
                 continue;
             }
 
@@ -1166,6 +1166,11 @@ impl Orchestrator {
                 o.rejection_reason = Some(reason_owned.clone());
                 o
             };
+
+            // §30 layer 3.5 lives at the sized_batch admission boundary
+            // (`reject_unanchored_or_keep`) — unanchored rejections never
+            // reach the emit below (RULE 00: no NULL anchors persisted).
+
             // Already counted in on_route_intent's optimizer rejection path.
             // Avoid double-counting by not incrementing REJECTED_NO_PROFIT_TOTAL here.
             // ── TASK 1 log #9: v2.emitter.input ─────────────────────────
@@ -1504,6 +1509,16 @@ impl Orchestrator {
 // Utilities
 // ---------------------------------------------------------------------------
 
+/// §30 layer 3.5: one sized-batch entry as admitted to
+/// `process_candidate`/emit — (net-bps ranking envelope, candidate, per-leg
+/// ledger). Shared by the emit loop and the pre-emit unanchored-rejected
+/// drop (`reject_unanchored_or_keep`).
+pub(crate) type SizedBatchEntry = (
+    crate::net_bps_ranking::RankedRoute,
+    StrategyCandidate,
+    Option<(Vec<String>, Vec<String>)>,
+);
+
 // WO-16 resolve_hot_gate_inputs excised (see struct-field tombstone; §5.4).
 
 /// WO-GAP2 (2026-09-07): R8 fail-honest rejection fields for the spine-gate
@@ -1533,6 +1548,48 @@ fn apply_gate_rejection_fields(opp: &mut shared_rs::contracts::Opportunity, reas
 /// names so Grafana dashboards can filter by source without mapping.
 fn detection_source_as_str(src: crate::route_intent::DetectionSource) -> &'static str {
     src.as_str()
+}
+
+/// Apply the §30 layer 3.5 pre-emit drop to a single sized-batch entry.
+///
+/// A REJECTED entry whose `Opportunity::block_number` is `None` cannot be
+/// honestly anchored: mempool-sourced intents carry no observed block by
+/// design (`RouteIntent::observed_block()` returns `None` for
+/// `source_event != NewBlock`), and anchoring them to the current head would
+/// fabricate a height from the pending tx's FUTURE (violating §30's "anchor
+/// to YOUR block, observed — not manufactured"). RULE 00: a knowingly
+/// unanchorable row is dropped instead of persisted as NULL — explicitly
+/// counted (`UNANCHORED_REJECTED_DROPPED_TOTAL{chain_id,detector}`, R8),
+/// never silently discarded.
+///
+/// NOT applied to accepted entries: no known case exists; if an unanchored
+/// accepted row ever appears it must stay VISIBLE (persisted) rather than
+/// silently dropped.
+fn reject_unanchored_or_keep(entry: SizedBatchEntry, chain_id: u64) -> Option<SizedBatchEntry> {
+    let (_, candidate, _) = &entry;
+    if candidate.rejection_reason.is_none() || candidate.opportunity.block_number.is_some() {
+        return Some(entry);
+    }
+    let chain_str = chain_id.to_string();
+    let detector = candidate
+        .opportunity
+        .detector_id
+        .as_deref()
+        .unwrap_or("unknown")
+        .to_string();
+    UNANCHORED_REJECTED_DROPPED_TOTAL
+        .with_label_values(&[&chain_str, &detector])
+        .inc();
+    info!(
+        event = "orchestrator.reject_unanchored_drop",
+        chain_id,
+        tx_hash = %candidate.source_intent_hash,
+        strategy = candidate.label.as_str(),
+        detector,
+        rejection_reason = candidate.rejection_reason.as_deref().unwrap_or_default(),
+        "rejected candidate has no observed block — dropped pre-emit (RULE 00: no NULL anchors persisted)"
+    );
+    None
 }
 
 // ---------------------------------------------------------------------------
@@ -1735,12 +1792,106 @@ mod tests {
         assert_eq!(c.route_plan.strategy_kind, "dex_arb_v2v3");
     }
 
+    // ── orchestrator::tests::reject_unanchored_drops_instead_of_persisting ──
+    // §30 residual regression (layer 3.5): a REJECTED candidate whose
+    // Opportunity has `block_number: None` (mempool-sourced intents carry none
+    // by design) must NOT reach the emitter — it is dropped at the pre-emit
+    // boundary (`reject_unanchored_or_keep`), the
+    // UNANCHORED_REJECTED_DROPPED_TOTAL{chain_id,detector} counter increments,
+    // and no emit happens. RULE 00: better an absent row than a knowingly
+    // unanchorable NULL-anchor row.
+
+    #[test]
+    fn reject_unanchored_drops_instead_of_persisting() {
+        use crate::metrics::UNANCHORED_REJECTED_DROPPED_TOTAL;
+
+        let make_entry = |mut sc: StrategyCandidate| -> SizedBatchEntry {
+            sc.opportunity.detector_id = Some("dex_engine".to_string());
+            (
+                crate::net_bps_ranking::RankedRoute {
+                    route_key: format!("test:{}", sc.opportunity.id),
+                    economics: crate::net_bps_ranking::RouteNetEconomics::not_computable(),
+                },
+                sc,
+                None,
+            )
+        };
+
+        // Case 1 — the live NULL-row shape: rejected by the engine,
+        // mempool-origin (no block anchor), detector_id present.
+        let sc = make_candidate(
+            StrategyLabel::DexArbV2V2,
+            Some("single_pool_no_spread".to_string()),
+        );
+        assert!(
+            sc.opportunity.block_number.is_none(),
+            "fixture must be unanchored (mempool-origin shape)"
+        );
+        let chain_str = sc.opportunity.chain_id.to_string();
+        let before = UNANCHORED_REJECTED_DROPPED_TOTAL
+            .with_label_values(&[&chain_str, "dex_engine"])
+            .get();
+
+        let kept = reject_unanchored_or_keep(make_entry(sc), 1);
+        assert!(
+            kept.is_none(),
+            "unanchored rejection must be dropped (None)"
+        );
+
+        let after = UNANCHORED_REJECTED_DROPPED_TOTAL
+            .with_label_values(&[&chain_str, "dex_engine"])
+            .get();
+        assert_eq!(
+            after,
+            before + 1,
+            "UNANCHORED_REJECTED_DROPPED_TOTAL must increment by exactly 1 for chain=1 detector=dex_engine"
+        );
+
+        // Case 2 — ANCHORED rejection: must be KEPT (visible, not dropped).
+        let mut anchored = make_candidate(
+            StrategyLabel::DexArbV2V2,
+            Some("single_pool_no_spread".to_string()),
+        );
+        anchored.opportunity.block_number = Some(12_345);
+        let before_ok = UNANCHORED_REJECTED_DROPPED_TOTAL
+            .with_label_values(&[&chain_str, "dex_engine"])
+            .get();
+        let kept_ok = reject_unanchored_or_keep(make_entry(anchored), 1);
+        assert!(kept_ok.is_some(), "anchored rejection must NOT be dropped");
+        let after_ok = UNANCHORED_REJECTED_DROPPED_TOTAL
+            .with_label_values(&[&chain_str, "dex_engine"])
+            .get();
+        assert_eq!(
+            after_ok, before_ok,
+            "anchored rejection must NOT trip the unanchored-drop counter"
+        );
+
+        // Case 3 — UNANCHORED ACCEPTED: must be KEPT. No known case exists;
+        // if one ever appears it must stay VISIBLE (persisted), never dropped.
+        let mut accepted = make_candidate(StrategyLabel::DexArbV2V2, None);
+        assert!(accepted.opportunity.block_number.is_none());
+        let before_acc = UNANCHORED_REJECTED_DROPPED_TOTAL
+            .with_label_values(&[&chain_str, "dex_engine"])
+            .get();
+        let kept_acc = reject_unanchored_or_keep(make_entry(accepted), 1);
+        assert!(
+            kept_acc.is_some(),
+            "unanchored ACCEPTED candidate must be kept (visible, not dropped)"
+        );
+        let after_acc = UNANCHORED_REJECTED_DROPPED_TOTAL
+            .with_label_values(&[&chain_str, "dex_engine"])
+            .get();
+        assert_eq!(
+            after_acc, before_acc,
+            "accepted candidates must never trip the unanchored-drop counter"
+        );
+    }
+
     // ── orchestrator::tests::engine_error_does_not_crash ─────────────────────
     //
     // Verifies that the Prometheus ENGINE_ERRORS_TOTAL counter increments
     // correctly. The label value MUST come from StrategyLabel::as_str() —
     // never a hardcoded string literal.
-
     #[test]
     fn engine_error_counter_increments() {
         use crate::metrics::ENGINE_ERRORS_TOTAL;

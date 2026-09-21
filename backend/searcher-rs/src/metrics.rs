@@ -162,6 +162,36 @@ pub static REJECTED_CONFIG_TOTAL: Lazy<IntCounterVec> = Lazy::new(|| {
 });
 
 // ---------------------------------------------------------------------------
+// unanchored_rejected_dropped_total{chain_id, detector}  (§30 residual, 2026-09-21)
+// ---------------------------------------------------------------------------
+
+/// Layer 3.5 (§30 residual fix): rejected candidates with `block_number == None`
+/// dropped at the orchestrator emit boundary instead of being persisted as NULL.
+///
+/// Mempool-sourced intents (`source_event != NewBlock`) honestly carry no
+/// observed block (`RouteIntent::observed_block()` returns None by design), so
+/// their rejected rows would land in PG with `block_number IS NULL` and surface
+/// the FE `missing_block` quarantine banner. RULE 00: a knowingly unanchorable
+/// row is dropped — explicitly counted (R8), never silently discarded.
+///
+/// `detector` values come from `Opportunity::detector_id` when present
+/// (e.g. `dex_engine`, `triangular_engine`), `"unknown"` otherwise.
+/// NOT incremented on the accepted path — no known case; if one ever appears it
+/// must stay visible (persisted) rather than dropped.
+pub static UNANCHORED_REJECTED_DROPPED_TOTAL: Lazy<IntCounterVec> = Lazy::new(|| {
+    let c = IntCounterVec::new(
+        prometheus::opts!(
+            "arbx_unanchored_rejected_dropped_total",
+            "Rejected candidates with no observed block dropped pre-emit (RULE 00: no NULL anchors persisted)"
+        ),
+        &["chain_id", "detector"],
+    )
+    .expect("metric");
+    REGISTRY.register(Box::new(c.clone())).expect("register");
+    c
+});
+
+// ---------------------------------------------------------------------------
 // v3_quote_total{outcome}  (V3-QUOTE-CACHE-20260916, R8 visibility)
 // ---------------------------------------------------------------------------
 
@@ -574,6 +604,7 @@ pub fn init_orchestrator_metrics() {
     let _ = &*REJECTED_NO_PROFIT_TOTAL;
     let _ = &*REJECTED_CONFIG_TOTAL;
     let _ = &*SIMULATION_FAILED_TOTAL;
+    let _ = &*UNANCHORED_REJECTED_DROPPED_TOTAL;
     let _ = &*OPPORTUNITIES_PUBLISHED_TOTAL;
     let _ = &*ENGINE_ERRORS_TOTAL;
     let _ = &*FLASHLOAN_WRAPPED_TOTAL;
