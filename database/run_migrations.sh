@@ -7,6 +7,14 @@
 # script safe to re-run on every deploy; each processed file is registered in
 # schema_migrations (version + sha256) so the ledger reflects reality.
 #
+# RUNMIG-LOCK-01 (2026-09-20): files already registered with an UNCHANGED
+# sha256 are SKIPPED. Re-running applied DDL still takes locks (ADD COLUMN IF
+# NOT EXISTS needs ACCESS EXCLUSIVE even when the column exists) and under
+# live traffic the 10s lock_timeout aborted every deploy (093 on
+# route_discovery_outcomes). Unregistered files (drift) and checksum-changed
+# files still run idempotently and (re)register — the drift-healing property
+# is preserved.
+#
 # Replaces the legacy hand-enumerated list (which stopped at 024 and silently
 # dropped 025..102). The init container (database/init/001_init.sql) only runs
 # on first boot; this script is the canonical path for post-boot schema sync.
@@ -118,11 +126,30 @@ fi
 
 APPLIED=0
 SKIPPED=0
+# Snapshot the ledger once (RUNMIG-LOCK-01): a file whose registered sha256
+# equals the file's current sha256 was already applied byte-identically —
+# skip it instead of re-executing its DDL against live traffic. On a fresh
+# database the SELECT fails (table created by 002), the map stays empty and
+# every file runs — same behaviour as before this change.
+declare -A LEDGER=()
+while IFS='|' read -r v c; do
+  # IFS='|' does NOT strip surrounding whitespace — trim explicitly or the
+  # keys never match the filename-derived versions.
+  v="${v//[[:space:]]/}"
+  c="${c//[[:space:]]/}"
+  LEDGER["$v"]="$c"
+done < <(run_sql "SELECT version || '|' || checksum FROM schema_migrations;" 2>/dev/null | grep '|' || true)
 # Unique restricted logs prevent concurrent runs from overwriting each other's
 # diagnostics. Never retry arbitrary non-transactional or data migrations.
 LOG_DIR=$(mktemp -d)
 trap 'rm -rf "$LOG_DIR"' EXIT
 for f in "${FILES[@]}"; do
+  sum="$(sha256sum "$MIG_DIR/$f" | cut -d' ' -f1)"
+  if [ "${LEDGER[${f%.sql}]:-}" = "$sum" ]; then
+    echo "  -> SKIP $f (already applied, checksum unchanged)"
+    SKIPPED=$((SKIPPED + 1))
+    continue
+  fi
   # Each migration is wrapped so a failure aborts the whole deploy (fail-fast).
   # Idempotency is the migration author's responsibility (IF NOT EXISTS).
   attempts=1
@@ -149,7 +176,7 @@ for f in "${FILES[@]}"; do
     # runner, automation/scripts/migrate.sh, stopped being the canonical path).
     # Registration is metadata: a failure must not abort a deploy whose DDL succeeded.
     if ! run_sql "INSERT INTO schema_migrations (version, checksum)
-                  VALUES ('${f%.sql}', '$(sha256sum "$MIG_DIR/$f" | cut -d' ' -f1)')
+                  VALUES ('${f%.sql}', '$sum')
                   ON CONFLICT (version) DO UPDATE SET checksum = EXCLUDED.checksum;" >/dev/null 2>&1; then
       echo "  -> WARN ledger registration failed for $f (schema applied; ledger entry missing)"
     fi
@@ -169,7 +196,7 @@ for f in "${FILES[@]}"; do
     exit 1
   fi
 done
-echo "  ($APPLIED migration files processed)"
+echo "  ($APPLIED migration files processed, $SKIPPED skipped unchanged)"
 
 echo "=== Granting permissions ==="
 run_sql "GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA public TO arbx_rw;"
