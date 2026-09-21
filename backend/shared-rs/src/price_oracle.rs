@@ -341,8 +341,8 @@ async fn merge_cex_fallback(
     use redis::AsyncCommands;
     let cex_key = redis_cex_prices_key(chain_id);
     let raw: Result<HashMap<String, String>, redis::RedisError> = redis.hgetall(&cex_key).await;
-    let map = match raw {
-        Ok(m) => m,
+    match raw {
+        Ok(map) => merge_cex_entries_into(chain_id, map, parsed),
         Err(e) => {
             tracing::debug!(
                 event = "price_oracle.cex_hgetall_failed",
@@ -351,10 +351,21 @@ async fn merge_cex_fallback(
                 error = %e,
                 "cex fallback unavailable this tick — on-chain snapshot stands as-is"
             );
-            return;
         }
-    };
-    for (base, val_str) in map {
+    }
+}
+
+/// Pure merge core of [`merge_cex_fallback`]: insert CEX prices for symbols
+/// the on-chain tower has NOT produced (`or_insert` — on-chain precedence is
+/// absolute), dropping malformed JSON and non-finite/non-positive prices
+/// (R8: honest miss beats a poisoned snapshot). Extracted pure so the merge
+/// semantics are unit-testable without a live Redis (RULE 00: no mocks).
+fn merge_cex_entries_into(
+    chain_id: u64,
+    raw: HashMap<String, String>,
+    parsed: &mut HashMap<String, f64>,
+) {
+    for (base, val_str) in raw {
         let entry: CexPriceEntry = match serde_json::from_str(&val_str) {
             Ok(e) => e,
             Err(e) => {
@@ -730,5 +741,76 @@ mod tests {
         assert_eq!(cex_base_to_oracle_symbol("BNB"), "BNB");
         assert_eq!(cex_base_to_oracle_symbol(" sol "), "SOL");
         assert_eq!(cex_base_to_oracle_symbol("AVAX"), "AVAX");
+    }
+
+    /// Helper: a well-formed persisted CEX entry as the writer serializes it.
+    fn cex_json(price_json: &str) -> String {
+        format!(r#"{{"price":{price_json},"ts_ms":1700000000000,"quote":"USDT","source":"binance_ws"}}"#)
+    }
+
+    #[test]
+    fn cex_merge_never_overwrites_onchain_precedence() {
+        // On-chain values are ABSOLUTE: a CEX ETH mid must never replace an
+        // on-chain WETH price, but symbols the on-chain tower lacks are filled.
+        let mut parsed = HashMap::new();
+        parsed.insert("WETH".to_string(), 2500.0);
+        let raw = HashMap::from([
+            ("ETH".to_string(), cex_json("2517.42")),
+            ("SOL".to_string(), cex_json("63.5")),
+        ]);
+        merge_cex_entries_into(1, raw, &mut parsed);
+        assert_eq!(
+            parsed.get("WETH"),
+            Some(&2500.0),
+            "on-chain WETH must survive the CEX merge (or_insert, not overwrite)"
+        );
+        assert_eq!(parsed.get("SOL"), Some(&63.5), "absent on-chain → CEX fills");
+        assert_eq!(parsed.len(), 2);
+    }
+
+    #[test]
+    fn cex_merge_drops_malformed_and_invalid_entries() {
+        let mut parsed = HashMap::new();
+        let raw = HashMap::from([
+            // One good entry must survive the garbage around it.
+            ("ETH".to_string(), cex_json("2517.42")),
+            // Invalid JSON.
+            ("BAD1".to_string(), "not-json{{".to_string()),
+            // Missing required field (no price).
+            ("BAD2".to_string(), r#"{"ts_ms":1,"quote":"USDT"}"#.to_string()),
+            // Wrong type for price.
+            ("BAD3".to_string(), cex_json("\"abc\"")),
+            // Non-positive price (R8: never admit nonsense).
+            ("BAD4".to_string(), cex_json("-1.0")),
+            // 1e999 overflows f64 → +inf → dropped by the finiteness guard.
+            ("BAD5".to_string(), cex_json("1e999")),
+        ]);
+        merge_cex_entries_into(1, raw, &mut parsed);
+        assert_eq!(parsed.len(), 1, "only the well-formed entry survives");
+        // ETH maps to the on-chain WETH convention before insertion.
+        assert_eq!(parsed.get("WETH"), Some(&2517.42));
+    }
+
+    #[test]
+    fn cex_merge_absent_or_empty_hash_is_noop() {
+        // Feed off / worker never ticked → empty CEX hash → on-chain snapshot
+        // stands untouched (normal state, not an error).
+        let mut parsed = HashMap::new();
+        parsed.insert("WETH".to_string(), 2500.0);
+        merge_cex_entries_into(1, HashMap::new(), &mut parsed);
+        assert_eq!(parsed.len(), 1);
+        assert_eq!(parsed.get("WETH"), Some(&2500.0));
+    }
+
+    #[test]
+    fn cex_merge_maps_base_to_oracle_symbols_including_identity() {
+        let mut parsed = HashMap::new();
+        let raw = HashMap::from([
+            ("BTC".to_string(), cex_json("60000.5")),
+            ("DOGE".to_string(), cex_json("0.16")),
+        ]);
+        merge_cex_entries_into(1, raw, &mut parsed);
+        assert_eq!(parsed.get("WBTC"), Some(&60000.5), "BTC → WBTC");
+        assert_eq!(parsed.get("DOGE"), Some(&0.16), "unknown base → identity");
     }
 }
