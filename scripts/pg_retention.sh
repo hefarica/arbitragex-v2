@@ -172,6 +172,44 @@ rdo_backfill_chunk() {
     ON CONFLICT DO NOTHING" | tail -n 1
 }
 
+# ROLLUP-GAP-01 (2026-09-22): zero-fill honesto de buckets __totals__.
+# Días cuyas horas iniciales no tienen outcomes crudos jamás reciben fila
+# __totals__ (la agregación lateral del backfill solo corre donde hubo crudo
+# que contar tras el oldest mutable), y el coverage gate del purge salta el
+# día entero por esos huecos. Materializamos la fila cero SOLO donde NO
+# existe crudo en el bucket (RULE 00/R8: un bucket con crudo pendiente de
+# rollup NUNCA se rellena con cero — eso escondería datos reales).
+rdo_zero_fill() {
+  psql_batch "
+    WITH oldest AS (
+      SELECT min(ts_ms) / 300000::bigint * 300000 AS b
+      FROM route_discovery_outcomes
+    ),
+    last_complete AS (
+      SELECT floor(extract(epoch FROM now()) * 1000)::bigint
+             / 300000 * 300000 - 300000 AS b
+    ),
+    todo AS (
+      SELECT g.bucket
+      FROM generate_series(
+             COALESCE((SELECT b FROM oldest), (SELECT b FROM last_complete)),
+             (SELECT b FROM last_complete),
+             300000) AS g(bucket)
+      WHERE NOT EXISTS (
+        SELECT 1 FROM route_discovery_outcome_rollup_5m rr
+        WHERE rr.dim = '__totals__' AND rr.bucket_ms = g.bucket
+      )
+      AND NOT EXISTS (
+        SELECT 1 FROM route_discovery_outcomes r
+        WHERE r.ts_ms >= g.bucket AND r.ts_ms < g.bucket + 300000
+      )
+    )
+    INSERT INTO route_discovery_outcome_rollup_5m (dim, key, bucket_ms, n, opportunities, with_reserves, profit_gt0)
+    SELECT '__totals__', '', bucket, 0::bigint, 0::bigint, 0::bigint, 0::bigint
+    FROM todo
+    ON CONFLICT DO NOTHING" | tail -n 1
+}
+
 if [ "$DRY_RUN" = "0" ]; then
   bf_start=$SECONDS
   bf_rows=1
@@ -181,6 +219,9 @@ if [ "$DRY_RUN" = "0" ]; then
     [ "$bf_rows" -gt 0 ] && log "rdo.backfill chunk inserted rows=$bf_rows elapsed=$((SECONDS - bf_start))s"
   done
   log "rdo.backfill done missing_remaining=${bf_rows} elapsed=$((SECONDS - bf_start))s budget=${BACKFILL_BUDGET_S}s"
+  zf_out=$(rdo_zero_fill) || zf_out="err"
+  zf_rows=$(printf '%s' "$zf_out" | grep -oE 'INSERT 0 [0-9]+' | grep -oE '[0-9]+$') || zf_rows=0
+  log "rdo.zero_fill inserted_rows=$zf_rows out=$zf_out"
 fi
 
 # ----------------------------------------------------------------------------
