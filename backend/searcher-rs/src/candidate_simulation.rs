@@ -462,6 +462,7 @@ async fn prepare_inner(
         require_trace_hash: true,
         require_positive_net_profit: true,
         max_steps: 8,
+        paper_stack: None,
     };
     let simulator = Arc::new(simulator_v2::SimulatorV2::new(rpc_url).with_block(block_number));
     let sim_ctx = ctx.clone();

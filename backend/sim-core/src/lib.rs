@@ -44,5 +44,13 @@ pub mod sim_multistep;
 // compiling unchanged.
 pub mod sim_encoder;
 
+// G-SIM-1 WO-LR22.13 PR-B — paper-only fork-deploy of the executor stack.
+// Real forge-compiled AE/FLE bytecode (committed hex fixtures) deployed INSIDE
+// the in-process REVM CacheDB so the variance benchmark can exercise the REAL
+// wrapped-flash path against the REAL forked chain state (§32: no broadcast,
+// no signer). Types/encoders/fixtures are pure ethers (ungated); only
+// `deploy_paper_executor_stack` is `v2-simulator`-gated.
+pub mod paper_executors;
+
 #[cfg(feature = "v2-simulator")]
 pub mod verified_simulation;

@@ -213,6 +213,7 @@ async fn multistep_fork_round_trip_weth_usdc() {
         require_trace_hash: true,
         require_positive_net_profit: true,
         max_steps: 16,
+        paper_stack: None,
     };
 
     // 1. Plan construction must succeed before any REVM dispatch. The
@@ -347,6 +348,7 @@ fn build_multistep_plan_smoke_builds_four_step_plan() {
         require_trace_hash: true,
         require_positive_net_profit: true,
         max_steps: 16,
+        paper_stack: None,
     };
 
     let backward_amount_in = U256::from(3_000_000_000u64);

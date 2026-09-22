@@ -85,6 +85,10 @@ pub enum SequenceError {
     AmountsOutReverted(String),
     #[error("getAmountsOut halted: {0}")]
     AmountsOutHalted(String),
+    #[error("deploy() init_code is empty — a CREATE with no bytecode")]
+    CreateInitCodeEmpty,
+    #[error("create succeeded but REVM returned no created address")]
+    CreateAddressMissing,
 }
 
 impl SequenceError {
@@ -100,6 +104,8 @@ impl SequenceError {
             Self::AmountsOutEmptyArray => "amounts_out_empty_array",
             Self::AmountsOutReverted(_) => "amounts_out_reverted",
             Self::AmountsOutHalted(_) => "amounts_out_halted",
+            Self::CreateInitCodeEmpty => "create_init_code_empty",
+            Self::CreateAddressMissing => "create_address_missing",
         }
     }
 }
@@ -141,6 +147,34 @@ pub enum CallOutcome {
 }
 
 impl CallOutcome {
+    pub fn is_success(&self) -> bool {
+        matches!(self, Self::Success { .. })
+    }
+}
+
+/// A contract-deployment transaction to execute via `transact_commit` with
+/// `TxKind::Create`. The runner never synthesises init_code — the caller
+/// supplies it (committed bytecode fixtures, G-SIM-1 WO-LR22.13 PR-B).
+#[derive(Debug, Clone)]
+pub struct SequenceDeploy {
+    pub from: Address,
+    pub init_code: Vec<u8>,
+    pub gas_price_wei: u128,
+    pub gas_limit: u64,
+    /// Operator-visible label for logs (`"deploy_arbitrage_executor"`, etc).
+    pub label: &'static str,
+}
+
+/// Outcome of a single `deploy()`. `Success` carries the CREATED address
+/// decoded from REVM's `Output::Create` — never computed client-side.
+#[derive(Debug, Clone)]
+pub enum DeployOutcome {
+    Success { address: Address, gas_used: u64 },
+    Reverted { gas_used: u64, reason: String },
+    Halted { gas_used: u64, reason: String },
+}
+
+impl DeployOutcome {
     pub fn is_success(&self) -> bool {
         matches!(self, Self::Success { .. })
     }
@@ -280,6 +314,144 @@ impl SequenceContext {
             "storage override applied"
         );
         Ok(())
+    }
+
+    /// Set `account`'s native ETH balance to `balance_wei` in the CacheDB.
+    /// Paper-only caller-funding primitive — the same class of CacheDB-direct
+    /// mutation as `apply_storage`, answering the CALLER-GAS gap flagged in
+    /// `sim_multistep` (the paper caller holds no forked mainnet ETH, so
+    /// without this NO paper dispatch can ever pay gas). The sim-core
+    /// orchestrator gates this behind `paper_mode && enable_storage_cheats`
+    /// exactly like the role-grant override; the runner itself stays neutral.
+    /// The seed is ABSOLUTE (sets, never adds) so repeated seeding is
+    /// deterministic regardless of prior forked balance.
+    pub fn seed_balance(
+        &mut self,
+        account: Address,
+        balance_wei: U256,
+        label: &'static str,
+    ) -> Result<(), SequenceError> {
+        let db = self.evm.db_mut();
+        let mut info = db
+            .load_account(account)
+            .map_err(|e| SequenceError::TransactInfra(e.to_string()))?
+            .info
+            .clone();
+        info.balance = balance_wei;
+        db.insert_account_info(account, info);
+        debug!(
+            event = "sequence_runner.balance_seed",
+            account = ?account,
+            balance_wei = %balance_wei,
+            label = %label,
+            "account balance seeded (paper-only)"
+        );
+        Ok(())
+    }
+
+    /// Execute a contract deployment via `evm.transact_commit()` with
+    /// `TxKind::Create`. Mirrors `call()` (nonce from CacheDB state, gas
+    /// accounting, trace-hash folding, revert/halt decode) and additionally
+    /// decodes the CREATED address from REVM's execution output. The deployed
+    /// contract is immediately visible to subsequent `call()`/`read_balance()`
+    /// steps — the CacheDB is shared.
+    pub fn deploy(&mut self, deploy: SequenceDeploy) -> Result<DeployOutcome, SequenceError> {
+        if deploy.init_code.is_empty() {
+            return Err(SequenceError::CreateInitCodeEmpty);
+        }
+        let nonce = self
+            .evm
+            .db_mut()
+            .load_account(deploy.from)
+            .map_err(|e| SequenceError::TransactInfra(e.to_string()))?
+            .info
+            .nonce;
+        let tx = TxEnv {
+            nonce,
+            chain_id: Some(self.evm.ctx.cfg.chain_id),
+            caller: deploy.from,
+            kind: TransactTo::Create,
+            data: Bytes::copy_from_slice(&deploy.init_code),
+            value: U256::ZERO,
+            gas_price: deploy.gas_price_wei,
+            gas_limit: deploy.gas_limit,
+            ..TxEnv::default()
+        };
+
+        let exec = self
+            .evm
+            .transact_commit(tx)
+            .map_err(|e| SequenceError::TransactInfra(format!("{e}")))?;
+
+        Ok(match exec {
+            ExecutionResult::Success { gas, output, .. } => {
+                let gas_used = gas.tx_gas_used();
+                self.gas_used_total += gas_used;
+                // revm 42: `Output` is an enum — only the `Create` variant carries
+                // the deployed address. Fail-closed on anything else.
+                let address = match output {
+                    revm::context_interface::result::Output::Create(_, Some(addr)) => addr,
+                    revm::context_interface::result::Output::Create(_, None) => {
+                        warn!(
+                            event = "sequence_runner.deploy_address_missing",
+                            label = %deploy.label,
+                            gas_used,
+                        );
+                        return Ok(DeployOutcome::Halted {
+                            gas_used,
+                            reason: "create_address_missing".to_string(),
+                        });
+                    }
+                    revm::context_interface::result::Output::Call(_) => {
+                        warn!(
+                            event = "sequence_runner.deploy_output_not_create",
+                            label = %deploy.label,
+                            gas_used,
+                        );
+                        return Ok(DeployOutcome::Halted {
+                            gas_used,
+                            reason: "create_output_expected".to_string(),
+                        });
+                    }
+                };
+                self.successful_calls += 1;
+                self.hasher.update(&deploy.init_code);
+                self.hasher.update(address.as_slice());
+                debug!(
+                    event = "sequence_runner.deploy_success",
+                    label = %deploy.label,
+                    address = ?address,
+                    gas_used,
+                );
+                DeployOutcome::Success { address, gas_used }
+            }
+            ExecutionResult::Revert { gas, output, .. } => {
+                let gas_used = gas.tx_gas_used();
+                self.gas_used_total += gas_used;
+                let reason = decode_revert_reason(&output);
+                warn!(
+                    event = "sequence_runner.deploy_revert",
+                    label = %deploy.label,
+                    gas_used,
+                    reason = %reason,
+                );
+                DeployOutcome::Reverted { gas_used, reason }
+            }
+            ExecutionResult::Halt { reason, gas, .. } => {
+                let gas_used = gas.tx_gas_used();
+                self.gas_used_total += gas_used;
+                warn!(
+                    event = "sequence_runner.deploy_halt",
+                    label = %deploy.label,
+                    gas_used,
+                    reason = ?reason,
+                );
+                DeployOutcome::Halted {
+                    gas_used,
+                    reason: format!("{reason:?}"),
+                }
+            }
+        })
     }
 
     /// Execute `call` via `evm.transact_commit()`. Mutates the CacheDB

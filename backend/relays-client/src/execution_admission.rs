@@ -99,6 +99,7 @@ pub async fn refresh(
         require_trace_hash: true,
         require_positive_net_profit: true,
         max_steps: 8,
+        paper_stack: None,
     };
     let sim_ctx = ctx.clone();
     let outcome = tokio::time::timeout(

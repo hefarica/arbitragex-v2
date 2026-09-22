@@ -206,6 +206,7 @@ pub async fn run_real_simulation(
         require_trace_hash: true,
         require_positive_net_profit: true,
         max_steps: 8,
+        paper_stack: None,
     };
 
     // 4. Dispatch the sync REVM call off the tokio executor.

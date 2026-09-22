@@ -476,6 +476,7 @@ async fn variance_benchmark_predicted_vs_settled_block() {
             // market viability (documented in the evidence detail).
             require_positive_net_profit: false,
             max_steps: 8,
+            paper_stack: None,
         };
 
         let pred = sim_at_block(&rpc, block_b, &ctx, &exec_cfg);
