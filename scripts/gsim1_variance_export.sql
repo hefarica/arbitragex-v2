@@ -27,7 +27,7 @@ SELECT jsonb_build_object(
          'pool_addresses',   o.route_metadata->'pool_addresses',
          'token_addresses',  o.route_metadata->'token_addresses',
          'dex_adapters',     o.route_metadata->'dex_adapters',
-         'amount_in_wei',    o.amount_in_wei
+         'amount_in_wei',    o.amount_in_wei::text
        )
 FROM opportunities o
 WHERE o.chain_id = 1
