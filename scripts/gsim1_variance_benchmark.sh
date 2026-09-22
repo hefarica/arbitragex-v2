@@ -45,6 +45,11 @@ for var_name in ARBITRAGE_EXECUTOR FLASHLOAN_EXECUTOR_1 ARBX_ADMIN_TOKEN; do
   fi
 done
 
+# G-SIM1-DEJQ (2026-09-22): the evidence payload is built with python3 (jq is
+# not installed on the VPS). A missing builder is a missing prerequisite —
+# fail-honest, recorded, never a silent 0-byte payload.
+command -v python3 >/dev/null 2>&1 || MISSING_PREREQS+=("python3 (evidence payload builder)")
+
 record_failed_prereq() {
   local why="$1" rows="${2:-0}"
   curl --fail-with-body -sS --max-time 20 -X POST \
@@ -131,16 +136,25 @@ echo "benchmark outcome: $OUTCOME → registry status: $STATUS"
 
 # ---- 4. Record the evidence (append-only registry) ----------------------------
 RUN_REF="harness $(date -u +%Y-%m-%dT%H:%M:%SZ) host=$(hostname) rows=$ROWS gas_wei=$GAS_PRICE_WEI rpc=${RPC_URL}"
-jq -n \
-  --arg gate_id "G-SIM-1" \
-  --arg item_key "variance_benchmark" \
-  --arg status "$STATUS" \
-  --arg evidence_ref "$RUN_REF" \
-  --argjson detail "$JSON_DETAIL" \
-  --arg verified_by "operator:gsim1-variance-harness" \
-  '{gate_id: $gate_id, item_key: $item_key, status: $status,
-    evidence_ref: $evidence_ref, detail: $detail,
-    verified_by: $verified_by}' > "$WORK/evidence-payload.json"
+# G-SIM1-DEJQ (2026-09-22): jq is NOT installed on the VPS — the old `jq -n`
+# here left evidence-payload.json at 0 bytes and broke the registry POST even
+# on valid outcomes. python3 (3.12) is present; build the identical payload
+# with it instead. Fail-loud prerequisite above guarantees it exists.
+python3 - "$STATUS" "$RUN_REF" "$JSON_DETAIL" > "$WORK/evidence-payload.json" <<'PY'
+import json
+import sys
+
+status, evidence_ref = sys.argv[1], sys.argv[2]
+detail = json.loads(sys.argv[3])
+print(json.dumps({
+    "gate_id": "G-SIM-1",
+    "item_key": "variance_benchmark",
+    "status": status,
+    "evidence_ref": evidence_ref,
+    "detail": detail,
+    "verified_by": "operator:gsim1-variance-harness",
+}))
+PY
 
 curl --fail-with-body -sS --max-time 20 -X POST \
   -H "Content-Type: application/json" \
