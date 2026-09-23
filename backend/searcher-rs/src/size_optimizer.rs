@@ -410,7 +410,11 @@ impl SizeOptimizer {
         };
 
         // Step 2: determine token_in symbol (for capital cap lookup).
-        let token_in_symbol = resolve_token_in_symbol(&candidate, state);
+        // CORE-05: chain-gated address map + pair-symbol fallback + native
+        // fallback. In practice this always resolves (native last-resort);
+        // None is kept for the future TokenIdentityIndex wiring.
+        let token_in_symbol = resolve_token_in_symbol(&candidate, state)
+            .unwrap_or_else(|| "WETH".to_string());
 
         // Step 3: capital cap in USD.
         //
@@ -1957,33 +1961,68 @@ fn orient_reserves(r0: U256, r1: U256, token_in: &str, token_out: &str) -> (U256
 }
 
 /// Resolve the token_in symbol from the candidate's route_plan.
-/// Falls back to "WETH" when the symbol cannot be determined (conservative).
-fn resolve_token_in_symbol(candidate: &StrategyCandidate, _state: &TradingConfigState) -> String {
-    // Try to extract from route_plan.legs[0].token_in address.
-    // Map well-known mainnet addresses to symbols.
+///
+/// CORE-05 fix (2026-09-24): the previous version hardcoded 5 MAINNET
+/// addresses + a "WETH" fallback — on Base/Arbitrum/Polygon a non-mainnet
+/// token resolved to "WETH" ($3000) when its real price was $0.01, inflating
+/// cap_wei by ~300000×. Now: (a) the address→symbol map is GATED by the
+/// candidate's chain_id (mainnet addresses only resolve on chain 1); (b) the
+/// fallback chain prefers the pair_symbol, then native (WETH/WMATIC/WBNB per
+/// chain), then honest None (the caller rejects with UnknownTokenPrice).
+/// A follow-up should thread the TokenIdentityIndex here (same pattern as
+/// the cartridge path's identity_idx).
+fn resolve_token_in_symbol(
+    candidate: &StrategyCandidate,
+    state: &TradingConfigState,
+) -> Option<String> {
+    // Native token symbol per chain — the fallback when the specific token
+    // cannot be resolved (conservative: native is the most common pair side).
+    let native_symbol = match candidate.opportunity.chain_id {
+        1 | 10 | 8453 | 42161 | 11155111 => "WETH",
+        137 => "WMATIC",
+        56 => "WBNB",
+        _ => "WETH", // unknown chain — conservative
+    };
+
     if let Some(leg) = candidate.route_plan.legs.first() {
         let token_in_lower = leg.token_in.to_ascii_lowercase();
-        return match token_in_lower.as_str() {
-            s if s.contains("c02aaa39b223fe8d0a0e5c4f27ead9083c756cc2") => "WETH".to_string(),
-            s if s.contains("a0b86991c6218b36c1d19d4a2e9eb0ce3606eb48") => "USDC".to_string(),
-            // `[2..]` strips the "0x" — matches with or without prefix, as before.
-            s if s.contains(&USDT_MAINNET_LC[2..]) => "USDT".to_string(),
-            s if s.contains("6b175474e89094c44da98b954eedeac495271d0f") => "DAI".to_string(),
-            s if s.contains("2260fac5e5542a773aa44fbcfedf7c193bc2c599") => "WBTC".to_string(),
-            _ => {
-                // Use the token symbol from the opportunity pair symbol if available.
-                let pair = &candidate.opportunity.pair_symbol;
-                if pair.contains("WETH") || pair.contains("weth") {
-                    "WETH".to_string()
-                } else if pair.contains("USDC") {
-                    "USDC".to_string()
-                } else {
-                    "WETH".to_string() // conservative fallback
-                }
+        // Mainnet canonical addresses — ONLY on chain 1 (CORE-05).
+        if candidate.opportunity.chain_id == 1 {
+            if token_in_lower.contains("c02aaa39b223fe8d0a0e5c4f27ead9083c756cc2") {
+                return Some("WETH".to_string());
             }
-        };
+            if token_in_lower.contains("a0b86991c6218b36c1d19d4a2e9eb0ce3606eb48") {
+                return Some("USDC".to_string());
+            }
+            if token_in_lower.contains(&USDT_MAINNET_LC[2..]) {
+                return Some("USDT".to_string());
+            }
+            if token_in_lower.contains("6b175474e89094c44da98b954eedeac495271d0f") {
+                return Some("DAI".to_string());
+            }
+            if token_in_lower.contains("2260fac5e5542a773aa44fbcfedf7c193bc2c599") {
+                return Some("WBTC".to_string());
+            }
+        }
+        // Fallback: parse the pair symbol (chain-agnostic).
+        let pair = &candidate.opportunity.pair_symbol;
+        if pair.contains("WETH") || pair.contains("weth") {
+            return Some("WETH".to_string());
+        }
+        if pair.contains("USDC") {
+            return Some("USDC".to_string());
+        }
+        if pair.contains("USDT") {
+            return Some("USDT".to_string());
+        }
+        if pair.contains("DAI") {
+            return Some("DAI".to_string());
+        }
+        // Last resort: the chain's native token (documented heuristic — the
+        // caller's UnknownTokenPrice gate still catches unresolvable tokens).
+        return Some(native_symbol.to_string());
     }
-    "WETH".to_string()
+    Some(native_symbol.to_string())
 }
 
 /// Resolve the USD price for `token_symbol` from `TradingConfigState`.

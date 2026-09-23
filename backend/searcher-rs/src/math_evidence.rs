@@ -60,11 +60,26 @@ pub async fn build_market_state(
     for pool in pool_addresses {
         if let Some((r0, r1)) = reserves_cache.get(pool).await {
             if let Some(price) = price_from_reserves(r0, r1) {
+                // MATH-04 fix (2026-09-24): price_from_reserves computes the
+                // RAW ratio r1/r0 without decimal normalization — for
+                // WETH(18)/USDC(6) this yields ~0.002 instead of ~2000.
+                // The price_matrix is consumed by op_27 (path ordering:
+                // "precio del mismo asset a través de venues") and op_15/
+                // op_21 (reference_price = media). Without normalization,
+                // cross-pair routes produce meaningless spreads/averages.
+                // NOTE: we do NOT have per-token decimals at this layer (the
+                // reserves cache stores raw U256 pairs). The normalization
+                // requires the DecimalsMap from the route metadata — a
+                // follow-up thread. For now, the raw ratio is annotated in
+                // the MarketState so consumers know the convention.
                 price_matrix.push(vec![price]);
                 liquidity_reserves.push((r0.as_u128() as f64, r1.as_u128() as f64));
             }
         }
     }
+    // MATH-04 note: price_matrix carries RAW reserve ratios (r1/r0 in
+    // smallest units). Consumers that need human-unit prices MUST normalize
+    // by 10^(dec_in − dec_out) per pair. See op_27's doc comment.
 
     if price_matrix.is_empty() {
         return None; // insufficient_state — no reserves for any pool
@@ -370,19 +385,22 @@ pub async fn evaluate_math_evidence(
 // de emisión (snapshot per-oportunidad + aplicación en evaluate_paper_opportunity)
 // es el paso siguiente enfocado — estas primitivas son lo que ese paso requiere.
 
-/// Construye el vector de evidencia per-oportunidad e = (O_1, …, O_31) sobre un
-/// `MarketState`, despachando los 31 operadores. None → 0.0 (token "no computado";
-/// su LR_k calibra a ~1). Índice = operator_id − 1 (0..30). Devuelve Vec<f64>
-/// de largo 31. Observe-only: el llamador decide si persiste / alimenta el posterior.
+/// Construye el vector de evidencia per-oportunidad sobre un `MarketState`,
+/// despachando los operadores registrados. None → 0.0 (token "no computado";
+/// su LR_k calibra a ~1). Índice = operator_id − 1. Devuelve Vec<f64> de
+/// largo OPERATOR_COUNT (32 desde op_32 NSGA-II — MATH-08 fix 2026-09-24;
+/// antes era 31 fijo, excluyendo op_32 del espacio de calibración).
+/// Observe-only: el llamador decide si persiste / alimenta el posterior.
 pub fn build_evidence_vector(state: &MarketState, registry: &OperatorRegistry) -> Vec<f64> {
-    let mut e = vec![0.0_f64; 31];
-    for id in 1u8..=31u8 {
+    let count = math_engine::operators::OPERATOR_COUNT as usize;
+    let mut e = vec![0.0_f64; count];
+    for id in 1u8..=math_engine::operators::OPERATOR_COUNT {
         if crate::operator_toggles::is_disabled(id) {
             continue;
         }
         if let Some(out) = registry.dispatch(id, state) {
             let idx = usize::from(id).wrapping_sub(1);
-            if idx < 31 {
+            if idx < count {
                 e[idx] = out.scalar_value.unwrap_or(0.0);
             }
         }
@@ -439,14 +457,21 @@ mod evidence_tests {
         };
         let registry = OperatorRegistry::new();
         let e = build_evidence_vector(&state, &registry);
-        assert_eq!(e.len(), 31, "evidence vector must have 31 slots");
+        // MATH-08 fix: 32 slots since op_32 NSGA-II (was 31 — excluded op_32
+        // from the calibration space).
+        assert_eq!(
+            e.len(),
+            math_engine::operators::OPERATOR_COUNT as usize,
+            "evidence vector must have OPERATOR_COUNT slots"
+        );
         assert!(e.iter().all(|&v| v == 0.0), "degenerate state → all zeros");
     }
 
     #[test]
     fn posterior_is_flat_prior_with_empty_calibration() {
-        let evidence = vec![0.5; 31];
-        let empty_cal = vec![0.0; 31]; // sin calibrar
+        let count = math_engine::operators::OPERATOR_COUNT as usize;
+        let evidence = vec![0.5; count];
+        let empty_cal = vec![0.0; count]; // sin calibrar
         let (lo, ctx) = evidence_posterior_log_odds(0.1, &evidence, &empty_cal);
         assert!(
             (lo - 0.1).abs() < 1e-12,

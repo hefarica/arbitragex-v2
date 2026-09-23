@@ -1,0 +1,6 @@
+{
+  "title": "test(searcher): WO-15 — measured evidence cost/coverage of ops 1-31 across 264 cartridges",
+  "head": "perf/evidence-bench-31",
+  "base": "main",
+  "body": "## Summary\n- Benchmark medido (fixture determinista, RULE 00: MarketState sintético con series y reservas, semilla fija — cero telemetría de producción) que responde la pregunta del operador *\"¿cuánto mejoran los primeros 31 ops las estrategias?\"* con números medidos, no afirmaciones:\n  - **cobertura**: tasa de cómputo de los ops declarados sobre estado rico = **81.7%** (280 400/343 200 dispatches);\n  - **costo**: **4 488 µs/estrategia** con el declared-set completo (ON) vs **0.01 µs** baseline OFF;\n  - asserts: cobertura >50% en estado rico, avg declarados ≥3, costo ON <5 ms (la evidencia nunca puede dominar el ciclo).\n- 264 cartuchos parseados desde `cartridges/strategies/mev_*.rhai` (canon exacto verificado por assert).\n\n## Test plan\n- [x] `cargo test --test evidence_bench_31_test -- --nocapture` — 1 passed (237s, números arriba)\n- [ ] CI completa\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)"
+}

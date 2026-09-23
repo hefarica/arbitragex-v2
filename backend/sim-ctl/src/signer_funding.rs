@@ -127,6 +127,11 @@ impl SignerFunder {
         }
 
         // Sentinel-verified discovery.
+        // SIM-03 fix (2026-09-24): capture the ORIGINAL balance BEFORE probing
+        // slots so the restore after a failed sentinel writes the REAL prior
+        // value (not an assumed zero — on a fork with pre-existing state the
+        // zero-write corrupted the slot within the snapshot window).
+        let original_balance = bal.unwrap_or_default();
         for &slot in CANDIDATE_SLOTS.iter() {
             if !self
                 .write_balance(token, slot, signer, SENTINEL_BALANCE)
@@ -161,9 +166,11 @@ impl SignerFunder {
                     return Ok(());
                 }
             }
-            // Sentinel not observed — restore the prior balance (zero for a
-            // fresh fork) so we never leak a corrupted slot onward.
-            let _ = self.write_balance(token, slot, signer, U256::zero()).await;
+            // Sentinel not observed — restore the ORIGINAL balance (captured
+            // before any probe) so we never leak a corrupted slot onward.
+            let _ = self
+                .write_balance(token, slot, signer, original_balance)
+                .await;
         }
         count(outcome::SLOT_UNRESOLVED);
         Err("sim_signer_funding_slot_unresolved".to_string())
@@ -194,6 +201,11 @@ impl SignerFunder {
     /// `anvil_setStorageAt(token, slot32, value32)` for the signer's balance
     /// slot. Returns Ok(false) when the node refuses (non-anvil endpoint,
     /// unknown block) without aborting the search.
+    ///
+    /// SIM-10 fix (2026-09-24): wrapped in the same timeout as `balance_of`
+    /// (8s default) — an HTTP hang here previously froze the entire funding
+    /// path inside the snapshot window (no per-command timeout on raw
+    /// `provider.request`, unlike `balance_of` which the caller wraps).
     async fn write_balance(
         &self,
         token: Address,
@@ -203,10 +215,13 @@ impl SignerFunder {
     ) -> Result<bool, String> {
         let slot32 = balance_slot(slot, signer);
         let value32 = u256_to_h256(value);
-        let res: Result<bool, _> = self
-            .provider
-            .request::<_, bool>("anvil_setStorageAt", (token, slot32, value32))
-            .await;
+        let res: Result<bool, _> = tokio::time::timeout(
+            self.timeout,
+            self.provider
+                .request::<_, bool>("anvil_setStorageAt", (token, slot32, value32)),
+        )
+        .await
+        .map_err(|_| "anvil_setStorageAt_timeout".to_string())?;
         match res {
             Ok(true) => Ok(true),
             Ok(false) => Ok(false),

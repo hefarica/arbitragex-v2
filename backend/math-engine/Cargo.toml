@@ -30,14 +30,20 @@ rand = { version = "0.8", features = ["small_rng"] }
 rand_distr = "0.4"
 statrs = "0.16"
 
-# ML primitives (crates.io dependencies, not external repo ports)
-candle-core = { version = "0.4", optional = true }
-candle-nn = { version = "0.4", optional = true }
+# ML primitives — REMOVED with the `ml` feature (CI-07): candle-core 0.4
+# breaks compilation and no cfg consumer exists. Re-add with the feature.
+# candle-core = { version = "0.4", optional = true }
+# candle-nn = { version = "0.4", optional = true }
 
 [features]
 default = []
 api = ["dep:axum", "dep:tower", "dep:redis"]
-ml = ["dep:candle-core", "dep:candle-nn"]
+# CI-07 fix (2026-09-24): the `ml` feature is declared but has ZERO
+# `cfg(feature = "ml")` in code AND candle-core 0.4 fails to compile
+# (documented in ci.yml:56-59 "do NOT pass --all-features"). The feature and
+# its optional deps are REMOVED — re-add when candle is upgraded AND a real
+# cfg consumer exists. This unblocks --all-features for any future CI job.
+# ml = ["dep:candle-core", "dep:candle-nn"]
 
 [[bin]]
 name = "math-engine"

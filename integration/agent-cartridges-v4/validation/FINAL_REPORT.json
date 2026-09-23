@@ -1,0 +1,24 @@
+{
+  "python_tests": 387,
+  "python_suite_counts": {
+    "test_reference": 102,
+    "test_source_conformance": 278,
+    "test_stager": 7
+  },
+  "python_failures": 0,
+  "typescript_tests": 16,
+  "typescript_failures": 0,
+  "typescript_strict_compile": "PASS",
+  "rhai_structural_checks": 264,
+  "rhai_compilation": "NOT_RUN",
+  "rust_compilation": "NOT_RUN",
+  "evm_simulation": "NOT_RUN",
+  "live_e2e": "NOT_RUN",
+  "source_formulas_preserved": 24552,
+  "source_nonempty_cells": 276225,
+  "deployment": "NOT_PERFORMED",
+  "all_test_inputs_market_status": "SYNTHETIC_NOT_LIVE",
+  "existing_configuration_changes": 0,
+  "staging_smoke": "PASS_TEMPORARY_REPOSITORY_ONLY",
+  "deterministic_generated_files": 528
+}

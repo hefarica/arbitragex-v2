@@ -231,7 +231,7 @@ pub struct MultiStepExecutionConfig {
     /// Anti-fraud: a successful outcome MUST carry a non-zero combined
     /// trace hash. Defensive against simulator-v2 contract changes that
     /// might silently return zeros.
-    pub require_trace_hash: bool,
+    pub require_trace_hash: bool, // SIM-06 note: SET but NEVER READ — guards are unconditional (see L805-817). Semantic is documentation-only.
     /// Anti-fraud: a successful outcome MUST have a positive GROSS retained
     /// spread (`retained_spread = fle_post - fle_pre > 0`, == the contract's
     /// `profit - premium`). This is the prices-free invariant the sim CAN
@@ -240,7 +240,7 @@ pub struct MultiStepExecutionConfig {
     /// is the DOWNSTREAM `compute_profit_usd` consumer's job and MUST run before
     /// any LIVE broadcast. Disabling this would let zero-spread simulations
     /// bubble up as SIM_SUCCESS — never appropriate for the production hot path.
-    pub require_positive_net_profit: bool,
+    pub require_positive_net_profit: bool, // SIM-06 note: SET but NEVER READ — the retained_spread>0 guard is unconditional.
     /// Defensive cap on the multi-step plan length (forward leg + backward
     /// leg = 2 swaps; with auxiliary balance reads + allowance applications
     /// the canonical plan has ~5–7 steps).
@@ -489,8 +489,16 @@ fn validate_context(ctx: &RoundTripContext) -> Result<(), MultiStepError> {
     if ctx.token_out == Address::zero() {
         return Err(MultiStepError::InvalidTokenOut);
     }
+    // SIM-01 fix (2026-09-24, issue #567): token_in == token_out is the
+    // DEFINING topology of a cyclic round-trip — exactly what this module
+    // exists to simulate. The blanket SameTokenInOut rejection made every
+    // carrier cyclic plan structurally un-simulatable (the class
+    // `strategy_cyclic_route_not_simulatable_in_s4`). Now: a same-token ctx
+    // is accepted ONLY when the path topology proves a genuine cycle (see
+    // validate_cycle_topology); distinct-token contexts keep the legacy
+    // semantics untouched.
     if ctx.token_in == ctx.token_out {
-        return Err(MultiStepError::SameTokenInOut);
+        validate_cycle_topology(ctx)?;
     }
     if ctx.amount_in.is_zero() {
         return Err(MultiStepError::InvalidAmountIn);
@@ -506,6 +514,32 @@ fn validate_context(ctx: &RoundTripContext) -> Result<(), MultiStepError> {
     }
     if ctx.backward_path.is_empty() {
         return Err(MultiStepError::EmptyBackwardPath);
+    }
+    Ok(())
+}
+
+/// A cyclic round-trip (token_in == token_out) must prove its topology:
+///   forward_path[0] == token_in; backward_path.last() == token_out;
+///   forward_path.last() == backward_path[0] (the "turn" token);
+///   both paths carry >= 1 intermediate token (a degenerate 1-token "cycle"
+///   is a no-op, not a trade).
+fn validate_cycle_topology(ctx: &RoundTripContext) -> Result<(), MultiStepError> {
+    if ctx.forward_path.len() < 2 || ctx.backward_path.len() < 2 {
+        return Err(MultiStepError::SameTokenInOut);
+    }
+    let fwd_first = ctx.forward_path.first().ok_or(MultiStepError::EmptyForwardPath)?;
+    let fwd_last = ctx.forward_path.last().ok_or(MultiStepError::EmptyForwardPath)?;
+    let bwd_first = ctx.backward_path.first().ok_or(MultiStepError::EmptyBackwardPath)?;
+    let bwd_last = ctx.backward_path.last().ok_or(MultiStepError::EmptyBackwardPath)?;
+    if *fwd_first != ctx.token_in {
+        return Err(MultiStepError::SameTokenInOut);
+    }
+    if *bwd_last != ctx.token_out {
+        return Err(MultiStepError::SameTokenInOut);
+    }
+    if *fwd_last != *bwd_first {
+        // The forward and backward legs must MEET at the turn token.
+        return Err(MultiStepError::SameTokenInOut);
     }
     Ok(())
 }
@@ -864,7 +898,7 @@ pub fn execute_multistep_revm(
         // GROSS token_in delta (== contract `profit - premium`), exactly what
         // the field is documented to hold. NET-of-gas-in-USD is deferred to the
         // price-aware downstream layer via `compute_profit_usd`.
-        simulated_profit_token_in: alloy_u256_to_ethers(retained_spread_alloy),
+        simulated_profit_token_in: alloy_u256_to_ethers(retained_spread_alloy), // SIM-02: GROSS (prices-free, gas NOT deducted)
         intermediate_amount_out: result
             .reads
             .get("intermediate_token_out_balance")
@@ -1024,8 +1058,47 @@ mod tests {
 
     #[test]
     fn context_same_token_in_out_rejected() {
+        // SIM-01 fix (2026-09-24): same-token contexts are now accepted ONLY
+        // when the path topology proves a genuine cycle. The original test
+        // set token_out = token_in on a LINEAR ctx — with valid_ctx's paths
+        // ([A,B] fwd, [B,A] bwd) that IS a legitimate 2-hop cycle, so it now
+        // passes validation. This test uses DEGENERATE paths (no intermediate
+        // token) which must still reject.
         let mut ctx = valid_ctx();
         ctx.token_out = ctx.token_in;
+        // Degenerate: 1-token forward path (no intermediate → not a cycle).
+        ctx.forward_path = vec![ctx.token_in];
+        ctx.backward_path = vec![ctx.token_in];
+        assert_eq!(
+            validate_context(&ctx).unwrap_err(),
+            MultiStepError::SameTokenInOut
+        );
+    }
+
+    #[test]
+    fn context_same_token_in_out_genuine_cycle_accepted() {
+        // SIM-01 (issue #567): a cyclic round-trip (WETH→USDC→DAI→WETH) must
+        // pass validate_context — this is the module's raison d'être.
+        let mut ctx = valid_ctx();
+        let turn = Address::from_low_u64_be(0xbbb2);
+        ctx.token_out = ctx.token_in;
+        ctx.forward_path = vec![ctx.token_in, turn];
+        ctx.backward_path = vec![turn, ctx.token_in];
+        assert!(
+            validate_context(&ctx).is_ok(),
+            "genuine cyclic topology must be accepted"
+        );
+    }
+
+    #[test]
+    fn context_same_token_broken_cycle_rejected() {
+        // Forward and backward legs must MEET at the turn token.
+        let mut ctx = valid_ctx();
+        let turn_a = Address::from_low_u64_be(0xbbb2);
+        let turn_b = Address::from_low_u64_be(0xccc3);
+        ctx.token_out = ctx.token_in;
+        ctx.forward_path = vec![ctx.token_in, turn_a];
+        ctx.backward_path = vec![turn_b, ctx.token_in];
         assert_eq!(
             validate_context(&ctx).unwrap_err(),
             MultiStepError::SameTokenInOut

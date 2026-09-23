@@ -136,7 +136,7 @@ contract DeterministicFactory {
     /// @param _contractName Human-readable contract name for the salt.
     ///                      Examples: "ArbitrageExecutor", "WalletTopology".
     /// @return deployed     The address of the deployed contract.
-    function deploy(bytes memory _bytecode, uint256 _chainId, string memory _contractName)
+    // WEB3-08 note (2026-09-24): deploy() is intentionally permissionless —\n// a public CREATE2 factory is infrastructure, not a privileged endpoint.\n// Salt squatting is accepted by design (namespace = chainId+contractName;\n// a squatted name only prevents THAT deployment, steals nothing).\nfunction deploy(bytes memory _bytecode, uint256 _chainId, string memory _contractName)
         external
         returns (address deployed)
     {

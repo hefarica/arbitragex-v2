@@ -254,17 +254,55 @@ async fn consolidate(db: &PgPool, cfg: &Stage2Config) -> anyhow::Result<()> {
         if row.actual_timestamp > watermark {
             watermark = row.actual_timestamp;
         }
-        if let Some(Json::Array(arr)) = row.evidence {
-            for (idx, v) in arr.iter().enumerate().take(OPERATOR_COUNT) {
-                // "Fired" = a finite, non-zero scalar at slot idx (0.0 is the
-                // builder's explicit "not computed" token).
-                if let Some(f) = v.as_f64() {
-                    if f.is_finite() && f != 0.0 {
-                        op_n[idx + 1] += 1;
-                        op_wins[idx + 1] += u64::from(win);
+        // MATH-02 fix (2026-09-24): scored_opportunities.evidence_vector is
+        // archived VERBATIM from the emitter, which captures the OBJECT form
+        // that math_evidence publishes ({primary_operators:[{op,scalar}...]}).
+        // The previous Array-only match never fired — op_n stayed 0 for every
+        // operator and Stage-2b always produced a flat prior. Accept both the
+        // historical flat array and the published object.
+        match row.evidence {
+            Some(Json::Array(arr)) => {
+                for (idx, v) in arr.iter().enumerate().take(OPERATOR_COUNT) {
+                    // "Fired" = a finite, non-zero scalar at slot idx (0.0 is the
+                    // builder's explicit "not computed" token).
+                    if let Some(f) = v.as_f64() {
+                        if f.is_finite() && f != 0.0 {
+                            op_n[idx + 1] += 1;
+                            op_wins[idx + 1] += u64::from(win);
+                        }
                     }
                 }
             }
+            Some(Json::Object(map)) => {
+                for key in ["primary_operators", "secondary_operators"] {
+                    let Some(rows) = map.get(key).and_then(|v| v.as_array()) else {
+                        continue;
+                    };
+                    for entry in rows {
+                        let Some(op_id) =
+                            entry.get("op").and_then(|v| v.as_u64())
+                        else {
+                            continue;
+                        };
+                        let Some(op_idx) = usize::try_from(op_id)
+                            .ok()
+                            .and_then(|i| i.checked_sub(1))
+                            .filter(|i| *i < OPERATOR_COUNT)
+                        else {
+                            continue; // 1-based ids outside 1..=31
+                        };
+                        let fired = entry
+                            .get("scalar")
+                            .and_then(|v| v.as_f64())
+                            .is_some_and(|f| f.is_finite() && f != 0.0);
+                        if fired {
+                            op_n[op_idx + 1] += 1;
+                            op_wins[op_idx + 1] += u64::from(win);
+                        }
+                    }
+                }
+            }
+            _ => {}
         }
     }
 

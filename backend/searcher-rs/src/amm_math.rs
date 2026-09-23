@@ -78,6 +78,14 @@ pub fn v2_amount_out(amount_in: U256, reserve_in: U256, reserve_out: U256, fee_b
     if amount_in.is_zero() || reserve_in.is_zero() || reserve_out.is_zero() {
         return U256::zero();
     }
+    // CORE-06 fix (2026-09-24): guard fee_bps ∈ [0, 10_000] BEFORE the
+    // subtraction below — `10_000u32 - fee_bps` panics in debug (and wraps
+    // in release, yielding a massive fee_factor) when fee_bps > 10_000.
+    // Both live call-sites already guard (host_bindings 0..10_000; simulate_swap
+    // literal 30), but this is the kernel-level defense the audit recommended.
+    if fee_bps > 10_000 {
+        return U256::zero();
+    }
     let fee_factor = U256::from(10_000u32 - fee_bps);
     let amount_in_with_fee = amount_in.saturating_mul(fee_factor);
     let numerator = amount_in_with_fee.saturating_mul(reserve_out);

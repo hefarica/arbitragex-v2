@@ -163,6 +163,8 @@ import {
   buildRouteDiscoveryRouter,
   buildCartridgesRouter,
 } from "./routes/route-discovery.js";
+// CARTRIDGE-CONTROL — acople/desacople por cartucho (audit-first + Redis + PubSub).
+import { buildCartridgeControlRouter } from "./routes/cartridge-control.js";
 import { createServer } from "http";
 import rateLimit from "express-rate-limit";
 
@@ -717,6 +719,22 @@ const routeDiscoveryCache = new TelemetryCache(200);
 const cartridgeTelemetryCache = new TelemetryCache(200);
 app.use(buildRouteDiscoveryRouter(routeDiscoveryCache));
 app.use(buildCartridgesRouter(cartridgeTelemetryCache, { redis, requireAdminToken, adminToken: ARBX_ADMIN_TOKEN }));
+
+// CARTRIDGE-CONTROL (2026-09-24) — acople/desacople por cartucho: admin-gated
+// GET/PUT /api/v1/cartridges/control (audit-first en cartridge_control 125 +
+// audit_log 011, Redis hash + PubSub hot command). Needs the PG pool for the
+// audit trail; without DATABASE_URL the route 500s its writes honestly.
+app.use(
+  requireDbPool()
+    ? buildCartridgeControlRouter({ redis, pool: requireDbPool()!, requireAdminToken, adminToken: ARBX_ADMIN_TOKEN, logger })
+    : buildCartridgeControlRouter({
+        redis,
+        pool: { query: async () => { throw new Error("DATABASE_URL not configured"); } },
+        requireAdminToken,
+        adminToken: ARBX_ADMIN_TOKEN,
+        logger,
+      }),
+);
 
 // FASE B Gate-C — read-only analytics over the durable route_discovery_outcomes
 // table (the shadow outcomes the sink persists, incl. the Paso 9 `reason`). This is

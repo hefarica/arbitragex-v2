@@ -97,11 +97,43 @@ impl TopologicalOperator for FlashLoanOperator {
         }
 
         // Net Topological Yield at the optimum (metadata).
-        let gas_units = state.features.get("gas_units").copied().unwrap_or(0.0);
-        let token0_per_eth = state.features.get("token0_per_eth").copied().unwrap_or(0.0);
-        let gas_cost = (state.gas_price_gwei * gas_units * 1e-9 * token0_per_eth).max(0.0);
+        // MATH-05 fix (2026-09-24): the previous defaults (gas_units=0,
+        // token0_per_eth=0) made gas_cost=0 — a fail-OPEN that published
+        // y_net without the gas discount. Now: absent features ⇒ the operator
+        // reports a DATA_GAP (computed=0, reason in metadata), never a
+        // fabricated gas-free net. Present features are validated finite/positive.
+        let gas_units = state
+            .features
+            .get("gas_units")
+            .copied()
+            .filter(|v| v.is_finite() && *v > 0.0);
+        let token0_per_eth = state
+            .features
+            .get("token0_per_eth")
+            .copied()
+            .filter(|v| v.is_finite() && *v > 0.0);
+        let (gas_cost, costs_complete) = match (gas_units, token0_per_eth) {
+            (Some(units), Some(eth_price)) => (
+                (state.gas_price_gwei * units * 1e-9 * eth_price).max(0.0),
+                true,
+            ),
+            _ => (0.0, false),
+        };
         let delta_out = (r1 * gamma * x_star) / (r0 + gamma * x_star);
         let y_net = delta_out / p_ref - repayment * x_star - gas_cost;
+
+        if !costs_complete {
+            metadata.insert("computed".to_string(), 0.0);
+            // Metadata is HashMap<String, f64> — reason_code 1 = gas features missing.
+            metadata.insert("reason_code".to_string(), 1.0);
+            // Report the gross-only x* (still useful as an upper bound) but
+            // never claim a complete net figure.
+            metadata.insert("x_star".to_string(), x_star);
+            metadata.insert("y_net_gross_only".to_string(), y_net);
+            metadata.insert("gas_cost".to_string(), 0.0);
+            metadata.insert("gas_features_status".to_string(), 0.0); // 0 = MISSING
+            return none_output(self.id(), self.name(), metadata);
+        }
 
         metadata.insert("computed".to_string(), 1.0);
         metadata.insert("x_star".to_string(), x_star);

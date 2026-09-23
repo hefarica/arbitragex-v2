@@ -1,0 +1,19 @@
+{
+  "started_at": "2026-09-20T06:02:52.206363+00:00",
+  "base": "https://arbx.ape-tv.net",
+  "checks": {
+    "http_status": 200,
+    "networkidle": true,
+    "title": "QuantumX — Control Plane",
+    "body_length": 93193,
+    "table_rows": 0,
+    "cards": 108
+  },
+  "screenshot": "post_deploy_smoke_600.png",
+  "console_errors": [],
+  "failed_requests": [
+    "GET https://arbx.ape-tv.net/risk?_rsc=1lz93 :: net::ERR_ABORTED",
+    "GET https://arbx.ape-tv.net/worker-health?_rsc=1lz93 :: net::ERR_ABORTED"
+  ],
+  "finished_at": "2026-09-20T06:03:03.903939+00:00"
+}
