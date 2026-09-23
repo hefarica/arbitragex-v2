@@ -399,6 +399,38 @@ pub fn idle_timeout_from_env() -> Duration {
     }
 }
 
+/// SCANNER-STALL-02 (2026-09-22): idle watchdog for `newHeads` consume loops.
+///
+/// #624 (SCANNER-STALL-01) armed `next_item_with_idle` on the PENDING-TX
+/// consume loops only. The newHeads consumers (`route_scanner_worker::
+/// run_scan_subscription`, `block_scanner::run_block_subscription`,
+/// `block_scanner::run_head_subscription`) kept a bare `blocks.next()` —
+/// on 2026-09-22T10:19Z a TCP-live but frame-dead newHeads socket parked
+/// those loops forever (no error, no rotation, heartbeat counters frozen at
+/// 0 for ~7h while the process and every timer worker stayed healthy).
+///
+/// Same contract as the pending-tx watchdog: race `stream.next()` against
+/// the idle deadline; a silent stall becomes a bounded `Err` the existing
+/// reconnect+rotate loops already handle. `Ok(None)` = stream genuinely
+/// ended (caller keeps its "stream ended" error). Ethereum mainnet emits a
+/// head every ~12s, so the default 60s deadline has ~5× margin.
+pub async fn next_head_with_idle<S, T>(stream: &mut S, idle: Duration) -> anyhow::Result<Option<T>>
+where
+    S: futures_util::Stream<Item = T> + Unpin,
+{
+    match tokio::time::timeout(idle, stream.next()).await {
+        Err(_) => {
+            warn!(
+                event = "chain_client.head_subscription_idle",
+                idle_secs = idle.as_secs(),
+                "newHeads stream silent beyond watchdog; forcing reconnect + endpoint rotation"
+            );
+            anyhow::bail!("newHeads stream idle watchdog fired")
+        }
+        Ok(v) => Ok(v),
+    }
+}
+
 #[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
@@ -496,5 +528,41 @@ mod tests {
         assert!(parse_idle_timeout_secs(Some("0")).is_err());
         assert!(parse_idle_timeout_secs(Some("7200")).is_err());
         assert!(parse_idle_timeout_secs(Some("abc")).is_err());
+    }
+
+    // SCANNER-STALL-02 (2026-09-22): the newHeads idle watchdog must convert
+    // a silent (frame-dead) stream into a bounded Err — the exact zombie-socket
+    // shape of the 2026-09-22T10:19Z incident — while passing items and
+    // genuine stream-end through unchanged.
+    #[tokio::test]
+    async fn head_idle_watchdog_fires_on_silent_stream() {
+        let mut s = futures_util::stream::pending::<u32>();
+        let started = std::time::Instant::now();
+        let res: anyhow::Result<Option<u32>> =
+            next_head_with_idle(&mut s, Duration::from_millis(50)).await;
+        assert!(res.is_err());
+        assert!(started.elapsed() < Duration::from_secs(1));
+    }
+
+    #[tokio::test]
+    async fn head_idle_watchdog_passes_items_through() {
+        let mut s = futures_util::stream::iter(vec![1u32, 2u32]);
+        let a = next_head_with_idle(&mut s, Duration::from_secs(5))
+            .await
+            .unwrap();
+        let b = next_head_with_idle(&mut s, Duration::from_secs(5))
+            .await
+            .unwrap();
+        assert_eq!(a, Some(1));
+        assert_eq!(b, Some(2));
+    }
+
+    #[tokio::test]
+    async fn head_idle_watchdog_reports_ended_stream() {
+        let mut s = futures_util::stream::empty::<u32>();
+        let res = next_head_with_idle(&mut s, Duration::from_secs(5))
+            .await
+            .unwrap();
+        assert_eq!(res, None);
     }
 }

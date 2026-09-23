@@ -99,6 +99,21 @@ pub static ENRICHER_UP: Lazy<IntGauge> = Lazy::new(|| {
     g
 });
 
+/// Consumption-freshness gauge (ENRICHER-SILENT-01): unixtime of the last
+/// successful XREADGROUP round-trip (INCLUDING idle timeouts — an empty BLOCK
+/// reply still proves the Redis connection is alive and consuming). The docker
+/// healthcheck fails when this goes stale, so a zombie consumer (socket dead,
+/// loop alive) can no longer report "healthy".
+pub static ENRICHER_LAST_READ: Lazy<IntGauge> = Lazy::new(|| {
+    let g = IntGauge::new(
+        "arbx_enricher_last_read_unixtime",
+        "unixtime of the last successful XREADGROUP round-trip (idle timeouts count)",
+    )
+    .expect("metric definition");
+    REGISTRY.register(Box::new(g.clone())).expect("register");
+    g
+});
+
 // ---------------------------------------------------------------------------
 // Init: force Lazy initialisation so all metrics appear in /metrics immediately
 // ---------------------------------------------------------------------------
@@ -112,6 +127,7 @@ pub fn init_metrics() {
     let _ = &*RPC_CALLS_TOTAL;
     let _ = &*PENDING_UNRESOLVED;
     let _ = &*ENRICHER_UP;
+    let _ = &*ENRICHER_LAST_READ;
     ENRICHER_UP.set(1);
 }
 

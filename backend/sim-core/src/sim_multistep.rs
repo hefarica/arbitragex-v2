@@ -245,6 +245,16 @@ pub struct MultiStepExecutionConfig {
     /// leg = 2 swaps; with auxiliary balance reads + allowance applications
     /// the canonical plan has ~5–7 steps).
     pub max_steps: usize,
+    /// G-SIM-1 WO-LR22.13 PR-B — when `Some`, deploy the paper executor
+    /// stack (real forge-compiled `ArbitrageExecutor` + `FlashLoanExecutor`
+    /// bytecode, committed hex fixtures) into the fork's CacheDB BEFORE the
+    /// plan runs, and use the DEPLOYED addresses instead of the env-resolved
+    /// `FLASHLOAN_EXECUTOR_<chain_id>` and the configured
+    /// `executor_address` — both of which currently point at label-only
+    /// addresses with NO code on-chain (verified 2026-09-22), structurally
+    /// zeroing labeled outcomes. Paper-only; §32: REVM in-process, no
+    /// broadcast, no signer.
+    pub paper_stack: Option<crate::paper_executors::PaperStackSpec>,
 }
 
 impl MultiStepExecutionConfig {
@@ -555,28 +565,15 @@ pub fn execute_multistep_revm(
         return crate::verified_simulation::execute(ctx, simulator, config);
     }
 
-    // 0. Resolve the FlashLoanExecutor `.to()` (env-driven, fail-closed). This
-    //    is the rubric `.to() == resolve_flashloan_executor_address(chain_id)`.
-    let flashloan_executor =
-        match shared_rs::chains::resolve_flashloan_executor_address(config.chain_id) {
-            Ok(a) => a,
-            Err(e) => {
-                warn!(event = "multistep.flashloan_executor_unresolved", error = %e);
-                return SimulationOutcome::failed(format!(
-                    "multistep_flashloan_executor_unresolved:{e}"
-                ));
-            }
-        };
-
-    // 1. Resolve LazyDb FIRST. The SequenceContext must exist BEFORE the plan is
-    //    built, because the plan's wrapped-flash calldata encodes the leg-1
-    //    backward `amountIn` from the REAL intermediate quoted off the forward
-    //    leg — and that quote is a REVM `getAmountsOut` view call. Reuse the
-    //    simulator's pinned block when available (`SimulatorV2::with_block`,
-    //    used by the G-SIM-1 variance-benchmark replay so both sides of the
-    //    comparison see deterministic chain state); otherwise fall back to
-    //    `None` (LazyDb resolves "latest" once and memoizes — same convention
-    //    SimulatorV2 uses).
+    // 0/1. Resolve LazyDb FIRST. The SequenceContext must exist BEFORE the
+    //    plan is built, because the plan's wrapped-flash calldata encodes the
+    //    leg-1 backward `amountIn` from the REAL intermediate quoted off the
+    //    forward leg — and that quote is a REVM `getAmountsOut` view call.
+    //    Reuse the simulator's pinned block when available
+    //    (`SimulatorV2::with_block`, used by the G-SIM-1 variance-benchmark
+    //    replay so both sides of the comparison see deterministic chain
+    //    state); otherwise fall back to `None` (LazyDb resolves "latest" once
+    //    and memoizes — same convention SimulatorV2 uses).
     let lazy = match simulator_v2::LazyDb::new(&simulator.rpc_url, simulator.pinned_block()) {
         Ok(db) => db,
         Err(e) => {
@@ -586,6 +583,45 @@ pub fn execute_multistep_revm(
     };
     let pinned_block = lazy.pinned_block_number();
     let mut sctx = SequenceContext::new(lazy, config.chain_id, pinned_block);
+
+    // 1b. Resolve the FlashLoanExecutor `.to()` — either the env-driven
+    //     `resolve_flashloan_executor_address(chain_id)` (fail-closed) or,
+    //     when a paper stack is configured (WO-LR22.13 PR-B), the freshly
+    //     DEPLOYED FLE inside this fork. The paper stack also overrides
+    //     `executor_address` with the deployed AE (the env labels point at
+    //     addresses with NO on-chain code, so the env path can never produce
+    //     a labeled success today).
+    let (flashloan_executor, effective_config): (ethers::types::Address, MultiStepExecutionConfig) =
+        if let Some(spec) = &config.paper_stack {
+            match crate::paper_executors::deploy_paper_executor_stack(&mut sctx, spec) {
+                Ok(stack) => {
+                    // PaperExecutorStack already exposes ethers addresses.
+                    let mut cfg = config.clone();
+                    cfg.executor_address = stack.arbitrage_executor;
+                    (stack.flashloan_executor, cfg)
+                }
+                Err(e) => {
+                    warn!(event = "multistep.paper_stack_failed", error = %e);
+                    return SimulationOutcome::failed(format!(
+                        "multistep_paper_stack_failed:{}",
+                        e.reason_tag()
+                    ));
+                }
+            }
+        } else {
+            match shared_rs::chains::resolve_flashloan_executor_address(config.chain_id) {
+                Ok(a) => (a, config.clone()),
+                Err(e) => {
+                    warn!(event = "multistep.flashloan_executor_unresolved", error = %e);
+                    return SimulationOutcome::failed(format!(
+                        "multistep_flashloan_executor_unresolved:{e}"
+                    ));
+                }
+            }
+        };
+    // From here on, the effective config (paper-stack overrides applied)
+    // IS the config.
+    let config = &effective_config;
 
     // 2. QUOTE the forward leg via a NON-COMMITTING `getAmountsOut` view call on
     //    the forward router. This is the REAL intermediate `token_out` the
@@ -916,6 +952,7 @@ mod tests {
             require_trace_hash: true,
             require_positive_net_profit: true,
             max_steps: 10,
+            paper_stack: None,
         }
     }
 

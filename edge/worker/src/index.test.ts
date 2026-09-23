@@ -35,11 +35,11 @@ function makeKV(putDelayMs = 0) {
   };
 }
 
-function makeEnv(kv = makeKV(), rl = makeKV()): Env {
+function makeEnv(kv = makeKV(), rl = makeKV(), allowedOrigins = ""): Env {
   return {
     ARBX_ENV: "test",
     API_SERVER_URL: "http://upstream.invalid",
-    ALLOWED_ORIGINS: "",
+    ALLOWED_ORIGINS: allowedOrigins,
     ARBX_EDGE_TOKEN: "edge-secret",
     JWT_SECRET: "jwt-secret",
     ARBX_CACHE: kv,
@@ -105,6 +105,51 @@ describe("WO-10: proxy() deferred cache fill", () => {
     // Unhandled rejection would fail the process; reaching here proves the catch.
     expect(errSpy).toHaveBeenCalled();
     errSpy.mockRestore();
+  });
+});
+
+describe("WO-LR22.2: proxyPassThrough() carries CORS headers on success AND error", () => {
+  // Incident shape (2026-09-22): proxyPassThrough returned a raw
+  // `new Response(...)`, which Hono returns verbatim — the CORS headers set
+  // via c.header() in the app.use("*") middleware were dropped, so the
+  // honest 503 `quote_anchor_not_published` surfaced in the browser console
+  // as a CORS error instead of a readable 503 (R8 observability defect).
+  const ORIGIN = "https://arbx.ape-tv.net";
+
+  it("success (200): allowlisted origin gets ACAO echoed on /api/quote/anchor", async () => {
+    vi.stubGlobal("fetch", stubUpstream({ pair: "WETH/USDC", price_usd: 1 }, 200));
+    const res = await app.request(
+      new Request("http://edge.invalid/api/quote/anchor", { headers: { origin: ORIGIN } }),
+      undefined,
+      makeEnv(makeKV(), makeKV(), ORIGIN),
+    );
+    expect(res.status).toBe(200);
+    expect(res.headers.get("x-arbx-cache")).toBe("PASS");
+    expect(res.headers.get("access-control-allow-origin")).toBe(ORIGIN);
+  });
+
+  it("error (503 quote_anchor_not_published): same ACAO + real status visible to the browser", async () => {
+    vi.stubGlobal("fetch", stubUpstream({ error: "quote_anchor_not_published" }, 503));
+    const res = await app.request(
+      new Request("http://edge.invalid/api/quote/anchor", { headers: { origin: ORIGIN } }),
+      undefined,
+      makeEnv(makeKV(), makeKV(), ORIGIN),
+    );
+    expect(res.status).toBe(503);
+    expect(res.headers.get("access-control-allow-origin")).toBe(ORIGIN);
+    const body = (await res.json()) as { error?: string };
+    expect(body.error).toBe("quote_anchor_not_published");
+  });
+
+  it("non-allowlisted origin: ACAO empty string (no wildcard leak), body still passes through", async () => {
+    vi.stubGlobal("fetch", stubUpstream({ ok: true }, 200));
+    const res = await app.request(
+      new Request("http://edge.invalid/api/quote/anchor", { headers: { origin: "https://evil.example" } }),
+      undefined,
+      makeEnv(makeKV(), makeKV(), ORIGIN),
+    );
+    expect(res.status).toBe(200);
+    expect(res.headers.get("access-control-allow-origin") ?? "").toBe("");
   });
 });
 

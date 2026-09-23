@@ -15,9 +15,13 @@
 //!
 //! ## Connection model
 //!
-//! Uses `redis::aio::MultiplexedConnection` (available with the `tokio-comp`
-//! feature already in Cargo.toml; does NOT require the `connection-manager`
-//! feature).
+//! Uses `redis::aio::ConnectionManager` (auto-reconnecting multiplexed
+//! connection, `connection-manager` feature). ENRICHER-SILENT-01 (2026-09-22):
+//! the previous `MultiplexedConnection` NEVER reconnects — when the Redis
+//! socket died (host restart storm) every XREADGROUP failed forever with
+//! `broken pipe` while the container stayed "healthy" for 38h (zombie
+//! consumer). ConnectionManager retries in place with backoff, so a dead
+//! socket heals without a process restart and the PEL semantics are preserved.
 //!
 //! ## Delivery semantics
 //!
@@ -72,10 +76,11 @@ const BLOCK_MS: usize = 2_000;
 /// Maximum messages to fetch per `XREADGROUP` call.
 const BATCH_SIZE: usize = 50;
 
-/// Async Redis Streams consumer that wraps a multiplexed connection and
-/// exposes a `read_one_batch()` loop-primitive and a `drain_pel()` startup method.
+/// Async Redis Streams consumer that wraps an auto-reconnecting connection
+/// manager and exposes a `read_one_batch()` loop-primitive and a `drain_pel()`
+/// startup method.
 pub struct EnricherConsumer {
-    conn: redis::aio::MultiplexedConnection,
+    conn: redis::aio::ConnectionManager,
 }
 
 impl EnricherConsumer {
@@ -89,9 +94,9 @@ impl EnricherConsumer {
     pub async fn connect(redis_url: &str) -> Result<Self> {
         let client = redis::Client::open(redis_url).context("redis::Client::open")?;
         let mut conn = client
-            .get_multiplexed_async_connection()
+            .get_connection_manager()
             .await
-            .context("get_multiplexed_async_connection")?;
+            .context("get_connection_manager")?;
 
         // XGROUP CREATE <stream> <group> $ MKSTREAM
         // "$" means "start delivering only new messages" — existing history is
@@ -358,6 +363,12 @@ impl EnricherConsumer {
                 return Err(anyhow::anyhow!("xreadgroup error: {e}"));
             }
         };
+
+        // Freshness heartbeat (ENRICHER-SILENT-01): ANY successful round-trip —
+        // including an empty BLOCK-timeout reply — proves the consumer loop is
+        // alive and connected. Recorded BEFORE the empty-reply early return so
+        // idle streams still refresh the gauge.
+        crate::metrics::ENRICHER_LAST_READ.set(chrono::Utc::now().timestamp());
 
         if reply.keys.is_empty() {
             return Ok((vec![], vec![]));

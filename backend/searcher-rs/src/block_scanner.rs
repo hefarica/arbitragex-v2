@@ -30,7 +30,7 @@ use tokio::sync::RwLock;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, info, warn};
 
-use crate::chain_client::WsChainClient;
+use crate::chain_client::{idle_timeout_from_env, next_head_with_idle, WsChainClient};
 use crate::impact_index::ImpactIndex;
 use crate::orchestrator::Orchestrator;
 use crate::route_intent::{
@@ -211,6 +211,10 @@ async fn run_block_subscription(
     let client = WsChainClient::connect(chain_id, url).await?;
     let provider = client.provider.clone();
     let mut blocks = client.subscribe_blocks().await?;
+    // SCANNER-STALL-02 (2026-09-22): idle watchdog on the newHeads consume —
+    // mirrors route_scanner_worker (incident 10:19Z: frame-dead socket parked
+    // this loop forever with zero errors).
+    let idle = idle_timeout_from_env();
     info!(
         event = "block_scanner.connected",
         chain_id, "subscribed to newHeads"
@@ -222,8 +226,8 @@ async fn run_block_subscription(
     loop {
         tokio::select! {
             _ = cancel.cancelled() => return Ok(()),
-            blk = blocks.next() => {
-                let Some(block) = blk else {
+            blk = next_head_with_idle(&mut blocks, idle) => {
+                let Some(block) = blk? else {
                     return Err(anyhow::anyhow!("newHeads stream ended"));
                 };
                 let Some(block_num) = block.number else { continue };
@@ -361,6 +365,9 @@ async fn run_head_subscription(
 ) -> anyhow::Result<()> {
     let client = WsChainClient::connect(chain_id, url).await?;
     let mut blocks = client.subscribe_blocks().await?;
+    // SCANNER-STALL-02 (2026-09-22): idle watchdog — same class as the other
+    // newHeads consumers.
+    let idle = idle_timeout_from_env();
     info!(
         event = "head_sink.connected",
         chain_id, "subscribed to newHeads (anchor-only)"
@@ -368,8 +375,8 @@ async fn run_head_subscription(
     loop {
         tokio::select! {
             _ = cancel.cancelled() => return Ok(()),
-            blk = blocks.next() => {
-                let Some(block) = blk else {
+            blk = next_head_with_idle(&mut blocks, idle) => {
+                let Some(block) = blk? else {
                     return Err(anyhow::anyhow!("newHeads stream ended"));
                 };
                 let Some(block_num) = block.number else { continue };

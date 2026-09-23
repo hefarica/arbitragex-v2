@@ -522,15 +522,21 @@ async function proxyPassThrough(
     cf: { cacheTtl: 0, cacheEverything: false },
   });
 
-  // Pass-through: forward the response body stream directly without buffering
+  // WO-LR22.2 (2026-09-22): return through c.header/c.body — NOT a raw
+  // `new Response()` — so the CORS headers computed by the app.use("*")
+  // middleware (access-control-allow-origin/-credentials, set from
+  // ALLOWED_ORIGINS at line ~318) are merged into THIS response on BOTH
+  // success and error statuses. A raw Response is returned verbatim by
+  // Hono and drops the c.header() context: the honest 503
+  // `quote_anchor_not_published` then surfaced in the browser console as a
+  // CORS failure, masking the real status (R8 observability defect).
+  // Same response-construction precedent as proxy() (~line 498).
   c.header("x-arbx-cache", "PASS");
-  return new Response(upstream.body, {
-    status: upstream.status,
-    statusText: upstream.statusText,
-    headers: {
-      "content-type": upstream.headers.get("content-type") ?? "application/json",
-    },
-  });
+  c.header("content-type", upstream.headers.get("content-type") ?? "application/json");
+  const status = upstream.status as 200 | 400 | 401 | 404 | 429 | 500 | 501 | 502 | 503 | 504;
+  return upstream.body === null
+    ? c.body(null, status)
+    : c.body(upstream.body, status);
 }
 
 /**

@@ -3235,6 +3235,7 @@ async fn dispatch_orchestrator_and_classify(
         // The wrapped-flash plan is 4 steps (role grant + FLE pre-read + flash
         // dispatch + FLE post-read). 8 is a comfortable defensive ceiling.
         max_steps: 8,
+        paper_stack: None,
     };
 
     // Pre-snapshot the EXACT inputs the sim path encodes from, BEFORE `ctx`/

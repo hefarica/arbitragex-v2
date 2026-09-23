@@ -38,7 +38,7 @@ mod provenance;
 
 use crate::cartridge::runner::CartridgeRunner;
 use crate::cartridge_boot::shadow_evaluate_intent;
-use crate::chain_client::WsChainClient;
+use crate::chain_client::{idle_timeout_from_env, next_head_with_idle, WsChainClient};
 use crate::impact_index::ImpactIndex;
 use crate::orchestrator::Orchestrator;
 use crate::route_discovery::graph_builder::{build_graph, GraphBuildConfig, TokenGraph};
@@ -745,6 +745,11 @@ async fn run_scan_subscription(
 ) -> anyhow::Result<()> {
     let client = WsChainClient::connect(chain_id, url).await?;
     let mut blocks = client.subscribe_blocks().await?;
+    // SCANNER-STALL-02 (2026-09-22): race the newHeads consume against the
+    // idle watchdog — a TCP-live but frame-dead socket must surface as a
+    // bounded Err so run_loop reconnects + rotates instead of parking the
+    // whole detection stream (incident 10:19Z: 7h frozen, zero errors).
+    let idle = idle_timeout_from_env();
     info!(
         event = "route_scanner.connected",
         chain_id, "subscribed to newHeads (per-block multi-hop scan active)"
@@ -752,8 +757,8 @@ async fn run_scan_subscription(
     loop {
         tokio::select! {
             _ = cancel.cancelled() => return Ok(()),
-            blk = blocks.next() => {
-                let Some(block) = blk else {
+            blk = next_head_with_idle(&mut blocks, idle) => {
+                let Some(block) = blk? else {
                     return Err(anyhow::anyhow!("newHeads stream ended"));
                 };
                 let Some(number) = block.number else { continue };
