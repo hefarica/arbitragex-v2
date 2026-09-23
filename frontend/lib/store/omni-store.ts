@@ -114,6 +114,13 @@ interface RegistrySlice {
 interface OpportunitySlice {
   /** Live opportunities from mempool (capped at MAX_OPPORTUNITIES) */
   opportunities: OmniOpportunity[];
+  /**
+   * AUDIT-CARDS-MINOR (§2) · WO-H4: distinct routes in the ≤5 min window of
+   * the LAST /api/opportunities/live snapshot envelope (COUNT(*) OVER ()).
+   * R8: null until a snapshot carrying the field arrives — absent is never
+   * invented as 0; a real 0 (computed empty window) is stored as 0.
+   */
+  windowTotal: number | null;
   /** WebSocket connection status */
   wsStatus: WsStatus;
   /** ISO timestamp of last received opportunity */
@@ -126,6 +133,8 @@ interface OpportunitySlice {
   addOpportunity: (opp: OmniOpportunity) => void;
   /** Replace the entire opportunity list in a single update (batch) */
   setOpportunities: (opps: OmniOpportunity[]) => void;
+  /** Set window_total from a snapshot envelope (null = absent, R8) */
+  setWindowTotal: (total: number | null) => void;
   /**
    * MEM-RENDER-01: drop opportunities detected more than maxAgeMs ago.
    * Vigency eviction — the live grid keeps only active/vigent cards instead
@@ -360,6 +369,7 @@ function storeFactory(
       // Opportunity Slice
       // =========================================================================
       opportunities: [],
+      windowTotal: null, // AUDIT-CARDS-MINOR (§2) — absent until first snapshot (R8)
       wsStatus: "DISCONNECTED",
       lastUpdate: null,
 
@@ -544,6 +554,11 @@ function storeFactory(
         }),
 
       clearOpportunities: () => set({ opportunities: [], lastUpdate: null }),
+
+      // AUDIT-CARDS-MINOR (§2): WO-H4 envelope counter — written ONLY by the
+      // snapshot paths (useOmniOpportunities reconcile/poll + the page's
+      // manual refresh), never by WS pushes (single rows carry no envelope).
+      setWindowTotal: (total) => set({ windowTotal: total }),
 
       // MEM-RENDER-01: vigency eviction. In LIVE mode nothing removes dead
       // cards (the periodic snapshot only runs in degraded POLLING mode), so

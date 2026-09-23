@@ -75,7 +75,6 @@ import {
   SYNTHETIC_LEGACY_VIEW_LABEL,
   type OmniOpportunity,
 } from "@/lib/store/types";
-import type { StrategyRuntimeConfig } from "@/lib/schemas";
 
 // ─── Tone → token-based class map ────────────────────────────────────────────
 const TONE_CLASS: Record<string, string> = {
@@ -114,11 +113,6 @@ export interface OpportunityTradeCardProps {
   isMounted: boolean;
   /** Whether a shadow-sim is currently running for this card. */
   simLoading: boolean;
-  /**
-   * Declared per-strategy config from trading_config.strategy_configs.
-   * R8: null when the endpoint has no entry for this strategy_kind → "—".
-   */
-  strategyConfig?: StrategyRuntimeConfig | null;
   /** Effective execution terminus (paper/live) — display-only read from /killswitch state. */
   modeLabel?: "paper" | "live";
   /** Trigger the shadow simulation (wired to POST .../simulate). */
@@ -132,7 +126,6 @@ function OpportunityTradeCardImpl({
   now,
   isMounted,
   simLoading,
-  strategyConfig = null,
   modeLabel = "paper",
   onExecute,
   onInspect,
@@ -271,7 +264,12 @@ function OpportunityTradeCardImpl({
   // is first-in + every leg out. A closed cycle repeats the opener as the final
   // out — drop it so N hops render exactly N tokens (the operator's chip-count
   // contract). Fail-honest fallback when no topology persisted: in→out pair.
-  const tokenPathAddrs: string[] = (() => {
+  // AUDIT-CARDS-MINOR (§3): that fallback pair used to render EXACTLY like a
+  // topology-backed path — the ladder marks its §29 synthetic legs but the
+  // chip row did not. tokenPathFromTopology is null when (and only when) the
+  // chips did NOT come from persisted topology (synthetic legs included), so
+  // the row now carries the same compact §29 mark as the ladder band.
+  const tokenPathFromTopology: string[] | null = (() => {
     if (legs.length > 0) {
       const seq = [legs[0]!.token_in, ...legs.map((l) => l.token_out)];
       if (
@@ -282,8 +280,12 @@ function OpportunityTradeCardImpl({
       }
       if (seq.every((a) => a.length > 0)) return seq;
     }
-    return [opp.token_in, opp.token_out];
+    return null;
   })();
+  const tokenPathAddrs: string[] =
+    tokenPathFromTopology ?? [opp.token_in, opp.token_out];
+  const tokenPathIsFallback: boolean =
+    tokenPathFromTopology == null || hasSyntheticLegs;
 
   const handleExecute = async (e: React.MouseEvent) => {
     e.stopPropagation();
@@ -455,6 +457,17 @@ function OpportunityTradeCardImpl({
             </React.Fragment>
           );
         })}
+        {/* AUDIT-CARDS-MINOR (§3): §29 fallback chip row — same compact mark
+            discipline as the ladder's SYNTHETIC band (reused classes, no new
+            design): the in→out pair is NOT a persisted topology. */}
+        {tokenPathIsFallback && (
+          <span
+            title="fallback §29 — sin topología persistida"
+            className="text-[9px] uppercase tracking-wide text-muted-foreground/70 shrink-0"
+          >
+            ·syn
+          </span>
+        )}
       </div>
 
       {/* ── FE-0033 (§36): canonical summary grid — ruta/strategy/detector/
@@ -720,7 +733,6 @@ export const OpportunityTradeCard = React.memo(
       p.token_out_info?.symbol === n.token_out_info?.symbol &&
       prev.isMounted === next.isMounted &&
       prev.simLoading === next.simLoading &&
-      prev.strategyConfig === next.strategyConfig &&
       prev.modeLabel === next.modeLabel &&
       prev.onExecute === next.onExecute &&
       prev.onInspect === next.onInspect &&

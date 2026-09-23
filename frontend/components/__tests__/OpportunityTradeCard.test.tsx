@@ -266,3 +266,50 @@ describe("OpportunityTradeCard — CARDS-TOKENPATH-01 token path chips", () => {
     expect(html.toLowerCase()).toContain(B.toLowerCase());
   });
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// AUDIT-CARDS-MINOR (§3) — the §29 fallback token path (no route_metadata ⇒
+// [token_in, token_out]) used to render EXACTLY like a topology-backed chip
+// row. The ladder already marks its synthetic legs ("SYNTHETIC LEGACY VIEW");
+// now the chip row carries the same compact mark: a "·syn" suffix + tooltip.
+// ─────────────────────────────────────────────────────────────────────────────
+describe("OpportunityTradeCard — AUDIT-CARDS-MINOR (§3) fallback chip-row mark", () => {
+  it("no route_metadata (synthetic legs) ⇒ chip row carries the compact §29 mark + tooltip", () => {
+    const opp = mapToOmniOpportunity(wire({ route_metadata: null }));
+    const html = card(opp);
+    expect(html).toContain("·syn");
+    expect(html).toContain('title="fallback §29 — sin topología persistida"');
+    // ladder discipline unchanged — the band still marks the synthetic legs
+    expect(html).toContain("SYNTHETIC LEGACY VIEW");
+  });
+
+  it("no topology at all (no dex pair either) ⇒ the in→out pair is ALSO a fallback and is marked", () => {
+    const opp = mapToOmniOpportunity(
+      wire({ route_metadata: null, dex_a: "", dex_b: null }),
+    );
+    const html = card(opp);
+    expect(html).toContain("·syn");
+    expect(html).toContain('title="fallback §29 — sin topología persistida"');
+  });
+
+  it("persisted topology ⇒ NO fallback mark (the chip path is real, not §29)", () => {
+    const opp = mapToOmniOpportunity(
+      wire({
+        route_metadata: {
+          dex_adapters: ["uniswap-v2", "sushiswap"],
+          token_addresses: ["0xa", "0xb", "0xa"],
+          pool_addresses: ["0xpool1", "0xpool2"],
+        },
+      }),
+    );
+    const html = card(opp);
+    expect(html).not.toContain("·syn");
+    expect(html).not.toContain("sin topología persistida");
+  });
+
+  it("the mark adds no extra chip-row arrows — a compact suffix, never a fake hop", () => {
+    const opp = mapToOmniOpportunity(wire({ route_metadata: null }));
+    const html = card(opp);
+    expect(countArrows(html)).toBe(1); // exactly the in→out pair, as before the mark
+  });
+});
