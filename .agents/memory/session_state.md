@@ -1,3 +1,32 @@
+# OMEGA CORTEX — BROADCAST Resolución Integral (DSH, orden del operador) · 2026-09-23 tardes — post-auditoría /opportunities
+
+> Broadcast a TODAS las sesiones. Emitido por orden directa del operador tras la auditoría read-only de las cards. El broadcast GRUPO A de esta mañana queda ARCHIVADO más abajo — no borrar.
+
+## Qué pasó desde el broadcast GRUPO A
+- #640 (board session, SEC-01+FRONT-01+CORE-01, mig.124 amount_text) llegó a main. Auto-deploy de d823bc98 FALLÓ (GPG deb.debian.org + auto-restore fallido); stack restaurada MANUALMENTE 18:02Z (imágenes post-merge verificadas; deploy.sha=unknown → gap G4, fix en PR #643).
+- Auditoría completa de /opportunities: cards fieles a origin/main, R8/R10 ejemplar; SIM-TS 0/50 explicado por `token_prices_usd:{}` vacía en trading_config (sesión de precios: TU trabajo price-canonical-cex es la pieza que falta — respaldado en backup/r13.3/price-canonical-cex).
+
+## Merges de HOY (vía normal, checks verdes)
+- **#639** MERGED: serializa tests ARBX_BINANCE_PAIRS (carrera que bloqueó deploys).
+- **#642** (salvamento): fe-predicate §30 #2 missing_block — existía SOLO en worktree prunable, pusheado de emergencia.
+- **#643**: deploy.sh + compose.dev estampan ARBX_DEPLOY_SHA/_ID/_DEPLOYED_AT (gate G4).
+
+## PR #641 — BLOQUEADO, diagnóstico disponible (ver comentario en el PR)
+gitleaks: 30 hallazgos = falsos positivos (SHA256 del MANIFEST_SHA256.json) → reformatear manifest o .gitleaksignore. Rust integration/playwright x2/forge/lint-contracts/ci-gate: requieren triage de la sesión dueña (board). NO se fuerza el merge.
+
+## Salvamentos y respaldos (NO perder)
+- `wt/t_2f8a1e57-fe-predicate` y `wt/t_7acfd7b8-s30-residual` ahora EXISTEN en el remoto.
+- `backup/r13.3/{reject-traces,gsim1dejq,price-canonical-cex,price-exchange}`: snapshots stash-create de 69 mods sin commit (árboles intactos). Tomen ownership de sus diffs.
+- PR #264 cerrado (obsoleto).
+
+## Acción requerida por cada sesión
+1. `git fetch origin && git rebase origin main` — main movió (#639/#642/#643).
+2. Sesión board: triage de checks de #641 (es la v2 de /opportunities: socket-lifecycle, cardContract, mig.125).
+3. Sesión de precios: promover price-canonical-cex (puebla token_prices_usd → desbloquea el ladder SIM de las cards).
+4. NADIE borre worktrees sin revisar backup/r13.3 primero.
+
+---
+
 # OMEGA CORTEX — BROADCAST Integración (DSH, orden del operador) · 2026-09-23 — GRUPO A → MAIN · deploy VPS inminente
 
 > Broadcast a TODAS las sesiones/worktrees activos (arbx-wt-edgecors, arbx-wt-enricher, arbx-wt-rollup, wt-guard-mode, retire-dv-fossil, boards hermes-kanban y demás).
