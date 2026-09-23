@@ -15,6 +15,7 @@
 
 import React, { useMemo } from "react";
 import { usePricesStream } from "@/lib/hooks/usePricesStream";
+import { flashClass, useValueFlash } from "@/components/cex/flash";
 
 /** Hard cap on rendered chips — memory discipline (mirrors VISIBLE_CAP idea). */
 const MAX_SYMBOLS = 14;
@@ -25,6 +26,49 @@ function formatPrice(v: number): string {
   if (v >= 1) return v.toFixed(4).replace(/0+$/, "").replace(/\.$/, "");
   if (v >= 0.0001) return v.toFixed(6).replace(/0+$/, "").replace(/\.$/, "");
   return v.toPrecision(4);
+}
+
+/**
+ * WO-PRICE-EXCHANGE-V1 (FE) — one pair chip, owning its CEX-style flash.
+ * Extracted so the flash memory (useValueFlash ref) lives per-chip: a symbol
+ * whose price changed animates ONLY its own chip; unchanged prices render
+ * with no animation and no extra work.
+ */
+function PriceChip({
+  sym,
+  price,
+  prev,
+}: {
+  sym: string;
+  price: number | undefined;
+  prev: number | undefined;
+}) {
+  const flash = useValueFlash(price ?? null);
+  const hasPrev = prev !== undefined && prev > 0;
+  const up = price !== undefined && hasPrev && price > prev;
+  const down = price !== undefined && hasPrev && price < prev;
+  const dir = up ? "▲" : down ? "▼" : "•";
+  const fcls = flashClass(flash);
+  return (
+    <span className="text-xs font-mono">
+      <span className="text-muted-foreground">{sym}</span>{" "}
+      {price !== undefined ? (
+        <>
+          <span
+            // key=seq remounts the span on each CHANGE so the one-shot CSS
+            // flash replays on consecutive same-direction moves.
+            key={flash.seq}
+            className={`text-foreground rounded-sm px-0.5 -mx-0.5 ${fcls ?? ""}`}
+          >
+            ${formatPrice(price)}
+          </span>{" "}
+          <span className={up ? "text-success" : "text-muted-foreground"}>{dir}</span>
+        </>
+      ) : (
+        <span className="text-muted-foreground">—</span>
+      )}
+    </span>
+  );
 }
 
 export function PriceTicker({
@@ -62,27 +106,14 @@ export function PriceTicker({
         <span className={statusClass} />
         PRICES <b>{status}</b>
       </span>
-      {upperSymbols.map((sym) => {
-        const price = state.prices[sym];
-        const prev = state.prevPrices[sym];
-        const hasPrev = prev !== undefined && prev > 0;
-        const up = price !== undefined && hasPrev && price > prev;
-        const down = price !== undefined && hasPrev && price < prev;
-        const dir = up ? "▲" : down ? "▼" : "•";
-        return (
-          <span key={sym} className="text-xs font-mono">
-            <span className="text-muted-foreground">{sym}</span>{" "}
-            {price !== undefined ? (
-              <>
-                <span className="text-foreground">${formatPrice(price)}</span>{" "}
-                <span className={up ? "text-success" : "text-muted-foreground"}>{dir}</span>
-              </>
-            ) : (
-              <span className="text-muted-foreground">—</span>
-            )}
-          </span>
-        );
-      })}
+      {upperSymbols.map((sym) => (
+        <PriceChip
+          key={sym}
+          sym={sym}
+          price={state.prices[sym]}
+          prev={state.prevPrices[sym]}
+        />
+      ))}
       <span className="ml-auto text-[10px] text-muted-foreground" suppressHydrationWarning>
         {state.ts ? `upd ${new Date(state.ts).toLocaleTimeString()}` : "waiting first frame…"}
       </span>

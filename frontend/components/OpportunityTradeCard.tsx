@@ -59,6 +59,11 @@ import { StrategyBadge } from "@/components/StrategyBadge";
 import { QuarantineStrip } from "@/components/QuarantineStrip";
 import { OpportunitySummaryGrid } from "@/components/opportunities/OpportunitySummaryGrid";
 import { StatusPill } from "@/components/StatusPill";
+import { Sparkline } from "@/components/cex/Sparkline";
+import { FreshnessBadge, freshnessLevel } from "@/components/cex/FreshnessBadge";
+import { flashClass, useValueFlash } from "@/components/cex/flash";
+import { useRouteSeries } from "@/components/cex/route-series";
+import { formatAgo } from "@/components/OpportunityTicker";
 import {
   formatPctOrDash,
   formatProfitUSD,
@@ -184,6 +189,23 @@ function OpportunityTradeCardImpl({
   const cb = opp.simulated_cost_breakdown;
   const grossUsd = opp.expected_profit_usd ?? null;
   const netUsd = canonicalNet ?? simulatedNet;
+
+  // ── WO-PRICE-EXCHANGE-V1 (FE) — CEX-premium treatment on the EXISTING card ──
+  // Flash memory in refs (useValueFlash): a WS/polling batch that changes
+  // Gross/Net animates ONLY this card's value cells; identical values across
+  // the 1s age-ticker re-renders animate nothing.
+  const grossFlash = useValueFlash(grossUsd);
+  const netFlash = useValueFlash(netUsd);
+  // Sparkline feed: route_key = dex_a + pair, values from the stream already
+  // flowing into this card. When the backend price_history mirror lands, the
+  // same Sparkline consumes that source via its `points` prop.
+  const routeTrendKey = `${opp.dex_a ?? "?"}·${opp.pair_symbol ?? `${opp.token_in}→${opp.token_out}`}`;
+  // Source + freshness corner badge: token_in symbol + age with a
+  // StatusPill-style dot. R1: age text/level only after mount.
+  const sourceSymbol =
+    opp.token_in_info?.symbol ?? opp.token_in_info?.registry_symbol ?? shortAddr(opp.token_in);
+  const agoText = isMounted && opp.detected_at != null ? formatAgo(opp.detected_at) : null;
+  const sourceFreshness = freshnessLevel(isMounted ? ageSecs : null);
 
   // End-of-route value: capital + net (SIM path). Honest only when both known.
   const endValueUsd: number | null =
@@ -375,6 +397,10 @@ function OpportunityTradeCardImpl({
               : "--"}
           </span>
         </div>
+        <div className="flex items-center gap-1.5">
+          {/* WO-PRICE-EXCHANGE-V1 (FE) — source + freshness badge (pure, R1). */}
+          <FreshnessBadge symbol={sourceSymbol} agoText={agoText} level={sourceFreshness} />
+        </div>
         <span
           title={
             isStale === null
@@ -438,13 +464,29 @@ function OpportunityTradeCardImpl({
         <OpportunitySummaryGrid opp={opp} />
       </div>
 
+      {/* ── WO-PRICE-EXCHANGE-V1 (FE): route trend sparkline (local stream) ──
+           R1: mounted-only — SSR renders nothing here, keeping server markup
+           byte-stable. Client-only component so the series recording never
+           touches the memoized card's render purity. */}
+      {isMounted && (
+        <div className="mb-3 flex items-end justify-between gap-2">
+          <span className="text-[9px] uppercase tracking-wide text-muted-foreground/70 pb-0.5">
+            Route trend · local stream
+          </span>
+          <RouteTrend routeKey={routeTrendKey} value={grossUsd} />
+        </div>
+      )}
+
       {/* ── EXECUTIVE RESULT: net yield + target verdict ── */}
       <div className="grid grid-cols-2 gap-2 mb-3">
         <div className="rounded-lg bg-muted/40 p-2">
           <div className="text-[9px] uppercase tracking-wide text-muted-foreground">Net yield</div>
           <div className="flex items-center gap-1">
             <span
-              className={`font-mono text-lg font-bold ${TONE_CLASS[net.tone] ?? "text-muted-foreground"}`}
+              // WO-PRICE-EXCHANGE-V1: key=seq remounts on each CHANGE so the
+              // one-shot flash replays on consecutive same-direction moves.
+              key={netFlash.seq}
+              className={`font-mono text-lg font-bold ${TONE_CLASS[net.tone] ?? "text-muted-foreground"} ${flashClass(netFlash) ?? ""}`}
               title={
                 netSource === "canonical"
                   ? "Canonical spine net = gross − all costs"
@@ -519,6 +561,8 @@ function OpportunityTradeCardImpl({
             label="Gross out (AMM spread)"
             value={grossUsd}
             tone="text-foreground"
+            flashCls={flashClass(grossFlash)}
+            flashSeq={grossFlash.seq}
           />
           <div className="my-1 border-t border-border/50" />
           <LedgerRow down label={`Repay (principal + TLS fee)`} value={repayUsd} />
@@ -539,6 +583,8 @@ function OpportunityTradeCardImpl({
             value={netUsd}
             tone={netUsd == null ? undefined : netUsd > 0 ? "text-success" : netUsd < 0 ? "text-destructive" : "text-muted-foreground"}
             strong
+            flashCls={flashClass(netFlash)}
+            flashSeq={netFlash.seq}
           />
         </div>
       </div>
@@ -695,6 +741,8 @@ function LedgerRow({
   small = false,
   tone,
   hint,
+  flashCls,
+  flashSeq,
 }: {
   label: string;
   value: number | null;
@@ -705,6 +753,10 @@ function LedgerRow({
   small?: boolean;
   tone?: string;
   hint?: string;
+  /** WO-PRICE-EXCHANGE-V1: one-shot flash class for this row's value cell. */
+  flashCls?: string;
+  /** Remount key — replays the CSS animation on consecutive changes. */
+  flashSeq?: number;
 }) {
   return (
     <div
@@ -718,11 +770,30 @@ function LedgerRow({
         <span className="truncate">{label}</span>
         {hint && <span className="text-[9px] text-muted-foreground/50 italic">({hint})</span>}
       </span>
-      <span className={tone ?? (muted ? "text-muted-foreground/60" : "text-foreground")}>
+      <span
+        key={flashSeq}
+        className={`${tone ?? (muted ? "text-muted-foreground/60" : "text-foreground")} ${flashCls ?? ""}`}
+      >
         {usd(value)}
       </span>
     </div>
   );
+}
+
+// ─── WO-PRICE-EXCHANGE-V1 — route trend feed + sparkline (client-only) ───────
+// Isolated component so the series recording (useEffect) and its local state
+// re-render stay OUTSIDE the memoized card body: a new point refreshes this
+// tiny subtree only. The Sparkline's `points` prop is the future seam for the
+// backend price_history / price_delta mirror.
+function RouteTrend({
+  routeKey,
+  value,
+}: {
+  routeKey: string;
+  value: number | null;
+}) {
+  const points = useRouteSeries(routeKey, value);
+  return <Sparkline points={points ?? undefined} />;
 }
 
 // ─── Config row (applied strategy config) ────────────────────────────────────
