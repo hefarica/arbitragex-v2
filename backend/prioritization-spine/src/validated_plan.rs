@@ -169,7 +169,7 @@ impl ValidatedPlan {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use shared_rs::chains::{USDC_MAINNET, WETH_MAINNET};
+    use shared_rs::chains::{RouterKind, USDC_MAINNET, WETH_MAINNET};
     use std::str::FromStr;
 
     fn addr(hex: &str) -> Address {
@@ -194,6 +194,10 @@ mod tests {
             backward_router: addr("0x68b3465833fb72A70ecDF485E0e4C7bD8665Fc45"),
             backward_path: vec![usdc(), weth()],
             deadline: U256::from(1_700_000_000u64),
+            forward_kind: RouterKind::Unknown,
+            backward_kind: RouterKind::Unknown,
+            forward_fee_tier: None,
+            backward_fee_tier: None,
         };
         ValidatedPlan {
             ctx,

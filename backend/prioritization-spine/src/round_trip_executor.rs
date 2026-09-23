@@ -39,8 +39,13 @@
 
 use ethers::types::{Address, Bytes, H256, U256};
 use serde::{Deserialize, Serialize};
+use shared_rs::chains::RouterKind;
 
-use crate::swap_encoder::{encode_erc20_balance_of, encode_v2_swap_exact_tokens_for_tokens};
+use crate::swap_encoder::{
+    encode_erc20_balance_of, encode_v2_swap_exact_tokens_for_tokens, encode_v3_exact_input_single,
+    encode_v3_exact_input_single_no_deadline, V3ExactInputSingleNoDeadlineParams,
+    V3ExactInputSingleParams,
+};
 
 /// Facts captured by the simulator from one canonical, hash-pinned snapshot.
 #[derive(Debug, Clone)]
@@ -142,6 +147,21 @@ pub struct RoundTripContext {
     pub backward_router: Address,
     pub backward_path: Vec<Address>,
     pub deadline: U256,
+    /// Venue kind per leg. `#[serde(default)]` → `Unknown` keeps pre-V3
+    /// persisted records deserializable; `Unknown` encodes as V2-class (the
+    /// only encoding those records ever had). V3 kinds additionally require
+    /// the matching `*_fee_tier`.
+    #[serde(default)]
+    pub forward_kind: RouterKind,
+    #[serde(default)]
+    pub backward_kind: RouterKind,
+    /// V3 fee tier (raw units: 100/500/3000/10000) for the forward leg,
+    /// resolved from the V3 pool (`pool.fee()`) at encode time. `None` =
+    /// V2-class leg. `Some` on a V2-kind leg is a caller bug → encode fails.
+    #[serde(default)]
+    pub forward_fee_tier: Option<u32>,
+    #[serde(default)]
+    pub backward_fee_tier: Option<u32>,
 }
 
 /// The pre-computed calldata bundle for the round trip. Produced by
@@ -157,6 +177,116 @@ pub struct RoundTripPlan<'ctx> {
     pub balance_of_caller_token_in_calldata: Bytes,
 }
 
+/// Error building a `RoundTripPlan` — typed so callers (and the sim funnel)
+/// can tag rejections with the exact reason instead of a stringly guess.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum RoundTripPlanError {
+    #[error("router kind {0:?} has no round-trip encoder")]
+    UnsupportedRouterKind(RouterKind),
+    #[error("V3 leg on {which} router {router:?} is missing its fee tier (pool.fee())")]
+    MissingFeeTier {
+        which: &'static str,
+        router: Address,
+    },
+    #[error("fee tier {fee} on {which} leg exceeds uint24")]
+    FeeTierOverflow { which: &'static str, fee: u32 },
+    #[error("fee tier set on non-V3 {which} leg ({kind:?}) — caller bug")]
+    FeeTierOnV2Leg {
+        which: &'static str,
+        kind: RouterKind,
+    },
+    #[error(
+        "V3 {which} leg path has {len} tokens; exactInputSingle needs exactly token_in/token_out"
+    )]
+    InvalidV3PathShape { which: &'static str, len: usize },
+}
+
+/// Encode ONE leg's swap calldata per its venue kind. V2-class legs (and
+/// legacy `Unknown` records, which predate venue tagging) use
+/// `swapExactTokensForTokens`; V3 legs use the venue-correct
+/// `exactInputSingle` shape (8-field w/ deadline for the classic SwapRouter,
+/// 7-field for SwapRouter02-style routers like PancakeV3).
+#[allow(clippy::too_many_arguments)]
+fn encode_leg_calldata(
+    which: &'static str,
+    kind: RouterKind,
+    fee_tier: Option<u32>,
+    router: Address,
+    path: &[Address],
+    amount_in: U256,
+    recipient: Address,
+    deadline: U256,
+) -> Result<Bytes, RoundTripPlanError> {
+    match kind {
+        RouterKind::UniswapV2 | RouterKind::Sushi | RouterKind::Unknown => {
+            if fee_tier.is_some() {
+                return Err(RoundTripPlanError::FeeTierOnV2Leg { which, kind });
+            }
+            Ok(encode_v2_swap_exact_tokens_for_tokens(
+                amount_in,
+                U256::zero(), // amount_out_minimum=0 (no slippage protection in sim)
+                path,
+                recipient,
+                deadline,
+            ))
+        }
+        RouterKind::UniswapV3 => {
+            let fee = fee_tier.ok_or(RoundTripPlanError::MissingFeeTier { which, router })?;
+            if fee >= 1 << 24 {
+                return Err(RoundTripPlanError::FeeTierOverflow { which, fee });
+            }
+            let [token_in, token_out] = [path.first().copied(), path.get(1).copied()];
+            // V3 exactInputSingle is single-hop by construction; a longer
+            // path belongs on `exactInput` (not encoded in the round-trip
+            // plan yet) — fail closed rather than silently dropping hops.
+            match (token_in, token_out) {
+                (Some(a), Some(b)) if path.len() == 2 && a != b => {
+                    Ok(encode_v3_exact_input_single(&V3ExactInputSingleParams {
+                        token_in: a,
+                        token_out: b,
+                        fee,
+                        recipient,
+                        deadline,
+                        amount_in,
+                        amount_out_minimum: U256::zero(),
+                        sqrt_price_limit_x96: U256::zero(),
+                    }))
+                }
+                _ => Err(RoundTripPlanError::InvalidV3PathShape {
+                    which,
+                    len: path.len(),
+                }),
+            }
+        }
+        RouterKind::PancakeV3 => {
+            let fee = fee_tier.ok_or(RoundTripPlanError::MissingFeeTier { which, router })?;
+            if fee >= 1 << 24 {
+                return Err(RoundTripPlanError::FeeTierOverflow { which, fee });
+            }
+            let [token_in, token_out] = [path.first().copied(), path.get(1).copied()];
+            match (token_in, token_out) {
+                (Some(a), Some(b)) if path.len() == 2 && a != b => Ok(
+                    encode_v3_exact_input_single_no_deadline(&V3ExactInputSingleNoDeadlineParams {
+                        token_in: a,
+                        token_out: b,
+                        fee,
+                        recipient,
+                        amount_in,
+                        amount_out_minimum: U256::zero(),
+                        sqrt_price_limit_x96: U256::zero(),
+                    }),
+                ),
+                _ => Err(RoundTripPlanError::InvalidV3PathShape {
+                    which,
+                    len: path.len(),
+                }),
+            }
+        }
+        // UniversalRouter / Curve / Balancer: no round-trip encoder yet.
+        kind => Err(RoundTripPlanError::UnsupportedRouterKind(kind)),
+    }
+}
+
 /// Build the calldata bundle for the round trip. Pure — no IO, no EVM
 /// execution. Encoders come from Phase 1/2 (swap_encoder).
 ///
@@ -164,20 +294,25 @@ pub struct RoundTripPlan<'ctx> {
 /// is not enforcing slippage (it's measuring realised profit, not constraining
 /// the swap). Real on-chain execution would compute amount_out_minimum from
 /// quote + tolerance.
-pub fn build_round_trip_plan<'a>(ctx: &'a RoundTripContext) -> RoundTripPlan<'a> {
-    let forward_calldata = encode_v2_swap_exact_tokens_for_tokens(
-        ctx.amount_in,
-        U256::zero(), // amount_out_minimum=0 (no slippage protection in sim)
+pub fn build_round_trip_plan<'a>(
+    ctx: &'a RoundTripContext,
+) -> Result<RoundTripPlan<'a>, RoundTripPlanError> {
+    let forward_calldata = encode_leg_calldata(
+        "forward",
+        ctx.forward_kind,
+        ctx.forward_fee_tier,
+        ctx.forward_router,
         &ctx.forward_path,
+        ctx.amount_in,
         ctx.caller,
         ctx.deadline,
-    );
-    RoundTripPlan {
+    )?;
+    Ok(RoundTripPlan {
         ctx,
         forward_calldata,
         balance_of_caller_token_out_calldata: encode_erc20_balance_of(ctx.caller),
         balance_of_caller_token_in_calldata: encode_erc20_balance_of(ctx.caller),
-    }
+    })
 }
 
 /// Decode the 32-byte return data of an ERC20 `balanceOf(account)` call
@@ -556,8 +691,12 @@ mod tests {
             backward_router: addr("0x68b3465833fb72A70ecDF485E0e4C7bD8665Fc45"),
             backward_path: vec![usdc(), weth()],
             deadline: U256::from(1_700_000_000u64),
+            forward_kind: RouterKind::Unknown,
+            backward_kind: RouterKind::Unknown,
+            forward_fee_tier: None,
+            backward_fee_tier: None,
         };
-        let plan = build_round_trip_plan(&ctx);
+        let plan = build_round_trip_plan(&ctx).expect("v2-class plan");
 
         // Forward calldata starts with V2 swapExactTokensForTokens selector
         assert_eq!(&plan.forward_calldata[..4], &[0x38, 0xed, 0x17, 0x39]);
@@ -569,6 +708,125 @@ mod tests {
         assert_eq!(
             &plan.balance_of_caller_token_in_calldata[..4],
             &[0x70, 0xa0, 0x82, 0x31]
+        );
+    }
+
+    #[test]
+    fn build_round_trip_plan_uniswap_v3_uses_deadline_encoder() {
+        // UniswapV3 → classic SwapRouter → 8-field exactInputSingle (0x414bf389)
+        let ctx = RoundTripContext {
+            caller: addr("0x1111111111111111111111111111111111111111"),
+            token_in: weth(),
+            token_out: usdc(),
+            amount_in: U256::from(10_u64).pow(U256::from(18)),
+            forward_router: addr("0xE592427A0AEce92De3Edee1F18E0157C05861564"),
+            forward_path: vec![weth(), usdc()],
+            backward_router: addr("0x7a250d5630b4cf539739df2c5dacb4c659f2488d"),
+            backward_path: vec![usdc(), weth()],
+            deadline: U256::from(1_700_000_000u64),
+            forward_kind: RouterKind::UniswapV3,
+            backward_kind: RouterKind::UniswapV2,
+            forward_fee_tier: Some(500),
+            backward_fee_tier: None,
+        };
+        let plan = build_round_trip_plan(&ctx).expect("v3 plan");
+        assert_eq!(&plan.forward_calldata[..4], &[0x41, 0x4b, 0xf3, 0x89]);
+    }
+
+    #[test]
+    fn build_round_trip_plan_pancake_v3_uses_no_deadline_encoder() {
+        // PancakeV3 → SwapRouter02-style → 7-field exactInputSingle (0x04e45aaf)
+        let ctx = RoundTripContext {
+            caller: addr("0x1111111111111111111111111111111111111111"),
+            token_in: weth(),
+            token_out: usdc(),
+            amount_in: U256::from(10_u64).pow(U256::from(18)),
+            forward_router: addr("0x13F4EA83D0bd40E75C8222255BC855a974568Dd4"),
+            forward_path: vec![weth(), usdc()],
+            backward_router: addr("0x7a250d5630b4cf539739df2c5dacb4c659f2488d"),
+            backward_path: vec![usdc(), weth()],
+            deadline: U256::from(1_700_000_000u64),
+            forward_kind: RouterKind::PancakeV3,
+            backward_kind: RouterKind::UniswapV2,
+            forward_fee_tier: Some(2500),
+            backward_fee_tier: None,
+        };
+        let plan = build_round_trip_plan(&ctx).expect("pancake v3 plan");
+        assert_eq!(&plan.forward_calldata[..4], &[0x04, 0xe4, 0x5a, 0xaf]);
+    }
+
+    #[test]
+    fn build_round_trip_plan_v3_without_fee_tier_fails_closed() {
+        let ctx = RoundTripContext {
+            caller: addr("0x1111111111111111111111111111111111111111"),
+            token_in: weth(),
+            token_out: usdc(),
+            amount_in: U256::from(10_u64).pow(U256::from(18)),
+            forward_router: addr("0xE592427A0AEce92De3Edee1F18E0157C05861564"),
+            forward_path: vec![weth(), usdc()],
+            backward_router: addr("0x7a250d5630b4cf539739df2c5dacb4c659f2488d"),
+            backward_path: vec![usdc(), weth()],
+            deadline: U256::from(1_700_000_000u64),
+            forward_kind: RouterKind::UniswapV3,
+            backward_kind: RouterKind::UniswapV2,
+            forward_fee_tier: None,
+            backward_fee_tier: None,
+        };
+        assert_eq!(
+            build_round_trip_plan(&ctx).unwrap_err(),
+            RoundTripPlanError::MissingFeeTier {
+                which: "forward",
+                router: addr("0xE592427A0AEce92De3Edee1F18E0157C05861564"),
+            }
+        );
+    }
+
+    #[test]
+    fn build_round_trip_plan_fee_tier_on_v2_leg_is_caller_bug() {
+        let ctx = RoundTripContext {
+            caller: addr("0x1111111111111111111111111111111111111111"),
+            token_in: weth(),
+            token_out: usdc(),
+            amount_in: U256::from(10_u64).pow(U256::from(18)),
+            forward_router: addr("0x7a250d5630b4cf539739df2c5dacb4c659f2488d"),
+            forward_path: vec![weth(), usdc()],
+            backward_router: addr("0x7a250d5630b4cf539739df2c5dacb4c659f2488d"),
+            backward_path: vec![usdc(), weth()],
+            deadline: U256::from(1_700_000_000u64),
+            forward_kind: RouterKind::UniswapV2,
+            backward_kind: RouterKind::UniswapV2,
+            forward_fee_tier: Some(3000),
+            backward_fee_tier: None,
+        };
+        assert_eq!(
+            build_round_trip_plan(&ctx).unwrap_err(),
+            RoundTripPlanError::FeeTierOnV2Leg {
+                which: "forward",
+                kind: RouterKind::UniswapV2,
+            }
+        );
+    }
+
+    #[test]
+    fn build_round_trip_plan_unsupported_kind_fails() {
+        let ctx = RoundTripContext {
+            caller: addr("0x1111111111111111111111111111111111111111"),
+            token_in: weth(),
+            token_out: usdc(),
+            amount_in: U256::from(10_u64).pow(U256::from(18)),
+            forward_router: addr("0x1111111111111111111111111111111111111111"),
+            forward_path: vec![weth(), usdc()],
+            backward_router: addr("0x7a250d5630b4cf539739df2c5dacb4c659f2488d"),
+            backward_path: vec![usdc(), weth()],
+            deadline: U256::from(1_700_000_000u64),
+            forward_kind: RouterKind::Curve,
+            backward_kind: RouterKind::UniswapV2,
+            forward_fee_tier: None,
+            backward_fee_tier: None,
+        };
+        assert_eq!(
+            build_round_trip_plan(&ctx).unwrap_err(),
+            RoundTripPlanError::UnsupportedRouterKind(RouterKind::Curve)
         );
     }
 
@@ -595,8 +853,12 @@ mod tests {
             backward_router: addr("0x68b3465833fb72A70ecDF485E0e4C7bD8665Fc45"),
             backward_path: vec![usdc(), weth()],
             deadline: U256::from(1_700_000_000u64),
+            forward_kind: RouterKind::Unknown,
+            backward_kind: RouterKind::Unknown,
+            forward_fee_tier: None,
+            backward_fee_tier: None,
         };
-        let plan = build_round_trip_plan(&ctx);
+        let plan = build_round_trip_plan(&ctx).expect("v2-class plan");
         let outcome = execute_round_trip(&plan);
         assert!(!outcome.passed);
         assert!(outcome.fail_reason.unwrap().contains("Phase 5"));

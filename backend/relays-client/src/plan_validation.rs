@@ -376,6 +376,7 @@ mod tests {
     use prioritization_spine::{
         round_trip_executor::RoundTripContext, validated_plan::SimulationBinding,
     };
+    use shared_rs::chains::RouterKind;
     fn plan() -> ValidatedPlan {
         let ctx = RoundTripContext {
             caller: Address::from_low_u64_be(1),
@@ -387,6 +388,10 @@ mod tests {
             forward_path: vec![Address::from_low_u64_be(2), Address::from_low_u64_be(3)],
             backward_path: vec![Address::from_low_u64_be(3), Address::from_low_u64_be(2)],
             deadline: U256::from(1800000120u64),
+            forward_kind: RouterKind::Unknown,
+            backward_kind: RouterKind::Unknown,
+            forward_fee_tier: None,
+            backward_fee_tier: None,
         };
         let bytes = build_flash_funded_broadcast_calldata_with_minima(
             &ctx,

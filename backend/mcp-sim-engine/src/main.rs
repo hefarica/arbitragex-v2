@@ -40,6 +40,7 @@ use searcher_rs::route_discovery::types::{RouteDirection, RouteEdge};
 use searcher_rs::route_discovery::unique_route_finder::{find_routes, RouteFinderConfig};
 use searcher_rs::route_intent::ProtocolType;
 use searcher_rs::sim_orchestrator::{execute_round_trip_revm, RoundTripExecutionConfig};
+use shared_rs::chains::RouterKind;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Shared helpers
@@ -688,6 +689,13 @@ impl SimEngine {
             backward_router: bwd_router,
             backward_path: bwd_path,
             deadline,
+            // The MCP tool params carry router addresses, not venue labels —
+            // `Unknown` encodes as V2-class (the only shape this tool ever
+            // produced). V3 params need the PR-D typed input.
+            forward_kind: RouterKind::Unknown,
+            backward_kind: RouterKind::Unknown,
+            forward_fee_tier: None,
+            backward_fee_tier: None,
         };
         let config = RoundTripExecutionConfig {
             chain_id: p.chain_id,

@@ -426,6 +426,7 @@ fn failed_with(e: RoundTripExecutionError) -> SimulationOutcome {
 mod tests {
     use super::*;
     use prioritization_spine::execute_arbitrage_encoder::EXECUTE_ARBITRAGE_SELECTOR;
+    use shared_rs::chains::RouterKind;
     use std::str::FromStr;
 
     fn addr(s: &str) -> Address {
@@ -447,6 +448,10 @@ mod tests {
             backward_router: router_b,
             backward_path: vec![usdc, weth],
             deadline: U256::from(1_700_000_000u64),
+            forward_kind: RouterKind::Unknown,
+            backward_kind: RouterKind::Unknown,
+            forward_fee_tier: None,
+            backward_fee_tier: None,
         }
     }
 

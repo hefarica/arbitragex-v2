@@ -174,8 +174,9 @@ pub fn build_context(
         .map(|label| {
             let kind = sim_core::sim_encoder::parse_dex_kind(label)
                 .map_err(|_| anyhow!("candidate_adapter_unsupported"))?;
-            sim_core::sim_encoder::resolve_router_address(opportunity.chain_id, kind)
-                .map_err(|_| anyhow!("candidate_router_unavailable"))
+            let router = sim_core::sim_encoder::resolve_router_address(opportunity.chain_id, kind)
+                .map_err(|_| anyhow!("candidate_router_unavailable"))?;
+            Ok::<_, anyhow::Error>((router, kind))
         })
         .collect::<anyhow::Result<Vec<_>>>()?;
     for (i, leg) in route_plan.legs.iter().enumerate() {
@@ -191,26 +192,34 @@ pub fn build_context(
         ensure!(
             sim_core::sim_encoder::resolve_router_address(opportunity.chain_id, kind)
                 .map_err(|_| anyhow!("candidate_router_unavailable"))?
-                == routers[i],
+                == routers[i].0,
             "candidate_adapter_plan_mismatch"
         );
     }
     let boundaries: Vec<_> = (1..hops)
-        .filter(|&i| routers[i] != routers[i - 1])
+        .filter(|&i| routers[i].0 != routers[i - 1].0)
         .collect();
     ensure!(boundaries.len() <= 1, "candidate_router_groups_unsupported");
     let split = boundaries.first().copied().unwrap_or(1);
     ensure!(tokens[split] != tokens[0], "candidate_pivot_is_input");
+    // V3 legs carry no fee tier here yet — the PR-D `PoolFeeProvider` (cached
+    // on-chain `pool.fee()`) is the honest source. `None` keeps the context
+    // encodable for V2-class legs; a V3 leg fails closed at plan-build with
+    // `MissingFeeTier` rather than guessing a tier.
     Ok(RoundTripContext {
         caller,
         token_in: tokens[0],
         token_out: tokens[split],
         amount_in,
-        forward_router: routers[0],
+        forward_router: routers[0].0,
         forward_path: tokens[..=split].to_vec(),
-        backward_router: routers[split],
+        backward_router: routers[split].0,
         backward_path: tokens[split..].to_vec(),
         deadline,
+        forward_kind: routers[0].1,
+        backward_kind: routers[split].1,
+        forward_fee_tier: None,
+        backward_fee_tier: None,
     })
 }
 

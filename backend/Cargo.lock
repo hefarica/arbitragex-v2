@@ -4689,6 +4689,7 @@ dependencies = [
  "searcher-rs",
  "serde",
  "serde_json",
+ "shared-rs",
  "simulator-v2",
  "tokio",
  "tracing",

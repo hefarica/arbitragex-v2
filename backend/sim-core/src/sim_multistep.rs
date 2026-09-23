@@ -91,6 +91,7 @@ use crate::sim_prefund::{
 use ethers::types::{Address, U256};
 use prioritization_spine::execute_arbitrage_encoder::build_flash_funded_broadcast_calldata_with_intermediate;
 use prioritization_spine::round_trip_executor::{RoundTripContext, SimulationOutcome};
+use shared_rs::chains::RouterKind;
 use std::sync::Arc;
 use thiserror::Error;
 use tracing::{debug, warn};
@@ -164,6 +165,10 @@ pub enum MultiStepError {
     PrefundFailed(#[from] PrefundError),
     #[error("flash-funded broadcast calldata encoding failed (empty forward calldata)")]
     FlashCalldataEncodeFailed,
+    #[error(
+        "V3 venue ({0:?}) reached the V2-only multistep flash encoder — V3 quoting/execution lands in the PR-D harness; fail-honest, never V2-encoded"
+    )]
+    UnsupportedV3Venue(RouterKind),
 }
 
 impl MultiStepError {
@@ -187,6 +192,7 @@ impl MultiStepError {
             Self::SameTokenInOut => "same_token_in_out",
             Self::PrefundFailed(_) => "prefund_failed",
             Self::FlashCalldataEncodeFailed => "flash_calldata_encode_failed",
+            Self::UnsupportedV3Venue(_) => "unsupported_v3_venue",
         }
     }
 }
@@ -506,6 +512,22 @@ fn validate_context(ctx: &RoundTripContext) -> Result<(), MultiStepError> {
     }
     if ctx.backward_path.is_empty() {
         return Err(MultiStepError::EmptyBackwardPath);
+    }
+    // Fail-honest V3 guard: the wrapped-flash encoder below is V2-only
+    // (`swapExactTokensForTokens` payloads). A V3-kind leg — with OR without
+    // a fee tier — must NOT be silently V2-encoded. PR-D lands the V3
+    // QuoterV2 quoting path; until then this rejects with an explicit tag.
+    if matches!(
+        ctx.forward_kind,
+        RouterKind::UniswapV3 | RouterKind::PancakeV3
+    ) {
+        return Err(MultiStepError::UnsupportedV3Venue(ctx.forward_kind));
+    }
+    if matches!(
+        ctx.backward_kind,
+        RouterKind::UniswapV3 | RouterKind::PancakeV3
+    ) {
+        return Err(MultiStepError::UnsupportedV3Venue(ctx.backward_kind));
     }
     Ok(())
 }
@@ -921,6 +943,10 @@ mod tests {
             backward_router: router_b,
             backward_path: vec![usdc(), weth()],
             deadline: U256::from(1_700_000_000u64),
+            forward_kind: RouterKind::Unknown,
+            backward_kind: RouterKind::Unknown,
+            forward_fee_tier: None,
+            backward_fee_tier: None,
         }
     }
 

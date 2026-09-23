@@ -451,6 +451,7 @@ async fn variance_benchmark_predicted_vs_settled_block() {
             row.chain_id,
             executor,
             &decimals_cache,
+            &sim_core::sim_encoder::NoPoolFeeProvider,
             &encode_config,
         ) {
             Ok(c) => c,

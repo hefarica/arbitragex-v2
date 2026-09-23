@@ -175,6 +175,7 @@ pub async fn run_real_simulation(
         chain_id,
         env_config.executor_address,
         &decimals_provider,
+        &sim_core::sim_encoder::NoPoolFeeProvider,
         &encode_config,
     ) {
         Ok(ctx) => ctx,

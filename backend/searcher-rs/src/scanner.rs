@@ -3044,6 +3044,7 @@ pub(crate) fn dispatch_encoder_gate(
         chain_id,
         executor,
         provider_ref,
+        &crate::sim_encoder::NoPoolFeeProvider,
         &config,
     ) {
         Ok(round_trip_context) => EncoderGateOutcome::EncoderOk(round_trip_context),

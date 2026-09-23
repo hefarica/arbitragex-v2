@@ -216,6 +216,7 @@ mod tests {
     use super::*;
     use ethers::types::{Address, U256};
     use prioritization_spine::round_trip_executor::RoundTripContext;
+    use shared_rs::chains::RouterKind;
 
     /// Producer-shaped 3-hop cyclic plan: WETH → USDC → DAI → back to WETH
     /// (token_in == token_out — EXACTLY the topology `tx_builder` refuses
@@ -237,6 +238,10 @@ mod tests {
             backward_router: router_b,
             backward_path: vec![dai, usdc, weth],
             deadline: U256::from(1_800_000_000u64),
+            forward_kind: RouterKind::Unknown,
+            backward_kind: RouterKind::Unknown,
+            forward_fee_tier: None,
+            backward_fee_tier: None,
         };
         ValidatedPlan {
             ctx,

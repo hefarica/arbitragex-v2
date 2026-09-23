@@ -6,14 +6,15 @@
 //! ERC-20 balances, NOT submit anything. Its sole job is to project a
 //! candidate into a deterministic, testable, fail-closed simulation input.
 //!
-//! ## Scope (Phase A.3.a)
+//! ## Scope (Phase A.3.a + V3 encoder layer)
 //!
-//! - SUPPORTED: 2-leg round-trip candidates whose `dex_adapters` resolve to V2
-//!   or Sushi (V2-API-compatible). The forward and backward legs both encode
-//!   via `swap_encoder::encode_v2_swap_exact_tokens_for_tokens`.
-//! - UNSUPPORTED (deferred to A.3.b / A.3.c):
-//!   - V3 (needs per-leg fee tier — not carried in `OpportunityCandidate`)
-//!   - Curve / Balancer (no encoder in `prioritization_spine::swap_encoder` yet)
+//! - SUPPORTED: 2-leg round-trip candidates whose `dex_adapters` resolve to
+//!   V2, Sushi (V2-API-compatible) or V3 kinds (UniswapV3 / PancakeV3). V3
+//!   legs additionally require `pool_addresses[leg]` + a `PoolFeeProvider`
+//!   entry (the cached on-chain `pool.fee()`).
+//! - UNSUPPORTED (deferred):
+//!   - Curve / Balancer / UniversalRouter (no encoder in
+//!     `prioritization_spine::swap_encoder` yet)
 //!   - Triangular 3-leg shape (incompatible with 2-leg `RoundTripContext`)
 //!   - 1-leg flashloan / liquidation shapes
 //!
@@ -134,6 +135,18 @@ pub enum SimEncoderError {
 
     #[error("RouteEncodingConfig.min_profit_wei is zero (no source for slippage floor)")]
     MissingMinProfitInput,
+
+    #[error("candidate has no pool_addresses for a V3 leg (no fee-tier source)")]
+    MissingPoolAddress,
+
+    #[error("pool address {pool:?} cannot be parsed as a 20-byte EVM address")]
+    InvalidPoolAddress { pool: String },
+
+    #[error("fee tier for chain {chain_id} pool {pool:?} not configured (pool.fee() unread)")]
+    MissingPoolFeeTier { chain_id: u64, pool: Address },
+
+    #[error("fee tier {fee} for pool {pool:?} exceeds uint24")]
+    InvalidPoolFeeTier { fee: u32, pool: Address },
 }
 
 impl SimEncoderError {
@@ -162,6 +175,10 @@ impl SimEncoderError {
             Self::MissingRouterAddress { .. } => "missing_router",
             Self::MissingDeadlineConfig => "missing_deadline_config",
             Self::MissingMinProfitInput => "missing_min_profit",
+            Self::MissingPoolAddress => "missing_pool_address",
+            Self::InvalidPoolAddress { .. } => "invalid_pool_address",
+            Self::MissingPoolFeeTier { .. } => "missing_pool_fee_tier",
+            Self::InvalidPoolFeeTier { .. } => "invalid_pool_fee_tier",
         }
     }
 }
@@ -212,6 +229,58 @@ impl InMemoryTokenDecimalsProvider {
 impl TokenDecimalsProvider for InMemoryTokenDecimalsProvider {
     fn decimals(&self, chain_id: u64, token: &Address) -> Option<u8> {
         self.table.get(&(chain_id, *token)).copied()
+    }
+}
+
+/// Read-only provider of a V3 pool's fee tier (raw units: 100/500/3000/10000),
+/// keyed by `(chain_id, pool_address)` — the value of the pool's on-chain
+/// `fee()` call, cached by the producer that enriches pools.
+///
+/// Returning `None` for an unknown pool is the only honest signal: the encoder
+/// then rejects the V3 leg with `MissingPoolFeeTier` (R8 — no default 3000,
+/// a wrong tier silently routes through the wrong concentration band).
+/// V2-class legs never consult this provider.
+pub trait PoolFeeProvider: Send + Sync {
+    fn pool_fee(&self, chain_id: u64, pool: &Address) -> Option<u32>;
+}
+
+/// Test-only in-memory fee provider (same gating rationale as
+/// `InMemoryTokenDecimalsProvider` — invisible to the binary build).
+#[cfg(test)]
+#[derive(Debug, Default, Clone)]
+pub struct InMemoryPoolFeeProvider {
+    table: HashMap<(u64, Address), u32>,
+}
+
+#[cfg(test)]
+impl InMemoryPoolFeeProvider {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn with_pool_fee(mut self, chain_id: u64, pool: Address, fee: u32) -> Self {
+        self.table.insert((chain_id, pool), fee);
+        self
+    }
+}
+
+#[cfg(test)]
+impl PoolFeeProvider for InMemoryPoolFeeProvider {
+    fn pool_fee(&self, chain_id: u64, pool: &Address) -> Option<u32> {
+        self.table.get(&(chain_id, *pool)).copied()
+    }
+}
+
+/// A `PoolFeeProvider` that knows NO pool. Passing it to
+/// `build_round_trip_context_from_candidate` keeps every V2-class candidate
+/// encoding identically to before (fee lookup never fires) and makes every
+/// V3 candidate fail closed with `MissingPoolFeeTier` — the honest state
+/// until the PR-D producer (cached on-chain `pool.fee()`) lands.
+pub struct NoPoolFeeProvider;
+
+impl PoolFeeProvider for NoPoolFeeProvider {
+    fn pool_fee(&self, _chain_id: u64, _pool: &Address) -> Option<u32> {
+        None
     }
 }
 
@@ -351,10 +420,12 @@ pub fn convert_amount_to_wei(amount_in: f64, decimals: u8) -> Result<U256, SimEn
 
 /// Map a `dex_adapters` semantic label to `shared_rs::chains::RouterKind`.
 ///
-/// Phase A.3.a supports V2-style routers only (UniswapV2 + Sushi). V3 requires
-/// per-leg fee tier (not carried in `OpportunityCandidate`); Curve / Balancer
-/// have no encoder in `prioritization_spine::swap_encoder` yet. Every other
-/// label rejects with `UnsupportedDexKind`.
+/// V2-class routers (UniswapV2 + Sushi) encode directly. V3 kinds
+/// (UniswapV3 + PancakeV3) parse here but their legs additionally need a
+/// fee tier, resolved by `build_round_trip_context_from_candidate` from
+/// `pool_addresses` + the `PoolFeeProvider`. Curve / Balancer /
+/// UniversalRouter have no encoder in `prioritization_spine::swap_encoder`
+/// yet. Every other label rejects with `UnsupportedDexKind`.
 ///
 /// The match is spelling-proof: producers emit the same DEX under different
 /// spellings — scanner fixtures use kebab ("uniswap-v2", "sushi") while
@@ -374,6 +445,8 @@ pub fn parse_dex_kind(label: &str) -> Result<RouterKind, SimEncoderError> {
         // (canonical_enums::DEXES spells "Sushi V2"); "sushiswap" the
         // cartridge feed; "sushi" the original scanner fixtures.
         "sushi" | "sushiswap" | "sushiv2" => Ok(RouterKind::Sushi),
+        "uniswapv3" | "uni-v3" | "univ3" => Ok(RouterKind::UniswapV3),
+        "pancakev3" | "pancakeswapv3" | "pancake-v3" => Ok(RouterKind::PancakeV3),
         _ => Err(SimEncoderError::UnsupportedDexKind {
             dex_kind: label.to_string(),
         }),
@@ -399,7 +472,7 @@ pub fn resolve_router_address(chain_id: u64, kind: RouterKind) -> Result<Address
 // Main entry point
 // ---------------------------------------------------------------------------
 
-/// Build a `RoundTripContext` from a 2-leg V2-class candidate.
+/// Build a `RoundTripContext` from a 2-leg candidate (V2-class or V3).
 ///
 /// Returns `Err(SimEncoderError::…)` on any incomplete or unsupported input.
 /// On success, the returned context is a fully-typed input to
@@ -413,8 +486,10 @@ pub fn resolve_router_address(chain_id: u64, kind: RouterKind) -> Result<Address
 /// 4. Tokens parse, are non-zero, and distinct.
 /// 5. Decimals available for token_in (used to scale `amount_in`).
 /// 6. `amount_in` converts safely to U256 wei.
-/// 7. Both dex_kinds supported (V2 / Sushi).
+/// 7. Both dex_kinds supported (V2 / Sushi / V3 kinds).
 /// 8. Both routers resolve in the static catalogue.
+/// 9. V3 legs resolve a fee tier from `pool_addresses[leg]` + the
+///    `PoolFeeProvider` (V2 legs skip this step entirely).
 ///
 /// Each step short-circuits with a typed error. The function is pure: same
 /// inputs always produce the same output (or the same error).
@@ -423,6 +498,7 @@ pub fn build_round_trip_context_from_candidate(
     chain_id: u64,
     executor: Address,
     decimals_provider: &dyn TokenDecimalsProvider,
+    fee_provider: &dyn PoolFeeProvider,
     config: &RouteEncodingConfig,
 ) -> Result<RoundTripContext, SimEncoderError> {
     config.validate()?;
@@ -477,6 +553,33 @@ pub fn build_round_trip_context_from_candidate(
     let forward_router = resolve_router_address(chain_id, forward_kind)?;
     let backward_router = resolve_router_address(chain_id, backward_kind)?;
 
+    // ── V3 fee tiers ───────────────────────────────────────────────────────
+    // One entry per leg, in leg order. V2-class legs carry `None` (and never
+    // touch the provider); a V3 leg WITHOUT its pool fee fails closed — a
+    // guessed tier would route the swap through the wrong concentration band.
+    let resolve_fee_tier = |leg: usize, kind: RouterKind| -> Result<Option<u32>, SimEncoderError> {
+        if !matches!(kind, RouterKind::UniswapV3 | RouterKind::PancakeV3) {
+            return Ok(None);
+        }
+        let pool_str = candidate
+            .pool_addresses
+            .get(leg)
+            .ok_or(SimEncoderError::MissingPoolAddress)?;
+        let pool =
+            Address::from_str(pool_str).map_err(|_| SimEncoderError::InvalidPoolAddress {
+                pool: pool_str.clone(),
+            })?;
+        let fee = fee_provider
+            .pool_fee(chain_id, &pool)
+            .ok_or(SimEncoderError::MissingPoolFeeTier { chain_id, pool })?;
+        if fee >= 1 << 24 {
+            return Err(SimEncoderError::InvalidPoolFeeTier { fee, pool });
+        }
+        Ok(Some(fee))
+    };
+    let forward_fee_tier = resolve_fee_tier(0, forward_kind)?;
+    let backward_fee_tier = resolve_fee_tier(1, backward_kind)?;
+
     // ── Paths ──────────────────────────────────────────────────────────────
     let forward_path = vec![token_in, token_out];
     let backward_path = vec![token_out, token_in];
@@ -495,6 +598,10 @@ pub fn build_round_trip_context_from_candidate(
         decimals = decimals_in,
         forward_router = ?forward_router,
         backward_router = ?backward_router,
+        forward_kind = ?forward_kind,
+        backward_kind = ?backward_kind,
+        forward_fee_tier = ?forward_fee_tier,
+        backward_fee_tier = ?backward_fee_tier,
         legs = candidate.dex_adapters.len(),
         "RoundTripContext built"
     );
@@ -509,6 +616,10 @@ pub fn build_round_trip_context_from_candidate(
         backward_router,
         backward_path,
         deadline,
+        forward_kind,
+        backward_kind,
+        forward_fee_tier,
+        backward_fee_tier,
     })
 }
 
@@ -572,9 +683,15 @@ mod tests {
     fn valid_candidate_v2_builds_round_trip_context() {
         let c = valid_candidate_v2();
         let p = provider_with_weth_18();
-        let ctx =
-            build_round_trip_context_from_candidate(&c, 1, dummy_executor(), &p, &valid_config())
-                .unwrap();
+        let ctx = build_round_trip_context_from_candidate(
+            &c,
+            1,
+            dummy_executor(),
+            &p,
+            &NoPoolFeeProvider,
+            &valid_config(),
+        )
+        .unwrap();
         assert_eq!(ctx.token_in, addr(WETH));
         assert_eq!(ctx.token_out, addr(USDC));
         // 1.5 WETH (18 decimals) → 1.5 × 10^18 = 1500000000000000000
@@ -588,22 +705,32 @@ mod tests {
         assert_eq!(ctx.deadline, U256::from(1_700_000_060u64));
     }
 
-    // ── Test 2 — V3 candidate rejected (UnsupportedDexKind in A.3.a) ────────
+    // ── Test 2 — V3 candidate fails closed without an on-chain fee tier ─────
+    //
+    // G-SIM-1 PR-C: "uniswap-v3" now parses to RouterKind::UniswapV3 instead of
+    // UnsupportedDexKind. With NoPoolFeeProvider the resolver fails closed at
+    // MissingPoolFeeTier — the honest funnel outcome until PR-D wires the cached
+    // on-chain pool.fee() provider.
 
     #[test]
-    fn valid_candidate_v3_rejected_unsupported_in_a3a() {
+    fn valid_candidate_v3_without_fee_provider_fails_closed() {
         let mut c = valid_candidate_v2();
-        c.dex_adapters = vec!["uniswap-v3".into(), "uniswap-v3".into()];
+        c.dex_adapters = vec!["uniswap-v3".into(), "uniswap-v2".into()];
+        c.pool_addresses = vec![
+            "0x1111111111111111111111111111111111111111".into(),
+            "0x2222222222222222222222222222222222222222".into(),
+        ];
         let err = build_round_trip_context_from_candidate(
             &c,
             1,
             dummy_executor(),
             &provider_with_weth_18(),
+            &NoPoolFeeProvider,
             &valid_config(),
         )
         .unwrap_err();
-        assert!(matches!(err, SimEncoderError::UnsupportedDexKind { .. }));
-        assert_eq!(err.reason_tag(), "unsupported_dex_kind");
+        assert!(matches!(err, SimEncoderError::MissingPoolFeeTier { .. }));
+        assert_eq!(err.reason_tag(), "missing_pool_fee_tier");
     }
 
     // ── Test 2b — parse_dex_kind is spelling-proof across producers ─────────
@@ -629,7 +756,7 @@ mod tests {
 
     #[test]
     fn parse_dex_kind_fails_closed_with_original_label() {
-        for unsupported in ["uniswap-v3", "UniswapV3", "PancakeSwapV3", "curve", ""] {
+        for unsupported in ["curve", "balancer", "universal-router", ""] {
             let err = parse_dex_kind(unsupported).unwrap_err();
             match err {
                 SimEncoderError::UnsupportedDexKind { dex_kind } => {
@@ -639,6 +766,15 @@ mod tests {
                 other => panic!("expected UnsupportedDexKind, got {other:?}"),
             }
         }
+    }
+
+    #[test]
+    fn parse_dex_kind_accepts_v3_variants() {
+        assert_eq!(parse_dex_kind("uniswap-v3"), Ok(RouterKind::UniswapV3));
+        assert_eq!(parse_dex_kind("UniswapV3"), Ok(RouterKind::UniswapV3));
+        assert_eq!(parse_dex_kind("uni-v3"), Ok(RouterKind::UniswapV3));
+        assert_eq!(parse_dex_kind("PancakeSwapV3"), Ok(RouterKind::PancakeV3));
+        assert_eq!(parse_dex_kind("pancake-v3"), Ok(RouterKind::PancakeV3));
     }
 
     // ── Test 2c — real feed shape (PascalCase adapters) builds context ──────
@@ -652,6 +788,7 @@ mod tests {
             1,
             dummy_executor(),
             &provider_with_weth_18(),
+            &NoPoolFeeProvider,
             &valid_config(),
         )
         .unwrap();
@@ -670,6 +807,7 @@ mod tests {
             1,
             dummy_executor(),
             &provider_with_weth_18(),
+            &NoPoolFeeProvider,
             &valid_config(),
         )
         .unwrap_err();
@@ -730,6 +868,7 @@ mod tests {
             1,
             dummy_executor(),
             &provider_with_weth_18(),
+            &NoPoolFeeProvider,
             &valid_config(),
         )
         .unwrap_err();
@@ -747,6 +886,7 @@ mod tests {
             1,
             dummy_executor(),
             &provider_with_weth_18(),
+            &NoPoolFeeProvider,
             &valid_config(),
         )
         .unwrap_err();
@@ -759,9 +899,15 @@ mod tests {
     fn missing_decimals_rejected() {
         let c = valid_candidate_v2();
         let p = InMemoryTokenDecimalsProvider::new(); // empty
-        let err =
-            build_round_trip_context_from_candidate(&c, 1, dummy_executor(), &p, &valid_config())
-                .unwrap_err();
+        let err = build_round_trip_context_from_candidate(
+            &c,
+            1,
+            dummy_executor(),
+            &p,
+            &NoPoolFeeProvider,
+            &valid_config(),
+        )
+        .unwrap_err();
         assert!(matches!(err, SimEncoderError::MissingTokenDecimals { .. }));
         assert_eq!(err.reason_tag(), "missing_decimals");
     }
@@ -772,9 +918,15 @@ mod tests {
     fn invalid_decimals_rejected() {
         let c = valid_candidate_v2();
         let p = InMemoryTokenDecimalsProvider::new().with_decimals(1, addr(WETH), 50);
-        let err =
-            build_round_trip_context_from_candidate(&c, 1, dummy_executor(), &p, &valid_config())
-                .unwrap_err();
+        let err = build_round_trip_context_from_candidate(
+            &c,
+            1,
+            dummy_executor(),
+            &p,
+            &NoPoolFeeProvider,
+            &valid_config(),
+        )
+        .unwrap_err();
         assert!(matches!(err, SimEncoderError::InvalidTokenDecimals { .. }));
     }
 
@@ -848,6 +1000,7 @@ mod tests {
             1,
             dummy_executor(),
             &provider_with_weth_18(),
+            &NoPoolFeeProvider,
             &valid_config(),
         )
         .unwrap_err();
@@ -865,6 +1018,7 @@ mod tests {
             1,
             dummy_executor(),
             &provider_with_weth_18(),
+            &NoPoolFeeProvider,
             &valid_config(),
         )
         .unwrap_err();
@@ -886,6 +1040,7 @@ mod tests {
             1,
             dummy_executor(),
             &provider_with_weth_18(),
+            &NoPoolFeeProvider,
             &cfg,
         )
         .unwrap_err();
@@ -907,6 +1062,7 @@ mod tests {
             1,
             dummy_executor(),
             &provider_with_weth_18(),
+            &NoPoolFeeProvider,
             &cfg,
         )
         .unwrap_err();
@@ -920,9 +1076,15 @@ mod tests {
         let mut c = valid_candidate_v2();
         c.token_addresses = vec![WETH.into(), WETH.into()];
         let p = InMemoryTokenDecimalsProvider::new().with_decimals(1, addr(WETH), 18);
-        let err =
-            build_round_trip_context_from_candidate(&c, 1, dummy_executor(), &p, &valid_config())
-                .unwrap_err();
+        let err = build_round_trip_context_from_candidate(
+            &c,
+            1,
+            dummy_executor(),
+            &p,
+            &NoPoolFeeProvider,
+            &valid_config(),
+        )
+        .unwrap_err();
         assert!(matches!(err, SimEncoderError::SameTokenInOut { .. }));
     }
 
@@ -937,6 +1099,7 @@ mod tests {
             1,
             dummy_executor(),
             &provider_with_weth_18(),
+            &NoPoolFeeProvider,
             &valid_config(),
         )
         .unwrap_err();
@@ -957,6 +1120,7 @@ mod tests {
             1,
             dummy_executor(),
             &provider_with_weth_18(),
+            &NoPoolFeeProvider,
             &valid_config(),
         )
         .unwrap_err();
@@ -992,6 +1156,7 @@ mod tests {
             99999,
             dummy_executor(),
             &p,
+            &NoPoolFeeProvider,
             &valid_config(),
         )
         .unwrap_err();

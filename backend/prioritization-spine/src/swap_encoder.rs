@@ -41,6 +41,13 @@ const SELECTOR_ERC20_TRANSFER: [u8; 4] = [0xa9, 0x05, 0x9c, 0xbb];
 /// V3 SwapRouter (v1) at 0xE592427A0AEce92De3Edee1F18E0157C05861564.
 const SELECTOR_V3_EXACT_INPUT_SINGLE: [u8; 4] = [0x41, 0x4b, 0xf3, 0x89];
 
+/// `exactInputSingle((address,address,uint24,address,uint256,uint256,uint160))`
+/// SwapRouter02-style 7-field shape (NO deadline) — PancakeSwap V3 Smart
+/// Router (PANCAKE-ROUTER-01) at 0x13F4EA83D0bd40E75C8222255BC855a974568Dd4
+/// and Uniswap SwapRouter02 at 0x68b3465833fb72A70ecDF485E0e4C7bD8665Fc45.
+/// Selector = keccak of the 7-field signature (verified via `cast sig`).
+const SELECTOR_V3_EXACT_INPUT_SINGLE_NO_DEADLINE: [u8; 4] = [0x04, 0xe4, 0x5a, 0xaf];
+
 /// `exactInput((bytes,address,uint256,uint256,uint256))`
 /// V3 SwapRouter multi-hop with packed `path` bytes.
 const SELECTOR_V3_EXACT_INPUT: [u8; 4] = [0xc0, 0x4b, 0x8d, 0x59];
@@ -141,6 +148,37 @@ pub fn encode_v3_exact_input_single(params: &V3ExactInputSingleParams) -> Bytes 
     ]);
     let encoded = encode(&[tuple]);
     prepend_selector(SELECTOR_V3_EXACT_INPUT_SINGLE, encoded).into()
+}
+
+/// Parameters for the SwapRouter02-style `exactInputSingle` — the 7-field
+/// tuple WITHOUT deadline. Field order MUST match the Solidity struct.
+/// Used by PancakeSwap V3 Smart Router (PANCAKE-ROUTER-01) and Uniswap
+/// SwapRouter02. `fee` semantics identical to the 8-field variant.
+pub struct V3ExactInputSingleNoDeadlineParams {
+    pub token_in: Address,
+    pub token_out: Address,
+    pub fee: u32,
+    pub recipient: Address,
+    pub amount_in: U256,
+    pub amount_out_minimum: U256,
+    pub sqrt_price_limit_x96: U256,
+}
+
+/// Encode the 7-field `exactInputSingle(params)` calldata (no deadline).
+pub fn encode_v3_exact_input_single_no_deadline(
+    params: &V3ExactInputSingleNoDeadlineParams,
+) -> Bytes {
+    let tuple = Token::Tuple(vec![
+        Token::Address(params.token_in),
+        Token::Address(params.token_out),
+        Token::Uint(U256::from(params.fee)),
+        Token::Address(params.recipient),
+        Token::Uint(params.amount_in),
+        Token::Uint(params.amount_out_minimum),
+        Token::Uint(params.sqrt_price_limit_x96),
+    ]);
+    let encoded = encode(&[tuple]);
+    prepend_selector(SELECTOR_V3_EXACT_INPUT_SINGLE_NO_DEADLINE, encoded).into()
 }
 
 /// Encode the V3 multi-hop `path` bytes blob: `token0 || fee0 || token1 || fee1 || ... || tokenN`.

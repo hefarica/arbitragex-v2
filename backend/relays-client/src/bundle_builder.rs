@@ -242,6 +242,7 @@ mod tests {
         build_flash_funded_broadcast_calldata,
         build_flash_funded_broadcast_calldata_with_intermediate,
     };
+    use shared_rs::chains::RouterKind;
     use std::str::FromStr;
 
     fn weth() -> Address {
@@ -264,6 +265,10 @@ mod tests {
                 .unwrap(),
             backward_path: vec![usdc(), weth()],
             deadline: U256::from(1_700_000_000u64),
+            forward_kind: RouterKind::Unknown,
+            backward_kind: RouterKind::Unknown,
+            forward_fee_tier: None,
+            backward_fee_tier: None,
         };
         let route_hash = [0x11u8; 32];
         let min_profit_wei = U256::from(1u64);

@@ -6,9 +6,10 @@
 //! must be reviewed.
 
 use ethers::types::Address;
+use serde::{Deserialize, Serialize};
 use std::str::FromStr;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum RouterKind {
     UniswapV2,
     UniswapV3,
@@ -23,6 +24,14 @@ pub enum RouterKind {
     /// NOT the UniV3 v1 8-field shape.
     PancakeV3,
     Unknown,
+}
+
+impl Default for RouterKind {
+    /// `Unknown` — serde `#[serde(default)]` on new context fields must not
+    /// fabricate a concrete venue for pre-V3 persisted records.
+    fn default() -> Self {
+        RouterKind::Unknown
+    }
 }
 
 impl RouterKind {

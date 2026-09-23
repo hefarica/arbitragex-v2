@@ -18,6 +18,8 @@ searcher-rs = { path = "../searcher-rs" }
 # RoundTripContext type + the REVM SimulatorV2 used by simulate_bundle.
 prioritization-spine = { workspace = true }
 simulator-v2 = { path = "../simulator-v2" }
+# RouterKind (venue tagging on RoundTripContext literals).
+shared-rs = { workspace = true }
 
 # Official Rust MCP SDK (Model Context Protocol). stdio transport + tool macros.
 # 3.1.4 — GHSA-89vp-x53w-74fx (DNS rebinding, high) requires >= 1.4.0; ported

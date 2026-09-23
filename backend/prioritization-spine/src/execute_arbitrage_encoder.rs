@@ -392,7 +392,7 @@ pub fn build_flash_funded_broadcast_calldata_with_minima(
 mod tests {
     use super::*;
     use ethers::abi::{decode, ParamType};
-    use shared_rs::chains::{USDC_MAINNET, WETH_MAINNET};
+    use shared_rs::chains::{RouterKind, USDC_MAINNET, WETH_MAINNET};
     use std::str::FromStr;
 
     /// Build a deterministic 2-token round trip context shared across tests.
@@ -416,6 +416,10 @@ mod tests {
             backward_router,
             backward_path: vec![token_out, token_in],
             deadline: U256::from(1_700_000_000u64),
+            forward_kind: RouterKind::Unknown,
+            backward_kind: RouterKind::Unknown,
+            forward_fee_tier: None,
+            backward_fee_tier: None,
         };
 
         let route_hash = [0x11u8; 32];

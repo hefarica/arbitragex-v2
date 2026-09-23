@@ -50,6 +50,7 @@ use std::str::FromStr;
 use ethers::types::{Address, U256};
 use prioritization_spine::round_trip_executor::RoundTripContext;
 use searcher_rs::sim_multistep::{build_multistep_plan, MultiStepExecutionConfig};
+use shared_rs::chains::RouterKind;
 
 // ---------------------------------------------------------------------------
 // NOTE (M2 flash R5 — Gap A dissolved): the wrapped-flash sim no longer takes
@@ -182,6 +183,10 @@ async fn multistep_fork_round_trip_weth_usdc() {
         backward_router: sushi,
         backward_path: vec![usdc, weth],
         deadline: U256::from(u64::MAX),
+        forward_kind: RouterKind::Unknown,
+        backward_kind: RouterKind::Unknown,
+        forward_fee_tier: None,
+        backward_fee_tier: None,
     };
 
     let gas_price_wei: U256 = prereqs
@@ -335,6 +340,10 @@ fn build_multistep_plan_smoke_builds_four_step_plan() {
         backward_router: sushi,
         backward_path: vec![usdc, weth],
         deadline: U256::from(u64::MAX),
+        forward_kind: RouterKind::Unknown,
+        backward_kind: RouterKind::Unknown,
+        forward_fee_tier: None,
+        backward_fee_tier: None,
     };
     let config = MultiStepExecutionConfig {
         chain_id: 1,
