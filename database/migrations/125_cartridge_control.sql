@@ -14,7 +14,8 @@
 
 BEGIN;
 
-CREATE TABLE IF NOT EXISTS cartridge_control (
+-- New table in this migration → non-CONCURRENT index is safe (table is empty).
+CREATE TABLE cartridge_control (
   id            BIGSERIAL PRIMARY KEY,
   chain_id      BIGINT      NOT NULL,
   cartridge_id  TEXT        NOT NULL,
@@ -24,8 +25,7 @@ CREATE TABLE IF NOT EXISTS cartridge_control (
   created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
-CREATE INDEX IF NOT EXISTS idx_cartridge_control_lookup
-  ON cartridge_control (chain_id, cartridge_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_cartridge_control_lookup ON cartridge_control (chain_id, cartridge_id, created_at DESC);
 
 COMMENT ON TABLE cartridge_control IS
   'Append-only audit trail of cartridge couple/decouple commands (latest per cartridge = desired state; runtime source of truth is Redis arbx:cartridges:control:<chain>)';
