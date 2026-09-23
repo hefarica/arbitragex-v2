@@ -1,1 +1,0 @@
-{"version":1,"failures":[{"contract":"test/DeterministicFactory.t.sol:DeterministicFactoryTest","test":"test_I3_sameInputSameAddress"}]}

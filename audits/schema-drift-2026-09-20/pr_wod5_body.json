@@ -1,0 +1,6 @@
+{
+  "title": "fix(api): WO-D5 — remove dead `metrics` WS room (handler with no producer/consumer)",
+  "head": "fix/ws-metrics-dead-room",
+  "base": "main",
+  "body": "## Summary\n- Censo WS del api-server (schema-drift-2026-09-20 WO-D5): de los 7 rooms, 6 están vivos en ambos extremos (handler→productor→consumidor). El room `metrics` era un **wire muerto**: handler de suscripción existía (websocket.ts) pero NO existía ningún `io.to('metrics').emit` en todo el codebase NI consumidor frontend (useGatesStatus usa HTTP polling). AsyncAPI ya lo etiquetaba DORMANT.\n- Fix quirúrgico: handler removido + entrada `subscribe:metrics` eliminada del contrato `apis/asyncapi.yaml` + replicación del harness removida en `websocket-rooms.test.ts` + comentario de auth actualizado.\n- El e2e `omega-audit.spec.ts` test 05 auditaba ese canal muerto (pasaba vacío): repuntado al room VIVO `telemetry` (CartridgeTelemetry loose shape: cartridge_id/level/message, aserción no-empty-object en vez de `type` fijo).\n- R10 E2E-COMPUTE GUARD: un canal suscribible que nunca puede entregar nada no se ofrece — se remueve.\n\n## Test plan\n- [x] vitest run src/websocket-rooms.test.ts — 4/4\n- [x] tsc --noEmit api-server — limpio\n- [ ] CI completa\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)"
+}

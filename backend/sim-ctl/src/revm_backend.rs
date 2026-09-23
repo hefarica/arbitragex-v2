@@ -75,10 +75,49 @@ impl SimulatorBackend for RevmBackend {
         let trace_id = opp.trace_id;
 
         // Translate Opportunity → CandidateInput.
-        // from/to are 20-byte arrays; parse from hex strings.
-        let from = parse_addr_bytes(&opp.token_in).unwrap_or([0u8; 20]);
-        let to = parse_addr_bytes(&opp.token_out).unwrap_or([0u8; 20]);
-        let value_wei: u128 = opp.amount_in_wei.parse().unwrap_or(0);
+        // SIM-08 fix (2026-09-24): the previous silent unwrap_or([0u8; 20])
+        // degraded a malformed token address to a zero-address candidate
+        // (a degenerate probe that would revert confusingly downstream).
+        // Now: a malformed address is an honest typed failure.
+        let from = match parse_addr_bytes(&opp.token_in) {
+            Some(addr) => addr,
+            None => {
+                return Ok(translate_result(
+                    id,
+                    trace_id,
+                    Err(SimError::Provider(format!(
+                        "invalid_token_in_address: {:?}",
+                        opp.token_in
+                    ))),
+                ))
+            }
+        };
+        let to = match parse_addr_bytes(&opp.token_out) {
+            Some(addr) => addr,
+            None => {
+                return Ok(translate_result(
+                    id,
+                    trace_id,
+                    Err(SimError::Provider(format!(
+                        "invalid_token_out_address: {:?}",
+                        opp.token_out
+                    ))),
+                ))
+            }
+        };
+        let value_wei: u128 = match opp.amount_in_wei.parse() {
+            Ok(v) => v,
+            Err(_) => {
+                return Ok(translate_result(
+                    id,
+                    trace_id,
+                    Err(SimError::Provider(format!(
+                        "invalid_amount_in_wei: {:?}",
+                        opp.amount_in_wei
+                    ))),
+                ))
+            }
+        };
 
         // Read live gas price from Redis (sister key to gas_price_ts, written
         // every ~10s by gas_oracle_worker). If absent or stale, return a
@@ -222,12 +261,12 @@ fn translate_result(
             gas_estimate_wei: None,
             gas_price_wei: None,
             slippage_pct: None,
-            revert_risk_pct: Some(100.0),
+            revert_risk_pct: None, // SIM-09: fabricated — no risk model computes this
             simulated_profit_usd: None,
             simulator: SimulatorKind::Revm,
             fail_reason: Some(format!(
                 "revm_reverted: {}",
-                &reason[..reason.len().min(200)]
+                truncate_chars(&reason, 200)
             )),
             simulated_at: Utc::now(),
             trace_id,
@@ -238,12 +277,12 @@ fn translate_result(
             gas_estimate_wei: None,
             gas_price_wei: None,
             slippage_pct: None,
-            revert_risk_pct: Some(100.0),
+            revert_risk_pct: None, // SIM-09: fabricated — no risk model computes this
             simulated_profit_usd: None,
             simulator: SimulatorKind::Revm,
             fail_reason: Some(format!(
                 "revm_provider_error: {}",
-                &msg[..msg.len().min(200)]
+                truncate_chars(&msg, 200)
             )),
             simulated_at: Utc::now(),
             trace_id,
@@ -262,6 +301,15 @@ fn parse_addr_bytes(s: &str) -> Option<[u8; 20]> {
     let mut arr = [0u8; 20];
     arr.copy_from_slice(&bytes);
     Some(arr)
+}
+
+/// SIM-04 fix (2026-09-24): char-boundary-safe truncation. The previous
+/// `&s[..s.len().min(200)]` sliced at a BYTE index — if byte 200 fell mid
+/// codepoint (multibyte UTF-8 in revert reasons / RPC errors), the consumer
+/// task PANICKED and the entry lost its processing (recovered by XAUTOCLAIM
+/// but an avoidable panic). `chars().take(n)` never splits a codepoint.
+pub(crate) fn truncate_chars(s: &str, max: usize) -> String {
+    s.chars().take(max).collect()
 }
 
 #[cfg(test)]

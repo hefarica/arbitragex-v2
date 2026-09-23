@@ -1,0 +1,177 @@
+{
+  "sheet_instances": 17,
+  "nonempty_cells": 276225,
+  "sheets": [
+    {
+      "workbook": "ArbitrageX_264_Cartridge_Math_Architecture(1).xlsx",
+      "sheet": "01_MEV_MATRIX_1_11",
+      "range": "A1:AA265",
+      "nonempty_cells": 7155,
+      "rows": 265,
+      "columns": 27,
+      "workbook_sha256": "93e0807f5baa9dc0628d0be72c149e517f68e365c269b99d225a9a40f9ea47c4",
+      "treatment": "RAW_CELLS_AND_FORMULAS_PRESERVED_NOT_ALL_RUNTIME_IMPLEMENTED"
+    },
+    {
+      "workbook": "ArbitrageX_264_Cartridge_Math_Architecture(1).xlsx",
+      "sheet": "00_CARTRIDGE_ARCH",
+      "range": "A1:E28",
+      "nonempty_cells": 61,
+      "rows": 28,
+      "columns": 5,
+      "workbook_sha256": "93e0807f5baa9dc0628d0be72c149e517f68e365c269b99d225a9a40f9ea47c4",
+      "treatment": "RAW_CELLS_AND_FORMULAS_PRESERVED_NOT_ALL_RUNTIME_IMPLEMENTED"
+    },
+    {
+      "workbook": "ArbitrageX_264_Cartridge_Math_Architecture(1).xlsx",
+      "sheet": "02_CARTRIDGE_MATH_MAP",
+      "range": "A1:AB265",
+      "nonempty_cells": 6954,
+      "rows": 265,
+      "columns": 28,
+      "workbook_sha256": "93e0807f5baa9dc0628d0be72c149e517f68e365c269b99d225a9a40f9ea47c4",
+      "treatment": "RAW_CELLS_AND_FORMULAS_PRESERVED_NOT_ALL_RUNTIME_IMPLEMENTED"
+    },
+    {
+      "workbook": "ArbitrageX_264_Cartridge_Math_Architecture(1).xlsx",
+      "sheet": "03_DETECTOR_FAMILIES",
+      "range": "A1:L61",
+      "nonempty_cells": 621,
+      "rows": 61,
+      "columns": 12,
+      "workbook_sha256": "93e0807f5baa9dc0628d0be72c149e517f68e365c269b99d225a9a40f9ea47c4",
+      "treatment": "RAW_CELLS_AND_FORMULAS_PRESERVED_NOT_ALL_RUNTIME_IMPLEMENTED"
+    },
+    {
+      "workbook": "ArbitrageX_264_Cartridge_Math_Architecture(1).xlsx",
+      "sheet": "04_FRONTEND_CONTRACT",
+      "range": "A1:F22",
+      "nonempty_cells": 132,
+      "rows": 22,
+      "columns": 6,
+      "workbook_sha256": "93e0807f5baa9dc0628d0be72c149e517f68e365c269b99d225a9a40f9ea47c4",
+      "treatment": "RAW_CELLS_AND_FORMULAS_PRESERVED_NOT_ALL_RUNTIME_IMPLEMENTED"
+    },
+    {
+      "workbook": "ArbitrageX_264_Cartridge_Math_Architecture(1).xlsx",
+      "sheet": "05_OPERATOR_CATALOG",
+      "range": "A1:D32",
+      "nonempty_cells": 128,
+      "rows": 32,
+      "columns": 4,
+      "workbook_sha256": "93e0807f5baa9dc0628d0be72c149e517f68e365c269b99d225a9a40f9ea47c4",
+      "treatment": "RAW_CELLS_AND_FORMULAS_PRESERVED_NOT_ALL_RUNTIME_IMPLEMENTED"
+    },
+    {
+      "workbook": "ArbitrageX_Master_264x31_LIVE_First(2).xlsx",
+      "sheet": "01_MEV_MATRIX_1_11",
+      "range": "A1:AA265",
+      "nonempty_cells": 7155,
+      "rows": 265,
+      "columns": 27,
+      "workbook_sha256": "54fcdca9098868845e9777d565745353c54b5985f97f673a05b95c8e54723aba",
+      "treatment": "RAW_CELLS_AND_FORMULAS_PRESERVED_NOT_ALL_RUNTIME_IMPLEMENTED"
+    },
+    {
+      "workbook": "ArbitrageX_Master_264x31_LIVE_First(2).xlsx",
+      "sheet": "00_CARTRIDGE_ARCH",
+      "range": "A1:E39",
+      "nonempty_cells": 96,
+      "rows": 39,
+      "columns": 5,
+      "workbook_sha256": "54fcdca9098868845e9777d565745353c54b5985f97f673a05b95c8e54723aba",
+      "treatment": "RAW_CELLS_AND_FORMULAS_PRESERVED_NOT_ALL_RUNTIME_IMPLEMENTED"
+    },
+    {
+      "workbook": "ArbitrageX_Master_264x31_LIVE_First(2).xlsx",
+      "sheet": "02_CARTRIDGE_MATH_MAP",
+      "range": "A1:AB265",
+      "nonempty_cells": 6954,
+      "rows": 265,
+      "columns": 28,
+      "workbook_sha256": "54fcdca9098868845e9777d565745353c54b5985f97f673a05b95c8e54723aba",
+      "treatment": "RAW_CELLS_AND_FORMULAS_PRESERVED_NOT_ALL_RUNTIME_IMPLEMENTED"
+    },
+    {
+      "workbook": "ArbitrageX_Master_264x31_LIVE_First(2).xlsx",
+      "sheet": "03_DETECTOR_FAMILIES",
+      "range": "A1:L61",
+      "nonempty_cells": 621,
+      "rows": 61,
+      "columns": 12,
+      "workbook_sha256": "54fcdca9098868845e9777d565745353c54b5985f97f673a05b95c8e54723aba",
+      "treatment": "RAW_CELLS_AND_FORMULAS_PRESERVED_NOT_ALL_RUNTIME_IMPLEMENTED"
+    },
+    {
+      "workbook": "ArbitrageX_Master_264x31_LIVE_First(2).xlsx",
+      "sheet": "04_FRONTEND_CONTRACT",
+      "range": "A1:F31",
+      "nonempty_cells": 180,
+      "rows": 31,
+      "columns": 6,
+      "workbook_sha256": "54fcdca9098868845e9777d565745353c54b5985f97f673a05b95c8e54723aba",
+      "treatment": "RAW_CELLS_AND_FORMULAS_PRESERVED_NOT_ALL_RUNTIME_IMPLEMENTED"
+    },
+    {
+      "workbook": "ArbitrageX_Master_264x31_LIVE_First(2).xlsx",
+      "sheet": "05_OPERATOR_CATALOG",
+      "range": "A1:D32",
+      "nonempty_cells": 128,
+      "rows": 32,
+      "columns": 4,
+      "workbook_sha256": "54fcdca9098868845e9777d565745353c54b5985f97f673a05b95c8e54723aba",
+      "treatment": "RAW_CELLS_AND_FORMULAS_PRESERVED_NOT_ALL_RUNTIME_IMPLEMENTED"
+    },
+    {
+      "workbook": "ArbitrageX_Master_264x31_LIVE_First(2).xlsx",
+      "sheet": "06_B_STATIC_DIAG",
+      "range": "A1:H22",
+      "nonempty_cells": 153,
+      "rows": 22,
+      "columns": 8,
+      "workbook_sha256": "54fcdca9098868845e9777d565745353c54b5985f97f673a05b95c8e54723aba",
+      "treatment": "RAW_CELLS_AND_FORMULAS_PRESERVED_NOT_ALL_RUNTIME_IMPLEMENTED"
+    },
+    {
+      "workbook": "ArbitrageX_Master_264x31_LIVE_First(2).xlsx",
+      "sheet": "07_MASTER_264x31",
+      "range": "A1:AJ8185",
+      "nonempty_cells": 245603,
+      "rows": 8185,
+      "columns": 36,
+      "workbook_sha256": "54fcdca9098868845e9777d565745353c54b5985f97f673a05b95c8e54723aba",
+      "treatment": "RAW_CELLS_AND_FORMULAS_PRESERVED_NOT_ALL_RUNTIME_IMPLEMENTED"
+    },
+    {
+      "workbook": "ArbitrageX_Master_264x31_LIVE_First(2).xlsx",
+      "sheet": "08_CONFLICTS",
+      "range": "A1:J7",
+      "nonempty_cells": 67,
+      "rows": 7,
+      "columns": 10,
+      "workbook_sha256": "54fcdca9098868845e9777d565745353c54b5985f97f673a05b95c8e54723aba",
+      "treatment": "RAW_CELLS_AND_FORMULAS_PRESERVED_NOT_ALL_RUNTIME_IMPLEMENTED"
+    },
+    {
+      "workbook": "ArbitrageX_Master_264x31_LIVE_First(2).xlsx",
+      "sheet": "09_EXECUTION_MODES",
+      "range": "A1:J20",
+      "nonempty_cells": 136,
+      "rows": 20,
+      "columns": 10,
+      "workbook_sha256": "54fcdca9098868845e9777d565745353c54b5985f97f673a05b95c8e54723aba",
+      "treatment": "RAW_CELLS_AND_FORMULAS_PRESERVED_NOT_ALL_RUNTIME_IMPLEMENTED"
+    },
+    {
+      "workbook": "ArbitrageX_Master_264x31_LIVE_First(2).xlsx",
+      "sheet": "10_MODE_MIGRATION",
+      "range": "A1:H12",
+      "nonempty_cells": 81,
+      "rows": 12,
+      "columns": 8,
+      "workbook_sha256": "54fcdca9098868845e9777d565745353c54b5985f97f673a05b95c8e54723aba",
+      "treatment": "RAW_CELLS_AND_FORMULAS_PRESERVED_NOT_ALL_RUNTIME_IMPLEMENTED"
+    }
+  ],
+  "runtime_coverage_is_separate": true
+}

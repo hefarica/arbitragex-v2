@@ -129,6 +129,15 @@ pub struct V3ExactInputSingleParams {
 /// encoding (Token::Tuple) so the struct is laid out as a single static head
 /// followed by no dynamic data.
 pub fn encode_v3_exact_input_single(params: &V3ExactInputSingleParams) -> Bytes {
+    // WEB3-07 fix (2026-09-24): fee is encoded as uint24 — a fee ≥ 2^24
+    // produces a non-canonical ABI word that reverts at the router (fail-
+    // closed, wasted gas). Guard here for a clean error instead.
+    debug_assert!(
+        params.fee < (1 << 24),
+        "V3 fee tier {} exceeds uint24 max ({}); canonical tiers: 100/500/3000/10000",
+        params.fee,
+        (1 << 24) - 1
+    );
     let tuple = Token::Tuple(vec![
         Token::Address(params.token_in),
         Token::Address(params.token_out),

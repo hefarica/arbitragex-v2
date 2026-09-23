@@ -445,9 +445,45 @@ impl Orchestrator {
             let registry = self.ctx.math_registry.clone();
             let router = self.ctx.regime_router;
             let mut math_redis = self.ctx.math_redis.clone();
-            let strategy_kind = format!("{:?}", intent.router_kind);
+            // MATH-02 fix (2026-09-24, second half): the regime-keyed §IV
+            // snapshot was keyed `format!("{:?}", intent.router_kind)` — e.g.
+            // "UniswapV2" — while the emitter reads `strategy_evidence_key` by
+            // the ENGINE-persisted family string ("dex_arb"/"triangular"/…).
+            // The keys never matched for engine-originated rows. Map the router
+            // kind to the canonical engine family the eventual Opportunity will
+            // carry (all DEX routers → dex_arb; lending positions → liquidation).
+            // (Per-cartridge evidence uses the canonical cartridge_id key via
+            // publish_declared_combo_evidence — STRAT-IDENT-01; unchanged.)
+            let strategy_kind = {
+                let dbg = format!("{:?}", intent.router_kind);
+                if dbg.contains("Liquid") || dbg.contains("Lending") || dbg.contains("Aave") || dbg.contains("Compound") {
+                    "liquidation".to_string()
+                } else {
+                    // Every DEX router family (UniswapV2/V3, Curve, Balancer,
+                    // aggregators…) persists StrategyKind::dex_arb() today.
+                    "dex_arb".to_string()
+                }
+            };
             let pools: Vec<Address> = intent.legs.iter().filter_map(|leg| leg.pool_hint).collect();
             if !pools.is_empty() {
+                // CORE-01/MATH-01 fix (2026-09-24): the §IV evidence previously
+                // received gas_price_gwei=0.0 ("not carried in RouteIntent yet"),
+                // making every gas-sensitive operator (op_15/op_21/op_26) compute
+                // with free gas. Propagate the REAL head base fee + block number
+                // from the cartridge HostContext atomics — the same source the
+                // cartridge path uses (milli-gwei stored; decode ÷1e3).
+                let (gas_price_gwei, block_number) = match self.ctx.cartridge_runner.as_ref() {
+                    Some(runner) => {
+                        let milli = runner
+                            .host_base_fee_handle()
+                            .load(std::sync::atomic::Ordering::Relaxed);
+                        let head = runner
+                            .host_block_number_handle()
+                            .load(std::sync::atomic::Ordering::Relaxed);
+                        ((milli as f64) / 1e3, head)
+                    }
+                    None => (0.0, 0),
+                };
                 tokio::spawn(async move {
                     crate::math_evidence::evaluate_math_evidence(
                         &reserves_cache,
@@ -456,9 +492,9 @@ impl Orchestrator {
                         &mut math_redis,
                         &pools,
                         chain_id,
-                        0.0, // gas_price_gwei — not carried in RouteIntent yet (observe-only)
-                        0,   // block_number — not carried in RouteIntent yet
-                        0,   // block_timestamp — not carried in RouteIntent yet
+                        gas_price_gwei,
+                        block_number,
+                        0,   // block_timestamp — still not carried on the intent (observe-only)
                         std::collections::HashMap::new(),
                         &strategy_kind,
                     )

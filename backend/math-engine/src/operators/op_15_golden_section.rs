@@ -99,15 +99,35 @@ impl TopologicalOperator for GoldenSectionOperator {
             return none_out("invalid_price");
         }
 
-        let gas = state.gas_price_gwei * 21_000.0 * 1e-9 * price;
+        // MATH-03 fix (2026-09-24): the previous objective mixed token1 (output)
+        // minus token0 (input) without conversion — on any pool whose price
+        // ratio departs from 1:1 (every WETH/* pair) the "yield" was fiction
+        // (counterexample: r0=10 WETH, r1=30000 USDC at a fair price produced
+        // ~15k phantom yield-units). Now everything is measured in the SAME
+        // numerary (token0): the output is valued at the reference price, the
+        // input is costed at that same price, and gas uses swap-real units
+        // (21000 was a plain ETH transfer, not a swap).
+        // gas_units: swap on V2 ≈ 150k gas (conservative default; the host
+        // features map can override — admission gates remain authoritative).
+        let gas_units = state
+            .features
+            .get("gas_units")
+            .copied()
+            .filter(|v| *v > 0.0 && v.is_finite())
+            .unwrap_or(150_000.0);
+        let gas = state.gas_price_gwei * gas_units * 1e-9 * price;
 
-        // f(x) = gross_yield(x) − gas; gross_yield = r1·γ·x/(r0+γ·x) − x.
+        // f(x) = [out(x)·p − x·p] − gas = p · (out(x) − x) − gas, where out(x)
+        // is in token1 and p converts token1 → token0 units. Measuring the
+        // spread in token0 (the input asset) keeps gross_yield, optimal_size
+        // and the bracket [0, r0] dimensionally coherent.
         let f = |x: f64| -> f64 {
             let denom = r0 + gamma * x;
             if denom <= 0.0 {
                 return f64::NEG_INFINITY;
             }
-            (r1 * gamma * x) / denom - x - gas
+            let out = (r1 * gamma * x) / denom; // token1 units
+            price * (out - x) - gas              // token0-numerary net
         };
 
         // Maximización por sección áurea sobre [a, b] = [0, r0].

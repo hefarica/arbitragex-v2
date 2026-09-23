@@ -74,45 +74,87 @@ fn evaluate_opportunity(pool_data) {
         };
     }
 
-    // Calcular monto máximo liquidable
+    // Calcular monto máximo liquidable (unidades humanas del debt token)
     let debt_amount = from_wei(debt_amount_str, debt_meta.decimals);
     let max_liquidatable = debt_amount * (close_factor_bps.to_float() / 10000.0);
 
-    // Calcular bonus de liquidación
-    let bonus_pct = liquidation_bonus_bps.to_float() / 10000.0;
-    let gross_profit = max_liquidatable * bonus_pct;
-
-    // Estimar costos
-    let base_fee = get_base_fee();
-    let gas_cost = estimate_liquidation_gas(pool_data.protocol, chain_id) * base_fee / 1000000000.0;
-
-    // DEX swap cost (para convertir collateral recibido)
-    let swap_cost_bps = 30.0; // 0.3% swap fee
-    let swap_cost = max_liquidatable * (swap_cost_bps / 10000.0);
-
-    let net_profit = gross_profit - gas_cost - swap_cost;
-
-    if net_profit <= 0.0 {
+    // ── RHAI-17 fix (2026-09-24): el bonus se recibe en COLLATERAL por el
+    // valor repagado. Antes: gross = max_liquidatable(debt units) × bonus —
+    // mezclaba deuda/colateral/nativo. Ahora todo se valora en USD con el
+    // precio de CADA token (el binding resuelve addr→símbolo canónico).
+    let debt_usd_px = get_token_price_usd(debt_token);
+    let coll_usd_px = get_token_price_usd(collateral_token);
+    if debt_usd_px == () || debt_usd_px <= 0.0 || coll_usd_px == () || coll_usd_px <= 0.0 {
         return #{
             is_opportunity: false,
-            estimated_profit: net_profit,
+            estimated_profit: 0.0,
+            confidence: 0.0,
+            urgency: "none",
+            reason: "liquidation_token_price_unavailable"
+        };
+    }
+    // Valor repagado (debt) y collateral recibido por ese repago (con bonus).
+    let repaid_usd = max_liquidatable * debt_usd_px;
+    let bonus_pct = liquidation_bonus_bps.to_float() / 10000.0;
+    let collateral_received_usd = repaid_usd * (1.0 + bonus_pct);
+
+    // Costes en USD: gas en NATIVO × precio nativo (no en debt units).
+    let base_fee = get_base_fee();
+    let gas_native = estimate_liquidation_gas(pool_data.protocol, chain_id) * base_fee / 1000000000.0;
+    let native_gas_symbol = if chain_id == 1 || chain_id == 10 || chain_id == 8453 || chain_id == 42161 {
+        "WETH"
+    } else if chain_id == 137 {
+        "WMATIC"
+    } else if chain_id == 56 {
+        "WBNB"
+    } else {
+        ""
+    };
+    let native_usd = if native_gas_symbol == "" { () } else { get_token_price_usd(native_gas_symbol) };
+    if native_usd == () || native_usd <= 0.0 {
+        return #{
+            is_opportunity: false,
+            estimated_profit: 0.0,
+            confidence: 0.0,
+            urgency: "none",
+            reason: "liquidation_no_gas_price"
+        };
+    }
+    let gas_usd = gas_native * native_usd;
+
+    // Swap del collateral recibido a debt token para repagar el flash loan:
+    // fee aproximado sobre el VALOR USD del collateral vendido.
+    let swap_cost_bps = 30.0; // 0.3% swap fee
+    let swap_cost_usd = collateral_received_usd * (swap_cost_bps / 10000.0);
+
+    // Neto en USD (única frontera económica): colateral recibido − deuda
+    // repagada − gas − swap. Gross profit = solo el bonus (lo que excede el
+    // repago) menos el costo de conversión.
+    let gross_profit_usd = collateral_received_usd - repaid_usd;
+    let net_profit_usd = gross_profit_usd - gas_usd - swap_cost_usd;
+
+    if net_profit_usd <= 0.0 {
+        return #{
+            is_opportunity: false,
+            estimated_profit: net_profit_usd,
             confidence: 0.0,
             urgency: "none",
             reason: "unprofitable_after_costs",
-            gas_cost: gas_cost,
-            swap_cost: swap_cost
+            gas_cost_usd: gas_usd,
+            swap_cost_usd: swap_cost_usd
         };
     }
 
-    // Confianza basada en health factor y profit
-    let confidence = calculate_liq_confidence(health_factor, net_profit, gas_cost);
+    // Confianza basada en health factor y profit (USD, dimensionalmente consistente)
+    let confidence = calculate_liq_confidence(health_factor, net_profit_usd, gas_usd);
     let urgency = if health_factor < 0.8 { "immediate" } else if health_factor < 0.95 { "next_block" } else { "monitor" };
 
-    log_quantum("info", `[chain:${chain_id}] Liquidation: borrower=${pool_data.borrower}, HF=${health_factor}, profit=${net_profit}`);
+    log_quantum("info", `[chain:${chain_id}] Liquidation: borrower=${pool_data.borrower}, HF=${health_factor}, net_usd=${net_profit_usd}`);
 
     #{
         is_opportunity: true,
-        estimated_profit: net_profit,
+        estimated_profit: net_profit_usd,
+        profit_usd_hint: net_profit_usd,
         confidence: confidence,
         urgency: urgency,
         chain_id: chain_id,
@@ -122,8 +164,11 @@ fn evaluate_opportunity(pool_data) {
         debt_token: debt_token,
         collateral_token: collateral_token,
         max_liquidatable: max_liquidatable,
+        debt_decimals: debt_meta.decimals,
+        collateral_decimals: collateral_meta.decimals,
         liquidation_bonus_pct: bonus_pct,
-        gas_cost: gas_cost,
+        gas_cost_usd: gas_usd,
+        swap_cost_usd: swap_cost_usd,
         route_type: "liquidation"
     }
 }
@@ -143,7 +188,9 @@ fn build_payload(opportunity) {
         flash_loan: #{
             protocol: "auto",
             token: opportunity.debt_token,
-            amount: to_wei(opportunity.max_liquidatable, 18)
+            // RHAI-09 fix (2026-09-24): usar los decimales REALES del debt
+            // token (antes to_wei(..., 18) fijo — para USDC sobrepréstamo 1e12×).
+            amount: to_wei(opportunity.max_liquidatable, opportunity.debt_decimals)
         },
         route: #{
             type: "liquidation",

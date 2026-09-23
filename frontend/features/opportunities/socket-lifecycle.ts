@@ -24,18 +24,20 @@ export interface OpportunitySocketOptions {
   onStatus: (status: WsStatus) => void;
   onOpportunity: (opp: Opportunity) => void;
   /**
-   * C4 fix (audit 2026-05-10): backend `setupWebSocketGateway` rejects every
-   * handshake without an admin token. Frontend MUST pass the operator's
-   * admin token in the auth payload. Three protocol-supported channels are
-   * accepted by the backend:
+   * FRONT-04 fix (2026-09-24): the original C4 comment claimed the backend
+   * `setupWebSocketGateway` "rejects every handshake without an admin token"
+   * — that was FALSE. The gateway is PUBLIC by design (websocket.ts:391-393
+   * "Public: allow connection without token..."; WS-POLL-1). The token, when
+   * present, only elevates the socket to `runtimeAckAllowed`. This consumer
+   * still passes the token through all three channels for that elevation,
+   * but MUST NOT assume anonymous connections are rejected.
    *
    *   1. `auth: { token }` — preferred for socket.io v3+
    *   2. `query: { token }` — browser fallback when auth is unavailable
    *   3. `extraHeaders: { 'x-arbx-admin-token': token }` — tooling/curl
    *
-   * Pass an empty string to skip auth (the backend will reject and the
-   * caller should degrade to polling). The constructor never crashes on
-   * missing tokens — connection failure surfaces via `onStatus("STALE")`.
+   * Empty token → omit entirely (public connection; runtime_ack commands
+   * stay unprivileged — the server enforces the real authorization).
    */
   authToken?: string;
 }

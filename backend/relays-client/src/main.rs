@@ -277,15 +277,36 @@ async fn main() -> anyhow::Result<()> {
                     Some(pool)
                 }
                 Err(e) => {
+                    // RELAY-03 fix (2026-09-24): in LIVE mode, the 12-step
+                    // checklist requires the PG pool (submit_engine.rs:148
+                    // drops "live_requires_database_and_private_simulator").
+                    // Previously a DB-down boot continued silently — the
+                    // invariant "live ⇒ checklist" depended on a drop in the
+                    // hot path rather than a boot-time gate. Now: fail-fast
+                    // if LIVE_EXEC is enabled but the DB is unreachable.
+                    if crate::live_exec_policy::LiveExecPolicy::from_env().enabled {
+                        anyhow::bail!(
+                            "LIVE_EXEC is enabled but the database is unreachable: {e}. \
+                             Refusing to start (RELAY-03 fail-fast: the 12-step live \
+                             checklist requires PG; a silent boot would bypass it)."
+                        );
+                    }
                     warn!(
                         event = "db.connect_failed", error = %e,
-                        "continuing without DB — relay catalog will be empty until restart"
+                        "continuing without DB — relay catalog will be empty until restart (paper mode)"
                     );
                     None
                 }
             }
         }
         _ => {
+            // RELAY-03: same fail-fast for the unset-var case.
+            if crate::live_exec_policy::LiveExecPolicy::from_env().enabled {
+                anyhow::bail!(
+                    "LIVE_EXEC is enabled but DATABASE_URL is not set. \
+                     Refusing to start (RELAY-03 fail-fast)."
+                );
+            }
             warn!(
                 event = "db.not_configured",
                 "DATABASE_URL not set; relay catalog cannot be loaded, consumer will not spawn"

@@ -1,0 +1,60 @@
+{
+    "permissions":  {
+                        "defaultMode":  "bypassPermissions",
+                        "skipDangerousModePermissionPrompt":  true,
+                        "allow":  [
+                                      "Bash(cargo check *)",
+                                      "mcp__filesystem__create_directory",
+                                      "Bash(npm run *)",
+                                      "Bash(git add *)",
+                                      "Bash(git commit -m \u0027feat\\(readiness\\): Tasks 5-6 Paper-Mode State Authority endpoints *)",
+                                      "Bash(git commit -m \u0027feat\\(paper-mode\\): add getPaperModeState\\(\\) client + usePaperModeState\\(\\) hook \\(Task 7\\) *)",
+                                      "mcp__filesystem__list_directory",
+                                      "Bash(npx tsc *)",
+                                      "mcp__filesystem__read_text_file",
+                                      "mcp__sequential-thinking__sequentialthinking",
+                                      "Bash(npx playwright *)",
+                                      "Bash(npm install *)",
+                                      "Bash(curl -s -o /dev/null -w \"%{http_code}\" http://localhost:3000/wallet)"
+                                  ]
+                    },
+    "enabledMcpjsonServers":  [
+                                  "playwright",
+                                  "filesystem",
+                                  "postgres",
+                                  "redis",
+                                  "foundry",
+                                  "evm"
+                              ],
+    "gateDoctrine":  ".claude/gate/semiotic-bridge-gate-doctrine.md",
+    "gateBehavior":  {
+                         "semiticBridgeFastTrack":  true,
+                         "bashEditPreferred":  true,
+                         "mathematicalOutputRequired":  true
+                     },
+    "env":  {
+                "ANTHROPIC_API_KEY":  "sk-ccr-oHW3pgJfEtI-iXBvH3sZ-woGGCZ-v6y9JKs2JPCoRb4",
+                "CLAUDE_AUTOCOMPACT_PCT_OVERRIDE":  "90",
+                "CLAUDE_CODE_MAX_CONTEXT_TOKENS":  "262144",
+                "CLAUDE_CODE_MAX_RETRIES":  "1",
+                "ANTHROPIC_BASE_URL":  "http://127.0.0.1:3456",
+                "ANTHROPIC_API_BASE_URL":  "http://127.0.0.1:3456",
+                "CLAUDE_AGENT_API_BASE_URL":  "http://127.0.0.1:3456",
+                "CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY":  "1",
+                "CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS":  "1",
+                "ENABLE_TOOL_SEARCH":  "auto",
+                "API_TIMEOUT_MS":  "600000",
+                "ANTHROPIC_AUTH_TOKEN":  "sk-ccr-oHW3pgJfEtI-iXBvH3sZ-woGGCZ-v6y9JKs2JPCoRb4",
+                "NO_PROXY":  "127.0.0.1,localhost",
+                "DISABLE_AUTOUPDATER":  "1",
+                "CLAUDE_CODE_EFFORT_LEVEL":  "medium",
+                "CLAUDE_CODE_AUTO_COMPACT_WINDOW":  "950000"
+            },
+    "useAutoModeDuringPlan":  false,
+    "disableAllHooks":  true,
+    "disableAutoMode":  "disable",
+    "effortLevel":  "medium",
+    "skillListingBudgetFraction":  0.003,
+    "skillListingMaxDescChars":  320,
+    "autoCompactEnabled":  true
+}

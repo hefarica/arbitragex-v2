@@ -13,23 +13,28 @@
                                   ]
                     },
     "env":  {
-                "ANTHROPIC_API_KEY":  "ccr-local",
                 "CLAUDE_AUTOCOMPACT_PCT_OVERRIDE":  "81",
-                "CLAUDE_CODE_MAX_CONTEXT_TOKENS":  "251658",
+                "CLAUDE_CODE_MAX_CONTEXT_TOKENS":  "960000",
                 "CLAUDE_CODE_MAX_RETRIES":  "2",
+                "DISABLE_AUTOUPDATER":  "1",
+                "CLAUDE_CODE_EFFORT_LEVEL":  "medium",
+                "CLAUDE_CODE_AUTO_COMPACT_WINDOW":  "235929",
                 "ANTHROPIC_BASE_URL":  "http://127.0.0.1:3466",
                 "ANTHROPIC_API_BASE_URL":  "http://127.0.0.1:3466",
                 "CLAUDE_AGENT_API_BASE_URL":  "http://127.0.0.1:3466",
-                "CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY":  "true",
-                "CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS":  "1",
-                "ENABLE_TOOL_SEARCH":  "false",
+                "ANTHROPIC_API_KEY":  "ccr-local",
+                "ANTHROPIC_MODEL":  "zai-coding-plan-2/glm-5.3",
+                "CCR_CLAUDE_CODE_MODEL":  "zai-coding-plan-2/glm-5.3",
+                "CODEXL_CLAUDE_CODE_MODEL":  "zai-coding-plan-2/glm-5.3",
                 "API_TIMEOUT_MS":  "120000",
-                "ANTHROPIC_AUTH_TOKEN":  "sk-ccr-oHW3pgJfEtI-iXBvH3sZ-woGGCZ-v6y9JKs2JPCoRb4",
-                "ANTHROPIC_MODEL":  "anthropic/claude-ccr-h6b696d692d636f64652f6b696d692d666f722d636f64696e67",
-                "CCR_CLAUDE_CODE_MODEL":  "anthropic/claude-ccr-h6b696d692d636f64652f6b696d692d666f722d636f64696e67",
-                "CODEXL_CLAUDE_CODE_MODEL":  "anthropic/claude-ccr-h6b696d692d636f64652f6b696d692d666f722d636f64696e67"
+                "ENABLE_TOOL_SEARCH":  "false",
+                "CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY":  "true"
             },
     "useAutoModeDuringPlan":  false,
     "disableAllHooks":  true,
-    "disableAutoMode":  "disable"
+    "disableAutoMode":  "disable",
+    "effortLevel":  "medium",
+    "skillListingBudgetFraction":  0.003,
+    "skillListingMaxDescChars":  320,
+    "autoCompactEnabled":  true
 }

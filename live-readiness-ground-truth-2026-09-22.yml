@@ -1,0 +1,417 @@
+- generic [active] [ref=e1]:
+  - link "Skip to main content" [ref=e2] [cursor=pointer]:
+    - /url: "#main"
+  - generic [ref=e3]:
+    - banner [ref=e4]:
+      - generic [ref=e5]:
+        - link "ARBITRAGEX" [ref=e6] [cursor=pointer]:
+          - /url: /
+        - generic [ref=e15]:
+          - generic [ref=e16]: Quantum Research Terminal
+          - generic [ref=e17]: ·
+          - generic [ref=e18]: Topological Yield Engine
+        - generic [ref=e19]:
+          - generic [ref=e20]: PAPER · TLS SHADOW
+          - generic [ref=e22]: KILL-SWITCH <10MS
+          - 'generic "Live opportunity stream status: IDLE" [ref=e25]': IDLE
+          - code [ref=e27]
+          - button "Switch to light mode" [ref=e28]
+    - generic [ref=e29]:
+      - complementary [ref=e30]:
+        - button "Collapse sidebar" [ref=e31]
+        - generic [ref=e35]:
+          - generic [ref=e36]:
+            - generic [ref=e37]: Pipeline
+            - list [ref=e38]:
+              - listitem [ref=e39]:
+                - link "Home" [ref=e40] [cursor=pointer]:
+                  - /url: /
+              - listitem [ref=e45]:
+                - link "System status" [ref=e46] [cursor=pointer]:
+                  - /url: /status
+              - listitem [ref=e50]:
+                - link "Opportunities" [ref=e51] [cursor=pointer]:
+                  - /url: /opportunities
+              - listitem [ref=e58]:
+                - link "Executions" [ref=e59] [cursor=pointer]:
+                  - /url: /executions
+              - listitem [ref=e63]:
+                - link "Paper history" [ref=e64] [cursor=pointer]:
+                  - /url: /paper/history
+              - listitem [ref=e68]:
+                - link "Recon & yield" [ref=e69] [cursor=pointer]:
+                  - /url: /recon
+              - listitem [ref=e74]:
+                - link "Operations metrics" [ref=e75] [cursor=pointer]:
+                  - /url: /operations
+              - listitem [ref=e80]:
+                - link "Route outcomes" [ref=e81] [cursor=pointer]:
+                  - /url: /route-outcomes
+              - listitem [ref=e87]:
+                - link "Route discovery" [ref=e88] [cursor=pointer]:
+                  - /url: /routes/discovery
+              - listitem [ref=e97]:
+                - link "SED Pipeline" [ref=e98] [cursor=pointer]:
+                  - /url: /sed
+              - listitem [ref=e102]:
+                - link "Agent insights" [ref=e103] [cursor=pointer]:
+                  - /url: /agent-insights
+              - listitem [ref=e108]:
+                - link "Worker health" [ref=e109] [cursor=pointer]:
+                  - /url: /worker-health
+          - generic [ref=e114]:
+            - generic [ref=e115]: Risk & Control
+            - list [ref=e116]:
+              - listitem [ref=e117]:
+                - link "Entropy & alerts" [ref=e118] [cursor=pointer]:
+                  - /url: /risk
+              - listitem [ref=e122]:
+                - link "Kill-switch" [ref=e123] [cursor=pointer]:
+                  - /url: /killswitch
+              - listitem [ref=e127]:
+                - link "Live readiness" [ref=e128] [cursor=pointer]:
+                  - /url: /live-readiness
+              - listitem [ref=e134]:
+                - link "Operator panel" [ref=e135] [cursor=pointer]:
+                  - /url: /operator
+              - listitem [ref=e139]:
+                - link "Self-test center" [ref=e140] [cursor=pointer]:
+                  - /url: /operator/self-test
+              - listitem [ref=e146]:
+                - link "Audit logs" [ref=e147] [cursor=pointer]:
+                  - /url: /audit-logs
+              - listitem [ref=e152]:
+                - link "Apex allocator" [ref=e153] [cursor=pointer]:
+                  - /url: /apex/allocator
+          - generic [ref=e158]:
+            - generic [ref=e159]: Configuration
+            - list [ref=e160]:
+              - listitem [ref=e161]:
+                - link "Credentials" [ref=e162] [cursor=pointer]:
+                  - /url: /settings/credentials
+              - listitem [ref=e167]:
+                - link "Config" [ref=e168] [cursor=pointer]:
+                  - /url: /config
+              - listitem [ref=e173]:
+                - link "Trading config" [ref=e174] [cursor=pointer]:
+                  - /url: /config/trading
+              - listitem [ref=e177]:
+                - link "Strategies" [ref=e178] [cursor=pointer]:
+                  - /url: /strategies
+              - listitem [ref=e181]:
+                - link "Cartridge Forge" [ref=e182] [cursor=pointer]:
+                  - /url: /strategies/forge
+              - listitem [ref=e188]:
+                - link "Onboarding" [ref=e189] [cursor=pointer]:
+                  - /url: /onboarding
+              - listitem [ref=e194]:
+                - link "Chain registry" [ref=e195] [cursor=pointer]:
+                  - /url: /chains
+              - listitem [ref=e200]:
+                - link "RPC health" [ref=e201] [cursor=pointer]:
+                  - /url: /rpcs
+              - listitem [ref=e206]:
+                - link "Pool registry" [ref=e207] [cursor=pointer]:
+                  - /url: /pools
+              - listitem [ref=e214]:
+                - link "Exchange registry" [ref=e215] [cursor=pointer]:
+                  - /url: /dex-registry
+              - listitem [ref=e221]:
+                - link "Wallets" [ref=e222] [cursor=pointer]:
+                  - /url: /wallets
+              - listitem [ref=e227]:
+                - link "Wallet overview" [ref=e228] [cursor=pointer]:
+                  - /url: /wallet
+              - listitem [ref=e233]:
+                - link "Deploy pipeline" [ref=e234] [cursor=pointer]:
+                  - /url: /deploy-pipeline
+              - listitem [ref=e241]:
+                - link "Topology Vault" [ref=e242] [cursor=pointer]:
+                  - /url: /admin/topology
+              - listitem [ref=e249]:
+                - link "Admin chains" [ref=e250] [cursor=pointer]:
+                  - /url: /admin/chains
+              - listitem [ref=e255]:
+                - link "Admin sign-in" [ref=e256] [cursor=pointer]:
+                  - /url: /admin/signin
+              - listitem [ref=e261]:
+                - link "Settings" [ref=e262] [cursor=pointer]:
+                  - /url: /settings
+          - generic [ref=e267]:
+            - generic [ref=e268]: Omega S5
+            - list [ref=e269]:
+              - listitem [ref=e270]:
+                - link "Ω Core decoder" [ref=e271] [cursor=pointer]:
+                  - /url: /omega-s5/core
+              - listitem [ref=e276]:
+                - link "Ω Crucible tracker" [ref=e277] [cursor=pointer]:
+                  - /url: /omega-s5/crucible
+              - listitem [ref=e282]:
+                - link "Ω Factory deployments" [ref=e283] [cursor=pointer]:
+                  - /url: /omega-s5/factory
+              - listitem [ref=e287]:
+                - link "Ω DEX adapters" [ref=e288] [cursor=pointer]:
+                  - /url: /omega-s5/adapters
+              - listitem [ref=e295]:
+                - link "Ω Drift detection" [ref=e296] [cursor=pointer]:
+                  - /url: /omega-s5/drift
+              - listitem [ref=e302]:
+                - link "Ω Operator params" [ref=e303] [cursor=pointer]:
+                  - /url: /omega-s5/operator
+              - listitem [ref=e307]:
+                - link "Ω Entity registries" [ref=e308] [cursor=pointer]:
+                  - /url: /omega-s5/registry
+              - listitem [ref=e312]:
+                - link "Ω Wallet topology" [ref=e313] [cursor=pointer]:
+                  - /url: /omega-s5/wallets
+          - generic "Paper Mode - No capital at risk" [ref=e318]:
+            - generic [ref=e319]: PAPER
+            - paragraph [ref=e322]: Simulated execution
+      - main [ref=e323]:
+        - status [ref=e324]:
+          - generic [ref=e325]:
+            - generic [ref=e326]: System guard
+            - generic [ref=e331]:
+              - generic [ref=e332]: "Live:"
+              - generic [ref=e333]: "OFF"
+            - generic [ref=e334]:
+              - generic [ref=e335]: "Private relay:"
+              - generic [ref=e336]: "OFF"
+            - generic [ref=e337]:
+              - generic [ref=e338]: "Submit:"
+              - generic [ref=e339]: "OFF"
+            - generic [ref=e340]:
+              - generic [ref=e341]: "Broadcast:"
+              - generic [ref=e342]: "OFF"
+            - generic [ref=e343]:
+              - generic [ref=e344]: "Paper:"
+              - generic [ref=e345]: "ON"
+              - generic [ref=e346]: · DEFAULT_SAFE
+            - generic [ref=e347]: DEGRADED
+            - generic [ref=e348]:
+              - generic [ref=e349]: "Capital:"
+              - generic [ref=e350]: $0
+            - generic [ref=e351]:
+              - generic [ref=e352]: "Readiness:"
+              - generic [ref=e353]: 0/4
+            - generic [ref=e354]:
+              - generic [ref=e355]: "LIVE lock:"
+              - generic [ref=e356]: LOCKED
+            - generic [ref=e357]:
+              - generic [ref=e358]: "GO live:"
+              - generic [ref=e359]: NO-GO
+            - generic [ref=e360]:
+              - generic [ref=e361]: "A.4 fork:"
+              - generic [ref=e362]: unknown
+            - generic [ref=e363]:
+              - generic [ref=e364]: "A.5 paper-shadow:"
+              - generic [ref=e365]: unknown
+            - generic [ref=e366]:
+              - 'generic "PG: edge_error" [ref=e656]': PG edge_error
+              - generic [ref=e372]: ·
+              - 'generic "Redis: edge_error" [ref=e657]': Redis edge_error
+              - generic [ref=e658]: ·
+              - 'generic "edge HTTP 500: {\"error\":\"internal_error\"}" [ref=e659]': HB stale/absent
+              - generic [ref=e660]: ·
+              - generic [ref=e661]: Engine ?
+              - generic [ref=e662]: ·
+              - generic [ref=e663]: Flip ?
+        - status "Runtime posture" [ref=e373]:
+          - generic "killswitch state could not be served — edge timeout after 5000ms" [ref=e664]: KILL SWITCH ?
+          - generic "paper-mode state could not be served — edge timeout after 5000ms" [ref=e667]: PAPER MODE ?
+          - generic "the single socket.io connection shared by every WS channel" [ref=e382]:
+            - generic [ref=e383]: socket
+            - 'generic "no transport: pre-connect, teardown, or a passive channel whose only transport is down — the single socket.io connection is down" [ref=e384]': DISCONNECTED
+          - generic "route_discovery WS room with a REST tick fallback" [ref=e392]:
+            - generic [ref=e393]: routes
+            - generic "last delivery attempt failed and nothing has been accepted since (cleared on the next accepted payload) — edge timeout after 5000ms" [ref=e670]: ERROR
+          - generic "runtime_ack WS room (admin capability); passive recorder with no REST fallback by design" [ref=e397]:
+            - generic [ref=e398]: runtime_ack
+            - generic "mounted, awaiting the first accepted payload" [ref=e399]: CONNECTING
+          - generic "pairs snapshot over REST (no WS room)" [ref=e402]:
+            - generic [ref=e403]: pairs
+            - 'generic "last delivery attempt failed and nothing has been accepted since (cleared on the next accepted payload) — edge HTTP 500: {\"error\":\"internal_error\"}" [ref=e675]': ERROR
+          - generic "quote anchor snapshot over REST (no WS room)" [ref=e407]:
+            - generic [ref=e408]: quote_anchor
+            - generic "last delivery attempt failed and nothing has been accepted since (cleared on the next accepted payload) — edge timeout after 5000ms" [ref=e680]: ERROR
+        - generic [ref=e412]:
+          - navigation "Breadcrumb" [ref=e413]:
+            - link "Home" [ref=e414] [cursor=pointer]:
+              - /url: /
+            - generic [ref=e418]: Live readiness
+          - generic [ref=e423]:
+            - generic [ref=e424]:
+              - heading "Live readiness" [level=1] [ref=e425]
+              - paragraph [ref=e426]: Doctrinal gate between paper_mode and any future flip to live capital. Each item is verified dynamically by the api-server — no false greens.
+            - button "refresh" [ref=e685]
+          - generic [ref=e428]:
+            - generic [ref=e429]:
+              - generic [ref=e430]:
+                - paragraph [ref=e431]: Live Readiness Tracker
+                - heading "Secuencia de Ignición Operativa" [level=2] [ref=e432]
+                - paragraph [ref=e433]: El estado se deriva de comprobaciones server-side. Ningún paso futuro se marca verde por simulación; permanece bloqueado hasta existir un endpoint de validación real.
+              - generic [ref=e440]:
+                - generic [ref=e441]: Progreso
+                - generic [ref=e442]: 0/4
+            - generic [ref=e691]:
+              - text: "Verificador de readiness no disponible:"
+              - code [ref=e692]: edge timeout after 5000ms
+            - generic [ref=e443]:
+              - 'link "Paso 1: Manifolds de Ingesta. Estado: Pendiente" [ref=e444] [cursor=pointer]':
+                - /url: /admin/topology
+                - generic [ref=e456]:
+                  - generic [ref=e457]:
+                    - generic [ref=e458]: Paso 1
+                    - generic [ref=e459]: Pendiente
+                  - heading "Manifolds de Ingesta" [level=3] [ref=e460]
+                  - paragraph [ref=e461]: Topology Vault
+                  - paragraph [ref=e462]: ≥1 proveedor RPC + ≥1 WSS activos en el Topology Vault (verificado server-side).
+                  - paragraph [ref=e463]: —
+              - 'link "Paso 2: Firmas Cuánticas. Estado: Bloqueado" [ref=e464] [cursor=pointer]':
+                - /url: /settings/credentials
+                - generic [ref=e471]:
+                  - generic [ref=e472]:
+                    - generic [ref=e473]: Paso 2
+                    - generic [ref=e474]: Bloqueado
+                  - heading "Firmas Cuánticas" [level=3] [ref=e475]
+                  - paragraph [ref=e476]: Credentials / Wallets
+                  - paragraph [ref=e477]: "Presencia server-side de signer/clave autorizada (redactado: present|null)."
+                  - paragraph [ref=e478]: —
+              - 'link "Paso 3: Topología de Mercados. Estado: Bloqueado" [ref=e479] [cursor=pointer]':
+                - /url: /dex-registry
+                - generic [ref=e486]:
+                  - generic [ref=e487]:
+                    - generic [ref=e488]: Paso 3
+                    - generic [ref=e489]: Bloqueado
+                  - heading "Topología de Mercados" [level=3] [ref=e490]
+                  - paragraph [ref=e491]: Chains & DEXes
+                  - paragraph [ref=e492]: Chains, DEXes y pools registrados en el backend (conteos reales).
+                  - paragraph [ref=e493]: —
+              - 'link "Paso 4: Motores de Resolución. Estado: Bloqueado" [ref=e494] [cursor=pointer]':
+                - /url: /strategies
+                - generic [ref=e501]:
+                  - generic [ref=e502]:
+                    - generic [ref=e503]: Paso 4
+                    - generic [ref=e504]: Bloqueado
+                  - heading "Motores de Resolución" [level=3] [ref=e505]
+                  - paragraph [ref=e506]: SVS / DLP / Backrun
+                  - paragraph [ref=e507]: ≥1 motor de resolución habilitado (paper/shadow; live deshabilitado).
+                  - paragraph [ref=e508]: —
+            - generic [ref=e509]:
+              - paragraph [ref=e510]:
+                - strong [ref=e511]: "Guardrail LIVE:"
+                - text: el modo LIVE permanece visualmente bloqueado hasta que los cuatro pasos del pipeline estén en verde.
+              - generic [ref=e512]: LIVE bloqueado
+          - generic [ref=e693]:
+            - generic [ref=e694]: verifier error
+            - generic [ref=e695]: edge timeout after 5000ms
+            - generic [ref=e696]: The page never synthesizes data — this is the verbatim error from the verifier. Fix the underlying issue and click refresh.
+          - generic [ref=e514]:
+            - generic [ref=e515]:
+              - generic [ref=e517]:
+                - generic [ref=e518]:
+                  - generic [ref=e519]:
+                    - text: GO / NO-GO decision
+                    - generic [ref=e520]: "Live trading: OFF"
+                  - generic [ref=e521]:
+                    - text: Verdict derived from
+                    - code [ref=e522]: /api/readiness/decision
+                    - text: .There is no UI control to flip Live to ON.
+                - generic "polls every 30s" [ref=e698]: updated 7s ago
+              - alert [ref=e699]:
+                - generic [ref=e702]: Cannot fetch decision
+                - generic [ref=e703]: edge timeout after 5000ms
+            - generic [ref=e530]:
+              - generic [ref=e532]:
+                - generic [ref=e533]:
+                  - generic [ref=e534]: A.9 formal sign-off
+                  - generic [ref=e537]:
+                    - text: Recorded ledger state from
+                    - code [ref=e538]: /api/go-no-go/status
+                    - text: .Sign-off happens via admin API only — there is no sign button here.
+                - generic [ref=e539]:
+                  - button "Regenerate ledger" [ref=e540]
+                  - generic "polls every 30s" [ref=e704]: updated 10s ago
+              - generic [ref=e541]:
+                - alert [ref=e705]:
+                  - generic [ref=e708]: Cannot fetch sign-off status
+                  - generic [ref=e709]: "edge HTTP 500: {\"error\":\"internal_error\"}"
+                - generic [ref=e549]:
+                  - generic [ref=e550]: Sign-off runbook (admin API — 2 distinct operators, same ledger hash)
+                  - generic [ref=e551]: "# 1. Regenerate + read the current ledger (any operator, read-only): curl -s http://<VPS-IP>:8080/api/v1/go-no-go/ledger | head -c 600 # 2. Each operator signs (GO or NO_GO) — direct to api-server, NEVER via edge: curl -X POST http://<VPS-IP>:8080/admin/go-no-go/sign-off \\ -H \"Content-Type: application/json\" \\ -H \"x-arbx-admin-token: $ARBX_ADMIN_TOKEN\" \\ -H \"x-arbx-actor: <OPERATOR_NAME>\" \\ -d '{\"decision\":\"GO\",\"ledger_hash\":\"<LEDGER_HASH>\"}' # 3. Verify quorum (read-only): curl -s http://<VPS-IP>:8080/api/v1/go-no-go/status"
+            - generic [ref=e552]:
+              - generic [ref=e554]:
+                - generic [ref=e555]:
+                  - generic [ref=e556]: Readiness blockers
+                  - generic [ref=e561]:
+                    - text: Concrete obstacles between the current paper state and any live flip. Sourced from
+                    - code [ref=e562]: /api/readiness/blockers
+                    - text: . Env values are redacted to
+                    - code [ref=e563]: "\"present\""
+                    - text: or
+                    - code [ref=e564]: "null"
+                    - text: — raw values never reach the UI.
+                - generic "polls every 30s" [ref=e711]: updated 10s ago
+              - alert [ref=e712]:
+                - generic [ref=e715]: Cannot fetch blockers
+                - generic [ref=e716]: "edge HTTP 500: {\"error\":\"internal_error\"}"
+            - generic [ref=e572]:
+              - generic [ref=e573]:
+                - generic [ref=e574]: Fork Validation
+                - generic [ref=e577]: ERROR
+                - paragraph [ref=e724]: "HTTP 500: {\"error\":\"internal_error\"}"
+              - generic [ref=e584]:
+                - generic [ref=e585]: Paper Shadow
+                - paragraph [ref=e727]: "HTTP 500: {\"error\":\"internal_error\"}"
+                - paragraph [ref=e728]: The paper-shadow service may not be running yet. This is expected in P2.
+            - generic [ref=e592]:
+              - generic [ref=e594]:
+                - generic [ref=e595]: G-SIM-1 (Simulator V2)
+                - generic [ref=e598]: RED
+              - generic [ref=e599]:
+                - paragraph [ref=e600]: Validates the REVM multi-step simulation path against Sepolia contracts. A passing smoke test enables the simulator-v2 readiness gate.
+                - button "Run Sepolia Smoke Test" [ref=e602]
+            - generic [ref=e603]:
+              - generic [ref=e606]:
+                - generic [ref=e607]:
+                  - text: Agent Teams
+                  - generic [ref=e608]: workspace-verified · 17 agents
+                - generic [ref=e609]:
+                  - text: Verdicts of the build/audit/deploy agent cycle. Source
+                  - code [ref=e610]: workspace_verified
+                  - text: reflects the most recent operator pass;
+                  - code [ref=e611]: runtime
+                  - text: appears when the backend demotes a verdict on a failing prerequisite.
+              - alert [ref=e729]:
+                - generic [ref=e732]: Cannot fetch agent teams status
+                - generic [ref=e733]: "edge HTTP 500: {\"error\":\"internal_error\"}"
+            - generic [ref=e619]:
+              - generic [ref=e622]:
+                - generic [ref=e623]:
+                  - text: Confidence scoring (A.8)
+                  - generic [ref=e624]: paper-only · live OFF
+                - generic [ref=e625]:
+                  - text: "Honest wire status of Bayesian + Kelly + VPIN primitives in the paper pipeline. Schema:"
+                  - code [ref=e626]: /api/scoring/status
+                  - text: . Scoring NEVER enables live trading.
+              - alert [ref=e734]:
+                - generic [ref=e737]: Cannot fetch scoring status
+                - generic [ref=e738]: "edge HTTP 500: {\"error\":\"internal_error\"}"
+            - generic [ref=e634]:
+              - generic [ref=e637]:
+                - generic [ref=e638]:
+                  - text: Risk circuit breakers (A.6)
+                  - generic [ref=e641]: live OFF
+                - generic [ref=e642]:
+                  - text: "10 comprehensive breakers. Source:"
+                  - code [ref=e643]: /api/risk/circuit-breakers/status
+                  - text: . Missing data sources render
+                  - code [ref=e644]: NOT_AVAILABLE
+                  - text: — never fabricated PASS.
+              - alert [ref=e739]:
+                - generic [ref=e742]: Cannot fetch circuit breakers
+                - generic [ref=e743]: "edge HTTP 500: {\"error\":\"internal_error\"}"
+  - status "Live opportunity feed" [ref=e652]:
+    - generic [ref=e653]: Opportunity feed unavailable — Failed to fetch (retrying every 30s)
+  - region "Notifications alt+T"
+  - alert [ref=e655]

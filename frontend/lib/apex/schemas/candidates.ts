@@ -38,7 +38,18 @@ export const OpportunityCandidateSchema = z
     expected_amount_out: z.number().nonnegative(),
     gross_profit: UsdDecimalSchema,
     decimals: DecimalsMapSchema,
-    block_number: z.number().int().nonnegative().nullable().optional(),
+    // FRONT-07 fix (2026-09-24): reuse the wire-tolerant block_number schema
+    // from schemas.ts — a future PG-sourced candidate would carry int8 as a
+    // string (same class as the block-number-string incident). The strict
+    // z.number() would reject the entire payload.
+    block_number: z.preprocess(
+      (v) => {
+        if (typeof v !== "string") return v;
+        const t = v.trim();
+        return /^-?\d+$/.test(t) ? Number(t) : v;
+      },
+      z.number().int().nonnegative().nullable().optional(),
+    ),
     route_fingerprint: z.string().min(1),
   })
   .strict();

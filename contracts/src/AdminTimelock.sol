@@ -79,6 +79,12 @@ contract AdminTimelock is Initializable, TimelockControllerUpgradeable {
         override
         initializer
     {
+        // WEB3-03 fix (2026-09-24): reject minDelay == 0 — a zero-delay
+        // timelock is a bypass of the 24h standard (an admin action becomes
+        // immediately executable). The OZ underlying would silently accept it.
+        if (minDelay == 0) revert AdminTimelock__ZeroMinDelay();
         __TimelockController_init(minDelay, proposers, executors, admin);
     }
+
+    error AdminTimelock__ZeroMinDelay();
 }

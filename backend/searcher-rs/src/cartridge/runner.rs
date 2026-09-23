@@ -535,8 +535,8 @@ impl CartridgeRunner {
             .map(|c| c as u64)
             .collect();
 
-        // 264×31 matrix wiring: capture the strategy's operator mapping (previously
-        // dropped at load). These IDs (1-31) drive strategy-keyed operator evidence.
+        // 264×32 matrix wiring: capture the strategy's operator mapping (previously
+        // dropped at load). These IDs (1-32) drive strategy-keyed operator evidence.
         let primary_operators: Vec<u32> = map
             .get("primary_operators")
             .and_then(|v| v.clone().into_typed_array::<i64>().ok())
@@ -574,6 +574,21 @@ impl CartridgeRunner {
         let map = result.try_cast::<Map>().ok_or_else(|| {
             CartridgeError::RuntimeError("evaluate_opportunity must return a Map".into())
         })?;
+
+        // ── AGENT v4 branch (integration/agent-cartridges-v4, 2026-09-24) ──────
+        // v4 cartridges seal their result with contract_version
+        // "arbx.cartridge.agent/4" and deliberately set estimated_profit /
+        // confidence to NULL (exact decimal USD strings live in the payload).
+        // The v3 reader below would silently convert that absence to 0.0 —
+        // forbidden by the package contract. Detect v4 FIRST, preserve the
+        // full lossless proposal in `metadata["proposal_v4"]`, parse it via
+        // ProposalV4 for validation, and keep the v3 f64 fields at their
+        // null-derived defaults ONLY as legacy telemetry shape (the exact
+        // figures are the proposal's *_usd strings).
+        let is_v4 = map
+            .get("contract_version")
+            .and_then(|v| v.clone().into_string().ok())
+            .is_some_and(|cv| cv == "arbx.cartridge.agent/4");
 
         let is_opportunity = map
             .get("is_opportunity")
@@ -615,6 +630,40 @@ impl CartridgeRunner {
             .contains(&key.as_str())
             {
                 metadata.insert(key, dynamic_to_json_value(v));
+            }
+        }
+
+        if is_v4 {
+            // Validate the sealed proposal through the lossless contract. A
+            // malformed v4 envelope is a RuntimeError (fail-closed) — never a
+            // silent zero-profit candidate.
+            let proposal_json = serde_json::Value::Object(
+                metadata
+                    .iter()
+                    .filter_map(|(k, v)| {
+                        serde_json::value::to_value(v).ok().map(|v| (k.clone(), v))
+                    })
+                    .collect(),
+            );
+            match crate::proposal_contract::ProposalV4::parse(proposal_json.clone()) {
+                Ok(_validated) => {
+                    // Preserve the full lossless proposal for downstream
+                    // consumers (telemetry streams, future snapshot store).
+                    metadata.insert(
+                        "proposal_v4".to_string(),
+                        serde_json::value::to_value(&proposal_json)
+                            .unwrap_or(serde_json::Value::Null),
+                    );
+                    metadata.insert(
+                        "numeric_contract".to_string(),
+                        serde_json::json!("arbx.cartridge.agent/4: money=USD decimal strings; v3 f64 fields are NOT authoritative for v4"),
+                    );
+                }
+                Err(e) => {
+                    return Err(CartridgeError::RuntimeError(format!(
+                        "invalid_v4_proposal: {e}"
+                    )));
+                }
             }
         }
 

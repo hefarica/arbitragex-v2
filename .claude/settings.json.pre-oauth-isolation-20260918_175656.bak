@@ -1,0 +1,72 @@
+{
+    "permissions":  {
+                        "defaultMode":  "bypassPermissions",
+                        "skipDangerousModePermissionPrompt":  true,
+                        "allow":  [
+                                      "Bash(printf \u0027%s\\\\n\u0027 \u0027-- Migration 100: paper_trade_runs execution_time_ms column \\(Task 6\\) *)",
+                                      "Bash(printf \u0027%s\\\\n\u0027 \u0027BEGIN *)",
+                                      "Bash(sed -i \u0027s/gross_topological_yield_wei?: string;/gross_topological_yield_wei: string | undefined;/\u0027 backend/api-server/src/paper/executor.ts)",
+                                      "Bash(sed -i \u0027s/net_topological_yield_wei?: string;/net_topological_yield_wei: string | undefined;/\u0027 backend/api-server/src/paper/executor.ts)",
+                                      "Bash(sed -i \u0027s/gas_cost_wei?: string;/gas_cost_wei: string | undefined;/\u0027 backend/api-server/src/paper/executor.ts)",
+                                      "Bash(sed -i \u0027s/decoherence_penalty_wei?: string;/decoherence_penalty_wei: string | undefined;/\u0027 backend/api-server/src/paper/executor.ts)",
+                                      "Bash(sed -i \u0027s/opportunity_id?: string;/opportunity_id: string | undefined;/\u0027 backend/api-server/src/paper/executor.ts)"
+                                  ]
+                    },
+    "env":  {
+                "ANTHROPIC_API_KEY":  "sk-ccr-oHW3pgJfEtI-iXBvH3sZ-woGGCZ-v6y9JKs2JPCoRb4",
+                "CLAUDE_AUTOCOMPACT_PCT_OVERRIDE":  "90",
+                "CLAUDE_CODE_MAX_CONTEXT_TOKENS":  "262144",
+                "CLAUDE_CODE_MAX_RETRIES":  "1",
+                "ANTHROPIC_BASE_URL":  "http://127.0.0.1:3456",
+                "ANTHROPIC_API_BASE_URL":  "http://127.0.0.1:3456",
+                "CLAUDE_AGENT_API_BASE_URL":  "http://127.0.0.1:3456",
+                "CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY":  "1",
+                "CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS":  "1",
+                "ENABLE_TOOL_SEARCH":  "auto",
+                "API_TIMEOUT_MS":  "600000",
+                "ANTHROPIC_AUTH_TOKEN":  "sk-ccr-oHW3pgJfEtI-iXBvH3sZ-woGGCZ-v6y9JKs2JPCoRb4",
+                "NO_PROXY":  "127.0.0.1,localhost",
+                "DISABLE_AUTOUPDATER":  "1",
+                "CLAUDE_CODE_EFFORT_LEVEL":  "medium",
+                "CLAUDE_CODE_AUTO_COMPACT_WINDOW":  "950000"
+            },
+    "useAutoModeDuringPlan":  false,
+    "disableAllHooks":  true,
+    "disableAutoMode":  "disable",
+    "effortLevel":  "medium",
+    "skillListingBudgetFraction":  0.003,
+    "skillListingMaxDescChars":  320,
+    "autoCompactEnabled":  true,
+    "hooks":  {
+                  "SessionStart":  [
+                                       {
+                                           "hooks":  [
+                                                         {
+                                                             "type":  "command",
+                                                             "command":  "[ -f C:/Users/HFRC/.claude/doctrines/51-hermes.md ] \u0026\u0026 cat C:/Users/HFRC/.claude/doctrines/51-hermes.md || echo \u0027[HERMES Ã‚Â§51] protocolo pendiente: invoca comandante + armada paralela\u0027"
+                                                         }
+                                                     ]
+                                       }
+                                   ],
+                  "UserPromptSubmit":  [
+                                           {
+                                               "hooks":  [
+                                                             {
+                                                                 "type":  "command",
+                                                                 "command":  "echo \u0027[HERMES Ã‚Â§51] turno entrante: ejecutar protocolo completo ANTES de responder Ã¢â‚¬â€ descomposicion \u003e100 ramas, armada paralela, gate de evidencia, resumen, siguiente paso. No opcional.\u0027"
+                                                             }
+                                                         ]
+                                           }
+                                       ],
+                  "Stop":  [
+                               {
+                                   "hooks":  [
+                                                 {
+                                                     "type":  "command",
+                                                     "command":  "echo \u0027[HERMES Ã‚Â§51] post-turn compile: resumen obligatorio (ramas/OK/DEAD_END+razon/pendientes) + siguiente paso ya en ejecucion.\u0027"
+                                                 }
+                                             ]
+                               }
+                           ]
+              }
+}

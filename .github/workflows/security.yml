@@ -209,6 +209,13 @@ jobs:
           #      sprint). The ignore below therefore covers ONLY the legacy 0.3
           #      instance; the runtime 0.4 line stays patched and audited.
           #                                      Plan: retire with ethers/reqwest major bump.
+          # CI-06 fix (2026-09-24): removed STALE ignores — the referenced
+          # versions are NO LONGER in backend/Cargo.lock:
+          #   RUSTSEC-2024-0363 (sqlx 0.7.4) → sqlx is now 0.8.1 (fixed line)
+          #   RUSTSEC-2026-0189 (rmcp 0.3.2) → rmcp is now 3.1.4 (fixed line)
+          # The gate was blocking advisories that are already remediated.
+          # smartstring 1.0.1 (RUSTSEC-2026-0249) is STILL in the lock (via
+          # sqlx 0.8.1 subtree) — that ignore stays.
           RUSTSEC_IGNORES: >-
             --ignore RUSTSEC-2026-0002
             --ignore RUSTSEC-2024-0388
@@ -223,10 +230,8 @@ jobs:
             --ignore RUSTSEC-2026-0098
             --ignore RUSTSEC-2026-0099
             --ignore RUSTSEC-2026-0104
-            --ignore RUSTSEC-2024-0363
             --ignore RUSTSEC-2026-0173
             --ignore RUSTSEC-2026-0235
-            --ignore RUSTSEC-2026-0189
             --ignore RUSTSEC-2026-0249
             --ignore RUSTSEC-2026-0253
             --ignore RUSTSEC-2026-0258

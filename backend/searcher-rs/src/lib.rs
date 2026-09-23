@@ -24,6 +24,23 @@
 // over the SAME curve the golden-section kernel maximizes.
 pub mod amm_math;
 pub mod amount_buckets;
+// ── Agent cartridge v4 runtime (integration/agent-cartridges-v4) ─────────────
+// Installed from the operator's ARBX_CARTUCHOS_AGENTE_264 package (2026-09-24):
+// Rhai bridge/bindings (agent_v4_*), bounded cycle search + exact integer CPMM
+// quotes, immutable-snapshot services, per-context routing, the lossless
+// ProposalV4 result contract, and the math-engine operator adapter. The 264 v4
+// scripts remain STAGED under integration/agent-cartridges-v4/ — NOT in the
+// active cartridges/ loader dir — until the INTEGRACION.md activation criteria
+// (native compile of all 264 + real snapshot producers + plan store) are met.
+pub mod rhai_agent_bridge;
+pub mod agent_graph;
+pub mod snapshot_services;
+pub mod context_router;
+pub mod proposal_contract;
+pub mod native_operator_adapter;
+// CARTRIDGE-CONTROL: acople/desacople por cartucho — desired-state store
+// (Redis hash + PG), boot application and a runtime command loop.
+pub mod cartridge_control;
 pub mod batch_quote;
 pub mod calldata;
 pub mod canonical_enums;

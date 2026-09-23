@@ -190,7 +190,7 @@ impl SequenceContext {
         let cache_db = CacheDB::new(lazy_db);
         let mut cfg = CfgEnv::default();
         cfg.chain_id = chain_id;
-        cfg.spec = SpecId::OSAKA;
+        cfg.spec = SpecId::OSAKA; // SIM-11 note (2026-09-24): paper path pins OSAKA regardless of the forked block's actual hardfork; verified path derives from header;
         let block = BlockEnv {
             number: U256::from(block_number),
             ..BlockEnv::default()

@@ -318,8 +318,11 @@ export interface OmniOpportunity {
   simulated_notes: string[] | null;
 
   // === Confidence & Gas (UI display) ===
-  confidence_score_bps: number | null;
-  gas_used: number | null;
+  // FRONT-06 (2026-09-24): confidence_score_bps and gas_used REMOVED from
+  // the ViewModel — no producer on the /opportunities/live wire emits them
+  // (grep verified; schemas.ts:120-124 documents this gap). They were
+  // permanently-null dead surface. Re-add ONLY when the scored-opportunities
+  // archiver (which exists) is wired as a producer on this feed.
 
   // === Semantic verdict (FE-0031 §30) ===
   // Computed by the mapper via validateOpportunitySemantics(): the §30
@@ -452,9 +455,17 @@ export function mapToOmniOpportunity(raw: Record<string, unknown>): OmniOpportun
       : null,
 
     // Confidence & Gas
-    confidence_score_bps:
-      raw.confidence_score_bps != null ? Number(raw.confidence_score_bps) : null,
-    gas_used: raw.gas_used != null ? Number(raw.gas_used) : null,
+    // FRONT-06 fix (2026-09-24): these two fields have NO producer on the
+    // /opportunities/live wire (verified by grep — schemas.ts:120-124 documents
+    // "backend does not yet emit these"). The previous code silently left them
+    // null-forever (R10-declared degradation); the honest fix is to REMOVE the
+    // dead ViewModel surface until the scored-opportunities archiver wires a
+    // real producer. Callers reading these get undefined (TypeScript-level
+    // signal that the field doesn't exist), not a misleading null-forever.
+    // confidence_score_bps: REMOVED (FRONT-06) — no producer on the wire
+    // gas_used: REMOVED (FRONT-06) — only the hot stream (dead wire FRONT-03)
+    //            carried it as a wei string; Number(wei-string) would lose
+    //            precision if ever wired
 
     // §30 verdict — annotated below on the complete object.
     semantic_violations: [],

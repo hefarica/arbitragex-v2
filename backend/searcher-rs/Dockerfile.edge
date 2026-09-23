@@ -1,71 +1,59 @@
-# ═══════════════════════════════════════════════════════════════
-# STAGE 1: BUILDER
-# Compilación cruzada optimizada para Linux x86_64
-# SOP-EDGE-001 — Edge Node Dockerfile (Paper-Shadow)
-# ═══════════════════════════════════════════════════════════════
-FROM rust:1.78-slim-bookworm AS builder
+# ArbitrageX v2 — searcher-rs (EDGE, paper-shadow features)
+# CI-04 fix (2026-09-24): this image was previously un-buildable —
+#   :6  rust:1.78 < workspace MSRV 1.85 ("requires rustc 1.85");
+#   :18-20 copied only 2 of the 13 virtual-manifest members ("failed to load
+#       manifest for workspace member");
+#   :26/:36 ran `cargo build --features paper-shadow` WITHOUT `-p searcher-rs`
+#       at the virtual-manifest root ("none of the selected packages contains
+#       these features");
+#   no --locked (non-reproducible resolution).
+# Rebased on the canonical searcher-rs/Dockerfile (rust:1.91, full member copy
+# set, -p pinning, --locked). The feature `paper-shadow` EXISTS
+# (searcher-rs/Cargo.toml [features]) and gates sed_bridge cfg paths.
+# Build context must be the `backend/` directory (same as the base Dockerfile).
 
-WORKDIR /app
-
-# Instalar dependencias de compilación
-RUN apt-get update && apt-get install -y \
-    pkg-config \
-    libssl-dev \
-    protobuf-compiler \
+FROM rust:1.91-slim-bookworm AS builder
+# Same EPYC-Rome target as the base image (perf-stack WO-8).
+ENV RUSTFLAGS="-C target-cpu=x86-64-v3"
+WORKDIR /build
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        pkg-config libssl-dev ca-certificates \
     && rm -rf /var/lib/apt/lists/*
+# Full virtual-manifest member set (the workspace resolver requires every
+# declared member's manifest to be readable — same rationale as the base image).
+COPY Cargo.toml ./Cargo.toml
+COPY Cargo.lock ./Cargo.lock
+COPY shared-rs ./shared-rs
+COPY searcher-rs ./searcher-rs
+COPY sim-ctl ./sim-ctl
+COPY relays-client ./relays-client
+COPY recon ./recon
+COPY math-engine ./math-engine
+COPY prioritization-spine ./prioritization-spine
+COPY simulator-v2 ./simulator-v2
+COPY sim-core ./sim-core
+COPY token-enricher ./token-enricher
+COPY sed-core ./sed-core
+COPY semiotic-bridge ./semiotic-bridge
+COPY mcp-sim-engine ./mcp-sim-engine
+# paper-shadow feature + -p pinning + --locked (reproducible).
+RUN cargo build --release --locked -p searcher-rs --features paper-shadow
 
-# Copiar manifests primero para cachear dependencies
-COPY Cargo.toml Cargo.lock ./
-COPY shared-rs/Cargo.toml shared-rs/
-COPY searcher-rs/Cargo.toml searcher-rs/
-
-# Crear estructura dummy para cachear build de dependencies
-RUN mkdir -p shared-rs/src searcher-rs/src && \
-    echo "fn main() {}" > shared-rs/src/lib.rs && \
-    echo "fn main() {}" > searcher-rs/src/main.rs && \
-    cargo build --release --features paper-shadow && \
-    rm -rf shared-rs/src searcher-rs/src
-
-# Copiar código fuente REAL
-COPY shared-rs/src shared-rs/src/
-COPY searcher-rs/src searcher-rs/src/
-COPY searcher-rs/Cargo.toml searcher-rs/
-
-# Forzar recompilación del código real (no dependencies)
-RUN touch searcher-rs/src/main.rs && \
-    cargo build --release --features paper-shadow --bin searcher-rs
-
-# ═══════════════════════════════════════════════════════════════
-# STAGE 2: RUNTIME
-# Imagen final mínima — distroless o debian-slim
-# ═══════════════════════════════════════════════════════════════
 FROM debian:bookworm-slim AS runtime
-
-# Crear usuario no-root (seguridad)
-RUN groupadd -r sedgroup && useradd -r -g sedgroup seduser
-
-# Instalar solo librerías runtime esenciales
-RUN apt-get update && apt-get install -y \
-    ca-certificates \
-    libssl3 \
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        ca-certificates tini wget \
     && rm -rf /var/lib/apt/lists/* \
-    && apt-get clean
-
+    && groupadd -r arbx && useradd -r -g arbx arbx
 WORKDIR /app
-
-# Copiar binario compilado
-COPY --from=builder /app/target/release/searcher-rs /app/sed-core
-
-# Cambiar ownership
-RUN chown -R seduser:sedgroup /app
-
-USER seduser
-
-# Puerto de métricas Prometheus
-EXPOSE 9001
-
-# Healthcheck
-HEALTHCHECK --interval=10s --timeout=3s --start-period=30s --retries=3 \
-    CMD curl -f http://localhost:9001/health || exit 1
-
-ENTRYPOINT ["./sed-core"]
+# Same binary name (the historical rename to /app/sed-core was confusing and is
+# dropped — the feature flag, not a rename, distinguishes this image).
+COPY --from=builder /build/target/release/searcher-rs /usr/local/bin/searcher-rs
+# Ship the master cartridges (same FASE OMEGA fix as the base image — the
+# filesystem auto-loader is CWD-relative "cartridges").
+COPY searcher-rs/cartridges ./cartridges
+# integration/agent-cartridges-v4 (staged, NOT auto-loaded) is NOT copied:
+# the loader only scans ./cartridges; activating v4 requires the INTEGRACION.md
+# criteria first (parser v4 + snapshot producers + plan store).
+USER arbx
+ENTRYPOINT ["/usr/bin/tini", "--"]
+CMD ["searcher-rs"]
