@@ -39,8 +39,63 @@
 //!   `positions_watchlist_empty_total` counter to detect zero-entries condition.
 
 use once_cell::sync::Lazy;
-use prometheus::{IntCounterVec, IntGauge};
+use prometheus::{Histogram, IntCounterVec, IntGauge};
 use shared_rs::metrics::REGISTRY;
+
+// ---------------------------------------------------------------------------
+// WO-REJECT-TRACES-01 E1 — rejection forensics metrics
+// ---------------------------------------------------------------------------
+
+/// C1-C3 wire violations repaired at the single serialization site
+/// (`reject_traces::finalize`), by offending field. Alertable: ANY increase
+/// is a bug-suspected rejection (verdict b-unif: the gate publishes ALWAYS,
+/// repairs in place, and counts — never drops). Alert rule lives in
+/// monitoring/alerts.rules.yml (`RejectTraceGateRepair`).
+pub static BUG_SUSPECTED_REJECTIONS_TOTAL: Lazy<IntCounterVec> = Lazy::new(|| {
+    let c = IntCounterVec::new(
+        prometheus::opts!(
+            "arbx_bug_suspected_rejections_total",
+            "Rejection-evidence wire violations repaired with gate_repair envelopes (never dropped), by field"
+        ),
+        &["field"],
+    )
+    .expect("metric");
+    REGISTRY.register(Box::new(c.clone())).expect("register");
+    c
+});
+
+/// Serialized length (bytes) of each rejection trace dump. Histogram only —
+/// if the block ever weighs too much, that is decided with MEASURED data in
+/// a follow-up WO, never pre-optimized here (verdict c-unif).
+pub static REJECT_TRACE_SERIALIZED_BYTES: Lazy<Histogram> = Lazy::new(|| {
+    let h = Histogram::with_opts(
+        prometheus::histogram_opts!(
+            "arbx_reject_trace_serialized_bytes",
+            "Serialized length in bytes of computed_evidence rejection dumps",
+            vec![64.0, 128.0, 256.0, 512.0, 1024.0, 2048.0, 4096.0, 8192.0, 16384.0]
+        ),
+    )
+    .expect("metric");
+    REGISTRY.register(Box::new(h.clone())).expect("register");
+    h
+});
+
+/// Honest accounting of the batched rechazos_traces sink:
+/// submitted / deduped / dropped (channel full) / flushed / flush_error /
+/// disabled (no writer). Silent loss is prohibited (R8).
+pub static REJECT_TRACE_DUMP_TOTAL: Lazy<IntCounterVec> = Lazy::new(|| {
+    let c = IntCounterVec::new(
+        prometheus::opts!(
+            "arbx_reject_trace_dump_total",
+            "Reject-trace dump lifecycle accounting, by outcome"
+        ),
+        &["outcome"],
+    )
+    .expect("metric");
+    REGISTRY.register(Box::new(c.clone())).expect("register");
+    c
+});
+
 
 // ---------------------------------------------------------------------------
 // decoded_intents_total{chain_id, source}

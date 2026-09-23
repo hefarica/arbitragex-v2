@@ -123,6 +123,7 @@ impl BackrunEngine {
             rejection_reason: None,
             source_intent_hash: target_tx_hash,
             base_strategy: None,
+            trace: crate::reject_traces::Trace::default(),
         })
     }
 }

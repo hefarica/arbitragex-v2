@@ -507,6 +507,11 @@ impl OpportunityEmitter {
                 });
             }
             return Ok(EmitOutcome::Published);
+            // NOTE (E1): the dry-run record intentionally carries the caller's
+            // computed_evidence verbatim — the default-envelope fill below is a
+            // wire concern of the REAL emit path only. Tests assert on the
+            // caller-provided block; injecting a default here would mask a
+            // producer that forgot to finalize.
         }
 
         // WO-10 (2026-09-06): emit-boundary span origin — real I/O starts at
@@ -527,7 +532,20 @@ impl OpportunityEmitter {
         // WO-CARDS-COMPLETE-01 (2026-09-17): the clone is also where the
         // emit-boundary `pipeline_latency_ms` is stamped — rejected rows carry
         // the same two wire fields as accepted ones.
-        let rejected = stamped_for_emit(opportunity, Some(rejection_reason));
+        let mut rejected = stamped_for_emit(opportunity, Some(rejection_reason));
+        // WO-REJECT-TRACES-01 (E1): every REJECTED row carries a
+        // computed_evidence block on the wire (frozen contract — None is for
+        // viable rows only). Producers that hold a StrategyCandidate finalize
+        // a rich trace BEFORE calling emit_rejected; paths that never saw a
+        // candidate (scanner pre-gates, cartridge pre-gates) still publish
+        // the honest `no_alcanzado` envelope here — never a raw null, never
+        // a fabricated number.
+        if rejected.computed_evidence.is_none() {
+            rejected.computed_evidence = Some(crate::reject_traces::finalize(
+                rejection_reason,
+                &crate::reject_traces::Trace::default(),
+            ));
+        }
 
         let pg_ok = self.try_insert_pg_with_route(&rejected, route).await;
 
@@ -921,6 +939,7 @@ mod tests {
             // WO-CARDS-COMPLETE-01: construction-site field (the detector).
             detector_id: Some("dex_engine".to_owned()),
             pipeline_latency_ms: None, // stamped at emit entry, not construction
+            computed_evidence: None,
             detected_at: Utc::now(),
             trace_id: Uuid::new_v4(),
         }

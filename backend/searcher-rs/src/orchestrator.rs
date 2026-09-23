@@ -1155,6 +1155,11 @@ impl Orchestrator {
             let opp_with_reason = {
                 let mut o = sc.opportunity.clone();
                 o.rejection_reason = Some(reason_owned.clone());
+                // WO-REJECT-TRACES-01 (E1): dump EXACTLY at this gate — the
+                // candidate's forensics slots (written point by point by the
+                // engine) + the economics already computed on the opportunity
+                // are serialized ONCE here by the single serialization site.
+                o.computed_evidence = Some(evidence_at_rejection(reason, &sc, &o));
                 o
             };
             // Already counted in on_route_intent's optimizer rejection path.
@@ -1364,6 +1369,10 @@ impl Orchestrator {
                     // Propagate net_expected_profit_usd when gross is available (R8).
                     opp.net_expected_profit_usd =
                         opp.expected_profit_usd.map(|g| g - outcome.gas_cost_usd);
+                    // WO-REJECT-TRACES-01 (E1): economics in hand — the dump
+                    // carries gross/net/gas at THIS gate (single serialization).
+                    opp.computed_evidence =
+                        Some(evidence_at_rejection(&reason_str, &sc, &opp));
                     // TASK 3: EvaluatedRejected IS a real evaluation failure → SIMULATION_FAILED.
                     SIMULATION_FAILED_TOTAL
                         .with_label_values(&[&chain_str, label_str, "EvaluatedRejected"])
@@ -1517,6 +1526,28 @@ fn apply_gate_rejection_fields(opp: &mut shared_rs::contracts::Opportunity, reas
     opp.risk_score = Some(0.0);
 }
 
+/// WO-REJECT-TRACES-01 (E1): hydrate the candidate's forensics trace with the
+/// economics already computed on the opportunity, then serialize ONCE via the
+/// single serialization site (`reject_traces::finalize`). Hydration is
+/// strictly `None`-slot backfill from `Some` values the pipeline actually
+/// computed — never a fabricated number (RULE 00 / R8). Pre-data rejections
+/// (allowlist, strategy off, reserves miss) carry no economics; their trace
+/// stays empty and `finalize` emits the honest `no_alcanzado` envelope.
+fn evidence_at_rejection(
+    reason: &str,
+    sc: &StrategyCandidate,
+    opp: &shared_rs::contracts::Opportunity,
+) -> serde_json::Value {
+    let mut t = sc.trace.clone();
+    if t.gross_profit_usd.is_none() {
+        t.gross_profit_usd = opp.expected_profit_usd;
+    }
+    if t.net_profit_usd.is_none() {
+        t.net_profit_usd = opp.net_expected_profit_usd;
+    }
+    crate::reject_traces::finalize(reason, &t)
+}
+
 /// Returns a static string label for a `DetectionSource`.
 ///
 /// Used as the Prometheus `source` label in `decoded_intents_total`.
@@ -1614,6 +1645,7 @@ mod tests {
             cartridge_id: None,
             detector_id: None,
             pipeline_latency_ms: None,
+            computed_evidence: None,
             detected_at: Utc::now(),
             trace_id: Uuid::new_v4(),
         }
@@ -1682,6 +1714,7 @@ mod tests {
             rejection_reason: rejection,
             source_intent_hash: H256::zero(),
             base_strategy: None,
+            trace: crate::reject_traces::Trace::default(),
         }
     }
 

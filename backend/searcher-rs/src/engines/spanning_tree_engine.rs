@@ -475,6 +475,7 @@ impl SpanningTreeEngine {
             // WO-CARDS-COMPLETE-01 (2026-09-17): detector identity at construction.
             detector_id: Some("spanning_tree_engine".to_string()),
             pipeline_latency_ms: None,
+            computed_evidence: None,
             detected_at: Utc::now(),
             trace_id,
         };
@@ -571,6 +572,7 @@ impl SpanningTreeEngine {
             rejection_reason,
             source_intent_hash: tx_hash,
             base_strategy: None,
+            trace: crate::reject_traces::Trace::default(),
         }
     }
 

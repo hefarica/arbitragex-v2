@@ -76,6 +76,7 @@ pub mod pair_alpha_runtime;
 pub mod pair_index;
 pub mod patterns;
 pub mod persistence;
+pub mod reject_traces;
 pub mod pool_candidate;
 pub mod pool_discovery;
 pub mod pool_sources;

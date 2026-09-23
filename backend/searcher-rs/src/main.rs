@@ -83,6 +83,7 @@ mod topology_reload;
 mod metrics;
 mod patterns;
 mod persistence;
+mod reject_traces; // WO-REJECT-TRACES-01 (E1)
 mod priors_cache; // BR-05 (2026-09-07): Stage 2c §IV read side (WO-07 port-back).
 mod publisher;
 mod reserves;
@@ -570,6 +571,15 @@ async fn main() -> anyhow::Result<()> {
     // Without a DB pool the encoder cannot resolve decimals — scanner stays
     // in the Phase A.2.5 fail-closed path (`no_simulator_for_chain` /
     // `encoder_not_ready`) for every candidate (RULE 12 fail-honest).
+    // WO-REJECT-TRACES-01 (E1): batched writer for the rechazos_traces
+    // forensic dump (mpsc, flush 200 rows / 250ms, partition maintenance).
+    // Without a pool the sink stays disabled and every submit is COUNTED as
+    // `disabled` (R8 — never a silent drop).
+    if let Some(pool) = &db_pool {
+        crate::reject_traces::init_writer(pool.clone());
+        info!(event = "reject_traces.writer_started", "rechazos_traces batch writer up");
+    }
+
     let token_decimals_provider: Option<Arc<dyn sim_encoder::TokenDecimalsProvider + Send + Sync>> =
         match &db_pool {
             Some(pool) => {

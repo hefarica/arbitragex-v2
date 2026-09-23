@@ -458,6 +458,7 @@ impl TriangularEngine {
                     rejection_reason: Some(reason.to_owned()),
                     source_intent_hash: tx_hash,
                     base_strategy: None,
+                    trace: crate::reject_traces::Trace::default(),
                 }]
             }
             Some(result) => {
@@ -483,6 +484,7 @@ impl TriangularEngine {
                             rejection_reason: Some("sanity_reject_implausible_profit".to_owned()),
                             source_intent_hash: tx_hash,
                             base_strategy: None,
+                            trace: crate::reject_traces::Trace::default(),
                         }];
                     }
 
@@ -517,6 +519,7 @@ impl TriangularEngine {
                         rejection_reason: None,
                         source_intent_hash: tx_hash,
                         base_strategy: None,
+                        trace: crate::reject_traces::Trace::default(),
                     }]
                 } else {
                     // R8 invariant: `evaluate_cycle` returns `None` when price
@@ -545,6 +548,7 @@ impl TriangularEngine {
                         rejection_reason: None,
                         source_intent_hash: tx_hash,
                         base_strategy: None,
+                        trace: crate::reject_traces::Trace::default(),
                     }]
                 }
             }
@@ -602,6 +606,7 @@ fn build_opportunity(
         // WO-CARDS-COMPLETE-01 (2026-09-17): detector identity at construction.
         detector_id: Some("triangular_engine".to_string()),
         pipeline_latency_ms: None,
+        computed_evidence: None,
         detected_at: Utc::now(),
         trace_id,
     };

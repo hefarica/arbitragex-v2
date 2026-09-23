@@ -226,6 +226,7 @@ impl DexEngine {
                         rejection_reason: Some("single_pool_no_spread".to_owned()),
                         source_intent_hash: tx_hash,
                         base_strategy: None,
+                        trace: crate::reject_traces::Trace::default(),
                     });
                 }
                 continue;
@@ -241,6 +242,12 @@ impl DexEngine {
 
                     // Determine strategy label from protocol types.
                     let label = classify_label(pool_a.protocol_type, pool_b.protocol_type);
+
+                    // WO-REJECT-TRACES-01 (E1): forensic slots for this pool
+                    // pair — written at each gate below, serialized ONCE at
+                    // rejection by `reject_traces::finalize` (zero alloc per
+                    // gate; the slots ride the candidate).
+                    let mut trace = crate::reject_traces::Trace::default();
 
                     // Fetch real reserves from ReservesCache for V2 pools.
                     // Missing reserves → emit reserves_cache_miss rejection (R8 honest,
@@ -285,6 +292,7 @@ impl DexEngine {
                             rejection_reason: Some("reserves_cache_miss".to_owned()),
                             source_intent_hash: tx_hash,
                             base_strategy: None,
+                            trace: crate::reject_traces::Trace::default(),
                         });
                         continue;
                     }
@@ -321,8 +329,11 @@ impl DexEngine {
                         };
 
                     // For V3 paths: try to get a virtual quote via state_projector.
+                    // WO-REJECT-TRACES-01: the trace records per-leg quotes and
+                    // the QuoteFailed sub-etiqueta at the exact gate.
                     let v3_gross_usd = if !can_price_v2 {
-                        self.compute_v3_gross_usd(pool_a, pool_b, probe_amount, &cfg_opt, intent)
+                        trace.stage = crate::reject_traces::TraceStage::Priced;
+                        self.compute_v3_gross_usd(pool_a, pool_b, probe_amount, &cfg_opt, intent, &mut trace)
                             .await
                     } else {
                         V3GrossOutcome::Skipped
@@ -366,6 +377,10 @@ impl DexEngine {
                             // ⇒ !can_price_v2 false or cfg absent) — honest fallback.
                             _ => "no_price_oracle",
                         };
+                        // The rejecting gate IS this V3-quote gate: the dump
+                        // carries the exact stage + per-leg evidence collected
+                        // above (verdict d — dump EXACTLY at the gate).
+                        trace.stage = crate::reject_traces::TraceStage::Priced;
                         let (opp, cand, rp) =
                             build_rejected_opportunity(chain_id, tx_hash, pool_a, pool_b, label);
                         candidates.push(StrategyCandidate {
@@ -378,6 +393,7 @@ impl DexEngine {
                             rejection_reason: Some(reason.to_owned()),
                             source_intent_hash: tx_hash,
                             base_strategy: None,
+                            trace,
                         });
                         continue;
                     }
@@ -412,6 +428,9 @@ impl DexEngine {
                         rejection_reason: None,
                         source_intent_hash: tx_hash,
                         base_strategy: None,
+                        // Slots filled above ride the candidate; the sizing
+                        // gates downstream keep writing into them (E1).
+                        trace,
                     });
                 }
             }
@@ -445,6 +464,7 @@ impl DexEngine {
         probe_amount: U256,
         cfg_opt: &Option<TradingConfigState>,
         intent: &RouteIntent,
+        trace: &mut crate::reject_traces::Trace,
     ) -> V3GrossOutcome {
         let Some(projector) = self.state_projector.as_ref() else {
             return V3GrossOutcome::QuoteUnavailable;
@@ -453,6 +473,15 @@ impl DexEngine {
             return V3GrossOutcome::NoConfig;
         };
 
+        // ADDENDUM (pool_b lag): the probe block is the intent's observed
+        // block — the height this candidate was probed at. The projector's
+        // answer block (oracle_block) is not yet tracked by the in-memory
+        // reserves cache, so it stays None → omitted from the wire (R8:
+        // never zero-filled).
+        if let Some(b) = intent.observed_block_number {
+            trace.probe_block = Some(b as f64);
+        }
+
         // For each V3 pool, get a virtual quote using project_v3_quote.
         // V2 pools: use v2_amount_out with canonical unit reserves (same approximation
         // as compute_spread_v2_only — the real reserves are used by size_optimizer).
@@ -460,18 +489,24 @@ impl DexEngine {
         // a catalog gap (PoolNotCatalogued / PairHasNoV3Pools) is surfaced as
         // V3Labeled(label), only a V2 reserves miss stays QuoteUnavailable.
         let out_a = match self
-            .get_pool_quote(pool_a, probe_amount, projector, intent)
+            .get_pool_quote(pool_a, probe_amount, projector, intent, trace)
             .await
         {
-            Ok(v) => v,
+            Ok(v) => {
+                trace.v3_quote_a = Some(u256_to_f64_lossy(v) / 1e18_f64);
+                v
+            }
             Err(V3QuoteLegError::V3(label)) => return V3GrossOutcome::V3Labeled(label),
             Err(V3QuoteLegError::ReservesMiss) => return V3GrossOutcome::QuoteUnavailable,
         };
         let out_b = match self
-            .get_pool_quote(pool_b, probe_amount, projector, intent)
+            .get_pool_quote(pool_b, probe_amount, projector, intent, trace)
             .await
         {
-            Ok(v) => v,
+            Ok(v) => {
+                trace.v3_quote_b = Some(u256_to_f64_lossy(v) / 1e18_f64);
+                v
+            }
             Err(V3QuoteLegError::V3(label)) => return V3GrossOutcome::V3Labeled(label),
             Err(V3QuoteLegError::ReservesMiss) => return V3GrossOutcome::QuoteUnavailable,
         };
@@ -526,6 +561,7 @@ impl DexEngine {
         probe_amount: U256,
         projector: &StateProjector,
         intent: &RouteIntent,
+        trace: &mut crate::reject_traces::Trace,
     ) -> Result<U256, V3QuoteLegError> {
         // V3 pools: virtual quote via state_projector (checked — label preserved).
         if matches!(pool.protocol_type, ProtocolType::V3) {
@@ -537,11 +573,23 @@ impl DexEngine {
                 token1: pool.token1,
                 fee_bps: pool.fee_bps,
             };
-            projector
+            // WO-REJECT-TRACES-01 (E1): record the QuoteFailed detail as the
+            // sub-etiqueta BEFORE the label flattening — `as_label()` collapses
+            // ProviderUnavailable and QuoteFailed into the same public label,
+            // and the forensics dump needs the root-cause split (truncated to
+            // 120 chars at the serialization gate).
+            match projector
                 .project_v3_quote_checked(&sp_pool, probe_amount, zero_for_one)
                 .await
-                .map(|q| q.amount_out)
-                .map_err(|e| V3QuoteLegError::V3(e.as_label()))
+            {
+                Ok(q) => Ok(q.amount_out),
+                Err(e) => {
+                    if let crate::state_projector::ProjectV3Error::QuoteFailed(detail) = &e {
+                        trace.v3_sublabel = Some(detail.clone());
+                    }
+                    Err(V3QuoteLegError::V3(e.as_label()))
+                }
+            }
         } else {
             // V2 / Curve / Balancer: quote via REAL reserves from the cache.
             // J-5 fix (2026-08-09): `compute_v3_gross_usd` calls this on BOTH
@@ -811,6 +859,7 @@ fn build_accepted_opportunity(
         // pipeline_latency_ms is stamped by the emitter at emit entry.
         detector_id: Some("dex_engine".to_string()),
         pipeline_latency_ms: None,
+        computed_evidence: None,
         detected_at: Utc::now(),
         trace_id,
     };

@@ -2065,6 +2065,7 @@ mod tests {
             rejection_reason: None,
             source_intent_hash: H256::zero(),
             base_strategy: None,
+            trace: crate::reject_traces::Trace::default(),
         }
     }
 
@@ -2640,6 +2641,7 @@ mod tests {
             rejection_reason: None,
             source_intent_hash: H256::zero(),
             base_strategy: None,
+            trace: crate::reject_traces::Trace::default(),
         };
 
         let intent = make_intent(tok_a, tok_b);
@@ -2797,6 +2799,7 @@ mod tests {
             rejection_reason: None,
             source_intent_hash: H256::zero(),
             base_strategy: None,
+            trace: crate::reject_traces::Trace::default(),
         };
 
         let intent = make_intent(tok_a, tok_b);
@@ -3860,6 +3863,7 @@ mod tests {
             rejection_reason: None,
             source_intent_hash: H256::zero(),
             base_strategy: None,
+            trace: crate::reject_traces::Trace::default(),
         }
     }
 

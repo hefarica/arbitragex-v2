@@ -60,6 +60,7 @@ pub fn build_dex_arb_candidate(ctx: &TxContext, swap: &DecodedSwap) -> Opportuni
         // the S2 pattern matcher that built this dex_arb candidate.
         detector_id: Some("patterns".to_string()),
         pipeline_latency_ms: None,
+        computed_evidence: None,
         detected_at: Utc::now(),
         trace_id: Uuid::new_v4(),
     }

@@ -630,6 +630,7 @@ mod tests {
             cartridge_id: None,
             detector_id: None,
             pipeline_latency_ms: None,
+            computed_evidence: None,
             detected_at: chrono::Utc::now(),
             trace_id: Uuid::new_v4(),
         };

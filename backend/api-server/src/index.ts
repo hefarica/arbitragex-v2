@@ -122,6 +122,7 @@ import { mountScoringStatus } from "./routes/scoring-status.js";
 import { mountGoNoGo, buildDefaultLedgerFacts } from "./routes/go-no-go.js";
 import { mountPaperShadowMetrics } from "./routes/paper-shadow-metrics.js";
 import { mountPaperShadowAudit } from "./routes/paper-shadow-audit.js";
+import { mountPoolBLag } from "./routes/forensic-pool-b-lag.js";
 import { mountForkStatus } from "./routes/fork-status.js";
 import { mountRpcRegistry } from "./routes/rpc-registry.js";
 import { mountRpcBackend } from "./routes/rpc-backend.js";
@@ -567,6 +568,8 @@ mountReadinessSteps(app, { pool, redis, logger });
 mountReadinessEvidence(app, { pool, requireAdminToken, adminToken: ARBX_ADMIN_TOKEN, logger });
 registerGatesStatusRoutes(app, { pool, redis, logger });
 mountAgentsStatus(app, { pool, logger });
+// WO-REJECT-TRACES-01 ADDENDUM: pool-B block-lag forensics over rechazos_traces (fail-honest sin_datos).
+mountPoolBLag(app, { pool, logger });
 mountScoringStatus(app, { pool, logger });
 // Web3 safe-gated wallet surface (read-only / paper) + SIWE identity-only auth.
 // HARD INVARIANTS: live OFF, capital_exposed 0, broadcast OFF, no signer/keys

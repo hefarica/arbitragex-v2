@@ -338,6 +338,7 @@ fn clone_for_rejection(
         rejection_reason: None, // caller sets this
         source_intent_hash: base.source_intent_hash,
         base_strategy: Some(base_label),
+        trace: crate::reject_traces::Trace::default(),
     }
 }
 
@@ -374,6 +375,7 @@ fn build_wrapped_candidate(
         rejection_reason: None,
         source_intent_hash: base.source_intent_hash,
         base_strategy: Some(base.label),
+        trace: crate::reject_traces::Trace::default(),
     }
 }
 
@@ -415,6 +417,7 @@ mod tests {
             cartridge_id: None,
             detector_id: None,
             pipeline_latency_ms: None,
+            computed_evidence: None,
             detected_at: Utc::now(),
             trace_id: Uuid::new_v4(),
         }
@@ -493,6 +496,7 @@ mod tests {
             rejection_reason: rejection,
             source_intent_hash: H256::zero(),
             base_strategy: None,
+            trace: crate::reject_traces::Trace::default(),
         }
     }
 

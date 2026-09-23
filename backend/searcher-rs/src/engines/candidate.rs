@@ -52,4 +52,10 @@ pub struct StrategyCandidate {
     /// `None` unless this candidate wraps a base strategy in a flashloan.
     /// Phase 10: set by `FlashloanEngine`. Always `None` from other engines.
     pub base_strategy: Option<StrategyLabel>,
+    /// WO-REJECT-TRACES-01 (E1): flat forensics slots, written point by
+    /// point at each gate (zero alloc per gate — the candidate owns the
+    /// slots from construction; gates mutate them in place). Serialized
+    /// ONCE at rejection by `reject_traces::finalize`. Accepted candidates
+    /// carry it unused (viable rows never get an evidence block).
+    pub trace: crate::reject_traces::Trace,
 }

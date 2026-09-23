@@ -151,14 +151,16 @@ pub async fn insert_opportunity_with_route(
             expected_profit_usd, net_expected_profit_usd, roi_pct, risk_score,
             block_number, status, rejection_reason, trace_id, detected_at,
             route_metadata, cartridge_id,
-            detector_id, pipeline_latency_ms
+            detector_id, pipeline_latency_ms,
+            computed_evidence
         ) VALUES (
             $1, $2, $3, $4, $5, $6,
             $7, $8, $9,
             $10, $11, $12, $13,
             $14, $20, $15, $16, $17,
             $18, $19,
-            $21, $22
+            $21, $22,
+            $23
         )
         ON CONFLICT (id) DO NOTHING
         "#,
@@ -187,6 +189,9 @@ pub async fn insert_opportunity_with_route(
     // latency (migration 121). Both NULL-able — legacy rows carry None (R8).
     .bind(o.detector_id.as_deref())
     .bind(o.pipeline_latency_ms.map(|m| m as i64))
+    // WO-REJECT-TRACES-01 (E1, migration 122): the SAME `serde_json::Value`
+    // built once by `reject_traces::finalize` — NULL for viable rows (R8).
+    .bind(o.computed_evidence.as_ref())
     .execute(pool)
     .await
     .context("insert opportunity")?;
@@ -202,6 +207,28 @@ pub async fn insert_opportunity_with_route(
     if result.rows_affected() > 0 {
         crate::metrics::PIPELINE_LAST_OPPORTUNITY_INSERT_UNIXTIME
             .set(chrono::Utc::now().timestamp());
+        // WO-REJECT-TRACES-01 (E1): second sink — the forensic dump row for
+        // rechazos_traces, derived from the SAME `Value` bound above (V2
+        // byte-equality by construction). Only when the row actually landed
+        // (a duplicate must not dump twice); best-effort, counted, never
+        // gating the opportunities write.
+        if let (Some(reason), Some(ev)) = (o.rejection_reason.as_deref(), o.computed_evidence.as_ref()) {
+            if let Ok(bytes) = serde_json::to_vec(ev) {
+                let trace_hash = crate::reject_traces::trace_hash(&bytes);
+                let evidence = String::from_utf8(bytes).unwrap_or_default();
+                crate::reject_traces::submit(crate::reject_traces::RejectTraceRow {
+                    opp_id: o.id,
+                    trace_id: o.trace_id,
+                    chain_id: o.chain_id as i64,
+                    strategy_kind: o.strategy_kind.as_str().to_string(),
+                    rejection_reason: reason.to_string(),
+                    detected_at: o.detected_at,
+                    evidence,
+                    trace_hash,
+                    pipeline_latency_ms: o.pipeline_latency_ms.map(|m| m as i64),
+                });
+            }
+        }
     }
     Ok(())
 }

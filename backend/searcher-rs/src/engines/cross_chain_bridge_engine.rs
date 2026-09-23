@@ -327,6 +327,7 @@ impl CrossChainBridgeEngine {
             // WO-CARDS-COMPLETE-01 (2026-09-17): detector identity at construction.
             detector_id: Some("cross_chain_bridge_engine".to_string()),
             pipeline_latency_ms: None,
+            computed_evidence: None,
             detected_at: Utc::now(),
             trace_id,
         };
@@ -395,6 +396,7 @@ impl CrossChainBridgeEngine {
             rejection_reason: None,
             source_intent_hash: tx_hash,
             base_strategy: None,
+            trace: crate::reject_traces::Trace::default(),
         }
     }
 

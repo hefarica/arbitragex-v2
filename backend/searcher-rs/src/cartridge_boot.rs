@@ -1206,6 +1206,7 @@ pub async fn active_evaluate_and_emit(
                     // canonical cartridge identity), stamped at construction.
                     detector_id: Some(cartridge_id.clone()),
                     pipeline_latency_ms: None,
+                    computed_evidence: None,
                     detected_at: chrono::Utc::now(),
                     trace_id: Uuid::new_v4(), // Generate new trace ID for cartridge path
                 };
@@ -1426,6 +1427,7 @@ pub async fn active_evaluate_and_emit(
                     rejection_reason: None,
                     source_intent_hash: intent.tx_hash,
                     base_strategy: None,
+                    trace: crate::reject_traces::Trace::default(),
                 };
 
                 // ── C.1: run SizeOptimizer BEFORE the gates ───────────────────

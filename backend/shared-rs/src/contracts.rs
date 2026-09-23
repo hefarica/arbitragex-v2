@@ -106,6 +106,17 @@ pub struct Opportunity {
     /// span is negative (clock step guard, R8).
     #[serde(default)]
     pub pipeline_latency_ms: Option<u64>,
+    /// WO-REJECT-TRACES-01 (E1, 2026-09-18): unified rejection forensics —
+    /// the SINGLE serialized evidence block for rejected rows, built once at
+    /// `searcher_rs::reject_traces::finalize` (the only serialization site).
+    /// The SAME `serde_json::Value` is bound to this column AND to the
+    /// `rechazos_traces` forensic table — no second format, ever.
+    /// `None` for viable rows (their numeric columns ARE their evidence) and
+    /// for pre-column historic rows (R8 — never backfilled, RULE 00).
+    /// Wire contract (frozen in E1): every field is a number or a closed
+    /// envelope {"estado", "razon"} — never a raw null.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub computed_evidence: Option<serde_json::Value>,
     pub detected_at: DateTime<Utc>,
     pub trace_id: Uuid,
 }

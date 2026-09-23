@@ -132,6 +132,7 @@ impl SvsEngine {
             rejection_reason: None,
             source_intent_hash: H256::zero(),
             base_strategy: None,
+            trace: crate::reject_traces::Trace::default(),
         })
     }
 }

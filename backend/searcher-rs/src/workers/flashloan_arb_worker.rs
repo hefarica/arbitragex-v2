@@ -1095,6 +1095,7 @@ impl FlashloanArbWorker {
                     // WO-CARDS-COMPLETE-01 (2026-09-17): detector identity at construction.
                     detector_id: Some("flashloan_arb_worker".to_string()),
                     pipeline_latency_ms: None,
+                    computed_evidence: None,
                     detected_at: Utc::now(),
                     trace_id: Uuid::new_v4(),
                 };
