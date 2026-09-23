@@ -93,8 +93,11 @@ describe("QuarantinedEventsAuditTrail (§31)", () => {
     expect(html).toContain("trace-abcd…"); // source (short form, 10 chars)
     expect(html).toContain("dex_arb"); // strategy
     expect(html).toContain("uniswap-v2 → sushiswap"); // route
-    // block + profit violations as §30 codes
-    expect(html).toContain("missing_block · profit_not_numeric");
+    // block + profit violations as §30 codes. §30 #2 (t_2f8a1e57): this row is
+    // REJECTED (rejection_reason set) — a block is NOT expected on the mempool
+    // path, so missing_block must not fire; only the real profit code shows.
+    expect(html).toContain("profit_not_numeric");
+    expect(html).not.toContain("missing_block");
     // the clean row's id is not listed
     expect(html).not.toContain('key="1"');
   });

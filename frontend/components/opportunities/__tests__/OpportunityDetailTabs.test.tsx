@@ -293,6 +293,8 @@ describe("OpportunityDetailTabs (§37)", () => {
   });
 
   it("Gates: backend verdicts render — rejection, §30 violations, target verdict", () => {
+    // §30 #2 (t_2f8a1e57): a REJECTED row without block carries only its real
+    // codes — missing_block is reserved for rows where a block IS expected.
     const quarantined = mapToOmniOpportunity(
       wire({
         route_metadata: rm2hop,
@@ -304,7 +306,21 @@ describe("OpportunityDetailTabs (§37)", () => {
     const html = tab(quarantined, "gates");
     expect(html).toContain("cartridge_gate:addr");
     expect(html).toContain("QUARANTINED");
-    expect(html).toContain("missing_block · profit_not_numeric");
+    expect(html).toContain("profit_not_numeric");
+    expect(html).not.toContain("missing_block");
+
+    // A DETECTED row without block IS a §30 violation (block expected), and
+    // keeps the multi-code join rendering.
+    const detectedQuarantined = mapToOmniOpportunity(
+      wire({
+        route_metadata: rm2hop,
+        block_number: undefined,
+        net_expected_profit_usd: "oops",
+      }),
+    );
+    expect(tab(detectedQuarantined, "gates")).toContain(
+      "missing_block · profit_not_numeric",
+    );
 
     const clean = tab(rich(), "gates");
     expect(clean).toContain("0 (validación limpia)");
