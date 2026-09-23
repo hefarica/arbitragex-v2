@@ -205,7 +205,7 @@ function OpportunityTradeCardImpl({
   const sourceSymbol =
     opp.token_in_info?.symbol ?? opp.token_in_info?.registry_symbol ?? shortAddr(opp.token_in);
   const agoText = isMounted && opp.detected_at != null ? formatAgo(opp.detected_at) : null;
-  const sourceFreshness = freshnessLevel(isMounted ? ageSecs : null);
+  const sourceFreshness = freshnessLevel(isMounted ? lastAgeSecs : null);
 
   // End-of-route value: capital + net (SIM path). Honest only when both known.
   const endValueUsd: number | null =
