@@ -47,7 +47,8 @@ credential sources, and the environment traps are all captured here and in the t
   `C:\Users\HFRC\Desktop\arbitragex_v2_productivo_full`.
 - **Current truth** (keep updated): paper-shadow infra is healthy; the audit doc dated 2026-06-14 is
   mostly STALE. The real blockers and what's done/pending are in the runbook §"Paper-shadow truth".
-- **Two deploy planes**: (a) CODE via CI/CD — `deploy-vps.yml` (manual `workflow_dispatch`, gated);
+- **Two deploy planes**: (a) CODE via CI/CD — `auto-deploy-vps.yml` (push:main + manual
+  `workflow_dispatch`; the June-2026 `deploy-vps.yml` fossil was retired 2026-09-23);
   (b) SECRETS via the Excel `.env Production` sheet → `RunFullSyncCycle` macro → VPS `.env`.
 
 ## 10-item delivery format (use for every substantial deliverable)

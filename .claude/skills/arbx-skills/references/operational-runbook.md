@@ -68,16 +68,21 @@ max_value_eth=0.0` fail-closed) — from ONBOARDING §3b/§3c verbatim, paper-sa
 
 ---
 
-## 3. CODE deploy — via CI/CD (`deploy-vps.yml`)
+## 3. CODE deploy — via CI/CD (`auto-deploy-vps.yml`)
 
-- **Canonical path. Manual only** (`workflow_dispatch`; the `push:[main]` auto-trigger was REMOVED
-  2026-06-06 — "no deploy without explicit operator OK"). Trigger:
-  `gh workflow run deploy-vps.yml --repo hefarica/arbitragex-v2 -f reason="..."`.
-- **What it does on the VPS**: `git fetch origin main` → `git reset --hard origin/main` →
-  `docker compose -f docker/compose.prod.yml pull` → `up -d --build --remove-orphans` → in-VPS
-  healthcheck `curl localhost:8080/health` (15×6s). Full Rust `--release` rebuild on cold cache can
-  hit ~45m; warm ~10-16m. `git reset --hard` keeps UNTRACKED files (operator WIP survives); `.env`
-  is gitignored so secrets/oracles survive; the DB (decimals) survives.
+- **Canonical path: `auto-deploy-vps.yml` ("Auto-Deploy VPS (Post-E2E)")** — triggers on
+  `push:[main]` AND manual `workflow_dispatch`. The June-2026 `deploy-vps.yml` fossil was RETIRED
+  2026-09-23 (its bare `docker compose -f ... pull` lacked `--env-file` → died on DATABASE_URL
+  interpolation; RULE 04). Trigger manual:
+  `gh workflow run auto-deploy-vps.yml --repo hefarica/arbitragex-v2`.
+- **What it does**: wait-for-gates (same-SHA checks incl. CodeQL) → hardened SSH script
+  (`--env-file .env` on every compose call, RULE 04) → per-service `build --no-cache` + up →
+  in-VPS healthchecks → G4 DEPLOY-VERAZ assertion (VPS `git rev-parse HEAD` == run SHA) →
+  publishes evidence; auto-restores the previous stack on failure. Concurrency group
+  `production-vps` serializes runs (queued, never cancelled mid-run).
+- **Do NOT merge to main while a deploy run is in flight** — the VPS pulls the newer main and the
+  G4 assertion fails (POST-DEPLOY DRIFT, deploy technically succeeds but check goes red; cure =
+  let the newest push run finish).
 - **Merge gate**: PR auto-merge is DISABLED on the repo → wait for CI green, then
   `gh pr merge <N> --merge`. CI must be 100% green first (see CI gotchas).
 - **A separate mechanism advances the VPS git ref to main without rebuilding** (HEAD moves but images
