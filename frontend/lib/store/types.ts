@@ -809,8 +809,14 @@ export function validateOpportunitySemantics(opp: OmniOpportunity): SemanticViol
   }
 
   // Block context (the wire SELECTs block_number — absent means the row never
-  // anchored itself to a block).
-  if (opp.block_number == null) v.push("missing_block");
+  // anchored itself to a block). §30: the mark is reserved for rows where a
+  // block IS expected by the contract — viable/detected (no rejection_reason).
+  // Rejected rows from the mempool path (route_intent source != NewBlock,
+  // observed_block() = None by design) legitimately carry no block — that is
+  // fail-honest shape, not data quarantine — and must NOT trip the §30 banner.
+  if (opp.block_number == null && opp.rejection_reason == null) {
+    v.push("missing_block");
+  }
 
   // Profit numerics: PRESENT values must be finite. null = not computed (R8),
   // never a violation.

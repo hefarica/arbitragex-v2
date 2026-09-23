@@ -110,6 +110,43 @@ describe("validateOpportunitySemantics (§30)", () => {
     );
   });
 
+  // §30 #2 (t_2f8a1e57): a rejected row with block_number NULL is legitimate
+  // fail-honest shape — the mempool path (route_intent source != NewBlock)
+  // never anchors a block by design, and the live feed exposes rejected rows
+  // for transparency (CARDS-MIRROR-01, viable_only=false default). The §30
+  // banner is reserved for rows where a block IS expected (detected/viable).
+  it("missing_block does NOT fire on rejected rows without block (§30 mempool path)", () => {
+    const rejected = mk({
+      status: "rejected",
+      rejection_reason: "v3_quote_unavailable", // real mempool-path reason
+      block_number: undefined,
+    });
+    expect(rejected.rejection_reason).toBe("v3_quote_unavailable");
+    expect(rejected.block_number).toBeNull();
+    expect(rejected.semantic_violations).not.toContain("missing_block");
+    // Direct call agrees (same viewmodel, same verdict).
+    expect(validateOpportunitySemantics(rejected)).not.toContain(
+      "missing_block",
+    );
+  });
+
+  it("missing_block DOES fire on detected/viable rows without block (§30 contract)", () => {
+    // A detected row carries no rejection_reason → block IS expected.
+    const detected = mk({
+      status: "detected",
+      rejection_reason: undefined,
+      block_number: undefined,
+    });
+    expect(detected.rejection_reason).toBeNull();
+    expect(detected.semantic_violations).toContain("missing_block");
+    // A rejected row WITH a block is anchored — irrelevant here, but the mark
+    // must never fire on it either way (block present).
+    expect(
+      mk({ status: "rejected", rejection_reason: "r", block_number: 123 })
+        .semantic_violations,
+    ).not.toContain("missing_block");
+  });
+
   it("profit_not_numeric fires on present-but-non-finite profit", () => {
     // Wire vector: string payload → Number("oops") = NaN → present, not finite.
     expect(
