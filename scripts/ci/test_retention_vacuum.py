@@ -202,8 +202,12 @@ class RollupZeroFill(unittest.TestCase):
                        capture_output=True, timeout=30, check=True)
 
     def sql(self, statement: str) -> subprocess.CompletedProcess[str]:
+        # SIN -q (misma lección que psql_batch en pg_retention.sh): quiet suprime
+        # los command tags ("INSERT 0 n") y los asserts de zero-fill/idempotencia
+        # los exigen visibles. -t ya suprime footers: los asserts de SELECT
+        # (rows-only) no cambian de comportamiento.
         return subprocess.run(DOCKER + ["exec", self.container, "psql", "-U", "postgres",
-            "-d", "arbitragex", "-X", "-qAt", "-v", "ON_ERROR_STOP=1",
+            "-d", "arbitragex", "-X", "-At", "-v", "ON_ERROR_STOP=1",
             "-c", statement], text=True, capture_output=True, timeout=20)
 
     def setUp(self) -> None:
