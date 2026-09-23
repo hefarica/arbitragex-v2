@@ -127,6 +127,15 @@ pub struct CartridgeRunner {
     host_ctx: HostContext,
 }
 
+/// Decodes the host `base_fee_gwei` atomic into gwei. The atomic stores
+/// MILLI-gwei (wei/1e6) — see `GasBlockSink.publish_head` in block_scanner.rs
+/// ("get_base_fee() decodes the atomic as gwei×1000"). CORE-01/MATH-01
+/// (t_26eaafc3): single decode site for the §IV math-evidence path — it was
+/// ÷1e9 in cartridge_boot (1e6× off) and hardcoded 0.0 in the orchestrator.
+pub fn decode_milligwei_to_gwei(milli_gwei: u64) -> f64 {
+    milli_gwei as f64 / 1e3
+}
+
 impl CartridgeRunner {
     /// Creates a new `CartridgeRunner` with the given host context.
     ///
@@ -419,6 +428,16 @@ impl CartridgeRunner {
         self.host_ctx.base_fee_gwei.clone()
     }
 
+    /// Head gas price in gwei, decoded from the milli-gwei atomic (÷1e3).
+    /// CORE-01/MATH-01 (t_26eaafc3): single decode site for the §IV math-evidence
+    /// path — `GasBlockSink.publish_head` stores wei/1e6 (milli-gwei; see
+    /// block_scanner.rs `get_base_fee()` "gwei×1000" note). The same atomic used
+    /// to be decoded ÷1e9 in cartridge_boot (1e6× off) and hardcoded 0.0 in the
+    /// orchestrator; both now go through here so the factor can never diverge.
+    pub fn host_gas_price_gwei(&self) -> f64 {
+        self.host_ctx.base_fee_gwei.load(std::sync::atomic::Ordering::Relaxed) as f64 / 1e3
+    }
+
     /// Reads a pool's reserves from Redis using the SAME key + shape as the
     /// `get_reserves` host binding (`arbx:pool_reserves:{chain}:{pool_lower}`).
     /// Used by the orchestrator shadow path to enrich `pool_data.reserves_source`
@@ -667,6 +686,27 @@ fn dynamic_to_json_value(val: &Dynamic) -> serde_json::Value {
 mod tests {
     use super::*;
     use std::sync::atomic::AtomicU64;
+
+    /// CORE-01/MATH-01 (t_26eaafc3) — the §IV gas decode MUST read the host
+    /// atomic as MILLI-gwei (÷1e3, the GasBlockSink.publish_head convention:
+    /// wei/1e6). The pre-fix cartridge_boot decode was ÷1e9 (1e6× off) and the
+    /// orchestrator path hardcoded 0.0 — this test pins the single decode site
+    /// used by both call sites (`decode_milligwei_to_gwei`).
+    #[test]
+    fn core01_milligwei_decode() {
+        // Writer convention: 30 gwei base fee → 30000 milli-gwei in the atomic
+        // (matches make_test_host_ctx's `base_fee_gwei: AtomicU64::new(30_000)`).
+        assert!((decode_milligwei_to_gwei(30_000) - 30.0).abs() < f64::EPSILON);
+
+        // Regression guards: the two wrong decodes this fix replaces.
+        assert!((decode_milligwei_to_gwei(30_000) - 30.0e-6).abs() > 1e-9); // was ÷1e9
+        assert_ne!(decode_milligwei_to_gwei(30_000), 0.0); // orchestrator was 0.0
+
+        // Fractional milli-gwei survives the decode (wei resolution 1e-6 gwei).
+        assert!((decode_milligwei_to_gwei(30_001) - 30.001).abs() < f64::EPSILON);
+        // Zero stays honest zero (R8).
+        assert_eq!(decode_milligwei_to_gwei(0), 0.0);
+    }
 
     #[allow(dead_code)]
     fn make_test_host_ctx() -> HostContext {
