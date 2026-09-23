@@ -448,6 +448,22 @@ impl Orchestrator {
             let strategy_kind = format!("{:?}", intent.router_kind);
             let pools: Vec<Address> = intent.legs.iter().filter_map(|leg| leg.pool_hint).collect();
             if !pools.is_empty() {
+                // CORE-01/MATH-01 fix (2026-09-24): the §IV evidence previously
+                // received gas_price_gwei=0.0 ("not carried in RouteIntent yet"),
+                // making every gas-sensitive operator (op_15/op_21/op_26) compute
+                // with free gas. Propagate the REAL head base fee + block number
+                // from the cartridge HostContext atomics — the same source the
+                // cartridge path uses (milli-gwei stored; decode ÷1e3 via
+                // host_gas_price_gwei).
+                let (gas_price_gwei, block_number) = match self.ctx.cartridge_runner.as_ref() {
+                    Some(runner) => {
+                        let head = runner
+                            .host_block_number_handle()
+                            .load(std::sync::atomic::Ordering::Relaxed);
+                        (runner.host_gas_price_gwei(), head)
+                    }
+                    None => (0.0, 0), // R8 fail-honest: no runner → no head data
+                };
                 tokio::spawn(async move {
                     crate::math_evidence::evaluate_math_evidence(
                         &reserves_cache,
@@ -456,9 +472,9 @@ impl Orchestrator {
                         &mut math_redis,
                         &pools,
                         chain_id,
-                        0.0, // gas_price_gwei — not carried in RouteIntent yet (observe-only)
-                        0,   // block_number — not carried in RouteIntent yet
-                        0,   // block_timestamp — not carried in RouteIntent yet
+                        gas_price_gwei,
+                        block_number,
+                        0, // block_timestamp — still not carried on the intent (observe-only)
                         std::collections::HashMap::new(),
                         &strategy_kind,
                     )

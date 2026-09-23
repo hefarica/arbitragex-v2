@@ -1241,11 +1241,10 @@ pub async fn active_evaluate_and_emit(
                         let block_number = runner_ev
                             .host_block_number_handle()
                             .load(std::sync::atomic::Ordering::Relaxed);
-                        let base_fee_gwei = (runner_ev
-                            .host_base_fee_handle()
-                            .load(std::sync::atomic::Ordering::Relaxed)
-                            as f64)
-                            / 1e9;
+                        // CORE-01/MATH-01 (t_26eaafc3): the host atomic stores
+                        // MILLI-gwei (wei/1e6, see GasBlockSink.publish_head) —
+                        // decode ÷1e3, not ÷1e9 (1e6× off before this fix).
+                        let base_fee_gwei = runner_ev.host_gas_price_gwei();
                         crate::math_evidence::publish_declared_combo_evidence(
                             &reserves_ev,
                             &registry_ev,
