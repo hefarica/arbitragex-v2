@@ -435,7 +435,10 @@ impl CartridgeRunner {
     /// to be decoded ÷1e9 in cartridge_boot (1e6× off) and hardcoded 0.0 in the
     /// orchestrator; both now go through here so the factor can never diverge.
     pub fn host_gas_price_gwei(&self) -> f64 {
-        self.host_ctx.base_fee_gwei.load(std::sync::atomic::Ordering::Relaxed) as f64 / 1e3
+        self.host_ctx
+            .base_fee_gwei
+            .load(std::sync::atomic::Ordering::Relaxed) as f64
+            / 1e3
     }
 
     /// Reads a pool's reserves from Redis using the SAME key + shape as the

@@ -474,11 +474,11 @@ impl Orchestrator {
                         chain_id,
                         gas_price_gwei,
                         block_number,
-                        0,   // block_timestamp — still not carried on the intent (observe-only)
+                        0, // block_timestamp — still not carried on the intent (observe-only)
                         std::collections::HashMap::new(),
                         &strategy_kind,
                     )
-                        .await;
+                    .await;
                 });
             }
         }
