@@ -139,7 +139,8 @@ contract DeterministicFactory {
     // WEB3-08 note (2026-09-24): deploy() is intentionally permissionless —
 // a public CREATE2 factory is infrastructure, not a privileged endpoint.
 // Salt squatting is accepted by design (namespace = chainId+contractName;
-// a squatted name only prevents THAT deployment, steals nothing).\n    function deploy(bytes memory _bytecode, uint256 _chainId, string memory _contractName)
+// a squatted name only prevents THAT deployment, steals nothing).
+    function deploy(bytes memory _bytecode, uint256 _chainId, string memory _contractName)
         external
         returns (address deployed)
     {
