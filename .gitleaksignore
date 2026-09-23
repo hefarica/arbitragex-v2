@@ -6,3 +6,6 @@
 # en 028491b7, pero el fingerprint vive en el commit de introduccion
 # (0fc286f0) y el escaneo por rango lo sigue viendo. No es un secreto.
 0fc286f0675bd4e3877f4da96c4065e3dca79553:audits/omniscience-integration-2026-09-06/WO-14-DESIGN.md:generic-api-key:213
+
+# SEC-01: DSN postgres://arbx_rw:... ya ELIMINADO del archivo actual
+d7f9c6d3:backend/api-server/inject-trigger.mjs:generic-api-key:3

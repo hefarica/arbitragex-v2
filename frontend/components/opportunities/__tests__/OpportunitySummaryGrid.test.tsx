@@ -74,7 +74,7 @@ describe("OpportunitySummaryGrid (§36)", () => {
     expect(html).toContain("$10.50"); // Gross
     expect(html).toContain("$8.25"); // Net
     expect(html).toContain("12"); // bps = 0.12% × 100
-    expect(html).toContain("0.34"); // Risk
+    expect(html).toContain("34.0%"); // Risk
     expect(html).toContain("$4500.00"); // in (simulated USD)
     expect(html).toContain("~$7.90"); // Sim VALUE
   });
@@ -163,7 +163,7 @@ describe("OpportunitySummaryGrid (§36)", () => {
     expect(html).toContain("$10.50");
     expect(html).toContain("$8.25");
     expect(html).toContain("12"); // bps
-    expect(html).toContain("0.34");
+    expect(html).toContain("34.0%");
     expect(html).toContain("$4500.00");
     expect(html).toContain("~$7.90");
     expect(html).not.toContain(NOT_COMPUTED); // full data row never shows the placeholder
