@@ -576,17 +576,30 @@ impl GeckoTerminalOracle {
         let mut pipe = redis::pipe();
         pipe.atomic();
         let mut written = 0usize;
+        let mut written_syms: Vec<String> = Vec::new();
         for (sym, price) in prices {
             if !(price.is_finite() && *price > 0.0) {
                 continue;
             }
             pipe.hset(&key, sym, format!("{price}")).ignore();
+            written_syms.push(sym.clone());
             written += 1;
         }
         if written == 0 {
             return Ok(0);
         }
         pipe.expire(&key, ttl_secs).ignore();
+        // WO-PRICE-EXCHANGE-V1: per-token (source, ts) sidecar in the SAME
+        // atomic pipeline — feeds the api-server delta engine (source-switch
+        // detection). No consumer is required; missing meta = "unknown" there.
+        shared_rs::price_oracle::append_meta_sidecar(
+            &mut pipe,
+            chain_id,
+            "geckoterminal",
+            chrono::Utc::now().timestamp_millis(),
+            &written_syms,
+            ttl_secs,
+        );
         // G-PRICE-1: notify subscribers (api-server prices-stream bridge) in the
         // same atomic pipeline — the receiver re-reads the hash for the data.
         pipe.cmd("PUBLISH")

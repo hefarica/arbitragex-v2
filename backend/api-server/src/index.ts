@@ -1842,7 +1842,10 @@ const convergenceSubscriber = subscribeToConvergenceSignals(io, REDIS_URL);
 // STARTED, so `prices:update` never fired (snapshots worked; pushes didn't —
 // L4 caught it). Dedicated subscriber connection + its own command client,
 // exactly like the convergence/cartridge bridges above.
-const priceUpdatesSubscriber = subscribeToPriceUpdates(io, REDIS_URL);
+// WO-PRICE-EXCHANGE-V1: the bridge now also drives the in-process delta
+// mirror (`price_delta` frames) and the OHLC 1-min write-behind into
+// `price_history` (migration 122) when DATABASE_URL is present.
+const priceUpdatesSubscriber = subscribeToPriceUpdates(io, REDIS_URL, { pool });
 
 // FASE OMEGA — puente Redis Pub/Sub → WebSocket para la telemetría de cartuchos
 // (`log_quantum` del motor Rhai en Rust). Misma postura fail-honest que convergencia.

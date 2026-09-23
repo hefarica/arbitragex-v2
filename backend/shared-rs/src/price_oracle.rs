@@ -297,6 +297,55 @@ pub fn prices_updated_channel(chain_id: u64) -> String {
     format!("arbx:prices:updated:{chain_id}")
 }
 
+/// WO-PRICE-EXCHANGE-V1 — sidecar hash key holding per-token write metadata
+/// for the api-server delta engine. Hash schema: field = symbol (same casing
+/// the writer uses for the price hash), value = JSON
+/// `{"source":"dexscreener","ts":<unix_ms>}`.
+///
+/// No consumer is REQUIRED: readers that don't know this key are unaffected
+/// (zero breakage), and the api-server treats a missing field as
+/// `source: "unknown"` (fail-honest, never fabricated).
+///
+/// Writers wired today: token-enricher `dexscreener` + `geckoterminal_tier`.
+/// `searcher-rs price_worker` wiring is PENDING: that file is under concurrent
+/// edit by another builder (WO-PRICE-EXCHANGE-V1 no-touch constraint); its
+/// owner should add the same `append_meta_sidecar(...)` call inside
+/// `persist_prices`'s pipeline with `source = "price_worker"`.
+pub fn token_prices_meta_key(chain_id: u64) -> String {
+    format!("arbx:token_prices:meta:{chain_id}")
+}
+
+/// Serialize one sidecar meta field value. `ts_ms` is the writer's wall-clock
+/// unix-milliseconds at write time (chrono `Utc::now().timestamp_millis()`).
+pub fn token_price_meta_value(source: &str, ts_ms: i64) -> String {
+    serde_json::json!({ "source": source, "ts": ts_ms }).to_string()
+}
+
+/// Append the WO-PRICE-EXCHANGE-V1 sidecar writes to an EXISTING atomic price
+/// pipeline: per-symbol metadata HSETs into `arbx:token_prices:meta:<chain>`
+/// plus the same EXPIRE the caller applies to the price hash (the two hashes
+/// must age together — Redis < 7.4 has no per-field TTL). Callers MUST invoke
+/// this with exactly the symbols they HSET into the price hash, inside the
+/// same MULTI/EXEC pipeline, before `query_async`.
+pub fn append_meta_sidecar(
+    pipe: &mut redis::Pipeline,
+    chain_id: u64,
+    source: &str,
+    ts_ms: i64,
+    symbols: &[String],
+    ttl_secs: i64,
+) {
+    if symbols.is_empty() {
+        return;
+    }
+    let meta_key = token_prices_meta_key(chain_id);
+    let value = token_price_meta_value(source, ts_ms);
+    for sym in symbols {
+        pipe.hset(&meta_key, sym, &value).ignore();
+    }
+    pipe.expire(&meta_key, ttl_secs).ignore();
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -607,5 +656,50 @@ mod tests {
         assert_eq!(oracle.price_usd("BAD2"), None);
         assert_eq!(oracle.price_usd("BAD3"), None);
         assert_eq!(oracle.price_usd("BAD4"), None);
+    }
+
+    // ── WO-PRICE-EXCHANGE-V1 — meta sidecar ─────────────────────────────
+
+    #[test]
+    fn meta_sidecar_key_matches_wire_contract() {
+        assert_eq!(token_prices_meta_key(1), "arbx:token_prices:meta:1");
+        assert_eq!(token_prices_meta_key(42161), "arbx:token_prices:meta:42161");
+    }
+
+    #[test]
+    fn meta_sidecar_value_shape_is_source_plus_unix_ms_ts() {
+        let v = token_price_meta_value("dexscreener", 1_789_724_513_297i64);
+        let parsed: serde_json::Value = serde_json::from_str(&v).expect("valid JSON");
+        assert_eq!(parsed["source"], "dexscreener");
+        assert_eq!(parsed["ts"], 1_789_724_513_297i64);
+        // Exact two-field shape — no extra keys the delta engine would ignore.
+        assert_eq!(parsed.as_object().map(|o| o.len()), Some(2));
+    }
+
+    #[test]
+    fn append_meta_sidecar_encodes_hsets_and_expire() {
+        // Verify the appended commands carry the right key/field/value WITHOUT
+        // a live Redis: encode the pipeline and inspect the RESP bytes.
+        let mut pipe = redis::pipe();
+        pipe.atomic();
+        let symbols = vec!["WETH".to_string(), "UNI".to_string()];
+        append_meta_sidecar(&mut pipe, 1, "geckoterminal", 42_000, &symbols, 60);
+        let encoded = pipe.get_packed_pipeline();
+        let s = String::from_utf8_lossy(&encoded).to_string();
+        assert!(s.contains("arbx:token_prices:meta:1"), "meta key present: {s}");
+        assert!(s.contains("WETH"));
+        assert!(s.contains("UNI"));
+        assert!(s.contains("geckoterminal"));
+        assert!(s.contains("42000"));
+        assert!(s.to_uppercase().contains("EXPIRE"), "TTL refresh present");
+    }
+
+    #[test]
+    fn append_meta_sidecar_noop_on_empty_symbols() {
+        let mut pipe = redis::pipe();
+        pipe.atomic();
+        append_meta_sidecar(&mut pipe, 1, "dexscreener", 1, &[], 60);
+        let s = String::from_utf8_lossy(&pipe.get_packed_pipeline()).to_string();
+        assert!(!s.contains("arbx:token_prices:meta"), "no meta writes: {s}");
     }
 }
