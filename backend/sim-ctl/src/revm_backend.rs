@@ -264,10 +264,7 @@ fn translate_result(
             revert_risk_pct: None, // SIM-09: fabricated — no risk model computes this
             simulated_profit_usd: None,
             simulator: SimulatorKind::Revm,
-            fail_reason: Some(format!(
-                "revm_reverted: {}",
-                truncate_chars(&reason, 200)
-            )),
+            fail_reason: Some(format!("revm_reverted: {}", truncate_chars(&reason, 200))),
             simulated_at: Utc::now(),
             trace_id,
         },

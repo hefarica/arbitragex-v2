@@ -456,7 +456,11 @@ impl Orchestrator {
             // publish_declared_combo_evidence — STRAT-IDENT-01; unchanged.)
             let strategy_kind = {
                 let dbg = format!("{:?}", intent.router_kind);
-                if dbg.contains("Liquid") || dbg.contains("Lending") || dbg.contains("Aave") || dbg.contains("Compound") {
+                if dbg.contains("Liquid")
+                    || dbg.contains("Lending")
+                    || dbg.contains("Aave")
+                    || dbg.contains("Compound")
+                {
                     "liquidation".to_string()
                 } else {
                     // Every DEX router family (UniswapV2/V3, Curve, Balancer,

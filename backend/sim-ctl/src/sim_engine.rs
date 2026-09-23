@@ -260,9 +260,7 @@ fn compute_slippage(opp: &Opportunity, actual_out: Option<U256>) -> Option<f64> 
         // Cross-decimal pair: the raw-unit ratio is meaningless (R8).
         debug!(
             event = "sim.slippage_cross_decimals_not_computable",
-            dec_in,
-            dec_out,
-            "returning None (honest) — needs quote-based slippage (S6)"
+            dec_in, dec_out, "returning None (honest) — needs quote-based slippage (S6)"
         );
         return None;
     }

@@ -280,7 +280,10 @@ mod tests {
     #[test]
     fn desired_state_parse_roundtrip() {
         assert_eq!(DesiredState::parse("enabled"), Some(DesiredState::Enabled));
-        assert_eq!(DesiredState::parse("DISABLED"), Some(DesiredState::Disabled));
+        assert_eq!(
+            DesiredState::parse("DISABLED"),
+            Some(DesiredState::Disabled)
+        );
         assert_eq!(DesiredState::parse("off"), Some(DesiredState::Disabled));
         assert_eq!(DesiredState::parse(""), None);
         assert_eq!(DesiredState::parse("maybe"), None);
@@ -299,8 +302,13 @@ mod tests {
         assert_eq!(ok.actor, "operator");
 
         // vacío / desired inválido / sin chain → None (fail-closed)
-        assert!(ControlCommand::parse(r#"{"chain_id":1,"cartridge_id":"","desired":"disabled"}"#).is_none());
-        assert!(ControlCommand::parse(r#"{"chain_id":1,"cartridge_id":"x","desired":"zap"}"#).is_none());
+        assert!(
+            ControlCommand::parse(r#"{"chain_id":1,"cartridge_id":"","desired":"disabled"}"#)
+                .is_none()
+        );
+        assert!(
+            ControlCommand::parse(r#"{"chain_id":1,"cartridge_id":"x","desired":"zap"}"#).is_none()
+        );
         assert!(ControlCommand::parse(r#"{"cartridge_id":"x","desired":"disabled"}"#).is_none());
         assert!(ControlCommand::parse("not json").is_none());
     }

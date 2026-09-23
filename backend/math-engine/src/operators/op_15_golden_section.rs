@@ -127,7 +127,7 @@ impl TopologicalOperator for GoldenSectionOperator {
                 return f64::NEG_INFINITY;
             }
             let out = (r1 * gamma * x) / denom; // token1 units
-            price * (out - x) - gas              // token0-numerary net
+            price * (out - x) - gas // token0-numerary net
         };
 
         // Maximización por sección áurea sobre [a, b] = [0, r0].

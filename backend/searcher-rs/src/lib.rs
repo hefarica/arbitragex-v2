@@ -32,19 +32,19 @@ pub mod amount_buckets;
 // scripts remain STAGED under integration/agent-cartridges-v4/ — NOT in the
 // active cartridges/ loader dir — until the INTEGRACION.md activation criteria
 // (native compile of all 264 + real snapshot producers + plan store) are met.
-pub mod rhai_agent_bridge;
 pub mod agent_graph;
-pub mod snapshot_services;
 pub mod context_router;
-pub mod proposal_contract;
 pub mod native_operator_adapter;
+pub mod proposal_contract;
+pub mod rhai_agent_bridge;
+pub mod snapshot_services;
 // CARTRIDGE-CONTROL: acople/desacople por cartucho — desired-state store
 // (Redis hash + PG), boot application and a runtime command loop.
-pub mod cartridge_control;
 pub mod batch_quote;
 pub mod calldata;
 pub mod canonical_enums;
 pub mod canonical_knobs;
+pub mod cartridge_control;
 pub mod chain_client;
 pub mod counters;
 // XLS-QB-05c / ARBX-0003: pair→cycles inverted index — the scoped re-evaluation

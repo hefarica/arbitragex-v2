@@ -413,8 +413,8 @@ impl SizeOptimizer {
         // CORE-05: chain-gated address map + pair-symbol fallback + native
         // fallback. In practice this always resolves (native last-resort);
         // None is kept for the future TokenIdentityIndex wiring.
-        let token_in_symbol = resolve_token_in_symbol(&candidate, state)
-            .unwrap_or_else(|| "WETH".to_string());
+        let token_in_symbol =
+            resolve_token_in_symbol(&candidate, state).unwrap_or_else(|| "WETH".to_string());
 
         // Step 3: capital cap in USD.
         //

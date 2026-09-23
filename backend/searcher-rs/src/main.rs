@@ -184,13 +184,13 @@ mod route_intent;
 // staged but NOT active — modules compile in both targets so the v4 parser,
 // bridge and control loop are reachable the moment activation criteria pass.
 // See lib.rs declaration block for the full rationale.
-mod rhai_agent_bridge;
 mod agent_graph;
-mod snapshot_services;
 mod context_router;
-mod proposal_contract;
 #[allow(dead_code)]
 mod native_operator_adapter;
+mod proposal_contract;
+mod rhai_agent_bridge;
+mod snapshot_services;
 // CARTRIDGE-CONTROL: acople/desacople por cartucho (desired-state store +
 // boot application + runtime command loop).
 mod cartridge_control;

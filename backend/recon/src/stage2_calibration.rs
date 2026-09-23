@@ -279,9 +279,7 @@ async fn consolidate(db: &PgPool, cfg: &Stage2Config) -> anyhow::Result<()> {
                         continue;
                     };
                     for entry in rows {
-                        let Some(op_id) =
-                            entry.get("op").and_then(|v| v.as_u64())
-                        else {
+                        let Some(op_id) = entry.get("op").and_then(|v| v.as_u64()) else {
                             continue;
                         };
                         let Some(op_idx) = usize::try_from(op_id)

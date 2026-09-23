@@ -1192,7 +1192,10 @@ pub async fn active_evaluate_and_emit(
                         reason = ?eval_result.reason,
                         "cartridge active eval: no opportunity"
                     );
-                    let reason_key = eval_result.reason.clone().unwrap_or_else(|| "none".to_string());
+                    let reason_key = eval_result
+                        .reason
+                        .clone()
+                        .unwrap_or_else(|| "none".to_string());
                     *negative_reasons.entry(reason_key).or_insert(0) += 1;
                     negative_total += 1;
                     continue;
@@ -1227,10 +1230,9 @@ pub async fn active_evaluate_and_emit(
                     let first_leg_v4 = intent.legs.first();
                     let last_leg_v4 = intent.legs.last();
                     let (token_in_v4, token_out_v4) = match (first_leg_v4, last_leg_v4) {
-                        (Some(f), Some(l)) => (
-                            format!("{:#x}", f.token_in),
-                            format!("{:#x}", l.token_out),
-                        ),
+                        (Some(f), Some(l)) => {
+                            (format!("{:#x}", f.token_in), format!("{:#x}", l.token_out))
+                        }
                         _ => (String::new(), String::new()),
                     };
                     let opp_v4 = shared_rs::contracts::Opportunity {

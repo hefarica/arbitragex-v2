@@ -527,10 +527,22 @@ fn validate_cycle_topology(ctx: &RoundTripContext) -> Result<(), MultiStepError>
     if ctx.forward_path.len() < 2 || ctx.backward_path.len() < 2 {
         return Err(MultiStepError::SameTokenInOut);
     }
-    let fwd_first = ctx.forward_path.first().ok_or(MultiStepError::EmptyForwardPath)?;
-    let fwd_last = ctx.forward_path.last().ok_or(MultiStepError::EmptyForwardPath)?;
-    let bwd_first = ctx.backward_path.first().ok_or(MultiStepError::EmptyBackwardPath)?;
-    let bwd_last = ctx.backward_path.last().ok_or(MultiStepError::EmptyBackwardPath)?;
+    let fwd_first = ctx
+        .forward_path
+        .first()
+        .ok_or(MultiStepError::EmptyForwardPath)?;
+    let fwd_last = ctx
+        .forward_path
+        .last()
+        .ok_or(MultiStepError::EmptyForwardPath)?;
+    let bwd_first = ctx
+        .backward_path
+        .first()
+        .ok_or(MultiStepError::EmptyBackwardPath)?;
+    let bwd_last = ctx
+        .backward_path
+        .last()
+        .ok_or(MultiStepError::EmptyBackwardPath)?;
     if *fwd_first != ctx.token_in {
         return Err(MultiStepError::SameTokenInOut);
     }
