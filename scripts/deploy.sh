@@ -112,6 +112,18 @@ if [ -n "${KNOWN_GOOD_REVISION:-}" ]; then
     echo "Known-good revision verified: $KNOWN_GOOD_REVISION"
 fi
 
+# ── G4 "deploy veraz" completeness: stamp the deployed identity ────────────────
+# The workflow path exports ARBX_DEPLOY_SHA/_ID/_DEPLOYED_AT before compose
+# (auto-deploy-vps.yml); manual restores via this script left /status reporting
+# deploy.sha="unknown" (audit 2026-09-23: stack manually restored after a failed
+# auto-restore, identity unverifiable). compose.*.yml pass these into api-server
+# with :-unknown defaults, so exporting here stamps the identity on EVERY path.
+# Values already set in the environment (workflow-injected) take precedence.
+export ARBX_DEPLOY_SHA="${ARBX_DEPLOY_SHA:-$HEAD_AFTER}"
+export ARBX_DEPLOY_ID="${ARBX_DEPLOY_ID:-manual-$(date -u +%Y%m%dT%H%M%SZ)}"
+export ARBX_DEPLOYED_AT="${ARBX_DEPLOYED_AT:-$(date -u +%Y-%m-%dT%H:%M:%SZ)}"
+echo "deploy identity: sha=${ARBX_DEPLOY_SHA} run=${ARBX_DEPLOY_ID} at=${ARBX_DEPLOYED_AT}"
+
 # Deploy
 docker compose --env-file .env -f "$COMPOSE_FILE" "$@"
 
