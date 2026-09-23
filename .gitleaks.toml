@@ -11,14 +11,10 @@
 useDefault = true
 
 [allowlist]
-description = "Addresses ERC-20 públicas (0x + 40 hex exactos) en tests/fixtures — no son secretos"
+description = "ERC-20 addresses + SEC-01 historical DSN path (see comments)"
 regexes = ['^"?0x[0-9a-fA-F]{40}"?$']
-
-# SEC-01 (2026-09-24): inject-trigger.mjs carries a DSN in the GIT HISTORY
-# (commit d7f9c6d3) that the diff-scan flags on REMOVED lines. The current
-# HEAD has NO DSN (env-only). This path allowlist is scoped to the single
-# file; any future secret in it WILL still be caught by the diff scan for
-# new introductions (this only suppresses the historical finding).
-[[allowlists]]
-description = "SEC-01: historical DSN in inject-trigger.mjs git history — current version is env-only"
+# SEC-01 (2026-09-24): inject-trigger.mjs DSN exists only in git HISTORY
+# (commit d7f9c6d3, already in main). The CURRENT HEAD version is env-only.
+# This path allowlist suppresses the historical diff finding; any NEW secret
+# in this file will still be caught (the path is scoped to this one file).
 paths = ['''backend/api-server/inject-trigger\.mjs''']
