@@ -328,6 +328,12 @@ services:
       ARBX_SERVICE_CONTROL: ${ARBX_SERVICE_CONTROL:-off}
       ARBX_SERVICE_CONTROL_ALLOWLIST: ${ARBX_SERVICE_CONTROL_ALLOWLIST:-searcher-rs,sim-ctl,relays-client,recon,token-enricher}
       DOCKER_PROXY_URL: http://socket-proxy:2375
+      # G4 "deploy veraz" parity with compose.prod.yml: deployed identity for
+      # /status. scripts/deploy.sh exports these post-ARBX-R-0004-gates so
+      # manual dev-stack restores also stamp deploy.sha (audit 2026-09-23).
+      ARBX_DEPLOY_SHA: ${ARBX_DEPLOY_SHA:-unknown}
+      ARBX_DEPLOY_ID: ${ARBX_DEPLOY_ID:-unknown}
+      ARBX_DEPLOYED_AT: ${ARBX_DEPLOYED_AT:-unknown}
     ports: ["127.0.0.1:8080:8080"]
     volumes:
       # Read-only mount of repo source for static-source verifiers
