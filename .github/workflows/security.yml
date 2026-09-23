@@ -268,7 +268,10 @@ jobs:
               HEAD="${{ github.event.after }}"
             fi
             echo "Scanning diff ${BASE}..${HEAD} for high-entropy secrets"
-            gitleaks detect --source . --log-opts="${BASE}..${HEAD}" --redact --verbose
+            # --config: explicitly point to the repo's .gitleaks.toml so the
+            # path/regex allowlists are honored in the diff scan too (without
+            # this, a bare `gitleaks detect` uses default rules only).
+            gitleaks detect --source . --log-opts="${BASE}..${HEAD}" --config .gitleaks.toml --redact --verbose
           else
             echo "gitleaks binary not available in runner; skipping diff scan"
           fi
