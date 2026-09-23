@@ -90,6 +90,7 @@ pub fn parse_book_ticker(data: &serde_json::Value) -> Option<(String, BookTicker
             ask,
             event_ms,
             recv_ns: now_ns(),
+            update_id: data.get("u").and_then(|v| v.as_u64()).unwrap_or(0),
         },
     ))
 }
@@ -123,6 +124,10 @@ pub fn parse_depth5(stream: &str, data: &serde_json::Value) -> Option<(String, D
             bids,
             asks,
             event_ms: data.get("E").and_then(|v| v.as_u64()).unwrap_or(0),
+            last_update_id: data
+                .get("lastUpdateId")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(0),
         },
     ))
 }
@@ -371,6 +376,7 @@ mod tests {
         assert!((t.ask - 2625.47).abs() < 1e-9);
         assert_eq!(t.event_ms, 0);
         assert!(t.recv_ns > 0);
+        assert_eq!(t.update_id, 400900217, "WO-FE3: order-book updateId preserved");
     }
 
     #[test]
@@ -396,6 +402,7 @@ mod tests {
         assert!((d.bids[0].price - 80000.1).abs() < 1e-9);
         assert!((d.asks[1].qty - 1.5).abs() < 1e-9);
         assert_eq!(d.event_ms, 0);
+        assert_eq!(d.last_update_id, 42, "WO-FE3: book lastUpdateId preserved");
     }
 
     #[test]

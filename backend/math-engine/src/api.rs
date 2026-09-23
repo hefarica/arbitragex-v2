@@ -11,6 +11,7 @@
 //! | Toggles   | GET    | `/api/operators`               | List all 32 operators            |
 //! | Toggles   | GET    | `/api/operators/:id`           | Single operator metadata         |
 //! | Toggles   | POST   | `/api/operators/:id/toggle`    | Enable / disable operator        |
+//! | Toggles   | GET    | `/api/operators/toggles/status`| Persisted vs applied toggle rev  |
 //! | Compute   | POST   | `/api/compute`                 | Dispatch operator(s) on state    |
 //! | Compute   | POST   | `/api/compute/batch`           | Batch dispatch                   |
 //! | Matrix    | GET    | `/api/matrix/projection`       | 264×31 projection metadata       |
@@ -152,6 +153,11 @@ pub struct ComputeRequest {
 pub struct ToggleRequest {
     /// Desired enabled state.
     pub enabled: bool,
+    /// Caller-assigned action identifier (WO-FE10). Echoed back and carried in
+    /// the Redis payload so the searcher can report WHICH toggle it applied.
+    /// When absent the writer mints one — the response always carries a
+    /// request_id.
+    pub request_id: Option<String>,
 }
 
 /// Response wrapper for compute results.
@@ -167,6 +173,13 @@ pub struct ComputeResponse {
 pub struct ToggleResponse {
     pub operator_id: u8,
     pub enabled: bool,
+    /// Identifier of this toggle action (caller-supplied or minted).
+    pub request_id: String,
+    /// Persisted revision of `arbx:ops:disabled` — `None` when propagation to
+    /// Redis failed (R8 fail-honest: the toggle applied in-process only).
+    pub revision: Option<u64>,
+    /// Whether the disabled-set reached the Redis propagation channel.
+    pub propagated: bool,
 }
 
 /// Error response body.
@@ -218,6 +231,7 @@ pub fn create_router_with_state(state: ApiState) -> Router {
         .route("/api/operators", get(list_operators_handler))
         .route("/api/operators/:id", get(get_operator_handler))
         .route("/api/operators/:id/toggle", post(toggle_operator_handler))
+        .route("/api/operators/toggles/status", get(toggles_status_handler))
         .route("/api/compute", post(compute_handler))
         .route("/api/compute/batch", post(compute_batch_handler))
         .route("/api/matrix/projection", get(projection_matrix_handler))
@@ -283,12 +297,26 @@ async fn toggle_operator_handler(
             .into_response();
     }
     st.set_enabled(id, body.enabled);
-    publish_disabled_set(&st).await;
+    let request_id = body.request_id.unwrap_or_else(|| {
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0);
+        format!("toggle-{id}-{}-{nanos}", body.enabled)
+    });
+    let propagation = publish_disabled_set(&st, &request_id).await;
+    let (revision, propagated) = match propagation {
+        Ok(rev) => (Some(rev), true),
+        Err(_) => (None, false),
+    };
     (
         StatusCode::OK,
         Json(ToggleResponse {
             operator_id: id,
             enabled: body.enabled,
+            request_id,
+            revision,
+            propagated,
         }),
     )
         .into_response()
@@ -300,7 +328,12 @@ async fn toggle_operator_handler(
 /// toggles. Best-effort: no REDIS_URL or a Redis error logs a warning and
 /// never fails the toggle response (the HTTP toggle itself is source of truth
 /// for this process; Redis is the propagation channel for other processes).
-async fn publish_disabled_set(st: &ApiState) {
+///
+/// WO-FE10 (F13): the payload is versioned — `INCR arbx:ops:disabled:rev`
+/// mints a monotonic revision and the payload carries
+/// `{revision, request_id, disabled}` so the searcher can ack WHICH toggle it
+/// applied (`arbx:ops:disabled:applied`). Returns the persisted revision.
+async fn publish_disabled_set(st: &ApiState, request_id: &str) -> Result<u64, String> {
     let url = match std::env::var("REDIS_URL") {
         Ok(u) if !u.is_empty() => u,
         _ => {
@@ -308,29 +341,134 @@ async fn publish_disabled_set(st: &ApiState) {
                 event = "ops_toggle.propagation_skipped",
                 reason = "REDIS_URL unset"
             );
-            return;
+            return Err("REDIS_URL unset".to_string());
         }
     };
     let disabled = st.disabled_ids();
-    let payload = serde_json::to_vec(&disabled).unwrap_or_default();
-    let result: Result<(), String> = async {
+    let outcome: Result<u64, String> = async {
         let client = redis::Client::open(url).map_err(|e| e.to_string())?;
         let mut conn = client
             .get_connection_manager()
             .await
             .map_err(|e| e.to_string())?;
-        redis::cmd("SET")
-            .arg("arbx:ops:disabled")
-            .arg(payload)
+        let revision: u64 = redis::cmd("INCR")
+            .arg("arbx:ops:disabled:rev")
             .query_async(&mut conn)
             .await
-            .map_err(|e| e.to_string())
+            .map_err(|e| e.to_string())?;
+        let payload = serde_json::json!({
+            "revision": revision,
+            "request_id": request_id,
+            "disabled": disabled,
+        });
+        redis::cmd("SET")
+            .arg("arbx:ops:disabled")
+            .arg(payload.to_string())
+            .query_async(&mut conn)
+            .await
+            .map_err(|e| e.to_string())?;
+        Ok(revision)
     }
     .await;
-    match result {
-        Ok(()) => tracing::info!(event = "ops_toggle.propagated", count = disabled.len()),
+    match &outcome {
+        Ok(rev) => tracing::info!(
+            event = "ops_toggle.propagated",
+            revision = rev,
+            request_id = request_id,
+            count = disabled.len()
+        ),
         Err(e) => tracing::warn!(event = "ops_toggle.propagation_failed", error = %e),
     }
+    outcome
+}
+
+/// GET /api/operators/toggles/status — reflected state of the toggle channel
+/// (WO-FE10): what was last PERSISTED to Redis and what the searcher-rs poll
+/// loop last APPLIED (`arbx:ops:disabled:applied`). Fail-honest: fields are
+/// `null` when Redis is unreachable or a side has not reported yet.
+async fn toggles_status_handler() -> Response {
+    let url = match std::env::var("REDIS_URL") {
+        Ok(u) if !u.is_empty() => u,
+        _ => {
+            return (
+                StatusCode::SERVICE_UNAVAILABLE,
+                Json(TogglesStatusResponse {
+                    persisted_revision: None,
+                    persisted_request_id: None,
+                    applied_revision: None,
+                    disabled: None,
+                    reason: Some("REDIS_URL unset".to_string()),
+                }),
+            )
+                .into_response()
+        }
+    };
+    let outcome: Result<TogglesStatusResponse, String> = async {
+        let client = redis::Client::open(url).map_err(|e| e.to_string())?;
+        let mut conn = client
+            .get_connection_manager()
+            .await
+            .map_err(|e| e.to_string())?;
+        let raw: Option<String> = redis::cmd("GET")
+            .arg("arbx:ops:disabled")
+            .query_async(&mut conn)
+            .await
+            .map_err(|e| e.to_string())?;
+        let applied: Option<String> = redis::cmd("GET")
+            .arg("arbx:ops:disabled:applied")
+            .query_async(&mut conn)
+            .await
+            .map_err(|e| e.to_string())?;
+        let persisted: Option<serde_json::Value> = raw
+            .as_deref()
+            .map(serde_json::from_str)
+            .transpose()
+            .map_err(|e| e.to_string())?;
+        // Accept both the versioned object and the legacy bare-array payload.
+        let (persisted_revision, persisted_request_id, disabled) = match &persisted {
+            Some(v) if v.is_object() => (
+                v.get("revision").and_then(|r| r.as_u64()),
+                v.get("request_id").and_then(|r| r.as_str()).map(String::from),
+                v.get("disabled").cloned(),
+            ),
+            Some(v) if v.is_array() => (None, None, Some(v.clone())),
+            _ => (None, None, None),
+        };
+        Ok(TogglesStatusResponse {
+            persisted_revision,
+            persisted_request_id,
+            applied_revision: applied
+                .as_deref()
+                .and_then(|a| a.parse::<u64>().ok()),
+            disabled,
+            reason: None,
+        })
+    }
+    .await;
+    match outcome {
+        Ok(status) => (StatusCode::OK, Json(status)).into_response(),
+        Err(e) => (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(TogglesStatusResponse {
+                persisted_revision: None,
+                persisted_request_id: None,
+                applied_revision: None,
+                disabled: None,
+                reason: Some(e),
+            }),
+        )
+            .into_response(),
+    }
+}
+
+/// Response for `GET /api/operators/toggles/status`.
+#[derive(Debug, Clone, Serialize)]
+pub struct TogglesStatusResponse {
+    pub persisted_revision: Option<u64>,
+    pub persisted_request_id: Option<String>,
+    pub applied_revision: Option<u64>,
+    pub disabled: Option<serde_json::Value>,
+    pub reason: Option<String>,
 }
 
 /// POST /api/compute — dispatch operators on a market state.
@@ -506,6 +644,18 @@ mod tests {
             .unwrap();
         let resp = app.clone().oneshot(toggle_req).await.unwrap();
         assert_eq!(resp.status(), StatusCode::OK);
+        // WO-FE10 (F13): every toggle responds with request_id; revision is
+        // present iff propagation to Redis succeeded.
+        let body = axum::body::to_bytes(resp.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert!(json["request_id"].as_str().is_some_and(|s| !s.is_empty()));
+        match json["propagated"].as_bool() {
+            Some(true) => assert!(json["revision"].as_u64().is_some()),
+            Some(false) => assert!(json["revision"].is_null()),
+            None => panic!("propagated missing in toggle response"),
+        }
 
         // Compute with operator 1 disabled
         let compute_req = Request::builder()

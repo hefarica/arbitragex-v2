@@ -28,6 +28,10 @@ export function buildOperatorRouter(pool: Pool): Router {
       `SELECT feature_key, ui_path, backend_route, requires_layers, enabled, description
        FROM feature_manifest`
     );
+    const rev = await pool.query(
+      `SELECT toggle_revision FROM operator_parametrization WHERE operator_id=$1`,
+      [op.operatorId]
+    );
     const manifest = featureManifest.rows.map(r => ({
       feature_key: r.feature_key,
       ui_path: r.ui_path,
@@ -55,6 +59,7 @@ export function buildOperatorRouter(pool: Pool): Router {
         feature_overrides: op.featureOverrides,
         config_hash: op.configHash,
         enabled: op.enabled,
+        toggle_revision: Number(rev.rows[0]?.toggle_revision ?? 0),
       },
       gates: {
         // Capacidades efectivas derivadas de role
@@ -104,10 +109,12 @@ export function buildOperatorRouter(pool: Pool): Router {
     const client = await pool.connect();
     try {
       await client.query('BEGIN');
-      await client.query(
+      const updated = await client.query(
         `UPDATE operator_parametrization
-         SET ui_preferences=$1, config_hash=$2, updated_at=NOW()
-         WHERE operator_id=$3`,
+         SET ui_preferences=$1, config_hash=$2, updated_at=NOW(),
+             toggle_revision = toggle_revision + 1
+         WHERE operator_id=$3
+         RETURNING toggle_revision`,
         [newPrefs, configHashAfter, op.operatorId]
       );
 
@@ -132,20 +139,23 @@ export function buildOperatorRouter(pool: Pool): Router {
         ]
       );
       await client.query('COMMIT');
+      const appliedRevision = Number(updated.rows[0]?.toggle_revision ?? 0);
+
+      res.json({
+        status: 'VERIFIED',
+        request_id: idempotencyKey,
+        applied_revision: appliedRevision,
+        operator_id: op.operatorId,
+        config_hash_before: configHashBefore,
+        config_hash_after: configHashAfter,
+        layers_completed: ['api', 'handler', 'pg', 'authz', 'audit'],
+      });
     } catch (err) {
       await client.query('ROLLBACK');
       throw err;
     } finally {
       client.release();
     }
-
-    res.json({
-      status: 'VERIFIED',
-      operator_id: op.operatorId,
-      config_hash_before: configHashBefore,
-      config_hash_after: configHashAfter,
-      layers_completed: ['api', 'handler', 'pg', 'authz', 'audit'],
-    });
   });
 
   // -------------------------------------------------------------------------
@@ -169,10 +179,12 @@ export function buildOperatorRouter(pool: Pool): Router {
     const client = await pool.connect();
     try {
       await client.query('BEGIN');
-      await client.query(
+      const updated = await client.query(
         `UPDATE operator_parametrization
-         SET feature_overrides=$1, config_hash=$2, updated_at=NOW()
-         WHERE operator_id=$3`,
+         SET feature_overrides=$1, config_hash=$2, updated_at=NOW(),
+             toggle_revision = toggle_revision + 1
+         WHERE operator_id=$3
+         RETURNING toggle_revision`,
         [overrides, configHashAfter, op.operatorId]
       );
 
@@ -197,20 +209,23 @@ export function buildOperatorRouter(pool: Pool): Router {
         ]
       );
       await client.query('COMMIT');
+      const appliedRevision = Number(updated.rows[0]?.toggle_revision ?? 0);
+
+      res.json({
+        status: 'VERIFIED',
+        request_id: idempotencyKey,
+        applied_revision: appliedRevision,
+        operator_id: op.operatorId,
+        config_hash_before: configHashBefore,
+        config_hash_after: configHashAfter,
+        layers_completed: ['api', 'handler', 'pg', 'authz', 'audit'],
+      });
     } catch (err) {
       await client.query('ROLLBACK');
       throw err;
     } finally {
       client.release();
     }
-
-    res.json({
-      status: 'VERIFIED',
-      operator_id: op.operatorId,
-      config_hash_before: configHashBefore,
-      config_hash_after: configHashAfter,
-      layers_completed: ['api', 'handler', 'pg', 'authz', 'audit'],
-    });
   });
 
   return router;

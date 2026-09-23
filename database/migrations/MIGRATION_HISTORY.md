@@ -260,6 +260,17 @@ retention becomes `DROP PARTITION` instead of WAL-heavy batched DELETEs (the
   the same rollup-materialization guard as the v2 purge path (plus optional
   zstd archive). The generic RDO DELETE loop is skipped when partitioned.
 
+## `124_operator_toggle_revision.sql` — WO-FE10 (2026-09-21)
+
+`operator_parametrization.toggle_revision BIGINT NOT NULL DEFAULT 0`: revisión
+monótona incrementada en la misma transacción que persiste cada toggle de
+preferences/feature-overrides (routes/operator.ts), devuelta al cliente como
+`applied_revision` junto con `request_id` (= Idempotency-Key existente).
+Cierra F13 (toggles sin confirmación de aplicación) del lado PG; el canal
+ops-disabled (math-engine→Redis→searcher-rs) lleva su propia revisión atómica
+(`INCR arbx:ops:disabled:rev`) versionando el payload de
+`arbx:ops:disabled`. Idempotente; sin datos que migrar (default 0).
+
 ## `123_bayesian_priors_token_pair_nullable.sql` — Deuda 4 (2026-09-20)
 
 `bayesian_priors` rows are keyed by `strategy_key` (partial unique index

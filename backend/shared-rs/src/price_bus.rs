@@ -27,7 +27,9 @@
 
 use crate::price_oracle::PriceOracle;
 use arc_swap::ArcSwap;
-use std::collections::HashMap;
+use serde_json::{Map as JsonMap, Value};
+use sha2::{Digest as Sha256Digest, Sha256};
+use std::collections::{BTreeSet, HashMap};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -36,19 +38,25 @@ use std::time::{SystemTime, UNIX_EPOCH};
 /// per-unit in the PAIR's quote currency; `event_ms` is Binance's event time,
 /// `recv_ns` our local receive monotonic-ish epoch (SystemTime ns — wall clock
 /// is fine here: staleness compares it to later wall-clock reads).
+/// `update_id` is Binance's order-book updateId (`u`) — source provenance
+/// (WO-FE3); 0 = feed did not provide one.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct BookTicker {
     pub bid: f64,
     pub ask: f64,
     pub event_ms: u64,
     pub recv_ns: u64,
+    pub update_id: u64,
 }
 
 /// A Chainlink anchor sample from `latestRoundData()`. `answer` is already
 /// decimal-adjusted (USD per unit); `updated_at` is the aggregator's round
-/// timestamp (epoch SECONDS) used for staleness.
+/// timestamp (epoch SECONDS) used for staleness. `round_id` is the
+/// aggregator's roundId (uint80) — source provenance (WO-FE3); 0 = feed did
+/// not provide one.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Anchor {
+    pub round_id: u64,
     pub answer: f64,
     pub updated_at: u64,
     pub recv_ns: u64,
@@ -62,12 +70,14 @@ pub struct DepthLevel {
 }
 
 /// Top-5 partial book depth (`@depth5@100ms`). Bids descend from best,
-/// asks ascend from best (Binance order).
+/// asks ascend from best (Binance order). `last_update_id` is the book's
+/// `lastUpdateId` — source provenance (WO-FE3); 0 = not provided.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Depth5 {
     pub bids: Vec<DepthLevel>,
     pub asks: Vec<DepthLevel>,
     pub event_ms: u64,
+    pub last_update_id: u64,
 }
 
 /// Immutable published snapshot. Symbol/pair keys are UPPERCASE.
@@ -110,6 +120,168 @@ impl Verdict {
             Verdict::NoSource => "no_live_price",
         }
     }
+}
+
+/// ─── WO-FE1: `arbx.pricebus.export.v1` canonical export ────────────────
+///
+/// Strict-consumer contract (tools/forensic_integrity/real_cards.py
+/// `CanonicalPriceView`): the snapshot is a canonical-JSON object whose
+/// `snapshot_hash` is the ARBX-CJSON-1 digest of the body WITHOUT the
+/// `snapshot_hash` member. Decimal money values are exact decimal strings;
+/// integers stay ≤ 2^53; nanosecond stamps are strings (the profile rejects
+/// large integers as numbers). Verdicts that carry no verified price
+/// (frozen / no source) are exported as EXPLICIT non-price records — a
+/// stale_anchor or frozen pair is NEVER promoted to a verified verdict.
+pub const EXPORT_SCHEMA: &str = "arbx.pricebus.export.v1";
+pub const EXPORT_SOURCE: &str = "canonical_pricebus";
+
+/// Render a double as an exact fixed-precision decimal string. Both Rust
+/// `{:.` and Python `{:.` format the exact binary value with correct
+/// rounding, so independent implementations produce identical bytes.
+fn fmt_decimal(p: f64) -> String {
+    format!("{p:.10}")
+}
+
+/// ARBX-CJSON-1 digest: serde_json with default features sorts object keys
+/// and emits compact separators — byte-identical to the reference
+/// `canonical_bytes` + sha256 in tools/forensic_integrity/integrity.py for
+/// this profile (ASCII keys, no floats, ints ≤ 2^53).
+fn canonical_digest(v: &Value) -> String {
+    let bytes = serde_json::to_vec(v).expect("export profile is canonical-safe");
+    let mut h = Sha256::new();
+    h.update(&bytes);
+    format!("{:x}", h.finalize())
+}
+
+/// Raw sources behind one fused resolution. Shared by the hot read path and
+/// the export so the export can never re-derive (and diverge from) fusion.
+struct ResolvedSources {
+    price: Option<f64>,
+    verdict: Verdict,
+    pair: Option<(&'static str, &'static str)>,
+    ticker: Option<BookTicker>,
+    quote_anchor: Option<Anchor>,
+    own_anchor: Option<Anchor>,
+}
+
+impl Default for ResolvedSources {
+    fn default() -> Self {
+        Self {
+            price: None,
+            verdict: Verdict::NoSource,
+            pair: None,
+            ticker: None,
+            quote_anchor: None,
+            own_anchor: None,
+        }
+    }
+}
+
+fn anchor_input_hash(symbol: &str, a: Anchor) -> String {
+    // round_id as a decimal STRING: Chainlink roundId is uint80 (> 2^53) and
+    // ARBX-CJSON-1 requires large ints as strings.
+    canonical_digest(&serde_json::json!({
+        "kind": "chainlink.latestRoundData",
+        "symbol": symbol,
+        "answer": fmt_decimal(a.answer),
+        "round_id": a.round_id.to_string(),
+        "updated_at": a.updated_at,
+        "recv_ns": a.recv_ns.to_string(),
+    }))
+}
+
+/// Source observation time (ms): the SOURCE's own timestamp when it has one
+/// (Binance event time, Chainlink round time), else our local receive time.
+fn observed_at_ms(r: &ResolvedSources) -> u64 {
+    let mut obs: u64 = 0;
+    if let Some(t) = r.ticker {
+        obs = obs.max(if t.event_ms > 0 {
+            t.event_ms
+        } else {
+            t.recv_ns / 1_000_000
+        });
+    }
+    if let Some(a) = r.quote_anchor {
+        obs = obs.max(anchor_observed_ms(a));
+    }
+    if let Some(a) = r.own_anchor {
+        obs = obs.max(anchor_observed_ms(a));
+    }
+    obs
+}
+
+fn anchor_observed_ms(a: Anchor) -> u64 {
+    if a.updated_at > 0 {
+        a.updated_at * 1000
+    } else {
+        a.recv_ns / 1_000_000
+    }
+}
+
+/// One `prices[key]` record. `key` is the exact map key the record is stored
+/// under (consumer rejects any `asset_key` mismatch). Verified verdicts
+/// (ok / stale_binance) carry full provenance; unverified ones (stale_anchor /
+/// frozen / no_live_price) keep their honest verdict — the strict consumer
+/// reads the verdict BEFORE the price, so their zeroed money fields are never
+/// consumed as data.
+fn export_record(key: &str, sym: &str, r: &ResolvedSources, now_ms: u64, bus: &PriceBus) -> Value {
+    let price_str = match r.price {
+        Some(p) if p.is_finite() && p > 0.0 => fmt_decimal(p),
+        _ => "0".to_string(),
+    };
+    let valid_until_ms = if r.price.is_some() {
+        match r.verdict {
+            // Anchor-priced record: the anchor window bounds validity.
+            Verdict::StaleBinance => {
+                let secs = if crate::chains::is_stablecoin_symbol(sym) {
+                    bus.config().anchor_stale_secs_stable
+                } else {
+                    bus.config().anchor_stale_secs_volatile
+                };
+                now_ms + secs * 1000
+            }
+            _ => now_ms + bus.config().binance_stale_ns / 1_000_000,
+        }
+    } else {
+        0
+    };
+    let mut refs: BTreeSet<String> = BTreeSet::new();
+    let mut input_hashes: Vec<String> = Vec::new();
+    if let Some((pair, quote)) = r.pair {
+        refs.insert(format!("binance_ws:{pair}@bookTicker"));
+        refs.insert(format!("chainlink:{quote}/latestRoundData"));
+        if let Some(a) = r.quote_anchor {
+            input_hashes.push(anchor_input_hash(quote, a));
+        }
+        if let Some(t) = r.ticker {
+            // update_id as a decimal STRING (ARBX-CJSON-1: u64 updateId can
+            // exceed 2^53).
+            input_hashes.push(canonical_digest(&serde_json::json!({
+                "kind": "binance.bookTicker",
+                "pair": pair,
+                "bid": fmt_decimal(t.bid),
+                "ask": fmt_decimal(t.ask),
+                "event_ms": t.event_ms,
+                "update_id": t.update_id.to_string(),
+                "recv_ns": t.recv_ns.to_string(),
+            })));
+        }
+    }
+    if let Some(a) = r.own_anchor {
+        refs.insert(format!("chainlink:{sym}/latestRoundData"));
+        input_hashes.push(anchor_input_hash(sym, a));
+    }
+    serde_json::json!({
+        "asset_key": key,
+        "price_usd": price_str,
+        "currency": "USD",
+        "purpose": "valuation",
+        "verdict": r.verdict.as_str(),
+        "observed_at_ms": observed_at_ms(r),
+        "valid_until_ms": valid_until_ms,
+        "source_references": refs.into_iter().collect::<Vec<_>>(),
+        "input_hashes": input_hashes,
+    })
 }
 
 /// Tunables. Defaults follow the frozen charter decisions; every field is
@@ -241,6 +413,62 @@ impl PriceBus {
 
     pub fn config(&self) -> &PriceBusConfig {
         &self.cfg
+    }
+
+    /// Digest of the export-relevant policy (WO-FE1). Floats render as exact
+    /// decimal strings so the digest is byte-stable across languages.
+    pub fn export_policy_hash(&self) -> String {
+        canonical_digest(&serde_json::json!({
+            "schema": EXPORT_SCHEMA,
+            "anchor_stale_secs_stable": self.cfg.anchor_stale_secs_stable.to_string(),
+            "anchor_stale_secs_volatile": self.cfg.anchor_stale_secs_volatile.to_string(),
+            "band_k": fmt_decimal(self.cfg.band_k),
+            "band_min": fmt_decimal(self.cfg.band_min),
+            "band_warmup": self.cfg.band_warmup,
+            "binance_stale_ns": self.cfg.binance_stale_ns.to_string(),
+        }))
+    }
+
+    /// Canonical `arbx.pricebus.export.v1` snapshot (WO-FE1). `now_ms` is
+    /// injected (deterministic test vector). `asset_keys` maps an UPPERCASE
+    /// symbol (e.g. "ETH") to the consumer's asset id (e.g. "1:0xabc…");
+    /// symbols without a mapping export under their own symbol.
+    ///
+    /// Every symbol present in EITHER source gets a record — including
+    /// frozen / no-source symbols as explicit non-price records (R8: an absent
+    /// key would be indistinguishable from "not computed").
+    pub fn export_v1(&self, now_ms: u64, asset_keys: &HashMap<String, String>) -> Value {
+        let view = self.view();
+        let now_ns_val = (now_ms as u128 * 1_000_000u128) as u64;
+        let mut symbols: BTreeSet<&str> = view.snap.chainlink.keys().map(|s| s.as_str()).collect();
+        for pair in view.snap.binance.keys() {
+            if let Some(token) = token_for_pair(pair) {
+                symbols.insert(token);
+            }
+        }
+
+        let mut prices = JsonMap::new();
+        for sym in symbols {
+            let r = view.resolve_fused(sym, now_ns_val);
+            let key = asset_keys
+                .get(sym)
+                .cloned()
+                .unwrap_or_else(|| sym.to_string());
+            prices.insert(key.clone(), export_record(&key, sym, &r, now_ms, self));
+        }
+
+        let mut body = serde_json::json!({
+            "schema": EXPORT_SCHEMA,
+            "source": EXPORT_SOURCE,
+            "generated_at_ms": now_ms,
+            "policy_hash": self.export_policy_hash(),
+            "prices": Value::Object(prices),
+        });
+        let snapshot_hash = canonical_digest(&body);
+        if let Value::Object(m) = &mut body {
+            m.insert("snapshot_hash".to_string(), Value::String(snapshot_hash));
+        }
+        body
     }
 
     /// Load a fused read view (single atomic load — consistent snapshot).
@@ -412,13 +640,13 @@ impl PriceView<'_> {
         (now_ns_val / 1_000_000_000).saturating_sub(a.updated_at) <= max_age
     }
 
-    fn fresh_anchor_price(&self, symbol: &str, now_ns_val: u64) -> Option<f64> {
+    fn fresh_anchor(&self, symbol: &str, now_ns_val: u64) -> Option<Anchor> {
         let a = self.snap.chainlink.get(symbol).copied()?;
-        if self.anchor_is_fresh(symbol, a, now_ns_val) {
-            Some(a.answer)
-        } else {
-            None
-        }
+        self.anchor_is_fresh(symbol, a, now_ns_val).then_some(a)
+    }
+
+    fn fresh_anchor_price(&self, symbol: &str, now_ns_val: u64) -> Option<f64> {
+        self.fresh_anchor(symbol, now_ns_val).map(|a| a.answer)
     }
 
     /// USD price of the pair's quote token, from a FRESH Chainlink anchor.
@@ -434,28 +662,67 @@ impl PriceView<'_> {
         if sym.is_empty() {
             return (None, Verdict::NoSource);
         }
-        let now = now_ns();
-        let ticker_usable = canonical_pair_for_token(&sym).and_then(|(pair, quote)| {
-            let t = self.snap.binance.get(pair).copied()?;
-            let fresh = now.saturating_sub(t.recv_ns) <= self.bus.cfg.binance_stale_ns;
-            let q = self.quote_usd(quote)?;
-            (fresh && t.bid > 0.0).then_some(t.bid * q)
-        });
-        let anchor = self.fresh_anchor_price(&sym, now);
+        let r = self.resolve_fused(&sym, now_ns());
+        (r.price, r.verdict)
+    }
 
-        match (ticker_usable, anchor) {
-            (Some(binance_usd), Some(_anchor_usd)) => {
+    /// Single source of truth for fusion: the hot read path AND the export
+    /// both consume this. `now_ns_val` is injected so the export can pin a
+    /// deterministic instant (WO-FE1 test vector).
+    fn resolve_fused(&self, sym_upper: &str, now_ns_val: u64) -> ResolvedSources {
+        let mut r = ResolvedSources {
+            verdict: Verdict::NoSource,
+            ..ResolvedSources::default()
+        };
+        let ticker_usable: Option<f64> = if let Some((pair, quote)) =
+            canonical_pair_for_token(sym_upper)
+        {
+            match self.snap.binance.get(pair).copied() {
+                Some(t)
+                    if now_ns_val.saturating_sub(t.recv_ns) <= self.bus.cfg.binance_stale_ns
+                        && t.bid > 0.0 =>
+                {
+                    match self.fresh_anchor(quote, now_ns_val) {
+                        Some(qa) => {
+                            r.pair = Some((pair, quote));
+                            r.ticker = Some(t);
+                            r.quote_anchor = Some(qa);
+                            Some(t.bid * qa.answer)
+                        }
+                        None => None,
+                    }
+                }
+                _ => None,
+            }
+        } else {
+            None
+        };
+        let own_anchor = self.fresh_anchor(sym_upper, now_ns_val);
+
+        match (ticker_usable, own_anchor) {
+            (Some(binance_usd), Some(a)) => {
                 // Frozen latch, read lock-free from the published snapshot
                 // (WO-V1 MAJOR: no band Mutex on the hot read path).
-                if self.snap.frozen.contains(&sym) {
-                    return (None, Verdict::DivergenceFrozen);
+                r.own_anchor = Some(a);
+                if self.snap.frozen.contains(sym_upper) {
+                    r.verdict = Verdict::DivergenceFrozen;
+                } else {
+                    r.price = Some(binance_usd);
+                    r.verdict = Verdict::Ok;
                 }
-                (Some(binance_usd), Verdict::Ok)
             }
-            (Some(binance_usd), None) => (Some(binance_usd), Verdict::StaleAnchor),
-            (None, Some(anchor_usd)) => (Some(anchor_usd), Verdict::StaleBinance),
-            (None, None) => (None, Verdict::NoSource),
+            (Some(binance_usd), None) => {
+                r.price = Some(binance_usd);
+                r.verdict = Verdict::StaleAnchor;
+            }
+            (None, Some(a)) => {
+                r.own_anchor = Some(a);
+                r.price = Some(a.answer);
+                r.verdict = Verdict::StaleBinance;
+            }
+            (None, None) => {}
         }
+        r
     }
 
     /// Fused price; `None` on frozen/no-source (caller rejects fail-honest).
@@ -484,7 +751,11 @@ impl PriceView<'_> {
         let depth = self.snap.depth.get(pair)?;
         let quote_usd = self.quote_usd(quote)?;
         let size_quote = size_usd / quote_usd;
-        vwap_for_quote(depth, side, size_quote)
+        // vwap_for_quote returns QUOTE/base, not USD/base. Never assume
+        // USDC/USDT equals one dollar; use the same fresh quote anchor.
+        let price_quote = vwap_for_quote(depth, side, size_quote)?;
+        let price_usd = price_quote * quote_usd;
+        (price_usd.is_finite() && price_usd > 0.0).then_some(price_usd)
     }
 }
 
@@ -544,6 +815,7 @@ mod tests {
 
     fn anchor(answer: f64) -> Anchor {
         Anchor {
+            round_id: 4_200_000_000,
             answer,
             updated_at: now_secs() - 10,
             recv_ns: now_ns(),
@@ -556,7 +828,33 @@ mod tests {
             ask,
             event_ms: 0,
             recv_ns: now_ns(),
+            update_id: 987_654_321,
         }
+    }
+
+    #[test]
+    fn vwap_usd_applies_the_quote_currency_anchor() {
+        let b = bus();
+        // Synthetic unit vector: 10 quote/base, quote worth $0.80.
+        // A $80 buy spends 100 quote for 10 base; true VWAP = $8/base.
+        b.update_anchor("USDC", anchor(0.8));
+        b.update_depth(
+            "ETHUSDC",
+            Depth5 {
+                bids: vec![DepthLevel {
+                    price: 9.0,
+                    qty: 100.0,
+                }],
+                asks: vec![DepthLevel {
+                    price: 10.0,
+                    qty: 100.0,
+                }],
+                event_ms: now_ns() / 1_000_000,
+                last_update_id: 0,
+            },
+        );
+        let result = b.view().vwap_usd("ETH", Side::Buy, 80.0);
+        assert!(matches!(result, Some(p) if (p - 8.0).abs() < 1e-10));
     }
 
     #[test]
@@ -588,6 +886,7 @@ mod tests {
                 ask: 2625.1,
                 event_ms: 0,
                 recv_ns: now_ns().saturating_sub(60_000_000_000),
+                update_id: 0,
             },
         );
         let v = b.view();
@@ -603,6 +902,7 @@ mod tests {
         b.update_anchor(
             "ETH",
             Anchor {
+                round_id: 0,
                 answer: 2619.59,
                 updated_at: now_secs() - 10_000, // > 3900s volatile limit
                 recv_ns: now_ns(),
@@ -633,6 +933,7 @@ mod tests {
         b.update_anchor(
             "USDC",
             Anchor {
+                round_id: 0,
                 answer: 0.99984488,
                 updated_at: now_secs() - 49_297,
                 recv_ns: now_ns(),
@@ -695,6 +996,7 @@ mod tests {
                 ask: 1.0,
                 event_ms: 0,
                 recv_ns: 1,
+                update_id: 0,
             },
         );
         b.update_binance(
@@ -704,6 +1006,7 @@ mod tests {
                 ask: 1.0,
                 event_ms: 0,
                 recv_ns: 1,
+                update_id: 0,
             },
         ); // crossed
         b.update_binance(
@@ -713,6 +1016,7 @@ mod tests {
                 ask: 1.0,
                 event_ms: 0,
                 recv_ns: 1,
+                update_id: 0,
             },
         );
         assert!(b.view().snapshot().binance.is_empty());
@@ -720,6 +1024,7 @@ mod tests {
         b.update_anchor(
             "ETH",
             Anchor {
+                round_id: 0,
                 answer: -5.0,
                 updated_at: now_secs(),
                 recv_ns: 1,
@@ -771,6 +1076,7 @@ mod tests {
                 },
             ],
             event_ms: 0,
+            last_update_id: 0,
         }
     }
 
@@ -822,6 +1128,7 @@ mod tests {
                     qty: 2.0,
                 }],
                 event_ms: 0,
+                last_update_id: 0,
             },
         );
         let v = b.view();
@@ -846,6 +1153,7 @@ mod tests {
                 }],
                 asks: vec![],
                 event_ms: 0,
+                last_update_id: 0,
             },
         );
         assert!(b.view().snapshot().depth.is_empty());
@@ -859,8 +1167,116 @@ mod tests {
                 .collect(),
             asks: vec![],
             event_ms: 0,
+            last_update_id: 0,
         };
         b.update_depth("ETHUSDC", six);
         assert!(b.view().snapshot().depth.is_empty());
+    }
+
+    // ─── WO-FE1: canonical export `arbx.pricebus.export.v1` ────────────────
+
+    fn export_bus() -> Arc<PriceBus> {
+        let b = bus();
+        b.update_anchor("USDC", anchor(0.99984));
+        b.update_anchor("ETH", anchor(2619.59));
+        b.update_binance("ETHUSDC", ticker(2625.46, 2625.47));
+        b
+    }
+
+    #[test]
+    fn export_v1_hashes_maps_assets_and_provenance() {
+        let b = export_bus();
+        let now_ms = now_ns() / 1_000_000;
+        let mut asset_keys = HashMap::new();
+        asset_keys.insert("ETH".to_string(), "1:0xeth".to_string());
+        let snap = b.export_v1(now_ms, &asset_keys);
+
+        assert_eq!(snap["schema"], EXPORT_SCHEMA);
+        assert_eq!(snap["source"], EXPORT_SOURCE);
+        assert_eq!(snap["generated_at_ms"], now_ms);
+        assert!(b.export_policy_hash().len() == 64);
+        assert_eq!(snap["policy_hash"], b.export_policy_hash().as_str());
+
+        let rec = &snap["prices"]["1:0xeth"];
+        assert_eq!(rec["asset_key"], "1:0xeth");
+        assert_eq!(rec["verdict"], "ok");
+        assert_eq!(rec["currency"], "USD");
+        assert_eq!(rec["purpose"], "valuation");
+        let expected = format!("{:.10}", 2625.46f64 * 0.99984);
+        assert_eq!(rec["price_usd"], expected.as_str());
+        assert!(rec["observed_at_ms"].as_u64().unwrap() > 0);
+        assert!(rec["valid_until_ms"].as_u64().unwrap() >= now_ms);
+        assert!(!rec["source_references"].as_array().unwrap().is_empty());
+        assert!(!rec["input_hashes"].as_array().unwrap().is_empty());
+        // USDC has no asset_keys mapping → exported under its own symbol.
+        assert!(snap["prices"]["USDC"]["verdict"] == "stale_binance");
+
+        // snapshot_hash = digest(body without snapshot_hash) — structural
+        // self-consistency (cross-language bytes are proven by the external
+        // vector test, never re-computed here).
+        let mut body = snap.clone();
+        let obj = body.as_object_mut().unwrap();
+        let stored = obj.remove("snapshot_hash").unwrap();
+        assert_eq!(stored, canonical_digest(&body).as_str());
+        // Tamper detection: mutate one price, re-digest → mismatch.
+        let mut tampered = body.clone();
+        tampered["prices"]["1:0xeth"]["price_usd"] = "9999.0".into();
+        assert_ne!(stored, canonical_digest(&tampered).as_str());
+    }
+
+    #[test]
+    fn export_v1_stale_anchor_is_never_verified() {
+        // Binance fresh, own ETH anchor STALE → verdict must stay
+        // "stale_anchor" (the strict consumer rejects it as unverified).
+        let b = bus();
+        b.update_anchor("USDC", anchor(0.99984));
+        b.update_anchor(
+            "ETH",
+            Anchor {
+                round_id: 0,
+                answer: 2619.59,
+                updated_at: now_secs() - 10_000,
+                recv_ns: now_ns(),
+            },
+        );
+        b.update_binance("ETHUSDC", ticker(2625.46, 2625.47));
+        let snap = b.export_v1(now_ns() / 1_000_000, &HashMap::new());
+        assert_eq!(snap["prices"]["ETH"]["verdict"], "stale_anchor");
+    }
+
+    #[test]
+    fn export_v1_frozen_and_no_source_are_explicit_non_price_records() {
+        // Stale-but-present anchor → symbol exported with no_live_price,
+        // price "0", no expiry.
+        let b = bus();
+        b.update_anchor(
+            "ETH",
+            Anchor {
+                round_id: 0,
+                answer: 2619.59,
+                updated_at: now_secs() - 10_000,
+                recv_ns: now_ns(),
+            },
+        );
+        let snap = b.export_v1(now_ns() / 1_000_000, &HashMap::new());
+        let rec = &snap["prices"]["ETH"];
+        assert_eq!(rec["verdict"], "no_live_price");
+        assert_eq!(rec["price_usd"], "0");
+        assert_eq!(rec["valid_until_ms"], 0);
+
+        // Frozen pair (warm band + 3% jump, as in the freeze test).
+        let b = bus();
+        b.update_anchor("USDT", anchor(0.9998));
+        b.update_anchor("USDC", anchor(1.0));
+        b.update_anchor("ETH", anchor(2600.0));
+        for i in 0..30 {
+            b.update_binance("ETHUSDC", ticker(2600.0 + (i % 3) as f64 * 0.5, 2601.0));
+        }
+        b.update_binance("ETHUSDC", ticker(2680.0, 2680.5));
+        let snap = b.export_v1(now_ns() / 1_000_000, &HashMap::new());
+        let rec = &snap["prices"]["ETH"];
+        assert_eq!(rec["verdict"], "price_divergence_binance_chainlink");
+        assert_eq!(rec["price_usd"], "0");
+        assert_eq!(rec["valid_until_ms"], 0);
     }
 }

@@ -1159,7 +1159,7 @@ impl PriceWorker {
             }
         };
         for (token_addr, oracle_addr, decimals) in rows {
-            let (raw, updated_at) = match self.eth_call_latest_answer(rpc_url, &oracle_addr).await {
+            let (round_id, raw, updated_at) = match self.eth_call_latest_answer(rpc_url, &oracle_addr).await {
                 Some(v) => v,
                 None => continue,
             };
@@ -1188,6 +1188,7 @@ impl PriceWorker {
                 bus.update_anchor(
                     &symbol,
                     shared_rs::price_bus::Anchor {
+                        round_id,
                         answer: price,
                         updated_at,
                         recv_ns: unix_now_ns(),
@@ -1246,11 +1247,14 @@ impl PriceWorker {
         fused
     }
 
-    /// `eth_call latestRoundData()` on a Chainlink aggregator; returns the raw
-    /// `answer` (feed units, pre-decimals) and the round's `updated_at`
-    /// (epoch seconds). Read-only JSON-RPC via the worker's reqwest client.
-    /// `None` on any RPC / parse failure (fail-honest).
-    async fn eth_call_latest_answer(&self, rpc_url: &str, oracle_addr: &str) -> Option<(f64, u64)> {
+    /// `eth_call latestRoundData()` on a Chainlink aggregator; returns the
+    /// round's `round_id` (uint80 word[0], truncated to low 64 bits — fits
+    /// every live feed), the raw `answer` (feed units, pre-decimals) and the
+    /// round's `updated_at` (epoch seconds). Read-only JSON-RPC via the
+    /// worker's reqwest client. `None` on any RPC / parse failure
+    /// (fail-honest). NOTE: `eth_call` carries no block number — provenance
+    /// for the anchor is roundId + timestamps, not a block height.
+    async fn eth_call_latest_answer(&self, rpc_url: &str, oracle_addr: &str) -> Option<(u64, f64, u64)> {
         let body = serde_json::json!({
             "jsonrpc": "2.0",
             "id": 1,
@@ -1276,19 +1280,22 @@ impl PriceWorker {
         };
         let result_hex = parsed.get("result")?.as_str()?;
         let hex = result_hex.strip_prefix("0x").unwrap_or(result_hex);
-        // 5 × 32-byte words; `answer` = word[1] (hex chars 64..128), `updatedAt`
-        // = word[3] (hex chars 192..256). The USD price fits within u128, so
-        // parse the low 16 bytes of each word (chars 96..128 / 224..256).
+        // 5 × 32-byte words; `roundId` = word[0] (chars 0..64), `answer` =
+        // word[1] (hex chars 64..128), `updatedAt` = word[3] (hex chars
+        // 192..256). The USD price fits within u128, so parse the low 16
+        // bytes of each word (chars 32..64 / 96..128 / 224..256).
         // Chainlink USD answers are positive and timestamps are unsigned, so
         // treating the words as unsigned is correct here.
         if hex.len() < 256 {
             return None;
         }
+        let round_low = &hex[32..64];
+        let round_id = u128::from_str_radix(round_low, 16).ok()? as u64;
         let answer_low = &hex[96..128];
         let raw = u128::from_str_radix(answer_low, 16).ok()?;
         let updated_low = &hex[224..256];
         let updated_at = u128::from_str_radix(updated_low, 16).ok()? as u64;
-        Some((raw as f64, updated_at))
+        Some((round_id, raw as f64, updated_at))
     }
 
     async fn persist_prices(
