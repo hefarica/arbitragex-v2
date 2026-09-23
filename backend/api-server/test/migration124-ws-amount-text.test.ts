@@ -47,10 +47,12 @@ beforeAll(async () => {
     password: "test",
     database: "arbitragex",
   });
-  // Prereq table (same sequence as migrations.test.ts).
-  await pool.query(
-    readFileSync(path.join(MIG_DIR, "003_opportunities.sql"), "utf8"),
-  );
+  // Prereq table (same sequence as migrations.test.ts: 003 GRANTs TO arbx_rw,
+  // so 001_roles.sql must run first or the GRANT fails on a fresh container —
+  // caught by the TS-integration CI job, 2026-09-23).
+  for (const f of ["001_roles.sql", "003_opportunities.sql"]) {
+    await pool.query(readFileSync(path.join(MIG_DIR, f), "utf8"));
+  }
 }, 120_000);
 
 afterAll(async () => {
