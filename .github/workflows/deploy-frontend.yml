@@ -26,7 +26,7 @@ permissions:
 
 env:
   TARGET_SHA: 6c922106fb6db30152d011ef109da78af16ece23
-  VPS_HOST: 195.201.235.70
+  VPS_HOST: ${{ secrets.VPS_SSH_HOST }}
   COMPOSE_FILE: docker/compose.prod.yml
   REPO_PATH: /opt/arbitragex-v2
 
