@@ -236,7 +236,6 @@ pub fn spawn_cartridge_runtime(
     {
         let runner_control = runner.clone();
         let control_cancel = control_cancel;
-        let control_redis_url = control_redis_url;
         tokio::spawn(async move {
             crate::cartridge_control::control_loop(
                 runner_control,

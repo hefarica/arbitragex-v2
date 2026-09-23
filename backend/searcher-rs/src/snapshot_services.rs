@@ -90,16 +90,21 @@ pub struct SnapshotBundle {
     /// Must bound candidate x size expansion as well as graph enumeration.
     pub max_evaluations: usize,
 }
+/// Revision liveness guard supplied by the owner (never invented here).
+type RevisionGuard = Arc<dyn Fn(&str, &str) -> bool + Send + Sync>;
+/// Dispatch into the REAL OperatorRegistry (see native_operator_adapter).
+type OperatorDispatch = Arc<dyn Fn(&Value, &Value, &Value) -> Result<Value, String> + Send + Sync>;
+/// Receipt resolver backed by the canonical plan store.
+type PayloadResolver = Arc<dyn Fn(&str) -> Result<EncodedAndSimulated, String> + Send + Sync>;
+
 pub struct SnapshotServices {
     data: Arc<SnapshotBundle>,
     /// Must consult the backend's live control/revision guard. The closure is
     /// supplied by the owner; this module does not invent switch states.
-    active_revision: Arc<dyn Fn(&str, &str) -> bool + Send + Sync>,
+    active_revision: RevisionGuard,
     discovery: Mutex<Option<SearchReport>>,
-    operator_dispatch:
-        Option<Arc<dyn Fn(&Value, &Value, &Value) -> Result<Value, String> + Send + Sync>>,
-    payload_resolver:
-        Option<Arc<dyn Fn(&str) -> Result<EncodedAndSimulated, String> + Send + Sync>>,
+    operator_dispatch: Option<OperatorDispatch>,
+    payload_resolver: Option<PayloadResolver>,
 }
 fn now_ms() -> Result<u64, String> {
     SystemTime::now()
@@ -122,10 +127,7 @@ fn valid_hex(s: &str, bytes: Option<usize>) -> bool {
         && bytes.is_none_or(|b| h.len() == b * 2)
 }
 impl SnapshotServices {
-    pub fn new(
-        data: Arc<SnapshotBundle>,
-        active_revision: Arc<dyn Fn(&str, &str) -> bool + Send + Sync>,
-    ) -> Result<Self, String> {
+    pub fn new(data: Arc<SnapshotBundle>, active_revision: RevisionGuard) -> Result<Self, String> {
         if data.context_id.is_empty()
             || data.snapshot_id.is_empty()
             || data.chain_id == 0
@@ -155,19 +157,13 @@ impl SnapshotServices {
     /// Attach the actual registry dispatcher once at construction. The caller
     /// may use native_operator_adapter::evaluate_declared with is_disabled from
     /// the existing operator_toggles module; switches are never written here.
-    pub fn with_operator_dispatch(
-        mut self,
-        dispatch: Arc<dyn Fn(&Value, &Value, &Value) -> Result<Value, String> + Send + Sync>,
-    ) -> Self {
+    pub fn with_operator_dispatch(mut self, dispatch: OperatorDispatch) -> Self {
         self.operator_dispatch = Some(dispatch);
         self
     }
     /// Receipts can arrive AFTER strategy selection without mutating the
     /// immutable quote snapshot. Resolve from the existing canonical plan store.
-    pub fn with_payload_resolver(
-        mut self,
-        resolve: Arc<dyn Fn(&str) -> Result<EncodedAndSimulated, String> + Send + Sync>,
-    ) -> Self {
+    pub fn with_payload_resolver(mut self, resolve: PayloadResolver) -> Self {
         self.payload_resolver = Some(resolve);
         self
     }

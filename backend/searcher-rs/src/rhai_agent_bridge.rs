@@ -45,10 +45,10 @@ impl Usd {
         Self(BigDecimal::from(0))
     }
     pub fn is_positive(&self) -> bool {
-        self.0 > BigDecimal::from(0)
+        self.0 > 0
     }
     pub fn is_negative(&self) -> bool {
-        self.0 < BigDecimal::from(0)
+        self.0 < 0
     }
     pub fn checked_add(&self, rhs: &Self) -> Result<Self, String> {
         Ok(Self(&self.0 + &rhs.0))

@@ -171,7 +171,11 @@ export async function runRealCardPipeline(contextInput: FieldContext, requiremen
     let timer: ReturnType<typeof setTimeout> | undefined;
     try {
       const deps: Record<string, RealField> = {};
-      for (const d of producer.depends_on) deps[d] = fields[d];
+      for (const d of producer.depends_on) {
+        const dep = fields[d];
+        if (!dep) { fields[r.name] = failure(r.unit, "dependency_value_missing"); return; }
+        deps[d] = dep;
+      }
       const produced = await Promise.race([
         Promise.resolve().then(() => producer.compute({context, dependencies: freeze(structuredClone(deps)), signal: ctrl.signal})),
         new Promise<RealField>(resolve => { timer = setTimeout(() => {ctrl.abort(); resolve(failure(r.unit,"producer_timeout"));},timeout); }),
@@ -195,7 +199,7 @@ export async function runRealCardPipeline(contextInput: FieldContext, requiremen
       }
       if (p.depends_on.some(d => pending.has(d))) continue;
       // A producer may not turn a missing or N/A prerequisite into an invented number.
-      if (p.depends_on.some(d => !["observed","computed"].includes(fields[d].state))) {
+      if (p.depends_on.some(d => { const f = fields[d]; return !f || !["observed","computed"].includes(f.state); })) {
         fields[name] = failure(r.unit,"applicable_upstream_failed"); pending.delete(name); continue;
       }
       ready.push({r,p});
@@ -213,7 +217,8 @@ export async function runRealCardPipeline(contextInput: FieldContext, requiremen
   // Final deadline/freshness check: a value may expire while other fields finish.
   const repairs: Repair[] = [];
   for (const r of requirements) {
-    const reason = fieldFailure(fields[r.name],r,context,policy.now(),policy.max_clock_skew_ms);
+    const fr = fields[r.name];
+    const reason = fr ? fieldFailure(fr,r,context,policy.now(),policy.max_clock_skew_ms) : "field_missing";
     if (reason) {
       fields[r.name] = failure(r.unit,reason);
       repairs.push({event_id:context.event_id,context_id:context.context_id,field:r.name,reason,
