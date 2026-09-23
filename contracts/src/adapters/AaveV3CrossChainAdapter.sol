@@ -62,10 +62,7 @@ contract AaveV3CrossChainAdapter {
     // any recipient. Now the withdrawal can ONLY go to msg.sender. Per-user
     // accounting would be needed for shared positions - self-custody is the
     // safe bound until then.
-    function withdraw(address provider, address asset, uint256 amount)
-        external
-        returns (uint256 withdrawn)
-    {
+    function withdraw(address provider, address asset, uint256 amount) external returns (uint256 withdrawn) {
         if (amount == 0) revert Aave__ZeroAmount();
         address pool = IAavePoolAddressesProvider(provider).getPool();
 
