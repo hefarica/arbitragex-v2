@@ -328,7 +328,11 @@ export class StreamConsumer {
     const safetyIn = await checkToken(this.deps.pool, this.deps.tokenSafetyCb, this.deps.cfg, opp.chain_id, opp.token_in);
     const safetyOut = await checkToken(this.deps.pool, this.deps.tokenSafetyCb, this.deps.cfg, opp.chain_id_out ?? opp.chain_id, opp.token_out);
     const safety = safetyIn.safety_score <= safetyOut.safety_score ? safetyIn : safetyOut;
-    const scored = // SEL-03 note (2026-09-24): sim=null means the simulation_failed and\n// revert_risk_too_high gates in decide() are structurally non-operative\n// (consumer-side; tests DO cover decide() with sim — false confidence).\n// Wire sim-ctl to this consumer or mark the gates as pending in the docs.\nscoreOpportunity(opp, null, safety.safety_score, weightsFromConfig(this.deps.cfg), this.deps.cfg.risk.max_gas_price_gwei);
+    // SEL-03 note (2026-09-24): sim=null means the simulation_failed and
+    // revert_risk_too_high gates in decide() are structurally non-operative
+    // (consumer-side; tests DO cover decide() with sim — false confidence).
+    // Wire sim-ctl to this consumer or mark the gates as pending in the docs.
+    const scored = scoreOpportunity(opp, null, safety.safety_score, weightsFromConfig(this.deps.cfg), this.deps.cfg.risk.max_gas_price_gwei);
 
     return decide({ scored, safety, sim: null, cfg: this.deps.cfg });
   }

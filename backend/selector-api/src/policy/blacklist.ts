@@ -39,7 +39,11 @@ export async function listBlacklist(redis: Redis, chainId: number): Promise<stri
 export async function addToWhitelist(redis: Redis, chainId: number, addr: string): Promise<void> {
   await redis.sadd(keyWhite(chainId), normalize(addr));
 }
-/** SEL-02 note (2026-09-24): this whitelist has ZERO call-sites in the\n * decision pipeline (grep verified — only defined here). The gate is\n * default-ALLOW: any token not in the blacklist passes. To switch to\n * default-deny, wire this into prefilter — until then it is dead surface. */\nexport async function isWhitelisted(redis: Redis, chainId: number, addr: string): Promise<boolean> {
+/** SEL-02 note (2026-09-24): this whitelist has ZERO call-sites in the
+ * decision pipeline (grep verified — only defined here). The gate is
+ * default-ALLOW: any token not in the blacklist passes. To switch to
+ * default-deny, wire this into prefilter — until then it is dead surface. */
+export async function isWhitelisted(redis: Redis, chainId: number, addr: string): Promise<boolean> {
   const r = await redis.sismember(keyWhite(chainId), normalize(addr));
   return r === 1;
 }
