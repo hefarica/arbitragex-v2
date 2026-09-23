@@ -331,9 +331,24 @@ async fn sleep_with_jitter(base: Duration) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::{Mutex, OnceLock};
+
+    /// ARBX_BINANCE_PAIRS es estado de proceso (env var global): los tests que
+    /// lo mutan DEBEN serializarse entre sí. La carrera paralela (set_var de un
+    /// test vs remove_var del otro dentro de la ventana set→read) hizo fallar
+    /// `pairs_env_filters_garbage` en el push a main 322beb73 (gate de deploy
+    /// bloqueado, 2026-09-23): 1357 pass / 1 fail por scheduling, no por lógica.
+    fn pairs_env_lock() -> std::sync::MutexGuard<'static, ()> {
+        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+        match LOCK.get_or_init(|| Mutex::new(())).lock() {
+            Ok(guard) => guard,
+            Err(poisoned) => poisoned.into_inner(),
+        }
+    }
 
     #[test]
     fn pairs_from_env_shape_defaults() {
+        let _env = pairs_env_lock();
         // No env set → canonical five (test hermeticity: clear if present).
         std::env::remove_var("ARBX_BINANCE_PAIRS");
         let pairs = pairs_from_env();
@@ -345,6 +360,7 @@ mod tests {
 
     #[test]
     fn pairs_env_filters_garbage() {
+        let _env = pairs_env_lock();
         std::env::set_var("ARBX_BINANCE_PAIRS", " ETHusdc ,,x!,btcusdt");
         let pairs = pairs_from_env();
         assert_eq!(pairs, vec!["ethusdc", "btcusdt"]);
