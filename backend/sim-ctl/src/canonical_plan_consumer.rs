@@ -159,6 +159,7 @@ pub async fn resimulate(
         require_trace_hash: true,
         require_positive_net_profit: true,
         max_steps: 8,
+        paper_stack: None,
     };
 
     let ctx = plan.ctx;

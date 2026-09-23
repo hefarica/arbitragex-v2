@@ -7461,6 +7461,7 @@ dependencies = [
  "anyhow",
  "bigdecimal",
  "ethers",
+ "hex",
  "prioritization-spine",
  "serde",
  "serde_json",
