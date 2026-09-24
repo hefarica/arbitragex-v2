@@ -277,9 +277,9 @@ fn find_best_triangle(pools_ab, pools_bc, pools_ca, amount_in_str, dec_a, dec_b,
 /// token_in es token0 (convención del pool_index — best-effort documentado).
 fn oriented_reserves(res, swap_token_in) {
     if res.token0_addr != () && swap_token_in != res.token0_addr {
-        return (res.r1, res.r0);
+        return [res.r1, res.r0];
     }
-    (res.r0, res.r1)
+    [res.r0, res.r1]
 }
 
 fn calculate_amount_out(amount_in_str, r0_str, r1_str) {
