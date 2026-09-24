@@ -1,0 +1,104 @@
+name: vps-janitor
+# APT-GPG-02 (2026-09-24): the VPS disk hit 100% during a deploy build, which
+# cascaded into (a) apt GPG "invalid signature" inside the Docker build and
+# (b) a corrupted redis AOF that crash-looped until an operator ran
+# redis-check-aof --fix by hand. This janitor runs nightly so neither can
+# happen again: it prunes the space hogs BEFORE they reach 100%, runs the
+# redis self-heal pass, and reports the numbers in the run summary.
+on:
+  schedule:
+    - cron: '30 3 * * *' # 03:30 UTC — off-peak for the VPS
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: production-vps
+  cancel-in-progress: false # never race a deploy; wait for it
+
+jobs:
+  janitor:
+    name: Disk prune + redis doctor (APT-GPG-02)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository (script source of truth)
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+
+      - name: Setup SSH (clave efímera)
+        env:
+          VPS_KEY: ${{ secrets.VPS_SSH_KEY }}
+          VPS_HOST: ${{ secrets.VPS_SSH_HOST }}
+          VPS_USER: ${{ secrets.VPS_SSH_USER }}
+          VPS_PORT: ${{ secrets.VPS_PORT || '22' }}
+        run: |
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "$VPS_KEY" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          ssh-keyscan -T 10 -p "$VPS_PORT" -H "$VPS_HOST" >> ~/.ssh/known_hosts
+          test -s ~/.ssh/known_hosts
+          echo "VPS_HOST=$VPS_HOST" >> "$GITHUB_ENV"
+          echo "VPS_USER=$VPS_USER" >> "$GITHUB_ENV"
+          echo "VPS_PORT=$VPS_PORT" >> "$GITHUB_ENV"
+
+      - name: Ejecutar janitor + redis-doctor en el VPS
+        run: |
+          ssh -i ~/.ssh/deploy_key -p "$VPS_PORT" \
+            -o ConnectTimeout=15 -o ServerAliveInterval=15 -o ServerAliveCountMax=4 \
+            -o BatchMode=yes -o StrictHostKeyChecking=yes \
+            "$VPS_USER@$VPS_HOST" "bash -s" <<'EOF'
+          set -euo pipefail
+          echo "=== [1/4] Disco ANTES ==="
+          df -h / | tail -1
+
+          echo "=== [2/4] Limpieza de espacio (build cache, journals, imágenes colgantes) ==="
+          docker builder prune -f -a 2>&1 | tail -1
+          journalctl --vacuum-size=100M 2>&1 | tail -1 || true
+          docker image prune -f 2>&1 | tail -1
+
+          echo "=== [3/4] Redis doctor (APT-GPG-02: AOF corrupto por disco lleno) ==="
+          RSTATE=$(docker ps -a --format '{{.Names}} {{.Status}}' | grep -E 'redis' || true)
+          echo "estado: ${RSTATE:-<sin contenedor redis>}"
+          # Crash-loop signature: the container exists but is NOT "Up ... (healthy)".
+          if echo "$RSTATE" | grep -qv 'Up .* (healthy)'; then
+            echo "redis no está Up+healthy — corriendo doctor (backup + redis-check-aof --fix + start)"
+            VOL=$(docker volume ls --format '{{.Name}}' | grep -i 'redis' | grep -i 'data' | head -1)
+            if [ -n "$VOL" ]; then
+              VDIR=$(docker volume inspect --format '{{.Mountpoint}}' "$VOL")
+              tar czf "/tmp/redis-aof-backup-$(date +%Y%m%d%H%M%S).tar.gz" -C "$VDIR" . \
+                && echo "backup AOF -> /tmp"
+              cd /opt/arbitragex-v2
+              if [ -f docker/compose.prod.yml ]; then
+                docker compose -f docker/compose.prod.yml stop redis || true
+              else
+                docker compose -f docker/compose.dev.yml stop redis || true
+              fi
+              docker run --rm -v "${VOL}:/data" redis:7.2 sh -c \
+                'yes | redis-check-aof --fix /data/appendonlydir/appendonly.aof.manifest' 2>&1 | tail -2
+              if [ -f docker/compose.prod.yml ]; then
+                docker compose -f docker/compose.prod.yml start redis
+              else
+                docker compose -f docker/compose.dev.yml start redis
+              fi
+              sleep 5
+              docker ps --format '{{.Names}} {{.Status}}' | grep -i redis
+            else
+              echo "::warning::volumen de redis no encontrado — doctor no puede actuar"
+            fi
+          else
+            echo "redis sano — doctor no requiere acción"
+          fi
+
+          echo "=== [4/4] Disco DESPUÉS ==="
+          df -h / | tail -1
+          FREE_GB=$(df -BG --output=avail / | tail -1 | tr -dc '0-9')
+          if [ "${FREE_GB}" -lt 15 ]; then
+            echo "::error::APT-GPG-02: el disco quedó en ${FREE_GB}GB libres (<15GB) tras la limpieza — atención del operador requerida"
+            exit 1
+          fi
+          echo "JANITOR OK — ${FREE_GB}GB libres"
+          EOF
+
+      - name: Resumen
+        if: always()
+        run: echo "Janitor APT-GPG-02 ejecutado — revisar pasos superiores para el detalle de disco y redis."
