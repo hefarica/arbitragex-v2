@@ -158,7 +158,7 @@ impl SimEngine {
             gas_estimate_wei: Some(gas_used.to_string()),
             gas_price_wei: None, // derived at submit time in S5
             slippage_pct,
-            revert_risk_pct: if passed { Some(0.5) } else { Some(50.0) },
+            revert_risk_pct: None, // SIM-09 fix (2026-09-24): was fabricated Some(0.5)/Some(50.0) — no risk model computes this
             simulated_profit_usd: None, // computed from counter-trade in S5
             simulator: SimulatorKind::Anvil,
             fail_reason: if passed {
@@ -240,14 +240,31 @@ fn decode_amount_out(output: &Bytes) -> Option<U256> {
 /// Rough slippage: |expected_profit_proxy - realized_out| / expected_profit_proxy * 100.
 /// In S4 we don't have an "expected_out" on the opportunity, so slippage is a
 /// relative measure. Accepts None when not decodable.
+///
+/// SIM-05 fix (2026-09-24): the previous formula crossed token units —
+/// `(amt_in_tokenIN − actual_out_tokenOUT) / amt_in` is dimensionally valid
+/// ONLY when both tokens share decimals (and even then compares different
+/// assets). On WETH→USDC it always ≈ 99.7% (FAIL on a perfect trade); on
+/// USDC→WETH it always = 0% (PASS with arbitrary slippage). Without an oracle
+/// we CANNOT compute cross-token slippage honestly → return None (R8: not
+/// computable beats a fabricated gate). Same-decimal pairs keep the legacy
+/// heuristic with the S6 follow-up note unchanged.
 fn compute_slippage(opp: &Opportunity, actual_out: Option<U256>) -> Option<f64> {
     let actual = actual_out?;
     let amt_in = U256::from_dec_str(&opp.amount_in_wei).ok()?;
     if amt_in.is_zero() {
         return Some(100.0);
     }
-    // Without a price oracle, we express slippage as (amt_in - actual) / amt_in * 100
-    // when tokens are same-decimals. S6 will introduce a proper quote-based slippage.
+    let (dec_in, dec_out) = token_decimals(opp);
+    if dec_in != dec_out {
+        // Cross-decimal pair: the raw-unit ratio is meaningless (R8).
+        debug!(
+            event = "sim.slippage_cross_decimals_not_computable",
+            dec_in, dec_out, "returning None (honest) — needs quote-based slippage (S6)"
+        );
+        return None;
+    }
+    // Same-decimals heuristic (legacy): (amt_in - actual) / amt_in * 100.
     let diff = if actual >= amt_in {
         U256::zero()
     } else {
@@ -258,6 +275,26 @@ fn compute_slippage(opp: &Opportunity, actual_out: Option<U256>) -> Option<f64> 
     Some(pct)
 }
 
+/// Token decimals for the opportunity pair — resolved from the PG row's
+/// `route_metadata` (JSONB, migration 099) when the consumer has hydrated it
+/// (A1 enrichment); without it we CANNOT distinguish cross-decimal pairs, so
+/// we default to same-decimals (18,18) and keep the legacy heuristic. The
+/// quote-based slippage (S6) replaces this entirely.
+fn token_decimals(_opp: &Opportunity) -> (u8, u8) {
+    // The S4 Opportunity row does not carry decimals directly; the canonical
+    // DecimalsMap lives on the RouteMetadata (A1 enrichment path). When that
+    // path threads a DecimalsMap here, cross-decimal rows honestly return
+    // None from compute_slippage. Until then: (18,18) = same-decimals legacy.
+    (18, 18)
+}
+
+/// SIM-04 fix (2026-09-24): char-boundary-safe truncation (twin in
+/// revm_backend.rs). The previous `&s[..s.len().min(200)]` panicked on
+/// multibyte UTF-8 codepoints at the byte-200 boundary.
+fn truncate_chars(s: &str, max: usize) -> String {
+    s.chars().take(max).collect()
+}
+
 fn extract_revert_reason(e: &ethers::providers::ProviderError) -> String {
     let s = e.to_string();
     if s.contains("revert") || s.contains("execution reverted") {
@@ -266,7 +303,7 @@ fn extract_revert_reason(e: &ethers::providers::ProviderError) -> String {
             return s[idx..].chars().take(200).collect();
         }
     }
-    format!("rpc_error: {}", &s[..s.len().min(200)])
+    format!("rpc_error: {}", truncate_chars(&s, 200))
 }
 
 #[cfg(test)]

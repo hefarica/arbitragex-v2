@@ -121,8 +121,11 @@ function summaryCells(opp: OmniOpportunity): Array<{
     ),
     cell(
       "Risk",
-      opp.risk_score != null ? opp.risk_score.toFixed(2) : null,
-      "risk_score del wire",
+      // FRONT-05 fix (2026-09-24): risk_score is a 0-1 FRACTION on the wire;
+      // the raw display (0.11) contradicted formatRiskOrDash's "11.0%" for
+      // the same field. Unify to percent via the same formula.
+      opp.risk_score != null ? `${(opp.risk_score * 100).toFixed(1)}%` : null,
+      "risk_score del wire (fracción 0-1, renderizada como %)",
     ),
     cell(
       "Sim",

@@ -4,7 +4,7 @@
 >
 > **Readiness (verifier SSOT):** A.4 fork **PASS** · A.5 paper-shadow **PASS** (closure #473; A.4 fork-validation lineage #431) · A.8 confidence scoring **LIVE** (#470/#471) · remaining: A.6 circuit-breaker envs, A.7 private-relay call-site, A.9 formal sign-off. The DApp banner renders `go_a4`/`go_a5` live from `/api/readiness/decision` (#477) — UI = RuntimeVerifierStatus, never a hardcoded snapshot. `/status` reports the exact deploy SHA + workflow run (#478).
 
-A real-time arbitrage detection + paper-shadow simulation system for EVM DEXs. It detects price asymmetries across liquidity venues, simulates execution on REVM/Anvil forks (zero capital), and scores opportunities via a 31-operator mathematical evidence pipeline.
+A real-time arbitrage detection + paper-shadow simulation system for EVM DEXs. It detects price asymmetries across liquidity venues, simulates execution on REVM/Anvil forks (zero capital), and scores opportunities via a 32-operator mathematical evidence pipeline.
 
 ---
 
@@ -16,13 +16,13 @@ $$\mathcal{A} = \left|\log\prod_{(i,j) \in \text{loop}} \frac{p_j}{p_i}\right| >
 
 The **Topological Yield** (net profit) is $\mathcal{Y} = \mathcal{A}_{\text{gross}} - \gamma_{\text{gas}} - \delta_{\text{slip}}$.
 
-The 31 mathematical operators form an **observational basis** — each projects the market state into a scalar signal:
+The 32 mathematical operators form an **observational basis** — each projects the market state into a scalar signal:
 
-$$\mathbf{e} = [O_1, O_2, \dots, O_{31}]^\top \in \mathbb{R}^{31}$$
+$$\mathbf{e} = [O_1, O_2, \dots, O_{32}]^\top \in \mathbb{R}^{32}$$
 
 The evidence vector feeds a **calibrated Bayesian posterior**:
 
-$$\log\frac{\pi}{1-\pi} = \log\frac{\pi_0}{1-\pi_0} + \sum_{k=1}^{31} \log LR_k \cdot e_k$$
+$$\log\frac{\pi}{1-\pi} = \log\frac{\pi_0}{1-\pi_0} + \sum_{k=1}^{32} \log LR_k \cdot e_k$$
 
 Position sizing via **Kelly criterion**: $f^* = \frac{b\hat{p} - q}{b}$, clamped to $[0, 1]$.
 
@@ -33,23 +33,27 @@ Position sizing via **Kelly criterion**: $f^* = \frac{b\hat{p} - q}{b}$, clamped
 ## Architecture (C-S-E Canonical)
 
 ```
-Collector (Rust) ──▶ Strategy Engine (TS) ──▶ Risk Engine ──▶ Executor (paper)
-     │                      │                     │
+Collector (Rust) ──▶ Strategy Engine (TS) ──▶ Risk Engine ──▶ Terminus (relays-client)
+     │                      │                     │              §34.3: the ONLY signer
      ▼                      ▼                     ▼
  searcher-rs            Redis Streams         api-server ──▶ edge ──▶ frontend
      │                      │                     │
      ▼                      ▼                     ▼
  math-engine            PostgreSQL            sim-ctl (REVM fork)
- (31 operators)         (opportunities)       (capital $0)
+ (32 operators)         (opportunities)       (capital $0)
+     │                                           │
+     ▼                                           ▼
+ prioritization-spine                       shared-rs
+ (scoring/gates)                       (contracts/types/identity)
 ```
 
 **24 services** on the prod VPS (Hetzner). See [HARDENING_AND_ROADMAP.md](docs/HARDENING_AND_ROADMAP.md) §2 for the full list.
 
 ---
 
-## The 31 Mathematical Operators
+## The 32 Mathematical Operators
 
-All 31 implemented with real formulas + fail-honest `None` (commit `7f47c5e2`, 107 tests).
+All 32 implemented with real formulas + fail-honest `None` (commit `7f47c5e2`, 107 tests).
 
 | Domain | Operators | Key Scalars |
 |---|---|---|
@@ -60,7 +64,7 @@ All 31 implemented with real formulas + fail-honest `None` (commit `7f47c5e2`, 1
 | **Game Theory / OR** | Queueing, Bundle recon, Path ordering, Shapley | E[W_q], margin, spread, max φ_i |
 | **Finance** | Flash Loan (CPMM), JIT Liquidity | optimal x*, decay k |
 | **Control** | Pontryagin, Lagrangian | H*, L = T−V |
-| **ML** | DRL (PPO) | V(s_t) — gated None (untrained) |
+| **ML** | DRL (PPO) | V(s_t) — gated None (untrained) |\n| **Multi-objective** | NSGA-II (op_32) | Pareto front — dominance + crowding |
 
 ---
 

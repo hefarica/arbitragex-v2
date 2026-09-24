@@ -36,7 +36,7 @@ jobs:
       DATABASE_URL: postgres://postgres:postgres@localhost:5432/arbitragex
 
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
 
       - name: psql shim (cached postgres:16 image — no apt)
         # CI-FLAKE-PSQL-APT (2026-08-17): apt-get hung until job timeout on a

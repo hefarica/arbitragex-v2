@@ -47,8 +47,13 @@ function strip(over: Partial<Parameters<typeof RegistryCoherenceStrip>[0]>): str
 }
 
 describe("coherenceVerdict (pure)", () => {
-  it("empty + genuinely answered → COHERENT", () => {
-    expect(coherenceVerdict([], null, null)).toEqual({ kind: "COHERENT" });
+  it("empty → NOT_COMPUTED (DOC-06: no producer = no verdict, never COHERENT)", () => {
+    // DOC-06 fix (2026-09-24): drift_observations has ZERO writers — an empty
+    // table over an absent producer is NOT "COHERENT - 0 observations".
+    expect(coherenceVerdict([], null, null)).toEqual({
+      kind: "NOT_COMPUTED",
+      why: "drift_observations sin productor (schema-drift P0 abierto)",
+    });
   });
 
   it("≥1 observation → DRIFT with count", () => {
@@ -102,13 +107,13 @@ describe("layerGroup (pure)", () => {
 });
 
 describe("RegistryCoherenceStrip (§56)", () => {
-  it("COHERENT: 0 unresolved observations, query genuinely answered", () => {
+  it("empty observations → NOT COMPUTADO (DOC-06: no producer = no verdict)", () => {
     const html = strip({});
     expect(html).toContain('data-testid="coherence-verdict"');
-    expect(html).toContain(">COHERENT<");
-    expect(html).toContain("0 observaciones sin resolver");
-    // the §79 disclaimer rides with the coherent verdict
-    expect(html).toContain("el FE no recomputa hashes (§79)");
+    // DOC-06: empty over absent producer = NOT COMPUTED, never COHERENT
+    expect(html).not.toContain(">COHERENT<");
+    expect(html).toContain("NO COMPUTADO");
+    expect(html).toContain("sin productor");
   });
 
   it("NO COMPUTADO (reason): table absent is never COHERENT (R8)", () => {

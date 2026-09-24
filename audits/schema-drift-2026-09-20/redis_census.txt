@@ -1,0 +1,9 @@
+Unrecognized option or bad number of args for: '--type'
+===PUBSUB===
+arbx:killswitch:changes
+arbx:topology:mutation
+arbx:route_discovery:telemetry
+arbx:config:chains:reload
+arbx:signals:convergence
+arbx:cartridge:telemetry
+arbx:cartridge:injection

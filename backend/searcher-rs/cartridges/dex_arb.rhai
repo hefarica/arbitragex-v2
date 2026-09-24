@@ -266,6 +266,7 @@ fn evaluate_opportunity(pool_data) {
             return #{
                 is_opportunity: true,
                 estimated_profit: best_net_usd,
+                currency: "usd",
                 estimated_amount_out: best_final_in,
                 confidence: 0.3,
                 single_tick_unconfirmed: true,
@@ -297,7 +298,13 @@ fn evaluate_opportunity(pool_data) {
     }
 
     // ── Buscar pools alternativos para el mismo par (path V2 cross-DEX) ──
-    // get_pool_index resuelve automáticamente por chain_id del host
+    // RHAI-01/02/03 fix (2026-09-24): esta rama comparaba Q_alt(x) vs Q_source(x)
+    // (dos quotes de ida con el MISMO input — contraejemplo: diff paralela
+    // +0.099690 B con ambos ciclos reales perdiendo −0.718160/−0.519517 A),
+    // comparaba token_out humano contra gas nativo, y usaba block_number fuera
+    // del scope del for. Ahora: round-trip ENCADENADO por cada pool alt en ambas
+    // direcciones, reservas orientadas por token0_addr, y gas valorado en USD
+    // con el precio del token nativo (mismo criterio que la rama V3).
     let alt_pools = get_pool_index(meta_in.symbol, meta_out.symbol);
 
     if alt_pools.len() < 2 {
@@ -321,109 +328,173 @@ fn evaluate_opportunity(pool_data) {
             reason: "source_reserves_unavailable"
         };
     }
-    let source_price = calculate_price_v2(
-        source_reserves.r0,
-        source_reserves.r1,
-        decimals_in,
-        decimals_out
-    );
 
-    // ── Escanear pools alternativos buscando discrepancia ───────────────
-    let best_profit = 0.0;
+    // Scope fix (RHAI-03): un único anclaje de bloque para TODO el scan.
+    let block_number = get_block_number();
+
+    // Gas en USD (RHAI-02): gas se paga en el token NATIVO — se pricing con el
+    // precio USD del nativo (WETH/WMATIC/WBNB), nunca con el precio de token_in.
+    let base_fee = get_base_fee();
+    let gas_units = estimate_gas_cost("v2", chain_id);
+    let gas_cost_native = gas_units * base_fee / 1000000000.0;
+    let native_gas_symbol = if chain_id == 1 || chain_id == 10 || chain_id == 8453 || chain_id == 42161 {
+        "WETH"
+    } else if chain_id == 137 {
+        "WMATIC"
+    } else if chain_id == 56 {
+        "WBNB"
+    } else {
+        ""
+    };
+    let native_usd = if native_gas_symbol == "" { () } else { get_token_price_usd(native_gas_symbol) };
+    // Sin precio del nativo no hay gate de gas computable → fail-honest.
+    if native_usd == () || native_usd <= 0.0 {
+        return #{
+            is_opportunity: false,
+            estimated_profit: 0.0,
+            confidence: 0.0,
+            urgency: "none",
+            reason: "v2_arb_no_gas_price"
+        };
+    }
+    let gas_usd = gas_cost_native * native_usd;
+
+    // Precio USD del token_in para valorar el profit (el binding resuelve
+    // dirección→símbolo canónico — RHAI-11 fix del lado host).
+    let price_in_usd = get_token_price_usd(token_in);
+    if price_in_usd == () || price_in_usd <= 0.0 {
+        return #{
+            is_opportunity: false,
+            estimated_profit: 0.0,
+            confidence: 0.0,
+            urgency: "none",
+            reason: "v2_arb_no_price"
+        };
+    }
+
+    // ── Round-trip encadenado por pool alternativo (RHAI-01) ────────────
+    // Para cada alt pool se cotizan AMBAS direcciones del ciclo:
+    //   A: source(token_in→token_out) luego alt(token_out→token_in)
+    //   B: alt(token_in→token_out) luego source(token_out→token_in)
+    // El profit es final_token_in − amount_in (mismo token, mismas unidades).
+    let best_net_usd = ();
     let best_pool = "";
+    let best_direction = "";
+    let best_profit_tok = 0.0;
+    let best_final_in = "0";
     let best_price = 0.0;
     let best_reserves = ();
+    let source_price = 0.0;
+
+    // Reservas del pool fuente orientadas por token0 (los pools V2 ordenan
+    // token0 por dirección; r0 SIEMPRE es la reserva de token0).
+    let src_r0 = source_reserves.r0;
+    let src_r1 = source_reserves.r1;
+    let src_token0 = if source_reserves.token0_addr != () { source_reserves.token0_addr } else { "" };
+    // reserve de token_in / token_out en el source pool (sin destructuring:
+    // Rhai no soporta let (a, b) = ...).
+    let src_ri = if src_token0 != "" && token_in != src_token0 { src_r1 } else { src_r0 };
+    let src_ro = if src_token0 != "" && token_in != src_token0 { src_r0 } else { src_r1 };
+    source_price = calculate_price_v2_oriented(src_ri, src_ro, decimals_in, decimals_out);
 
     for pool_addr in alt_pools {
-        // Saltar el pool fuente
         if pool_addr == source_pool {
             continue;
         }
-
-        // Obtener reservas del pool alternativo (host resuelve por chain)
         let reserves = get_reserves(pool_addr);
         if reserves == () {
             continue;
         }
-
-        // Verificar frescura de las reservas (máx 3 bloques de antigüedad)
-        let block_number = get_block_number();
-        if reserves.block < block_number - 3 {
+        if reserves.block != () && reserves.block < block_number - 3 {
             log_quantum("debug", "stale reserves for pool " + pool_addr);
             continue;
         }
+        let r0 = reserves.r0;
+        let r1 = reserves.r1;
+        if r0 == () || r1 == () {
+            continue;
+        }
+        let alt_token0 = if reserves.token0_addr != () { reserves.token0_addr } else { "" };
+        // reserve de token_in / token_out en el alt pool (sin destructuring).
+        let alt_ri = if alt_token0 != "" && token_in != alt_token0 { r1 } else { r0 };
+        let alt_ro = if alt_token0 != "" && token_in != alt_token0 { r0 } else { r1 };
+        // reservas para el tramo inverso (token_out→token_in): swap de columnas
+        let alt_ri_rev = alt_ro;
+        let alt_ro_rev = alt_ri;
+        let src_ri_rev = src_ro;
+        let src_ro_rev = src_ri;
 
-        // Calcular precio en pool alternativo
-        let alt_price = calculate_price_v2(
-            reserves.r0,
-            reserves.r1,
-            decimals_in,
-            decimals_out
-        );
-
+        let alt_price = calculate_price_v2_oriented(alt_ri, alt_ro, decimals_in, decimals_out);
         if alt_price <= 0.0 || source_price <= 0.0 {
             continue;
         }
 
-        // ── Calcular profit potencial ───────────────────────────────────
-        let price_diff_pct = math_abs((alt_price - source_price) / source_price) * 100.0;
+        // Dirección A: comprar en source (más barato), vender en alt.
+        // Dirección B: comprar en alt, vender en source. (Helper fuera del
+        // loop: el presupuesto de profundidad de expresión de Rhai es por
+        // función — ExprTooDeep si se anida todo inline.)
+        let rt_a = roundtrip_one_dir(amount_in_str, src_ri, src_ro, alt_ri_rev, alt_ro_rev, price_in_usd, gas_usd, decimals_in);
+        let rt_b = roundtrip_one_dir(amount_in_str, alt_ri, alt_ro, src_ri_rev, src_ro_rev, price_in_usd, gas_usd, decimals_in);
 
-        // Calcular amount_out óptimo usando constant-product math
-        let amount_in_f = from_wei(amount_in_str, decimals_in);
-        let estimated_out_source = calculate_amount_out_v2(
-            amount_in_str,
-            source_reserves.r0,
-            source_reserves.r1
-        );
-        let estimated_out_alt = calculate_amount_out_v2(
-            amount_in_str,
-            reserves.r0,
-            reserves.r1
-        );
-
-        let profit_raw = 0.0;
-        if alt_price > source_price {
-            // Comprar en source (más barato), vender en alt (más caro)
-            profit_raw = estimated_out_alt - estimated_out_source;
-        } else {
-            // Comprar en alt (más barato), vender en source (más caro)
-            profit_raw = estimated_out_source - estimated_out_alt;
+        // Conservar la mejor dirección por net USD (con el número real, aun
+        // negativo — R8: la pérdida no se borra).
+        let best_this_usd = ();
+        let best_this_dir = "";
+        let best_this_final = "0";
+        let best_this_profit = 0.0;
+        if rt_a.net_usd != () && (rt_b.net_usd == () || rt_a.net_usd >= rt_b.net_usd) {
+            best_this_usd = rt_a.net_usd;
+            best_this_dir = "buy_source_sell_alt";
+            best_this_final = rt_a.final_in;
+            best_this_profit = rt_a.profit_tok;
+        } else if rt_b.net_usd != () {
+            best_this_usd = rt_b.net_usd;
+            best_this_dir = "buy_alt_sell_source";
+            best_this_final = rt_b.final_in;
+            best_this_profit = rt_b.profit_tok;
         }
 
-        let profit_human = from_wei(profit_raw.to_string(), decimals_out);
-
-        if profit_human > best_profit {
-            best_profit = profit_human;
-            best_pool = pool_addr;
-            best_price = alt_price;
-            best_reserves = reserves;
+        if best_this_usd != () {
+            if best_net_usd == () || best_this_usd > best_net_usd {
+                best_net_usd = best_this_usd;
+                best_pool = pool_addr;
+                best_direction = best_this_dir;
+                best_final_in = best_this_final;
+                best_profit_tok = best_this_profit;
+                best_price = alt_price;
+                best_reserves = reserves;
+            }
         }
     }
 
-    // ── Evaluar viabilidad económica (gas-aware, chain-agnostic) ────────
-    let base_fee = get_base_fee();
-    let estimated_gas = estimate_gas_cost(protocol_type, chain_id);
-    let gas_cost_token = estimated_gas * base_fee / 1000000000.0; // gwei to token
-
-    // Profit mínimo debe cubrir gas + margen de seguridad (20%)
-    let min_profit_threshold = gas_cost_token * 1.2;
-
-    if best_profit <= min_profit_threshold {
+    if best_net_usd == () {
         return #{
             is_opportunity: false,
-            estimated_profit: best_profit,
+            estimated_profit: 0.0,
+            confidence: 0.0,
+            urgency: "none",
+            reason: "no_computable_roundtrip"
+        };
+    }
+
+    // Gate económico en USD: net > 0 y margen 20% sobre gas (dimensionalmente
+    // consistente — ambos lados en USD).
+    if best_net_usd <= gas_usd * 0.2 {
+        return #{
+            is_opportunity: false,
+            estimated_profit: best_net_usd,
             confidence: 0.0,
             urgency: "none",
             reason: "below_gas_threshold",
-            gas_cost: gas_cost_token,
+            gas_cost_usd: gas_usd,
             best_pool: best_pool
         };
     }
 
     // ── Calcular confianza basada en múltiples factores ──────────────────
     let confidence = calculate_confidence(
-        best_profit,
-        min_profit_threshold,
+        best_net_usd,
+        gas_usd,
         source_reserves,
         best_reserves,
         block_number
@@ -431,9 +502,9 @@ fn evaluate_opportunity(pool_data) {
 
     // ── Determinar urgencia ─────────────────────────────────────────────
     let urgency = "monitor";
-    if confidence > 0.85 && best_profit > min_profit_threshold * 3.0 {
+    if confidence > 0.85 && best_net_usd > gas_usd * 3.0 {
         urgency = "immediate";
-    } else if confidence > 0.6 && best_profit > min_profit_threshold * 1.5 {
+    } else if confidence > 0.6 && best_net_usd > gas_usd * 1.5 {
         urgency = "next_block";
     }
 
@@ -443,32 +514,69 @@ fn evaluate_opportunity(pool_data) {
             chain_id: chain_id,
             source_pool: source_pool,
             target_pool: best_pool,
-            profit_estimate: best_profit,
+            direction: best_direction,
+            profit_estimate_usd: best_net_usd,
             confidence: confidence
         });
     }
 
-    log_quantum("info", `[chain:${chain_id}] DEX arb found: profit=${best_profit}, conf=${confidence}, urgency=${urgency}`);
+    log_quantum("info", `[chain:${chain_id}] DEX arb roundtrip: net_usd=${best_net_usd}, dir=${best_direction}, conf=${confidence}, urgency=${urgency}`);
 
     #{
         is_opportunity: true,
-        estimated_profit: best_profit,
+        estimated_profit: best_profit_tok,
+        currency: "token_in",
+        profit_usd_hint: best_net_usd,
         confidence: confidence,
         urgency: urgency,
         source_pool: source_pool,
         target_pool: best_pool,
+        direction: best_direction,
         source_price: source_price,
         target_price: best_price,
         token_in: token_in,
         token_out: token_out,
         amount_in: amount_in_str,
-        gas_cost_estimate: gas_cost_token,
-        net_profit: best_profit - gas_cost_token,
+        amount_out_final: best_final_in,
+        gas_cost_usd: gas_usd,
+        net_profit_usd: best_net_usd,
+        quote_method: "v2_chained_roundtrip",
         protocol_type: protocol_type,
         chain_id: chain_id,
         block_number: block_number,
         route_type: "two_leg_arb"
     }
+}
+
+/// Precio spot orientado: reserva_out/reserva_in normalizado por decimales.
+fn calculate_price_v2_oriented(ri_str, ro_str, decimals_in, decimals_out) {
+    let ri = parse_float(ri_str);
+    let ro = parse_float(ro_str);
+    if ri <= 0.0 || ro <= 0.0 {
+        return 0.0;
+    }
+    let adj_ri = ri / math_pow(10.0, decimals_in.to_float());
+    let adj_ro = ro / math_pow(10.0, decimals_out.to_float());
+    adj_ro / adj_ri
+}
+
+/// Round-trip encadenado de UNA dirección (RHAI-01): leg1 forward con
+/// amount_in, leg2 reverse con el output de leg1 como input. Devuelve
+/// #{ net_usd: float | (), final_in: string, profit_tok: float } — net_usd
+/// es () cuando el ciclo no es computable (fail-honest, nunca cero falso).
+fn roundtrip_one_dir(amount_in_str, ri_fwd, ro_fwd, ri_rev, ro_rev, price_in_usd, gas_usd, decimals_in) {
+    let out1 = calculate_amount_out_v2(amount_in_str, ri_fwd, ro_fwd);
+    if out1 <= 0.0 {
+        return #{ net_usd: (), final_in: "0", profit_tok: 0.0 };
+    }
+    let out2 = calculate_amount_out_v2(out1.to_string(), ri_rev, ro_rev);
+    if out2 <= 0.0 {
+        return #{ net_usd: (), final_in: "0", profit_tok: 0.0 };
+    }
+    let amount_raw = parse_float(amount_in_str);
+    let profit_tok = (out2 - amount_raw) / math_pow(10.0, decimals_in.to_float());
+    let net_usd = profit_tok * price_in_usd - gas_usd;
+    #{ net_usd: net_usd, final_in: out2.to_string(), profit_tok: profit_tok }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

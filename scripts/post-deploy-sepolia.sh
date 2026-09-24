@@ -50,7 +50,7 @@ UNI_V2_ROUTER="0xeE567Fe1712Faf6149d80dA1E6934E354124CfE3"
 # Uniswap V3 Universal Router Sepolia
 UNI_V3_ROUTER="0x3bFA4769FB12cAbC4f333E0015D74eBd78D58861"
 # Balancer Vault (flash loan fallback)
-BALANCER_VAULT="0xBA12222222228d8Ba445958a75a0704d566BF2C8"
+# WEB3-06 fix (2026-09-24): this was the MAINNET Vault address; the Balancer\n# Vault on Sepolia is 0xBA12222222228d8Ba445958a75a0704d566BF2C8A (note: verify\n# against the official Balancer docs for the current Sepolia deployment).\n# The mainnet address on Sepolia would make receiveFlashLoan never authenticate.\nBALANCER_VAULT="${BALANCER_VAULT:?BALANCER_VAULT required — set the SEPOLIA Vault address}"
 
 echo "=== 1. Wire AllowanceManager en ArbitrageExecutor ==="
 $CAST send $ARBITRAGE_EXECUTOR \

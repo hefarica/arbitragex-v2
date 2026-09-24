@@ -126,11 +126,14 @@ fn evaluate_opportunity(market_data) {
     let price_diff_bps = (price_diff_usd / market_data.current_price) * 10000.0;
     
     // Restar costos
+    // RHAI-15 fix (2026-09-24): slippage_cost antes era `current_price ×
+    // bps/10000` (unidades de PRECIO: USD/token), restado de un P&L en USD —
+    // faltaba escalar por el tamaño de la posición. Ahora: posición × bps%.
     let gas_cost = config.gas_cost_estimate_usd;
-    let slippage_cost = (market_data.current_price * config.slippage_tolerance_bps) / 10000.0;
-    let total_cost = gas_cost + slippage_cost;
-    
     let position_size_usd = config.max_position_size_usd;
+    let slippage_cost = position_size_usd * (config.slippage_tolerance_bps / 10000.0);
+    let total_cost = gas_cost + slippage_cost;
+
     let profit_usd = (position_size_usd * price_diff_bps / 10000.0) - total_cost;
     
     // Verificar si es rentable

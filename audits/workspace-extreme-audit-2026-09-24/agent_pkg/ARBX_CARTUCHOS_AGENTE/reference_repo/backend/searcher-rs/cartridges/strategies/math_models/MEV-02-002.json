@@ -1,0 +1,63 @@
+{
+  "version": "2.0.0",
+  "frontend_toggle": {
+    "key": "strategy.2.002.enabled",
+    "default": null,
+    "gate_live": "Sim PASS + net_profit>0 + risk_score>=70"
+  },
+  "applicable_operators": [
+    3,
+    4,
+    19,
+    21,
+    1,
+    2,
+    13,
+    14,
+    15,
+    20,
+    22
+  ],
+  "classification": null,
+  "safety_gates": [
+    "arbx-simulation-mandatory",
+    "arbx-paper-trade-first",
+    "arbx-risk-limits-enforcement"
+  ],
+  "mode": null,
+  "operator_weights": {
+    "3": 1.0,
+    "4": 1.0,
+    "19": 1.0,
+    "21": 1.0,
+    "1": 0.7,
+    "2": 0.7,
+    "13": 0.7,
+    "14": 0.7,
+    "15": 0.7,
+    "20": 0.7,
+    "22": 0.7,
+    "31": 0.32,
+    "12": 0.31,
+    "30": 0.31,
+    "11": 0.3
+  },
+  "math_concepts": [
+    {
+      "domain": null,
+      "application_point": "Execution",
+      "formula": "f(x) = x",
+      "module": "math_engine",
+      "purpose": "Placeholder - customize per strategy",
+      "concept": "Deterministic concept for MEV-02-002"
+    }
+  ],
+  "leg_type": null,
+  "atomicity": "TX_ATOMIC",
+  "verdict": "ALLOW",
+  "strategy_id": "MEV-02-002",
+  "family": null,
+  "math_domain": null,
+  "liquidity_type": "FLASH_SWAP",
+  "liquidity_provider": "UniswapV3"
+}

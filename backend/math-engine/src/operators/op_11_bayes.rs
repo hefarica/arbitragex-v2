@@ -45,6 +45,30 @@ impl TopologicalOperator for BayesOperator {
             .copied()
             .unwrap_or(1.0);
 
+        // MATH-06 fix (2026-09-24): the previous guard `wins + losses < 1.0`
+        // passed NaN through (NaN < 1.0 is false) and accepted negative
+        // counts (alpha/beta could go ≤ 0, mean outside [0,1]). Now: any
+        // non-finite or negative input is an honest DATA_GAP.
+        let data_gap = |reason_code: f64| OperatorOutput {
+            operator_id: self.id(),
+            operator_name: self.name().to_string(),
+            scalar_value: None,
+            vector_result: None,
+            matrix_result: None,
+            metadata: {
+                let mut m = HashMap::new();
+                m.insert("computed".to_string(), 0.0);
+                m.insert("reason_code".to_string(), reason_code);
+                m
+            },
+        };
+        if !wins.is_finite() || !losses.is_finite() || wins < 0.0 || losses < 0.0 {
+            return data_gap(1.0); // bayes_invalid_counts_nonfinite_or_negative
+        }
+        if !alpha0.is_finite() || !beta0.is_finite() || alpha0 <= 0.0 || beta0 <= 0.0 {
+            return data_gap(2.0); // bayes_invalid_prior_nonfinite_or_nonpositive
+        }
+
         if wins + losses < 1.0 {
             return OperatorOutput {
                 operator_id: self.id(),

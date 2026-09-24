@@ -56,6 +56,12 @@ impl CanonicalStrategy {
     fn compute_viability(&self, state: &MarketState) -> f64 {
         let mut z = 0.0;
 
+        // MATH-09 fix (2026-09-24): non-finite features (NaN/Inf in
+        // volatility/decoherence) propagate through z into the sigmoid,
+        // producing NaN viability that silently passes `< 0.3` comparisons.
+        // Filter each feature at consumption; a NaN contribution is SKIPPED
+        // (treated as absent), never added to z.
+
         // Penalizacion por gas elevado
         z -= state.gas_price_gwei * 0.01;
 
@@ -68,13 +74,19 @@ impl CanonicalStrategy {
         z += (total_liq / 1_000_000.0).ln_1p();
 
         // Bonificacion por volatilidad (features["volatility"])
+        // MATH-09: is_finite guard — NaN/Inf skips the contribution.
         if let Some(&vol) = state.features.get("volatility") {
-            z += vol * 0.5;
+            if vol.is_finite() {
+                z += vol * 0.5;
+            }
         }
 
         // Penalizacion por decoherencia estimada (features["decoherencia"])
+        // MATH-09: same guard.
         if let Some(&dec) = state.features.get("decoherencia") {
-            z -= dec * 2.0;
+            if dec.is_finite() {
+                z -= dec * 2.0;
+            }
         }
 
         // Factor de escala segun grupo (algunos grupos son mas dificiles)

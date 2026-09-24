@@ -161,6 +161,11 @@ pub fn spawn_cartridge_runtime(
     let runner = Arc::new(CartridgeRunner::new(host_ctx));
     let runner_for_task = runner.clone();
 
+    // CARTRIDGE-CONTROL: clone the cancellation token + Redis URL BEFORE the
+    // boot task below moves them — the hot couple/decouple loop needs its own.
+    let control_cancel = cancel.clone();
+    let control_redis_url = redis_url.clone();
+
     tokio::spawn(async move {
         // Boot-load cartridges from the filesystem directory (dev/bootstrap path).
         // Redis-injected cartridges arrive later via the subscriber.
@@ -182,6 +187,17 @@ pub fn spawn_cartridge_runtime(
         // (not telemetry-gated). TTL is a safety net: if the searcher dies the
         // key expires and the API fails honest instead of serving stale rows.
         publish_cartridge_registry(&mut registry_redis, &runner_for_task, chain_id).await;
+
+        // ── CARTRIDGE-CONTROL (boot application): acoplar/desacoplar según el
+        // estado deseado persistido. Corre DESPUÉS de la carga para no correr
+        // contra ella; sin hash alcanzable no desacopla nada (fail-open hacia
+        // el estado de carga por defecto, documentado en cartridge_control).
+        crate::cartridge_control::apply_desired_states(
+            &runner_for_task,
+            &mut registry_redis,
+            chain_id,
+        )
+        .await;
 
         // Registry REFRESH loop — the snapshot TTL is 600s but the searcher
         // runs for days; without a periodic re-publish the key expires and
@@ -215,6 +231,21 @@ pub fn spawn_cartridge_runtime(
             chain_id, "cartridge subscriber task exited"
         );
     });
+
+    // ── CARTRIDGE-CONTROL: loop de comandos en caliente (canal PubSub) ────────
+    {
+        let runner_control = runner.clone();
+        let control_cancel = control_cancel;
+        tokio::spawn(async move {
+            crate::cartridge_control::control_loop(
+                runner_control,
+                control_redis_url,
+                chain_id,
+                control_cancel,
+            )
+            .await;
+        });
+    }
 
     Some(runner)
 }
@@ -1106,6 +1137,32 @@ pub async fn active_evaluate_and_emit(
     let mut positive_total: u64 = 0;
 
     for (cartridge_id, category, declared_primary_ops, declared_secondary_ops) in pertinent {
+        // ── CORE-04 fix (2026-09-24): apply the workbook dispatch doctrine ──
+        // (strategy_dispatch_status.rs) on the CANDIDATE path too. Previously
+        // only route_discovery_worker consulted it — a NEEDS_ROUTE_DATA or
+        // NO_COMPATIBLE_ROUTE cartridge with a permissive Execution_Class
+        // could form a candidate here, bypassing the workbook's "NEEDS_ROUTE_
+        // DATA nunca fabrica ruta" doctrine. Fail-closed: unknown MEV ids pass
+        // (the workbook covers the 264; root masters + custom are exempt).
+        let mev_id = crate::signal_tier::mev_id_from_cartridge_id(&cartridge_id);
+        if let Some(mev_id) = &mev_id {
+            let disposition = crate::strategy_dispatch_status::disposition(mev_id);
+            if !disposition.may_form_candidate() {
+                debug!(
+                    event = "cartridge.active_dispatch_blocked",
+                    chain_id,
+                    cartridge_id = %cartridge_id,
+                    mev_id = %mev_id,
+                    reason = disposition.reason(),
+                    "workbook dispatch status blocks candidate formation on the cartridge path"
+                );
+                let reason_key = format!("dispatch_{}", disposition.reason());
+                *negative_reasons.entry(reason_key).or_insert(0) += 1;
+                negative_total += 1;
+                continue;
+            }
+        }
+
         match runner.evaluate(&cartridge_id, pool_data.clone()).await {
             Ok(eval_result) => {
                 // BUG-003/RD-06/ARBX-0024 (2026-08-31): telemetry is hot-path
@@ -1134,8 +1191,98 @@ pub async fn active_evaluate_and_emit(
                         reason = ?eval_result.reason,
                         "cartridge active eval: no opportunity"
                     );
-                    let reason_key = eval_result.reason.unwrap_or_else(|| "none".to_string());
+                    let reason_key = eval_result
+                        .reason
+                        .clone()
+                        .unwrap_or_else(|| "none".to_string());
                     *negative_reasons.entry(reason_key).or_insert(0) += 1;
+                    negative_total += 1;
+                    continue;
+                }
+
+                // ── AGENT v4 interception (integration/agent-cartridges-v4) ──────
+                // A v4 proposal must NEVER flow into the v3 candidate path: the
+                // v3 adapter rebuilds the plan from intent.legs (RHAI-12) and
+                // sizes with the legacy f64 contract. Until the snapshot store
+                // + plan-identity consumer ((plan_hash, snapshot_id,
+                // amount_in_raw) lookup) is wired, an eligible v4 CANDIDATE is
+                // emitted as an honest REJECTED row with its exact status —
+                // observe-only, no fabricated candidate, no silent drop (R8).
+                if eval_result.metadata.contains_key("proposal_v4") {
+                    let v4_status = eval_result
+                        .metadata
+                        .get("proposal_v4")
+                        .and_then(|p| p.get("status"))
+                        .and_then(|s| s.as_str())
+                        .unwrap_or("UNKNOWN");
+                    let v4_reason = format!("agent_v4_{v4_status}_snapshot_store_not_wired");
+                    info!(
+                        event = "cartridge.active_v4_intercepted",
+                        chain_id,
+                        cartridge_id = %cartridge_id,
+                        v4_status,
+                        "v4 proposal intercepted: awaiting snapshot-store consumer (no v3 candidate formed)"
+                    );
+                    // Honest rejection row WITHOUT the v3 candidate machinery:
+                    // identity from the intent (causal origin), no economics
+                    // fabricated (expected_profit_usd = None — R8).
+                    let first_leg_v4 = intent.legs.first();
+                    let last_leg_v4 = intent.legs.last();
+                    let (token_in_v4, token_out_v4) = match (first_leg_v4, last_leg_v4) {
+                        (Some(f), Some(l)) => {
+                            (format!("{:#x}", f.token_in), format!("{:#x}", l.token_out))
+                        }
+                        _ => (String::new(), String::new()),
+                    };
+                    let opp_v4 = shared_rs::contracts::Opportunity {
+                        id: uuid::Uuid::new_v4(),
+                        chain_id,
+                        strategy_kind: shared_rs::contracts::StrategyKind::cartridge(
+                            cartridge_id.clone(),
+                        ),
+                        dex_a: first_leg_v4
+                            .and_then(|l| l.dex_hint.clone())
+                            .unwrap_or_else(|| "unknown".to_string()),
+                        dex_b: last_leg_v4.and_then(|l| l.dex_hint.clone()),
+                        pair_symbol: format!("{}/{}", token_in_v4, token_out_v4),
+                        token_in: token_in_v4,
+                        token_out: token_out_v4,
+                        amount_in_wei: intent.amount_in.to_string(),
+                        expected_profit_usd: None, // v4 exact strings live in the telemetry payload
+                        net_expected_profit_usd: None,
+                        roi_pct: None,
+                        risk_score: None,
+                        block_number: intent.observed_block().or_else(|| {
+                            let head = runner
+                                .host_block_number_handle()
+                                .load(std::sync::atomic::Ordering::Relaxed);
+                            (head > 0).then_some(head)
+                        }),
+                        rejection_reason: Some(v4_reason.clone()),
+                        cartridge_id: Some(cartridge_id.clone()),
+                        detector_id: Some(cartridge_id.clone()),
+                        pipeline_latency_ms: None,
+                        detected_at: chrono::Utc::now(),
+                        trace_id: uuid::Uuid::new_v4(),
+                    };
+                    if let Err(e) = emitter
+                        .emit_rejected(
+                            &opp_v4,
+                            crate::strategy_label::StrategyLabel::DexArbV2V2,
+                            &v4_reason,
+                            None,
+                        )
+                        .await
+                    {
+                        warn!(
+                            event = "cartridge.v4_emit_rejected_failed",
+                            chain_id,
+                            cartridge_id = %cartridge_id,
+                            error = %e,
+                            "failed to emit v4 interception rejection"
+                        );
+                    }
+                    *negative_reasons.entry(v4_reason).or_insert(0) += 1;
                     negative_total += 1;
                     continue;
                 }
@@ -1741,7 +1888,10 @@ pub fn cartridge_registry_redis_key(chain_id: u64) -> String {
 /// if the searcher dies the key expires and the API returns an honest
 /// "registry unavailable" rather than stale rows. Best-effort — a Redis hiccup
 /// is logged and never fatal to the scanner.
-async fn publish_cartridge_registry(
+///
+/// CARTRIDGE-CONTROL: `pub` so the hot couple/decouple loop can refresh the
+/// registry snapshot immediately after a pause/resume (not just every 240s).
+pub async fn publish_cartridge_registry(
     redis: &mut redis::aio::ConnectionManager,
     runner: &Arc<CartridgeRunner>,
     chain_id: u64,

@@ -22,13 +22,38 @@ impl OpportunityScorer for PrioritizationEngine {
     ) -> Result<OpportunityScore, ScoringError> {
         let net_expected =
             evidence.gross_profit - evidence.gas_cost - evidence.bribe - evidence.flashloan_fee;
+        // MATH-07 fix (2026-09-24): NaN passed through `<= 0.0` (false for
+        // NaN) and produced a NaN final_score that broke the ranker's total
+        // order. Now: any non-finite input is an explicit Err, never a NaN.
+        if !net_expected.is_finite() {
+            return Err(ScoringError::InvalidEvidence);
+        }
         if net_expected <= 0.0 {
             return Err(ScoringError::NegativeProfit);
         }
+        if !evidence.landing_probability.is_finite()
+            || !evidence.liquidity_confidence.is_finite()
+            || !evidence.token_risk_score.is_finite()
+        {
+            return Err(ScoringError::InvalidEvidence);
+        }
 
-        let final_score =
-            (net_expected * evidence.landing_probability * evidence.liquidity_confidence)
-                / (evidence.state_freshness_ms as f64 * evidence.token_risk_score).max(1.0);
+        // MATH-07 (second half): the raw division by state_freshness_ms makes
+        // score ∝ 1/freshness — a 1ms-old $1 opportunity outranks a 50ms-old
+        // $10 one by 5×. Normalize freshness to a bounded [0,1] decay
+        // (exp(−ms/τ), τ = 60s): fresh ≈ 1.0, 60s-old ≈ 0.37, stale → 0.
+        // The denominator floor (max 1.0) still guards against div-by-0.
+        const FRESHNESS_TAU_MS: f64 = 60_000.0;
+        let freshness_factor = (-(evidence.state_freshness_ms as f64) / FRESHNESS_TAU_MS).exp();
+        let final_score = net_expected
+            * evidence.landing_probability
+            * evidence.liquidity_confidence
+            * freshness_factor
+            / evidence.token_risk_score.max(1.0);
+
+        if !final_score.is_finite() {
+            return Err(ScoringError::InvalidEvidence);
+        }
 
         Ok(OpportunityScore {
             net_expected_profit: net_expected,

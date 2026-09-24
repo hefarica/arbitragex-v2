@@ -748,11 +748,13 @@ impl PoolDiscoveryService {
 
         match proto {
             crate::route_intent::ProtocolType::V2 => {
-                let key = format!(
-                    "arbx:pool_index:{}:{}:{}",
+                // CORE-02: use the canonical key builder (lowercase + sorted) —
+                // the raw format! here previously bypassed key_pool_index's
+                // normalization, splitting the index into two key spaces.
+                let key = crate::reserves::key_pool_index(
                     self.chain_id,
-                    sym0.to_lowercase(),
-                    sym1.to_lowercase()
+                    &sym0.to_lowercase(),
+                    &sym1.to_lowercase(),
                 );
                 let raw_val: Option<String> = redis::cmd("GET")
                     .arg(&key)

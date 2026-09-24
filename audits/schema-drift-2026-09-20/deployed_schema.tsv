@@ -1,0 +1,1139 @@
+agent_registry	id	uuid	NO
+agent_registry	role	text	NO
+agent_registry	discipline	text	NO
+agent_registry	rank	text	NO
+agent_registry	active	boolean	NO
+agent_registry	capabilities	jsonb	NO
+agent_registry	evidence_bindings	jsonb	NO
+agent_registry	status	text	NO
+agent_registry	config_hash	character	NO
+agent_registry	created_at	timestamp with time zone	NO
+agent_registry	updated_at	timestamp with time zone	NO
+agent_registry	created_by	text	NO
+agent_registry	updated_by	text	NO
+audit_event	id	uuid	NO
+audit_event	actor	text	NO
+audit_event	action	text	NO
+audit_event	entity_type	text	NO
+audit_event	entity_id	text	NO
+audit_event	chain_id	bigint	YES
+audit_event	before_state	jsonb	YES
+audit_event	after_state	jsonb	YES
+audit_event	config_hash_before	character	YES
+audit_event	config_hash_after	character	YES
+audit_event	idempotency_key	text	NO
+audit_event	result	text	NO
+audit_event	error	text	YES
+audit_event	ip_address	cidr	YES
+audit_event	user_agent	text	YES
+audit_event	trace_id	text	YES
+audit_event	timestamp	timestamp with time zone	NO
+audit_event	operator_id	text	YES
+audit_event	operator_pubkey	text	YES
+audit_event	operator_role	text	YES
+audit_log	id	uuid	NO
+audit_log	actor	text	NO
+audit_log	action	text	NO
+audit_log	target_kind	text	YES
+audit_log	target_id	text	YES
+audit_log	before_state	jsonb	YES
+audit_log	after_state	jsonb	YES
+audit_log	ip_address	cidr	YES
+audit_log	user_agent	text	YES
+audit_log	trace_id	uuid	YES
+audit_log	created_at	timestamp with time zone	NO
+audit_log_2026_05	id	uuid	NO
+audit_log_2026_05	actor	text	NO
+audit_log_2026_05	action	text	NO
+audit_log_2026_05	target_kind	text	YES
+audit_log_2026_05	target_id	text	YES
+audit_log_2026_05	before_state	jsonb	YES
+audit_log_2026_05	after_state	jsonb	YES
+audit_log_2026_05	ip_address	cidr	YES
+audit_log_2026_05	user_agent	text	YES
+audit_log_2026_05	trace_id	uuid	YES
+audit_log_2026_05	created_at	timestamp with time zone	NO
+audit_log_2026_06	id	uuid	NO
+audit_log_2026_06	actor	text	NO
+audit_log_2026_06	action	text	NO
+audit_log_2026_06	target_kind	text	YES
+audit_log_2026_06	target_id	text	YES
+audit_log_2026_06	before_state	jsonb	YES
+audit_log_2026_06	after_state	jsonb	YES
+audit_log_2026_06	ip_address	cidr	YES
+audit_log_2026_06	user_agent	text	YES
+audit_log_2026_06	trace_id	uuid	YES
+audit_log_2026_06	created_at	timestamp with time zone	NO
+audit_log_default	id	uuid	NO
+audit_log_default	actor	text	NO
+audit_log_default	action	text	NO
+audit_log_default	target_kind	text	YES
+audit_log_default	target_id	text	YES
+audit_log_default	before_state	jsonb	YES
+audit_log_default	after_state	jsonb	YES
+audit_log_default	ip_address	cidr	YES
+audit_log_default	user_agent	text	YES
+audit_log_default	trace_id	uuid	YES
+audit_log_default	created_at	timestamp with time zone	NO
+bayesian_priors	id	bigint	NO
+bayesian_priors	token_pair	text	NO
+bayesian_priors	log_odds	double precision	NO
+bayesian_priors	observation_count	bigint	NO
+bayesian_priors	profitable_count	bigint	NO
+bayesian_priors	last_updated	timestamp with time zone	NO
+bayesian_priors	strategy_key	text	YES
+capital_gates	id	uuid	NO
+capital_gates	scope	text	NO
+capital_gates	scope_ref	text	YES
+capital_gates	name	text	NO
+capital_gates	capital_cap_usd	numeric	NO
+capital_gates	max_gas_burn_usd	numeric	NO
+capital_gates	max_drawdown_pct	numeric	NO
+capital_gates	max_consecutive_err	integer	NO
+capital_gates	max_revert_rate_pct	numeric	NO
+capital_gates	max_latency_ms	integer	NO
+capital_gates	window_seconds	integer	NO
+capital_gates	enabled	boolean	NO
+capital_gates	status	text	NO
+capital_gates	config_hash	character	NO
+capital_gates	created_at	timestamp with time zone	NO
+capital_gates	updated_at	timestamp with time zone	NO
+capital_gates	created_by	text	NO
+capital_gates	updated_by	text	NO
+cartridge_audit_log	id	bigint	NO
+cartridge_audit_log	cartridge_id	uuid	NO
+cartridge_audit_log	event_type	text	NO
+cartridge_audit_log	actor	text	NO
+cartridge_audit_log	details	jsonb	YES
+cartridge_audit_log	created_at	timestamp with time zone	NO
+cartridge_metrics_hourly	id	bigint	NO
+cartridge_metrics_hourly	cartridge_id	uuid	NO
+cartridge_metrics_hourly	chain_id	bigint	NO
+cartridge_metrics_hourly	hour	timestamp with time zone	NO
+cartridge_metrics_hourly	evaluations	bigint	NO
+cartridge_metrics_hourly	opportunities	bigint	NO
+cartridge_metrics_hourly	errors	bigint	NO
+cartridge_metrics_hourly	avg_eval_ms	double precision	YES
+cartridge_metrics_hourly	max_eval_ms	double precision	YES
+cartridge_metrics_hourly	total_profit_usd	double precision	YES
+cartridge_registry	id	uuid	NO
+cartridge_registry	slug	text	NO
+cartridge_registry	name	text	NO
+cartridge_registry	version	text	NO
+cartridge_registry	author	text	NO
+cartridge_registry	description	text	NO
+cartridge_registry	category	text	NO
+cartridge_registry	source_code	text	NO
+cartridge_registry	content_hash	text	NO
+cartridge_registry	target_chains	jsonb	NO
+cartridge_registry	state	USER-DEFINED	NO
+cartridge_registry	min_eval_interval_ms	integer	NO
+cartridge_registry	created_by	text	NO
+cartridge_registry	created_at	timestamp with time zone	NO
+cartridge_registry	updated_at	timestamp with time zone	NO
+cartridge_registry	last_compiled_at	timestamp with time zone	YES
+cartridge_registry	compilation_errors	text	YES
+cartridge_registry	total_evaluations	bigint	NO
+cartridge_registry	total_opportunities	bigint	NO
+cartridge_registry	total_errors	bigint	NO
+cartridge_registry	last_evaluation_at	timestamp with time zone	YES
+chains	id	uuid	NO
+chains	chain_id	integer	NO
+chains	name	character varying	NO
+chains	native_currency	character varying	NO
+chains	explorer_url	character varying	YES
+chains	is_active	boolean	YES
+chains	created_at	timestamp with time zone	YES
+chains	updated_at	timestamp with time zone	YES
+chains_runtime	id	bigint	NO
+chains_runtime	chain_id	bigint	NO
+chains_runtime	name	text	NO
+chains_runtime	rpc_http_url	text	NO
+chains_runtime	rpc_ws_url	text	YES
+chains_runtime	native_currency	text	NO
+chains_runtime	block_time_ms	integer	NO
+chains_runtime	enabled	boolean	NO
+chains_runtime	config_hash	text	YES
+chains_runtime	notes	text	YES
+chains_runtime	created_at	timestamp with time zone	NO
+chains_runtime	updated_at	timestamp with time zone	NO
+chains_runtime	created_by	text	YES
+chains_runtime	updated_by	text	YES
+config_hash_registry	id	uuid	NO
+config_hash_registry	resource	text	NO
+config_hash_registry	chain_id	bigint	YES
+config_hash_registry	hash_value	character	NO
+config_hash_registry	row_count	integer	NO
+config_hash_registry	computed_at	timestamp with time zone	NO
+config_hash_registry	snapshot_id	uuid	NO
+contract_registry	id	uuid	NO
+contract_registry	chain_id	bigint	NO
+contract_registry	label	text	NO
+contract_registry	address	text	NO
+contract_registry	deployer	text	NO
+contract_registry	salt	text	NO
+contract_registry	init_code_hash	text	NO
+contract_registry	abi_version	text	NO
+contract_registry	contract_kind	text	NO
+contract_registry	proxy_kind	text	YES
+contract_registry	implementation	text	YES
+contract_registry	deploy_tx	text	YES
+contract_registry	deploy_block	bigint	YES
+contract_registry	verified	boolean	NO
+contract_registry	enabled	boolean	NO
+contract_registry	status	text	NO
+contract_registry	config_hash	character	NO
+contract_registry	metadata	jsonb	NO
+contract_registry	created_at	timestamp with time zone	NO
+contract_registry	updated_at	timestamp with time zone	NO
+contract_registry	created_by	text	NO
+contract_registry	updated_by	text	NO
+defi_registry	address	text	NO
+defi_registry	symbol	text	NO
+defi_registry	chain_id	integer	NO
+defi_registry	decimals	smallint	NO
+defi_registry	verified_source	text	NO
+defi_registry	seed_version	integer	NO
+defi_registry	last_verified	timestamp with time zone	NO
+defi_registry	is_active	boolean	NO
+dex_chain_metrics	dex_id	uuid	NO
+dex_chain_metrics	chain_id	integer	NO
+dex_chain_metrics	volume_24h_usd	numeric	YES
+dex_chain_metrics	tvl_usd	numeric	YES
+dex_chain_metrics	last_updated_at	timestamp with time zone	NO
+dex_chain_metrics	source	text	NO
+dexes	id	uuid	NO
+dexes	name	character varying	NO
+dexes	protocol_type	character varying	YES
+dexes	is_active	boolean	YES
+dexes	created_at	timestamp with time zone	YES
+dexes	volume_24h_usd	numeric	YES
+dexes	tvl_usd	numeric	YES
+drift_observations	id	uuid	NO
+drift_observations	resource	text	NO
+drift_observations	chain_id	bigint	YES
+drift_observations	layer_a	text	NO
+drift_observations	layer_b	text	NO
+drift_observations	hash_a	character	YES
+drift_observations	hash_b	character	YES
+drift_observations	diff_count	integer	NO
+drift_observations	diff_summary	jsonb	NO
+drift_observations	severity	text	NO
+drift_observations	observed_at	timestamp with time zone	NO
+drift_observations	resolved_at	timestamp with time zone	YES
+execution_policy	id	uuid	NO
+execution_policy	chain_id	integer	NO
+execution_policy	version	integer	NO
+execution_policy	paper_mode	boolean	NO
+execution_policy	private_only	boolean	NO
+execution_policy	max_value_eth	numeric	NO
+execution_policy	max_gas_price_gwei	numeric	NO
+execution_policy	max_slippage_pct	numeric	NO
+execution_policy	max_parallel_executions	integer	NO
+execution_policy	target_block_offset	integer	NO
+execution_policy	max_inclusion_wait_blocks	integer	NO
+execution_policy	priority_fee_increment_pct	integer	NO
+execution_policy	retry_limit	integer	NO
+execution_policy	flashbots_submit_timeout_ms	integer	NO
+execution_policy	description	text	NO
+execution_policy	activated_by	text	NO
+execution_policy	effective_at	timestamp with time zone	NO
+execution_policy	superseded_at	timestamp with time zone	YES
+execution_policy	created_at	timestamp with time zone	NO
+executions	id	uuid	NO
+executions	opportunity_id	uuid	NO
+executions	simulation_id	uuid	YES
+executions	relay_name	text	NO
+executions	tx_hash	text	YES
+executions	bundle_hash	text	YES
+executions	block_included	bigint	YES
+executions	expected_profit_usd	numeric	YES
+executions	actual_profit_usd	numeric	YES
+executions	gas_used_wei	numeric	YES
+executions	gas_price_effective_wei	numeric	YES
+executions	status	text	NO
+executions	error_message	text	YES
+executions	raw_receipt	jsonb	YES
+executions	trace_id	uuid	NO
+executions	submitted_at	timestamp with time zone	NO
+executions	confirmed_at	timestamp with time zone	YES
+factories	id	uuid	NO
+factories	dex_id	uuid	YES
+factories	chain_id	integer	YES
+factories	address	character varying	NO
+factories	created_at	timestamp with time zone	YES
+factories	is_active	boolean	NO
+feature_manifest	id	uuid	NO
+feature_manifest	feature_key	text	NO
+feature_manifest	description	text	NO
+feature_manifest	layer	text	NO
+feature_manifest	state_hash	character	NO
+feature_manifest	panel_path	text	NO
+feature_manifest	required	boolean	NO
+feature_manifest	created_at	timestamp with time zone	NO
+feature_manifest	updated_at	timestamp with time zone	NO
+feature_manifest	ui_path	text	YES
+feature_manifest	backend_route	text	YES
+feature_manifest	requires_layers	jsonb	YES
+feature_manifest	enabled	boolean	YES
+gate_c_metrics	token_pair	text	YES
+gate_c_metrics	total_scored	bigint	YES
+gate_c_metrics	accepted_total	bigint	YES
+gate_c_metrics	net_positive_total	bigint	YES
+gate_c_metrics	avg_posterior	double precision	YES
+gate_c_metrics	avg_kelly_fraction	double precision	YES
+gate_c_metrics	last_scored_at	timestamp with time zone	YES
+gate_c_metrics	first_scored_at	timestamp with time zone	YES
+gate_c_validation	id	bigint	NO
+gate_c_validation	gate	text	NO
+gate_c_validation	status	text	NO
+gate_c_validation	evidence_ref	text	YES
+gate_c_validation	created_at	timestamp with time zone	NO
+go_no_go_signoffs	id	bigint	NO
+go_no_go_signoffs	ledger_hash	text	NO
+go_no_go_signoffs	actor	text	NO
+go_no_go_signoffs	decision	text	NO
+go_no_go_signoffs	signed_at	timestamp with time zone	NO
+incident_log	id	uuid	NO
+incident_log	title	text	NO
+incident_log	status	text	NO
+incident_log	severity	text	NO
+incident_log	started_at	timestamp with time zone	NO
+incident_log	resolved_at	timestamp with time zone	YES
+incident_log	root_cause	text	YES
+incident_log	remediation	text	YES
+incident_log	related_risk_event_ids	ARRAY	YES
+kill_switch_audit	id	bigint	NO
+kill_switch_audit	triggered_at	timestamp with time zone	NO
+kill_switch_audit	edge_node_id	text	NO
+kill_switch_audit	reason	text	NO
+kill_switch_audit	action_taken	text	NO
+kill_switch_audit	resolved_at	timestamp with time zone	YES
+kill_switch_audit	resolved_by	text	YES
+math_operator_calibration	operator_id	smallint	NO
+math_operator_calibration	log_lr	double precision	NO
+math_operator_calibration	sample_count	bigint	NO
+math_operator_calibration	calibrated_at	timestamp with time zone	YES
+math_operator_calibration	token_pair	text	YES
+observed_unindexed_pairs	id	uuid	NO
+observed_unindexed_pairs	chain_id	bigint	NO
+observed_unindexed_pairs	token0_addr	character varying	NO
+observed_unindexed_pairs	token1_addr	character varying	NO
+observed_unindexed_pairs	router_addr	character varying	YES
+observed_unindexed_pairs	source_event	character varying	NO
+observed_unindexed_pairs	first_seen_at	timestamp with time zone	NO
+observed_unindexed_pairs	last_seen_at	timestamp with time zone	NO
+observed_unindexed_pairs	observation_count	bigint	NO
+observed_unindexed_pairs	is_resolved	boolean	NO
+observed_unindexed_pairs	resolved_pool_addr	character varying	YES
+onboarding_progress	id	uuid	NO
+onboarding_progress	org_id	text	NO
+onboarding_progress	phase_1_completed_at	timestamp with time zone	YES
+onboarding_progress	phase_1_completed_by	text	YES
+onboarding_progress	phase_1_vault_sealed_healthy	boolean	NO
+onboarding_progress	phase_2_completed_at	timestamp with time zone	YES
+onboarding_progress	phase_2_completed_by	text	YES
+onboarding_progress	phase_2_rpc_probe_ok	boolean	NO
+onboarding_progress	phase_3_completed_at	timestamp with time zone	YES
+onboarding_progress	phase_3_completed_by	text	YES
+onboarding_progress	phase_4_completed_at	timestamp with time zone	YES
+onboarding_progress	phase_4_completed_by	text	YES
+onboarding_progress	phase_4_signer_zero_balance_verified	boolean	NO
+onboarding_progress	phase_5_completed_at	timestamp with time zone	YES
+onboarding_progress	phase_5_completed_by	text	YES
+onboarding_progress	phase_5_paper_mode_off_at	timestamp with time zone	YES
+onboarding_progress	created_at	timestamp with time zone	NO
+onboarding_progress	updated_at	timestamp with time zone	NO
+operator_parametrization	operator_id	text	NO
+operator_parametrization	display_name	text	NO
+operator_parametrization	signing_pubkey	text	NO
+operator_parametrization	role	text	NO
+operator_parametrization	cap_usd_ceiling	numeric	NO
+operator_parametrization	allowed_chains	jsonb	NO
+operator_parametrization	allowed_registries	jsonb	NO
+operator_parametrization	ui_preferences	jsonb	NO
+operator_parametrization	feature_overrides	jsonb	NO
+operator_parametrization	enabled	boolean	NO
+operator_parametrization	created_at	timestamp with time zone	NO
+operator_parametrization	updated_at	timestamp with time zone	NO
+operator_parametrization	config_hash	text	NO
+operator_session_state	session_id	text	NO
+operator_session_state	operator_id	text	NO
+operator_session_state	active_chain_id	integer	YES
+operator_session_state	active_registry	text	YES
+operator_session_state	filters_state	jsonb	NO
+operator_session_state	last_seen	timestamp with time zone	NO
+operator_session_state	created_at	timestamp with time zone	NO
+opportunities	id	uuid	NO
+opportunities	chain_id	integer	NO
+opportunities	strategy_kind	text	NO
+opportunities	dex_a	text	NO
+opportunities	dex_b	text	YES
+opportunities	pair_symbol	text	YES
+opportunities	token_in	text	NO
+opportunities	token_out	text	NO
+opportunities	amount_in_wei	numeric	NO
+opportunities	expected_profit_usd	numeric	YES
+opportunities	roi_pct	numeric	YES
+opportunities	risk_score	numeric	YES
+opportunities	block_number	bigint	YES
+opportunities	status	text	NO
+opportunities	rejection_reason	text	YES
+opportunities	trace_id	uuid	NO
+opportunities	detected_at	timestamp with time zone	NO
+opportunities	updated_at	timestamp with time zone	NO
+opportunities	chain_id_out	integer	YES
+opportunities	bridge	text	YES
+opportunities	bridge_fee_usd	numeric	YES
+opportunities	net_expected_profit_usd	numeric	YES
+opportunities	route_metadata	jsonb	NO
+opportunities	cartridge_id	text	YES
+opportunities	detector_id	text	YES
+opportunities	pipeline_latency_ms	bigint	YES
+opportunities_archive_pre_sprint3	id	uuid	NO
+opportunities_archive_pre_sprint3	chain_id	integer	NO
+opportunities_archive_pre_sprint3	strategy_kind	text	NO
+opportunities_archive_pre_sprint3	dex_a	text	NO
+opportunities_archive_pre_sprint3	dex_b	text	YES
+opportunities_archive_pre_sprint3	pair_symbol	text	YES
+opportunities_archive_pre_sprint3	token_in	text	NO
+opportunities_archive_pre_sprint3	token_out	text	NO
+opportunities_archive_pre_sprint3	amount_in_wei	numeric	NO
+opportunities_archive_pre_sprint3	expected_profit_usd	numeric	YES
+opportunities_archive_pre_sprint3	roi_pct	numeric	YES
+opportunities_archive_pre_sprint3	risk_score	numeric	YES
+opportunities_archive_pre_sprint3	block_number	bigint	YES
+opportunities_archive_pre_sprint3	status	text	NO
+opportunities_archive_pre_sprint3	rejection_reason	text	YES
+opportunities_archive_pre_sprint3	trace_id	uuid	NO
+opportunities_archive_pre_sprint3	detected_at	timestamp with time zone	NO
+opportunities_archive_pre_sprint3	updated_at	timestamp with time zone	NO
+opportunity_observations	id	uuid	NO
+opportunity_observations	chain_id	bigint	NO
+opportunity_observations	strategy_kind	character varying	NO
+opportunity_observations	opportunity_id	uuid	YES
+opportunity_observations	tx_hash	character varying	NO
+opportunity_observations	discovered_pool_addrs	jsonb	NO
+opportunity_observations	estimated_profit_usd	double precision	YES
+opportunity_observations	estimated_gas_usd	double precision	YES
+opportunity_observations	is_viable	boolean	NO
+opportunity_observations	rejection_reason	character varying	YES
+opportunity_observations	observed_at	timestamp with time zone	NO
+paper_trade_runs	id	uuid	NO
+paper_trade_runs	opportunity_id	uuid	NO
+paper_trade_runs	chain_id	integer	NO
+paper_trade_runs	strategy_kind	text	NO
+paper_trade_runs	sim_expected_profit_usd	numeric	NO
+paper_trade_runs	sim_gas_cost_usd	numeric	YES
+paper_trade_runs	sim_block_number	bigint	YES
+paper_trade_runs	sim_timestamp	timestamp with time zone	NO
+paper_trade_runs	actual_amount_out_wei	numeric	YES
+paper_trade_runs	actual_profit_usd	numeric	YES
+paper_trade_runs	actual_gas_cost_usd	numeric	YES
+paper_trade_runs	actual_block_number	bigint	YES
+paper_trade_runs	actual_timestamp	timestamp with time zone	YES
+paper_trade_runs	profit_drift_pct	numeric	YES
+paper_trade_runs	gas_drift_pct	numeric	YES
+paper_trade_runs	created_at	timestamp with time zone	NO
+paper_trade_runs	reason	text	YES
+paper_trade_runs	route_hash	text	YES
+paper_trade_runs	execution_time_ms	integer	YES
+paper_trade_runs	sim_fail_family	text	YES
+paper_trade_runs	calibration_eligible	boolean	NO
+paper_trade_runs	sim_attempts	integer	NO
+paper_trade_runs	sim_last_attempt_at	timestamp with time zone	YES
+paper_trade_runs_daily	day	date	NO
+paper_trade_runs_daily	chain_id	integer	NO
+paper_trade_runs_daily	strategy_kind	text	NO
+paper_trade_runs_daily	runs	bigint	NO
+paper_trade_runs_daily	runs_with_actual	bigint	NO
+paper_trade_runs_daily	sim_profit_sum	numeric	NO
+paper_trade_runs_daily	sim_profit_n	bigint	NO
+paper_trade_runs_daily	actual_profit_sum	numeric	NO
+paper_trade_runs_daily	actual_profit_n	bigint	NO
+paper_trade_runs_daily	actual_profit_gt0	bigint	NO
+paper_trade_runs_daily	sim_fails	bigint	NO
+pool_cycles	cycle_id	bigint	NO
+pool_cycles	chain_id	integer	NO
+pool_cycles	token_path	ARRAY	NO
+pool_cycles	pool_path	ARRAY	NO
+pool_cycles	direction	smallint	NO
+pool_cycles	active	boolean	NO
+pool_cycles	discovered_at	timestamp with time zone	NO
+pool_reserves	id	uuid	NO
+pool_reserves	pool_id	uuid	YES
+pool_reserves	block_number	bigint	NO
+pool_reserves	reserve0	numeric	NO
+pool_reserves	reserve1	numeric	NO
+pool_reserves	timestamp	timestamp with time zone	YES
+pool_reserves_daily	day	date	NO
+pool_reserves_daily	pool_id	uuid	NO
+pool_reserves_daily	last_block	bigint	YES
+pool_reserves_daily	reserve0	numeric	YES
+pool_reserves_daily	reserve1	numeric	YES
+pool_reserves_daily	snapshot_at	timestamp with time zone	NO
+pool_ticks	id	uuid	NO
+pool_ticks	pool_id	uuid	YES
+pool_ticks	block_number	bigint	NO
+pool_ticks	tick	integer	NO
+pool_ticks	liquidity_net	numeric	NO
+pool_ticks	liquidity_gross	numeric	NO
+pool_ticks	timestamp	timestamp with time zone	YES
+pools	id	uuid	NO
+pools	chain_id	integer	YES
+pools	factory_id	uuid	YES
+pools	address	character varying	NO
+pools	token0_id	uuid	YES
+pools	token1_id	uuid	YES
+pools	fee_tier	integer	YES
+pools	is_active	boolean	YES
+pools	created_at	timestamp with time zone	YES
+pools	enum_source	text	YES
+pools	tvl_usd	numeric	YES
+pools	volume_usd_24h	numeric	YES
+pools	last_enumerated_at	timestamp with time zone	YES
+price_oracles	id	uuid	NO
+price_oracles	chain_id	integer	NO
+price_oracles	kind	text	NO
+price_oracles	token_address	text	NO
+price_oracles	quote_symbol	text	NO
+price_oracles	oracle_address	text	NO
+price_oracles	decimals	integer	NO
+price_oracles	enabled	boolean	NO
+price_oracles	description	text	YES
+price_oracles	created_by	text	NO
+price_oracles	created_at	timestamp with time zone	NO
+price_oracles	updated_at	timestamp with time zone	NO
+profit_reconciliation	id	uuid	NO
+profit_reconciliation	opportunity_id	uuid	YES
+profit_reconciliation	execution_id	uuid	YES
+profit_reconciliation	chain_id	integer	NO
+profit_reconciliation	tx_hash	character varying	NO
+profit_reconciliation	block_number	bigint	NO
+profit_reconciliation	wallet_address	character varying	NO
+profit_reconciliation	balance_before_eth	numeric	NO
+profit_reconciliation	balance_after_eth	numeric	NO
+profit_reconciliation	gas_used	bigint	NO
+profit_reconciliation	gas_cost_native	numeric	NO
+profit_reconciliation	flashloan_fee_usd	numeric	YES
+profit_reconciliation	protocol_fee_usd	numeric	YES
+profit_reconciliation	expected_profit_usd	numeric	NO
+profit_reconciliation	realized_profit_usd	numeric	NO
+profit_reconciliation	reconciliation_status	character varying	YES
+profit_reconciliation	audit_hash	character varying	NO
+profit_reconciliation	explorer_url	text	NO
+profit_reconciliation	created_at	timestamp with time zone	YES
+readiness_evidence	gate_id	text	NO
+readiness_evidence	item_key	text	NO
+readiness_evidence	status	text	NO
+readiness_evidence	evidence_ref	text	NO
+readiness_evidence	detail	jsonb	YES
+readiness_evidence	verified_at	timestamp with time zone	NO
+readiness_evidence	verified_by	text	NO
+readiness_evidence_history	gate_id	text	NO
+readiness_evidence_history	item_key	text	NO
+readiness_evidence_history	status	text	NO
+readiness_evidence_history	evidence_ref	text	NO
+readiness_evidence_history	detail	jsonb	YES
+readiness_evidence_history	verified_at	timestamp with time zone	NO
+readiness_evidence_history	verified_by	text	NO
+recon_reports	id	uuid	NO
+recon_reports	opportunity_id	uuid	NO
+recon_reports	execution_id	uuid	YES
+recon_reports	tx_hash	text	YES
+recon_reports	chain_id	integer	NO
+recon_reports	expected_amount_out_wei	numeric	YES
+recon_reports	actual_amount_out_wei	numeric	YES
+recon_reports	variance_native_units	numeric	YES
+recon_reports	variance_pct	numeric	YES
+recon_reports	expected_profit_usd	numeric	YES
+recon_reports	actual_profit_usd	numeric	YES
+recon_reports	pnl_source	text	NO
+recon_reports	actual_gas_used_wei	numeric	YES
+recon_reports	actual_gas_price_wei	numeric	YES
+recon_reports	fail_reason	text	YES
+recon_reports	raw_receipt	jsonb	YES
+recon_reports	trace_id	uuid	NO
+recon_reports	created_at	timestamp with time zone	NO
+relay_endpoints	id	uuid	NO
+relay_endpoints	chain_id	bigint	NO
+relay_endpoints	name	text	NO
+relay_endpoints	url	text	NO
+relay_endpoints	relay_kind	text	NO
+relay_endpoints	auth_credential_id	uuid	YES
+relay_endpoints	priority	integer	NO
+relay_endpoints	timeout_ms	integer	NO
+relay_endpoints	enabled	boolean	NO
+relay_endpoints	status	text	NO
+relay_endpoints	config_hash	character	NO
+relay_endpoints	last_health_at	timestamp with time zone	YES
+relay_endpoints	last_health_ok	boolean	YES
+relay_endpoints	created_at	timestamp with time zone	NO
+relay_endpoints	updated_at	timestamp with time zone	NO
+relay_endpoints	created_by	text	NO
+relay_endpoints	updated_by	text	NO
+relay_scores	id	uuid	NO
+relay_scores	relay_name	text	NO
+relay_scores	chain_id	integer	NO
+relay_scores	window_start	timestamp with time zone	NO
+relay_scores	window_end	timestamp with time zone	NO
+relay_scores	submitted	integer	NO
+relay_scores	included	integer	NO
+relay_scores	reverted	integer	NO
+relay_scores	dropped	integer	NO
+relay_scores	inclusion_rate	numeric	YES
+relay_scores	avg_latency_ms	numeric	YES
+relay_scores	score	numeric	YES
+relay_scores	enabled	boolean	NO
+relay_scores	updated_at	timestamp with time zone	NO
+relays	id	uuid	NO
+relays	name	text	NO
+relays	chain_id	integer	NO
+relays	endpoint	text	YES
+relays	auth_scheme	text	NO
+relays	auth_secret_ref	text	YES
+relays	enabled	boolean	NO
+relays	priority	integer	NO
+relays	notes	text	YES
+relays	created_by	text	NO
+relays	created_at	timestamp with time zone	NO
+relays	updated_at	timestamp with time zone	NO
+retention_settings	key	text	NO
+retention_settings	value	jsonb	NO
+retention_settings	updated_at	timestamp with time zone	NO
+risk_events	id	uuid	NO
+risk_events	event_type	text	NO
+risk_events	severity	text	NO
+risk_events	source_service	text	NO
+risk_events	payload	jsonb	NO
+risk_events	trace_id	uuid	YES
+risk_events	opportunity_id	uuid	YES
+risk_events	created_at	timestamp with time zone	NO
+risk_events	chain_id	bigint	YES
+risk_gates	id	uuid	NO
+risk_gates	scope	text	NO
+risk_gates	scope_ref	text	YES
+risk_gates	gate_kind	text	NO
+risk_gates	threshold_value	numeric	NO
+risk_gates	comparator	text	NO
+risk_gates	action_on_breach	text	NO
+risk_gates	enabled	boolean	NO
+risk_gates	status	text	NO
+risk_gates	config_hash	character	NO
+risk_gates	created_at	timestamp with time zone	NO
+risk_gates	updated_at	timestamp with time zone	NO
+risk_gates	created_by	text	NO
+risk_gates	updated_by	text	NO
+risk_policy	id	uuid	NO
+risk_policy	chain_id	integer	NO
+risk_policy	version	integer	NO
+risk_policy	max_revert_rate_pct	numeric	NO
+risk_policy	max_execution_variance_pct	numeric	NO
+risk_policy	min_token_safety_score	integer	NO
+risk_policy	simulation_required_for_new_routes	boolean	NO
+risk_policy	anomaly_window_minutes	integer	NO
+risk_policy	anomaly_min_samples	integer	NO
+risk_policy	anomaly_revert_rate_pct	numeric	NO
+risk_policy	auto_trip_on_high_revert_rate	boolean	NO
+risk_policy	description	text	NO
+risk_policy	activated_by	text	NO
+risk_policy	effective_at	timestamp with time zone	NO
+risk_policy	superseded_at	timestamp with time zone	YES
+risk_policy	created_at	timestamp with time zone	NO
+route_discovery_outcome_rollup_5m	dim	text	NO
+route_discovery_outcome_rollup_5m	key	text	NO
+route_discovery_outcome_rollup_5m	bucket_ms	bigint	NO
+route_discovery_outcome_rollup_5m	n	bigint	NO
+route_discovery_outcome_rollup_5m	opportunities	bigint	NO
+route_discovery_outcome_rollup_5m	with_reserves	bigint	NO
+route_discovery_outcome_rollup_5m	profit_gt0	bigint	NO
+route_discovery_outcomes	id	bigint	NO
+route_discovery_outcomes	stream_id	text	NO
+route_discovery_outcomes	ts_ms	bigint	NO
+route_discovery_outcomes	schema_ver	text	NO
+route_discovery_outcomes	chain_id	bigint	NO
+route_discovery_outcomes	cartridge_id	text	NO
+route_discovery_outcomes	tx_hash	text	NO
+route_discovery_outcomes	source_event	text	YES
+route_discovery_outcomes	pool_hint	text	YES
+route_discovery_outcomes	token_in	text	YES
+route_discovery_outcomes	token_out	text	YES
+route_discovery_outcomes	is_opportunity	boolean	NO
+route_discovery_outcomes	estimated_profit	double precision	NO
+route_discovery_outcomes	confidence	double precision	NO
+route_discovery_outcomes	urgency	text	YES
+route_discovery_outcomes	had_reserves	boolean	NO
+route_discovery_outcomes	mode	text	NO
+route_discovery_outcomes	inserted_at	timestamp with time zone	NO
+route_discovery_outcomes	reason	text	YES
+route_legs	id	uuid	NO
+route_legs	route_id	uuid	YES
+route_legs	step_index	integer	NO
+route_legs	pool_id	uuid	YES
+route_legs	token_in_id	uuid	YES
+route_legs	token_out_id	uuid	YES
+routers	id	uuid	NO
+routers	dex_id	uuid	YES
+routers	chain_id	integer	YES
+routers	address	character varying	NO
+routers	version	character varying	YES
+routers	is_trusted	boolean	YES
+routers	created_at	timestamp with time zone	YES
+routes	id	uuid	NO
+routes	chain_id	integer	YES
+routes	hash	character varying	NO
+routes	is_active	boolean	YES
+routes	estimated_gas	bigint	YES
+routes	last_profitable_at	timestamp with time zone	YES
+routes	created_at	timestamp with time zone	YES
+rpc_endpoints	id	uuid	NO
+rpc_endpoints	chain_id	bigint	NO
+rpc_endpoints	url	text	NO
+rpc_endpoints	transport	text	NO
+rpc_endpoints	tier	text	NO
+rpc_endpoints	auth_kind	text	NO
+rpc_endpoints	auth_credential_id	uuid	YES
+rpc_endpoints	weight	integer	NO
+rpc_endpoints	rate_limit_rps	integer	YES
+rpc_endpoints	max_concurrency	integer	NO
+rpc_endpoints	enabled	boolean	NO
+rpc_endpoints	status	text	NO
+rpc_endpoints	config_hash	character	NO
+rpc_endpoints	last_probe_at	timestamp with time zone	YES
+rpc_endpoints	last_latency_ms	integer	YES
+rpc_endpoints	notes	text	YES
+rpc_endpoints	created_at	timestamp with time zone	NO
+rpc_endpoints	updated_at	timestamp with time zone	NO
+rpc_endpoints	created_by	text	NO
+rpc_endpoints	updated_by	text	NO
+rpcs	id	uuid	NO
+rpcs	chain_id	integer	YES
+rpcs	url	character varying	NO
+rpcs	type	character varying	YES
+rpcs	priority	integer	YES
+rpcs	is_active	boolean	YES
+rpcs	health_status	character varying	YES
+rpcs	latency_ms	integer	YES
+rpcs	last_checked_at	timestamp with time zone	YES
+rpcs	created_at	timestamp with time zone	YES
+runtime_ack	id	uuid	NO
+runtime_ack	event_id	uuid	NO
+runtime_ack	resource	text	NO
+runtime_ack	chain_id	bigint	YES
+runtime_ack	idempotency_key	text	NO
+runtime_ack	config_hash_before	character	YES
+runtime_ack	config_hash_after	character	NO
+runtime_ack	worker_id	text	NO
+runtime_ack	layer	text	NO
+runtime_ack	status	text	NO
+runtime_ack	latency_ms	integer	YES
+runtime_ack	error	text	YES
+runtime_ack	received_at	timestamp with time zone	NO
+runtime_ack_dedupe_archive_069	archived_id	uuid	NO
+runtime_ack_dedupe_archive_069	archived_at	timestamp with time zone	NO
+runtime_ack_dedupe_archive_069	original_id	uuid	NO
+runtime_ack_dedupe_archive_069	event_id	uuid	NO
+runtime_ack_dedupe_archive_069	resource	text	NO
+runtime_ack_dedupe_archive_069	chain_id	bigint	YES
+runtime_ack_dedupe_archive_069	idempotency_key	text	NO
+runtime_ack_dedupe_archive_069	config_hash_before	character	YES
+runtime_ack_dedupe_archive_069	config_hash_after	character	NO
+runtime_ack_dedupe_archive_069	worker_id	text	NO
+runtime_ack_dedupe_archive_069	layer	text	NO
+runtime_ack_dedupe_archive_069	status	text	NO
+runtime_ack_dedupe_archive_069	latency_ms	integer	YES
+runtime_ack_dedupe_archive_069	error	text	YES
+runtime_ack_dedupe_archive_069	received_at	timestamp with time zone	NO
+schema_migrations	version	text	NO
+schema_migrations	applied_at	timestamp with time zone	NO
+schema_migrations	checksum	text	YES
+schema_migrations	applied_by	text	NO
+scored_opportunities	id	bigint	NO
+scored_opportunities	stream_id	text	YES
+scored_opportunities	opportunity_id	text	NO
+scored_opportunities	token_pair	text	NO
+scored_opportunities	posterior_prob	double precision	NO
+scored_opportunities	kelly_fraction	double precision	NO
+scored_opportunities	recommended_usd	double precision	NO
+scored_opportunities	net_profit_usd	double precision	YES
+scored_opportunities	bayesian_accepted	boolean	NO
+scored_opportunities	prior_log_odds	double precision	YES
+scored_opportunities	chain_id	integer	YES
+scored_opportunities	source_context	text	YES
+scored_opportunities	scoring_mode	text	NO
+scored_opportunities	created_at	timestamp with time zone	NO
+scored_opportunities	evidence_vector	jsonb	YES
+scored_opportunities	evidence_computed_at	timestamp with time zone	YES
+scored_opportunities	strategy_key	text	YES
+scored_opportunities	emission_outcome	text	NO
+scored_opportunities	rejection_reason	text	YES
+scoring_weights	id	uuid	NO
+scoring_weights	chain_id	integer	NO
+scoring_weights	version	integer	NO
+scoring_weights	weight_liquidity	numeric	NO
+scoring_weights	weight_depth	numeric	NO
+scoring_weights	weight_safety	numeric	NO
+scoring_weights	weight_slippage	numeric	NO
+scoring_weights	weight_gas	numeric	NO
+scoring_weights	weight_risk	numeric	NO
+scoring_weights	min_accept_score	numeric	NO
+scoring_weights	description	text	NO
+scoring_weights	activated_by	text	NO
+scoring_weights	effective_at	timestamp with time zone	NO
+scoring_weights	superseded_at	timestamp with time zone	YES
+scoring_weights	created_at	timestamp with time zone	NO
+sed_allocations	id	uuid	NO
+sed_allocations	created_at	timestamp with time zone	NO
+sed_allocations	updated_at	timestamp with time zone	NO
+sed_allocations	market_id	character varying	NO
+sed_allocations	token_pair	character varying	NO
+sed_allocations	chain_id	integer	NO
+sed_allocations	constant_product	numeric	NO
+sed_allocations	token0_reserve	numeric	NO
+sed_allocations	token1_reserve	numeric	NO
+sed_allocations	metric_tensor	jsonb	NO
+sed_allocations	pool_address	character varying	YES
+sed_allocations	optimal_control	jsonb	NO
+sed_allocations	value_functional	double precision	NO
+sed_allocations	costate_trajectory	jsonb	NO
+sed_allocations	time_horizon	double precision	NO
+sed_allocations	injection_point	jsonb	NO
+sed_allocations	dirac_amplitude	double precision	NO
+sed_allocations	support_radius	double precision	NO
+sed_allocations	hyperbolic_constraint_satisfied	boolean	NO
+sed_allocations	hyperbolic_tolerance	double precision	NO
+sed_allocations	hyperbolic_violation	numeric	YES
+sed_allocations	execution_window_start	timestamp with time zone	YES
+sed_allocations	execution_window_end	timestamp with time zone	YES
+sed_allocations	eigenstate_id	uuid	YES
+sed_allocations	bundle_hash	character varying	YES
+sed_allocations	tx_hash	character varying	YES
+sed_allocations	relay_response	jsonb	YES
+sed_allocations	block_number	bigint	YES
+sed_allocations	solver_iterations	integer	YES
+sed_allocations	solver_convergence_error	double precision	YES
+sed_allocations	status	character varying	NO
+sed_allocations	kill_switch_state	character varying	YES
+sed_allocations	prerequisite_services	jsonb	YES
+sed_allocations	variance_captured	double precision	YES
+sed_allocations	variance_target	double precision	YES
+sed_eigenstates	id	uuid	NO
+sed_eigenstates	created_at	timestamp with time zone	NO
+sed_eigenstates	updated_at	timestamp with time zone	NO
+sed_eigenstates	market_id	character varying	NO
+sed_eigenstates	token_pair	character varying	NO
+sed_eigenstates	chain_id	integer	NO
+sed_eigenstates	hamiltonian_kinetic	jsonb	NO
+sed_eigenstates	hamiltonian_potential	jsonb	NO
+sed_eigenstates	metric_tensor	jsonb	NO
+sed_eigenstates	discretization_grid	jsonb	NO
+sed_eigenstates	eigenstate_index	integer	NO
+sed_eigenstates	eigenstate_energy	double precision	NO
+sed_eigenstates	eigenstate_amplitude	jsonb	NO
+sed_eigenstates	eigenstate_degeneracy	integer	NO
+sed_eigenstates	quantum_numbers	jsonb	YES
+sed_eigenstates	is_equilibrium_state	boolean	NO
+sed_eigenstates	equilibrium_probability	double precision	YES
+sed_eigenstates	transition_amplitude	jsonb	YES
+sed_eigenstates	boundary_hypersurface	jsonb	YES
+sed_eigenstates	critical_probability	double precision	YES
+sed_eigenstates	convergence_radius	double precision	YES
+sed_eigenstates	stability_exponent	double precision	YES
+sed_eigenstates	block_number	bigint	YES
+sed_eigenstates	simulation_duration_ms	integer	YES
+sed_eigenstates	lanczos_iterations	integer	YES
+sed_eigenstates	lanczos_tolerance	double precision	YES
+sed_eigenstates	status	character varying	NO
+sed_eigenstates	kill_switch_state	character varying	YES
+sed_eigenstates	prerequisite_services	jsonb	YES
+sed_eigenstates	filtration_id	uuid	YES
+sed_eigenstates	spectral_gap	double precision	YES
+sed_entropy_metrics	id	bigint	NO
+sed_entropy_metrics	sampled_at	timestamp with time zone	NO
+sed_entropy_metrics	edge_node_id	text	NO
+sed_entropy_metrics	mempool_tx_per_sec	double precision	YES
+sed_entropy_metrics	mempool_avg_gas_price	double precision	YES
+sed_entropy_metrics	mempool_entropy_score	double precision	YES
+sed_entropy_metrics	reserve_update_freq_hz	double precision	YES
+sed_entropy_metrics	reserve_divergence_max	double precision	YES
+sed_entropy_metrics	sed_opportunities_per_min	double precision	YES
+sed_entropy_metrics	sed_simulation_success_rate	double precision	YES
+sed_entropy_metrics	sed_avg_pipeline_latency_ms	double precision	YES
+sed_entropy_metrics	cpu_usage_percent	double precision	YES
+sed_entropy_metrics	memory_usage_mb	double precision	YES
+sed_entropy_metrics	network_io_mbps	double precision	YES
+sed_filtrations	id	uuid	NO
+sed_filtrations	created_at	timestamp with time zone	NO
+sed_filtrations	updated_at	timestamp with time zone	NO
+sed_filtrations	market_id	character varying	NO
+sed_filtrations	token_pair	character varying	NO
+sed_filtrations	chain_id	integer	NO
+sed_filtrations	drift_vector	jsonb	NO
+sed_filtrations	diffusion_matrix	jsonb	NO
+sed_filtrations	jump_intensity	double precision	NO
+sed_filtrations	jump_distribution	jsonb	NO
+sed_filtrations	jump_compensator	double precision	NO
+sed_filtrations	cdc_value	double precision	NO
+sed_filtrations	cdc_critical_threshold	double precision	NO
+sed_filtrations	cdc_is_inefficiency	boolean	NO
+sed_filtrations	cdc_confidence	double precision	NO
+sed_filtrations	predicted_state	jsonb	NO
+sed_filtrations	variance_envelope	double precision	NO
+sed_filtrations	optimal_intervention_time	double precision	YES
+sed_filtrations	block_number	bigint	YES
+sed_filtrations	block_timestamp	timestamp with time zone	YES
+sed_filtrations	execution_time_ms	integer	YES
+sed_filtrations	status	character varying	NO
+sed_filtrations	kill_switch_state	character varying	YES
+sed_filtrations	prerequisite_services	jsonb	YES
+sed_hedges	id	uuid	NO
+sed_hedges	created_at	timestamp with time zone	NO
+sed_hedges	updated_at	timestamp with time zone	NO
+sed_hedges	market_a_id	character varying	NO
+sed_hedges	market_b_id	character varying	NO
+sed_hedges	token_pair_a	character varying	NO
+sed_hedges	token_pair_b	character varying	NO
+sed_hedges	chain_id	integer	NO
+sed_hedges	entangled_amplitude	jsonb	NO
+sed_hedges	entanglement_entropy	double precision	NO
+sed_hedges	market_a_dimension	integer	NO
+sed_hedges	market_b_dimension	integer	NO
+sed_hedges	normal_vector	jsonb	NO
+sed_hedges	basis_vectors	jsonb	NO
+sed_hedges	null_covariance_constraint	jsonb	NO
+sed_hedges	original_direction	jsonb	NO
+sed_hedges	projected_direction	jsonb	NO
+sed_hedges	residual_direction	jsonb	NO
+sed_hedges	is_fully_neutralized	boolean	NO
+sed_hedges	orthogonality_error	double precision	NO
+sed_hedges	covariance_matrix	jsonb	NO
+sed_hedges	covariance_off_diagonal	double precision	NO
+sed_hedges	null_covariance_verified	boolean	NO
+sed_hedges	allocation_a_id	uuid	YES
+sed_hedges	allocation_b_id	uuid	YES
+sed_hedges	risk_score	double precision	YES
+sed_hedges	hedge_efficiency	double precision	YES
+sed_hedges	block_number	bigint	YES
+sed_hedges	sync_duration_ms	integer	YES
+sed_hedges	decoherence_rate	double precision	YES
+sed_hedges	correlation_threshold	double precision	YES
+sed_hedges	status	character varying	NO
+sed_hedges	kill_switch_state	character varying	YES
+sed_hedges	prerequisite_services	jsonb	YES
+sed_opportunities	id	uuid	NO
+sed_opportunities	detected_at	timestamp with time zone	NO
+sed_opportunities	block_number	bigint	NO
+sed_opportunities	tx_trigger_hash	text	NO
+sed_opportunities	token_in	text	NO
+sed_opportunities	token_out	text	NO
+sed_opportunities	amount_in	double precision	NO
+sed_opportunities	expected_out	double precision	NO
+sed_opportunities	price_impact	double precision	NO
+sed_opportunities	phase	smallint	NO
+sed_opportunities	status	text	NO
+sed_opportunities	latency_detect_us	bigint	YES
+sed_opportunities	latency_simulate_us	bigint	YES
+sed_opportunities	latency_total_us	bigint	YES
+sed_opportunities	simulation_gas_used	bigint	YES
+sed_opportunities	simulation_success	boolean	YES
+sed_opportunities	simulation_revert_reason	text	YES
+sed_opportunities	execution_tx_hash	text	YES
+sed_opportunities	execution_gas_cost	double precision	YES
+sed_opportunities	execution_net_pnl	double precision	YES
+sed_opportunities	created_at	timestamp with time zone	NO
+sed_opportunities	updated_at	timestamp with time zone	NO
+sed_opportunities	edge_node_id	text	NO
+service_credentials	id	uuid	NO
+service_credentials	provider	text	NO
+service_credentials	scope	text	NO
+service_credentials	display_name	text	NO
+service_credentials	secret_value	text	YES
+service_credentials	status	text	NO
+service_credentials	last_validated_at	timestamp with time zone	YES
+service_credentials	last_validation_error	text	YES
+service_credentials	metadata	jsonb	NO
+service_credentials	created_at	timestamp with time zone	NO
+service_credentials	updated_at	timestamp with time zone	NO
+service_credentials	created_by	text	YES
+service_credentials	updated_by	text	YES
+service_credentials	secret_ciphertext	bytea	YES
+service_credentials	secret_salt	bytea	YES
+service_credentials	secret_key_version	smallint	YES
+service_credentials	secret_hint	text	YES
+simulations	id	uuid	NO
+simulations	opportunity_id	uuid	NO
+simulations	simulator	text	NO
+simulations	gas_estimate_wei	numeric	YES
+simulations	gas_price_wei	numeric	YES
+simulations	slippage_pct	numeric	YES
+simulations	revert_risk_pct	numeric	YES
+simulations	simulated_profit_usd	numeric	YES
+simulations	passed	boolean	NO
+simulations	fail_reason	text	YES
+simulations	raw_trace	jsonb	YES
+simulations	trace_id	uuid	NO
+simulations	simulated_at	timestamp with time zone	NO
+strategy_catalog	kind	text	NO
+strategy_catalog	display_name	text	NO
+strategy_catalog	description	text	NO
+strategy_catalog	category	text	NO
+strategy_catalog	is_implemented	boolean	NO
+strategy_catalog	is_default	boolean	NO
+strategy_catalog	risk_level	text	NO
+strategy_catalog	capital_required	text	YES
+strategy_catalog	expected_complexity	text	YES
+strategy_catalog	competitive_advantage	text	YES
+strategy_catalog	ethical_constraint	text	YES
+strategy_catalog	skill_refs	ARRAY	NO
+strategy_catalog	requires_flashloan	boolean	NO
+strategy_catalog	chains_supported	ARRAY	NO
+strategy_catalog	created_at	timestamp with time zone	NO
+strategy_catalog	lifecycle_status	text	YES
+strategy_scores	id	uuid	NO
+strategy_scores	strategy_kind	text	NO
+strategy_scores	chain_id	integer	NO
+strategy_scores	window_start	timestamp with time zone	NO
+strategy_scores	window_end	timestamp with time zone	NO
+strategy_scores	sample_count	integer	NO
+strategy_scores	success_rate	numeric	YES
+strategy_scores	avg_profit_usd	numeric	YES
+strategy_scores	revert_rate	numeric	YES
+strategy_scores	score	numeric	YES
+strategy_scores	enabled	boolean	NO
+strategy_scores	updated_at	timestamp with time zone	NO
+token_safety_cache	chain_id	integer	NO
+token_safety_cache	token_address	text	NO
+token_safety_cache	safety_score	integer	NO
+token_safety_cache	flags	jsonb	NO
+token_safety_cache	source	text	NO
+token_safety_cache	ttl_expires_at	timestamp with time zone	NO
+token_safety_cache	updated_at	timestamp with time zone	NO
+token_validations	chain_id	bigint	NO
+token_validations	address	text	NO
+token_validations	exists_onchain	boolean	YES
+token_validations	is_contract	boolean	YES
+token_validations	bytecode_size	integer	YES
+token_validations	standard	text	YES
+token_validations	onchain_name	text	YES
+token_validations	onchain_symbol	text	YES
+token_validations	onchain_decimals	smallint	YES
+token_validations	total_supply_str	text	YES
+token_validations	pair_count	integer	YES
+token_validations	liquidity_usd	numeric	YES
+token_validations	volume_24h_usd	numeric	YES
+token_validations	volume_1h_usd	numeric	YES
+token_validations	volume_5m_usd	numeric	YES
+token_validations	price_usd	numeric	YES
+token_validations	primary_dex	text	YES
+token_validations	primary_pair_address	text	YES
+token_validations	registry_verified	boolean	YES
+token_validations	registry_source	text	YES
+token_validations	registry_symbol	text	YES
+token_validations	registry_name	text	YES
+token_validations	final_status	text	NO
+token_validations	score	smallint	NO
+token_validations	score_reasons	jsonb	YES
+token_validations	validators_run	ARRAY	NO
+token_validations	errors	jsonb	YES
+token_validations	validated_at	timestamp with time zone	NO
+token_validations	stale_after	timestamp with time zone	NO
+tokens	id	uuid	NO
+tokens	chain_id	integer	NO
+tokens	address	character varying	NO
+tokens	symbol	character varying	YES
+tokens	decimals	smallint	YES
+tokens	is_stablecoin	boolean	YES
+tokens	is_active	boolean	YES
+tokens	risk_level	character varying	YES
+tokens	created_at	timestamp with time zone	YES
+tokens	logo_url	text	YES
+tokens	resolved_via	text	NO
+tokens	resolved_at	timestamp with time zone	YES
+tokens	last_seen_at	timestamp with time zone	YES
+tokens_reconciliation_audit	id	uuid	YES
+tokens_reconciliation_audit	chain_id	integer	YES
+tokens_reconciliation_audit	address	character varying	YES
+tokens_reconciliation_audit	symbol	character varying	YES
+tokens_reconciliation_audit	decimals	smallint	YES
+tokens_reconciliation_audit	deactivated_at	timestamp with time zone	YES
+tokens_reconciliation_audit	reason	text	YES
+trading_config	id	uuid	NO
+trading_config	chain_id	integer	NO
+trading_config	capital_usd	numeric	NO
+trading_config	base_token_symbol	text	NO
+trading_config	base_token_price_usd	numeric	NO
+trading_config	allowed_token_symbols	ARRAY	NO
+trading_config	min_profit_usd	numeric	NO
+trading_config	min_roi_pct	numeric	NO
+trading_config	min_landing_probability	numeric	NO
+trading_config	min_liquidity_confidence	numeric	NO
+trading_config	max_token_risk_score	numeric	NO
+trading_config	gas_price_strategy	text	NO
+trading_config	fixed_gas_price_gwei	numeric	YES
+trading_config	gas_estimate_units	integer	NO
+trading_config	max_slippage_pct	numeric	NO
+trading_config	failure_risk_buffer_pct	numeric	NO
+trading_config	flashloan_fee_pct	numeric	NO
+trading_config	enabled_strategies	ARRAY	NO
+trading_config	enabled	boolean	NO
+trading_config	updated_by	text	NO
+trading_config	updated_at	timestamp with time zone	NO
+trading_config	created_at	timestamp with time zone	NO
+trading_config	token_prices_usd	jsonb	NO
+trading_config	simulation_capital_usd	numeric	YES
+trading_config	simulation_per_token_amounts_usd	jsonb	NO
+trading_config	simulation_per_strategy_caps_usd	jsonb	NO
+trading_config	simulation_target_profit_usd	numeric	YES
+trading_config	simulation_target_roi_pct	numeric	YES
+trading_config	enabled_dex_ids	ARRAY	YES
+trading_config	capital_cost_rate_annual_pct	numeric	NO
+trading_config	ops_overhead_usd_per_attempt	numeric	NO
+trading_config	spread_sanity_mult	numeric	NO
+trading_config	p_copied_volume_threshold_usd	numeric	NO
+trading_config	p_copied_max	numeric	NO
+trading_config	strategy_configs	jsonb	NO
+trading_config	lp_fee_default_pct	numeric	NO
+v_sed_convergence_dashboard	hour_bucket	timestamp with time zone	YES
+v_sed_convergence_dashboard	market_id	character varying	YES
+v_sed_convergence_dashboard	total_filtrations	bigint	YES
+v_sed_convergence_dashboard	inefficiency_count	bigint	YES
+v_sed_convergence_dashboard	avg_cdc	double precision	YES
+v_sed_convergence_dashboard	max_cdc	double precision	YES
+v_sed_convergence_dashboard	avg_variance	double precision	YES
+v_sed_equilibrium_boundary	market_id	character varying	YES
+v_sed_equilibrium_boundary	token_pair	character varying	YES
+v_sed_equilibrium_boundary	eigenstate_index	integer	YES
+v_sed_equilibrium_boundary	eigenstate_energy	double precision	YES
+v_sed_equilibrium_boundary	equilibrium_probability	double precision	YES
+v_sed_equilibrium_boundary	convergence_radius	double precision	YES
+v_sed_equilibrium_boundary	stability_exponent	double precision	YES
+v_sed_equilibrium_boundary	triggering_cdc	double precision	YES
+v_sed_equilibrium_boundary	filtration_time	timestamp with time zone	YES
+v_sed_equilibrium_boundary	eigenstate_time	timestamp with time zone	YES
+v_sed_hedge_effectiveness	market_a_id	character varying	YES
+v_sed_hedge_effectiveness	market_b_id	character varying	YES
+v_sed_hedge_effectiveness	token_pair_a	character varying	YES
+v_sed_hedge_effectiveness	token_pair_b	character varying	YES
+v_sed_hedge_effectiveness	is_fully_neutralized	boolean	YES
+v_sed_hedge_effectiveness	null_covariance_verified	boolean	YES
+v_sed_hedge_effectiveness	orthogonality_error	double precision	YES
+v_sed_hedge_effectiveness	entanglement_entropy	double precision	YES
+v_sed_hedge_effectiveness	risk_score	double precision	YES
+v_sed_hedge_effectiveness	hedge_efficiency	double precision	YES
+v_sed_hedge_effectiveness	allocation_a_value	double precision	YES
+v_sed_hedge_effectiveness	allocation_b_value	double precision	YES
+wallet_allowances	id	uuid	NO
+wallet_allowances	wallet_id	uuid	YES
+wallet_allowances	token_id	uuid	YES
+wallet_allowances	spender_address	character varying	NO
+wallet_allowances	amount	numeric	NO
+wallet_allowances	last_checked_at	timestamp with time zone	YES
+wallets	id	uuid	NO
+wallets	address	character varying	NO
+wallets	label	character varying	YES
+wallets	private_key_encrypted	text	NO
+wallets	encryption_iv	character varying	NO
+wallets	encryption_tag	character varying	NO
+wallets	is_active	boolean	YES
+wallets	created_at	timestamp with time zone	YES
+wallets	updated_at	timestamp with time zone	YES

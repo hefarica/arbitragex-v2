@@ -1,0 +1,34 @@
+{
+  "architecture": "ArbitrageX_264_Cartridge_Math_Architecture(1).xlsx",
+  "master": "ArbitrageX_Master_264x31_LIVE_First(2).xlsx",
+  "repo": "hefarica/arbitragex-v2",
+  "checked_ref": "2245eeb325ab7a3d0e40f09cfeca357369975d1a",
+  "source_archive": "arbitragex-v2-main (22).zip",
+  "archive_is_not_asserted_equal_to_all_of_main": true,
+  "numbered_generated": 264,
+  "root_preserved": 7,
+  "operator_rows": 8184,
+  "families": 60,
+  "unresolved_weight_cells": 8184,
+  "source_role_counts": {
+    "SECONDARY": 833,
+    "N/A": 6468,
+    "PRIMARY": 883
+  },
+  "family_logic_counts": {
+    "closed_route": 38,
+    "firm_pair": 16,
+    "path_comparison": 2,
+    "split_allocation": 2,
+    "redemption": 38,
+    "constrained_settlement": 20,
+    "carry_projection": 35,
+    "post_state_route": 30,
+    "auction": 7,
+    "observe_only": 8,
+    "cross_domain": 30,
+    "payoff_portfolio": 17,
+    "liquidation": 8,
+    "nft_firm_exit": 13
+  }
+}
