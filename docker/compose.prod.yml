@@ -670,8 +670,8 @@ services:
       # of fake health on arbx_enricher_up alone. BLOCK 2s read cadence → 180s
       # tolerates transient Redis restarts without flapping.
       - now=$(date +%s); m=$(wget -q -O- http://localhost:9004/metrics 2>/dev/null);
-        echo "$m" | grep -q 'arbx_enricher_up 1' || exit 1; last=$(echo "$m" |
-        awk '/^arbx_enricher_last_read_unixtime/{print $2}'); [ -n "$last" ] &&
+        echo "$$m" | grep -q 'arbx_enricher_up 1' || exit 1; last=$(echo "$$m" |
+        awk '/^arbx_enricher_last_read_unixtime/{print $2}'); [ -n "$$last" ] &&
         [ $((now - last)) -lt 180 ] || exit 1
       interval: 30s
       timeout: 5s
