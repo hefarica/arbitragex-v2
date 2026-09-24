@@ -192,7 +192,11 @@ pub fn spawn_cartridge_runtime(
         start_token: String::new(),
         chain_id,
         edges: Vec::new(),
-        limits: crate::agent_graph::SearchLimits { max_hops: 0, max_expansions: 0, max_paths: 0 },
+        limits: crate::agent_graph::SearchLimits {
+            max_hops: 0,
+            max_expansions: 0,
+            max_paths: 0,
+        },
         size_schedule_raw: Vec::new(),
         prices: Default::default(),
         exact_quotes: Default::default(),
@@ -206,10 +210,8 @@ pub fn spawn_cartridge_runtime(
     // booted with; a restart rebuilds a fresh (equally-honest) bundle.
     let v4_revision: Arc<dyn Fn(&str, &str) -> bool + Send + Sync> =
         Arc::new(move |_policy_rev: &str, _price_rev: &str| true);
-    let v4_services = match crate::snapshot_services::SnapshotServices::new(
-        v4_bundle,
-        v4_revision,
-    ) {
+    let v4_services = match crate::snapshot_services::SnapshotServices::new(v4_bundle, v4_revision)
+    {
         Ok(s) => Arc::new(s),
         Err(e) => {
             tracing::error!(
@@ -224,9 +226,7 @@ pub fn spawn_cartridge_runtime(
 
     // Build the runner BEFORE spawning so we can share the Arc with both the
     // subscriber task and the orchestrator (shadow evaluation).
-    let runner = Arc::new(
-        CartridgeRunner::new(host_ctx).with_agent_services(v4_services),
-    );
+    let runner = Arc::new(CartridgeRunner::new(host_ctx).with_agent_services(v4_services));
     let runner_for_task = runner.clone();
 
     // CARTRIDGE-CONTROL: clone the cancellation token + Redis URL BEFORE the
