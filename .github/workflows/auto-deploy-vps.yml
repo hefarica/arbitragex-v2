@@ -123,6 +123,14 @@ jobs:
             exit 1
           fi
           cd "$DEPLOY_PATH"
+          echo "[-1/9] Disk guard (APT-GPG-02): pruning build cache and checking free space"
+          docker builder prune -f >/dev/null 2>&1 || true
+          FREE_GB=$(df -BG --output=avail / | tail -1 | tr -dc '0-9')
+          echo "    free=${FREE_GB}GB"
+          if [ "${FREE_GB}" -lt 15 ]; then
+            echo "::error::APT-GPG-02: only ${FREE_GB}GB free (<15GB) — refusing to build on a full disk (the 2026-09-24 incident: disk 100% -> apt GPG invalid signature -> corrupted redis AOF). Stack stays on the previous release; free space first."
+            exit 1
+          fi
 
           # DEPLOY-WATCHDOG-RACE gate (GEN-CI-FAIL attempts 1+3, 2026-08-31):
           # the minute cron watchdog (arbx-watchdog.sh) restores the stack when
