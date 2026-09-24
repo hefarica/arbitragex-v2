@@ -208,7 +208,7 @@ pub fn spawn_cartridge_runtime(
     });
     // Single-revision Phase-1 guard: this process serves exactly the bundle it
     // booted with; a restart rebuilds a fresh (equally-honest) bundle.
-    let v4_revision: Arc<dyn Fn(&str, &str) -> bool + Send + Sync> =
+    let v4_revision: crate::snapshot_services::RevisionGuard =
         Arc::new(move |_policy_rev: &str, _price_rev: &str| true);
     let v4_services = match crate::snapshot_services::SnapshotServices::new(v4_bundle, v4_revision)
     {

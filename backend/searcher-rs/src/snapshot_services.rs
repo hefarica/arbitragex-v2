@@ -91,7 +91,7 @@ pub struct SnapshotBundle {
     pub max_evaluations: usize,
 }
 /// Revision liveness guard supplied by the owner (never invented here).
-type RevisionGuard = Arc<dyn Fn(&str, &str) -> bool + Send + Sync>;
+pub type RevisionGuard = Arc<dyn Fn(&str, &str) -> bool + Send + Sync>;
 /// Dispatch into the REAL OperatorRegistry (see native_operator_adapter).
 type OperatorDispatch = Arc<dyn Fn(&Value, &Value, &Value) -> Result<Value, String> + Send + Sync>;
 /// Receipt resolver backed by the canonical plan store.
