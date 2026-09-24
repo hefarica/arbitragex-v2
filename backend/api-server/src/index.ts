@@ -725,6 +725,7 @@ app.use(buildCartridgesRouter(cartridgeTelemetryCache, { redis, requireAdminToke
 // audit_log 011, Redis hash + PubSub hot command). Needs the PG pool for the
 // audit trail; without DATABASE_URL the route 500s its writes honestly.
 app.use(
+  "/api/v1/cartridges",
   requireDbPool()
     ? buildCartridgeControlRouter({ redis, pool: requireDbPool()!, requireAdminToken, adminToken: ARBX_ADMIN_TOKEN, logger })
     : buildCartridgeControlRouter({

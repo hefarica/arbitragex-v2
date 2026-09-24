@@ -227,7 +227,9 @@ fn find_best_triangle(pools_ab, pools_bc, pools_ca, amount_in_str, dec_a, dec_b,
         if res_ab == () { continue; }
 
         // Hop 1: A→B (token_in = token_a)
-        let (ri_ab, ro_ab) = oriented_reserves(res_ab, token_a);
+        let or_ab = oriented_reserves(res_ab, token_a);
+        let ri_ab = or_ab[0];
+        let ro_ab = or_ab[1];
         let out_b_raw = calculate_amount_out(amount_in_str, ri_ab.to_string(), ro_ab.to_string());
         if out_b_raw <= 0.0 { continue; }
 
@@ -236,7 +238,9 @@ fn find_best_triangle(pools_ab, pools_bc, pools_ca, amount_in_str, dec_a, dec_b,
             if res_bc == () { continue; }
 
             // Hop 2: B→C (token_in = token_b)
-            let (ri_bc, ro_bc) = oriented_reserves(res_bc, token_b);
+            let or_bc = oriented_reserves(res_bc, token_b);
+            let ri_bc = or_bc[0];
+            let ro_bc = or_bc[1];
             let out_c_raw = calculate_amount_out(out_b_raw.to_string(), ri_bc.to_string(), ro_bc.to_string());
             if out_c_raw <= 0.0 { continue; }
 
@@ -245,7 +249,9 @@ fn find_best_triangle(pools_ab, pools_bc, pools_ca, amount_in_str, dec_a, dec_b,
                 if res_ca == () { continue; }
 
                 // Hop 3: C→A (token_in = token_c)
-                let (ri_ca, ro_ca) = oriented_reserves(res_ca, token_c);
+                let or_ca = oriented_reserves(res_ca, token_c);
+                let ri_ca = or_ca[0];
+                let ro_ca = or_ca[1];
                 let out_a_raw = calculate_amount_out(out_c_raw.to_string(), ri_ca.to_string(), ro_ca.to_string());
                 if out_a_raw <= 0.0 { continue; }
 

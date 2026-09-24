@@ -122,4 +122,4 @@ jobs:
         # false-green path that Gate 2 closes.
         run: forge test --fork-url $MAINNET_RPC_URL --match-test "testFork_" -vvv
         env:
-          MAINNET_RPC_URL: ${{ secrets.MAINNET_RPC_URL }}
+          MAINNET_RPC_URL: ${{ secrets.MAINNET_RPC_URL || secrets.RPC_HTTP_1_ARCHIVE }}
