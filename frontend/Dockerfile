@@ -21,7 +21,7 @@ ENV NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID=$NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID
 ENV ARBX_TLS_ENABLED=$ARBX_TLS_ENABLED
 # Prevent Corepack from mis-reading packageManager and trying yarn.
 ENV COREPACK_ENABLE_STRICT=0
-RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates \
+RUN sed -i "s|http://deb.debian.org|http://ftp.de.debian.org|g" /etc/apt/sources.list.d/debian.sources /etc/apt/sources.list 2>/dev/null; for i in 1 2 3 4 5; do apt-get update && break || sleep 8; done && apt-get install -y --no-install-recommends ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
 # Root lockfile + every workspace package.json must be present before `npm ci`.
@@ -47,7 +47,7 @@ RUN npm run -w @arbx/frontend build
 
 FROM node:20-bookworm-slim AS runtime
 WORKDIR /app
-RUN apt-get update && apt-get install -y --no-install-recommends tini ca-certificates \
+RUN sed -i "s|http://deb.debian.org|http://ftp.de.debian.org|g" /etc/apt/sources.list.d/debian.sources /etc/apt/sources.list 2>/dev/null; for i in 1 2 3 4 5; do apt-get update && break || sleep 8; done && apt-get install -y --no-install-recommends tini ca-certificates \
     && rm -rf /var/lib/apt/lists/* \
     && groupadd -r arbx && useradd -r -g arbx arbx
 ENV NODE_ENV=production

@@ -16,7 +16,7 @@ FROM rust:1.91-bookworm AS builder
 ENV RUSTFLAGS="-C target-cpu=x86-64-v3"
 WORKDIR /build
 
-RUN apt-get update && apt-get install -y --no-install-recommends \
+RUN sed -i "s|http://deb.debian.org|http://ftp.de.debian.org|g" /etc/apt/sources.list.d/debian.sources /etc/apt/sources.list 2>/dev/null; for i in 1 2 3 4 5; do apt-get update && break || sleep 8; done && apt-get install -y --no-install-recommends \
         pkg-config libssl-dev ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
@@ -34,7 +34,7 @@ RUN cargo build --release --locked -p token-enricher
 # ---------------------------------------------------------------------------
 FROM debian:bookworm-slim AS runtime
 
-RUN apt-get update && apt-get install -y --no-install-recommends \
+RUN sed -i "s|http://deb.debian.org|http://ftp.de.debian.org|g" /etc/apt/sources.list.d/debian.sources /etc/apt/sources.list 2>/dev/null; for i in 1 2 3 4 5; do apt-get update && break || sleep 8; done && apt-get install -y --no-install-recommends \
         ca-certificates tini wget \
     && rm -rf /var/lib/apt/lists/* \
     && groupadd -r arbx && useradd -r -g arbx -u 65532 arbx
