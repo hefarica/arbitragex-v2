@@ -93,10 +93,14 @@ impl CartridgeMode {
 /// tokio task loads filesystem cartridges from the `cartridges/` directory and runs
 /// the Redis hot-reload subscriber until `cancel` fires.
 ///
-/// Returns the shared `Arc<CartridgeRunner>` so the orchestrator can also evaluate
-/// cartridges in shadow mode (the registry is shared via `Arc<RwLock<…>>`, so
-/// cartridges loaded by the subscriber are visible to the orchestrator). Returns
-/// `None` only when `REDIS_URL` is absent (fail-honest, no boot).
+/// Returns the shared `Arc<CartridgeRunner>` plus the AGENT v4
+/// `Arc<ContextRouter>` (Fase 3a) so the orchestrator can also evaluate
+/// cartridges and register per-intent real snapshot contexts (the registry is
+/// shared via `Arc`/`RwLock`, so cartridges loaded by the subscriber are
+/// visible to the orchestrator). The router half is `None` only when the
+/// ContextRouter itself could not be created/seeded — the runner then falls
+/// back to the Phase-1 static service. Returns `None` only when `REDIS_URL`
+/// is absent (fail-honest, no boot).
 ///
 /// Callers MUST only invoke this when `mode.is_enabled()`. The subscriber task is
 /// fire-and-forget; any failure is logged and never fatal to the scanner.
@@ -111,7 +115,10 @@ pub fn spawn_cartridge_runtime(
     rpc_pool: Option<Arc<shared_rs::rpc_failover::HttpRpcPool>>,
     cancel: CancellationToken,
     mode: CartridgeMode,
-) -> Option<Arc<CartridgeRunner>> {
+) -> Option<(
+    Arc<CartridgeRunner>,
+    Option<Arc<crate::context_router::ContextRouter>>,
+)> {
     // The hot-reload subscriber opens its OWN Redis client from a URL (see
     // `subscriber.rs`). Fail-honest: if `REDIS_URL` is absent we skip cartridge
     // boot rather than hardcode a localhost default (arbx-no-hardcode-doctrine).
@@ -224,9 +231,49 @@ pub fn spawn_cartridge_runtime(
         }
     };
 
+    // ── AGENT v4 Fase 3a (integration/agent-cartridges-v4): ContextRouter ──
+    // El router implementa AgentServices por delegación resolviendo por
+    // ctx["context_id"]. El contexto DATA_GAP existente queda insertado como
+    // FALLBACK; la tarea ACTIVE registra además un SnapshotBundle REAL por
+    // intent (context_id "intent-{uuid}") y lo retira al terminar (guard con
+    // Drop). Ante un router indisponible se conserva el comportamiento
+    // Phase-1 exacto (servicio estático único) — fail-honest, nunca fatal.
+    let v4_router = match crate::context_router::ContextRouter::new(256) {
+        Ok(router) => {
+            let router = Arc::new(router);
+            match router.insert(v4_context_id.clone(), v4_services.clone()) {
+                Ok(()) => Some(router),
+                Err(e) => {
+                    warn!(
+                        event = "cartridge.v4_router_data_gap_insert_failed",
+                        chain_id,
+                        reason = %e,
+                        "ContextRouter sin contexto DATA_GAP; fallback a servicio estático Phase-1"
+                    );
+                    None
+                }
+            }
+        }
+        Err(e) => {
+            warn!(
+                event = "cartridge.v4_router_init_failed",
+                chain_id,
+                reason = %e,
+                "ContextRouter no disponible; fallback a servicio estático Phase-1"
+            );
+            None
+        }
+    };
+
     // Build the runner BEFORE spawning so we can share the Arc with both the
-    // subscriber task and the orchestrator (shadow evaluation).
-    let runner = Arc::new(CartridgeRunner::new(host_ctx).with_agent_services(v4_services));
+    // subscriber task and the orchestrator (shadow/active evaluation). Con
+    // router: los bindings agent_v4_* resuelven por context_id (DATA_GAP +
+    // intents reales); sin router: servicio estático Phase-1 (idéntico a
+    // main previo a Fase 3a).
+    let runner = Arc::new(match v4_router.as_ref() {
+        Some(router) => CartridgeRunner::new(host_ctx).with_agent_services(router.clone()),
+        None => CartridgeRunner::new(host_ctx).with_agent_services(v4_services),
+    });
     let runner_for_task = runner.clone();
 
     // CARTRIDGE-CONTROL: clone the cancellation token + Redis URL BEFORE the
@@ -315,7 +362,7 @@ pub fn spawn_cartridge_runtime(
         });
     }
 
-    Some(runner)
+    Some((runner, v4_router))
 }
 
 /// Maps a `ProtocolType` to the lowercase string cartridges expect in `pool_data`.
@@ -1042,6 +1089,173 @@ pub async fn shadow_evaluate_intent(
     }
 }
 
+/// Fase 3a — retira el contexto por-intent del ContextRouter en TODA salida
+/// de la tarea ACTIVE (return temprano, `?`/`continue` no aplican a nivel de
+/// función, panic o fin normal del loop). Sin este guard, cada intent dejaría
+/// una entrada ocupando la capacidad 256 del router hasta reiniciar.
+struct V4IntentContextGuard {
+    router: Option<Arc<crate::context_router::ContextRouter>>,
+    context_id: String,
+}
+impl Drop for V4IntentContextGuard {
+    fn drop(&mut self) {
+        if let Some(router) = self.router.take() {
+            if let Err(e) = router.remove(&self.context_id) {
+                debug!(
+                    event = "cartridge.v4_intent_context_remove_failed",
+                    context_id = %self.context_id,
+                    reason = %e,
+                    "no se pudo retirar el contexto del intent (capacidad del router puede agotarse)"
+                );
+            }
+        }
+    }
+}
+
+/// Fase 3a — decimales REALES por dirección desde `arbx:tokens:*`. Es la
+/// MISMA fuente Redis que alimenta `crate::token_identity::index_for`
+/// (scan_token_universe); `TokenIdentityIndex` no expone decimales (se
+/// descartan en `resolve`), así que se lee el origen directo. `None` =
+/// meta ausente/ilegible → la pierna se OMITE (R8, sin decimales asumidos).
+/// Cacheada por intent para no repetir GETs del mismo token entre piernas.
+async fn v4_token_decimals(
+    redis: &mut redis::aio::ConnectionManager,
+    chain_id: u64,
+    addr_lower: &str,
+    cache: &mut std::collections::HashMap<String, Option<u8>>,
+) -> Option<u8> {
+    if let Some(hit) = cache.get(addr_lower) {
+        return *hit;
+    }
+    let decimals = crate::reserves::get_token_meta(redis, chain_id, addr_lower)
+        .await
+        .ok()
+        .flatten()
+        .map(|meta| meta.decimals);
+    cache.insert(addr_lower.to_owned(), decimals);
+    decimals
+}
+
+/// Fase 3a — construye el SnapshotBundle REAL del intent: policy honesta
+/// desde la config del operador (`TradingConfigState`), precios canónicos
+/// por token distinto de las piernas (dirección → símbolo del universo de
+/// identidad → precio del snapshot Redis o de trading_config) y el tamaño
+/// REAL observado del intent como único tamaño del schedule. Los productores
+/// ausentes (exact_quotes, domain_plans, manifest admission) quedan vacíos:
+/// el contrato v4 los reporta como DATA_GAP con razón explícita — nunca
+/// se fabrican (R8). `None` sólo si el reloj no permite una ventana temporal
+/// honesta.
+#[allow(clippy::too_many_arguments)]
+fn build_v4_intent_bundle(
+    chain_id: u64,
+    ctx_snapshot_id: &str,
+    edges: Vec<crate::agent_graph::Edge>,
+    start_token: &str,
+    amount_in_raw: &str,
+    cfg: &shared_rs::trading_config::TradingConfigState,
+    identity: &shared_rs::token_identity::TokenIdentityIndex,
+    price_snapshot: &std::collections::HashMap<String, f64>,
+) -> Option<crate::snapshot_services::SnapshotBundle> {
+    let observed_at_ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .ok()?
+        .as_millis() as u64;
+    let valid_until_ms = observed_at_ms + 60_000;
+    // Revisiones ancladas al instante de composición sobre la config real:
+    // "cfg-<ts_ms>" (origen "cfg" + timestamp, según spec de Fase 3a).
+    let revision = format!("cfg-{observed_at_ms}");
+    let policy = crate::rhai_agent_bridge::PolicyView {
+        enabled: cfg.enabled,
+        capital_cap_usd: cfg.capital_usd.to_string(),
+        // simulation_target_profit_usd es el target de simulación del
+        // operador; ausente → None (el gate de build_payload lo omite — R8).
+        min_profit_usd: cfg.simulation_target_profit_usd.map(|v| v.to_string()),
+        // TradingConfigState no trae tope de gas a nivel cadena → None
+        // honesto (nunca un tope inventado).
+        max_gas_usd: None,
+        snapshot_id: ctx_snapshot_id.to_owned(),
+        price_revision: revision.clone(),
+        policy_revision: revision.clone(),
+        // Modo canónico del bridge (economic_check exige
+        // LIVE_MAINNET|TESTNET|PAPER_SHADOW): esta ruta evalúa en papel y la
+        // intercepción v4 rechaza a observación; el terminus real vive en
+        // relays-client (§34.3).
+        execution_mode: "PAPER_SHADOW".into(),
+        control_state: if cfg.enabled {
+            "operator_config_enabled".into()
+        } else {
+            "operator_config_disabled".into()
+        },
+    };
+    let mut tokens: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+    for edge in &edges {
+        tokens.insert(edge.token_in.clone());
+        tokens.insert(edge.token_out.clone());
+    }
+    let mut prices = std::collections::BTreeMap::new();
+    for token in tokens {
+        let Some(symbol) = identity.symbol_for_addr(&token) else {
+            continue; // sin identidad de universo → sin precio (R8)
+        };
+        let from_snapshot = price_snapshot
+            .get(&symbol.to_ascii_uppercase())
+            .copied()
+            .map(|v| (v, "price_snapshot"));
+        let from_config = cfg
+            .token_prices_usd
+            .iter()
+            .find(|(k, _)| k.eq_ignore_ascii_case(symbol))
+            .map(|(_, v)| (*v, "trading_config"));
+        let Some((usd, evidence_id)) = from_snapshot
+            .or(from_config)
+            .filter(|(v, _)| v.is_finite() && *v > 0.0)
+        else {
+            continue; // sin precio real positivo → SIN entrada (R8)
+        };
+        prices.insert(
+            (chain_id, token.clone()),
+            crate::snapshot_services::CanonicalPrice {
+                chain_id,
+                token_address: token,
+                usd: usd.to_string(),
+                revision: revision.clone(),
+                observed_at_ms,
+                valid_until_ms,
+                evidence_id: evidence_id.to_owned(),
+                // Productor canónico del bus de precios que respalda el
+                // snapshot Redis (identidad exigida por
+                // SnapshotServices::price — "PriceBus").
+                producer: "PriceBus".into(),
+            },
+        );
+    }
+    Some(crate::snapshot_services::SnapshotBundle {
+        context_id: ctx_snapshot_id.to_owned(),
+        snapshot_id: ctx_snapshot_id.to_owned(),
+        observed_at_ms,
+        valid_until_ms,
+        policy,
+        start_token: start_token.to_owned(),
+        chain_id,
+        edges,
+        limits: crate::agent_graph::SearchLimits {
+            max_hops: 4,
+            max_expansions: 512,
+            max_paths: 64,
+        },
+        // Tamaño REAL observado del intent — el único tamaño honesto
+        // conocido para este contexto (spec Fase 3a).
+        size_schedule_raw: vec![amount_in_raw.to_owned()],
+        prices,
+        exact_quotes: Default::default(),
+        route_support: Default::default(),
+        domain_plans: Default::default(),
+        canonical_payloads: Default::default(),
+        manifest_digests: Default::default(),
+        max_evaluations: 8,
+    })
+}
+
 /// ACTIVE MODE — evaluate cartridges and emit real StrategyCandidates through the full pipeline.
 ///
 /// This is the FASE OMEGA follow-up that wires cartridge evaluation → execution:
@@ -1059,7 +1273,7 @@ pub async fn shadow_evaluate_intent(
 ///
 /// R8 fail-honest: unknown figures are `None`, never fabricated. Candidates with
 /// missing data (no pool_hint, no token addresses) are rejected with explicit reason.
-#[allow(clippy::too_many_arguments)] // 9 params: eval pipeline + STRAT-IDENT-01 evidence deps
+#[allow(clippy::too_many_arguments)] // 10 params: eval pipeline + STRAT-IDENT-01 evidence deps + router v4
 pub async fn active_evaluate_and_emit(
     runner: Arc<CartridgeRunner>,
     intent: RouteIntent,
@@ -1070,6 +1284,7 @@ pub async fn active_evaluate_and_emit(
     ctx_chain_id: u64,
     math_registry: Arc<math_engine::OperatorRegistry>,
     reserves_cache: Arc<crate::engines::triangular_engine::ReservesCache>,
+    v4_router: Option<Arc<crate::context_router::ContextRouter>>,
 ) {
     use crate::engines::StrategyCandidate;
     use crate::metrics::REJECTED_NO_PROFIT_TOTAL;
@@ -1161,7 +1376,9 @@ pub async fn active_evaluate_and_emit(
         Some(p) => runner.read_pool_reserves(&format!("{:#x}", p)).await,
         None => None,
     };
-    let pool_data = build_cartridge_pool_data(&intent, reserves_source.as_ref());
+    // Fase 3a: `mut` porque la ruta ACTIVE sella context_id/snapshot_id del
+    // contexto por-intent (ver bloque v4 más abajo) antes de evaluar.
+    let mut pool_data = build_cartridge_pool_data(&intent, reserves_source.as_ref());
 
     // Snapshot config once for all candidates (same as orchestrator)
     let cfg_snapshot = cfg_provider.snapshot(chain_id).await;
@@ -1193,6 +1410,209 @@ pub async fn active_evaluate_and_emit(
         .await;
         oracle.into_snapshot()
     };
+
+    // ── AGENT v4 Fase 3a — SnapshotBundle REAL por intent (ContextRouter) ──
+    // Para ESTE intent se compone un grafo con edges orientados desde las
+    // reservas REALES de Redis (orientación EXACTA por token0_addr — jamás
+    // heurística de magnitud: R8). Una pierna sin pool, sin reservas, sin
+    // token0_addr, sin decimales o degenerada se OMITE con razón explícita.
+    // Con edges reales se registra un contexto "intent-{uuid}" en el router
+    // y pool_data se sella con ese id; sin ellos, la evaluación continúa
+    // contra el contexto DATA_GAP estático (ids boot-chain/boot-genesis),
+    // que responde con razones honestas. Ruta shadow: intacta (Phase-1).
+    let v4_ctx_id = format!("intent-{}", Uuid::new_v4());
+    let v4_static_context_id = format!("boot-chain-{chain_id}");
+    let v4_static_snapshot_id = format!("boot-genesis-{chain_id}");
+    let mut v4_edges: Vec<crate::agent_graph::Edge> = Vec::new();
+    let mut v4_first_token_in: Option<String> = None;
+    let mut v4_skip_reasons: std::collections::BTreeMap<&'static str, u64> =
+        std::collections::BTreeMap::new();
+    let mut v4_decimal_cache: std::collections::HashMap<String, Option<u8>> =
+        std::collections::HashMap::new();
+    let mut v4_redis = runner.redis_connection().await;
+    for leg in &intent.legs {
+        let Some(pool) = leg.pool_hint else {
+            *v4_skip_reasons.entry("missing_pool_hint").or_insert(0) += 1;
+            continue;
+        };
+        let token_in = format!("{:#x}", leg.token_in);
+        let token_out = format!("{:#x}", leg.token_out);
+        if token_in == token_out {
+            // Una pierna degenerada invalidaría TODO el grafo
+            // (enumerate_cycles: invalid_or_duplicate_graph_edge); se omite.
+            *v4_skip_reasons.entry("degenerate_self_pair").or_insert(0) += 1;
+            continue;
+        }
+        let Some(entry) = runner.read_pool_reserves(&format!("{:#x}", pool)).await else {
+            *v4_skip_reasons.entry("reserves_missing").or_insert(0) += 1;
+            continue;
+        };
+        // Orientación exacta: token0_addr declara cuál reserva es "in" para
+        // esta pierna. Sin token0_addr o con token0 fuera de la ruta →
+        // OMITIR (R8: sin dual-orientation ni inferencia).
+        let Some(token0) = entry.token0_addr.as_deref() else {
+            *v4_skip_reasons.entry("token0_addr_missing").or_insert(0) += 1;
+            continue;
+        };
+        let (reserve_in, reserve_out) = if token0 == token_in {
+            (entry.r0.clone(), entry.r1.clone())
+        } else if token0 == token_out {
+            (entry.r1.clone(), entry.r0.clone())
+        } else {
+            *v4_skip_reasons
+                .entry("token0_addr_out_of_route")
+                .or_insert(0) += 1;
+            continue;
+        };
+        let Some(dec_in) =
+            v4_token_decimals(&mut v4_redis, chain_id, &token_in, &mut v4_decimal_cache).await
+        else {
+            *v4_skip_reasons
+                .entry("token_in_decimals_missing")
+                .or_insert(0) += 1;
+            continue;
+        };
+        let Some(dec_out) =
+            v4_token_decimals(&mut v4_redis, chain_id, &token_out, &mut v4_decimal_cache).await
+        else {
+            *v4_skip_reasons
+                .entry("token_out_decimals_missing")
+                .or_insert(0) += 1;
+            continue;
+        };
+        if v4_first_token_in.is_none() {
+            v4_first_token_in = Some(token_in.clone());
+        }
+        let pool_id = format!("{:#x}", pool);
+        v4_edges.push(crate::agent_graph::Edge {
+            edge_id: pool_id.clone(),
+            pool_id,
+            chain_id,
+            token_in,
+            token_out,
+            protocol: leg
+                .dex_hint
+                .clone()
+                .unwrap_or_else(|| "unknown".to_string()),
+            snapshot_id: v4_ctx_id.clone(),
+            // Identidad de bloque REAL observada (número de la entrada de
+            // reservas) con prefijo explícito "blk-": Edge no tiene campo
+            // para número de bloque y JAMÁS se fabrica un hash (R8).
+            block_hash: format!("blk-{}", entry.blk),
+            reserve_in_raw: Some(reserve_in),
+            reserve_out_raw: Some(reserve_out),
+            // La caché de reservas no porta fee del pool → None: el contrato
+            // v4 exige quote de productor exacto por protocolo (sin inferir
+            // fees — R8). El discovery de ciclos no necesita fee.
+            fee_units: None,
+            fee_denominator: None,
+            token_in_decimals: dec_in,
+            token_out_decimals: dec_out,
+            // Adaptador que respalda estos edges: la caché de reservas del
+            // searcher (procedencia real, no una versión de protocolo).
+            adapter_version: "reserves_cache_v1".to_string(),
+        });
+    }
+    // LOGFLOOD-01: omisiones por-pierna a DEBUG con histograma agregado de
+    // razones (sin muestreo — R8), una sola línea por intent.
+    if !v4_skip_reasons.is_empty() {
+        debug!(
+            event = "cartridge.v4_intent_legs_skipped",
+            chain_id,
+            tx_hash = %intent.tx_hash,
+            legs_total = intent.legs.len(),
+            edges_built = v4_edges.len(),
+            ?v4_skip_reasons,
+            "piernas omitidas al componer el grafo v4 del intent (omisión honesta, sin heurísticas)"
+        );
+    }
+
+    let mut v4_registered = false;
+    if v4_edges.is_empty() {
+        debug!(
+            event = "cartridge.v4_intent_no_edges",
+            chain_id,
+            tx_hash = %intent.tx_hash,
+            "grafo v4 vacío tras omisiones R8; la evaluación usa el contexto estático"
+        );
+    } else if let (Some(cfg), Some(identity), Some(start_token), Some(router)) = (
+        cfg_snapshot.as_ref(),
+        identity_idx.as_ref(),
+        v4_first_token_in.as_deref(),
+        v4_router.as_ref(),
+    ) {
+        match build_v4_intent_bundle(
+            chain_id,
+            &v4_ctx_id,
+            v4_edges,
+            start_token,
+            &intent.amount_in.to_string(),
+            cfg,
+            identity,
+            &price_snapshot,
+        ) {
+            Some(bundle) => {
+                // Guarda de revisión de un solo bundle: este intent sirve
+                // exactamente el contexto que acaba de componer (mismo
+                // enfoque honesto del contexto DATA_GAP Phase-1).
+                let v4_revision: crate::snapshot_services::RevisionGuard =
+                    Arc::new(|_: &str, _: &str| true);
+                match crate::snapshot_services::SnapshotServices::new(Arc::new(bundle), v4_revision)
+                {
+                    Ok(services) => match router.insert(v4_ctx_id.clone(), Arc::new(services)) {
+                        Ok(()) => v4_registered = true,
+                        Err(e) => debug!(
+                            event = "cartridge.v4_intent_insert_failed",
+                            chain_id,
+                            tx_hash = %intent.tx_hash,
+                            reason = %e,
+                            "router sin capacidad para el contexto del intent; contexto estático"
+                        ),
+                    },
+                    Err(e) => warn!(
+                        event = "cartridge.v4_intent_bundle_rejected",
+                        chain_id,
+                        tx_hash = %intent.tx_hash,
+                        reason = %e,
+                        "bundle v4 del intent rechazado; fallback a DATA_GAP sin romper el flujo"
+                    ),
+                }
+            }
+            None => {
+                debug!(
+                    event = "cartridge.v4_intent_clock_invalid",
+                    chain_id,
+                    tx_hash = %intent.tx_hash,
+                    "sin base temporal honesta para el bundle; contexto estático"
+                );
+            }
+        }
+    }
+
+    // Guard con Drop: retira el contexto por-intent del router en TODA salida
+    // de la tarea (incluye panic) — sin fugas de capacidad del router.
+    let _v4_intent_guard = V4IntentContextGuard {
+        router: if v4_registered {
+            v4_router.clone()
+        } else {
+            None
+        },
+        context_id: v4_ctx_id.clone(),
+    };
+
+    // Sello de identidad del contexto para ESTA evaluación: los cartuchos v4
+    // copian estos campos a su ctx y SnapshotServices::check exige
+    // ctx["context_id"] == bundle.context_id && ctx["snapshot_id"] ==
+    // bundle.snapshot_id. Registrado → ids del intent; fallback → ids
+    // estáticos DATA_GAP (coinciden con el contexto registrado en boot).
+    // Ruta ACTIVE únicamente: la shadow conserva su comportamiento Phase-1.
+    let (v4_stamp_context, v4_stamp_snapshot) = if v4_registered {
+        (v4_ctx_id.clone(), v4_ctx_id.clone())
+    } else {
+        (v4_static_context_id, v4_static_snapshot_id)
+    };
+    pool_data.insert("context_id".into(), rhai::Dynamic::from(v4_stamp_context));
+    pool_data.insert("snapshot_id".into(), rhai::Dynamic::from(v4_stamp_snapshot));
 
     // LOGFLOOD-01: per-cartridge negatives below log at DEBUG (was INFO —
     // ~183 lines/s evicted every other log from the 50MB docker rotation
