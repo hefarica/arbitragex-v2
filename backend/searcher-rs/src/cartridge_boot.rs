@@ -156,9 +156,77 @@ pub fn spawn_cartridge_runtime(
         rpc_last_call_ns: Arc::new(AtomicU64::new(0)),
     };
 
+    // ── AGENT v4 (integration/agent-cartridges-v4): Phase-1 honest context ──
+    // Registers the agent_v4_* bindings backed by a SnapshotServices built
+    // from a DATA_GAP bundle: edges/prices/quotes are EMPTY (nothing
+    // fabricated — R8), so v4 cartridges run their real flow and report the
+    // missing producers as explicit reasons instead of silent zeros. Real
+    // producers wire into this bundle in later phases (issue #647 family).
+    // Ids are deterministic so `build_cartridge_pool_data` call sites can
+    // stamp them into pool_data (SnapshotServices::check requires ctx
+    // identity match). Validity is 24h — an empty DATA_GAP bundle has no
+    // real data to go stale; a restart rebuilds it fresh.
+    let v4_now_ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0);
+    let v4_context_id = format!("boot-chain-{chain_id}");
+    let v4_snapshot_id = format!("boot-genesis-{chain_id}");
+    let v4_policy = crate::rhai_agent_bridge::PolicyView {
+        enabled: true,
+        capital_cap_usd: "0".into(),
+        min_profit_usd: None,
+        max_gas_usd: None,
+        snapshot_id: v4_snapshot_id.clone(),
+        price_revision: "phase1_data_gap".into(),
+        policy_revision: "phase1_data_gap".into(),
+        execution_mode: "paper_shadow".into(),
+        control_state: "phase1_data_gap".into(),
+    };
+    let v4_bundle = Arc::new(crate::snapshot_services::SnapshotBundle {
+        context_id: v4_context_id.clone(),
+        snapshot_id: v4_snapshot_id.clone(),
+        observed_at_ms: v4_now_ms,
+        valid_until_ms: v4_now_ms + 86_400_000,
+        policy: v4_policy,
+        start_token: String::new(),
+        chain_id,
+        edges: Vec::new(),
+        limits: crate::agent_graph::SearchLimits {
+            max_hops: 0,
+            max_expansions: 0,
+            max_paths: 0,
+        },
+        size_schedule_raw: Vec::new(),
+        prices: Default::default(),
+        exact_quotes: Default::default(),
+        route_support: Default::default(),
+        domain_plans: Default::default(),
+        canonical_payloads: Default::default(),
+        manifest_digests: Default::default(),
+        max_evaluations: 1,
+    });
+    // Single-revision Phase-1 guard: this process serves exactly the bundle it
+    // booted with; a restart rebuilds a fresh (equally-honest) bundle.
+    let v4_revision: crate::snapshot_services::RevisionGuard =
+        Arc::new(move |_policy_rev: &str, _price_rev: &str| true);
+    let v4_services = match crate::snapshot_services::SnapshotServices::new(v4_bundle, v4_revision)
+    {
+        Ok(s) => Arc::new(s),
+        Err(e) => {
+            tracing::error!(
+                event = "cartridge.v4_services_failed",
+                chain_id,
+                reason = %e,
+                "AGENT v4 Phase-1 services rejected"
+            );
+            return None;
+        }
+    };
+
     // Build the runner BEFORE spawning so we can share the Arc with both the
     // subscriber task and the orchestrator (shadow evaluation).
-    let runner = Arc::new(CartridgeRunner::new(host_ctx));
+    let runner = Arc::new(CartridgeRunner::new(host_ctx).with_agent_services(v4_services));
     let runner_for_task = runner.clone();
 
     // CARTRIDGE-CONTROL: clone the cancellation token + Redis URL BEFORE the
@@ -1224,8 +1292,29 @@ pub async fn active_evaluate_and_emit(
                         "v4 proposal intercepted: awaiting snapshot-store consumer (no v3 candidate formed)"
                     );
                     // Honest rejection row WITHOUT the v3 candidate machinery:
-                    // identity from the intent (causal origin), no economics
-                    // fabricated (expected_profit_usd = None — R8).
+                    // identity from the intent (causal origin). The economics
+                    // surfaced are the PROPOSAL'S OWN validated figures
+                    // (gross/net/amount — decimal strings parsed to f64; R8:
+                    // absent/unparseable stays None, never invented). The
+                    // api-server SIM-TS then composes the full cost ladder
+                    // from these + trading_config (prices/targets seeded).
+                    let proposal_v4_json = eval_result
+                        .metadata
+                        .get("proposal_v4")
+                        .cloned()
+                        .unwrap_or(serde_json::Value::Null);
+                    let v4_amount_raw = proposal_v4_json
+                        .get("amount_in_raw")
+                        .and_then(|v| v.as_str())
+                        .map(String::from);
+                    let v4_gross_usd = proposal_v4_json
+                        .get("gross_profit_usd")
+                        .and_then(|v| v.as_str())
+                        .and_then(|s| s.parse::<f64>().ok());
+                    let v4_net_usd = proposal_v4_json
+                        .get("net_profit_usd")
+                        .and_then(|v| v.as_str())
+                        .and_then(|s| s.parse::<f64>().ok());
                     let first_leg_v4 = intent.legs.first();
                     let last_leg_v4 = intent.legs.last();
                     let (token_in_v4, token_out_v4) = match (first_leg_v4, last_leg_v4) {
@@ -1247,9 +1336,10 @@ pub async fn active_evaluate_and_emit(
                         pair_symbol: format!("{}/{}", token_in_v4, token_out_v4),
                         token_in: token_in_v4,
                         token_out: token_out_v4,
-                        amount_in_wei: intent.amount_in.to_string(),
-                        expected_profit_usd: None, // v4 exact strings live in the telemetry payload
-                        net_expected_profit_usd: None,
+                        amount_in_wei: v4_amount_raw
+                            .unwrap_or_else(|| intent.amount_in.to_string()),
+                        expected_profit_usd: v4_gross_usd,
+                        net_expected_profit_usd: v4_net_usd,
                         roi_pct: None,
                         risk_score: None,
                         block_number: intent.observed_block().or_else(|| {

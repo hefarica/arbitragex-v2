@@ -594,3 +594,38 @@ fn test_content_hash_dedup() {
         "different source should produce different hash"
     );
 }
+
+/// AGENT v4 Phase-1: EVERY deployed strategy cartridge must compile with the
+/// release-limit engine. This closes the package's own declared gap (its
+/// VALIDACION: "No se compilo ni invoco ningun cartucho con un interprete
+/// Rhai real") — the gap that shipped a syntax-broken cartridge to main on
+/// 2026-09-23. New .rhai files in cartridges/strategies/ are covered here
+/// automatically: a syntax-broken cartridge must NEVER reach production.
+#[test]
+fn test_all_strategy_cartridges_compile() {
+    let mut engine = Engine::new();
+    engine.set_max_expr_depths(64, 32);
+    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("cartridges/strategies");
+    let mut checked = 0usize;
+    let mut failures: Vec<String> = Vec::new();
+    for entry in std::fs::read_dir(&dir).expect("cartridges/strategies dir must exist") {
+        let path = entry.expect("dir entry").path();
+        if path.extension().and_then(|e| e.to_str()) != Some("rhai") {
+            continue;
+        }
+        let source = std::fs::read_to_string(&path).expect("read cartridge source");
+        checked += 1;
+        if let Err(e) = engine.compile(&source) {
+            failures.push(format!("{}: {e}", path.display()));
+        }
+    }
+    assert!(
+        checked >= 200,
+        "expected the full deployed strategy set (>=200 scripts), found {checked}"
+    );
+    assert!(
+        failures.is_empty(),
+        "cartridges that failed to compile:\n{}",
+        failures.join("\n")
+    );
+}

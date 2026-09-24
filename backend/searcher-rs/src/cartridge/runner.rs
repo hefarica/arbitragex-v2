@@ -125,6 +125,10 @@ pub struct CartridgeRunner {
     cartridges: Arc<RwLock<HashMap<String, CompiledCartridge>>>,
     /// Host context for infrastructure access.
     host_ctx: HostContext,
+    /// AGENT v4 services (integration/agent-cartridges-v4). When present, the
+    /// agent_v4_* bindings are registered on the engine so v4-sealed cartridges
+    /// can run their discover/quote/operators/economic_check/seal flow.
+    agent_services: Option<std::sync::Arc<dyn crate::rhai_agent_bridge::AgentServices>>,
 }
 
 /// Decodes the host `base_fee_gwei` atomic into gwei. The atomic stores
@@ -174,7 +178,21 @@ impl CartridgeRunner {
             engine,
             cartridges: Arc::new(RwLock::new(HashMap::new())),
             host_ctx,
+            agent_services: None,
         }
+    }
+
+    /// AGENT v4 (integration/agent-cartridges-v4): registers the agent_v4_*
+    /// bindings backed by `svc` on this runner's engine. Call BEFORE handing
+    /// the runner to consumers; v4-sealed cartridges (contract_version
+    /// "arbx.cartridge.agent/4") cannot evaluate without these bindings.
+    pub fn with_agent_services(
+        mut self,
+        svc: std::sync::Arc<dyn crate::rhai_agent_bridge::AgentServices>,
+    ) -> Self {
+        crate::rhai_agent_bridge::register(&mut self.engine, svc.clone());
+        self.agent_services = Some(svc);
+        self
     }
 
     /// Compiles, validates, and registers a new cartridge from source code.
