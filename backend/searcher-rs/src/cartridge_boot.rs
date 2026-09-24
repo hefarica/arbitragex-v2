@@ -1292,8 +1292,29 @@ pub async fn active_evaluate_and_emit(
                         "v4 proposal intercepted: awaiting snapshot-store consumer (no v3 candidate formed)"
                     );
                     // Honest rejection row WITHOUT the v3 candidate machinery:
-                    // identity from the intent (causal origin), no economics
-                    // fabricated (expected_profit_usd = None — R8).
+                    // identity from the intent (causal origin). The economics
+                    // surfaced are the PROPOSAL'S OWN validated figures
+                    // (gross/net/amount — decimal strings parsed to f64; R8:
+                    // absent/unparseable stays None, never invented). The
+                    // api-server SIM-TS then composes the full cost ladder
+                    // from these + trading_config (prices/targets seeded).
+                    let proposal_v4_json = eval_result
+                        .metadata
+                        .get("proposal_v4")
+                        .cloned()
+                        .unwrap_or(serde_json::Value::Null);
+                    let v4_amount_raw = proposal_v4_json
+                        .get("amount_in_raw")
+                        .and_then(|v| v.as_str())
+                        .map(String::from);
+                    let v4_gross_usd = proposal_v4_json
+                        .get("gross_profit_usd")
+                        .and_then(|v| v.as_str())
+                        .and_then(|s| s.parse::<f64>().ok());
+                    let v4_net_usd = proposal_v4_json
+                        .get("net_profit_usd")
+                        .and_then(|v| v.as_str())
+                        .and_then(|s| s.parse::<f64>().ok());
                     let first_leg_v4 = intent.legs.first();
                     let last_leg_v4 = intent.legs.last();
                     let (token_in_v4, token_out_v4) = match (first_leg_v4, last_leg_v4) {
@@ -1315,9 +1336,10 @@ pub async fn active_evaluate_and_emit(
                         pair_symbol: format!("{}/{}", token_in_v4, token_out_v4),
                         token_in: token_in_v4,
                         token_out: token_out_v4,
-                        amount_in_wei: intent.amount_in.to_string(),
-                        expected_profit_usd: None, // v4 exact strings live in the telemetry payload
-                        net_expected_profit_usd: None,
+                        amount_in_wei: v4_amount_raw
+                            .unwrap_or_else(|| intent.amount_in.to_string()),
+                        expected_profit_usd: v4_gross_usd,
+                        net_expected_profit_usd: v4_net_usd,
                         roi_pct: None,
                         risk_score: None,
                         block_number: intent.observed_block().or_else(|| {
