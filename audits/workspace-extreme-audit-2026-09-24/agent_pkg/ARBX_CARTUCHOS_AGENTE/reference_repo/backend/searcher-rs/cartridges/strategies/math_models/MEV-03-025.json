@@ -1,0 +1,62 @@
+{
+  "version": "2.0.0",
+  "frontend_toggle": {
+    "key": "strategy.3.025.enabled",
+    "default": null,
+    "gate_live": "Sim PASS + net_profit>0 + risk_score>=70"
+  },
+  "applicable_operators": [
+    5,
+    7,
+    8,
+    11,
+    6,
+    10,
+    12,
+    13,
+    14,
+    22
+  ],
+  "classification": null,
+  "safety_gates": [
+    "arbx-simulation-mandatory",
+    "arbx-paper-trade-first",
+    "arbx-risk-limits-enforcement"
+  ],
+  "mode": null,
+  "operator_weights": {
+    "5": 1.0,
+    "7": 1.0,
+    "8": 1.0,
+    "11": 1.0,
+    "6": 0.7,
+    "10": 0.7,
+    "12": 0.7,
+    "13": 0.7,
+    "14": 0.7,
+    "22": 0.7,
+    "24": 0.34,
+    "23": 0.33,
+    "9": 0.31,
+    "21": 0.31,
+    "20": 0.3
+  },
+  "math_concepts": [
+    {
+      "domain": null,
+      "application_point": "Execution",
+      "formula": "f(x) = x",
+      "module": "math_engine",
+      "purpose": "Placeholder - customize per strategy",
+      "concept": "Deterministic concept for MEV-03-025"
+    }
+  ],
+  "leg_type": null,
+  "atomicity": "BUNDLE_ORDERED",
+  "verdict": "ALLOW",
+  "strategy_id": "MEV-03-025",
+  "family": null,
+  "math_domain": null,
+  "liquidity_type": "BUNDLE_ORDERED",
+  "liquidity_provider": null
+}

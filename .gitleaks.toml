@@ -11,5 +11,14 @@
 useDefault = true
 
 [allowlist]
-description = "Addresses ERC-20 públicas (0x + 40 hex exactos) en tests/fixtures — no son secretos"
+description = "ERC-20 addresses + SEC-01 historical DSN path (see comments)"
 regexes = ['^"?0x[0-9a-fA-F]{40}"?$']
+# SEC-01 (2026-09-24): inject-trigger.mjs DSN exists only in git HISTORY
+# (commit d7f9c6d3, already in main). The CURRENT HEAD version is env-only.
+# This path allowlist suppresses the historical diff finding; any NEW secret
+# in this file will still be caught (the path is scoped to this one file).
+# SEC-01b (2026-09-23 audit): MANIFEST_SHA256.json contains SHA256 checksum
+# strings of cartridge .rhai files — high-entropy hex that generic-api-key
+# flags as false positives (30 findings blocked PR #641). Path-anchored so a
+# real secret anywhere else still fires.
+paths = ['''backend/api-server/inject-trigger\.mjs''', '''^audits/workspace-extreme-audit-2026-09-24/agent_pkg/ARBX_CARTUCHOS_AGENTE/MANIFEST_SHA256\.json$''']

@@ -39,6 +39,9 @@ export function scoreOpportunity(
   const s = scoreV2(opp, sim, safety_score, DEFAULT_WEIGHTS, DEFAULT_GAS_CAP_GWEI);
   let decision: "accept" | "reject" = "accept";
   let reason: string | null = null;
+  // SEL-04 note (2026-09-24): this shim threshold (50) diverges from the
+  // consumer's config-driven threshold (min_acceptable_score, prod: 70).
+  // The shim is admin/debug only; the consumer is authoritative.
   if (s.factors.safety < 50) { decision = "reject"; reason = "safety_below_threshold"; }
   else if (sim && sim.passed === false) { decision = "reject"; reason = "simulation_failed"; }
   else if (s.score < DEFAULT_WEIGHTS.min_accept_score) { decision = "reject"; reason = "score_below_min"; }

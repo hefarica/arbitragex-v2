@@ -20,35 +20,47 @@ env:
 jobs:
   validate:
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        # CI-01 fix (2026-09-24): the Rust workspace manifest lives in
+        # backend/ — a root-level `cargo check --workspace` fails with
+        # "could not find Cargo.toml" and kills the whole live-testnet gate.
+        # Node steps override back to the repo root (working-directory: .).
+        working-directory: backend
     steps:
       - uses: actions/checkout@v4
 
       - name: Fail fast on mainnet
+        working-directory: .
         run: |
           if [ "${{ inputs.chain_id }}" = "1" ]; then
             echo "MAINNET_CHAIN_ID_REJECTED"
             exit 1
           fi
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: npm
 
       - name: Install dependencies
+        working-directory: .
         run: npm ci
 
       - name: Typecheck TypeScript workspaces
+        working-directory: .
         run: npm run typecheck:all
 
       - name: Lint
+        working-directory: .
         run: npm run lint:all
 
       - name: Test shared-ts + frontend
+        working-directory: .
         run: npm run test:all
 
       - name: Cargo check (Rust workspace)
-        run: cargo check --workspace
+        run: cargo check --workspace --locked
 
   e2e-live-testnet:
     runs-on: ubuntu-latest
@@ -56,7 +68,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: npm

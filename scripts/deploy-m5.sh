@@ -31,9 +31,12 @@ fi
 : "${SEPOLIA_RPC_URL:?SEPOLIA_RPC_URL not set}"
 : "${AAVE_POOL_ADDRESS:?AAVE_POOL_ADDRESS not set}"
 
-# Public simulation sender — Anvil account #0. Zero value on any real network; NEVER a real deployer.
-# DeployTestnet.s.sol reads this via vm.envUint for the simulated sender only (no signing key custody).
-export DEPLOYER_PRIVATE_KEY="${DEPLOYER_PRIVATE_KEY:-0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80}"
+# SEC-02 fix (2026-09-24): previously defaulted to the PUBLIC Anvil #0 key
+# (0xac09...). While this script is Sepolia-only (hard guard at L42-46) and
+# the key is documented as a zero-value simulation sender, the DEFAULT pattern
+# itself is a hazard: anyone copying this script to a mainnet context would
+# deploy with a drainable key. The variable is now REQUIRED (fail-closed).
+export DEPLOYER_PRIVATE_KEY="${DEPLOYER_PRIVATE_KEY:?DEPLOYER_PRIVATE_KEY is required (simulation sender key — see docs/env; the old Anvil#0 default is removed per SEC-02)}"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CONTRACTS_DIR="$(cd "${SCRIPT_DIR}/../contracts" && pwd)"

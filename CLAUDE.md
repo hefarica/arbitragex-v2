@@ -159,6 +159,22 @@ Antes de diagnosticar "el evento X nunca ocurriÃ³" desde `docker logs`:
 
 ### R10 â€” E2E-COMPUTE GUARD (orden del operador 2026-09-20)
 NingÃºn campo puede presentarse como computado si no estÃ¡ siendo procesado en TODAS y cada una de las capas end-to-end (productor â†’ canal/PG â†’ API â†’ frontend). Un wire sin productor (tabla siempre vacÃ­a, stream XLEN=0, canal declarado-never-created) NO es evidencia de valor cero ni de coherencia: el veredicto en pantalla debe degradarse a **NO COMPUTADO** con `reason` explÃ­cito (ej. `drift_observations_no_producer`, ver `system-manifest.ts` GET /drift y su test de contrato). Extiende R8/RULE 00 al eje productorâ†’consumidor: la ausencia de cÃ³mputo jamÃ¡s se viste de Ã©xito. Precedente: `drift_observations` mostraba "COHERENT — 0 observaciones" sobre una tabla SIN escritor (schema-drift-2026-09-20, DRIFT-REPORT Â§2.3).
+### R11 â€” VERIFICACIÃ“N EN ÃRBOL AJENO (MULTI-SESIÃ“N, orden del operador 2026-09-20)
+Con 3+ sesiones compartiendo UN checkout principal, PROHIBIDO verificar un branch en un Ã¡rbol que estÃ© en OTRO branch sin protocolo:
+1. Si es inevitable (p.ej. solo el main tree tiene `node_modules` completo): copiar el CLOSURE COMPLETO de dependencias del branch base (types, format, etc.), no solo los archivos tocados.
+2. Errores de tsc/vitest que referencien lÃneas o campos que NO tocaste = FALSOS POSITIVOS hasta demostrar que el archivo del error es byte-idÃ©ntico al de tu branch. JamÃ¡s "corregir" un error fantasma.
+3. El revert de las copias temporales ocurre EN LA MISMA SESIÃ“N de trabajo. Si un lock lo impide: declararlo por SendMessage a los peers INMEDIATAMENTE (archivo + duraciÃ³n estimada) â€” copias huÃ©sped en el Ã¡rbol compartido son contaminaciÃ³n potencial del prÃ³ximo `git add -A` de otra sesiÃ³n.
+Incidente origen (2026-09-20): primer tsc del PR #622 produjo 17 errores falsos (main tree sin types.ts de #620) y 6 archivos de verificaciÃ³n quedaron 40 min en el Ã¡rbol compartido bloqueados por index.lock.
+
+### R12 â€” PROTOCOLO index.lock MULTI-SESIÃ“N
+`index.lock` NUNCA se borra a ciegas. Secuencia obligatoria: (a) edad del lock, (b) tamaÃ±o â€” 0 bytes = crash huÃ©rfano casi seguro, (c) `Get-Process` git vivo = NINGUNO, (d) solo entonces MOVER (no borrar) a `.git/index.lock.stale-<timestamp>` y avisar a los peers. Lock 0-byte >30 min con cero procesos git = huÃ©rfano (caso 2026-09-20 12:59).
+
+### R13 â€” MANIFESTACIÃ“N PROBADA DE PR (orden del operador 2026-09-20)
+Un PR existe cuando SU DIFF lo dice, no cuando el POST respondiÃ³:
+1. Tras crear PR por API (curl/python), SIEMPRE verificar con GET que existe (el POST puede triunfar aunque el parse local falle â€” caso #621) â€” y jamÃ¡s re-POST por un error de parse propio.
+2. Tras el push, auditar `GET /pulls/N/files` contra el SET EXACTO de archivos intencionales. Archivo faltante = implementaciÃ³n NO manifestada = bloqueador.
+3. Cierre de cada ciclo: escanear tus worktrees por tracked-mods sin commit (`git status --porcelain | grep -v '^\?\?'`) â€” trabajo editado y nunca PR-eado es la forma silenciosa de perder una implementaciÃ³n (hallazgo 2026-09-20: worktrees reject-traces 35 mods y price-exchange 5 mods huÃ©rfanos de 09-18).
+4. PRs apilados sobre branch no-mergeada: el diff GitHub mostrarÃ¡ el UNION con la base â€” documentar la base en el body y re-auditar el diff DESPUÃ‰S del merge de la base.
 
 ## 4. OMEGA ARCHITECTURAL FIDELITY
 

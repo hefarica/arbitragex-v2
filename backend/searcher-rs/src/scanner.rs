@@ -471,8 +471,11 @@ async fn build_orchestrator(
             // Each cycle has 3 edges; collect pool addresses for each unique edge.
             let edges: [(&str, &str); 3] = [(_sym_a, sym_b), (sym_b, sym_c), (_sym_a, sym_c)];
             for (s0, s1) in edges {
-                let (lo, hi) = if s0 <= s1 { (s0, s1) } else { (s1, s0) };
-                let key = format!("arbx:pool_index:{}:{}:{}", chain_id, lo, hi);
+                // CORE-02: canonical builder (lowercase + sorted) — the raw
+                // format! built UPPERCASE keys that missed the lowercase index.
+                let key = crate::reserves::key_pool_index(chain_id, s0, s1);
+                let lo = s0.to_ascii_lowercase();
+                let hi = s1.to_ascii_lowercase();
                 let raw: Result<Option<String>, _> =
                     redis::AsyncCommands::get(&mut redis, &key).await;
                 if let Ok(Some(json)) = raw {

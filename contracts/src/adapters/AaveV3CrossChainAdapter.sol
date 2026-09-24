@@ -57,15 +57,17 @@ contract AaveV3CrossChainAdapter {
         emit AaveSupply(pool, asset, amount, onBehalfOf);
     }
 
-    function withdraw(address provider, address asset, uint256 amount, address to)
-        external
-        returns (uint256 withdrawn)
-    {
+    // WEB3-02 fix (2026-09-24): withdraw previously sent to an arbitrary
+    // 	o address, letting anyone drain the adapter's aToken position to
+    // any recipient. Now the withdrawal can ONLY go to msg.sender. Per-user
+    // accounting would be needed for shared positions - self-custody is the
+    // safe bound until then.
+    function withdraw(address provider, address asset, uint256 amount) external returns (uint256 withdrawn) {
         if (amount == 0) revert Aave__ZeroAmount();
         address pool = IAavePoolAddressesProvider(provider).getPool();
 
-        withdrawn = IAavePool(pool).withdraw(asset, amount, to);
-        emit AaveWithdraw(pool, asset, withdrawn, to);
+        withdrawn = IAavePool(pool).withdraw(asset, amount, msg.sender);
+        emit AaveWithdraw(pool, asset, withdrawn, msg.sender);
     }
 
     /**

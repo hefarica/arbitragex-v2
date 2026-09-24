@@ -51,6 +51,11 @@ import "../src/AdminTimelock.sol";
 
 contract DeployTestnet is Script {
     function run() external {
+        // WEB3-03 fix (2026-09-24): refuse to run against mainnet. This script
+        // deploys with a 60s timelock and deployer-EOA admin — safe ONLY on a
+        // testnet. A `--rpc-url $MAINNET_RPC` invocation would previously
+        // deploy the weak configuration to mainnet.
+        require(block.chainid != 1, "DeployTestnet: MAINNET_REJECTED - use DeployMainnet.s.sol");
         uint256 deployerKey = vm.envUint("DEPLOYER_PRIVATE_KEY");
         address deployer = vm.addr(deployerKey);
         address aavePool = vm.envAddress("AAVE_POOL_ADDRESS");

@@ -180,6 +180,20 @@ mod source_supervisor;
 #[allow(dead_code)]
 mod route_discovery;
 mod route_intent;
+// ── Agent cartridge v4 runtime (integration/agent-cartridges-v4, 2026-09-24):
+// staged but NOT active — modules compile in both targets so the v4 parser,
+// bridge and control loop are reachable the moment activation criteria pass.
+// See lib.rs declaration block for the full rationale.
+mod agent_graph;
+mod context_router;
+#[allow(dead_code)]
+mod native_operator_adapter;
+mod proposal_contract;
+mod rhai_agent_bridge;
+mod snapshot_services;
+// CARTRIDGE-CONTROL: acople/desacople por cartucho (desired-state store +
+// boot application + runtime command loop).
+mod cartridge_control;
 // CB-02 (2026-09-07) — control-plane runtime knobs (class A toggle client,
 // worker heartbeat, boot census). See audits/control-board-2026-09-07/.
 mod runtime_knobs;

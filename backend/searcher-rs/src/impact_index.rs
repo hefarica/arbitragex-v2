@@ -844,8 +844,9 @@ async fn build_mvp_seeds_from_redis(
         // Each edge can resolve to zero or more pool addresses.
         let edges: [(&str, &str); 3] = [(sym_a, sym_b), (sym_b, sym_c), (sym_a, sym_c)];
         for (s0, s1) in edges {
-            let (lo, hi) = if s0 <= s1 { (s0, s1) } else { (s1, s0) };
-            let key = format!("arbx:pool_index:{}:{}:{}", chain_id, lo, hi);
+            // CORE-02: canonical builder (lowercase + sorted) — the raw format!
+            // built UPPERCASE keys that missed the lowercase index space.
+            let key = crate::reserves::key_pool_index(chain_id, s0, s1);
             let raw: Result<Option<String>, _> = redis.get(&key).await;
             if let Ok(Some(json)) = raw {
                 if let Ok(addrs) = serde_json::from_str::<Vec<String>>(&json) {

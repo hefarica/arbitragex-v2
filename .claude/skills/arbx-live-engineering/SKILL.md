@@ -370,3 +370,116 @@ en arbitrajes de todo tipo — el autor nunca certifica su propia pieza. Canóni
 `arbitragex-omniscience` §12. Los gates de esta skill (§4, §11) quedan intactos.
 Precedente: SIM-FUND-01b — 12 bytes de padeo erróneo, 706/706 fundings muertos,
 certificados por un test que re-computaba la fórmula defectuosa.
+
+## 17. Arsenal Hermes DeFi/Web3/Trading integrado a este comando (orden del operador 2026-09-22)
+
+> Aditivo a §1-§16: el lote de 21 skills comunitarias DeFi/Web3/Trading (instaladas
+> 2026-09-21/22 en `%LOCALAPPDATA%\hermes\skills\`; re-verificadas idempotente el
+> 2026-09-22) queda integrado a `/arbx-live-engineering`. **SSOT del inventario completo
+> con roles**: `arbitragex-omniscience` §14.6 (global) + espejo proyecto §14 punto 6 —
+> aquí sólo la matriz de convocatoria por fase de la máquina de estados §4. Reglas de
+> activación = omniscience §14.1 (visibilidad por reinicio de sesión Hermes;
+> convocatoria por rol; doctrina de terceros ⊂ gates del repo). Censo vivo:
+> `hermes skills list`.
+
+### 17.1 Matriz de convocatoria por estado de §4
+
+| Estado / trabajo | Skills del arsenal convocables | Notas |
+|---|---|---|
+| ACCESS_CHECK · VPS_READ_ONLY · VPS_MAPPED | `blockchain`, `defi-research`, `on-chain-analyitcs` (dir local; name "onchain-analysis"), `git-integrate` | Research/mapeo read-only; datos reales (RULE 00); jamás grafo o inventario simulado |
+| CHANGE_AUTHORIZED · ENGINEERING_VERIFIED (código/contratos/frontend) | `web3-dapp-development-skill`, `react-coding-style`, `afrexai-web3-engineering`, `blockchain-web3-toolkit`, `ah-blockchain-developer`, `write-contracts`, `axodus-smartcontracts-audits`, `abi-to-mcp-generator` | `write-contracts` bajo FUSILE_SOURCE_POLICY + port-with-validation; `axodus-*` sinergia con security-auditor (auditoría read-only); `abi-to-mcp-generator` SOLO MCP local read-only (§33.2: jamás firma/broadcast) |
+| Economía de ejecución: gas, precios, sizing | `gas-fee-tracker`, `coingecko-price`, `auto-trading-strategy`, `defi-trading-engine`*, `polymarket-arb-scanner-pro`*, `defi-stablecoin-yield-scanner`, `afrexai-investment-engine` | Gas/precios alimentan net-gate y sizing con datos reales (fuentes gratuitas del stack soberano); `defi-trading-engine` SOLO knowledge risk-manager/daily-review — `trade-executor` NO convocable (§32) |
+| TESTNET_LIVE_VERIFIED · MAINNET_RELEASE_READY | `hft-paper-trader`, `ultimate-agents` | `hft-paper-trader` = paper/shadow ONLY (PAPER_SHADOW §34.1); `ultimate-agents` orquestación bajo §9 del omniscience — **`wallet.js` PROHIBIDO (§32: sin wallets/capital)** |
+
+\* = instalada con `--force` tras hallazgos MEDIUM del scanner; scripts pip/npm de
+terceros NO se ejecutan sin revisión.
+
+### 17.2 Excluidas (registro fail-honest, heredado de omniscience §14.6.2)
+
+`openmm`, `smart-accounts-kit`, `smart-contract-audit`, `chain-audit-deploy-skill`
+(bloqueadas DANGEROUS por skills-guard-v5, `--force` NO overridea) y `clawhub/dapp`,
+`clawhub/defi` (stale upstream). No existe vía de instalación forzada; no simular su
+contenido.
+
+### 17.4 Lote 2 (orden del operador 2026-09-22) — 6 skills adicionales
+
+> Mismas reglas de §17.1/§17.7. SSOT: `arbitragex-omniscience` §14.7 (global).
+
+| Estado / trabajo | Skill | Notas |
+|---|---|---|
+| CHANGE_AUTHORIZED · ENGINEERING_VERIFIED (validación de código) | `code-inspector`* | Inspección estática read-only; apoyo a validators; pip unpinned NO se ejecuta sin revisión |
+| Cross-review de hallazgos en cualquier estado | `council-v2` | Consejo multi-rol con síntesis — refuerza la validación builder+validator (§16 doctrina Hermes) |
+| Economía de ejecución: detección cross-exchange | `cross-exchange-arb-scanner` | Patrón CexDex en paper/shadow (§34.1); scanner Python read-only, datos reales (RULE 00) |
+| VPS_READ_ONLY · TESTNET_LIVE_VERIFIED (due diligence de activos) | `onchain-token-diligence` | Alimenta gate `arbx-token-safety-screen` antes de registrar/aceptar tokens (§10 agregador) |
+| Runs largos / checkpoints del encargo | `agent-dream`* | Tipos de memoria de agentes; setup.js npm NO se ejecuta sin revisión |
+| Utilidad general del operador | `web3-pm-interview-skill`* | Fuera del hot-path; forceada por falso positivo `role_pretend` (revisado) |
+
+**Excluidas**: `afrexai-agent-engineering` (DANGEROUS 11 hallazgos, sin override),
+`python-debugpy` (stale upstream), `systematic-debugging`/`simplify-code` (ya builtin
+del store Hermes — convocables por rol vía censo `hermes skills list`, no se duplican).
+
+### 17.5 Lote 3 (orden del operador 2026-09-22) — 15 skills adicionales
+
+> Mismas reglas de §17.1/§17.7. SSOT: `arbitragex-omniscience` §14.8 (global).
+
+| Estado / trabajo | Skill | Notas |
+|---|---|---|
+| Runs largos / resiliencia de encargos | `trinity-harness` | Checkpoint patterns + taxonomía MAST; apoya PROGRESS.md de runs (§16) |
+| Calidad de orquestación en cualquier estado | `agent-harness-engineering` | Bootstrap playbook, quality gates, GC → charters del gang |
+| Checkpoints / memoria de runs | `afrexai-agent-memory`*, `agent-memory-sr`** | ** = force por U+FEFF (BOM Windows) en QUICKSTART.md:1 — falso positivo revisado |
+| Evaluación del gang (post-entrega) | `agent-metrics-osiris`* | Métricas de agentes; metrics.py pip unpinned NO se ejecuta |
+| Paneles watchdog/kill-switch (knowledge) | `warden-app` | Notas UI warden; read-only, sin tocar terminus §34 |
+| Diseño de flujo de señales/precios | `crypto-signals-router`** | sudo/systemd del README NUNCA se ejecutan (§32/§33) |
+| Economía cross-chain (diseño, no ejecución) | `cross-chain-arbitrage-cn`* | Knowledge paper/shadow ONLY (§34.1) |
+| CHANGE_AUTHORIZED (backend TS) | `agency-backend-architect` | Apoyo control-plane/api-server |
+| Auditoría multi-repo (§32 git-url) | `agent-repo-router` | Routing de repos para agentes |
+| CHANGE_AUTHORIZED (scaffold) | `ai-backendfrontend-autowriter` | BAJO RULE 00 — jamás mocks ni datos fabricados |
+| Utilidad general del operador | `ai-product-description-generator-free`* | Fuera del hot-path; environ/pip NO se ejecutan |
+| WOs requirements→implementación | `fec-backend-requirements-handoff` | Handoff estructurado antes de construir |
+| ENGINEERING_VERIFIED (tests) | `backend-test-plan`* | Pirámide de tests de backend; npm unpinned NO se ejecuta |
+| Planning profundo pre-despacho | `deepagents-implementation`** | Deep agents multi-nivel; force por `"env":` en snippet JSON de docs — benigno |
+
+`software-architecture-design` ya estaba (§14.2 del omniscience). **Excluidas DANGEROUS
+sin override**: `agent-kanban` (6), `wallet-mcp` (17 — además §32/§33 prohíben wallets
+vía MCP), `chainstream-data` (24). Censo tras lote: 116 enabled.
+
+### 17.6 Lote 4 (orden del operador 2026-09-22) — PM de ingeniería + plugins
+
+> Mismas reglas de §17.1/§17.7. SSOT: `arbitragex-omniscience` §14.9 (global).
+
+| Estado / trabajo | Skill / Plugin | Notas |
+|---|---|---|
+| Cualquier estado con WO/encargo sustancial | `engineering-project-manager` (name `project-manager`) | PM SPICE: scope/WBS, baselines, milestones, risk register, traceability, release gates — apoya §37 (revert+gate, evidence-only) y R13 (manifestación de PRs); scripts Python NO se ejecutan sin revisión |
+| Runs largos / compresión de contexto | plugin `hermes-snapcompact` | Archiva historia como PNG denso a ~1/3 tokens; enabled, carga al próximo arranque del gateway |
+| Descomposición builder+validator | plugin `hades-coding-workflows` | Dual-model harness, subagent-driven dev, planning; enabled, carga al próximo arranque |
+
+**Excluidas**: skill `nextflow` (DANGEROUS 11 hallazgos sin override — bioinformática,
+sin rol aquí), plugin `crypto-prices` (DANGEROUS 1 CRITICAL `rm -rf $HOME` en README;
+sin override — bypasear el scanner vía `plugins.scan_on_install` PROHIBIDO, frontera
+§33.2). Censo: 117 enabled.
+
+### 17.7 Frontera inquebrantable
+
+El knowledge de trading/deploy/ejecución de estas skills NO autoriza nada que §4, §11,
+§16, CLAUDE.md §32/§33/§34 o los gates `arbx-*` prohíban: sin capital, sin broadcast, sin
+flips de modo, sin mocks (RULE 00). Su uso en este comando es INGENIERÍA read-only:
+detección, auditoría, scaffolding y preparación del paquete de activación del operador.
+
+### 17.8 Lote 5 (orden del operador 2026-09-22) — Redis/WS/DB operacional ("usarlos siempre")
+
+> Mismas reglas de §17.1/§17.7. SSOT: `arbitragex-omniscience` §14.10 (global).
+
+| Estado / trabajo | Skill | Notas |
+|---|---|---|
+| VPS_MAPPED / diagnóstico Redis (streams, grupos, lag, AOF, socket-proxy) | `redis-cluster-analyzer` | Topología cluster/sentinel/replicación; health de nodos |
+| VPS_READ_ONLY / trazabilidad R7 (XLEN, XINFO GROUPS, XPENDING) | `redis-commander` | Su docker-compose.yml NO se levanta sin orden explícita del operador |
+| CHANGE_AUTHORIZED (consumers WS, reconexión de sockets, backpressure) | `websocket-hub-patterns` | Patrón de diseño contra la clase-zombi (SCANNER-SILENT-02, enricher broken-pipe): jamás retry eterno sobre socket muerto |
+| VPS_MAPPED / PostgreSQL internals (WAL, vacuum, particiones, locking) | `db-internals-deep-dive` | WAL-burst pacing, VACUUM FULL standalone, retention por particiones |
+| VPS_READ_ONLY / exploración de esquema/datos | `db-explorer-lens` | Auditoría dirigida (paper_trade_runs, rollups) sin queries ciegos |
+| Cualquier estado / triaje multi-fuente (PRs, issues, pipelines, incidentes) | `dx-data-navigator` | Alimenta el motor forense y el BOARD |
+
+**Obligatorias por dominio** (orden "usarlos siempre"): Redis → analyzer+commander;
+WS/reconexión → hub-patterns; PG internals → deep-dive+explorer-lens; data cross-stack
+→ data-navigator. **Excluida**: `clawhub/redis-store` (índice stale, archivos upstream
+inexistentes — ver §14.10.1 del omniscience; familia oficial `redis/agent-skills`
+disponible si el operador decide sustituir).

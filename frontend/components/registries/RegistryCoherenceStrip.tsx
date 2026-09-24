@@ -58,7 +58,13 @@ export function coherenceVerdict(
   if (pollError) return { kind: "NOT_COMPUTED", why: `poll_failed: ${pollError}` };
   if (observations.length > 0) return { kind: "DRIFT", count: observations.length };
   if (reason) return { kind: "NOT_COMPUTED", why: reason };
-  return { kind: "COHERENT" };
+  // DOC-06 fix (2026-09-24): drift_observations has ZERO writers in the repo.
+  // An empty table over an absent producer is NOT "COHERENT - 0 observations";
+  // it is honestly NO COMPUTADO until a drift producer lands (P0 abierto).
+  return {
+    kind: "NOT_COMPUTED",
+    why: "drift_observations sin productor (schema-drift P0 abierto)",
+  };
 }
 
 /** Map a wire layer label to its canonical chip group (unknown → verbatim). */

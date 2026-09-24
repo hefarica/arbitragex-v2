@@ -1,0 +1,21 @@
+const assert = require('node:assert/strict');
+const {readAgentCard,agentCardRevision,moneyLabel}=require('../validation/ts_build/card_contract.js');
+let n=0;function test(name,fn){fn();n++;console.log('PASS '+name);}
+const wire={contract_version:'arbx.cartridge.agent/4',mev_id:'TEST',detector_id:'TEST',context_id:'CTX',status:'REJECTED',candidate_eligible:false,approved_for_execution:false,net_profit_usd:'-0.519517',gross_profit_usd:'0',amount_in_raw:'1000000000000000001',legs:[],observations:[],reason:'non_positive_net',simulation:{status:'NOT_RUN_BY_CARTRIDGE',passed:null}};
+test('loss survives',()=>assert.equal(readAgentCard(wire).net_profit_usd,'-0.519517'));
+test('exact zero survives',()=>assert.equal(readAgentCard(wire).gross_profit_usd,'0'));
+test('raw precision survives',()=>assert.equal(readAgentCard(wire).amount_in_raw,'1000000000000000001'));
+test('missing not zero',()=>assert.equal(readAgentCard({...wire,net_profit_usd:null}).net_profit_usd,null));
+test('no Sim PASS',()=>assert.equal(readAgentCard(wire).simulation.passed,null));
+test('legacy rejected',()=>assert.throws(()=>readAgentCard({...wire,contract_version:'v3'})));
+test('self authorization rejected',()=>assert.throws(()=>readAgentCard({...wire,approved_for_execution:true})));
+test('bad amount rejected',()=>assert.throws(()=>readAgentCard({...wire,amount_in_raw:'1e18'})));
+test('numeric money rejected',()=>assert.throws(()=>readAgentCard({...wire,net_profit_usd:42})));
+test('NaN rejected',()=>assert.throws(()=>readAgentCard({...wire,net_profit_usd:'NaN'})));
+test('candidate requires ledger',()=>assert.throws(()=>readAgentCard({...wire,candidate_eligible:true})));
+test('revision includes raw amount',()=>assert.notEqual(agentCardRevision(readAgentCard(wire)),agentCardRevision(readAgentCard({...wire,amount_in_raw:'1000000000000000002'}))));
+test('revision includes snapshot',()=>assert.notEqual(agentCardRevision(readAgentCard(wire)),agentCardRevision(readAgentCard({...wire,snapshot_id:'NEW'}))));
+test('missing displays reason',()=>assert.equal(moneyLabel(null,'no_quote'),'Dato pendiente: no_quote'));
+test('zero displays zero',()=>assert.equal(moneyLabel('0','unused'),'0 USD'));
+test('wire evidence preserved',()=>assert.deepEqual(readAgentCard({...wire,custom_evidence:{id:'abc'}}).wire.custom_evidence,{id:'abc'}));
+console.log(JSON.stringify({tests:n,failures:0,scope:'TypeScript contract only; no live frontend'}));

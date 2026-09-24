@@ -102,7 +102,17 @@ impl TopologicalOperator for NewtonOperator {
         if !price.is_finite() || price <= 0.0 {
             return none_out("invalid_price");
         }
-        let gas = state.gas_price_gwei * 21_000.0 * 1e-9 * price;
+        // MATH-03 fix (2026-09-24): same dimensional correction as op_15 —
+        // measure everything in token0-numerary (price·(out − x)), gas at
+        // swap-real units (150k default, features-overridable). 21000 was a
+        // plain ETH transfer.
+        let gas_units = state
+            .features
+            .get("gas_units")
+            .copied()
+            .filter(|v| *v > 0.0 && v.is_finite())
+            .unwrap_or(150_000.0);
+        let gas = state.gas_price_gwei * gas_units * 1e-9 * price;
         let break_even_target = state
             .features
             .get("break_even_target")
@@ -110,21 +120,21 @@ impl TopologicalOperator for NewtonOperator {
             .filter(|v| v.is_finite())
             .unwrap_or(0.0);
 
-        // f(x)  = r1·γ·x/(r0+γ·x) − x − gas − break_even_target
-        // f'(x) = r1·γ·r0/(r0+γ·x)² − 1
+        // f(x)  = p·(r1·γ·x/(r0+γ·x) − x) − gas − break_even_target   [token0 numerary]
+        // f'(x) = p·r1·γ·r0/(r0+γ·x)² − p
         let f = |x: f64| -> f64 {
             let denom = r0 + gamma * x;
             if denom <= 0.0 {
                 return f64::INFINITY;
             }
-            (r1 * gamma * x) / denom - x - gas - break_even_target
+            price * ((r1 * gamma * x) / denom - x) - gas - break_even_target
         };
         let df = |x: f64| -> f64 {
             let denom = r0 + gamma * x;
             if denom <= 0.0 {
                 return f64::INFINITY;
             }
-            (r1 * gamma * r0) / (denom * denom) - 1.0
+            price * ((r1 * gamma * r0) / (denom * denom) - 1.0)
         };
 
         let p_pool = r1 / r0;
