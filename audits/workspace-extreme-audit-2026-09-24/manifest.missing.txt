@@ -1,0 +1,7 @@
+MISSING_ON_DISK  ".agents/skills/arbx-m-m019-documentation-as-code-di\303\241taxis-adr/SKILL.md"
+MISSING_ON_DISK  ".agents/skills/arbx-m-m020-advanced-documentation-as-code-di\303\241taxis-adr/SKILL.md"
+MISSING_ON_DISK  ".agents/skills/arbx-m-m021-applied-documentation-as-code-di\303\241taxis-adr-in-arbitragex-v2/SKILL.md"
+MISSING_ON_DISK  "QUANTUMX/Sin t\303\255tulo.base"
+MISSING_ON_DISK  contracts/lib/forge-std
+MISSING_ON_DISK  contracts/lib/openzeppelin-contracts
+MISSING_ON_DISK  contracts/lib/openzeppelin-contracts-upgradeable

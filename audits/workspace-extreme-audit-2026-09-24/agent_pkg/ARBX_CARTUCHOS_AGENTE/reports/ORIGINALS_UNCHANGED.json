@@ -1,0 +1,2368 @@
+{
+  "verified_reference_files": 590,
+  "files": [
+    {
+      "path": "docs/quotebase_strategy_hop_map.json",
+      "sha256": "ab5ecd89b15985f63a598bd9cd51a3169a19d67b34cc584559df61cc52680fec"
+    },
+    {
+      "path": "docs/quotebase_detector_policy.json",
+      "sha256": "bb7bcab7e90ebd670a5fdb36bb89c182e8bbb06e184285b093f8de139ce4642f"
+    },
+    {
+      "path": "backend/Cargo.lock",
+      "sha256": "7fd27bf8c5267ea8f1ff0941ddcffbc5ca1c3d1d4df465c33f4a13251a8f4b59"
+    },
+    {
+      "path": "backend/searcher-rs/Cargo.toml",
+      "sha256": "258f19090f275a8fcc214b56c1c57492e588ad8caf83a7670dc8a09a2e0feec0"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/dex_arb.rhai",
+      "sha256": "de05ee3ba33c04ddad88c46a6c8239740b0442316af17afc97fa9a5fc8efd84d"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/omega_strategy_pack.rhai",
+      "sha256": "402891c98536870ec566ce782aa575356d3a97edb3a912f789df27fd71527131"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/mean_reversion_arbitrage.rhai",
+      "sha256": "349cb2a5b252b9a4923f6ffe028cc196774ab2afcb78a2ddb9495bc34df621c6"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/funding_rate_arbitrage.rhai",
+      "sha256": "c057ab5420f409d037cc774c50f3514730d4f2b0f0071d2b25950f57bc3e1ee0"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/triangular_arb.rhai",
+      "sha256": "0d8fb05cd0d91d3bcd89dc8b49757b197805e952ee10dce918a9a3b310b08cf9"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/liquidity_classification.json",
+      "sha256": "faf17a66e9e489d55324a3b938cdbb550062e96c5978c43d95461ae70b3e3d2b"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/backrun.rhai",
+      "sha256": "f730da7459ae129e00012d57a40605c50afd39757884c908629035d03198df72"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/liquidation.rhai",
+      "sha256": "711f110cfbe5cc98cceae22949f423b1387ef99786719803c2e2d87130d3cd45"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategy_mapping.json",
+      "sha256": "9f68a3c61821f2fb07143bb65c239dfc8d4acfaf93a2b1ce6880e1ba7cd62790"
+    },
+    {
+      "path": "backend/searcher-rs/src/math_evidence.rs",
+      "sha256": "d51db709bd734a2774ac8eb72b74aeb59f5df326cf6b5d6ab3c83cd45f10472c"
+    },
+    {
+      "path": "backend/searcher-rs/src/strategy_dispatch_status.rs",
+      "sha256": "cd848a35e243599e7c8e879c0644e85fe24348e2202a13f75627762432b716b6"
+    },
+    {
+      "path": "backend/searcher-rs/src/strategy_hop_mask.rs",
+      "sha256": "4db09e6738b2acf28f02206db141ce518980a33ae50a80f1b588927e5825b550"
+    },
+    {
+      "path": "backend/searcher-rs/src/operator_toggles.rs",
+      "sha256": "325d9159e5932d5f5fb7c43b441e32261e357aa583394945b8bd36d6fad9c3b3"
+    },
+    {
+      "path": "backend/searcher-rs/src/cartridge_boot.rs",
+      "sha256": "e022fd609bff8e809c0f04f3991cd6795ea838bfd014b319e6bf84c3f623c8a6"
+    },
+    {
+      "path": "backend/searcher-rs/src/cartridge/types.rs",
+      "sha256": "3422bfdbbb031bc9795484bcd7ec978a3cbb2a5ee5049bce0b225626c2a24e37"
+    },
+    {
+      "path": "backend/searcher-rs/src/cartridge/contract.rs",
+      "sha256": "1c0dd9a67d10e8277f44b2fec146c2f70807164da855524b9ab96973f19020c9"
+    },
+    {
+      "path": "backend/searcher-rs/src/cartridge/host_bindings.rs",
+      "sha256": "053f30378fc3928b2e411479a18bed7deb17462f07f0de3e69028d0fd80a93c3"
+    },
+    {
+      "path": "backend/searcher-rs/src/cartridge/runner.rs",
+      "sha256": "824aeb26035e6ec94e8182d360df551fd0fb67848a46438580f023a9788ae756"
+    },
+    {
+      "path": "backend/searcher-rs/src/cartridge/manifest_test.rs",
+      "sha256": "32caf9f3c885e7bf300bcf5e5a39c9caaa69e47ed907ea457f5d66516f3b05d7"
+    },
+    {
+      "path": "backend/searcher-rs/src/cartridge/subscriber.rs",
+      "sha256": "dd3c3700e74a75822bbbb30e1df91806f9b705561d7f80ef3dfe98e56e87293b"
+    },
+    {
+      "path": "backend/searcher-rs/src/cartridge/mod.rs",
+      "sha256": "9ea96b41f7165a3c0819c3dce106bb58fe2b67f7225939725dbbf1f5490f1288"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/manifests/math_map.json",
+      "sha256": "0bc1de63aa12f093e07f73dbeae7a9aac0e2b5966b4d47619ba0607b627773c1"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/mev_09_010_exclusive_order_flow_arbitrage.rhai",
+      "sha256": "553fd91f9a719234ab086babcd31f283a91d680126db52cbebe484b25e1736e4"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/mev_05_014_fiat_stablecoin_dex_arbitrage.rhai",
+      "sha256": "7a5cc62535b76d70dcb88766eba49bad7f644b9490188484331c3ecd3600e800"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/mev_10_014_gaming_asset_marketplace_arbitrage.rhai",
+      "sha256": "4268b4f5ff78bdc522430692cec6fa22289660c50e79b2c9ce8a6151adf48f43"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/mev_07_014_oracle_perpetual_arbitrage.rhai",
+      "sha256": "cfc9f67cbc19c4ddfa5318b40a6c3ebcbc31d417e63535d0af5422f981351534"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/mev_08_003_cross_lending_protocol_arbitrage.rhai",
+      "sha256": "25f69ef124d09287b4273946b9119c1bfc90d7072932d967be97cca470f5401d"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/mev_07_012_index_price_arbitrage.rhai",
+      "sha256": "3aff8e7ac9f6c17768edac2d12bc4eba96e6f06b51aa9ea6aa3c670579297c76"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/mev_08_002_supply_rate_arbitrage.rhai",
+      "sha256": "3bba41c25fc254e9d7fe1bdb06d96d945b628946b1f7044998e193acc84fcf7c"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/mev_08_004_fixed_rate_floating_rate_arbitrage.rhai",
+      "sha256": "994ecfb3f64c96f58fe5a7f754592873d99b376e852b64075c9211c52ea5dcc6"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/mev_06_014_canonical_bridge_arbitrage.rhai",
+      "sha256": "b058686111b2fb8ca68f7e883f283fe236fb41bd238aef1f42bbe7c801d65d76"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/mev_04_005_mint_redeem_stablecoin_arbitrage.rhai",
+      "sha256": "c273b744ed1225a740f5622422ab9438d99e7f3885d4b3cd660ce46ae159e5bc"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/mev_07_019_box_spread_arbitrage.rhai",
+      "sha256": "a1d8062b5eef7337dded009a6de9dceee1a8d29f8be232353736e650c0eba2c1"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/mev_01_029_ring_arbitrage.rhai",
+      "sha256": "b61c19b5a1797a37a2805cf785bf86612c1e351115422e18252e9a90248699c9"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/mev_04_014_index_token_basket_arbitrage.rhai",
+      "sha256": "3697e4728db5b39b95a5ef3891f453c1fb82dade833eb7fa5387cf010ea18a1f"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/mev_01_028_index_arbitrage.rhai",
+      "sha256": "ba4fb3efa9dce251e08207be3bcd1032187ae1f8e307e1b0aed1fe57db03e60b"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/mev_08_011_leverage_loop_arbitrage.rhai",
+      "sha256": "3cb2b2d7b068398c73a346c0c23c5968045c2db5d16cd9d0ac4f5d091ef428f9"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/mev_11_010_oracle_resolution_timing_arbitrage.rhai",
+      "sha256": "57934bcf96301da701a1ef9744bc6e6ee8777a2fd67e9f155fd0286fbaccbf26"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/mev_06_030_cross_chain_liquidation_arbitrage.rhai",
+      "sha256": "2f6016f4eb3c94c09ff41fd3ce2c6eb77b7a517a1eec37ff7fa7d78a00306edf"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/mev_08_001_borrow_rate_arbitrage.rhai",
+      "sha256": "62a72b4b93704f0daf485995d4ff6c5cc9021167dbece4b69306bf233a4899d2"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/mev_04_022_cross_lst_arbitrage.rhai",
+      "sha256": "c2fe5744183888725b643a77efdd7156a45b166ce9022b359a79a75b5c8b07f4"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/mev_04_001_stablecoin_peg_arbitrage.rhai",
+      "sha256": "015a2f9bcacb93e54db9957a2e1c2f1b24a177cc72b34352d5892191058e08c0"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/mev_01_018_n_leg_cyclic_arbitrage.rhai",
+      "sha256": "08d614658540ba1dec6dca46f1410ae5f696558f01710be6acf8726468e87128"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/mev_07_007_basis_arbitrage.rhai",
+      "sha256": "b9ee6ec74862738855da5ade6391ac1a6c8df70a0a9508e0081ab46bf6fb0a6d"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/mev_06_029_cross_domain_oracle_arbitrage.rhai",
+      "sha256": "6aaa745450b70944cee170543bee8ceeb265d202e11895876fc7a2f775e24354"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/mev_07_010_calendar_spread_arbitrage.rhai",
+      "sha256": "6b7ca32f67377aee6c37def57421b057ac4988ad3599cb646992989b8b10d60e"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/mev_04_031_points_pre_token_arbitrage.rhai",
+      "sha256": "0f2db12391ffb3bda8a0895629be590fa83814f229bd16c8d02097755234e61e"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/mev_03_031_fork_state_arbitrage.rhai",
+      "sha256": "9cdbdad5f5560878b65ae00807cedfe840a4d439a9b5c23ac4de20bdecddf046"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/mev_09_019_builder_integrated_arbitrage.rhai",
+      "sha256": "3c39838ada556f45997a773de521af0c2ae87c331b1518fe070c137acca4b3a8"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/mev_07_002_perpetual_perpetual_arbitrage.rhai",
+      "sha256": "3e51b7132d5f3e03500e6427db8a42531986fecbcf2be70657800089a9e2a317"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/mev_02_002_constant_sum_arbitrage.rhai",
+      "sha256": "ac47d5780ed11bb8f3835d982c08762705dca6125519af0008782362e87605e7"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/mev_07_018_reversal_arbitrage.rhai",
+      "sha256": "0bcf0af55aeb7dacd68574294b5c7092cd4d06c1ed8921728cdd6937db115b9b"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/mev_07_013_mark_price_arbitrage.rhai",
+      "sha256": "0a18d7e1c86e8ec8f2ed739289923237721285878a7c95c61fb66c1ab6920b2a"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/mev_06_012_cross_chain_cyclic_arbitrage.rhai",
+      "sha256": "c0951d0b2853ff22dc727cb908359d3bccf3567d4b022d1505cc7e590042ef18"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/mev_05_011_otc_dex_arbitrage.rhai",
+      "sha256": "bd54f3a18328720b9481dd3f057ff335093f66411faec4a48bbb713bdd37d66b"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/mev_09_003_intent_to_clob_arbitrage.rhai",
+      "sha256": "381b5db8d15637db06016e2beae8f59a5d60ded6d07009645c34d76f5dfbf21b"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/mev_04_003_algorithmic_stablecoin_arbitrage.rhai",
+      "sha256": "321f075f5481fd39c422ca071eeb8cec9f7b87fee764f44856abf0ed756dec7b"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/mev_06_023_pre_positioned_inventory_arbitrage.rhai",
+      "sha256": "b891eec9f24fadd9179acfe069c3435ee938bc6db2eac0fc56e1d50ca444221f"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/mev_11_005_exhaustive_outcome_basket_arbitrage.rhai",
+      "sha256": "707446f6babd81b0b7f61c81782edbed412c4863acf6c2c283d0ec7228e26692"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/mev_07_001_spot_perpetual_arbitrage.rhai",
+      "sha256": "a4aa465488b991acb4e950c40be2a2f8eab368ac4634ac9bd202e4dc39864c74"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/mev_09_007_batch_auction_arbitrage.rhai",
+      "sha256": "ce5df47676fc00e39cd43f7e036294b8e77237f86d6187347768ccacb863aa8e"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/mev_08_024_underwater_position_takeover_arbitrage.rhai",
+      "sha256": "85c0e9994fc91c19c77f4aa06b227e1fcf7945536636d914a504183d4b4d0540"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/mev_01_009_amm_clob_arbitrage.rhai",
+      "sha256": "f226ec1918d5aa066e08f01ae2188ff21d858029a0fec0f3de74d8928edbc49c"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/mev_10_018_redeemable_nft_arbitrage.rhai",
+      "sha256": "fa3ed38d39211f6c93c9d5629d4ecabeff64c278a5d4b6cd33f3f633caba759e"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/mev_06_010_cross_domain_dex_dex_arbitrage.rhai",
+      "sha256": "5e0cd497c1ba317cb59bdb559f3d8191fe85ecd9fb14c90ac31fa7d0dc84e2ad"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/mev_07_011_cross_maturity_futures_arbitrage.rhai",
+      "sha256": "aab9acf54d7dacbd9e6bdfdbea63d787ca43da4809c86b1224d6495816771ef9"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/mev_03_028_sequencer_latency_arbitrage.rhai",
+      "sha256": "e6a916d2a6b52836895c55a8f317f12f6a2b94d717be1385ed1b5ee49b14cbba"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/mev_08_020_bad_debt_auction_arbitrage.rhai",
+      "sha256": "3224f0b0a1e95cf268b49ca1e944548523ac65139a9e505897f784a13ed9de53"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/mev_07_009_cross_exchange_funding_arbitrage.rhai",
+      "sha256": "cd42d4ea56afba80c970b959e68e9ac77283678f3937e4261581092fdf17be0a"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/mev_06_020_wrapped_representation_arbitrage.rhai",
+      "sha256": "9559c4e034af4112a1a0f237e8c0baabf36e49625e522a2639f23798187e77c5"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/mev_03_025_keeper_triggered_arbitrage.rhai",
+      "sha256": "41085ed927f320b2f73572b8e8bac74759e674449311bac9b58bf65bac315b20"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/mev_07_015_vamm_spot_arbitrage.rhai",
+      "sha256": "b76d0dc0d4080a056c778d2ba802d0b43a0a8d0fd1ddb35fe29271043728ad21"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/mev_01_021_intra_dex_cyclic_arbitrage.rhai",
+      "sha256": "b9892368864753f50b6b66c001bfa9bf2f2aaf2720ce95e4f829070e290543f7"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/mev_02_010_bonding_curve_arbitrage.rhai",
+      "sha256": "6478fb4fe23af54903b6741fd5157954af81d8bb0bdb579b2fd71eb74ab3d6f1"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/mev_03_011_rebase_arbitrage.rhai",
+      "sha256": "e6825d6963c2e904d597a98e603d341fe7f5e0052208946456c7d0fbb7a8cdd7"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/mev_01_001_dex_dex_arbitrage.rhai",
+      "sha256": "77a7516320fcfe3af1d766afa9a99c982793bd6a43e00ace60ae070e447bece3"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/mev_04_010_receipt_token_arbitrage.rhai",
+      "sha256": "dedf8ae76e008a8dbd806525675dfc521b566650cb02b6fddd3c3eab5cd95138"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/mev_03_027_block_time_arbitrage.rhai",
+      "sha256": "7e003217b0cf5019b6102072dd2fd75fc9b98c123c41c132a258516e257705ba"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/mev_03_001_swap_backrun_arbitrage.rhai",
+      "sha256": "68ca1a59371ae886b0410f68e75dd008361d48f86652699f58143ba607750a4f"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/mev_06_008_cross_vm_arbitrage.rhai",
+      "sha256": "77fd0d06aab56e80619fbaa03b3ddab04a27de2162c8b5588f5ddeb2748606d6"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/mev_07_022_options_amm_order_book_arbitrage.rhai",
+      "sha256": "a5336169439424c586f3ddcec6ad646a08b954d607dc7231efe91c7e437b8d5f"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/mev_06_019_canonical_vs_fast_bridge_arbitrage.rhai",
+      "sha256": "3b2337f5d19fe85f745675462697bc92d306a87c12ed3ed3b99974230e35ee5d"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/mev_03_018_liquidity_add_arbitrage.rhai",
+      "sha256": "1d4e88018eb703df72d71f5f6c3993688f02956fec6a19b644bb075a733c8842"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/mev_10_002_floor_price_arbitrage.rhai",
+      "sha256": "8e2dbedec0a1bed84a61e05911803872b0d106bb01e701caa21ff3c1978e9206"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/mev_05_010_dex_price_lead_arbitrage.rhai",
+      "sha256": "deab736a6af4f255d97372101eb841728d41c76ac16b566d3ce684c44f895e99"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/mev_06_028_sequencer_builder_cross_domain_arbitrage.rhai",
+      "sha256": "95c3a2cadfa5a58d2ea2a83a0b4ba26bb2cfb5cdbe93b3f2da1b9cb866ffd996"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/mev_03_008_latency_arbitrage.rhai",
+      "sha256": "aa484f9f23900f0bb0c42477f7226c02d9adffba396c3d4408fa84435cacedca"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/mev_02_003_stableswap_arbitrage.rhai",
+      "sha256": "d02ae600110ca5587dcb4048c5e563d451ee02cf8d1ca2d4270c469402a004fb"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/mev_03_017_redemption_state_arbitrage.rhai",
+      "sha256": "36d6ea0b8a9b7f2cf0ae678fbd6111de551f593e9802350e053780177748eced"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/mev_03_002_multi_swap_backrun.rhai",
+      "sha256": "6681c28fbab67432faf92d788f4cb2c4c6a7201bf98b77073fd50ac400231a66"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/mev_01_031_exact_in_exact_out_arbitrage.rhai",
+      "sha256": "059c3281b16024ab0a7af61d453a31e39577db354d3f825890d78affc3b483d9"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/mev_01_034_rebate_arbitrage.rhai",
+      "sha256": "d78a8691463640e9e94df355cfc8c4c82675e490bd4ff8780b4a21d5265b0e6c"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/mev_03_015_settlement_arbitrage.rhai",
+      "sha256": "8087d657f1b1a64fd9b8d3c8a64312ac17bd3add4474d4b969e9bb60ef6081a5"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/mev_04_004_collateralized_stablecoin_arbitrage.rhai",
+      "sha256": "8b50304ba3a0c07a25163bb184bab109108aa9fb0bd4fcdd61f64c6a61d6ab10"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/mev_02_017_cross_invariant_arbitrage.rhai",
+      "sha256": "05d0d8c53746b5f27a31ce9f9dd9dabb20756712415555a8d2cc39dfca7dca63"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/mev_11_011_pre_resolution_settlement_arbitrage.rhai",
+      "sha256": "0901b004c6c54e560bd5f05a15873009669bb985d4d9e35463f7b5d316ab8c95"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/mev_08_005_refinancing_arbitrage.rhai",
+      "sha256": "7f951cf2e7436689882965639c9691e8acb71a0e81a1522d3d4478d2629ac412"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/mev_02_011_oracle_priced_amm_arbitrage.rhai",
+      "sha256": "f8dbfc1631d09880a7a8d2e697c7df68ab787e0e0e9344f3f2cfb6e2d5b9ea07"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/mev_03_010_oev_oracle_extractable_value.rhai",
+      "sha256": "d03f15cc9c5991f50022684e55a182b7c07b316de7c79b4bf7113686c88b8c2a"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/mev_01_017_quadrangular_arbitrage.rhai",
+      "sha256": "9220bf040b8073af10c64e3bb4d589205f3d4f2f3b236e93fe996a341a65645b"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/mev_01_003_cross_protocol_arbitrage.rhai",
+      "sha256": "51fdfb294abd890a1aad64011423db19ceae1877d55a48b996a7d3da865036b7"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/mev_06_021_message_latency_arbitrage.rhai",
+      "sha256": "c04cf90fb18699ae0bce82ad2d7797bf4d3c92b23920c6b3de1e1fc1e41ef963"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/mev_09_013_price_improvement_arbitrage.rhai",
+      "sha256": "5711cef9486413ce2b303ab2d578a356117614efa504b115e11d3a8d2af438b4"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/mev_01_008_amm_amm_arbitrage.rhai",
+      "sha256": "3467c8dad1c9ae4259f4eb45ec25eb06097c379da6cb1c909c1d46a3b48bba5e"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/mev_01_022_non_cyclic_inventory_arbitrage.rhai",
+      "sha256": "0123405250419968e492daa077d3d9d70db428d7f51dd7ec732d49881b9e3c96"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/mev_07_006_reverse_cash_and_carry_arbitrage.rhai",
+      "sha256": "032794b480cd1913c92e26902d0898a38e09567f24d80f14ba7153c8951e9960"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/mev_04_011_erc_4626_share_price_arbitrage.rhai",
+      "sha256": "dcf9ce238ba175da166631c3b7c7104685a62e80f191bf68e6ccfad38045242a"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/mev_10_008_mint_to_secondary_market_arbitrage.rhai",
+      "sha256": "011e54840794129b30614fba2be730d15b2da052478b531a28cc88f3a918258f"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/mev_10_005_bid_ask_nft_arbitrage.rhai",
+      "sha256": "7bbb934a84eaf78e9dcf82ad9052e71bc479c2dcd1be47c6dfe8c16d32fa0e26"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/mev_02_004_weighted_pool_arbitrage.rhai",
+      "sha256": "0738f94ffdd46a60c99e92e2bd26a64cd4f16674dc5ccf2ab519c9345370c5ed"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/mev_11_003_cross_platform_prediction_arbitrage.rhai",
+      "sha256": "5b4c67826749d4663114e8b4be7e8d33fe2edb6dec40a99ee45138d9a8b26df7"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/mev_06_001_l1_l1_arbitrage.rhai",
+      "sha256": "7798c9f9f9a9fd2a8976adf95931ba6118e413dd3fed84b896cbe3abed66ceac"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/mev_06_009_cross_consensus_arbitrage.rhai",
+      "sha256": "b92e906ea7709637c8be69bbca182a55fd2171cbbf1093752142b3e62d625335"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/mev_04_020_lst_redemption_arbitrage.rhai",
+      "sha256": "fcc871c04ad2d71cb46d87e3b22b551998757740ec886d0aff88948563f0dd93"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/mev_03_019_liquidity_removal_arbitrage.rhai",
+      "sha256": "73b315e45d64dd956b4fb3d93e66a6d10a9fcc1fcf3d427b7a723c5ba6b8213f"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/mev_01_036_hook_arbitrage.rhai",
+      "sha256": "0dee932e5899adf82868684019d0e7d9fc28d8f5938b812aa4c191a738c030c8"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/mev_06_026_cross_chain_solver_arbitrage.rhai",
+      "sha256": "81a52d6387614396d18c581822ac9ab8c5081a9942163e3ea5919409d213391d"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/mev_10_016_royalty_adjusted_marketplace_arbitrage.rhai",
+      "sha256": "51a0d1434c0602a05a04d2d870b5a23c7418de368c9b25f64573e433bc339062"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/mev_04_028_pt_yt_parity_arbitrage.rhai",
+      "sha256": "89e4ad5004c92c3eae62d0cce9813a8ebf5f4c54aa2f85edb774367c52760dec"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/mev_07_024_volatility_surface_inconsistency_arbitrage.rhai",
+      "sha256": "68104fb5476ec80ad621be0332a52fd32503a05885e4da8712578cac6d8eafea"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/mev_09_011_order_flow_auction_arbitrage.rhai",
+      "sha256": "4aeaf374802f90cf158ad08f41f5abefbbd739dd9cc55270af4f4c8906cdd708"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/mev_01_007_cross_liquidity_tier_arbitrage.rhai",
+      "sha256": "fa869706b7a8c1cd3363375e63c29e4d3cf4013639696f32a92a41f633d04111"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/mev_08_022_collateral_redemption_arbitrage.rhai",
+      "sha256": "afeccace812dba227300c7da0bd792c545c91e98044a55c44526e570a9e9f030"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/mev_02_013_hybrid_amm_clob_arbitrage.rhai",
+      "sha256": "c5956343b6b46a9d84ca767bc64bf8ae29b21b28528905fff7b6c757844d9cae"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/mev_05_001_cex_dex_spot_arbitrage.rhai",
+      "sha256": "e33eb718fa24ce99548da00092472b73ac5dc8cd06cad756455791ffa65e2cb3"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/mev_05_002_dex_cex_spot_arbitrage.rhai",
+      "sha256": "f83e0d6909723b5cf342075a8fd13fe09babe048f28bbec38d0f3ede26039572"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/mev_08_013_partial_liquidation_arbitrage.rhai",
+      "sha256": "110de55e80c22056c91a3d58331f1a3d5ef0868dbed7e5243523a5035f0036d5"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/mev_01_006_cross_fee_tier_arbitrage.rhai",
+      "sha256": "e231c251bdc1fd2bb2ad6cd79cca7f0abbd2a06144866a7fe7ed017abac73d06"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/mev_06_002_l1_l2_arbitrage.rhai",
+      "sha256": "19caa874d384ecf3df38efe390193841407bc6a34cbf422180cca6c937c7218f"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/mev_07_028_derivative_liquidation_arbitrage.rhai",
+      "sha256": "bf8408833556521a4fb410d7af2b763d5ed541f51e07827cbd020b3fe52093a4"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/mev_04_009_synthetic_underlying_arbitrage.rhai",
+      "sha256": "7ff230f3f91c20d2c7c3cf7ecc9383ae9a4aa9269352fffd84d5a5fa18467c30"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/mev_03_022_fee_switch_arbitrage.rhai",
+      "sha256": "6d75aedf18082f68a907609175de83b7300e73cfb23cc60d79d29468724b0659"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/mev_05_007_cex_futures_dex_spot_arbitrage.rhai",
+      "sha256": "991944c6cafbfba7c911dddc3edb2b976be1e3eccdfc1ce2990c380f701dd987"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/mev_09_004_intent_to_rfq_arbitrage.rhai",
+      "sha256": "1b19f1c280fe360265edf4e66de0632a3cfdac6abe24d2f6946d0be2bbe749bd"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/mev_10_015_cross_chain_nft_arbitrage.rhai",
+      "sha256": "50550a4a5d67d03412b974d7067136694367ffccffc249b38b83d69770ed8058"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/mev_08_017_oracle_update_liquidation_backrun.rhai",
+      "sha256": "4bdd29c3d2e384f4071f64d8c812d257d383ee4cea26c41af024f3b9d30e22bb"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/mev_07_003_spot_future_arbitrage.rhai",
+      "sha256": "c965fa01540c1ce902eb87b04e4c8bece1e7c611760da4876b6c0ff391586a6e"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/mev_03_029_spam_arbitrage.rhai",
+      "sha256": "e347638a79b9db96913bd0e3bdd0e4bb061ee59d2503e593077e91b5fc7d7b60"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/mev_09_008_combinatorial_auction_arbitrage.rhai",
+      "sha256": "9791a20b3193567bc406310048fce7b6980eba3075978328209b037e9087b9f6"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/mev_04_017_rebasing_token_arbitrage.rhai",
+      "sha256": "e8b2e840f4f4fd0bb2eda6cca6ea27bf8b121d14a1f76230b9287227bb915ebf"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/mev_01_002_cross_pool_arbitrage.rhai",
+      "sha256": "01924d1d1de23cf3525350b157d1c2124d688c076e478f71e9b3f5a08a740687"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/mev_01_013_aggregator_dex_arbitrage.rhai",
+      "sha256": "6a8052af3fdf6077d17d9cc1e21287a1a6f462aea7a2b389cfc6da9f1f461044"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/mev_01_025_split_route_arbitrage.rhai",
+      "sha256": "4cdbca7e6bbe9018d1e7aff45034ed9c583481dedcad55c37534ce582e751053"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/mev_04_025_tokenized_position_arbitrage.rhai",
+      "sha256": "da8236350f125d39e980193f0b635f5a6bdad5a054325e87488add1e684f2388"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/mev_09_006_coincidence_of_wants_settlement.rhai",
+      "sha256": "9a0a9d7e63519516bb4a41970ff074ef82a92cce1b59ec3c8be537ecc574b44c"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/mev_09_015_solver_routing_arbitrage.rhai",
+      "sha256": "b9c23543ecfb946f505e87652e29a30fc180b418626b2776f1a6854e4429f26a"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/mev_01_033_gas_adjusted_arbitrage.rhai",
+      "sha256": "2b6e710951a84aa74faf2981d5e7753404a443f10976d979eb0520b504b28bf6"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/mev_01_024_direct_vs_indirect_route_arbitrage.rhai",
+      "sha256": "5cfbbbfc186f9ed525bba3754247a1426b07ef30f7ab0d28c2e2510261d8eb7d"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/mev_11_002_complete_set_arbitrage.rhai",
+      "sha256": "c614dcc2d5c4bd0bb41cb068c9ff72a10db923a3257624dc9a77ce888f4b49d4"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/mev_04_023_governance_wrapper_arbitrage.rhai",
+      "sha256": "cd4007397fb44477e17eec3638263cf9d0ac257778a1b1aa3d6c889337439507"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/mev_07_021_cross_expiry_options_arbitrage.rhai",
+      "sha256": "382f2b71f8172e38d51a0a4cace90cf01c8ed01769c6f117d22c5e5bd3b42850"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/mev_11_008_correlated_event_arbitrage.rhai",
+      "sha256": "b7aa0e9041a952ea75d71b143569d78bc261702df4816f86bcf95718e4bc828d"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/mev_08_023_debt_repayment_arbitrage.rhai",
+      "sha256": "2afbe46946b46258c693f44470eee81cd822a9013e8124ad84f7118fddf33de2"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/mev_01_005_cross_fork_arbitrage.rhai",
+      "sha256": "29026122450ffd3fe451f5ce2553239b891dc74182cab0534ae2a384106e401c"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/mev_04_012_vault_share_underlying_arbitrage.rhai",
+      "sha256": "4c3fa7f68b654c80b8fb284042add21a1b7206e3776702d1381cad79578ed1fb"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/mev_05_006_cex_order_book_amm_arbitrage.rhai",
+      "sha256": "dd0effceca38d0a908f10e035f12c9bef5590b0811c9c68185c750b504edfda1"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/mev_07_026_settlement_price_arbitrage.rhai",
+      "sha256": "d3436a74a6f3a2b63793aa86acca08e78b2041a3264941f8699e2ce73424dd7b"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/mev_06_013_multi_chain_n_leg_arbitrage.rhai",
+      "sha256": "935c40be9565824e72025dfe2ee594f63076590d75a2b198c86417a29e935257"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/mev_01_030_coincidence_of_wants_arbitrage.rhai",
+      "sha256": "79d8320f373f9d4e745b13531fea86de89d1234947ff70f597e1a548f56780f2"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/mev_03_026_auction_clearing_arbitrage.rhai",
+      "sha256": "31101f5d8ec04927abe030790ab2d37befd3641af64184b429157a2e79dcaab9"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/mev_08_019_dutch_auction_liquidation_arbitrage.rhai",
+      "sha256": "3423dad885fd57a726a9f959212be8f55a4cd6772d22782c3fc971fc64d6a052"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/mev_11_001_binary_complement_arbitrage.rhai",
+      "sha256": "306eafb10cfa93aaf95b57961c62ea9d3022365ec7be105494fcf3c00af93752"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/mev_06_025_cross_chain_intent_arbitrage.rhai",
+      "sha256": "6b975d99189b6332087dc93b41f16c83f1a61220368f217a28eb740bba745fd7"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/mev_01_014_router_pool_arbitrage.rhai",
+      "sha256": "f476b34ef9c2fa5c91d181f555de14c2df649d38a7a8fb658d0d4a08c717d7eb"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/mev_11_009_resolution_source_arbitrage.rhai",
+      "sha256": "0dd5d939abdc4f591824193788f7aef5b800fdd43a1c552df2116b619ddac45b"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/mev_06_027_shared_sequencer_arbitrage.rhai",
+      "sha256": "aa8f2e8973ac48410943313db8409372efefb2ff8cdf3dca2485cd26c5cd1ba0"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/mev_06_006_sidechain_sidechain_arbitrage.rhai",
+      "sha256": "01529f35f6e62c69dabf8862104cc4da210ea3a9e39df32a8653cb54b69a8f14"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/mev_01_035_dynamic_fee_arbitrage.rhai",
+      "sha256": "4288a9a98555594166ea1e0592618e14d6a63c80c9f0acfb1f18093c50b4e9f9"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/mev_02_007_proactive_market_maker_arbitrage.rhai",
+      "sha256": "8bef3044148415ad1632f818505b676c9c1ba4473112a78c7119ec4c184487e8"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/mev_10_009_underpriced_listing_arbitrage.rhai",
+      "sha256": "730177a821d51d1dadf0538a03b0222da6e3e821bf42f0ceef39d9f522a1a7a5"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/mev_03_003_cross_pool_ripple_arbitrage.rhai",
+      "sha256": "1ba39d73bd88f207c0e08e121034b8202a12cc40f5ce35ea59e536ae980c11c1"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/mev_06_017_bridge_liquidity_arbitrage.rhai",
+      "sha256": "d323f47c638650a5c82347ea512397ac9f8506942a91f1df07037e63886c52bb"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/mev_05_012_market_maker_inventory_dex_arbitrage.rhai",
+      "sha256": "c03e568ca60225656113a5dbd7995fd38daf6c88c4e6a2734890155dab9ff3dd"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/mev_06_003_l2_l1_arbitrage.rhai",
+      "sha256": "730c9e3d754b4bd25498b2991e1881a85ae8e82a193c6b02c54b72a3ac23f48d"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/mev_01_032_fee_adjusted_arbitrage.rhai",
+      "sha256": "eb16b9d08b658747bef49d815d72b2e1cf028096c01777033a0e581ebf79b0c6"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/mev_08_010_credit_delegation_arbitrage.rhai",
+      "sha256": "a6f6ee3afd25b70d29217020862a4f2d691e199010f8141bdeffcbb5dd2f639b"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/mev_05_003_cex_dex_triangular_arbitrage.rhai",
+      "sha256": "db7169c867964dfe892ccf844277164997e9a28b4c7e58432bc466c64e984ab8"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/mev_07_017_conversion_arbitrage.rhai",
+      "sha256": "283541c1afbbe7555f38829e685136353b1474c982908714aa8ad01d7de93973"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/mev_09_020_searcher_builder_vertically_integrated_arbitrage.rhai",
+      "sha256": "5e548d8ec4ee50ddc857ef57df2e8b11f2d5bb75648409526766c8be64e108b1"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/mev_03_006_inter_block_arbitrage.rhai",
+      "sha256": "73be1d77aedbfee71ee1009f394bfbb0bb4b55c686ad07ca23e712bcbdd0ed71"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/mev_05_005_multi_cex_dex_arbitrage.rhai",
+      "sha256": "6577e235e6efd9304ab7200e143288782d8cccc84e06554052e220856ff75cc2"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/mev_07_029_structured_product_parity_arbitrage.rhai",
+      "sha256": "becb6cffea3f685ca434ec6823b31015664b41565929fbd43b5fe57ab01d2401"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/mev_02_015_batch_amm_arbitrage.rhai",
+      "sha256": "8fbcffb2335183f2e3e33e30f9476715233310d7895c112cc3d52764396ae086"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/mev_01_004_cross_version_arbitrage.rhai",
+      "sha256": "77a580d2f6af5c0bdbf9d56109485c3c37bc33e39b875eba718db4e2df44bb6a"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/mev_10_011_fractional_token_redemption_arbitrage.rhai",
+      "sha256": "f494488f9ca16dc88518f23ff4ac1f0a342129622b94f23d53d0ee0f43558228"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/mev_10_010_nft_fractionalization_arbitrage.rhai",
+      "sha256": "be727872d66d581b553e6adec801cfb3cd76c8895d5fd849000b20b56c975b26"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/mev_10_007_nft_amm_nft_amm_arbitrage.rhai",
+      "sha256": "949b88b005ea31ec297e7a981255c93c0ebb502d4d3c74ebf33c59f93b361c59"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/mev_08_025_interest_accrual_timing_arbitrage.rhai",
+      "sha256": "4056fc798695c4dcd16b137b35f3dbeb8ab98746c6e7733d7d17b60d5accf275"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/mev_06_022_finality_delay_arbitrage.rhai",
+      "sha256": "42f9f9f1756f9f359feaeb290f3e07f97f2ccfec6edc109853d0eea77c1cf644"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/mev_06_018_bridge_rebalancing_arbitrage.rhai",
+      "sha256": "91f19e9356011676271dc81e2b36a9216e051853ef4729578d7c3a51f69f122f"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/mev_01_016_triangular_arbitrage.rhai",
+      "sha256": "7b37b98255703b176b0d546aed46e56d26f887b2a60cf5f1366549eef8197c1c"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/mev_05_004_cex_multi_dex_arbitrage.rhai",
+      "sha256": "de8066ce977f44d14ada48ecf2fbcfd23ec77219461e0176955f3d2a0f3aed7e"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/mev_10_013_nft_rental_rights_arbitrage.rhai",
+      "sha256": "5b101a5c5822ed3b129f5f34651d70a1d11435cdb5f92b6ea731ba79479d7026"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/mev_11_004_mutually_exclusive_outcomes_arbitrage.rhai",
+      "sha256": "2572267358fdb79d3d0c69f7fad90ae11303766ae3c00ff6b5cda9ccb0a6bc10"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/mev_01_019_multi_hop_arbitrage.rhai",
+      "sha256": "5af7f2713a340bef1b17b82323e526ebff57d4b9a7c71b7ab093d995d7bc259c"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/mev_04_018_fee_on_transfer_token_arbitrage.rhai",
+      "sha256": "ab8c27e552b6807cad29672fb2300ea7e1f83915704d27417e5d0ab5a385305b"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/mev_06_015_fast_bridge_arbitrage.rhai",
+      "sha256": "ef29fbb2c5a32725a5c42efb0734f820531acdb22faf722310d2a4fcc00e7912"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/mev_04_021_liquid_restaking_token_arbitrage.rhai",
+      "sha256": "6927ee4f3615fb36fec530e8c240ac826561a37b7c050a69063e0a3375e22755"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/mev_06_024_bridge_in_the_loop_arbitrage.rhai",
+      "sha256": "caef7626663dda0fd041528a224d249312446302d5cdc035e20d9afb61478cd0"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/mev_10_017_bundle_unbundle_nft_arbitrage.rhai",
+      "sha256": "b644da1d1f9b2f9565f854361f21e621292c077557ee0dc523be38a51c29555c"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/mev_01_023_path_inconsistency_arbitrage.rhai",
+      "sha256": "c71a0242bebd89ce0fdc8ae5ff835e5857f071009b6d8cf85e24e89a46dedadc"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/mev_02_005_concentrated_liquidity_arbitrage.rhai",
+      "sha256": "5e5a238d5bb1f8f9d562f4080ee573a58acb010984a4753cbe11a55bffcaf47d"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/mev_09_002_intent_to_amm_arbitrage.rhai",
+      "sha256": "bb722f934c2672e9ae10ad25f133a9fd9ac92ca447e2795ee07e65404da5da18"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/mev_09_016_solver_solver_latency_arbitrage.rhai",
+      "sha256": "a3a8b85851027d3d321a2a5f48d7c62cdd1bd14830937692424e741c7e121ff7"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/mev_01_020_multi_dex_cyclic_arbitrage.rhai",
+      "sha256": "a3ad739f53dbe9711a64188891eb6bcaf08289ffb05fb9bfd56de320ef1438e5"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/mev_11_007_nested_market_logical_arbitrage.rhai",
+      "sha256": "bff69688444a531e912ef3f20e9bdf322b8b89a276899ae9d313d7252d23f5bd"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/mev_09_009_dutch_auction_decay_arbitrage.rhai",
+      "sha256": "173ee7fc7750d54840d6a0d2b6e94b748c19b7b894071493ba7fb91d51858e92"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/mev_02_016_auction_managed_amm_arbitrage.rhai",
+      "sha256": "af8d33bd95b009858bc1affc7a8de59a088d58c24c2d3f10c5257e16b4580853"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/mev_10_004_collection_basket_arbitrage.rhai",
+      "sha256": "ba71632cadcc24aa2611a9406b4cd32f2db327b786c18808d93a3ba01523bf1f"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/mev_07_025_delta_hedged_options_arbitrage.rhai",
+      "sha256": "0679effd09d186c5eda8dfd6915b0c8da46ebce73c0964464d08a0b8d7e63330"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/mev_03_004_top_of_block_arbitrage.rhai",
+      "sha256": "3c2efddf5f715af8df3975494931de352e39db9fc25bed5bd379d83c8c6a67cf"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/mev_03_009_oracle_update_arbitrage.rhai",
+      "sha256": "9adc5a74d10c67f1ab821d709ed85a248a8f25de77866f1c3a24b761fd3af0a5"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/mev_01_010_clob_clob_arbitrage.rhai",
+      "sha256": "d5ccfbb2a797ec94083af3e7967fd12e2e2bbbcad8f327ed0cd54edf78c0a964"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/mev_06_007_appchain_arbitrage.rhai",
+      "sha256": "61d622eded9de1470b35298b9cb429e8aeb17e1d92d32100c56ce95397b4565f"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/mev_06_005_rollup_sidechain_arbitrage.rhai",
+      "sha256": "19f73e9aa37496ec35c08c4a454ff0cfcf6b471a1d72458a87391a4104f519cb"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/mev_04_024_vote_escrow_derivative_arbitrage.rhai",
+      "sha256": "882969de113750604b62c5b80bc7d951d1b2566a56ed332e52bfc25c62eecd07"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/mev_07_004_future_future_arbitrage.rhai",
+      "sha256": "2e79d9fbf8a5a6d72d1049fc92ef55af24ae0ce6c8440a248b089848c91879c1"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/mev_03_020_pool_initialization_arbitrage.rhai",
+      "sha256": "ef4ebdd154aafd66124252b73315f0e119e399825008e7bc8f4fe2c5c11c51aa"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/mev_01_012_rfq_rfq_arbitrage.rhai",
+      "sha256": "d8d2ecea9be46c01ba493edf2e772571ada8cc9a71d0146a54389bc2b9e90021"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/mev_10_001_cross_marketplace_nft_arbitrage.rhai",
+      "sha256": "259399a16aadfa6fcd9d4a433628a80766c888844ea648619df075d68ca1b2f3"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/mev_05_008_cex_perpetual_dex_spot_arbitrage.rhai",
+      "sha256": "9d3f35ceb5f6d2ff77597c17e3dca88169af3243ecf44458c6bf17bf19060211"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/mev_09_012_surplus_capture_arbitrage.rhai",
+      "sha256": "1f51de0795b0e1893529b114e801697859885810c90cf69260515604efa816f6"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/mev_08_006_collateral_price_arbitrage.rhai",
+      "sha256": "b14155761fb70223d475871d5b5d11dc406604023d73b6c026aa85f2f7887a97"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/mev_09_001_solver_arbitrage.rhai",
+      "sha256": "f836b1603a7c2bd2cfca29aac41fb96ac2d552fdb774926a54db845f0f413172"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/mev_08_009_flash_loan_rate_arbitrage.rhai",
+      "sha256": "33408e8236f7071ca05bace53e62ce2f73b2a45e28768ddc58900ffb7d5d6fe2"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/mev_04_016_rwa_nav_arbitrage.rhai",
+      "sha256": "7745e9be9e37adb84b304135dca4e06695480ea6617203bf4ebcbed97bdc9559"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/mev_01_015_two_leg_arbitrage.rhai",
+      "sha256": "a0f233a6d45b912aa7ab5e7a8fbb60b1fc264dbc8907fdc6c48e1275b926cfe4"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/mev_08_018_liquidation_auction_arbitrage.rhai",
+      "sha256": "339265b0ee67cf929b692ddf801947929c3f740245e85ae15be829c7114eafb5"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/mev_01_011_amm_rfq_arbitrage.rhai",
+      "sha256": "29c65a79ea1b34acdf2a86c434f98ad94dfea15b771f0fa16424fcc77de0d617"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/mev_08_021_recapitalization_auction_arbitrage.rhai",
+      "sha256": "1551c9287f7bc0a85284c2591f728756c633a4b272779fd8f3c3923ca16da8e7"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/mev_03_005_end_of_block_arbitrage.rhai",
+      "sha256": "8744e67ce5d40fd85d5af1774358c0a1136e288f64d07aba6ae30f60ccd1385f"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/mev_03_016_mint_burn_state_arbitrage.rhai",
+      "sha256": "346c897c2dd34103543efac3e26c8ec75c929cd3104df6c9bf93582b43e853eb"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/mev_08_012_liquidation_discount_arbitrage.rhai",
+      "sha256": "ab9194723f101c06234d1d5e6e82a9a48dde69b4b4d4860b22c5babc513f6bf7"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/mev_08_008_debt_token_arbitrage.rhai",
+      "sha256": "97852a184df74aa30357ae0f5942f63e198f2097eacbbfe1a66f32d998a5f885"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/mev_08_015_cross_protocol_liquidation_arbitrage.rhai",
+      "sha256": "3a9b505179ad572cc59d1bb372ae15d2e785a0ebcc6de6ec66e2c5b1522dc858"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/mev_03_012_interest_index_update_arbitrage.rhai",
+      "sha256": "bc1f668c8351bf61b80352bf3388b3bb18ea802c88eef798c9ea13443c3a2480"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/mev_04_029_cross_maturity_yield_arbitrage.rhai",
+      "sha256": "8f8c221f0f20badab41126ed4377f546b05fe429d3728e304b8583cbc77057fc"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/mev_10_012_nft_backed_loan_liquidation_arbitrage.rhai",
+      "sha256": "b265fcb25b4703e5a7b19f6041bd6676abca541fcd3db40d565872e63b6fea3d"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/mev_04_013_lp_token_nav_arbitrage.rhai",
+      "sha256": "83175b9b697962c7d5b3368aea91e1504751d2ed0be311a43feccf1890b914f5"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/mev_04_019_liquid_staking_token_arbitrage.rhai",
+      "sha256": "5e766bf8c11361a5b090b24128f193030996fb2222f86b6e73b59be3a4f84fde"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/mev_04_007_canonical_bridged_token_arbitrage.rhai",
+      "sha256": "89cd733620bfaaa8395adf27e9c050cf91e45807136c355d874e165fa3af1fbe"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/mev_04_008_cross_wrapper_arbitrage.rhai",
+      "sha256": "91ad2c0837a4555f8da3cc2ea1f2954a6fe26f430e956b2eff4111291b5324c1"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/mev_08_007_collateral_wrapper_arbitrage.rhai",
+      "sha256": "e03e1e08a575464799cfab40318945f8b8f1dbdced61571d36c1272994acc26d"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/mev_07_016_options_put_call_parity_arbitrage.rhai",
+      "sha256": "c4f3e29b3a0e07fa7b1deefa74820f1adcd598f242502927bdb441ece09f352b"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/mev_10_003_trait_floor_arbitrage.rhai",
+      "sha256": "28f8f3e7df4031b7e7c984fae8902d84b434da9ddbe896a976b03d1e74f1e622"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/mev_01_026_parallel_route_arbitrage.rhai",
+      "sha256": "e776237a342255447ce909a0e439bafc164b5eda5f62cf6b56d4cfeee100db18"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/mev_03_007_stale_price_arbitrage.rhai",
+      "sha256": "765ed7814782bcf0ee087ce1b2b8694dc22e8f6a41eb33409144816562164d47"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/mev_09_014_internalization_arbitrage.rhai",
+      "sha256": "90efdd3ca0c08c85ca47140ee896a02e82e50b2c1690387d8d5b1863ae1a03fb"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/mev_09_017_private_order_flow_backrun.rhai",
+      "sha256": "6c49d534ca1c32f2f71a97bc7b082cce21dc250e46d13562066bcf5fdeaab426"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/mev_05_009_cex_price_lead_latency_arbitrage.rhai",
+      "sha256": "5db16dbf8c13669a4d3e42ad1976a229e8ef8f6072a00baa988af593e87d8591"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/mev_10_006_amm_marketplace_nft_arbitrage.rhai",
+      "sha256": "cc48f1b4eabc79cfef49369667374a9084333466739ed45d2c89792a508abfc9"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/mev_07_023_cross_venue_implied_volatility_arbitrage.rhai",
+      "sha256": "dbacdd03eed2fd6bff3f86c90600c8006d9962d6b0355b2a0677aed2af81f465"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/mev_11_012_prediction_amm_order_book_arbitrage.rhai",
+      "sha256": "4ffdc36572d1a376c8e9f46d8f31db14b8c7557b0c83cd45c616596220465298"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/mev_05_013_cross_custodian_arbitrage.rhai",
+      "sha256": "f3a20feafd081d10ff8f9e4c88d449805d7f8c41dab8fc7040532c5e5e48f752"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/mev_01_027_basket_arbitrage.rhai",
+      "sha256": "2ac6cd5c8362de9c1fcc4e2ac8476e58d3729778bab29aa4bc42168c11f2529e"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/mev_04_015_etf_like_token_arbitrage.rhai",
+      "sha256": "fe80943787bbb7625b4d1104141acef4029e139a597f49826a2406dd6919ea3f"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/mev_03_030_reorg_time_bandit_arbitrage.rhai",
+      "sha256": "84feac0f42e125e86e3fb294f02d64a392bfc8540c080a3628ca66ef89c988e1"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/mev_04_026_principal_token_arbitrage.rhai",
+      "sha256": "cb1eeab2169ed5cc66d978279f20911f17bb2b4d22add3d5ff0648d9e13744af"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/mev_04_006_native_wrapped_arbitrage.rhai",
+      "sha256": "d22ef6181c0d5c8bd5e404bc4fc2c620af80a25314a2fb543a8156b176e19271"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/mev_07_008_funding_rate_arbitrage.rhai",
+      "sha256": "b9dd6e785e90c17beb7d5b5d9c52ac6e79200ca9fd8918fa2a9d6305db48f032"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/mev_09_005_cross_intent_netting_arbitrage.rhai",
+      "sha256": "480c0fffab58ab067e9239eec158a4c5e3d2396390f1e9a31c889dae1b691aae"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/mev_11_006_conditional_token_arbitrage.rhai",
+      "sha256": "44e5681cc881ccde0d412d6c2324554cc530ebe96e16c3b2d97b1ebbb161587d"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/mev_09_018_mev_share_backrun_arbitrage.rhai",
+      "sha256": "bd7c56ae758c860d9df2955094219c519e3deffe2f76f000c014b1af60527379"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/mev_02_006_liquidity_bin_arbitrage.rhai",
+      "sha256": "6fadf970c8b8d276db09cdfc6a8602f97061c1671ee8d5f274584ef25f85164f"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/mev_06_016_bridge_rate_arbitrage.rhai",
+      "sha256": "b5e15d2e61d4ade37065a8503074ff78593fe0f95ddb61fcafcbda5e08376a27"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/mev_02_001_constant_product_arbitrage.rhai",
+      "sha256": "0e17d75cee5d2030daee4ce32d146455e5e6f33204947b0cb0a5736ffb02cc4d"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/mev_03_014_epoch_rollover_arbitrage.rhai",
+      "sha256": "c3aa3e9b5326a02af4b07d07c5a2a7908d69bf9f9ad66f30e0d821622cb79e89"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/mev_07_027_expiry_arbitrage.rhai",
+      "sha256": "01c176cf5c8dbffc7561ec4235778038523073008e09a8258e6b3c6fe8341e30"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/mev_07_020_cross_strike_arbitrage.rhai",
+      "sha256": "093efca2e94e801befa3d6033d1bf1126074c2277cb03ecc3c95a9434101b263"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/mev_04_027_yield_token_arbitrage.rhai",
+      "sha256": "bb1bcc3cdcd5af0af4d84c51cb5a489874e21335f05c475ed4477889eb2eaafa"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/mev_08_016_cross_chain_liquidation_arbitrage.rhai",
+      "sha256": "6fc01ac5e2882098443402858461708f68c9bd9921a085adce8176a8de351c0a"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/mev_02_008_dynamic_liquidity_arbitrage.rhai",
+      "sha256": "cb104cc1125712b93797febc41158f49f92d29e96424b8423c82a072229391ad"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/mev_06_011_cross_domain_triangular_arbitrage.rhai",
+      "sha256": "4fab3515003731fb230ca99a31f451a879544ccf0f915f15324fff5255af211a"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/mev_02_012_virtual_amm_arbitrage.rhai",
+      "sha256": "428d54eedcc91d760a4715a2ab0c4be34dd57939f9878f3377d3d02280356ce8"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/mev_03_021_migration_arbitrage.rhai",
+      "sha256": "45701a38329465ce1cea2e8ce70e632a3de9b712250131f8f57c4fde1459c909"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/mev_03_023_parameter_update_arbitrage.rhai",
+      "sha256": "376db0f2cc05209ab922b70f57df6326acbf92b04fc21061e831cc529d763578"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/mev_04_002_cross_stablecoin_arbitrage.rhai",
+      "sha256": "7697e18dbbaae8038ad97db2b42a7328dc534551df771175dd2cc4501e029ac6"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/mev_08_014_full_liquidation_arbitrage.rhai",
+      "sha256": "8fd33b34f33c22840c431ffeaf2ed81974408b84ba691a6753bea1a05212bfab"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/mev_07_030_leverage_token_rebalancing_arbitrage.rhai",
+      "sha256": "854375688084bf95b2007d5c342f202420a5bfd07c8af5c68894f9e3433c9426"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/mev_06_004_l2_l2_cross_rollup_arbitrage.rhai",
+      "sha256": "89da4d866d3df2c0e269aa63875c207363084e2c16957de7648a23c3860060cf"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/mev_03_013_funding_update_arbitrage.rhai",
+      "sha256": "47d65ef7ef15b3141227ac94bf9e32a29f9c682ef0de52199d20966c0e11863b"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/mev_02_009_dynamic_weight_arbitrage.rhai",
+      "sha256": "d0bf0c837b40f63a5de2d87e0eaff655ada33f27ccba0306b17377c2291001db"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/mev_07_005_cash_and_carry_arbitrage.rhai",
+      "sha256": "087a2621bb7751b10aac7abdbcae9271462cc1c636ffec53e1f86a633ceb22ac"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/mev_04_030_fixed_yield_floating_yield_arbitrage.rhai",
+      "sha256": "17a38759988b7048ca317a7db8c6d07d4affc24b2ae3738b085f317d7ae59169"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/mev_02_014_twamm_arbitrage.rhai",
+      "sha256": "edf3ca48ee609bc34964e603a455b105ac7ed61b7551ad1557a4650a7c92e6d3"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/mev_03_024_governance_execution_arbitrage.rhai",
+      "sha256": "322b6e49e749d5e03aa8ffdcd3cf07ff8fff9daab712ae4121d8c4847c3df8bf"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/math_models/MEV-03-015.json",
+      "sha256": "78872456c94eada670925be29234a5bf56de661d84c54d1204c567bc18821a13"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/math_models/MEV-01-022.json",
+      "sha256": "91bfb901d940311aeb0b2ea4167fcfc6d8f9f463c1976046656cf0b04f97c9ab"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/math_models/MEV-03-011.json",
+      "sha256": "94fedb17d9667d1cf3eb54e54f4ef958d0ce81cd1c31478c0a9e8270a97b8b03"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/math_models/MEV-08-021.json",
+      "sha256": "4ea26fa23aa3244e3ba0634a0d932063420b30c066fc7f2c321a26219cb13b96"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/math_models/MEV-06-027.json",
+      "sha256": "923ed47103ee1577385941d2a849f8e8ab9166a10a724f51b1dd61f2415b1fb5"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/math_models/MEV-07-024.json",
+      "sha256": "8ea34ec22e30e15ac036da2f9e55c1252deacaccd9b0221c7e80da77f915bff2"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/math_models/MEV-03-004.json",
+      "sha256": "720e700e67d14cf209b29309720e8e4c4400c10992742eda8de81ff5e6a49491"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/math_models/MEV-10-013.json",
+      "sha256": "0c856b4105536608d396e853b68236d44b55cd6c37ce1c1c539307623f17f6cd"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/math_models/MEV-07-003.json",
+      "sha256": "4e9f240852a8723fe3c42dbcef3b2a3c47ba02256659c570f4999304583a3c9b"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/math_models/MEV-03-031.json",
+      "sha256": "3207a1a8adcfccf90f9a1de478498c1bcb3477c2795038be6115c49d431e74bc"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/math_models/MEV-01-029.json",
+      "sha256": "e535688ac71dacf1009b67f1b0daa64a3371fab091702654e3e24577a5c79c98"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/math_models/MEV-03-029.json",
+      "sha256": "1e86da29b2c8e8031be7ed9ff090c48360587086a1f1387854afb3f446ecfd32"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/math_models/MEV-01-008.json",
+      "sha256": "ff6887c8205f1bf3e2a8a758c7a401481a2752f93c094d890957b0238d43dbd0"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/math_models/MEV-03-006.json",
+      "sha256": "2629fa53ae49d567705702e10a53e8161bf4984fc0a556a3fa6a2fa162fefe12"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/math_models/MEV-07-014.json",
+      "sha256": "24a8c00ce0f6ec0fd090e34343340363c5e0a5918b0cfcf5017e0677341dd43b"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/math_models/MEV-09-011.json",
+      "sha256": "9189cbb32dac71b3c052d823a839d0dda0bc95eda5d1a496524292ae4593a8c5"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/math_models/MEV-06-010.json",
+      "sha256": "0db8528e730938b364cf8888a73e0b5491b336f68199b86f67768377e724a1c0"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/math_models/MEV-07-005.json",
+      "sha256": "a842fc6542eb64234ce97485cdaad13fabcca875a6eaf41498fc9ef2207b73b0"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/math_models/MEV-03-023.json",
+      "sha256": "9ef15cbf8e0dc2602bc34cc422832fee208ee51de221bf4d7c5dfdb21fa89743"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/math_models/MEV-03-005.json",
+      "sha256": "01ff65b27a6b7be924c78124de6f67cc066b37b8ffbf4c15c5afdca8649ea83b"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/math_models/MEV-05-002.json",
+      "sha256": "702d3c3bf1f204e6289a5c6279e21655ae6aadbf08ce27eb6dc3a4cd9efa1ce9"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/math_models/MEV-10-003.json",
+      "sha256": "980ae40c8601fdf6751f68475ca1543b3333734911f346b1bec5d178a258920b"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/math_models/MEV-01-030.json",
+      "sha256": "c83382e324e2268d6072ddcffae211a703dbd4f868231610c8f64146e61510fc"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/math_models/MEV-01-005.json",
+      "sha256": "fe5a9c5ce946a2cb80c7fb287adc5d47246f7f04d0992e867e44cf76995fe947"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/math_models/MEV-07-016.json",
+      "sha256": "50ae478f8610be1923a458b21f0d5aa0d708289b8edfbef026da22f6b8f8acd8"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/math_models/MEV-04-027.json",
+      "sha256": "e31abb9a3e7729f4b2de8f0e4d1f6f4661322121d93957b43ab41b1d6e0653a9"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/math_models/MEV-01-021.json",
+      "sha256": "e193b73225e64fec01c517e784ca903d447a38e6e0efcdefb2cb2faf9993872d"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/math_models/MEV-05-006.json",
+      "sha256": "e3a870b2d6b59ac6975a08d595f1a1d8e450545ff6659624b361a2ecd62325c0"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/math_models/MEV-06-016.json",
+      "sha256": "45445e012f7e7a49ce9235b0d73732a94e1a954b045792993bd0baeb435f72a9"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/math_models/MEV-06-025.json",
+      "sha256": "f83d1f3a6869b85045dec44ac5a5b52ccb4b4ae242f4dc91ad029e1eea6db465"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/math_models/MEV-08-018.json",
+      "sha256": "d906a1415558a97bcc3e600c8617d10f01b4cff3ee06a01003ea56ec90bb542f"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/math_models/MEV-01-035.json",
+      "sha256": "3e0f6be10d853eff20522fe8e59d7ef3305182b2b6709d49edc3ff4886939c9e"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/math_models/MEV-10-012.json",
+      "sha256": "ce5b14bec71cb7c14bb4340a5579e300ca06bb0fe9f5a0c7b7d0e6b19f260045"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/math_models/MEV-01-031.json",
+      "sha256": "90e745649abb1995a76444c28babc3a92e38a35e77555877c002edd6c20240fc"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/math_models/MEV-01-019.json",
+      "sha256": "3138533182cb6059f3b68043f0d4beefda12e645053478eb99fd734b390393b7"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/math_models/MEV-09-001.json",
+      "sha256": "87dd2250f3b0232bd496d8bc913d02719e5040e4ed7c9c7a93357c2d2965b473"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/math_models/MEV-04-003.json",
+      "sha256": "fc31137f0aa5357dc143e2d7983fc6f6848e9b143d5c8ace019f1f3e561700bf"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/math_models/MEV-11-010.json",
+      "sha256": "ccc1f1b7c2f13b7d37e6d88cade21efbb50cf8975135b9e487b25f2baf624e6d"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/math_models/MEV-03-012.json",
+      "sha256": "826172182375fd78af72163e13b596954fbbd04f686f41cd36d3cfe3d6b531ec"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/math_models/MEV-10-014.json",
+      "sha256": "f8077e75479b0507ece90e1c47a99cd0a0f44f32b4ae7ccb6dedc5c2468b6713"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/math_models/MEV-10-002.json",
+      "sha256": "a86f791f2f48b10444af39f29e8c09eee3c45643f79ecbf497e17fb0ced84c13"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/math_models/MEV-04-011.json",
+      "sha256": "8b508d6c06c0b62cb41144681ae6b1b0dab505b4c6e58c2f8920fea2aa71de17"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/math_models/MEV-01-027.json",
+      "sha256": "2d790498cd2506096e302c219ee683171cfc281aea7c3671e6882453ed715bef"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/math_models/MEV-03-016.json",
+      "sha256": "4a7ea1761ad6fa58ca05f221f952cae895b5e8fe56812baa17bd56e647bfe1e9"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/math_models/MEV-08-016.json",
+      "sha256": "f531f972364eba742a03e97c178969daa8d162466a9c628311cee7661e5b8ab1"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/math_models/MEV-06-003.json",
+      "sha256": "54ec48bd5d5e47aeaddb6168ed7083c0dae0302d6ad2301d0da4ddfd0aa45714"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/math_models/MEV-01-017.json",
+      "sha256": "5e1538e67052f0aae0924c53b4d78218dda5f6467ba0fe7c9c1e06aaa0dfe968"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/math_models/MEV-04-028.json",
+      "sha256": "cbdc97b8ec1541839f76b1ae1819a8cf3e9fb26a8c1e5e3825a5f0874d351f69"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/math_models/MEV-04-020.json",
+      "sha256": "f9d069471fd49a973016fab2652b82b63f59ea0d36e133f2aaff2adfdf167c26"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/math_models/MEV-06-022.json",
+      "sha256": "d680aea6a8c7c18334314f8b0d325ebc45aa67e9cf1c3ca9bcad6cbf071c01cc"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/math_models/MEV-02-002.json",
+      "sha256": "d14ab6d24647114be435e486efac58a7f5d0ffcc3ef21cd34fa86f552281e026"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/math_models/MEV-07-009.json",
+      "sha256": "337b0783f89843ad2170d04ec960fff5ba156e37366870326738e397bfc07dbe"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/math_models/MEV-11-011.json",
+      "sha256": "2ba45e01a24608145ddcad63ef5fbf853c6cdb40b2129502fbd092201e75cf4f"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/math_models/MEV-01-015.json",
+      "sha256": "6d0fb178cab85f582a3ad92b3c3e275aa0d67a749264567bf8368e3cb16d7cba"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/math_models/MEV-03-002.json",
+      "sha256": "e32e00eaa9331f5b01c2e69266cd22f0e173a0c54046cc05bca6659f1502760f"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/math_models/MEV-09-012.json",
+      "sha256": "d10025237f8c87ab26e0d591fd2fc69ff8cae33ede792e060912fa92ec246d68"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/math_models/MEV-10-017.json",
+      "sha256": "6a13477a0b58db55764d02d04c4ac6b3a2a6ada17db2dcdfb396348a0c1e2985"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/math_models/MEV-05-001.json",
+      "sha256": "96290bf80474a586e319a8e4c4b0243d874f9e653044f30ad285ef123055f9a0"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/math_models/MEV-06-015.json",
+      "sha256": "8a8846dff7a860f5b2811723309bdb74e9d744ad10f2ddf5b6697fdb9ec17215"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/math_models/MEV-03-020.json",
+      "sha256": "40db8a37512aea07ebd13049d82ee17b1b34d66a83c32e5d32d13a2ba06938e2"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/math_models/MEV-04-007.json",
+      "sha256": "d3347417ad72601b793371deceff309476ffa39fd8bdbc5b6fbe5f423a96e1ee"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/math_models/MEV-06-030.json",
+      "sha256": "4755e8eaed7e1ec23699b4badebc69126deb16d86712068806ef5eea5ec49d13"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/math_models/MEV-08-008.json",
+      "sha256": "d61f66ce38a4bf463d17d69c170b562251e2e8025df578ea9174c8fc929b13fe"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/math_models/MEV-07-017.json",
+      "sha256": "a416774c9db99427aa0264c9f0409f69af9cf83710963b10d91f2e5a29142b3b"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/math_models/MEV-06-014.json",
+      "sha256": "ba45f1d549e5d6a93154391ba815910da9538a6c69e65ed3af1b721360ed1533"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/math_models/MEV-07-004.json",
+      "sha256": "3c30ada4f3c5e38e7f6679fef75152aba2836b3526f1e90750864e3cf7d06c92"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/math_models/MEV-01-011.json",
+      "sha256": "ceb324dd6ca2e70fdf52c90f3637ba0a0df59e59470371e549c321bd5b4a9506"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/math_models/MEV-03-008.json",
+      "sha256": "fd0dd4dbda6ad185ae3136ce45bfdd525dfda1d99fcbb39752b4a3dfcc885f40"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/math_models/MEV-05-013.json",
+      "sha256": "ab387cbdb0da414349e82619d26fe81291d38f1f0340e16561d2bda6956bce0a"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/math_models/MEV-07-027.json",
+      "sha256": "cf6858bd34824d1f990567649540e4c5946e7737067f091d9eed796f699fa58c"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/math_models/MEV-01-018.json",
+      "sha256": "fc5f66393c24604ccf384ea128a1e708f99574185fcb4f7b2a47bd09106b0e64"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/math_models/MEV-05-005.json",
+      "sha256": "9624242345f8f5c6dee4f81789c3781830f99fc80e1e7c87164be144c6ab791d"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/math_models/MEV-01-014.json",
+      "sha256": "b0df0c8d1f8718248f2a00829ee629ad271659de63fcf07e7f94504e09c80002"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/math_models/MEV-08-015.json",
+      "sha256": "13e753d0f14bcccee8ad17949ed79ae874f42803b201895ec807e74803ed74eb"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/math_models/MEV-02-013.json",
+      "sha256": "128205647f2e58657c9cef3cbe52de66457a9f18b3790240bd482cc4b95846ac"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/math_models/MEV-04-004.json",
+      "sha256": "4097228738bc8fbbbd5c3f7b427f8f1fd839adf93daefe7572bbfae1e8aa58a6"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/math_models/MEV-11-004.json",
+      "sha256": "dd21c95e2d96a84e279c2444d52f14a4753d6885a8fa3247008a56c075c51f88"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/math_models/MEV-07-019.json",
+      "sha256": "d63eb4ece0a9a2a3af37e6ae5cf80d499986095ed07eccbc7b623d779362b230"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/math_models/MEV-06-028.json",
+      "sha256": "fe475b4752b933ee4c088f9491098018b56d9b0b94e8486117c412481833e667"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/math_models/MEV-08-002.json",
+      "sha256": "23086e1f7228bc504cb045b0c1936c5b22500695920b91787d88487d0231db62"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/math_models/MEV-10-009.json",
+      "sha256": "1090c1dcfc6dff83b4d999516912e923cee9b5c061878b5780bc52e01f8213c9"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/math_models/MEV-03-018.json",
+      "sha256": "f9966f3c95d70da7c1725e5afa2179fc50dbcaedd593dd3afdb26967a8983eee"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/math_models/MEV-11-006.json",
+      "sha256": "bbacc3063f6186c62ad0335e800bad1111fe808dd6d96c56a0e05817d503182a"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/math_models/MEV-07-010.json",
+      "sha256": "15d78e020230a5a3d7891b42f3e1a175e4ec3ca43dbb332bcb2fd484801fe396"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/math_models/MEV-09-003.json",
+      "sha256": "d2c90913b2ca8bb5a18c53ade8ef81d15b825792795a816c9d65a915c8387224"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/math_models/MEV-03-025.json",
+      "sha256": "e03bfda824b8938863e379f312390fca994ee1c4e3f7eee73cd01a6c4c3fc0f7"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/math_models/MEV-11-008.json",
+      "sha256": "f03438938954f11d018adac57f1c56cf9cdb81dafaeead4c6b93ff2e5f2adc26"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/math_models/MEV-01-020.json",
+      "sha256": "a1eabfb602d0aea190dc68f237ae95146f4ea5e130ef476d5ae6ca8c5b9c30aa"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/math_models/MEV-02-007.json",
+      "sha256": "5b3c6091217d498d60fe75c30d3225dd315ff83f7eace4bebf87ba77ca0cea1b"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/math_models/MEV-09-002.json",
+      "sha256": "ce48a61c198f4e068672a5f52a09200b1405e39ea56995d362334fb882a2339c"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/math_models/MEV-06-019.json",
+      "sha256": "7bdabfdb4be95a1677355eb8cfa869a58a055b486970dba260493f70a9fdbd72"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/math_models/MEV-08-020.json",
+      "sha256": "5c0ed5006577d91bfabfaacf7151a63070a8372d845f13a5c2dc2d0f3f9cc6b2"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/math_models/MEV-03-014.json",
+      "sha256": "968aa7c1eb2d57776f8c3308397573f3040a31c85a79058b7ade6729062753b3"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/math_models/MEV-08-023.json",
+      "sha256": "eecb94044d3ca553dce4792ca4b099c076e2a8789c4cee391a5d1b7ca92c2acc"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/math_models/MEV-01-032.json",
+      "sha256": "60236ff1cbb8a5648eef132e4084cf0ae1d15961126445b6346d2f6f84ce1284"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/math_models/MEV-11-003.json",
+      "sha256": "8ac8757b6a0bca031bfe68eae6f9d91d550b75e829a63a16a6b4a9eb119ade39"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/math_models/MEV-02-012.json",
+      "sha256": "f579c1b1579b9cef98a955482e906356e450fa022a3eeeee945d65be36dfed7b"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/math_models/MEV-03-009.json",
+      "sha256": "922fe7d9a1dc9586d1cad57acd955d5587bb62904b388b1a6fc2757166ed56bc"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/math_models/MEV-01-016.json",
+      "sha256": "304d80fb0764b70ff44340aa9f8cc7370ae8b5751f965b36f48158e0d12a31b3"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/math_models/MEV-06-013.json",
+      "sha256": "b33b6b5721f88a3141e228a74b8e2277f90d9040ecbf21aa880963c16a88ea69"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/math_models/MEV-11-001.json",
+      "sha256": "2c5ddad26ccd26be417de4957fa18bfbaba8f8464885fd0ec785e3a53569fcd2"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/math_models/MEV-04-021.json",
+      "sha256": "95bd3022a2c25a93b368a60560669a6b21008be46d19f828ec016b38f80bbf0d"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/math_models/MEV-09-018.json",
+      "sha256": "e8ad51c9b677efd98e82dd3775efdc5c53e8b5f2dd1c014a27e8c3fb4e8ee911"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/math_models/MEV-10-008.json",
+      "sha256": "7ac962dab1b67ebfbad3cd6bc121859e20d7d6d084eeb0b03f2c23625abf349a"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/math_models/MEV-03-024.json",
+      "sha256": "8c0b5ae653d8af7bfbaac6f235f4264784517d285e2a7816ed908a120867df25"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/math_models/MEV-04-008.json",
+      "sha256": "1432245694e195439666a604b9c279df703fe91b08d726fcc9ff364545b0b3cd"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/math_models/MEV-04-025.json",
+      "sha256": "c2bab88abf9d3ea749b051ff6096b3f888f475f9292fa62da5c534e047894895"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/math_models/MEV-01-010.json",
+      "sha256": "b257a16616765cb865f8174e665bbd7b4c3a383e601e52daf546985af477b68d"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/math_models/MEV-07-013.json",
+      "sha256": "10d5a4af1dc4540ecc41dbfd326fb33a6e0115582b11971d072ede79d28f2b0d"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/math_models/MEV-02-017.json",
+      "sha256": "8fa8cd889462e94eb2a7fd0e774f425ce30fe355a0afe806e17dbbc611ed4c74"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/math_models/MEV-07-020.json",
+      "sha256": "b02fb25d66eeef9bdcb555aecc60e0e332ed3cf33a717dbb5fbeac658f1a357a"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/math_models/MEV-07-029.json",
+      "sha256": "52c97f45ae521fb3f7b3dbb5d27ff58b11a9b0ee3ee77ffb512a092688544fa2"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/math_models/MEV-01-025.json",
+      "sha256": "d52b847d173389c737ce194ee97f27572478de847442af56782ffcb0204fd1d8"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/math_models/MEV-08-010.json",
+      "sha256": "aeb5e09a7ba020ce56c117e687c60678f1a91dbad7b75bb7b99f1bea8c3886d8"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/math_models/MEV-08-012.json",
+      "sha256": "2eca881983e8632edbf1773df1cf273185f77553c882cc4fc5512e45f1179728"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/math_models/MEV-04-031.json",
+      "sha256": "d57fe3296f93c4bc1d550f34b3c718ab9597fda8add94e3ed6c8a3d935c76e59"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/math_models/MEV-01-006.json",
+      "sha256": "0c99e58a628c5a76b0e45e9988ba94e99191a316a74037c080133ff15848bfe3"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/math_models/MEV-07-012.json",
+      "sha256": "ff5f356506e90e950f1e87dea82b7fb90d8c206386de7d370284765481303e0c"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/math_models/MEV-02-016.json",
+      "sha256": "2f257893d58f8c7195a46df83ad264e0856dd80478de3e4a407fa3228b8264c0"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/math_models/MEV-04-012.json",
+      "sha256": "5038945fff4be2b27f33cabc9ccb0983799baff354e0f37a5a3044613b778b82"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/math_models/MEV-04-005.json",
+      "sha256": "7bcdb3f47de5a0a472c2efeb662f255bfd7654e33142cee25a285ac81c4d2b05"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/math_models/MEV-07-006.json",
+      "sha256": "e1161fc3520c653283ceb74b40329dcacd398a937ed53b7eb85756eed8241b87"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/math_models/MEV-02-003.json",
+      "sha256": "3cf369a554638141df511a16db6dd9190268bb1c4fe38cbb463715cfd120b33d"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/math_models/MEV-04-017.json",
+      "sha256": "5722ef489b972582820395331838489bae88b0cc2009b1c223c8a8a2a75ffd7c"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/math_models/MEV-03-017.json",
+      "sha256": "d0724779469020ac6240f2a88d3fda6b7318292d6d72a480cb67e584133bbaa2"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/math_models/MEV-09-014.json",
+      "sha256": "e80569b3e8e08f5503ceed8778f620aad3898370e115841896cc0d769e8a6ce8"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/math_models/MEV-05-004.json",
+      "sha256": "c8bfa1d6182062ac347488e5c27b241e09a95d0208255a2a2f2a153f4a930100"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/math_models/MEV-07-015.json",
+      "sha256": "3fc44a301be0d594dc05abb26cded1614fc74d901ca53d2fa4a8f823354e491d"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/math_models/MEV-06-021.json",
+      "sha256": "ef8cb8cd257559ad1a18f62e6d0e3088e9c55ec8818d5e1dd1ec5b24334ddd26"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/math_models/MEV-03-019.json",
+      "sha256": "cf19222f9044de3797fd962aee0e7a8aecab61a56ee31f448992465897e0c3ba"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/math_models/MEV-03-021.json",
+      "sha256": "2ec96e418ba58e3f21b50080102af26dca11214b025ba03bbe1528aa87071250"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/math_models/MEV-06-012.json",
+      "sha256": "c7dc9f8b1f39a2fb6925ae68031f4db1977bc4bb88cac96a1d52ae37b178ffa9"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/math_models/MEV-04-026.json",
+      "sha256": "758b7b25d83f977c8f46cd02557d441de3e60d686c02939898af43a1185da92e"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/math_models/MEV-02-014.json",
+      "sha256": "faa6bcf96d063e0c9325a65c8b409734866a31f08441821ffd90ef525384af78"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/math_models/MEV-10-010.json",
+      "sha256": "6c48e3d6689f0a8927571230c56e637d9234023f845157e37bed890bd37b5f4f"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/math_models/MEV-05-014.json",
+      "sha256": "0f232e3b16dcf163a1bff4c3ef9038ba3d4d6b72e0d58534584cdc1b86e5aa6c"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/math_models/MEV-05-012.json",
+      "sha256": "bd7dcc39b5edb651a72291f3a2d711f34974dd6d1f944bdcebee5d03815618c1"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/math_models/MEV-09-009.json",
+      "sha256": "c659bca6dfc21031a66dbc39463a860316f3d40dede11c459d35a74a14c42441"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/math_models/MEV-01-003.json",
+      "sha256": "ec6e0667a7514ce4ea5cd8c8bcaa1b52b09f5378036bf7e9689022f0a7676353"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/math_models/MEV-08-017.json",
+      "sha256": "980ef7dc6c345b4bdaf63e418486d4e140952341c4714a5f305385bfa87835f4"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/math_models/MEV-04-010.json",
+      "sha256": "76d463fc65b3382d50946575539df43604b5696c1697b91aa76ef62e93812068"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/math_models/MEV-09-004.json",
+      "sha256": "160d8acb47cc9b44d42be5c811371dda4cb4debd2ecea83a7ac00336bb341f79"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/math_models/MEV-04-016.json",
+      "sha256": "3596185d1783ce8b965f8f17f978b5f58809ef5b38d5f0ac2379dd81800c5b6f"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/math_models/MEV-10-016.json",
+      "sha256": "f8053935bbc1d3c019db30fddbdd5eb2705468f784778693bdd984b9f6e959a9"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/math_models/MEV-07-021.json",
+      "sha256": "73741b74f814f81e1701571c28fc9b4904a7119fa0df8568b3f487dfb2baa723"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/math_models/MEV-06-018.json",
+      "sha256": "6fc4b5530662031f68f8d681a30c10072fb6ce223d45fdb0c4911c5cb95ef35c"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/math_models/MEV-02-010.json",
+      "sha256": "c7d39f7ccc76413142f55f2fa8ebe0f8c84918b9575b0bc1c002c7222c4b0652"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/math_models/MEV-09-015.json",
+      "sha256": "830ef2971f87e667e359a7890d7c53e32239f2e83cf50284df3bda70753a2106"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/math_models/MEV-06-004.json",
+      "sha256": "61bc18907231dda4a9fbcee1ba3038a99e4ab616f0b611e61ee10ae61bcd23e2"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/math_models/MEV-08-001.json",
+      "sha256": "89e8340f7d0f7aeb94ae7f52827a5bd9cd546f97421f2660f5872f9dd152f372"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/math_models/MEV-08-006.json",
+      "sha256": "a18c73d6ed4b285d48df9d34c678d1153aebfb56c92e54766fd3444700d2c372"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/math_models/MEV-04-014.json",
+      "sha256": "7343fad930362849a5d4fd5bdceb2beab03b032b0d86357c90fbaffd6833cf9d"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/math_models/MEV-01-028.json",
+      "sha256": "4d01a72c0b8f059d103fd70e7ca5d32035952304968145b335e8eada68281dc8"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/math_models/MEV-04-013.json",
+      "sha256": "7437bc5c02d3f54f6a7fbe56b54b02d83fac0759772546ab5406b8b2dbd40f73"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/math_models/MEV-07-028.json",
+      "sha256": "7695762bc743b1a3c51677c254763846193bc4120d41e431b91cf56a13a4d6f8"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/math_models/MEV-05-007.json",
+      "sha256": "a43abd8850746f224d4b2071c94cc2ab0eb06eff7a93c4e1f4e0680fcf6ab29c"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/math_models/MEV-08-009.json",
+      "sha256": "86e6587bffcae03cb921571429fd0a44d85f1fbe57617e34e068a2aa97b8ca98"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/math_models/MEV-05-003.json",
+      "sha256": "fc8c37c4e84ba19c2cb920d9a2a31bbd83de687cdacdd56f3c4ac44dd7b5ebdc"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/math_models/MEV-11-005.json",
+      "sha256": "62f712ed115f3a845b7a001e99e432291dc11ebab68ebc961790f984d9de49dc"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/math_models/MEV-08-011.json",
+      "sha256": "b4257c7f9e23d47bdc8b6edf0322a22e0e28722d76269f30e4f02569986f8da7"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/math_models/MEV-04-030.json",
+      "sha256": "c4cb141e710d5c087598857efae20f534aaf9ebe43c53f9157cacbd9724976cf"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/math_models/MEV-09-006.json",
+      "sha256": "f5c5dafbf741fd13aab0cb5915dd7e28a975e9639cc1b07c33f8163d877049b7"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/math_models/MEV-03-026.json",
+      "sha256": "118b89ec6bb4dff7cf62fc7add1fa5357a0b92ad21cd2b28b1b4594746bbc476"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/math_models/MEV-11-009.json",
+      "sha256": "c3157a96d7f863fbea997c3ed5321a255cf6074a1477c4c339f784c9aa721cf6"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/math_models/MEV-08-022.json",
+      "sha256": "530c8e63196e1d334808c3f66e0ee7f69afd57dc895c713f202a701fa9e42010"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/math_models/MEV-04-024.json",
+      "sha256": "92c2cd2d925ffc998df5a110e1f1e48e2d204f3cd161e74fef07755c8729d743"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/math_models/MEV-04-006.json",
+      "sha256": "65217e3d6453ce713a2427f15af2a6c81bd355852ec5510fac42acfd9f91eea9"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/math_models/MEV-03-010.json",
+      "sha256": "d0728beba60283a248ebd792163d685f341e05458ebcc8ab4ef3075f3391ebd6"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/math_models/MEV-01-007.json",
+      "sha256": "0597af46546c16f76f0933678b897586c1c35a4b27543b0447cf0b8c32e11e27"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/math_models/MEV-07-022.json",
+      "sha256": "4efa315011b80a685e09ec9bc8d5cbfb24ebbff6b9eb0833a8d2cb9ac2181899"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/math_models/MEV-08-025.json",
+      "sha256": "6a9a4941a336e62374ae8845e1a7b8a6f65140e9f35ebf52d382b522dad6ba0b"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/math_models/MEV-04-029.json",
+      "sha256": "c9dbb7c6afbae4bc1f9a73a1b867082c1aa741b7ed382cdfb5b7ff11708a2fbc"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/math_models/MEV-07-026.json",
+      "sha256": "5dcc2f78ae6420c4a4d09c01d75f0bf65ec04f5a222a3ef812da3351c0734bd2"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/math_models/MEV-07-025.json",
+      "sha256": "9ccb3e5334d479d1e5d3c13b4b23c2cc79830c7bbede5ffc6f207309b37c4971"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/math_models/MEV-03-028.json",
+      "sha256": "25eafce0816f62d753e318f6358b8628898f1405442f0d6127cf5226dfec59b2"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/math_models/MEV-10-004.json",
+      "sha256": "8472ea9016a12afa82da828719530308698e82a1fe3b7f09cb68118bd8bcd8ee"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/math_models/MEV-07-011.json",
+      "sha256": "893a2b6d1c4f98f957088cc5506b7aab5a39ae505b27c9265d7a20df41308206"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/math_models/MEV-11-007.json",
+      "sha256": "405442c887b2b568bdf9e00397b6f818cb205207e56cb4d294ca8d8094205129"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/math_models/MEV-02-001.json",
+      "sha256": "7c53ae742475fb4e9f37a17103d7ca4a338c085c66770bdaa8e7fe914ac47f5d"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/math_models/MEV-04-009.json",
+      "sha256": "56f0403f6dac84ebd544810f21eaf3cc5092838e373f6e029dcccc9ed8ae2af5"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/math_models/MEV-03-001.json",
+      "sha256": "a09ed9ee6e9c24972d2b9c14834e458829a82e068cfdaddcb8370a8aeca1d3e3"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/math_models/MEV-07-023.json",
+      "sha256": "d0af2db7b98eb8822808f8ac469217958a92a9c4df7d9219847e2650d5c9bfde"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/math_models/MEV-10-005.json",
+      "sha256": "f768286ff90436295cb8060475a4998810f17e6628a3406a0fd705520640ebd7"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/math_models/MEV-07-030.json",
+      "sha256": "70899c3e88b27a2ac93a5b0ed4fb98294012ae86807449371938263e022e335a"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/math_models/MEV-06-009.json",
+      "sha256": "314c4cf5543aa8efc9e1a2ef3f098b3f436ca5a7c7d21c519a240e99e2c4521d"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/math_models/MEV-01-036.json",
+      "sha256": "6ec3a36ee2ac39f1e2189f6aab2d7a40a3c937b9fceba3a0d46d2bcd04ddbc4d"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/math_models/MEV-08-014.json",
+      "sha256": "9cf043ec72febdaca8b51d6fff6d4074b48da005d63eb82ceb352febbfa93063"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/math_models/MEV-06-017.json",
+      "sha256": "a272aa2d8cc6f6a7f9fb2e906e4307d97798684897c69eee89985caa919a1526"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/math_models/MEV-11-002.json",
+      "sha256": "0b559fe73c62f7638979a6890ddfba97ce86f59c5c265ebb6a2654d6f035a1d9"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/math_models/MEV-06-001.json",
+      "sha256": "d84f2bd3d1c463fae3ba1b1e459552e1f9c040c9507ed82fa3e7806f900b6393"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/math_models/MEV-09-017.json",
+      "sha256": "31888fed554afbd24713293c72fb118acc070997184cd212fa114a750d5e4289"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/math_models/MEV-03-007.json",
+      "sha256": "1ad2bebde97d851879918915e38563e2c87e71862f03c5f1fd539d2a6bdb3ec6"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/math_models/MEV-07-018.json",
+      "sha256": "54a2dbabee76c777126165f74f5b6796d9a14d73a2e8684e263cd962535eb0e6"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/math_models/MEV-03-003.json",
+      "sha256": "fa20b8ea1b40479c36f183ad48e3145ae092555cea0da5ee8ffaeba44d492a90"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/math_models/MEV-01-002.json",
+      "sha256": "e63d303ae45ed46e03c628b4dfd62ec19c577b05285b75e6c1682a06a62bb12c"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/math_models/MEV-09-010.json",
+      "sha256": "0f545bbeaba5d886722defe1f7500f2d29a8a7bd32ce124f40954d871f65e6c1"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/math_models/MEV-06-011.json",
+      "sha256": "ec2dd7b3e99343ce0f73f76c0b9b328420424594ae822e4b948b1e1f9cd1fc29"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/math_models/MEV-04-022.json",
+      "sha256": "baccfb4d9e8d48b5be5d73625a93fd03652b3c2b33ecf1a91b305c075819a5ba"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/math_models/MEV-02-008.json",
+      "sha256": "19aa2341d9fe51d3185c129ba0296f1ab076e9646aea021b449a1e641a6dd09b"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/math_models/MEV-11-012.json",
+      "sha256": "f833e30ab966ee298969742c7d8bfcc01af6578f97f1693813d60896c9ec1546"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/math_models/MEV-01-009.json",
+      "sha256": "00c5600e1b48e55fb7d463f295628bcd1a8e22002a74a416d6b716cb5ae1775d"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/math_models/MEV-01-004.json",
+      "sha256": "6dca02c8c8abf2f30da40819c3c838894784454f6dbffbf8dad0a2f1927028f1"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/math_models/MEV-02-011.json",
+      "sha256": "2bdbbe332ef65a2a3ac182fd521654407e97f82a929c0b245e862c02ea0817bc"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/math_models/MEV-06-023.json",
+      "sha256": "9a4fc098223a8f045c51b343f63aecc29e29bc335ee64a11b52cdbb57eea10cc"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/math_models/MEV-04-015.json",
+      "sha256": "022707906907e7bd29dfe961d003794f228f81046b307de1c0e367d28aa63db2"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/math_models/MEV-05-010.json",
+      "sha256": "c3dc6ed9ccd8c4b147377987d106be506a4955637e8f6384020a0adfe4b4882d"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/math_models/MEV-01-013.json",
+      "sha256": "34341cca41f5ab507d253daae6fe964f4695c8345db02f30e97d7620f3768d71"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/math_models/MEV-10-011.json",
+      "sha256": "a5d1fe25b2a22aa6558bd7a4f5dfbe16afab0722738179d11a67990be2ef3e49"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/math_models/MEV-01-024.json",
+      "sha256": "21472df3658a48380f19dc2c88c8eeebd2e7a1cd87909d2911102b970b2899fb"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/math_models/MEV-01-023.json",
+      "sha256": "9c5ffb43202363ef2fa898643d06f88674113398b66012b33db2cf2cda05dc22"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/math_models/MEV-05-008.json",
+      "sha256": "347b9bfb42106a80affcf1933e03340df9f2dc25fc6fad6889a582903c1a6710"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/math_models/MEV-10-018.json",
+      "sha256": "480b7c9cba4d3fe208798cba0df324a1934e6efe02804204ee3eba3312cc6ec7"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/math_models/MEV-01-034.json",
+      "sha256": "e6e5f3654dd8da018ba56c011e1c79d3f46030958294df75b0300282d4816bd7"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/math_models/MEV-09-008.json",
+      "sha256": "1a8fafbcbf155ea2813f33a829394d94f1daf4d97f25b8068c184948df753bcd"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/math_models/MEV-06-006.json",
+      "sha256": "25a1db8aeba0091e8948fdfbc6cc4c8ebb637ccdb0234b0937dd37748a2e4899"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/math_models/MEV-02-015.json",
+      "sha256": "d01ca2eb888d672bb6ceae8f5d611eb24f88da833490eca48fc34b05c21876eb"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/math_models/MEV-03-013.json",
+      "sha256": "cd6a23e9f71d7f629eafd1308d4e3e1a751500b82b8bf9e694431b9eb5675ae8"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/math_models/MEV-10-006.json",
+      "sha256": "9c90a8599444f501f942b39634b1d2d517fa08bce68b2824da50ebd5c84bbc19"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/math_models/MEV-10-001.json",
+      "sha256": "636e5c23e1e05251ab05cee9573f55e055d293a80a37b9a9b9d49748b40bb200"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/math_models/MEV-08-003.json",
+      "sha256": "6d41b8797dd03e2178a4d2e73a687b124d04c2ba1725e52f4bdde3f047dbf64b"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/math_models/MEV-08-004.json",
+      "sha256": "3a4cc9f305080d44d5fa68ad7eab47cc3d902dd60837cf9bdab92042e2b58376"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/math_models/MEV-04-001.json",
+      "sha256": "549c5bce421ffc01362717ac2c8b1045a5b9e950e68c84e194ff3b04c94dc286"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/math_models/MEV-02-004.json",
+      "sha256": "2659f7a48353058c2ca42a27545fc3c712b1f8285b22dc946496e1e53e8e19d9"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/math_models/MEV-10-015.json",
+      "sha256": "e629a36418832ebb7475870043a164c60c9b2c235a61ecb1b6b1ac84d3e5fd7b"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/math_models/MEV-06-008.json",
+      "sha256": "67fd98d5312a354108ab3c4ecb9dd4873f899e9e7db9e1b439f0aace147fe6a6"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/math_models/MEV-06-026.json",
+      "sha256": "f2ec0fa34eeb849af1abd22cd36e57b7eece35c1141cf4dedb1cfe2f17bd92ed"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/math_models/MEV-08-013.json",
+      "sha256": "d2a983d7af00e9a54f9666cdb162778466f6aa9d8dd1c272ea7cdd45a0f0254f"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/math_models/MEV-03-022.json",
+      "sha256": "62c563bd36a01dcd255149394e445da9c5926baaa5a8a867309ed4d70872b9c6"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/math_models/MEV-04-023.json",
+      "sha256": "aaab51bf5adbca5718de32df1c69d4a4cbda1884e1ecefd79aa651f1637fd6a0"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/math_models/MEV-09-005.json",
+      "sha256": "95af1ae9dae89d71df0cd383fb8fd1651c8b3110d617e942d5eed31ee2e3a45d"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/math_models/MEV-04-018.json",
+      "sha256": "48dae6d2042fb586158b60f6b5e6c3f1749148bcd40f19464b8cbdcd2e3e1bc7"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/math_models/MEV-08-024.json",
+      "sha256": "a734fb65b2f8dd65c7a8c05f5ce82ab7f09512f92e22684208483b3a80dbb4ec"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/math_models/MEV-06-020.json",
+      "sha256": "2de9cf42e29d4a88f6d5f54586d8b8b79b8f8328babad599a48ed84fc0b3de42"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/math_models/MEV-01-033.json",
+      "sha256": "2b421d9e00f25b0d6365bdc78a88624bcb08df4b01c1219954ff2545a916ffe2"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/math_models/MEV-09-007.json",
+      "sha256": "54b0c998e5d14beca4f995adae5a318762ea997de041e867b70cc4fc7b76ad91"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/math_models/MEV-01-026.json",
+      "sha256": "849ad6a8d36c9523f0730ff96c2468f00b7b27459000a429562ab9b65bb9b0a5"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/math_models/MEV-03-027.json",
+      "sha256": "0278a1e203de356e44c265f7fe52ec28f3685efd088811eedd552678e9c26d76"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/math_models/MEV-08-007.json",
+      "sha256": "5332b54a64c5b4aa5385afefeefa805aa279d8061e06a69bcb31917de1b3e15b"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/math_models/MEV-07-002.json",
+      "sha256": "93bf82f7144f7ec7d357f928235b889a9858e4361feb589ded329b2ba58c1e91"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/math_models/MEV-07-008.json",
+      "sha256": "1dc30a1052916dc7d4cdcb2e8b147ea28ed50ec1555eb1f1500aef2aa336d1bd"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/math_models/MEV-09-013.json",
+      "sha256": "4c6b9d49682a32871c1ba7df94baa4d18787017e443000b2d06a737750c5bc01"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/math_models/MEV-05-011.json",
+      "sha256": "2058754df915316408785424430964c66e730349e1aad5cae17f9a9fc53f0784"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/math_models/MEV-08-019.json",
+      "sha256": "46df265105258b71e09bb7db51437eb0cff5a26ff32aa730fb7174c12eaacbcb"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/math_models/MEV-09-016.json",
+      "sha256": "624b4b57f212fe456ad01edbdb8d7c6df36ed4e7564e82c0871e86cc12abeff6"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/math_models/MEV-09-020.json",
+      "sha256": "303262feb967e2fe3bfe162298545ab663a0e83bb3deaab6c077fcacb8889250"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/math_models/MEV-09-019.json",
+      "sha256": "243813a7727ffd9b4b5e87116ba5ce06969f9f704705dc638af19264863b6b9c"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/math_models/MEV-02-006.json",
+      "sha256": "34d42bdb031ac7776540749f09e54743e00c25dbb335dbc7339186f9682e5f23"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/math_models/MEV-03-030.json",
+      "sha256": "cdf92a11f819ad9a90c1e52d3bfd6818f7821823836e6df36a7bbb9fc650b417"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/math_models/MEV-08-005.json",
+      "sha256": "a416e2dcf3ef251691ba9e42eb2c2a108e09ad9a4f85d2a5e82d90e2c5c56363"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/math_models/MEV-06-024.json",
+      "sha256": "792d4f3262eccad1a5864d13bddeeb40b0b67934ed5d66dca81ed50e4033a036"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/math_models/MEV-02-005.json",
+      "sha256": "c8185b0eb7e547be3c59cf711d4754eecd0c2381ea4135e60a91c4cc93234329"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/math_models/MEV-02-009.json",
+      "sha256": "073584b911a5ed368a73894687b6b6d8455281cde12727fc4c06e4d656b3919d"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/math_models/MEV-07-007.json",
+      "sha256": "1b1095f8a0a8fb77bb5f8ae7d200bc91b6f6b52c1506ff89a2e997fca970c4c1"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/math_models/MEV-01-012.json",
+      "sha256": "0b48630e510a0ecac62a55153f6209e49d9ee9be5ddbdd414df3fae38d56d79c"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/math_models/MEV-10-007.json",
+      "sha256": "b81d10e893955ce1256b0064bcdc113e9150f4867b692ee84c7ea8555540e99e"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/math_models/MEV-06-007.json",
+      "sha256": "ccfa93ee0cdaad6e6f5cd1747baca28fa7582a0706a4273a544ada6febb9c52d"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/math_models/MEV-07-001.json",
+      "sha256": "816d395d3de99791d51001cd7c902539a24aae7da3bca3fb62dbf95f571f0690"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/math_models/MEV-05-009.json",
+      "sha256": "6a65c8f0dd088657e68ef42cfeb6c9dbf859ef59249d78dd3a52d873ee595bbb"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/math_models/MEV-06-029.json",
+      "sha256": "0d26c1188644e3a7965be8f7f1cbab54f8140fb547ce73a4f4ce0b3ffcb3c642"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/math_models/MEV-04-019.json",
+      "sha256": "a69f397f7adbb1b727ac507a89e8e34e83a1332ba798780817d757fafaec51ca"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/math_models/MEV-06-002.json",
+      "sha256": "133e773218b5428a397501904a702e0d9a93fcab9c0b98eb5ed7ab886cfcd266"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/math_models/MEV-04-002.json",
+      "sha256": "21dff8876eb4223cd99988ae4b2b5d5969dfa5078e39cd0d63386b276151e7b9"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/math_models/MEV-06-005.json",
+      "sha256": "9aea8a1f628c0637faf0eed279395673ee81f34187fb65c149f85c3fe9258dbc"
+    },
+    {
+      "path": "backend/searcher-rs/cartridges/strategies/math_models/MEV-01-001.json",
+      "sha256": "a02f0d413b1f26ada72bb84462ef3af4e00c9b4216c146a5bc764f1a15327559"
+    },
+    {
+      "path": "backend/math-engine/src/operators/op_05_pdmp.rs",
+      "sha256": "c42dc20cc827ee408acf349cc728dfac6f068479b2ded3aad482892704f943cf"
+    },
+    {
+      "path": "backend/math-engine/src/operators/op_15_golden_section.rs",
+      "sha256": "2788a46daded826c1b0a8cc3a0b85b958d7222717bc2702ded008a40d0421dec"
+    },
+    {
+      "path": "backend/math-engine/src/operators/op_20_gradient_descent.rs",
+      "sha256": "7db3b75d585497500661216b7f64c1ca057b58441c030562365e7ecd1384a765"
+    },
+    {
+      "path": "backend/math-engine/src/operators/op_16_kelly.rs",
+      "sha256": "87f070982969e862729e89fa71e6af60bda0fa984dd89378240ffacb2de83353"
+    },
+    {
+      "path": "backend/math-engine/src/operators/op_27_path_ordering.rs",
+      "sha256": "ab609dfbc78bd39c1a7627890bc7d10a2e86e9f0593aa481305f4710c01b1eff"
+    },
+    {
+      "path": "backend/math-engine/src/operators/op_23_queueing.rs",
+      "sha256": "c8d549f2aafb5bfbe98ee7b06c39a04808164cec30e943eaaa0c360d267ec809"
+    },
+    {
+      "path": "backend/math-engine/src/operators/op_21_newton.rs",
+      "sha256": "a316c006c04e386f3a473bc0e53dad57bc06661eaf6edd7065a7378f4306ff1a"
+    },
+    {
+      "path": "backend/math-engine/src/operators/op_02_pca.rs",
+      "sha256": "9d5927e4eeb9785eed4de13ba68c0cfc5db28900b777a27ecc2f3182533059d0"
+    },
+    {
+      "path": "backend/math-engine/src/operators/op_19_simplex.rs",
+      "sha256": "fe50204fc785548aae872300571ef85a8af99adab8f5c2dc3d10affb0d70ee45"
+    },
+    {
+      "path": "backend/math-engine/src/operators/op_31_drl_agent.rs",
+      "sha256": "19b95e97189d9bbffc1678107f0ecd77f6b8ae8ffe3a05b4a034aeacfd07bdd0"
+    },
+    {
+      "path": "backend/math-engine/src/operators/op_24_nash.rs",
+      "sha256": "3bb79625212aa78730607386d9363ba50ab2067b419e7420ade22686c9d7b5e3"
+    },
+    {
+      "path": "backend/math-engine/src/operators/op_17_pontryagin.rs",
+      "sha256": "8d01e2282a9851a6ebe074894407555eba51388808c5a5dd0fe98be45a19ba4f"
+    },
+    {
+      "path": "backend/math-engine/src/operators/op_10_welford.rs",
+      "sha256": "dd4c0faa99f777178de27e983230353308ad032ebb253ecb017b30a2e6855363"
+    },
+    {
+      "path": "backend/math-engine/src/operators/op_06_markov_chain.rs",
+      "sha256": "a0cb9ec491d94febfe8495371f84f34ee2f073f391169940c85bb5205c094d9e"
+    },
+    {
+      "path": "backend/math-engine/src/operators/op_32_multi_objective.rs",
+      "sha256": "19c45adb5fc46a2c75f42c4dfd07915786df93fd0098e40a3f3e0bc5dcc3237f"
+    },
+    {
+      "path": "backend/math-engine/src/operators/op_25_bundle_recon.rs",
+      "sha256": "7d5458a40a9f9447e0554c37561baa4e39f8a3bcfa432ef8659d91689bf2f14f"
+    },
+    {
+      "path": "backend/math-engine/src/operators/op_18_lagrangian.rs",
+      "sha256": "e645f3925d5b125e53189661d3506ac2e4dee957e2b90d772f517ab1ce8b1ff6"
+    },
+    {
+      "path": "backend/math-engine/src/operators/op_26_flash_loan.rs",
+      "sha256": "9e6ff4f56692b3cab11a7fc15a0dbf1bbb15ec0c6839ac87f6ef2d0d2e827991"
+    },
+    {
+      "path": "backend/math-engine/src/operators/op_04_von_neumann.rs",
+      "sha256": "7ea93a157ce3cfc47262e850142909355ede11763ef8c4f26641599529e98d0f"
+    },
+    {
+      "path": "backend/math-engine/src/operators/op_14_kl_divergence.rs",
+      "sha256": "67c2cc092ab868c6e5e81951667151950bf8eb5831c4a049515313606c772fdc"
+    },
+    {
+      "path": "backend/math-engine/src/operators/op_22_monte_carlo.rs",
+      "sha256": "97a1b368b93de9c77be95ae464913bd1058ceeb701ddf851e73b4f48e3bbdf38"
+    },
+    {
+      "path": "backend/math-engine/src/operators/op_07_hmm.rs",
+      "sha256": "f90c81d58e4e0a5c80af4c7dcd7ccbda3703e087fbca0cbcab2716226abc6b24"
+    },
+    {
+      "path": "backend/math-engine/src/operators/op_09_levy.rs",
+      "sha256": "62ee7f2100b43f769dcc0a269cafaf8704d40747c6879b6e40d4c90fd160e8c9"
+    },
+    {
+      "path": "backend/math-engine/src/operators/op_03_eigen.rs",
+      "sha256": "8009dda282df1cfaced1ac7092066513177c93c4ff46ebf970b14d8dd117a045"
+    },
+    {
+      "path": "backend/math-engine/src/operators/op_01_svd.rs",
+      "sha256": "83d09f7e6619067b893a8c6ef4ba739dfb764db8f2d116d9356613e7411f1920"
+    },
+    {
+      "path": "backend/math-engine/src/operators/op_30_gnn_encoder.rs",
+      "sha256": "2a6924ef4abbbf872c9a3862a9e817abe174ac9ba57e6faf46b551b2b9dc9d98"
+    },
+    {
+      "path": "backend/math-engine/src/operators/real_ops_tests.rs",
+      "sha256": "e30345579d004ca244e6dc66189b765bd54164b0b55c76efabb18e6fd782b47a"
+    },
+    {
+      "path": "backend/math-engine/src/operators/mod.rs",
+      "sha256": "b425da417723a3bb1fc61b8ca6ea312de490f28cad515c87a97e1bd8dd385030"
+    },
+    {
+      "path": "backend/math-engine/src/operators/op_08_kalman.rs",
+      "sha256": "0915caf493ace108903483730092bc8a729e79681842dee8f19cfe392a3c408c"
+    },
+    {
+      "path": "backend/math-engine/src/operators/op_28_jit_liquidity.rs",
+      "sha256": "3211fe4e36f2f210357b37785354ad395e97d36a49e4ae6036f1d90773269a8e"
+    },
+    {
+      "path": "backend/math-engine/src/operators/op_13_regression.rs",
+      "sha256": "d0d24f4cd98e9fd2582be4ec8de15dd74bc5fdf6cda977bbd2a4a137b9a0f9b6"
+    },
+    {
+      "path": "backend/math-engine/src/operators/op_12_mle.rs",
+      "sha256": "187f2dcd0666f233f224f60a9d45c9e151ea1af3a3922c178723f7956af3960f"
+    },
+    {
+      "path": "backend/math-engine/src/operators/op_11_bayes.rs",
+      "sha256": "7173a11b34287794041b3135decc9092951aee0f32b81c453112627455d6959c"
+    },
+    {
+      "path": "backend/math-engine/src/operators/op_29_shapley.rs",
+      "sha256": "d52ac30d74bc304e96a8567d3c6415114b9b7c8bea907df62eeff1553104f33a"
+    },
+    {
+      "path": "backend/math-engine/src/operators/op_32_nsga2/core.rs",
+      "sha256": "69144084cc830f491d5cb7749b6a781c00828472f69226e2a9b65f8ad8287cf1"
+    },
+    {
+      "path": "backend/math-engine/src/operators/op_32_nsga2/mod.rs",
+      "sha256": "1b134659713ef1ac93d6d2b0547f00e88d53d1c88664365ea95645be3adffbe5"
+    }
+  ],
+  "existing_repo_write_actions": 0,
+  "remote_configuration_changes": 0,
+  "note": "Reference copies matched original ZIP; no claim that every file of ZIP equals current main."
+}

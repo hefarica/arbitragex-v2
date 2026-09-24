@@ -1,0 +1,5597 @@
+[
+  {
+    "id": "SOURCE_LEGS_VS_REQUESTED_SWAP_SEARCH_SCOPE",
+    "strategy": "MEV-01-001",
+    "source_min_legs": 2,
+    "source_max_legs": 8,
+    "repository_hops": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "selected_scope": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "source_ref": "ArbitrageX_Master_264x31_LIVE_First(2).xlsx!02_CARTRIDGE_MATH_MAP!A2:AB2",
+    "resolution": "Preserve source and repository policy. Search only their intersection with requested 2..7 swap hops; do not call that full source coverage.",
+    "status": "DISCLOSED_SCOPE_LIMIT"
+  },
+  {
+    "id": "SOURCE_LEGS_VS_REQUESTED_SWAP_SEARCH_SCOPE",
+    "strategy": "MEV-01-002",
+    "source_min_legs": 2,
+    "source_max_legs": 8,
+    "repository_hops": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "selected_scope": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "source_ref": "ArbitrageX_Master_264x31_LIVE_First(2).xlsx!02_CARTRIDGE_MATH_MAP!A3:AB3",
+    "resolution": "Preserve source and repository policy. Search only their intersection with requested 2..7 swap hops; do not call that full source coverage.",
+    "status": "DISCLOSED_SCOPE_LIMIT"
+  },
+  {
+    "id": "SOURCE_LEGS_VS_REQUESTED_SWAP_SEARCH_SCOPE",
+    "strategy": "MEV-01-003",
+    "source_min_legs": 2,
+    "source_max_legs": 8,
+    "repository_hops": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "selected_scope": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "source_ref": "ArbitrageX_Master_264x31_LIVE_First(2).xlsx!02_CARTRIDGE_MATH_MAP!A4:AB4",
+    "resolution": "Preserve source and repository policy. Search only their intersection with requested 2..7 swap hops; do not call that full source coverage.",
+    "status": "DISCLOSED_SCOPE_LIMIT"
+  },
+  {
+    "id": "SOURCE_LEGS_VS_REQUESTED_SWAP_SEARCH_SCOPE",
+    "strategy": "MEV-01-004",
+    "source_min_legs": 2,
+    "source_max_legs": 8,
+    "repository_hops": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "selected_scope": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "source_ref": "ArbitrageX_Master_264x31_LIVE_First(2).xlsx!02_CARTRIDGE_MATH_MAP!A5:AB5",
+    "resolution": "Preserve source and repository policy. Search only their intersection with requested 2..7 swap hops; do not call that full source coverage.",
+    "status": "DISCLOSED_SCOPE_LIMIT"
+  },
+  {
+    "id": "SOURCE_LEGS_VS_REQUESTED_SWAP_SEARCH_SCOPE",
+    "strategy": "MEV-01-005",
+    "source_min_legs": 2,
+    "source_max_legs": 8,
+    "repository_hops": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "selected_scope": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "source_ref": "ArbitrageX_Master_264x31_LIVE_First(2).xlsx!02_CARTRIDGE_MATH_MAP!A6:AB6",
+    "resolution": "Preserve source and repository policy. Search only their intersection with requested 2..7 swap hops; do not call that full source coverage.",
+    "status": "DISCLOSED_SCOPE_LIMIT"
+  },
+  {
+    "id": "SOURCE_LEGS_VS_REQUESTED_SWAP_SEARCH_SCOPE",
+    "strategy": "MEV-01-006",
+    "source_min_legs": 2,
+    "source_max_legs": 8,
+    "repository_hops": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "selected_scope": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "source_ref": "ArbitrageX_Master_264x31_LIVE_First(2).xlsx!02_CARTRIDGE_MATH_MAP!A7:AB7",
+    "resolution": "Preserve source and repository policy. Search only their intersection with requested 2..7 swap hops; do not call that full source coverage.",
+    "status": "DISCLOSED_SCOPE_LIMIT"
+  },
+  {
+    "id": "SOURCE_LEGS_VS_REQUESTED_SWAP_SEARCH_SCOPE",
+    "strategy": "MEV-01-007",
+    "source_min_legs": 2,
+    "source_max_legs": 8,
+    "repository_hops": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "selected_scope": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "source_ref": "ArbitrageX_Master_264x31_LIVE_First(2).xlsx!02_CARTRIDGE_MATH_MAP!A8:AB8",
+    "resolution": "Preserve source and repository policy. Search only their intersection with requested 2..7 swap hops; do not call that full source coverage.",
+    "status": "DISCLOSED_SCOPE_LIMIT"
+  },
+  {
+    "id": "SOURCE_LEGS_VS_REQUESTED_SWAP_SEARCH_SCOPE",
+    "strategy": "MEV-01-008",
+    "source_min_legs": 2,
+    "source_max_legs": 8,
+    "repository_hops": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "selected_scope": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "source_ref": "ArbitrageX_Master_264x31_LIVE_First(2).xlsx!02_CARTRIDGE_MATH_MAP!A9:AB9",
+    "resolution": "Preserve source and repository policy. Search only their intersection with requested 2..7 swap hops; do not call that full source coverage.",
+    "status": "DISCLOSED_SCOPE_LIMIT"
+  },
+  {
+    "id": "SOURCE_LEGS_VS_REQUESTED_SWAP_SEARCH_SCOPE",
+    "strategy": "MEV-01-009",
+    "source_min_legs": 2,
+    "source_max_legs": 8,
+    "repository_hops": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "selected_scope": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "source_ref": "ArbitrageX_Master_264x31_LIVE_First(2).xlsx!02_CARTRIDGE_MATH_MAP!A10:AB10",
+    "resolution": "Preserve source and repository policy. Search only their intersection with requested 2..7 swap hops; do not call that full source coverage.",
+    "status": "DISCLOSED_SCOPE_LIMIT"
+  },
+  {
+    "id": "SOURCE_LEGS_VS_REQUESTED_SWAP_SEARCH_SCOPE",
+    "strategy": "MEV-01-010",
+    "source_min_legs": 2,
+    "source_max_legs": 8,
+    "repository_hops": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "selected_scope": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "source_ref": "ArbitrageX_Master_264x31_LIVE_First(2).xlsx!02_CARTRIDGE_MATH_MAP!A11:AB11",
+    "resolution": "Preserve source and repository policy. Search only their intersection with requested 2..7 swap hops; do not call that full source coverage.",
+    "status": "DISCLOSED_SCOPE_LIMIT"
+  },
+  {
+    "id": "SOURCE_LEGS_VS_REQUESTED_SWAP_SEARCH_SCOPE",
+    "strategy": "MEV-01-011",
+    "source_min_legs": 2,
+    "source_max_legs": 8,
+    "repository_hops": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "selected_scope": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "source_ref": "ArbitrageX_Master_264x31_LIVE_First(2).xlsx!02_CARTRIDGE_MATH_MAP!A12:AB12",
+    "resolution": "Preserve source and repository policy. Search only their intersection with requested 2..7 swap hops; do not call that full source coverage.",
+    "status": "DISCLOSED_SCOPE_LIMIT"
+  },
+  {
+    "id": "SOURCE_LEGS_VS_REQUESTED_SWAP_SEARCH_SCOPE",
+    "strategy": "MEV-01-012",
+    "source_min_legs": 2,
+    "source_max_legs": 8,
+    "repository_hops": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "selected_scope": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "source_ref": "ArbitrageX_Master_264x31_LIVE_First(2).xlsx!02_CARTRIDGE_MATH_MAP!A13:AB13",
+    "resolution": "Preserve source and repository policy. Search only their intersection with requested 2..7 swap hops; do not call that full source coverage.",
+    "status": "DISCLOSED_SCOPE_LIMIT"
+  },
+  {
+    "id": "SOURCE_LEGS_VS_REQUESTED_SWAP_SEARCH_SCOPE",
+    "strategy": "MEV-01-013",
+    "source_min_legs": 2,
+    "source_max_legs": 8,
+    "repository_hops": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "selected_scope": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "source_ref": "ArbitrageX_Master_264x31_LIVE_First(2).xlsx!02_CARTRIDGE_MATH_MAP!A14:AB14",
+    "resolution": "Preserve source and repository policy. Search only their intersection with requested 2..7 swap hops; do not call that full source coverage.",
+    "status": "DISCLOSED_SCOPE_LIMIT"
+  },
+  {
+    "id": "SOURCE_LEGS_VS_REQUESTED_SWAP_SEARCH_SCOPE",
+    "strategy": "MEV-01-014",
+    "source_min_legs": 2,
+    "source_max_legs": 8,
+    "repository_hops": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "selected_scope": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "source_ref": "ArbitrageX_Master_264x31_LIVE_First(2).xlsx!02_CARTRIDGE_MATH_MAP!A15:AB15",
+    "resolution": "Preserve source and repository policy. Search only their intersection with requested 2..7 swap hops; do not call that full source coverage.",
+    "status": "DISCLOSED_SCOPE_LIMIT"
+  },
+  {
+    "id": "TRIANGULAR_FIXED_3_VS_PSEUDOCODE_3_TO_7",
+    "strategy": "MEV-01-016",
+    "source_min_legs": 3,
+    "source_max_legs": 3,
+    "repository_hops": [
+      3
+    ],
+    "selected_scope": [
+      3
+    ],
+    "source_ref": "ArbitrageX_Master_264x31_LIVE_First(2).xlsx!02_CARTRIDGE_MATH_MAP!A17:AB17",
+    "resolution": "Preserve source and repository policy. Search only their intersection with requested 2..7 swap hops; do not call that full source coverage.",
+    "status": "DISCLOSED_SCOPE_LIMIT"
+  },
+  {
+    "id": "SOURCE_LEGS_VS_REQUESTED_SWAP_SEARCH_SCOPE",
+    "strategy": "MEV-01-018",
+    "source_min_legs": 3,
+    "source_max_legs": 16,
+    "repository_hops": [
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "selected_scope": [
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "source_ref": "ArbitrageX_Master_264x31_LIVE_First(2).xlsx!02_CARTRIDGE_MATH_MAP!A19:AB19",
+    "resolution": "Preserve source and repository policy. Search only their intersection with requested 2..7 swap hops; do not call that full source coverage.",
+    "status": "DISCLOSED_SCOPE_LIMIT"
+  },
+  {
+    "id": "SOURCE_LEGS_VS_REQUESTED_SWAP_SEARCH_SCOPE",
+    "strategy": "MEV-01-019",
+    "source_min_legs": 3,
+    "source_max_legs": 16,
+    "repository_hops": [
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "selected_scope": [
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "source_ref": "ArbitrageX_Master_264x31_LIVE_First(2).xlsx!02_CARTRIDGE_MATH_MAP!A20:AB20",
+    "resolution": "Preserve source and repository policy. Search only their intersection with requested 2..7 swap hops; do not call that full source coverage.",
+    "status": "DISCLOSED_SCOPE_LIMIT"
+  },
+  {
+    "id": "SOURCE_LEGS_VS_REQUESTED_SWAP_SEARCH_SCOPE",
+    "strategy": "MEV-01-020",
+    "source_min_legs": 3,
+    "source_max_legs": 16,
+    "repository_hops": [
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "selected_scope": [
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "source_ref": "ArbitrageX_Master_264x31_LIVE_First(2).xlsx!02_CARTRIDGE_MATH_MAP!A21:AB21",
+    "resolution": "Preserve source and repository policy. Search only their intersection with requested 2..7 swap hops; do not call that full source coverage.",
+    "status": "DISCLOSED_SCOPE_LIMIT"
+  },
+  {
+    "id": "SOURCE_LEGS_VS_REQUESTED_SWAP_SEARCH_SCOPE",
+    "strategy": "MEV-01-021",
+    "source_min_legs": 3,
+    "source_max_legs": 16,
+    "repository_hops": [
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "selected_scope": [
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "source_ref": "ArbitrageX_Master_264x31_LIVE_First(2).xlsx!02_CARTRIDGE_MATH_MAP!A22:AB22",
+    "resolution": "Preserve source and repository policy. Search only their intersection with requested 2..7 swap hops; do not call that full source coverage.",
+    "status": "DISCLOSED_SCOPE_LIMIT"
+  },
+  {
+    "id": "SOURCE_LEGS_VS_REQUESTED_SWAP_SEARCH_SCOPE",
+    "strategy": "MEV-01-022",
+    "source_min_legs": 3,
+    "source_max_legs": 16,
+    "repository_hops": [
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "selected_scope": [
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "source_ref": "ArbitrageX_Master_264x31_LIVE_First(2).xlsx!02_CARTRIDGE_MATH_MAP!A23:AB23",
+    "resolution": "Preserve source and repository policy. Search only their intersection with requested 2..7 swap hops; do not call that full source coverage.",
+    "status": "DISCLOSED_SCOPE_LIMIT"
+  },
+  {
+    "id": "NON_CYCLIC_NAME_VS_CLOSED_CYCLE_SPECIFIC_NOTE",
+    "strategy": "MEV-01-022",
+    "source_min_legs": 3,
+    "source_max_legs": 16,
+    "repository_hops": [
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "selected_scope": [
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "source_ref": "ArbitrageX_Master_264x31_LIVE_First(2).xlsx!02_CARTRIDGE_MATH_MAP!A23:AB23",
+    "resolution": "Preserve source and repository policy. Search only their intersection with requested 2..7 swap hops; do not call that full source coverage.",
+    "status": "REQUIRES_SOURCE_RESOLUTION"
+  },
+  {
+    "id": "SOURCE_LEGS_VS_REQUESTED_SWAP_SEARCH_SCOPE",
+    "strategy": "MEV-01-023",
+    "source_min_legs": 2,
+    "source_max_legs": 8,
+    "repository_hops": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "selected_scope": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "source_ref": "ArbitrageX_Master_264x31_LIVE_First(2).xlsx!02_CARTRIDGE_MATH_MAP!A24:AB24",
+    "resolution": "Preserve source and repository policy. Search only their intersection with requested 2..7 swap hops; do not call that full source coverage.",
+    "status": "DISCLOSED_SCOPE_LIMIT"
+  },
+  {
+    "id": "SOURCE_LEGS_VS_REQUESTED_SWAP_SEARCH_SCOPE",
+    "strategy": "MEV-01-024",
+    "source_min_legs": 2,
+    "source_max_legs": 8,
+    "repository_hops": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "selected_scope": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "source_ref": "ArbitrageX_Master_264x31_LIVE_First(2).xlsx!02_CARTRIDGE_MATH_MAP!A25:AB25",
+    "resolution": "Preserve source and repository policy. Search only their intersection with requested 2..7 swap hops; do not call that full source coverage.",
+    "status": "DISCLOSED_SCOPE_LIMIT"
+  },
+  {
+    "id": "SOURCE_LEGS_VS_REQUESTED_SWAP_SEARCH_SCOPE",
+    "strategy": "MEV-01-025",
+    "source_min_legs": 2,
+    "source_max_legs": 8,
+    "repository_hops": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "selected_scope": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "source_ref": "ArbitrageX_Master_264x31_LIVE_First(2).xlsx!02_CARTRIDGE_MATH_MAP!A26:AB26",
+    "resolution": "Preserve source and repository policy. Search only their intersection with requested 2..7 swap hops; do not call that full source coverage.",
+    "status": "DISCLOSED_SCOPE_LIMIT"
+  },
+  {
+    "id": "SOURCE_LEGS_VS_REQUESTED_SWAP_SEARCH_SCOPE",
+    "strategy": "MEV-01-026",
+    "source_min_legs": 2,
+    "source_max_legs": 8,
+    "repository_hops": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "selected_scope": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "source_ref": "ArbitrageX_Master_264x31_LIVE_First(2).xlsx!02_CARTRIDGE_MATH_MAP!A27:AB27",
+    "resolution": "Preserve source and repository policy. Search only their intersection with requested 2..7 swap hops; do not call that full source coverage.",
+    "status": "DISCLOSED_SCOPE_LIMIT"
+  },
+  {
+    "id": "SOURCE_LEGS_VS_REQUESTED_SWAP_SEARCH_SCOPE",
+    "strategy": "MEV-01-027",
+    "source_min_legs": 3,
+    "source_max_legs": 16,
+    "repository_hops": [
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "selected_scope": [
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "source_ref": "ArbitrageX_Master_264x31_LIVE_First(2).xlsx!02_CARTRIDGE_MATH_MAP!A28:AB28",
+    "resolution": "Preserve source and repository policy. Search only their intersection with requested 2..7 swap hops; do not call that full source coverage.",
+    "status": "DISCLOSED_SCOPE_LIMIT"
+  },
+  {
+    "id": "SOURCE_LEGS_VS_REQUESTED_SWAP_SEARCH_SCOPE",
+    "strategy": "MEV-01-028",
+    "source_min_legs": 2,
+    "source_max_legs": 8,
+    "repository_hops": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "selected_scope": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "source_ref": "ArbitrageX_Master_264x31_LIVE_First(2).xlsx!02_CARTRIDGE_MATH_MAP!A29:AB29",
+    "resolution": "Preserve source and repository policy. Search only their intersection with requested 2..7 swap hops; do not call that full source coverage.",
+    "status": "DISCLOSED_SCOPE_LIMIT"
+  },
+  {
+    "id": "SOURCE_LEGS_VS_REQUESTED_SWAP_SEARCH_SCOPE",
+    "strategy": "MEV-01-029",
+    "source_min_legs": 3,
+    "source_max_legs": 16,
+    "repository_hops": [
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "selected_scope": [
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "source_ref": "ArbitrageX_Master_264x31_LIVE_First(2).xlsx!02_CARTRIDGE_MATH_MAP!A30:AB30",
+    "resolution": "Preserve source and repository policy. Search only their intersection with requested 2..7 swap hops; do not call that full source coverage.",
+    "status": "DISCLOSED_SCOPE_LIMIT"
+  },
+  {
+    "id": "SOURCE_LEGS_VS_REQUESTED_SWAP_SEARCH_SCOPE",
+    "strategy": "MEV-01-030",
+    "source_min_legs": 2,
+    "source_max_legs": 8,
+    "repository_hops": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "selected_scope": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "source_ref": "ArbitrageX_Master_264x31_LIVE_First(2).xlsx!02_CARTRIDGE_MATH_MAP!A31:AB31",
+    "resolution": "Preserve source and repository policy. Search only their intersection with requested 2..7 swap hops; do not call that full source coverage.",
+    "status": "DISCLOSED_SCOPE_LIMIT"
+  },
+  {
+    "id": "SOURCE_LEGS_VS_REQUESTED_SWAP_SEARCH_SCOPE",
+    "strategy": "MEV-01-031",
+    "source_min_legs": 2,
+    "source_max_legs": 8,
+    "repository_hops": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "selected_scope": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "source_ref": "ArbitrageX_Master_264x31_LIVE_First(2).xlsx!02_CARTRIDGE_MATH_MAP!A32:AB32",
+    "resolution": "Preserve source and repository policy. Search only their intersection with requested 2..7 swap hops; do not call that full source coverage.",
+    "status": "DISCLOSED_SCOPE_LIMIT"
+  },
+  {
+    "id": "SOURCE_LEGS_VS_REQUESTED_SWAP_SEARCH_SCOPE",
+    "strategy": "MEV-01-032",
+    "source_min_legs": 2,
+    "source_max_legs": 8,
+    "repository_hops": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "selected_scope": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "source_ref": "ArbitrageX_Master_264x31_LIVE_First(2).xlsx!02_CARTRIDGE_MATH_MAP!A33:AB33",
+    "resolution": "Preserve source and repository policy. Search only their intersection with requested 2..7 swap hops; do not call that full source coverage.",
+    "status": "DISCLOSED_SCOPE_LIMIT"
+  },
+  {
+    "id": "SOURCE_LEGS_VS_REQUESTED_SWAP_SEARCH_SCOPE",
+    "strategy": "MEV-01-033",
+    "source_min_legs": 2,
+    "source_max_legs": 8,
+    "repository_hops": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "selected_scope": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "source_ref": "ArbitrageX_Master_264x31_LIVE_First(2).xlsx!02_CARTRIDGE_MATH_MAP!A34:AB34",
+    "resolution": "Preserve source and repository policy. Search only their intersection with requested 2..7 swap hops; do not call that full source coverage.",
+    "status": "DISCLOSED_SCOPE_LIMIT"
+  },
+  {
+    "id": "SOURCE_LEGS_VS_REQUESTED_SWAP_SEARCH_SCOPE",
+    "strategy": "MEV-01-034",
+    "source_min_legs": 2,
+    "source_max_legs": 8,
+    "repository_hops": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "selected_scope": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "source_ref": "ArbitrageX_Master_264x31_LIVE_First(2).xlsx!02_CARTRIDGE_MATH_MAP!A35:AB35",
+    "resolution": "Preserve source and repository policy. Search only their intersection with requested 2..7 swap hops; do not call that full source coverage.",
+    "status": "DISCLOSED_SCOPE_LIMIT"
+  },
+  {
+    "id": "SOURCE_LEGS_VS_REQUESTED_SWAP_SEARCH_SCOPE",
+    "strategy": "MEV-01-035",
+    "source_min_legs": 2,
+    "source_max_legs": 8,
+    "repository_hops": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "selected_scope": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "source_ref": "ArbitrageX_Master_264x31_LIVE_First(2).xlsx!02_CARTRIDGE_MATH_MAP!A36:AB36",
+    "resolution": "Preserve source and repository policy. Search only their intersection with requested 2..7 swap hops; do not call that full source coverage.",
+    "status": "DISCLOSED_SCOPE_LIMIT"
+  },
+  {
+    "id": "SOURCE_LEGS_VS_REQUESTED_SWAP_SEARCH_SCOPE",
+    "strategy": "MEV-01-036",
+    "source_min_legs": 2,
+    "source_max_legs": 8,
+    "repository_hops": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "selected_scope": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "source_ref": "ArbitrageX_Master_264x31_LIVE_First(2).xlsx!02_CARTRIDGE_MATH_MAP!A37:AB37",
+    "resolution": "Preserve source and repository policy. Search only their intersection with requested 2..7 swap hops; do not call that full source coverage.",
+    "status": "DISCLOSED_SCOPE_LIMIT"
+  },
+  {
+    "id": "SOURCE_LEGS_VS_REQUESTED_SWAP_SEARCH_SCOPE",
+    "strategy": "MEV-02-001",
+    "source_min_legs": 2,
+    "source_max_legs": 8,
+    "repository_hops": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "selected_scope": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "source_ref": "ArbitrageX_Master_264x31_LIVE_First(2).xlsx!02_CARTRIDGE_MATH_MAP!A38:AB38",
+    "resolution": "Preserve source and repository policy. Search only their intersection with requested 2..7 swap hops; do not call that full source coverage.",
+    "status": "DISCLOSED_SCOPE_LIMIT"
+  },
+  {
+    "id": "SOURCE_LEGS_VS_REQUESTED_SWAP_SEARCH_SCOPE",
+    "strategy": "MEV-02-002",
+    "source_min_legs": 2,
+    "source_max_legs": 8,
+    "repository_hops": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "selected_scope": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "source_ref": "ArbitrageX_Master_264x31_LIVE_First(2).xlsx!02_CARTRIDGE_MATH_MAP!A39:AB39",
+    "resolution": "Preserve source and repository policy. Search only their intersection with requested 2..7 swap hops; do not call that full source coverage.",
+    "status": "DISCLOSED_SCOPE_LIMIT"
+  },
+  {
+    "id": "SOURCE_LEGS_VS_REQUESTED_SWAP_SEARCH_SCOPE",
+    "strategy": "MEV-02-003",
+    "source_min_legs": 2,
+    "source_max_legs": 8,
+    "repository_hops": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "selected_scope": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "source_ref": "ArbitrageX_Master_264x31_LIVE_First(2).xlsx!02_CARTRIDGE_MATH_MAP!A40:AB40",
+    "resolution": "Preserve source and repository policy. Search only their intersection with requested 2..7 swap hops; do not call that full source coverage.",
+    "status": "DISCLOSED_SCOPE_LIMIT"
+  },
+  {
+    "id": "SOURCE_LEGS_VS_REQUESTED_SWAP_SEARCH_SCOPE",
+    "strategy": "MEV-02-004",
+    "source_min_legs": 2,
+    "source_max_legs": 8,
+    "repository_hops": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "selected_scope": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "source_ref": "ArbitrageX_Master_264x31_LIVE_First(2).xlsx!02_CARTRIDGE_MATH_MAP!A41:AB41",
+    "resolution": "Preserve source and repository policy. Search only their intersection with requested 2..7 swap hops; do not call that full source coverage.",
+    "status": "DISCLOSED_SCOPE_LIMIT"
+  },
+  {
+    "id": "SOURCE_LEGS_VS_REQUESTED_SWAP_SEARCH_SCOPE",
+    "strategy": "MEV-02-005",
+    "source_min_legs": 2,
+    "source_max_legs": 8,
+    "repository_hops": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "selected_scope": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "source_ref": "ArbitrageX_Master_264x31_LIVE_First(2).xlsx!02_CARTRIDGE_MATH_MAP!A42:AB42",
+    "resolution": "Preserve source and repository policy. Search only their intersection with requested 2..7 swap hops; do not call that full source coverage.",
+    "status": "DISCLOSED_SCOPE_LIMIT"
+  },
+  {
+    "id": "SOURCE_LEGS_VS_REQUESTED_SWAP_SEARCH_SCOPE",
+    "strategy": "MEV-02-006",
+    "source_min_legs": 2,
+    "source_max_legs": 8,
+    "repository_hops": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "selected_scope": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "source_ref": "ArbitrageX_Master_264x31_LIVE_First(2).xlsx!02_CARTRIDGE_MATH_MAP!A43:AB43",
+    "resolution": "Preserve source and repository policy. Search only their intersection with requested 2..7 swap hops; do not call that full source coverage.",
+    "status": "DISCLOSED_SCOPE_LIMIT"
+  },
+  {
+    "id": "SOURCE_LEGS_VS_REQUESTED_SWAP_SEARCH_SCOPE",
+    "strategy": "MEV-02-007",
+    "source_min_legs": 2,
+    "source_max_legs": 8,
+    "repository_hops": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "selected_scope": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "source_ref": "ArbitrageX_Master_264x31_LIVE_First(2).xlsx!02_CARTRIDGE_MATH_MAP!A44:AB44",
+    "resolution": "Preserve source and repository policy. Search only their intersection with requested 2..7 swap hops; do not call that full source coverage.",
+    "status": "DISCLOSED_SCOPE_LIMIT"
+  },
+  {
+    "id": "SOURCE_LEGS_VS_REQUESTED_SWAP_SEARCH_SCOPE",
+    "strategy": "MEV-02-008",
+    "source_min_legs": 2,
+    "source_max_legs": 8,
+    "repository_hops": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "selected_scope": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "source_ref": "ArbitrageX_Master_264x31_LIVE_First(2).xlsx!02_CARTRIDGE_MATH_MAP!A45:AB45",
+    "resolution": "Preserve source and repository policy. Search only their intersection with requested 2..7 swap hops; do not call that full source coverage.",
+    "status": "DISCLOSED_SCOPE_LIMIT"
+  },
+  {
+    "id": "SOURCE_LEGS_VS_REQUESTED_SWAP_SEARCH_SCOPE",
+    "strategy": "MEV-02-009",
+    "source_min_legs": 2,
+    "source_max_legs": 8,
+    "repository_hops": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "selected_scope": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "source_ref": "ArbitrageX_Master_264x31_LIVE_First(2).xlsx!02_CARTRIDGE_MATH_MAP!A46:AB46",
+    "resolution": "Preserve source and repository policy. Search only their intersection with requested 2..7 swap hops; do not call that full source coverage.",
+    "status": "DISCLOSED_SCOPE_LIMIT"
+  },
+  {
+    "id": "SOURCE_LEGS_VS_REQUESTED_SWAP_SEARCH_SCOPE",
+    "strategy": "MEV-02-010",
+    "source_min_legs": 2,
+    "source_max_legs": 8,
+    "repository_hops": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "selected_scope": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "source_ref": "ArbitrageX_Master_264x31_LIVE_First(2).xlsx!02_CARTRIDGE_MATH_MAP!A47:AB47",
+    "resolution": "Preserve source and repository policy. Search only their intersection with requested 2..7 swap hops; do not call that full source coverage.",
+    "status": "DISCLOSED_SCOPE_LIMIT"
+  },
+  {
+    "id": "SOURCE_LEGS_VS_REQUESTED_SWAP_SEARCH_SCOPE",
+    "strategy": "MEV-02-011",
+    "source_min_legs": 2,
+    "source_max_legs": 8,
+    "repository_hops": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "selected_scope": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "source_ref": "ArbitrageX_Master_264x31_LIVE_First(2).xlsx!02_CARTRIDGE_MATH_MAP!A48:AB48",
+    "resolution": "Preserve source and repository policy. Search only their intersection with requested 2..7 swap hops; do not call that full source coverage.",
+    "status": "DISCLOSED_SCOPE_LIMIT"
+  },
+  {
+    "id": "SOURCE_LEGS_VS_REQUESTED_SWAP_SEARCH_SCOPE",
+    "strategy": "MEV-02-012",
+    "source_min_legs": 2,
+    "source_max_legs": 8,
+    "repository_hops": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "selected_scope": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "source_ref": "ArbitrageX_Master_264x31_LIVE_First(2).xlsx!02_CARTRIDGE_MATH_MAP!A49:AB49",
+    "resolution": "Preserve source and repository policy. Search only their intersection with requested 2..7 swap hops; do not call that full source coverage.",
+    "status": "DISCLOSED_SCOPE_LIMIT"
+  },
+  {
+    "id": "SOURCE_LEGS_VS_REQUESTED_SWAP_SEARCH_SCOPE",
+    "strategy": "MEV-02-013",
+    "source_min_legs": 2,
+    "source_max_legs": 8,
+    "repository_hops": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "selected_scope": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "source_ref": "ArbitrageX_Master_264x31_LIVE_First(2).xlsx!02_CARTRIDGE_MATH_MAP!A50:AB50",
+    "resolution": "Preserve source and repository policy. Search only their intersection with requested 2..7 swap hops; do not call that full source coverage.",
+    "status": "DISCLOSED_SCOPE_LIMIT"
+  },
+  {
+    "id": "SOURCE_LEGS_VS_REQUESTED_SWAP_SEARCH_SCOPE",
+    "strategy": "MEV-02-014",
+    "source_min_legs": 2,
+    "source_max_legs": 8,
+    "repository_hops": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "selected_scope": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "source_ref": "ArbitrageX_Master_264x31_LIVE_First(2).xlsx!02_CARTRIDGE_MATH_MAP!A51:AB51",
+    "resolution": "Preserve source and repository policy. Search only their intersection with requested 2..7 swap hops; do not call that full source coverage.",
+    "status": "DISCLOSED_SCOPE_LIMIT"
+  },
+  {
+    "id": "SOURCE_LEGS_VS_REQUESTED_SWAP_SEARCH_SCOPE",
+    "strategy": "MEV-02-015",
+    "source_min_legs": 2,
+    "source_max_legs": 8,
+    "repository_hops": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "selected_scope": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "source_ref": "ArbitrageX_Master_264x31_LIVE_First(2).xlsx!02_CARTRIDGE_MATH_MAP!A52:AB52",
+    "resolution": "Preserve source and repository policy. Search only their intersection with requested 2..7 swap hops; do not call that full source coverage.",
+    "status": "DISCLOSED_SCOPE_LIMIT"
+  },
+  {
+    "id": "SOURCE_LEGS_VS_REQUESTED_SWAP_SEARCH_SCOPE",
+    "strategy": "MEV-02-016",
+    "source_min_legs": 2,
+    "source_max_legs": 8,
+    "repository_hops": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "selected_scope": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "source_ref": "ArbitrageX_Master_264x31_LIVE_First(2).xlsx!02_CARTRIDGE_MATH_MAP!A53:AB53",
+    "resolution": "Preserve source and repository policy. Search only their intersection with requested 2..7 swap hops; do not call that full source coverage.",
+    "status": "DISCLOSED_SCOPE_LIMIT"
+  },
+  {
+    "id": "SOURCE_LEGS_VS_REQUESTED_SWAP_SEARCH_SCOPE",
+    "strategy": "MEV-02-017",
+    "source_min_legs": 2,
+    "source_max_legs": 8,
+    "repository_hops": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "selected_scope": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "source_ref": "ArbitrageX_Master_264x31_LIVE_First(2).xlsx!02_CARTRIDGE_MATH_MAP!A54:AB54",
+    "resolution": "Preserve source and repository policy. Search only their intersection with requested 2..7 swap hops; do not call that full source coverage.",
+    "status": "DISCLOSED_SCOPE_LIMIT"
+  },
+  {
+    "id": "SOURCE_LEGS_VS_REQUESTED_SWAP_SEARCH_SCOPE",
+    "strategy": "MEV-03-001",
+    "source_min_legs": 2,
+    "source_max_legs": 8,
+    "repository_hops": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "selected_scope": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "source_ref": "ArbitrageX_Master_264x31_LIVE_First(2).xlsx!02_CARTRIDGE_MATH_MAP!A55:AB55",
+    "resolution": "Preserve source and repository policy. Search only their intersection with requested 2..7 swap hops; do not call that full source coverage.",
+    "status": "DISCLOSED_SCOPE_LIMIT"
+  },
+  {
+    "id": "SOURCE_LEGS_VS_REQUESTED_SWAP_SEARCH_SCOPE",
+    "strategy": "MEV-03-002",
+    "source_min_legs": 2,
+    "source_max_legs": 8,
+    "repository_hops": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "selected_scope": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "source_ref": "ArbitrageX_Master_264x31_LIVE_First(2).xlsx!02_CARTRIDGE_MATH_MAP!A56:AB56",
+    "resolution": "Preserve source and repository policy. Search only their intersection with requested 2..7 swap hops; do not call that full source coverage.",
+    "status": "DISCLOSED_SCOPE_LIMIT"
+  },
+  {
+    "id": "SOURCE_LEGS_VS_REQUESTED_SWAP_SEARCH_SCOPE",
+    "strategy": "MEV-03-003",
+    "source_min_legs": 2,
+    "source_max_legs": 8,
+    "repository_hops": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "selected_scope": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "source_ref": "ArbitrageX_Master_264x31_LIVE_First(2).xlsx!02_CARTRIDGE_MATH_MAP!A57:AB57",
+    "resolution": "Preserve source and repository policy. Search only their intersection with requested 2..7 swap hops; do not call that full source coverage.",
+    "status": "DISCLOSED_SCOPE_LIMIT"
+  },
+  {
+    "id": "SOURCE_LEGS_VS_REQUESTED_SWAP_SEARCH_SCOPE",
+    "strategy": "MEV-03-004",
+    "source_min_legs": 2,
+    "source_max_legs": 8,
+    "repository_hops": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "selected_scope": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "source_ref": "ArbitrageX_Master_264x31_LIVE_First(2).xlsx!02_CARTRIDGE_MATH_MAP!A58:AB58",
+    "resolution": "Preserve source and repository policy. Search only their intersection with requested 2..7 swap hops; do not call that full source coverage.",
+    "status": "DISCLOSED_SCOPE_LIMIT"
+  },
+  {
+    "id": "SOURCE_LEGS_VS_REQUESTED_SWAP_SEARCH_SCOPE",
+    "strategy": "MEV-03-005",
+    "source_min_legs": 2,
+    "source_max_legs": 8,
+    "repository_hops": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "selected_scope": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "source_ref": "ArbitrageX_Master_264x31_LIVE_First(2).xlsx!02_CARTRIDGE_MATH_MAP!A59:AB59",
+    "resolution": "Preserve source and repository policy. Search only their intersection with requested 2..7 swap hops; do not call that full source coverage.",
+    "status": "DISCLOSED_SCOPE_LIMIT"
+  },
+  {
+    "id": "SOURCE_LEGS_VS_REQUESTED_SWAP_SEARCH_SCOPE",
+    "strategy": "MEV-03-006",
+    "source_min_legs": 2,
+    "source_max_legs": 8,
+    "repository_hops": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "selected_scope": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "source_ref": "ArbitrageX_Master_264x31_LIVE_First(2).xlsx!02_CARTRIDGE_MATH_MAP!A60:AB60",
+    "resolution": "Preserve source and repository policy. Search only their intersection with requested 2..7 swap hops; do not call that full source coverage.",
+    "status": "DISCLOSED_SCOPE_LIMIT"
+  },
+  {
+    "id": "SOURCE_LEGS_VS_REQUESTED_SWAP_SEARCH_SCOPE",
+    "strategy": "MEV-03-007",
+    "source_min_legs": 2,
+    "source_max_legs": 8,
+    "repository_hops": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "selected_scope": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "source_ref": "ArbitrageX_Master_264x31_LIVE_First(2).xlsx!02_CARTRIDGE_MATH_MAP!A61:AB61",
+    "resolution": "Preserve source and repository policy. Search only their intersection with requested 2..7 swap hops; do not call that full source coverage.",
+    "status": "DISCLOSED_SCOPE_LIMIT"
+  },
+  {
+    "id": "SOURCE_LEGS_VS_REQUESTED_SWAP_SEARCH_SCOPE",
+    "strategy": "MEV-03-008",
+    "source_min_legs": 2,
+    "source_max_legs": 8,
+    "repository_hops": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "selected_scope": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "source_ref": "ArbitrageX_Master_264x31_LIVE_First(2).xlsx!02_CARTRIDGE_MATH_MAP!A62:AB62",
+    "resolution": "Preserve source and repository policy. Search only their intersection with requested 2..7 swap hops; do not call that full source coverage.",
+    "status": "DISCLOSED_SCOPE_LIMIT"
+  },
+  {
+    "id": "SOURCE_LEGS_VS_REQUESTED_SWAP_SEARCH_SCOPE",
+    "strategy": "MEV-03-009",
+    "source_min_legs": 2,
+    "source_max_legs": 8,
+    "repository_hops": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "selected_scope": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "source_ref": "ArbitrageX_Master_264x31_LIVE_First(2).xlsx!02_CARTRIDGE_MATH_MAP!A63:AB63",
+    "resolution": "Preserve source and repository policy. Search only their intersection with requested 2..7 swap hops; do not call that full source coverage.",
+    "status": "DISCLOSED_SCOPE_LIMIT"
+  },
+  {
+    "id": "SOURCE_LEGS_VS_REQUESTED_SWAP_SEARCH_SCOPE",
+    "strategy": "MEV-03-010",
+    "source_min_legs": 2,
+    "source_max_legs": 8,
+    "repository_hops": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "selected_scope": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "source_ref": "ArbitrageX_Master_264x31_LIVE_First(2).xlsx!02_CARTRIDGE_MATH_MAP!A64:AB64",
+    "resolution": "Preserve source and repository policy. Search only their intersection with requested 2..7 swap hops; do not call that full source coverage.",
+    "status": "DISCLOSED_SCOPE_LIMIT"
+  },
+  {
+    "id": "SOURCE_LEGS_VS_REQUESTED_SWAP_SEARCH_SCOPE",
+    "strategy": "MEV-03-011",
+    "source_min_legs": 2,
+    "source_max_legs": 8,
+    "repository_hops": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "selected_scope": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "source_ref": "ArbitrageX_Master_264x31_LIVE_First(2).xlsx!02_CARTRIDGE_MATH_MAP!A65:AB65",
+    "resolution": "Preserve source and repository policy. Search only their intersection with requested 2..7 swap hops; do not call that full source coverage.",
+    "status": "DISCLOSED_SCOPE_LIMIT"
+  },
+  {
+    "id": "SOURCE_LEGS_VS_REQUESTED_SWAP_SEARCH_SCOPE",
+    "strategy": "MEV-03-012",
+    "source_min_legs": 2,
+    "source_max_legs": 8,
+    "repository_hops": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "selected_scope": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "source_ref": "ArbitrageX_Master_264x31_LIVE_First(2).xlsx!02_CARTRIDGE_MATH_MAP!A66:AB66",
+    "resolution": "Preserve source and repository policy. Search only their intersection with requested 2..7 swap hops; do not call that full source coverage.",
+    "status": "DISCLOSED_SCOPE_LIMIT"
+  },
+  {
+    "id": "SOURCE_LEGS_VS_REQUESTED_SWAP_SEARCH_SCOPE",
+    "strategy": "MEV-03-013",
+    "source_min_legs": 2,
+    "source_max_legs": 8,
+    "repository_hops": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "selected_scope": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "source_ref": "ArbitrageX_Master_264x31_LIVE_First(2).xlsx!02_CARTRIDGE_MATH_MAP!A67:AB67",
+    "resolution": "Preserve source and repository policy. Search only their intersection with requested 2..7 swap hops; do not call that full source coverage.",
+    "status": "DISCLOSED_SCOPE_LIMIT"
+  },
+  {
+    "id": "SOURCE_LEGS_VS_REQUESTED_SWAP_SEARCH_SCOPE",
+    "strategy": "MEV-03-014",
+    "source_min_legs": 2,
+    "source_max_legs": 8,
+    "repository_hops": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "selected_scope": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "source_ref": "ArbitrageX_Master_264x31_LIVE_First(2).xlsx!02_CARTRIDGE_MATH_MAP!A68:AB68",
+    "resolution": "Preserve source and repository policy. Search only their intersection with requested 2..7 swap hops; do not call that full source coverage.",
+    "status": "DISCLOSED_SCOPE_LIMIT"
+  },
+  {
+    "id": "SOURCE_LEGS_VS_REQUESTED_SWAP_SEARCH_SCOPE",
+    "strategy": "MEV-03-015",
+    "source_min_legs": 2,
+    "source_max_legs": 8,
+    "repository_hops": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "selected_scope": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "source_ref": "ArbitrageX_Master_264x31_LIVE_First(2).xlsx!02_CARTRIDGE_MATH_MAP!A69:AB69",
+    "resolution": "Preserve source and repository policy. Search only their intersection with requested 2..7 swap hops; do not call that full source coverage.",
+    "status": "DISCLOSED_SCOPE_LIMIT"
+  },
+  {
+    "id": "SOURCE_LEGS_VS_REQUESTED_SWAP_SEARCH_SCOPE",
+    "strategy": "MEV-03-016",
+    "source_min_legs": 2,
+    "source_max_legs": 8,
+    "repository_hops": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "selected_scope": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "source_ref": "ArbitrageX_Master_264x31_LIVE_First(2).xlsx!02_CARTRIDGE_MATH_MAP!A70:AB70",
+    "resolution": "Preserve source and repository policy. Search only their intersection with requested 2..7 swap hops; do not call that full source coverage.",
+    "status": "DISCLOSED_SCOPE_LIMIT"
+  },
+  {
+    "id": "SOURCE_LEGS_VS_REQUESTED_SWAP_SEARCH_SCOPE",
+    "strategy": "MEV-03-017",
+    "source_min_legs": 2,
+    "source_max_legs": 8,
+    "repository_hops": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "selected_scope": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "source_ref": "ArbitrageX_Master_264x31_LIVE_First(2).xlsx!02_CARTRIDGE_MATH_MAP!A71:AB71",
+    "resolution": "Preserve source and repository policy. Search only their intersection with requested 2..7 swap hops; do not call that full source coverage.",
+    "status": "DISCLOSED_SCOPE_LIMIT"
+  },
+  {
+    "id": "SOURCE_LEGS_VS_REQUESTED_SWAP_SEARCH_SCOPE",
+    "strategy": "MEV-03-018",
+    "source_min_legs": 2,
+    "source_max_legs": 8,
+    "repository_hops": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "selected_scope": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "source_ref": "ArbitrageX_Master_264x31_LIVE_First(2).xlsx!02_CARTRIDGE_MATH_MAP!A72:AB72",
+    "resolution": "Preserve source and repository policy. Search only their intersection with requested 2..7 swap hops; do not call that full source coverage.",
+    "status": "DISCLOSED_SCOPE_LIMIT"
+  },
+  {
+    "id": "SOURCE_LEGS_VS_REQUESTED_SWAP_SEARCH_SCOPE",
+    "strategy": "MEV-03-019",
+    "source_min_legs": 2,
+    "source_max_legs": 8,
+    "repository_hops": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "selected_scope": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "source_ref": "ArbitrageX_Master_264x31_LIVE_First(2).xlsx!02_CARTRIDGE_MATH_MAP!A73:AB73",
+    "resolution": "Preserve source and repository policy. Search only their intersection with requested 2..7 swap hops; do not call that full source coverage.",
+    "status": "DISCLOSED_SCOPE_LIMIT"
+  },
+  {
+    "id": "SOURCE_LEGS_VS_REQUESTED_SWAP_SEARCH_SCOPE",
+    "strategy": "MEV-03-020",
+    "source_min_legs": 2,
+    "source_max_legs": 8,
+    "repository_hops": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "selected_scope": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "source_ref": "ArbitrageX_Master_264x31_LIVE_First(2).xlsx!02_CARTRIDGE_MATH_MAP!A74:AB74",
+    "resolution": "Preserve source and repository policy. Search only their intersection with requested 2..7 swap hops; do not call that full source coverage.",
+    "status": "DISCLOSED_SCOPE_LIMIT"
+  },
+  {
+    "id": "SOURCE_LEGS_VS_REQUESTED_SWAP_SEARCH_SCOPE",
+    "strategy": "MEV-03-021",
+    "source_min_legs": 2,
+    "source_max_legs": 8,
+    "repository_hops": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "selected_scope": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "source_ref": "ArbitrageX_Master_264x31_LIVE_First(2).xlsx!02_CARTRIDGE_MATH_MAP!A75:AB75",
+    "resolution": "Preserve source and repository policy. Search only their intersection with requested 2..7 swap hops; do not call that full source coverage.",
+    "status": "DISCLOSED_SCOPE_LIMIT"
+  },
+  {
+    "id": "SOURCE_LEGS_VS_REQUESTED_SWAP_SEARCH_SCOPE",
+    "strategy": "MEV-03-022",
+    "source_min_legs": 2,
+    "source_max_legs": 8,
+    "repository_hops": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "selected_scope": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "source_ref": "ArbitrageX_Master_264x31_LIVE_First(2).xlsx!02_CARTRIDGE_MATH_MAP!A76:AB76",
+    "resolution": "Preserve source and repository policy. Search only their intersection with requested 2..7 swap hops; do not call that full source coverage.",
+    "status": "DISCLOSED_SCOPE_LIMIT"
+  },
+  {
+    "id": "SOURCE_LEGS_VS_REQUESTED_SWAP_SEARCH_SCOPE",
+    "strategy": "MEV-03-023",
+    "source_min_legs": 2,
+    "source_max_legs": 8,
+    "repository_hops": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "selected_scope": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "source_ref": "ArbitrageX_Master_264x31_LIVE_First(2).xlsx!02_CARTRIDGE_MATH_MAP!A77:AB77",
+    "resolution": "Preserve source and repository policy. Search only their intersection with requested 2..7 swap hops; do not call that full source coverage.",
+    "status": "DISCLOSED_SCOPE_LIMIT"
+  },
+  {
+    "id": "SOURCE_LEGS_VS_REQUESTED_SWAP_SEARCH_SCOPE",
+    "strategy": "MEV-03-024",
+    "source_min_legs": 2,
+    "source_max_legs": 8,
+    "repository_hops": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "selected_scope": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "source_ref": "ArbitrageX_Master_264x31_LIVE_First(2).xlsx!02_CARTRIDGE_MATH_MAP!A78:AB78",
+    "resolution": "Preserve source and repository policy. Search only their intersection with requested 2..7 swap hops; do not call that full source coverage.",
+    "status": "DISCLOSED_SCOPE_LIMIT"
+  },
+  {
+    "id": "SOURCE_LEGS_VS_REQUESTED_SWAP_SEARCH_SCOPE",
+    "strategy": "MEV-03-025",
+    "source_min_legs": 2,
+    "source_max_legs": 8,
+    "repository_hops": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "selected_scope": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "source_ref": "ArbitrageX_Master_264x31_LIVE_First(2).xlsx!02_CARTRIDGE_MATH_MAP!A79:AB79",
+    "resolution": "Preserve source and repository policy. Search only their intersection with requested 2..7 swap hops; do not call that full source coverage.",
+    "status": "DISCLOSED_SCOPE_LIMIT"
+  },
+  {
+    "id": "SOURCE_LEGS_VS_REQUESTED_SWAP_SEARCH_SCOPE",
+    "strategy": "MEV-03-026",
+    "source_min_legs": 3,
+    "source_max_legs": 16,
+    "repository_hops": [
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "selected_scope": [
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "source_ref": "ArbitrageX_Master_264x31_LIVE_First(2).xlsx!02_CARTRIDGE_MATH_MAP!A80:AB80",
+    "resolution": "Preserve source and repository policy. Search only their intersection with requested 2..7 swap hops; do not call that full source coverage.",
+    "status": "DISCLOSED_SCOPE_LIMIT"
+  },
+  {
+    "id": "SOURCE_LEGS_VS_REQUESTED_SWAP_SEARCH_SCOPE",
+    "strategy": "MEV-03-027",
+    "source_min_legs": 2,
+    "source_max_legs": 8,
+    "repository_hops": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "selected_scope": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "source_ref": "ArbitrageX_Master_264x31_LIVE_First(2).xlsx!02_CARTRIDGE_MATH_MAP!A81:AB81",
+    "resolution": "Preserve source and repository policy. Search only their intersection with requested 2..7 swap hops; do not call that full source coverage.",
+    "status": "DISCLOSED_SCOPE_LIMIT"
+  },
+  {
+    "id": "SOURCE_LEGS_VS_REQUESTED_SWAP_SEARCH_SCOPE",
+    "strategy": "MEV-03-028",
+    "source_min_legs": 2,
+    "source_max_legs": 8,
+    "repository_hops": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "selected_scope": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "source_ref": "ArbitrageX_Master_264x31_LIVE_First(2).xlsx!02_CARTRIDGE_MATH_MAP!A82:AB82",
+    "resolution": "Preserve source and repository policy. Search only their intersection with requested 2..7 swap hops; do not call that full source coverage.",
+    "status": "DISCLOSED_SCOPE_LIMIT"
+  },
+  {
+    "id": "SOURCE_LEGS_VS_REQUESTED_SWAP_SEARCH_SCOPE",
+    "strategy": "MEV-03-029",
+    "source_min_legs": 2,
+    "source_max_legs": 8,
+    "repository_hops": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "selected_scope": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "source_ref": "ArbitrageX_Master_264x31_LIVE_First(2).xlsx!02_CARTRIDGE_MATH_MAP!A83:AB83",
+    "resolution": "Preserve source and repository policy. Search only their intersection with requested 2..7 swap hops; do not call that full source coverage.",
+    "status": "DISCLOSED_SCOPE_LIMIT"
+  },
+  {
+    "id": "SOURCE_LEGS_VS_REQUESTED_SWAP_SEARCH_SCOPE",
+    "strategy": "MEV-03-030",
+    "source_min_legs": 2,
+    "source_max_legs": 8,
+    "repository_hops": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "selected_scope": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "source_ref": "ArbitrageX_Master_264x31_LIVE_First(2).xlsx!02_CARTRIDGE_MATH_MAP!A84:AB84",
+    "resolution": "Preserve source and repository policy. Search only their intersection with requested 2..7 swap hops; do not call that full source coverage.",
+    "status": "DISCLOSED_SCOPE_LIMIT"
+  },
+  {
+    "id": "SOURCE_LEGS_VS_REQUESTED_SWAP_SEARCH_SCOPE",
+    "strategy": "MEV-03-031",
+    "source_min_legs": 2,
+    "source_max_legs": 8,
+    "repository_hops": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "selected_scope": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "source_ref": "ArbitrageX_Master_264x31_LIVE_First(2).xlsx!02_CARTRIDGE_MATH_MAP!A85:AB85",
+    "resolution": "Preserve source and repository policy. Search only their intersection with requested 2..7 swap hops; do not call that full source coverage.",
+    "status": "DISCLOSED_SCOPE_LIMIT"
+  },
+  {
+    "id": "SOURCE_LEGS_VS_REQUESTED_SWAP_SEARCH_SCOPE",
+    "strategy": "MEV-04-001",
+    "source_min_legs": 2,
+    "source_max_legs": 8,
+    "repository_hops": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "selected_scope": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "source_ref": "ArbitrageX_Master_264x31_LIVE_First(2).xlsx!02_CARTRIDGE_MATH_MAP!A86:AB86",
+    "resolution": "Preserve source and repository policy. Search only their intersection with requested 2..7 swap hops; do not call that full source coverage.",
+    "status": "DISCLOSED_SCOPE_LIMIT"
+  },
+  {
+    "id": "SOURCE_LEGS_VS_REQUESTED_SWAP_SEARCH_SCOPE",
+    "strategy": "MEV-04-002",
+    "source_min_legs": 2,
+    "source_max_legs": 8,
+    "repository_hops": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "selected_scope": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "source_ref": "ArbitrageX_Master_264x31_LIVE_First(2).xlsx!02_CARTRIDGE_MATH_MAP!A87:AB87",
+    "resolution": "Preserve source and repository policy. Search only their intersection with requested 2..7 swap hops; do not call that full source coverage.",
+    "status": "DISCLOSED_SCOPE_LIMIT"
+  },
+  {
+    "id": "SOURCE_LEGS_VS_REQUESTED_SWAP_SEARCH_SCOPE",
+    "strategy": "MEV-04-003",
+    "source_min_legs": 2,
+    "source_max_legs": 8,
+    "repository_hops": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "selected_scope": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "source_ref": "ArbitrageX_Master_264x31_LIVE_First(2).xlsx!02_CARTRIDGE_MATH_MAP!A88:AB88",
+    "resolution": "Preserve source and repository policy. Search only their intersection with requested 2..7 swap hops; do not call that full source coverage.",
+    "status": "DISCLOSED_SCOPE_LIMIT"
+  },
+  {
+    "id": "SOURCE_LEGS_VS_REQUESTED_SWAP_SEARCH_SCOPE",
+    "strategy": "MEV-04-004",
+    "source_min_legs": 2,
+    "source_max_legs": 8,
+    "repository_hops": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "selected_scope": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "source_ref": "ArbitrageX_Master_264x31_LIVE_First(2).xlsx!02_CARTRIDGE_MATH_MAP!A89:AB89",
+    "resolution": "Preserve source and repository policy. Search only their intersection with requested 2..7 swap hops; do not call that full source coverage.",
+    "status": "DISCLOSED_SCOPE_LIMIT"
+  },
+  {
+    "id": "SOURCE_LEGS_VS_REQUESTED_SWAP_SEARCH_SCOPE",
+    "strategy": "MEV-04-005",
+    "source_min_legs": 2,
+    "source_max_legs": 8,
+    "repository_hops": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "selected_scope": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "source_ref": "ArbitrageX_Master_264x31_LIVE_First(2).xlsx!02_CARTRIDGE_MATH_MAP!A90:AB90",
+    "resolution": "Preserve source and repository policy. Search only their intersection with requested 2..7 swap hops; do not call that full source coverage.",
+    "status": "DISCLOSED_SCOPE_LIMIT"
+  },
+  {
+    "id": "SOURCE_LEGS_VS_REQUESTED_SWAP_SEARCH_SCOPE",
+    "strategy": "MEV-04-006",
+    "source_min_legs": 2,
+    "source_max_legs": 8,
+    "repository_hops": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "selected_scope": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "source_ref": "ArbitrageX_Master_264x31_LIVE_First(2).xlsx!02_CARTRIDGE_MATH_MAP!A91:AB91",
+    "resolution": "Preserve source and repository policy. Search only their intersection with requested 2..7 swap hops; do not call that full source coverage.",
+    "status": "DISCLOSED_SCOPE_LIMIT"
+  },
+  {
+    "id": "SOURCE_LEGS_VS_REQUESTED_SWAP_SEARCH_SCOPE",
+    "strategy": "MEV-04-007",
+    "source_min_legs": 2,
+    "source_max_legs": 8,
+    "repository_hops": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "selected_scope": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "source_ref": "ArbitrageX_Master_264x31_LIVE_First(2).xlsx!02_CARTRIDGE_MATH_MAP!A92:AB92",
+    "resolution": "Preserve source and repository policy. Search only their intersection with requested 2..7 swap hops; do not call that full source coverage.",
+    "status": "DISCLOSED_SCOPE_LIMIT"
+  },
+  {
+    "id": "SOURCE_LEGS_VS_REQUESTED_SWAP_SEARCH_SCOPE",
+    "strategy": "MEV-04-008",
+    "source_min_legs": 2,
+    "source_max_legs": 8,
+    "repository_hops": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "selected_scope": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "source_ref": "ArbitrageX_Master_264x31_LIVE_First(2).xlsx!02_CARTRIDGE_MATH_MAP!A93:AB93",
+    "resolution": "Preserve source and repository policy. Search only their intersection with requested 2..7 swap hops; do not call that full source coverage.",
+    "status": "DISCLOSED_SCOPE_LIMIT"
+  },
+  {
+    "id": "SOURCE_LEGS_VS_REQUESTED_SWAP_SEARCH_SCOPE",
+    "strategy": "MEV-04-009",
+    "source_min_legs": 2,
+    "source_max_legs": 8,
+    "repository_hops": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "selected_scope": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "source_ref": "ArbitrageX_Master_264x31_LIVE_First(2).xlsx!02_CARTRIDGE_MATH_MAP!A94:AB94",
+    "resolution": "Preserve source and repository policy. Search only their intersection with requested 2..7 swap hops; do not call that full source coverage.",
+    "status": "DISCLOSED_SCOPE_LIMIT"
+  },
+  {
+    "id": "SOURCE_LEGS_VS_REQUESTED_SWAP_SEARCH_SCOPE",
+    "strategy": "MEV-04-010",
+    "source_min_legs": 2,
+    "source_max_legs": 8,
+    "repository_hops": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "selected_scope": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "source_ref": "ArbitrageX_Master_264x31_LIVE_First(2).xlsx!02_CARTRIDGE_MATH_MAP!A95:AB95",
+    "resolution": "Preserve source and repository policy. Search only their intersection with requested 2..7 swap hops; do not call that full source coverage.",
+    "status": "DISCLOSED_SCOPE_LIMIT"
+  },
+  {
+    "id": "SOURCE_LEGS_VS_REQUESTED_SWAP_SEARCH_SCOPE",
+    "strategy": "MEV-04-011",
+    "source_min_legs": 2,
+    "source_max_legs": 8,
+    "repository_hops": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "selected_scope": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "source_ref": "ArbitrageX_Master_264x31_LIVE_First(2).xlsx!02_CARTRIDGE_MATH_MAP!A96:AB96",
+    "resolution": "Preserve source and repository policy. Search only their intersection with requested 2..7 swap hops; do not call that full source coverage.",
+    "status": "DISCLOSED_SCOPE_LIMIT"
+  },
+  {
+    "id": "SOURCE_LEGS_VS_REQUESTED_SWAP_SEARCH_SCOPE",
+    "strategy": "MEV-04-012",
+    "source_min_legs": 2,
+    "source_max_legs": 8,
+    "repository_hops": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "selected_scope": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "source_ref": "ArbitrageX_Master_264x31_LIVE_First(2).xlsx!02_CARTRIDGE_MATH_MAP!A97:AB97",
+    "resolution": "Preserve source and repository policy. Search only their intersection with requested 2..7 swap hops; do not call that full source coverage.",
+    "status": "DISCLOSED_SCOPE_LIMIT"
+  },
+  {
+    "id": "SOURCE_LEGS_VS_REQUESTED_SWAP_SEARCH_SCOPE",
+    "strategy": "MEV-04-013",
+    "source_min_legs": 2,
+    "source_max_legs": 8,
+    "repository_hops": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "selected_scope": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "source_ref": "ArbitrageX_Master_264x31_LIVE_First(2).xlsx!02_CARTRIDGE_MATH_MAP!A98:AB98",
+    "resolution": "Preserve source and repository policy. Search only their intersection with requested 2..7 swap hops; do not call that full source coverage.",
+    "status": "DISCLOSED_SCOPE_LIMIT"
+  },
+  {
+    "id": "SOURCE_LEGS_VS_REQUESTED_SWAP_SEARCH_SCOPE",
+    "strategy": "MEV-04-014",
+    "source_min_legs": 3,
+    "source_max_legs": 16,
+    "repository_hops": [
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "selected_scope": [
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "source_ref": "ArbitrageX_Master_264x31_LIVE_First(2).xlsx!02_CARTRIDGE_MATH_MAP!A99:AB99",
+    "resolution": "Preserve source and repository policy. Search only their intersection with requested 2..7 swap hops; do not call that full source coverage.",
+    "status": "DISCLOSED_SCOPE_LIMIT"
+  },
+  {
+    "id": "SOURCE_LEGS_VS_REQUESTED_SWAP_SEARCH_SCOPE",
+    "strategy": "MEV-04-015",
+    "source_min_legs": 2,
+    "source_max_legs": 8,
+    "repository_hops": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "selected_scope": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "source_ref": "ArbitrageX_Master_264x31_LIVE_First(2).xlsx!02_CARTRIDGE_MATH_MAP!A100:AB100",
+    "resolution": "Preserve source and repository policy. Search only their intersection with requested 2..7 swap hops; do not call that full source coverage.",
+    "status": "DISCLOSED_SCOPE_LIMIT"
+  },
+  {
+    "id": "SOURCE_LEGS_VS_REQUESTED_SWAP_SEARCH_SCOPE",
+    "strategy": "MEV-04-016",
+    "source_min_legs": 2,
+    "source_max_legs": 8,
+    "repository_hops": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "selected_scope": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "source_ref": "ArbitrageX_Master_264x31_LIVE_First(2).xlsx!02_CARTRIDGE_MATH_MAP!A101:AB101",
+    "resolution": "Preserve source and repository policy. Search only their intersection with requested 2..7 swap hops; do not call that full source coverage.",
+    "status": "DISCLOSED_SCOPE_LIMIT"
+  },
+  {
+    "id": "SOURCE_LEGS_VS_REQUESTED_SWAP_SEARCH_SCOPE",
+    "strategy": "MEV-04-017",
+    "source_min_legs": 2,
+    "source_max_legs": 8,
+    "repository_hops": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "selected_scope": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "source_ref": "ArbitrageX_Master_264x31_LIVE_First(2).xlsx!02_CARTRIDGE_MATH_MAP!A102:AB102",
+    "resolution": "Preserve source and repository policy. Search only their intersection with requested 2..7 swap hops; do not call that full source coverage.",
+    "status": "DISCLOSED_SCOPE_LIMIT"
+  },
+  {
+    "id": "SOURCE_LEGS_VS_REQUESTED_SWAP_SEARCH_SCOPE",
+    "strategy": "MEV-04-018",
+    "source_min_legs": 2,
+    "source_max_legs": 8,
+    "repository_hops": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "selected_scope": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "source_ref": "ArbitrageX_Master_264x31_LIVE_First(2).xlsx!02_CARTRIDGE_MATH_MAP!A103:AB103",
+    "resolution": "Preserve source and repository policy. Search only their intersection with requested 2..7 swap hops; do not call that full source coverage.",
+    "status": "DISCLOSED_SCOPE_LIMIT"
+  },
+  {
+    "id": "SOURCE_LEGS_VS_REQUESTED_SWAP_SEARCH_SCOPE",
+    "strategy": "MEV-04-019",
+    "source_min_legs": 2,
+    "source_max_legs": 8,
+    "repository_hops": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "selected_scope": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "source_ref": "ArbitrageX_Master_264x31_LIVE_First(2).xlsx!02_CARTRIDGE_MATH_MAP!A104:AB104",
+    "resolution": "Preserve source and repository policy. Search only their intersection with requested 2..7 swap hops; do not call that full source coverage.",
+    "status": "DISCLOSED_SCOPE_LIMIT"
+  },
+  {
+    "id": "SOURCE_LEGS_VS_REQUESTED_SWAP_SEARCH_SCOPE",
+    "strategy": "MEV-04-020",
+    "source_min_legs": 2,
+    "source_max_legs": 8,
+    "repository_hops": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "selected_scope": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "source_ref": "ArbitrageX_Master_264x31_LIVE_First(2).xlsx!02_CARTRIDGE_MATH_MAP!A105:AB105",
+    "resolution": "Preserve source and repository policy. Search only their intersection with requested 2..7 swap hops; do not call that full source coverage.",
+    "status": "DISCLOSED_SCOPE_LIMIT"
+  },
+  {
+    "id": "SOURCE_LEGS_VS_REQUESTED_SWAP_SEARCH_SCOPE",
+    "strategy": "MEV-04-021",
+    "source_min_legs": 2,
+    "source_max_legs": 8,
+    "repository_hops": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "selected_scope": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "source_ref": "ArbitrageX_Master_264x31_LIVE_First(2).xlsx!02_CARTRIDGE_MATH_MAP!A106:AB106",
+    "resolution": "Preserve source and repository policy. Search only their intersection with requested 2..7 swap hops; do not call that full source coverage.",
+    "status": "DISCLOSED_SCOPE_LIMIT"
+  },
+  {
+    "id": "SOURCE_LEGS_VS_REQUESTED_SWAP_SEARCH_SCOPE",
+    "strategy": "MEV-04-022",
+    "source_min_legs": 2,
+    "source_max_legs": 8,
+    "repository_hops": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "selected_scope": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "source_ref": "ArbitrageX_Master_264x31_LIVE_First(2).xlsx!02_CARTRIDGE_MATH_MAP!A107:AB107",
+    "resolution": "Preserve source and repository policy. Search only their intersection with requested 2..7 swap hops; do not call that full source coverage.",
+    "status": "DISCLOSED_SCOPE_LIMIT"
+  },
+  {
+    "id": "SOURCE_LEGS_VS_REQUESTED_SWAP_SEARCH_SCOPE",
+    "strategy": "MEV-04-023",
+    "source_min_legs": 2,
+    "source_max_legs": 8,
+    "repository_hops": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "selected_scope": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "source_ref": "ArbitrageX_Master_264x31_LIVE_First(2).xlsx!02_CARTRIDGE_MATH_MAP!A108:AB108",
+    "resolution": "Preserve source and repository policy. Search only their intersection with requested 2..7 swap hops; do not call that full source coverage.",
+    "status": "DISCLOSED_SCOPE_LIMIT"
+  },
+  {
+    "id": "SOURCE_LEGS_VS_REQUESTED_SWAP_SEARCH_SCOPE",
+    "strategy": "MEV-04-024",
+    "source_min_legs": 2,
+    "source_max_legs": 8,
+    "repository_hops": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "selected_scope": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "source_ref": "ArbitrageX_Master_264x31_LIVE_First(2).xlsx!02_CARTRIDGE_MATH_MAP!A109:AB109",
+    "resolution": "Preserve source and repository policy. Search only their intersection with requested 2..7 swap hops; do not call that full source coverage.",
+    "status": "DISCLOSED_SCOPE_LIMIT"
+  },
+  {
+    "id": "SOURCE_LEGS_VS_REQUESTED_SWAP_SEARCH_SCOPE",
+    "strategy": "MEV-04-025",
+    "source_min_legs": 2,
+    "source_max_legs": 8,
+    "repository_hops": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "selected_scope": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "source_ref": "ArbitrageX_Master_264x31_LIVE_First(2).xlsx!02_CARTRIDGE_MATH_MAP!A110:AB110",
+    "resolution": "Preserve source and repository policy. Search only their intersection with requested 2..7 swap hops; do not call that full source coverage.",
+    "status": "DISCLOSED_SCOPE_LIMIT"
+  },
+  {
+    "id": "SOURCE_LEGS_VS_REQUESTED_SWAP_SEARCH_SCOPE",
+    "strategy": "MEV-04-026",
+    "source_min_legs": 2,
+    "source_max_legs": 8,
+    "repository_hops": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "selected_scope": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "source_ref": "ArbitrageX_Master_264x31_LIVE_First(2).xlsx!02_CARTRIDGE_MATH_MAP!A111:AB111",
+    "resolution": "Preserve source and repository policy. Search only their intersection with requested 2..7 swap hops; do not call that full source coverage.",
+    "status": "DISCLOSED_SCOPE_LIMIT"
+  },
+  {
+    "id": "SOURCE_LEGS_VS_REQUESTED_SWAP_SEARCH_SCOPE",
+    "strategy": "MEV-04-027",
+    "source_min_legs": 2,
+    "source_max_legs": 8,
+    "repository_hops": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "selected_scope": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "source_ref": "ArbitrageX_Master_264x31_LIVE_First(2).xlsx!02_CARTRIDGE_MATH_MAP!A112:AB112",
+    "resolution": "Preserve source and repository policy. Search only their intersection with requested 2..7 swap hops; do not call that full source coverage.",
+    "status": "DISCLOSED_SCOPE_LIMIT"
+  },
+  {
+    "id": "SOURCE_LEGS_VS_REQUESTED_SWAP_SEARCH_SCOPE",
+    "strategy": "MEV-04-029",
+    "source_min_legs": 2,
+    "source_max_legs": 8,
+    "repository_hops": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "selected_scope": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "source_ref": "ArbitrageX_Master_264x31_LIVE_First(2).xlsx!02_CARTRIDGE_MATH_MAP!A114:AB114",
+    "resolution": "Preserve source and repository policy. Search only their intersection with requested 2..7 swap hops; do not call that full source coverage.",
+    "status": "DISCLOSED_SCOPE_LIMIT"
+  },
+  {
+    "id": "SOURCE_LEGS_VS_REQUESTED_SWAP_SEARCH_SCOPE",
+    "strategy": "MEV-04-030",
+    "source_min_legs": 2,
+    "source_max_legs": 8,
+    "repository_hops": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "selected_scope": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "source_ref": "ArbitrageX_Master_264x31_LIVE_First(2).xlsx!02_CARTRIDGE_MATH_MAP!A115:AB115",
+    "resolution": "Preserve source and repository policy. Search only their intersection with requested 2..7 swap hops; do not call that full source coverage.",
+    "status": "DISCLOSED_SCOPE_LIMIT"
+  },
+  {
+    "id": "SOURCE_LEGS_VS_REQUESTED_SWAP_SEARCH_SCOPE",
+    "strategy": "MEV-04-031",
+    "source_min_legs": 2,
+    "source_max_legs": 8,
+    "repository_hops": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "selected_scope": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "source_ref": "ArbitrageX_Master_264x31_LIVE_First(2).xlsx!02_CARTRIDGE_MATH_MAP!A116:AB116",
+    "resolution": "Preserve source and repository policy. Search only their intersection with requested 2..7 swap hops; do not call that full source coverage.",
+    "status": "DISCLOSED_SCOPE_LIMIT"
+  },
+  {
+    "id": "SOURCE_LEGS_VS_REQUESTED_SWAP_SEARCH_SCOPE",
+    "strategy": "MEV-05-001",
+    "source_min_legs": 2,
+    "source_max_legs": 8,
+    "repository_hops": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "selected_scope": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "source_ref": "ArbitrageX_Master_264x31_LIVE_First(2).xlsx!02_CARTRIDGE_MATH_MAP!A117:AB117",
+    "resolution": "Preserve source and repository policy. Search only their intersection with requested 2..7 swap hops; do not call that full source coverage.",
+    "status": "DISCLOSED_SCOPE_LIMIT"
+  },
+  {
+    "id": "SOURCE_LEGS_VS_REQUESTED_SWAP_SEARCH_SCOPE",
+    "strategy": "MEV-05-002",
+    "source_min_legs": 2,
+    "source_max_legs": 8,
+    "repository_hops": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "selected_scope": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "source_ref": "ArbitrageX_Master_264x31_LIVE_First(2).xlsx!02_CARTRIDGE_MATH_MAP!A118:AB118",
+    "resolution": "Preserve source and repository policy. Search only their intersection with requested 2..7 swap hops; do not call that full source coverage.",
+    "status": "DISCLOSED_SCOPE_LIMIT"
+  },
+  {
+    "id": "SOURCE_LEGS_VS_REQUESTED_SWAP_SEARCH_SCOPE",
+    "strategy": "MEV-05-004",
+    "source_min_legs": 2,
+    "source_max_legs": 8,
+    "repository_hops": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "selected_scope": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "source_ref": "ArbitrageX_Master_264x31_LIVE_First(2).xlsx!02_CARTRIDGE_MATH_MAP!A120:AB120",
+    "resolution": "Preserve source and repository policy. Search only their intersection with requested 2..7 swap hops; do not call that full source coverage.",
+    "status": "DISCLOSED_SCOPE_LIMIT"
+  },
+  {
+    "id": "SOURCE_LEGS_VS_REQUESTED_SWAP_SEARCH_SCOPE",
+    "strategy": "MEV-05-005",
+    "source_min_legs": 2,
+    "source_max_legs": 8,
+    "repository_hops": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "selected_scope": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "source_ref": "ArbitrageX_Master_264x31_LIVE_First(2).xlsx!02_CARTRIDGE_MATH_MAP!A121:AB121",
+    "resolution": "Preserve source and repository policy. Search only their intersection with requested 2..7 swap hops; do not call that full source coverage.",
+    "status": "DISCLOSED_SCOPE_LIMIT"
+  },
+  {
+    "id": "SOURCE_LEGS_VS_REQUESTED_SWAP_SEARCH_SCOPE",
+    "strategy": "MEV-05-006",
+    "source_min_legs": 2,
+    "source_max_legs": 8,
+    "repository_hops": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "selected_scope": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "source_ref": "ArbitrageX_Master_264x31_LIVE_First(2).xlsx!02_CARTRIDGE_MATH_MAP!A122:AB122",
+    "resolution": "Preserve source and repository policy. Search only their intersection with requested 2..7 swap hops; do not call that full source coverage.",
+    "status": "DISCLOSED_SCOPE_LIMIT"
+  },
+  {
+    "id": "SOURCE_LEGS_VS_REQUESTED_SWAP_SEARCH_SCOPE",
+    "strategy": "MEV-05-007",
+    "source_min_legs": 2,
+    "source_max_legs": 8,
+    "repository_hops": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "selected_scope": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "source_ref": "ArbitrageX_Master_264x31_LIVE_First(2).xlsx!02_CARTRIDGE_MATH_MAP!A123:AB123",
+    "resolution": "Preserve source and repository policy. Search only their intersection with requested 2..7 swap hops; do not call that full source coverage.",
+    "status": "DISCLOSED_SCOPE_LIMIT"
+  },
+  {
+    "id": "SOURCE_LEGS_VS_REQUESTED_SWAP_SEARCH_SCOPE",
+    "strategy": "MEV-05-008",
+    "source_min_legs": 2,
+    "source_max_legs": 8,
+    "repository_hops": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "selected_scope": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "source_ref": "ArbitrageX_Master_264x31_LIVE_First(2).xlsx!02_CARTRIDGE_MATH_MAP!A124:AB124",
+    "resolution": "Preserve source and repository policy. Search only their intersection with requested 2..7 swap hops; do not call that full source coverage.",
+    "status": "DISCLOSED_SCOPE_LIMIT"
+  },
+  {
+    "id": "SOURCE_LEGS_VS_REQUESTED_SWAP_SEARCH_SCOPE",
+    "strategy": "MEV-05-009",
+    "source_min_legs": 2,
+    "source_max_legs": 8,
+    "repository_hops": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "selected_scope": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "source_ref": "ArbitrageX_Master_264x31_LIVE_First(2).xlsx!02_CARTRIDGE_MATH_MAP!A125:AB125",
+    "resolution": "Preserve source and repository policy. Search only their intersection with requested 2..7 swap hops; do not call that full source coverage.",
+    "status": "DISCLOSED_SCOPE_LIMIT"
+  },
+  {
+    "id": "SOURCE_LEGS_VS_REQUESTED_SWAP_SEARCH_SCOPE",
+    "strategy": "MEV-05-010",
+    "source_min_legs": 2,
+    "source_max_legs": 8,
+    "repository_hops": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "selected_scope": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "source_ref": "ArbitrageX_Master_264x31_LIVE_First(2).xlsx!02_CARTRIDGE_MATH_MAP!A126:AB126",
+    "resolution": "Preserve source and repository policy. Search only their intersection with requested 2..7 swap hops; do not call that full source coverage.",
+    "status": "DISCLOSED_SCOPE_LIMIT"
+  },
+  {
+    "id": "SOURCE_LEGS_VS_REQUESTED_SWAP_SEARCH_SCOPE",
+    "strategy": "MEV-05-011",
+    "source_min_legs": 2,
+    "source_max_legs": 8,
+    "repository_hops": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "selected_scope": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "source_ref": "ArbitrageX_Master_264x31_LIVE_First(2).xlsx!02_CARTRIDGE_MATH_MAP!A127:AB127",
+    "resolution": "Preserve source and repository policy. Search only their intersection with requested 2..7 swap hops; do not call that full source coverage.",
+    "status": "DISCLOSED_SCOPE_LIMIT"
+  },
+  {
+    "id": "SOURCE_LEGS_VS_REQUESTED_SWAP_SEARCH_SCOPE",
+    "strategy": "MEV-05-012",
+    "source_min_legs": 2,
+    "source_max_legs": 8,
+    "repository_hops": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "selected_scope": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "source_ref": "ArbitrageX_Master_264x31_LIVE_First(2).xlsx!02_CARTRIDGE_MATH_MAP!A128:AB128",
+    "resolution": "Preserve source and repository policy. Search only their intersection with requested 2..7 swap hops; do not call that full source coverage.",
+    "status": "DISCLOSED_SCOPE_LIMIT"
+  },
+  {
+    "id": "SOURCE_LEGS_VS_REQUESTED_SWAP_SEARCH_SCOPE",
+    "strategy": "MEV-05-013",
+    "source_min_legs": 2,
+    "source_max_legs": 8,
+    "repository_hops": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "selected_scope": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "source_ref": "ArbitrageX_Master_264x31_LIVE_First(2).xlsx!02_CARTRIDGE_MATH_MAP!A129:AB129",
+    "resolution": "Preserve source and repository policy. Search only their intersection with requested 2..7 swap hops; do not call that full source coverage.",
+    "status": "DISCLOSED_SCOPE_LIMIT"
+  },
+  {
+    "id": "SOURCE_LEGS_VS_REQUESTED_SWAP_SEARCH_SCOPE",
+    "strategy": "MEV-05-014",
+    "source_min_legs": 2,
+    "source_max_legs": 8,
+    "repository_hops": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "selected_scope": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "source_ref": "ArbitrageX_Master_264x31_LIVE_First(2).xlsx!02_CARTRIDGE_MATH_MAP!A130:AB130",
+    "resolution": "Preserve source and repository policy. Search only their intersection with requested 2..7 swap hops; do not call that full source coverage.",
+    "status": "DISCLOSED_SCOPE_LIMIT"
+  },
+  {
+    "id": "SOURCE_LEGS_VS_REQUESTED_SWAP_SEARCH_SCOPE",
+    "strategy": "MEV-06-001",
+    "source_min_legs": 2,
+    "source_max_legs": 16,
+    "repository_hops": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "selected_scope": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "source_ref": "ArbitrageX_Master_264x31_LIVE_First(2).xlsx!02_CARTRIDGE_MATH_MAP!A131:AB131",
+    "resolution": "Preserve source and repository policy. Search only their intersection with requested 2..7 swap hops; do not call that full source coverage.",
+    "status": "DISCLOSED_SCOPE_LIMIT"
+  },
+  {
+    "id": "SOURCE_LEGS_VS_REQUESTED_SWAP_SEARCH_SCOPE",
+    "strategy": "MEV-06-002",
+    "source_min_legs": 2,
+    "source_max_legs": 16,
+    "repository_hops": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "selected_scope": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "source_ref": "ArbitrageX_Master_264x31_LIVE_First(2).xlsx!02_CARTRIDGE_MATH_MAP!A132:AB132",
+    "resolution": "Preserve source and repository policy. Search only their intersection with requested 2..7 swap hops; do not call that full source coverage.",
+    "status": "DISCLOSED_SCOPE_LIMIT"
+  },
+  {
+    "id": "SOURCE_LEGS_VS_REQUESTED_SWAP_SEARCH_SCOPE",
+    "strategy": "MEV-06-003",
+    "source_min_legs": 2,
+    "source_max_legs": 16,
+    "repository_hops": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "selected_scope": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "source_ref": "ArbitrageX_Master_264x31_LIVE_First(2).xlsx!02_CARTRIDGE_MATH_MAP!A133:AB133",
+    "resolution": "Preserve source and repository policy. Search only their intersection with requested 2..7 swap hops; do not call that full source coverage.",
+    "status": "DISCLOSED_SCOPE_LIMIT"
+  },
+  {
+    "id": "SOURCE_LEGS_VS_REQUESTED_SWAP_SEARCH_SCOPE",
+    "strategy": "MEV-06-004",
+    "source_min_legs": 2,
+    "source_max_legs": 16,
+    "repository_hops": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "selected_scope": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "source_ref": "ArbitrageX_Master_264x31_LIVE_First(2).xlsx!02_CARTRIDGE_MATH_MAP!A134:AB134",
+    "resolution": "Preserve source and repository policy. Search only their intersection with requested 2..7 swap hops; do not call that full source coverage.",
+    "status": "DISCLOSED_SCOPE_LIMIT"
+  },
+  {
+    "id": "SOURCE_LEGS_VS_REQUESTED_SWAP_SEARCH_SCOPE",
+    "strategy": "MEV-06-005",
+    "source_min_legs": 2,
+    "source_max_legs": 16,
+    "repository_hops": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "selected_scope": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "source_ref": "ArbitrageX_Master_264x31_LIVE_First(2).xlsx!02_CARTRIDGE_MATH_MAP!A135:AB135",
+    "resolution": "Preserve source and repository policy. Search only their intersection with requested 2..7 swap hops; do not call that full source coverage.",
+    "status": "DISCLOSED_SCOPE_LIMIT"
+  },
+  {
+    "id": "SOURCE_LEGS_VS_REQUESTED_SWAP_SEARCH_SCOPE",
+    "strategy": "MEV-06-006",
+    "source_min_legs": 2,
+    "source_max_legs": 16,
+    "repository_hops": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "selected_scope": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "source_ref": "ArbitrageX_Master_264x31_LIVE_First(2).xlsx!02_CARTRIDGE_MATH_MAP!A136:AB136",
+    "resolution": "Preserve source and repository policy. Search only their intersection with requested 2..7 swap hops; do not call that full source coverage.",
+    "status": "DISCLOSED_SCOPE_LIMIT"
+  },
+  {
+    "id": "SOURCE_LEGS_VS_REQUESTED_SWAP_SEARCH_SCOPE",
+    "strategy": "MEV-06-007",
+    "source_min_legs": 2,
+    "source_max_legs": 16,
+    "repository_hops": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "selected_scope": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "source_ref": "ArbitrageX_Master_264x31_LIVE_First(2).xlsx!02_CARTRIDGE_MATH_MAP!A137:AB137",
+    "resolution": "Preserve source and repository policy. Search only their intersection with requested 2..7 swap hops; do not call that full source coverage.",
+    "status": "DISCLOSED_SCOPE_LIMIT"
+  },
+  {
+    "id": "SOURCE_LEGS_VS_REQUESTED_SWAP_SEARCH_SCOPE",
+    "strategy": "MEV-06-008",
+    "source_min_legs": 2,
+    "source_max_legs": 16,
+    "repository_hops": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "selected_scope": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "source_ref": "ArbitrageX_Master_264x31_LIVE_First(2).xlsx!02_CARTRIDGE_MATH_MAP!A138:AB138",
+    "resolution": "Preserve source and repository policy. Search only their intersection with requested 2..7 swap hops; do not call that full source coverage.",
+    "status": "DISCLOSED_SCOPE_LIMIT"
+  },
+  {
+    "id": "SOURCE_LEGS_VS_REQUESTED_SWAP_SEARCH_SCOPE",
+    "strategy": "MEV-06-009",
+    "source_min_legs": 2,
+    "source_max_legs": 16,
+    "repository_hops": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "selected_scope": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "source_ref": "ArbitrageX_Master_264x31_LIVE_First(2).xlsx!02_CARTRIDGE_MATH_MAP!A139:AB139",
+    "resolution": "Preserve source and repository policy. Search only their intersection with requested 2..7 swap hops; do not call that full source coverage.",
+    "status": "DISCLOSED_SCOPE_LIMIT"
+  },
+  {
+    "id": "SOURCE_LEGS_VS_REQUESTED_SWAP_SEARCH_SCOPE",
+    "strategy": "MEV-06-010",
+    "source_min_legs": 2,
+    "source_max_legs": 16,
+    "repository_hops": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "selected_scope": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "source_ref": "ArbitrageX_Master_264x31_LIVE_First(2).xlsx!02_CARTRIDGE_MATH_MAP!A140:AB140",
+    "resolution": "Preserve source and repository policy. Search only their intersection with requested 2..7 swap hops; do not call that full source coverage.",
+    "status": "DISCLOSED_SCOPE_LIMIT"
+  },
+  {
+    "id": "SOURCE_LEGS_VS_REQUESTED_SWAP_SEARCH_SCOPE",
+    "strategy": "MEV-06-012",
+    "source_min_legs": 3,
+    "source_max_legs": 16,
+    "repository_hops": [
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "selected_scope": [
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "source_ref": "ArbitrageX_Master_264x31_LIVE_First(2).xlsx!02_CARTRIDGE_MATH_MAP!A142:AB142",
+    "resolution": "Preserve source and repository policy. Search only their intersection with requested 2..7 swap hops; do not call that full source coverage.",
+    "status": "DISCLOSED_SCOPE_LIMIT"
+  },
+  {
+    "id": "SOURCE_LEGS_VS_REQUESTED_SWAP_SEARCH_SCOPE",
+    "strategy": "MEV-06-013",
+    "source_min_legs": 3,
+    "source_max_legs": 16,
+    "repository_hops": [
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "selected_scope": [
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "source_ref": "ArbitrageX_Master_264x31_LIVE_First(2).xlsx!02_CARTRIDGE_MATH_MAP!A143:AB143",
+    "resolution": "Preserve source and repository policy. Search only their intersection with requested 2..7 swap hops; do not call that full source coverage.",
+    "status": "DISCLOSED_SCOPE_LIMIT"
+  },
+  {
+    "id": "SOURCE_LEGS_VS_REQUESTED_SWAP_SEARCH_SCOPE",
+    "strategy": "MEV-06-014",
+    "source_min_legs": 2,
+    "source_max_legs": 16,
+    "repository_hops": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "selected_scope": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "source_ref": "ArbitrageX_Master_264x31_LIVE_First(2).xlsx!02_CARTRIDGE_MATH_MAP!A144:AB144",
+    "resolution": "Preserve source and repository policy. Search only their intersection with requested 2..7 swap hops; do not call that full source coverage.",
+    "status": "DISCLOSED_SCOPE_LIMIT"
+  },
+  {
+    "id": "SOURCE_LEGS_VS_REQUESTED_SWAP_SEARCH_SCOPE",
+    "strategy": "MEV-06-015",
+    "source_min_legs": 2,
+    "source_max_legs": 16,
+    "repository_hops": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "selected_scope": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "source_ref": "ArbitrageX_Master_264x31_LIVE_First(2).xlsx!02_CARTRIDGE_MATH_MAP!A145:AB145",
+    "resolution": "Preserve source and repository policy. Search only their intersection with requested 2..7 swap hops; do not call that full source coverage.",
+    "status": "DISCLOSED_SCOPE_LIMIT"
+  },
+  {
+    "id": "SOURCE_LEGS_VS_REQUESTED_SWAP_SEARCH_SCOPE",
+    "strategy": "MEV-06-016",
+    "source_min_legs": 2,
+    "source_max_legs": 16,
+    "repository_hops": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "selected_scope": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "source_ref": "ArbitrageX_Master_264x31_LIVE_First(2).xlsx!02_CARTRIDGE_MATH_MAP!A146:AB146",
+    "resolution": "Preserve source and repository policy. Search only their intersection with requested 2..7 swap hops; do not call that full source coverage.",
+    "status": "DISCLOSED_SCOPE_LIMIT"
+  },
+  {
+    "id": "SOURCE_LEGS_VS_REQUESTED_SWAP_SEARCH_SCOPE",
+    "strategy": "MEV-06-017",
+    "source_min_legs": 2,
+    "source_max_legs": 16,
+    "repository_hops": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "selected_scope": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "source_ref": "ArbitrageX_Master_264x31_LIVE_First(2).xlsx!02_CARTRIDGE_MATH_MAP!A147:AB147",
+    "resolution": "Preserve source and repository policy. Search only their intersection with requested 2..7 swap hops; do not call that full source coverage.",
+    "status": "DISCLOSED_SCOPE_LIMIT"
+  },
+  {
+    "id": "SOURCE_LEGS_VS_REQUESTED_SWAP_SEARCH_SCOPE",
+    "strategy": "MEV-06-018",
+    "source_min_legs": 2,
+    "source_max_legs": 16,
+    "repository_hops": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "selected_scope": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "source_ref": "ArbitrageX_Master_264x31_LIVE_First(2).xlsx!02_CARTRIDGE_MATH_MAP!A148:AB148",
+    "resolution": "Preserve source and repository policy. Search only their intersection with requested 2..7 swap hops; do not call that full source coverage.",
+    "status": "DISCLOSED_SCOPE_LIMIT"
+  },
+  {
+    "id": "SOURCE_LEGS_VS_REQUESTED_SWAP_SEARCH_SCOPE",
+    "strategy": "MEV-06-019",
+    "source_min_legs": 2,
+    "source_max_legs": 16,
+    "repository_hops": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "selected_scope": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "source_ref": "ArbitrageX_Master_264x31_LIVE_First(2).xlsx!02_CARTRIDGE_MATH_MAP!A149:AB149",
+    "resolution": "Preserve source and repository policy. Search only their intersection with requested 2..7 swap hops; do not call that full source coverage.",
+    "status": "DISCLOSED_SCOPE_LIMIT"
+  },
+  {
+    "id": "SOURCE_LEGS_VS_REQUESTED_SWAP_SEARCH_SCOPE",
+    "strategy": "MEV-06-020",
+    "source_min_legs": 2,
+    "source_max_legs": 16,
+    "repository_hops": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "selected_scope": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "source_ref": "ArbitrageX_Master_264x31_LIVE_First(2).xlsx!02_CARTRIDGE_MATH_MAP!A150:AB150",
+    "resolution": "Preserve source and repository policy. Search only their intersection with requested 2..7 swap hops; do not call that full source coverage.",
+    "status": "DISCLOSED_SCOPE_LIMIT"
+  },
+  {
+    "id": "SOURCE_LEGS_VS_REQUESTED_SWAP_SEARCH_SCOPE",
+    "strategy": "MEV-06-021",
+    "source_min_legs": 2,
+    "source_max_legs": 16,
+    "repository_hops": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "selected_scope": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "source_ref": "ArbitrageX_Master_264x31_LIVE_First(2).xlsx!02_CARTRIDGE_MATH_MAP!A151:AB151",
+    "resolution": "Preserve source and repository policy. Search only their intersection with requested 2..7 swap hops; do not call that full source coverage.",
+    "status": "DISCLOSED_SCOPE_LIMIT"
+  },
+  {
+    "id": "SOURCE_LEGS_VS_REQUESTED_SWAP_SEARCH_SCOPE",
+    "strategy": "MEV-06-022",
+    "source_min_legs": 2,
+    "source_max_legs": 16,
+    "repository_hops": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "selected_scope": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "source_ref": "ArbitrageX_Master_264x31_LIVE_First(2).xlsx!02_CARTRIDGE_MATH_MAP!A152:AB152",
+    "resolution": "Preserve source and repository policy. Search only their intersection with requested 2..7 swap hops; do not call that full source coverage.",
+    "status": "DISCLOSED_SCOPE_LIMIT"
+  },
+  {
+    "id": "SOURCE_LEGS_VS_REQUESTED_SWAP_SEARCH_SCOPE",
+    "strategy": "MEV-06-023",
+    "source_min_legs": 2,
+    "source_max_legs": 16,
+    "repository_hops": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "selected_scope": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "source_ref": "ArbitrageX_Master_264x31_LIVE_First(2).xlsx!02_CARTRIDGE_MATH_MAP!A153:AB153",
+    "resolution": "Preserve source and repository policy. Search only their intersection with requested 2..7 swap hops; do not call that full source coverage.",
+    "status": "DISCLOSED_SCOPE_LIMIT"
+  },
+  {
+    "id": "SOURCE_LEGS_VS_REQUESTED_SWAP_SEARCH_SCOPE",
+    "strategy": "MEV-06-024",
+    "source_min_legs": 2,
+    "source_max_legs": 16,
+    "repository_hops": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "selected_scope": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "source_ref": "ArbitrageX_Master_264x31_LIVE_First(2).xlsx!02_CARTRIDGE_MATH_MAP!A154:AB154",
+    "resolution": "Preserve source and repository policy. Search only their intersection with requested 2..7 swap hops; do not call that full source coverage.",
+    "status": "DISCLOSED_SCOPE_LIMIT"
+  },
+  {
+    "id": "SOURCE_LEGS_VS_REQUESTED_SWAP_SEARCH_SCOPE",
+    "strategy": "MEV-06-025",
+    "source_min_legs": 2,
+    "source_max_legs": 16,
+    "repository_hops": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "selected_scope": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "source_ref": "ArbitrageX_Master_264x31_LIVE_First(2).xlsx!02_CARTRIDGE_MATH_MAP!A155:AB155",
+    "resolution": "Preserve source and repository policy. Search only their intersection with requested 2..7 swap hops; do not call that full source coverage.",
+    "status": "DISCLOSED_SCOPE_LIMIT"
+  },
+  {
+    "id": "SOURCE_LEGS_VS_REQUESTED_SWAP_SEARCH_SCOPE",
+    "strategy": "MEV-06-026",
+    "source_min_legs": 2,
+    "source_max_legs": 16,
+    "repository_hops": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "selected_scope": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "source_ref": "ArbitrageX_Master_264x31_LIVE_First(2).xlsx!02_CARTRIDGE_MATH_MAP!A156:AB156",
+    "resolution": "Preserve source and repository policy. Search only their intersection with requested 2..7 swap hops; do not call that full source coverage.",
+    "status": "DISCLOSED_SCOPE_LIMIT"
+  },
+  {
+    "id": "SOURCE_LEGS_VS_REQUESTED_SWAP_SEARCH_SCOPE",
+    "strategy": "MEV-06-027",
+    "source_min_legs": 2,
+    "source_max_legs": 16,
+    "repository_hops": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "selected_scope": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "source_ref": "ArbitrageX_Master_264x31_LIVE_First(2).xlsx!02_CARTRIDGE_MATH_MAP!A157:AB157",
+    "resolution": "Preserve source and repository policy. Search only their intersection with requested 2..7 swap hops; do not call that full source coverage.",
+    "status": "DISCLOSED_SCOPE_LIMIT"
+  },
+  {
+    "id": "SOURCE_LEGS_VS_REQUESTED_SWAP_SEARCH_SCOPE",
+    "strategy": "MEV-06-028",
+    "source_min_legs": 2,
+    "source_max_legs": 16,
+    "repository_hops": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "selected_scope": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "source_ref": "ArbitrageX_Master_264x31_LIVE_First(2).xlsx!02_CARTRIDGE_MATH_MAP!A158:AB158",
+    "resolution": "Preserve source and repository policy. Search only their intersection with requested 2..7 swap hops; do not call that full source coverage.",
+    "status": "DISCLOSED_SCOPE_LIMIT"
+  },
+  {
+    "id": "SOURCE_LEGS_VS_REQUESTED_SWAP_SEARCH_SCOPE",
+    "strategy": "MEV-06-029",
+    "source_min_legs": 2,
+    "source_max_legs": 16,
+    "repository_hops": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "selected_scope": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "source_ref": "ArbitrageX_Master_264x31_LIVE_First(2).xlsx!02_CARTRIDGE_MATH_MAP!A159:AB159",
+    "resolution": "Preserve source and repository policy. Search only their intersection with requested 2..7 swap hops; do not call that full source coverage.",
+    "status": "DISCLOSED_SCOPE_LIMIT"
+  },
+  {
+    "id": "SOURCE_LEGS_VS_REQUESTED_SWAP_SEARCH_SCOPE",
+    "strategy": "MEV-06-030",
+    "source_min_legs": 2,
+    "source_max_legs": 16,
+    "repository_hops": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "selected_scope": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "source_ref": "ArbitrageX_Master_264x31_LIVE_First(2).xlsx!02_CARTRIDGE_MATH_MAP!A160:AB160",
+    "resolution": "Preserve source and repository policy. Search only their intersection with requested 2..7 swap hops; do not call that full source coverage.",
+    "status": "DISCLOSED_SCOPE_LIMIT"
+  },
+  {
+    "id": "SOURCE_LEGS_VS_REQUESTED_SWAP_SEARCH_SCOPE",
+    "strategy": "MEV-08-001",
+    "source_min_legs": 1,
+    "source_max_legs": 4,
+    "repository_hops": [
+      2,
+      3,
+      4
+    ],
+    "selected_scope": [
+      2,
+      3,
+      4
+    ],
+    "source_ref": "ArbitrageX_Master_264x31_LIVE_First(2).xlsx!02_CARTRIDGE_MATH_MAP!A191:AB191",
+    "resolution": "Preserve source and repository policy. Search only their intersection with requested 2..7 swap hops; do not call that full source coverage.",
+    "status": "DISCLOSED_SCOPE_LIMIT"
+  },
+  {
+    "id": "SOURCE_LEGS_VS_REQUESTED_SWAP_SEARCH_SCOPE",
+    "strategy": "MEV-08-002",
+    "source_min_legs": 1,
+    "source_max_legs": 4,
+    "repository_hops": [
+      2,
+      3,
+      4
+    ],
+    "selected_scope": [
+      2,
+      3,
+      4
+    ],
+    "source_ref": "ArbitrageX_Master_264x31_LIVE_First(2).xlsx!02_CARTRIDGE_MATH_MAP!A192:AB192",
+    "resolution": "Preserve source and repository policy. Search only their intersection with requested 2..7 swap hops; do not call that full source coverage.",
+    "status": "DISCLOSED_SCOPE_LIMIT"
+  },
+  {
+    "id": "SOURCE_LEGS_VS_REQUESTED_SWAP_SEARCH_SCOPE",
+    "strategy": "MEV-08-003",
+    "source_min_legs": 1,
+    "source_max_legs": 4,
+    "repository_hops": [
+      2,
+      3,
+      4
+    ],
+    "selected_scope": [
+      2,
+      3,
+      4
+    ],
+    "source_ref": "ArbitrageX_Master_264x31_LIVE_First(2).xlsx!02_CARTRIDGE_MATH_MAP!A193:AB193",
+    "resolution": "Preserve source and repository policy. Search only their intersection with requested 2..7 swap hops; do not call that full source coverage.",
+    "status": "DISCLOSED_SCOPE_LIMIT"
+  },
+  {
+    "id": "SOURCE_LEGS_VS_REQUESTED_SWAP_SEARCH_SCOPE",
+    "strategy": "MEV-08-004",
+    "source_min_legs": 1,
+    "source_max_legs": 4,
+    "repository_hops": [
+      2,
+      3,
+      4
+    ],
+    "selected_scope": [
+      2,
+      3,
+      4
+    ],
+    "source_ref": "ArbitrageX_Master_264x31_LIVE_First(2).xlsx!02_CARTRIDGE_MATH_MAP!A194:AB194",
+    "resolution": "Preserve source and repository policy. Search only their intersection with requested 2..7 swap hops; do not call that full source coverage.",
+    "status": "DISCLOSED_SCOPE_LIMIT"
+  },
+  {
+    "id": "SOURCE_LEGS_VS_REQUESTED_SWAP_SEARCH_SCOPE",
+    "strategy": "MEV-08-005",
+    "source_min_legs": 1,
+    "source_max_legs": 4,
+    "repository_hops": [
+      2,
+      3,
+      4
+    ],
+    "selected_scope": [
+      2,
+      3,
+      4
+    ],
+    "source_ref": "ArbitrageX_Master_264x31_LIVE_First(2).xlsx!02_CARTRIDGE_MATH_MAP!A195:AB195",
+    "resolution": "Preserve source and repository policy. Search only their intersection with requested 2..7 swap hops; do not call that full source coverage.",
+    "status": "DISCLOSED_SCOPE_LIMIT"
+  },
+  {
+    "id": "SOURCE_LEGS_VS_REQUESTED_SWAP_SEARCH_SCOPE",
+    "strategy": "MEV-08-006",
+    "source_min_legs": 1,
+    "source_max_legs": 4,
+    "repository_hops": [
+      2,
+      3,
+      4
+    ],
+    "selected_scope": [
+      2,
+      3,
+      4
+    ],
+    "source_ref": "ArbitrageX_Master_264x31_LIVE_First(2).xlsx!02_CARTRIDGE_MATH_MAP!A196:AB196",
+    "resolution": "Preserve source and repository policy. Search only their intersection with requested 2..7 swap hops; do not call that full source coverage.",
+    "status": "DISCLOSED_SCOPE_LIMIT"
+  },
+  {
+    "id": "SOURCE_LEGS_VS_REQUESTED_SWAP_SEARCH_SCOPE",
+    "strategy": "MEV-08-007",
+    "source_min_legs": 1,
+    "source_max_legs": 4,
+    "repository_hops": [
+      2,
+      3,
+      4
+    ],
+    "selected_scope": [
+      2,
+      3,
+      4
+    ],
+    "source_ref": "ArbitrageX_Master_264x31_LIVE_First(2).xlsx!02_CARTRIDGE_MATH_MAP!A197:AB197",
+    "resolution": "Preserve source and repository policy. Search only their intersection with requested 2..7 swap hops; do not call that full source coverage.",
+    "status": "DISCLOSED_SCOPE_LIMIT"
+  },
+  {
+    "id": "SOURCE_LEGS_VS_REQUESTED_SWAP_SEARCH_SCOPE",
+    "strategy": "MEV-08-008",
+    "source_min_legs": 1,
+    "source_max_legs": 4,
+    "repository_hops": [
+      2,
+      3,
+      4
+    ],
+    "selected_scope": [
+      2,
+      3,
+      4
+    ],
+    "source_ref": "ArbitrageX_Master_264x31_LIVE_First(2).xlsx!02_CARTRIDGE_MATH_MAP!A198:AB198",
+    "resolution": "Preserve source and repository policy. Search only their intersection with requested 2..7 swap hops; do not call that full source coverage.",
+    "status": "DISCLOSED_SCOPE_LIMIT"
+  },
+  {
+    "id": "SOURCE_LEGS_VS_REQUESTED_SWAP_SEARCH_SCOPE",
+    "strategy": "MEV-08-009",
+    "source_min_legs": 1,
+    "source_max_legs": 4,
+    "repository_hops": [
+      2,
+      3,
+      4
+    ],
+    "selected_scope": [
+      2,
+      3,
+      4
+    ],
+    "source_ref": "ArbitrageX_Master_264x31_LIVE_First(2).xlsx!02_CARTRIDGE_MATH_MAP!A199:AB199",
+    "resolution": "Preserve source and repository policy. Search only their intersection with requested 2..7 swap hops; do not call that full source coverage.",
+    "status": "DISCLOSED_SCOPE_LIMIT"
+  },
+  {
+    "id": "SOURCE_LEGS_VS_REQUESTED_SWAP_SEARCH_SCOPE",
+    "strategy": "MEV-08-010",
+    "source_min_legs": 1,
+    "source_max_legs": 4,
+    "repository_hops": [
+      2,
+      3,
+      4
+    ],
+    "selected_scope": [
+      2,
+      3,
+      4
+    ],
+    "source_ref": "ArbitrageX_Master_264x31_LIVE_First(2).xlsx!02_CARTRIDGE_MATH_MAP!A200:AB200",
+    "resolution": "Preserve source and repository policy. Search only their intersection with requested 2..7 swap hops; do not call that full source coverage.",
+    "status": "DISCLOSED_SCOPE_LIMIT"
+  },
+  {
+    "id": "SOURCE_LEGS_VS_REQUESTED_SWAP_SEARCH_SCOPE",
+    "strategy": "MEV-08-011",
+    "source_min_legs": 1,
+    "source_max_legs": 4,
+    "repository_hops": [
+      2,
+      3,
+      4
+    ],
+    "selected_scope": [
+      2,
+      3,
+      4
+    ],
+    "source_ref": "ArbitrageX_Master_264x31_LIVE_First(2).xlsx!02_CARTRIDGE_MATH_MAP!A201:AB201",
+    "resolution": "Preserve source and repository policy. Search only their intersection with requested 2..7 swap hops; do not call that full source coverage.",
+    "status": "DISCLOSED_SCOPE_LIMIT"
+  },
+  {
+    "id": "SOURCE_LEGS_VS_REQUESTED_SWAP_SEARCH_SCOPE",
+    "strategy": "MEV-08-012",
+    "source_min_legs": 1,
+    "source_max_legs": 4,
+    "repository_hops": [
+      2,
+      3,
+      4
+    ],
+    "selected_scope": [
+      2,
+      3,
+      4
+    ],
+    "source_ref": "ArbitrageX_Master_264x31_LIVE_First(2).xlsx!02_CARTRIDGE_MATH_MAP!A202:AB202",
+    "resolution": "Preserve source and repository policy. Search only their intersection with requested 2..7 swap hops; do not call that full source coverage.",
+    "status": "DISCLOSED_SCOPE_LIMIT"
+  },
+  {
+    "id": "SOURCE_LEGS_VS_REQUESTED_SWAP_SEARCH_SCOPE",
+    "strategy": "MEV-08-013",
+    "source_min_legs": 1,
+    "source_max_legs": 4,
+    "repository_hops": [
+      2,
+      3,
+      4
+    ],
+    "selected_scope": [
+      2,
+      3,
+      4
+    ],
+    "source_ref": "ArbitrageX_Master_264x31_LIVE_First(2).xlsx!02_CARTRIDGE_MATH_MAP!A203:AB203",
+    "resolution": "Preserve source and repository policy. Search only their intersection with requested 2..7 swap hops; do not call that full source coverage.",
+    "status": "DISCLOSED_SCOPE_LIMIT"
+  },
+  {
+    "id": "SOURCE_LEGS_VS_REQUESTED_SWAP_SEARCH_SCOPE",
+    "strategy": "MEV-08-014",
+    "source_min_legs": 1,
+    "source_max_legs": 4,
+    "repository_hops": [
+      2,
+      3,
+      4
+    ],
+    "selected_scope": [
+      2,
+      3,
+      4
+    ],
+    "source_ref": "ArbitrageX_Master_264x31_LIVE_First(2).xlsx!02_CARTRIDGE_MATH_MAP!A204:AB204",
+    "resolution": "Preserve source and repository policy. Search only their intersection with requested 2..7 swap hops; do not call that full source coverage.",
+    "status": "DISCLOSED_SCOPE_LIMIT"
+  },
+  {
+    "id": "SOURCE_LEGS_VS_REQUESTED_SWAP_SEARCH_SCOPE",
+    "strategy": "MEV-08-015",
+    "source_min_legs": 1,
+    "source_max_legs": 4,
+    "repository_hops": [
+      2,
+      3,
+      4
+    ],
+    "selected_scope": [
+      2,
+      3,
+      4
+    ],
+    "source_ref": "ArbitrageX_Master_264x31_LIVE_First(2).xlsx!02_CARTRIDGE_MATH_MAP!A205:AB205",
+    "resolution": "Preserve source and repository policy. Search only their intersection with requested 2..7 swap hops; do not call that full source coverage.",
+    "status": "DISCLOSED_SCOPE_LIMIT"
+  },
+  {
+    "id": "SOURCE_LEGS_VS_REQUESTED_SWAP_SEARCH_SCOPE",
+    "strategy": "MEV-08-016",
+    "source_min_legs": 1,
+    "source_max_legs": 4,
+    "repository_hops": [
+      2,
+      3,
+      4
+    ],
+    "selected_scope": [
+      2,
+      3,
+      4
+    ],
+    "source_ref": "ArbitrageX_Master_264x31_LIVE_First(2).xlsx!02_CARTRIDGE_MATH_MAP!A206:AB206",
+    "resolution": "Preserve source and repository policy. Search only their intersection with requested 2..7 swap hops; do not call that full source coverage.",
+    "status": "DISCLOSED_SCOPE_LIMIT"
+  },
+  {
+    "id": "SOURCE_LEGS_VS_REQUESTED_SWAP_SEARCH_SCOPE",
+    "strategy": "MEV-08-017",
+    "source_min_legs": 1,
+    "source_max_legs": 4,
+    "repository_hops": [
+      2,
+      3,
+      4
+    ],
+    "selected_scope": [
+      2,
+      3,
+      4
+    ],
+    "source_ref": "ArbitrageX_Master_264x31_LIVE_First(2).xlsx!02_CARTRIDGE_MATH_MAP!A207:AB207",
+    "resolution": "Preserve source and repository policy. Search only their intersection with requested 2..7 swap hops; do not call that full source coverage.",
+    "status": "DISCLOSED_SCOPE_LIMIT"
+  },
+  {
+    "id": "SOURCE_LEGS_VS_REQUESTED_SWAP_SEARCH_SCOPE",
+    "strategy": "MEV-08-018",
+    "source_min_legs": 1,
+    "source_max_legs": 4,
+    "repository_hops": [
+      2,
+      3,
+      4
+    ],
+    "selected_scope": [
+      2,
+      3,
+      4
+    ],
+    "source_ref": "ArbitrageX_Master_264x31_LIVE_First(2).xlsx!02_CARTRIDGE_MATH_MAP!A208:AB208",
+    "resolution": "Preserve source and repository policy. Search only their intersection with requested 2..7 swap hops; do not call that full source coverage.",
+    "status": "DISCLOSED_SCOPE_LIMIT"
+  },
+  {
+    "id": "SOURCE_LEGS_VS_REQUESTED_SWAP_SEARCH_SCOPE",
+    "strategy": "MEV-08-019",
+    "source_min_legs": 1,
+    "source_max_legs": 4,
+    "repository_hops": [
+      2,
+      3,
+      4
+    ],
+    "selected_scope": [
+      2,
+      3,
+      4
+    ],
+    "source_ref": "ArbitrageX_Master_264x31_LIVE_First(2).xlsx!02_CARTRIDGE_MATH_MAP!A209:AB209",
+    "resolution": "Preserve source and repository policy. Search only their intersection with requested 2..7 swap hops; do not call that full source coverage.",
+    "status": "DISCLOSED_SCOPE_LIMIT"
+  },
+  {
+    "id": "SOURCE_LEGS_VS_REQUESTED_SWAP_SEARCH_SCOPE",
+    "strategy": "MEV-08-020",
+    "source_min_legs": 1,
+    "source_max_legs": 4,
+    "repository_hops": [
+      2,
+      3,
+      4
+    ],
+    "selected_scope": [
+      2,
+      3,
+      4
+    ],
+    "source_ref": "ArbitrageX_Master_264x31_LIVE_First(2).xlsx!02_CARTRIDGE_MATH_MAP!A210:AB210",
+    "resolution": "Preserve source and repository policy. Search only their intersection with requested 2..7 swap hops; do not call that full source coverage.",
+    "status": "DISCLOSED_SCOPE_LIMIT"
+  },
+  {
+    "id": "SOURCE_LEGS_VS_REQUESTED_SWAP_SEARCH_SCOPE",
+    "strategy": "MEV-08-021",
+    "source_min_legs": 1,
+    "source_max_legs": 4,
+    "repository_hops": [
+      2,
+      3,
+      4
+    ],
+    "selected_scope": [
+      2,
+      3,
+      4
+    ],
+    "source_ref": "ArbitrageX_Master_264x31_LIVE_First(2).xlsx!02_CARTRIDGE_MATH_MAP!A211:AB211",
+    "resolution": "Preserve source and repository policy. Search only their intersection with requested 2..7 swap hops; do not call that full source coverage.",
+    "status": "DISCLOSED_SCOPE_LIMIT"
+  },
+  {
+    "id": "SOURCE_LEGS_VS_REQUESTED_SWAP_SEARCH_SCOPE",
+    "strategy": "MEV-08-022",
+    "source_min_legs": 1,
+    "source_max_legs": 4,
+    "repository_hops": [
+      2,
+      3,
+      4
+    ],
+    "selected_scope": [
+      2,
+      3,
+      4
+    ],
+    "source_ref": "ArbitrageX_Master_264x31_LIVE_First(2).xlsx!02_CARTRIDGE_MATH_MAP!A212:AB212",
+    "resolution": "Preserve source and repository policy. Search only their intersection with requested 2..7 swap hops; do not call that full source coverage.",
+    "status": "DISCLOSED_SCOPE_LIMIT"
+  },
+  {
+    "id": "SOURCE_LEGS_VS_REQUESTED_SWAP_SEARCH_SCOPE",
+    "strategy": "MEV-08-023",
+    "source_min_legs": 1,
+    "source_max_legs": 4,
+    "repository_hops": [
+      2,
+      3,
+      4
+    ],
+    "selected_scope": [
+      2,
+      3,
+      4
+    ],
+    "source_ref": "ArbitrageX_Master_264x31_LIVE_First(2).xlsx!02_CARTRIDGE_MATH_MAP!A213:AB213",
+    "resolution": "Preserve source and repository policy. Search only their intersection with requested 2..7 swap hops; do not call that full source coverage.",
+    "status": "DISCLOSED_SCOPE_LIMIT"
+  },
+  {
+    "id": "SOURCE_LEGS_VS_REQUESTED_SWAP_SEARCH_SCOPE",
+    "strategy": "MEV-08-024",
+    "source_min_legs": 1,
+    "source_max_legs": 4,
+    "repository_hops": [
+      2,
+      3,
+      4
+    ],
+    "selected_scope": [
+      2,
+      3,
+      4
+    ],
+    "source_ref": "ArbitrageX_Master_264x31_LIVE_First(2).xlsx!02_CARTRIDGE_MATH_MAP!A214:AB214",
+    "resolution": "Preserve source and repository policy. Search only their intersection with requested 2..7 swap hops; do not call that full source coverage.",
+    "status": "DISCLOSED_SCOPE_LIMIT"
+  },
+  {
+    "id": "SOURCE_LEGS_VS_REQUESTED_SWAP_SEARCH_SCOPE",
+    "strategy": "MEV-08-025",
+    "source_min_legs": 1,
+    "source_max_legs": 4,
+    "repository_hops": [
+      2,
+      3,
+      4
+    ],
+    "selected_scope": [
+      2,
+      3,
+      4
+    ],
+    "source_ref": "ArbitrageX_Master_264x31_LIVE_First(2).xlsx!02_CARTRIDGE_MATH_MAP!A215:AB215",
+    "resolution": "Preserve source and repository policy. Search only their intersection with requested 2..7 swap hops; do not call that full source coverage.",
+    "status": "DISCLOSED_SCOPE_LIMIT"
+  },
+  {
+    "id": "SOURCE_LEGS_VS_REQUESTED_SWAP_SEARCH_SCOPE",
+    "strategy": "MEV-09-001",
+    "source_min_legs": 2,
+    "source_max_legs": 12,
+    "repository_hops": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "selected_scope": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "source_ref": "ArbitrageX_Master_264x31_LIVE_First(2).xlsx!02_CARTRIDGE_MATH_MAP!A216:AB216",
+    "resolution": "Preserve source and repository policy. Search only their intersection with requested 2..7 swap hops; do not call that full source coverage.",
+    "status": "DISCLOSED_SCOPE_LIMIT"
+  },
+  {
+    "id": "SOURCE_LEGS_VS_REQUESTED_SWAP_SEARCH_SCOPE",
+    "strategy": "MEV-09-002",
+    "source_min_legs": 2,
+    "source_max_legs": 12,
+    "repository_hops": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "selected_scope": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "source_ref": "ArbitrageX_Master_264x31_LIVE_First(2).xlsx!02_CARTRIDGE_MATH_MAP!A217:AB217",
+    "resolution": "Preserve source and repository policy. Search only their intersection with requested 2..7 swap hops; do not call that full source coverage.",
+    "status": "DISCLOSED_SCOPE_LIMIT"
+  },
+  {
+    "id": "SOURCE_LEGS_VS_REQUESTED_SWAP_SEARCH_SCOPE",
+    "strategy": "MEV-09-003",
+    "source_min_legs": 2,
+    "source_max_legs": 12,
+    "repository_hops": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "selected_scope": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "source_ref": "ArbitrageX_Master_264x31_LIVE_First(2).xlsx!02_CARTRIDGE_MATH_MAP!A218:AB218",
+    "resolution": "Preserve source and repository policy. Search only their intersection with requested 2..7 swap hops; do not call that full source coverage.",
+    "status": "DISCLOSED_SCOPE_LIMIT"
+  },
+  {
+    "id": "SOURCE_LEGS_VS_REQUESTED_SWAP_SEARCH_SCOPE",
+    "strategy": "MEV-09-004",
+    "source_min_legs": 2,
+    "source_max_legs": 12,
+    "repository_hops": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "selected_scope": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "source_ref": "ArbitrageX_Master_264x31_LIVE_First(2).xlsx!02_CARTRIDGE_MATH_MAP!A219:AB219",
+    "resolution": "Preserve source and repository policy. Search only their intersection with requested 2..7 swap hops; do not call that full source coverage.",
+    "status": "DISCLOSED_SCOPE_LIMIT"
+  },
+  {
+    "id": "SOURCE_LEGS_VS_REQUESTED_SWAP_SEARCH_SCOPE",
+    "strategy": "MEV-09-005",
+    "source_min_legs": 2,
+    "source_max_legs": 12,
+    "repository_hops": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "selected_scope": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "source_ref": "ArbitrageX_Master_264x31_LIVE_First(2).xlsx!02_CARTRIDGE_MATH_MAP!A220:AB220",
+    "resolution": "Preserve source and repository policy. Search only their intersection with requested 2..7 swap hops; do not call that full source coverage.",
+    "status": "DISCLOSED_SCOPE_LIMIT"
+  },
+  {
+    "id": "SOURCE_LEGS_VS_REQUESTED_SWAP_SEARCH_SCOPE",
+    "strategy": "MEV-09-006",
+    "source_min_legs": 2,
+    "source_max_legs": 12,
+    "repository_hops": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "selected_scope": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "source_ref": "ArbitrageX_Master_264x31_LIVE_First(2).xlsx!02_CARTRIDGE_MATH_MAP!A221:AB221",
+    "resolution": "Preserve source and repository policy. Search only their intersection with requested 2..7 swap hops; do not call that full source coverage.",
+    "status": "DISCLOSED_SCOPE_LIMIT"
+  },
+  {
+    "id": "SOURCE_LEGS_VS_REQUESTED_SWAP_SEARCH_SCOPE",
+    "strategy": "MEV-09-007",
+    "source_min_legs": 2,
+    "source_max_legs": 12,
+    "repository_hops": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "selected_scope": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "source_ref": "ArbitrageX_Master_264x31_LIVE_First(2).xlsx!02_CARTRIDGE_MATH_MAP!A222:AB222",
+    "resolution": "Preserve source and repository policy. Search only their intersection with requested 2..7 swap hops; do not call that full source coverage.",
+    "status": "DISCLOSED_SCOPE_LIMIT"
+  },
+  {
+    "id": "SOURCE_LEGS_VS_REQUESTED_SWAP_SEARCH_SCOPE",
+    "strategy": "MEV-09-008",
+    "source_min_legs": 3,
+    "source_max_legs": 16,
+    "repository_hops": [
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "selected_scope": [
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "source_ref": "ArbitrageX_Master_264x31_LIVE_First(2).xlsx!02_CARTRIDGE_MATH_MAP!A223:AB223",
+    "resolution": "Preserve source and repository policy. Search only their intersection with requested 2..7 swap hops; do not call that full source coverage.",
+    "status": "DISCLOSED_SCOPE_LIMIT"
+  },
+  {
+    "id": "SOURCE_LEGS_VS_REQUESTED_SWAP_SEARCH_SCOPE",
+    "strategy": "MEV-09-009",
+    "source_min_legs": 2,
+    "source_max_legs": 12,
+    "repository_hops": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "selected_scope": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "source_ref": "ArbitrageX_Master_264x31_LIVE_First(2).xlsx!02_CARTRIDGE_MATH_MAP!A224:AB224",
+    "resolution": "Preserve source and repository policy. Search only their intersection with requested 2..7 swap hops; do not call that full source coverage.",
+    "status": "DISCLOSED_SCOPE_LIMIT"
+  },
+  {
+    "id": "SOURCE_LEGS_VS_REQUESTED_SWAP_SEARCH_SCOPE",
+    "strategy": "MEV-09-010",
+    "source_min_legs": 2,
+    "source_max_legs": 12,
+    "repository_hops": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "selected_scope": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "source_ref": "ArbitrageX_Master_264x31_LIVE_First(2).xlsx!02_CARTRIDGE_MATH_MAP!A225:AB225",
+    "resolution": "Preserve source and repository policy. Search only their intersection with requested 2..7 swap hops; do not call that full source coverage.",
+    "status": "DISCLOSED_SCOPE_LIMIT"
+  },
+  {
+    "id": "SOURCE_LEGS_VS_REQUESTED_SWAP_SEARCH_SCOPE",
+    "strategy": "MEV-09-011",
+    "source_min_legs": 2,
+    "source_max_legs": 12,
+    "repository_hops": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "selected_scope": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "source_ref": "ArbitrageX_Master_264x31_LIVE_First(2).xlsx!02_CARTRIDGE_MATH_MAP!A226:AB226",
+    "resolution": "Preserve source and repository policy. Search only their intersection with requested 2..7 swap hops; do not call that full source coverage.",
+    "status": "DISCLOSED_SCOPE_LIMIT"
+  },
+  {
+    "id": "SOURCE_LEGS_VS_REQUESTED_SWAP_SEARCH_SCOPE",
+    "strategy": "MEV-09-012",
+    "source_min_legs": 2,
+    "source_max_legs": 12,
+    "repository_hops": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "selected_scope": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "source_ref": "ArbitrageX_Master_264x31_LIVE_First(2).xlsx!02_CARTRIDGE_MATH_MAP!A227:AB227",
+    "resolution": "Preserve source and repository policy. Search only their intersection with requested 2..7 swap hops; do not call that full source coverage.",
+    "status": "DISCLOSED_SCOPE_LIMIT"
+  },
+  {
+    "id": "SOURCE_LEGS_VS_REQUESTED_SWAP_SEARCH_SCOPE",
+    "strategy": "MEV-09-013",
+    "source_min_legs": 2,
+    "source_max_legs": 12,
+    "repository_hops": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "selected_scope": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "source_ref": "ArbitrageX_Master_264x31_LIVE_First(2).xlsx!02_CARTRIDGE_MATH_MAP!A228:AB228",
+    "resolution": "Preserve source and repository policy. Search only their intersection with requested 2..7 swap hops; do not call that full source coverage.",
+    "status": "DISCLOSED_SCOPE_LIMIT"
+  },
+  {
+    "id": "SOURCE_LEGS_VS_REQUESTED_SWAP_SEARCH_SCOPE",
+    "strategy": "MEV-09-014",
+    "source_min_legs": 2,
+    "source_max_legs": 12,
+    "repository_hops": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "selected_scope": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "source_ref": "ArbitrageX_Master_264x31_LIVE_First(2).xlsx!02_CARTRIDGE_MATH_MAP!A229:AB229",
+    "resolution": "Preserve source and repository policy. Search only their intersection with requested 2..7 swap hops; do not call that full source coverage.",
+    "status": "DISCLOSED_SCOPE_LIMIT"
+  },
+  {
+    "id": "SOURCE_LEGS_VS_REQUESTED_SWAP_SEARCH_SCOPE",
+    "strategy": "MEV-09-015",
+    "source_min_legs": 2,
+    "source_max_legs": 12,
+    "repository_hops": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "selected_scope": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "source_ref": "ArbitrageX_Master_264x31_LIVE_First(2).xlsx!02_CARTRIDGE_MATH_MAP!A230:AB230",
+    "resolution": "Preserve source and repository policy. Search only their intersection with requested 2..7 swap hops; do not call that full source coverage.",
+    "status": "DISCLOSED_SCOPE_LIMIT"
+  },
+  {
+    "id": "SOURCE_LEGS_VS_REQUESTED_SWAP_SEARCH_SCOPE",
+    "strategy": "MEV-09-016",
+    "source_min_legs": 2,
+    "source_max_legs": 12,
+    "repository_hops": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "selected_scope": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "source_ref": "ArbitrageX_Master_264x31_LIVE_First(2).xlsx!02_CARTRIDGE_MATH_MAP!A231:AB231",
+    "resolution": "Preserve source and repository policy. Search only their intersection with requested 2..7 swap hops; do not call that full source coverage.",
+    "status": "DISCLOSED_SCOPE_LIMIT"
+  },
+  {
+    "id": "SOURCE_LEGS_VS_REQUESTED_SWAP_SEARCH_SCOPE",
+    "strategy": "MEV-09-017",
+    "source_min_legs": 2,
+    "source_max_legs": 12,
+    "repository_hops": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "selected_scope": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "source_ref": "ArbitrageX_Master_264x31_LIVE_First(2).xlsx!02_CARTRIDGE_MATH_MAP!A232:AB232",
+    "resolution": "Preserve source and repository policy. Search only their intersection with requested 2..7 swap hops; do not call that full source coverage.",
+    "status": "DISCLOSED_SCOPE_LIMIT"
+  },
+  {
+    "id": "SOURCE_LEGS_VS_REQUESTED_SWAP_SEARCH_SCOPE",
+    "strategy": "MEV-09-018",
+    "source_min_legs": 2,
+    "source_max_legs": 12,
+    "repository_hops": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "selected_scope": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "source_ref": "ArbitrageX_Master_264x31_LIVE_First(2).xlsx!02_CARTRIDGE_MATH_MAP!A233:AB233",
+    "resolution": "Preserve source and repository policy. Search only their intersection with requested 2..7 swap hops; do not call that full source coverage.",
+    "status": "DISCLOSED_SCOPE_LIMIT"
+  },
+  {
+    "id": "SOURCE_LEGS_VS_REQUESTED_SWAP_SEARCH_SCOPE",
+    "strategy": "MEV-09-019",
+    "source_min_legs": 2,
+    "source_max_legs": 12,
+    "repository_hops": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "selected_scope": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "source_ref": "ArbitrageX_Master_264x31_LIVE_First(2).xlsx!02_CARTRIDGE_MATH_MAP!A234:AB234",
+    "resolution": "Preserve source and repository policy. Search only their intersection with requested 2..7 swap hops; do not call that full source coverage.",
+    "status": "DISCLOSED_SCOPE_LIMIT"
+  },
+  {
+    "id": "SOURCE_LEGS_VS_REQUESTED_SWAP_SEARCH_SCOPE",
+    "strategy": "MEV-09-020",
+    "source_min_legs": 2,
+    "source_max_legs": 12,
+    "repository_hops": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "selected_scope": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "source_ref": "ArbitrageX_Master_264x31_LIVE_First(2).xlsx!02_CARTRIDGE_MATH_MAP!A235:AB235",
+    "resolution": "Preserve source and repository policy. Search only their intersection with requested 2..7 swap hops; do not call that full source coverage.",
+    "status": "DISCLOSED_SCOPE_LIMIT"
+  },
+  {
+    "id": "SOURCE_LEGS_VS_REQUESTED_SWAP_SEARCH_SCOPE",
+    "strategy": "MEV-10-001",
+    "source_min_legs": 2,
+    "source_max_legs": 8,
+    "repository_hops": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "selected_scope": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "source_ref": "ArbitrageX_Master_264x31_LIVE_First(2).xlsx!02_CARTRIDGE_MATH_MAP!A236:AB236",
+    "resolution": "Preserve source and repository policy. Search only their intersection with requested 2..7 swap hops; do not call that full source coverage.",
+    "status": "DISCLOSED_SCOPE_LIMIT"
+  },
+  {
+    "id": "SOURCE_LEGS_VS_REQUESTED_SWAP_SEARCH_SCOPE",
+    "strategy": "MEV-10-002",
+    "source_min_legs": 2,
+    "source_max_legs": 8,
+    "repository_hops": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "selected_scope": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "source_ref": "ArbitrageX_Master_264x31_LIVE_First(2).xlsx!02_CARTRIDGE_MATH_MAP!A237:AB237",
+    "resolution": "Preserve source and repository policy. Search only their intersection with requested 2..7 swap hops; do not call that full source coverage.",
+    "status": "DISCLOSED_SCOPE_LIMIT"
+  },
+  {
+    "id": "SOURCE_LEGS_VS_REQUESTED_SWAP_SEARCH_SCOPE",
+    "strategy": "MEV-10-003",
+    "source_min_legs": 2,
+    "source_max_legs": 8,
+    "repository_hops": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "selected_scope": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "source_ref": "ArbitrageX_Master_264x31_LIVE_First(2).xlsx!02_CARTRIDGE_MATH_MAP!A238:AB238",
+    "resolution": "Preserve source and repository policy. Search only their intersection with requested 2..7 swap hops; do not call that full source coverage.",
+    "status": "DISCLOSED_SCOPE_LIMIT"
+  },
+  {
+    "id": "SOURCE_LEGS_VS_REQUESTED_SWAP_SEARCH_SCOPE",
+    "strategy": "MEV-10-004",
+    "source_min_legs": 3,
+    "source_max_legs": 16,
+    "repository_hops": [
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "selected_scope": [
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "source_ref": "ArbitrageX_Master_264x31_LIVE_First(2).xlsx!02_CARTRIDGE_MATH_MAP!A239:AB239",
+    "resolution": "Preserve source and repository policy. Search only their intersection with requested 2..7 swap hops; do not call that full source coverage.",
+    "status": "DISCLOSED_SCOPE_LIMIT"
+  },
+  {
+    "id": "SOURCE_LEGS_VS_REQUESTED_SWAP_SEARCH_SCOPE",
+    "strategy": "MEV-10-005",
+    "source_min_legs": 2,
+    "source_max_legs": 8,
+    "repository_hops": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "selected_scope": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "source_ref": "ArbitrageX_Master_264x31_LIVE_First(2).xlsx!02_CARTRIDGE_MATH_MAP!A240:AB240",
+    "resolution": "Preserve source and repository policy. Search only their intersection with requested 2..7 swap hops; do not call that full source coverage.",
+    "status": "DISCLOSED_SCOPE_LIMIT"
+  },
+  {
+    "id": "SOURCE_LEGS_VS_REQUESTED_SWAP_SEARCH_SCOPE",
+    "strategy": "MEV-10-006",
+    "source_min_legs": 2,
+    "source_max_legs": 8,
+    "repository_hops": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "selected_scope": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "source_ref": "ArbitrageX_Master_264x31_LIVE_First(2).xlsx!02_CARTRIDGE_MATH_MAP!A241:AB241",
+    "resolution": "Preserve source and repository policy. Search only their intersection with requested 2..7 swap hops; do not call that full source coverage.",
+    "status": "DISCLOSED_SCOPE_LIMIT"
+  },
+  {
+    "id": "SOURCE_LEGS_VS_REQUESTED_SWAP_SEARCH_SCOPE",
+    "strategy": "MEV-10-007",
+    "source_min_legs": 2,
+    "source_max_legs": 8,
+    "repository_hops": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "selected_scope": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "source_ref": "ArbitrageX_Master_264x31_LIVE_First(2).xlsx!02_CARTRIDGE_MATH_MAP!A242:AB242",
+    "resolution": "Preserve source and repository policy. Search only their intersection with requested 2..7 swap hops; do not call that full source coverage.",
+    "status": "DISCLOSED_SCOPE_LIMIT"
+  },
+  {
+    "id": "SOURCE_LEGS_VS_REQUESTED_SWAP_SEARCH_SCOPE",
+    "strategy": "MEV-10-008",
+    "source_min_legs": 2,
+    "source_max_legs": 8,
+    "repository_hops": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "selected_scope": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "source_ref": "ArbitrageX_Master_264x31_LIVE_First(2).xlsx!02_CARTRIDGE_MATH_MAP!A243:AB243",
+    "resolution": "Preserve source and repository policy. Search only their intersection with requested 2..7 swap hops; do not call that full source coverage.",
+    "status": "DISCLOSED_SCOPE_LIMIT"
+  },
+  {
+    "id": "SOURCE_LEGS_VS_REQUESTED_SWAP_SEARCH_SCOPE",
+    "strategy": "MEV-10-009",
+    "source_min_legs": 2,
+    "source_max_legs": 8,
+    "repository_hops": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "selected_scope": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "source_ref": "ArbitrageX_Master_264x31_LIVE_First(2).xlsx!02_CARTRIDGE_MATH_MAP!A244:AB244",
+    "resolution": "Preserve source and repository policy. Search only their intersection with requested 2..7 swap hops; do not call that full source coverage.",
+    "status": "DISCLOSED_SCOPE_LIMIT"
+  },
+  {
+    "id": "SOURCE_LEGS_VS_REQUESTED_SWAP_SEARCH_SCOPE",
+    "strategy": "MEV-10-010",
+    "source_min_legs": 2,
+    "source_max_legs": 8,
+    "repository_hops": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "selected_scope": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "source_ref": "ArbitrageX_Master_264x31_LIVE_First(2).xlsx!02_CARTRIDGE_MATH_MAP!A245:AB245",
+    "resolution": "Preserve source and repository policy. Search only their intersection with requested 2..7 swap hops; do not call that full source coverage.",
+    "status": "DISCLOSED_SCOPE_LIMIT"
+  },
+  {
+    "id": "SOURCE_LEGS_VS_REQUESTED_SWAP_SEARCH_SCOPE",
+    "strategy": "MEV-10-011",
+    "source_min_legs": 2,
+    "source_max_legs": 8,
+    "repository_hops": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "selected_scope": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "source_ref": "ArbitrageX_Master_264x31_LIVE_First(2).xlsx!02_CARTRIDGE_MATH_MAP!A246:AB246",
+    "resolution": "Preserve source and repository policy. Search only their intersection with requested 2..7 swap hops; do not call that full source coverage.",
+    "status": "DISCLOSED_SCOPE_LIMIT"
+  },
+  {
+    "id": "SOURCE_LEGS_VS_REQUESTED_SWAP_SEARCH_SCOPE",
+    "strategy": "MEV-10-012",
+    "source_min_legs": 2,
+    "source_max_legs": 8,
+    "repository_hops": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "selected_scope": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "source_ref": "ArbitrageX_Master_264x31_LIVE_First(2).xlsx!02_CARTRIDGE_MATH_MAP!A247:AB247",
+    "resolution": "Preserve source and repository policy. Search only their intersection with requested 2..7 swap hops; do not call that full source coverage.",
+    "status": "DISCLOSED_SCOPE_LIMIT"
+  },
+  {
+    "id": "SOURCE_LEGS_VS_REQUESTED_SWAP_SEARCH_SCOPE",
+    "strategy": "MEV-10-013",
+    "source_min_legs": 2,
+    "source_max_legs": 8,
+    "repository_hops": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "selected_scope": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "source_ref": "ArbitrageX_Master_264x31_LIVE_First(2).xlsx!02_CARTRIDGE_MATH_MAP!A248:AB248",
+    "resolution": "Preserve source and repository policy. Search only their intersection with requested 2..7 swap hops; do not call that full source coverage.",
+    "status": "DISCLOSED_SCOPE_LIMIT"
+  },
+  {
+    "id": "SOURCE_LEGS_VS_REQUESTED_SWAP_SEARCH_SCOPE",
+    "strategy": "MEV-10-014",
+    "source_min_legs": 2,
+    "source_max_legs": 8,
+    "repository_hops": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "selected_scope": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "source_ref": "ArbitrageX_Master_264x31_LIVE_First(2).xlsx!02_CARTRIDGE_MATH_MAP!A249:AB249",
+    "resolution": "Preserve source and repository policy. Search only their intersection with requested 2..7 swap hops; do not call that full source coverage.",
+    "status": "DISCLOSED_SCOPE_LIMIT"
+  },
+  {
+    "id": "SOURCE_LEGS_VS_REQUESTED_SWAP_SEARCH_SCOPE",
+    "strategy": "MEV-10-015",
+    "source_min_legs": 2,
+    "source_max_legs": 8,
+    "repository_hops": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "selected_scope": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "source_ref": "ArbitrageX_Master_264x31_LIVE_First(2).xlsx!02_CARTRIDGE_MATH_MAP!A250:AB250",
+    "resolution": "Preserve source and repository policy. Search only their intersection with requested 2..7 swap hops; do not call that full source coverage.",
+    "status": "DISCLOSED_SCOPE_LIMIT"
+  },
+  {
+    "id": "SOURCE_LEGS_VS_REQUESTED_SWAP_SEARCH_SCOPE",
+    "strategy": "MEV-10-016",
+    "source_min_legs": 2,
+    "source_max_legs": 8,
+    "repository_hops": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "selected_scope": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "source_ref": "ArbitrageX_Master_264x31_LIVE_First(2).xlsx!02_CARTRIDGE_MATH_MAP!A251:AB251",
+    "resolution": "Preserve source and repository policy. Search only their intersection with requested 2..7 swap hops; do not call that full source coverage.",
+    "status": "DISCLOSED_SCOPE_LIMIT"
+  },
+  {
+    "id": "SOURCE_LEGS_VS_REQUESTED_SWAP_SEARCH_SCOPE",
+    "strategy": "MEV-10-017",
+    "source_min_legs": 2,
+    "source_max_legs": 8,
+    "repository_hops": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "selected_scope": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "source_ref": "ArbitrageX_Master_264x31_LIVE_First(2).xlsx!02_CARTRIDGE_MATH_MAP!A252:AB252",
+    "resolution": "Preserve source and repository policy. Search only their intersection with requested 2..7 swap hops; do not call that full source coverage.",
+    "status": "DISCLOSED_SCOPE_LIMIT"
+  },
+  {
+    "id": "SOURCE_LEGS_VS_REQUESTED_SWAP_SEARCH_SCOPE",
+    "strategy": "MEV-10-018",
+    "source_min_legs": 2,
+    "source_max_legs": 8,
+    "repository_hops": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "selected_scope": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "source_ref": "ArbitrageX_Master_264x31_LIVE_First(2).xlsx!02_CARTRIDGE_MATH_MAP!A253:AB253",
+    "resolution": "Preserve source and repository policy. Search only their intersection with requested 2..7 swap hops; do not call that full source coverage.",
+    "status": "DISCLOSED_SCOPE_LIMIT"
+  },
+  {
+    "id": "SOURCE_LEGS_VS_REQUESTED_SWAP_SEARCH_SCOPE",
+    "strategy": "MEV-11-001",
+    "source_min_legs": 2,
+    "source_max_legs": 12,
+    "repository_hops": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "selected_scope": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "source_ref": "ArbitrageX_Master_264x31_LIVE_First(2).xlsx!02_CARTRIDGE_MATH_MAP!A254:AB254",
+    "resolution": "Preserve source and repository policy. Search only their intersection with requested 2..7 swap hops; do not call that full source coverage.",
+    "status": "DISCLOSED_SCOPE_LIMIT"
+  },
+  {
+    "id": "SOURCE_LEGS_VS_REQUESTED_SWAP_SEARCH_SCOPE",
+    "strategy": "MEV-11-002",
+    "source_min_legs": 2,
+    "source_max_legs": 12,
+    "repository_hops": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "selected_scope": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "source_ref": "ArbitrageX_Master_264x31_LIVE_First(2).xlsx!02_CARTRIDGE_MATH_MAP!A255:AB255",
+    "resolution": "Preserve source and repository policy. Search only their intersection with requested 2..7 swap hops; do not call that full source coverage.",
+    "status": "DISCLOSED_SCOPE_LIMIT"
+  },
+  {
+    "id": "SOURCE_LEGS_VS_REQUESTED_SWAP_SEARCH_SCOPE",
+    "strategy": "MEV-11-003",
+    "source_min_legs": 2,
+    "source_max_legs": 12,
+    "repository_hops": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "selected_scope": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "source_ref": "ArbitrageX_Master_264x31_LIVE_First(2).xlsx!02_CARTRIDGE_MATH_MAP!A256:AB256",
+    "resolution": "Preserve source and repository policy. Search only their intersection with requested 2..7 swap hops; do not call that full source coverage.",
+    "status": "DISCLOSED_SCOPE_LIMIT"
+  },
+  {
+    "id": "SOURCE_LEGS_VS_REQUESTED_SWAP_SEARCH_SCOPE",
+    "strategy": "MEV-11-004",
+    "source_min_legs": 2,
+    "source_max_legs": 12,
+    "repository_hops": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "selected_scope": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "source_ref": "ArbitrageX_Master_264x31_LIVE_First(2).xlsx!02_CARTRIDGE_MATH_MAP!A257:AB257",
+    "resolution": "Preserve source and repository policy. Search only their intersection with requested 2..7 swap hops; do not call that full source coverage.",
+    "status": "DISCLOSED_SCOPE_LIMIT"
+  },
+  {
+    "id": "SOURCE_LEGS_VS_REQUESTED_SWAP_SEARCH_SCOPE",
+    "strategy": "MEV-11-005",
+    "source_min_legs": 3,
+    "source_max_legs": 16,
+    "repository_hops": [
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "selected_scope": [
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "source_ref": "ArbitrageX_Master_264x31_LIVE_First(2).xlsx!02_CARTRIDGE_MATH_MAP!A258:AB258",
+    "resolution": "Preserve source and repository policy. Search only their intersection with requested 2..7 swap hops; do not call that full source coverage.",
+    "status": "DISCLOSED_SCOPE_LIMIT"
+  },
+  {
+    "id": "SOURCE_LEGS_VS_REQUESTED_SWAP_SEARCH_SCOPE",
+    "strategy": "MEV-11-006",
+    "source_min_legs": 2,
+    "source_max_legs": 12,
+    "repository_hops": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "selected_scope": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "source_ref": "ArbitrageX_Master_264x31_LIVE_First(2).xlsx!02_CARTRIDGE_MATH_MAP!A259:AB259",
+    "resolution": "Preserve source and repository policy. Search only their intersection with requested 2..7 swap hops; do not call that full source coverage.",
+    "status": "DISCLOSED_SCOPE_LIMIT"
+  },
+  {
+    "id": "SOURCE_LEGS_VS_REQUESTED_SWAP_SEARCH_SCOPE",
+    "strategy": "MEV-11-007",
+    "source_min_legs": 2,
+    "source_max_legs": 12,
+    "repository_hops": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "selected_scope": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "source_ref": "ArbitrageX_Master_264x31_LIVE_First(2).xlsx!02_CARTRIDGE_MATH_MAP!A260:AB260",
+    "resolution": "Preserve source and repository policy. Search only their intersection with requested 2..7 swap hops; do not call that full source coverage.",
+    "status": "DISCLOSED_SCOPE_LIMIT"
+  },
+  {
+    "id": "SOURCE_LEGS_VS_REQUESTED_SWAP_SEARCH_SCOPE",
+    "strategy": "MEV-11-008",
+    "source_min_legs": 2,
+    "source_max_legs": 12,
+    "repository_hops": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "selected_scope": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "source_ref": "ArbitrageX_Master_264x31_LIVE_First(2).xlsx!02_CARTRIDGE_MATH_MAP!A261:AB261",
+    "resolution": "Preserve source and repository policy. Search only their intersection with requested 2..7 swap hops; do not call that full source coverage.",
+    "status": "DISCLOSED_SCOPE_LIMIT"
+  },
+  {
+    "id": "SOURCE_LEGS_VS_REQUESTED_SWAP_SEARCH_SCOPE",
+    "strategy": "MEV-11-009",
+    "source_min_legs": 2,
+    "source_max_legs": 12,
+    "repository_hops": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "selected_scope": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "source_ref": "ArbitrageX_Master_264x31_LIVE_First(2).xlsx!02_CARTRIDGE_MATH_MAP!A262:AB262",
+    "resolution": "Preserve source and repository policy. Search only their intersection with requested 2..7 swap hops; do not call that full source coverage.",
+    "status": "DISCLOSED_SCOPE_LIMIT"
+  },
+  {
+    "id": "SOURCE_LEGS_VS_REQUESTED_SWAP_SEARCH_SCOPE",
+    "strategy": "MEV-11-010",
+    "source_min_legs": 2,
+    "source_max_legs": 12,
+    "repository_hops": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "selected_scope": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "source_ref": "ArbitrageX_Master_264x31_LIVE_First(2).xlsx!02_CARTRIDGE_MATH_MAP!A263:AB263",
+    "resolution": "Preserve source and repository policy. Search only their intersection with requested 2..7 swap hops; do not call that full source coverage.",
+    "status": "DISCLOSED_SCOPE_LIMIT"
+  },
+  {
+    "id": "SOURCE_LEGS_VS_REQUESTED_SWAP_SEARCH_SCOPE",
+    "strategy": "MEV-11-011",
+    "source_min_legs": 2,
+    "source_max_legs": 12,
+    "repository_hops": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "selected_scope": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "source_ref": "ArbitrageX_Master_264x31_LIVE_First(2).xlsx!02_CARTRIDGE_MATH_MAP!A264:AB264",
+    "resolution": "Preserve source and repository policy. Search only their intersection with requested 2..7 swap hops; do not call that full source coverage.",
+    "status": "DISCLOSED_SCOPE_LIMIT"
+  },
+  {
+    "id": "SOURCE_LEGS_VS_REQUESTED_SWAP_SEARCH_SCOPE",
+    "strategy": "MEV-11-012",
+    "source_min_legs": 2,
+    "source_max_legs": 12,
+    "repository_hops": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "selected_scope": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "source_ref": "ArbitrageX_Master_264x31_LIVE_First(2).xlsx!02_CARTRIDGE_MATH_MAP!A265:AB265",
+    "resolution": "Preserve source and repository policy. Search only their intersection with requested 2..7 swap hops; do not call that full source coverage.",
+    "status": "DISCLOSED_SCOPE_LIMIT"
+  },
+  {
+    "id": "COUNT_270_VS_264_PLUS_7",
+    "resolution": "Generate exactly 264 numbered replacements. Preserve all seven root scripts; never delete one to force 270.",
+    "status": "RESOLVED_GENERATION_SCOPE"
+  },
+  {
+    "id": "OPS_31_VS_REGISTRY_32",
+    "resolution": "Preserve 31 source columns and original numeric IDs. Do not disable, relabel, or assign a made-up role/weight to NSGA-II operator 32.",
+    "status": "EXTENSION_NOT_SPECIFIED"
+  },
+  {
+    "id": "RISK_WEIGHT_VS_QUALITY_GATE",
+    "resolution": "Do not map quality >=70 to probability <0.10. Native risk gate must report metric name, scale, direction and evidence.",
+    "status": "REQUIRES_RUNTIME_GATE_BINDING"
+  },
+  {
+    "id": "PSEUDOCODE_DOUBLE_COST",
+    "resolution": "Quote outputs already include curve impact/LP fees. Subtract only documented external costs once, in a common numeraire.",
+    "status": "IMPLEMENTED_ACCOUNTING_RULE"
+  },
+  {
+    "id": "MASTER_NO_CALIBRATED_WEIGHTS",
+    "resolution": "All 8184 Resolved_Weight cells remain null; no flat 0.5 confidence or normalized fake evidence.",
+    "status": "PRESERVED"
+  },
+  {
+    "id": "SOURCE_STATIC_AUDIT_IS_NOT_LIVE_EVIDENCE",
+    "resolution": "06_B_STATIC_DIAG and 08_CONFLICTS are supplied findings, not current production measurements. Preserve their wording and source dates.",
+    "status": "PRESERVED_NOT_REATTESTED"
+  },
+  {
+    "id": "SOURCE_CONFLICTS_ROW_ALIGNMENT",
+    "resolution": "Rows C-004/C-005/C-006 contain shifted short rows under ten headers. Preserve exact cells; do not infer displaced Status values.",
+    "status": "PRESERVED_RAW"
+  }
+]

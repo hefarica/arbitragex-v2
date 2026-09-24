@@ -170,8 +170,18 @@ pub(crate) struct SectionIvFold {
 /// - An all-zero slice yields `Some(prior_log_odds)` + `false` — LR = e⁰ = 1
 ///   contributes nothing (the honest flat state).
 ///
-/// `evidence` is the archived JSON array (31 slots, 0.0 = not computed);
-/// non-finite entries are treated as not computed. Pure — no I/O.
+/// `evidence` accepted forms (MATH-02 fix, 2026-09-24):
+/// 1. Flat JSON **array** (31 slots, 0.0 = not computed) — the historical
+///    reader-only shape (build_evidence_vector, no production writer).
+/// 2. The **object** actually published by `math_evidence::publish_declared_
+///    combo_evidence` / the regime writer to `arbx:math_evidence:<chain>:
+///    <strategy>`: `{primary_operators:[{op,scalar,…}], secondary_operators:[…],
+///    operators_computed:N}`. Scalars must be finite to count; `op` is a 1-based
+///    operator id into the 31 calibration slots.
+///
+/// Before this fix the reader demanded the array form while every writer
+/// published the object form — `calibration_applied` was structurally always
+/// false. Non-finite entries are treated as not computed. Pure — no I/O.
 pub(crate) fn section_iv_fold(
     prior_log_odds: f64,
     evidence: &Option<serde_json::Value>,
@@ -183,18 +193,52 @@ pub(crate) fn section_iv_fold(
             calibration_applied: false,
         };
     };
-    let Some(serde_json::Value::Array(arr)) = evidence else {
+    let Some(evidence) = evidence else {
         return SectionIvFold {
             posterior_log_odds: None,
             calibration_applied: false,
         };
     };
     let mut e = vec![0.0f64; OPERATOR_COUNT];
-    for (i, v) in arr.iter().enumerate().take(OPERATOR_COUNT) {
-        if let Some(f) = v.as_f64() {
-            if f.is_finite() {
-                e[i] = f;
+    match evidence {
+        serde_json::Value::Array(arr) => {
+            for (i, v) in arr.iter().enumerate().take(OPERATOR_COUNT) {
+                if let Some(f) = v.as_f64() {
+                    if f.is_finite() {
+                        e[i] = f;
+                    }
+                }
             }
+        }
+        serde_json::Value::Object(map) => {
+            // Declared-combo / regime snapshot object: harvest finite scalars
+            // from primary_operators + secondary_operators rows.
+            for key in ["primary_operators", "secondary_operators"] {
+                let Some(rows) = map.get(key).and_then(|v| v.as_array()) else {
+                    continue;
+                };
+                for row in rows {
+                    let Some(op_id) = row.get("op").and_then(|v| v.as_u64()) else {
+                        continue;
+                    };
+                    // op ids are 1-based; slot k corresponds to operator k+1.
+                    let idx = usize::try_from(op_id).ok().and_then(|i| i.checked_sub(1));
+                    let Some(idx) = idx.filter(|i| *i < OPERATOR_COUNT) else {
+                        continue;
+                    };
+                    if let Some(f) = row.get("scalar").and_then(|v| v.as_f64()) {
+                        if f.is_finite() {
+                            e[idx] = f;
+                        }
+                    }
+                }
+            }
+        }
+        _ => {
+            return SectionIvFold {
+                posterior_log_odds: None,
+                calibration_applied: false,
+            };
         }
     }
     let (lo, ctx) = crate::math_evidence::evidence_posterior_log_odds(prior_log_odds, &e, cal);
@@ -210,6 +254,51 @@ mod tests {
 
     fn evidence(vals: &[f64]) -> Option<serde_json::Value> {
         Some(serde_json::json!(vals))
+    }
+
+    /// MATH-02 regression: the DECLARED-COMBO OBJECT form (what
+    /// publish_declared_combo_evidence actually writes) must fold, not silently
+    /// no-op like it did when the reader only accepted arrays.
+    #[test]
+    fn fold_accepts_declared_combo_object_form() {
+        let obj = serde_json::json!({
+            "chain_id": 1,
+            "strategy_kind": "mev_01_001_dex_dex_arbitrage",
+            "source": "declared_combo",
+            "primary_operators": [
+                {"op": 15, "role": "PRIMARY", "name": "op_15_golden_section", "scalar": 0.42},
+                {"op": 16, "role": "PRIMARY", "name": "op_16_kelly", "scalar": -0.10}
+            ],
+            "secondary_operators": [
+                {"op": 27, "role": "SECONDARY", "name": "op_27_path_ordering", "scalar": 1.5}
+            ],
+            "operators_computed": 3
+        });
+        let mut cal = vec![0.0f64; OPERATOR_COUNT];
+        cal[14] = 1.2; // op 15 slot
+        let f = section_iv_fold(0.0, &Some(obj), &Some(cal));
+        // posterior = 0.0 + 1.2 · 0.42 = 0.504 — the exact counterexample that
+        // previously returned None because the object never matched Array.
+        assert!((f.posterior_log_odds.unwrap() - 0.504).abs() < 1e-12);
+        assert!(f.calibration_applied);
+    }
+
+    #[test]
+    fn fold_object_ignores_nonfinite_and_out_of_range_ops() {
+        let obj = serde_json::json!({
+            "primary_operators": [
+                {"op": 0, "scalar": 9.9},          // 1-based: out of range
+                {"op": 99, "scalar": 9.9},         // out of range
+                {"op": 1, "scalar": serde_json::Value::Null} // missing scalar
+            ]
+        });
+        // All-zero calibration: LR = e⁰ = 1 contributes nothing — the honest
+        // flat state (a non-zero cal slot WOULD mark `calibrated` per the
+        // existing evidence_posterior_log_odds semantics even with e=0).
+        let cal = vec![0.0f64; OPERATOR_COUNT];
+        let f = section_iv_fold(0.25, &Some(obj), &Some(cal));
+        assert!((f.posterior_log_odds.unwrap() - 0.25).abs() < 1e-12); // nothing folded
+        assert!(!f.calibration_applied);
     }
 
     #[test]

@@ -1,0 +1,13 @@
+{
+  "generated_rhai": 264,
+  "full_manifests": 264,
+  "source_sheets": 17,
+  "source_nonempty_cells": 276225,
+  "source_operator_relations": 8184,
+  "detector_families": 60,
+  "logical_contract_classes": 14,
+  "source_scope_complete_strategies": 36,
+  "existing_root_scripts_preserved": 7,
+  "native_compilation": "NOT_RUN",
+  "production_activation": "NOT_PERFORMED"
+}

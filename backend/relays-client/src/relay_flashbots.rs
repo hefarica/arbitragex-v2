@@ -268,6 +268,9 @@ struct TxCallResultRaw {
     revert: Option<String>,
 }
 
+/// RELAY-05 note (2026-09-24): a malformed coinbase_diff returns None
+/// silently — this degrades the EWMA relay-fee signal but never gates
+/// economics. Consider logging the parse failure for observability.
 fn parse_rpc_u128(s: &str) -> Option<u128> {
     if s.starts_with("0x") || s.starts_with("0X") {
         if s.len() <= 2 {

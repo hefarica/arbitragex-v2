@@ -87,18 +87,32 @@ contract MakerDssAdapter {
         emit PsmBuyGem(psm, msg.sender, gemAmt, daiSpent);
     }
 
+    // ── DSR deposit/withdraw ────────────────────────────────────────────────
+    // WEB3-01 fix (2026-09-24): dsrExit previously accepted an arbitrary
+    // `recipient`, letting ANYONE drain the shared DSR position to any
+    // address. Now the withdrawal can ONLY go to msg.sender (the depositor
+    // who called dsrJoin). A per-user accounting mapping would be needed for
+    // shared-position precision — until then, self-custody is the safe bound.
+
+    mapping(address dsr => mapping(address user => uint256 wad)) private s_dsrDeposits;
+
     function dsrJoin(address dsr, address dai, uint256 wad) external {
         if (wad == 0) revert Maker__ZeroAmount();
         IERC20Maker(dai).transferFrom(msg.sender, address(this), wad);
         IERC20Maker(dai).approve(dsr, wad);
         IDsr(dsr).join(wad);
+        s_dsrDeposits[dsr][msg.sender] += wad;
         emit DsrJoined(dsr, msg.sender, wad);
     }
 
-    function dsrExit(address dsr, address dai, uint256 wad, address recipient) external {
+    function dsrExit(address dsr, address dai, uint256 wad) external {
         if (wad == 0) revert Maker__ZeroAmount();
+        if (s_dsrDeposits[dsr][msg.sender] < wad) revert Maker__InsufficientDeposit();
+        s_dsrDeposits[dsr][msg.sender] -= wad;
         IDsr(dsr).exit(wad);
-        IERC20Maker(dai).transfer(recipient, wad);
-        emit DsrExited(dsr, recipient, wad);
+        IERC20Maker(dai).transfer(msg.sender, wad);
+        emit DsrExited(dsr, msg.sender, wad);
     }
+
+    error Maker__InsufficientDeposit();
 }

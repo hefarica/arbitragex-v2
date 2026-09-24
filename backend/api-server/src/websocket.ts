@@ -495,6 +495,23 @@ export function setupWebSocketGateway(server: HttpServer, carnotStore?: CarnotSt
 
 // Simulador de emisión de oportunidades
 export function broadcastOpportunity(io: Server, opp: any) {
+    // FRONT-01 defense-in-depth (2026-09-24): migration 124 now sends
+    // amount_in_wei as an exact STRING from the PG trigger. If an old trigger
+    // (pre-124) still sends it as a raw JSON number, stringify it HERE so the
+    // client never receives a float64-rounded wei.
+    const rawAmount = (opp as { amount_in_wei?: unknown } | null | undefined)?.amount_in_wei;
+    if (typeof rawAmount === 'number') {
+        (opp as { amount_in_wei?: unknown }).amount_in_wei = String(rawAmount);
+    }
+    // FRONT-02 (2026-09-24): CONTRACT DOCUMENTATION — the WS payload is the
+    // RAW PG row (NOTIFY row_to_json); it carries the core economics
+    // (expected/net profit, roi_pct, block_number, route_metadata, detector_id)
+    // but NOT the REST-only enrichments (token_in_info/token_out_info,
+    // leg_symbols, chain_base_token_symbol, paper_status, chains_used,
+    // dexes_used, simulated_*). Consumers needing the enriched shape must
+    // re-hydrate via GET /api/v1/opportunities/live (the frontend's mapper
+    // leaves absent fields null — R8 honest "—", never fabricated). This
+    // differential is the documented contract, not a bug.
     io.to('opportunities').emit('new_opportunity', opp);
     // WO-10 (2026-09-06): E2E detección→broadcast — origin
     // `opportunities.detected_at` (PG row_to_json via NOTIFY), terminus the

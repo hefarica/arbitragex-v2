@@ -82,21 +82,28 @@ pub fn key_pool_reserves(chain_id: u64, pool_addr_lower: &str) -> String {
     format!("arbx:pool_reserves:{}:{}", chain_id, pool_addr_lower)
 }
 
+/// Canonical V2 pool-index key. CORE-02 fix (2026-09-24): there were THREE key
+/// conventions on the same index — pool_sync bootstrap wrote UPPERCASE-sorted
+/// PG symbols, pool_discovery wrote lowercase address-ordered symbols, and the
+/// cartridge `get_pool_index` binding read lowercase symbol-sorted. Cartridge
+/// cross-pool discovery systematically missed the bootstrap set. The canonical
+/// form is now LOWERCASE + lexicographically sorted, enforced HERE so every
+/// writer/reader converges (uppercase legacy keys simply expire and are
+/// re-written by the next bootstrap pass).
 pub fn key_pool_index(chain_id: u64, sym_a: &str, sym_b: &str) -> String {
-    let (lo, hi) = if sym_a < sym_b {
-        (sym_a, sym_b)
-    } else {
-        (sym_b, sym_a)
-    };
+    let a = sym_a.to_lowercase();
+    let b = sym_b.to_lowercase();
+    let (lo, hi) = if a < b { (&a, &b) } else { (&b, &a) };
     format!("arbx:pool_index:{}:{}:{}", chain_id, lo, hi)
 }
 
+/// Canonical V3 pool-index key — same lowercase+sort normalization as V2 so
+/// all writers (bootstrap, discovery) and readers (v3_fee_catalog, scanner,
+/// price_worker symbol scan) agree on one key space.
 pub fn key_pool_index_v3(chain_id: u64, sym_a: &str, sym_b: &str) -> String {
-    let (lo, hi) = if sym_a < sym_b {
-        (sym_a, sym_b)
-    } else {
-        (sym_b, sym_a)
-    };
+    let a = sym_a.to_lowercase();
+    let b = sym_b.to_lowercase();
+    let (lo, hi) = if a < b { (&a, &b) } else { (&b, &a) };
     format!("arbx:pool_index_v3:{}:{}:{}", chain_id, lo, hi)
 }
 
@@ -463,13 +470,20 @@ mod tests {
 
     #[test]
     fn pool_index_key_sorts_symbols() {
+        // CORE-02: canonical form is lowercase+sorted regardless of input case
+        // (writers previously disagreed: UPPERCASE bootstrap vs lowercase
+        // discovery vs lowercase-binding reads).
         assert_eq!(
             key_pool_index(1, "WETH", "USDC"),
-            "arbx:pool_index:1:USDC:WETH"
+            "arbx:pool_index:1:usdc:weth"
         );
         assert_eq!(
             key_pool_index(1, "USDC", "WETH"),
-            "arbx:pool_index:1:USDC:WETH"
+            "arbx:pool_index:1:usdc:weth"
+        );
+        assert_eq!(
+            key_pool_index(1, "weth", "usdc"),
+            "arbx:pool_index:1:usdc:weth"
         );
     }
 
@@ -513,11 +527,11 @@ mod tests {
         // Same sort invariant as V2 — readers query without knowing the seed order.
         assert_eq!(
             key_pool_index_v3(1, "WETH", "USDC"),
-            "arbx:pool_index_v3:1:USDC:WETH"
+            "arbx:pool_index_v3:1:usdc:weth"
         );
         assert_eq!(
             key_pool_index_v3(1, "USDC", "WETH"),
-            "arbx:pool_index_v3:1:USDC:WETH"
+            "arbx:pool_index_v3:1:usdc:weth"
         );
     }
 

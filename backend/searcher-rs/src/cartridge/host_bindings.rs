@@ -418,15 +418,58 @@ pub fn register_host_bindings(engine: &mut Engine, ctx: HostContext) {
         },
     );
 
-    // get_token_price_usd(symbol: String) -> Dynamic (f64 USD, or () on miss)
-    // Reads the price oracle hash arbx:token_prices:<chain> (HGET field=symbol), populated every
-    // ~30s by price_worker (Chainlink/DexScreener/GeckoTerminal). RULE 00: returns () on cache miss
-    // or unparsable value — the cartridge MUST fail honestly ("v3_arb_no_price"), never fabricate.
+    // get_token_price_usd(symbol_or_address: String) -> Dynamic (f64 USD, or () on miss)
+    // Reads the price oracle hash arbx:token_prices:<chain> (HGET field=symbol),
+    // populated every ~30s by price_worker (Chainlink/DexScreener/GeckoTerminal)
+    // with CANONICAL UPPERCASE symbol fields.
+    //
+    // RHAI-11 fix (2026-09-24): all 264 generated cartridges pass the token
+    // ADDRESS (`get_token_price_usd(token_in0)`) while the hash is keyed by
+    // symbol — every lookup missed, `profit_usd_hint` never existed, and the
+    // emitter's has_computed_economics gate reclassified every acceptance as
+    // `no_computable_economics`. When the argument carries an 0x address we now
+    // resolve the canonical symbol through the arbx:tokens meta cache first,
+    // then HGET the UPPERCASE field. RULE 00 unchanged: () on any miss; never
+    // fabricate a price (no stable=$1 shortcut).
     let ctx_price = ctx.clone();
-    engine.register_fn("get_token_price_usd", move |symbol: &str| -> Dynamic {
+    engine.register_fn("get_token_price_usd", move |symbol_or_addr: &str| -> Dynamic {
         let ctx = ctx_price.clone();
+        let field: Option<String> = if symbol_or_addr.starts_with("0x")
+            && symbol_or_addr.len() == 42
+            && symbol_or_addr[2..].bytes().all(|b| b.is_ascii_hexdigit())
+        {
+            // Address form: resolve the canonical symbol via the token meta cache.
+            let addr = symbol_or_addr.to_lowercase();
+            let meta_json: Option<String> = ctx.rt_handle.block_on(async {
+                let mut redis = ctx.redis.write().await;
+                let key = format!("arbx:tokens:{}:{}", ctx.chain_id, addr);
+                redis::AsyncCommands::get(&mut *redis, &key).await.ok()?
+            });
+            let symbol = meta_json
+                .as_deref()
+                .and_then(|s| serde_json::from_str::<serde_json::Value>(s).ok())
+                .and_then(|v| {
+                    v.get("symbol")
+                        .and_then(|s| s.as_str())
+                        .map(|s| s.to_ascii_uppercase())
+                });
+            if symbol.is_none() {
+                debug!(
+                    event = "cartridge.price_addr_unresolved",
+                    chain_id = ctx.chain_id,
+                    token = %symbol_or_addr,
+                    "address passed to get_token_price_usd but arbx:tokens meta miss — honest () return"
+                );
+            }
+            symbol
+        } else {
+            // Symbol form: canonicalize case to match the writer's UPPERCASE fields.
+            Some(symbol_or_addr.to_ascii_uppercase())
+        };
+        let Some(field) = field else {
+            return Dynamic::UNIT;
+        };
         let key = format!("arbx:token_prices:{}", ctx.chain_id);
-        let field = symbol.to_string();
         let raw: Option<String> = ctx.rt_handle.block_on(async {
             let mut redis = ctx.redis.write().await;
             redis::AsyncCommands::hget(&mut *redis, &key, &field)
@@ -443,7 +486,7 @@ pub fn register_host_bindings(engine: &mut Engine, ctx: HostContext) {
     // get_math_evidence(strategy_kind: String) -> Map
     // Returns the LIVE math-evidence snapshot computed by math_evidence.rs for this
     // (chain, strategy_kind): the detected market regime + the per-operator scalar
-    // values from the 31-operator registry (op_01_svd … op_31_drl_agent). This is
+    // values from the 32-operator registry (op_01_svd … op_31_drl_agent + op_32 NSGA-II). This is
     // the "anabolic" that lets each cartridge decide with full mathematical context
     // (regime, volatility, arbitrage_gap, health_factor, oracle_bias, parity_deviation
     // + each operator's scalar) instead of spot math alone.
@@ -780,6 +823,10 @@ pub fn register_host_bindings(engine: &mut Engine, ctx: HostContext) {
 
     // to_wei(amount: f64, decimals: i64) -> String
     // Converts a human-readable amount to wei string representation.
+    // RHAI-20 note (2026-09-24): f64→u128 via s truncates AND loses precision
+    // above 2^53 (~1e15 wei = ~0.001 ETH at 18 decimals). Error is bounded by
+    // ~128 wei for amounts ≥1e18. Acceptable for the single current use
+    // (liquidation build_payload flash_loan amount, fail-honest downstream).
     engine.register_fn("to_wei", |amount: f64, decimals: i64| -> Dynamic {
         let factor = 10f64.powi(decimals as i32);
         let wei = (amount * factor) as u128;

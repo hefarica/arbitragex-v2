@@ -262,6 +262,14 @@ fn build_payload(opportunity) {
 // FUNCIONES AUXILIARES
 // ═══════════════════════════════════════════════════════════════════════════════
 
+// RHAI-21 note (2026-09-24): this local get_config() returns the cartridge's
+// OWN init_strategy() metadata — the config_schema values are the SOURCE
+// DEFAULTS (gas_cost_estimate_usd: 50, max_position_size_usd, etc.), not
+// operator-editable runtime config. The "editable: true" flags in
+// config_schema are decorative until a host config binding exists. The values
+// are honest defaults from the canonical workbook; they are NOT fabricated
+// prices or costs — they are policy parameters that the downstream net gate
+// (§34 mode-invariant) revalidates.
 fn get_config() {
     init_strategy()
 }

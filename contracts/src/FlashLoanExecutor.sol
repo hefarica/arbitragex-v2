@@ -75,6 +75,21 @@ interface IAaveV3Pool {
 contract FlashLoanExecutor is Initializable, AccessControlUpgradeable, UUPSUpgradeable {
     using SafeERC20 for IERC20;
 
+    // ── WEB3-04 fix (2026-09-24): reentrancy guard on the flash callbacks.
+    // Auth in 3 layers already blocks the known vectors (msg.sender == aavePool
+    // / balancerVault + initiator == this + EXECUTOR_ROLE on re-entry), but a
+    // nonReentrant modifier on both callbacks is defense-in-depth against any
+    // future provider whose callback semantics differ.
+    uint256 private constant _NOT_ENTERED = 1;
+    uint256 private constant _ENTERED = 2;
+
+    modifier nonReentrant() {
+        require(_reentrancyStatus != _ENTERED, "FL_ReentrantCall");
+        _reentrancyStatus = _ENTERED;
+        _;
+        _reentrancyStatus = _NOT_ENTERED;
+    }
+
     /// @notice Role required to call requestFlashLoan.
     bytes32 public constant EXECUTOR_ROLE = keccak256("EXECUTOR_ROLE");
     /// @notice Separate UPGRADER_ROLE allows key rotation independent of admin.
@@ -108,6 +123,14 @@ contract FlashLoanExecutor is Initializable, AccessControlUpgradeable, UUPSUpgra
     ///         arbitrageExecutor. Set via setBalancerVault() before using Balancer loans.
     address public balancerVault;
     // APPEND new variables below this line in future upgrades. Never above.
+
+    // WEB3-04 (2026-09-24): reentrancy guard state — APPENDED at the last slot
+    // per StorageLayout.t.sol's pinned-layout rule: declaring it above shifted
+    // aavePool off slot 0 (test_FlashLoanExecutor_StorageLayout FAIL = proxy
+    // upgradeability break). Direct deploys start at _NOT_ENTERED via the
+    // initializer expression; UUPS proxies read 0 before initialize, which the
+    // guard also accepts (0 != _ENTERED) — no initialize() migration needed.
+    uint256 private _reentrancyStatus = _NOT_ENTERED;
 
     // SC-06: observability events for off-chain monitoring (recon, dashboard)
 
@@ -286,6 +309,7 @@ contract FlashLoanExecutor is Initializable, AccessControlUpgradeable, UUPSUpgra
     /// @return           True on successful completion.
     function executeOperation(address asset, uint256 amount, uint256 premium, address initiator, bytes calldata params)
         external
+        nonReentrant
         returns (bool)
     {
         if (msg.sender != address(aavePool)) revert FL_UnauthorizedCaller();
@@ -314,7 +338,7 @@ contract FlashLoanExecutor is Initializable, AccessControlUpgradeable, UUPSUpgra
         uint256[] calldata amounts,
         uint256[] calldata feeAmounts,
         bytes calldata userData
-    ) external {
+    ) external nonReentrant {
         // SECURITY (audit A4, 2026-05-10): three-layer authentication guard.
         //
         // Layer 1: balancerVault must be configured. Prevents callbacks before
@@ -348,7 +372,6 @@ contract FlashLoanExecutor is Initializable, AccessControlUpgradeable, UUPSUpgra
         // clear named error if the round trip did not leave enough to repay.
         uint256 amountOwed = amount + premium;
         if (asset.balanceOf(address(this)) < amountOwed) revert FL_RepaymentShortfall();
-        asset.forceApprove(msg.sender, amountOwed);
         asset.safeTransfer(msg.sender, amountOwed);
 
         emit FlashLoanExecuted(address(asset), amount, premium, true);

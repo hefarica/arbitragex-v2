@@ -147,7 +147,11 @@ fn evaluate_opportunity(pool_data) {
     if pos.flash_fee_bps == () { return no_opp("flash_fee_unavailable"); }
 
     // Full close only: the protocol must allow clearing the whole position.
-    let cf0 = if pos.close_factor != () { pos.close_factor } else { 1.0 };
+    // RHAI-23 fix (2026-09-24): default close_factor 1.0 (full close) was
+    // fail-OPEN — Aave's canonical default is 0.5 (50%). An absent field now
+    // uses the conservative default; a feed that explicitly carries cf < 1.0
+    // still rejects below (close_factor_not_full).
+    let cf0 = if pos.close_factor != () { pos.close_factor } else { 0.5 };
     if cf0 < 1.0 { return no_opp("close_factor_not_full"); }
 
     // -- Repay queue: the DEX route collateral -> debt token (live reserves) ---

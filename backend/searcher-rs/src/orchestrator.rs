@@ -445,7 +445,29 @@ impl Orchestrator {
             let registry = self.ctx.math_registry.clone();
             let router = self.ctx.regime_router;
             let mut math_redis = self.ctx.math_redis.clone();
-            let strategy_kind = format!("{:?}", intent.router_kind);
+            // MATH-02 fix (2026-09-24, second half): the regime-keyed §IV
+            // snapshot was keyed `format!("{:?}", intent.router_kind)` — e.g.
+            // "UniswapV2" — while the emitter reads `strategy_evidence_key` by
+            // the ENGINE-persisted family string ("dex_arb"/"triangular"/…).
+            // The keys never matched for engine-originated rows. Map the router
+            // kind to the canonical engine family the eventual Opportunity will
+            // carry (all DEX routers → dex_arb; lending positions → liquidation).
+            // (Per-cartridge evidence uses the canonical cartridge_id key via
+            // publish_declared_combo_evidence — STRAT-IDENT-01; unchanged.)
+            let strategy_kind = {
+                let dbg = format!("{:?}", intent.router_kind);
+                if dbg.contains("Liquid")
+                    || dbg.contains("Lending")
+                    || dbg.contains("Aave")
+                    || dbg.contains("Compound")
+                {
+                    "liquidation".to_string()
+                } else {
+                    // Every DEX router family (UniswapV2/V3, Curve, Balancer,
+                    // aggregators…) persists StrategyKind::dex_arb() today.
+                    "dex_arb".to_string()
+                }
+            };
             let pools: Vec<Address> = intent.legs.iter().filter_map(|leg| leg.pool_hint).collect();
             if !pools.is_empty() {
                 // CORE-01/MATH-01 fix (2026-09-24): the §IV evidence previously
