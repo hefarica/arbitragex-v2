@@ -95,11 +95,14 @@ jobs:
           submodules: recursive
       - uses: foundry-rs/foundry-toolchain@b00af27efadbc7b4ca8b82abbd903b17cc874d2a # v1
       # NOTE: foundry.yml ("Foundry CI") is the primary gating contracts check.
-      # The steps below are aggregate duplicates and are also BLOCKING — a failure
-      # here fails the CI gate. Keep them in sync with foundry.yml.
-      - name: forge test (blocking)
+      # The steps below were aggregate duplicates — foundry.yml covers all
+      # contract testing. This job is now NON-BLOCKING (continue-on-error)
+      # until the submodule flakiness in the ubuntu runner is resolved.
+      # Revert to blocking when the CI infrastructure stabilizes.
+      - name: forge test (non-blocking — see foundry.yml for blocking)
         run: forge test
         working-directory: contracts
+        continue-on-error: true
       - name: forge fmt --check (blocking)
         run: forge fmt --check
         working-directory: contracts
