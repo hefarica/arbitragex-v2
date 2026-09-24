@@ -5,7 +5,7 @@ FROM rust:1.91-slim-bookworm AS builder
 # verificado en VPS). Release SOLO se buildea en VPS (RULE 01).
 ENV RUSTFLAGS="-C target-cpu=x86-64-v3"
 WORKDIR /build
-RUN sed -i "s|http://deb.debian.org|http://ftp.de.debian.org|g" /etc/apt/sources.list.d/debian.sources /etc/apt/sources.list 2>/dev/null; for i in 1 2 3 4 5; do apt-get update && break || sleep 8; done && apt-get install -y --no-install-recommends \
+RUN sed -i "s|http://deb.debian.org|https://deb.debian.org|g" /etc/apt/sources.list.d/debian.sources /etc/apt/sources.list 2>/dev/null; for i in 1 2 3 4 5; do apt-get update && break || sleep 8; done && apt-get install -y --no-install-recommends \
         pkg-config libssl-dev \
     && rm -rf /var/lib/apt/lists/*
 COPY Cargo.toml ./Cargo.toml
@@ -29,7 +29,7 @@ COPY semiotic-bridge ./semiotic-bridge
 RUN cargo build --release --locked -p math-engine --features api --bin math-engine
 
 FROM debian:bookworm-slim AS runtime
-RUN sed -i "s|http://deb.debian.org|http://ftp.de.debian.org|g" /etc/apt/sources.list.d/debian.sources /etc/apt/sources.list 2>/dev/null; for i in 1 2 3 4 5; do apt-get update && break || sleep 8; done && apt-get install -y --no-install-recommends \
+RUN sed -i "s|http://deb.debian.org|https://deb.debian.org|g" /etc/apt/sources.list.d/debian.sources /etc/apt/sources.list 2>/dev/null; for i in 1 2 3 4 5; do apt-get update && break || sleep 8; done && apt-get install -y --no-install-recommends \
         ca-certificates tini wget \
     && rm -rf /var/lib/apt/lists/* \
     && groupadd -r arbx && useradd -r -g arbx arbx
