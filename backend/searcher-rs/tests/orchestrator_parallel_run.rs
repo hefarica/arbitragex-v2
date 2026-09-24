@@ -215,6 +215,8 @@ async fn build_test_orchestrator() -> Option<std::sync::Arc<searcher_rs::orchest
         chain_id: CHAIN_ID,
         native_engines_enabled: true,
         cartridge_runner: None,
+        // AGENT v4 Fase 3a — sin router en este fixture.
+        cartridge_context_router: None,
         // Fix B math-evidence sensors — mirror scanner.rs production wiring.
         cartridge_mode: searcher_rs::cartridge_boot::CartridgeMode::from_env(),
         math_registry: Arc::new(math_engine::OperatorRegistry::new()),

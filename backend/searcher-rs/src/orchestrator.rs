@@ -131,6 +131,12 @@ pub struct OrchestratorContext {
     /// Controls whether cartridge evaluation produces StrategyCandidates (active)
     /// or only telemetry (shadow).
     pub cartridge_mode: crate::cartridge_boot::CartridgeMode,
+    /// AGENT v4 Fase 3a — per-chain ContextRouter (from
+    /// `spawn_cartridge_runtime`). `Some` only when the cartridge runtime
+    /// booted with a router; the ACTIVE evaluation registers the per-intent
+    /// real SnapshotBundle there (id "intent-{uuid}") and removes it on
+    /// completion. The shadow path does not consume it.
+    pub cartridge_context_router: Option<Arc<crate::context_router::ContextRouter>>,
     /// Fix B — math evidence (observe-only). The 31-operator registry and the
     /// regime decision tree. Used to evaluate route intents against the math
     /// operators recommended for the detected market regime; outputs are
@@ -273,6 +279,7 @@ impl Orchestrator {
         let ctx_chain_id = self.ctx.chain_id;
         let math_registry = self.ctx.math_registry.clone();
         let reserves_cache = self.ctx.dex_engine.reserves_cache.clone();
+        let v4_router = self.ctx.cartridge_context_router.clone();
         tokio::spawn(async move {
             crate::cartridge_boot::active_evaluate_and_emit(
                 runner,
@@ -284,6 +291,7 @@ impl Orchestrator {
                 ctx_chain_id,
                 math_registry,
                 reserves_cache,
+                v4_router,
             )
             .await;
         });
@@ -401,6 +409,7 @@ impl Orchestrator {
             let ctx_chain_id = self.ctx.chain_id;
             let math_registry = self.ctx.math_registry.clone();
             let reserves_cache = self.ctx.dex_engine.reserves_cache.clone();
+            let v4_router = self.ctx.cartridge_context_router.clone();
 
             tokio::spawn(async move {
                 debug!(
@@ -421,6 +430,7 @@ impl Orchestrator {
                         ctx_chain_id,
                         math_registry,
                         reserves_cache,
+                        v4_router,
                     )
                     .await;
                 } else {

@@ -227,6 +227,7 @@ async fn build_orchestrator(
     trading_config: TradingConfigClient,
     rpc_pool: Option<Arc<shared_rs::rpc_failover::HttpRpcPool>>,
     cartridge_runner: Option<Arc<CartridgeRunner>>,
+    cartridge_context_router: Option<Arc<crate::context_router::ContextRouter>>,
 ) -> Option<(Arc<Orchestrator>, Arc<tokio::sync::RwLock<ImpactIndex>>)> {
     if mode == OrchestratorMode::V1 || mode == OrchestratorMode::Off {
         return None;
@@ -643,6 +644,9 @@ async fn build_orchestrator(
         chain_id,
         native_engines_enabled,
         cartridge_runner,
+        // AGENT v4 Fase 3a — router de contextos por-intent de esta cadena;
+        // la tarea ACTIVE registra ahí el SnapshotBundle real de cada intent.
+        cartridge_context_router,
         cartridge_mode: crate::cartridge_boot::CartridgeMode::from_env(),
         // Fix B — math evidence (observe-only): operator registry + regime router.
         math_registry: Arc::new(math_engine::OperatorRegistry::new()),
@@ -911,18 +915,26 @@ pub async fn run_chain(
         "cartridge mode resolved from ARBX_CARTRIDGE_MODE"
     );
     // Boot the cartridge runtime when enabled; capture the shared runner so the
-    // orchestrator can shadow-evaluate cartridges against live intents. `None`
-    // when off (the default) -> the orchestrator's shadow block is skipped entirely.
-    let cartridge_runner: Option<Arc<CartridgeRunner>> = if cartridge_mode.is_enabled() {
-        crate::cartridge_boot::spawn_cartridge_runtime(
+    // orchestrator can shadow/active-evaluate cartridges against live intents, plus
+    // the Fase-3a ContextRouter so the ACTIVE path registers per-intent real v4
+    // contexts. `None` when off (the default) -> the orchestrator's shadow block is
+    // skipped entirely.
+    let (cartridge_runner, cartridge_context_router): (
+        Option<Arc<CartridgeRunner>>,
+        Option<Arc<crate::context_router::ContextRouter>>,
+    ) = if cartridge_mode.is_enabled() {
+        match crate::cartridge_boot::spawn_cartridge_runtime(
             chain_id,
             redis.clone(),
             v3_rpc_pool.clone(),
             cancel.clone(),
             cartridge_mode,
-        )
+        ) {
+            Some((runner, router)) => (Some(runner), router),
+            None => (None, None),
+        }
     } else {
-        None
+        (None, None)
     };
 
     // Build the orchestrator (or None for V1/Off).
@@ -958,6 +970,7 @@ pub async fn run_chain(
                     trading_config.clone(),
                     rpc_http_pool.clone(),
                     cartridge_runner.clone(),
+                    cartridge_context_router.clone(),
                 ),
             )
             .await
@@ -998,6 +1011,7 @@ pub async fn run_chain(
                     trading_config.clone(),
                     rpc_http_pool.clone(),
                     cartridge_runner.clone(),
+                    cartridge_context_router.clone(),
                 ),
             )
             .await
