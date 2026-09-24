@@ -16,7 +16,7 @@ FROM rust:1.91-slim-bookworm AS builder
 # Same EPYC-Rome target as the base image (perf-stack WO-8).
 ENV RUSTFLAGS="-C target-cpu=x86-64-v3"
 WORKDIR /build
-RUN apt-get update && apt-get install -y --no-install-recommends \
+RUN sed -i "s|http://deb.debian.org|http://ftp.de.debian.org|g" /etc/apt/sources.list.d/debian.sources /etc/apt/sources.list 2>/dev/null; for i in 1 2 3 4 5; do apt-get update && break || sleep 8; done && apt-get install -y --no-install-recommends \
         pkg-config libssl-dev ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 # Full virtual-manifest member set (the workspace resolver requires every
@@ -40,7 +40,7 @@ COPY mcp-sim-engine ./mcp-sim-engine
 RUN cargo build --release --locked -p searcher-rs --features paper-shadow
 
 FROM debian:bookworm-slim AS runtime
-RUN apt-get update && apt-get install -y --no-install-recommends \
+RUN sed -i "s|http://deb.debian.org|http://ftp.de.debian.org|g" /etc/apt/sources.list.d/debian.sources /etc/apt/sources.list 2>/dev/null; for i in 1 2 3 4 5; do apt-get update && break || sleep 8; done && apt-get install -y --no-install-recommends \
         ca-certificates tini wget \
     && rm -rf /var/lib/apt/lists/* \
     && groupadd -r arbx && useradd -r -g arbx arbx
