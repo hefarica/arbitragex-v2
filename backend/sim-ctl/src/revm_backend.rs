@@ -274,7 +274,15 @@ fn translate_result(
             gas_estimate_wei: None,
             gas_price_wei: None,
             slippage_pct: None,
-            revert_risk_pct: None, // SIM-09: fabricated — no risk model computes this
+            // Fail-closed (contrato del test route_encoding_rejection_maps_to_fail_closed_result):
+            // una ruta sin encoding es INEJECUTABLE por definición → revert risk 100%
+            // no es fabricado, es computable-exacto (R8: Some(100.0) = computado y pleno).
+            // El resto de errores provider conservan None (SIM-09: sin modelo de riesgo).
+            revert_risk_pct: if msg.contains("route_encoding_not_available") {
+                Some(100.0)
+            } else {
+                None // SIM-09: fabricated — no risk model computes this
+            },
             simulated_profit_usd: None,
             simulator: SimulatorKind::Revm,
             fail_reason: Some(format!(
