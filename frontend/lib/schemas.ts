@@ -135,6 +135,11 @@ export const OpportunityRowSchema = z.object({
 export const OpportunitiesLiveSchema = z.object({
   count: z.number(),
   window: z.string(),
+  // AUDIT-CARDS-MINOR (§2) · WO-H4: distinct routes in the ≤5 min window
+  // (COUNT(*) OVER () on the LIVE_QUERY, api-server's `?? 0` on zero rows).
+  // Optional: pre-WO-H4 edges / cached envelopes may omit it — absent is
+  // never fabricated as 0 by the consumer (parseWindowTotal → null).
+  window_total: z.number().int().nullable().optional(),
   items: z.array(OpportunityRowSchema),
   ts: z.string(),
 });

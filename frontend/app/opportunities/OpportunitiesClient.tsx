@@ -5,6 +5,7 @@ import { sanitizeForDisplay } from "@/lib/omega-lexicon";
 import { toast } from "sonner";
 import { OpportunityDetailDialog } from "@/components/OpportunityDetailDialog";
 import { OpportunityTradeCard } from "@/components/OpportunityTradeCard";
+import { WindowTotalSegment } from "@/components/opportunities/WindowTotalSegment";
 import { QuarantinedEventsAuditTrail } from "@/components/opportunities/QuarantinedEventsAuditTrail";
 // CONSOLIDACIÓN 2026-09-19 (orden operador): los MOTORES de la página exchange
 // (filtro familiar/cadena/yield, price ticker G-PRICE-1, badge paper/live, cap
@@ -22,10 +23,9 @@ import { usePaperModeState } from "@/hooks/usePaperModeState";
 import { useOmniOpportunities } from "@/lib/store/useOmniOpportunities";
 import { useOmniStore } from "@/lib/store/omni-store";
 import { type OmniOpportunity } from "@/lib/store/types";
-import { parseSnapshotItems } from "@/lib/store/snapshot-payload";
+import { parseSnapshotItems, parseWindowTotal } from "@/lib/store/snapshot-payload";
 import { routeGroupKeyOf } from "@/lib/store/route-key";
-import { getApiBaseUrl, getPublicEdgeBaseUrl, getTradingConfig } from "@/lib/api-client";
-import type { StrategyRuntimeConfig } from "@/lib/schemas";
+import { getApiBaseUrl, getPublicEdgeBaseUrl } from "@/lib/api-client";
 
 // Re-export store types for downstream consumers (FE-0034: the detail dialog
 // no longer needs the mirror — it imports OmniOpportunity from the store).
@@ -92,6 +92,11 @@ export default function OpportunitiesClient({
   const opportunities = useOmniStore((state) => state.opportunities);
   const wsStatus = useOmniStore((state) => state.wsStatus);
   const setOpportunities = useOmniStore((state) => state.setOpportunities);
+  // AUDIT-CARDS-MINOR (§2): WO-H4 window_total from the LAST live-snapshot
+  // envelope — distinct routes in the ≤5 min window. R8: null until a
+  // snapshot carrying the field arrives (absent ≠ 0, never invented).
+  const windowTotal = useOmniStore((state) => state.windowTotal);
+  const setWindowTotal = useOmniStore((state) => state.setWindowTotal);
 
   // ─── UI State (local, not in store) ───────────────────────────────────────
   const [isMounted, setIsMounted] = useState(false);
@@ -134,33 +139,12 @@ export default function OpportunitiesClient({
   // FE-13: Read notification threshold from user prefs (localStorage, R1 compliant).
   const { prefs } = useUserPrefs();
 
-  // ── Declared strategy config (trading_config.strategy_configs) ─────────────
-  // R8 fail-honest: if the config endpoint fails or a strategy has no entry,
-  // the card receives null and renders "—" (never fabricated). SSR-safe: the
-  // fetch lives in useEffect, not in render, so no hydration mismatch (R1).
-  const [strategyConfigs, setStrategyConfigs] = useState<Record<
-    string,
-    StrategyRuntimeConfig | null
-  >>({});
-  useEffect(() => {
-    const chainId = initialSnapshot.opportunities[0]?.chain_id ?? 1;
-    let cancelled = false;
-    getTradingConfig(chainId)
-      .then((cfg) => {
-        if (cancelled || !cfg) return;
-        setStrategyConfigs(
-          (cfg as { strategy_configs?: Record<string, StrategyRuntimeConfig> })
-            .strategy_configs ?? {},
-        );
-      })
-      .catch(() => {
-        // Fail-honest: leave the map empty so cards show "—".
-      });
-    return () => {
-      cancelled = true;
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  // AUDIT-CARDS-MINOR (§1): the declared per-strategy trading-config fetch
+  // (GET /api/trading-config → strategyConfigs state) is REMOVED — it only fed
+  // OpportunityTradeCard's dead `strategyConfig` prop, which never rendered
+  // anything (the card's "Applied strategy config" block reads
+  // opp.simulated_target). One phantom request per mount less; /strategies and
+  // /config/trading keep their own getTradingConfig consumers.
 
   // Derive feedStatus from wsStatus for display. "POLLING" is the degraded
   // HTTP-fallback state emitted by the hook after 3 WS failures.
@@ -246,12 +230,15 @@ export default function OpportunitiesClient({
       // PERF: batch store update instead of clear + 50 addOpportunity calls.
       // FE-SNAPSHOT-01: same parser seam as the 5s reconcile loop.
       setOpportunities(parseSnapshotItems(data));
+      // AUDIT-CARDS-MINOR (§2): the envelope's window_total (WO-H4) rides the
+      // same snapshot — null when the payload doesn't carry it (R8).
+      setWindowTotal(parseWindowTotal(data));
       setLastRefresh(new Date());
       setErrorMsg(null);
     } catch (e) {
       setErrorMsg((e as Error).message);
     }
-  }, [PUBLIC_EDGE_URL, viableOnly, setOpportunities]);
+  }, [PUBLIC_EDGE_URL, viableOnly, setOpportunities, setWindowTotal]);
 
   // R1: localStorage read happens here — never during render (SSR has no localStorage).
   // 2026-05-10: bumped the storage key from "arbx-opps-viable-only" to "-v2" so
@@ -409,6 +396,13 @@ export default function OpportunitiesClient({
                   )}
                 </span>
               )}
+              {/* AUDIT-CARDS-MINOR (§2): shown-vs-window — the payload's
+                  window_total next to the grid count. Renders nothing while
+                  windowTotal is null (R8: absent ≠ 0). */}
+              <WindowTotalSegment
+                shown={opportunities.length}
+                windowTotal={windowTotal}
+              />
             </p>
           )}
         </div>
@@ -619,9 +613,6 @@ export default function OpportunitiesClient({
             now={now}
             isMounted={isMounted}
             simLoading={simLoading === opp.id}
-              strategyConfig={
-                opp.strategy_kind != null ? (strategyConfigs[opp.strategy_kind] ?? null) : null
-              }
               modeLabel={modeLabel}
               onExecute={onExecute}
               onInspect={onInspect}

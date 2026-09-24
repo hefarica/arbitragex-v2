@@ -21,7 +21,7 @@ import { createOpportunitySocket, type WsStatus } from "@/features/opportunities
 import { getAdminToken } from "@/lib/admin-token";
 import { getPublicEdgeBaseUrl, getWsBaseUrl } from "@/lib/api-client";
 import { useOmniStore } from "./omni-store";
-import { parseSnapshotItems } from "./snapshot-payload";
+import { parseSnapshotItems, parseWindowTotal } from "./snapshot-payload";
 import { mapToOmniOpportunity, type OmniOpportunity } from "./types";
 // FE-0047: the MEM-RENDER-01 buffer as a pure seam (dedup/out-of-order are
 // §33 semantics — now testable without renderHook; behavior identical).
@@ -87,6 +87,7 @@ export function useOmniOpportunities({
 }: UseOmniOpportunitiesOptions) {
   // Store actions (stable references)
   const setOpportunities = useOmniStore((state) => state.setOpportunities);
+  const setWindowTotal = useOmniStore((state) => state.setWindowTotal);
   const pruneStale = useOmniStore((state) => state.pruneStale);
   const setWsStatus = useOmniStore((state) => state.setWsStatus);
 
@@ -139,13 +140,16 @@ export function useOmniOpportunities({
       // Each addOpportunity triggered a separate Zustand update + devtools
       // serialization; with 50 items every 4-5s that caused severe memory churn.
       setOpportunities(parseSnapshotItems(data));
+      // AUDIT-CARDS-MINOR (§2): the envelope's window_total (WO-H4) rides the
+      // same snapshot — null when the payload doesn't carry it (R8).
+      setWindowTotal(parseWindowTotal(data));
       // MEM-RENDER-01: vigency applies on every path, not only the WS flush —
       // a stale row inside the server snapshot must not resurrect a card.
       pruneStale(OPP_TTL_MS);
     } catch {
       // Swallow — R8: the status badge (LIVE/POLLING/STALE) owns surfacing.
     }
-  }, [setOpportunities, pruneStale]);
+  }, [setOpportunities, setWindowTotal, pruneStale]);
 
   // HTTP polling fallback
   const startPolling = useCallback(() => {
