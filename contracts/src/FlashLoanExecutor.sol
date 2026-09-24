@@ -82,7 +82,6 @@ contract FlashLoanExecutor is Initializable, AccessControlUpgradeable, UUPSUpgra
     // future provider whose callback semantics differ.
     uint256 private constant _NOT_ENTERED = 1;
     uint256 private constant _ENTERED = 2;
-    uint256 private _reentrancyStatus = _NOT_ENTERED;
 
     modifier nonReentrant() {
         require(_reentrancyStatus != _ENTERED, "FL_ReentrantCall");
@@ -124,6 +123,14 @@ contract FlashLoanExecutor is Initializable, AccessControlUpgradeable, UUPSUpgra
     ///         arbitrageExecutor. Set via setBalancerVault() before using Balancer loans.
     address public balancerVault;
     // APPEND new variables below this line in future upgrades. Never above.
+
+    // WEB3-04 (2026-09-24): reentrancy guard state — APPENDED at the last slot
+    // per StorageLayout.t.sol's pinned-layout rule: declaring it above shifted
+    // aavePool off slot 0 (test_FlashLoanExecutor_StorageLayout FAIL = proxy
+    // upgradeability break). Direct deploys start at _NOT_ENTERED via the
+    // initializer expression; UUPS proxies read 0 before initialize, which the
+    // guard also accepts (0 != _ENTERED) — no initialize() migration needed.
+    uint256 private _reentrancyStatus = _NOT_ENTERED;
 
     // SC-06: observability events for off-chain monitoring (recon, dashboard)
 
