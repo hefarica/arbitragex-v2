@@ -18,6 +18,8 @@
 // Deterministic across SSR/CSR so the mounted-only counter line cannot
 // hydrate-mismatch.
 
+import React from "react";
+
 export function WindowTotalSegment({
   shown,
   windowTotal,
