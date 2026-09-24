@@ -149,6 +149,26 @@ describe("OpportunitiesLiveSchema", () => {
     });
     expect(r.success).toBe(false);
   });
+
+  // AUDIT-CARDS-MINOR (§2) · WO-H4: the envelope's window_total (COUNT(*)
+  // OVER () on the LIVE_QUERY) is part of the wire — optional so pre-WO-H4
+  // edges / cached envelopes still validate; int pins the api-server's ::int
+  // cast (empty window emits a REAL 0 via `?? 0`, never null in practice).
+  it("accepts the WO-H4 window_total envelope field, and stays optional when absent", () => {
+    const base = {
+      count: 3,
+      window: "latest",
+      items: [],
+      ts: "2026-09-24T00:00:00.000Z",
+    };
+    const withField = OpportunitiesLiveSchema.safeParse({ ...base, window_total: 12155 });
+    expect(withField.success).toBe(true);
+    if (withField.success) expect(withField.data.window_total).toBe(12155);
+    // absent (pre-WO-H4 edge) still validates — absent is never 0 downstream
+    const withoutField = OpportunitiesLiveSchema.safeParse(base);
+    expect(withoutField.success).toBe(true);
+    if (withoutField.success) expect(withoutField.data.window_total).toBeUndefined();
+  });
 });
 
 // WO-G2-PARITY (2026-09-17): same int8-as-string class as the live feed,
