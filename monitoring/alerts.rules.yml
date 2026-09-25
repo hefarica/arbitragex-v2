@@ -159,6 +159,27 @@ groups:
   # MON-3: Disk space alerts for postgres and grafana volumes
   - name: storage
     rules:
+      # APT-GPG-02 (2026-09-24): the root filesystem hit 100% and cascaded into
+      # apt GPG corruption + redis AOF crash-loop. node_exporter now reports the
+      # HOST root (path.rootfs=/host) — these alerts fire at 85/90/95%.
+      - alert: HostRootDiskWarning
+        expr: |
+          (node_filesystem_avail_bytes{instance=~".*node_exporter.*", mountpoint="/", fstype!~"tmpfs|overlay|squashfs"}
+            / node_filesystem_size_bytes{instance=~".*node_exporter.*", mountpoint="/", fstype!~"tmpfs|overlay|squashfs"}) < 0.15
+        for: 10m
+        labels: { severity: warning, platform: arbitragex }
+        annotations:
+          summary: "Root filesystem < 15% free (APT-GPG-02 guard)"
+          description: "Free {{ $value | humanizePercentage }} — run the vps-janitor workflow or prune docker build cache before the next deploy."
+      - alert: HostRootDiskCritical
+        expr: |
+          (node_filesystem_avail_bytes{instance=~".*node_exporter.*", mountpoint="/", fstype!~"tmpfs|overlay|squashfs"}
+            / node_filesystem_size_bytes{instance=~".*node_exporter.*", mountpoint="/", fstype!~"tmpfs|overlay|squashfs"}) < 0.10
+        for: 5m
+        labels: { severity: critical, platform: arbitragex }
+        annotations:
+          summary: "Root filesystem < 10% free — deploys will fail (APT-GPG-02)"
+          description: "Free {{ $value | humanizePercentage }} — at 100% the deploy build corrupts apt lists and the redis AOF. Prune NOW."
       - alert: PostgresDiskSpaceLow
         expr: |
           (
