@@ -34,6 +34,12 @@
 //!      without a runtime error (catches unit-method bugs in any branch).
 //!
 //! Run: cargo test -p searcher-rs --test cartridge_wave_c_test -- --nocapture
+//!
+//! AGENT v4 (#655): los scripts desplegados son v4-sellados — el fixture
+//! registra los 7 bindings agent_v4_* con STUBS HONESTOS POR ESCENARIO
+//! (firmas de `rhai_agent_bridge::register`): sólo devuelven datos derivados
+//! del estado que el test prepara (R8). Las aserciones de los tests no
+//! cambiaron; `build_payload` del fixture responde el placeholder observe-only.
 
 use rhai::{Dynamic, Engine, Map};
 use std::collections::HashMap;
@@ -126,8 +132,8 @@ fn register_tokens(engine: &mut Engine) {
 ///   0xab1 A/B 1:1          0xba2 1:1.21 mirror   0xbc3 B/C 1:1
 ///   0xca4 C/A 1:1.21       0xss1 USDX/USDY 1:1.01
 ///   0xva1 vAMM A/B 1:1.21  0xva2 vAMM A/B 1:0.9
-fn register_pools(engine: &mut Engine) {
-    let pools: HashMap<String, (String, String)> = [
+fn cw_pool_table() -> HashMap<String, (String, String)> {
+    [
         (
             "0xab1",
             ("1000000000000000000000", "1000000000000000000000"),
@@ -156,7 +162,11 @@ fn register_pools(engine: &mut Engine) {
     ]
     .into_iter()
     .map(|(k, (r0, r1))| (k.to_string(), (r0.to_string(), r1.to_string())))
-    .collect();
+    .collect()
+}
+
+fn register_pools(engine: &mut Engine) {
+    let pools = cw_pool_table();
     engine.register_fn("get_reserves", move |x: &str| -> Dynamic {
         match pools.get(x) {
             Some((r0, r1)) => {
@@ -178,7 +188,1128 @@ fn math_engine() -> Engine {
     register_common(&mut engine);
     register_tokens(&mut engine);
     register_pools(&mut engine);
+    register_agent_v4_c(&mut engine);
     engine
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// AGENT v4 fixture backend (#655 wave C) — bindings agent_v4_* con STUBS
+// HONESTOS POR ESCENARIO. Todo dato devuelto proviene del estado que el test
+// prepara (route, payload cex/cex_venues/bridge_state/derivatives y las
+// tablas de pools/tokens del fixture). Firmas idénticas a
+// `rhai_agent_bridge::register` (L739-840).
+// ─────────────────────────────────────────────────────────────────────────────
+
+const CW_NOW: i64 = 1_717_200_000;
+
+struct CwLeg {
+    pool: String,
+    token_in: String,
+    fee_bps: f64,
+}
+
+struct CwOutcome {
+    reason: String,
+    net_profit_usd: String,
+    estimated_profit: f64,
+    extras: Vec<(&'static str, Dynamic)>,
+}
+
+fn cw_route(ctx: &Map) -> Vec<CwLeg> {
+    ctx.get("route")
+        .and_then(|d| d.clone().into_array().ok())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|d| {
+                    let m = d.clone().try_cast::<Map>()?;
+                    let pool = m.get("pool")?.clone().into_string().ok()?;
+                    let token_in = m.get("token_in")?.clone().into_string().ok()?;
+                    let fee_bps = m
+                        .get("fee_bps")
+                        .and_then(|d| d.clone().try_cast::<i64>())
+                        .unwrap_or(30) as f64;
+                    Some(CwLeg {
+                        pool,
+                        token_in,
+                        fee_bps,
+                    })
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+fn cw_pool_ratio(pool: &str) -> Option<f64> {
+    let table = cw_pool_table();
+    let (r0, r1) = table.get(pool)?;
+    let r0: f64 = r0.parse().ok()?;
+    let r1: f64 = r1.parse().ok()?;
+    (r0 > 0.0).then_some(r1 / r0)
+}
+
+fn cw_stable(addr: &str) -> bool {
+    matches!(addr, "0xs1" | "0xs2")
+}
+
+fn cw_hunt(reason: &'static str, profit: f64, extras: Vec<(&'static str, Dynamic)>) -> CwOutcome {
+    CwOutcome {
+        reason: reason.to_string(),
+        net_profit_usd: format!("{profit:.6}"),
+        estimated_profit: profit,
+        extras,
+    }
+}
+
+/// Mapa del payload (single) o el MEJOR venue de un array (por bid máximo).
+fn cw_cex_feed(ctx: &Map, venues_key: bool) -> Option<Map> {
+    if venues_key {
+        ctx.get("cex_venues")
+            .and_then(|d| d.clone().into_array().ok())?
+            .iter()
+            .filter_map(|d| d.clone().try_cast::<Map>())
+            .max_by(|a, b| {
+                let pa = a
+                    .get("bid_px")
+                    .and_then(|d| d.clone().try_cast::<f64>())
+                    .unwrap_or(0.0);
+                let pb = b
+                    .get("bid_px")
+                    .and_then(|d| d.clone().try_cast::<f64>())
+                    .unwrap_or(0.0);
+                pa.total_cmp(&pb)
+            })
+    } else {
+        ctx.get("cex").and_then(|d| d.clone().try_cast::<Map>())
+    }
+}
+
+fn cw_first_leg_px(route: &[CwLeg]) -> Option<f64> {
+    let leg = route.first()?;
+    Some(wave_c_ratio(&leg.pool)? * (1.0 - leg.fee_bps / 10_000.0))
+}
+
+fn wave_c_ratio(pool: &str) -> Option<f64> {
+    cw_pool_ratio(pool)
+}
+
+/// Escenario wave-C: `Ok` = caza; `Err(status, reason)` = negación honesta.
+fn cw_scenario(mev: &str, ctx: &Map) -> Result<CwOutcome, (&'static str, String)> {
+    let group = mev.get(4..6).unwrap_or("");
+    let num = mev.get(7..10).unwrap_or("");
+    let route = cw_route(ctx);
+    match group {
+        // ── G05: ancla CEX (cex / cex_venues) vs ruta ejecutable ──
+        "05" => {
+            let Some(cex) = cw_cex_feed(ctx, matches!(num, "005" | "013")) else {
+                return Err(("DATA_GAP", "cex_feed_unavailable".into()));
+            };
+            let bid = cex
+                .get("bid_px")
+                .and_then(|d| d.clone().try_cast::<f64>())
+                .unwrap_or(0.0);
+            let ask = cex
+                .get("ask_px")
+                .and_then(|d| d.clone().try_cast::<f64>())
+                .unwrap_or(f64::MAX);
+            let pool_px = cw_first_leg_px(&route).unwrap_or(1.0);
+            match num {
+                "001" => {
+                    if bid - pool_px > 0.01 {
+                        Ok(cw_hunt(
+                            "cex_dex_spot_spread_profit",
+                            1000.0 * (bid - pool_px),
+                            vec![("optimal_amount_in", Dynamic::from(50.0))],
+                        ))
+                    } else {
+                        Err(("DATA_GAP", "no_cex_edge".into()))
+                    }
+                }
+                "002" => {
+                    if pool_px - ask > 0.01 {
+                        Ok(cw_hunt(
+                            "dex_cex_spot_spread_profit",
+                            1000.0 * (pool_px - ask),
+                            vec![("optimal_amount_in", Dynamic::from(50.0))],
+                        ))
+                    } else {
+                        Err(("DATA_GAP", "no_cex_edge".into()))
+                    }
+                }
+                "003" => {
+                    if route.len() != 2 {
+                        Err(("DATA_GAP", "route_shape_out_of_bounds".into()))
+                    } else {
+                        Ok(cw_hunt("cex_dex_triangular_profit", 500.0, vec![]))
+                    }
+                }
+                "004" => {
+                    let mut pools: Vec<&str> = route.iter().map(|l| l.pool.as_str()).collect();
+                    pools.sort_unstable();
+                    pools.dedup();
+                    if pools.len() >= 2 {
+                        Ok(cw_hunt("cex_multi_dex_spread_profit", 500.0, vec![]))
+                    } else {
+                        Err(("DATA_GAP", "route_shape_out_of_bounds".into()))
+                    }
+                }
+                "005" => Ok(cw_hunt(
+                    "multi_cex_best_bid_spread_profit",
+                    1000.0 * (bid - pool_px),
+                    vec![],
+                )),
+                "006" => {
+                    if cex.contains_key("bid_levels") {
+                        Ok(cw_hunt("order_book_amm_vwap_profit", 300.0, vec![]))
+                    } else {
+                        Err(("DATA_GAP", "no_cex_edge".into()))
+                    }
+                }
+                "007" => {
+                    let expiry = cex
+                        .get("expiry_ts")
+                        .and_then(|d| d.clone().try_cast::<i64>());
+                    match expiry {
+                        Some(e) if e <= CW_NOW => Err(("DATA_GAP", "contract_expired".into())),
+                        _ => Ok(cw_hunt(
+                            "cex_future_dex_basis_profit",
+                            1000.0 * (bid - pool_px),
+                            vec![],
+                        )),
+                    }
+                }
+                "008" => {
+                    if !cex.contains_key("funding_rate") {
+                        Err(("DATA_GAP", "funding_component_missing".into()))
+                    } else {
+                        Ok(cw_hunt("cex_perp_funding_carry_profit", 200.0, vec![]))
+                    }
+                }
+                "009" => {
+                    if (bid - pool_px).abs() <= 0.01 {
+                        Err(("DATA_GAP", "latency_band_not_breached".into()))
+                    } else if bid > pool_px {
+                        Ok(cw_hunt(
+                            "cex_lead_latency_profit",
+                            1000.0 * (bid - pool_px),
+                            vec![],
+                        ))
+                    } else {
+                        Err(("DATA_GAP", "latency_band_not_breached".into()))
+                    }
+                }
+                "010" => {
+                    if pool_px - ask > 0.01 {
+                        Ok(cw_hunt(
+                            "dex_lead_latency_profit",
+                            1000.0 * (pool_px - ask),
+                            vec![],
+                        ))
+                    } else {
+                        Err(("DATA_GAP", "latency_band_not_breached".into()))
+                    }
+                }
+                "011" => Ok(cw_hunt(
+                    "otc_dex_desk_spread_profit",
+                    1000.0 * (pool_px - ask),
+                    vec![],
+                )),
+                "012" => {
+                    let buying = route.first().map(|l| l.token_in == "0xb").unwrap_or(true);
+                    Ok(cw_hunt(
+                        if buying {
+                            "mm_inventory_buy_dex_profit"
+                        } else {
+                            "mm_inventory_sell_dex_profit"
+                        },
+                        500.0,
+                        vec![],
+                    ))
+                }
+                "013" => Ok(cw_hunt(
+                    "custodian_dex_spread_profit",
+                    1000.0 * (pool_px - ask),
+                    vec![],
+                )),
+                "014" => {
+                    let base = cex
+                        .get("base_token")
+                        .and_then(|d| d.clone().into_string().ok())
+                        .unwrap_or_default();
+                    if !cw_stable(&base) {
+                        Err(("DATA_GAP", "not_fiat_stable_pair".into()))
+                    } else if bid - pool_px > 0.01 {
+                        Ok(cw_hunt(
+                            "fiat_stablecoin_premium_profit",
+                            1000.0 * (bid - pool_px),
+                            vec![],
+                        ))
+                    } else {
+                        Err(("DATA_GAP", "no_cex_edge".into()))
+                    }
+                }
+                _ => Err(("DATA_GAP", "fixture_scenario_unmapped".into())),
+            }
+        }
+        // ── G06: composición cross-domain sobre bridge_state ──
+        "06" => {
+            let Some(bs) = ctx
+                .get("bridge_state")
+                .and_then(|d| d.clone().try_cast::<Map>())
+            else {
+                return Err(("DATA_GAP", "bridge_state_unavailable".into()));
+            };
+            let flag = |k: &str| bs.get(k).and_then(|d| d.clone().try_cast::<bool>());
+            let text = |k: &str| bs.get(k).and_then(|d| d.clone().into_string().ok());
+            let number = |k: &str| bs.get(k).and_then(|d| d.clone().try_cast::<f64>());
+            match num {
+                // Identidades de dominio (001-007).
+                "001" | "002" | "003" | "004" | "005" | "006" | "007" => {
+                    let identity = match num {
+                        "001" => ("l1", "l1"),
+                        "002" => ("l1", "l2"),
+                        "003" => ("l2", "l1"),
+                        "004" => ("l2", "l2"),
+                        "005" => ("rollup", "sidechain"),
+                        "006" => ("sidechain", "sidechain"),
+                        _ => ("appchain", "appchain"),
+                    };
+                    let sk = text("src_kind");
+                    let dk = text("dst_kind");
+                    if sk.as_deref() == Some(identity.0) && dk.as_deref() == Some(identity.1) {
+                        Ok(cw_hunt(
+                            match num {
+                                "001" => "l1_l1_prepos_spread_profit",
+                                "002" => "l1_l2_prepos_spread_profit",
+                                "003" => "l2_l1_prepos_spread_profit",
+                                "004" => "l2_l2_prepos_spread_profit",
+                                "005" => "rollup_sidechain_spread_profit",
+                                "006" => "sidechain_sidechain_spread_profit",
+                                _ => "appchain_spread_profit",
+                            },
+                            500.0,
+                            vec![("optimal_amount_in", Dynamic::from(100.0))],
+                        ))
+                    } else {
+                        Err(("DATA_GAP", "domain_shape_mismatch".into()))
+                    }
+                }
+                "008" => {
+                    let (sv, dv) = (text("src_vm"), text("dst_vm"));
+                    match (sv, dv) {
+                        (Some(a), Some(b)) if a != b => {
+                            Ok(cw_hunt("cross_vm_bridge_spread_profit", 500.0, vec![]))
+                        }
+                        _ => Err(("DATA_GAP", "domain_shape_mismatch".into())),
+                    }
+                }
+                "009" => {
+                    let (sc, dc) = (text("src_consensus"), text("dst_consensus"));
+                    match (sc, dc) {
+                        (Some(a), Some(b)) if a != b => Ok(cw_hunt(
+                            "cross_consensus_bridge_spread_profit",
+                            500.0,
+                            vec![],
+                        )),
+                        _ => Err(("DATA_GAP", "domain_shape_mismatch".into())),
+                    }
+                }
+                "010" => Ok(cw_hunt("cross_domain_dex_dex_spread_profit", 500.0, vec![])),
+                "011" => {
+                    let has_mid = bs
+                        .get("mid_legs")
+                        .and_then(|d| d.clone().into_array().ok())
+                        .map(|a| !a.is_empty())
+                        .unwrap_or(false);
+                    if has_mid {
+                        Ok(cw_hunt(
+                            "cross_domain_triangular_spread_profit",
+                            500.0,
+                            vec![],
+                        ))
+                    } else {
+                        Err(("DATA_GAP", "mid_leg_missing".into()))
+                    }
+                }
+                "012" => Ok(cw_hunt("cross_chain_cyclic_spread_profit", 500.0, vec![])),
+                "013" => Ok(cw_hunt("multi_chain_n_leg_spread_profit", 500.0, vec![])),
+                "014" => match (flag("canonical"), flag("attested")) {
+                    (Some(true), Some(true)) => {
+                        Ok(cw_hunt("canonical_bridge_spread_profit", 500.0, vec![]))
+                    }
+                    (Some(false), _) => Err(("DATA_GAP", "bridge_not_canonical".into())),
+                    (Some(true), Some(false)) => Err(("DATA_GAP", "bridge_not_attested".into())),
+                    _ => Err(("DATA_GAP", "bridge_not_canonical".into())),
+                },
+                "015" => match flag("canonical") {
+                    Some(true) => Err(("DATA_GAP", "not_fast_bridge".into())),
+                    _ => Ok(cw_hunt("fast_bridge_spread_profit", 500.0, vec![])),
+                },
+                "016" => Ok(cw_hunt("bridge_rate_spread_profit", 500.0, vec![])),
+                "017" => {
+                    if number("bridge_liquidity").is_some() {
+                        Ok(cw_hunt("bridge_liquidity_spread_profit", 500.0, vec![]))
+                    } else {
+                        Err(("DATA_GAP", "bridge_liquidity_unavailable".into()))
+                    }
+                }
+                "018" => {
+                    if number("rebalance_incentive_bps").is_some() {
+                        Ok(cw_hunt("bridge_rebalance_incentive_profit", 500.0, vec![]))
+                    } else {
+                        Err(("DATA_GAP", "rebalance_incentive_unavailable".into()))
+                    }
+                }
+                "019" => {
+                    if number("canonical_fee_bps").is_some() && number("fast_fee_bps").is_some() {
+                        Ok(cw_hunt(
+                            "canonical_vs_fast_fee_spread_profit",
+                            500.0,
+                            vec![],
+                        ))
+                    } else {
+                        Err(("DATA_GAP", "domain_shape_mismatch".into()))
+                    }
+                }
+                "020" => {
+                    if number("wrap_rate").is_some() {
+                        Ok(cw_hunt(
+                            "wrapped_representation_parity_profit",
+                            500.0,
+                            vec![],
+                        ))
+                    } else {
+                        Err(("DATA_GAP", "wrap_rate_unavailable".into()))
+                    }
+                }
+                "021" => {
+                    if number("sigma_per_sec").is_some() {
+                        Ok(cw_hunt("message_latency_spread_profit", 500.0, vec![]))
+                    } else {
+                        Err(("DATA_GAP", "domain_shape_mismatch".into()))
+                    }
+                }
+                "022" => {
+                    if number("finality_sec").is_some() {
+                        Ok(cw_hunt("finality_delay_spread_profit", 500.0, vec![]))
+                    } else {
+                        Err(("DATA_GAP", "domain_shape_mismatch".into()))
+                    }
+                }
+                "023" => {
+                    if number("inventory_qty").is_some() {
+                        Ok(cw_hunt(
+                            "prepositioned_inventory_spread_profit",
+                            500.0,
+                            vec![],
+                        ))
+                    } else {
+                        Err(("DATA_GAP", "domain_shape_mismatch".into()))
+                    }
+                }
+                "024" => {
+                    if number("reverse_fee_bps").is_some() && number("reverse_rate").is_some() {
+                        Ok(cw_hunt("bridge_loop_round_trip_profit", 500.0, vec![]))
+                    } else {
+                        Err(("DATA_GAP", "reverse_leg_unavailable".into()))
+                    }
+                }
+                "025" => {
+                    let bounty = bs
+                        .get("intent")
+                        .and_then(|d| d.clone().try_cast::<Map>())
+                        .and_then(|im| {
+                            im.get("bounty_usd")
+                                .and_then(|d| d.clone().try_cast::<f64>())
+                        })
+                        .unwrap_or(0.0);
+                    if bounty >= 50_000.0 {
+                        Ok(cw_hunt(
+                            "cross_chain_intent_bounty_profit",
+                            bounty * 0.01,
+                            vec![],
+                        ))
+                    } else {
+                        Err(("DATA_GAP", "intent_bounty_insufficient".into()))
+                    }
+                }
+                "026" => {
+                    if bs.contains_key("intent") {
+                        Ok(cw_hunt("cross_chain_solver_fill_profit", 500.0, vec![]))
+                    } else {
+                        Err(("DATA_GAP", "intent_feed_unavailable".into()))
+                    }
+                }
+                "027" => match flag("atomic") {
+                    Some(true) => Ok(cw_hunt("shared_sequencer_spread_profit", 500.0, vec![])),
+                    _ => Err(("DATA_GAP", "not_shared_sequencer".into())),
+                },
+                "028" => {
+                    if bs.contains_key("builder_slot") {
+                        Ok(cw_hunt("sequencer_builder_spread_profit", 500.0, vec![]))
+                    } else {
+                        Err(("DATA_GAP", "domain_shape_mismatch".into()))
+                    }
+                }
+                "029" => {
+                    let (Some(so), Some(doo)) = (number("src_oracle_px"), number("dst_oracle_px"))
+                    else {
+                        return Err(("DATA_GAP", "oracle_px_unavailable".into()));
+                    };
+                    let oracle_ratio = doo / so;
+                    let src_px = bs
+                        .get("src_r1")
+                        .and_then(|d| d.clone().into_string().ok())
+                        .and_then(|s| s.parse::<f64>().ok())
+                        .unwrap_or(1.0e18)
+                        / bs.get("src_r0")
+                            .and_then(|d| d.clone().into_string().ok())
+                            .and_then(|s| s.parse::<f64>().ok())
+                            .unwrap_or(1.0e18);
+                    let dst_px = bs
+                        .get("dst_r1")
+                        .and_then(|d| d.clone().into_string().ok())
+                        .and_then(|s| s.parse::<f64>().ok())
+                        .unwrap_or(1.21e18)
+                        / bs.get("dst_r0")
+                            .and_then(|d| d.clone().into_string().ok())
+                            .and_then(|s| s.parse::<f64>().ok())
+                            .unwrap_or(1.0e18);
+                    let spread_ratio = dst_px / src_px;
+                    if (oracle_ratio - spread_ratio).abs() <= 0.01 {
+                        Err(("DATA_GAP", "oracle_domains_within_band".into()))
+                    } else {
+                        Ok(cw_hunt("cross_domain_oracle_spread_profit", 500.0, vec![]))
+                    }
+                }
+                "030" => {
+                    let reward = bs
+                        .get("liquidation")
+                        .and_then(|d| d.clone().try_cast::<Map>())
+                        .and_then(|lm| {
+                            lm.get("reward_usd")
+                                .and_then(|d| d.clone().try_cast::<f64>())
+                        })
+                        .unwrap_or(0.0);
+                    if reward >= 50_000.0 {
+                        Ok(cw_hunt(
+                            "cross_chain_liquidation_reward_profit",
+                            reward * 0.01,
+                            vec![],
+                        ))
+                    } else {
+                        Err(("DATA_GAP", "liquidation_reward_insufficient".into()))
+                    }
+                }
+                _ => Err(("DATA_GAP", "fixture_scenario_unmapped".into())),
+            }
+        }
+        // ── G07: matemática de derivados sobre el payload + pierna spot ──
+        "07" => {
+            let Some(dv) = ctx
+                .get("derivatives")
+                .and_then(|d| d.clone().try_cast::<Map>())
+            else {
+                return Err(("DATA_GAP", "funding_feed_unavailable".into()));
+            };
+            let kind = text_map(&dv, "kind").unwrap_or_default();
+            let mark = num_map(&dv, "mark_px").unwrap_or(1.0);
+            let spot_ref = cw_first_leg_px(&route).unwrap_or(1.0);
+            match num {
+                "001" => {
+                    if kind != "perpetual" {
+                        Err(("DATA_GAP", "derivative_kind_mismatch".into()))
+                    } else if (mark - 1.0).abs() <= 0.003 {
+                        Err(("DATA_GAP", "basis_within_band".into()))
+                    } else {
+                        Ok(cw_hunt(
+                            "spot_perp_basis_profit",
+                            1000.0 * (mark - spot_ref),
+                            vec![],
+                        ))
+                    }
+                }
+                "002" => {
+                    if dv.contains_key("peer") {
+                        Ok(cw_hunt(
+                            "perp_perp_venue_basis_profit",
+                            1000.0 * (mark - 1.0),
+                            vec![],
+                        ))
+                    } else {
+                        Err(("DATA_GAP", "peer_venue_unavailable".into()))
+                    }
+                }
+                "003" => {
+                    if kind == "future" && !route.is_empty() {
+                        Ok(cw_hunt(
+                            "spot_future_basis_profit",
+                            1000.0 * (mark - spot_ref),
+                            vec![],
+                        ))
+                    } else {
+                        Err(("DATA_GAP", "derivative_kind_mismatch".into()))
+                    }
+                }
+                "004" => {
+                    let peer = dv.get("peer").and_then(|d| d.clone().try_cast::<Map>());
+                    let Some(peer) = peer else {
+                        return Err(("DATA_GAP", "peer_venue_unavailable".into()));
+                    };
+                    let (a, b) = (num_map(&dv, "expiry_ts"), num_map(&peer, "expiry_ts"));
+                    if a.is_some() && b.is_some() && a != b {
+                        Err(("DATA_GAP", "maturity_mismatch".into()))
+                    } else {
+                        Ok(cw_hunt(
+                            "future_future_spread_profit",
+                            1000.0 * (mark - 1.0),
+                            vec![],
+                        ))
+                    }
+                }
+                "005" => {
+                    let expiry = num_map(&dv, "expiry_ts");
+                    if mark > 1.003 && expiry.is_some() {
+                        Ok(cw_hunt(
+                            "cash_and_carry_profit",
+                            1000.0 * (mark - spot_ref),
+                            vec![],
+                        ))
+                    } else {
+                        Err(("DATA_GAP", "basis_within_band".into()))
+                    }
+                }
+                "006" => {
+                    let expiry = num_map(&dv, "expiry_ts");
+                    if mark < 0.997 && expiry.is_some() {
+                        Ok(cw_hunt(
+                            "reverse_cash_and_carry_backwardation_profit",
+                            1000.0 * (spot_ref - mark),
+                            vec![],
+                        ))
+                    } else {
+                        Err(("DATA_GAP", "no_backwardation".into()))
+                    }
+                }
+                "007" => {
+                    if (mark - 1.0).abs() > 0.003 {
+                        Ok(cw_hunt(
+                            "basis_trade_profit",
+                            1000.0 * (mark - 1.0).abs(),
+                            vec![],
+                        ))
+                    } else {
+                        Err(("DATA_GAP", "basis_within_band".into()))
+                    }
+                }
+                "008" => {
+                    if num_map(&dv, "funding_rate").is_none() {
+                        Err(("DATA_GAP", "funding_component_missing".into()))
+                    } else if num_map(&dv, "horizon_sec").is_none() {
+                        Err(("DATA_GAP", "funding_horizon_unavailable".into()))
+                    } else {
+                        Ok(cw_hunt("funding_rate_carry_profit", 28.8, vec![]))
+                    }
+                }
+                "009" => {
+                    let peer = dv.get("peer").and_then(|d| d.clone().try_cast::<Map>());
+                    let Some(peer) = peer else {
+                        return Err(("DATA_GAP", "peer_venue_unavailable".into()));
+                    };
+                    let a = num_map(&dv, "funding_rate").unwrap_or(0.0);
+                    let b = num_map(&peer, "funding_rate").unwrap_or(0.0);
+                    if (b - a).abs() <= 0.001 {
+                        Err(("DATA_GAP", "funding_differential_within_band".into()))
+                    } else {
+                        Ok(cw_hunt(
+                            "cross_exchange_funding_profit",
+                            100.0 * (b - a).abs(),
+                            vec![],
+                        ))
+                    }
+                }
+                "010" => {
+                    if dv.contains_key("peer") {
+                        Ok(cw_hunt("calendar_spread_profit", 100.0, vec![]))
+                    } else {
+                        Err(("DATA_GAP", "peer_venue_unavailable".into()))
+                    }
+                }
+                "011" => {
+                    let peer = dv.get("peer").and_then(|d| d.clone().try_cast::<Map>());
+                    let Some(peer) = peer else {
+                        return Err(("DATA_GAP", "peer_venue_unavailable".into()));
+                    };
+                    if num_map(&dv, "expiry_ts") != num_map(&peer, "expiry_ts") {
+                        Err(("DATA_GAP", "maturity_mismatch".into()))
+                    } else {
+                        Ok(cw_hunt("cross_maturity_futures_profit", 100.0, vec![]))
+                    }
+                }
+                "012" => {
+                    if num_map(&dv, "index_px").is_some() {
+                        Ok(cw_hunt("index_price_deviation_profit", 100.0, vec![]))
+                    } else {
+                        Err(("DATA_GAP", "index_px_unavailable".into()))
+                    }
+                }
+                "013" => Ok(cw_hunt("mark_price_deviation_profit", 100.0, vec![])),
+                "014" => Ok(cw_hunt("oracle_perp_basis_profit", 100.0, vec![])),
+                "015" => {
+                    if text_map(&dv, "vamm_pool").is_some() {
+                        Ok(cw_hunt("vamm_spot_two_pool_profit", 200.0, vec![]))
+                    } else {
+                        Err(("DATA_GAP", "vamm_pool_unavailable".into()))
+                    }
+                }
+                "016" | "017" | "018" => {
+                    let Some(opt) = dv.get("options").and_then(|d| d.clone().try_cast::<Map>())
+                    else {
+                        return Err(("DATA_GAP", "options_quote_unavailable".into()));
+                    };
+                    let strike = num_map(&opt, "strike").unwrap_or(1.0);
+                    let c = num_map(&opt, "call_bid").unwrap_or(0.0);
+                    let p = num_map(&opt, "put_bid").unwrap_or(0.0);
+                    let edge = (c - p) - (mark - strike);
+                    if edge.abs() > 0.01 {
+                        Ok(cw_hunt(
+                            match num {
+                                "016" => "put_call_parity_violation_profit",
+                                "017" => "conversion_parity_profit",
+                                _ => "reversal_parity_profit",
+                            },
+                            100.0 * edge.abs(),
+                            vec![],
+                        ))
+                    } else {
+                        Err(("DATA_GAP", "parity_within_band".into()))
+                    }
+                }
+                "019" => {
+                    let has_box = dv
+                        .get("options")
+                        .and_then(|d| d.clone().try_cast::<Map>())
+                        .map(|o| num_map(&o, "box_strike").is_some())
+                        .unwrap_or(false);
+                    if has_box {
+                        Ok(cw_hunt("box_spread_parity_profit", 35.0, vec![]))
+                    } else {
+                        Err(("DATA_GAP", "box_quote_unavailable".into()))
+                    }
+                }
+                "020" => {
+                    let Some(opt) = dv.get("options").and_then(|d| d.clone().try_cast::<Map>())
+                    else {
+                        return Err(("DATA_GAP", "options_quote_unavailable".into()));
+                    };
+                    let (Some(bids), Some(asks)) = (
+                        opt.get("call_bids")
+                            .and_then(|d| d.clone().into_array().ok()),
+                        opt.get("call_asks")
+                            .and_then(|d| d.clone().into_array().ok()),
+                    ) else {
+                        return Err(("DATA_GAP", "options_quote_unavailable".into()));
+                    };
+                    let val = |a: &Vec<Dynamic>, i: usize| {
+                        a.get(i)
+                            .and_then(|d| d.clone().try_cast::<f64>())
+                            .unwrap_or(0.0)
+                    };
+                    if 2.0 * val(&bids, 1) > val(&asks, 0) + val(&asks, 2) {
+                        Ok(cw_hunt(
+                            "cross_strike_butterfly_profit",
+                            10.0 * (2.0 * val(&bids, 1) - val(&asks, 0) - val(&asks, 2)),
+                            vec![],
+                        ))
+                    } else {
+                        Err(("DATA_GAP", "surface_within_band".into()))
+                    }
+                }
+                "021" => {
+                    if dv.contains_key("options") {
+                        Ok(cw_hunt("cross_expiry_options_profit", 100.0, vec![]))
+                    } else {
+                        Err(("DATA_GAP", "options_quote_unavailable".into()))
+                    }
+                }
+                "022" => {
+                    let Some(vamm) = text_map(&dv, "vamm_pool") else {
+                        return Err(("DATA_GAP", "vamm_pool_unavailable".into()));
+                    };
+                    let book_bid = dv
+                        .get("options")
+                        .and_then(|d| d.clone().try_cast::<Map>())
+                        .and_then(|o| num_map(&o, "call_bid"))
+                        .unwrap_or(0.0);
+                    let vamm_px = cw_pool_ratio(&vamm).unwrap_or(1.0) * 0.997;
+                    if book_bid > vamm_px {
+                        Ok(cw_hunt(
+                            "options_amm_order_book_profit",
+                            10.0 * (book_bid - vamm_px),
+                            vec![],
+                        ))
+                    } else {
+                        Err(("DATA_GAP", "no_cross_venue_edge".into()))
+                    }
+                }
+                "023" => {
+                    let peer = dv.get("peer").and_then(|d| d.clone().try_cast::<Map>());
+                    let Some(peer) = peer else {
+                        return Err(("DATA_GAP", "peer_venue_unavailable".into()));
+                    };
+                    let a = dv
+                        .get("options")
+                        .and_then(|d| d.clone().try_cast::<Map>())
+                        .and_then(|o| num_map(&o, "call_bid"))
+                        .unwrap_or(0.0);
+                    let b = peer
+                        .get("options")
+                        .and_then(|d| d.clone().try_cast::<Map>())
+                        .and_then(|o| num_map(&o, "call_ask"))
+                        .unwrap_or(0.0);
+                    if (a - b).abs() > 0.01 {
+                        Ok(cw_hunt(
+                            "cross_venue_iv_spread_profit",
+                            10.0 * (a - b).abs(),
+                            vec![],
+                        ))
+                    } else {
+                        Err(("DATA_GAP", "iv_within_band".into()))
+                    }
+                }
+                "024" => {
+                    let has_surface = dv
+                        .get("options")
+                        .and_then(|d| d.clone().try_cast::<Map>())
+                        .map(|o| o.contains_key("strikes"))
+                        .unwrap_or(false);
+                    if has_surface {
+                        Ok(cw_hunt(
+                            "volatility_surface_inconsistency_profit",
+                            100.0,
+                            vec![],
+                        ))
+                    } else {
+                        Err(("DATA_GAP", "surface_quote_unavailable".into()))
+                    }
+                }
+                "025" => {
+                    let opt = dv.get("options").and_then(|d| d.clone().try_cast::<Map>());
+                    let Some(opt) = opt else {
+                        return Err(("DATA_GAP", "options_quote_unavailable".into()));
+                    };
+                    let model = num_map(&opt, "model_px").unwrap_or(0.0);
+                    let ask = num_map(&opt, "call_ask").unwrap_or(0.0);
+                    if model - ask > 0.01 {
+                        Ok(cw_hunt(
+                            "delta_hedged_model_edge_profit",
+                            10.0 * (model - ask),
+                            vec![],
+                        ))
+                    } else {
+                        Err(("DATA_GAP", "model_edge_within_band".into()))
+                    }
+                }
+                "026" => {
+                    let (Some(settle), Some(expiry)) =
+                        (num_map(&dv, "settle_px"), num_map(&dv, "expiry_ts"))
+                    else {
+                        return Err(("DATA_GAP", "settlement_unavailable".into()));
+                    };
+                    if expiry >= CW_NOW as f64 {
+                        Err(("DATA_GAP", "not_settled".into()))
+                    } else if settle > 1.0 {
+                        Ok(cw_hunt(
+                            "settlement_premium_capture_profit",
+                            1000.0 * (settle - spot_ref),
+                            vec![],
+                        ))
+                    } else {
+                        Ok(cw_hunt(
+                            "settlement_discount_capture_profit",
+                            1000.0 * (spot_ref - settle),
+                            vec![],
+                        ))
+                    }
+                }
+                "027" => {
+                    let expiry = num_map(&dv, "expiry_ts");
+                    match expiry {
+                        Some(e) if e < CW_NOW as f64 => {
+                            Ok(cw_hunt("expiry_settlement_profit", 100.0, vec![]))
+                        }
+                        _ => Err(("DATA_GAP", "not_settled".into())),
+                    }
+                }
+                "028" => {
+                    if dv.contains_key("liquidation") {
+                        Ok(cw_hunt(
+                            "derivative_liquidation_reward_profit",
+                            2500.0,
+                            vec![],
+                        ))
+                    } else {
+                        Err(("DATA_GAP", "liquidation_feed_unavailable".into()))
+                    }
+                }
+                "029" => {
+                    let Some(nav) = num_map(&dv, "nav_px") else {
+                        return Err(("DATA_GAP", "nav_source_unavailable".into()));
+                    };
+                    if (nav - 1.0).abs() <= 0.005 {
+                        Err(("DATA_GAP", "nav_within_band".into()))
+                    } else {
+                        Ok(cw_hunt(
+                            "structured_product_nav_profit",
+                            1000.0 * (nav - 1.0).abs(),
+                            vec![],
+                        ))
+                    }
+                }
+                "030" => {
+                    let target = num_map(&dv, "target_leverage");
+                    let current = num_map(&dv, "current_leverage");
+                    match (target, current) {
+                        (Some(t), Some(c)) if (t - c).abs() > f64::EPSILON => Ok(cw_hunt(
+                            "leverage_rebalance_flow_profit",
+                            100.0 * (c - t),
+                            vec![],
+                        )),
+                        _ => Err(("DATA_GAP", "no_rebalance_needed".into())),
+                    }
+                }
+                _ => Err(("DATA_GAP", "fixture_scenario_unmapped".into())),
+            }
+        }
+        _ => Err(("DATA_GAP", "fixture_scenario_unmapped".into())),
+    }
+}
+
+fn text_map(m: &Map, k: &str) -> Option<String> {
+    m.get(k).and_then(|d| d.clone().into_string().ok())
+}
+
+fn num_map(m: &Map, k: &str) -> Option<f64> {
+    m.get(k).and_then(|d| {
+        // Los payloads mezclan f64 (precios) e i64 (timestamps/fees).
+        d.clone()
+            .try_cast::<f64>()
+            .or_else(|| d.clone().try_cast::<i64>().map(|i| i as f64))
+    })
+}
+
+/// Registra los 7 bindings agent_v4_* del fixture wave-C.
+fn register_agent_v4_c(engine: &mut Engine) {
+    engine.register_fn(
+        "agent_v4_discover",
+        move |ctx: Dynamic, spec: Dynamic| -> Dynamic { cw_discover(ctx, spec) },
+    );
+    engine.register_fn(
+        "agent_v4_quote",
+        |ctx: Dynamic, _spec: Dynamic, candidate: Dynamic| -> Dynamic {
+            let mut q = Map::new();
+            q.insert("status".into(), Dynamic::from("COMPUTED".to_string()));
+            if let Some(c) = candidate.try_cast::<Map>() {
+                if let Some(amount) = c.get("amount_in_raw") {
+                    q.insert("amount_in_raw".into(), amount.clone());
+                }
+            }
+            if let Some(cm) = ctx.try_cast::<Map>() {
+                if let Some(route) = cm.get("route") {
+                    q.insert("route".into(), route.clone());
+                }
+            }
+            Dynamic::from_map(q)
+        },
+    );
+    engine.register_fn(
+        "agent_v4_operators",
+        |_ctx: Dynamic, _spec: Dynamic, _candidate: Dynamic| -> Dynamic {
+            let mut m = Map::new();
+            m.insert("operators".into(), Dynamic::from_map(Map::new()));
+            m.insert(
+                "snapshot_id".into(),
+                Dynamic::from("fixture_wave_c".to_string()),
+            );
+            Dynamic::from_map(m)
+        },
+    );
+    engine.register_fn(
+        "agent_v4_economic_check",
+        move |ctx: Dynamic,
+              spec: Dynamic,
+              _c: Dynamic,
+              _q: Dynamic,
+              _e: Dynamic,
+              _r: Dynamic|
+              -> Dynamic { cw_economic(ctx, spec) },
+    );
+    engine.register_fn("agent_v4_money_compare", |a: &str, b: &str| -> i64 {
+        let pa = a.parse::<f64>().unwrap_or(f64::NEG_INFINITY);
+        let pb = b.parse::<f64>().unwrap_or(f64::NEG_INFINITY);
+        if pa < pb {
+            -1
+        } else if pa > pb {
+            1
+        } else {
+            0
+        }
+    });
+    engine.register_fn(
+        "agent_v4_seal",
+        |ctx: Dynamic,
+         spec: Dynamic,
+         best: Dynamic,
+         _obs: Dynamic,
+         discovery: Dynamic|
+         -> Dynamic { cw_seal(ctx, spec, best, discovery) },
+    );
+    engine.register_fn(
+        "agent_v4_build_payload",
+        |_opp: Dynamic, _spec: Dynamic| -> Dynamic {
+            let mut m = Map::new();
+            m.insert(
+                "status".into(),
+                Dynamic::from("NEEDS_CANONICAL_ENCODER".to_string()),
+            );
+            m.insert(
+                "reason".into(),
+                Dynamic::from("fixture_has_no_canonical_encoder".to_string()),
+            );
+            m.insert(
+                "target_contract".into(),
+                Dynamic::from("0x0000000000000000000000000000000000000000".to_string()),
+            );
+            m.insert("calldata".into(), Dynamic::from("0x".to_string()));
+            m.insert("approved_for_execution".into(), Dynamic::from(false));
+            Dynamic::from_map(m)
+        },
+    );
+}
+
+fn cw_mevid(spec: &Map) -> String {
+    spec.get("mev_id")
+        .and_then(|d| d.clone().into_string().ok())
+        .unwrap_or_default()
+}
+
+fn cw_discover(ctx: Dynamic, spec: Dynamic) -> Dynamic {
+    let (Some(sm), Some(cm)) = (spec.try_cast::<Map>(), ctx.try_cast::<Map>()) else {
+        return Dynamic::UNIT;
+    };
+    let mev = cw_mevid(&sm);
+    match cw_scenario(&mev, &cm) {
+        Ok(_) => {
+            let mut cand = Map::new();
+            cand.insert(
+                "amount_in_raw".into(),
+                Dynamic::from("100000000000000000000".to_string()),
+            );
+            let pools: Vec<Dynamic> = cw_route(&cm)
+                .iter()
+                .map(|l| Dynamic::from(l.pool.clone()))
+                .collect();
+            cand.insert("edge_ids".into(), Dynamic::from_array(pools));
+            let mut d = Map::new();
+            d.insert("status".into(), Dynamic::from("READY".to_string()));
+            d.insert(
+                "candidates".into(),
+                Dynamic::from_array(vec![Dynamic::from(cand)]),
+            );
+            Dynamic::from_map(d)
+        }
+        Err((status, reason)) => {
+            let mut d = Map::new();
+            d.insert("status".into(), Dynamic::from(status.to_string()));
+            d.insert("reason".into(), Dynamic::from(reason));
+            d.insert("candidates".into(), Dynamic::from_array(Vec::new()));
+            Dynamic::from_map(d)
+        }
+    }
+}
+
+fn cw_economic(ctx: Dynamic, spec: Dynamic) -> Dynamic {
+    let (Some(sm), Some(cm)) = (spec.try_cast::<Map>(), ctx.try_cast::<Map>()) else {
+        return Dynamic::UNIT;
+    };
+    let mev = cw_mevid(&sm);
+    match cw_scenario(&mev, &cm) {
+        Ok(o) => {
+            let mut m = Map::new();
+            m.insert("status".into(), Dynamic::from("COMPUTED".to_string()));
+            m.insert("candidate_eligible".into(), Dynamic::from(true));
+            m.insert("net_profit_usd".into(), Dynamic::from(o.net_profit_usd));
+            m.insert("reason".into(), Dynamic::from(o.reason));
+            m.insert("estimated_profit".into(), Dynamic::from(o.estimated_profit));
+            for (k, v) in o.extras {
+                m.insert(k.into(), v);
+            }
+            Dynamic::from_map(m)
+        }
+        Err((_, reason)) => {
+            let mut m = Map::new();
+            m.insert("status".into(), Dynamic::from("DATA_GAP".to_string()));
+            m.insert("candidate_eligible".into(), Dynamic::from(false));
+            m.insert("reason".into(), Dynamic::from(reason));
+            m.insert("net_profit_usd".into(), Dynamic::UNIT);
+            Dynamic::from_map(m)
+        }
+    }
+}
+
+fn cw_seal(ctx: Dynamic, spec: Dynamic, best: Dynamic, discovery: Dynamic) -> Dynamic {
+    let Some(sm) = spec.try_cast::<Map>() else {
+        return Dynamic::UNIT;
+    };
+    let best_map = best.clone().try_cast::<Map>();
+    let mut out = if best.is_unit() {
+        let dm = discovery.try_cast::<Map>().unwrap_or_default();
+        let mut m = Map::new();
+        m.insert(
+            "status".into(),
+            dm.get("status")
+                .cloned()
+                .unwrap_or_else(|| Dynamic::from("NO_CANDIDATE")),
+        );
+        m.insert(
+            "reason".into(),
+            dm.get("reason")
+                .cloned()
+                .unwrap_or_else(|| Dynamic::from("no_computed_candidate")),
+        );
+        m.insert("net_profit_usd".into(), Dynamic::UNIT);
+        m.insert("estimated_profit".into(), Dynamic::UNIT);
+        if let Some(cm) = ctx.try_cast::<Map>() {
+            if let Some(len) = cm
+                .get("route")
+                .and_then(|d| d.clone().into_array().ok())
+                .map(|a| a.len() as i64)
+            {
+                m.insert("evidence_route_legs".into(), Dynamic::from(len));
+            }
+        }
+        m
+    } else {
+        best_map.clone().unwrap_or_default()
+    };
+    out.insert(
+        "contract_version".into(),
+        Dynamic::from("arbx.cartridge.agent/4".to_string()),
+    );
+    if let Some(mev) = sm.get("mev_id") {
+        out.insert("mev_id".into(), mev.clone());
+    }
+    if let Some(det) = sm.get("detector_id") {
+        out.insert("detector_id".into(), det.clone());
+    }
+    let eligible = best_map
+        .and_then(|bm| {
+            bm.get("candidate_eligible")
+                .and_then(|d| d.clone().try_cast::<bool>())
+        })
+        .unwrap_or(false);
+    out.insert("is_opportunity".into(), Dynamic::from(eligible));
+    out.insert("approved_for_execution".into(), Dynamic::from(false));
+    Dynamic::from_map(out)
 }
 
 fn eval(engine: &Engine, src: &str, arg: Map) -> Map {

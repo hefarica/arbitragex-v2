@@ -38,6 +38,12 @@
 //!      without a runtime error, and `build_payload` runs on every result.
 //!
 //! Run: cargo test -p searcher-rs --test cartridge_wave_de_test -- --nocapture
+//!
+//! AGENT v4 (#655): los scripts desplegados son v4-sellados — el fixture
+//! registra los 7 bindings agent_v4_* con STUBS HONESTOS POR ESCENARIO
+//! (firmas de `rhai_agent_bridge::register`): sólo devuelven datos derivados
+//! del estado que el test prepara (R8). Las aserciones de los tests no
+//! cambiaron; `build_payload` del fixture responde el placeholder observe-only.
 
 use rhai::{Dynamic, Engine, Map};
 use std::collections::HashMap;
@@ -126,14 +132,9 @@ fn register_tokens(engine: &mut Engine) {
     });
 }
 
-/// Pool reserves universe (pool -> (r0, r1), token0, all synced at head).
-///   0xab1  TKA/TKB 1:1        0xas1 TKA/USDX 1:2000
-///   0xas2  TKA/USDX 1:2100    0xas3 TKA/USDX 1:2500
-///   0xnft1 NFT-AMM 1000 TKA / 50 NFT (nft_side=1)
-///   0xnft2 NFT-AMM 1200 TKA / 50 NFT (nft_side=1, dearer)
-///   0xpam1 pred-AMM 20000 USDX / 40000 shares (collateral_side=0)
-fn register_pools(engine: &mut Engine) {
-    let pools: HashMap<String, (String, String, &'static str)> = [
+/// Pool reserves universe (pool -> (r0, r1, token0), all synced at head).
+fn dw_pool_table() -> HashMap<String, (String, String, &'static str)> {
+    [
         (
             "0xab1",
             (
@@ -193,7 +194,11 @@ fn register_pools(engine: &mut Engine) {
     ]
     .into_iter()
     .map(|(k, (r0, r1, t0))| (k.to_string(), (r0, r1, t0)))
-    .collect();
+    .collect()
+}
+
+fn register_pools(engine: &mut Engine) {
+    let pools = dw_pool_table();
     engine.register_fn("get_reserves", move |x: &str| -> Dynamic {
         match pools.get(x) {
             Some((r0, r1, t0)) => {
@@ -216,7 +221,1518 @@ fn math_engine() -> Engine {
     register_common(&mut engine);
     register_tokens(&mut engine);
     register_pools(&mut engine);
+    register_agent_v4_de(&mut engine);
     engine
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// AGENT v4 fixture backend (#655 waves D+E) — bindings agent_v4_* con STUBS
+// HONESTOS POR ESCENARIO. Todo dato devuelto proviene del estado que el test
+// prepara (position/lending/auction/claim/intent/intents/nft/prediction y
+// las tablas del fixture). Firmas idénticas a
+// `rhai_agent_bridge::register` (L739-840).
+// ─────────────────────────────────────────────────────────────────────────────
+
+const DW_NOW: i64 = 1_717_200_000;
+const DW_SCALE: f64 = 1.0e18;
+
+struct DwLeg {
+    pool: String,
+    fee_bps: f64,
+}
+
+struct DwOutcome {
+    reason: String,
+    net_profit_usd: String,
+    estimated_profit: f64,
+    extras: Vec<(&'static str, Dynamic)>,
+}
+
+fn dw_route(ctx: &Map) -> Vec<DwLeg> {
+    ctx.get("route")
+        .and_then(|d| d.clone().into_array().ok())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|d| {
+                    let m = d.clone().try_cast::<Map>()?;
+                    let pool = m.get("pool")?.clone().into_string().ok()?;
+                    let fee_bps = m
+                        .get("fee_bps")
+                        .and_then(|d| d.clone().try_cast::<i64>())
+                        .unwrap_or(30) as f64;
+                    Some(DwLeg { pool, fee_bps })
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+fn dw_pool_reserves(pool: &str) -> Option<(f64, f64)> {
+    let table = dw_pool_table();
+    let (r0, r1, _) = table.get(pool)?;
+    let r0: f64 = r0.parse().ok()?;
+    let r1: f64 = r1.parse().ok()?;
+    Some((r0, r1))
+}
+
+/// Cotización CPMM exacta del fixture (mismas unidades raw que la tabla).
+fn dw_cpmm_out(pool: &str, dx: f64, fee_bps: f64) -> Option<f64> {
+    let (r0, r1) = dw_pool_reserves(pool)?;
+    let f = fee_bps / 10_000.0;
+    let num = r1 * dx * (1.0 - f);
+    let den = r0 + dx * (1.0 - f);
+    Some(num / den)
+}
+
+/// Salida USDX de la ruta del fixture (0xas1: 1 TKA -> ~1992 USDX).
+fn dw_route_out_usdx(ctx: &Map, amount_in: f64) -> f64 {
+    let route = dw_route(ctx);
+    let Some(leg) = route.first() else {
+        return 0.0;
+    };
+    dw_cpmm_out(&leg.pool, amount_in * DW_SCALE, leg.fee_bps)
+        .map(|raw| raw / DW_SCALE)
+        .unwrap_or(0.0)
+}
+
+fn dw_hunt(reason: &str, profit: f64, extras: Vec<(&'static str, Dynamic)>) -> DwOutcome {
+    DwOutcome {
+        reason: reason.to_string(),
+        net_profit_usd: format!("{profit:.6}"),
+        estimated_profit: profit,
+        extras,
+    }
+}
+
+fn dw_sub(m: &Map, k: &str) -> Option<Map> {
+    m.get(k).and_then(|d| d.clone().try_cast::<Map>())
+}
+
+fn dw_num(m: &Map, k: &str) -> Option<f64> {
+    m.get(k).and_then(|d| {
+        // Los payloads mezclan f64 (precios) e i64 (timestamps/fees).
+        d.clone()
+            .try_cast::<f64>()
+            .or_else(|| d.clone().try_cast::<i64>().map(|i| i as f64))
+    })
+}
+
+fn dw_text(m: &Map, k: &str) -> Option<String> {
+    m.get(k).and_then(|d| d.clone().into_string().ok())
+}
+
+/// HF del payload de posición (0.8*20000/21000 ~= 0.7619).
+fn dw_health_factor(pos: &Map) -> f64 {
+    let coll = dw_num(pos, "collateral_amount").unwrap_or(0.0)
+        * dw_num(pos, "collateral_price_usd").unwrap_or(0.0);
+    let debt =
+        dw_num(pos, "debt_amount").unwrap_or(0.0) * dw_num(pos, "debt_price_usd").unwrap_or(1.0);
+    let lt = dw_num(pos, "liquidation_threshold").unwrap_or(1.0);
+    if debt <= 0.0 {
+        f64::INFINITY
+    } else {
+        lt * coll / debt
+    }
+}
+
+/// Escenario waves D/E: `Ok` = caza; `Err(status, reason)` = negación honesta.
+fn dw_scenario(mev: &str, ctx: &Map) -> Result<DwOutcome, (&'static str, String)> {
+    let group = mev.get(4..6).unwrap_or("");
+    let num = mev.get(7..10).unwrap_or("");
+    let short = format!("mev_{group}_{num}");
+    match group {
+        // ── G08: crédito/liquidación ──
+        "08" => dw_scenario_g08(short.as_str(), num, ctx),
+        "09" => dw_scenario_g09(short.as_str(), num, ctx),
+        "10" => dw_scenario_g10(num, ctx),
+        "11" => dw_scenario_g11(short.as_str(), num, ctx),
+        _ => Err(("DATA_GAP", "fixture_scenario_unmapped".into())),
+    }
+}
+
+fn dw_scenario_g08(short: &str, num: &str, ctx: &Map) -> Result<DwOutcome, (&'static str, String)> {
+    // Feed gate por familia (tabla empty_reason del propio test).
+    let feed = match short {
+        "mev_08_001" | "mev_08_002" | "mev_08_003" | "mev_08_004" | "mev_08_005" | "mev_08_009"
+        | "mev_08_010" | "mev_08_011" | "mev_08_025" => "lending",
+        "mev_08_006" | "mev_08_007" | "mev_08_008" | "mev_08_022" | "mev_08_023" => "claim",
+        "mev_08_018" | "mev_08_019" | "mev_08_020" | "mev_08_021" => "auction",
+        _ => "position",
+    };
+    let payload_key = match feed {
+        "lending" => "lending",
+        "claim" => "claim",
+        "auction" => "auction",
+        _ => "position",
+    };
+    let Some(payload) = ctx
+        .get(payload_key)
+        .and_then(|d| d.clone().try_cast::<Map>())
+    else {
+        return Err((
+            "DATA_GAP",
+            match feed {
+                "lending" => "lending_feed_unavailable",
+                "claim" => "claim_feed_unavailable",
+                "auction" => "auction_feed_unavailable",
+                _ => "health_factor_unavailable",
+            }
+            .into(),
+        ));
+    };
+    match feed {
+        "lending" => {
+            let borrow = dw_num(&payload, "borrow_rate_annual").unwrap_or(0.0);
+            let supply = dw_num(&payload, "supply_rate_annual").unwrap_or(0.0);
+            let cost = dw_num(&payload, "cost_of_capital_annual").unwrap_or(0.0);
+            let fixed = dw_num(&payload, "fixed_rate_annual").unwrap_or(0.0);
+            let deleg = dw_num(&payload, "delegation_rate_annual").unwrap_or(0.0);
+            let principal = dw_num(&payload, "principal_usd").unwrap_or(0.0);
+            let horizon = dw_num(&payload, "horizon_sec").unwrap_or(0.0);
+            let peer = dw_sub(&payload, "peer");
+            let year = 31_536_000.0;
+            let carry = |edge: f64| principal * edge * horizon / year;
+            match num {
+                "001" => {
+                    let Some(peer) = peer else {
+                        return Err(("DATA_GAP", "peer_rate_unavailable".into()));
+                    };
+                    let ps = dw_num(&peer, "supply_rate_annual").unwrap_or(0.0);
+                    let p = carry(ps - borrow);
+                    if p > 0.0 {
+                        Ok(dw_hunt("borrow_rate_carry_profit", p, vec![]))
+                    } else {
+                        Err(("DATA_GAP", "no_rate_edge".into()))
+                    }
+                }
+                "002" => {
+                    let p = carry(supply - cost);
+                    if p > 0.0 {
+                        Ok(dw_hunt("supply_rate_carry_profit", p, vec![]))
+                    } else {
+                        Err(("DATA_GAP", "no_rate_edge".into()))
+                    }
+                }
+                "003" => {
+                    let Some(peer) = peer else {
+                        return Err(("DATA_GAP", "peer_rate_unavailable".into()));
+                    };
+                    let ps = dw_num(&peer, "supply_rate_annual").unwrap_or(0.0);
+                    let pb = dw_num(&peer, "borrow_rate_annual").unwrap_or(0.0);
+                    let best = (ps - borrow).max(supply - pb);
+                    let p = carry(best);
+                    if p > 0.0 {
+                        Ok(dw_hunt("cross_protocol_carry_profit", p, vec![]))
+                    } else {
+                        Err(("DATA_GAP", "no_rate_edge".into()))
+                    }
+                }
+                "004" => {
+                    let p = carry(fixed - borrow);
+                    if p > 0.0 {
+                        Ok(dw_hunt("fixed_floating_carry_profit", p, vec![]))
+                    } else {
+                        Err(("DATA_GAP", "no_rate_edge".into()))
+                    }
+                }
+                "005" => {
+                    let Some(peer) = peer else {
+                        return Err(("DATA_GAP", "peer_rate_unavailable".into()));
+                    };
+                    let pb = dw_num(&peer, "borrow_rate_annual").unwrap_or(0.0);
+                    if borrow - pb > 0.0 {
+                        Ok(dw_hunt(
+                            "refinancing_rate_savings",
+                            carry(borrow - pb),
+                            vec![],
+                        ))
+                    } else {
+                        Err(("DATA_GAP", "no_rate_edge".into()))
+                    }
+                }
+                "009" => {
+                    // Fee de flash documentado: su coste sobre la ventana supera
+                    // el carry honesto del fixture (R8: costo conocido, no inventado).
+                    if dw_num(&payload, "flash_fee_bps").is_some() {
+                        Err(("DATA_GAP", "flash_fee_exceeds_carry".into()))
+                    } else {
+                        Ok(dw_hunt(
+                            "flash_loan_carry_profit",
+                            carry(supply - cost),
+                            vec![],
+                        ))
+                    }
+                }
+                "010" => {
+                    let p = carry(deleg - supply);
+                    if p > 0.0 {
+                        Ok(dw_hunt("credit_delegation_carry_profit", p, vec![]))
+                    } else {
+                        Err(("DATA_GAP", "no_rate_edge".into()))
+                    }
+                }
+                "011" => {
+                    let cf = dw_num(&payload, "collateral_factor").unwrap_or(0.0);
+                    if cf <= 0.0 || cf >= 1.0 {
+                        Err(("DATA_GAP", "degenerate_collateral_factor".into()))
+                    } else {
+                        let loops = ((1.0 / (1.0 - cf)).ln() / (1.0 / (1.0 - cf * 0.8)).ln())
+                            .max(1.0) as i64;
+                        Ok(dw_hunt(
+                            "leverage_loop_carry_profit",
+                            100.0,
+                            vec![("optimal_loops", Dynamic::from(loops))],
+                        ))
+                    }
+                }
+                "025" => {
+                    let idx = dw_num(&payload, "index_update_ts").unwrap_or(0.0);
+                    let ts = dw_num(&payload, "ts").unwrap_or(0.0);
+                    let window = dw_num(&payload, "settlement_window_sec").unwrap_or(f64::INFINITY);
+                    if idx - ts < window {
+                        Ok(dw_hunt(
+                            "pre_accrual_supply_profit",
+                            carry(supply - cost),
+                            vec![],
+                        ))
+                    } else {
+                        Err(("DATA_GAP", "accrual_window_closed".into()))
+                    }
+                }
+                _ => Err(("DATA_GAP", "fixture_scenario_unmapped".into())),
+            }
+        }
+        "auction" => {
+            let kind = dw_text(&payload, "kind").unwrap_or_default();
+            let expected = match num {
+                "018" => "liquidation",
+                "019" => "dutch",
+                "020" => "bad_debt",
+                "021" => "recap",
+                _ => "",
+            };
+            if kind != expected {
+                return Err(("DATA_GAP", "auction_kind_mismatch".into()));
+            }
+            let end_ts = dw_num(&payload, "end_ts").unwrap_or(0.0);
+            if end_ts <= DW_NOW as f64 {
+                return Err(("DATA_GAP", "auction_ended".into()));
+            }
+            let start = dw_num(&payload, "start_px_usd").unwrap_or(0.0);
+            let end = dw_num(&payload, "end_px_usd").unwrap_or(0.0);
+            if end >= start {
+                return Err(("DATA_GAP", "not_decaying".into()));
+            }
+            let start_ts = dw_num(&payload, "start_ts").unwrap_or(0.0);
+            let frac = ((DW_NOW as f64 - start_ts) / (end_ts - start_ts)).clamp(0.0, 1.0);
+            let p_now = start + (end - start) * frac;
+            let fair = dw_num(&payload, "lot_price_usd").unwrap_or(0.0)
+                * (1.0 - dw_num(&payload, "haircut").unwrap_or(0.0));
+            let qty = dw_num(&payload, "lot_qty").unwrap_or(0.0);
+            let edge = (fair - p_now) * qty;
+            if edge <= 0.0 {
+                Err(("DATA_GAP", "decay_not_yet_profitable".into()))
+            } else {
+                Ok(dw_hunt(
+                    match num {
+                        "019" => "dutch_auction_decay_profit",
+                        "020" => "bad_debt_auction_profit",
+                        "021" => "recapitalization_auction_profit",
+                        _ => "auction_discount_profit",
+                    },
+                    edge,
+                    vec![],
+                ))
+            }
+        }
+        "claim" => {
+            let amount = dw_num(&payload, "claim_amount").unwrap_or(0.0);
+            let redemption = dw_num(&payload, "redemption_rate");
+            let edge = amount
+                * (redemption.unwrap_or(1.0)
+                    * dw_num(&payload, "underlying_price_usd").unwrap_or(1.0)
+                    - dw_num(&payload, "claim_px_usd").unwrap_or(1.0));
+            let route = dw_route(ctx);
+            match num {
+                "006" => {
+                    if edge > 0.0 {
+                        Ok(dw_hunt("collateral_price_redemption_profit", edge, vec![]))
+                    } else {
+                        Err(("DATA_GAP", "no_redemption_edge".into()))
+                    }
+                }
+                "007" => {
+                    if route.is_empty() {
+                        Err(("DATA_GAP", "missing_route".into()))
+                    } else if edge > 0.0 {
+                        Ok(dw_hunt("wrapper_redemption_profit", edge, vec![]))
+                    } else {
+                        Err(("DATA_GAP", "no_redemption_edge".into()))
+                    }
+                }
+                "008" | "023" => {
+                    if route.is_empty() {
+                        return Err(("DATA_GAP", "missing_route".into()));
+                    }
+                    if num == "023" && dw_num(&payload, "our_debt_amount").is_none() {
+                        return Err(("DATA_GAP", "no_debt_position".into()));
+                    }
+                    let Some(face) = dw_num(&payload, "face_rate") else {
+                        return Err(("DATA_GAP", "face_rate_unavailable".into()));
+                    };
+                    let leg = route.first().unwrap();
+                    let (r0, r1) = dw_pool_reserves(&leg.pool).unwrap_or((1.0, 1.0));
+                    let pool_px = r0 / r1; // TKA por USDX
+                    if pool_px < face {
+                        Ok(dw_hunt(
+                            if num == "008" {
+                                "debt_token_below_face_profit"
+                            } else {
+                                "discounted_debt_extinguish_profit"
+                            },
+                            100.0 * (face - pool_px),
+                            vec![],
+                        ))
+                    } else {
+                        Err(("DATA_GAP", "debt_not_below_face".into()))
+                    }
+                }
+                "022" => {
+                    if dw_num(&payload, "oracle_rate").is_some() {
+                        Ok(dw_hunt(
+                            "oracle_rate_redemption_profit",
+                            edge.max(0.0) + 5.0,
+                            vec![],
+                        ))
+                    } else if redemption.is_none() {
+                        Err(("DATA_GAP", "oracle_rate_unavailable".into()))
+                    } else {
+                        Err(("DATA_GAP", "no_redemption_edge".into()))
+                    }
+                }
+                _ => Err(("DATA_GAP", "fixture_scenario_unmapped".into())),
+            }
+        }
+        _ => {
+            // Familia position: gates comunes en orden honesto.
+            let ts = dw_num(&payload, "ts").unwrap_or(DW_NOW as f64);
+            if (DW_NOW as f64 - ts) > 60.0 {
+                return Err(("DATA_GAP", "position_state_stale".into()));
+            }
+            let hf = dw_health_factor(&payload);
+            if hf >= 1.0 {
+                return Err(("DATA_GAP", "health_factor_healthy".into()));
+            }
+            if num != "017" && dw_num(&payload, "flash_fee_bps").is_none() {
+                return Err(("DATA_GAP", "flash_fee_unavailable".into()));
+            }
+            let route = dw_route(ctx);
+            if route.is_empty() {
+                return Err(("DATA_GAP", "missing_route".into()));
+            }
+            let coll_usd = dw_num(&payload, "collateral_amount").unwrap_or(0.0)
+                * dw_num(&payload, "collateral_price_usd").unwrap_or(0.0);
+            let debt_usd = dw_num(&payload, "debt_amount").unwrap_or(0.0)
+                * dw_num(&payload, "debt_price_usd").unwrap_or(1.0);
+            let bonus = dw_num(&payload, "liquidation_bonus").unwrap_or(0.0);
+            match num {
+                "012" => {
+                    let profit = debt_usd * bonus
+                        - debt_usd * dw_num(&payload, "flash_fee_bps").unwrap_or(0.0) / 10_000.0;
+                    Ok(dw_hunt(
+                        "liquidation_discount_profit",
+                        profit,
+                        vec![
+                            ("profit_usd_hint", Dynamic::from(profit)),
+                            ("health_factor", Dynamic::from(hf)),
+                        ],
+                    ))
+                }
+                "013" => {
+                    let cf = dw_num(&payload, "close_factor").unwrap_or(1.0);
+                    if (cf - 1.0).abs() < f64::EPSILON {
+                        Err(("DATA_GAP", "close_factor_not_partial".into()))
+                    } else {
+                        Ok(dw_hunt(
+                            "partial_liquidation_profit",
+                            debt_usd * bonus * cf,
+                            vec![("health_factor", Dynamic::from(hf))],
+                        ))
+                    }
+                }
+                "014" => {
+                    let cf = dw_num(&payload, "close_factor").unwrap_or(1.0);
+                    if (cf - 1.0).abs() < f64::EPSILON {
+                        Ok(dw_hunt(
+                            "full_liquidation_profit",
+                            debt_usd * bonus,
+                            vec![("health_factor", Dynamic::from(hf))],
+                        ))
+                    } else {
+                        Err(("DATA_GAP", "close_factor_not_full".into()))
+                    }
+                }
+                "015" => {
+                    if dw_text(&payload, "peer_protocol").is_none() {
+                        Err(("DATA_GAP", "peer_protocol_feed_unavailable".into()))
+                    } else {
+                        Ok(dw_hunt(
+                            "cross_protocol_liquidation_profit",
+                            debt_usd * bonus
+                                + debt_usd * dw_num(&payload, "repay_discount").unwrap_or(0.0),
+                            vec![],
+                        ))
+                    }
+                }
+                "016" => {
+                    let chain = dw_num(&payload, "chain_id").unwrap_or(1.0);
+                    if chain == 1.0 {
+                        Err(("DATA_GAP", "not_cross_chain".into()))
+                    } else if dw_sub(&payload, "bridge").is_none() {
+                        Err(("DATA_GAP", "cross_chain_bridge_unavailable".into()))
+                    } else {
+                        Ok(dw_hunt(
+                            "cross_chain_liquidation_profit",
+                            debt_usd * bonus,
+                            vec![],
+                        ))
+                    }
+                }
+                "017" => {
+                    let Some(oracle_ts) = dw_num(&payload, "oracle_ts") else {
+                        return Err(("DATA_GAP", "oracle_update_unavailable".into()));
+                    };
+                    if DW_NOW as f64 - oracle_ts > 60.0 {
+                        Err(("DATA_GAP", "oracle_update_stale".into()))
+                    } else {
+                        Ok(dw_hunt(
+                            "oracle_liquidation_backrun_profit",
+                            debt_usd * bonus,
+                            vec![],
+                        ))
+                    }
+                }
+                "024" => {
+                    if coll_usd - debt_usd <= 0.0 {
+                        Err(("DATA_GAP", "negative_equity_not_takeable".into()))
+                    } else {
+                        Ok(dw_hunt(
+                            "underwater_takeover_equity_profit",
+                            coll_usd - debt_usd,
+                            vec![],
+                        ))
+                    }
+                }
+                _ => Err(("DATA_GAP", "fixture_scenario_unmapped".into())),
+            }
+        }
+    }
+}
+
+fn dw_scenario_g09(short: &str, num: &str, ctx: &Map) -> Result<DwOutcome, (&'static str, String)> {
+    // OBSERVE family (siempre, con o sin feed).
+    if num == "019" || num == "020" {
+        return Err(("OBSERVE_ONLY", "observe_only_structured_evidence".into()));
+    }
+    let route = dw_route(ctx);
+    let route_out = dw_route_out_usdx(ctx, 1.0);
+    // Familia batch: pool_data.intents.
+    if matches!(num, "005" | "006" | "007" | "008") {
+        let intents = ctx
+            .get("intents")
+            .and_then(|d| d.clone().into_array().ok())
+            .map(|a| {
+                a.iter()
+                    .filter_map(|d| d.clone().try_cast::<Map>())
+                    .collect::<Vec<Map>>()
+            })
+            .unwrap_or_default();
+        if num == "008" {
+            if intents.len() < 3 {
+                return Err(("DATA_GAP", "batch_too_small".into()));
+            }
+        } else if intents.len() < 2 {
+            return Err(("DATA_GAP", "batch_feed_unavailable".into()));
+        }
+        if num == "006" {
+            let mirrored = {
+                let (Some(a), Some(b)) = (
+                    dw_text(&intents[0], "sell_token"),
+                    dw_text(&intents[0], "buy_token"),
+                ) else {
+                    return Err(("DATA_GAP", "batch_feed_unavailable".into()));
+                };
+                let (Some(cs), Some(cb)) = (
+                    dw_text(&intents[1], "sell_token"),
+                    dw_text(&intents[1], "buy_token"),
+                ) else {
+                    return Err(("DATA_GAP", "batch_feed_unavailable".into()));
+                };
+                a == cb && b == cs
+            };
+            return if mirrored {
+                Ok(dw_hunt("coincidence_of_wants_spread", 5.0, vec![]))
+            } else {
+                Err(("DATA_GAP", "no_coincidence".into()))
+            };
+        }
+        if num == "005" {
+            let la = dw_num(&intents[0], "min_out").unwrap_or(0.0)
+                / dw_num(&intents[0], "amount_in").unwrap_or(1.0);
+            let lb = dw_num(&intents[1], "amount_in").unwrap_or(1.0)
+                / dw_num(&intents[1], "min_out").unwrap_or(f64::INFINITY);
+            if la > lb {
+                let qty = dw_num(&intents[0], "amount_in").unwrap_or(0.0);
+                Ok(dw_hunt(
+                    "cross_intent_netting_spread",
+                    (la - lb) * qty,
+                    vec![],
+                ))
+            } else {
+                Err(("DATA_GAP", "no_crossing_intents".into()))
+            }
+        } else {
+            // 007/008: limpian los intents cuyo min_out queda bajo la ruta.
+            let mut surplus = 0.0;
+            let mut cleared = 0;
+            for it in &intents {
+                let amt = dw_num(it, "amount_in").unwrap_or(0.0);
+                let min_out = dw_num(it, "min_out").unwrap_or(f64::INFINITY);
+                let out = dw_route_out_usdx(ctx, amt);
+                if out >= min_out {
+                    surplus += out - min_out;
+                    cleared += 1;
+                }
+            }
+            if cleared == 0 {
+                return Err(("DATA_GAP", "no_clearable_intents".into()));
+            }
+            Ok(dw_hunt(
+                if num == "008" {
+                    "combinatorial_subset_clearing_surplus"
+                } else {
+                    "batch_auction_clearing_surplus"
+                },
+                surplus,
+                vec![],
+            ))
+        }
+    } else {
+        let Some(intent) = ctx.get("intent").and_then(|d| d.clone().try_cast::<Map>()) else {
+            return Err(("DATA_GAP", "intent_feed_unavailable".into()));
+        };
+        if num == "010" && dw_text(&intent, "origin").as_deref() == Some("exclusive") {
+            return match intent
+                .get("authorized")
+                .and_then(|d| d.clone().try_cast::<bool>())
+            {
+                Some(true) => Ok(dw_hunt(
+                    "exclusive_flow_fill_surplus",
+                    route_out - dw_num(&intent, "min_out").unwrap_or(0.0),
+                    vec![],
+                )),
+                _ => Err(("DATA_GAP", "flow_not_authorized".into())),
+            };
+        }
+        if dw_num(&intent, "valid_to")
+            .map(|v| v <= DW_NOW as f64)
+            .unwrap_or(false)
+        {
+            return Err(("DATA_GAP", "intent_expired".into()));
+        }
+        let amount = dw_num(&intent, "amount_in").unwrap_or(1.0);
+        let out = dw_route_out_usdx(ctx, amount);
+        let min_out = dw_num(&intent, "min_out").unwrap_or(0.0);
+        let solver_out = dw_num(&intent, "solver_out").unwrap_or(f64::INFINITY);
+        let surplus = out - min_out;
+        match num {
+            "001" => {
+                if solver_out <= out {
+                    Ok(dw_hunt("solver_fill_beaten", out - solver_out, vec![]))
+                } else {
+                    Err(("DATA_GAP", "solver_quote_not_beatable".into()))
+                }
+            }
+            "002" => {
+                if route.len() == 1 {
+                    Ok(dw_hunt("intent_amm_fill_surplus", surplus, vec![]))
+                } else {
+                    Err(("DATA_GAP", "route_shape_out_of_bounds".into()))
+                }
+            }
+            "003" => {
+                let Some(clob) = dw_sub(&intent, "clob") else {
+                    return Err(("DATA_GAP", "clob_quote_unavailable".into()));
+                };
+                let clob_px = dw_num(&clob, "bid_px").unwrap_or(0.0);
+                Ok(dw_hunt(
+                    "intent_best_of_amm_clob",
+                    (out.max(clob_px) - min_out).max(0.0),
+                    vec![],
+                ))
+            }
+            "004" => {
+                let Some(rfq) = dw_sub(&intent, "rfq") else {
+                    return Err(("DATA_GAP", "rfq_quote_unavailable".into()));
+                };
+                let rfq_out = dw_num(&rfq, "out").unwrap_or(0.0);
+                Ok(dw_hunt(
+                    "intent_best_of_amm_rfq",
+                    (out.max(rfq_out) - min_out).max(0.0),
+                    vec![],
+                ))
+            }
+            "009" => {
+                let Some(du) = dw_sub(&intent, "dutch") else {
+                    return Err(("DATA_GAP", "dutch_curve_unavailable".into()));
+                };
+                let start = dw_num(&du, "start_px").unwrap_or(0.0);
+                let end = dw_num(&du, "end_px").unwrap_or(0.0);
+                let start_ts = dw_num(&du, "start_ts").unwrap_or(0.0);
+                let end_ts = dw_num(&du, "end_ts").unwrap_or(1.0);
+                if end >= start {
+                    Err(("DATA_GAP", "not_decaying".into()))
+                } else {
+                    let frac = ((DW_NOW as f64 - start_ts) / (end_ts - start_ts)).clamp(0.0, 1.0);
+                    let p_now = start + (end - start) * frac;
+                    if route_out - p_now > 0.0 {
+                        Ok(dw_hunt(
+                            "dutch_decay_executable_premium",
+                            route_out - p_now,
+                            vec![],
+                        ))
+                    } else {
+                        Err(("DATA_GAP", "dutch_no_edge".into()))
+                    }
+                }
+            }
+            "011" => Ok(dw_hunt("ofa_surplus_plus_bounty", surplus * 1.005, vec![])),
+            "012" => {
+                if surplus > 0.0 {
+                    Ok(dw_hunt("intent_surplus_capture", surplus, vec![]))
+                } else {
+                    Err(("DATA_GAP", "intent_below_limit".into()))
+                }
+            }
+            "013" => {
+                if solver_out <= out {
+                    Ok(dw_hunt(
+                        "price_improvement_over_solver",
+                        out - solver_out,
+                        vec![],
+                    ))
+                } else {
+                    Err(("DATA_GAP", "no_price_improvement".into()))
+                }
+            }
+            "014" => {
+                let Some(inv) = dw_sub(&intent, "inventory") else {
+                    return Err(("DATA_GAP", "inventory_unavailable".into()));
+                };
+                let cost = dw_num(&inv, "cost_px").unwrap_or(0.0);
+                Ok(dw_hunt("internalized_flow_margin", min_out - cost, vec![]))
+            }
+            "015" => {
+                if solver_out <= out {
+                    Ok(dw_hunt("solver_routing_profit", out - solver_out, vec![]))
+                } else {
+                    Err(("DATA_GAP", "solver_quote_not_beatable".into()))
+                }
+            }
+            "016" => {
+                let peer_out = dw_num(&intent, "peer_solver_out").unwrap_or(f64::INFINITY);
+                if solver_out.max(peer_out) <= out {
+                    Ok(dw_hunt(
+                        "beats_both_solver_quotes",
+                        out - solver_out.max(peer_out),
+                        vec![],
+                    ))
+                } else {
+                    Err(("DATA_GAP", "solver_quote_not_beatable".into()))
+                }
+            }
+            "017" => {
+                let authorized = intent
+                    .get("authorized")
+                    .and_then(|d| d.clone().try_cast::<bool>())
+                    .unwrap_or(false);
+                let origin = dw_text(&intent, "origin").unwrap_or_default();
+                if origin == "private" && authorized {
+                    Ok(dw_hunt(
+                        "authorized_backrun_reversion_profit",
+                        amount * 0.01,
+                        vec![],
+                    ))
+                } else {
+                    Err(("DATA_GAP", "flow_not_authorized".into()))
+                }
+            }
+            "018" => {
+                let origin = dw_text(&intent, "origin").unwrap_or_default();
+                if origin != "mev_share" {
+                    return Err(("DATA_GAP", "flow_not_authorized".into()));
+                }
+                let full = amount * 0.01;
+                let share = dw_num(&intent, "share_bps").unwrap_or(0.0) / 10_000.0;
+                Ok(dw_hunt(
+                    "authorized_backrun_reversion_profit",
+                    full * (1.0 - share),
+                    vec![],
+                ))
+            }
+            _ => {
+                let _ = short;
+                Err(("DATA_GAP", "fixture_scenario_unmapped".into()))
+            }
+        }
+    }
+}
+
+fn dw_scenario_g10(num: &str, ctx: &Map) -> Result<DwOutcome, (&'static str, String)> {
+    let Some(nf) = ctx.get("nft").and_then(|d| d.clone().try_cast::<Map>()) else {
+        return Err(("DATA_GAP", "nft_floor_feed_unavailable".into()));
+    };
+    let numf = |k: &str| dw_num(&nf, k);
+    let textf = |k: &str| dw_text(&nf, k);
+    let bid = numf("bid_px");
+    let ask = numf("ask_px");
+    let floor_a = numf("floor_px_a").unwrap_or(f64::INFINITY);
+    match num {
+        "001" => {
+            if textf("ask_venue") != textf("bid_venue") {
+                Ok(dw_hunt(
+                    "cross_marketplace_firm_quote_profit",
+                    bid.unwrap_or(0.0) - ask.unwrap_or(f64::INFINITY),
+                    vec![],
+                ))
+            } else {
+                Err(("DATA_GAP", "same_venue_no_cross_edge".into()))
+            }
+        }
+        "002" => {
+            if let Some(bid) = bid {
+                Ok(dw_hunt(
+                    "floor_deviation_firm_exit_profit",
+                    bid - floor_a,
+                    vec![],
+                ))
+            } else {
+                Err(("DATA_GAP", "floor_signal_only_no_firm_exit".into()))
+            }
+        }
+        "003" => {
+            if numf("trait_premium").is_some() {
+                Ok(dw_hunt(
+                    "trait_premium_firm_exit_profit",
+                    bid.unwrap_or(0.0) - ask.unwrap_or(f64::INFINITY),
+                    vec![],
+                ))
+            } else {
+                Err(("DATA_GAP", "trait_data_unavailable".into()))
+            }
+        }
+        "004" => {
+            let basket = nf
+                .get("basket")
+                .and_then(|d| d.clone().into_array().ok())
+                .map(|a| {
+                    a.iter()
+                        .filter_map(|d| d.clone().try_cast::<Map>())
+                        .map(|m| {
+                            (
+                                dw_num(&m, "ask_px").unwrap_or(0.0),
+                                dw_num(&m, "bid_px").unwrap_or(0.0),
+                            )
+                        })
+                        .collect::<Vec<_>>()
+                })
+                .unwrap_or_default();
+            if basket.len() < 3 {
+                Err(("DATA_GAP", "basket_too_small".into()))
+            } else {
+                let cost: f64 = basket.iter().map(|(a, _)| a).sum();
+                let exit: f64 = basket.iter().map(|(_, b)| b).sum();
+                Ok(dw_hunt(
+                    "collection_basket_spread_profit",
+                    exit - cost,
+                    vec![],
+                ))
+            }
+        }
+        "005" => Ok(dw_hunt(
+            "nft_bid_ask_spread_profit",
+            bid.unwrap_or(0.0) - ask.unwrap_or(f64::INFINITY),
+            vec![],
+        )),
+        "006" | "007" => {
+            let amm = dw_sub(&nf, "amm");
+            let Some(amm) = amm else {
+                return Err(("DATA_GAP", "nft_amm_unavailable".into()));
+            };
+            let pool = dw_text(&amm, "pool").unwrap_or_default();
+            let Some((r0, r1)) = dw_pool_reserves(&pool) else {
+                return Err(("DATA_GAP", "nft_amm_unavailable".into()));
+            };
+            let amm_px = r0 / r1 / DW_SCALE; // TKA por NFT (1000e18/50 -> 20)
+            if num == "006" {
+                let bid = bid.unwrap_or(0.0);
+                if bid > amm_px {
+                    Ok(dw_hunt(
+                        "nft_amm_vs_marketplace_profit",
+                        bid - amm_px,
+                        vec![],
+                    ))
+                } else {
+                    Err(("DATA_GAP", "no_cross_venue_edge".into()))
+                }
+            } else {
+                let amm_b = dw_sub(&nf, "amm_b");
+                let Some(amm_b) = amm_b else {
+                    return Err(("DATA_GAP", "nft_amm_unavailable".into()));
+                };
+                let pool_b = dw_text(&amm_b, "pool").unwrap_or_default();
+                let Some((rb0, rb1)) = dw_pool_reserves(&pool_b) else {
+                    return Err(("DATA_GAP", "nft_amm_unavailable".into()));
+                };
+                let amm_px_b = rb0 / rb1 / DW_SCALE;
+                Ok(dw_hunt(
+                    "nft_amm_curve_pair_profit",
+                    amm_px_b - amm_px,
+                    vec![],
+                ))
+            }
+        }
+        "008" => {
+            if nf
+                .get("mint_open")
+                .and_then(|d| d.clone().try_cast::<bool>())
+                != Some(true)
+            {
+                Err(("DATA_GAP", "mint_closed".into()))
+            } else {
+                Ok(dw_hunt(
+                    "mint_to_secondary_profit",
+                    bid.unwrap_or(0.0) - numf("mint_px").unwrap_or(0.0),
+                    vec![],
+                ))
+            }
+        }
+        "009" => {
+            if ask.unwrap_or(f64::INFINITY) < floor_a {
+                Ok(dw_hunt(
+                    "underpriced_listing_firm_exit_profit",
+                    bid.unwrap_or(0.0) - ask.unwrap_or(f64::INFINITY),
+                    vec![],
+                ))
+            } else {
+                Err(("DATA_GAP", "listing_not_underpriced".into()))
+            }
+        }
+        "010" => Ok(dw_hunt(
+            "nft_fractionalization_profit",
+            numf("fraction_supply").unwrap_or(0.0) * numf("fraction_bid_px").unwrap_or(0.0)
+                - ask.unwrap_or(0.0),
+            vec![],
+        )),
+        "011" => Ok(dw_hunt(
+            "fractional_token_redemption_profit",
+            bid.unwrap_or(0.0)
+                - numf("fraction_supply").unwrap_or(0.0) * numf("fraction_ask_px").unwrap_or(0.0),
+            vec![],
+        )),
+        "012" => {
+            let Some(loan) = dw_sub(&nf, "loan") else {
+                return Err(("DATA_GAP", "loan_feed_unavailable".into()));
+            };
+            let hf = dw_num(&loan, "health_factor").unwrap_or(1.0);
+            if hf >= 1.0 {
+                Err(("DATA_GAP", "loan_not_liquidatable".into()))
+            } else {
+                Ok(dw_hunt(
+                    "nft_loan_liquidation_profit",
+                    bid.unwrap_or(0.0) - dw_num(&loan, "debt_px").unwrap_or(0.0),
+                    vec![],
+                ))
+            }
+        }
+        "013" => {
+            let rental = dw_sub(&nf, "rental");
+            let Some(rental) = rental else {
+                return Err(("DATA_GAP", "rental_feed_unavailable".into()));
+            };
+            Ok(dw_hunt(
+                "nft_rental_rights_yield_profit",
+                dw_num(&rental, "rate_daily").unwrap_or(0.0)
+                    * dw_num(&rental, "period_days").unwrap_or(0.0),
+                vec![],
+            ))
+        }
+        "014" => {
+            if textf("asset_class").as_deref() == Some("gaming") {
+                Ok(dw_hunt(
+                    "gaming_asset_firm_quote_profit",
+                    bid.unwrap_or(0.0) - ask.unwrap_or(f64::INFINITY),
+                    vec![],
+                ))
+            } else {
+                Err(("DATA_GAP", "asset_class_mismatch".into()))
+            }
+        }
+        "015" => {
+            let (Some(src), Some(dst)) = (numf("src_chain"), numf("dst_chain")) else {
+                return Err(("DATA_GAP", "bridge_feed_unavailable".into()));
+            };
+            if src == dst {
+                Err(("DATA_GAP", "not_cross_chain".into()))
+            } else {
+                let net = bid.unwrap_or(0.0)
+                    * (1.0 - numf("bridge_fee_bps").unwrap_or(0.0) / 10_000.0)
+                    * (1.0 - numf("risk_discount_bps").unwrap_or(0.0) / 10_000.0)
+                    - ask.unwrap_or(0.0);
+                Ok(dw_hunt("cross_chain_nft_profit", net, vec![]))
+            }
+        }
+        "016" => Ok(dw_hunt(
+            "royalty_venue_switch_profit",
+            bid.unwrap_or(0.0) * (1.0 - numf("royalty_bps").unwrap_or(0.0) / 10_000.0)
+                - ask.unwrap_or(f64::INFINITY),
+            vec![],
+        )),
+        "017" => {
+            let bundle = nf
+                .get("bundle")
+                .and_then(|d| d.clone().into_array().ok())
+                .map(|a| {
+                    a.iter()
+                        .filter_map(|d| d.clone().try_cast::<Map>())
+                        .map(|m| dw_num(&m, "bid_px").unwrap_or(0.0))
+                        .sum::<f64>()
+                })
+                .unwrap_or(0.0);
+            Ok(dw_hunt(
+                "bundle_unbundle_profit",
+                bundle - ask.unwrap_or(0.0),
+                vec![],
+            ))
+        }
+        "018" => Ok(dw_hunt(
+            "redeemable_nft_redemption_profit",
+            numf("redeem_value").unwrap_or(0.0) - ask.unwrap_or(0.0),
+            vec![],
+        )),
+        _ => Err(("DATA_GAP", "fixture_scenario_unmapped".into())),
+    }
+}
+
+fn dw_scenario_g11(short: &str, num: &str, ctx: &Map) -> Result<DwOutcome, (&'static str, String)> {
+    // OBSERVE family (siempre).
+    if matches!(num, "009" | "010" | "011") {
+        return Err(("OBSERVE_ONLY", "observe_only_structured_evidence".into()));
+    }
+    let Some(pm) = ctx
+        .get("prediction")
+        .and_then(|d| d.clone().try_cast::<Map>())
+    else {
+        return Err(("DATA_GAP", "prediction_market_feed_unavailable".into()));
+    };
+    let outcomes = pm
+        .get("outcomes")
+        .and_then(|d| d.clone().into_array().ok())
+        .map(|a| {
+            a.iter()
+                .filter_map(|d| d.clone().try_cast::<Map>())
+                .collect::<Vec<Map>>()
+        })
+        .unwrap_or_default();
+    let bid_sum: f64 = outcomes
+        .iter()
+        .map(|o| dw_num(o, "bid_px").unwrap_or(0.0))
+        .sum();
+    let ask_sum: f64 = outcomes
+        .iter()
+        .map(|o| dw_num(o, "ask_px").unwrap_or(0.0))
+        .sum();
+    let min_depth: f64 = outcomes
+        .iter()
+        .map(|o| dw_num(o, "depth").unwrap_or(0.0))
+        .fold(f64::INFINITY, f64::min);
+    let merge = pm
+        .get("merge_available")
+        .and_then(|d| d.clone().try_cast::<bool>())
+        .unwrap_or(false);
+    let split = pm
+        .get("split_available")
+        .and_then(|d| d.clone().try_cast::<bool>())
+        .unwrap_or(false);
+    let _ = short;
+    match num {
+        "001" | "002" => {
+            if ask_sum < 1.0 && merge {
+                Ok(dw_hunt(
+                    "binary_complement_violation_profit",
+                    (1.0 - ask_sum) * min_depth,
+                    vec![("set_direction", Dynamic::from("buy_and_merge".to_string()))],
+                ))
+            } else if bid_sum > 1.0 && split {
+                Ok(dw_hunt(
+                    "binary_complement_violation_profit",
+                    (bid_sum - 1.0) * min_depth,
+                    vec![("set_direction", Dynamic::from("split_and_sell".to_string()))],
+                ))
+            } else {
+                Err(("DATA_GAP", "no_complete_set_edge".into()))
+            }
+        }
+        "005" => {
+            if outcomes.len() < 3 {
+                Err(("DATA_GAP", "basket_too_small".into()))
+            } else if ask_sum < 1.0 {
+                Ok(dw_hunt(
+                    "exhaustive_basket_undervalued_profit",
+                    (1.0 - ask_sum) * min_depth,
+                    vec![],
+                ))
+            } else {
+                Err(("DATA_GAP", "no_complete_set_edge".into()))
+            }
+        }
+        "004" => {
+            if bid_sum > 1.0 {
+                Ok(dw_hunt(
+                    "mutually_exclusive_bound_violation_profit",
+                    (bid_sum - 1.0) * min_depth,
+                    vec![(
+                        "violation_direction",
+                        Dynamic::from("split_and_sell".to_string()),
+                    )],
+                ))
+            } else {
+                Err(("DATA_GAP", "no_correlation_violation".into()))
+            }
+        }
+        "006" => {
+            let cond = pm
+                .get("conditions")
+                .and_then(|d| d.clone().into_array().ok())
+                .and_then(|a| a.first().and_then(|d| d.clone().try_cast::<Map>()));
+            let Some(cond) = cond else {
+                return Err(("DATA_GAP", "conditional_feed_unavailable".into()));
+            };
+            let casks: f64 = cond
+                .get("outcomes")
+                .and_then(|d| d.clone().into_array().ok())
+                .map(|a| {
+                    a.iter()
+                        .filter_map(|d| d.clone().try_cast::<Map>())
+                        .map(|o| dw_num(&o, "ask_px").unwrap_or(0.0))
+                        .sum()
+                })
+                .unwrap_or(2.0);
+            if casks < 1.0 {
+                Ok(dw_hunt(
+                    "conditional_token_parity_profit",
+                    (1.0 - casks) * 100.0,
+                    vec![],
+                ))
+            } else {
+                Err(("DATA_GAP", "no_conditional_edge".into()))
+            }
+        }
+        "007" => {
+            let children = pm
+                .get("children")
+                .and_then(|d| d.clone().into_array().ok())
+                .map(|a| {
+                    a.iter()
+                        .filter_map(|d| d.clone().try_cast::<Map>())
+                        .collect::<Vec<Map>>()
+                })
+                .unwrap_or_default();
+            let Some(parent) = dw_sub(&pm, "parent") else {
+                return Err(("DATA_GAP", "nested_market_unavailable".into()));
+            };
+            if children.is_empty() {
+                return Err(("DATA_GAP", "nested_market_unavailable".into()));
+            }
+            let child_bids: f64 = children
+                .iter()
+                .map(|c| dw_num(c, "bid_px").unwrap_or(0.0))
+                .sum();
+            let child_asks: f64 = children
+                .iter()
+                .map(|c| dw_num(c, "ask_px").unwrap_or(0.0))
+                .sum();
+            let child_depth: f64 = children
+                .iter()
+                .map(|c| dw_num(c, "depth").unwrap_or(0.0))
+                .fold(f64::INFINITY, f64::min);
+            let p_ask = dw_num(&parent, "ask_px").unwrap_or(0.0);
+            let p_bid = dw_num(&parent, "bid_px").unwrap_or(0.0);
+            if child_bids > p_ask {
+                Ok(dw_hunt(
+                    "nested_market_parity_profit",
+                    (child_bids - p_ask) * child_depth,
+                    vec![(
+                        "parity_direction",
+                        Dynamic::from("split_parent".to_string()),
+                    )],
+                ))
+            } else if p_bid > child_asks {
+                Ok(dw_hunt(
+                    "nested_market_parity_profit",
+                    (p_bid - child_asks) * child_depth,
+                    vec![(
+                        "parity_direction",
+                        Dynamic::from("merge_children".to_string()),
+                    )],
+                ))
+            } else {
+                Err(("DATA_GAP", "no_nested_edge".into()))
+            }
+        }
+        "008" => {
+            let imp = pm
+                .get("implies")
+                .and_then(|d| d.clone().into_array().ok())
+                .and_then(|a| a.first().and_then(|d| d.clone().try_cast::<Map>()));
+            let Some(imp) = imp else {
+                return Err(("DATA_GAP", "correlation_feed_unavailable".into()));
+            };
+            let i = dw_num(&imp, "i").unwrap_or(0.0) as usize;
+            let j = dw_num(&imp, "j").unwrap_or(0.0) as usize;
+            // i implica j => precio_i debe ser <= precio_j; bid_i > ask_j es
+            // la violación ejecutable del bound lógico.
+            let bid_i = outcomes
+                .get(i)
+                .and_then(|o| dw_num(o, "bid_px"))
+                .unwrap_or(0.0);
+            let ask_j = outcomes
+                .get(j)
+                .and_then(|o| dw_num(o, "ask_px"))
+                .unwrap_or(f64::INFINITY);
+            let depth = outcomes
+                .get(i)
+                .and_then(|o| dw_num(o, "depth"))
+                .unwrap_or(0.0)
+                .min(
+                    outcomes
+                        .get(j)
+                        .and_then(|o| dw_num(o, "depth"))
+                        .unwrap_or(0.0),
+                );
+            if bid_i > ask_j {
+                Ok(dw_hunt(
+                    "correlation_bound_violation_profit",
+                    (bid_i - ask_j) * depth,
+                    vec![],
+                ))
+            } else {
+                Err(("DATA_GAP", "no_correlation_violation".into()))
+            }
+        }
+        "003" => {
+            let Some(peer) = dw_sub(&pm, "peer") else {
+                return Err(("DATA_GAP", "peer_market_unavailable".into()));
+            };
+            if dw_text(&peer, "event_ref") != dw_text(&pm, "event_ref") {
+                return Err(("DATA_GAP", "event_identity_mismatch".into()));
+            }
+            if dw_text(&peer, "resolution_source") != dw_text(&pm, "resolution_source") {
+                return Err(("DATA_GAP", "resolution_source_mismatch".into()));
+            }
+            let peer_outcomes = peer
+                .get("outcomes")
+                .and_then(|d| d.clone().into_array().ok())
+                .map(|a| {
+                    a.iter()
+                        .filter_map(|d| d.clone().try_cast::<Map>())
+                        .collect::<Vec<Map>>()
+                })
+                .unwrap_or_default();
+            let mut best_edge = 0.0f64;
+            let mut best_qty = 0.0f64;
+            for lo in &outcomes {
+                let Some(id) = dw_text(lo, "id") else {
+                    continue;
+                };
+                let Some(po) = peer_outcomes
+                    .iter()
+                    .find(|p| dw_text(p, "id").as_deref() == Some(id.as_str()))
+                else {
+                    continue;
+                };
+                let edge = dw_num(po, "bid_px").unwrap_or(0.0)
+                    - dw_num(lo, "ask_px").unwrap_or(f64::INFINITY);
+                if edge > best_edge {
+                    best_edge = edge;
+                    best_qty = dw_num(lo, "depth")
+                        .unwrap_or(0.0)
+                        .min(dw_num(po, "depth").unwrap_or(0.0));
+                }
+            }
+            if best_edge > 0.0 {
+                Ok(dw_hunt(
+                    "cross_platform_firm_spread_profit",
+                    best_edge * best_qty,
+                    vec![],
+                ))
+            } else {
+                Err(("DATA_GAP", "no_cross_platform_edge".into()))
+            }
+        }
+        "012" => {
+            let Some(amm) = dw_sub(&pm, "amm") else {
+                return Err(("DATA_GAP", "prediction_amm_unavailable".into()));
+            };
+            let pool = dw_text(&amm, "pool").unwrap_or_default();
+            let Some((r0, r1)) = dw_pool_reserves(&pool) else {
+                return Err(("DATA_GAP", "prediction_amm_unavailable".into()));
+            };
+            let amm_px = r0 / r1;
+            let idx = dw_num(&amm, "outcome_idx").unwrap_or(0.0) as usize;
+            let book_bid = outcomes
+                .get(idx)
+                .and_then(|o| dw_num(o, "bid_px"))
+                .unwrap_or(0.0);
+            let depth = outcomes
+                .get(idx)
+                .and_then(|o| dw_num(o, "depth"))
+                .unwrap_or(0.0);
+            if book_bid > amm_px {
+                Ok(dw_hunt(
+                    "prediction_amm_vs_book_profit",
+                    (book_bid - amm_px) * depth,
+                    vec![],
+                ))
+            } else {
+                Err(("DATA_GAP", "no_amm_edge".into()))
+            }
+        }
+        _ => Err(("DATA_GAP", "fixture_scenario_unmapped".into())),
+    }
+}
+
+fn dw_mevid(spec: &Map) -> String {
+    spec.get("mev_id")
+        .and_then(|d| d.clone().into_string().ok())
+        .unwrap_or_default()
+}
+
+fn dw_discover(ctx: Dynamic, spec: Dynamic) -> Dynamic {
+    let (Some(sm), Some(cm)) = (spec.try_cast::<Map>(), ctx.try_cast::<Map>()) else {
+        return Dynamic::UNIT;
+    };
+    let mev = dw_mevid(&sm);
+    match dw_scenario(&mev, &cm) {
+        Ok(_) => {
+            let mut cand = Map::new();
+            cand.insert(
+                "amount_in_raw".into(),
+                Dynamic::from("100000000000000000000".to_string()),
+            );
+            let pools: Vec<Dynamic> = dw_route(&cm)
+                .iter()
+                .map(|l| Dynamic::from(l.pool.clone()))
+                .collect();
+            cand.insert("edge_ids".into(), Dynamic::from_array(pools));
+            let mut d = Map::new();
+            d.insert("status".into(), Dynamic::from("READY".to_string()));
+            d.insert(
+                "candidates".into(),
+                Dynamic::from_array(vec![Dynamic::from(cand)]),
+            );
+            Dynamic::from_map(d)
+        }
+        Err((status, reason)) => {
+            let mut d = Map::new();
+            d.insert("status".into(), Dynamic::from(status.to_string()));
+            d.insert("reason".into(), Dynamic::from(reason));
+            d.insert("candidates".into(), Dynamic::from_array(Vec::new()));
+            Dynamic::from_map(d)
+        }
+    }
+}
+
+fn dw_economic(ctx: Dynamic, spec: Dynamic) -> Dynamic {
+    let (Some(sm), Some(cm)) = (spec.try_cast::<Map>(), ctx.try_cast::<Map>()) else {
+        return Dynamic::UNIT;
+    };
+    let mev = dw_mevid(&sm);
+    match dw_scenario(&mev, &cm) {
+        Ok(o) => {
+            let mut m = Map::new();
+            m.insert("status".into(), Dynamic::from("COMPUTED".to_string()));
+            m.insert("candidate_eligible".into(), Dynamic::from(true));
+            m.insert("net_profit_usd".into(), Dynamic::from(o.net_profit_usd));
+            m.insert("reason".into(), Dynamic::from(o.reason));
+            m.insert("estimated_profit".into(), Dynamic::from(o.estimated_profit));
+            for (k, v) in o.extras {
+                m.insert(k.into(), v);
+            }
+            Dynamic::from_map(m)
+        }
+        Err((_, reason)) => {
+            let mut m = Map::new();
+            m.insert("status".into(), Dynamic::from("DATA_GAP".to_string()));
+            m.insert("candidate_eligible".into(), Dynamic::from(false));
+            m.insert("reason".into(), Dynamic::from(reason));
+            m.insert("net_profit_usd".into(), Dynamic::UNIT);
+            Dynamic::from_map(m)
+        }
+    }
+}
+
+fn dw_seal(ctx: Dynamic, spec: Dynamic, best: Dynamic, discovery: Dynamic) -> Dynamic {
+    let Some(sm) = spec.try_cast::<Map>() else {
+        return Dynamic::UNIT;
+    };
+    let best_map = best.clone().try_cast::<Map>();
+    let mut out = if best.is_unit() {
+        let dm = discovery.try_cast::<Map>().unwrap_or_default();
+        let mut m = Map::new();
+        m.insert(
+            "status".into(),
+            dm.get("status")
+                .cloned()
+                .unwrap_or_else(|| Dynamic::from("NO_CANDIDATE")),
+        );
+        m.insert(
+            "reason".into(),
+            dm.get("reason")
+                .cloned()
+                .unwrap_or_else(|| Dynamic::from("no_computed_candidate")),
+        );
+        m.insert("net_profit_usd".into(), Dynamic::UNIT);
+        m.insert("estimated_profit".into(), Dynamic::UNIT);
+        // Evidencia estructurada de las familias observe-only.
+        if let Some(cm) = ctx.try_cast::<Map>() {
+            if let Some(intent) = cm.get("intent") {
+                m.insert(
+                    "evidence_intent_present".into(),
+                    Dynamic::from(!intent.is_unit()),
+                );
+            }
+            if let Some(len) = cm
+                .get("prediction")
+                .and_then(|d| d.clone().try_cast::<Map>())
+                .and_then(|p| p.get("outcomes").and_then(|d| d.clone().into_array().ok()))
+                .map(|a| a.len() as i64)
+            {
+                m.insert("evidence_outcomes".into(), Dynamic::from(len));
+            }
+        }
+        m
+    } else {
+        best_map.clone().unwrap_or_default()
+    };
+    out.insert(
+        "contract_version".into(),
+        Dynamic::from("arbx.cartridge.agent/4".to_string()),
+    );
+    if let Some(mev) = sm.get("mev_id") {
+        out.insert("mev_id".into(), mev.clone());
+    }
+    if let Some(det) = sm.get("detector_id") {
+        out.insert("detector_id".into(), det.clone());
+    }
+    let eligible = best_map
+        .and_then(|bm| {
+            bm.get("candidate_eligible")
+                .and_then(|d| d.clone().try_cast::<bool>())
+        })
+        .unwrap_or(false);
+    out.insert("is_opportunity".into(), Dynamic::from(eligible));
+    out.insert("approved_for_execution".into(), Dynamic::from(false));
+    Dynamic::from_map(out)
+}
+
+/// Registra los 7 bindings agent_v4_* del fixture waves D/E.
+fn register_agent_v4_de(engine: &mut Engine) {
+    engine.register_fn(
+        "agent_v4_discover",
+        |ctx: Dynamic, spec: Dynamic| -> Dynamic { dw_discover(ctx, spec) },
+    );
+    engine.register_fn(
+        "agent_v4_quote",
+        |ctx: Dynamic, _spec: Dynamic, candidate: Dynamic| -> Dynamic {
+            let mut q = Map::new();
+            q.insert("status".into(), Dynamic::from("COMPUTED".to_string()));
+            if let Some(c) = candidate.try_cast::<Map>() {
+                if let Some(amount) = c.get("amount_in_raw") {
+                    q.insert("amount_in_raw".into(), amount.clone());
+                }
+            }
+            if let Some(cm) = ctx.try_cast::<Map>() {
+                if let Some(route) = cm.get("route") {
+                    q.insert("route".into(), route.clone());
+                }
+            }
+            Dynamic::from_map(q)
+        },
+    );
+    engine.register_fn(
+        "agent_v4_operators",
+        |_ctx: Dynamic, _spec: Dynamic, _candidate: Dynamic| -> Dynamic {
+            let mut m = Map::new();
+            m.insert("operators".into(), Dynamic::from_map(Map::new()));
+            m.insert(
+                "snapshot_id".into(),
+                Dynamic::from("fixture_wave_de".to_string()),
+            );
+            Dynamic::from_map(m)
+        },
+    );
+    engine.register_fn(
+        "agent_v4_economic_check",
+        |ctx: Dynamic,
+         spec: Dynamic,
+         _c: Dynamic,
+         _q: Dynamic,
+         _e: Dynamic,
+         _r: Dynamic|
+         -> Dynamic { dw_economic(ctx, spec) },
+    );
+    engine.register_fn("agent_v4_money_compare", |a: &str, b: &str| -> i64 {
+        let pa = a.parse::<f64>().unwrap_or(f64::NEG_INFINITY);
+        let pb = b.parse::<f64>().unwrap_or(f64::NEG_INFINITY);
+        if pa < pb {
+            -1
+        } else if pa > pb {
+            1
+        } else {
+            0
+        }
+    });
+    engine.register_fn(
+        "agent_v4_seal",
+        |ctx: Dynamic,
+         spec: Dynamic,
+         best: Dynamic,
+         _obs: Dynamic,
+         discovery: Dynamic|
+         -> Dynamic { dw_seal(ctx, spec, best, discovery) },
+    );
+    engine.register_fn(
+        "agent_v4_build_payload",
+        |_opp: Dynamic, _spec: Dynamic| -> Dynamic {
+            let mut m = Map::new();
+            m.insert(
+                "status".into(),
+                Dynamic::from("NEEDS_CANONICAL_ENCODER".to_string()),
+            );
+            m.insert(
+                "reason".into(),
+                Dynamic::from("fixture_has_no_canonical_encoder".to_string()),
+            );
+            m.insert(
+                "target_contract".into(),
+                Dynamic::from("0x0000000000000000000000000000000000000000".to_string()),
+            );
+            m.insert("calldata".into(), Dynamic::from("0x".to_string()));
+            m.insert("approved_for_execution".into(), Dynamic::from(false));
+            Dynamic::from_map(m)
+        },
+    );
 }
 
 fn eval(engine: &Engine, src: &str, arg: Map) -> Map {

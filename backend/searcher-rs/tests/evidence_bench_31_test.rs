@@ -49,7 +49,12 @@ fn measured_evidence_cost_and_coverage_for_declared_ops() {
         }
         let src = std::fs::read_to_string(entry.path()).expect("cartucho legible");
         let mut ops: Vec<u8> = Vec::new();
-        for pat in ["primary_operators: [", "secondary_operators: ["] {
+        for pat in [
+            "primary_operators: [",
+            "secondary_operators: [",
+            "\"primary_operators\": [",
+            "\"secondary_operators\": [",
+        ] {
             if let Some(i) = src.find(pat) {
                 let rest = &src[i + pat.len()..];
                 if let Some(j) = rest.find(']') {
