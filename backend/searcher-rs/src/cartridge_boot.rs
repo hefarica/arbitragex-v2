@@ -3307,7 +3307,7 @@ mod v4_manifest_tests {
 
     #[test]
     fn rejects_ambiguous_mev_id() {
-        let ambiguous = format!("{SAMPLE_V4} let other = #{{ \"mev_id\": \"MEV-09-999\" }};");
+        let ambiguous = format!("{SAMPLE_V4} let other = #{{ \"mev_id\": \"MEV-01-016\" }};");
         assert!(v4_admit_script(&ambiguous).is_none());
     }
 
