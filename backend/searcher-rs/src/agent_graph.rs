@@ -362,7 +362,7 @@ pub fn quote_path(
             let zero_for_one = e.token_in <= e.token_out;
             let (out, sp_next) = v3_spot_within_tick(sp, liq, &current, fee, den, zero_for_one)?;
             let qid = canonical_hash(
-                &json!({"request":key,"sqrt_price_x96":sp,"liquidity":liq.to_string(),"fee":fee,"denominator":den,"zero_for_one":zero_for_one,"out":out}),
+                &json!({"request":key,"sqrt_price_x96":sp,"liquidity":liq.to_string(),"fee":fee,"denominator":den,"zero_for_one":zero_for_one,"out":out}), // gitleaks:allow — constantes matematicas de la quote V3 (sqrt/liquidity), no secretos
             );
             let metrics = json!({"status":"COMPUTED","model":"v3_within_tick_single_tick",
                 "single_tick_assumption":true,"sqrt_price_x96_next":sp_next,
