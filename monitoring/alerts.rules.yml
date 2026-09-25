@@ -180,7 +180,6 @@ groups:
         annotations:
           summary: "Root filesystem < 10% free — deploys will fail (APT-GPG-02)"
           description: "Free {{ $value | humanizePercentage }} — at 100% the deploy build corrupts apt lists and the redis AOF. Prune NOW."
-    rules:
       - alert: PostgresDiskSpaceLow
         expr: |
           (
