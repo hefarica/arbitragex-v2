@@ -690,7 +690,10 @@ impl CartridgeRunner {
             // (contract field, not telemetry). Re-insert it before validating.
             let mut proposal_json = proposal_json;
             if let Some(obj) = proposal_json.as_object_mut() {
-                obj.insert("is_opportunity".to_string(), serde_json::json!(is_opportunity));
+                obj.insert(
+                    "is_opportunity".to_string(),
+                    serde_json::json!(is_opportunity),
+                );
             }
             match crate::proposal_contract::ProposalV4::parse(proposal_json.clone()) {
                 Ok(_validated) => {
