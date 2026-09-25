@@ -290,10 +290,21 @@ export interface OmniOpportunity {
   leg_symbols?: Record<string, string> | null;
 
   // === Profit Metrics ===
+  // PIPELINE-INTEGRITY-02 (2026-09-25): the `number` fields below are display
+  // approximations parsed from the exact wire string. The `raw_*` companions
+  // preserve the EXACT wire value (PG NUMERIC → JSON string) for auditing,
+  // tooltip display, and future exact-arithmetic consumers. When the two
+  // disagree, `raw_*` is the source of truth (R8: fail-honest).
   expected_profit_usd: number | null;
   net_expected_profit_usd: number | null;
   roi_pct: number | null;
   risk_score: number | null;
+  /** Exact wire string for expected_profit_usd — never rounded through f64. */
+  raw_expected_profit_usd: string | null;
+  /** Exact wire string for net_expected_profit_usd — never rounded through f64. */
+  raw_net_expected_profit_usd: string | null;
+  /** Exact wire string for simulated_net_profit_usd — never rounded through f64. */
+  raw_simulated_net_profit_usd: string | null;
 
   // === Status ===
   /** Wire-mandatory lifecycle; null = malformed payload (§28) — not "detected". */
@@ -428,12 +439,20 @@ export function mapToOmniOpportunity(raw: Record<string, unknown>): OmniOpportun
     leg_symbols: (raw.leg_symbols as Record<string, string> | null) ?? null,
 
     // Profit Metrics
+    // PIPELINE-INTEGRITY-02: raw_* carries the exact wire string; the number
+    // is a display approximation only. Both stay null together (R8).
     expected_profit_usd:
       raw.expected_profit_usd != null ? Number(raw.expected_profit_usd) : null,
     net_expected_profit_usd:
       raw.net_expected_profit_usd != null ? Number(raw.net_expected_profit_usd) : null,
     roi_pct: raw.roi_pct != null ? Number(raw.roi_pct) : null,
     risk_score: raw.risk_score != null ? Number(raw.risk_score) : null,
+    raw_expected_profit_usd:
+      raw.expected_profit_usd != null ? String(raw.expected_profit_usd) : null,
+    raw_net_expected_profit_usd:
+      raw.net_expected_profit_usd != null ? String(raw.net_expected_profit_usd) : null,
+    raw_simulated_net_profit_usd:
+      raw.simulated_net_profit_usd != null ? String(raw.simulated_net_profit_usd) : null,
 
     // Status — §28: absent status is null, never a fabricated "detected".
     status: (raw.status as OpportunityStatus | undefined) ?? null,
@@ -464,6 +483,7 @@ export function mapToOmniOpportunity(raw: Record<string, unknown>): OmniOpportun
       raw.simulated_net_profit_usd != null
         ? Number(raw.simulated_net_profit_usd)
         : null,
+    // raw_simulated_net_profit_usd already set above with the other raw_* fields
     simulated_amount_in_usd:
       raw.simulated_amount_in_usd != null
         ? Number(raw.simulated_amount_in_usd)

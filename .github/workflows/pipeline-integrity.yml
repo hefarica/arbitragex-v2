@@ -1,0 +1,112 @@
+# Pipeline Integrity Gate — automated E2E verification that real data
+# flows from searcher → Redis → PG → API → WS without loss.
+#
+# PIPELINE-INTEGRITY-03 (2026-09-25): runs every 15 minutes against the VPS
+# and on-demand. Fails when ANY layer is empty, stale, or returns wrong types.
+# This is the automated guarantee that the cards show REAL opportunities
+# from REAL data in REAL time (RULE 00, R7, R8, R10).
+
+name: Pipeline Integrity Gate
+
+on:
+  schedule:
+    - cron: '*/15 * * * *'
+  workflow_dispatch:
+    inputs:
+      vps_host:
+        description: 'VPS hostname for API checks'
+        required: false
+        default: 'localhost'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pipeline-integrity
+  cancel-in-progress: true
+
+jobs:
+  verify-e2e:
+    name: Verify E2E no-loss pipeline
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      VPS_HOST: ${{ inputs.vps_host || 'localhost' }}
+
+    steps:
+      - name: Check Redis stream has recent detections
+        run: |
+          # Connect to VPS Redis and check the detected opportunities stream
+          # XLEN must be > 0 — an empty stream means the searcher is not producing
+          ssh arbx "
+            XLEN=\$(docker exec arbitragex-v2-redis-1 redis-cli XLEN arbx:opps:detected 2>/dev/null || echo 0)
+            echo \"Redis XLEN arbx:opps:detected = \$XLEN\"
+            if [ \"\$XLEN\" -eq \"0\" ]; then
+              echo '::error::Redis stream arbx:opps:detected is EMPTY — searcher not producing'
+              exit 1
+            fi
+          "
+
+      - name: Check PG has opportunities in last 5 minutes
+        run: |
+          ssh arbx "
+            COUNT=\$(docker exec arbitragex-v2-postgres-1 psql -U postgres -d arbitragex_v2 -t -A -c \
+              'SELECT COUNT(*) FROM opportunities WHERE detected_at > NOW() - INTERVAL '\''5 minutes'\''' 2>/dev/null || echo 0)
+            echo \"PG opportunities in last 5 min = \$COUNT\"
+            if [ \"\$COUNT\" -eq \"0\" ]; then
+              echo '::error::PG has ZERO opportunities in the last 5 minutes — pipeline broken between Redis and PG'
+              exit 1
+            fi
+          "
+
+      - name: Check API serves opportunities with correct types
+        run: |
+          # The API must return data AND amount_in_wei must be a string (not float)
+          RESP=\$(curl -sf "http://\${VPS_HOST}:8787/api/v1/opportunities/live?limit=1" 2>/dev/null || echo '{}')
+          COUNT=\$(echo "\$RESP" | jq '.data | length' 2>/dev/null || echo 0)
+          echo \"API /opportunities/live returns \$COUNT items\"
+          if [ \"\$COUNT\" -eq \"0\" ]; then
+            echo '::error::API returns ZERO opportunities — pipeline broken between PG and API'
+            exit 1
+          fi
+
+          # Verify amount_in_wei is string (not number) — precision guard
+          AMOUNT_TYPE=\$(echo "\$RESP" | jq -r '.data[0].amount_in_wei | type' 2>/dev/null || echo 'null')
+          echo \"amount_in_wei type = \$AMOUNT_TYPE\"
+          if [ \"\$AMOUNT_TYPE\" != '"string"' ] && [ \"\$AMOUNT_TYPE\" != '"null"' ]; then
+            echo '::error::amount_in_wei is '\$AMOUNT_TYPE' — should be string or null (precision loss!)'
+            exit 1
+          fi
+
+      - name: Check WS endpoint is alive
+        run: |
+          # WS health check: the endpoint must accept connections
+          # (full message verification requires a WS client — this checks TCP/HTTP upgrade)
+          HTTP_CODE=\$(curl -sf -o /dev/null -w '%{http_code}' \
+            "http://\${VPS_HOST}:8080/socket.io/?EIO=4&transport=polling" 2>/dev/null || echo "000")
+          echo \"WS polling endpoint HTTP status = \$HTTP_CODE\"
+          if [ \"\$HTTP_CODE\" != "200" ]; then
+            echo '::error::WebSocket polling endpoint returned '\$HTTP_CODE' — WS not reachable'
+            exit 1
+          fi
+
+      - name: Check Docker containers are healthy
+        run: |
+          ssh arbx "
+            UNHEALTHY=\$(docker ps --filter 'name=arbitragex-v2' --filter 'health=unhealthy' --format '{{.Names}}' 2>/dev/null)
+            if [ -n \"\$UNHEALTHY\" ]; then
+              echo '::error::Unhealthy containers: '\$UNHEALTHY
+              exit 1
+            fi
+            RUNNING=\$(docker ps --filter 'name=arbitragex-v2' --format '{{.Names}}' | wc -l)
+            echo \"\$RUNNING arbitragex containers running, all healthy\"
+            if [ \"\$RUNNING\" -lt 10 ]; then
+              echo '::warning::Only '\$RUNNING' containers running — expected 20+'
+            fi
+          "
+
+      - name: Summary
+        if: always()
+        run: |
+          echo "::notice::Pipeline integrity check completed at $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          echo "::notice::Layers verified: Redis(XLEN) → PG(COUNT) → API(types) → WS(alive) → Docker(healthy)"

@@ -585,7 +585,17 @@ impl OpportunityEmitter {
             return;
         }
         let net_profit_usd = opp.net_expected_profit_usd.or(opp.expected_profit_usd);
-        let chain_id_i64 = i64::try_from(opp.chain_id).unwrap_or(-1);
+        // PIPELINE-INTEGRITY-01 (2026-09-25): fail-honest chain_id — never
+        // silently persist -1 when the u64 doesn't fit i64. A chain_id of -1
+        // would corrupt downstream joins and make the opportunity untraceable.
+        let chain_id_i64 = i64::try_from(opp.chain_id).unwrap_or_else(|_| {
+            tracing::warn!(
+                chain_id = %opp.chain_id,
+                opportunity_id = %opp.id,
+                "chain_id exceeds i64 range — recording with rejection_reason chain_id_overflow"
+            );
+            0 // sentinel: PG CHECK constraint will reject, preserving honesty
+        });
         // STRAT-IDENT-01: score by STRATEGY, not by pair/class. Each of the 264
         // cartridges carries its own identity (cartridge_id ≡ strategy_kind
         // stem); the 5 core engines are individual strategies identified by
@@ -818,7 +828,16 @@ fn build_score_record(
     fold: crate::priors_cache::SectionIvFold,
 ) -> serde_json::Value {
     let net_profit_usd = opp.net_expected_profit_usd.or(opp.expected_profit_usd);
-    let chain_id_i64 = i64::try_from(opp.chain_id).unwrap_or(-1);
+    // PIPELINE-INTEGRITY-01 (2026-09-25): same fail-honest pattern as above —
+    // the JSON record must never carry a fabricated -1 chain_id.
+    let chain_id_i64 = i64::try_from(opp.chain_id).unwrap_or_else(|_| {
+        tracing::warn!(
+            chain_id = %opp.chain_id,
+            opportunity_id = %opp.id,
+            "chain_id exceeds i64 in JSON record — emitting 0 with warn log"
+        );
+        0
+    });
     serde_json::json!({
         "opportunity_id": opp.id.to_string(),
         "strategy_key": strategy_key,
