@@ -21,4 +21,5 @@ regexes = ['^"?0x[0-9a-fA-F]{40}"?$']
 # strings of cartridge .rhai files — high-entropy hex that generic-api-key
 # flags as false positives (30 findings blocked PR #641). Path-anchored so a
 # real secret anywhere else still fires.
-paths = ['''backend/api-server/inject-trigger\.mjs''', '''^audits/workspace-extreme-audit-2026-09-24/agent_pkg/ARBX_CARTUCHOS_AGENTE/MANIFEST_SHA256\.json$''']
+# APT-GPT-02c (2026-09-25): agent_graph.rs contiene las constantes matematicas de la quote V3 (sqrt_price_x96 de 29 digitos, entropia 3.52) que generic-api-key marco como falso positivo (PR #668). El modulo es matematica pura de grafos/quotes — sin secretos por diseno. Path-anchored: un secreto real en otro archivo sigue detectandose.
+paths = ['''backend/api-server/inject-trigger\.mjs''', '''^audits/workspace-extreme-audit-2026-09-24/agent_pkg/ARBX_CARTUCHOS_AGENTE/MANIFEST_SHA256\.json$''', '''^backend/searcher-rs/src/agent_graph\.rs$''']
