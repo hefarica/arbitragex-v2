@@ -266,7 +266,9 @@ mod tests {
 
     // ── CATALOG-BACKFILL-01 (2026-09-17): wire-contract rejection cases ──────
     //
-    // Anchored to the REAL Redis dump of 2026-09-17 (186 keys, 93 malformed):
+    // CATALOG-BACKFILL-02 (2026-09-25): the legacy `"address"` shape is now
+    // admitted via the serde alias — the 93 observed keys no longer poison
+    // their pairs. Anchored to the REAL Redis dump of 2026-09-17 (186 keys):
     // every malformed payload must count as malformed and contribute NOTHING
     // to the catalog (R8: no fabricated tiers), while a canonical payload
     // populates `by_pool` with its exact pips.
@@ -285,21 +287,24 @@ mod tests {
     }
 
     #[test]
-    fn catalog_backfill_legacy_address_field_is_malformed_and_not_catalogued() {
+    fn catalog_backfill_legacy_address_field_is_admitted_via_alias() {
         let c = V3FeeCatalog::new();
         // Legacy pre-WO-06 schema (`"address"` instead of `pool_addr`) — the
-        // exact shape of the 93 malformed keys observed in Redis.
+        // exact shape of the 93 malformed keys observed in Redis. The serde
+        // alias (CATALOG-BACKFILL-02, 2026-09-25) now ADMITS them so a whole
+        // per-pair array no longer poisons its pair into NotCatalogued ->
+        // v3_quote_unavailable (71% of live cards).
         let malformed = c.ingest_index_payload(
             r#"[{"address":"0xaea3df60e99c4726abc1e7dd9a2fa570e4eed638","fee_bps":30}]"#,
         );
         assert_eq!(
-            malformed, 1,
-            "legacy address-field payload must be malformed"
+            malformed, 0,
+            "legacy address-field payload must now be admitted via the alias"
         );
         assert_eq!(
             c.pool_count(),
-            0,
-            "legacy entries must NOT enter the catalog"
+            1,
+            "legacy address pool must enter the catalog via the alias"
         );
     }
 
