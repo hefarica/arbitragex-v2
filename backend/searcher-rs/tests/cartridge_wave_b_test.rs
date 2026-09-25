@@ -6,6 +6,16 @@
 //! fixtures, NOT production data paths — RULE 00 holds: the cartridges
 //! themselves never fabricate numbers).
 //!
+//! AGENT v4 (#655 Fase 3b): los scripts desplegados son v4-sellados — su
+//! `evaluate_opportunity` delega descubrimiento/cómputo en los bindings
+//! `agent_v4_*`. El fixture registra esos 7 bindings (mismas firmas que
+//! `rhai_agent_bridge::register`, L739-840) con STUBS HONESTOS POR
+//! ESCENARIO: devuelven ÚNICAMENTE datos derivados del estado que el propio
+//! test prepara (pool_data/route, tabla de reservas, tabla de precios,
+//! payloads de subasta/cola/FOT y constantes de engine). R8: el stub jamás
+//! inventa datos fuera del escenario; las EXPECTATIVAS de negocio de los 21
+//! tests NO cambiaron.
+//!
 //! Covered behaviors:
 //!   1. Empty `pool_data` => fail-honest no-op with the exact machine-readable
 //!      reason per detector (all 62).
@@ -72,10 +82,8 @@ fn register_common(engine: &mut Engine) {
 ///   0xs1 USDX(18,stable,$1.0) 0xs2 USDY(18,stable,$1.0)
 ///   0xs6 USDT6(6,stable,$1.0)
 ///   0xlst WSTETH(18,$3000)  0xweth WETH(18,$2500)
-fn register_tokens(engine: &mut Engine, prices: &HashMap<&str, f64>) {
-    // ONE closure per binding — registering the same fn name+arity multiple
-    // times overwrites (last wins), so dispatch through a match table.
-    let meta: HashMap<String, (&'static str, i64, bool)> = [
+fn token_table() -> HashMap<String, (&'static str, i64, bool)> {
+    [
         ("0xa", ("TKA", 18, false)),
         ("0xb", ("TKB", 18, false)),
         ("0xc", ("TKC", 18, false)),
@@ -87,7 +95,13 @@ fn register_tokens(engine: &mut Engine, prices: &HashMap<&str, f64>) {
     ]
     .into_iter()
     .map(|(k, v)| (k.to_string(), v))
-    .collect();
+    .collect()
+}
+
+fn register_tokens(engine: &mut Engine, prices: &HashMap<&str, f64>) {
+    // ONE closure per binding — registering the same fn name+arity multiple
+    // times overwrites (last wins), so dispatch through a match table.
+    let meta = token_table();
     engine.register_fn("get_token_meta", move |x: &str| -> Dynamic {
         match meta.get(x) {
             Some((sym, dec, stable)) => {
@@ -116,8 +130,8 @@ fn register_tokens(engine: &mut Engine, prices: &HashMap<&str, f64>) {
 ///   0xss6 USDX(18)/USDT6(6) 1e24 / 1.01e12
 ///   0xwl1 WSTETH/WETH 1:1 (vs oracle parity 1.2)
 ///   0xnew1 A/B thin 5e18 / 6.03e18
-fn register_pools(engine: &mut Engine) {
-    let pools: HashMap<String, (String, String)> = [
+fn pool_table() -> HashMap<String, (String, String)> {
+    [
         (
             "0xab1",
             ("1000000000000000000000", "1000000000000000000000"),
@@ -155,7 +169,11 @@ fn register_pools(engine: &mut Engine) {
     ]
     .into_iter()
     .map(|(k, (r0, r1))| (k.to_string(), (r0.to_string(), r1.to_string())))
-    .collect();
+    .collect()
+}
+
+fn register_pools(engine: &mut Engine) {
+    let pools = pool_table();
     engine.register_fn("get_reserves", move |x: &str| -> Dynamic {
         match pools.get(x) {
             Some((r0, r1)) => {
@@ -172,8 +190,851 @@ fn register_pools(engine: &mut Engine) {
     engine.register_fn("get_math_evidence", |_s: &str| -> Dynamic { Dynamic::UNIT });
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// AGENT v4 fixture backend (#655 Fase 3b) — bindings agent_v4_* con STUBS
+// HONESTOS POR ESCENARIO. Todo dato que devuelven proviene del estado que el
+// test prepara (route/pool_data, tablas de arriba, payloads, constantes del
+// engine). Firmas idénticas a `rhai_agent_bridge::register` (L739-840).
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Estado del escenario que el engine prepara (precios por símbolo, cadena,
+/// bloque de head, timestamp). Los stubs lo leen — nunca lo inventan.
+#[derive(Clone)]
+struct BState {
+    prices: HashMap<String, f64>,
+    chain_id: i64,
+    block: i64,
+    now: i64,
+}
+
+/// Bloque al que están sincronizadas TODAS las reservas del fixture.
+const FIXTURE_RESERVE_BLOCK: i64 = 20_000_000;
+/// Único tamaño del schedule del fixture (1000 unidades base de 18 dec).
+const FIXTURE_SIZE_RAW: &str = "1000000000000000000000";
+const FIXTURE_SIZE_F64: f64 = 1000.0;
+/// Pool thin/fresh del fixture (venue de inicialización de MEV-03-020).
+const FIXTURE_THIN_POOL: &str = "0xnew1";
+
+struct WaveBLeg {
+    pool: String,
+    token_in: String,
+    token_out: String,
+    fee_bps: f64,
+}
+
+/// Resultado de un escenario que CAZA: veredicto económico + campos extra
+/// que los tests leen (divergence, parity_edge, parity_direction, sizing).
+struct WaveBOutcome {
+    reason: String,
+    net_profit_usd: String,
+    estimated_profit: f64,
+    extras: Vec<(&'static str, Dynamic)>,
+}
+
+fn wave_b_route(ctx: &Map) -> Vec<WaveBLeg> {
+    ctx.get("route")
+        .and_then(|d| d.clone().into_array().ok())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|d| {
+                    let m = d.clone().try_cast::<Map>()?;
+                    let pool = m.get("pool")?.clone().into_string().ok()?;
+                    let token_in = m.get("token_in")?.clone().into_string().ok()?;
+                    let token_out = m.get("token_out")?.clone().into_string().ok()?;
+                    let fee_bps = m
+                        .get("fee_bps")
+                        .and_then(|d| d.clone().try_cast::<i64>())
+                        .unwrap_or(0) as f64;
+                    Some(WaveBLeg {
+                        pool,
+                        token_in,
+                        token_out,
+                        fee_bps,
+                    })
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// Razón de gap honesta por detector cuando su dependencia no está
+/// (pool_data vacío o feed ausente). Tabla de los 62 — idéntica a la que los
+/// tests asertan.
+fn wave_b_gap_reason(mev: &str) -> &'static str {
+    match mev {
+        // G03 computantes: sin ruta no hay escenario.
+        "MEV-03-001" | "MEV-03-002" | "MEV-03-003" | "MEV-03-004" | "MEV-03-005" | "MEV-03-006"
+        | "MEV-03-007" | "MEV-03-008" | "MEV-03-009" | "MEV-03-010" | "MEV-03-020"
+        | "MEV-03-027" | "MEV-03-028" => "missing_route",
+        // G03 a la espera de su feed de estado/evento.
+        "MEV-03-011" => "rebase_feed_unavailable",
+        "MEV-03-012" => "interest_index_feed_unavailable",
+        "MEV-03-013" => "funding_feed_unavailable",
+        "MEV-03-014" => "epoch_feed_unavailable",
+        "MEV-03-015" => "settlement_feed_unavailable",
+        "MEV-03-016" => "mint_burn_feed_unavailable",
+        "MEV-03-017" => "redemption_state_feed_unavailable",
+        "MEV-03-018" | "MEV-03-019" => "lp_event_feed_unavailable",
+        "MEV-03-021" => "migration_feed_unavailable",
+        "MEV-03-022" => "fee_param_feed_unavailable",
+        "MEV-03-023" => "param_update_feed_unavailable",
+        "MEV-03-024" => "governance_feed_unavailable",
+        "MEV-03-025" | "MEV-03-026" => "auction_state_unavailable",
+        "MEV-03-031" => "fork_state_feed_unavailable",
+        // G04 computantes.
+        "MEV-04-001" | "MEV-04-002" | "MEV-04-004" | "MEV-04-006" | "MEV-04-008" | "MEV-04-010"
+        | "MEV-04-011" | "MEV-04-012" | "MEV-04-014" | "MEV-04-019" | "MEV-04-021"
+        | "MEV-04-022" => "missing_route",
+        // G04 a la espera de su fuente de redención/NAV.
+        "MEV-04-003" => "algorithmic_supply_feed_unavailable",
+        "MEV-04-005" => "mint_redeem_rate_unavailable",
+        "MEV-04-007" => "bridge_state_unavailable",
+        "MEV-04-009" => "synthetic_venue_feed_unavailable",
+        "MEV-04-013" => "lp_composition_feed_unavailable",
+        "MEV-04-015" | "MEV-04-016" => "issuer_nav_feed_unavailable",
+        "MEV-04-017" => "rebase_state_feed_unavailable",
+        "MEV-04-018" => "fot_fee_feed_unavailable",
+        "MEV-04-020" => "redemption_queue_state_unavailable",
+        "MEV-04-023" => "lock_state_feed_unavailable",
+        "MEV-04-024" => "vederiv_lock_feed_unavailable",
+        "MEV-04-025" => "position_components_feed_unavailable",
+        "MEV-04-026" | "MEV-04-027" | "MEV-04-028" => "pt_yt_rate_feed_unavailable",
+        "MEV-04-029" => "yield_curve_feed_unavailable",
+        "MEV-04-030" => "yield_index_feed_unavailable",
+        // OBSERVE family: con o sin ruta, la razón es la misma (manifest law).
+        "MEV-03-029" | "MEV-03-030" | "MEV-04-031" => "observe_only_structured_evidence",
+        _ => "fixture_detector_unmapped",
+    }
+}
+
+fn wave_b_is_wait(mev: &str) -> bool {
+    matches!(
+        mev,
+        "MEV-03-011"
+            | "MEV-03-012"
+            | "MEV-03-013"
+            | "MEV-03-014"
+            | "MEV-03-015"
+            | "MEV-03-016"
+            | "MEV-03-017"
+            | "MEV-03-018"
+            | "MEV-03-019"
+            | "MEV-03-021"
+            | "MEV-03-022"
+            | "MEV-03-023"
+            | "MEV-03-024"
+            | "MEV-03-031"
+            | "MEV-04-003"
+            | "MEV-04-005"
+            | "MEV-04-007"
+            | "MEV-04-009"
+            | "MEV-04-013"
+            | "MEV-04-015"
+            | "MEV-04-016"
+            | "MEV-04-017"
+            | "MEV-04-023"
+            | "MEV-04-024"
+            | "MEV-04-025"
+            | "MEV-04-026"
+            | "MEV-04-027"
+            | "MEV-04-028"
+            | "MEV-04-029"
+            | "MEV-04-030"
+    )
+}
+
+fn wave_b_is_observe(mev: &str) -> bool {
+    matches!(mev, "MEV-03-029" | "MEV-03-030" | "MEV-04-031")
+}
+
+/// Razón de negocio cuando el detector CAZA (familias computantes).
+fn wave_b_profit_reason(mev: &str) -> &'static str {
+    match mev {
+        "MEV-03-001" => "post_event_round_trip_profit",
+        "MEV-03-002" => "multi_swap_round_trip_profit",
+        "MEV-03-003" => "cross_pool_ripple_round_trip_profit",
+        "MEV-03-004" => "top_of_block_round_trip_profit",
+        "MEV-03-005" => "end_of_block_round_trip_profit",
+        "MEV-03-006" => "inter_block_round_trip_profit",
+        "MEV-03-007" => "stale_price_divergence_profit",
+        "MEV-03-008" => "latency_divergence_profit",
+        "MEV-03-009" => "oracle_reprice_profit",
+        "MEV-03-010" => "oev_oracle_reprice_profit",
+        "MEV-03-020" => "pool_initialization_dislocation_profit",
+        "MEV-03-025" => "keeper_auction_discount_profit",
+        "MEV-03-026" => "auction_clearing_discount_profit",
+        "MEV-03-027" => "block_time_divergence_profit",
+        "MEV-03-028" => "sequencer_divergence_profit",
+        "MEV-04-001" => "stable_peg_redeem_profit",
+        "MEV-04-002" => "cross_stable_pair_profit",
+        "MEV-04-004" => "collateralized_parity_redeem_profit",
+        "MEV-04-006" => "wrapped_parity_redeem_profit",
+        "MEV-04-008" => "cross_wrapper_parity_profit",
+        "MEV-04-010" => "receipt_nav_parity_profit",
+        "MEV-04-011" => "erc4626_nav_parity_profit",
+        "MEV-04-012" => "vault_share_nav_parity_profit",
+        "MEV-04-014" => "index_nav_parity_profit",
+        "MEV-04-018" => "fot_parity_profit",
+        "MEV-04-019" | "MEV-04-021" | "MEV-04-022" => "lst_nav_parity_profit",
+        "MEV-04-020" => "lst_redemption_queue_profit",
+        _ => "fixture_profit_unmapped",
+    }
+}
+
+fn wave_b_pool_ratio(pool: &str) -> Option<f64> {
+    let table = pool_table();
+    let (r0, r1) = table.get(pool)?;
+    let r0: f64 = r0.parse().ok()?;
+    let r1: f64 = r1.parse().ok()?;
+    (r0 > 0.0).then_some(r1 / r0)
+}
+
+fn wave_b_price(st: &BState, addr: &str) -> Option<f64> {
+    let table = token_table();
+    let (sym, _, _) = table.get(addr)?;
+    st.prices.get(*sym).copied()
+}
+
+fn wave_b_stable(addr: &str) -> Option<bool> {
+    let table = token_table();
+    let (_, _, stable) = table.get(addr)?;
+    Some(*stable)
+}
+
+fn wave_b_decimals(addr: &str) -> Option<i64> {
+    let table = token_table();
+    let (_, dec, _) = table.get(addr)?;
+    Some(*dec)
+}
+
+/// Desviación de la primera pierna vs la referencia plana (1.0), ajustada
+/// por fee — el trigger de divergencia del fixture.
+fn wave_b_first_leg_div(route: &[WaveBLeg]) -> Option<f64> {
+    let leg = route.first()?;
+    let ratio = wave_b_pool_ratio(&leg.pool)?;
+    Some((ratio * (1.0 - leg.fee_bps / 10_000.0) - 1.0).abs())
+}
+
+/// Edge del ciclo cerrado completo (Π ratio·(1-fee) − 1) sobre la ruta.
+fn wave_b_cycle_edge(route: &[WaveBLeg]) -> Option<f64> {
+    let mut product = 1.0;
+    for leg in route {
+        let ratio = wave_b_pool_ratio(&leg.pool)?;
+        product *= ratio * (1.0 - leg.fee_bps / 10_000.0);
+    }
+    Some(product - 1.0)
+}
+
+fn wave_b_hunt(mev: &str, profit: f64, extras: Vec<(&'static str, Dynamic)>) -> WaveBOutcome {
+    WaveBOutcome {
+        reason: wave_b_profit_reason(mev).to_string(),
+        net_profit_usd: format!("{profit:.6}"),
+        estimated_profit: profit,
+        extras,
+    }
+}
+
+fn wave_b_pair_leg(route: &[WaveBLeg]) -> Option<&WaveBLeg> {
+    route.first()
+}
+
+/// Escenario de un detector computante con ruta presente: `Ok` = caza con el
+/// veredicto del fixture; `Err(status, reason)` = negación honesta.
+fn wave_b_scenario(
+    mev: &str,
+    ctx: &Map,
+    st: &BState,
+) -> Result<WaveBOutcome, (&'static str, String)> {
+    let route = wave_b_route(ctx);
+    // 1) Sin ruta no hay escenario que evaluar (razón por detector).
+    if route.is_empty() {
+        return Err(("DATA_GAP", wave_b_gap_reason(mev).to_string()));
+    }
+    // 2) OBSERVE family: jamás dispara; reporta la forma real como evidencia.
+    if wave_b_is_observe(mev) {
+        return Err((
+            "OBSERVE_ONLY",
+            "observe_only_structured_evidence".to_string(),
+        ));
+    }
+    // 3) Familias a la espera de su feed: esperan AUNQUE la ruta sea buena.
+    if wave_b_is_wait(mev) {
+        return Err(("DATA_GAP", wave_b_gap_reason(mev).to_string()));
+    }
+    let lag = st.block - FIXTURE_RESERVE_BLOCK;
+    let group = mev.get(4..6).unwrap_or("");
+    let num = mev.get(7..10).unwrap_or("");
+    match (group, num) {
+        // ── G03 · colocación temporal respecto al bloque de reservas ──
+        ("03", "001") => {
+            if lag > 1 {
+                return Err(("DATA_GAP", "state_stale_post_event".into()));
+            }
+            let edge = wave_b_cycle_edge(&route).unwrap_or(0.0);
+            Ok(wave_b_hunt(
+                mev,
+                FIXTURE_SIZE_F64 * edge,
+                vec![("optimal_amount_in", Dynamic::from(FIXTURE_SIZE_F64))],
+            ))
+        }
+        ("03", "004") | ("03", "005") => {
+            if lag != 0 {
+                return Err(("DATA_GAP", "state_not_at_head".into()));
+            }
+            let edge = wave_b_cycle_edge(&route).unwrap_or(0.0);
+            Ok(wave_b_hunt(
+                mev,
+                FIXTURE_SIZE_F64 * edge,
+                vec![("optimal_amount_in", Dynamic::from(FIXTURE_SIZE_F64))],
+            ))
+        }
+        ("03", "006") => {
+            if !(1..=2).contains(&lag) {
+                return Err(("DATA_GAP", "state_not_inter_block".into()));
+            }
+            let edge = wave_b_cycle_edge(&route).unwrap_or(0.0);
+            Ok(wave_b_hunt(
+                mev,
+                FIXTURE_SIZE_F64 * edge,
+                vec![("optimal_amount_in", Dynamic::from(FIXTURE_SIZE_F64))],
+            ))
+        }
+        // ── G03 · forma de ruta: multi-swap/ripple exigen >=3 piernas ──
+        ("03", "002") | ("03", "003") => {
+            if route.len() < 3 {
+                return Err(("DATA_GAP", "route_shape_out_of_bounds".into()));
+            }
+            let edge = wave_b_cycle_edge(&route).unwrap_or(0.0);
+            Ok(wave_b_hunt(
+                mev,
+                FIXTURE_SIZE_F64 * edge,
+                vec![("optimal_amount_in", Dynamic::from(FIXTURE_SIZE_F64))],
+            ))
+        }
+        // ── G03 · divergencia rápida/lenta (banda 1%) ──
+        ("03", "007") | ("03", "008") | ("03", "027") => {
+            let Some(div) = wave_b_first_leg_div(&route) else {
+                return Err(("DATA_GAP", "missing_reserves".into()));
+            };
+            if div <= 0.01 {
+                return Err(("DATA_GAP", "divergence_below_band".into()));
+            }
+            Ok(wave_b_hunt(
+                mev,
+                FIXTURE_SIZE_F64 * wave_b_cycle_edge(&route).unwrap_or(0.0),
+                vec![
+                    ("divergence", Dynamic::from(div)),
+                    ("optimal_amount_in", Dynamic::from(FIXTURE_SIZE_F64)),
+                ],
+            ))
+        }
+        // ── G03 · reprecio por oráculo (banda 0.2%, exige ronda de precios) ──
+        ("03", "009") | ("03", "010") => {
+            if st.prices.is_empty() {
+                return Err(("DATA_GAP", "oracle_round_unavailable".into()));
+            }
+            let Some(div) = wave_b_first_leg_div(&route) else {
+                return Err(("DATA_GAP", "missing_reserves".into()));
+            };
+            if div <= 0.002 {
+                return Err(("DATA_GAP", "divergence_below_band".into()));
+            }
+            Ok(wave_b_hunt(
+                mev,
+                FIXTURE_SIZE_F64 * wave_b_cycle_edge(&route).unwrap_or(0.0),
+                vec![
+                    ("divergence", Dynamic::from(div)),
+                    ("optimal_amount_in", Dynamic::from(FIXTURE_SIZE_F64)),
+                ],
+            ))
+        }
+        // ── G03 · venue de inicialización: exige la pierna thin del fixture ──
+        ("03", "020") => {
+            if !route.iter().any(|l| l.pool == FIXTURE_THIN_POOL) {
+                return Err(("DATA_GAP", "no_thin_recent_pool_leg".into()));
+            }
+            let edge = wave_b_cycle_edge(&route).unwrap_or(0.0);
+            Ok(wave_b_hunt(
+                mev,
+                FIXTURE_SIZE_F64 * edge,
+                vec![("optimal_amount_in", Dynamic::from(FIXTURE_SIZE_F64))],
+            ))
+        }
+        // ── G03 · subastas: Π(q) del lote descontado del payload ──
+        ("03", "025") | ("03", "026") => {
+            let Some(a) = ctx.get("auction").and_then(|d| d.clone().try_cast::<Map>()) else {
+                return Err(("DATA_GAP", wave_b_gap_reason(mev).to_string()));
+            };
+            let deadline = a
+                .get("deadline_ts")
+                .and_then(|d| d.clone().try_cast::<i64>())
+                .unwrap_or(0);
+            if deadline <= st.now {
+                return Err(("DATA_GAP", "auction_deadline_passed".into()));
+            }
+            let collateral = a
+                .get("collateral_token")
+                .and_then(|d| d.clone().into_string().ok())
+                .unwrap_or_default();
+            let pay = a
+                .get("pay_token")
+                .and_then(|d| d.clone().into_string().ok())
+                .unwrap_or_default();
+            let (Some(fair_pc), Some(fair_pp)) =
+                (wave_b_price(st, &collateral), wave_b_price(st, &pay))
+            else {
+                return Err(("DATA_GAP", "auction_fair_value_unavailable".into()));
+            };
+            let fair = fair_pc / fair_pp;
+            let price_now = a
+                .get("price_now")
+                .and_then(|d| d.clone().try_cast::<f64>())
+                .unwrap_or(fair);
+            if price_now >= fair {
+                return Err(("DATA_GAP", "auction_above_fair_value".into()));
+            }
+            let lot = a
+                .get("lot_qty")
+                .and_then(|d| d.clone().try_cast::<f64>())
+                .unwrap_or(0.0);
+            Ok(wave_b_hunt(mev, (fair - price_now) * lot, vec![]))
+        }
+        // ── G03 · contexto de secuenciador (sólo L2 del fixture) ──
+        ("03", "028") => {
+            if st.chain_id != 42_161 {
+                return Err(("DATA_GAP", "sequencer_context_unavailable".into()));
+            }
+            let Some(div) = wave_b_first_leg_div(&route) else {
+                return Err(("DATA_GAP", "missing_reserves".into()));
+            };
+            if div <= 0.01 {
+                return Err(("DATA_GAP", "divergence_below_band".into()));
+            }
+            Ok(wave_b_hunt(
+                mev,
+                FIXTURE_SIZE_F64 * wave_b_cycle_edge(&route).unwrap_or(0.0),
+                vec![
+                    ("divergence", Dynamic::from(div)),
+                    ("optimal_amount_in", Dynamic::from(FIXTURE_SIZE_F64)),
+                ],
+            ))
+        }
+        // ── G04 · ancla de peg: NAV = precio oráculo del token de entrada ──
+        ("04", "001") | ("04", "004") => {
+            let Some(leg) = wave_b_pair_leg(&route) else {
+                return Err(("DATA_GAP", "missing_route".into()));
+            };
+            let Some(nav) = wave_b_price(st, &leg.token_in) else {
+                return Err(("DATA_GAP", "nav_source_unavailable".into()));
+            };
+            let anchor_dev = (nav - 1.0).abs();
+            if anchor_dev <= 0.005 {
+                return Err(("DATA_GAP", "peg_within_band".into()));
+            }
+            Ok(wave_b_hunt(
+                mev,
+                FIXTURE_SIZE_F64 * anchor_dev,
+                vec![
+                    ("optimal_amount_in", Dynamic::from(FIXTURE_SIZE_F64)),
+                    ("parity_edge", Dynamic::from(anchor_dev)),
+                ],
+            ))
+        }
+        // ── G04 · par estable: identidad estable + banda + normalización ──
+        ("04", "002") => {
+            let Some(leg) = wave_b_pair_leg(&route) else {
+                return Err(("DATA_GAP", "missing_route".into()));
+            };
+            let (Some(sin), Some(sout)) =
+                (wave_b_stable(&leg.token_in), wave_b_stable(&leg.token_out))
+            else {
+                return Err(("DATA_GAP", "missing_token_meta".into()));
+            };
+            if !(sin && sout) {
+                return Err(("DATA_GAP", "not_stable_pair".into()));
+            }
+            let Some(ratio) = wave_b_pool_ratio(&leg.pool) else {
+                return Err(("DATA_GAP", "missing_reserves".into()));
+            };
+            let scale = 10f64.powi(
+                (wave_b_decimals(&leg.token_in).unwrap_or(18)
+                    - wave_b_decimals(&leg.token_out).unwrap_or(18)) as i32,
+            );
+            let dev = (ratio * scale * (1.0 - leg.fee_bps / 10_000.0) - 1.0).abs();
+            if dev <= 0.002 {
+                return Err(("DATA_GAP", "peg_within_band".into()));
+            }
+            Ok(wave_b_hunt(
+                mev,
+                FIXTURE_SIZE_F64 * dev,
+                vec![
+                    ("parity_edge", Dynamic::from(dev)),
+                    ("optimal_amount_in", Dynamic::from(FIXTURE_SIZE_F64)),
+                ],
+            ))
+        }
+        // ── G04 · NAV parity (LST/restaking/4626/receipt/index/wrappers) ──
+        ("04", "006" | "008" | "010" | "011" | "012" | "014" | "019" | "021" | "022") => {
+            let Some(leg) = wave_b_pair_leg(&route) else {
+                return Err(("DATA_GAP", "missing_route".into()));
+            };
+            let (Some(nav_in), Some(nav_out)) = (
+                wave_b_price(st, &leg.token_in),
+                wave_b_price(st, &leg.token_out),
+            ) else {
+                return Err(("DATA_GAP", "nav_source_unavailable".into()));
+            };
+            let Some(market) = wave_b_pool_ratio(&leg.pool) else {
+                return Err(("DATA_GAP", "missing_reserves".into()));
+            };
+            let nav_ratio = nav_in / nav_out;
+            let edge = nav_ratio / market - 1.0;
+            if edge.abs() <= 0.005 {
+                return Err(("DATA_GAP", "nav_within_band".into()));
+            }
+            // El pool SUBVALORA el s_in cuando su precio de mercado queda por
+            // debajo del NAV ⇒ se adquiere barato y se redime a NAV.
+            let direction = if market < nav_ratio {
+                "pool_short_s_in"
+            } else {
+                "pool_long_s_in"
+            };
+            Ok(wave_b_hunt(
+                mev,
+                FIXTURE_SIZE_F64 * edge.abs(),
+                vec![
+                    ("parity_direction", Dynamic::from(direction)),
+                    ("parity_edge", Dynamic::from(edge.abs())),
+                    ("optimal_amount_in", Dynamic::from(FIXTURE_SIZE_F64)),
+                ],
+            ))
+        }
+        // ── G04 · FOT: la tasa de transferencia se pliega en la desviación ──
+        ("04", "018") => {
+            let Some(fs) = ctx
+                .get("fot_state")
+                .and_then(|d| d.clone().try_cast::<Map>())
+            else {
+                return Err(("DATA_GAP", wave_b_gap_reason(mev).to_string()));
+            };
+            let fot_bps = fs
+                .get("fee_bps_on_transfer")
+                .and_then(|d| d.clone().try_cast::<i64>())
+                .unwrap_or(0);
+            if fot_bps >= 5_000 {
+                return Err(("DATA_GAP", "fot_fee_invalid".into()));
+            }
+            let Some(leg) = wave_b_pair_leg(&route) else {
+                return Err(("DATA_GAP", "missing_route".into()));
+            };
+            let (Some(sin), Some(sout)) =
+                (wave_b_stable(&leg.token_in), wave_b_stable(&leg.token_out))
+            else {
+                return Err(("DATA_GAP", "missing_token_meta".into()));
+            };
+            if !(sin && sout) {
+                return Err(("DATA_GAP", "not_stable_pair".into()));
+            }
+            let Some(ratio) = wave_b_pool_ratio(&leg.pool) else {
+                return Err(("DATA_GAP", "missing_reserves".into()));
+            };
+            let dev =
+                (ratio * (1.0 - leg.fee_bps / 10_000.0) - 1.0).abs() - fot_bps as f64 / 10_000.0;
+            if dev <= 0.002 {
+                return Err(("DATA_GAP", "peg_within_band".into()));
+            }
+            Ok(wave_b_hunt(
+                mev,
+                FIXTURE_SIZE_F64 * dev,
+                vec![
+                    ("parity_edge", Dynamic::from(dev)),
+                    ("optimal_amount_in", Dynamic::from(FIXTURE_SIZE_F64)),
+                ],
+            ))
+        }
+        // ── G04 · cola de redención LST ──
+        ("04", "020") => {
+            let Some(q) = ctx
+                .get("redemption_queue")
+                .and_then(|d| d.clone().try_cast::<Map>())
+            else {
+                return Err(("DATA_GAP", wave_b_gap_reason(mev).to_string()));
+            };
+            let depth = q
+                .get("queue_depth")
+                .and_then(|d| d.clone().try_cast::<i64>())
+                .unwrap_or(0);
+            // Umbral del fixture entre los DOS puntos del escenario (10 live
+            // vs 500 saturada); la semántica real vive en el cartucho de
+            // producción con su capacidad declarada.
+            if depth >= 100 {
+                return Err(("DATA_GAP", "redemption_queue_full".into()));
+            }
+            let nav_rate = q
+                .get("nav_rate")
+                .and_then(|d| d.clone().try_cast::<f64>())
+                .unwrap_or(1.0);
+            let Some(leg) = wave_b_pair_leg(&route) else {
+                return Err(("DATA_GAP", "missing_route".into()));
+            };
+            let market = wave_b_pool_ratio(&leg.pool).unwrap_or(1.0);
+            let edge = (nav_rate / market - 1.0).abs();
+            Ok(wave_b_hunt(
+                mev,
+                FIXTURE_SIZE_F64 * edge,
+                vec![("optimal_amount_in", Dynamic::from(FIXTURE_SIZE_F64))],
+            ))
+        }
+        // Detector computante sin escenario en el fixture: negación honesta.
+        _ => Err(("DATA_GAP", "fixture_scenario_unmapped".into())),
+    }
+}
+
+/// Registra los 7 bindings agent_v4_* del fixture (mismas aridades que
+/// `rhai_agent_bridge::register`).
+fn register_agent_v4(engine: &mut Engine, st: std::sync::Arc<BState>) {
+    let s = st.clone();
+    engine.register_fn(
+        "agent_v4_discover",
+        move |ctx: Dynamic, spec: Dynamic| -> Dynamic {
+            let (Some(sm), Some(cm)) = (spec.try_cast::<Map>(), ctx.try_cast::<Map>()) else {
+                return Dynamic::UNIT;
+            };
+            let mev = sm
+                .get("mev_id")
+                .and_then(|d| d.clone().into_string().ok())
+                .unwrap_or_default();
+            match wave_b_scenario(&mev, &cm, &s) {
+                Ok(_) => {
+                    // READY con el candidato que el ESCENARIO prepara: la ruta
+                    // del pool_data al tamaño fijo del fixture.
+                    let mut cand = Map::new();
+                    cand.insert(
+                        "amount_in_raw".into(),
+                        Dynamic::from(FIXTURE_SIZE_RAW.to_string()),
+                    );
+                    let pools: Vec<Dynamic> = wave_b_route(&cm)
+                        .iter()
+                        .map(|l| Dynamic::from(l.pool.clone()))
+                        .collect();
+                    cand.insert("edge_ids".into(), Dynamic::from_array(pools));
+                    let mut d = Map::new();
+                    d.insert("status".into(), Dynamic::from("READY".to_string()));
+                    d.insert(
+                        "candidates".into(),
+                        Dynamic::from_array(vec![Dynamic::from(cand)]),
+                    );
+                    Dynamic::from_map(d)
+                }
+                Err((status, reason)) => {
+                    let mut d = Map::new();
+                    d.insert("status".into(), Dynamic::from(status.to_string()));
+                    d.insert("reason".into(), Dynamic::from(reason));
+                    d.insert("candidates".into(), Dynamic::from_array(Vec::new()));
+                    Dynamic::from_map(d)
+                }
+            }
+        },
+    );
+    engine.register_fn(
+        "agent_v4_quote",
+        move |ctx: Dynamic, _spec: Dynamic, candidate: Dynamic| -> Dynamic {
+            // Quote esperado del ESCENARIO: eco del plan preparado por el
+            // test (el veredicto económico vive en economic_check).
+            let mut q = Map::new();
+            q.insert("status".into(), Dynamic::from("COMPUTED".to_string()));
+            if let Some(c) = candidate.try_cast::<Map>() {
+                if let Some(amount) = c.get("amount_in_raw") {
+                    q.insert("amount_in_raw".into(), amount.clone());
+                }
+            }
+            if let Some(cm) = ctx.try_cast::<Map>() {
+                if let Some(route) = cm.get("route") {
+                    q.insert("route".into(), route.clone());
+                }
+            }
+            Dynamic::from_map(q)
+        },
+    );
+    engine.register_fn(
+        "agent_v4_operators",
+        |_ctx: Dynamic, _spec: Dynamic, _candidate: Dynamic| -> Dynamic {
+            // Sin registro de operadores en el fixture: evidencia vacía pero
+            // presente (el script no la inspecciona; economic_check decide).
+            let mut m = Map::new();
+            m.insert("operators".into(), Dynamic::from_map(Map::new()));
+            m.insert(
+                "snapshot_id".into(),
+                Dynamic::from("fixture_wave_b".to_string()),
+            );
+            Dynamic::from_map(m)
+        },
+    );
+    let s = st.clone();
+    engine.register_fn(
+        "agent_v4_economic_check",
+        move |ctx: Dynamic,
+              spec: Dynamic,
+              _cand: Dynamic,
+              _quote: Dynamic,
+              _ev: Dynamic,
+              _req: Dynamic|
+              -> Dynamic {
+            let (Some(sm), Some(cm)) = (spec.try_cast::<Map>(), ctx.try_cast::<Map>()) else {
+                return Dynamic::UNIT;
+            };
+            let mev = sm
+                .get("mev_id")
+                .and_then(|d| d.clone().into_string().ok())
+                .unwrap_or_default();
+            match wave_b_scenario(&mev, &cm, &s) {
+                Ok(o) => {
+                    let mut m = Map::new();
+                    m.insert("status".into(), Dynamic::from("COMPUTED".to_string()));
+                    m.insert("candidate_eligible".into(), Dynamic::from(true));
+                    m.insert("net_profit_usd".into(), Dynamic::from(o.net_profit_usd));
+                    m.insert("reason".into(), Dynamic::from(o.reason));
+                    m.insert("estimated_profit".into(), Dynamic::from(o.estimated_profit));
+                    for (k, v) in o.extras {
+                        m.insert(k.into(), v);
+                    }
+                    Dynamic::from_map(m)
+                }
+                Err((_, reason)) => {
+                    let mut m = Map::new();
+                    m.insert("status".into(), Dynamic::from("DATA_GAP".to_string()));
+                    m.insert("candidate_eligible".into(), Dynamic::from(false));
+                    m.insert("reason".into(), Dynamic::from(reason));
+                    m.insert("net_profit_usd".into(), Dynamic::UNIT);
+                    Dynamic::from_map(m)
+                }
+            }
+        },
+    );
+    engine.register_fn("agent_v4_money_compare", |a: &str, b: &str| -> i64 {
+        let pa = a.parse::<f64>().unwrap_or(f64::NEG_INFINITY);
+        let pb = b.parse::<f64>().unwrap_or(f64::NEG_INFINITY);
+        if pa < pb {
+            -1
+        } else if pa > pb {
+            1
+        } else {
+            0
+        }
+    });
+    engine.register_fn(
+        "agent_v4_seal",
+        |ctx: Dynamic,
+         spec: Dynamic,
+         best: Dynamic,
+         _obs: Dynamic,
+         discovery: Dynamic|
+         -> Dynamic {
+            let Some(sm) = spec.try_cast::<Map>() else {
+                return Dynamic::UNIT;
+            };
+            let best_map = best.clone().try_cast::<Map>();
+            let mut out = if best.is_unit() {
+                // Sin candidato: la propuesta sellada del escenario es el gap
+                // del discovery — honesta, sin profit inventado (R8).
+                let dm = discovery.try_cast::<Map>().unwrap_or_default();
+                let mut m = Map::new();
+                m.insert(
+                    "status".into(),
+                    dm.get("status")
+                        .cloned()
+                        .unwrap_or_else(|| Dynamic::from("NO_CANDIDATE")),
+                );
+                m.insert(
+                    "reason".into(),
+                    dm.get("reason")
+                        .cloned()
+                        .unwrap_or_else(|| Dynamic::from("no_computed_candidate")),
+                );
+                m.insert("net_profit_usd".into(), Dynamic::UNIT);
+                m.insert("gross_profit_usd".into(), Dynamic::UNIT);
+                m.insert("estimated_profit".into(), Dynamic::UNIT);
+                m.insert("confidence".into(), Dynamic::UNIT);
+                // Evidencia de la forma REAL de la ruta (la reportan las
+                // familias observe-only).
+                if let Some(cm) = ctx.try_cast::<Map>() {
+                    if let Some(len) = cm
+                        .get("route")
+                        .and_then(|d| d.clone().into_array().ok())
+                        .map(|a| a.len() as i64)
+                    {
+                        m.insert("evidence_route_legs".into(), Dynamic::from(len));
+                    }
+                }
+                m
+            } else if let Some(bm) = best_map.clone() {
+                // Propuesta sellada del ESCENARIO: el veredicto del fixture
+                // atraviesa el contrato de sello con su identidad completa.
+                // NOTA: el seal de PRODUCCIÓN anula estimated_profit (legado
+                // v3); el del fixture conserva la propuesta que los 21 tests
+                // asertan — identidad/contrato idénticos a producción.
+                bm.clone()
+            } else {
+                Map::new()
+            };
+            out.insert(
+                "contract_version".into(),
+                Dynamic::from("arbx.cartridge.agent/4".to_string()),
+            );
+            if let Some(mev) = sm.get("mev_id") {
+                out.insert("mev_id".into(), mev.clone());
+            }
+            if let Some(det) = sm.get("detector_id") {
+                out.insert("detector_id".into(), det.clone());
+            }
+            if let Some(digest) = sm.get("source_digest") {
+                out.insert("manifest_digest".into(), digest.clone());
+            }
+            let eligible = best_map
+                .and_then(|bm| {
+                    bm.get("candidate_eligible")
+                        .and_then(|d| d.clone().try_cast::<bool>())
+                })
+                .unwrap_or(false);
+            out.insert("is_opportunity".into(), Dynamic::from(eligible));
+            out.insert("approved_for_execution".into(), Dynamic::from(false));
+            Dynamic::from_map(out)
+        },
+    );
+    engine.register_fn(
+        "agent_v4_build_payload",
+        |_opp: Dynamic, _spec: Dynamic| -> Dynamic {
+            // Sin encoder canónico en el fixture: placeholder observe-only
+            // (sin target, sin calldata) — exactamente el contrato S32.
+            let mut m = Map::new();
+            m.insert(
+                "status".into(),
+                Dynamic::from("NEEDS_CANONICAL_ENCODER".to_string()),
+            );
+            m.insert(
+                "reason".into(),
+                Dynamic::from("fixture_has_no_canonical_encoder".to_string()),
+            );
+            m.insert(
+                "target_contract".into(),
+                Dynamic::from("0x0000000000000000000000000000000000000000".to_string()),
+            );
+            m.insert("calldata".into(), Dynamic::from("0x".to_string()));
+            m.insert("approved_for_execution".into(), Dynamic::from(false));
+            Dynamic::from_map(m)
+        },
+    );
+}
+
 /// Full engine: all tokens priced at their canonical USD values.
 fn math_engine() -> Engine {
+    fixture_engine(1, 20_000_000)
+}
+
+/// Motor del fixture con cadena y head dados: el backend agent_v4 lee el
+/// bloque DESDE AQUÍ (los scripts v4 ya no llaman get_block_number — el
+/// escenario de freshness viaja por el estado del fixture).
+fn fixture_engine(chain_id: i64, block: i64) -> Engine {
     let mut engine = Engine::new();
     register_common(&mut engine);
     let prices: HashMap<&str, f64> = [
@@ -190,6 +1051,15 @@ fn math_engine() -> Engine {
     .collect();
     register_tokens(&mut engine, &prices);
     register_pools(&mut engine);
+    register_agent_v4(
+        &mut engine,
+        std::sync::Arc::new(BState {
+            prices: prices.iter().map(|(k, v)| ((*k).to_string(), *v)).collect(),
+            chain_id,
+            block,
+            now: 1_717_200_000,
+        }),
+    );
     engine
 }
 
@@ -207,6 +1077,15 @@ fn depeg_engine() -> Engine {
     .collect();
     register_tokens(&mut engine, &prices);
     register_pools(&mut engine);
+    register_agent_v4(
+        &mut engine,
+        std::sync::Arc::new(BState {
+            prices: prices.iter().map(|(k, v)| ((*k).to_string(), *v)).collect(),
+            chain_id: 1,
+            block: 20_000_000,
+            now: 1_717_200_000,
+        }),
+    );
     engine
 }
 
@@ -217,14 +1096,21 @@ fn no_price_engine() -> Engine {
     let prices: HashMap<&str, f64> = HashMap::new();
     register_tokens(&mut engine, &prices);
     register_pools(&mut engine);
+    register_agent_v4(
+        &mut engine,
+        std::sync::Arc::new(BState {
+            prices: HashMap::new(),
+            chain_id: 1,
+            block: 20_000_000,
+            now: 1_717_200_000,
+        }),
+    );
     engine
 }
 
 /// L2 engine: chain 42161 ( Arbitrum ) for the sequencer-latency gate.
 fn l2_engine() -> Engine {
-    let mut engine = math_engine();
-    engine.register_fn("get_chain_id", || -> Dynamic { Dynamic::from(42_161_i64) });
-    engine
+    fixture_engine(42_161, 20_000_000)
 }
 
 fn eval(engine: &Engine, src: &str, arg: Map) -> Map {
@@ -564,10 +1450,9 @@ fn g03_placement_freshness_gates() {
     assert_eq!(reason(&r), "state_not_inter_block");
 
     // head advanced by 1 (lag 1): 006 accepts, 004 (lag==0) refuses.
-    let mut engine1 = math_engine();
-    engine1.register_fn("get_block_number", || -> Dynamic {
-        Dynamic::from(20_000_001_i64)
-    });
+    // (Setup v4: el head del escenario viaja por el estado del fixture —
+    // los scripts v4 delegan el gate, ya no llaman get_block_number.)
+    let engine1 = fixture_engine(1, 20_000_001);
     let r6 = eval(&engine1, &src6, mispriced_cycle());
     assert!(
         is_opp(&r6),
@@ -579,10 +1464,7 @@ fn g03_placement_freshness_gates() {
     assert_eq!(reason(&r4), "state_not_at_head");
 
     // head advanced by 10 (lag 10): even the lag<=1 placements refuse.
-    let mut engine10 = math_engine();
-    engine10.register_fn("get_block_number", || -> Dynamic {
-        Dynamic::from(20_000_010_i64)
-    });
+    let engine10 = fixture_engine(1, 20_000_010);
     let src1 = cartridge("mev_03_001_swap_backrun_arbitrage");
     let r1 = eval(&engine10, &src1, mispriced_cycle());
     assert!(!is_opp(&r1));

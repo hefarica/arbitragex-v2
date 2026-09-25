@@ -1136,12 +1136,140 @@ async fn v4_token_decimals(
     decimals
 }
 
+// ── AGENT v4 Fase 3b — admisión EXPLÍCITA de manifiestos ─────────────────────
+// El backend ADMITE el par (mev_id, source_digest) que cada script v4-sellado
+// desplegado declara en su PROPIO agent_manifest() (escaneo de texto del
+// archivo — sin compilar Rhai ni depender de registros externos). Sólo
+// participan scripts con `arbx.cartridge.agent/4`; los v3 no aportan
+// admisiones. R8: un manifiesto ausente, ambiguo o malformado NO se admite —
+// el cartucho recibirá `manifest_not_admitted_by_backend`, la razón honesta.
+
+/// Extrae todos los valores `"clave": "valor"` (estilo JSON) de un texto.
+/// Escaneo literal delimitado por comillas — sin dependencia regex.
+fn v4_extract_quoted_values<'a>(source: &'a str, key: &str) -> Vec<&'a str> {
+    let needle = format!("\"{key}\"");
+    let mut out = Vec::new();
+    let mut rest = source;
+    while let Some(pos) = rest.find(&needle) {
+        let Some(after_colon) = rest[pos + needle.len()..].trim_start().strip_prefix(':') else {
+            break;
+        };
+        let Some(value) = after_colon.trim_start().strip_prefix('"') else {
+            break;
+        };
+        let Some(end) = value.find('"') else {
+            break;
+        };
+        out.push(&value[..end]);
+        rest = &value[end + 1..];
+    }
+    out
+}
+
+/// Admite UN script: devuelve el par (mev_id, source_digest) auto-declarado.
+/// Exige contrato v4, valores únicos y consistentes dentro del archivo,
+/// mev_id `[A-Z0-9-]` y digest de 64 hex (SHA-256).
+fn v4_admit_script(source: &str) -> Option<(String, String)> {
+    if !source.contains("arbx.cartridge.agent/4") {
+        return None;
+    }
+    let mevs = v4_extract_quoted_values(source, "mev_id");
+    let digests = v4_extract_quoted_values(source, "source_digest");
+    let mev = *mevs.first()?;
+    if mevs.iter().any(|m| *m != mev)
+        || mev.is_empty()
+        || !mev
+            .bytes()
+            .all(|b| b.is_ascii_uppercase() || b.is_ascii_digit() || b == b'-')
+    {
+        return None;
+    }
+    let digest = *digests.first()?;
+    if digests.iter().any(|d| *d != digest)
+        || digest.len() != 64
+        || !digest.bytes().all(|b| b.is_ascii_hexdigit())
+    {
+        return None;
+    }
+    Some((mev.to_owned(), digest.to_owned()))
+}
+
+/// Escaneo determinista (orden por nombre de archivo) de los scripts v4
+/// desplegados en `<dir>/strategies/*.rhai`. Un `mev_id` repetido entre
+/// archivos conserva el PRIMERO (orden alfabético) y lo registra — el
+/// despliegue real es 1:1 por mev_id, el conflicto es anomalía observable.
+fn v4_scan_manifest_digests(dir: &std::path::Path) -> std::collections::BTreeMap<String, String> {
+    let strategies = dir.join("strategies");
+    let mut out = std::collections::BTreeMap::new();
+    let Ok(entries) = std::fs::read_dir(&strategies) else {
+        info!(
+            event = "cartridge.v4_manifests_dir_missing",
+            dir = %strategies.display(),
+            "sin directorio strategies desplegado; cero admisiones v4 (R8)"
+        );
+        return out;
+    };
+    let mut paths: Vec<std::path::PathBuf> = entries
+        .flatten()
+        .map(|e| e.path())
+        .filter(|p| p.extension().and_then(|e| e.to_str()) == Some("rhai"))
+        .collect();
+    paths.sort();
+    let mut scanned = 0usize;
+    let mut skipped = 0usize;
+    let mut conflicts = 0usize;
+    for path in paths {
+        let Ok(source) = std::fs::read_to_string(&path) else {
+            skipped += 1;
+            continue;
+        };
+        scanned += 1;
+        match v4_admit_script(&source) {
+            Some((mev, digest)) => {
+                if out.insert(mev.clone(), digest).is_some() {
+                    conflicts += 1;
+                    warn!(
+                        event = "cartridge.v4_manifest_conflict",
+                        file = %path.display(),
+                        mev_id = %mev,
+                        "mev_id duplicado entre scripts desplegados; se conserva el primero (orden alfabético)"
+                    );
+                }
+            }
+            None => {
+                skipped += 1;
+            }
+        }
+    }
+    info!(
+        event = "cartridge.v4_manifests_admitted",
+        admitted = out.len(),
+        scanned,
+        skipped,
+        conflicts,
+        dir = %strategies.display(),
+        "admisión explícita de manifiestos v4 (auto-declarados por el script desplegado)"
+    );
+    out
+}
+
+/// Mapa (mev_id → source_digest) de la librería desplegada, calculado UNA vez
+/// por proceso. Alcance Fase 3b: los scripts DEPLOYADOS en `CARTRIDGE_DIR`;
+/// un cartucho inyectado en caliente con digest nuevo NO estará en este mapa
+/// y fallará la admisión con razón explícita hasta reinicio (la admisión
+/// hot-reload es una fase posterior, documentada en el PR).
+pub fn v4_manifest_digests() -> &'static std::collections::BTreeMap<String, String> {
+    static V4_MANIFESTS: OnceLock<std::collections::BTreeMap<String, String>> = OnceLock::new();
+    V4_MANIFESTS.get_or_init(|| v4_scan_manifest_digests(std::path::Path::new(CARTRIDGE_DIR)))
+}
+
 /// Fase 3a — construye el SnapshotBundle REAL del intent: policy honesta
 /// desde la config del operador (`TradingConfigState`), precios canónicos
 /// por token distinto de las piernas (dirección → símbolo del universo de
-/// identidad → precio del snapshot Redis o de trading_config) y el tamaño
-/// REAL observado del intent como único tamaño del schedule. Los productores
-/// ausentes (exact_quotes, domain_plans, manifest admission) quedan vacíos:
+/// identidad → precio del snapshot Redis o de trading_config), el tamaño
+/// REAL observado del intent como único tamaño del schedule y la admisión
+/// EXPLÍCITA de manifiestos v4 desplegados (Fase 3b). Los productores aún
+/// ausentes (exact_quotes, domain_plans, canonical_payloads) quedan vacíos:
 /// el contrato v4 los reporta como DATA_GAP con razón explícita — nunca
 /// se fabrican (R8). `None` sólo si el reloj no permite una ventana temporal
 /// honesta.
@@ -1155,6 +1283,7 @@ fn build_v4_intent_bundle(
     cfg: &shared_rs::trading_config::TradingConfigState,
     identity: &shared_rs::token_identity::TokenIdentityIndex,
     price_snapshot: &std::collections::HashMap<String, f64>,
+    manifest_digests: &std::collections::BTreeMap<String, String>,
 ) -> Option<crate::snapshot_services::SnapshotBundle> {
     let observed_at_ms = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -1251,7 +1380,9 @@ fn build_v4_intent_bundle(
         route_support: Default::default(),
         domain_plans: Default::default(),
         canonical_payloads: Default::default(),
-        manifest_digests: Default::default(),
+        // Fase 3b: admisión explícita de los manifiestos v4 desplegados
+        // (mev_id → source_digest auto-declarado por cada script).
+        manifest_digests: manifest_digests.clone(),
         max_evaluations: 8,
     })
 }
@@ -1550,6 +1681,7 @@ pub async fn active_evaluate_and_emit(
             cfg,
             identity,
             &price_snapshot,
+            v4_manifest_digests(),
         ) {
             Some(bundle) => {
                 // Guarda de revisión de un solo bundle: este intent sirve
@@ -3139,6 +3271,100 @@ mod tests {
                     assert_eq!(result, expected, "raw={raw}, script={script}");
                 }
             }
+        }
+    }
+}
+
+#[cfg(test)]
+mod v4_manifest_tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used)] // test module — panics are acceptable
+    use super::*;
+
+    const SAMPLE_V4: &str = r#"fn agent_manifest() {
+    #{
+        "contract": "arbx.cartridge.agent/4",
+        "mev_id": "MEV-01-002",
+        "detector_id": "R_CLOSED_CYCLE",
+        "source_digest": "abce7b713e0839bc99a162331e0768d364fa13681a18b7e2f5948538e20be891",
+    }
+}"#;
+
+    #[test]
+    fn admits_sealed_script_with_consistent_manifest() {
+        let (mev, digest) = v4_admit_script(SAMPLE_V4).expect("v4 script must be admitted");
+        assert_eq!(mev, "MEV-01-002");
+        assert_eq!(
+            digest,
+            "abce7b713e0839bc99a162331e0768d364fa13681a18b7e2f5948538e20be891"
+        );
+    }
+
+    #[test]
+    fn rejects_v3_script_without_v4_contract() {
+        let v3 = r#"fn agent_manifest() { #{ "mev_id": "MEV-01-002", "source_digest": "abce7b713e0839bc99a162331e0768d364fa13681a18b7e2f5948538e20be891", } }"#;
+        assert!(v4_admit_script(v3).is_none(), "v3 scripts are not admitted");
+    }
+
+    #[test]
+    fn rejects_ambiguous_mev_id() {
+        let ambiguous = format!("{SAMPLE_V4} let other = #{{ \"mev_id\": \"MEV-09-999\" }};");
+        assert!(v4_admit_script(&ambiguous).is_none());
+    }
+
+    #[test]
+    fn rejects_malformed_digest() {
+        let short = SAMPLE_V4.replace(
+            "abce7b713e0839bc99a162331e0768d364fa13681a18b7e2f5948538e20be891",
+            "abce7b71",
+        );
+        assert!(v4_admit_script(&short).is_none(), "digest must be 64 hex");
+        let non_hex = SAMPLE_V4.replace(
+            "abce7b713e0839bc99a162331e0768d364fa13681a18b7e2f5948538e20be891",
+            &"z".repeat(64),
+        );
+        assert!(v4_admit_script(&non_hex).is_none(), "digest must be hex");
+    }
+
+    #[test]
+    fn deployed_library_is_fully_admitted() {
+        // Fase 3b/#655 (sync incremental): TODO script v4-sellado desplegado
+        // en strategies/ debe estar admissionado — en este PR la wave B
+        // completa (mev_03_*/mev_04_*, 62 scripts); las waves restantes
+        // llegan con la migración de SUS fixtures (los scripts v3 no
+        // participan: sin contrato v4 no hay admisión).
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("cartridges");
+        let map = v4_scan_manifest_digests(&dir);
+        let strategies = dir.join("strategies");
+        let mut v4_deployed = 0usize;
+        for entry in std::fs::read_dir(&strategies).expect("strategies dir must exist") {
+            let path = entry.expect("dir entry").path();
+            if path.extension().and_then(|e| e.to_str()) != Some("rhai") {
+                continue;
+            }
+            let source = std::fs::read_to_string(&path).expect("read script");
+            if source.contains("arbx.cartridge.agent/4") {
+                v4_deployed += 1;
+            }
+        }
+        assert!(
+            v4_deployed >= 62,
+            "wave B = 62 v4 scripts, found {v4_deployed}"
+        );
+        assert_eq!(
+            map.len(),
+            v4_deployed,
+            "todo script v4 desplegado debe estar admissionado"
+        );
+        assert!(
+            map.contains_key("MEV-03-001"),
+            "MEV-03-001 must be admitted"
+        );
+        assert!(
+            map.contains_key("MEV-04-031"),
+            "MEV-04-031 must be admitted"
+        );
+        for (mev, digest) in &map {
+            assert_eq!(digest.len(), 64, "{mev}: digest must be 64 hex");
         }
     }
 }
