@@ -548,7 +548,7 @@ services:
           memory: 128M
   node_exporter:
     logging: *id001
-    image: prom/node_exporter:v1.8.2
+    image: prom/node-exporter:v1.8.2
     command:
     - --path.procfs=/host/proc
     - --path.sysfs=/host/sys
