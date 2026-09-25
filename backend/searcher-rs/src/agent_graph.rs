@@ -330,6 +330,88 @@ mod tests {
         assert_eq!(end, "99281840");
     }
     #[test]
+    fn quote_path_computes_cpmm_locally_with_fee() {
+        // Edge con la forma EXACTA que produce cartridge_boot (Fase 3c):
+        // protocolo cpmm_v2 + fee del intent (30/10000) + reservas reales.
+        // quote_path debe computar el quote LOCAL sin productor externo:
+        // out = floor(R_out * dx * (den-fee) / (R_in*den + dx*(den-fee))).
+        let edge = Edge {
+            edge_id: "0xpool".into(),
+            pool_id: "0xpool".into(),
+            chain_id: 1,
+            token_in: "0xa".into(),
+            token_out: "0xb".into(),
+            protocol: "cpmm_v2".into(),
+            snapshot_id: "intent-snap".into(),
+            block_hash: "blk-1".into(),
+            reserve_in_raw: Some("1000000000000".into()),
+            reserve_out_raw: Some("1000000000000".into()),
+            fee_units: Some(30),
+            fee_denominator: Some(10_000),
+            token_in_decimals: 18,
+            token_out_decimals: 18,
+            adapter_version: "reserves_cache_v1".into(),
+        };
+        let legs = quote_path(std::slice::from_ref(&edge), "100000000", &BTreeMap::new()).unwrap();
+        assert_eq!(legs[0]["amount_out_raw"], "99690060");
+        assert_eq!(legs[0]["quote_method"], "cpmm_exact_integer");
+        assert_eq!(legs[0]["edge_id"], "0xpool");
+    }
+    #[test]
+    fn quote_path_requires_exact_quotes_for_non_cpmm() {
+        // V3 (y cualquier protocolo no-cpmm) queda en exact-only por
+        // doctrina: sin fallback constant-product, con o sin fee.
+        let mut edge = Edge {
+            edge_id: "0xpool".into(),
+            pool_id: "0xpool".into(),
+            chain_id: 1,
+            token_in: "0xa".into(),
+            token_out: "0xb".into(),
+            protocol: "uniswap_v3".into(),
+            snapshot_id: "intent-snap".into(),
+            block_hash: "blk-1".into(),
+            reserve_in_raw: Some("1000000000000".into()),
+            reserve_out_raw: Some("1000000000000".into()),
+            fee_units: None,
+            fee_denominator: None,
+            token_in_decimals: 18,
+            token_out_decimals: 18,
+            adapter_version: "reserves_cache_v1".into(),
+        };
+        let err =
+            quote_path(std::slice::from_ref(&edge), "100000000", &BTreeMap::new()).unwrap_err();
+        assert!(err.contains("exact_protocol_quote_required_no_cpmm_fallback"));
+        edge.fee_units = Some(500);
+        edge.fee_denominator = Some(1_000_000);
+        let err =
+            quote_path(std::slice::from_ref(&edge), "100000000", &BTreeMap::new()).unwrap_err();
+        assert!(err.contains("exact_protocol_quote_required_no_cpmm_fallback"));
+    }
+    #[test]
+    fn quote_path_fails_honest_without_fee() {
+        // cpmm_v2 sin fee determinable: falla con razón explícita (R8).
+        let edge = Edge {
+            edge_id: "0xpool".into(),
+            pool_id: "0xpool".into(),
+            chain_id: 1,
+            token_in: "0xa".into(),
+            token_out: "0xb".into(),
+            protocol: "cpmm_v2".into(),
+            snapshot_id: "intent-snap".into(),
+            block_hash: "blk-1".into(),
+            reserve_in_raw: Some("1000000000000".into()),
+            reserve_out_raw: Some("1000000000000".into()),
+            fee_units: None,
+            fee_denominator: None,
+            token_in_decimals: 18,
+            token_out_decimals: 18,
+            adapter_version: "reserves_cache_v1".into(),
+        };
+        let err =
+            quote_path(std::slice::from_ref(&edge), "100000000", &BTreeMap::new()).unwrap_err();
+        assert!(err.contains("missing_fee_units"));
+    }
+    #[test]
     fn exact_large_token_valuation() {
         assert_eq!(
             token_value_usd("1000000000000000001", 18, "2000.00000001").unwrap(),

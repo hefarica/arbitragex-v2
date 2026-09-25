@@ -1263,6 +1263,34 @@ pub fn v4_manifest_digests() -> &'static std::collections::BTreeMap<String, Stri
     V4_MANIFESTS.get_or_init(|| v4_scan_manifest_digests(std::path::Path::new(CARTRIDGE_DIR)))
 }
 
+/// Fase 3c — mapea la pierna del intent a (protocolo, fee) del Edge v4.
+///
+/// - Familia V2 (`ProtocolType::V2`) → `"cpmm_v2"`: `quote_path` computa el
+///   quote LOCAL con `cpmm_exact_in` (sin productor externo). La fee viene del
+///   PROPIO intent (`fee_bps`, basis points del leg) → units = bps,
+///   denominator = 10_000. Sin fee declarada → `None`: el quote fallará con
+///   `missing_fee_units` — honesto, igual que hoy (R8: sin fee inferida).
+/// - `V3`/`Curve`/`Balancer`/`Unknown` → su protocolo nominal y fee `None`:
+///   `quote_path` exige quote de productor exacto por protocolo
+///   (`exact_protocol_quote_required_no_cpmm_fallback`). V3 nunca cae a
+///   matemática constant-product (doctrina del contrato) y su `fee_bps` son
+///   PIPS (denominator 1_000_000), no bps — por eso jamás se reutilizan aquí.
+fn v4_edge_protocol_and_fee(
+    leg: &crate::route_intent::RouteIntentLeg,
+) -> (String, Option<u32>, Option<u32>) {
+    let fee_bps = leg.fee_bps.map(|bps| (bps, 10_000u32));
+    match leg.protocol_type {
+        ProtocolType::V2 => match fee_bps {
+            Some((units, den)) => ("cpmm_v2".to_string(), Some(units), Some(den)),
+            None => ("cpmm_v2".to_string(), None, None),
+        },
+        ProtocolType::V3 => ("uniswap_v3".to_string(), None, None),
+        ProtocolType::Curve => ("curve".to_string(), None, None),
+        ProtocolType::Balancer => ("balancer".to_string(), None, None),
+        ProtocolType::Unknown => ("unknown".to_string(), None, None),
+    }
+}
+
 /// Fase 3a — construye el SnapshotBundle REAL del intent: policy honesta
 /// desde la config del operador (`TradingConfigState`), precios canónicos
 /// por token distinto de las piernas (dirección → símbolo del universo de
@@ -1615,16 +1643,17 @@ pub async fn active_evaluate_and_emit(
             v4_first_token_in = Some(token_in.clone());
         }
         let pool_id = format!("{:#x}", pool);
+        // Protocolo + fee del Edge: V2 → cpmm_v2 con la fee del intent
+        // (quote local); resto → protocolo nominal sin fee (quote de
+        // productor exacto — sin fallback CPMM, doctrina v4).
+        let (edge_protocol, fee_units, fee_denominator) = v4_edge_protocol_and_fee(leg);
         v4_edges.push(crate::agent_graph::Edge {
             edge_id: pool_id.clone(),
             pool_id,
             chain_id,
             token_in,
             token_out,
-            protocol: leg
-                .dex_hint
-                .clone()
-                .unwrap_or_else(|| "unknown".to_string()),
+            protocol: edge_protocol,
             snapshot_id: v4_ctx_id.clone(),
             // Identidad de bloque REAL observada (número de la entrada de
             // reservas) con prefijo explícito "blk-": Edge no tiene campo
@@ -1632,11 +1661,8 @@ pub async fn active_evaluate_and_emit(
             block_hash: format!("blk-{}", entry.blk),
             reserve_in_raw: Some(reserve_in),
             reserve_out_raw: Some(reserve_out),
-            // La caché de reservas no porta fee del pool → None: el contrato
-            // v4 exige quote de productor exacto por protocolo (sin inferir
-            // fees — R8). El discovery de ciclos no necesita fee.
-            fee_units: None,
-            fee_denominator: None,
+            fee_units,
+            fee_denominator,
             token_in_decimals: dec_in,
             token_out_decimals: dec_out,
             // Adaptador que respalda estos edges: la caché de reservas del
@@ -3365,6 +3391,66 @@ mod v4_manifest_tests {
         );
         for (mev, digest) in &map {
             assert_eq!(digest.len(), 64, "{mev}: digest must be 64 hex");
+        }
+    }
+}
+
+#[cfg(test)]
+mod v4_edge_protocol_tests {
+    use super::*;
+
+    fn leg(
+        protocol_type: ProtocolType,
+        fee_bps: Option<u32>,
+    ) -> crate::route_intent::RouteIntentLeg {
+        crate::route_intent::RouteIntentLeg {
+            token_in: Default::default(),
+            token_out: Default::default(),
+            pool_hint: None,
+            dex_hint: None,
+            fee_bps,
+            protocol_type,
+        }
+    }
+
+    #[test]
+    fn v2_leg_maps_to_cpmm_with_intent_fee() {
+        let (protocol, units, den) = v4_edge_protocol_and_fee(&leg(ProtocolType::V2, Some(30)));
+        assert_eq!(protocol, "cpmm_v2");
+        assert_eq!(units, Some(30));
+        assert_eq!(den, Some(10_000));
+    }
+
+    #[test]
+    fn v2_leg_without_fee_stays_honest() {
+        // Sin fee declarada el edge sigue siendo cpmm_v2 pero sin fee:
+        // el quote fallará con missing_fee_units, jamás una fee inferida.
+        let (protocol, units, den) = v4_edge_protocol_and_fee(&leg(ProtocolType::V2, None));
+        assert_eq!(protocol, "cpmm_v2");
+        assert_eq!(units, None);
+        assert_eq!(den, None);
+    }
+
+    #[test]
+    fn v3_leg_never_falls_back_to_cpmm() {
+        // fee_bps de V3 son PIPS (den 1e6) — no se reutilizan como bps.
+        let (protocol, units, den) = v4_edge_protocol_and_fee(&leg(ProtocolType::V3, Some(3_000)));
+        assert_eq!(protocol, "uniswap_v3");
+        assert_eq!(units, None);
+        assert_eq!(den, None);
+    }
+
+    #[test]
+    fn other_families_keep_nominal_protocol_without_fee() {
+        for (pt, expected) in [
+            (ProtocolType::Curve, "curve"),
+            (ProtocolType::Balancer, "balancer"),
+            (ProtocolType::Unknown, "unknown"),
+        ] {
+            let (protocol, units, den) = v4_edge_protocol_and_fee(&leg(pt, Some(30)));
+            assert_eq!(protocol, expected);
+            assert_eq!(units, None);
+            assert_eq!(den, None);
         }
     }
 }
