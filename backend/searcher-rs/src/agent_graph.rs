@@ -25,6 +25,14 @@ pub struct Edge {
     pub token_in_decimals: u8,
     pub token_out_decimals: u8,
     pub adapter_version: String,
+    /// V3 within-tick spot quote inputs, from the SAME cached slot0 the
+    /// `get_v3_slot0` host binding reads (sqrt_price_x96 decimal string,
+    /// liquidity raw). `None` = no cached slot0 → the edge stays honest and
+    /// `quote_path` demands a producer exact quote.
+    #[serde(default)]
+    pub sqrt_price_x96_raw: Option<String>,
+    #[serde(default)]
+    pub liquidity: Option<u128>,
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SearchLimits {
@@ -213,6 +221,68 @@ fn cpmm_metrics(
     )
 }
 
+/// V3 within-tick EXACT-input spot quote (integer math, Q96, Uniswap V3
+/// whitepaper single-tick formulas), fee applied on the input:
+///   zero_for_one (token0→token1): sqrtP' = L·sqrtP·Q96 / (L·Q96 + dx'·sqrtP);
+///                                 out1 = L·(sqrtP − sqrtP') / Q96
+///   one_for_zero (token1→token0): sqrtP' = sqrtP + dx'·Q96 / L;
+///                                 out0 = L·Q96·(sqrtP' − sqrtP) / (sqrtP'·sqrtP)
+/// with dx' = dx·(den−fee)/den. CONSERVATIVE tick-cross guard (R8): the
+/// closed form is only valid while the swap stays inside the current tick;
+/// a sqrt-price move > 0.5% (≈ 1% price impact) voids the assumption and the
+/// call is rejected with an explicit reason — a real QuoterV2 (tick-crossing)
+/// quote is required instead. Never a disguised approximation.
+fn v3_spot_within_tick(
+    sqrt_price_x96_raw: &str,
+    liquidity: u128,
+    amount_in_raw: &str,
+    fee: u32,
+    denominator: u32,
+    zero_for_one: bool,
+) -> Result<(String, String), String> {
+    // V3 fee is denominated in millionths of the pool (pips).
+    if denominator != 1_000_000 {
+        return Err("invalid_v3_fee_denominator".into());
+    }
+    if fee >= denominator {
+        return Err("invalid_v3_fee_fraction".into());
+    }
+    let sp = U512::from(u256(sqrt_price_x96_raw)?);
+    let l = U512::from(liquidity);
+    let dx = U512::from(u256(amount_in_raw)?);
+    // Q96 = 2^96.
+    let q96 = U512::from(u256("79228162514264337593543950336")?);
+    if sp.is_zero() || l.is_zero() {
+        return Err("degenerate_v3_pool_state".into());
+    }
+    let dx_adj = dx * U512::from(denominator - fee) / U512::from(denominator);
+    let (sp_next, out) = if zero_for_one {
+        let num = l * sp * q96;
+        let den = l * q96 + dx_adj * sp;
+        let sp_next = num / den;
+        let out = l * (sp - sp_next) / q96;
+        (sp_next, out)
+    } else {
+        let sp_next = sp + dx_adj * q96 / l;
+        let out = l * q96 * (sp_next - sp) / (sp_next * sp);
+        (sp_next, out)
+    };
+    // Tick-cross guard: |sqrtP' − sqrtP| > sqrtP/200 ⇒ > ~1% price impact.
+    let moved = if sp_next > sp {
+        sp_next - sp
+    } else {
+        sp - sp_next
+    };
+    if moved * U512::from(200u32) > sp {
+        return Err("v3_tick_cross_requires_quoter".into());
+    }
+    let to_u256 = |v: U512| -> Result<String, String> {
+        let v256: U256 = v.try_into().map_err(|_| "v3_result_overflow")?;
+        Ok(v256.to_string())
+    };
+    Ok((to_u256(out)?, to_u256(sp_next)?))
+}
+
 /// Exact terminating decimal token valuation (USD), without binary floats.
 pub fn token_value_usd(raw: &str, decimals: u8, price: &str) -> Result<String, String> {
     let amount = u256(raw)?;
@@ -282,6 +352,22 @@ pub fn quote_path(
             );
             let metrics = cpmm_metrics(&current, ri, ro, fee, den, &out)?;
             (out, qid, "cpmm_exact_integer".to_owned(), metrics)
+        } else if e.protocol == "uniswap_v3" && e.sqrt_price_x96_raw.is_some() {
+            // V3 within-tick: slot0 cacheado presente → spot quote exacto
+            // dentro del tick (guard conservador de cruce — R8).
+            let sp = e.sqrt_price_x96_raw.as_deref().ok_or("missing_v3_slot0")?;
+            let liq = e.liquidity.ok_or("missing_v3_slot0")?;
+            let fee = e.fee_units.ok_or("missing_fee_units")?;
+            let den = e.fee_denominator.ok_or("missing_fee_denominator")?;
+            let zero_for_one = e.token_in <= e.token_out;
+            let (out, sp_next) = v3_spot_within_tick(sp, liq, &current, fee, den, zero_for_one)?;
+            let qid = canonical_hash(
+                &json!({"request":key,"sqrt_price_x96":sp,"liquidity":liq.to_string(),"fee":fee,"denominator":den,"zero_for_one":zero_for_one,"out":out}),
+            );
+            let metrics = json!({"status":"COMPUTED","model":"v3_within_tick_single_tick",
+                "single_tick_assumption":true,"sqrt_price_x96_next":sp_next,
+                "direction":if zero_for_one {"zero_for_one"} else {"one_for_zero"}});
+            (out, qid, "v3_spot_within_tick".to_owned(), metrics)
         } else {
             let q = exact
                 .get(&key)
@@ -351,6 +437,8 @@ mod tests {
             token_in_decimals: 18,
             token_out_decimals: 18,
             adapter_version: "reserves_cache_v1".into(),
+            sqrt_price_x96_raw: None,
+            liquidity: None,
         };
         let legs = quote_path(std::slice::from_ref(&edge), "100000000", &BTreeMap::new()).unwrap();
         assert_eq!(legs[0]["amount_out_raw"], "99690060");
@@ -377,6 +465,8 @@ mod tests {
             token_in_decimals: 18,
             token_out_decimals: 18,
             adapter_version: "reserves_cache_v1".into(),
+            sqrt_price_x96_raw: None,
+            liquidity: None,
         };
         let err =
             quote_path(std::slice::from_ref(&edge), "100000000", &BTreeMap::new()).unwrap_err();
@@ -406,10 +496,131 @@ mod tests {
             token_in_decimals: 18,
             token_out_decimals: 18,
             adapter_version: "reserves_cache_v1".into(),
+            sqrt_price_x96_raw: None,
+            liquidity: None,
         };
         let err =
             quote_path(std::slice::from_ref(&edge), "100000000", &BTreeMap::new()).unwrap_err();
         assert!(err.contains("missing_fee_units"));
+    }
+    #[test]
+    fn quote_path_v3_within_tick_hand_verifiable() {
+        // sqrtP = Q96 (precio 1:1), L = 1e18, dx = 1e15 (0.1% de L — dentro
+        // del tick), fee 3000/1e6.
+        // out = L·dx'/ (L + dx') con dx' = dx·997/1000 = 9.97e14
+        //     = 1e18·9.97e14/1.000997e18 ≈ 996007192000000 (>0, < dx, ≤ dx').
+        let edge = Edge {
+            edge_id: "0xpool".into(),
+            pool_id: "0xpool".into(),
+            chain_id: 1,
+            token_in: "0xaaaa".into(),
+            token_out: "0xbbbb".into(),
+            protocol: "uniswap_v3".into(),
+            snapshot_id: "intent-snap".into(),
+            block_hash: "blk-1".into(),
+            reserve_in_raw: None,
+            reserve_out_raw: None,
+            fee_units: Some(3_000),
+            fee_denominator: Some(1_000_000),
+            token_in_decimals: 18,
+            token_out_decimals: 18,
+            adapter_version: "reserves_cache_v1".into(),
+            sqrt_price_x96_raw: Some("79228162514264337593543950336".into()),
+            liquidity: Some(1_000_000_000_000_000_000),
+        };
+        let legs = quote_path(
+            std::slice::from_ref(&edge),
+            "1000000000000000",
+            &BTreeMap::new(),
+        )
+        .unwrap();
+        assert_eq!(legs[0]["quote_method"], "v3_spot_within_tick");
+        let out: u128 = legs[0]["amount_out_raw"].as_str().unwrap().parse().unwrap();
+        assert!(out > 0, "out must be positive");
+        assert!(out < 1_000_000_000_000_000, "out < in (fee, P=1)");
+        assert!(out <= 997_000_000_000_000, "out <= dx·(1−fee)");
+        // Valor hand-derived (±1e9 por la precisión del cálculo a mano; los
+        // floors enteros del algoritmo son sub-unitarios en escala Q96).
+        assert!(
+            (996_006_000_000_000..=996_008_000_000_000).contains(&out),
+            "out {out} vs hand-derived ~996007192000000"
+        );
+    }
+    #[test]
+    fn quote_path_v3_within_tick_production_slot0() {
+        // sqrt_price_x96/liquidity REALES de producción
+        // (log v3_source_priced: sqrt=84480035704410099036497320888,
+        //  liquidity=26328339605015878). Monto pequeño dentro del tick.
+        let edge = Edge {
+            edge_id: "0xv3pool".into(),
+            pool_id: "0xv3pool".into(),
+            chain_id: 1,
+            token_in: "0xaaaa".into(),
+            token_out: "0xbbbb".into(),
+            protocol: "uniswap_v3".into(),
+            snapshot_id: "intent-snap".into(),
+            block_hash: "blk-1".into(),
+            reserve_in_raw: None,
+            reserve_out_raw: None,
+            fee_units: Some(3_000),
+            fee_denominator: Some(1_000_000),
+            token_in_decimals: 18,
+            token_out_decimals: 18,
+            adapter_version: "reserves_cache_v1".into(),
+            sqrt_price_x96_raw: Some("84480035704410099036497320888".into()),
+            liquidity: Some(26_328_339_605_015_878),
+        };
+        let legs =
+            quote_path(std::slice::from_ref(&edge), "10000000000", &BTreeMap::new()).unwrap();
+        assert_eq!(legs[0]["quote_method"], "v3_spot_within_tick");
+        let out: u128 = legs[0]["amount_out_raw"].as_str().unwrap().parse().unwrap();
+        assert!(out > 0, "within-tick out must be positive");
+        // Cota matemática del precio spot (zero_for_one: precio medio ≤ spot):
+        // out · Q96² · den ≤ sqrtP² · dx · (den − fee).
+        let sp = U512::from_dec_str("84480035704410099036497320888").unwrap();
+        let q96 = U512::from_dec_str("79228162514264337593543950336").unwrap();
+        let out512 = U512::from(out);
+        assert!(
+            out512 * q96 * q96 * U512::from(1_000_000u32)
+                <= sp * sp * U512::from(10_000_000_000u64) * U512::from(997_000u32),
+            "out bounded by the spot price"
+        );
+        // Determinista.
+        let legs2 =
+            quote_path(std::slice::from_ref(&edge), "10000000000", &BTreeMap::new()).unwrap();
+        assert_eq!(legs[0]["amount_out_raw"], legs2[0]["amount_out_raw"]);
+    }
+    #[test]
+    fn quote_path_v3_huge_amount_hits_tick_cross_guard() {
+        // Monto enorme con la liquidity real de producción: el movimiento de
+        // sqrtP supera el guard conservador → razón explícita, jamás una
+        // aproximación within-tick disfrazada de exacta (R8).
+        let edge = Edge {
+            edge_id: "0xv3pool".into(),
+            pool_id: "0xv3pool".into(),
+            chain_id: 1,
+            token_in: "0xaaaa".into(),
+            token_out: "0xbbbb".into(),
+            protocol: "uniswap_v3".into(),
+            snapshot_id: "intent-snap".into(),
+            block_hash: "blk-1".into(),
+            reserve_in_raw: None,
+            reserve_out_raw: None,
+            fee_units: Some(3_000),
+            fee_denominator: Some(1_000_000),
+            token_in_decimals: 18,
+            token_out_decimals: 18,
+            adapter_version: "reserves_cache_v1".into(),
+            sqrt_price_x96_raw: Some("84480035704410099036497320888".into()),
+            liquidity: Some(26_328_339_605_015_878),
+        };
+        let err = quote_path(
+            std::slice::from_ref(&edge),
+            "1000000000000000000",
+            &BTreeMap::new(),
+        )
+        .unwrap_err();
+        assert!(err.contains("v3_tick_cross_requires_quoter"));
     }
     #[test]
     fn exact_large_token_valuation() {

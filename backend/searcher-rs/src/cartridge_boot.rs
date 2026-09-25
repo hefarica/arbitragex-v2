@@ -1136,6 +1136,31 @@ async fn v4_token_decimals(
     decimals
 }
 
+/// Fase 3d — slot0 V3 cacheado para el edge (misma fuente Redis que el
+/// binding `get_v3_slot0`: `arbx:v3_slot0:<chain>:<pool>`, TTL del writer).
+/// Cacheado por intent; `None` = sin slot0 → edge honesto sin campos V3 y
+/// `quote_path` exigirá productor exacto para esa pierna (R8).
+async fn v4_slot0(
+    redis: &mut redis::aio::ConnectionManager,
+    chain_id: u64,
+    pool_addr_lower: &str,
+    cache: &mut std::collections::HashMap<String, Option<(String, u128)>>,
+) -> Option<(String, u128)> {
+    if let Some(hit) = cache.get(pool_addr_lower) {
+        return hit.clone();
+    }
+    let slot0 = crate::reserves::get_v3_slot0(redis, chain_id, pool_addr_lower)
+        .await
+        .ok()
+        .flatten()
+        .and_then(|entry| {
+            let liquidity: u128 = entry.liquidity.parse().ok()?;
+            Some((entry.sqrt_price_x96, liquidity))
+        });
+    cache.insert(pool_addr_lower.to_owned(), slot0.clone());
+    slot0
+}
+
 // ── AGENT v4 Fase 3b — admisión EXPLÍCITA de manifiestos ─────────────────────
 // El backend ADMITE el par (mev_id, source_digest) que cada script v4-sellado
 // desplegado declara en su PROPIO agent_manifest() (escaneo de texto del
@@ -1263,18 +1288,20 @@ pub fn v4_manifest_digests() -> &'static std::collections::BTreeMap<String, Stri
     V4_MANIFESTS.get_or_init(|| v4_scan_manifest_digests(std::path::Path::new(CARTRIDGE_DIR)))
 }
 
-/// Fase 3c — mapea la pierna del intent a (protocolo, fee) del Edge v4.
+/// Fase 3c/3d — mapea la pierna del intent a (protocolo, fee) del Edge v4.
 ///
 /// - Familia V2 (`ProtocolType::V2`) → `"cpmm_v2"`: `quote_path` computa el
 ///   quote LOCAL con `cpmm_exact_in` (sin productor externo). La fee viene del
 ///   PROPIO intent (`fee_bps`, basis points del leg) → units = bps,
 ///   denominator = 10_000. Sin fee declarada → `None`: el quote fallará con
 ///   `missing_fee_units` — honesto, igual que hoy (R8: sin fee inferida).
-/// - `V3`/`Curve`/`Balancer`/`Unknown` → su protocolo nominal y fee `None`:
-///   `quote_path` exige quote de productor exacto por protocolo
-///   (`exact_protocol_quote_required_no_cpmm_fallback`). V3 nunca cae a
-///   matemática constant-product (doctrina del contrato) y su `fee_bps` son
-///   PIPS (denominator 1_000_000), no bps — por eso jamás se reutilizan aquí.
+/// - `V3` → `"uniswap_v3"` con la fee PIPS del intent (units = pips,
+///   denominator = 1_000_000 — el formato exacto del pool): la usa la rama
+///   within-tick de `quote_path` cuando el edge porta slot0 cacheado; sin
+///   slot0 el quote exige productor exacto (sin fallback constant-product —
+///   doctrina del contrato).
+/// - `Curve`/`Balancer`/`Unknown` → protocolo nominal y fee `None`: quote de
+///   productor exacto.
 fn v4_edge_protocol_and_fee(
     leg: &crate::route_intent::RouteIntentLeg,
 ) -> (String, Option<u32>, Option<u32>) {
@@ -1284,7 +1311,10 @@ fn v4_edge_protocol_and_fee(
             Some((units, den)) => ("cpmm_v2".to_string(), Some(units), Some(den)),
             None => ("cpmm_v2".to_string(), None, None),
         },
-        ProtocolType::V3 => ("uniswap_v3".to_string(), None, None),
+        ProtocolType::V3 => match leg.fee_bps {
+            Some(pips) => ("uniswap_v3".to_string(), Some(pips), Some(1_000_000)),
+            None => ("uniswap_v3".to_string(), None, None),
+        },
         ProtocolType::Curve => ("curve".to_string(), None, None),
         ProtocolType::Balancer => ("balancer".to_string(), None, None),
         ProtocolType::Unknown => ("unknown".to_string(), None, None),
@@ -1588,6 +1618,8 @@ pub async fn active_evaluate_and_emit(
         std::collections::BTreeMap::new();
     let mut v4_decimal_cache: std::collections::HashMap<String, Option<u8>> =
         std::collections::HashMap::new();
+    let mut v4_slot0_cache: std::collections::HashMap<String, Option<(String, u128)>> =
+        std::collections::HashMap::new();
     let mut v4_redis = runner.redis_connection().await;
     for leg in &intent.legs {
         let Some(pool) = leg.pool_hint else {
@@ -1644,9 +1676,20 @@ pub async fn active_evaluate_and_emit(
         }
         let pool_id = format!("{:#x}", pool);
         // Protocolo + fee del Edge: V2 → cpmm_v2 con la fee del intent
-        // (quote local); resto → protocolo nominal sin fee (quote de
-        // productor exacto — sin fallback CPMM, doctrina v4).
+        // (quote local); V3 → uniswap_v3 con fee PIPS del intent (rama
+        // within-tick si hay slot0 cacheado); resto → protocolo nominal sin
+        // fee (quote de productor exacto — sin fallback CPMM, doctrina v4).
         let (edge_protocol, fee_units, fee_denominator) = v4_edge_protocol_and_fee(leg);
+        // V3: slot0 cacheado (misma fuente que get_v3_slot0) → campos del
+        // within-tick. Sin slot0 → None: quote de productor exacto (R8).
+        let (sqrt_price_x96_raw, liquidity) = if edge_protocol == "uniswap_v3" {
+            match v4_slot0(&mut v4_redis, chain_id, &pool_id, &mut v4_slot0_cache).await {
+                Some((sp, liq)) => (Some(sp), Some(liq)),
+                None => (None, None),
+            }
+        } else {
+            (None, None)
+        };
         v4_edges.push(crate::agent_graph::Edge {
             edge_id: pool_id.clone(),
             pool_id,
@@ -1668,6 +1711,8 @@ pub async fn active_evaluate_and_emit(
             // Adaptador que respalda estos edges: la caché de reservas del
             // searcher (procedencia real, no una versión de protocolo).
             adapter_version: "reserves_cache_v1".to_string(),
+            sqrt_price_x96_raw,
+            liquidity,
         });
     }
     // LOGFLOOD-01: omisiones por-pierna a DEBUG con histograma agregado de
@@ -3432,9 +3477,15 @@ mod v4_edge_protocol_tests {
     }
 
     #[test]
-    fn v3_leg_never_falls_back_to_cpmm() {
-        // fee_bps de V3 son PIPS (den 1e6) — no se reutilizan como bps.
+    fn v3_leg_carries_pips_fee_for_within_tick() {
+        // fee_bps de V3 son PIPS con denominator 1_000_000 — se portan al
+        // edge en SU formato para la rama within-tick de quote_path (que
+        // igualmente exige slot0 cacheado; sin slot0 → productor exacto).
         let (protocol, units, den) = v4_edge_protocol_and_fee(&leg(ProtocolType::V3, Some(3_000)));
+        assert_eq!(protocol, "uniswap_v3");
+        assert_eq!(units, Some(3_000));
+        assert_eq!(den, Some(1_000_000));
+        let (protocol, units, den) = v4_edge_protocol_and_fee(&leg(ProtocolType::V3, None));
         assert_eq!(protocol, "uniswap_v3");
         assert_eq!(units, None);
         assert_eq!(den, None);
