@@ -129,7 +129,10 @@ function calculateNetTopologicalYield(
 }
 
 function weiToUsd(wei: bigint): number {
-  const eth = Number(wei) / 1e18;
+  // Wei > 2^53 lose digits through Number (f64): the rounding is irreversible
+  // (String(number) cannot recover it). BigInt division keeps base units exact;
+  // the final Number() is taken AFTER truncating to micro-ETH — display-grade.
+  const eth = Number(BigInt(wei) / 10n ** 12n) / 1e6;
   return eth * 3500;
 }
 
