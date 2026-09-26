@@ -574,13 +574,9 @@ impl SizeOptimizer {
         // applied as a 50% pre-cap on the search range. Now uses
         // candidate-specific gross/net ratios + config-sourced multiplier
         // and per-trade cap.
-        let result_opt = Self::apply_kelly_constraints(
-            kernel_outcome,
-            state,
-            cap_usd,
-            token_price_usd,
-            decimals,
-        );
+        let result_opt = self
+            .apply_kelly_constraints(kernel_outcome, state, cap_usd, token_price_usd, decimals)
+            .await;
 
         Ok(result_opt)
     }
@@ -604,7 +600,8 @@ impl SizeOptimizer {
     ///   final_size = min(kernel_optimum,
     ///                   nav × f* × kelly_multiplier  capped at kelly_max_per_trade_fraction)
     ///   Gas floor: net_usd ≥ cost_usd × kelly_gas_safety_multiplier
-    fn apply_kelly_constraints(
+    async fn apply_kelly_constraints(
+        &self,
         outcome: OptimizeOutcome,
         state: &TradingConfigState,
         cap_usd: f64,
@@ -739,12 +736,14 @@ impl SizeOptimizer {
             sized.gross_profit_usd = new_gross;
             sized.estimated_net_profit_usd = new_net;
             sized.net_negative = true;
-            // HOPS-LEDGER-04: the per-leg ledger was computed at the KERNEL
-            // size, not the Kelly-capped size — re-quoting per leg is another
-            // RPC round, so the honest state is absent (R8), never a stale
-            // chain that contradicts the rescaled figures above.
-            sized.leg_amounts_in = None;
-            sized.leg_amounts_out = None;
+            // HOPS-LEDGER-05: the ledger the kernel produced belongs to the
+            // KERNEL size, so it is re-derived AT the Kelly-capped size — a
+            // stale chain contradicting the rescaled figures is never kept,
+            // and the per-hop numbers survive instead of vanishing (measured
+            // before this fix: 339 of 4.16M rows in 24h carried a ledger).
+            let (ins, outs) = self.reledger_at(&sized, kelly_cap_wei).await;
+            sized.leg_amounts_in = ins;
+            sized.leg_amounts_out = outs;
             return OptimizeOutcome::Sized(Box::new(sized));
         }
         // Re-check gas floor on the scaled profit. A Kelly cap that drives
@@ -758,11 +757,92 @@ impl SizeOptimizer {
         sized.optimal_amount_in = kelly_cap_wei;
         sized.gross_profit_usd = new_gross;
         sized.estimated_net_profit_usd = new_net;
-        // HOPS-LEDGER-04: same rationale as the net_negative bind arm above —
-        // ledger computed at the kernel size, not the Kelly-capped size.
-        sized.leg_amounts_in = None;
-        sized.leg_amounts_out = None;
+        // HOPS-LEDGER-05: same re-derivation as the net_negative bind arm above.
+        let (ins, outs) = self.reledger_at(&sized, kelly_cap_wei).await;
+        sized.leg_amounts_in = ins;
+        sized.leg_amounts_out = outs;
         OptimizeOutcome::Sized(Box::new(sized))
+    }
+
+    /// HOPS-LEDGER-05 — re-derive the per-leg ledger at `amount_in` (the FINAL,
+    /// Kelly-capped size) instead of discarding it.
+    ///
+    /// WHY THIS EXISTS: the sizing kernels emit the ledger at the profit-optimal
+    /// size; Kelly then caps the size, and the pre-fix code set `leg_amounts_* =
+    /// None` because the chain no longer matched the reported figures. Honest, but
+    /// it made the operator's per-hop numbers unreachable on essentially every
+    /// emitted row — measured in production: **339 of 4,161,891 rows in 24 h**
+    /// carried `leg_amounts_in` (0.008%).
+    ///
+    /// The V2 chain is exact, local and RPC-free: `out_i = v2_amount_out(in_i,
+    /// r_in_i, r_out_i, fee_i)` with the SAME cached reserves the kernel read, so
+    /// recomputing it at the capped size makes the ledger belong to the figures
+    /// the row reports (Sancho condition 1) with no extra network round.
+    ///
+    /// Fees mirror the producing kernel exactly: the 2-leg V2 kernel uses each
+    /// leg's declared `fee_bps` (default 30, `size_two_leg_with_reason`), the
+    /// N-leg cycle kernel uses a constant 30 (`size_triangular_with_reason`).
+    ///
+    /// R8 — returns `(None, None)`, never a stale or partial chain, when:
+    ///   · the kernel produced no ledger in the first place (V3/RPC kernel,
+    ///     hand-built fixture) — nothing to re-derive;
+    ///   · ANY leg touches a V3-style pool: constant-product math is WRONG for
+    ///     concentrated liquidity, and a fabricated CPMM chain would understate
+    ///     the real output;
+    ///   · a pool address or a reserve is missing from the cache.
+    async fn reledger_at(
+        &self,
+        sized: &SizedCandidate,
+        amount_in: U256,
+    ) -> (Option<Vec<String>>, Option<Vec<String>>) {
+        if sized.leg_amounts_in.is_none() {
+            return (None, None);
+        }
+        let candidate = &sized.candidate;
+        if route_has_v3(candidate) {
+            return (None, None);
+        }
+        let legs = &candidate.route_plan.legs;
+        if legs.is_empty() {
+            return (None, None);
+        }
+        // Fee source must match the kernel that produced the ledger.
+        let n_leg_fee = candidate.label == StrategyLabel::TriangularArb || legs.len() != 2;
+
+        let mut current = amount_in;
+        let mut ins: Vec<String> = Vec::with_capacity(legs.len());
+        let mut outs: Vec<String> = Vec::with_capacity(legs.len());
+        for leg in legs {
+            let Some(pool_str) = leg.pool_address.as_deref() else {
+                return (None, None);
+            };
+            let Ok(pool_addr) = pool_str.parse::<ethers::types::Address>() else {
+                return (None, None);
+            };
+            let Some((r0, r1)) = self.state_projector.reserves_cache.get(&pool_addr).await else {
+                return (None, None);
+            };
+            // Same token0/token1 orientation the kernels use (address ordering).
+            let (reserve_in, reserve_out) = if leg.token_in <= leg.token_out {
+                (r0, r1)
+            } else {
+                (r1, r0)
+            };
+            let fee_bps = if n_leg_fee {
+                30
+            } else {
+                leg.fee_bps.unwrap_or(30)
+            };
+            let out = crate::amm_math::v2_amount_out(current, reserve_in, reserve_out, fee_bps);
+            if out.is_zero() {
+                // Degenerate hop — a zero-output chain is not a ledger (R8).
+                return (None, None);
+            }
+            ins.push(current.to_string());
+            outs.push(out.to_string());
+            current = out;
+        }
+        (Some(ins), Some(outs))
     }
 
     // -----------------------------------------------------------------------
@@ -3333,7 +3413,7 @@ mod tests {
         // Generous Kelly budget ($1M NAV, per-trade cap 100%) so the overlay
         // does NOT rescale — this test pins the KERNEL's ledger emission;
         // the rescale-null-out is pinned separately in
-        // kelly_overlay_nulls_triangular_leg_ledger_when_rescaling.
+        // kelly_overlay_drops_ledger_when_reserves_not_derivable.
         let cfg = make_cfg_kelly(
             /* capital_usd */ 1_000_000.0,
             /* multiplier */ 1.0,
@@ -3753,16 +3833,55 @@ mod tests {
         c
     }
 
-    #[test]
-    fn kelly_passes_rejected_through_unchanged() {
+    /// HOPS-LEDGER-05 — drive the Kelly step through a bare optimizer instance.
+    ///
+    /// The step is now an instance method because it RE-DERIVES the per-leg ledger
+    /// at the capped size from the reserves cache. These gates are pure Kelly
+    /// arithmetic over hand-built fixtures whose pools are not in any cache, so
+    /// `reledger_at` honestly returns `(None, None)` (R8: not derivable) and every
+    /// pre-existing expectation holds bit-for-bit. The re-derivation itself has its
+    /// own gate (`kelly_ledger_is_rederived_at_the_final_size`).
+    async fn kelly_step(
+        outcome: OptimizeOutcome,
+        cfg: &TradingConfigState,
+        cap_usd: f64,
+        token_price_usd: f64,
+        decimals: u8,
+    ) -> OptimizeOutcome {
+        let cache = Arc::new(ReservesCache::new());
+        let projector = Arc::new(StateProjector::new(cache, None, empty_v3_fee_catalog()));
+        SizeOptimizer::new(projector)
+            .apply_kelly_constraints(outcome, cfg, cap_usd, token_price_usd, decimals)
+            .await
+    }
+
+    /// Same, with the pools actually cached — the `HOPS-LEDGER-05` re-derivation
+    /// path (the empty-cache helper above can only prove the R8 absence).
+    async fn kelly_step_with_cache(
+        outcome: OptimizeOutcome,
+        cfg: &TradingConfigState,
+        cap_usd: f64,
+        token_price_usd: f64,
+        decimals: u8,
+        cache: Arc<ReservesCache>,
+    ) -> OptimizeOutcome {
+        let projector = Arc::new(StateProjector::new(cache, None, empty_v3_fee_catalog()));
+        SizeOptimizer::new(projector)
+            .apply_kelly_constraints(outcome, cfg, cap_usd, token_price_usd, decimals)
+            .await
+    }
+
+    #[tokio::test]
+    async fn kelly_passes_rejected_through_unchanged() {
         let cfg = make_cfg(1000.0);
-        let result = SizeOptimizer::apply_kelly_constraints(
+        let result = kelly_step(
             OptimizeOutcome::Rejected(OptimizeRejectReason::NoConfig, None),
             &cfg,
             1000.0,
             3000.0,
             18,
-        );
+        )
+        .await;
         match result {
             OptimizeOutcome::Rejected(OptimizeRejectReason::NoConfig, payload) => {
                 assert!(payload.is_none(), "None payload must pass through as None");
@@ -3787,8 +3906,8 @@ mod tests {
         assert_eq!(negative_case.net_profit_usd(), Some(-0.42));
     }
 
-    #[test]
-    fn kelly_passes_when_cap_not_binding() {
+    #[tokio::test]
+    async fn kelly_passes_when_cap_not_binding() {
         // Generous cap and permissive gates → Kelly does not change the kernel
         // result.
         let cfg = make_cfg_kelly(
@@ -3799,13 +3918,14 @@ mod tests {
             /* min_p */ 0.8,
         );
         let sized = make_sized(unit(1), 100.0, 90.0); // 1 WETH bet; cap is huge
-        let result = SizeOptimizer::apply_kelly_constraints(
+        let result = kelly_step(
             OptimizeOutcome::Sized(Box::new(sized.clone())),
             &cfg,
             cfg.capital_usd,
             3000.0,
             18,
-        );
+        )
+        .await;
         match result {
             OptimizeOutcome::Sized(s) => {
                 assert_eq!(s.optimal_amount_in, sized.optimal_amount_in);
@@ -3818,8 +3938,8 @@ mod tests {
         }
     }
 
-    #[test]
-    fn kelly_caps_optimal_when_max_per_trade_binds() {
+    #[tokio::test]
+    async fn kelly_caps_optimal_when_max_per_trade_binds() {
         // Tight max_per_trade forces the cap to bind. Profit must scale down.
         let cfg = make_cfg_kelly(
             /* capital_usd */ 3_000.0, // $3K cap
@@ -3829,13 +3949,14 @@ mod tests {
         );
         // Kernel says: 1 WETH ≈ $3000, gross=$100, net=$90 (cost=$10).
         let sized = make_sized(unit(1), 100.0, 90.0);
-        let result = SizeOptimizer::apply_kelly_constraints(
+        let result = kelly_step(
             OptimizeOutcome::Sized(Box::new(sized.clone())),
             &cfg,
             cfg.capital_usd,
             3000.0,
             18,
-        );
+        )
+        .await;
         match result {
             OptimizeOutcome::Sized(s) => {
                 assert!(
@@ -3866,19 +3987,20 @@ mod tests {
         }
     }
 
-    #[test]
-    fn gas_floor_rejects_when_net_below_safety_multiplier() {
+    #[tokio::test]
+    async fn gas_floor_rejects_when_net_below_safety_multiplier() {
         // gross=10, net=4 → cost_proxy=6. With gas_safety=3.0, floor=18.
         // net (4) < floor (18) → reject GasFloorBreach.
         let cfg = make_cfg_kelly(1000.0, 0.5, 1.0, 3.0, 0.8);
         let sized = make_sized(unit(1), 10.0, 4.0);
-        let result = SizeOptimizer::apply_kelly_constraints(
+        let result = kelly_step(
             OptimizeOutcome::Sized(Box::new(sized)),
             &cfg,
             1000.0,
             3000.0,
             18,
-        );
+        )
+        .await;
         match result {
             OptimizeOutcome::Rejected(OptimizeRejectReason::GasFloorBreach, payload) => {
                 // Deuda 4-(B): the computed net (4.0, positive but below the
@@ -3889,59 +4011,62 @@ mod tests {
         }
     }
 
-    #[test]
-    fn gas_floor_accepts_when_net_meets_safety_multiplier() {
+    #[tokio::test]
+    async fn gas_floor_accepts_when_net_meets_safety_multiplier() {
         // gross=100, net=90 → cost_proxy=10. With gas_safety=3.0, floor=30.
         // net (90) ≥ floor (30) → accepts.
         let cfg = make_cfg_kelly(1_000_000.0, 0.5, 1.0, 3.0, 0.8);
         let sized = make_sized(unit(1), 100.0, 90.0);
-        let result = SizeOptimizer::apply_kelly_constraints(
+        let result = kelly_step(
             OptimizeOutcome::Sized(Box::new(sized)),
             &cfg,
             1_000_000.0,
             3000.0,
             18,
-        );
+        )
+        .await;
         assert!(
             matches!(result, OptimizeOutcome::Sized(_)),
             "gas floor should not reject when net ≥ multiplier × cost",
         );
     }
 
-    #[test]
-    fn kelly_rejects_negative_edge() {
+    #[tokio::test]
+    async fn kelly_rejects_negative_edge() {
         // Setup so gas-floor passes but Kelly says negative edge.
         // gross=100, net=70 → cost=30. With gas_safety=1.0, floor=30 ≤ net.
         // W = gross/cost = 100/30 ≈ 3.33. p=0.2:
         //   f* = 0.2 - 0.8/3.33 ≈ 0.2 - 0.24 = -0.04 < 0 → KellyNegativeEdge.
         let cfg = make_cfg_kelly(1_000_000.0, 0.5, 1.0, 1.0, 0.2);
         let sized = make_sized(unit(1), 100.0, 70.0);
-        let result = SizeOptimizer::apply_kelly_constraints(
+        let result = kelly_step(
             OptimizeOutcome::Sized(Box::new(sized)),
             &cfg,
             1_000_000.0,
             3000.0,
             18,
-        );
+        )
+        .await;
         match result {
             OptimizeOutcome::Rejected(OptimizeRejectReason::KellyNegativeEdge, _) => {}
             other => panic!("expected KellyNegativeEdge, got {:?}", other.reason_str()),
         }
     }
 
-    #[test]
-    fn kelly_accepts_when_edge_is_positive() {
+    #[tokio::test]
+    async fn kelly_accepts_when_edge_is_positive() {
         // p=0.7 (good), W = gross/cost = 100/10 = 10
         // f* = 0.7 - 0.3/10 = 0.67 > 0 → accept (with cap).
         let cfg = make_cfg_kelly(1_000_000.0, 0.5, 1.0, 1.0, 0.7);
         let sized = make_sized(unit(1), 100.0, 90.0);
-        let result = SizeOptimizer::apply_kelly_constraints(
+        let result = kelly_step(
             OptimizeOutcome::Sized(Box::new(sized)),
             &cfg,
             1_000_000.0,
             3000.0,
             18,
-        );
+        )
+        .await;
         assert!(
             matches!(result, OptimizeOutcome::Sized(_)),
             "positive Kelly edge should accept",
@@ -3956,8 +4081,8 @@ mod tests {
     // HOPS-LEDGER-04 null-out applies to it too. These tests document and
     // pin that inheritance.
 
-    #[test]
-    fn kelly_overlay_nulls_triangular_leg_ledger_when_rescaling() {
+    #[tokio::test]
+    async fn kelly_overlay_drops_ledger_when_reserves_not_derivable() {
         // 1 WETH bet, gross=$100, net=$90 (cost=$10). max_per_trade=0.1% of
         // $1M NAV → $1000 cap → 0.333 WETH. Kelly binds and rescales:
         // new_gross=$33.3, new_net=$23.3 > 0, gas floor (1.0×) passes → Sized
@@ -3983,26 +4108,31 @@ mod tests {
             "1010000000000000000".to_string(),
         ]);
         let before_amount = sized.optimal_amount_in;
-        let result = SizeOptimizer::apply_kelly_constraints(
+        let result = kelly_step(
             OptimizeOutcome::Sized(Box::new(sized)),
             &cfg,
             cfg.capital_usd,
             3000.0,
             18,
-        );
+        )
+        .await;
         match result {
             OptimizeOutcome::Sized(s) => {
                 assert!(
                     s.optimal_amount_in < before_amount,
                     "Kelly cap should have reduced the triangular amount"
                 );
+                // HOPS-LEDGER-05: absent because these fixture pools are in NO
+                // reserves cache — `reledger_at` cannot re-derive honestly (R8).
+                // It is NOT the old unconditional discard: the gate below proves
+                // the ledger comes back when the reserves ARE cached.
                 assert!(
                     s.leg_amounts_in.is_none(),
-                    "triangular ledger must be absent after Kelly rescale (R8)"
+                    "ledger must be absent when the reserves are not derivable (R8)"
                 );
                 assert!(
                     s.leg_amounts_out.is_none(),
-                    "triangular ledger must be absent after Kelly rescale (R8)"
+                    "ledger must be absent when the reserves are not derivable (R8)"
                 );
             }
             OptimizeOutcome::Rejected(r, _) | OptimizeOutcome::RejectedWithLedger(r, _, _) => {
@@ -4011,8 +4141,135 @@ mod tests {
         }
     }
 
-    #[test]
-    fn kelly_overlay_preserves_triangular_leg_ledger_when_cap_not_binding() {
+    /// HOPS-LEDGER-05 gate — the per-leg ledger must BELONG to the size the row
+    /// reports, and survive the Kelly cap instead of disappearing.
+    ///
+    /// Before this fix Kelly unconditionally dropped `leg_amounts_*` whenever it
+    /// rescaled the size ("computed at the kernel size, not the capped size"),
+    /// which made the operator's per-hop numbers unreachable on essentially every
+    /// emitted row. Measured in production: **339 of 4,161,891 rows in 24 h**
+    /// carried `leg_amounts_in`. The fix re-derives the V2 chain at the capped
+    /// size from the SAME cached reserves the kernel read — exact, local, no RPC.
+    ///
+    /// Fixture: the same 2-leg `DexArbV2V2` candidate `make_sized` builds, with the
+    /// kernel's ledger attached by hand (the kernel's own emission is gated by the
+    /// profitability fixtures elsewhere). Asserted:
+    ///   · cached pools + binding cap ⇒ ledger PRESENT and `ins[0]` IS the capped
+    ///     `optimal_amount_in` (Sancho condition 1: the chain belongs to the
+    ///     reported size), contiguous, and different from the kernel-size chain;
+    ///   · NO cached pools ⇒ ledger absent (R8: not derivable — never fabricated).
+    #[tokio::test]
+    async fn kelly_ledger_is_rederived_at_the_final_size() {
+        // Pools the fixture candidate points at (`make_sized` uses addr(1)/addr(2)).
+        let pool_a = addr(1);
+        let pool_b = addr(2);
+        let cache = Arc::new(ReservesCache::new());
+        cache.insert(pool_a, unit(1000), unit(2_000_000)).await;
+        cache.insert(pool_b, unit(1_000_000), unit(600)).await;
+
+        // 0.1% of NAV per trade binds against a 1 WETH kernel optimum.
+        let cfg = make_cfg_kelly(10_000.0, 0.5, 0.001, 1.0, 0.8);
+
+        let mut sized = make_sized(unit(1), 100.0, 90.0);
+        sized.leg_amounts_in = Some(vec![unit(1).to_string(), "1999999999999999999".to_string()]);
+        sized.leg_amounts_out = Some(vec![
+            "1999999999999999999".to_string(),
+            "2000000000000000000".to_string(),
+        ]);
+        let kernel_in = sized.leg_amounts_in.clone().unwrap();
+        let before_amount = sized.optimal_amount_in;
+
+        let result = kelly_step_with_cache(
+            OptimizeOutcome::Sized(Box::new(sized)),
+            &cfg,
+            cfg.capital_usd,
+            3000.0,
+            18,
+            cache,
+        )
+        .await;
+
+        let s = match result {
+            OptimizeOutcome::Sized(s) => s,
+            OptimizeOutcome::Rejected(r, _) | OptimizeOutcome::RejectedWithLedger(r, _, _) => {
+                panic!("unexpected reject {:?}", r)
+            }
+        };
+        assert!(
+            s.optimal_amount_in < before_amount,
+            "the tight per-trade fraction must bind ({} vs {})",
+            before_amount,
+            s.optimal_amount_in
+        );
+        let ins = s
+            .leg_amounts_in
+            .as_ref()
+            .expect("HOPS-LEDGER-05: the ledger must SURVIVE the Kelly cap (re-derived)");
+        let outs = s.leg_amounts_out.as_ref().expect("re-derived ledger out");
+        assert_eq!(ins.len(), 2, "2-leg route ⇒ 2-hop ledger");
+        assert_eq!(outs.len(), 2);
+        assert_eq!(
+            ins[0],
+            s.optimal_amount_in.to_string(),
+            "re-derived ledger must START at the capped size, not the kernel size"
+        );
+        assert_ne!(
+            ins[0], kernel_in[0],
+            "the capped chain differs from the kernel's"
+        );
+        assert_eq!(
+            outs[0], ins[1],
+            "leg 1's input IS leg 0's output (contiguity)"
+        );
+
+        // Chain correctness, orientation-agnostic: the final leg's output must be
+        // the exact V2 chain from the capped input under ONE consistent per-leg
+        // reserve orientation (the legs swap token0/token1 by address, and this
+        // gate must not encode that convention twice).
+        let x = s.optimal_amount_in;
+        let leg0 = [(unit(1000), unit(2_000_000)), (unit(2_000_000), unit(1000))];
+        let leg1 = [(unit(1_000_000), unit(600)), (unit(600), unit(1_000_000))];
+        let mut expected: Vec<String> = Vec::new();
+        for (a_in, a_out) in leg0 {
+            let mid = crate::amm_math::v2_amount_out(x, a_in, a_out, 30);
+            for (b_in, b_out) in leg1 {
+                expected.push(crate::amm_math::v2_amount_out(mid, b_in, b_out, 30).to_string());
+            }
+        }
+        assert!(
+            expected.contains(&outs[1]),
+            "final leg output must be the exact V2 chain from the capped input \
+             (got {}, candidates {:?})",
+            outs[1],
+            expected
+        );
+
+        // R8 counter-proof: with NO cached reserves the same rescaled row must
+        // report the ledger as absent — never a stale or partial chain.
+        let mut uncached = make_sized(unit(1), 100.0, 90.0);
+        uncached.leg_amounts_in = Some(vec![unit(1).to_string(), unit(1).to_string()]);
+        uncached.leg_amounts_out = Some(vec![unit(1).to_string(), unit(1).to_string()]);
+        let bare = kelly_step(
+            OptimizeOutcome::Sized(Box::new(uncached)),
+            &cfg,
+            cfg.capital_usd,
+            3000.0,
+            18,
+        )
+        .await;
+        match bare {
+            OptimizeOutcome::Sized(b) => {
+                assert!(
+                    b.leg_amounts_in.is_none() && b.leg_amounts_out.is_none(),
+                    "not derivable ⇒ absent (R8), never a fabricated chain"
+                );
+            }
+            other => panic!("expected Sized, got {:?}", other.reason_str()),
+        }
+    }
+
+    #[tokio::test]
+    async fn kelly_overlay_preserves_triangular_leg_ledger_when_cap_not_binding() {
         // Generous Kelly budget → no rescale → the triangular ledger survives.
         let cfg = make_cfg_kelly(1_000_000.0, 0.5, 1.0, 1.0, 0.7);
         let mut sized = make_sized(unit(1), 100.0, 90.0);
@@ -4027,13 +4284,14 @@ mod tests {
             "990000000000000000".to_string(),
             "1010000000000000000".to_string(),
         ]);
-        let result = SizeOptimizer::apply_kelly_constraints(
+        let result = kelly_step(
             OptimizeOutcome::Sized(Box::new(sized)),
             &cfg,
             cfg.capital_usd,
             3000.0,
             18,
-        );
+        )
+        .await;
         match result {
             OptimizeOutcome::Sized(s) => {
                 assert!(s.leg_amounts_in.is_some(), "ledger must survive");
