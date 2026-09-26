@@ -548,7 +548,7 @@ services:
           memory: 128M
   node_exporter:
     logging: *id001
-    image: prom/node_exporter:v1.8.2
+    image: prom/node-exporter:v1.8.2
     command:
     - --path.procfs=/host/proc
     - --path.sysfs=/host/sys
@@ -874,30 +874,7 @@ services:
     - prometheus_data:/prometheus
     - ../monitoring/thanos/objstore.yml:/etc/thanos/objstore.yml:ro
     depends_on:
-      node_exporter:
-    logging: *id001
-    image: prom/node_exporter:v1.8.2
-    command:
-    - --path.procfs=/host/proc
-    - --path.sysfs=/host/sys
-    - --path.rootfs=/host
-    - --web.listen-address=:9100
-    pid: host
-    volumes:
-    - /proc:/host/proc:ro
-    - /sys:/host/sys:ro
-    - /:/host/root:ro,rslave
-    healthcheck:
-      test:
-      - CMD-SHELL
-      - wget -q -O- http://localhost:9100/metrics 2>/dev/null | head -1 || exit 1
-      interval: 30s
-      timeout: 5s
-      retries: 3
-    restart: unless-stopped
-    networks:
-    - arbx-net
-  prometheus:
+      prometheus:
         condition: service_healthy
       minio:
         condition: service_healthy
