@@ -582,6 +582,16 @@ impl GeckoTerminalOracle {
                 .await
                 .unwrap_or_default();
 
+        // B5c: PENDING corrections from previous cycles (own short-TTL key).
+        let pending_key = shared_rs::price_oracle::pending_corrections_key(chain_id);
+        let pending: std::collections::HashMap<String, String> =
+            <redis::aio::MultiplexedConnection as redis::AsyncCommands>::hgetall(
+                &mut *conn,
+                &pending_key,
+            )
+            .await
+            .unwrap_or_default();
+
         let mut pipe = redis::pipe();
         pipe.atomic();
         let mut written = 0usize;
@@ -599,13 +609,38 @@ impl GeckoTerminalOracle {
             }
             let prev_val = prev.get(sym).and_then(|v| v.parse::<f64>().ok());
             if !shared_rs::price_oracle::is_plausible_price(prev_val, *price) {
+                // B5c — see the DexScreener tier: AAVE's poison (161,339,420.31
+                // stored vs ~154 real) was proposed as 154.1760931358 by THIS
+                // writer and refused by the range guard, so the poison could
+                // never be repaired. A corroborated pair is accepted; a lone
+                // outlier is recorded as PENDING (never published) and refused.
+                let pending_val = pending.get(sym).and_then(|v| v.parse::<f64>().ok());
+                if shared_rs::price_oracle::is_corroborated_correction(pending_val, *price) {
+                    tracing::warn!(
+                        event = "geckoterminal.price_corroborated_correction",
+                        symbol = sym.as_str(),
+                        stored = ?prev_val,
+                        corrected_to = *price,
+                        "B5c: two agreeing observations — accepting the correction of the stored value"
+                    );
+                    pipe.hset(&key, sym, format!("{price}")).ignore();
+                    pipe.hdel(&pending_key, sym).ignore();
+                    written += 1;
+                    continue;
+                }
                 tracing::warn!(
                     event = "geckoterminal.price_implausible_skip",
                     symbol = sym.as_str(),
                     prev = ?prev_val,
                     new = *price,
-                    "B5: refusing an implausible single-tick jump — keeping the stored value"
+                    "B5: refusing an implausible single-tick jump — keeping the stored value (recorded as PENDING)"
                 );
+                pipe.hset(&pending_key, sym, format!("{price}")).ignore();
+                pipe.expire(
+                    &pending_key,
+                    shared_rs::price_oracle::PENDING_CORRECTION_TTL_SECS,
+                )
+                .ignore();
                 continue;
             }
             pipe.hset(&key, sym, format!("{price}")).ignore();

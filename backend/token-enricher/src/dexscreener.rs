@@ -516,6 +516,17 @@ impl DexScreenerPriceOracle {
                 .await
                 .unwrap_or_default();
 
+        // B5c: the PENDING corrections recorded by previous cycles (their own
+        // short-TTL key, never published as prices). Read once, like `prev`.
+        let pending_key = shared_rs::price_oracle::pending_corrections_key(chain_id);
+        let pending: std::collections::HashMap<String, String> =
+            <redis::aio::MultiplexedConnection as redis::AsyncCommands>::hgetall(
+                &mut *conn,
+                &pending_key,
+            )
+            .await
+            .unwrap_or_default();
+
         let mut pipe = redis::pipe();
         pipe.atomic();
         let mut written = 0usize;
@@ -536,13 +547,40 @@ impl DexScreenerPriceOracle {
             }
             let prev_val = prev.get(sym).and_then(|v| v.parse::<f64>().ok());
             if !shared_rs::price_oracle::is_plausible_price(prev_val, *price) {
+                // B5c: an implausible jump may be the CORRECTION of an already
+                // stored poison (live: AAVE stored 161,339,420.31 while the real
+                // price is ~154 and this writer proposed 154.1760931358 — the
+                // range guard refused it, so the poison could never be repaired).
+                // Two independent observations agreeing against the stored value
+                // are accepted; a lone outlier is recorded as PENDING (separate,
+                // short-TTL key — never published as a price) and still refused.
+                let pending_val = pending.get(sym).and_then(|v| v.parse::<f64>().ok());
+                if shared_rs::price_oracle::is_corroborated_correction(pending_val, *price) {
+                    tracing::warn!(
+                        event = "dexscreener.price_corroborated_correction",
+                        symbol = sym.as_str(),
+                        stored = ?prev_val,
+                        corrected_to = *price,
+                        "B5c: two agreeing observations — accepting the correction of the stored value"
+                    );
+                    pipe.hset(&key, sym, format!("{price}")).ignore();
+                    pipe.hdel(&pending_key, sym).ignore();
+                    written += 1;
+                    continue;
+                }
                 tracing::warn!(
                     event = "dexscreener.price_implausible_skip",
                     symbol = sym.as_str(),
                     prev = ?prev_val,
                     new = *price,
-                    "B5: refusing an implausible single-tick jump — keeping the stored value"
+                    "B5: refusing an implausible single-tick jump — keeping the stored value (recorded as PENDING)"
                 );
+                pipe.hset(&pending_key, sym, format!("{price}")).ignore();
+                pipe.expire(
+                    &pending_key,
+                    shared_rs::price_oracle::PENDING_CORRECTION_TTL_SECS,
+                )
+                .ignore();
                 continue;
             }
             pipe.hset(&key, sym, format!("{price}")).ignore();
