@@ -206,6 +206,20 @@ pub enum OptimizeOutcome {
     /// UPPER BOUND best profit on the V3 0-RPC early-reject — a provable
     /// bound on the real grid's max, not a QuoterV2 quote.
     Rejected(OptimizeRejectReason, Option<f64>),
+    /// PER-HOP (math-audit AUDIT-MATH-OPPS-2026-09-26): a rejection whose path
+    /// HAD already computed the exact per-leg wei chain (the clamped-size
+    /// evaluation runs before the non-positive gate fires). Carries the same
+    /// payload semantics as `Rejected` plus the per-leg ledger, so a rejected
+    /// row can still show how much each hop moves — the operator's per-hop
+    /// request — instead of "not computed".
+    ///
+    /// `None` legs = the chain was not computable on this path (R8: the variant
+    /// is used ONLY where the amounts genuinely exist; it is never fabricated).
+    RejectedWithLedger(
+        OptimizeRejectReason,
+        Option<f64>,
+        Option<(Vec<String>, Vec<String>)>,
+    ),
 }
 
 impl OptimizeOutcome {
@@ -214,6 +228,7 @@ impl OptimizeOutcome {
         match self {
             Self::Sized(_) => None,
             Self::Rejected(r, _) => Some(r.as_str()),
+            Self::RejectedWithLedger(r, _, _) => Some(r.as_str()),
         }
     }
 
@@ -222,6 +237,7 @@ impl OptimizeOutcome {
         match self {
             Self::Sized(s) => Some(s.gross_profit_usd),
             Self::Rejected(_, _) => None,
+            Self::RejectedWithLedger(_, _, _) => None,
         }
     }
 
@@ -232,6 +248,7 @@ impl OptimizeOutcome {
         match self {
             Self::Sized(s) => Some(s.estimated_net_profit_usd),
             Self::Rejected(_, net) => *net,
+            Self::RejectedWithLedger(_, net, _) => *net,
         }
     }
 
@@ -240,6 +257,17 @@ impl OptimizeOutcome {
         match self {
             Self::Sized(s) => Some(s.optimal_amount_in),
             Self::Rejected(_, _) => None,
+            Self::RejectedWithLedger(_, _, _) => None,
+        }
+    }
+
+    /// PER-HOP: the per-leg wei ledger (amounts_in, amounts_out) when the
+    /// rejecting path had computed it. `None` on every other path (R8) —
+    /// including `Sized`, whose ledger travels through `SizedCandidate`.
+    pub fn leg_ledger(&self) -> Option<&(Vec<String>, Vec<String>)> {
+        match self {
+            Self::RejectedWithLedger(_, _, legs) => legs.as_ref(),
+            _ => None,
         }
     }
 }
@@ -586,8 +614,12 @@ impl SizeOptimizer {
         let mut sized = match outcome {
             OptimizeOutcome::Sized(boxed) => *boxed,
             // Rejected outcomes pass through — kernel already named the reason
-            // and computed whatever USD value it could (R8 payload).
+            // and computed whatever USD value it could (R8 payload). The
+            // ledger-carrying variant passes through intact (PER-HOP).
             OptimizeOutcome::Rejected(r, net) => return OptimizeOutcome::Rejected(r, net),
+            OptimizeOutcome::RejectedWithLedger(r, net, legs) => {
+                return OptimizeOutcome::RejectedWithLedger(r, net, legs)
+            }
         };
 
         let gross_usd = sized.gross_profit_usd;
@@ -755,6 +787,7 @@ impl SizeOptimizer {
         match self.optimize_with_reason(candidate, intent, cfg).await? {
             OptimizeOutcome::Sized(s) => Ok(Some(*s)),
             OptimizeOutcome::Rejected(_, _) => Ok(None),
+            OptimizeOutcome::RejectedWithLedger(_, _, _) => Ok(None),
         }
     }
 
@@ -975,6 +1008,7 @@ impl SizeOptimizer {
         {
             OptimizeOutcome::Sized(s) => Some(*s),
             OptimizeOutcome::Rejected(_, _) => None,
+            OptimizeOutcome::RejectedWithLedger(_, _, _) => None,
         }
     }
 
@@ -1118,9 +1152,18 @@ impl SizeOptimizer {
             // Payload = the clamped-size profit converted to USD (<= 0).
             let profit_usd =
                 (profit_at_clamped as f64) / 10f64.powi(decimals as i32) * token_price_usd;
-            return OptimizeOutcome::Rejected(
+            // PER-HOP (math-audit AUDIT-MATH-OPPS-2026-09-26): this path ALREADY
+            // computed the exact clamped chain (amount_in, out_a, out_b) — the
+            // same values the accepted path below turns into the ledger. Carry
+            // them so the rejected row can still show each hop's movement
+            // (operator's per-hop request) instead of "not computed".
+            return OptimizeOutcome::RejectedWithLedger(
                 OptimizeRejectReason::NonPositiveProfit,
                 Some(profit_usd),
+                Some((
+                    vec![amount_in.to_string(), out_a.to_string()],
+                    vec![out_a.to_string(), out_b.to_string()],
+                )),
             );
         }
 
@@ -1733,6 +1776,7 @@ impl SizeOptimizer {
         {
             OptimizeOutcome::Sized(s) => Some(*s),
             OptimizeOutcome::Rejected(_, _) => None,
+            OptimizeOutcome::RejectedWithLedger(_, _, _) => None,
         }
     }
 }
@@ -3541,7 +3585,7 @@ mod tests {
             other => {
                 let reason = match other {
                     OptimizeOutcome::Sized(_) => "Sized (unexpected — profit survived high gas)",
-                    OptimizeOutcome::Rejected(r, _) => r.as_str(),
+                    OptimizeOutcome::Rejected(r, _) | OptimizeOutcome::RejectedWithLedger(r, _, _) => r.as_str(),
                 };
                 panic!("unexpected outcome: {reason}");
             }
@@ -3767,7 +3811,7 @@ mod tests {
                 assert_eq!(s.gross_profit_usd, sized.gross_profit_usd);
                 assert_eq!(s.estimated_net_profit_usd, sized.estimated_net_profit_usd);
             }
-            OptimizeOutcome::Rejected(r, _) => panic!("unexpected reject {:?}", r),
+            OptimizeOutcome::Rejected(r, _) | OptimizeOutcome::RejectedWithLedger(r, _, _) => panic!("unexpected reject {:?}", r),
         }
     }
 
@@ -3802,7 +3846,7 @@ mod tests {
                     "gross should scale down when amount caps down",
                 );
             }
-            OptimizeOutcome::Rejected(r, _) => {
+            OptimizeOutcome::Rejected(r, _) | OptimizeOutcome::RejectedWithLedger(r, _, _) => {
                 // The scaled net may drop below gas floor at very tight caps;
                 // both Sized-with-smaller-amount and Rejected(GasFloorBreach
                 // / NonPositiveNetUsd) are doctrinally correct outcomes.
@@ -3958,7 +4002,7 @@ mod tests {
                     "triangular ledger must be absent after Kelly rescale (R8)"
                 );
             }
-            OptimizeOutcome::Rejected(r, _) => panic!("unexpected reject {:?}", r),
+            OptimizeOutcome::Rejected(r, _) | OptimizeOutcome::RejectedWithLedger(r, _, _) => panic!("unexpected reject {:?}", r),
         }
     }
 
@@ -3990,7 +4034,7 @@ mod tests {
                 assert!(s.leg_amounts_in.is_some(), "ledger must survive");
                 assert!(s.leg_amounts_out.is_some(), "ledger must survive");
             }
-            OptimizeOutcome::Rejected(r, _) => panic!("unexpected reject {:?}", r),
+            OptimizeOutcome::Rejected(r, _) | OptimizeOutcome::RejectedWithLedger(r, _, _) => panic!("unexpected reject {:?}", r),
         }
     }
 
@@ -4140,7 +4184,7 @@ mod tests {
                 assert!(s.gross_profit_usd > 0.0, "gross must be positive");
                 assert!(s.estimated_net_profit_usd > 0.0, "net must be positive");
             }
-            OptimizeOutcome::Rejected(r, _) => {
+            OptimizeOutcome::Rejected(r, _) | OptimizeOutcome::RejectedWithLedger(r, _, _) => {
                 panic!(
                     "expected Sized for a profitable V3 route, got {}",
                     r.as_str()
@@ -4426,7 +4470,7 @@ mod tests {
                 assert!(s.gross_profit_usd > 0.0, "gross must be positive");
                 assert!(s.estimated_net_profit_usd > 0.0, "net must be positive");
             }
-            OptimizeOutcome::Rejected(r, _) => {
+            OptimizeOutcome::Rejected(r, _) | OptimizeOutcome::RejectedWithLedger(r, _, _) => {
                 panic!(
                     "expected Sized for spA>spB profitable curve, got {}",
                     r.as_str()

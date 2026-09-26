@@ -2351,7 +2351,12 @@ pub async fn active_evaluate_and_emit(
                             };
                             (c, legs)
                         }
-                        OptimizeOutcome::Rejected(reason, rejected_net) => {
+                        // PER-HOP: the ledger-carrying variant is treated exactly
+                        // like Rejected here; the cartridge emission path does not
+                        // attach per-leg metadata yet (the native orchestrator path
+                        // does — follow-up documented in the PR).
+                        OptimizeOutcome::Rejected(reason, rejected_net)
+                        | OptimizeOutcome::RejectedWithLedger(reason, rejected_net, _) => {
                             let reason_str = reason.as_str().to_owned();
                             REJECTED_NO_PROFIT_TOTAL
                                 .with_label_values(&[&chain_str, label.as_str(), &reason_str])
