@@ -383,24 +383,28 @@ function OpportunityTradeCardImpl({
     const cycleNegative = (entry.cycle_delta_wei ?? "").trim().startsWith("-");
     return (
       <span
-        className="flex flex-col items-end min-w-0 leading-tight text-right text-[10px] font-mono whitespace-nowrap"
+        // CARDS-LAYOUT-01: this cell renders on its OWN full-width line
+        // (LedgerRow), so it can never collide with the hop label. `w-full` +
+        // `min-w-0` keep it inside the block; each of the three figures
+        // truncates rather than painting outside its own box.
+        className="flex w-full min-w-0 flex-col items-end leading-tight text-right text-[10px] font-mono whitespace-nowrap"
         title={
           "Montos exactos en wei del kernel de sizing (ledger on-chain, no estimación). " +
           "Δ USD valorado con los precios PriceBus en vivo — no es el neto SIM."
         }
       >
-        <span className="truncate max-w-full">
+        <span className="max-w-full truncate">
           {inView != null ? `${inView.text} ${symIn}` : `${entry.amount_in_wei}·wei`}
           {" → "}
           {outView != null ? `${outView.text} ${symOut}` : `${entry.amount_out_wei}·wei`}
         </span>
         {legDeltaUsd != null && (
-          <span className={legDeltaUsd >= 0 ? "text-success" : "text-destructive"}>
+          <span className={`max-w-full truncate ${legDeltaUsd >= 0 ? "text-success" : "text-destructive"}`}>
             Δ {usd(legDeltaUsd)}
           </span>
         )}
         {cycleText != null && (
-          <span className={cycleNegative ? "text-destructive" : "text-success"}>
+          <span className={`max-w-full truncate ${cycleNegative ? "text-destructive" : "text-success"}`}>
             ciclo {cycleText} {cycleView != null ? symOut : "wei"}
           </span>
         )}
@@ -730,6 +734,7 @@ function OpportunityTradeCardImpl({
               return (
                 <LedgerRow
                   key={l.index}
+                  testId={`ledger-hop-${l.index + 1}`}
                   label={`Hop ${l.index + 1}/${legs.length} · ${legSym(l.token_in)}→${legSym(l.token_out)}`}
                   value={null}
                   muted
@@ -790,12 +795,31 @@ function OpportunityTradeCardImpl({
           Applied strategy config
         </div>
         {tgt ? (
-          <div className="grid grid-cols-2 gap-x-3 gap-y-1 font-mono text-[11px]">
+          // CARDS-LAYOUT-02 (2026-09-26, operator report — PROVEN on the live
+          // card): this block was `grid grid-cols-2`, which Tailwind compiles to
+          // `repeat(2, minmax(0,1fr))`. A `minmax(0,1fr)` track may be NARROWER
+          // than its content minimum, so a pair overflowed its own column
+          // instead of reflowing. Measured on the live card (viewport 1280, card
+          // 289px, ledger 255px): the grid resolved to 115.33px tracks; the
+          // `binding floor` cell painted `scrollWidth 124 > clientWidth 115`,
+          // its label wrapped to 2 lines (`binding` / `floor`) and the value
+          // wrapped at its hyphens into 3 lines (`net-per-` / `usd-` /
+          // `nonpositive`), spilling toward the neighbouring column — exactly
+          // the operator's "binding net_per_usd / floor nonpositive stacked on
+          // top of each other". `binding_floor` is `net-per-usd-nonpositive` on
+          // 38/38 live rows, so the defect was systematic, not an edge case.
+          //
+          // One pair per LINE (the block is 250-360px wide inside a 1/2/3-col
+          // page grid — half of that is never a label/value pair): every row now
+          // owns the full block width, the label truncates and the value keeps
+          // its own width, so the pairs stay clean and cannot collide.
+          <div className="grid grid-cols-1 gap-y-1 font-mono text-[11px]">
             <ConfigRow label="min net USD" value={tgt.target_net_usd != null ? usd(tgt.target_net_usd) : "—"} />
             <ConfigRow label="min ROI %" value={tgt.target_roi_pct != null ? `${tgt.target_roi_pct.toFixed(2)}%` : "—"} />
             <ConfigRow
               label="binding floor"
               value={tgt.binding_floor}
+              title={`binding_floor del wire (inverse-sizing kernel): ${tgt.binding_floor}`}
               tone={
                 tgt.binding_floor === "roi-unreachable" || tgt.binding_floor === "net-per-usd-nonpositive"
                   ? "text-destructive"
@@ -939,6 +963,7 @@ function LedgerRow({
   hint,
   flashCls,
   flashSeq,
+  testId,
 }: {
   label: string;
   value?: number | null;
@@ -955,28 +980,63 @@ function LedgerRow({
   flashCls?: string;
   /** Remount key — replays the CSS animation on consecutive changes. */
   flashSeq?: number;
+  /** Stable DOM id for the SSR layout gates (cards-overlap regression). */
+  testId?: string;
 }) {
+  // CARDS-LAYOUT-01 (2026-09-26, operator report — PROVEN with geometry on the
+  // live card): the row used to be `flex items-center justify-between`. In a
+  // flex row the label's `truncate` (`white-space: nowrap`, `overflow: hidden`)
+  // gives that span a min-content floor, and the `(dex)` hint was a SECOND flex
+  // item with no `min-w-0`/`truncate`/`shrink-0` at all, so neither side could
+  // reflow: measured at viewports 1280/1440 the left span resolved to w=180
+  // while its own content was 184px + gap + hint — the hint painted OUTSIDE its
+  // box (the row's `scrollWidth` still equalled its `clientWidth`, so nothing
+  // clipped it) and landed on top of the value cell. That is the "overlapping"
+  // the operator reads in the hop rows.
+  //
+  // The header is now a two-track GRID (`minmax(0,1fr)` + `auto`): label and
+  // hint both carry `min-w-0 truncate` (each may ellipsize, neither can push the
+  // other), the hint is capped at 45% of the row, and the value cell is
+  // `shrink-0 whitespace-nowrap tabular-nums`. Overflow is impossible by
+  // construction at any card width and for any label/hint length.
+  //
+  // A row carrying a rich value cell (HOPS-LEDGER-04 per-hop amounts) renders
+  // that cell on its OWN full-width line: `Hop i/N · A→B (dex)` on the header
+  // line and the exact wei / leg Δ / cycle Δ right-aligned underneath. The hop
+  // identity and its numbers no longer compete for one line — and each hop still
+  // renders EXACTLY once (one LedgerRow per leg: no duplicated row, no phantom
+  // second line).
   return (
     <div
-      className={`flex items-center justify-between gap-2 ${
-        muted ? "text-muted-foreground/70" : "text-foreground"
-      } ${small ? "text-[10px]" : ""} ${strong ? "font-bold" : ""}`}
+      data-testid={testId}
+      className={`${muted ? "text-muted-foreground/70" : "text-foreground"} ${
+        small ? "text-[10px]" : ""
+      } ${strong ? "font-bold" : ""}`}
     >
-      <span className="flex items-center gap-1 min-w-0">
-        {up && <ArrowUpRight size={11} className="text-success shrink-0" />}
-        {down && <ArrowDownRight size={11} className="text-destructive shrink-0" />}
-        <span className="truncate">{label}</span>
-        {hint && <span className="text-[9px] text-muted-foreground/50 italic">({hint})</span>}
-      </span>
-      {valueNode != null ? (
-        valueNode
-      ) : (
-        <span
-          key={flashSeq}
-          className={`${tone ?? (muted ? "text-muted-foreground/60" : "text-foreground")} ${flashCls ?? ""}`}
-        >
-          {usd(value)}
+      <div className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-2">
+        <span className="flex min-w-0 items-center gap-1">
+          {up && <ArrowUpRight size={11} className="text-success shrink-0" />}
+          {down && <ArrowDownRight size={11} className="text-destructive shrink-0" />}
+          <span className="min-w-0 flex-1 truncate">{label}</span>
+          {hint && (
+            <span className="min-w-0 max-w-[45%] shrink-0 truncate text-[9px] text-muted-foreground/50 italic">
+              ({hint})
+            </span>
+          )}
         </span>
+        {valueNode == null && (
+          <span
+            key={flashSeq}
+            className={`shrink-0 whitespace-nowrap tabular-nums ${tone ?? (muted ? "text-muted-foreground/60" : "text-foreground")} ${flashCls ?? ""}`}
+          >
+            {usd(value)}
+          </span>
+        )}
+      </div>
+      {valueNode != null && (
+        <div className="flex min-w-0 justify-end pl-4" data-testid="ledger-row-amounts">
+          {valueNode}
+        </div>
       )}
     </div>
   );
@@ -1003,15 +1063,25 @@ function ConfigRow({
   label,
   value,
   tone = "text-foreground",
+  title,
 }: {
   label: string;
   value: string;
   tone?: string;
+  title?: string;
 }) {
+  // CARDS-LAYOUT-02: label/value pair as a two-track grid — the label truncates
+  // (never wraps into a second line that reads as another label) and the value
+  // keeps its own width on one line (`tabular-nums` so digits line up across
+  // rows). No pair can overflow into its neighbour.
   return (
-    <div className="flex items-center justify-between gap-2">
-      <span className="text-muted-foreground">{label}</span>
-      <span className={tone}>{value}</span>
+    <div
+      data-testid="config-pair"
+      title={title}
+      className="grid grid-cols-[minmax(0,1fr)_auto] items-baseline gap-x-2"
+    >
+      <span className="min-w-0 truncate text-muted-foreground">{label}</span>
+      <span className={`shrink-0 whitespace-nowrap tabular-nums ${tone}`}>{value}</span>
     </div>
   );
 }
