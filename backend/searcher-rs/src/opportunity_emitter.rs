@@ -804,6 +804,28 @@ fn stamped_for_emit(opportunity: &Opportunity, rejection_reason: Option<&str>) -
     if let Some(reason) = rejection_reason {
         o.rejection_reason = Some(reason.to_owned());
     }
+    // CARDS-NUMBERS-01 (2026-09-26, closes #647): a rejected row carrying REAL
+    // computed economics (gross/net Some) with amount_in_wei "0" is an
+    // amount/economics contradiction — the economics were computed against the
+    // engines' canonical probe (dex_engine.rs probe_amount = 1e18, the same
+    // convention V3 rows already persist) while the intent decoder lost the
+    // source amount. Record the probe basis so downstream SIM-TS
+    // (forwardSimulate requires gross AND amount>0 AND a priceable token) can
+    // compute the ladder instead of degrading to "no computado". R8: the
+    // stamp fires ONLY when economics exist — rows without economics keep
+    // amount "0" verbatim (never fabricated), and the warn keeps the decoder
+    // gap observable as a data-quality signal.
+    if (o.expected_profit_usd.is_some() || o.net_expected_profit_usd.is_some())
+        && o.amount_in_wei == "0"
+    {
+        tracing::warn!(
+            opportunity_id = %o.id,
+            gross_usd = ?o.expected_profit_usd,
+            net_usd = ?o.net_expected_profit_usd,
+            "CARDS-NUMBERS-01: economics present with amount_in_wei=0 — stamping canonical probe 1e18 (decoder lost the source amount)"
+        );
+        o.amount_in_wei = "1000000000000000000".to_owned();
+    }
     o.pipeline_latency_ms = pipeline_latency_ms_now(opportunity.detected_at);
     o
 }
@@ -1031,6 +1053,53 @@ mod tests {
         let mut net_only = make_opp(Uuid::new_v4(), None, None);
         net_only.net_expected_profit_usd = Some(0.42);
         assert!(has_computed_economics(&net_only));
+    }
+
+    // ── CARDS-NUMBERS-01: probe stamp on economics-with-zero-amount (#647) ──
+
+    /// A rejected row with REAL economics and amount "0" must be stamped with
+    /// the canonical 1e18 probe (the basis the engines actually used) so the
+    /// downstream SIM-TS ladder can compute.
+    #[test]
+    fn cards_numbers_probe_stamps_zero_amount_with_economics() {
+        let mut opp = make_opp(
+            Uuid::new_v4(),
+            Some(1.5),
+            Some("non_positive_profit".to_string()),
+        );
+        opp.amount_in_wei = "0".to_owned();
+        let stamped = stamped_for_emit(&opp, Some("non_positive_profit"));
+        assert_eq!(stamped.amount_in_wei, "1000000000000000000");
+        assert_eq!(stamped.expected_profit_usd, Some(1.5));
+        assert_eq!(stamped.rejection_reason, Some("non_positive_profit".into()));
+    }
+
+    /// Rows WITHOUT economics keep amount "0" verbatim — the stamp must never
+    /// fabricate an amount for uncomputed economics (R8).
+    #[test]
+    fn cards_numbers_no_stamp_without_economics() {
+        let mut opp = make_opp(
+            Uuid::new_v4(),
+            None,
+            Some("v3_quote_unavailable".to_string()),
+        );
+        opp.amount_in_wei = "0".to_owned();
+        let stamped = stamped_for_emit(&opp, Some("v3_quote_unavailable"));
+        assert_eq!(stamped.amount_in_wei, "0");
+        assert!(stamped.expected_profit_usd.is_none());
+    }
+
+    /// Rows with a real non-zero amount are never touched by the stamp.
+    #[test]
+    fn cards_numbers_no_stamp_when_amount_present() {
+        let mut opp = make_opp(
+            Uuid::new_v4(),
+            Some(2.0),
+            Some("non_positive_profit".to_string()),
+        );
+        opp.amount_in_wei = "500000".to_owned();
+        let stamped = stamped_for_emit(&opp, Some("non_positive_profit"));
+        assert_eq!(stamped.amount_in_wei, "500000");
     }
 
     // ── build_score_record (ARBX-RDY-02) ────────────────────────────────────
