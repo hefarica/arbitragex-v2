@@ -26,6 +26,7 @@ pub mod canonicalizer;
 pub mod cycle_enumerator;
 pub mod dense_view;
 pub mod graph_builder;
+pub mod hop_cycle_bridge;
 pub mod lat_candidates;
 pub mod multi_hop_search;
 pub mod route_discovery_worker;

@@ -1033,7 +1033,11 @@ fn build_route_leg(pool: &PoolRef, token_in: &str, token_out: &str, amount_in: f
 // ---------------------------------------------------------------------------
 
 /// Maps `ProtocolType` to the `protocol_type` string used in `RouteLeg`.
-fn protocol_type_to_str(pt: ProtocolType) -> String {
+///
+/// `pub(crate)`: the discovery→emission bridge
+/// (`route_discovery::hop_cycle_bridge`) labels a discovered leg with its own
+/// protocol family through this same table — one mapping, never a second one.
+pub(crate) fn protocol_type_to_str(pt: ProtocolType) -> String {
     match pt {
         ProtocolType::V2 => "uniswap-v2".to_string(),
         ProtocolType::V3 => "uniswap-v3".to_string(),
