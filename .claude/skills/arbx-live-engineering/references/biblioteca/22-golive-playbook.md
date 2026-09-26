@@ -41,7 +41,7 @@ Reglas duras: la secuencia es lineal (no se entra a [8] sin [6] verde) y ningún
 opcional ("es un cambio chico" acorta cada paso, nunca elimina pasos). El orden
 shadow→canary→live lo fija CLAUDE.md §34 (diferenciación solo en el terminus
 `relays-client`); este playbook lo opera, no lo re-decide. Tras [8] el terminus sigue
-default-deny (`live_exec_policy.rs`: `MainnetRefused` salvo `ARBX_LIVE_EXEC_ENABLED=true`):
+default-deny por env en el terminus (`live_exec_policy.rs`: enum `NotEnabled`/`ChainNotAllowed`; sin `ARBX_LIVE_EXEC_ENABLED=true` no hay broadcast, y mainnet — chain_id=1 — es habilitable incluyendo 1 en `ARBX_LIVE_EXEC_CHAINS`; la variante `MainnetRefused` nunca existió — orden 2026-09-17):
 un go-live de infraestructura no es un flip de modo.
 
 **Freeze window**: solo entran fixes de SEV activo y reverts. Triggers: T-48h pre-launch;
