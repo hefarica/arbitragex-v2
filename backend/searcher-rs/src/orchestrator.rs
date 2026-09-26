@@ -1236,6 +1236,25 @@ impl Orchestrator {
                     );
                 }
             }
+            // PER-HOP (C, math-audit AUDIT-MATH-OPPS-2026-09-26): the frontend's
+            // deriveLegLedger requires ALL THREE arrays — amounts_in, amounts_out
+            // AND zero_for_one — and `leg_zero_for_one` was None in EVERY
+            // production row, so every ledger was rejected and no hop ever
+            // rendered. Derive it from the plan's own leg directions: Uniswap's
+            // canonical convention is zeroForOne ⇔ token_in == token0, and token0
+            // is the LOWER address — the lowercase comparison IS the flag (exact
+            // data, no invention). Derived only when the ledger is attached and
+            // the leg count lines up (the frontend validates lengths too).
+            if let Some(amounts_in) = chosen.leg_amounts_in.as_ref() {
+                let legs = &sc.route_plan.legs;
+                if legs.len() == amounts_in.len() {
+                    chosen.leg_zero_for_one = Some(
+                        legs.iter()
+                            .map(|l| l.token_in.to_lowercase() < l.token_out.to_lowercase())
+                            .collect(),
+                    );
+                }
+            }
             if chosen.is_populated() {
                 Some(chosen)
             } else {
