@@ -255,6 +255,11 @@ const RAW_ABSENT_NULL_FIELDS: ReadonlyArray<keyof OmniOpportunity> = [
   "simulated_amount_in_usd",
   "simulated_roi_pct",
   "simulated_cost_breakdown",
+  // CARDS-NOTIONAL-01: the SIM ladder's own gross + Σcosts. REST-only, like the
+  // rest of the ladder — a raw WS row must not blank the closed triple and drop
+  // the card onto a borrowed (canonical) gross.
+  "simulated_gross_usd",
+  "simulated_costs_total_usd",
   "simulated_target",
   "simulated_at",
   "simulated_notes",
