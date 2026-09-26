@@ -79,7 +79,15 @@ function summaryCells(opp: OmniOpportunity): Array<{
   value: string;
   title: string;
 }> {
-  const bps = opp.roi_pct != null ? (opp.roi_pct * 100).toFixed(0) : null;
+  // CARDS-PRECEDENCE-02 (2026-09-26): the canonical ratio wins; when it is
+  // absent but the TS forward-sim computed one, the SIMULATED value is the
+  // computed value and must be displayed (marked `~`) instead of an empty cell.
+  // Live evidence (GET /api/opportunities/live): `roi_pct` is null on 38/38 rows
+  // while `simulated_roi_pct` is non-null on 3 — those 3 cards carried a
+  // computed ROI that this cell never showed.
+  const roiPct = opp.roi_pct ?? opp.simulated_roi_pct ?? null;
+  const roiIsSimulated = opp.roi_pct == null && opp.simulated_roi_pct != null;
+  const bps = roiPct != null ? `${roiIsSimulated ? "~" : ""}${(roiPct * 100).toFixed(0)}` : null;
   // CARDS-QUIET-01 (2026-09-26, operator order): a null economic value renders
   // the QUIET empty state (`DASH`), never a loud "no computado" wall.
   //
@@ -158,15 +166,34 @@ function summaryCells(opp: OmniOpportunity): Array<{
     ),
     cell(
       "Net",
-      opp.net_expected_profit_usd != null ? usd(opp.net_expected_profit_usd) : null,
-      "net_expected_profit_usd (spine canónico)",
+      // CARDS-PRECEDENCE-02: the CARD HEADLINE already renders
+      // `net_expected_profit_usd ?? simulated_net_profit_usd` (canonical spine
+      // net, else the TS forward-sim net). This cell used only the canonical
+      // field, so a row whose ONLY computed net is the simulated one rendered a
+      // quiet dash here while the same card showed `~$x SIM` two rows above —
+      // one field, two precedence rules, i.e. a computed value losing to a
+      // placeholder. Same rule here now, with the same `~` source mark.
+      opp.net_expected_profit_usd != null
+        ? usd(opp.net_expected_profit_usd)
+        : opp.simulated_net_profit_usd != null
+          ? `~${usd(opp.simulated_net_profit_usd)}`
+          : null,
+      opp.net_expected_profit_usd != null
+        ? "net_expected_profit_usd (spine canónico)"
+        : "simulated_net_profit_usd (TS forward-sim; canónico pendiente) — '~' marca el origen",
     ),
     cell(
       "bps",
       bps,
-      opp.roi_pct == null
-        ? "roi_pct no computado (R8)"
-        : `roi_pct ${opp.roi_pct.toFixed(4)}% × 100 — conversión de unidad, no un veredicto`,
+      // CARDS-PRECEDENCE-02: same rule — `roi_pct` is the canonical ratio and it
+      // is null on 38/38 live rows today, while `simulated_roi_pct` IS computed
+      // on 3 of them. The cell fell back to nothing instead of to that computed
+      // value; `~` marks the simulated source.
+      opp.roi_pct != null
+        ? `roi_pct ${opp.roi_pct.toFixed(4)}% × 100 — conversión de unidad, no un veredicto`
+        : opp.simulated_roi_pct != null
+          ? `simulated_roi_pct ${opp.simulated_roi_pct.toFixed(4)}% × 100 — '~' marca el origen (canónico pendiente)`
+          : "roi_pct no computado (R8)",
     ),
     cell(
       "Risk",

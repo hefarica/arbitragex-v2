@@ -89,7 +89,19 @@ export default function OpportunitiesClient({
   });
 
   // Selectors from Omni-Store (SSOT)
-  const opportunities = useOmniStore((state) => state.opportunities);
+  // SSR-FIRSTPAINT-01 (2026-09-26): the store value is `[]` on the server —
+  // `useOmniOpportunities` seeds it from `initialOpportunities` inside an
+  // EFFECT (useOmniOpportunities.ts:109-118), and effects never run during SSR.
+  // Reading the store directly therefore rendered ZERO cards in the server HTML
+  // while the fetched snapshot sat unused: PROVEN in production (3 consecutive
+  // `GET /opportunities` renders contained `data-opp-id` × 0 and the
+  // "0 matching" counter; `Cache-Control: private, no-cache, no-store`, so it
+  // is a live dynamic render; and the api-server log shows the page's own
+  // snapshot query answering 200 for
+  // `/api/v1/opportunities/live?order=profit_usd`). Every computed value of the
+  // snapshot was discarded for the first paint. Derived below as
+  // `opportunities` (R1 Mounted Snapshot Pattern).
+  const storeOpportunities = useOmniStore((state) => state.opportunities);
   const wsStatus = useOmniStore((state) => state.wsStatus);
   const setOpportunities = useOmniStore((state) => state.setOpportunities);
   // AUDIT-CARDS-MINOR (§2): WO-H4 window_total from the LAST live-snapshot
@@ -109,6 +121,18 @@ export default function OpportunitiesClient({
   );
   const [filters, setFilters] = useState<ExchangeFilters>(DEFAULT_FILTERS);
   const [cap, setCap] = useState<number>(VISIBLE_CAP);
+
+  // ── R1 Mounted Snapshot Pattern: which source owns the grid ────────────────
+  // Until mount, the SERVER-rendered snapshot is the display source, so the
+  // first paint shows the cards (and their computed figures) the Server
+  // Component already fetched. The store is empty on the server and on the very
+  // first client render, so both sides render the SAME prop-derived markup
+  // (byte-identical ⇒ no hydration mismatch, no Date.now/Math.random). The
+  // mount effect flips `isMounted`, after which the live store owns the grid; an
+  // empty store must NOT fall back to the snapshot again (that would resurrect
+  // pruned cards), which is exactly why this keys on `isMounted` and not on
+  // `storeOpportunities.length === 0`.
+  const opportunities = isMounted ? storeOpportunities : initialSnapshot.opportunities;
 
   // ── Motor badge paper/live (display-only, fail-safe) — portado del exchange ──
   const primaryChainId = initialSnapshot.opportunities[0]?.chain_id ?? 1;
