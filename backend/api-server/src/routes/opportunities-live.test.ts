@@ -91,16 +91,32 @@ function fakePool(opts: { rows?: Array<Record<string, unknown>>; fail?: boolean 
 // test absorb the transform and flake out).
 const { mountOpportunitiesLive } = await import("./opportunities-live.js");
 
-async function buildApp(pool: unknown): Promise<Express> {
+async function buildApp(pool: unknown, redis: unknown = null): Promise<Express> {
   const app = express();
   mountOpportunitiesLive(
     app,
     // biome-ignore lint/suspicious/noExplicitAny: test-only pool stand-in
     (pool === null ? null : (pool as any)) as never,
-    null,
+    // biome-ignore lint/suspicious/noExplicitAny: test-only redis stand-in
+    redis as any,
     logger,
   );
   return app;
+}
+
+/**
+ * CARDS-PRICES-01 gate (adversarial-review finding #5): the route's PriceBus
+ * read had ZERO coverage — both existing suites mounted with redis = null, so a
+ * bug that always emitted null (or read the wrong chain key) shipped green.
+ * Minimal in-memory double, same shape as prices-live.test.ts.
+ */
+function fakePriceRedis(prices: Record<string, string>, chainId = 1): unknown {
+  return {
+    hgetall: async (key: string) =>
+      key === `arbx:token_prices:${chainId}` ? { ...prices } : {},
+    get: async (_key: string) => null,
+    ttl: async (_key: string) => 42,
+  };
 }
 
 describe("GET /api/v1/opportunities/live — window_total contract (WO-H4)", () => {
@@ -133,6 +149,29 @@ describe("GET /api/v1/opportunities/live — window_total contract (WO-H4)", () 
     expect(r.body.count).toBe(0);
     expect(r.body.window_total).toBe(0);
     expect(r.body.items).toEqual([]);
+  });
+
+  // CARDS-PRICES-01 (adversarial-review finding #5): the PriceBus enrichment is
+  // exercised end-to-end with a Redis double — prices are attached per card
+  // keyed by the row's OWN symbols (UPPER), and a null/missing price never
+  // fabricates an entry.
+  it("(c2) with a PriceBus hash → items carry token_prices_usd for their symbols only", async () => {
+    const rows = [fixtureRow({ chain_id: 1 })]; // token_in_symbol WETH, token_out_symbol USDC
+    const app = await buildApp(
+      fakePool({ rows }),
+      fakePriceRedis({ WETH: "2685.78", USDC: "0.9998", PEPE: "0.0000043" }),
+    );
+    const r = await request(app).get("/api/v1/opportunities/live?limit=50");
+    expect(r.status).toBe(200);
+    // Only the card's own symbols — the unrelated PEPE price is NOT attached.
+    expect(r.body.items[0].token_prices_usd).toEqual({ WETH: 2685.78, USDC: 0.9998 });
+  });
+
+  it("(c3) redis null → token_prices_usd is null on every item (R8 fail-honest)", async () => {
+    const app = await buildApp(fakePool({ rows: [fixtureRow()] }), null);
+    const r = await request(app).get("/api/v1/opportunities/live?limit=50");
+    expect(r.status).toBe(200);
+    expect(r.body.items[0].token_prices_usd).toBeNull();
   });
 
   it("(d) query fails → 503 query_failed", async () => {

@@ -57,6 +57,24 @@ ARBX_V3_QUOTE_NEG_TRANSPORT_TTL_MS=30000
 ARBX_V3_QUOTE_BATCH_BACKOFF_MS=30000
 ```
 
+### 4bis. RE-TUNING 2026-09-26 (evidencia productiva — SUPERSEDE los valores de §4)
+
+Los valores de §4 se fijaron con el pool ROTO (merkle rate-limitando, endpoints cayendo en boot).
+Con el pool estabilizado (4 providers HTTP sanos + retry de boot MC-RPC-1 en main), esos valores
+**estrangulaban el path BUENO**: el timeout de 8s no alcanzaba para el batch de 25 quotes
+(**608 timeouts/10min**, `batch_backoff_skip` 1859) y el backoff de 30s bloqueaba el prefetch tras
+cada fallo, forzando todo al unary (peor tasa).
+
+| Knob | §4 (OBSOLETO) | **Vigente** | Evidencia (10-15 min post-cambio) |
+|---|---|---|---|
+| `ARBX_V3_QUOTE_MULTICALL_TIMEOUT_MS` | 8000 | **20000** | timeouts 608 → **31** /10min |
+| `ARBX_V3_QUOTE_BATCH_BACKOFF_MS` | 30000 | **5000** | `batch_call_ok` 90% → **100%** · `rpc_ok` 59% → **85%** · `rpc_error` 40% → **15%** · `cache_neg_hit` 55,993 → **4,339** |
+
+**ANTI-REGRESIÓN — no volver a 8000/30000.** El par óptimo depende del tamaño del batch (25
+sub-calls por aggregate3) y del pool vigente; el error de transporte bajó al target ≤15%. Cualquier
+cambio futuro se hace SOLO con medición antes/después de `arbx_v3_quote_total{outcome}` (Prometheus
+VPS :9090) + conteo de `timeout` en logs del searcher.
+
 **R2 — sanear `RPC_HTTP_1`** (lista separada por comas `name=url,...`):
 - QUITAR: `1rpc` (410 Gone, proveedor muerto), `flashbots` (`/fast` es relay, 403 a eth_call),
   `mevblocker` (relay, 403 a eth_call).
