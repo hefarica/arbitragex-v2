@@ -72,8 +72,12 @@ import {
 } from "@/lib/format";
 import {
   deriveLegs,
+  deriveLegLedger,
+  routeTokenDecimals,
   SYNTHETIC_LEGACY_VIEW_LABEL,
+  type LegLedgerEntry,
   type OmniOpportunity,
+  type RouteLeg,
 } from "@/lib/store/types";
 
 // ─── Tone → token-based class map ────────────────────────────────────────────
@@ -97,6 +101,59 @@ function usd(value: number | null | undefined, digits = 2): string {
 
 /** Freshness window (matches the table's 12s staleness heuristic). */
 const STALE_SECS = 12;
+
+/**
+ * HOPS-LEDGER-04 (PER-HOP, card half) — exact wei → token units, BigInt-only.
+ *
+ * The sizing kernel emits per-leg amounts as EXACT wei strings; displaying them
+ * requires the token's decimals, which is a deployment fact the wire may omit
+ * for unregistered tokens. Discipline:
+ *   · decimals unknown/invalid ⇒ `null`. The caller then prints the raw wei
+ *     string with a `·wei` mark — never a guessed 18-decimals unit (R8).
+ *   · fraction digits are TRUNCATED (never rounded up): a rendering must not
+ *     invent a wei that the kernel did not produce.
+ *   · integers longer than 12 digits collapse to `d.dde±k` so a 1e18-scale
+ *     phantom cannot blow the card layout.
+ * `numeric` is the float twin used ONLY for the live-price Δ marking; the text
+ * stays the exact-BigInt rendering.
+ */
+function weiUnits(
+  wei: string,
+  decimals: number | undefined,
+): { text: string; numeric: number | null } | null {
+  if (typeof decimals !== "number" || !Number.isInteger(decimals) || decimals < 0 || decimals > 255) {
+    return null;
+  }
+  if (typeof wei !== "string" || wei.trim() === "") return null;
+  let value: bigint;
+  try {
+    value = BigInt(wei.trim());
+  } catch {
+    return null;
+  }
+  const negative = value < 0n;
+  const abs = negative ? -value : value;
+  const base = 10n ** BigInt(decimals);
+  const whole = abs / base;
+  const frac = abs % base;
+  const wholeRaw = whole.toString();
+  const compact = wholeRaw.length > 12;
+  const wholeText = compact
+    ? `${wholeRaw.slice(0, 1)}.${wholeRaw.slice(1, 3)}e${wholeRaw.length - 1}`
+    : whole.toLocaleString("en-US");
+  const fracText =
+    !compact && frac > 0n
+      ? frac.toString().padStart(decimals, "0").slice(0, 6).replace(/0+$/, "")
+      : "";
+  const sign = negative ? "-" : "";
+  const numeric = Number(
+    `${sign}${wholeRaw}${frac > 0n ? `.${frac.toString().padStart(decimals, "0")}` : ""}`,
+  );
+  return {
+    text: `${sign}${wholeText}${fracText ? `.${fracText}` : ""}`,
+    numeric: Number.isFinite(numeric) ? numeric : null,
+  };
+}
 
 interface SimEvidence {
   passed: boolean | null;
@@ -258,6 +315,74 @@ function OpportunityTradeCardImpl({
     return opp.leg_symbols?.[lc] ?? shortAddr(addr);
   };
   const hasSyntheticLegs = legs.some((l) => l.synthetic === true);
+
+  // ── HOPS-LEDGER-04 (PER-HOP): exact per-leg ledger, rendered INSIDE the ────
+  // ladder row that already owns that hop (one place per hop — no duplicate
+  // block). `deriveLegLedger` is all-or-nothing and never touches §29 synthetic
+  // legs, so its length always aligns with `legs` when non-null.
+  const legLedger = deriveLegLedger(opp);
+  /** Live PriceBus USD for a token address; null when the symbol has no price. */
+  const symUsd = (addr: string): number | null => {
+    const px = opp.token_prices_usd?.[legSym(addr).toUpperCase()];
+    return px != null && Number.isFinite(px) && px > 0 ? px : null;
+  };
+  /**
+   * Value cell for one hop: exact in→out wei (unit-scaled when the token's
+   * decimals are known, verbatim `·wei` when they are not), plus the price-
+   * marked leg Δ and — closing leg only — the exact whole-cycle delta.
+   * Every figure is conditional on real inputs: a missing price or decimals
+   * removes that figure instead of rendering a fabricated 0 (R8).
+   */
+  const hopAmountNode = (leg: RouteLeg, entry: LegLedgerEntry): React.ReactNode => {
+    const rm = opp.route_metadata;
+    const inView = rm ? weiUnits(entry.amount_in_wei, routeTokenDecimals(rm, leg.token_in)) : null;
+    const outView = rm ? weiUnits(entry.amount_out_wei, routeTokenDecimals(rm, leg.token_out)) : null;
+    const symIn = legSym(leg.token_in);
+    const symOut = legSym(leg.token_out);
+    const pxIn = symUsd(leg.token_in);
+    const pxOut = symUsd(leg.token_out);
+    const inUsd = inView?.numeric != null && pxIn != null ? inView.numeric * pxIn : null;
+    const outUsd = outView?.numeric != null && pxOut != null ? outView.numeric * pxOut : null;
+    const legDeltaUsd = inUsd != null && outUsd != null ? outUsd - inUsd : null;
+    // Closing leg: delta of the whole cycle in the opening token's wei. The
+    // closing leg's OUT token IS the opening token, so its decimals denominate.
+    const cycleView =
+      rm && entry.cycle_delta_wei != null
+        ? weiUnits(entry.cycle_delta_wei, routeTokenDecimals(rm, leg.token_out))
+        : null;
+    const cycleText =
+      cycleView != null && entry.cycle_delta_wei != null
+        ? cycleView.text
+        : entry.cycle_delta_wei != null
+          ? entry.cycle_delta_wei
+          : null;
+    const cycleNegative = (entry.cycle_delta_wei ?? "").trim().startsWith("-");
+    return (
+      <span
+        className="flex flex-col items-end min-w-0 leading-tight text-right text-[10px] font-mono whitespace-nowrap"
+        title={
+          "Montos exactos en wei del kernel de sizing (ledger on-chain, no estimación). " +
+          "Δ USD valorado con los precios PriceBus en vivo — no es el neto SIM."
+        }
+      >
+        <span className="truncate max-w-full">
+          {inView != null ? `${inView.text} ${symIn}` : `${entry.amount_in_wei}·wei`}
+          {" → "}
+          {outView != null ? `${outView.text} ${symOut}` : `${entry.amount_out_wei}·wei`}
+        </span>
+        {legDeltaUsd != null && (
+          <span className={legDeltaUsd >= 0 ? "text-success" : "text-destructive"}>
+            Δ {usd(legDeltaUsd)}
+          </span>
+        )}
+        {cycleText != null && (
+          <span className={cycleNegative ? "text-destructive" : "text-success"}>
+            ciclo {cycleText} {cycleView != null ? symOut : "wei"}
+          </span>
+        )}
+      </span>
+    );
+  };
 
   // ── CARDS-TOKENPATH-01: full participating-token sequence (2..7 tokens) ────
   // deriveLegs already carries the persisted topology; the ordered token path
@@ -576,15 +701,19 @@ function OpportunityTradeCardImpl({
             value={capitalInUsd}
           />
           {legs.length > 0 ? (
-            legs.map((l) => (
-              <LedgerRow
-                key={l.index}
-                label={`Hop ${l.index + 1}/${legs.length} · ${legSym(l.token_in)}→${legSym(l.token_out)}`}
-                value={null}
-                muted
-                hint={`${l.dex || "—"}${l.synthetic ? " · syn" : ""}`}
-              />
-            ))
+            legs.map((l) => {
+              const entry = legLedger?.[l.index] ?? null;
+              return (
+                <LedgerRow
+                  key={l.index}
+                  label={`Hop ${l.index + 1}/${legs.length} · ${legSym(l.token_in)}→${legSym(l.token_out)}`}
+                  value={null}
+                  muted
+                  hint={`${l.dex || "—"}${l.synthetic ? " · syn" : ""}`}
+                  valueNode={entry != null ? hopAmountNode(l, entry) : undefined}
+                />
+              );
+            })
           ) : (
             <LedgerRow
               label="Hops"
@@ -776,6 +905,7 @@ export const OpportunityTradeCard = React.memo(
 function LedgerRow({
   label,
   value,
+  valueNode,
   up = false,
   down = false,
   muted = false,
@@ -787,7 +917,9 @@ function LedgerRow({
   flashSeq,
 }: {
   label: string;
-  value: number | null;
+  value?: number | null;
+  /** HOPS-LEDGER-04: rich cell (exact wei + Δ). Overrides the USD formatting. */
+  valueNode?: React.ReactNode;
   up?: boolean;
   down?: boolean;
   muted?: boolean;
@@ -812,12 +944,16 @@ function LedgerRow({
         <span className="truncate">{label}</span>
         {hint && <span className="text-[9px] text-muted-foreground/50 italic">({hint})</span>}
       </span>
-      <span
-        key={flashSeq}
-        className={`${tone ?? (muted ? "text-muted-foreground/60" : "text-foreground")} ${flashCls ?? ""}`}
-      >
-        {usd(value)}
-      </span>
+      {valueNode != null ? (
+        valueNode
+      ) : (
+        <span
+          key={flashSeq}
+          className={`${tone ?? (muted ? "text-muted-foreground/60" : "text-foreground")} ${flashCls ?? ""}`}
+        >
+          {usd(value)}
+        </span>
+      )}
     </div>
   );
 }

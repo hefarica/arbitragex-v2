@@ -338,3 +338,155 @@ describe("OpportunityTradeCard — AUDIT-CARDS-MINOR (§3) fallback chip-row mar
     expect(countArrows(html)).toBe(1); // exactly the in→out pair, as before the mark
   });
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// HOPS-LEDGER-04 (PER-HOP, card half) — the operator's per-hop mandate: every
+// hop of a 2..7-leg cycle shows ITS numbers (exact wei in→out) on the row that
+// already owns that hop, plus the price-marked leg Δ and the closed-cycle delta
+// on the closing leg. Fail-honest gates: no ledger ⇒ no figures; unknown
+// decimals ⇒ raw wei (never a guessed unit); no live price ⇒ no Δ (never $0).
+// ─────────────────────────────────────────────────────────────────────────────
+describe("OpportunityTradeCard — HOPS-LEDGER-04 per-hop amounts", () => {
+  const WETH = A;
+  const USDC = B;
+  const out18 = (n: string) => `${n}000000000000000000`; // n → n·1e18 wei
+  const usdc6 = (n: string) => `${n}000000`; // n → n·1e6 wei (6-dec token)
+  // 1.002 WETH in exact wei — a ledger entry is an integer wei string, never a decimal.
+  const WETH_1_002 = "1002000000000000000";
+
+  // 2-hop closed cycle WETH→USDC→WETH with the kernel's exact wei ledger:
+  // 1 WETH in → 2,700 USDC out → 1.002 WETH back.
+  const sized = mapToOmniOpportunity(
+    wire({
+      token_in: WETH,
+      token_out: WETH,
+      token_in_info: { symbol: "WETH", decimals: 18, logo_url: null, resolved_via: "onchain_full" },
+      token_out_info: { symbol: "WETH", decimals: 18, logo_url: null, resolved_via: "onchain_full" },
+      token_prices_usd: { WETH: 2700, USDC: 1 },
+      route_metadata: {
+        dex_adapters: ["uniswap_v2_router", "sushiswap"],
+        token_addresses: [WETH, USDC, WETH],
+        pool_addresses: ["0xpool1", "0xpool2"],
+        decimals: { [WETH.toLowerCase()]: 18, [USDC.toLowerCase()]: 6 },
+        leg_amounts_in: [out18("1"), usdc6("2700")],
+        leg_amounts_out: [usdc6("2700"), WETH_1_002],
+        leg_zero_for_one: [true, false],
+      },
+    }),
+  );
+
+  it("renders the exact per-hop wei of a sized cycle, scaled by each token's decimals", () => {
+    const html = card({ ...sized, leg_symbols: { [USDC.toLowerCase()]: "USDC" } });
+    // hop 1: 1 WETH → 2,700 USDC (6 decimals, thousands separator)
+    expect(html).toContain("Hop 1/2");
+    expect(html).toContain("1 WETH");
+    expect(html).toContain("2,700 USDC");
+    // hop 2: 2,700 USDC → 1.002 WETH
+    expect(html).toContain("Hop 2/2");
+    expect(html).toContain("1.002 WETH");
+  });
+
+  it("marks the leg Δ at live PriceBus prices and the closed-cycle delta on the closing leg only", () => {
+    const html = card({ ...sized, leg_symbols: { [USDC.toLowerCase()]: "USDC" } });
+    // leg 1 preserves value (1 WETH @2700 → 2,700 USDC @1): Δ $0, not a gain
+    expect(html).toContain("Δ $0.0000");
+    // leg 2 gains 0.002 WETH @2700 = $5.40 — the operator's per-hop number
+    expect(html).toContain("Δ $5.40");
+    // cycle delta is EXACT wei arithmetic (1.002e18 − 1e18 = 2e15), closing leg only
+    const cycleHits = (html.match(/ciclo /g) ?? []).length;
+    expect(cycleHits).toBe(1);
+    expect(html).toContain("ciclo 0.002 WETH");
+  });
+
+  it("a partial ledger renders NO per-hop figures (all-or-nothing, mirrors attach_leg_ledger)", () => {
+    const partial = mapToOmniOpportunity(
+      wire({
+        token_in: WETH,
+        token_out: WETH,
+        route_metadata: {
+          dex_adapters: ["uniswap_v2_router", "sushiswap"],
+          token_addresses: [WETH, USDC, WETH],
+          pool_addresses: ["0xpool1", "0xpool2"],
+          decimals: { [WETH.toLowerCase()]: 18, [USDC.toLowerCase()]: 6 },
+          // leg_zero_for_one missing ⇒ deriveLegLedger must return null
+          leg_amounts_in: [out18("1"), usdc6("2700")],
+          leg_amounts_out: [usdc6("2700"), WETH_1_002],
+        },
+      }),
+    );
+    const html = card(partial);
+    expect(html).toContain("Hop 1/2");
+    expect(html).not.toContain("ciclo ");
+    expect(html).not.toContain("Δ $");
+  });
+
+  it("unknown decimals ⇒ the raw wei verbatim (`·wei`), never a guessed 18-decimals unit", () => {
+    const noDecimals = mapToOmniOpportunity(
+      wire({
+        token_in: WETH,
+        token_out: WETH,
+        route_metadata: {
+          dex_adapters: ["uniswap_v2_router", "sushiswap"],
+          token_addresses: [WETH, USDC, WETH],
+          pool_addresses: ["0xpool1", "0xpool2"],
+          // decimals map EMPTY: the wire omitted the deployment fact (R8)
+          leg_amounts_in: [out18("1"), usdc6("2700")],
+          leg_amounts_out: [usdc6("2700"), WETH_1_002],
+          leg_zero_for_one: [true, false],
+        },
+      }),
+    );
+    const html = card(noDecimals);
+    expect(html).toContain(`${out18("1")}·wei`);
+    expect(html).toContain(`${usdc6("2700")}·wei`);
+    // no unit claim anywhere on those legs; the cycle delta falls back to raw wei
+    expect(html).not.toContain("Δ $");
+    expect(html).toContain("ciclo 2000000000000000 wei");
+  });
+
+  it("no live price for a leg's symbol ⇒ that leg shows amounts but NO Δ (never a $0)", () => {
+    const priced = {
+      ...sized,
+      token_prices_usd: { WETH: 2700 }, // USDC price absent
+      leg_symbols: { [USDC.toLowerCase()]: "USDC" },
+    };
+    const html = card(priced);
+    expect(html).toContain("2,700 USDC");
+    expect(html).not.toContain("Δ $");
+  });
+
+  it("R8: a 7-hop cycle renders 7 hop rows, each with its own ledger cell when sized", () => {
+    // T1..T7 distinct intermediates + closing leg back to T1 (operator max: 7).
+    const T = [1, 2, 3, 4, 5, 6, 7].map((i) => `0x${String(i).repeat(40)}`);
+    const tokens = [...T, T[0]!];
+    const decimals: Record<string, number> = {};
+    const legSymbols: Record<string, string> = {};
+    tokens.forEach((t, i) => {
+      decimals[t.toLowerCase()] = 18;
+      if (i < 7) legSymbols[t.toLowerCase()] = `T${i + 1}`;
+    });
+    const opp = {
+      ...mapToOmniOpportunity(
+        wire({
+          token_in: T[0],
+          token_out: T[6],
+          route_metadata: {
+            dex_adapters: Array.from({ length: 7 }, () => "uniswap_v2_router"),
+            token_addresses: tokens,
+            pool_addresses: Array.from({ length: 7 }, (_, i) => `0xpool${i}`),
+            decimals,
+            leg_amounts_in: Array.from({ length: 7 }, (_, i) => out18(String(i + 1))),
+            leg_amounts_out: Array.from({ length: 7 }, (_, i) => out18(String(i + 2))),
+            leg_zero_for_one: Array.from({ length: 7 }, (_, i) => i % 2 === 0),
+          },
+        }),
+      ),
+      leg_symbols: legSymbols,
+    };
+    const html = card(opp);
+    for (let i = 1; i <= 7; i++) expect(html).toContain(`Hop ${i}/7`);
+    // hop 1 cell: 1 → 2 T-units; closing leg carries the cycle delta (8 − 1 = 7)
+    expect(html).toContain("1 T1");
+    expect(html).toContain("ciclo 7 T1");
+  });
+});
