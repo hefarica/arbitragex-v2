@@ -1062,7 +1062,11 @@ mod tests {
     /// downstream SIM-TS ladder can compute.
     #[test]
     fn cards_numbers_probe_stamps_zero_amount_with_economics() {
-        let mut opp = make_opp(Uuid::new_v4(), Some(1.5), Some("non_positive_profit".to_string()));
+        let mut opp = make_opp(
+            Uuid::new_v4(),
+            Some(1.5),
+            Some("non_positive_profit".to_string()),
+        );
         opp.amount_in_wei = "0".to_owned();
         let stamped = stamped_for_emit(&opp, Some("non_positive_profit"));
         assert_eq!(stamped.amount_in_wei, "1000000000000000000");
@@ -1074,7 +1078,11 @@ mod tests {
     /// fabricate an amount for uncomputed economics (R8).
     #[test]
     fn cards_numbers_no_stamp_without_economics() {
-        let mut opp = make_opp(Uuid::new_v4(), None, Some("v3_quote_unavailable".to_string()));
+        let mut opp = make_opp(
+            Uuid::new_v4(),
+            None,
+            Some("v3_quote_unavailable".to_string()),
+        );
         opp.amount_in_wei = "0".to_owned();
         let stamped = stamped_for_emit(&opp, Some("v3_quote_unavailable"));
         assert_eq!(stamped.amount_in_wei, "0");
@@ -1084,7 +1092,11 @@ mod tests {
     /// Rows with a real non-zero amount are never touched by the stamp.
     #[test]
     fn cards_numbers_no_stamp_when_amount_present() {
-        let mut opp = make_opp(Uuid::new_v4(), Some(2.0), Some("non_positive_profit".to_string()));
+        let mut opp = make_opp(
+            Uuid::new_v4(),
+            Some(2.0),
+            Some("non_positive_profit".to_string()),
+        );
         opp.amount_in_wei = "500000".to_owned();
         let stamped = stamped_for_emit(&opp, Some("non_positive_profit"));
         assert_eq!(stamped.amount_in_wei, "500000");
