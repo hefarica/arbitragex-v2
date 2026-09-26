@@ -94,7 +94,34 @@ export interface SimulatedTarget {
     | "net-per-usd-nonpositive"
     | "tie";
   estimation_basis: "observed-gross" | "roi-assumed";
-  required_amount_in_usd: number;
+  /**
+   * CARDS-CRASH-01 (2026-09-26): this is NULL on the wire whenever the inverse
+   * sizing kernel hits its non-finite branch — PROVEN on live data
+   * (`GET /api/opportunities/live`: `required_amount_in_usd: null` on 41/41
+   * items, every one with `binding_floor: "net-per-usd-nonpositive"`).
+   *
+   * Mechanism, line-exact: `solveDualFloors` returns
+   * `{ required: Infinity, binding: "net-per-usd-nonpositive" }`
+   * (`backend/api-server/src/simulation/computeSimulatedNet.ts:415`; same at
+   * `:439` for `roi-unreachable`), that `Infinity` is emitted verbatim at
+   * `:545`/`:589`, and `JSON.stringify(Infinity)` is `null`. The kernel's own
+   * doc says so at `:111-112` ("Infinity when binding_floor is …").
+   *
+   * R8: a null required floor is "no finite floor computed", NOT 0, and it is
+   * NOT the same state as a floor of 0. It was mistyped as a non-nullable
+   * `number` while the mapper casts `raw.simulated_target as SimulatedTarget`
+   * unchecked (below), so `usd4(target.required_amount_in_usd)` in
+   * `components/opportunities/OpportunityDetailTabs.tsx` threw
+   * `TypeError: Cannot read properties of null (reading 'toFixed')` on 100% of
+   * live rows — the operator's "the pipeline breaks and the calculations do not
+   * arrive".
+   *
+   * The OTHER five numeric fields below stay non-nullable on purpose: their
+   * kernel paths are provably finite (the non-finite branch returns early at
+   * `computeSimulatedNet.ts:538-554`, before those values are computed at
+   * `:584-597`). Widening them would be type churn without evidence.
+   */
+  required_amount_in_usd: number | null;
   cap_amount_in_usd: number;
   suggested_amount_in_usd: number;
   suggested_net_usd: number;

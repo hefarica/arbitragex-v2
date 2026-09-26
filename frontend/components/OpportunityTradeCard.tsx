@@ -89,14 +89,38 @@ const TONE_CLASS: Record<string, string> = {
   pending: "text-muted-foreground/60 italic",
 };
 
-/** Compact USD for ledger cells (`$12.5k`, `$1.8M`, `$0.0123`). */
+/**
+ * Compact USD for ledger cells (`$12.5k`, `$1.8M`, `$0.0123`).
+ *
+ * CARDS-MAGNITUDE-01 (2026-09-26): the scale ladder used to stop at `M`, so
+ * any value at or above 1e9 rendered an unbounded mantissa (`(v/1e6).toFixed(2)`
+ * + "M"). PROVEN on the live feed: the route sized against a 6-decimal opening
+ * token carried `simulated_amount_in_usd = 999935091316.8`, and the card painted
+ * `Repay (principal + TLS fee) $1000835.03M` and `Total cost $9299.40M` — the
+ * operator's "suspicious magnitude". A `$NNNNNN.M` string is never a real
+ * magnitude, so the ladder is now closed at every decade (k → M → B → T) and
+ * beyond T the value is rendered in engineering notation rather than as a
+ * wider lie. R8: non-finite (`Infinity`/`NaN`, e.g. the inverse-sizing kernel's
+ * `required = Infinity` that JSON turns into `null`) stays an honest "—".
+ *
+ * The sign is emitted BEFORE the `$` (matching §36's `usd()` and the exchange
+ * card's `usdCost`) so one value never renders two ways on the same card
+ * (was: grid `-$0.00` vs ledger `$-0.0000`).
+ */
 function usd(value: number | null | undefined, digits = 2): string {
   if (value == null || !Number.isFinite(value)) return "—";
   const abs = Math.abs(value);
-  if (abs >= 1_000_000) return `$${(value / 1_000_000).toFixed(2)}M`;
-  if (abs >= 1_000) return `$${(value / 1_000).toFixed(1)}k`;
-  if (abs >= 1) return `$${value.toFixed(digits)}`;
-  return `$${value.toFixed(4)}`;
+  const sign = value < 0 ? "-" : "";
+  const body = (n: number, d: number) => `$${n.toFixed(d)}`;
+  // Beyond T the suffix ladder would need new letters; engineering notation is
+  // the honest rendering instead of inventing a unit.
+  if (abs >= 1e15) return `${sign}$${abs.toExponential(2).replace("e+", "e")}`;
+  if (abs >= 1e12) return `${sign}${body(abs / 1e12, 2)}T`;
+  if (abs >= 1e9) return `${sign}${body(abs / 1e9, 2)}B`;
+  if (abs >= 1e6) return `${sign}${body(abs / 1e6, 2)}M`;
+  if (abs >= 1e3) return `${sign}${body(abs / 1e3, 1)}k`;
+  if (abs >= 1) return `${sign}${body(abs, digits)}`;
+  return `${sign}${body(abs, 4)}`;
 }
 
 /** Freshness window (matches the table's 12s staleness heuristic). */
