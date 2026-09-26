@@ -313,7 +313,7 @@ pub fn is_plausible_price(prev: Option<f64>, new: f64) -> bool {
         return true;
     }
     let ratio = new / p;
-    ratio <= PRICE_MAX_TICK_RATIO && ratio >= 1.0 / PRICE_MAX_TICK_RATIO
+    (1.0 / PRICE_MAX_TICK_RATIO..=PRICE_MAX_TICK_RATIO).contains(&ratio)
 }
 
 /// Pub/sub channel notified whenever a writer persists prices into
