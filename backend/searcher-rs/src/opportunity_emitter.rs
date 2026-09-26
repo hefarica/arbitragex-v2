@@ -807,24 +807,39 @@ fn stamped_for_emit(opportunity: &Opportunity, rejection_reason: Option<&str>) -
     // CARDS-NUMBERS-01 (2026-09-26, closes #647): a rejected row carrying REAL
     // computed economics (gross/net Some) with amount_in_wei "0" is an
     // amount/economics contradiction — the economics were computed against the
-    // engines' canonical probe (dex_engine.rs probe_amount = 1e18, the same
-    // convention V3 rows already persist) while the intent decoder lost the
-    // source amount. Record the probe basis so downstream SIM-TS
-    // (forwardSimulate requires gross AND amount>0 AND a priceable token) can
-    // compute the ladder instead of degrading to "no computado". R8: the
-    // stamp fires ONLY when economics exist — rows without economics keep
-    // amount "0" verbatim (never fabricated), and the warn keeps the decoder
-    // gap observable as a data-quality signal.
+    // engines' canonical probe while the intent decoder lost the source amount.
+    // Record the probe basis so downstream SIM-TS (forwardSimulate requires gross
+    // AND amount>0 AND a priceable token) can compute the ladder instead of
+    // degrading to "no computado". R8: the stamp fires ONLY when economics exist —
+    // rows without economics keep amount "0" verbatim (never fabricated), and the
+    // warn keeps the decoder gap observable as a data-quality signal.
+    //
+    // HOPS-UNITS-01 (2026-09-26): the probe IS one native unit of the ROUTE's
+    // input token — `10^decimals(token_in)` — not the literal 1e18. Proof that the
+    // literal was wrong, on the live payload: the SIM's own arithmetic satisfies
+    // `simulated_amount_in_usd / (amount_in_wei / 10^6) == token_prices_usd.USDC`
+    // exactly, i.e. a USDC-in route was stamped 1e18, the SIM read it with USDC's
+    // 6 decimals and reported **1e12 USDC ≈ $1.0T** on the "Repay (principal +
+    // TLS fee)" row (41/41 live rows carried `binding_floor:
+    // net-per-usd-nonpositive` + that absurd magnitude). The decimals table is the
+    // same canonical one the engines' probe uses (`canonical_token_decimals_str`:
+    // USDC/USDT=6, WBTC=8, dominant ERC-20 default 18 — an unparseable/unknown
+    // token is NEVER guessed a per-token value, it takes the documented default).
     if (o.expected_profit_usd.is_some() || o.net_expected_profit_usd.is_some())
         && o.amount_in_wei == "0"
     {
+        let decimals = crate::engines::dex_engine::canonical_token_decimals_str(&o.token_in);
+        let probe = ethers::types::U256::from(10u8).pow(ethers::types::U256::from(decimals));
         tracing::warn!(
             opportunity_id = %o.id,
             gross_usd = ?o.expected_profit_usd,
             net_usd = ?o.net_expected_profit_usd,
-            "CARDS-NUMBERS-01: economics present with amount_in_wei=0 — stamping canonical probe 1e18 (decoder lost the source amount)"
+            token_in = %o.token_in,
+            decimals,
+            probe = %probe,
+            "CARDS-NUMBERS-01/HOPS-UNITS-01: economics present with amount_in_wei=0 — stamping one native unit of token_in (decoder lost the source amount)"
         );
-        o.amount_in_wei = "1000000000000000000".to_owned();
+        o.amount_in_wei = probe.to_string();
     }
     o.pipeline_latency_ms = pipeline_latency_ms_now(opportunity.detected_at);
     o
@@ -1087,6 +1102,72 @@ mod tests {
         let stamped = stamped_for_emit(&opp, Some("v3_quote_unavailable"));
         assert_eq!(stamped.amount_in_wei, "0");
         assert!(stamped.expected_profit_usd.is_none());
+    }
+
+    /// HOPS-UNITS-01 gate — the probe is ONE NATIVE UNIT of the ROUTE's input
+    /// token, not the literal 1e18.
+    ///
+    /// Production proof this was wrong: the SIM's own arithmetic satisfied
+    /// `simulated_amount_in_usd / (amount_in_wei / 10^6) == token_prices_usd.USDC`
+    /// exactly, i.e. a USDC-in route stamped 1e18 was read with USDC's 6 decimals
+    /// and reported **1e12 USDC ≈ $1.0T** on "Repay (principal + TLS fee)" (41/41
+    /// live rows carried `binding_floor: net-per-usd-nonpositive`).
+    #[test]
+    fn hops_units_probe_is_one_native_unit_of_token_in() {
+        // USDC mainnet (6 decimals) — the exact address of the live rows.
+        let mut opp = make_opp(
+            Uuid::new_v4(),
+            Some(1.5),
+            Some("non_positive_profit".into()),
+        );
+        opp.token_in = "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48".to_owned();
+        opp.amount_in_wei = "0".to_owned();
+        let stamped = stamped_for_emit(&opp, Some("non_positive_profit"));
+        assert_eq!(
+            stamped.amount_in_wei, "1000000",
+            "USDC-in route must be stamped 1e6 (6 decimals), never 1e18"
+        );
+
+        // USDT (6) — the other 6-decimal member of the canonical table.
+        let mut usdt = make_opp(Uuid::new_v4(), Some(1.5), None);
+        usdt.token_in = "0xdac17f958d2ee523a2206206994597c13d831ec7".to_owned();
+        usdt.amount_in_wei = "0".to_owned();
+        assert_eq!(
+            stamped_for_emit(&usdt, None).amount_in_wei,
+            "1000000",
+            "USDT-in route must be stamped 1e6"
+        );
+
+        // WBTC (8).
+        let mut wbtc = make_opp(Uuid::new_v4(), Some(1.5), None);
+        wbtc.token_in = "0x2260fac5e5542a773aa44fbcfedf7c193bc2c599".to_owned();
+        wbtc.amount_in_wei = "0".to_owned();
+        assert_eq!(
+            stamped_for_emit(&wbtc, None).amount_in_wei,
+            "100000000",
+            "WBTC-in route must be stamped 1e8"
+        );
+
+        // WETH (18) — unchanged from the previous behaviour.
+        let mut weth = make_opp(Uuid::new_v4(), Some(1.5), None);
+        weth.token_in = "0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2".to_owned();
+        weth.amount_in_wei = "0".to_owned();
+        assert_eq!(
+            stamped_for_emit(&weth, None).amount_in_wei,
+            "1000000000000000000",
+            "18-decimal token keeps the 1e18 probe"
+        );
+
+        // Unknown/unparseable token → the documented dominant-ERC-20 default
+        // (18), NEVER a guessed per-token value (R8).
+        let mut unknown = make_opp(Uuid::new_v4(), Some(1.5), None);
+        unknown.token_in = "0xdeadbeef".to_owned();
+        unknown.amount_in_wei = "0".to_owned();
+        assert_eq!(
+            stamped_for_emit(&unknown, None).amount_in_wei,
+            "1000000000000000000",
+            "unknown token takes the documented default, not a fabricated one"
+        );
     }
 
     /// Rows with a real non-zero amount are never touched by the stamp.
