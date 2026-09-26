@@ -559,3 +559,29 @@ tiempo real, mode-invariant (Paper/Testnet/Mainnet), alineado a rutas y config.
 <!-- HERMES_DIRECT_ACP_START -->
 Hermes local is connected to VS Code directly through ACP. Do not use or register Hermes through MCP.
 <!-- HERMES_DIRECT_ACP_END -->
+
+---
+
+# 38. POLÍTICA PERMANENTE — STACK SOBERANO DE PRECIOS/PROVEEDORES (orden del operador 2026-09-25)
+
+> PROHIBIDO proponer, planificar o presupuestar proveedores RPC/precios DE PAGO (Alchemy PAYG o
+> similares): el operador ya decidió la vía y no se vuelve a preguntar. Registro de la decisión
+> para que ningún agente vuelva a proponer costos.
+
+El stack de precios del proyecto es **soberano y gratuito**:
+1. **Binance WS** — `backend/searcher-rs/src/workers/binance_ws.rs` (book_ticker + depth5 →
+   price_bus/Redis; toggle de control-board `binance_depth5`).
+2. **Chainlink** — `backend/searcher-rs/src/workers/price_worker.rs::fetch_chainlink`
+   (`latestRoundData()` de oráculos configurados en PG; anchors en `shared-rs/src/price_bus.rs`
+   con veredicto de divergencia `price_divergence_binance_chainlink`).
+3. **CoinGecko y demás fuentes gratuitas** del stack soberano (nunca reemplazan lo on-chain).
+4. **RPC públicos gratuitos** (drpc / publicnode / 0xrpc / blockpi / llama) con breakers y
+   failover (`arbx-rpc-failover-discipline`).
+
+Reglas derivadas:
+- El quoter on-chain (QuoterV2 aggregate3) se arregla con **batching, backoff e higiene de la
+  lista RPC** (R1/R2 del incidente 2026-09-25), jamás con quota de pago.
+- Ante un cuello de proveedor, la respuesta es el **stack soberano** o datos del operador —
+  nunca una propuesta de costo ya rechazada.
+- Historial: propuesta Alchemy PAYG rechazada por el operador el 2026-09-25 ("para eso tenemos
+  Binance WS y Chainlink").

@@ -495,6 +495,13 @@ No necesitas un comando especial — solo pregunta.
    la RUTA a mainnet, no la barrera). Primacía epistémica (operador 2026-09-25): el conocimiento
    doctrinal de estas skills PREVALECE como base; la observación en tiempo real lo AJUSTA con
    evidencia y queda registrada — jamás se borra doctrina sin documentar la orden que la reemplaza.
+6. **Política de proveedores — stack soberano (orden del operador 2026-09-25, permanente)**:
+   PROHIBIDO proponer proveedores RPC/precios DE PAGO (Alchemy PAYG o similares). El stack de
+   precios es soberano y gratuito: Binance WS (`workers/binance_ws.rs` book_ticker+depth5 →
+   price_bus/Redis) + Chainlink (`workers/price_worker.rs::fetch_chainlink`, veredicto de
+   divergencia `price_divergence_binance_chainlink`) + CoinGecko/fuentes gratuitas + públicos
+   gratuitos con breakers. Cuellos de quoter se resuelven con batching/backoff/higiene de lista
+   RPC, jamás con quota de pago (precedente: propuesta Alchemy PAYG rechazada 2026-09-25).
 
 ## 12 — DOCTRINA DE VALIDACIÓN: CRIPTO/MATEMÁTICA + CICLO DE VIDA DE ESTRATEGIAS/OPS VÍA HERMES (orden del operador 2026-09-17)
 
