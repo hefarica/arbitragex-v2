@@ -127,7 +127,7 @@ fn batch_backoff() -> Duration {
 
 /// Pure gate (unit-testable).
 fn batch_backoff_active_at(now: Instant, until: Option<Instant>) -> bool {
-    until.map_or(false, |u| now < u)
+    until.is_some_and(|u| now < u)
 }
 
 fn quote_batch_size() -> usize {
