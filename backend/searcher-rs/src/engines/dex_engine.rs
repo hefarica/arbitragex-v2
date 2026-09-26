@@ -1323,7 +1323,8 @@ mod tests {
     #[test]
     fn b3_chained_cycle_kills_the_phantom_positive() {
         let e18 = U256::from(10u128).pow(U256::from(18u32));
-        let probe = e18; // one native unit in
+        // `probe` = one native unit in.
+        let probe = e18;
         // Pool A balanced (1000/1000); pool B token_out-poor by 0.1% (1000/999).
         // The imbalance must be SMALLER than the round-trip fee drag (2 × 0.3%):
         // a bigger dislocation is a REAL arb and would (correctly) profit — that
