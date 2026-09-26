@@ -983,13 +983,25 @@ impl Orchestrator {
                 strategy = candidate.label.as_str(),
                 result = match &outcome {
                     OptimizeOutcome::Sized(_) => "sized",
-                    OptimizeOutcome::Rejected(_, _) => "rejected",
+                    OptimizeOutcome::Rejected(_, _)
+                    | OptimizeOutcome::RejectedWithLedger(_, _, _) => "rejected",
                 },
                 reason = ?outcome.reason_str(),
                 gross_profit_usd = ?outcome.gross_profit_usd(),
                 net_profit_usd = ?outcome.net_profit_usd(),
                 optimal_amount_in = ?outcome.optimal_amount_in(),
             );
+
+            // PER-HOP (math-audit AUDIT-MATH-OPPS-2026-09-26): the rejection path
+            // can ALREADY carry the kernel's exact per-leg wei
+            // (OptimizeOutcome::RejectedWithLedger). Capture it before the match
+            // so the tail persists it onto the RouteMetadata exactly like the
+            // Sized path does — this is what lets a rejected card show each
+            // hop's movement instead of "not computed".
+            let rejected_ledger = match &outcome {
+                OptimizeOutcome::RejectedWithLedger(_, _, legs) => legs.clone(),
+                _ => None,
+            };
 
             let (final_candidate, net_economics, leg_ledger) = match outcome {
                 OptimizeOutcome::Sized(sized) => {
@@ -1017,7 +1029,8 @@ impl Orchestrator {
                     };
                     (c, s.net_economics, legs)
                 }
-                OptimizeOutcome::Rejected(reason, rejected_net) => {
+                OptimizeOutcome::Rejected(reason, rejected_net)
+                | OptimizeOutcome::RejectedWithLedger(reason, rejected_net, _) => {
                     // Route optimizer rejection to REJECTED_NO_PROFIT_TOTAL
                     // (not SIMULATION_FAILED_TOTAL — sizing is not simulation).
                     // The Prometheus label stays the BARE reason (a suffixed
@@ -1056,7 +1069,10 @@ impl Orchestrator {
                     // detección. La tarjeta debe mostrar los números reales para
                     // que el operador vea POR QUÉ no es viable.
                     // c.opportunity.expected_profit_usd = None;  ← REMOVIDO
-                    (c, None, None)
+                    // PER-HOP: the ledger captured above travels in the third
+                    // tuple slot exactly like the Sized path's, so the common
+                    // tail attaches it to the rejected row's RouteMetadata.
+                    (c, None, rejected_ledger)
                 }
             };
             sized_batch.push((
