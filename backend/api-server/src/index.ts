@@ -114,6 +114,8 @@ import { mountWallets } from "./routes/wallets.js";
 import { CarnotStore } from "./services/carnotStore.js";
 import { mountCarnotCycles } from "./routes/carnot-cycles.js";
 import { mountStrategyRuntimeStatus } from "./routes/strategy-runtime-status.js";
+// CHANNELS-01 (2026-09-26): fail-honest Redis Streams bus health (R8/R10).
+import { mountChannels } from "./routes/channels.js";
 import { mountReadinessExtras } from "./routes/readiness-extras.js";
 import { mountReadinessSteps } from "./routes/readiness-steps.js";
 import { mountReadinessEvidence } from "./routes/readiness-evidence.js";
@@ -563,6 +565,9 @@ mountPairs(app, { pool, redis, logger });
 mountWallets(app, { pool, logger });
 mountDefi(app, { pool, logger });
 mountStrategyRuntimeStatus(app, { pool, redis, logger });
+// CHANNELS-01 (2026-09-26): declared-stream bus health — fail-honest,
+// per-stream degrade; 503 solo si Redis entero cae (R8/R10).
+mountChannels(app, { redis, logger });
 mountReadinessExtras(app, { pool, redis, logger });
 mountReadinessSteps(app, { pool, redis, logger });
 // G-SIM-1 FASE 2: append-only readiness evidence registry. Admin-gated
