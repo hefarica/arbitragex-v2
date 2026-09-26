@@ -211,6 +211,76 @@ function laterIso(a: string | null, b: string | null): string | null {
 }
 
 /**
+ * CARDS-PRECEDENCE-01 — THE PRECEDENCE CONTRACT (operator order 2026-09-26).
+ *
+ * Two transports feed ONE card (R7):
+ *   · SNAPSHOT — `GET /api/opportunities/live` (edge → api-server LIVE_QUERY).
+ *     It is the ONLY producer of the ENRICHED shape: token metadata/validation,
+ *     chain base token, leg symbols, live PriceBus prices, and the whole
+ *     simulated_* ladder + target.
+ *   · WS PUSH — `new_opportunity` = `row_to_json(opportunities)` via PG NOTIFY.
+ *     Its exact key set is 26 raw columns and is DOCUMENTED by the producer
+ *     itself (`backend/api-server/src/websocket.ts:506-514`): it carries the
+ *     core economics but NOT the REST-only enrichments.
+ *
+ * CONTRACT: a value that WAS COMPUTED may never be replaced by a placeholder
+ * produced by a transport that never computed it. Concretely:
+ *   1. A grouped SNAPSHOT row (server aggregates present) is SSOT — verbatim.
+ *   2. A RAW row may only ADD what it actually carries. For every field the
+ *      raw transport does not carry, the previously computed value survives.
+ *   3. `None ≠ Some(0)` (R8): absence is not zero, and an absent value never
+ *      overwrites a present one.
+ *
+ * The lists below are the machine-readable form of the producer's own contract
+ * at `websocket.ts:506-514`. Adding an enriched field to the snapshot means
+ * adding it HERE, in one place — never a code branch per field.
+ */
+
+/**
+ * Fields the raw WS transport does not emit at all; their incoming mapper
+ * value is `null`/`undefined`. Preserve the previous computed value.
+ */
+const RAW_ABSENT_NULL_FIELDS: ReadonlyArray<keyof OmniOpportunity> = [
+  // REST-only token enrichment (token_in_info/token_out_info/leg_symbols/
+  // chain_base_token_symbol are named verbatim in websocket.ts:509-510).
+  "token_in_info",
+  "token_out_info",
+  "chain_base_token_symbol",
+  "leg_symbols",
+  // Live PriceBus prices, enriched per request by the LIVE_QUERY.
+  "token_prices_usd",
+  // The whole forward-sim ladder + inverse-sizing target.
+  "raw_simulated_net_profit_usd",
+  "simulated_net_profit_usd",
+  "simulated_amount_in_usd",
+  "simulated_roi_pct",
+  "simulated_cost_breakdown",
+  "simulated_target",
+  "simulated_at",
+  "simulated_notes",
+  // REST-only lifecycle derivation (websocket.ts:510).
+  "paper_status",
+];
+
+/**
+ * Fields the raw transport does not emit AND whose mapper default is an EMPTY
+ * ARRAY rather than null (`types.ts:486-491`). `[]` here is a mapper artifact,
+ * never a computed "no chains/dexes on a real route" — so it counts as absent
+ * for precedence. NOTE: `simulated_notes` is deliberately NOT in this list —
+ * for that field an empty array IS a computed "nothing to report"
+ * (OpportunityDetailTabs.tsx:615-617), so emptiness must survive as-is.
+ */
+const RAW_ABSENT_EMPTY_ARRAY_FIELDS: ReadonlyArray<keyof OmniOpportunity> = [
+  "chains_used",
+  "dexes_used",
+];
+
+/** True when a raw-transport value carries no information for this field. */
+function isAbsentForPrecedence(value: unknown): boolean {
+  return value == null || (Array.isArray(value) && value.length === 0);
+}
+
+/**
  * CARDS-DEDUP-HOPS: merge a re-detection of an EXISTING route card
  * (same routeGroupKeyOf, different row id — the WS path delivers raw
  * re-detections). The incoming economics REPLACE the card's values in place
@@ -224,10 +294,9 @@ function laterIso(a: string | null, b: string | null): string | null {
  * source of truth and overwrites any locally-rolled counters.
  *
  * NOTE (adversarial review 2026-09-20): the locally-rolled count is only
- * reconciled with the server's COUNT(*) when a snapshot actually runs. In
- * LIVE mode the snapshot fires on mount / manual refresh only (the periodic
- * poll is a degraded-mode fallback), so the local count stands in between —
- * bounded by pruneStale's TTL, never silently replaced.
+ * reconciled with the server's COUNT(*) when a snapshot actually runs. The
+ * 5 s LIVE reconcile (`useOmniOpportunities.ts:43,205-208`) does run it, so
+ * the local count is corrected every SNAPSHOT_INTERVAL_MS.
  */
 function mergeRedetection(
   prev: OmniOpportunity,
@@ -235,41 +304,38 @@ function mergeRedetection(
   hits: number,
 ): OmniOpportunity {
   if (incoming.first_seen_at != null || incoming.confirmations != null) {
-    return incoming; // grouped snapshot row — server aggregates win
+    return incoming; // grouped snapshot row — server aggregates win (rule 1)
   }
-  return {
+  const merged: OmniOpportunity = {
     ...incoming,
     first_seen_at: prev.first_seen_at ?? earlierIso(prev.detected_at, incoming.detected_at),
     last_seen_at: laterIso(prev.last_seen_at ?? prev.detected_at, incoming.detected_at),
     confirmations: (prev.confirmations ?? 0) + hits,
-    // ENRICH-PRESERVE-01 (2026-09-26, operator report): WS redetections are raw
-    // PG rows — they carry NONE of the REST-snapshot enrichment (token metadata
-    // → symbol letters/logos, leg symbols, chain base token, live PriceBus
-    // prices, and the whole SIM-TS ladder + target). Spreading the raw row over
-    // the snapshot wiped every enriched field on the first live update.
-    // Operator symptoms: token symbol letters vanish after the first refresh
-    // (icon-only chips) and "Applied Strategy Config" values go blank. Preserve
-    // prev's value whenever the incoming row lacks it. Grouped snapshot rows
-    // never reach this branch — they return verbatim above (server SSOT).
-    token_in_info: incoming.token_in_info ?? prev.token_in_info,
-    token_out_info: incoming.token_out_info ?? prev.token_out_info,
-    chain_base_token_symbol:
-      incoming.chain_base_token_symbol ?? prev.chain_base_token_symbol,
-    leg_symbols: incoming.leg_symbols ?? prev.leg_symbols,
-    token_prices_usd: incoming.token_prices_usd ?? prev.token_prices_usd ?? null,
-    raw_simulated_net_profit_usd:
-      incoming.raw_simulated_net_profit_usd ?? prev.raw_simulated_net_profit_usd,
-    simulated_net_profit_usd:
-      incoming.simulated_net_profit_usd ?? prev.simulated_net_profit_usd,
-    simulated_amount_in_usd:
-      incoming.simulated_amount_in_usd ?? prev.simulated_amount_in_usd,
-    simulated_roi_pct: incoming.simulated_roi_pct ?? prev.simulated_roi_pct,
-    simulated_cost_breakdown:
-      incoming.simulated_cost_breakdown ?? prev.simulated_cost_breakdown,
-    simulated_target: incoming.simulated_target ?? prev.simulated_target,
-    simulated_at: incoming.simulated_at ?? prev.simulated_at,
-    simulated_notes: incoming.simulated_notes ?? prev.simulated_notes,
   };
+  // ENRICH-PRESERVE-01 → CARDS-PRECEDENCE-01 (2026-09-26, operator report):
+  // WS redetections are raw PG rows — they carry NONE of the REST-snapshot
+  // enrichment. Spreading the raw row over the snapshot wiped every enriched
+  // field on the first live update (operator symptom: token symbol letters
+  // vanish after the first refresh, "Applied Strategy Config" goes blank).
+  // The earlier fix hardcoded a PARTIAL list and missed `paper_status`,
+  // `chains_used` and `dexes_used`, which the producer's own contract names as
+  // WS-absent (websocket.ts:510) — PROVEN on live data (route group
+  // 1||dex_arb|…|PancakeSwap V3|PancakeSwap V3):
+  //   paper_status "paper_rejected" → null · chains_used [1] → [] ·
+  //   dexes_used ["pancakeswap v3"] → [].
+  // Now driven by the contract lists above: one place, no per-field branch.
+  const mutable = merged as unknown as Record<string, unknown>;
+  for (const field of RAW_ABSENT_NULL_FIELDS) {
+    if (incoming[field] == null) {
+      mutable[field as string] = prev[field] ?? null;
+    }
+  }
+  for (const field of RAW_ABSENT_EMPTY_ARRAY_FIELDS) {
+    if (isAbsentForPrecedence(incoming[field])) {
+      mutable[field as string] = isAbsentForPrecedence(prev[field]) ? incoming[field] : prev[field];
+    }
+  }
+  return merged;
 }
 
 // =============================================================================

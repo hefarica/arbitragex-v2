@@ -860,9 +860,25 @@ export function mountOpportunitiesLive(
           const key = tokenCacheKey(r.chain_id, a);
           if (legSeen.has(key)) continue;
           legSeen.add(key);
-          // Pair tokens are already enriched via the LEFT JOIN above.
-          if (a.toLowerCase() === r.token_in.toLowerCase()) continue;
-          if (a.toLowerCase() === r.token_out.toLowerCase()) continue;
+          // LEGSYM-01 (2026-09-26): the endpoint tokens are NOT pre-seeded by
+          // the LEFT JOIN — that join only fills `r.token_in_symbol` /
+          // `r.token_out_symbol`, and rule (a) below never ran for rows whose
+          // endpoints repeat. Skipping them unconditionally left the map EMPTY
+          // for every 2-leg closed cycle (A→B→A), which is 100% of the live
+          // feed, so `any` stayed false and `leg_symbols` was emitted as `null`
+          // on 41/41 items (PROVEN against GET /api/opportunities/live).
+          // Seed them from the enrichment the row already carries — a real
+          // resolved symbol, never a fabricated one (R8: absent stays absent).
+          if (a.toLowerCase() === r.token_in.toLowerCase()) {
+            const s = r.token_in_symbol;
+            if (s) legSymbols.set(key, s);
+            continue;
+          }
+          if (a.toLowerCase() === r.token_out.toLowerCase()) {
+            const s = r.token_out_symbol;
+            if (s) legSymbols.set(key, s);
+            continue;
+          }
           legMissing.push({ chain_id: r.chain_id, address: a });
         }
       }

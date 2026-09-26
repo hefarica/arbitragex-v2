@@ -228,6 +228,59 @@ describe("opportunity evidence provenance — constructed unit inputs, not produ
       expect(response.body.items[0].dexes_used).toEqual(adapters);
     });
   }
+  // LEGSYM-01 (2026-09-26): `leg_symbols` was emitted as `null` on 41/41 items
+  // of the live feed. Root cause proven against production: the hydrator skipped
+  // BOTH endpoint tokens (they were assumed covered by the LEFT JOIN, which in
+  // fact only fills `token_in_symbol`/`token_out_symbol`), and every live route
+  // is a 2-leg CLOSED cycle A→B→A whose `token_addresses` contains nothing but
+  // those two endpoints — so `legMissing` stayed empty, the lookup map stayed
+  // empty, and `any` stayed false. This test pins the live shape.
+  it("LEGSYM-01: a 2-hop closed cycle (A→B→A) emits leg_symbols for BOTH endpoints", async () => {
+    const A = "0x0000000000000000000000000000000000000001"; // fixture token_in  (WETH)
+    const B = "0x0000000000000000000000000000000000000002"; // fixture token_out (USDC)
+    const topology = {
+      token_addresses: [A, B, A],
+      pool_addresses: [
+        "0x00000000000000000000000000000000000000c1",
+        "0x00000000000000000000000000000000000000c2",
+      ],
+      dex_adapters: ["uniswap-v2", "sushiswap"],
+    };
+    const app = await buildApp(fakePool({ rows: [fixtureRow({ route_metadata: topology })] }));
+    const response = await request(app).get("/api/v1/opportunities/live");
+    expect(response.status).toBe(200);
+    // Real resolved symbols from the row's own enrichment — never fabricated.
+    expect(response.body.items[0].leg_symbols).toEqual({ [A]: "WETH", [B]: "USDC" });
+  });
+
+  it("LEGSYM-01 (R8): an unresolved endpoint stays ABSENT from leg_symbols — never a guess", async () => {
+    const A = "0x0000000000000000000000000000000000000001";
+    const B = "0x0000000000000000000000000000000000000002";
+    const topology = {
+      token_addresses: [A, B, A],
+      pool_addresses: [
+        "0x00000000000000000000000000000000000000c1",
+        "0x00000000000000000000000000000000000000c2",
+      ],
+      dex_adapters: ["uniswap-v2", "sushiswap"],
+    };
+    const app = await buildApp(
+      fakePool({
+        rows: [
+          fixtureRow({
+            route_metadata: topology,
+            // The endpoint join missed and the on-demand resolver found nothing.
+            token_in_symbol: null,
+            token_out_symbol: null,
+          }),
+        ],
+      }),
+    );
+    const response = await request(app).get("/api/v1/opportunities/live");
+    expect(response.status).toBe(200);
+    expect(response.body.items[0].leg_symbols).toBeNull();
+  });
+
   for (const status of ["rejected", "failed"]) {
     it(`${status} without a reason does not become paper_viable`, async () => {
       const app = await buildApp(fakePool({ rows: [fixtureRow({status, rejection_reason: null})] }));

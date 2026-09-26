@@ -41,11 +41,37 @@ import type { OmniOpportunity } from "@/lib/store/types";
 
 const DASH = "—";
 export const NOT_EMITTED = "no emitido";
+/**
+ * @deprecated CARDS-QUIET-01 (2026-09-26, operator order): the loud
+ * `"no computado"` string is no longer rendered. Operator: "I am not interested
+ * in 'no computado'; what I need is a value — the CORRECT value." A cell with no
+ * computed value renders the quiet `DASH` (the honest empty state, R8) and the
+ * machine reason travels in the cell `title` so nothing is hidden, only not
+ * shouted. Kept exported for the audit trail / any external reader.
+ */
 export const NOT_COMPUTED = "no computado";
 
+/**
+ * Exact USD for the wire-grade summary cells (`$10.50`, `-$1.50`).
+ *
+ * CARDS-MAGNITUDE-01 (2026-09-26): below $1M the digits stay EXACT — this grid
+ * is the wire-grade view and its pinned tests depend on `$4500.00`. Above $1M
+ * the value collapses onto the T/B/M ladder instead of printing an unbounded
+ * mantissa: PROVEN on the live feed, a route sized against a 6-decimal opening
+ * token carried `simulated_amount_in_usd = 999935091316.8`, and the `in` cell
+ * painted the 12-digit blob `$999935091316.80` — the operator's "suspicious
+ * magnitude". A figure nobody can read is not a value displayed.
+ * R8: non-finite never renders a number.
+ */
 function usd(v: number, digits = 2): string {
-  const s = v.toFixed(digits);
-  return `${v < 0 ? "-" : ""}$${v < 0 ? s.slice(1) : s}`;
+  if (!Number.isFinite(v)) return DASH;
+  const abs = Math.abs(v);
+  const sign = v < 0 ? "-" : "";
+  if (abs >= 1e15) return `${sign}$${abs.toExponential(2).replace("e+", "e")}`;
+  if (abs >= 1e12) return `${sign}$${(abs / 1e12).toFixed(2)}T`;
+  if (abs >= 1e9) return `${sign}$${(abs / 1e9).toFixed(2)}B`;
+  if (abs >= 1e6) return `${sign}$${(abs / 1e6).toFixed(2)}M`;
+  return `${sign}$${abs.toFixed(digits)}`;
 }
 
 function summaryCells(opp: OmniOpportunity): Array<{
@@ -54,9 +80,25 @@ function summaryCells(opp: OmniOpportunity): Array<{
   title: string;
 }> {
   const bps = opp.roi_pct != null ? (opp.roi_pct * 100).toFixed(0) : null;
-  // WO-CARDS-COMPLETE-01: a null economic value on a row that carries a
-  // rejection_reason is "no computado" with the R8 reason in the title —
-  // the bare dash stays only when there is no reason to state.
+  // CARDS-QUIET-01 (2026-09-26, operator order): a null economic value renders
+  // the QUIET empty state (`DASH`), never a loud "no computado" wall.
+  //
+  // Precedence rule: a COMPUTED value always wins the cell; when there is no
+  // computed value the cell goes quiet — a placeholder must never compete with
+  // (or stand in for) a number. This is what the operator reported: cards
+  // showing `no computado` across RUTA/STRATEGY/DETECTOR/HOPS/SIM/LATENCIA next
+  // to real figures, i.e. a placeholder wall drowning the values. It was loud
+  // by construction: the old branch fired on EVERY null economic cell of ANY
+  // row carrying a rejection_reason — and on the live feed that is 41/41 rows
+  // (36 of them with 6 such cells), because a rejected row has null economics
+  // by definition.
+  //
+  // R8/RULE 00 are preserved, not weakened: absence stays absence (never 0,
+  // never a fabricated figure), and the machine reason is still surfaced — it
+  // moves from the cell body to the `title` tooltip, so the information is one
+  // hover away instead of occupying the value slot. `rejection_reason` itself
+  // is still rendered verbatim by the card's rejection banner and by the
+  // detail view's "Rejection Reason" row.
   const cell = (
     label: string,
     v: string | null,
@@ -64,9 +106,14 @@ function summaryCells(opp: OmniOpportunity): Array<{
   ): { label: string; value: string; title: string } =>
     v != null
       ? { label, value: v, title }
-      : opp.rejection_reason != null
-        ? { label, value: NOT_COMPUTED, title: `no computado: ${opp.rejection_reason} (R8)` }
-        : { label, value: DASH, title };
+      : {
+          label,
+          value: DASH,
+          title:
+            opp.rejection_reason != null
+              ? `${title} · no computado: ${opp.rejection_reason} (R8)`
+              : title,
+        };
   return [
     {
       label: "ruta",
@@ -82,8 +129,10 @@ function summaryCells(opp: OmniOpportunity): Array<{
           : "strategy_kind del wire",
     },
     {
+      // CARDS-QUIET-01: same precedence rule as `cell` — a computed detector_id
+      // wins; absent goes QUIET (the "no emitido" marker moves to the title).
       label: "detector",
-      value: opp.detector_id ?? NOT_EMITTED,
+      value: opp.detector_id ?? DASH,
       title:
         opp.detector_id == null
           ? "detector_id ausente en el payload — no emitido (nivel-(b) resuelto, R8)"
@@ -135,8 +184,9 @@ function summaryCells(opp: OmniOpportunity): Array<{
       "forward-sim net como VALOR — el wire no persiste veredicto PASS/FAIL de simulación (§79); PASS/FAIL solo vive en el target verdict",
     ),
     {
+      // CARDS-QUIET-01: computed latency wins; absent goes QUIET.
       label: "latencia",
-      value: opp.pipeline_latency_ms != null ? `${opp.pipeline_latency_ms}ms` : NOT_EMITTED,
+      value: opp.pipeline_latency_ms != null ? `${opp.pipeline_latency_ms}ms` : DASH,
       title:
         opp.pipeline_latency_ms == null
           ? "pipeline_latency_ms ausente en el payload — no emitido (nivel-(b) resuelto, R8)"
