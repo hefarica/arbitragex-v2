@@ -994,23 +994,36 @@ export function mountOpportunitiesLive(
       // Fail-honest: unknown symbol → absent from the per-row map (R8: never a
       // fabricated price). One HGETALL per distinct chain per request.
       const priceMaps = new Map<number, Map<string, number>>();
-      for (const cid of new Set(q.rows.map((r) => r.chain_id))) {
-        try {
-          const raw = (await redis?.hgetall(`arbx:token_prices:${cid}`)) as unknown as
-            | Record<string, string>
-            | undefined;
-          if (raw && Object.keys(raw).length > 0) {
-            const m = new Map<string, number>();
-            for (const [sym, v] of Object.entries(raw)) {
-              const n = Number(v);
-              if (Number.isFinite(n) && n > 0) m.set(sym.toUpperCase(), n);
+      await Promise.all(
+        [...new Set(q.rows.map((r) => r.chain_id))].map(async (cid) => {
+          try {
+            const raw = (await redis?.hgetall(`arbx:token_prices:${cid}`)) as unknown as
+              | Record<string, string>
+              | undefined;
+            if (raw && Object.keys(raw).length > 0) {
+              const m = new Map<string, number>();
+              for (const [sym, v] of Object.entries(raw)) {
+                const n = Number(v);
+                // trim() guards a padded producer key (" WETH") from silently
+                // missing every lookup (adversarial-review robustness note).
+                if (Number.isFinite(n) && n > 0) m.set(sym.trim().toUpperCase(), n);
+              }
+              if (m.size > 0) priceMaps.set(cid, m);
             }
-            if (m.size > 0) priceMaps.set(cid, m);
+          } catch (e) {
+            // fail-honest: this request ships without prices — but NEVER
+            // silently: a persistent Redis failure must leave a trace.
+            log.warn(
+              {
+                event: "opportunities.live.price_read_failed",
+                chain_id: cid,
+                err: (e as Error).message,
+              },
+              "PriceBus read failed — cards ship without live prices this request",
+            );
           }
-        } catch {
-          // fail-honest: this request ships without prices
-        }
-      }
+        }),
+      );
 
       res.status(200).json({
         count:           q.rows.length,
@@ -1040,7 +1053,7 @@ export function mountOpportunitiesLive(
                              info: { symbol?: string | null; registry_symbol?: string | null } | null | undefined,
                            ): void => {
                              const s = info?.symbol ?? info?.registry_symbol;
-                             if (s) syms.add(s.toUpperCase());
+                             if (s) syms.add(s.trim().toUpperCase());
                            };
                            push(item.token_in_info);
                            push(item.token_out_info);

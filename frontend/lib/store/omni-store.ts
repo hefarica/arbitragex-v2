@@ -432,12 +432,14 @@ function storeFactory(
             // keep the card's rolled vigency aggregates when the incoming row
             // doesn't carry them (single WS rows never do, R8).
             const next = state.opportunities.slice();
-            next[idx] = {
-              ...opp,
-              first_seen_at: opp.first_seen_at ?? prev.first_seen_at,
-              last_seen_at: opp.last_seen_at ?? prev.last_seen_at,
-              confirmations: opp.confirmations ?? prev.confirmations,
-            };
+            // CARDS-DEDUP-HOPS: a same-id row UPDATE is not a new detection —
+            // keep the card's rolled vigency aggregates when the incoming row
+            // doesn't carry them (single WS rows never do, R8).
+            // ENRICH-PRESERVE-01 (adversarial-review fix): route it through the
+            // SAME preserve path as re-detections — a same-id raw WS update must
+            // not wipe token metadata, live prices or the SIM ladder either
+            // (grouped snapshot rows still win verbatim inside mergeRedetection).
+            next[idx] = mergeRedetection(prev, opp, 0);
             return {
               opportunities: next,
               lastUpdate: new Date().toISOString(),

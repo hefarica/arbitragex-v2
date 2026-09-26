@@ -445,6 +445,15 @@ export function mapToOmniOpportunity(raw: Record<string, unknown>): OmniOpportun
     // fallback (R8).
     leg_symbols: (raw.leg_symbols as Record<string, string> | null) ?? null,
 
+    // CARDS-PRICES-01 (audit fix, adversarial review 2026-09-26): the live
+    // PriceBus per-symbol prices were declared on the interface but NOT mapped
+    // here — the sidecar subagent caught the silent drop (same class as
+    // HOPS-SYM-02 above: `?`-optional interface field + no mapper line = the
+    // card price render was dead code in production). Pass through verbatim:
+    // absent/null stays null and the chip renders nothing (R8: never a guess).
+    token_prices_usd:
+      (raw.token_prices_usd as Record<string, number> | null) ?? null,
+
     // Profit Metrics
     // PIPELINE-INTEGRITY-02: raw_* carries the exact wire string; the number
     // is a display approximation only. Both stay null together (R8).
