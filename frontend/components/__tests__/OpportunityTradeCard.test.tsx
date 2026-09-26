@@ -490,3 +490,202 @@ describe("OpportunityTradeCard — HOPS-LEDGER-04 per-hop amounts", () => {
     expect(html).toContain("ciclo 7 T1");
   });
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// CARDS-NOTIONAL-01 (2026-09-26) — SSR gate on the operator's live
+// contradiction. Live DOM evidence (production build `89d68ec8`,
+// https://arbx.ape-tv.net/opportunities):
+//
+//   4b79551c PEPE | IN $0.00   | GROSS $1.47M    | NET -$0.00 | BPS ~1513332276940974
+//                 | Repay $0.0000 | Total cost $73.4k
+//   ed368994 DAI  | IN $1.00   | GROSS $822215.98 | BPS ~3700454443
+//                 | Repay $1.00 | Total cost $41.1k
+//   one frame:    | Flash loan in (TLS) · WETH $0.0000 | Gross out (AMM spread)
+//                 | $1.45M | Relay fee $72.4k | Total cost $72.4k | Net yield -$0.0000
+//
+// Three doctrine breaks on ONE ladder: a cost ≫ its principal; `net != gross −
+// total_cost` by six orders of magnitude; a seven-figure gross standing on a
+// sub-dollar principal. The fixture below is that row: the recorded notional is
+// the DETECTION PROBE (`amount_in_wei = 1e6` ⇒ 1 USDC ⇒ $1.00, stamped at the
+// emit boundary), the gross is the DEX engine's fast-filter figure at the
+// SEARCHER's own probe, and the net is the sizing KERNEL's at the kernel's own
+// clamped size. Three producers, up to three notionals, one card.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Parse a rendered static-markup card into its ladder cells (`LedgerRow` →
+ * label/value pairs), so the invariants are asserted on the NUMBERS the operator
+ * actually reads rather than on substring luck.
+ */
+function ledgerCells(html: string): Array<{ label: string; value: string }> {
+  const out: Array<{ label: string; value: string }> = [];
+  const re =
+    /class="min-w-0 flex-1 truncate">([^<]*)<\/span>(?:<span class="min-w-0 max-w-\[45%\][^>]*>\([^<]*\)<\/span>)?<\/span><span[^>]*class="shrink-0 whitespace-nowrap tabular-nums[^"]*"[^>]*>([^<]*)<\/span>/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(html)) !== null) {
+    out.push({ label: m[1]!, value: m[2]! });
+  }
+  return out;
+}
+
+/** `$12.5k` / `-$0.0000` / `—` → USD, or null for the honest dash. */
+function cellUsd(value: string | null): number | null {
+  if (value == null) return null;
+  const t = value.trim();
+  const mm = /^(-?)\$([\d.]+)([kMBT])?$/.exec(t);
+  if (!mm) return null;
+  const body = Number(mm[2]);
+  if (!Number.isFinite(body)) return null;
+  const suffix = mm[3] ?? "";
+  const mult =
+    suffix === "k" ? 1e3 : suffix === "M" ? 1e6 : suffix === "B" ? 1e9 : suffix === "T" ? 1e12 : 1;
+  return (mm[1] === "-" ? -1 : 1) * body * mult;
+}
+
+const cell = (cells: Array<{ label: string; value: string }>, label: string) =>
+  cells.find((c) => c.label === label)?.value ?? null;
+
+/** The operator's row: a $1.00 probe notional beside the searcher's gross. */
+const probeVsKernelWire = (over: Record<string, unknown> = {}) =>
+  wire({
+    token_in: A,
+    token_out: B,
+    token_in_info: { symbol: "USDC", decimals: 6, logo_url: null, resolved_via: "onchain_full" },
+    amount_in_wei: "1000000", // 1 USDC = $1.00
+    expected_profit_usd: 822215.98, // searcher fast-filter gross (its own probe)
+    net_expected_profit_usd: -0.000011, // sizing kernel net (the kernel's size)
+    roi_pct: 37004544.43,
+    simulated_amount_in_usd: 1.0,
+    simulated_gross_usd: 822215.98,
+    simulated_costs_total_usd: 411107.985,
+    simulated_net_profit_usd: 411107.995,
+    simulated_roi_pct: 41110799.5,
+    simulated_cost_breakdown: {
+      gas_usd: 0.673172225,
+      lp_fees_usd: 0.003,
+      slippage_usd: 0.5,
+      failure_buffer_usd: 0.0004,
+      copied_buffer_usd: 369996.493527375,
+      capital_cost_usd: 0,
+      ops_overhead_usd: 0.01,
+      flashloan_fee_usd: 0.0009,
+      relay_fee_usd: 41110.799,
+    },
+    ...over,
+  });
+
+describe("OpportunityTradeCard — CARDS-NOTIONAL-01 SSR gate (one ladder, one notional)", () => {
+  it("no cost on a sub-dollar principal, no gross on a zero principal, net == gross − total cost", () => {
+    const html = card(mapToOmniOpportunity(probeVsKernelWire()));
+    const cells = ledgerCells(html);
+
+    const principal = cellUsd(cell(cells, "Flash loan in (TLS)"));
+    const gross = cellUsd(cell(cells, "Gross out (AMM spread)"));
+    const totalCost = cellUsd(cell(cells, "Total cost"));
+    const net = cellUsd(cells.find((c) => c.label.startsWith("Net yield"))?.value ?? null);
+    const repay = cell(cells, "Repay (principal + TLS fee)");
+
+    // (1) NO PRINCIPAL is painted for a basis the wire publishes no notional
+    //     for — `IN $0.00` / `IN $1.00` beside a $822k gross IS the defect.
+    //     And `Repay` cannot borrow another basis' number to fill the gap.
+    expect(principal).toBeNull();
+    expect(repay).toBe("—");
+
+    // (2) The ladder is arithmetically CLOSED: net == gross − total cost.
+    //     This is doctrine break #2 — `Total cost $72.4k` beside
+    //     `Net yield -$0.0000`, off by $72.4k on the live row.
+    expect(gross).not.toBeNull();
+    expect(net).not.toBeNull();
+    expect(totalCost).not.toBeNull();
+    expect(Math.abs(net! - (gross! - totalCost!))).toBeLessThanOrEqual(0.01);
+
+    // (3) Cost is non-negative and payable; a painted principal must be able to
+    //     carry the gross beside it (the searcher's own 5× gate). Asserted even
+    //     though the principal is absent here, so the pair cannot come back
+    //     silently in a future change.
+    expect(totalCost!).toBeGreaterThanOrEqual(0);
+    if (principal != null) {
+      expect(totalCost!).toBeLessThanOrEqual(principal + gross!);
+      expect(gross!).toBeLessThanOrEqual(principal * 5);
+    }
+
+    // The row's real numbers are still shown — quiet is not blindness (R8).
+    expect(html).toContain("$822.2k"); // gross, and the derived total cost
+    expect(html).toContain("-$0.0000"); // the kernel's net, verbatim
+    // …and the machine reason travels with every suppressed cell.
+    expect(html).toContain("CARDS-NOTIONAL-01");
+    expect(html).toContain('data-testid="ledger-basis-note"');
+  });
+
+  it("the omitted cost component is back: the 9-row ladder includes the copied buffer", () => {
+    const html = card(mapToOmniOpportunity(probeVsKernelWire()));
+    for (const label of [
+      "Gas",
+      "LP fees",
+      "Decoherence (slippage)",
+      "TLS fee (flash)",
+      "Relay fee",
+      "Capital cost",
+      "Failure buffer",
+      "Ops overhead",
+      "Copied buffer",
+    ]) {
+      expect(html).toContain(`>${label}</span>`);
+    }
+  });
+
+  it("a CLOSED ladder at the row's own notional renders the full capital path", () => {
+    // The B1 shape: `amount_in_wei` IS the size the economics were computed at
+    // (the orchestrator's Sized arm writes the kernel's `optimal_amount_in`
+    // there), so principal, gross and every cost share ONE basis.
+    const html = card(
+      mapToOmniOpportunity(
+        probeVsKernelWire({
+          amount_in_wei: "1000000000000000000000",
+          expected_profit_usd: 25.22783426,
+          net_expected_profit_usd: 1.369353192,
+          simulated_amount_in_usd: 1000,
+          simulated_gross_usd: 25.22783426,
+          simulated_costs_total_usd: 23.858481068,
+          simulated_net_profit_usd: 1.369353192,
+          simulated_cost_breakdown: {
+            gas_usd: 0.673172225,
+            lp_fees_usd: 3,
+            slippage_usd: 5,
+            failure_buffer_usd: 0.4,
+            copied_buffer_usd: 12.61391713,
+            capital_cost_usd: 0,
+            ops_overhead_usd: 0.01,
+            flashloan_fee_usd: 0.9,
+            relay_fee_usd: 1.261391713,
+          },
+        }),
+      ),
+    );
+    const cells = ledgerCells(html);
+    const principal = cellUsd(cell(cells, "Flash loan in (TLS)"));
+    const gross = cellUsd(cell(cells, "Gross out (AMM spread)"));
+    const totalCost = cellUsd(cell(cells, "Total cost"));
+    const net = cellUsd(cells.find((c) => c.label.startsWith("Net yield"))?.value ?? null);
+
+    expect(principal).toBe(1000);
+    expect(gross).toBeCloseTo(25.23, 1);
+    expect(net).toBeCloseTo(1.37, 1);
+    // Closed inside one notional, and payable out of principal + gross.
+    expect(Math.abs(net! - (gross! - totalCost!))).toBeLessThanOrEqual(0.01);
+    expect(totalCost!).toBeLessThanOrEqual(principal! + gross!);
+    expect(gross!).toBeLessThanOrEqual(principal! * 5);
+    // The ladder says WHICH producer it is, and the largest component is visible.
+    expect(html).toContain("(SIM)");
+    expect(html).toContain("$12.6");
+  });
+
+  it("R8: a row with NO economics paints dashes with the reason — never a 0", () => {
+    const html = card(mapToOmniOpportunity(wire({ token_in: A, token_out: B })));
+    const cells = ledgerCells(html);
+    expect(cellUsd(cell(cells, "Flash loan in (TLS)"))).toBeNull();
+    expect(cellUsd(cell(cells, "Total cost"))).toBeNull();
+    expect(cells.find((c) => c.label.startsWith("Net yield"))?.value).toBe("—");
+    expect(html).toContain("CARDS-NOTIONAL-01");
+  });
+});

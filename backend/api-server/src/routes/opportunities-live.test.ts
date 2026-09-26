@@ -207,7 +207,10 @@ describe("opportunity evidence provenance — constructed unit inputs, not produ
     expect(row.net_expected_profit_usd).toBe(7.240022);
     expect(row.paper_status).toBe("paper_rejected");
     for (const key of ["simulated_net_profit_usd", "simulated_amount_in_usd", "simulated_roi_pct",
-      "simulated_cost_breakdown", "simulated_at", "simulated_target"]) expect(row[key], key).toBeNull();
+      "simulated_cost_breakdown", "simulated_at", "simulated_target",
+      // CARDS-NOTIONAL-01: the ladder's own gross/Σcosts are null too when no
+      // forward ran — never a 0 the card could pair with a canonical figure.
+      "simulated_gross_usd", "simulated_costs_total_usd"]) expect(row[key], key).toBeNull();
   });
   for (const hops of [2, 3, 4, 5]) {
     it(`${hops} hops preserve every pool/token and ALL intermediate DEX names`, async () => {
@@ -302,6 +305,35 @@ describe("opportunity evidence provenance — constructed unit inputs, not produ
     expect(result.simulated_cost_breakdown).toEqual(cost);
     expect(result.simulated_at).toBe(sim.simulated_at);
     expect(result.net_expected_profit_usd).toBe(0.5);
+  });
+
+  // CARDS-NOTIONAL-01 (2026-09-26): the ladder's OWN gross and Σcosts must ride
+  // the wire next to its net. Without them every consumer had to pair the SIM
+  // cost breakdown with `expected_profit_usd` / `net_expected_profit_usd` —
+  // canonical figures the SEARCHER produced at the searcher's own size — which
+  // is how the card printed `IN $0.00` beside `GROSS $1.47M` and
+  // `Total cost $73.4k` beside `Net yield -$0.0000`.
+  it("CARDS-NOTIONAL-01: publishes the ladder's own gross and Σcosts, closed against its net", async () => {
+    const { __forTesting } = await import("./opportunities-live.js");
+    const cost = {gas_usd: 11.8, lp_fees_usd: 3, slippage_usd: 5, failure_buffer_usd: 0.4,
+      copied_buffer_usd: 12.61391713, capital_cost_usd: 0, ops_overhead_usd: 0.01,
+      flashloan_fee_usd: 0.9, relay_fee_usd: 1.261391713};
+    const total = 34.985308843;
+    const sim = {forward:{gross_usd: 25.22783426, net_usd: 25.22783426 - total,
+        costs_total_usd: total, amount_in_usd: 1000, roi_pct: -0.97,
+        cost_breakdown: cost, notes: ["basis=amount_in_wei"]},
+      inverse:null, simulated_at:"2026-09-26T00:00:00Z"};
+    const result = __forTesting.rowToOpportunity(
+      fixtureRow() as never, sim as never, null, new Map(), new Map(),
+    );
+    expect(result.simulated_gross_usd).toBe(25.22783426);
+    expect(result.simulated_costs_total_usd).toBe(total);
+    // Closure inside ONE computation, on the wire itself.
+    expect(
+      Math.abs(result.simulated_net_profit_usd - (result.simulated_gross_usd - result.simulated_costs_total_usd)),
+    ).toBeLessThanOrEqual(0.005);
+    // The basis marker travels with the ladder.
+    expect(result.simulated_notes).toContain("basis=amount_in_wei");
   });
 });
 
