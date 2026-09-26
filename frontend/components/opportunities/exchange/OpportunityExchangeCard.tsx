@@ -254,7 +254,10 @@ function OpportunityExchangeCardImpl({
       ? (flashFee / capitalInUsd) * 100
       : null;
 
-  // Gross out (AMM): capital + gross when both exist, else "—".
+  // Total AMM output = capital + gross profit when both exist, else "—".
+  // B4 (math-audit 2026-09-26): this is NOT the gain — it is rendered under the
+  // explicit "Salida total (AMM)" label; the results row above it carries the
+  // real Gross profit (grossUsd).
   const grossOutUsd =
     capitalInUsd != null && grossUsd != null ? capitalInUsd + grossUsd : null;
 
@@ -435,9 +438,26 @@ function OpportunityExchangeCardImpl({
       <div style={{ height: 6, borderTop: "1px solid rgba(74,222,128,0.15)" }} />
 
       {/* ── results ── */}
+      {/* B4 FIX (math-audit AUDIT-MATH-OPPS-2026-09-26): this row showed
+          capital + gross — the TOTAL AMM OUTPUT — under a results label the
+          operator read as a gain ("Gross out $7.24M" for a ~$2.7k probe). The
+          results section now shows the GAIN; the total output keeps its own
+          explicitly-labelled row, so nothing is hidden and nothing is misread.
+          R8: null → "—". */}
       <div className="kv">
-        <span>Gross out (AMM)</span>
-        <span>{usdAmount(grossOutUsd)}</span>
+        <span>Ganancia bruta (AMM)</span>
+        <span
+          className={grossUsd == null ? "v" : grossUsd > 0 ? "num" : grossUsd < 0 ? "neg" : "v"}
+          title="expected_profit_usd del searcher — ganancia bruta del ciclo (pre-costos)"
+        >
+          {usdAmount(grossUsd)}
+        </span>
+      </div>
+      <div className="kv">
+        <span>Salida total (AMM)</span>
+        <span title="capital de entrada + ganancia bruta — lo que devuelve el tramo AMM">
+          {usdAmount(grossOutUsd)}
+        </span>
       </div>
       <div className="kv">
         <span className="lbl-net">Net Yield</span>
