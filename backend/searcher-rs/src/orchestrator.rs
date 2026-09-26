@@ -983,13 +983,25 @@ impl Orchestrator {
                 strategy = candidate.label.as_str(),
                 result = match &outcome {
                     OptimizeOutcome::Sized(_) => "sized",
-                    OptimizeOutcome::Rejected(_, _) => "rejected",
+                    OptimizeOutcome::Rejected(_, _)
+                    | OptimizeOutcome::RejectedWithLedger(_, _, _) => "rejected",
                 },
                 reason = ?outcome.reason_str(),
                 gross_profit_usd = ?outcome.gross_profit_usd(),
                 net_profit_usd = ?outcome.net_profit_usd(),
                 optimal_amount_in = ?outcome.optimal_amount_in(),
             );
+
+            // PER-HOP (math-audit AUDIT-MATH-OPPS-2026-09-26): the rejection path
+            // can ALREADY carry the kernel's exact per-leg wei
+            // (OptimizeOutcome::RejectedWithLedger). Capture it before the match
+            // so the tail persists it onto the RouteMetadata exactly like the
+            // Sized path does — this is what lets a rejected card show each
+            // hop's movement instead of "not computed".
+            let rejected_ledger = match &outcome {
+                OptimizeOutcome::RejectedWithLedger(_, _, legs) => legs.clone(),
+                _ => None,
+            };
 
             let (final_candidate, net_economics, leg_ledger) = match outcome {
                 OptimizeOutcome::Sized(sized) => {
@@ -1024,7 +1036,8 @@ impl Orchestrator {
                     };
                     (c, s.net_economics, legs)
                 }
-                OptimizeOutcome::Rejected(reason, rejected_net) => {
+                OptimizeOutcome::Rejected(reason, rejected_net)
+                | OptimizeOutcome::RejectedWithLedger(reason, rejected_net, _) => {
                     // Route optimizer rejection to REJECTED_NO_PROFIT_TOTAL
                     // (not SIMULATION_FAILED_TOTAL — sizing is not simulation).
                     // The Prometheus label stays the BARE reason (a suffixed
@@ -1063,7 +1076,10 @@ impl Orchestrator {
                     // detección. La tarjeta debe mostrar los números reales para
                     // que el operador vea POR QUÉ no es viable.
                     // c.opportunity.expected_profit_usd = None;  ← REMOVIDO
-                    (c, None, None)
+                    // PER-HOP: the ledger captured above travels in the third
+                    // tuple slot exactly like the Sized path's, so the common
+                    // tail attaches it to the rejected row's RouteMetadata.
+                    (c, None, rejected_ledger)
                 }
             };
             sized_batch.push((
@@ -1186,6 +1202,25 @@ impl Orchestrator {
                 chosen.pool_addresses = c.pool_addresses.clone();
                 chosen.dex_adapters = c.dex_adapters.clone();
             }
+            // PER-HOP (math-audit AUDIT-MATH-OPPS-2026-09-26): populate the
+            // decimals map from the route's OWN token path — the same canonical
+            // immutable-protocol table the engine's USD conversion uses (unknown
+            // → 18, the ERC-20 default). Without it the card can only ever show
+            // raw per-hop wei, never USD: `route_metadata.decimals.map` was
+            // empty in 32/32 production rows.
+            {
+                let mut m = std::collections::HashMap::new();
+                for addr in &chosen.token_addresses {
+                    let lc = addr.to_lowercase();
+                    m.insert(
+                        lc,
+                        crate::engines::dex_engine::canonical_token_decimals_str(addr),
+                    );
+                }
+                if !m.is_empty() {
+                    chosen.decimals = shared_rs::candidates::DecimalsMap { map: m };
+                }
+            }
             // HOPS-LEDGER-04: attach the kernel's per-leg ledger AFTER the
             // source merge — attach_leg_ledger is all-or-nothing, so a
             // backfill that changed the hop count refuses the attach (never
@@ -1198,6 +1233,25 @@ impl Orchestrator {
                         amounts_in_len = amounts_in.len(),
                         amounts_out_len = amounts_out.len(),
                         "leg ledger length mismatch vs chosen topology — ledger omitted (R8)"
+                    );
+                }
+            }
+            // PER-HOP (C, math-audit AUDIT-MATH-OPPS-2026-09-26): the frontend's
+            // deriveLegLedger requires ALL THREE arrays — amounts_in, amounts_out
+            // AND zero_for_one — and `leg_zero_for_one` was None in EVERY
+            // production row, so every ledger was rejected and no hop ever
+            // rendered. Derive it from the plan's own leg directions: Uniswap's
+            // canonical convention is zeroForOne ⇔ token_in == token0, and token0
+            // is the LOWER address — the lowercase comparison IS the flag (exact
+            // data, no invention). Derived only when the ledger is attached and
+            // the leg count lines up (the frontend validates lengths too).
+            if let Some(amounts_in) = chosen.leg_amounts_in.as_ref() {
+                let legs = &sc.route_plan.legs;
+                if legs.len() == amounts_in.len() {
+                    chosen.leg_zero_for_one = Some(
+                        legs.iter()
+                            .map(|l| l.token_in.to_lowercase() < l.token_out.to_lowercase())
+                            .collect(),
                     );
                 }
             }

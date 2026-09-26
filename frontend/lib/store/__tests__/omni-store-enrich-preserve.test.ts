@@ -72,6 +72,12 @@ function enrichedSnapshot(): OmniOpportunity {
     chain_base_token_symbol: "WETH",
     leg_symbols: { [ROUTE_OUT.toLowerCase()]: "USDT" },
     token_prices_usd: { WETH: 2685.78, USDT: 0.9963 },
+    // CARDS-PRECEDENCE-01: the three fields the FIRST fix missed. All three are
+    // REST-only derivations (`backend/api-server/src/websocket.ts:506-514` names
+    // them as absent from the WS wire) and were proven to be wiped on live data.
+    paper_status: "paper_rejected",
+    chains_used: [1],
+    dexes_used: ["sushiswap", "uniswapv2"],
     raw_simulated_net_profit_usd: "-0.5",
     simulated_net_profit_usd: -0.5,
     simulated_amount_in_usd: 1000,
@@ -92,6 +98,11 @@ function rawWsRedetection(): OmniOpportunity {
     chain_base_token_symbol: null,
     leg_symbols: null,
     token_prices_usd: null,
+    // The raw transport has no column for these — the mapper's defaults are
+    // `null`, `[]`, `[]`. `[]` is a mapper artifact, never a computed value.
+    paper_status: null,
+    chains_used: [],
+    dexes_used: [],
     raw_simulated_net_profit_usd: null,
     simulated_net_profit_usd: null,
     simulated_amount_in_usd: null,
@@ -143,5 +154,54 @@ describe("ENRICH-PRESERVE-01 — raw WS rows never wipe snapshot enrichment", ()
     expect(row.simulated_net_profit_usd).toBeNull();
     // Symbol metadata still present — the snapshot carried it.
     expect(row.token_in_info?.symbol).toBe("WETH");
+  });
+
+  // CARDS-PRECEDENCE-01 (2026-09-26). Reproduces the EXACT live-data diff
+  // observed on route group `1||dex_arb|0xc02aaa…|0xdac17f…|PancakeSwap V3|
+  // PancakeSwap V3` between the enriched snapshot row and the raw PG row:
+  //   paper_status "paper_rejected" → null
+  //   chains_used  [1]              → []
+  //   dexes_used   ["pancakeswap v3"] → []
+  // All three are documented as WS-absent by the producer itself
+  // (`backend/api-server/src/websocket.ts:506-514`) and were the gap left by
+  // the first, hardcoded preserve list.
+  it("CARDS-PRECEDENCE-01: paper_status / chains_used / dexes_used survive a raw push", () => {
+    useOmniStore.getState().setOpportunities([enrichedSnapshot()]);
+    useOmniStore.getState().setOpportunities([rawWsRedetection()]);
+
+    const row = useOmniStore.getState().opportunities[0]!;
+    expect(row.paper_status).toBe("paper_rejected");
+    expect(row.chains_used).toEqual([1]);
+    expect(row.dexes_used).toEqual(["sushiswap", "uniswapv2"]);
+    // The raw push still wins what it actually carries (rule 2 of the contract).
+    expect(row.id).toBe("det-ws");
+    expect(row.detected_at).toBe("2026-09-26T00:02:00Z");
+  });
+
+  it("CARDS-PRECEDENCE-01: rule 3 (None ≠ Some(0)) — a REAL empty dexes_used is not overwritten by prev either", () => {
+    // Guard against over-preserving: when the SNAPSHOT itself carries `[]`
+    // (a genuinely computed "no dexes recorded"), a later raw push must not
+    // resurrect a stale non-empty list out of nowhere. Prev is `[]` here, so
+    // the merge keeps `[]` — never a fabrication in either direction.
+    useOmniStore
+      .getState()
+      .setOpportunities([{ ...enrichedSnapshot(), chains_used: [], dexes_used: [] } as OmniOpportunity]);
+    useOmniStore.getState().setOpportunities([rawWsRedetection()]);
+
+    const row = useOmniStore.getState().opportunities[0]!;
+    expect(row.chains_used).toEqual([]);
+    expect(row.dexes_used).toEqual([]);
+  });
+
+  it("CARDS-PRECEDENCE-01: simulated_notes emptiness is preserved as-is (computed 'nothing to report')", () => {
+    // `simulated_notes: []` is a COMPUTED empty (OpportunityDetailTabs.tsx
+    // comments it as "nothing to report"), so it must NOT be treated as absent.
+    useOmniStore
+      .getState()
+      .setOpportunities([{ ...enrichedSnapshot(), simulated_notes: [] } as OmniOpportunity]);
+    useOmniStore.getState().setOpportunities([rawWsRedetection()]);
+
+    const row = useOmniStore.getState().opportunities[0]!;
+    expect(row.simulated_notes).toEqual([]);
   });
 });

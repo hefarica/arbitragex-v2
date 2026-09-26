@@ -75,10 +75,25 @@ function Row({ label, value }: { label: string; value: React.ReactNode }) {
   );
 }
 
-/** Sign-preserving currency (−$x, matching the §36 grid's usd()). */
-function usd4(v: number): string {
-  const s = v.toFixed(4);
-  return `${v < 0 ? "-" : ""}$${v < 0 ? s.slice(1) : s}`;
+/**
+ * Sign-preserving currency (−$x, matching the §36 grid's usd()).
+ *
+ * CARDS-CRASH-01 (2026-09-26): this used to take a NON-NULLABLE `number` and
+ * call `v.toFixed(4)` directly. The inverse-sizing kernel returns
+ * `required_amount_in_usd: Infinity` whenever `binding_floor` is
+ * `net-per-usd-nonpositive` or `roi-unreachable`
+ * (`backend/api-server/src/simulation/computeSimulatedNet.ts:415,439` — and its
+ * own doc at :111-112 says so), and `JSON.stringify(Infinity)` is `null`. So the
+ * live wire carries `null` there — PROVEN: 41/41 items of
+ * `GET /api/opportunities/live`, every one with
+ * `binding_floor: "net-per-usd-nonpositive"`. Line :719 then threw
+ * `TypeError: Cannot read properties of null (reading 'toFixed')` and the whole
+ * detail view died — the operator's "the pipeline breaks and the calculations do
+ * not arrive". R8: a non-finite amount is NOT 0 and NOT a guess → "—".
+ */
+function usd4(v: number | null | undefined): string {
+  if (v == null || !Number.isFinite(v)) return "—";
+  return `${v < 0 ? "-" : ""}$${Math.abs(v).toFixed(4)}`;
 }
 
 /** 8 + … + 6 elision; full address lives in the cell title (§38). */
@@ -699,17 +714,31 @@ export function OpportunityDetailTabs({
                   : null
               }
             />
-            {target.target_net_usd != null && (
-              <Row
-                label="Delta"
-                value={
-                  <span className={target.suggested_net_usd - target.target_net_usd >= 0 ? "text-success" : "text-destructive"}>
-                    {target.suggested_net_usd >= target.target_net_usd ? "+" : ""}
-                    {usd4(target.suggested_net_usd - target.target_net_usd)}
-                  </span>
-                }
-              />
-            )}
+            {/* CARDS-CRASH-01: the delta is a subtraction of two wire values.
+                `target_net_usd` is nullable on the wire and
+                `required_amount_in_usd` is proven null (see usd4 above), so the
+                row is emitted only when both sides are real finite numbers —
+                otherwise JS would compute `null - number` (0) and paint a
+                fabricated "+$0.0000". R8: not computed → no row. */}
+            {target.target_net_usd != null &&
+              Number.isFinite(target.target_net_usd) &&
+              Number.isFinite(target.suggested_net_usd) && (
+                <Row
+                  label="Delta"
+                  value={
+                    <span
+                      className={
+                        target.suggested_net_usd - target.target_net_usd >= 0
+                          ? "text-success"
+                          : "text-destructive"
+                      }
+                    >
+                      {target.suggested_net_usd >= target.target_net_usd ? "+" : ""}
+                      {usd4(target.suggested_net_usd - target.target_net_usd)}
+                    </span>
+                  }
+                />
+              )}
             <Row label="Reason (binding_floor)" value={target.binding_floor} />
             {target.notes.length > 0 && (
               <Row label="Notes" value={target.notes.join(" · ")} />

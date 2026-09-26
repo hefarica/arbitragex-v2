@@ -61,8 +61,13 @@ fn yes() -> bool {
 fn default_max_pools_per_pair() -> usize {
     8
 }
+/// Embedded fallback when the YAML is absent/invalid — mirrors the SHIPPED
+/// `config/strategies/route_applicability.yaml` and the canonical workbook
+/// `Max_Hops` (7). HOPS-CARD-05: was 3, which silently capped every deployment
+/// without the env override at 2-3 hops against the operator's 2..7 mandate.
+/// The worker still clamps to 2..=7 and the finder's work budget bounds the DFS.
 fn default_max_depth() -> u8 {
-    3
+    7
 }
 
 /// Constructor helper for the embedded SAFE family defaults (RU-4). Every
@@ -105,8 +110,10 @@ impl Default for DiscoverySettings {
         Self {
             base_tokens: Vec::new(),
             min_liquidity_hint: 0.0,
-            max_pools_per_pair: 8,
-            max_depth: 5,
+            max_pools_per_pair: default_max_pools_per_pair(),
+            // HOPS-CARD-05: was a second hard-coded tier (5) that disagreed with
+            // both the shipped yaml and the canonical Max_Hops. One source now.
+            max_depth: default_max_depth(),
         }
     }
 }
@@ -942,6 +949,38 @@ strategies:
             .contains(&StrategyLabel::DexArbV2V3));
         // And nothing is enabled for execution (shadow defaults).
         assert!(eng.config().strategies.get("dex_arb").unwrap().shadow_only);
+    }
+
+    /// HOPS-CARD-05 anti-regression gate: the SHIPPED discovery default must
+    /// carry the operator's full 2..7 mandate and agree with the canonical
+    /// workbook knob. Before this gate, the yaml said 3 (and the embedded
+    /// fallback too), so every deployment without the `ARBX_KNOB_MAX_HOPS` /
+    /// `ARBX_ROUTE_DISCOVERY_MAX_DEPTH` env override silently discovered only
+    /// 2-3 hop cycles — 5-7 hop arbitrages were unrepresentable no matter what
+    /// the sizing kernel or the card supported.
+    ///
+    /// `include_str!` makes the tripwire compile-time: editing the shipped yaml
+    /// re-runs this assertion, and deleting the file breaks the build.
+    #[test]
+    fn shipped_discovery_depth_reaches_the_canonical_max_hops() {
+        let shipped = include_str!("../../config/strategies/route_applicability.yaml");
+        let eng = StrategyApplicabilityEngine::from_yaml_str(shipped);
+        let canonical = crate::canonical_knobs::CanonicalKnobs::default().max_hops;
+        assert_eq!(
+            canonical, 7,
+            "canonical Max_Hops must stay the 2..7 mandate"
+        );
+        assert_eq!(
+            eng.config().discovery.max_depth,
+            canonical,
+            "shipped route_applicability.yaml max_depth must equal canonical Max_Hops"
+        );
+        // The embedded fallback (file absent/invalid) must agree with the file.
+        assert_eq!(
+            DiscoverySettings::default().max_depth,
+            canonical,
+            "embedded fallback depth must not silently cap below the mandate"
+        );
     }
 
     #[test]

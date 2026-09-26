@@ -72,8 +72,12 @@ import {
 } from "@/lib/format";
 import {
   deriveLegs,
+  deriveLegLedger,
+  routeTokenDecimals,
   SYNTHETIC_LEGACY_VIEW_LABEL,
+  type LegLedgerEntry,
   type OmniOpportunity,
+  type RouteLeg,
 } from "@/lib/store/types";
 
 // ─── Tone → token-based class map ────────────────────────────────────────────
@@ -85,18 +89,95 @@ const TONE_CLASS: Record<string, string> = {
   pending: "text-muted-foreground/60 italic",
 };
 
-/** Compact USD for ledger cells (`$12.5k`, `$1.8M`, `$0.0123`). */
+/**
+ * Compact USD for ledger cells (`$12.5k`, `$1.8M`, `$0.0123`).
+ *
+ * CARDS-MAGNITUDE-01 (2026-09-26): the scale ladder used to stop at `M`, so
+ * any value at or above 1e9 rendered an unbounded mantissa (`(v/1e6).toFixed(2)`
+ * + "M"). PROVEN on the live feed: the route sized against a 6-decimal opening
+ * token carried `simulated_amount_in_usd = 999935091316.8`, and the card painted
+ * `Repay (principal + TLS fee) $1000835.03M` and `Total cost $9299.40M` — the
+ * operator's "suspicious magnitude". A `$NNNNNN.M` string is never a real
+ * magnitude, so the ladder is now closed at every decade (k → M → B → T) and
+ * beyond T the value is rendered in engineering notation rather than as a
+ * wider lie. R8: non-finite (`Infinity`/`NaN`, e.g. the inverse-sizing kernel's
+ * `required = Infinity` that JSON turns into `null`) stays an honest "—".
+ *
+ * The sign is emitted BEFORE the `$` (matching §36's `usd()` and the exchange
+ * card's `usdCost`) so one value never renders two ways on the same card
+ * (was: grid `-$0.00` vs ledger `$-0.0000`).
+ */
 function usd(value: number | null | undefined, digits = 2): string {
   if (value == null || !Number.isFinite(value)) return "—";
   const abs = Math.abs(value);
-  if (abs >= 1_000_000) return `$${(value / 1_000_000).toFixed(2)}M`;
-  if (abs >= 1_000) return `$${(value / 1_000).toFixed(1)}k`;
-  if (abs >= 1) return `$${value.toFixed(digits)}`;
-  return `$${value.toFixed(4)}`;
+  const sign = value < 0 ? "-" : "";
+  const body = (n: number, d: number) => `$${n.toFixed(d)}`;
+  // Beyond T the suffix ladder would need new letters; engineering notation is
+  // the honest rendering instead of inventing a unit.
+  if (abs >= 1e15) return `${sign}$${abs.toExponential(2).replace("e+", "e")}`;
+  if (abs >= 1e12) return `${sign}${body(abs / 1e12, 2)}T`;
+  if (abs >= 1e9) return `${sign}${body(abs / 1e9, 2)}B`;
+  if (abs >= 1e6) return `${sign}${body(abs / 1e6, 2)}M`;
+  if (abs >= 1e3) return `${sign}${body(abs / 1e3, 1)}k`;
+  if (abs >= 1) return `${sign}${body(abs, digits)}`;
+  return `${sign}${body(abs, 4)}`;
 }
 
 /** Freshness window (matches the table's 12s staleness heuristic). */
 const STALE_SECS = 12;
+
+/**
+ * HOPS-LEDGER-04 (PER-HOP, card half) — exact wei → token units, BigInt-only.
+ *
+ * The sizing kernel emits per-leg amounts as EXACT wei strings; displaying them
+ * requires the token's decimals, which is a deployment fact the wire may omit
+ * for unregistered tokens. Discipline:
+ *   · decimals unknown/invalid ⇒ `null`. The caller then prints the raw wei
+ *     string with a `·wei` mark — never a guessed 18-decimals unit (R8).
+ *   · fraction digits are TRUNCATED (never rounded up): a rendering must not
+ *     invent a wei that the kernel did not produce.
+ *   · integers longer than 12 digits collapse to `d.dde±k` so a 1e18-scale
+ *     phantom cannot blow the card layout.
+ * `numeric` is the float twin used ONLY for the live-price Δ marking; the text
+ * stays the exact-BigInt rendering.
+ */
+function weiUnits(
+  wei: string,
+  decimals: number | undefined,
+): { text: string; numeric: number | null } | null {
+  if (typeof decimals !== "number" || !Number.isInteger(decimals) || decimals < 0 || decimals > 255) {
+    return null;
+  }
+  if (typeof wei !== "string" || wei.trim() === "") return null;
+  let value: bigint;
+  try {
+    value = BigInt(wei.trim());
+  } catch {
+    return null;
+  }
+  const negative = value < 0n;
+  const abs = negative ? -value : value;
+  const base = 10n ** BigInt(decimals);
+  const whole = abs / base;
+  const frac = abs % base;
+  const wholeRaw = whole.toString();
+  const compact = wholeRaw.length > 12;
+  const wholeText = compact
+    ? `${wholeRaw.slice(0, 1)}.${wholeRaw.slice(1, 3)}e${wholeRaw.length - 1}`
+    : whole.toLocaleString("en-US");
+  const fracText =
+    !compact && frac > 0n
+      ? frac.toString().padStart(decimals, "0").slice(0, 6).replace(/0+$/, "")
+      : "";
+  const sign = negative ? "-" : "";
+  const numeric = Number(
+    `${sign}${wholeRaw}${frac > 0n ? `.${frac.toString().padStart(decimals, "0")}` : ""}`,
+  );
+  return {
+    text: `${sign}${wholeText}${fracText ? `.${fracText}` : ""}`,
+    numeric: Number.isFinite(numeric) ? numeric : null,
+  };
+}
 
 interface SimEvidence {
   passed: boolean | null;
@@ -258,6 +339,78 @@ function OpportunityTradeCardImpl({
     return opp.leg_symbols?.[lc] ?? shortAddr(addr);
   };
   const hasSyntheticLegs = legs.some((l) => l.synthetic === true);
+
+  // ── HOPS-LEDGER-04 (PER-HOP): exact per-leg ledger, rendered INSIDE the ────
+  // ladder row that already owns that hop (one place per hop — no duplicate
+  // block). `deriveLegLedger` is all-or-nothing and never touches §29 synthetic
+  // legs, so its length always aligns with `legs` when non-null.
+  const legLedger = deriveLegLedger(opp);
+  /** Live PriceBus USD for a token address; null when the symbol has no price. */
+  const symUsd = (addr: string): number | null => {
+    const px = opp.token_prices_usd?.[legSym(addr).toUpperCase()];
+    return px != null && Number.isFinite(px) && px > 0 ? px : null;
+  };
+  /**
+   * Value cell for one hop: exact in→out wei (unit-scaled when the token's
+   * decimals are known, verbatim `·wei` when they are not), plus the price-
+   * marked leg Δ and — closing leg only — the exact whole-cycle delta.
+   * Every figure is conditional on real inputs: a missing price or decimals
+   * removes that figure instead of rendering a fabricated 0 (R8).
+   */
+  const hopAmountNode = (leg: RouteLeg, entry: LegLedgerEntry): React.ReactNode => {
+    const rm = opp.route_metadata;
+    const inView = rm ? weiUnits(entry.amount_in_wei, routeTokenDecimals(rm, leg.token_in)) : null;
+    const outView = rm ? weiUnits(entry.amount_out_wei, routeTokenDecimals(rm, leg.token_out)) : null;
+    const symIn = legSym(leg.token_in);
+    const symOut = legSym(leg.token_out);
+    const pxIn = symUsd(leg.token_in);
+    const pxOut = symUsd(leg.token_out);
+    const inUsd = inView?.numeric != null && pxIn != null ? inView.numeric * pxIn : null;
+    const outUsd = outView?.numeric != null && pxOut != null ? outView.numeric * pxOut : null;
+    const legDeltaUsd = inUsd != null && outUsd != null ? outUsd - inUsd : null;
+    // Closing leg: delta of the whole cycle in the opening token's wei. The
+    // closing leg's OUT token IS the opening token, so its decimals denominate.
+    const cycleView =
+      rm && entry.cycle_delta_wei != null
+        ? weiUnits(entry.cycle_delta_wei, routeTokenDecimals(rm, leg.token_out))
+        : null;
+    const cycleText =
+      cycleView != null && entry.cycle_delta_wei != null
+        ? cycleView.text
+        : entry.cycle_delta_wei != null
+          ? entry.cycle_delta_wei
+          : null;
+    const cycleNegative = (entry.cycle_delta_wei ?? "").trim().startsWith("-");
+    return (
+      <span
+        // CARDS-LAYOUT-01: this cell renders on its OWN full-width line
+        // (LedgerRow), so it can never collide with the hop label. `w-full` +
+        // `min-w-0` keep it inside the block; each of the three figures
+        // truncates rather than painting outside its own box.
+        className="flex w-full min-w-0 flex-col items-end leading-tight text-right text-[10px] font-mono whitespace-nowrap"
+        title={
+          "Montos exactos en wei del kernel de sizing (ledger on-chain, no estimación). " +
+          "Δ USD valorado con los precios PriceBus en vivo — no es el neto SIM."
+        }
+      >
+        <span className="max-w-full truncate">
+          {inView != null ? `${inView.text} ${symIn}` : `${entry.amount_in_wei}·wei`}
+          {" → "}
+          {outView != null ? `${outView.text} ${symOut}` : `${entry.amount_out_wei}·wei`}
+        </span>
+        {legDeltaUsd != null && (
+          <span className={`max-w-full truncate ${legDeltaUsd >= 0 ? "text-success" : "text-destructive"}`}>
+            Δ {usd(legDeltaUsd)}
+          </span>
+        )}
+        {cycleText != null && (
+          <span className={`max-w-full truncate ${cycleNegative ? "text-destructive" : "text-success"}`}>
+            ciclo {cycleText} {cycleView != null ? symOut : "wei"}
+          </span>
+        )}
+      </span>
+    );
+  };
 
   // ── CARDS-TOKENPATH-01: full participating-token sequence (2..7 tokens) ────
   // deriveLegs already carries the persisted topology; the ordered token path
@@ -576,15 +729,20 @@ function OpportunityTradeCardImpl({
             value={capitalInUsd}
           />
           {legs.length > 0 ? (
-            legs.map((l) => (
-              <LedgerRow
-                key={l.index}
-                label={`Hop ${l.index + 1}/${legs.length} · ${legSym(l.token_in)}→${legSym(l.token_out)}`}
-                value={null}
-                muted
-                hint={`${l.dex || "—"}${l.synthetic ? " · syn" : ""}`}
-              />
-            ))
+            legs.map((l) => {
+              const entry = legLedger?.[l.index] ?? null;
+              return (
+                <LedgerRow
+                  key={l.index}
+                  testId={`ledger-hop-${l.index + 1}`}
+                  label={`Hop ${l.index + 1}/${legs.length} · ${legSym(l.token_in)}→${legSym(l.token_out)}`}
+                  value={null}
+                  muted
+                  hint={`${l.dex || "—"}${l.synthetic ? " · syn" : ""}`}
+                  valueNode={entry != null ? hopAmountNode(l, entry) : undefined}
+                />
+              );
+            })
           ) : (
             <LedgerRow
               label="Hops"
@@ -637,12 +795,31 @@ function OpportunityTradeCardImpl({
           Applied strategy config
         </div>
         {tgt ? (
-          <div className="grid grid-cols-2 gap-x-3 gap-y-1 font-mono text-[11px]">
+          // CARDS-LAYOUT-02 (2026-09-26, operator report — PROVEN on the live
+          // card): this block was `grid grid-cols-2`, which Tailwind compiles to
+          // `repeat(2, minmax(0,1fr))`. A `minmax(0,1fr)` track may be NARROWER
+          // than its content minimum, so a pair overflowed its own column
+          // instead of reflowing. Measured on the live card (viewport 1280, card
+          // 289px, ledger 255px): the grid resolved to 115.33px tracks; the
+          // `binding floor` cell painted `scrollWidth 124 > clientWidth 115`,
+          // its label wrapped to 2 lines (`binding` / `floor`) and the value
+          // wrapped at its hyphens into 3 lines (`net-per-` / `usd-` /
+          // `nonpositive`), spilling toward the neighbouring column — exactly
+          // the operator's "binding net_per_usd / floor nonpositive stacked on
+          // top of each other". `binding_floor` is `net-per-usd-nonpositive` on
+          // 38/38 live rows, so the defect was systematic, not an edge case.
+          //
+          // One pair per LINE (the block is 250-360px wide inside a 1/2/3-col
+          // page grid — half of that is never a label/value pair): every row now
+          // owns the full block width, the label truncates and the value keeps
+          // its own width, so the pairs stay clean and cannot collide.
+          <div className="grid grid-cols-1 gap-y-1 font-mono text-[11px]">
             <ConfigRow label="min net USD" value={tgt.target_net_usd != null ? usd(tgt.target_net_usd) : "—"} />
             <ConfigRow label="min ROI %" value={tgt.target_roi_pct != null ? `${tgt.target_roi_pct.toFixed(2)}%` : "—"} />
             <ConfigRow
               label="binding floor"
               value={tgt.binding_floor}
+              title={`binding_floor del wire (inverse-sizing kernel): ${tgt.binding_floor}`}
               tone={
                 tgt.binding_floor === "roi-unreachable" || tgt.binding_floor === "net-per-usd-nonpositive"
                   ? "text-destructive"
@@ -776,6 +953,7 @@ export const OpportunityTradeCard = React.memo(
 function LedgerRow({
   label,
   value,
+  valueNode,
   up = false,
   down = false,
   muted = false,
@@ -785,9 +963,12 @@ function LedgerRow({
   hint,
   flashCls,
   flashSeq,
+  testId,
 }: {
   label: string;
-  value: number | null;
+  value?: number | null;
+  /** HOPS-LEDGER-04: rich cell (exact wei + Δ). Overrides the USD formatting. */
+  valueNode?: React.ReactNode;
   up?: boolean;
   down?: boolean;
   muted?: boolean;
@@ -799,25 +980,64 @@ function LedgerRow({
   flashCls?: string;
   /** Remount key — replays the CSS animation on consecutive changes. */
   flashSeq?: number;
+  /** Stable DOM id for the SSR layout gates (cards-overlap regression). */
+  testId?: string;
 }) {
+  // CARDS-LAYOUT-01 (2026-09-26, operator report — PROVEN with geometry on the
+  // live card): the row used to be `flex items-center justify-between`. In a
+  // flex row the label's `truncate` (`white-space: nowrap`, `overflow: hidden`)
+  // gives that span a min-content floor, and the `(dex)` hint was a SECOND flex
+  // item with no `min-w-0`/`truncate`/`shrink-0` at all, so neither side could
+  // reflow: measured at viewports 1280/1440 the left span resolved to w=180
+  // while its own content was 184px + gap + hint — the hint painted OUTSIDE its
+  // box (the row's `scrollWidth` still equalled its `clientWidth`, so nothing
+  // clipped it) and landed on top of the value cell. That is the "overlapping"
+  // the operator reads in the hop rows.
+  //
+  // The header is now a two-track GRID (`minmax(0,1fr)` + `auto`): label and
+  // hint both carry `min-w-0 truncate` (each may ellipsize, neither can push the
+  // other), the hint is capped at 45% of the row, and the value cell is
+  // `shrink-0 whitespace-nowrap tabular-nums`. Overflow is impossible by
+  // construction at any card width and for any label/hint length.
+  //
+  // A row carrying a rich value cell (HOPS-LEDGER-04 per-hop amounts) renders
+  // that cell on its OWN full-width line: `Hop i/N · A→B (dex)` on the header
+  // line and the exact wei / leg Δ / cycle Δ right-aligned underneath. The hop
+  // identity and its numbers no longer compete for one line — and each hop still
+  // renders EXACTLY once (one LedgerRow per leg: no duplicated row, no phantom
+  // second line).
   return (
     <div
-      className={`flex items-center justify-between gap-2 ${
-        muted ? "text-muted-foreground/70" : "text-foreground"
-      } ${small ? "text-[10px]" : ""} ${strong ? "font-bold" : ""}`}
+      data-testid={testId}
+      className={`${muted ? "text-muted-foreground/70" : "text-foreground"} ${
+        small ? "text-[10px]" : ""
+      } ${strong ? "font-bold" : ""}`}
     >
-      <span className="flex items-center gap-1 min-w-0">
-        {up && <ArrowUpRight size={11} className="text-success shrink-0" />}
-        {down && <ArrowDownRight size={11} className="text-destructive shrink-0" />}
-        <span className="truncate">{label}</span>
-        {hint && <span className="text-[9px] text-muted-foreground/50 italic">({hint})</span>}
-      </span>
-      <span
-        key={flashSeq}
-        className={`${tone ?? (muted ? "text-muted-foreground/60" : "text-foreground")} ${flashCls ?? ""}`}
-      >
-        {usd(value)}
-      </span>
+      <div className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-2">
+        <span className="flex min-w-0 items-center gap-1">
+          {up && <ArrowUpRight size={11} className="text-success shrink-0" />}
+          {down && <ArrowDownRight size={11} className="text-destructive shrink-0" />}
+          <span className="min-w-0 flex-1 truncate">{label}</span>
+          {hint && (
+            <span className="min-w-0 max-w-[45%] shrink-0 truncate text-[9px] text-muted-foreground/50 italic">
+              ({hint})
+            </span>
+          )}
+        </span>
+        {valueNode == null && (
+          <span
+            key={flashSeq}
+            className={`shrink-0 whitespace-nowrap tabular-nums ${tone ?? (muted ? "text-muted-foreground/60" : "text-foreground")} ${flashCls ?? ""}`}
+          >
+            {usd(value)}
+          </span>
+        )}
+      </div>
+      {valueNode != null && (
+        <div className="flex min-w-0 justify-end pl-4" data-testid="ledger-row-amounts">
+          {valueNode}
+        </div>
+      )}
     </div>
   );
 }
@@ -843,15 +1063,25 @@ function ConfigRow({
   label,
   value,
   tone = "text-foreground",
+  title,
 }: {
   label: string;
   value: string;
   tone?: string;
+  title?: string;
 }) {
+  // CARDS-LAYOUT-02: label/value pair as a two-track grid — the label truncates
+  // (never wraps into a second line that reads as another label) and the value
+  // keeps its own width on one line (`tabular-nums` so digits line up across
+  // rows). No pair can overflow into its neighbour.
   return (
-    <div className="flex items-center justify-between gap-2">
-      <span className="text-muted-foreground">{label}</span>
-      <span className={tone}>{value}</span>
+    <div
+      data-testid="config-pair"
+      title={title}
+      className="grid grid-cols-[minmax(0,1fr)_auto] items-baseline gap-x-2"
+    >
+      <span className="min-w-0 truncate text-muted-foreground">{label}</span>
+      <span className={`shrink-0 whitespace-nowrap tabular-nums ${tone}`}>{value}</span>
     </div>
   );
 }

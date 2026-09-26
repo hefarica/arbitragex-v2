@@ -41,11 +41,37 @@ import type { OmniOpportunity } from "@/lib/store/types";
 
 const DASH = "—";
 export const NOT_EMITTED = "no emitido";
+/**
+ * @deprecated CARDS-QUIET-01 (2026-09-26, operator order): the loud
+ * `"no computado"` string is no longer rendered. Operator: "I am not interested
+ * in 'no computado'; what I need is a value — the CORRECT value." A cell with no
+ * computed value renders the quiet `DASH` (the honest empty state, R8) and the
+ * machine reason travels in the cell `title` so nothing is hidden, only not
+ * shouted. Kept exported for the audit trail / any external reader.
+ */
 export const NOT_COMPUTED = "no computado";
 
+/**
+ * Exact USD for the wire-grade summary cells (`$10.50`, `-$1.50`).
+ *
+ * CARDS-MAGNITUDE-01 (2026-09-26): below $1M the digits stay EXACT — this grid
+ * is the wire-grade view and its pinned tests depend on `$4500.00`. Above $1M
+ * the value collapses onto the T/B/M ladder instead of printing an unbounded
+ * mantissa: PROVEN on the live feed, a route sized against a 6-decimal opening
+ * token carried `simulated_amount_in_usd = 999935091316.8`, and the `in` cell
+ * painted the 12-digit blob `$999935091316.80` — the operator's "suspicious
+ * magnitude". A figure nobody can read is not a value displayed.
+ * R8: non-finite never renders a number.
+ */
 function usd(v: number, digits = 2): string {
-  const s = v.toFixed(digits);
-  return `${v < 0 ? "-" : ""}$${v < 0 ? s.slice(1) : s}`;
+  if (!Number.isFinite(v)) return DASH;
+  const abs = Math.abs(v);
+  const sign = v < 0 ? "-" : "";
+  if (abs >= 1e15) return `${sign}$${abs.toExponential(2).replace("e+", "e")}`;
+  if (abs >= 1e12) return `${sign}$${(abs / 1e12).toFixed(2)}T`;
+  if (abs >= 1e9) return `${sign}$${(abs / 1e9).toFixed(2)}B`;
+  if (abs >= 1e6) return `${sign}$${(abs / 1e6).toFixed(2)}M`;
+  return `${sign}$${abs.toFixed(digits)}`;
 }
 
 function summaryCells(opp: OmniOpportunity): Array<{
@@ -53,10 +79,34 @@ function summaryCells(opp: OmniOpportunity): Array<{
   value: string;
   title: string;
 }> {
-  const bps = opp.roi_pct != null ? (opp.roi_pct * 100).toFixed(0) : null;
-  // WO-CARDS-COMPLETE-01: a null economic value on a row that carries a
-  // rejection_reason is "no computado" with the R8 reason in the title —
-  // the bare dash stays only when there is no reason to state.
+  // CARDS-PRECEDENCE-02 (2026-09-26): the canonical ratio wins; when it is
+  // absent but the TS forward-sim computed one, the SIMULATED value is the
+  // computed value and must be displayed (marked `~`) instead of an empty cell.
+  // Live evidence (GET /api/opportunities/live): `roi_pct` is null on 38/38 rows
+  // while `simulated_roi_pct` is non-null on 3 — those 3 cards carried a
+  // computed ROI that this cell never showed.
+  const roiPct = opp.roi_pct ?? opp.simulated_roi_pct ?? null;
+  const roiIsSimulated = opp.roi_pct == null && opp.simulated_roi_pct != null;
+  const bps = roiPct != null ? `${roiIsSimulated ? "~" : ""}${(roiPct * 100).toFixed(0)}` : null;
+  // CARDS-QUIET-01 (2026-09-26, operator order): a null economic value renders
+  // the QUIET empty state (`DASH`), never a loud "no computado" wall.
+  //
+  // Precedence rule: a COMPUTED value always wins the cell; when there is no
+  // computed value the cell goes quiet — a placeholder must never compete with
+  // (or stand in for) a number. This is what the operator reported: cards
+  // showing `no computado` across RUTA/STRATEGY/DETECTOR/HOPS/SIM/LATENCIA next
+  // to real figures, i.e. a placeholder wall drowning the values. It was loud
+  // by construction: the old branch fired on EVERY null economic cell of ANY
+  // row carrying a rejection_reason — and on the live feed that is 41/41 rows
+  // (36 of them with 6 such cells), because a rejected row has null economics
+  // by definition.
+  //
+  // R8/RULE 00 are preserved, not weakened: absence stays absence (never 0,
+  // never a fabricated figure), and the machine reason is still surfaced — it
+  // moves from the cell body to the `title` tooltip, so the information is one
+  // hover away instead of occupying the value slot. `rejection_reason` itself
+  // is still rendered verbatim by the card's rejection banner and by the
+  // detail view's "Rejection Reason" row.
   const cell = (
     label: string,
     v: string | null,
@@ -64,9 +114,14 @@ function summaryCells(opp: OmniOpportunity): Array<{
   ): { label: string; value: string; title: string } =>
     v != null
       ? { label, value: v, title }
-      : opp.rejection_reason != null
-        ? { label, value: NOT_COMPUTED, title: `no computado: ${opp.rejection_reason} (R8)` }
-        : { label, value: DASH, title };
+      : {
+          label,
+          value: DASH,
+          title:
+            opp.rejection_reason != null
+              ? `${title} · no computado: ${opp.rejection_reason} (R8)`
+              : title,
+        };
   return [
     {
       label: "ruta",
@@ -82,8 +137,10 @@ function summaryCells(opp: OmniOpportunity): Array<{
           : "strategy_kind del wire",
     },
     {
+      // CARDS-QUIET-01: same precedence rule as `cell` — a computed detector_id
+      // wins; absent goes QUIET (the "no emitido" marker moves to the title).
       label: "detector",
-      value: opp.detector_id ?? NOT_EMITTED,
+      value: opp.detector_id ?? DASH,
       title:
         opp.detector_id == null
           ? "detector_id ausente en el payload — no emitido (nivel-(b) resuelto, R8)"
@@ -109,15 +166,34 @@ function summaryCells(opp: OmniOpportunity): Array<{
     ),
     cell(
       "Net",
-      opp.net_expected_profit_usd != null ? usd(opp.net_expected_profit_usd) : null,
-      "net_expected_profit_usd (spine canónico)",
+      // CARDS-PRECEDENCE-02: the CARD HEADLINE already renders
+      // `net_expected_profit_usd ?? simulated_net_profit_usd` (canonical spine
+      // net, else the TS forward-sim net). This cell used only the canonical
+      // field, so a row whose ONLY computed net is the simulated one rendered a
+      // quiet dash here while the same card showed `~$x SIM` two rows above —
+      // one field, two precedence rules, i.e. a computed value losing to a
+      // placeholder. Same rule here now, with the same `~` source mark.
+      opp.net_expected_profit_usd != null
+        ? usd(opp.net_expected_profit_usd)
+        : opp.simulated_net_profit_usd != null
+          ? `~${usd(opp.simulated_net_profit_usd)}`
+          : null,
+      opp.net_expected_profit_usd != null
+        ? "net_expected_profit_usd (spine canónico)"
+        : "simulated_net_profit_usd (TS forward-sim; canónico pendiente) — '~' marca el origen",
     ),
     cell(
       "bps",
       bps,
-      opp.roi_pct == null
-        ? "roi_pct no computado (R8)"
-        : `roi_pct ${opp.roi_pct.toFixed(4)}% × 100 — conversión de unidad, no un veredicto`,
+      // CARDS-PRECEDENCE-02: same rule — `roi_pct` is the canonical ratio and it
+      // is null on 38/38 live rows today, while `simulated_roi_pct` IS computed
+      // on 3 of them. The cell fell back to nothing instead of to that computed
+      // value; `~` marks the simulated source.
+      opp.roi_pct != null
+        ? `roi_pct ${opp.roi_pct.toFixed(4)}% × 100 — conversión de unidad, no un veredicto`
+        : opp.simulated_roi_pct != null
+          ? `simulated_roi_pct ${opp.simulated_roi_pct.toFixed(4)}% × 100 — '~' marca el origen (canónico pendiente)`
+          : "roi_pct no computado (R8)",
     ),
     cell(
       "Risk",
@@ -135,8 +211,9 @@ function summaryCells(opp: OmniOpportunity): Array<{
       "forward-sim net como VALOR — el wire no persiste veredicto PASS/FAIL de simulación (§79); PASS/FAIL solo vive en el target verdict",
     ),
     {
+      // CARDS-QUIET-01: computed latency wins; absent goes QUIET.
       label: "latencia",
-      value: opp.pipeline_latency_ms != null ? `${opp.pipeline_latency_ms}ms` : NOT_EMITTED,
+      value: opp.pipeline_latency_ms != null ? `${opp.pipeline_latency_ms}ms` : DASH,
       title:
         opp.pipeline_latency_ms == null
           ? "pipeline_latency_ms ausente en el payload — no emitido (nivel-(b) resuelto, R8)"

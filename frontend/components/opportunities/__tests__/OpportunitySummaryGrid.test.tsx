@@ -115,17 +115,21 @@ describe("OpportunitySummaryGrid (§36)", () => {
     expect(html).toContain("42ms"); // latencia cell
   });
 
-  it("WO-CARDS-COMPLETE-01: null detector/latencia stay 'no emitido' (nivel-(b) resuelto, R8)", () => {
+  it("CARDS-QUIET-01: null detector/latencia go QUIET — the nivel-(b) note stays in the title", () => {
     const opp = mapToOmniOpportunity(wire({ route_metadata: rm2hop }));
     const html = renderToStaticMarkup(
       React.createElement(OpportunitySummaryGrid, { opp }),
     );
-    expect(html).toContain(NOT_EMITTED);
+    expect(html).not.toContain(`>${NOT_EMITTED}<`);
     expect(html).toContain("detector_id ausente en el payload");
     expect(html).toContain("pipeline_latency_ms ausente en el payload");
   });
 
-  it("WO-CARDS-COMPLETE-01: null economics on a rejected row render 'no computado' with the R8 reason", () => {
+  it("CARDS-QUIET-01: null economics on a rejected row go QUIET — the reason moves to the title", () => {
+    // Operator order 2026-09-26: "I am not interested in 'no computado'; what I
+    // need is a value — the CORRECT value." The value slot must never be
+    // occupied by a placeholder wall. Supersedes the WO-CARDS-COMPLETE-01
+    // assertion that the loud string was rendered.
     const opp = mapToOmniOpportunity(
       wire({
         route_metadata: rm2hop,
@@ -136,9 +140,49 @@ describe("OpportunitySummaryGrid (§36)", () => {
     const html = renderToStaticMarkup(
       React.createElement(OpportunitySummaryGrid, { opp }),
     );
-    expect(html).toContain(NOT_COMPUTED);
+    // the loud wall is GONE from the rendered value slots…
+    expect(html).not.toContain(`>${NOT_COMPUTED}<`);
+    // …and so is the "no emitido" wall on the detector/latencia slots.
+    expect(html).not.toContain(`>${NOT_EMITTED}<`);
+    // the honest empty state is the quiet dash (6 null economic cells here).
+    expect((html.match(/>—</g) ?? []).length).toBeGreaterThanOrEqual(6);
+    // nothing is hidden — the R8 reason is one hover away, verbatim.
     expect(html).toContain("no computado: impact_zero (R8)");
     expect(html).not.toContain("$0.00"); // reason stated, never a fabricated zero
+  });
+
+  it("CARDS-PRECEDENCE-01: a computed value always wins its cell over any placeholder", () => {
+    // The precedence rule, pinned: every computed field renders its NUMBER and
+    // no placeholder appears anywhere on the card.
+    const opp = mapToOmniOpportunity(
+      wire({
+        route_metadata: rm2hop,
+        status: "rejected",
+        rejection_reason: "non_positive_profit",
+        detector_id: "det-1",
+        pipeline_latency_ms: 7,
+        expected_profit_usd: 52.13863753,
+        net_expected_profit_usd: -0.000014,
+        roi_pct: 0.12,
+        risk_score: 0.34,
+        simulated_amount_in_usd: 2688.2493,
+        simulated_net_profit_usd: 7.9,
+      }),
+    );
+    const html = renderToStaticMarkup(
+      React.createElement(OpportunitySummaryGrid, { opp }),
+    );
+    expect(html).toContain("$52.14"); // Gross — the computed value, not a dash
+    expect(html).toContain("$2688.25"); // in
+    expect(html).toContain("~$7.90"); // Sim
+    expect(html).toContain("det-1"); // detector
+    expect(html).toContain("7ms"); // latencia
+    // No placeholder occupies a VALUE slot. Scoped to the value `<div>`s: the
+    // `in` cell's title legitimately quotes the wire description
+    // ("amount_in_wei=no emitido · USD solo cuando la simulación lo computa"),
+    // which is exposition, not a placeholder in the value position.
+    expect(html).not.toContain(`>${NOT_COMPUTED}</div>`);
+    expect(html).not.toContain(`>${NOT_EMITTED}</div>`);
   });
 
   it("WO-CARDS-COMPLETE-01 regression: accepted row with full data shows the values", () => {

@@ -505,6 +505,17 @@ impl DexScreenerPriceOracle {
         // run() warns at boot if it grows large.
         let ttl_secs: i64 = ((self.cfg.interval.as_secs() as i64).saturating_mul(3)).max(60);
 
+        // B5 (math-audit AUDIT-MATH-OPPS-2026-09-26): read the current hash ONCE so
+        // each write can be validated against the stored value. Three writers
+        // target this key with last-writer-wins and no arbitration; a scaling bug
+        // in a free source poisoned oracle-less tokens (live: AAVE $161,339,420 =
+        // real x1e6). A poisoned write silently corrupts every gross computation
+        // downstream, so an implausible jump is refused and logged instead.
+        let prev: std::collections::HashMap<String, String> =
+            <redis::aio::MultiplexedConnection as redis::AsyncCommands>::hgetall(&mut *conn, &key)
+                .await
+                .unwrap_or_default();
+
         let mut pipe = redis::pipe();
         pipe.atomic();
         let mut written = 0usize;
@@ -512,6 +523,17 @@ impl DexScreenerPriceOracle {
             // Defensive: never write garbage (the reader also drops these, but
             // honesty starts at the writer).
             if !(price.is_finite() && *price > 0.0) {
+                continue;
+            }
+            let prev_val = prev.get(sym).and_then(|v| v.parse::<f64>().ok());
+            if !shared_rs::price_oracle::is_plausible_price(prev_val, *price) {
+                tracing::warn!(
+                    event = "dexscreener.price_implausible_skip",
+                    symbol = sym.as_str(),
+                    prev = ?prev_val,
+                    new = *price,
+                    "B5: refusing an implausible single-tick jump — keeping the stored value"
+                );
                 continue;
             }
             pipe.hset(&key, sym, format!("{price}")).ignore();

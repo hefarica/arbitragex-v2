@@ -1278,6 +1278,23 @@ fn v4_scan_manifest_digests(dir: &std::path::Path) -> std::collections::BTreeMap
     out
 }
 
+/// HOPS-CARD-05 — the cartridge-side DFS hop ceiling, sourced from the canonical
+/// workbook knob (`Max_Hops`, default 7) instead of the previous hard-coded 4.
+///
+/// Why it matters: `SnapshotBundle::limits.max_hops` bounds the agent graph the
+/// cartridge evaluates, so a hard-coded 4 made every 5-7 hop route intent
+/// unrepresentable inside the runtime — the operator's 2..7 mandate stopped at
+/// the cartridge boundary even though discovery, sizing
+/// (`size_triangular_with_reason` is generic in N) and the per-hop ledger all
+/// support 7. `agent_graph::SearchLimits` requires 2..=7, so the knob is clamped
+/// to that same closed interval (a malformed env value can never admit an
+/// unbounded DFS).
+pub fn canonical_max_hops() -> u8 {
+    crate::canonical_knobs::CanonicalKnobs::from_env()
+        .max_hops
+        .clamp(2, 7)
+}
+
 /// Mapa (mev_id → source_digest) de la librería desplegada, calculado UNA vez
 /// por proceso. Alcance Fase 3b: los scripts DEPLOYADOS en `CARTRIDGE_DIR`;
 /// un cartucho inyectado en caliente con digest nuevo NO estará en este mapa
@@ -1426,7 +1443,7 @@ fn build_v4_intent_bundle(
         chain_id,
         edges,
         limits: crate::agent_graph::SearchLimits {
-            max_hops: 4,
+            max_hops: canonical_max_hops() as usize,
             max_expansions: 512,
             max_paths: 64,
         },
@@ -2351,7 +2368,12 @@ pub async fn active_evaluate_and_emit(
                             };
                             (c, legs)
                         }
-                        OptimizeOutcome::Rejected(reason, rejected_net) => {
+                        // PER-HOP: the ledger-carrying variant is treated exactly
+                        // like Rejected here; the cartridge emission path does not
+                        // attach per-leg metadata yet (the native orchestrator path
+                        // does — follow-up documented in the PR).
+                        OptimizeOutcome::Rejected(reason, rejected_net)
+                        | OptimizeOutcome::RejectedWithLedger(reason, rejected_net, _) => {
                             let reason_str = reason.as_str().to_owned();
                             REJECTED_NO_PROFIT_TOTAL
                                 .with_label_values(&[&chain_str, label.as_str(), &reason_str])
@@ -2690,6 +2712,38 @@ mod tests {
         assert_eq!(CartridgeMode::Off.as_str(), "off");
         assert_eq!(CartridgeMode::Shadow.as_str(), "shadow");
         assert_eq!(CartridgeMode::Active.as_str(), "active");
+    }
+
+    /// HOPS-CARD-05 gate: the cartridge-side DFS ceiling must carry the full
+    /// canonical 2..7 range (it was hard-coded to 4, so 5-7 hop intents could
+    /// never be represented inside the runtime) and must stay inside the
+    /// `agent_graph::SearchLimits` invariant.
+    #[test]
+    fn cartridge_dfs_ceiling_uses_the_canonical_max_hops() {
+        let hops = canonical_max_hops();
+        assert!(
+            (2..=7).contains(&hops),
+            "cartridge max_hops {hops} outside the canonical 2..=7 range"
+        );
+        // The runtime consumer's OWN invariant (`enumerate_cycles` rejects
+        // anything outside 2..=7 before touching the graph): proven by calling
+        // it with the cartridge limits over an edge-less graph — valid limits
+        // return Ok(empty), invalid ones Err("invalid_search_limits").
+        let limits = crate::agent_graph::SearchLimits {
+            max_hops: hops as usize,
+            max_expansions: 512,
+            max_paths: 64,
+        };
+        let report = crate::agent_graph::enumerate_cycles(&[], "0xstart", &limits)
+            .expect("agent_graph must accept the cartridge DFS ceiling");
+        assert!(report.paths.is_empty() && !report.truncated);
+        // With no operator override the ceiling IS the workbook default (7).
+        if std::env::var("ARBX_KNOB_MAX_HOPS").is_err() {
+            assert_eq!(
+                hops,
+                crate::canonical_knobs::CanonicalKnobs::default().max_hops
+            );
+        }
     }
 
     #[test]

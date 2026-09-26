@@ -355,16 +355,29 @@ impl DexEngine {
                             let (r_in_b, r_out_b) = orient_reserves(rb, pool_b, intent);
                             let fee_a = pool_a.fee_bps.unwrap_or(30);
                             let fee_b = pool_b.fee_bps.unwrap_or(30);
-                            let out_a =
-                                amm_math::v2_amount_out(probe_amount, r_in_a, r_out_a, fee_a);
-                            let out_b =
-                                amm_math::v2_amount_out(probe_amount, r_in_b, r_out_b, fee_b);
-                            let spread = if out_a >= out_b {
-                                out_a.saturating_sub(out_b)
-                            } else {
-                                out_b.saturating_sub(out_a)
-                            };
-                            (spread, true)
+                            // B3 FIX (math-audit AUDIT-MATH-OPPS-2026-09-26): a real
+                            // arb is a CHAINED cycle, not the difference of two
+                            // independent probes. The old `|out_a − out_b|` ignored
+                            // that the second swap receives the FIRST swap's output
+                            // (paying both fees AND the pool's own price impact), and
+                            // it reported a POSITIVE gross on routes the kernel sized
+                            // as negative — a sign discrepancy against the router.
+                            // The cycle: buy where token_in→token_out is better, sell
+                            // the proceeds back into the other pool, and measure the
+                            // RETURN in token_in units: profit = final − probe.
+                            // B3 GATE: the chained math lives in a pure helper
+                            // (v2_cycle_profit) so the phantom-positive case is
+                            // unit-testable without an engine harness.
+                            let profit = v2_cycle_profit(
+                                probe_amount,
+                                r_in_a,
+                                r_out_a,
+                                fee_a,
+                                r_in_b,
+                                r_out_b,
+                                fee_b,
+                            );
+                            (profit, true)
                         } else {
                             // At least one pool is V3 — cannot compute spread here without projector.
                             (U256::zero(), false)
@@ -380,10 +393,15 @@ impl DexEngine {
 
                     // USD pricing: V2 cascade first, then V3 projector result.
                     let gross_profit_usd: Option<f64> = if can_price_v2 {
+                        // B3 FIX (math-audit 2026-09-26): the V2/V2 value is now the
+                        // CHAINED cycle's profit, denominated in token_in — the token
+                        // the cycle returns to and the one the probe was measured in.
+                        // Scale by token_in's decimals/price (passing token_out here
+                        // would mis-scale by the wrong token's decimals).
                         compute_gross_usd(
                             &gross_spread_units,
                             &cfg_opt,
-                            intent.legs.first().map(|l| l.token_out),
+                            intent.legs.first().map(|l| l.token_in),
                         )
                     } else {
                         v3_gross_usd.usd()
@@ -702,6 +720,48 @@ fn orient_reserves(reserves: (U256, U256), pool: &PoolRef, intent: &RouteIntent)
 /// Decimals come from `canonical_token_decimals` — immutable contract properties
 /// of canonical mainnet tokens (NOT market data, NOT a mock). Unknown token →
 /// 18 (the dominant ERC-20 case; correct for WETH/DAI/most tokens).
+///
+/// B3 (math-audit AUDIT-MATH-OPPS-2026-09-26): the V2/V2 value handed to this
+/// function is the CHAINED cycle's profit in token_in raw units (see
+/// `v2_cycle_profit`), so the denomination token at that call site is token_in.
+fn v2_cycle_profit(
+    probe_amount: U256,
+    r_in_a: U256,
+    r_out_a: U256,
+    fee_a: u32,
+    r_in_b: U256,
+    r_out_b: U256,
+    fee_b: u32,
+) -> U256 {
+    // A real arb is a CHAINED cycle: buy token_in→token_out where it is cheaper,
+    // then sell the proceeds back into the other pool (REVERSE orientation).
+    // The legacy `|out_a − out_b|` compared two independent probes of the same
+    // size — ignoring both fees and the return leg's price impact — and reported
+    // positive gross on routes the sizing kernel computed as negative.
+    // U256 cannot go negative: a losing cycle returns zero (computed-and-zero,
+    // which `compute_gross_usd` maps to None per R8).
+    let cycle = |buy_in: U256,
+                 buy_out: U256,
+                 buy_fee: u32,
+                 sell_in: U256,
+                 sell_out: U256,
+                 sell_fee: u32|
+     -> U256 {
+        let mid = amm_math::v2_amount_out(probe_amount, buy_in, buy_out, buy_fee);
+        amm_math::v2_amount_out(mid, sell_in, sell_out, sell_fee)
+    };
+    // A→B: A buys (forward), B sells (reverse: token_out reserve first).
+    let final_ab = cycle(r_in_a, r_out_a, fee_a, r_out_b, r_in_b, fee_b);
+    // B→A: B buys, A sells.
+    let final_ba = cycle(r_in_b, r_out_b, fee_b, r_out_a, r_in_a, fee_a);
+    let best = if final_ab >= final_ba {
+        final_ab
+    } else {
+        final_ba
+    };
+    best.saturating_sub(probe_amount)
+}
+
 fn compute_gross_usd(
     spread_units: &U256,
     cfg_opt: &Option<TradingConfigState>,
@@ -821,6 +881,17 @@ fn canonical_token_decimals(token: Option<Address>) -> u32 {
         // Everything else (WETH, DAI, and the ERC-20 majority) → 18.
         _ => 18,
     }
+}
+
+/// PER-HOP (math-audit AUDIT-MATH-OPPS-2026-09-26): string-address wrapper for
+/// callers that hold route tokens as lowercase `0x…` strings (RouteMetadata's
+/// `token_addresses`). Unparseable/missing → 18, the same dominant-ERC-20
+/// default the engine uses — never a fabricated per-token value.
+pub(crate) fn canonical_token_decimals_str(token: &str) -> u8 {
+    token
+        .parse::<Address>()
+        .map(|a| canonical_token_decimals(Some(a)) as u8)
+        .unwrap_or(18)
 }
 
 // ---------------------------------------------------------------------------
@@ -1225,6 +1296,44 @@ mod tests {
         );
     }
 
+    // ── dex_engine::tests::perhop_decimals_str ───────────────────────────────
+
+    /// PER-HOP gate (math-audit AUDIT-MATH-OPPS-2026-09-26): the string wrapper
+    /// that populates RouteMetadata.decimals must agree with the canonical table
+    /// the engine's USD conversion uses — otherwise per-hop wei would convert
+    /// with the wrong scale (the exact bug class B1 fixed).
+    #[test]
+    fn perhop_decimals_str_matches_the_canonical_table() {
+        assert_eq!(
+            canonical_token_decimals_str("0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48"),
+            6,
+            "USDC"
+        );
+        assert_eq!(
+            canonical_token_decimals_str("0xdac17f958d2ee523a2206206994597c13d831ec7"),
+            6,
+            "USDT"
+        );
+        assert_eq!(
+            canonical_token_decimals_str("0x2260fac5e5542a773aa44fbcfedf7c193bc2c599"),
+            8,
+            "WBTC"
+        );
+        assert_eq!(
+            canonical_token_decimals_str("0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2"),
+            18,
+            "WETH"
+        );
+        // Unknown-but-valid and unparseable input both take the dominant ERC-20
+        // default (18) — never a fabricated per-token value.
+        assert_eq!(
+            canonical_token_decimals_str("0x0000000000000000000000000000000000000123"),
+            18
+        );
+        assert_eq!(canonical_token_decimals_str("not-an-address"), 18);
+        assert_eq!(canonical_token_decimals_str(""), 18);
+    }
+
     // ── dex_engine::tests::b1_probe_is_one_native_unit ───────────────────────
 
     /// B1 gate (math-audit AUDIT-MATH-OPPS-2026-09-26): the probe must be ONE
@@ -1251,6 +1360,57 @@ mod tests {
         assert_eq!(probe_usdc, U256::from(1_000_000u64));
         let probe_weth = U256::from(10u128).pow(U256::from(canonical_token_decimals(Some(weth))));
         assert_eq!(probe_weth, U256::from(10u128).pow(U256::from(18u32)));
+    }
+
+    // ── dex_engine::tests::b3_chained_cycle_kills_the_phantom_positive ───────
+
+    /// B3 gate (math-audit AUDIT-MATH-OPPS-2026-09-26): on a route where the
+    /// legacy `|out_a − out_b|` reported a strictly POSITIVE spread, the chained
+    /// cycle must return ZERO — the second leg receives the first leg's output
+    /// and pays its own fee/impact, so a phantom positive can never reach the
+    /// emitter. A genuine dislocation must still produce profit.
+    #[test]
+    fn b3_chained_cycle_kills_the_phantom_positive() {
+        let e18 = U256::from(10u128).pow(U256::from(18u32));
+        // `probe` = one native unit in.
+        let probe = e18;
+        // Pool A balanced (1000/1000); pool B token_out-poor by 0.1% (1000/999).
+        // The imbalance must be SMALLER than the round-trip fee drag (2 × 0.3%):
+        // a bigger dislocation is a REAL arb and would (correctly) profit — that
+        // is the second half of this gate.
+        let a_in = e18 * U256::from(1000u32);
+        let a_out = e18 * U256::from(1000u32);
+        let b_in = e18 * U256::from(1000u32);
+        let b_out = e18 * U256::from(999u32);
+
+        // The legacy metric on this fixture was strictly positive…
+        let out_a = amm_math::v2_amount_out(probe, a_in, a_out, 30);
+        let out_b = amm_math::v2_amount_out(probe, b_in, b_out, 30);
+        let legacy = if out_a >= out_b {
+            out_a - out_b
+        } else {
+            out_b - out_a
+        };
+        assert!(
+            legacy > U256::zero(),
+            "fixture must reproduce the legacy phantom positive"
+        );
+
+        // …while the real chained cycle returns nothing (no arb exists).
+        let profit = v2_cycle_profit(probe, a_in, a_out, 30, b_in, b_out, 30);
+        assert_eq!(
+            profit,
+            U256::zero(),
+            "chained cycle must not report the phantom positive"
+        );
+
+        // A genuine dislocation (B is token_out-rich) DOES yield chained profit.
+        let b_rich = e18 * U256::from(1100u32);
+        let profit_real = v2_cycle_profit(probe, a_in, a_out, 30, b_in, b_rich, 30);
+        assert!(
+            profit_real > U256::zero(),
+            "a real dislocation must still produce profit"
+        );
     }
 
     // ── dex_engine::tests::v2_v2_classifies_correctly ────────────────────────
