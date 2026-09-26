@@ -1005,6 +1005,13 @@ impl Orchestrator {
                     // an inconsistent audit trail (RULE 00 violation surface).
                     c.opportunity.expected_profit_usd = Some(s.gross_profit_usd);
                     c.opportunity.net_expected_profit_usd = Some(s.estimated_net_profit_usd);
+                    // B1 FIX (math-audit AUDIT-MATH-OPPS-2026-09-26): the kernel's
+                    // optimal size was computed but never reached the row —
+                    // amount_in_wei kept the pre-sizing probe (or "0"), so the
+                    // persisted economics and the recorded notional disagreed and
+                    // the SIM-TS ladder ran on a notional the searcher never sized
+                    // for. Record the exact amount the kernel optimized.
+                    c.opportunity.amount_in_wei = s.optimal_amount_in.to_string();
                     // ARBX-0009: sheet-07 components from the kernel for the
                     // batch's Net_bps ranking (None ⇒ not computable ⇒ last).
                     // HOPS-LEDGER-04: thread the kernel's exact per-leg wei to
