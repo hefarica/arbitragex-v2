@@ -764,7 +764,10 @@ mod tests {
     fn batch_backoff_gate_boundaries() {
         let t0 = Instant::now();
         assert!(!batch_backoff_active_at(t0, None));
-        assert!(batch_backoff_active_at(t0, Some(t0 + Duration::from_secs(10))));
+        assert!(batch_backoff_active_at(
+            t0,
+            Some(t0 + Duration::from_secs(10))
+        ));
         assert!(!batch_backoff_active_at(
             t0 + Duration::from_secs(10),
             Some(t0 + Duration::from_secs(10))

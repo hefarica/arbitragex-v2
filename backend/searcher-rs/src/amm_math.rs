@@ -44,7 +44,9 @@ fn parse_multicall_timeout_ms(raw: Option<String>) -> Duration {
 
 pub(crate) fn v3_quote_multicall_timeout() -> Duration {
     static V: std::sync::OnceLock<Duration> = std::sync::OnceLock::new();
-    *V.get_or_init(|| parse_multicall_timeout_ms(std::env::var("ARBX_V3_QUOTE_MULTICALL_TIMEOUT_MS").ok()))
+    *V.get_or_init(|| {
+        parse_multicall_timeout_ms(std::env::var("ARBX_V3_QUOTE_MULTICALL_TIMEOUT_MS").ok())
+    })
 }
 
 /// Convert a wei-denominated decimal string to f64 token units using the
