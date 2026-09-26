@@ -21,8 +21,23 @@ discovery:
   min_liquidity_hint: 1.0
   # Branching cap: max parallel pools explored between any two tokens.
   max_pools_per_pair: 8
-  # Max cycle length in hops (2 = 2-cycles only; 3 = + triangulars).
-  max_depth: 3
+  # Max cycle length in hops (2 = 2-cycles only; 3 = + triangulars; 7 = the
+  # operator's full 2..7 mandate and the canonical workbook `Max_Hops`).
+  #
+  # HOPS-CARD-05: raised 3 → 7. Precedence (route_discovery_worker.rs:126-132):
+  # `ARBX_KNOB_MAX_HOPS` > `ARBX_ROUTE_DISCOVERY_MAX_DEPTH` > THIS value, all
+  # clamped to the canonical 2..=7. Production already ran at 7 through the env
+  # tier (ARBX_ROUTE_DISCOVERY_MAX_DEPTH=7, evidence: routes_found=500/tick with
+  # zero `work_limited` ticks), so this only makes the SHIPPED default agree with
+  # the canonical knob instead of silently capping every other deployment at 3.
+  #
+  # Safety bound on the deeper DFS: the finder's shared work budget
+  # (`DEFAULT_MAX_EDGE_VISITS = 100_000`, multi_hop_search.rs:120) plus the
+  # best-K heap capped by `max_routes_per_tick`; exhausting it sets
+  # `capped`/`work_limited` (fail-honest, never silent) — the depth-7 starvation
+  # incident ROUTES-0-20260916 is mitigated by the degree-1 leaf-start skip in
+  # unique_route_finder.rs:503-509.
+  max_depth: 7
 
 strategies:
   # DEX cross-arb (2-cycle). Maps to granular dex_arb_v2v2/.../v3v3 labels.
