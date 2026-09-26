@@ -80,7 +80,9 @@ describe("CHANNELS-01 — pure parsers", () => {
     const fallback = channelsStreamList(undefined);
     expect(fallback).toContain("arbx:opps:detected");
     expect(fallback.length).toBeGreaterThanOrEqual(8);
-    expect(channelsStreamList(" a , b ,, ")[Symbol.iterator]().toArray()).toEqual(["a", "b"]);
+    // Node 20 CI compat: iterator helpers (.toArray()) are ES2024+ — plain
+    // spread works on every supported runtime.
+    expect([...channelsStreamList(" a , b ,, ")]).toEqual(["a", "b"]);
     expect(channelsStreamList("   ")).toEqual(fallback);
   });
 });
