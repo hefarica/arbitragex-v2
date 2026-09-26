@@ -9,9 +9,12 @@
 import { describe, expect, it } from "vitest";
 import type { Redis } from "ioredis";
 import {
+  COST_CLOSURE_TOLERANCE_USD,
+  costsTotalUsd,
   forwardSimulate,
   inverseSize,
   resolveTarget,
+  tripleIsClosed,
   type SimulatorRow,
 } from "./computeSimulatedNet.js";
 import {
@@ -152,6 +155,75 @@ describe("forwardSimulate", () => {
     expect(r.cost_breakdown.copied_buffer_usd).toBeCloseTo(100 * 0.1, 5);
     // Notes should mention it.
     expect(r.notes.some((n) => n.includes("p-copied-max"))).toBe(true);
+  });
+});
+
+// ── CARDS-NOTIONAL-01 (2026-09-26): the ladder is published CLOSED ──────────
+//
+// The card painted `Total cost` from a hand-summed subset of this breakdown
+// that OMITTED `copied_buffer_usd` — at the live `p_copied_max = 0.5` that is
+// half the gross, the single largest term — while painting `Net yield` from a
+// DIFFERENT producer at a DIFFERENT size. `net == gross − total_cost` therefore
+// could not hold on the rendered row (`Total cost $72.4k` beside
+// `Net yield -$0.0000`). These tests pin the wire contract that makes closure an
+// identity of this function instead of a coincidence between call sites.
+describe("CARDS-NOTIONAL-01 — closed (gross, net, Σcosts) triple", () => {
+  it("publishes costs_total_usd, gross_usd and net_usd from ONE computation", () => {
+    const cfg = baseCfg();
+    cfg.p_copied_max = 0.5; // the live operator value
+    const row = baseRow();
+    const r = forwardSimulate(row, cfg)!;
+
+    expect(r.gross_usd).toBe(100);
+    // Σ of the PUBLISHED breakdown object, not a second formula.
+    expect(r.costs_total_usd).toBeCloseTo(costsTotalUsd(r.cost_breakdown), 12);
+    // Copied buffer IS in the total (it is 50 % of the gross here).
+    expect(r.cost_breakdown.copied_buffer_usd).toBeCloseTo(50, 6);
+    expect(r.costs_total_usd).toBeGreaterThanOrEqual(50);
+    // Closure, in the display's own rounding.
+    expect(
+      Math.abs(r.net_usd - (r.gross_usd - r.costs_total_usd)),
+    ).toBeLessThanOrEqual(COST_CLOSURE_TOLERANCE_USD);
+    expect(tripleIsClosed(r.gross_usd, r.net_usd, r.costs_total_usd)).toBe(true);
+    // The ladder declares the notional it belongs to — never inferred downstream.
+    expect(r.notes).toContain("basis=amount_in_wei");
+  });
+
+  it("REGRESSION: the old 8-of-9 hand sum (no copied buffer) breaks the identity", () => {
+    const cfg = baseCfg();
+    cfg.p_copied_max = 0.5;
+    const r = forwardSimulate(baseRow(), cfg)!;
+    const cb = r.cost_breakdown;
+    // The exact expression the card used to sum: every component EXCEPT copied.
+    const legacyTotal =
+      cb.gas_usd +
+      cb.lp_fees_usd +
+      cb.slippage_usd +
+      cb.flashloan_fee_usd +
+      cb.relay_fee_usd +
+      cb.capital_cost_usd +
+      cb.failure_buffer_usd +
+      cb.ops_overhead_usd;
+    // The old ladder was off by the copied buffer — half the gross — so the
+    // identity the operator reads on the card failed by that amount.
+    expect(legacyTotal).toBeLessThan(r.costs_total_usd);
+    expect(r.costs_total_usd - legacyTotal).toBeCloseTo(50, 6);
+    expect(
+      Math.abs(r.net_usd - (r.gross_usd - legacyTotal)),
+    ).toBeGreaterThan(COST_CLOSURE_TOLERANCE_USD);
+    // …and the contract test that catches it: closure must hold on the
+    // PUBLISHED total, which is why the consumer may never re-sum by hand.
+    expect(tripleIsClosed(r.gross_usd, r.net_usd, r.costs_total_usd)).toBe(true);
+    expect(tripleIsClosed(r.gross_usd, r.net_usd, legacyTotal)).toBe(false);
+  });
+
+  it("R8: a non-finite triple is never reported as closed", () => {
+    expect(tripleIsClosed(Number.NaN, 1, 1)).toBe(false);
+    expect(tripleIsClosed(1, Number.POSITIVE_INFINITY, 1)).toBe(false);
+    expect(tripleIsClosed(1, 0, Number.NaN)).toBe(false);
+    // Exactly at the tolerance boundary counts as closed (the display rounding).
+    expect(tripleIsClosed(10, 9, 1.005)).toBe(true);
+    expect(tripleIsClosed(10, 9, 1.02)).toBe(false);
   });
 });
 

@@ -369,6 +369,23 @@ export interface OmniOpportunity {
   simulated_amount_in_usd: number | null;
   simulated_roi_pct: number | null;
   simulated_cost_breakdown: SimulatedCostBreakdown | null;
+  /**
+   * CARDS-NOTIONAL-01 (2026-09-26): the gross the SIM ladder itself consumed,
+   * and the Σ of the ladder's own cost components.
+   *
+   * All three (`simulated_gross_usd`, `simulated_costs_total_usd`,
+   * `simulated_net_profit_usd`) come from ONE `forwardSimulate` call at ONE
+   * notional, so they satisfy `net == gross − total_cost` by construction.
+   * They exist precisely so no consumer has to pair the SIM's cost ladder with
+   * `expected_profit_usd` / `net_expected_profit_usd` — canonical figures the
+   * SEARCHER produced at the searcher's own size, which is how the card came to
+   * print `IN $0.00` beside `GROSS $1.47M` and `Total cost $73.4k` beside
+   * `Net yield -$0.0000`. See `frontend/lib/opportunity-ledger.ts`.
+   *
+   * Null (never 0) when no forward ran, or on any payload predating the field.
+   */
+  simulated_gross_usd: number | null;
+  simulated_costs_total_usd: number | null;
   simulated_target: SimulatedTarget | null;
   simulated_at: string | null;
   simulated_notes: string[] | null;
@@ -535,6 +552,16 @@ export function mapToOmniOpportunity(raw: Record<string, unknown>): OmniOpportun
       raw.simulated_roi_pct != null ? Number(raw.simulated_roi_pct) : null,
     simulated_cost_breakdown:
       (raw.simulated_cost_breakdown as SimulatedCostBreakdown) ?? null,
+    // CARDS-NOTIONAL-01: the SIM's OWN gross and the Σ of its OWN cost
+    // components — same `forwardSimulate` call, same notional as
+    // `simulated_net_profit_usd`. Absent on legacy payloads → null (R8: the
+    // ladder then renders on the canonical pair, never on a borrowed gross).
+    simulated_gross_usd:
+      raw.simulated_gross_usd != null ? Number(raw.simulated_gross_usd) : null,
+    simulated_costs_total_usd:
+      raw.simulated_costs_total_usd != null
+        ? Number(raw.simulated_costs_total_usd)
+        : null,
     simulated_target: (raw.simulated_target as SimulatedTarget) ?? null,
     simulated_at: raw.simulated_at != null ? String(raw.simulated_at) : null,
     simulated_notes: Array.isArray(raw.simulated_notes)

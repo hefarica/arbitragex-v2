@@ -38,6 +38,11 @@
 import * as React from "react";
 
 import type { OmniOpportunity } from "@/lib/store/types";
+// CARDS-NOTIONAL-01 — the same SSOT the card ladder and the notifier use.
+import {
+  buildLedger,
+  grossIsAttributableToPrincipal,
+} from "@/lib/opportunity-ledger";
 
 const DASH = "—";
 export const NOT_EMITTED = "no emitido";
@@ -79,14 +84,37 @@ function summaryCells(opp: OmniOpportunity): Array<{
   value: string;
   title: string;
 }> {
+  // CARDS-NOTIONAL-01 (2026-09-26): this grid is where the two figures that
+  // contradict each other on the live card are painted side by side —
+  // `in  $0.00` (the SIM's notional, from `amount_in_wei`) and
+  // `Gross $1.47M` (the searcher's fast-filter gross at ITS own size). Neither
+  // number is individually wrong, but the PORTRAIT is, because a reader takes
+  // "in" and "Gross" to be two cells of one arithmetic.
+  //
+  // `buildLedger` decides which closed arithmetic the row actually has. The
+  // grid then (a) only publishes a notional when the shown gross belongs to
+  // that notional, and (b) labels every economic cell with the producer it came
+  // from, so no two cells can be read as one ladder unless they are one.
+  const ledger = buildLedger(opp);
   // CARDS-PRECEDENCE-02 (2026-09-26): the canonical ratio wins; when it is
   // absent but the TS forward-sim computed one, the SIMULATED value is the
   // computed value and must be displayed (marked `~`) instead of an empty cell.
   // Live evidence (GET /api/opportunities/live): `roi_pct` is null on 38/38 rows
   // while `simulated_roi_pct` is non-null on 3 — those 3 cards carried a
   // computed ROI that this cell never showed.
-  const roiPct = opp.roi_pct ?? opp.simulated_roi_pct ?? null;
-  const roiIsSimulated = opp.roi_pct == null && opp.simulated_roi_pct != null;
+  //
+  // CARDS-NOTIONAL-01: the ratio must belong to the SAME notional as the cell
+  // above it, so the precedence now follows the rendered ladder's basis rather
+  // than a fixed field order. A ratio measured on the ladder's own notional is
+  // bounded by that notional; a ratio borrowed from another producer is not.
+  const roiPct =
+    ledger.basis === "simulated"
+      ? opp.simulated_roi_pct ?? opp.roi_pct ?? null
+      : opp.roi_pct ?? opp.simulated_roi_pct ?? null;
+  const roiIsSimulated =
+    ledger.basis === "simulated"
+      ? opp.simulated_roi_pct != null
+      : opp.roi_pct == null && opp.simulated_roi_pct != null;
   const bps = roiPct != null ? `${roiIsSimulated ? "~" : ""}${(roiPct * 100).toFixed(0)}` : null;
   // CARDS-QUIET-01 (2026-09-26, operator order): a null economic value renders
   // the QUIET empty state (`DASH`), never a loud "no computado" wall.
@@ -156,13 +184,34 @@ function summaryCells(opp: OmniOpportunity): Array<{
     },
     cell(
       "in",
-      opp.simulated_amount_in_usd != null ? usd(opp.simulated_amount_in_usd) : null,
-      `amount_in_wei=${opp.amount_in_wei ?? "no emitido"} · USD solo cuando la simulación lo computa (R8)`,
+      // CARDS-NOTIONAL-01: a notional is published only when the gross shown
+      // beside it can be attributed to it — same arithmetic, one size, checked
+      // with the searcher's OWN `SANITY_PROFIT_MULT_OF_CAP` (5×) bound rather
+      // than a threshold re-invented here. On the live feed that bound is what
+      // separates a legitimate «in $2688.25 / Gross $52.14» pair from the
+      // `in $0.00` beside `Gross $1.47M` the operator photographed; the latter
+      // renders the dash with the machine reason in the title.
+      grossIsAttributableToPrincipal(
+        opp.expected_profit_usd,
+        opp.simulated_amount_in_usd,
+      ) && opp.simulated_amount_in_usd != null
+        ? usd(opp.simulated_amount_in_usd)
+        : null,
+      opp.simulated_amount_in_usd == null
+        ? `amount_in_wei=${opp.amount_in_wei ?? "no emitido"} — sin precio no hay notional en USD (R8)`
+        : grossIsAttributableToPrincipal(
+              opp.expected_profit_usd,
+              opp.simulated_amount_in_usd,
+            )
+          ? `amount_in_wei=${opp.amount_in_wei ?? "no emitido"} valorado al precio vivo — notional del ladder SIM (basis=${ledger.basis})`
+          : `CARDS-NOTIONAL-01: el bruto mostrado (${opp.expected_profit_usd}) no es atribuible a este notional (${opp.simulated_amount_in_usd}) — se midieron en tamaños distintos, no se publica principal`,
     ),
     cell(
       "Gross",
       opp.expected_profit_usd != null ? usd(opp.expected_profit_usd) : null,
-      "expected_profit_usd (gross, pre-costos)",
+      ledger.basis === "simulated"
+        ? "simulated_gross_usd (bruto del ladder SIM, mismo notional que `in`)"
+        : "expected_profit_usd — bruto del searcher (dex_engine fast-filter) en SU propio tamaño; sin notional en el wire (CARDS-NOTIONAL-01)",
     ),
     cell(
       "Net",
@@ -189,11 +238,19 @@ function summaryCells(opp: OmniOpportunity): Array<{
       // is null on 38/38 live rows today, while `simulated_roi_pct` IS computed
       // on 3 of them. The cell fell back to nothing instead of to that computed
       // value; `~` marks the simulated source.
-      opp.roi_pct != null
-        ? `roi_pct ${opp.roi_pct.toFixed(4)}% × 100 — conversión de unidad, no un veredicto`
-        : opp.simulated_roi_pct != null
-          ? `simulated_roi_pct ${opp.simulated_roi_pct.toFixed(4)}% × 100 — '~' marca el origen (canónico pendiente)`
-          : "roi_pct no computado (R8)",
+      //
+      // CARDS-NOTIONAL-01: the ratio is now the one measured on the RENDERED
+      // ladder's notional (see the precedence above), so `bps` is bounded by the
+      // same notional as the cells it sits beside — `~1513332276940974` was
+      // `net_sim / $0.0000045 × 100`, i.e. a ratio whose denominator the reader
+      // could not see.
+      roiIsSimulated
+        ? `simulated_roi_pct ${(opp.simulated_roi_pct ?? 0).toFixed(4)}% × 100 — '~' marca el origen; medido sobre el notional del ladder (basis=${ledger.basis})`
+        : opp.roi_pct != null
+          ? `roi_pct ${opp.roi_pct.toFixed(4)}% × 100 — conversión de unidad, no un veredicto (basis=${ledger.basis})`
+          : opp.simulated_roi_pct != null
+            ? `simulated_roi_pct ${opp.simulated_roi_pct.toFixed(4)}% × 100 — '~' marca el origen (canónico pendiente)`
+            : "roi_pct no computado (R8)",
     ),
     cell(
       "Risk",

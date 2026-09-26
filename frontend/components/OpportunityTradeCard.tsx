@@ -79,6 +79,10 @@ import {
   type OmniOpportunity,
   type RouteLeg,
 } from "@/lib/store/types";
+// CARDS-NOTIONAL-01 — the SSOT for "which closed arithmetic may this card
+// paint". Shared with the high-value notifier so the two surfaces cannot
+// disagree about what a row's numbers mean.
+import { buildLedger, LEDGER_COST_ROW_LABELS } from "@/lib/opportunity-ledger";
 
 // ─── Tone → token-based class map ────────────────────────────────────────────
 const TONE_CLASS: Record<string, string> = {
@@ -242,27 +246,32 @@ function OpportunityTradeCardImpl({
   const isStale: boolean | null =
     lastAgeSecs == null ? null : lastAgeSecs > STALE_SECS;
 
-  // ── Net priority: canonical spine → TS simulated → "—" ─────────────────────
-  const gross = formatProfitUSD(opp.expected_profit_usd);
-  const canonicalNet = opp.net_expected_profit_usd ?? null;
-  const simulatedNet = opp.simulated_net_profit_usd ?? null;
-  const netSource: "canonical" | "simulated" | "none" =
-    canonicalNet != null ? "canonical" : simulatedNet != null ? "simulated" : "none";
-  const net = formatProfitUSD(canonicalNet ?? simulatedNet);
+  // ── Net priority: CARDS-NOTIONAL-01 — ONE ladder, ONE notional ─────────────
+  // The card used to pick `net` by FIELD NAME (canonical spine net preferred)
+  // while painting `Total cost` from the SIM's breakdown and `Flash loan in`
+  // from the SIM's notional — three producers, up to three sizes, one ladder.
+  // `buildLedger` (frontend/lib/opportunity-ledger.ts) is the SSOT that decides
+  // which CLOSED arithmetic this row may paint, and it is the SAME function the
+  // high-value notifier consults, so the card and the toast cannot disagree.
+  const ledger = buildLedger(opp);
+  const quietReason = ledger.reason;
+  const grossUsd = ledger.gross_usd;
+  const netUsd = ledger.net_usd;
+  const netSource: "canonical" | "simulated" | "none" = ledger.basis;
+  const net = formatProfitUSD(netUsd);
+  const gross = formatProfitUSD(grossUsd);
 
   const roi = opp.roi_pct;
   const roiTone: "pos" | "neg" | "muted" =
     roi == null ? "muted" : roi > 0 ? "pos" : roi < 0 ? "neg" : "muted";
 
   // ── Step-ladder ledger: borrow → buy A → buy B → buy C → repay → net ───────
-  // Capital in: the simulated borrow sized against the /strategies target, else
-  // the recorded amount_in (honest label). End value: capital_in + net (only
-  // when both are known — never invent one from the other).
-  const simInUsd = opp.simulated_amount_in_usd ?? null;
-  const capitalInUsd = simInUsd;
-  const cb = opp.simulated_cost_breakdown;
-  const grossUsd = opp.expected_profit_usd ?? null;
-  const netUsd = canonicalNet ?? simulatedNet;
+  // Every row below belongs to `ledger`'s basis or it is NOT rendered. The
+  // principal rows exist only on the `"simulated"` basis — the only basis whose
+  // notional is published on the wire; on the `"canonical"` basis they go quiet
+  // with `quietReason` in their `title` rather than borrowing the SIM's number.
+  const capitalInUsd = ledger.principal_usd;
+  const cb = ledger.basis === "simulated" ? opp.simulated_cost_breakdown : null;
 
   // ── WO-PRICE-EXCHANGE-V1 (FE) — CEX-premium treatment on the EXISTING card ──
   // Flash memory in refs (useValueFlash): a WS/polling batch that changes
@@ -281,10 +290,6 @@ function OpportunityTradeCardImpl({
   const agoText = isMounted && opp.detected_at != null ? formatAgo(opp.detected_at) : null;
   const sourceFreshness = freshnessLevel(isMounted ? lastAgeSecs : null);
 
-  // End-of-route value: capital + net (SIM path). Honest only when both known.
-  const endValueUsd: number | null =
-    capitalInUsd != null && netUsd != null ? capitalInUsd + netUsd : null;
-
   // Repay = capital in + flash-convergence fee (TLS principal + fee).
   const flashFee = cb?.flashloan_fee_usd ?? null;
   const repayUsd: number | null =
@@ -302,21 +307,20 @@ function OpportunityTradeCardImpl({
       : { label: "FAIL", tone: "fail" };
   })();
 
-  // Total cost = gross − net (when both known) or the sum of known cost rows.
-  const costRows: Array<[string, number | null]> = [
-    ["Gas", cb?.gas_usd ?? null],
-    ["LP fees", cb?.lp_fees_usd ?? null],
-    ["Decoherence (slippage)", cb?.slippage_usd ?? null],
-    ["TLS fee (flash)", cb?.flashloan_fee_usd ?? null],
-    ["Relay fee", cb?.relay_fee_usd ?? null],
-    ["Capital cost", cb?.capital_cost_usd ?? null],
-    ["Failure buffer", cb?.failure_buffer_usd ?? null],
-    ["Ops overhead", cb?.ops_overhead_usd ?? null],
-  ];
-  const knownCostSum = costRows.reduce<number | null>(
-    (acc, [, v]) => (v == null ? acc : (acc ?? 0) + v),
-    null,
-  );
+  // TOTAL COST — the ledger's own Σ, never a hand-summed subset.
+  //   · `"simulated"`: Σ of the SIM breakdown INCLUDING `copied_buffer_usd`.
+  //     The old code summed 8 of 9 components and dropped the copied buffer —
+  //     at the live `p_copied_max = 0.5` that is half the gross, so the printed
+  //     "Total cost" was ≈45% of the truth and `net == gross − total_cost`
+  //     could not hold even inside one producer's numbers.
+  //   · `"canonical"`: `gross − net`, the wire's OWN documented relation
+  //     (`net_expected_profit_usd` is "gross - costs" on that same row).
+  const costRows = ledger.cost_rows;
+  const knownCostSum = ledger.total_cost_usd;
+  /** Label → value for the rendered cost rows (values exist only on the SIM basis). */
+  const costValueByLabel = new Map(costRows.map((r) => [r.label, r.value]));
+  /** True when a wire figure was suppressed because it belongs to another notional. */
+  const ledgerIsQuiet = ledger.quiet;
 
   // ── HOPS-CARD-03: ladder legs from the PERSISTED topology (deriveLegs) ─────
   // The old hardcoded "Buy A / Buy B" 2-row ladder hid every N-leg route — a
@@ -717,16 +721,37 @@ function OpportunityTradeCardImpl({
 
       {/* ── STEP LADDER: capital path with running USD totals ──
            Each row shows its USD contribution so the operator reads where value
-           is gained/lost at every hop. Down = cost, up = inflow. */}
+           is gained/lost at every hop. Down = cost, up = inflow.
+
+           CARDS-NOTIONAL-01: every row here belongs to ONE basis, chosen by
+           `buildLedger`. A figure whose producer computed it at a DIFFERENT
+           size than the row's own notional is not painted at all — its cell
+           renders the honest dash and `quietReason` travels in the `title`.
+           That is what removes `IN $0.00` beside `Total cost $73.4k`,
+           `Total cost $72.4k` beside `Net yield -$0.0000`, and `GROSS $1.45M`
+           on a `$0.00`/`$1.00` principal. */}
       <div className="rounded-lg border border-border bg-muted/20 mb-3 overflow-hidden">
         <div className="px-2.5 py-1.5 border-b border-border/60 text-[9px] uppercase tracking-wide text-muted-foreground font-semibold">
           Capital path (USD)
+          <span className="ml-1 normal-case tracking-normal text-muted-foreground/60">
+            · {ledger.basis === "simulated"
+              ? "forward-sim @ amount_in_wei"
+              : ledger.basis === "canonical"
+                ? "searcher gross/net (sin notional)"
+                : "sin aritmética cerrada"}
+          </span>
         </div>
         <div className="p-2 space-y-0.5 font-mono text-[11px]">
           <LedgerRow
             up
             label={`Flash loan in (TLS)${opp.chain_base_token_symbol ? ` · ${opp.chain_base_token_symbol}` : ""}`}
             value={capitalInUsd}
+            title={
+              capitalInUsd != null
+                ? `Notional del ladder = simulated_amount_in_usd (amount_in_wei=${opp.amount_in_wei ?? "no emitido"} valorado al precio vivo).`
+                : quietReason ??
+                  "Principal no computado — no se pinta un notional de otro productor."
+            }
           />
           {legs.length > 0 ? (
             legs.map((l) => {
@@ -763,11 +788,42 @@ function OpportunityTradeCardImpl({
             tone="text-foreground"
             flashCls={flashClass(grossFlash)}
             flashSeq={grossFlash.seq}
+            title={
+              ledger.basis === "simulated"
+                ? "simulated_gross_usd — el bruto de ESTE ladder (misma llamada que el net y los costos)."
+                : "expected_profit_usd — bruto del searcher en SU propio tamaño; el wire no publica el notional de este par, así que el ladder no pinta principal."
+            }
           />
           <div className="my-1 border-t border-border/50" />
-          <LedgerRow down label={`Repay (principal + TLS fee)`} value={repayUsd} />
-          {costRows.map(([label, v]) => (
-            <LedgerRow key={label} down label={label} value={v} small />
+          <LedgerRow
+            down
+            label={`Repay (principal + TLS fee)`}
+            value={repayUsd}
+            title={
+              repayUsd != null
+                ? "principal + flashloan_fee del MISMO ladder (simulación al notional mostrado)."
+                : quietReason ??
+                  "Principal no computado — no se pinta un notional de otro productor."
+            }
+          />
+          {/* CARDS-NOTIONAL-01: the 9 labelled rows always render (stable
+              layout + the operator can see WHICH component is missing); their
+              VALUES exist only on the basis that owns a breakdown. A row with
+              no value for this basis is a quiet dash carrying `quietReason`. */}
+          {LEDGER_COST_ROW_LABELS.map((label) => (
+            <LedgerRow
+              key={label}
+              down
+              label={label}
+              value={costValueByLabel.get(label) ?? null}
+              small
+              title={
+                costValueByLabel.has(label)
+                  ? undefined
+                  : quietReason ??
+                    "Componente no computado para el notional mostrado (R8)."
+              }
+            />
           ))}
           <div className="my-1 border-t border-border/50" />
           <LedgerRow
@@ -775,18 +831,43 @@ function OpportunityTradeCardImpl({
             value={knownCostSum}
             tone="text-destructive"
             strong
+            title={
+              ledger.basis === "simulated"
+                ? "Σ de los 9 componentes del breakdown (incluye copied buffer = p_copied × gross)."
+                : ledger.basis === "canonical"
+                  ? "Derivado: expected_profit_usd − net_expected_profit_usd (la relación que el propio wire documenta para este par)."
+                  : quietReason ?? "Sin aritmética cerrada para esta fila."
+            }
           />
           <LedgerRow
             up={netUsd != null && netUsd > 0}
             down={netUsd != null && netUsd < 0}
-            label={`Net yield${netSource === "simulated" ? " (SIM)" : ""}`}
+            label={`Net yield${netSource === "simulated" ? " (SIM)" : netSource === "canonical" ? " (spine)" : ""}`}
             value={netUsd}
             tone={netUsd == null ? undefined : netUsd > 0 ? "text-success" : netUsd < 0 ? "text-destructive" : "text-muted-foreground"}
             strong
             flashCls={flashClass(netFlash)}
             flashSeq={netFlash.seq}
+            title={
+              netSource === "simulated"
+                ? "simulated_net_profit_usd — net del MISMO ladder: net = gross − Σcostos, exacto."
+                : netSource === "canonical"
+                  ? "net_expected_profit_usd — net del searcher; por construcción net = gross − Total cost en este bloque."
+                  : quietReason ?? "Net no computado (R8)."
+            }
           />
         </div>
+        {ledgerIsQuiet && ledger.basis !== "simulated" && (
+          <div
+            className="px-2.5 pb-1.5 text-[9px] leading-tight text-muted-foreground/70"
+            data-testid="ledger-basis-note"
+            title={quietReason ?? undefined}
+          >
+            {ledger.basis === "canonical"
+              ? "Ladder sobre el par (gross, net) del searcher: sin principal ni desglose por componente — esos viven en otro notional y no se mezclan (CARDS-NOTIONAL-01)."
+              : "Sin aritmética cerrada para esta fila: las celdas van en guion a propósito (R8)."}
+          </div>
+        )}
       </div>
 
       {/* ── APPLIED STRATEGY CONFIG (from /strategies) ── */}
@@ -964,6 +1045,7 @@ function LedgerRow({
   flashCls,
   flashSeq,
   testId,
+  title,
 }: {
   label: string;
   value?: number | null;
@@ -982,6 +1064,12 @@ function LedgerRow({
   flashSeq?: number;
   /** Stable DOM id for the SSR layout gates (cards-overlap regression). */
   testId?: string;
+  /**
+   * CARDS-NOTIONAL-01: why this cell is a dash, or which producer/notional the
+   * painted figure belongs to. R8: a suppressed figure must still be
+   * ACCOUNTABLE — the machine reason is one hover away, never hidden.
+   */
+  title?: string;
 }) {
   // CARDS-LAYOUT-01 (2026-09-26, operator report — PROVEN with geometry on the
   // live card): the row used to be `flex items-center justify-between`. In a
@@ -1009,6 +1097,7 @@ function LedgerRow({
   return (
     <div
       data-testid={testId}
+      title={title}
       className={`${muted ? "text-muted-foreground/70" : "text-foreground"} ${
         small ? "text-[10px]" : ""
       } ${strong ? "font-bold" : ""}`}

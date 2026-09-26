@@ -42,6 +42,9 @@ export type {
 // ─── Component imports ───────────────────────────────────────────────────────
 import { DegradedBanner } from "@/components/DegradedBanner";
 import { useUserPrefs } from "@/lib/user-prefs";
+// CARDS-NOTIONAL-01 — the notifier's gate is the SAME SSOT the card ladder
+// uses, so the toast can never announce a figure the card refuses to paint.
+import { decideOpportunityNotification } from "@/lib/opportunity-ledger";
 
 // Stable route identity for the card grid key. A re-detected route (same
 // chain + strategy + token pair + DEX path) must update the SAME card in place
@@ -286,18 +289,36 @@ export default function OpportunitiesClient({
   // R1: opportunities come from Omni-Store (SSOT).
   // seenNotifiedIds persists across re-renders via useRef so we never
   // re-toast the same opportunity across WS reconnects or poll cycles.
+  //
+  // CARDS-NOTIONAL-01 (2026-09-26): the toast used to read
+  //   const yieldVal = opp.expected_profit_usd ?? 0;
+  //   ... `Net yield $${yieldVal.toFixed(2)}`
+  // Two defects on one line: (1) `expected_profit_usd` is the DEX engine's fast
+  // filter GROSS, computed at the engine's own probe — it was announced as a
+  // "Net yield", which is how the operator read
+  // `Net yield $822215.98` for a row whose own kernel net was ≈ −0.00001;
+  // (2) `?? 0` turned "not computed" into a number that clears a threshold of 0
+  // (R8: None ≠ Some(0)).
+  //
+  // The gate is now the SAME SSOT the card ladder uses, so the toast can only
+  // ever announce a figure that is closed inside one notional, and it names it
+  // for what it is. A row whose economics cross notionals announces nothing.
   useEffect(() => {
     if (!isMounted) return;
     for (const opp of opportunities) {
       if (seenNotifiedIds.current.has(opp.id)) continue;
       seenNotifiedIds.current.add(opp.id);
-      const yieldVal = opp.expected_profit_usd ?? 0;
-      if (yieldVal >= prefs.notification_threshold_usd) {
-        toast.success(`High-value opportunity — ${opp.strategy_kind}`, {
-          description: `Net yield $${yieldVal.toFixed(2)} · chain ${opp.chain_id} · ${opp.dex_a}${opp.dex_b ? ` → ${opp.dex_b}` : ""}`,
-          duration: 8_000,
-        });
+      const decision = decideOpportunityNotification(
+        opp,
+        prefs.notification_threshold_usd,
+      );
+      if (!decision.fire || decision.amount_usd == null || decision.label == null) {
+        continue;
       }
+      toast.success(`High-value opportunity — ${opp.strategy_kind}`, {
+        description: `${decision.label} $${decision.amount_usd.toFixed(2)} · chain ${opp.chain_id} · ${opp.dex_a}${opp.dex_b ? ` → ${opp.dex_b}` : ""} · ${decision.basis === "simulated" ? "SIM" : "spine"}`,
+        duration: 8_000,
+      });
     }
   }, [opportunities, isMounted, prefs.notification_threshold_usd]);
 

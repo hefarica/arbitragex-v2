@@ -608,6 +608,16 @@ function rowToOpportunity(
   const simulated_roi_pct = sim?.forward?.roi_pct ?? null;
   const simulated_cost_breakdown: SimulatedCostBreakdown | null =
     sim?.forward?.cost_breakdown ?? null;
+  // CARDS-NOTIONAL-01 (2026-09-26): the ladder's OWN gross and the Σ of its OWN
+  // cost components. Both come from the same `forwardSimulate` call as
+  // `simulated_net_profit_usd`, so the three are one computation at one notional
+  // and satisfy `net == gross − total_cost` by construction. Without these two
+  // on the wire every consumer had to pair the SIM's cost ladder with
+  // `expected_profit_usd` / `net_expected_profit_usd` — figures the SEARCHER
+  // produced at the searcher's own size — which is exactly the crossed-notional
+  // card this defect names. Null (never 0) when the forward ran on nothing.
+  const simulated_gross_usd = sim?.forward?.gross_usd ?? null;
+  const simulated_costs_total_usd = sim?.forward?.costs_total_usd ?? null;
   const simulated_target: InverseSizingResult | null =
     sim?.inverse != null ? sim.inverse : null;
   // simulated_at is the timestamp of any sim activity (forward OR Path-B
@@ -711,6 +721,8 @@ function rowToOpportunity(
     simulated_amount_in_usd,
     simulated_roi_pct,
     simulated_cost_breakdown,
+    simulated_gross_usd,
+    simulated_costs_total_usd,
     simulated_target,
     simulated_at,
     simulated_notes:           simulated_notes.length ? simulated_notes : null,
