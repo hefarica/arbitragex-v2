@@ -1578,14 +1578,33 @@ async fn run_loop(
         // rows). The per-(chain, block) cap and the `ARBX_MULTIHOP_EMIT` toggle
         // live in the bridge; the task is detached so the tick's latency budget
         // is untouched and no candidate does RPC here.
+        //
+        // PERHOP-RESERVES-01: that budget is saturated by ~100× in production
+        // (31 556 refusals / 20 min against a cap of 12/block), so the ORDER in
+        // which cycles reach it decides which ones are admitted at all.
+        // `order_for_budget` offers the budget to the cycles the sizing kernel
+        // can actually price FIRST — a stable lane partition that drops nothing;
+        // `ARBX_MULTIHOP_PREFER_SIZEABLE=off` restores the pre-patch finder
+        // order. The lane split is reported in ONE aggregated line (R9: no
+        // per-cycle log inside the tick loop).
         if let Some(orch) = &orchestrator {
+            let prefer_sizeable = hop_cycle_bridge::prefer_sizeable();
             let mut bridge_spawned = 0usize;
-            for c in &tick.routes {
+            let mut lane_sizeable = 0usize;
+            let mut lane_unpriceable = 0usize;
+            for c in hop_cycle_bridge::order_for_budget(&tick.routes, prefer_sizeable) {
                 let hops = c.hops as usize;
                 if !(hop_cycle_bridge::MIN_BRIDGE_HOPS..=hop_cycle_bridge::MAX_BRIDGE_HOPS)
                     .contains(&hops)
                 {
                     continue;
+                }
+                if hop_cycle_bridge::kernel_capability_of_protocols(c.protocols.iter())
+                    == hop_cycle_bridge::KernelCapability::V2CycleSizeable
+                {
+                    lane_sizeable += 1;
+                } else {
+                    lane_unpriceable += 1;
                 }
                 let Some(mut intent) = build_intent(c) else {
                     // Canonicalizer produced a ragged candidate — honest skip
@@ -1618,6 +1637,11 @@ async fn run_loop(
                     event = "route_discovery.hop_bridge_spawned",
                     chain_id,
                     cycles = bridge_spawned,
+                    // PERHOP-RESERVES-01: the tick's deep cycles per budget lane,
+                    // and whether the sizeable-first ordering was applied.
+                    lane_sizeable,
+                    lane_unpriceable,
+                    prefer_sizeable,
                     "3..=7-hop discovered cycles handed to the native emission pipeline"
                 );
             }

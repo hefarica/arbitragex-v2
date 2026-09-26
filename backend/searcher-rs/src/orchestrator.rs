@@ -365,6 +365,14 @@ impl Orchestrator {
                         cap = budget.per_epoch(),
                         used = budget.used_in(epoch),
                         dropped = budget.dropped_in(epoch),
+                        // PERHOP-RESERVES-01: the lane split of the epoch's
+                        // allowance. `unpriceable_refused` is the counted
+                        // deferral — cycles the sizing kernel can only refuse
+                        // (`v3_multileg_unsupported`) that lost the budget to
+                        // priceable work. R8: the skip is explicit, never silent.
+                        sizeable_used = budget.sizeable_used_in(epoch),
+                        unpriceable_used = budget.unpriceable_used_in(epoch),
+                        unpriceable_refused = budget.unpriceable_refused_in(epoch),
                         "per-block multihop emission cap reached — cycle not emitted (R8 truncation)"
                     ),
                     other => debug!(
@@ -396,6 +404,9 @@ impl Orchestrator {
             cap = budget.per_epoch(),
             used = budget.used_in(epoch),
             dropped = budget.dropped_in(epoch),
+            sizeable_used = budget.sizeable_used_in(epoch),
+            unpriceable_used = budget.unpriceable_used_in(epoch),
+            unpriceable_refused = budget.unpriceable_refused_in(epoch),
         );
 
         let cfg_snapshot = self.live_config_snapshot(chain_id).await;
@@ -991,6 +1002,9 @@ impl Orchestrator {
                         cap = budget.per_epoch(),
                         used = budget.used_in(epoch),
                         dropped = budget.dropped_in(epoch),
+                        sizeable_used = budget.sizeable_used_in(epoch),
+                        unpriceable_used = budget.unpriceable_used_in(epoch),
+                        unpriceable_refused = budget.unpriceable_refused_in(epoch),
                     );
                     vec![c]
                 }
@@ -1013,6 +1027,14 @@ impl Orchestrator {
                                 cap = budget.per_epoch(),
                                 used = budget.used_in(epoch),
                                 dropped = budget.dropped_in(epoch),
+                                // PERHOP-RESERVES-01 lane split (see
+                                // `emit_discovered_cycle`): the per-epoch
+                                // allowance spent on priceable vs unpriceable
+                                // cycles, and how many unpriceable cycles were
+                                // deferred behind priceable work.
+                                sizeable_used = budget.sizeable_used_in(epoch),
+                                unpriceable_used = budget.unpriceable_used_in(epoch),
+                                unpriceable_refused = budget.unpriceable_refused_in(epoch),
                                 "per-block multihop emission cap reached — cycle not emitted (R8 truncation)"
                             );
                         } else {
