@@ -754,6 +754,7 @@ export const OpportunityTradeCard = React.memo(
       p.confirmations === n.confirmations &&
       sameJson(p.route_metadata, n.route_metadata) &&
       sameJson(p.leg_symbols, n.leg_symbols) &&
+      sameJson(p.token_prices_usd, n.token_prices_usd) &&
       p.dex_a === n.dex_a &&
       p.dex_b === n.dex_b &&
       p.token_in_info?.logo_url === n.token_in_info?.logo_url &&

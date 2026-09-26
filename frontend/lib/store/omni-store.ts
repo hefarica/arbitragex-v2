@@ -242,6 +242,14 @@ function mergeRedetection(
     first_seen_at: prev.first_seen_at ?? earlierIso(prev.detected_at, incoming.detected_at),
     last_seen_at: laterIso(prev.last_seen_at ?? prev.detected_at, incoming.detected_at),
     confirmations: (prev.confirmations ?? 0) + hits,
+    // CARDS-PRICES-01 (2026-09-26): WS rows are raw PG rows — token_prices_usd
+    // is ABSENT (undefined) on that wire, never "no prices". Preserve the REST
+    // snapshot's enrichment until the next snapshot refreshes it. An explicit
+    // null (snapshot says "no live prices") always wins over a stale value.
+    token_prices_usd:
+      incoming.token_prices_usd !== undefined
+        ? incoming.token_prices_usd
+        : (prev.token_prices_usd ?? null),
   };
 }
 
