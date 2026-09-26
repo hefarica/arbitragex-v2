@@ -1202,6 +1202,25 @@ impl Orchestrator {
                 chosen.pool_addresses = c.pool_addresses.clone();
                 chosen.dex_adapters = c.dex_adapters.clone();
             }
+            // PER-HOP (math-audit AUDIT-MATH-OPPS-2026-09-26): populate the
+            // decimals map from the route's OWN token path — the same canonical
+            // immutable-protocol table the engine's USD conversion uses (unknown
+            // → 18, the ERC-20 default). Without it the card can only ever show
+            // raw per-hop wei, never USD: `route_metadata.decimals.map` was
+            // empty in 32/32 production rows.
+            {
+                let mut m = std::collections::HashMap::new();
+                for addr in &chosen.token_addresses {
+                    let lc = addr.to_lowercase();
+                    m.insert(
+                        lc,
+                        crate::engines::dex_engine::canonical_token_decimals_str(addr),
+                    );
+                }
+                if !m.is_empty() {
+                    chosen.decimals = shared_rs::candidates::DecimalsMap { map: m };
+                }
+            }
             // HOPS-LEDGER-04: attach the kernel's per-leg ledger AFTER the
             // source merge — attach_leg_ledger is all-or-nothing, so a
             // backfill that changed the hop count refuses the attach (never

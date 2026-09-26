@@ -883,6 +883,17 @@ fn canonical_token_decimals(token: Option<Address>) -> u32 {
     }
 }
 
+/// PER-HOP (math-audit AUDIT-MATH-OPPS-2026-09-26): string-address wrapper for
+/// callers that hold route tokens as lowercase `0x…` strings (RouteMetadata's
+/// `token_addresses`). Unparseable/missing → 18, the same dominant-ERC-20
+/// default the engine uses — never a fabricated per-token value.
+pub(crate) fn canonical_token_decimals_str(token: &str) -> u8 {
+    token
+        .parse::<Address>()
+        .map(|a| canonical_token_decimals(Some(a)) as u8)
+        .unwrap_or(18)
+}
+
 // ---------------------------------------------------------------------------
 // Opportunity constructors
 // ---------------------------------------------------------------------------
@@ -1283,6 +1294,44 @@ mod tests {
             has_cache_miss,
             "must have at least one reserves_cache_miss rejection when cache is empty"
         );
+    }
+
+    // ── dex_engine::tests::perhop_decimals_str ───────────────────────────────
+
+    /// PER-HOP gate (math-audit AUDIT-MATH-OPPS-2026-09-26): the string wrapper
+    /// that populates RouteMetadata.decimals must agree with the canonical table
+    /// the engine's USD conversion uses — otherwise per-hop wei would convert
+    /// with the wrong scale (the exact bug class B1 fixed).
+    #[test]
+    fn perhop_decimals_str_matches_the_canonical_table() {
+        assert_eq!(
+            canonical_token_decimals_str("0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48"),
+            6,
+            "USDC"
+        );
+        assert_eq!(
+            canonical_token_decimals_str("0xdac17f958d2ee523a2206206994597c13d831ec7"),
+            6,
+            "USDT"
+        );
+        assert_eq!(
+            canonical_token_decimals_str("0x2260fac5e5542a773aa44fbcfedf7c193bc2c599"),
+            8,
+            "WBTC"
+        );
+        assert_eq!(
+            canonical_token_decimals_str("0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2"),
+            18,
+            "WETH"
+        );
+        // Unknown-but-valid and unparseable input both take the dominant ERC-20
+        // default (18) — never a fabricated per-token value.
+        assert_eq!(
+            canonical_token_decimals_str("0x0000000000000000000000000000000000000123"),
+            18
+        );
+        assert_eq!(canonical_token_decimals_str("not-an-address"), 18);
+        assert_eq!(canonical_token_decimals_str(""), 18);
     }
 
     // ── dex_engine::tests::b1_probe_is_one_native_unit ───────────────────────
