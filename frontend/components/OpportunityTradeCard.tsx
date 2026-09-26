@@ -453,6 +453,35 @@ function OpportunityTradeCardImpl({
                     isEndpointIn || isEndpointOut ? null : (opp.leg_symbols?.[lc] ?? null)
                   }
                 />
+                {/* CARDS-PRICES-01: live PriceBus USD price under the chip —
+                    real-time Binance WS + Chainlink snapshot. Absent = no live
+                    price for that symbol (R8: nothing rendered, never a guess). */}
+                {(() => {
+                  const info = isEndpointIn
+                    ? opp.token_in_info
+                    : isEndpointOut
+                      ? opp.token_out_info
+                      : null;
+                  const sym = (
+                    info?.symbol ??
+                    info?.registry_symbol ??
+                    opp.leg_symbols?.[lc]
+                  )?.toUpperCase();
+                  const px = sym ? opp.token_prices_usd?.[sym] : undefined;
+                  if (px == null || !Number.isFinite(px) || px <= 0) return null;
+                  const shown =
+                    px >= 1
+                      ? `$${px.toLocaleString("en-US", { maximumFractionDigits: 2 })}`
+                      : `$${px.toPrecision(3)}`;
+                  return (
+                    <div
+                      className="text-[9px] font-mono leading-tight text-emerald-300/90"
+                      title={`Precio live PriceBus (${sym})`}
+                    >
+                      {shown}
+                    </div>
+                  );
+                })()}
               </div>
             </React.Fragment>
           );

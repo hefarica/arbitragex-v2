@@ -280,6 +280,13 @@ export interface OmniOpportunity {
   // === Token Metadata (UI-enriched) ===
   token_in_info: TokenInfo | null;
   token_out_info: TokenInfo | null;
+  /**
+   * CARDS-PRICES-01 (2026-09-26): live PriceBus USD prices keyed by UPPER
+   * symbol (endpoints + legs of THIS card only) — real-time Binance WS +
+   * Chainlink snapshot, api-server enriched per request. null/absent key = no
+   * live price for that symbol (R8: never a fabricated price).
+   */
+  token_prices_usd?: Record<string, number> | null;
   chain_base_token_symbol: string | null;
   /**
    * F2 (audit §11 RC1): symbols for INTERMEDIATE route legs (multi-hop
