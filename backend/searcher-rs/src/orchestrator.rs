@@ -198,6 +198,17 @@ impl ConfigProvider {
 // Orchestrator
 // ---------------------------------------------------------------------------
 
+/// Result of one sizing pass, as the emit tail consumes it: the finalized
+/// candidate, its sheet-07 net economics (`None` = not computable ⇒ ranked
+/// last; ranking never gates or drops) and the kernel's exact per-leg wei
+/// ledger when it produced one (R8: absent ⇒ `None`, never a repeated intent
+/// amount dressed as a ledger).
+type SizedForEmit = (
+    StrategyCandidate,
+    Option<crate::net_bps_ranking::RouteNetEconomics>,
+    Option<(Vec<String>, Vec<String>)>,
+);
+
 /// Main orchestrator. Constructed once per chain and shared across tasks via `Arc`.
 pub struct Orchestrator {
     ctx: OrchestratorContext,
@@ -295,6 +306,105 @@ impl Orchestrator {
             )
             .await;
         });
+    }
+
+    /// DISCOVERY → EMISSION BRIDGE — size + emit ONE discovered closed cycle.
+    ///
+    /// HOPS-EMIT-01. The discovery workers (`route_discovery_worker`) find closed
+    /// cycles of 3..=7 hops over the live pool graph, but until now their only
+    /// exits were the cartridge path (`spawn_cartridge_eval`, a no-op unless
+    /// `ARBX_CARTRIDGE_MODE=active`) and the native engines, which re-derive
+    /// 2-hop pool PAIRS from the impacted pools. The cycle itself never reached
+    /// an emitter, so every persisted card was 2-hop.
+    ///
+    /// This entry point converts the cycle intent into a `StrategyCandidate`
+    /// whose `RoutePlan` carries the discovered hops, sizes it with the EXISTING
+    /// N-leg kernel and pushes it through the EXISTING tail
+    /// (`process_candidate` → `RouteMetadata` + `attach_leg_ledger` →
+    /// `OpportunityEmitter`) — the persisted wire shape is unchanged.
+    ///
+    /// Bounded + reversible: admission is
+    /// [`crate::route_discovery::hop_cycle_bridge::admit`] (knob
+    /// `ARBX_MULTIHOP_EMIT`, per-(chain, block) cap
+    /// `ARBX_MULTIHOP_EMIT_MAX_PER_TICK`, geometry gates). Returns `Ok(false)`
+    /// when the cycle was not admitted (reason logged); `Ok(true)` once the
+    /// candidate went through sizing + emit. `Err` only propagates an emitter
+    /// Redis failure, exactly like the native path.
+    pub async fn emit_discovered_cycle(&self, intent: RouteIntent) -> anyhow::Result<bool> {
+        let chain_id = self.ctx.chain_id;
+        if intent.chain_id != chain_id {
+            warn!(
+                event = "v2.hop_cycle_bridge.chain_id_mismatch",
+                ctx_chain_id = chain_id,
+                intent_chain_id = intent.chain_id,
+                tx_hash = %intent.tx_hash,
+            );
+            return Ok(false);
+        }
+        let chain_str = chain_id.to_string();
+        let hops = intent.legs.len();
+        let epoch = intent.observed_block().unwrap_or(0);
+        let budget = crate::route_discovery::hop_cycle_bridge::budget_for(chain_id);
+
+        let candidate = match crate::route_discovery::hop_cycle_bridge::admit(
+            &intent, &budget, epoch,
+        ) {
+            Ok(c) => c,
+            Err(skip) => {
+                use crate::route_discovery::hop_cycle_bridge::BridgeSkip;
+                match skip {
+                    // The cap is a hard bound, so hitting it is operator
+                    // information, not a per-item noise line (R9): one warn
+                    // per refused cycle, with the epoch's aggregate counts.
+                    BridgeSkip::CapReached => warn!(
+                        event = "v2.hop_cycle_bridge.cap_reached",
+                        chain_id,
+                        tx_hash = %intent.tx_hash,
+                        hops,
+                        epoch,
+                        cap = budget.per_epoch(),
+                        used = budget.used_in(epoch),
+                        dropped = budget.dropped_in(epoch),
+                        "per-block multihop emission cap reached — cycle not emitted (R8 truncation)"
+                    ),
+                    other => debug!(
+                        event = "v2.hop_cycle_bridge.skip",
+                        chain_id,
+                        tx_hash = %intent.tx_hash,
+                        hops,
+                        epoch,
+                        reason = other.as_str(),
+                    ),
+                }
+                return Ok(false);
+            }
+        };
+
+        CANDIDATES_TOTAL
+            .with_label_values(&[&chain_str, candidate.label.as_str()])
+            .inc();
+        info!(
+            event = "v2.engine.output",
+            chain_id,
+            tx_hash = %intent.tx_hash,
+            engine = "hop_cycle_bridge",
+            candidates_count = 1usize,
+            rejected_count = 0usize,
+            accepted_shape_count = 1usize,
+            hops,
+            epoch,
+            cap = budget.per_epoch(),
+            used = budget.used_in(epoch),
+            dropped = budget.dropped_in(epoch),
+        );
+
+        let cfg_snapshot = self.live_config_snapshot(chain_id).await;
+        let (final_candidate, _net_economics, leg_ledger) = self
+            .size_candidate_for_emit(candidate, &intent, cfg_snapshot.as_ref(), &chain_str)
+            .await;
+        self.process_candidate(final_candidate, leg_ledger, cfg_snapshot.as_ref(), chain_id)
+            .await?;
+        Ok(true)
     }
 
     pub async fn on_route_intent(&self, intent: RouteIntent) -> anyhow::Result<()> {
@@ -851,16 +961,91 @@ impl Orchestrator {
             flash_wrap_count = flash_candidates.len(),
         );
 
+        // ── Step 5b: discovery → emission bridge (3..=7-hop closed cycles) ────
+        // HOPS-EMIT-01. An intent that is itself a CLOSED cycle of 3..=7 hops
+        // (the shape `route_scanner_worker` publishes per block) becomes ONE
+        // candidate whose RoutePlan carries the discovered hops — the engines
+        // above can only ever produce 2-leg pairs, which is why every card was
+        // 2-hop. Admission owns the reversibility knob + the per-block cap;
+        // `native_on` keeps the Plan C.3 contract (off ⇒ cartridges-only, no
+        // native candidate of any kind). 2-hop intents are refused here — that
+        // shape is `dex_engine`'s alone (no duplicate rows).
+        let bridged_candidates: Vec<StrategyCandidate> = if native_on {
+            let epoch = intent.observed_block().unwrap_or(0);
+            let budget = crate::route_discovery::hop_cycle_bridge::budget_for(chain_id);
+            match crate::route_discovery::hop_cycle_bridge::admit(&intent, &budget, epoch) {
+                Ok(c) => {
+                    CANDIDATES_TOTAL
+                        .with_label_values(&[&chain_str, c.label.as_str()])
+                        .inc();
+                    info!(
+                        event = "v2.engine.output",
+                        chain_id,
+                        tx_hash = %intent.tx_hash,
+                        engine = "hop_cycle_bridge",
+                        candidates_count = 1usize,
+                        rejected_count = 0usize,
+                        accepted_shape_count = 1usize,
+                        hops = intent.legs.len(),
+                        epoch,
+                        cap = budget.per_epoch(),
+                        used = budget.used_in(epoch),
+                        dropped = budget.dropped_in(epoch),
+                    );
+                    vec![c]
+                }
+                Err(skip) => {
+                    // `too_few_hops` is the steady state for every ordinary swap
+                    // intent — not worth a per-intent line. Everything else is a
+                    // real signal (`cap_reached` truncation included: R8 never
+                    // hides it).
+                    if skip != crate::route_discovery::hop_cycle_bridge::BridgeSkip::TooFewHops
+                        && skip != crate::route_discovery::hop_cycle_bridge::BridgeSkip::Disabled
+                    {
+                        if skip == crate::route_discovery::hop_cycle_bridge::BridgeSkip::CapReached
+                        {
+                            warn!(
+                                event = "v2.hop_cycle_bridge.cap_reached",
+                                chain_id,
+                                tx_hash = %intent.tx_hash,
+                                hops = intent.legs.len(),
+                                epoch,
+                                cap = budget.per_epoch(),
+                                used = budget.used_in(epoch),
+                                dropped = budget.dropped_in(epoch),
+                                "per-block multihop emission cap reached — cycle not emitted (R8 truncation)"
+                            );
+                        } else {
+                            debug!(
+                                event = "v2.hop_cycle_bridge.skip",
+                                chain_id,
+                                tx_hash = %intent.tx_hash,
+                                hops = intent.legs.len(),
+                                epoch,
+                                reason = skip.as_str(),
+                            );
+                        }
+                    }
+                    vec![]
+                }
+            }
+        } else {
+            vec![]
+        };
+
         // ── Step 6: size + evaluate + emit each candidate ─────────────────
         // cfg_snapshot was already taken before engine fan-out (Step 4) so
         // the evaluator uses the same snapshot the engines used — consistent
         // within one intent's processing window.
         // For each candidate: run size_optimizer → update profit fields or
         // emit as rejected if optimizer returns None. Then evaluate + emit.
-        // Process base candidates first, then flashloan-wrapped variants.
+        // Process base candidates first, then flashloan-wrapped variants, then
+        // the bridged discovered cycle (never flashloan-wrapped: a wrapped
+        // variant of the same route would be a second row for one cycle).
         let all_candidates: Vec<StrategyCandidate> = base_candidates
             .into_iter()
             .chain(flash_candidates)
+            .chain(bridged_candidates)
             .collect();
 
         // Root-2B: merge live Redis per-token prices into the config snapshot so
@@ -937,151 +1122,9 @@ impl Orchestrator {
                 continue;
             }
 
-            // ── TASK 1 log #7: v2.optimizer.input ────────────────────────
-            info!(
-                event = "v2.optimizer.input",
-                chain_id,
-                tx_hash = %intent.tx_hash,
-                strategy = candidate.label.as_str(),
-                route_legs = candidate.route_plan.legs.len(),
-                pool_addresses = ?candidate
-                    .route_plan
-                    .legs
-                    .iter()
-                    .map(|l| l.pool_address.as_deref())
-                    .collect::<Vec<_>>(),
-                has_config = cfg_snapshot.is_some(),
-                gross_profit_usd = ?candidate.gross_profit_usd,
-            );
-
-            // Run size_optimizer (diagnostic-rich path). Errors are non-fatal.
-            let outcome = match self
-                .ctx
-                .size_optimizer
-                .optimize_with_reason(candidate.clone(), &intent, cfg_snapshot.as_ref())
-                .await
-            {
-                Ok(o) => o,
-                Err(e) => {
-                    warn!(
-                        event = "orchestrator.size_optimizer_error",
-                        chain_id,
-                        tx_hash = %intent.tx_hash,
-                        error = %e,
-                        "size_optimizer returned Err — treating as no profit"
-                    );
-                    // R8: infra error, no economic value was computed — None.
-                    OptimizeOutcome::Rejected(OptimizeRejectReason::NonPositiveProfit, None)
-                }
-            };
-
-            // ── TASK 1 log #8: v2.optimizer.output ───────────────────────
-            info!(
-                event = "v2.optimizer.output",
-                chain_id,
-                tx_hash = %intent.tx_hash,
-                strategy = candidate.label.as_str(),
-                result = match &outcome {
-                    OptimizeOutcome::Sized(_) => "sized",
-                    OptimizeOutcome::Rejected(_, _)
-                    | OptimizeOutcome::RejectedWithLedger(_, _, _) => "rejected",
-                },
-                reason = ?outcome.reason_str(),
-                gross_profit_usd = ?outcome.gross_profit_usd(),
-                net_profit_usd = ?outcome.net_profit_usd(),
-                optimal_amount_in = ?outcome.optimal_amount_in(),
-            );
-
-            // PER-HOP (math-audit AUDIT-MATH-OPPS-2026-09-26): the rejection path
-            // can ALREADY carry the kernel's exact per-leg wei
-            // (OptimizeOutcome::RejectedWithLedger). Capture it before the match
-            // so the tail persists it onto the RouteMetadata exactly like the
-            // Sized path does — this is what lets a rejected card show each
-            // hop's movement instead of "not computed".
-            let rejected_ledger = match &outcome {
-                OptimizeOutcome::RejectedWithLedger(_, _, legs) => legs.clone(),
-                _ => None,
-            };
-
-            let (final_candidate, net_economics, leg_ledger) = match outcome {
-                OptimizeOutcome::Sized(sized) => {
-                    // Unbox and update the candidate with optimal sizing data.
-                    let s = *sized;
-                    let mut c = s.candidate;
-                    c.gross_profit_usd = Some(s.gross_profit_usd);
-                    c.net_expected_profit_usd = Some(s.estimated_net_profit_usd);
-                    // FIX (review V2 #8): synchronize the Opportunity row that
-                    // process_candidate actually evaluates/emits. Without this,
-                    // the DB/API records pre-sizing figures while the optimizer's
-                    // post-sizing numbers only live on the StrategyCandidate —
-                    // an inconsistent audit trail (RULE 00 violation surface).
-                    c.opportunity.expected_profit_usd = Some(s.gross_profit_usd);
-                    c.opportunity.net_expected_profit_usd = Some(s.estimated_net_profit_usd);
-                    // B1 FIX (math-audit AUDIT-MATH-OPPS-2026-09-26): the kernel's
-                    // optimal size was computed but never reached the row —
-                    // amount_in_wei kept the pre-sizing probe (or "0"), so the
-                    // persisted economics and the recorded notional disagreed and
-                    // the SIM-TS ladder ran on a notional the searcher never sized
-                    // for. Record the exact amount the kernel optimized.
-                    c.opportunity.amount_in_wei = s.optimal_amount_in.to_string();
-                    // ARBX-0009: sheet-07 components from the kernel for the
-                    // batch's Net_bps ranking (None ⇒ not computable ⇒ last).
-                    // HOPS-LEDGER-04: thread the kernel's exact per-leg wei to
-                    // process_candidate — attached there onto the chosen
-                    // RouteMetadata (None when the kernel had no per-leg math
-                    // or Kelly rebound the size).
-                    let legs = match (s.leg_amounts_in, s.leg_amounts_out) {
-                        (Some(amounts_in), Some(amounts_out)) => Some((amounts_in, amounts_out)),
-                        _ => None,
-                    };
-                    (c, s.net_economics, legs)
-                }
-                OptimizeOutcome::Rejected(reason, rejected_net)
-                | OptimizeOutcome::RejectedWithLedger(reason, rejected_net, _) => {
-                    // Route optimizer rejection to REJECTED_NO_PROFIT_TOTAL
-                    // (not SIMULATION_FAILED_TOTAL — sizing is not simulation).
-                    // The Prometheus label stays the BARE reason (a suffixed
-                    // label would split the metric series mid-stream).
-                    let bare = reason.as_str();
-                    REJECTED_NO_PROFIT_TOTAL
-                        .with_label_values(&[&chain_str, candidate.label.as_str(), bare])
-                        .inc();
-                    // ARBX-0007: net-dependent rejections carry the financing
-                    // mode that was priced (label-scheme suffix, DB/UI only —
-                    // the rejection_reason string is plain text rendered
-                    // verbatim by the frontend). The discriminator is the same
-                    // one the kernel priced: a flash-backed base strategy.
-                    let rejection = if reason.is_net_dependent() {
-                        let mode = crate::financing::selected_mode(u8::from(
-                            candidate.base_strategy.is_some(),
-                        )
-                            as f64);
-                        format!("{bare}:{}", mode.as_str())
-                    } else {
-                        bare.to_owned()
-                    };
-                    let mut c = candidate;
-                    c.rejection_reason = Some(rejection);
-                    // Deuda 4-(B): stamp the kernel's computed net when the
-                    // rejecting path had one (R8). Without this the emitter
-                    // falls back to the raw detection estimate and the DB
-                    // labels unprofitable rejects as "profitable".
-                    if let Some(net) = rejected_net {
-                        c.net_expected_profit_usd = Some(net);
-                        c.opportunity.net_expected_profit_usd = Some(net);
-                    }
-                    // HARDENING: NO vaciar expected_profit_usd. Mantener el valor
-                    // que el SizeOptimizer calculó (gross) para que la tarjeta lo
-                    // muestre. El gate de net-positive es de EJECUCIÓN, no de
-                    // detección. La tarjeta debe mostrar los números reales para
-                    // que el operador vea POR QUÉ no es viable.
-                    // c.opportunity.expected_profit_usd = None;  ← REMOVIDO
-                    // PER-HOP: the ledger captured above travels in the third
-                    // tuple slot exactly like the Sized path's, so the common
-                    // tail attaches it to the rejected row's RouteMetadata.
-                    (c, None, rejected_ledger)
-                }
-            };
+            let (final_candidate, net_economics, leg_ledger) = self
+                .size_candidate_for_emit(candidate, &intent, cfg_snapshot.as_ref(), &chain_str)
+                .await;
             sized_batch.push((
                 crate::net_bps_ranking::RankedRoute {
                     route_key: route_key_of(&final_candidate),
@@ -1138,6 +1181,202 @@ impl Orchestrator {
         }
 
         Ok(())
+    }
+
+    // -----------------------------------------------------------------------
+    // Sizing step (shared by the mempool path and the discovery bridge)
+    // -----------------------------------------------------------------------
+
+    /// Size ONE candidate through the sizing kernel and return exactly what the
+    /// emit tail needs:
+    ///
+    /// - the finalized `StrategyCandidate` (Sized ⇒ profit/amount stamped on both
+    ///   the candidate and its `Opportunity`; Rejected ⇒ `rejection_reason` set),
+    /// - the sheet-07 net economics for the batch ranking (`None` = not
+    ///   computable ⇒ ranked last; ranking never gates),
+    /// - the kernel's exact per-leg wei ledger when it produced one (R8: absent
+    ///   ⇒ `None`, never a repeated intent amount dressed as a ledger).
+    ///
+    /// Extracted verbatim from `on_route_intent`'s Phase-1 loop so the
+    /// discovery→emission bridge ([`Self::emit_discovered_cycle`]) runs the
+    /// IDENTICAL sizing step: one implementation, no divergence between the
+    /// mempool path and the discovered-cycle path (doctrine §34.1 — the math is
+    /// mode-invariant, and it must not fork by entry point either).
+    async fn size_candidate_for_emit(
+        &self,
+        candidate: StrategyCandidate,
+        intent: &RouteIntent,
+        cfg_snapshot: Option<&TradingConfigState>,
+        chain_str: &str,
+    ) -> SizedForEmit {
+        let chain_id = self.ctx.chain_id;
+
+        // ── TASK 1 log #7: v2.optimizer.input ────────────────────────
+        info!(
+            event = "v2.optimizer.input",
+            chain_id,
+            tx_hash = %intent.tx_hash,
+            strategy = candidate.label.as_str(),
+            route_legs = candidate.route_plan.legs.len(),
+            pool_addresses = ?candidate
+                .route_plan
+                .legs
+                .iter()
+                .map(|l| l.pool_address.as_deref())
+                .collect::<Vec<_>>(),
+            has_config = cfg_snapshot.is_some(),
+            gross_profit_usd = ?candidate.gross_profit_usd,
+        );
+
+        // Run size_optimizer (diagnostic-rich path). Errors are non-fatal.
+        let outcome = match self
+            .ctx
+            .size_optimizer
+            .optimize_with_reason(candidate.clone(), intent, cfg_snapshot)
+            .await
+        {
+            Ok(o) => o,
+            Err(e) => {
+                warn!(
+                    event = "orchestrator.size_optimizer_error",
+                    chain_id,
+                    tx_hash = %intent.tx_hash,
+                    error = %e,
+                    "size_optimizer returned Err — treating as no profit"
+                );
+                // R8: infra error, no economic value was computed — None.
+                OptimizeOutcome::Rejected(OptimizeRejectReason::NonPositiveProfit, None)
+            }
+        };
+
+        // ── TASK 1 log #8: v2.optimizer.output ───────────────────────
+        info!(
+            event = "v2.optimizer.output",
+            chain_id,
+            tx_hash = %intent.tx_hash,
+            strategy = candidate.label.as_str(),
+            result = match &outcome {
+                OptimizeOutcome::Sized(_) => "sized",
+                OptimizeOutcome::Rejected(_, _)
+                | OptimizeOutcome::RejectedWithLedger(_, _, _) => "rejected",
+            },
+            reason = ?outcome.reason_str(),
+            gross_profit_usd = ?outcome.gross_profit_usd(),
+            net_profit_usd = ?outcome.net_profit_usd(),
+            optimal_amount_in = ?outcome.optimal_amount_in(),
+        );
+
+        // PER-HOP (math-audit AUDIT-MATH-OPPS-2026-09-26): the rejection path
+        // can ALREADY carry the kernel's exact per-leg wei
+        // (OptimizeOutcome::RejectedWithLedger). Capture it before the match
+        // so the tail persists it onto the RouteMetadata exactly like the
+        // Sized path does — this is what lets a rejected card show each
+        // hop's movement instead of "not computed".
+        let rejected_ledger = match &outcome {
+            OptimizeOutcome::RejectedWithLedger(_, _, legs) => legs.clone(),
+            _ => None,
+        };
+
+        match outcome {
+            OptimizeOutcome::Sized(sized) => {
+                // Unbox and update the candidate with optimal sizing data.
+                let s = *sized;
+                let mut c = s.candidate;
+                c.gross_profit_usd = Some(s.gross_profit_usd);
+                c.net_expected_profit_usd = Some(s.estimated_net_profit_usd);
+                // FIX (review V2 #8): synchronize the Opportunity row that
+                // process_candidate actually evaluates/emits. Without this,
+                // the DB/API records pre-sizing figures while the optimizer's
+                // post-sizing numbers only live on the StrategyCandidate —
+                // an inconsistent audit trail (RULE 00 violation surface).
+                c.opportunity.expected_profit_usd = Some(s.gross_profit_usd);
+                c.opportunity.net_expected_profit_usd = Some(s.estimated_net_profit_usd);
+                // B1 FIX (math-audit AUDIT-MATH-OPPS-2026-09-26): the kernel's
+                // optimal size was computed but never reached the row —
+                // amount_in_wei kept the pre-sizing probe (or "0"), so the
+                // persisted economics and the recorded notional disagreed and
+                // the SIM-TS ladder ran on a notional the searcher never sized
+                // for. Record the exact amount the kernel optimized.
+                c.opportunity.amount_in_wei = s.optimal_amount_in.to_string();
+                // ARBX-0009: sheet-07 components from the kernel for the
+                // batch's Net_bps ranking (None ⇒ not computable ⇒ last).
+                // HOPS-LEDGER-04: thread the kernel's exact per-leg wei to
+                // process_candidate — attached there onto the chosen
+                // RouteMetadata (None when the kernel had no per-leg math
+                // or Kelly rebound the size).
+                let legs = match (s.leg_amounts_in, s.leg_amounts_out) {
+                    (Some(amounts_in), Some(amounts_out)) => Some((amounts_in, amounts_out)),
+                    _ => None,
+                };
+                (c, s.net_economics, legs)
+            }
+            OptimizeOutcome::Rejected(reason, rejected_net)
+            | OptimizeOutcome::RejectedWithLedger(reason, rejected_net, _) => {
+                // Route optimizer rejection to REJECTED_NO_PROFIT_TOTAL
+                // (not SIMULATION_FAILED_TOTAL — sizing is not simulation).
+                // The Prometheus label stays the BARE reason (a suffixed
+                // label would split the metric series mid-stream).
+                let bare = reason.as_str();
+                REJECTED_NO_PROFIT_TOTAL
+                    .with_label_values(&[chain_str, candidate.label.as_str(), bare])
+                    .inc();
+                // ARBX-0007: net-dependent rejections carry the financing
+                // mode that was priced (label-scheme suffix, DB/UI only —
+                // the rejection_reason string is plain text rendered
+                // verbatim by the frontend). The discriminator is the same
+                // one the kernel priced: a flash-backed base strategy.
+                let rejection = if reason.is_net_dependent() {
+                    let mode = crate::financing::selected_mode(u8::from(
+                        candidate.base_strategy.is_some(),
+                    ) as f64);
+                    format!("{bare}:{}", mode.as_str())
+                } else {
+                    bare.to_owned()
+                };
+                let mut c = candidate;
+                c.rejection_reason = Some(rejection);
+                // Deuda 4-(B): stamp the kernel's computed net when the
+                // rejecting path had one (R8). Without this the emitter
+                // falls back to the raw detection estimate and the DB
+                // labels unprofitable rejects as "profitable".
+                if let Some(net) = rejected_net {
+                    c.net_expected_profit_usd = Some(net);
+                    c.opportunity.net_expected_profit_usd = Some(net);
+                }
+                // HARDENING: NO vaciar expected_profit_usd. Mantener el valor
+                // que el SizeOptimizer calculó (gross) para que la tarjeta lo
+                // muestre. El gate de net-positive es de EJECUCIÓN, no de
+                // detección. La tarjeta debe mostrar los números reales para
+                // que el operador vea POR QUÉ no es viable.
+                // c.opportunity.expected_profit_usd = None;  ← REMOVIDO
+                // PER-HOP: the ledger captured above travels in the third
+                // tuple slot exactly like the Sized path's, so the common
+                // tail attaches it to the rejected row's RouteMetadata.
+                (c, None, rejected_ledger)
+            }
+        }
+    }
+
+    /// Live config snapshot for a NON-mempool path (the discovery bridge).
+    ///
+    /// Same shape `on_route_intent` builds before sizing (Root-2B): the operator
+    /// config for this chain plus the live Redis per-token prices merged in, so
+    /// the kernel can price canonical non-stable tokens absent from the manual
+    /// `token_prices_usd` map. R8: no config ⇒ `None` (the caller then emits the
+    /// candidates as `NoTradingConfig` rejections, never as ungated accepts);
+    /// an empty/errored price snapshot is a no-op, never a fabricated price.
+    async fn live_config_snapshot(&self, chain_id: u64) -> Option<TradingConfigState> {
+        let mut cfg_snapshot = self.ctx.config_provider.snapshot(chain_id).await;
+        let mut redis_conn = self.ctx.math_redis.clone();
+        let redis_prices = RedisCachedPriceOracle::snapshot_from_redis(&mut redis_conn, chain_id)
+            .await
+            .into_snapshot();
+        if let Some(ref mut cfg) = cfg_snapshot {
+            for (sym, price) in &redis_prices {
+                cfg.token_prices_usd.insert(sym.clone(), *price);
+            }
+        }
+        cfg_snapshot
     }
 
     // -----------------------------------------------------------------------
