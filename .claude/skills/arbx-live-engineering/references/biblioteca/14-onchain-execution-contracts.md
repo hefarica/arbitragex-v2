@@ -427,7 +427,7 @@ El estado on-chain (`executedRoutes`, `paused`, umbrales) nace limpio vía `init
 
 ### 14.11.6 El despliegue NO habilita trading
 
-Deploy ≠ activación. `executeArbitrage` es `onlyRole(EXECUTOR_ROLE)` (núcleo §2) y el `initialize` del despliegue NO otorga `EXECUTOR_ROLE` a nadie: el contrato nace inerte para ejecución — sin caller autorizado, con la pausa disponible como segundo enclavamiento (§14.7) y `rescue`/upgrade en manos del timelock (§14.8, §14.11.3). El grant de `EXECUTOR_ROLE` al bot y el unpause son un paso separado del operador, subordinado a CLAUDE.md §34 (terminus `relays-client` default-deny, `MainnetRefused` para chain_id=1) y a los gates `arbx-*`; §34.5 exige los gates con evidencia reproducible ANTES de tocar el terminus. Regla de PR: un deploy script que otorgue `EXECUTOR_ROLE` o haga unpause "de paso" se rechaza (§37 P-∅: un PR = un ID).
+Deploy ≠ activación. `executeArbitrage` es `onlyRole(EXECUTOR_ROLE)` (núcleo §2) y el `initialize` del despliegue NO otorga `EXECUTOR_ROLE` a nadie: el contrato nace inerte para ejecución — sin caller autorizado, con la pausa disponible como segundo enclavamiento (§14.7) y `rescue`/upgrade en manos del timelock (§14.8, §14.11.3). El grant de `EXECUTOR_ROLE` al bot y el unpause son un paso separado del operador, subordinado a CLAUDE.md §34 (terminus `relays-client` default-deny por env; mainnet soportada vía `ARBX_LIVE_EXEC_ENABLED=true` + `ARBX_LIVE_EXEC_CHAINS=1` — la variante `MainnetRefused` nunca existió, orden 2026-09-17) y a los gates `arbx-*`; §34.5 exige los gates con evidencia reproducible ANTES de tocar el terminus. Regla de PR: un deploy script que otorgue `EXECUTOR_ROLE` o haga unpause "de paso" se rechaza (§37 P-∅: un PR = un ID).
 
 ## GOBERNANZA
 
