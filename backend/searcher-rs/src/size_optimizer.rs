@@ -3585,7 +3585,8 @@ mod tests {
             other => {
                 let reason = match other {
                     OptimizeOutcome::Sized(_) => "Sized (unexpected — profit survived high gas)",
-                    OptimizeOutcome::Rejected(r, _) | OptimizeOutcome::RejectedWithLedger(r, _, _) => r.as_str(),
+                    OptimizeOutcome::Rejected(r, _)
+                    | OptimizeOutcome::RejectedWithLedger(r, _, _) => r.as_str(),
                 };
                 panic!("unexpected outcome: {reason}");
             }
@@ -3811,7 +3812,9 @@ mod tests {
                 assert_eq!(s.gross_profit_usd, sized.gross_profit_usd);
                 assert_eq!(s.estimated_net_profit_usd, sized.estimated_net_profit_usd);
             }
-            OptimizeOutcome::Rejected(r, _) | OptimizeOutcome::RejectedWithLedger(r, _, _) => panic!("unexpected reject {:?}", r),
+            OptimizeOutcome::Rejected(r, _) | OptimizeOutcome::RejectedWithLedger(r, _, _) => {
+                panic!("unexpected reject {:?}", r)
+            }
         }
     }
 
@@ -4002,7 +4005,9 @@ mod tests {
                     "triangular ledger must be absent after Kelly rescale (R8)"
                 );
             }
-            OptimizeOutcome::Rejected(r, _) | OptimizeOutcome::RejectedWithLedger(r, _, _) => panic!("unexpected reject {:?}", r),
+            OptimizeOutcome::Rejected(r, _) | OptimizeOutcome::RejectedWithLedger(r, _, _) => {
+                panic!("unexpected reject {:?}", r)
+            }
         }
     }
 
@@ -4034,7 +4039,9 @@ mod tests {
                 assert!(s.leg_amounts_in.is_some(), "ledger must survive");
                 assert!(s.leg_amounts_out.is_some(), "ledger must survive");
             }
-            OptimizeOutcome::Rejected(r, _) | OptimizeOutcome::RejectedWithLedger(r, _, _) => panic!("unexpected reject {:?}", r),
+            OptimizeOutcome::Rejected(r, _) | OptimizeOutcome::RejectedWithLedger(r, _, _) => {
+                panic!("unexpected reject {:?}", r)
+            }
         }
     }
 
