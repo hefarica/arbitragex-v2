@@ -117,6 +117,14 @@ export const OpportunityRowSchema = z.object({
   simulated_net_profit_usd: z.number().nullable().optional(),
   evidence_gate: z.string().nullable().optional(),
   net_profit_gate: z.string().nullable().optional(),
+  // CARDS-PRICES-01 (2026-09-26): live PriceBus USD prices keyed by UPPER
+  // symbol, api-server-enriched per request. Declared here so Zod does not
+  // silently STRIP it for the validating consumer (OpportunityTicker via
+  // getOpportunitiesLive). R8: null/absent = no live price, never a guess.
+  token_prices_usd: z
+    .record(z.string(), z.number().positive())
+    .nullable()
+    .optional(),
   // ─── A.8 confidence scoring (audit 2026-05-13) ───
   // All nullable+optional: backend does not yet emit these on
   // /api/opportunities/live (scoring_pipeline_wired=false). When the future

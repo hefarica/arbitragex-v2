@@ -280,6 +280,13 @@ export interface OmniOpportunity {
   // === Token Metadata (UI-enriched) ===
   token_in_info: TokenInfo | null;
   token_out_info: TokenInfo | null;
+  /**
+   * CARDS-PRICES-01 (2026-09-26): live PriceBus USD prices keyed by UPPER
+   * symbol (endpoints + legs of THIS card only) — real-time Binance WS +
+   * Chainlink snapshot, api-server enriched per request. null/absent key = no
+   * live price for that symbol (R8: never a fabricated price).
+   */
+  token_prices_usd?: Record<string, number> | null;
   chain_base_token_symbol: string | null;
   /**
    * F2 (audit §11 RC1): symbols for INTERMEDIATE route legs (multi-hop
@@ -437,6 +444,15 @@ export function mapToOmniOpportunity(raw: Record<string, unknown>): OmniOpportun
     // absent/null stays null and renderers keep their honest shortAddr
     // fallback (R8).
     leg_symbols: (raw.leg_symbols as Record<string, string> | null) ?? null,
+
+    // CARDS-PRICES-01 (audit fix, adversarial review 2026-09-26): the live
+    // PriceBus per-symbol prices were declared on the interface but NOT mapped
+    // here — the sidecar subagent caught the silent drop (same class as
+    // HOPS-SYM-02 above: `?`-optional interface field + no mapper line = the
+    // card price render was dead code in production). Pass through verbatim:
+    // absent/null stays null and the chip renders nothing (R8: never a guess).
+    token_prices_usd:
+      (raw.token_prices_usd as Record<string, number> | null) ?? null,
 
     // Profit Metrics
     // PIPELINE-INTEGRITY-02: raw_* carries the exact wire string; the number

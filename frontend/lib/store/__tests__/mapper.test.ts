@@ -85,6 +85,31 @@ describe("mapToOmniOpportunity — R8 fail-honest + route_metadata", () => {
     expect(mapToOmniOpportunity({ ...base, leg_symbols: null }).leg_symbols).toBeNull();
   });
 
+  // CARDS-PRICES-01 (adversarial-review fix, findings #1/#2): the live PriceBus
+  // prices were declared on the interface but the mapper never assigned them —
+  // the card price render was dead code in production (same silent-drop class
+  // as HOPS-SYM-02 above). This gate pins the passthrough at the MAPPER level,
+  // where the drop actually happened.
+  it("passes token_prices_usd through verbatim; absent/null stays null", () => {
+    const base = {
+      id: "tp",
+      chain_id: 1,
+      strategy_kind: "dex_arb",
+      detected_at: "2026-09-26T00:00:00Z",
+      trace_id: "t",
+      dex_a: "uniswap-v3",
+      dex_b: null,
+      token_in: "0xa",
+      token_out: "0xb",
+    } as Record<string, unknown>;
+    const prices = { WETH: 2685.78, USDT: 0.9963 };
+    expect(mapToOmniOpportunity({ ...base, token_prices_usd: prices }).token_prices_usd).toEqual(
+      prices,
+    );
+    expect(mapToOmniOpportunity({ ...base }).token_prices_usd).toBeNull();
+    expect(mapToOmniOpportunity({ ...base, token_prices_usd: null }).token_prices_usd).toBeNull();
+  });
+
   // CARDS-DEDUP-HOPS: route-group aggregates pass through verbatim from the
   // grouped LIVE_QUERY wire; single WS rows (no aggregates) stay null — the
   // mapper NEVER fabricates a first_seen/confirmations=1 (R8 / RULE 00).
