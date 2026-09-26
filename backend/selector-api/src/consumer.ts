@@ -63,11 +63,62 @@ export class StreamConsumer {
 
   async start(): Promise<void> {
     if (this.running) return;
-    this.running = true;
+    // START-RETRY-01 (2026-09-26): ensureGroup() may throw on boot races
+    // (EAI_AGAIN while Redis is still coming up during a deploy recreate).
+    // The running latch must close ONLY AFTER the group is guaranteed — a
+    // premature latch poisons every retry into a silent no-op (observed
+    // 2026-09-25 22:43Z: "healthy" container, dead consumer).
     await this.ensureGroup();
+    this.running = true;
     this.stopPromise = this.runLoop();
     this.sweepPromise = this.maintenanceLoop();
     this.deps.logger.info({ event: "consumer.started", stream: STREAM_IN, group: GROUP, consumer: CONSUMER });
+  }
+
+  /**
+   * START-RETRY-01: boot-resilience wrapper around start(). Retries with
+   * exponential backoff + jitter so a Redis boot race cannot permanently kill
+   * the consumer while the HTTP health endpoint still reports "healthy".
+   * On exhaustion it THROWS (fail-loud): the caller exits non-zero and the
+   * container restart policy produces a VISIBLE crash-loop — never a silent
+   * zombie. Knobs (env-only, no hardcoded operator values):
+   *   ARBX_CONSUMER_START_RETRIES  (default 8)
+   *   ARBX_CONSUMER_START_BASE_MS  (default 250)
+   */
+  async startWithRetry(): Promise<void> {
+    const maxAttempts = Math.max(1, Number(process.env["ARBX_CONSUMER_START_RETRIES"] ?? 8));
+    const baseMs = Math.max(50, Number(process.env["ARBX_CONSUMER_START_BASE_MS"] ?? 250));
+    for (let attempt = 1; ; attempt++) {
+      try {
+        await this.start();
+        return;
+      } catch (e) {
+        if (attempt >= maxAttempts) {
+          this.deps.logger.error({
+            event: "consumer.start_exhausted",
+            attempts: attempt,
+            err: (e as Error).message,
+          });
+          throw e;
+        }
+        const backoff = Math.min(baseMs * 2 ** (attempt - 1), 15_000);
+        const jitter = Math.floor(Math.random() * Math.min(baseMs, 500));
+        const waitMs = backoff + jitter;
+        this.deps.logger.warn({
+          event: "consumer.start_retry",
+          attempt,
+          max_attempts: maxAttempts,
+          wait_ms: waitMs,
+          err: (e as Error).message,
+        });
+        await sleep(waitMs);
+      }
+    }
+  }
+
+  /** START-RETRY-01: liveness surface for /livez — the running loop is the truth. */
+  isAlive(): boolean {
+    return this.running;
   }
 
   async stop(): Promise<void> {

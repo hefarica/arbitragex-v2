@@ -159,8 +159,21 @@ const consumer = new StreamConsumer({
     lagGauge: (n) => selectorConsumerLag.labels("arbx:opps:detected", "selector-g0").set(n),
   },
 });
-consumer.start().catch((e: Error) =>
-  logger.error({ event: "consumer.start_failed", err: e.message }));
+// START-RETRY-01 (2026-09-26): boot races (EAI_AGAIN during deploy recreates)
+// must never leave a dead consumer behind an "healthy" HTTP surface. The
+// wrapper retries with backoff; on permanent exhaustion we exit non-zero so
+// the container restart policy shows a VISIBLE crash-loop instead.
+consumer.startWithRetry().catch((e: Error) => {
+  logger.error({ event: "consumer.start_failed_permanent", err: e.message });
+  process.exit(1);
+});
+
+// START-RETRY-01: consumer liveness — intentionally distinct from /health
+// (process liveness). A dead consumer answers 503 here, never "healthy".
+app.get("/livez", (_req, res) => {
+  const alive = consumer.isAlive();
+  res.status(alive ? 200 : 503).json({ consumer_alive: alive });
+});
 
 // ─── HTTP server ───
 const PORT = Number(process.env["SELECTOR_PORT"] ?? 3002);
