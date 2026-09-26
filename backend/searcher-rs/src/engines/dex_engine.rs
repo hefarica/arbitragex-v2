@@ -239,7 +239,18 @@ impl DexEngine {
             // pool, which is what kept opening the public RPC circuit breakers
             // (78% of the funnel rejected as v3_quote_unavailable).
             if let Some(projector) = self.state_projector.as_ref() {
-                let probe_amount = U256::from(10u128).pow(U256::from(18u32));
+                // B1 FIX (math-audit AUDIT-MATH-OPPS-2026-09-26): the probe must be
+                // ONE NATIVE UNIT of token_in (10^decimals), never a fixed 1e18.
+                // For a 6-dec token (USDC/USDT) the old 1e18 probe meant 1e12
+                // tokens — $999,935,091,316.80 at the live price — so every
+                // gross/USD number for those pairs was computed at an operating
+                // point that saturates any pool (and the card showed the $1T
+                // notional). canonical_token_decimals is the same immutable
+                // protocol table the USD conversion below already uses; unknown
+                // tokens keep the 18-dec default (previous behaviour).
+                let probe_amount = U256::from(10u128).pow(U256::from(canonical_token_decimals(
+                    intent.legs.first().map(|l| l.token_in),
+                )));
                 let v3_pools: Vec<crate::state_projector::PoolRef> = pools
                     .iter()
                     .filter(|p| matches!(p.protocol_type, ProtocolType::V3))
@@ -276,7 +287,12 @@ impl DexEngine {
                     // candidates where data is available.
                     //
                     // For V3 pools: attempt a virtual quote via state_projector.
-                    let probe_amount = U256::from(10u128).pow(U256::from(18u32));
+                    // B1 FIX (math-audit 2026-09-26): ONE NATIVE UNIT of token_in
+                    // (10^decimals) — see the prefetch site above for the full
+                    // rationale; the fixed 1e18 was a $1T notional for 6-dec tokens.
+                    let probe_amount = U256::from(10u128).pow(U256::from(
+                        canonical_token_decimals(intent.legs.first().map(|l| l.token_in)),
+                    ));
 
                     let a_is_v2 = matches!(
                         pool_a.protocol_type,
@@ -1207,6 +1223,34 @@ mod tests {
             has_cache_miss,
             "must have at least one reserves_cache_miss rejection when cache is empty"
         );
+    }
+
+    // ── dex_engine::tests::b1_probe_is_one_native_unit ───────────────────────
+
+    /// B1 gate (math-audit AUDIT-MATH-OPPS-2026-09-26): the probe must be ONE
+    /// NATIVE UNIT of token_in (10^decimals). The fixed 1e18 probe meant 1e12
+    /// USDC = $999,935,091,316.80 at the live price, so every gross/USD number
+    /// for 6-dec pairs was computed at an operating point that saturates any
+    /// pool. This pins the immutable protocol table the probe derives from.
+    #[test]
+    fn b1_probe_is_one_native_unit_of_token_in() {
+        use std::str::FromStr;
+        let usdc = Address::from_str("0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48").unwrap();
+        let usdt = Address::from_str("0xdac17f958d2ee523a2206206994597c13d831ec7").unwrap();
+        let wbtc = Address::from_str("0x2260fac5e5542a773aa44fbcfedf7c193bc2c599").unwrap();
+        let weth = Address::from_str("0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2").unwrap();
+        assert_eq!(canonical_token_decimals(Some(usdc)), 6);
+        assert_eq!(canonical_token_decimals(Some(usdt)), 6);
+        assert_eq!(canonical_token_decimals(Some(wbtc)), 8);
+        assert_eq!(canonical_token_decimals(Some(weth)), 18);
+        // Unknown / absent → the dominant ERC-20 default (previous behaviour).
+        assert_eq!(canonical_token_decimals(None), 18);
+
+        // The probe derived from the table: 1 USDC = 1e6 raw, NOT 1e18.
+        let probe_usdc = U256::from(10u128).pow(U256::from(canonical_token_decimals(Some(usdc))));
+        assert_eq!(probe_usdc, U256::from(1_000_000u64));
+        let probe_weth = U256::from(10u128).pow(U256::from(canonical_token_decimals(Some(weth))));
+        assert_eq!(probe_weth, U256::from(10u128).pow(U256::from(18u32)));
     }
 
     // ── dex_engine::tests::v2_v2_classifies_correctly ────────────────────────
