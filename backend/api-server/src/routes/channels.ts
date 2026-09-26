@@ -23,17 +23,14 @@
 import type { Application, Request, Response } from "express";
 import type { Redis } from "ioredis";
 
-/** System topology as observed in production 2026-09-26 (24-container survey). */
-export const DEFAULT_CHANNELS = [
-  "arbx:opps:detected",
-  "arbx:opps:validated",
-  "arbx:opps:simulated",
-  "arbx:opps:executed",
-  "arbx:scoring:scored",
-  "arbx:route_discovery:outcomes",
-  "arbx:hot:detected",
-  "arbx:hot:simulated",
-] as const;
+// CHANNELS-REGISTRY (R10): single source of truth for the declared stream
+// list. This route reports the RUNTIME truth; the registry holds the
+// DECLARED-WIRING truth — the list is never forked.
+import { CANONICAL_CHANNEL_REGISTRY } from "./channels-registry.js";
+
+export const DEFAULT_CHANNELS: readonly string[] = CANONICAL_CHANNEL_REGISTRY.map(
+  (e) => e.name,
+);
 
 const DEFAULT_ZOMBIE_IDLE_MS = 300_000;
 
