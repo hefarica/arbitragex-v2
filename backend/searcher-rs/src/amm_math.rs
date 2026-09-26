@@ -21,6 +21,8 @@ use shared_rs::rpc_failover::AlloyHttpProvider;
 use std::sync::Arc;
 use std::time::Duration;
 
+const DEFAULT_V3_QUOTE_MULTICALL_TIMEOUT_MS: u64 = 5_000;
+
 /// Hard upper bound on a single multicall RPC. A stalled RPC (e.g. provider
 /// hung on a TCP retransmit, dead VPN tunnel, blackhole) WITHOUT this guard
 /// would freeze the entire worker tick indefinitely (cs-validator MAJOR fix
@@ -28,7 +30,24 @@ use std::time::Duration;
 /// whole-batch RPC failure, increments the per-pool failure counter, and
 /// proceeds to the next tick. Five seconds is generous (Alchemy p99 ≈ 200ms
 /// even for 50-call multicalls) but avoids tripping on ordinary congestion.
-const V3_QUOTE_MULTICALL_TIMEOUT: Duration = Duration::from_secs(5);
+///
+/// R4 (V3-QUOTE-TRANSPORT-TUNE 2026-09-25): tunable via
+/// `ARBX_V3_QUOTE_MULTICALL_TIMEOUT_MS` (fail-honest parse: malformed/zero →
+/// default) so operators can give heavy aggregate3 chunks more headroom on
+/// saturated public providers without recompiling.
+fn parse_multicall_timeout_ms(raw: Option<String>) -> Duration {
+    raw.and_then(|v| v.trim().parse::<u64>().ok())
+        .filter(|ms| *ms > 0)
+        .map(Duration::from_millis)
+        .unwrap_or(Duration::from_millis(DEFAULT_V3_QUOTE_MULTICALL_TIMEOUT_MS))
+}
+
+pub(crate) fn v3_quote_multicall_timeout() -> Duration {
+    static V: std::sync::OnceLock<Duration> = std::sync::OnceLock::new();
+    *V.get_or_init(|| {
+        parse_multicall_timeout_ms(std::env::var("ARBX_V3_QUOTE_MULTICALL_TIMEOUT_MS").ok())
+    })
+}
 
 /// Convert a wei-denominated decimal string to f64 token units using the
 /// token's actual decimal precision.
@@ -447,14 +466,14 @@ pub async fn v3_quote_exact_in_multicall(
     // failure (existing whole-batch failure counter at triangular_worker.rs
     // ~line 1493). Without this, a stalled provider would freeze the worker
     // tick indefinitely.
-    let raw_bytes = match tokio::time::timeout(V3_QUOTE_MULTICALL_TIMEOUT, provider.call(tx)).await
-    {
+    let timeout = v3_quote_multicall_timeout();
+    let raw_bytes = match tokio::time::timeout(timeout, provider.call(tx)).await {
         Ok(Ok(b)) => b,
         Ok(Err(e)) => return Err(e.into()),
         Err(_elapsed) => {
             return Err(anyhow::anyhow!(
                 "multicall timeout after {}s",
-                V3_QUOTE_MULTICALL_TIMEOUT.as_secs()
+                timeout.as_secs()
             ));
         }
     };
@@ -506,6 +525,27 @@ mod tests {
             shared_rs::rpc_failover::LOAD_PROBE_CALLDATA,
             "LOAD_PROBE_CALLDATA drifted from the amm_math multicall3 ABI — regenerate it from \
              aggregate3Call {{ calls: vec![] }}.abi_encode()"
+        );
+    }
+
+    /// R4 parse (fail-honest): unset/junk/zero → default; valid → parsed.
+    #[test]
+    fn parse_multicall_timeout_ms_fail_honest() {
+        assert_eq!(
+            parse_multicall_timeout_ms(None),
+            Duration::from_millis(DEFAULT_V3_QUOTE_MULTICALL_TIMEOUT_MS)
+        );
+        assert_eq!(
+            parse_multicall_timeout_ms(Some("junk".into())),
+            Duration::from_millis(DEFAULT_V3_QUOTE_MULTICALL_TIMEOUT_MS)
+        );
+        assert_eq!(
+            parse_multicall_timeout_ms(Some("0".into())),
+            Duration::from_millis(DEFAULT_V3_QUOTE_MULTICALL_TIMEOUT_MS)
+        );
+        assert_eq!(
+            parse_multicall_timeout_ms(Some("15000".into())),
+            Duration::from_millis(15_000)
         );
     }
 
