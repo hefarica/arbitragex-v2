@@ -83,6 +83,53 @@ fn quote_neg_ttl() -> Duration {
     })
 }
 
+const DEFAULT_QUOTE_NEG_TRANSPORT_TTL_MS: u64 = 30_000;
+
+/// Pure parse (unit-testable): `ARBX_V3_QUOTE_NEG_TRANSPORT_TTL_MS` → Duration.
+fn parse_neg_transport_ttl_ms(raw: Option<String>) -> Duration {
+    raw.and_then(|v| v.trim().parse::<u64>().ok())
+        .filter(|ms| *ms > 0)
+        .map(Duration::from_millis)
+        .unwrap_or(Duration::from_millis(DEFAULT_QUOTE_NEG_TRANSPORT_TTL_MS))
+}
+
+/// R5 (V3-QUOTE-TRANSPORT-TUNE 2026-09-25): negative TTL for TRANSPORT failures
+/// (failover exhausted / all providers unhealthy), distinct from the short 2s
+/// negative TTL used for per-pool reverts (tier/liquidity — cheap, worth
+/// re-probing). A provider-wide outage re-probed every 2s is the 36.6
+/// rejection/s loop that floods `v3_quote_unavailable`; the 30s default cuts
+/// that churn 15× and lets the breaker floor (120s) do the pacing. Fail-honest
+/// parse: malformed/zero → default.
+fn quote_neg_transport_ttl() -> Duration {
+    static V: std::sync::OnceLock<Duration> = std::sync::OnceLock::new();
+    *V.get_or_init(|| {
+        parse_neg_transport_ttl_ms(std::env::var("ARBX_V3_QUOTE_NEG_TRANSPORT_TTL_MS").ok())
+    })
+}
+
+const DEFAULT_QUOTE_BATCH_BACKOFF_MS: u64 = 30_000;
+
+/// Pure parse (unit-testable): `ARBX_V3_QUOTE_BATCH_BACKOFF_MS` → Duration.
+fn parse_batch_backoff_ms(raw: Option<String>) -> Duration {
+    raw.and_then(|v| v.trim().parse::<u64>().ok())
+        .filter(|ms| *ms > 0)
+        .map(Duration::from_millis)
+        .unwrap_or(Duration::from_millis(DEFAULT_QUOTE_BATCH_BACKOFF_MS))
+}
+
+/// R5 v2 (peer-review P0, 2026-09-25): pause BATCH PREFETCH for this long after
+/// a batch transport failure. The unary quote path is NEVER paused and never
+/// reads this state. Fail-honest parse: malformed/zero → default.
+fn batch_backoff() -> Duration {
+    static V: std::sync::OnceLock<Duration> = std::sync::OnceLock::new();
+    *V.get_or_init(|| parse_batch_backoff_ms(std::env::var("ARBX_V3_QUOTE_BATCH_BACKOFF_MS").ok()))
+}
+
+/// Pure gate (unit-testable).
+fn batch_backoff_active_at(now: Instant, until: Option<Instant>) -> bool {
+    until.map_or(false, |u| now < u)
+}
+
 fn quote_batch_size() -> usize {
     static V: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
     *V.get_or_init(|| {
@@ -120,6 +167,9 @@ struct CacheEntry {
     result: QuoteResult,
     stored_at: Instant,
     neg: bool,
+    /// R5: transport-failure negative (failover exhausted) — paced by
+    /// `quote_neg_transport_ttl()` instead of the short pool-revert TTL.
+    neg_transport: bool,
 }
 
 /// TTL cache for V3 quotes — pure in-memory state, unit-tested in isolation
@@ -132,7 +182,13 @@ struct TtlQuoteCache {
 impl TtlQuoteCache {
     fn get_fresh(&self, key: &QuoteKey) -> Option<&QuoteResult> {
         let e = self.map.get(key)?;
-        let ttl = if e.neg { quote_neg_ttl() } else { quote_ttl() };
+        let ttl = if e.neg_transport {
+            quote_neg_transport_ttl()
+        } else if e.neg {
+            quote_neg_ttl()
+        } else {
+            quote_ttl()
+        };
         (Instant::now().duration_since(e.stored_at) < ttl).then_some(&e.result)
     }
 
@@ -144,6 +200,20 @@ impl TtlQuoteCache {
                 result,
                 stored_at: Instant::now(),
                 neg,
+                neg_transport: false,
+            },
+        );
+    }
+
+    /// R5: store a TRANSPORT-failure negative with the longer pacing TTL.
+    fn put_neg_transport(&mut self, key: QuoteKey, result: QuoteResult) {
+        self.map.insert(
+            key,
+            CacheEntry {
+                result,
+                stored_at: Instant::now(),
+                neg: true,
+                neg_transport: true,
             },
         );
     }
@@ -154,7 +224,13 @@ impl TtlQuoteCache {
             return;
         }
         self.map.retain(|_, e| {
-            let ttl = if e.neg { quote_neg_ttl() } else { quote_ttl() };
+            let ttl = if e.neg_transport {
+                quote_neg_transport_ttl()
+            } else if e.neg {
+                quote_neg_ttl()
+            } else {
+                quote_ttl()
+            };
             Instant::now().duration_since(e.stored_at) < ttl
         });
         while self.map.len() > QUOTE_CACHE_MAX {
@@ -184,6 +260,11 @@ pub struct MulticallV3QuoteProvider {
     /// key's mutex, then re-checks the cache — it never issues a duplicate RPC.
     /// Different keys proceed in parallel (no global serialization).
     inflight: std::sync::Mutex<HashMap<QuoteKey, Arc<tokio::sync::Mutex<()>>>>,
+    /// R5 v2 (peer-review P0): BATCH-scoped backoff. A batch transport failure
+    /// pauses PREFETCH for `batch_backoff()` WITHOUT writing per-key cache
+    /// entries — the authoritative unary path keeps quoting. Per-key transport
+    /// negatives live only on the unary path itself.
+    batch_backoff_until: std::sync::Mutex<Option<Instant>>,
 }
 
 impl MulticallV3QuoteProvider {
@@ -197,6 +278,7 @@ impl MulticallV3QuoteProvider {
             multicall_addr,
             cache: RwLock::new(TtlQuoteCache::default()),
             inflight: std::sync::Mutex::new(HashMap::new()),
+            batch_backoff_until: std::sync::Mutex::new(None),
         })
     }
 
@@ -212,6 +294,41 @@ impl MulticallV3QuoteProvider {
         let mut c = self.cache.write().unwrap_or_else(|e| e.into_inner());
         c.put(key, result);
         c.evict();
+    }
+
+    /// R5 v2: store a TRANSPORT-failure negative with the longer pacing TTL
+    /// (`quote_neg_transport_ttl`), bypassing the short pool-revert pacing.
+    /// UNARY path only: the authoritative path pacing its own retry. The batch
+    /// prefetch NEVER writes here (its failures set batch backoff instead).
+    fn cache_put_neg_transport(&self, key: QuoteKey, result: QuoteResult) {
+        let mut c = self.cache.write().unwrap_or_else(|e| e.into_inner());
+        c.put_neg_transport(key, result);
+        c.evict();
+    }
+
+    /// R5 v2 (peer-review P0): batch-scoped backoff control.
+    fn set_batch_backoff(&self) {
+        let mut g = self
+            .batch_backoff_until
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        *g = Some(Instant::now() + batch_backoff());
+    }
+
+    fn clear_batch_backoff(&self) {
+        let mut g = self
+            .batch_backoff_until
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        *g = None;
+    }
+
+    fn batch_backoff_active(&self) -> bool {
+        let g = self
+            .batch_backoff_until
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        batch_backoff_active_at(Instant::now(), *g)
     }
 
     /// Acquire (or create) the single-flight slot for `key`.
@@ -250,14 +367,22 @@ impl MulticallV3QuoteProvider {
     ///     `arbx_v3_quote_total{outcome}` funnel stays comparable across
     ///     paths; chunk-level transport health lands in `batch_call`,
     ///     `batch_call_ok`, `batch_call_error`.
-    ///   - Transport failure of a chunk negative-caches only that chunk's
-    ///     keys (short TTL), exactly like a failed unary attempt.
+    ///   - Transport failure of a chunk pauses PREFETCH (`batch_backoff()`,
+    ///     R5 v2) and writes NOTHING to the per-key cache — a failed batch
+    ///     must never block a potentially profitable unary quote
+    ///     (peer-review P0).
     async fn quote_batch_impl(
         &self,
         reqs: Vec<V3QuoteRequest>,
     ) -> Vec<(V3QuoteRequest, QuoteResult)> {
         let mut out: Vec<(V3QuoteRequest, QuoteResult)> = Vec::new();
         if reqs.is_empty() {
+            return out;
+        }
+        if self.batch_backoff_active() {
+            // R5 v2: prefetch paused after a batch transport failure; the
+            // authoritative unary path is unaffected.
+            quote_outcome_metric("batch_backoff_skip");
             return out;
         }
 
@@ -329,6 +454,8 @@ impl MulticallV3QuoteProvider {
             match rpc_result {
                 Ok(results) => {
                     quote_outcome_metric("batch_call_ok");
+                    // R5 v2: batch recovered → prefetch resumes immediately.
+                    self.clear_batch_backoff();
                     for (i, (key, req, _guard)) in chunk.iter().enumerate() {
                         quote_outcome_metric("rpc");
                         let res: QuoteResult = match results.get(i) {
@@ -354,12 +481,19 @@ impl MulticallV3QuoteProvider {
                 }
                 Err(e) => {
                     quote_outcome_metric("batch_call_error");
+                    // R5 v2 (peer-review P0): the batch is BEST-EFFORT prefetch.
+                    // Its transport failure must NOT poison the per-key quote
+                    // cache — the unary path is authoritative and must keep
+                    // trying every key. Storm control lives in the
+                    // BATCH-scoped backoff (prefetch paused), never in per-key
+                    // negatives that would block profitable unary quotes for
+                    // the whole chunk (up to batch_size keys) during the TTL.
+                    self.set_batch_backoff();
                     for (key, req, _guard) in chunk {
                         quote_outcome_metric("rpc");
                         quote_outcome_metric("rpc_error");
                         let res = Err(format!("v3 quote batch rpc failover exhausted: {e}"));
                         out.push((req.clone(), res.clone()));
-                        self.cache_put(*key, res);
                         self.inflight_clear(key);
                     }
                 }
@@ -445,6 +579,7 @@ impl V3QuoteProvider for MulticallV3QuoteProvider {
 
             // 4. One in-flight RPC for this key.
             quote_outcome_metric("rpc");
+            let mut transport_fail = false;
             let (outcome, rpc_result) = rpc_pool
                 .with_retry(|provider| {
                     // with_retry engages circuit-breaker + failover; the closure
@@ -462,7 +597,11 @@ impl V3QuoteProvider for MulticallV3QuoteProvider {
                     }
                 })
                 .await
-                .map_err(|e| anyhow::anyhow!("v3 quote rpc failover exhausted: {e}"))
+                .map_err(|e| {
+                    // R5: failover exhausted = TRANSPORT failure → long pacing TTL.
+                    transport_fail = true;
+                    anyhow::anyhow!("v3 quote rpc failover exhausted: {e}")
+                })
                 .map(|results| match results.into_iter().next() {
                     Some(r) if r.success => ("rpc_ok", Ok(r.amount_out)),
                     // Per-pool revert: the quoter call itself reverted at the
@@ -486,7 +625,13 @@ impl V3QuoteProvider for MulticallV3QuoteProvider {
             // 5. Store (success + negative, distinct TTLs), release the slot,
             //    answer. The cache stores String errors (Clone); the returned
             //    anyhow::Error is rebuilt from the stored String on hits.
-            self.cache_put(key, rpc_result.as_ref().map_err(|e| e.to_string()).cloned());
+            let cached = rpc_result.as_ref().map_err(|e| e.to_string()).cloned();
+            if transport_fail {
+                // R5: transport-failure negative → long pacing TTL.
+                self.cache_put_neg_transport(key, cached);
+            } else {
+                self.cache_put(key, cached);
+            }
             self.inflight_clear(&key);
             quote_outcome_metric(outcome);
             rpc_result
@@ -527,6 +672,107 @@ mod tests {
                 .parse::<Address>()
                 .unwrap()
         );
+    }
+
+    #[test]
+    fn parse_neg_transport_ttl_fail_honest() {
+        assert_eq!(
+            parse_neg_transport_ttl_ms(None),
+            Duration::from_millis(DEFAULT_QUOTE_NEG_TRANSPORT_TTL_MS)
+        );
+        assert_eq!(
+            parse_neg_transport_ttl_ms(Some("junk".into())),
+            Duration::from_millis(DEFAULT_QUOTE_NEG_TRANSPORT_TTL_MS)
+        );
+        assert_eq!(
+            parse_neg_transport_ttl_ms(Some("0".into())),
+            Duration::from_millis(DEFAULT_QUOTE_NEG_TRANSPORT_TTL_MS)
+        );
+        assert_eq!(
+            parse_neg_transport_ttl_ms(Some("120000".into())),
+            Duration::from_millis(120_000)
+        );
+    }
+
+    /// R5: a transport negative stored 3s ago is still fresh (30s TTL), while a
+    /// pool-revert negative stored 3s ago is stale (2s TTL). Deterministic: no
+    /// env override for `ARBX_V3_QUOTE_NEG_TRANSPORT_TTL_MS` in CI → defaults.
+    #[test]
+    fn transport_negative_outlives_pool_revert_negative() {
+        let mut cache = TtlQuoteCache::default();
+        let key: QuoteKey = (
+            Address::from_low_u64_be(1),
+            Address::from_low_u64_be(2),
+            Address::from_low_u64_be(3),
+            U256::one(),
+            500,
+        );
+        let stale_ago = Instant::now() - std::time::Duration::from_secs(3);
+        cache.map.insert(
+            key,
+            CacheEntry {
+                result: Err("tier revert".to_string()),
+                stored_at: stale_ago,
+                neg: true,
+                neg_transport: false,
+            },
+        );
+        assert!(
+            cache.get_fresh(&key).is_none(),
+            "2s pool-revert negative must expire at 3s"
+        );
+        cache.map.insert(
+            key,
+            CacheEntry {
+                result: Err("failover exhausted".to_string()),
+                stored_at: stale_ago,
+                neg: true,
+                neg_transport: true,
+            },
+        );
+        assert!(
+            cache.get_fresh(&key).is_some(),
+            "30s transport negative must survive 3s"
+        );
+        let mut cache2 = TtlQuoteCache::default();
+        cache2.put_neg_transport(key, Err("x".to_string()));
+        let e = cache2.map.get(&key).unwrap();
+        assert!(e.neg && e.neg_transport);
+    }
+
+    #[test]
+    fn parse_batch_backoff_fail_honest() {
+        assert_eq!(
+            parse_batch_backoff_ms(None),
+            Duration::from_millis(DEFAULT_QUOTE_BATCH_BACKOFF_MS)
+        );
+        assert_eq!(
+            parse_batch_backoff_ms(Some("junk".into())),
+            Duration::from_millis(DEFAULT_QUOTE_BATCH_BACKOFF_MS)
+        );
+        assert_eq!(
+            parse_batch_backoff_ms(Some("0".into())),
+            Duration::from_millis(DEFAULT_QUOTE_BATCH_BACKOFF_MS)
+        );
+        assert_eq!(
+            parse_batch_backoff_ms(Some("60000".into())),
+            Duration::from_millis(60_000)
+        );
+    }
+
+    #[test]
+    fn batch_backoff_gate_boundaries() {
+        let t0 = Instant::now();
+        assert!(!batch_backoff_active_at(t0, None));
+        assert!(batch_backoff_active_at(t0, Some(t0 + Duration::from_secs(10))));
+        assert!(!batch_backoff_active_at(
+            t0 + Duration::from_secs(10),
+            Some(t0 + Duration::from_secs(10))
+        ));
+        assert!(!batch_backoff_active_at(
+            t0 + Duration::from_secs(11),
+            Some(t0 + Duration::from_secs(10))
+        ));
     }
 
     #[test]
