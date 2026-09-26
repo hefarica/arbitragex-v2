@@ -284,6 +284,38 @@ pub fn redis_token_prices_key(chain_id: u64) -> String {
     format!("arbx:token_prices:{chain_id}")
 }
 
+/// B5 (math-audit AUDIT-MATH-OPPS-2026-09-26): maximum accepted single-tick
+/// change ratio for a price written by ONE source over the value already in the
+/// shared hash. Three writers (Chainlink price_worker, DexScreener,
+/// GeckoTerminal) target the same key with last-writer-wins and no arbitration;
+/// a scaling bug in a free source poisoned tokens that have NO configured
+/// oracle — live evidence: AAVE $161,339,420.31 (real ≈ $161) and SNX
+/// $272,885.72 (real ≈ $0.27), both exactly ×1e6. A real asset never moves 100×
+/// between consecutive writes (seconds apart); such a jump is a data error.
+pub const PRICE_MAX_TICK_RATIO: f64 = 100.0;
+
+/// B5 gate: may `new` replace `prev` for this symbol?
+///
+/// - non-finite or ≤ 0 `new` → never (basic honesty, mirrors the writers' guard);
+/// - no previous value (first write for the symbol) → yes;
+/// - a poisoned/absent previous value → yes (accept the correction);
+/// - ratio outside `[1/N, N]` with `N = PRICE_MAX_TICK_RATIO` → NO: the caller
+///   logs it and keeps the previous value (fail-honest: a stale plausible price
+///   beats a poisoned one that would silently corrupt every gross computation).
+pub fn is_plausible_price(prev: Option<f64>, new: f64) -> bool {
+    if !new.is_finite() || new <= 0.0 {
+        return false;
+    }
+    let Some(p) = prev else {
+        return true;
+    };
+    if !p.is_finite() || p <= 0.0 {
+        return true;
+    }
+    let ratio = new / p;
+    ratio <= PRICE_MAX_TICK_RATIO && ratio >= 1.0 / PRICE_MAX_TICK_RATIO
+}
+
 /// Pub/sub channel notified whenever a writer persists prices into
 /// `arbx:token_prices:<chain_id>` (G-PRICE-1: snapshot+push price streaming).
 /// Payload is a small JSON notice (`{"source":"price_worker","written":33}`);
@@ -300,6 +332,44 @@ mod tests {
     use super::*;
     use crate::trading_config::{GasPriceStrategy, TradingConfigState};
     use chrono::Utc;
+
+    // ── B5 gate (math-audit AUDIT-MATH-OPPS-2026-09-26) ─────────────────────
+
+    /// The exact production poisoning: AAVE ≈ $161 and SNX ≈ $0.27 both landed
+    /// in the shared hash ×1e6 from a free writer. The guard must refuse the
+    /// spike (keeping the stored value) while accepting normal movement and a
+    /// first write.
+    #[test]
+    fn b5_guard_refuses_the_x1e6_poison_and_accepts_normal_moves() {
+        // The live poison: 161 -> 161_339_420.31 (x1e6).
+        assert!(!is_plausible_price(Some(161.0), 161_339_420.31));
+        // SNX: 0.27 -> 272_885.72 (x1e6).
+        assert!(!is_plausible_price(Some(0.27), 272_885.72));
+        // Normal tick movement in both directions is accepted.
+        assert!(is_plausible_price(Some(161.0), 165.0));
+        assert!(is_plausible_price(Some(161.0), 158.0));
+        assert!(is_plausible_price(Some(0.27), 0.29));
+        // First write for a symbol (no stored value) is accepted.
+        assert!(is_plausible_price(None, 161.0));
+        // A non-finite/non-positive STORED value is treated as absent → accepted.
+        assert!(is_plausible_price(Some(0.0), 161.0));
+        assert!(is_plausible_price(Some(f64::NAN), 161.0));
+        // The guard is SYMMETRIC: a large move in EITHER direction is refused.
+        // That includes the downward correction of an already-poisoned value —
+        // the hash TTL (~60s, re-armed by every write cycle) clears the stale
+        // poison and the next first-write repopulates it sanely. Documented
+        // trade-off: a short stale window beats silently trusting a jump that
+        // looks exactly like the scaling bug this guard exists for.
+        assert!(!is_plausible_price(Some(161_339_420.31), 161.0));
+        // Non-finite / non-positive are never written.
+        assert!(!is_plausible_price(Some(1.0), f64::NAN));
+        assert!(!is_plausible_price(Some(1.0), f64::INFINITY));
+        assert!(!is_plausible_price(Some(1.0), 0.0));
+        assert!(!is_plausible_price(Some(1.0), -5.0));
+        // Boundary: exactly the max ratio is still plausible (inclusive).
+        assert!(is_plausible_price(Some(1.0), PRICE_MAX_TICK_RATIO));
+        assert!(!is_plausible_price(Some(1.0), PRICE_MAX_TICK_RATIO * 1.01));
+    }
 
     fn cfg_with_prices(prices: HashMap<String, f64>) -> TradingConfigState {
         TradingConfigState {

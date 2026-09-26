@@ -573,11 +573,31 @@ impl GeckoTerminalOracle {
         let key = redis_token_prices_key(chain_id);
         let ttl_secs: i64 = price_ttl_secs(self.cfg.interval);
 
+        // B5 (math-audit AUDIT-MATH-OPPS-2026-09-26): validate each write against
+        // the value already stored — the shared hash has three writers with
+        // last-writer-wins and no arbitration, and a scaling bug in a free source
+        // poisoned oracle-less tokens (live: SNX $272,885.72 = real x1e6).
+        let prev: std::collections::HashMap<String, String> =
+            <redis::aio::MultiplexedConnection as redis::AsyncCommands>::hgetall(&mut *conn, &key)
+                .await
+                .unwrap_or_default();
+
         let mut pipe = redis::pipe();
         pipe.atomic();
         let mut written = 0usize;
         for (sym, price) in prices {
             if !(price.is_finite() && *price > 0.0) {
+                continue;
+            }
+            let prev_val = prev.get(sym).and_then(|v| v.parse::<f64>().ok());
+            if !shared_rs::price_oracle::is_plausible_price(prev_val, *price) {
+                tracing::warn!(
+                    event = "geckoterminal.price_implausible_skip",
+                    symbol = sym.as_str(),
+                    prev = ?prev_val,
+                    new = *price,
+                    "B5: refusing an implausible single-tick jump — keeping the stored value"
+                );
                 continue;
             }
             pipe.hset(&key, sym, format!("{price}")).ignore();
