@@ -54,6 +54,31 @@ const A = "0x" + "a".repeat(40);
 const B = "0x" + "b".repeat(40);
 const C = "0x" + "c".repeat(40);
 
+// CARDS-PRICES-01 gate (adversarial-review finding #2, card-level half): a live
+// PriceBus price must reach the RENDERED chip through the real mapper, and an
+// absent price must render NOTHING (R8: never a guess). Without this gate the
+// mapper silent-drop (finding #1) shipped as dead code with every unit test
+// green.
+describe("OpportunityTradeCard — CARDS-PRICES-01 live price chip", () => {
+  it("renders the live USD price under the token chip; absent price renders nothing", () => {
+    const info = { symbol: "WETH", decimals: 18, logo_url: null, resolved_via: "onchain_full" };
+    const withPrice = mapToOmniOpportunity(
+      wire({
+        token_in: A,
+        token_out: B,
+        token_in_info: info,
+        token_prices_usd: { WETH: 2685.78 },
+      }),
+    );
+    expect(card(withPrice)).toContain("$2,685.78");
+
+    const withoutPrice = mapToOmniOpportunity(
+      wire({ token_in: A, token_out: B, token_in_info: info }),
+    );
+    expect(card(withoutPrice)).not.toContain("$2,685.78");
+  });
+});
+
 describe("OpportunityTradeCard — HOPS-CARD-03 step ladder", () => {
   it("renders every leg of a 3-hop route with symbols — not the hardcoded 2-row ladder", () => {
     const info = { symbol: "WETH", decimals: 18, logo_url: null, resolved_via: "onchain_full" };
