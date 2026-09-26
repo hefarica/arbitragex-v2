@@ -21,8 +21,9 @@ use crate::latency_budget::{LatencyLog, Stage};
 use crate::orchestrator::Orchestrator;
 use crate::pair_index::{DenseIdBuilder, TokenKey};
 use crate::route_discovery::graph_builder::{build_graph, GraphBuildConfig, GraphBuildOutcome};
+use crate::route_discovery::hop_cycle_bridge;
 use crate::route_discovery::lat_candidates::{self, CandidateSample};
-use crate::route_discovery::route_intent_dispatcher::plan_dispatch;
+use crate::route_discovery::route_intent_dispatcher::{build_intent, plan_dispatch};
 use crate::route_discovery::strategy_applicability::StrategyApplicabilityEngine;
 use crate::route_discovery::telemetry;
 use crate::route_discovery::triangular_adapter::{
@@ -1563,6 +1564,62 @@ async fn run_loop(
                     intent.observed_block_number = Some(current_block);
                 }
                 tokio::spawn(shadow_evaluate_intent(r.clone(), intent, chain_id));
+            }
+        }
+
+        // ── HOPS-EMIT-01: discovery → emission bridge (3..=7-hop cycles) ──────
+        // `tick.routes` holds every closed cycle the finder produced this tick,
+        // INDEPENDENTLY of `dispatch_enabled` — the cartridge dispatch above is
+        // a no-op without a runner (which is why a discovery tick could produce
+        // `route_intent.emitted = 0` and zero cards). Cycles of 3..=7 hops are
+        // handed to the native pipeline (N-leg sizing kernel + OpportunityEmitter)
+        // so the dashboard can render them with their per-hop numbers; 2-hop
+        // cycles are refused there and remain `dex_engine`'s alone (no duplicate
+        // rows). The per-(chain, block) cap and the `ARBX_MULTIHOP_EMIT` toggle
+        // live in the bridge; the task is detached so the tick's latency budget
+        // is untouched and no candidate does RPC here.
+        if let Some(orch) = &orchestrator {
+            let mut bridge_spawned = 0usize;
+            for c in &tick.routes {
+                let hops = c.hops as usize;
+                if !(hop_cycle_bridge::MIN_BRIDGE_HOPS..=hop_cycle_bridge::MAX_BRIDGE_HOPS)
+                    .contains(&hops)
+                {
+                    continue;
+                }
+                let Some(mut intent) = build_intent(c) else {
+                    // Canonicalizer produced a ragged candidate — honest skip
+                    // (never a partially-built route).
+                    debug!(
+                        event = "route_discovery.hop_bridge_malformed",
+                        chain_id,
+                        route_hash = %c.route_hash,
+                        hops,
+                    );
+                    continue;
+                };
+                if intent.observed_block_number.is_none() && current_block > 0 {
+                    intent.observed_block_number = Some(current_block);
+                }
+                let orch = orch.clone();
+                tokio::spawn(async move {
+                    if let Err(e) = orch.emit_discovered_cycle(intent).await {
+                        warn!(
+                            event = "route_discovery.hop_bridge_failed",
+                            error = %e,
+                            "discovered-cycle emission failed (emitter Redis error) — R8 honest"
+                        );
+                    }
+                });
+                bridge_spawned += 1;
+            }
+            if bridge_spawned > 0 {
+                debug!(
+                    event = "route_discovery.hop_bridge_spawned",
+                    chain_id,
+                    cycles = bridge_spawned,
+                    "3..=7-hop discovered cycles handed to the native emission pipeline"
+                );
             }
         }
 
