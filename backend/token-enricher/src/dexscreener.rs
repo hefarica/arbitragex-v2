@@ -519,10 +519,19 @@ impl DexScreenerPriceOracle {
         let mut pipe = redis::pipe();
         pipe.atomic();
         let mut written = 0usize;
+        // B5 (authority order): symbols the sovereign stack already owns
+        // (Binance charter / Chainlink anchors) are skipped — a free-tier pool
+        // quote must never clobber the authoritative writer's value. Aggregated
+        // into ONE summary log (R9: no per-item logflood).
+        let mut skipped_authoritative = 0usize;
         for (sym, price) in prices {
             // Defensive: never write garbage (the reader also drops these, but
             // honesty starts at the writer).
             if !(price.is_finite() && *price > 0.0) {
+                continue;
+            }
+            if shared_rs::price_oracle::is_authoritative_symbol(sym) {
+                skipped_authoritative += 1;
                 continue;
             }
             let prev_val = prev.get(sym).and_then(|v| v.parse::<f64>().ok());
@@ -538,6 +547,14 @@ impl DexScreenerPriceOracle {
             }
             pipe.hset(&key, sym, format!("{price}")).ignore();
             written += 1;
+        }
+        if skipped_authoritative > 0 {
+            tracing::debug!(
+                event = "dexscreener.price_authority_skip",
+                chain_id,
+                skipped = skipped_authoritative,
+                "B5: authoritative symbols left to price_worker (Binance charter / Chainlink)"
+            );
         }
         if written == 0 {
             // Nothing valid to write — don't touch the key (no EXPIRE, no clobber).

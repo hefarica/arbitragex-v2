@@ -294,6 +294,25 @@ pub fn redis_token_prices_key(chain_id: u64) -> String {
 /// between consecutive writes (seconds apart); such a jump is a data error.
 pub const PRICE_MAX_TICK_RATIO: f64 = 100.0;
 
+/// B5 (math-audit AUDIT-MATH-OPPS-2026-09-26) — AUTHORITY ORDER between the three
+/// writers of `arbx:token_prices:<chain>`.
+///
+/// The range guard above rejects an implausible JUMP, but it cannot fix a source
+/// that is *consistently* wrong: the shared hash has a ~60 s TTL, so every cycle
+/// is written from scratch, and a free-tier writer that derives a symbol from an
+/// arbitrary pool re-proposes the same bad value every tick (live evidence:
+/// AAVE = 161,339,420.31 and SNX = 272,885.72 came back after every expiry).
+///
+/// The sovereign stack already defines which symbols have an authoritative
+/// producer: `searcher-rs::price_worker` publishes the Binance charter pairs
+/// (`price_bus::canonical_pair_for_token`) and the Chainlink anchors. A free-tier
+/// enricher must therefore never clobber those symbols with a pool quote.
+///
+/// The set is derived from the ONE charter table — no second list to drift.
+pub fn is_authoritative_symbol(sym_upper: &str) -> bool {
+    crate::price_bus::canonical_pair_for_token(sym_upper).is_some()
+}
+
 /// B5 gate: may `new` replace `prev` for this symbol?
 ///
 /// - non-finite or ≤ 0 `new` → never (basic honesty, mirrors the writers' guard);
@@ -369,6 +388,34 @@ mod tests {
         // Boundary: exactly the max ratio is still plausible (inclusive).
         assert!(is_plausible_price(Some(1.0), PRICE_MAX_TICK_RATIO));
         assert!(!is_plausible_price(Some(1.0), PRICE_MAX_TICK_RATIO * 1.01));
+    }
+
+    /// B5 (authority order): the Binance/Chainlink charter symbols belong to
+    /// `price_worker`; a free-tier enricher must never clobber them. The set is
+    /// derived from the ONE charter table, so this gate fails the moment that
+    /// table changes without the writers being revisited.
+    #[test]
+    fn b5_authoritative_symbols_follow_the_binance_charter() {
+        for sym in ["WETH", "ETH", "WBTC", "BTC", "USDC"] {
+            assert!(
+                is_authoritative_symbol(sym),
+                "{sym} has a canonical Binance pair → price_worker owns it"
+            );
+            assert!(
+                crate::price_bus::canonical_pair_for_token(sym).is_some(),
+                "{sym} must come from the charter table, not a second list"
+            );
+        }
+        for sym in ["AAVE", "SNX", "PEPE", "UNI", "LINK"] {
+            assert!(
+                !is_authoritative_symbol(sym),
+                "{sym} has no canonical pair → free tiers may fill it"
+            );
+        }
+        // Case handling mirrors the other public helpers: the caller passes the
+        // uppercase hash field. A lowercase input is NOT authoritative, which is
+        // why every writer uppercases before consulting this.
+        assert!(!is_authoritative_symbol("weth"));
     }
 
     fn cfg_with_prices(prices: HashMap<String, f64>) -> TradingConfigState {
