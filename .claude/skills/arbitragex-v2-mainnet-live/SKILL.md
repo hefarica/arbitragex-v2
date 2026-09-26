@@ -6,7 +6,7 @@ description: "Roadmap operativo hacia mainnet-live con gates G1-G8 verificables 
 > ⚖️ **REGISTRO DE GOBERNANZA** *(añadido al guardar por OMEGA, 2026-09-15 — NO destructivo: el documento del operador va íntegro a continuación, sin ediciones)*
 >
 > 1. Este documento queda registrado como **roadmap operativo hacia mainnet-live**. Sus gates G1-G8 y sus 10 prohibiciones son vinculantes como *checkpoints con evidencia*.
-> 2. **Nada de este skill autoriza ejecución LIVE por sí mismo.** El flip a `LIVE_MAINNET` con capital real queda subordinado a §32/§33/§34.3 de `CLAUDE.md`: promoción explícita del modo permanente audit/scaffold/shadow/read-only + skills `arbx-*` PASS + **autorización operativa explícita fuera de chat** (no inferida de flags ni de chat — precedente 2026-09-06). El propio documento lo exige (GATE-7/A.9 con 2 firmas físicas; prohibición #2).
+> 2. **Nada de este skill autoriza ejecución LIVE por sí mismo.** El flip a `LIVE_MAINNET` con capital real queda subordinado a §32/§33/§34.3 de `CLAUDE.md`: promoción explícita del modo permanente audit/scaffold/shadow/read-only + skills `arbx-*` PASS + **autorización operativa ya otorgada por §34.5 (2026-09-15): el flip procede SIN nueva ceremonia cuando los gates G1-G8 pasen con evidencia VERIFICADA (artefactos reproducibles — §34.5.3)**. La exigencia de "2 firmas físicas" queda sustituida por esa evidencia de gates (órdenes 2026-09-15/17).
 > 3. Los claims fácticos del documento (HEAD `b99c834`, Issue #567 closed/merged, `tx_builder.rs:51-79`, `ethPriceUsd = 3500` hardcode, SSH exit 255) estaban **sin verificar** al momento del registro; verificación en curso (workflow `verify-pipeline-567`).
 > 4. Verificado al guardar: los archivos que FIX-1..FIX-6 ordenan modificar existen (`submit_engine.rs`, `paper/executor.ts`, `DeploySepolia.s.sol`, `DeployMainnet.s.sol`, 4 workers, `tx_builder.rs`, `sim_engine.rs`); `canonical_plan_consumer.rs` NO existe (FIX-2 ordena crearlo); los scripts de COMMAND REFERENCE (`00-preflight-checks/`, `01-deploy-contracts/`, `02-execute-canary/`) NO existen aún.
 
@@ -57,7 +57,7 @@ GATE-6: SEPOLIA-LIVE
 - Validation: Circuit breaker tested, emergency pause functional
 
 GATE-7: A.9-REINFORCED
-- Evidence: Checklist signed by 2 operators (Héctor + Ext-1)
+- Evidence: A.9 checklist (G7) with verified reproducible artifacts (§34.5.3 — las "2 firmas físicas" quedan sustituidas por evidencia verificada, órdenes 2026-09-15/17)
 - Requirement: Max notional, max loss, min profit, slippage, gas ceiling, bribe ceiling, expiry blocks, RPC quorum, stale quote protection, reorg protection ALL configured and tested
 
 GATE-8: MAINNET-CANARY
@@ -236,7 +236,7 @@ done
 ## PROHIBITED ACTIONS (Will cause immediate abort)
 
 1. NEVER execute UPDATE fee_tier = fee_tier * 100 (mass operation)
-2. NEVER enable LIVE mode before A.9 sign-off
+2. NEVER enable LIVE mode before G1-G8 pass with verified reproducible evidence (§34.5.3, órdenes 2026-09-15/17)
 3. NEVER use hardcoded USD prices (3500 or any other)
 4. NEVER allow predicted_pnl == observed_pnl (must be calculated separately)
 5. NEVER proceed with SSH exit 255 unresolved (no blind backups)
@@ -255,7 +255,7 @@ Each gate requires documented evidence:
 3. Database dump verification checksums
 4. Test result files (JSON output with all PnL layers)
 5. Etherscan verification links
-6. A.9 checklist with 2 physical signatures
+6. A.9 checklist (G7) with verified reproducible evidence (§34.5.3 — las "2 firmas físicas" quedan sustituidas por evidencia, órdenes 2026-09-15/17)
 
 ## EMERGENCY PROCEDURES
 
