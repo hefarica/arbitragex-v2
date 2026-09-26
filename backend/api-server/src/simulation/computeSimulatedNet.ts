@@ -61,12 +61,82 @@ export interface SimulatedCostBreakdown {
 
 export interface SimulationResult {
   amount_in_usd: number;
+  /**
+   * The gross THIS simulation consumed, verbatim from the wire.
+   *
+   * CARDS-NOTIONAL-01 (2026-09-26): this field was already computed here but
+   * never left the api-server — the route published only `net_usd` /
+   * `amount_in_usd` / `roi_pct` / `cost_breakdown`, so every consumer that
+   * needed "the gross of THIS ladder" reached for `expected_profit_usd`
+   * instead, which is a DIFFERENT producer's figure at a DIFFERENT size (the
+   * full chain lives in the header of `frontend/lib/opportunity-ledger.ts`).
+   * Publishing it is what lets the card render `net == gross − total_cost`
+   * inside one notional instead of crossing two.
+   */
   gross_usd: number;
   net_usd: number;
   roi_pct: number;
   cost_breakdown: SimulatedCostBreakdown;
+  /**
+   * Σ of every component of `cost_breakdown` — derived from THAT object and
+   * nothing else, so the total and the per-component rows can never disagree.
+   * This is the ladder's ONLY legitimate "Total cost": the card used to sum a
+   * hand-picked subset of the rows that OMITTED `copied_buffer_usd` (the
+   * largest component at the live `p_copied_max=0.5`), which is one of the two
+   * ways the rendered row broke `net == gross − total_cost`.
+   */
+  costs_total_usd: number;
   source: "simulation";
   notes: string[];
+}
+
+/**
+ * Half a cent: the card rounds every ledger cell to 2 decimals, so a closure
+ * residual below this can never be VISIBLE on the rendered row.
+ * CARDS-NOTIONAL-01: the closure identity is `net == gross − total_cost` under
+ * the SAME rounding as the display, and this is that rounding.
+ */
+export const COST_CLOSURE_TOLERANCE_USD = 0.005;
+
+/**
+ * Exact Σ of a cost breakdown. Pure, and the single definition of "total cost"
+ * for every consumer (route, card, notifier) — never a hand-maintained list of
+ * components re-declared at a render site.
+ */
+export function costsTotalUsd(cb: SimulatedCostBreakdown): number {
+  return (
+    cb.gas_usd +
+    cb.lp_fees_usd +
+    cb.slippage_usd +
+    cb.failure_buffer_usd +
+    cb.copied_buffer_usd +
+    cb.capital_cost_usd +
+    cb.ops_overhead_usd +
+    cb.flashloan_fee_usd +
+    cb.relay_fee_usd
+  );
+}
+
+/**
+ * R8 fail-honest closure check for a (gross, net, Σcosts) triple: true only
+ * when the three figures are one computation seen three ways. A triple that
+ * fails this describes two different notionals and must never be rendered as a
+ * single ladder.
+ */
+export function tripleIsClosed(
+  grossUsd: number,
+  netUsd: number,
+  costsTotal: number,
+  tolerance: number = COST_CLOSURE_TOLERANCE_USD,
+): boolean {
+  if (
+    !Number.isFinite(grossUsd) ||
+    !Number.isFinite(netUsd) ||
+    !Number.isFinite(costsTotal)
+  ) {
+    return false;
+  }
+  return Math.abs(netUsd - (grossUsd - costsTotal)) <= tolerance;
 }
 
 /**
@@ -278,17 +348,30 @@ export function forwardSimulate(
   const relay_fee_usd = relayFeeUsd(row.chain_id, grossUsd);
   if (relay_fee_usd > 0) notes.push("relay-cold-start-floor");
 
-  const net_usd =
-    grossUsd -
-    gas_usd -
-    flashloan_fee_usd -
-    lp_fees_usd -
-    slippage_usd -
-    failure_buffer_usd -
-    capital_cost_usd -
-    ops_overhead_usd -
-    copied_buffer_usd -
-    relay_fee_usd;
+  // CARDS-NOTIONAL-01: the ladder's basis is stated on the wire, never
+  // inferred. Every component above is either `rate × amount_in_usd` (gas
+  // aside, which is a per-attempt scalar) or `rate × gross`, and `gross_usd`
+  // is the wire's own figure — so the ONLY notional this ladder can honestly
+  // claim is the row's recorded `amount_in_wei`. A consumer that also holds
+  // canonical (searcher) economics must not mix them in; it reads this marker
+  // to know which figure the ladder belongs to.
+  notes.push("basis=amount_in_wei");
+
+  const cost_breakdown: SimulatedCostBreakdown = {
+    gas_usd,
+    lp_fees_usd,
+    slippage_usd,
+    failure_buffer_usd,
+    copied_buffer_usd,
+    capital_cost_usd,
+    ops_overhead_usd,
+    flashloan_fee_usd,
+    relay_fee_usd,
+  };
+  // Totals and net derived from the SAME object, in one place: closure
+  // (`net == gross − Σcomponents`) is then an identity of this function, not a
+  // property that happens to hold because two call sites agree.
+  const net_usd = grossUsd - costsTotalUsd(cost_breakdown);
 
   const roi_pct = amountInUsdVal > 0 ? (net_usd / amountInUsdVal) * 100 : 0;
 
@@ -297,17 +380,8 @@ export function forwardSimulate(
     gross_usd: grossUsd,
     net_usd,
     roi_pct,
-    cost_breakdown: {
-      gas_usd,
-      lp_fees_usd,
-      slippage_usd,
-      failure_buffer_usd,
-      copied_buffer_usd,
-      capital_cost_usd,
-      ops_overhead_usd,
-      flashloan_fee_usd,
-      relay_fee_usd,
-    },
+    cost_breakdown,
+    costs_total_usd: costsTotalUsd(cost_breakdown),
     source: "simulation",
     notes,
   };

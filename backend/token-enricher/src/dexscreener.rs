@@ -516,28 +516,83 @@ impl DexScreenerPriceOracle {
                 .await
                 .unwrap_or_default();
 
+        // B5c: the PENDING corrections recorded by previous cycles (their own
+        // short-TTL key, never published as prices). Read once, like `prev`.
+        let pending_key = shared_rs::price_oracle::pending_corrections_key(chain_id);
+        let pending: std::collections::HashMap<String, String> =
+            <redis::aio::MultiplexedConnection as redis::AsyncCommands>::hgetall(
+                &mut *conn,
+                &pending_key,
+            )
+            .await
+            .unwrap_or_default();
+
         let mut pipe = redis::pipe();
         pipe.atomic();
         let mut written = 0usize;
+        // B5 (authority order): symbols the sovereign stack already owns
+        // (Binance charter / Chainlink anchors) are skipped — a free-tier pool
+        // quote must never clobber the authoritative writer's value. Aggregated
+        // into ONE summary log (R9: no per-item logflood).
+        let mut skipped_authoritative = 0usize;
         for (sym, price) in prices {
             // Defensive: never write garbage (the reader also drops these, but
             // honesty starts at the writer).
             if !(price.is_finite() && *price > 0.0) {
                 continue;
             }
+            if shared_rs::price_oracle::is_authoritative_symbol(sym) {
+                skipped_authoritative += 1;
+                continue;
+            }
             let prev_val = prev.get(sym).and_then(|v| v.parse::<f64>().ok());
             if !shared_rs::price_oracle::is_plausible_price(prev_val, *price) {
+                // B5c: an implausible jump may be the CORRECTION of an already
+                // stored poison (live: AAVE stored 161,339,420.31 while the real
+                // price is ~154 and this writer proposed 154.1760931358 — the
+                // range guard refused it, so the poison could never be repaired).
+                // Two independent observations agreeing against the stored value
+                // are accepted; a lone outlier is recorded as PENDING (separate,
+                // short-TTL key — never published as a price) and still refused.
+                let pending_val = pending.get(sym).and_then(|v| v.parse::<f64>().ok());
+                if shared_rs::price_oracle::is_corroborated_correction(pending_val, *price) {
+                    tracing::warn!(
+                        event = "dexscreener.price_corroborated_correction",
+                        symbol = sym.as_str(),
+                        stored = ?prev_val,
+                        corrected_to = *price,
+                        "B5c: two agreeing observations — accepting the correction of the stored value"
+                    );
+                    pipe.hset(&key, sym, format!("{price}")).ignore();
+                    pipe.hdel(&pending_key, sym).ignore();
+                    written += 1;
+                    continue;
+                }
                 tracing::warn!(
                     event = "dexscreener.price_implausible_skip",
                     symbol = sym.as_str(),
                     prev = ?prev_val,
                     new = *price,
-                    "B5: refusing an implausible single-tick jump — keeping the stored value"
+                    "B5: refusing an implausible single-tick jump — keeping the stored value (recorded as PENDING)"
                 );
+                pipe.hset(&pending_key, sym, format!("{price}")).ignore();
+                pipe.expire(
+                    &pending_key,
+                    shared_rs::price_oracle::PENDING_CORRECTION_TTL_SECS,
+                )
+                .ignore();
                 continue;
             }
             pipe.hset(&key, sym, format!("{price}")).ignore();
             written += 1;
+        }
+        if skipped_authoritative > 0 {
+            tracing::debug!(
+                event = "dexscreener.price_authority_skip",
+                chain_id,
+                skipped = skipped_authoritative,
+                "B5: authoritative symbols left to price_worker (Binance charter / Chainlink)"
+            );
         }
         if written == 0 {
             // Nothing valid to write — don't touch the key (no EXPIRE, no clobber).

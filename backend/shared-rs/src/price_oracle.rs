@@ -294,6 +294,69 @@ pub fn redis_token_prices_key(chain_id: u64) -> String {
 /// between consecutive writes (seconds apart); such a jump is a data error.
 pub const PRICE_MAX_TICK_RATIO: f64 = 100.0;
 
+/// B5 (math-audit AUDIT-MATH-OPPS-2026-09-26) — AUTHORITY ORDER between the three
+/// writers of `arbx:token_prices:<chain>`.
+///
+/// The range guard above rejects an implausible JUMP, but it cannot fix a source
+/// that is *consistently* wrong: the shared hash has a ~60 s TTL, so every cycle
+/// is written from scratch, and a free-tier writer that derives a symbol from an
+/// arbitrary pool re-proposes the same bad value every tick (live evidence:
+/// AAVE = 161,339,420.31 and SNX = 272,885.72 came back after every expiry).
+///
+/// The sovereign stack already defines which symbols have an authoritative
+/// producer: `searcher-rs::price_worker` publishes the Binance charter pairs
+/// (`price_bus::canonical_pair_for_token`) and the Chainlink anchors. A free-tier
+/// enricher must therefore never clobber those symbols with a pool quote.
+///
+/// The set is derived from the ONE charter table — no second list to drift.
+pub fn is_authoritative_symbol(sym_upper: &str) -> bool {
+    crate::price_bus::canonical_pair_for_token(sym_upper).is_some()
+}
+
+/// B5c (math-audit AUDIT-MATH-OPPS-2026-09-26) — relative tolerance for a
+/// CORROBORATED correction of a stored price.
+pub const PRICE_CORRECTION_TOLERANCE: f64 = 0.20;
+
+/// B5c — is `candidate` a corroboration of a previously recorded pending
+/// correction? Two independent observations agreeing (within
+/// `PRICE_CORRECTION_TOLERANCE`) against the STORED value are evidence that the
+/// stored value is the outlier, not the candidate.
+///
+/// WHY THIS EXISTS (live evidence, 2026-09-26 20:17Z):
+/// `{"event":"geckoterminal.price_implausible_skip","symbol":"AAVE",
+///   "prev":"Some(161339420.31)","new":154.1760931358}`
+/// Real AAVE ≈ $154: the free tier proposed the CORRECT value and the range
+/// guard refused it, because the poisoned value landed first and every write
+/// refreshes the hash TTL (`prev` is therefore never absent). The guard was a
+/// ONE-WAY RATCHET: it blocked the injection of a ×1e6 error but could never
+/// repair one that was already stored. With this rule the second agreeing
+/// observation is accepted and the stored value is overwritten; a lone outlier
+/// is still refused forever (it never gets corroborated).
+pub fn is_corroborated_correction(pending: Option<f64>, candidate: f64) -> bool {
+    if !candidate.is_finite() || candidate <= 0.0 {
+        return false;
+    }
+    let Some(p) = pending else {
+        return false;
+    };
+    if !p.is_finite() || p <= 0.0 {
+        return false;
+    }
+    let ratio = candidate / p;
+    ((1.0 - PRICE_CORRECTION_TOLERANCE)..=(1.0 + PRICE_CORRECTION_TOLERANCE)).contains(&ratio)
+}
+
+/// Redis key holding the PENDING (not yet corroborated) corrections, as a hash
+/// of `SYMBOL -> candidate`. Deliberately separate from the published hash so a
+/// pending candidate can never be read as a price, and short-lived.
+pub fn pending_corrections_key(chain_id: u64) -> String {
+    format!("arbx:token_prices_pending:{chain_id}")
+}
+
+/// TTL of a pending correction (seconds). Long enough to be seen by the next
+/// cycle of any writer, short enough that a one-off outlier disappears.
+pub const PENDING_CORRECTION_TTL_SECS: i64 = 300;
+
 /// B5 gate: may `new` replace `prev` for this symbol?
 ///
 /// - non-finite or ≤ 0 `new` → never (basic honesty, mirrors the writers' guard);
@@ -369,6 +432,69 @@ mod tests {
         // Boundary: exactly the max ratio is still plausible (inclusive).
         assert!(is_plausible_price(Some(1.0), PRICE_MAX_TICK_RATIO));
         assert!(!is_plausible_price(Some(1.0), PRICE_MAX_TICK_RATIO * 1.01));
+    }
+
+    /// B5 (authority order): the Binance/Chainlink charter symbols belong to
+    /// `price_worker`; a free-tier enricher must never clobber them. The set is
+    /// derived from the ONE charter table, so this gate fails the moment that
+    /// table changes without the writers being revisited.
+    #[test]
+    fn b5_authoritative_symbols_follow_the_binance_charter() {
+        for sym in ["WETH", "ETH", "WBTC", "BTC", "USDC"] {
+            assert!(
+                is_authoritative_symbol(sym),
+                "{sym} has a canonical Binance pair → price_worker owns it"
+            );
+            assert!(
+                crate::price_bus::canonical_pair_for_token(sym).is_some(),
+                "{sym} must come from the charter table, not a second list"
+            );
+        }
+        for sym in ["AAVE", "SNX", "PEPE", "UNI", "LINK"] {
+            assert!(
+                !is_authoritative_symbol(sym),
+                "{sym} has no canonical pair → free tiers may fill it"
+            );
+        }
+        // Case handling mirrors the other public helpers: the caller passes the
+        // uppercase hash field. A lowercase input is NOT authoritative, which is
+        // why every writer uppercases before consulting this.
+        assert!(!is_authoritative_symbol("weth"));
+    }
+
+    /// B5c gate — the corroborated-correction rule that repairs an ALREADY
+    /// stored poison (the AAVE case: correct 154.17 refused against 161M).
+    #[test]
+    fn b5c_corroborated_correction_accepts_the_pair_and_refuses_a_lone_outlier() {
+        // AAVE: pending 154.1760931358, next cycle proposes the same ballpark.
+        assert!(is_corroborated_correction(Some(154.1760931358), 154.5));
+        assert!(is_corroborated_correction(Some(154.1760931358), 130.0)); // -15.6%
+        assert!(is_corroborated_correction(Some(154.1760931358), 180.0)); // +16.8%
+                                                                          // Outside the tolerance → not a corroboration (the pending record is
+                                                                          // simply replaced by the newer candidate).
+        assert!(!is_corroborated_correction(Some(154.1760931358), 100.0));
+        assert!(!is_corroborated_correction(Some(154.1760931358), 300.0));
+        // No pending record → nothing to corroborate (a single observation of a
+        // huge jump must never be accepted).
+        assert!(!is_corroborated_correction(None, 154.1760931358));
+        assert!(!is_corroborated_correction(None, 161_339_420.31));
+        // Garbage never corroborates.
+        assert!(!is_corroborated_correction(Some(f64::NAN), 154.0));
+        assert!(!is_corroborated_correction(Some(154.0), f64::NAN));
+        assert!(!is_corroborated_correction(Some(154.0), 0.0));
+        assert!(!is_corroborated_correction(Some(0.0), 154.0));
+        // Boundary is inclusive.
+        assert!(is_corroborated_correction(
+            Some(100.0),
+            100.0 * (1.0 + PRICE_CORRECTION_TOLERANCE)
+        ));
+        assert!(!is_corroborated_correction(
+            Some(100.0),
+            100.0 * (1.0 + PRICE_CORRECTION_TOLERANCE) * 1.01
+        ));
+        // The pending store is a SEPARATE key — a pending candidate is never a price.
+        assert_eq!(pending_corrections_key(1), "arbx:token_prices_pending:1");
+        assert_ne!(pending_corrections_key(1), redis_token_prices_key(1));
     }
 
     fn cfg_with_prices(prices: HashMap<String, f64>) -> TradingConfigState {
