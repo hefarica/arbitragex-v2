@@ -61,8 +61,12 @@ ARBX_V3_QUOTE_BATCH_BACKOFF_MS=30000
 - QUITAR: `1rpc` (410 Gone, proveedor muerto), `flashbots` (`/fast` es relay, 403 a eth_call),
   `mevblocker` (relay, 403 a eth_call).
 - CONSERVAR: `drpc`, `publicnode`, `0xrpc`, `blockpi`, `llama`.
-- **R3 (decisión del operador, costo)**: Alchemy quota PAYG — único proveedor con headroom
-  (hoy 429 incluso en `eth_blockNumber` suelto).
+- **R3 (corregido por orden del operador 2026-09-25)**: NO Alchemy PAYG. La vía del operador es
+  el stack soberano de precios ya en código: **Binance WS** (`workers/binance_ws.rs` — book_ticker
+  + depth5 → price_bus/Redis, toggle `binance_depth5`) + **Chainlink** (`workers/price_worker.rs`
+  `fetch_chainlink` — `latestRoundData()` de oráculos configurados en PG, anchors en
+  `shared-rs/src/price_bus.rs` con veredicto de divergencia `price_divergence_binance_chainlink`).
+  R1+R2 siguen siendo el fix del transporte del quoter on-chain.
 
 ## 5. Verificación post-deploy (artefactos, §34.5.3)
 
