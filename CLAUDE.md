@@ -271,6 +271,15 @@ Script `automation/claude-headless.sh` ejecuta Claude Code sin terminal para pip
 > Integrada desde `~/.claude/skills/git-url-e2e-auditor-scaffold/project-policy/CLAUDE.md`.
 > Encabezado nuevo, anexado de forma NO destructiva (no se removiÃ³ nada de Â§1-Â§31).
 
+> **SUPERSESIÓN PARCIAL — §34.5 (registro 2026-09-25, orden del operador):** los puntos 2-3 de esta
+> política ("Modo permanente", "Sin flips a live") gobiernan EXCLUSIVAMENTE el trabajo del skill
+> `git-url-e2e-auditor-scaffold` (auditoría/scaffold/shadow de un repo). NO se extienden al proyecto
+> ArbitrageX completo: el objetivo mainnet-live está autorizado (§34/§34.5) y el flip a LIVE_MAINNET
+> procede cuando se cumplen las condiciones de §34.5 — gates G1-G8 con evidencia verificada +
+> switch de entorno `ARBX_LIVE_EXEC_ENABLED`/`ARBX_LIVE_EXEC_CHAINS` (única restricción permitida a
+> mainnet, orden 2026-09-17). La activación financiera (firma/broadcast de valor) sigue siendo acto
+> del OPERADOR. Historia conservada: esta nota documenta la supersesión, no borra el texto original.
+
 Claude DEBE consultar la skill `git-url-e2e-auditor-scaffold` (en
 `~/.claude/skills/git-url-e2e-auditor-scaffold/SKILL.md`) en **toda interacciÃ³n**
 relacionada con cualquiera de estos disparadores:
@@ -319,6 +328,12 @@ relacionada con cualquiera de estos disparadores:
 > cuÃ¡ndo Claude DEBE usar los MCP servers declarados en `.mcp.json` (project) y en
 > el user config. Secretos SOLO por entorno (`.env.mcp`, gitignored); en archivos
 > versionados solo placeholders `${VAR}`.
+
+> **SUPERSESIÓN PARCIAL — §34.5 (registro 2026-09-25, orden del operador):** el modo read-only de
+> los MCP (§33.2: roles SELECT-only, PRIVATE_KEY vacío, sin escritura) rige el uso de los MCP
+> servers como herramientas. NO bloquea el objetivo mainnet-live del proyecto: la ingeniería live
+> (software, pruebas, paquete de activación) está autorizada por §34/§34.5; el flip de modo y la
+> activación financiera siguen siendo decisión del operador. Historia conservada.
 
 ### 33.1 Uso obligatorio por dominio
 

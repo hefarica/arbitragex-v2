@@ -457,6 +457,19 @@ No necesitas un comando especial — solo pregunta.
 4. **Gangs con /goal live**: todo charter de agente lleva este mandato inyectado cuando el
    /goal toque modos live; los agentes NO activan capital ni firman — preparan, prueban y
    entregan el paquete de activación (`templates/ACTA_CAPACIDAD_LIVE.template.md`).
+5. **Registro de alineación mainnet-live (órdenes del operador, actualizado 2026-09-25)**: todo
+   pasaje documental que (a) afirme rechazo físico de mainnet, (b) declare paper-only permanente,
+   o (c) añada restricción a mainnet más allá del switch de entorno (`ARBX_LIVE_EXEC_ENABLED` +
+   `ARBX_LIVE_EXEC_CHAINS`) es INCORRECTO y debe CORREGIRSE citando este registro — órdenes:
+   2026-09-11 (eliminación del rechazo físico), 2026-09-12 (objetivo live), 2026-09-15 (§34.5
+   autorización permanente condicionada a G1-G8 con evidencia verificada), 2026-09-17 (prohibido
+   añadir restricciones; corrección MainnetRefused), 2026-09-25 ("dueño de la cancha": actualizar
+   skills con conocimiento y corregir documentos en contra de mainnet live). Se CONSERVA intacto
+   el núcleo de seguridad que HABILITA el live: default-deny por env, kill-switch, límites de
+   capital, gates arbx-*, RULE 00/R8, activación financiera operador-only (§34.5: los gates son
+   la RUTA a mainnet, no la barrera). Primacía epistémica (operador 2026-09-25): el conocimiento
+   doctrinal de estas skills PREVALECE como base; la observación en tiempo real lo AJUSTA con
+   evidencia y queda registrada — jamás se borra doctrina sin documentar la orden que la reemplaza.
 
 ## 12 — DOCTRINA DE VALIDACIÓN: CRIPTO/MATEMÁTICA + CICLO DE VIDA DE ESTRATEGIAS/OPS VÍA HERMES (orden del operador 2026-09-17)
 
