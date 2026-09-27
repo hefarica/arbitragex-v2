@@ -44,6 +44,28 @@
 //!   whole bridge at admission time; when off, nothing is built, nothing is
 //!   sized, nothing is emitted and no existing behaviour changes.
 //!
+//! ## PERHOP-RESERVES-01 — budget ORDER vs. budget SIZE
+//!
+//! The per-(chain, block) cap above is a hard bound, and in production it is
+//! saturated by ~100× (`v2.hop_cycle_bridge.cap_reached`: 31 556 refusals in
+//! 20 min against a cap of 12/block). Until this patch the admitted set was
+//! therefore an arbitrary **first-K slice of the finder's order** — and the
+//! finder's order is a best-K selection ranked by gross cycle score, which in
+//! production is 100 % V3-bearing (measured: 585 of 585 discovered 3..=7-hop
+//! cycles over the `arbx:route_discovery:telemetry` channel carried at least
+//! one V3 leg; zero all-V2). Every one of those cycles is unpriceable by the
+//! N-leg kernel ([`KernelCapability::V3MultilegUnsupported`]) — so the scarce
+//! budget was spent, in full and every block, on cycles that provably cannot
+//! reach the ledger.
+//!
+//! [`order_for_budget`] fixes the ORDER (sizeable cycles are submitted to the
+//! budget first, stable within each lane) and [`MultihopEmitBudget`] now
+//! COUNTS the refusals per lane ([`MultihopEmitBudget::unpriceable_refused_in`])
+//! so the deferral is explicit and observable (R8 — never silent). No row is
+//! suppressed: an unpriceable cycle still occupies a slot whenever the sizeable
+//! lane did not need it, so the diagnostic rows the operator already sees keep
+//! flowing with their own explicit kernel reason.
+//!
 //! ## Which strategy label, and why
 //!
 //! `StrategyLabel` has no `MultiHop` variant, and this module does NOT invent
@@ -60,7 +82,8 @@
 
 use crate::engines::dex_engine::protocol_type_to_str;
 use crate::engines::StrategyCandidate;
-use crate::route_intent::{DetectionSource, RouteIntent, RouteIntentLeg};
+use crate::route_discovery::types::RouteCandidate;
+use crate::route_intent::{DetectionSource, ProtocolType, RouteIntent, RouteIntentLeg};
 use crate::strategy_label::StrategyLabel;
 use once_cell::sync::Lazy;
 use prioritization_spine::route_plan::{RouteLeg, RoutePlan};
@@ -86,6 +109,12 @@ pub const BRIDGE_ENABLED_ENV: &str = "ARBX_MULTIHOP_EMIT";
 
 /// Per-(chain, block) emission cap knob.
 pub const BRIDGE_CAP_ENV: &str = "ARBX_MULTIHOP_EMIT_MAX_PER_TICK";
+
+/// PERHOP-RESERVES-01 ordering knob. Absent/foreign ⇒ enabled, i.e. the
+/// per-block budget is offered to the cycles the sizing kernel can actually
+/// price BEFORE the ones it can only refuse; `off`/`false`/`0` ⇒ the pre-patch
+/// single pass in finder order (byte-identical admission sequence).
+pub const PREFER_SIZEABLE_ENV: &str = "ARBX_MULTIHOP_PREFER_SIZEABLE";
 
 /// Default cap: conservative, same order as the sibling volume guards
 /// (`route_scanner_worker::DEFAULT_CANONICAL_PER_BLOCK` = 25 per block) but
@@ -127,11 +156,139 @@ pub fn bridge_enabled() -> bool {
     *ENABLED
 }
 
+/// Pure parser for [`PREFER_SIZEABLE_ENV`] (testable without env mutation).
+///
+/// `None` (absent) ⇒ `true`: sizeable cycles are offered the budget first. Only
+/// the three explicit OFF spellings restore the pre-patch finder-order pass;
+/// any other value is foreign and keeps the default — the same rule
+/// [`bridge_enabled_from_raw`] applies.
+pub fn prefer_sizeable_from_raw(raw: Option<&str>) -> bool {
+    let normalized = raw.map(|v| v.trim().to_ascii_lowercase());
+    !matches!(
+        normalized.as_deref(),
+        Some("off") | Some("false") | Some("0")
+    )
+}
+
+/// Boot-time verdict of [`PREFER_SIZEABLE_ENV`], memoised (per-item env lookups
+/// would put a `std::env` call on the tick path).
+static PREFER_SIZEABLE: Lazy<bool> =
+    Lazy::new(|| prefer_sizeable_from_raw(std::env::var(PREFER_SIZEABLE_ENV).ok().as_deref()));
+
+/// Live verdict of [`PREFER_SIZEABLE_ENV`] (resolved once at first use).
+pub fn prefer_sizeable() -> bool {
+    *PREFER_SIZEABLE
+}
+
 fn cap_from_env() -> usize {
     std::env::var(BRIDGE_CAP_ENV)
         .ok()
         .and_then(|v| v.trim().parse::<usize>().ok())
         .unwrap_or(DEFAULT_MAX_PER_TICK)
+}
+
+// ---------------------------------------------------------------------------
+// PERHOP-RESERVES-01 — kernel capability (which lane a cycle belongs to)
+// ---------------------------------------------------------------------------
+
+/// Which slot of the per-(chain, block) budget a discovered cycle competes for.
+///
+/// Derived locally from the intent's own legs (no I/O, no RPC, no reserves), so
+/// classifying a cycle never costs a Redis or chain round-trip in the hot path.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EmitLane {
+    /// Every leg is a constant-product pool: the N-leg cycle kernel *can* price
+    /// this cycle from the in-memory reserves cache (and rejects honestly with
+    /// `missing_reserves_pool_*` when a pool is genuinely uncached).
+    Sizeable,
+    /// At least one leg is concentrated-liquidity: no N-leg V3 kernel exists, so
+    /// the cycle can only ever be refused. It must not outrank a sizeable cycle
+    /// for the scarce budget.
+    Unpriceable,
+}
+
+/// The verdict [`crate::size_optimizer::SizeOptimizer`] will reach for this
+/// cycle's geometry, decided from the intent alone.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum KernelCapability {
+    /// All-V2 (constant-product) legs — `size_triangular_with_reason` owns it.
+    V2CycleSizeable,
+    /// Contains a V3 (concentrated-liquidity) leg — the optimizer refuses with
+    /// its own `v3_multileg_unsupported` reason. A V3 pool has no
+    /// `getReserves()`, hence no `arbx:pool_reserves:<chain>:<pool>` key, so the
+    /// V2 cache-miss reason would name the wrong cause.
+    V3MultilegUnsupported,
+}
+
+impl KernelCapability {
+    /// The budget lane this capability competes for.
+    pub fn lane(self) -> EmitLane {
+        match self {
+            Self::V2CycleSizeable => EmitLane::Sizeable,
+            Self::V3MultilegUnsupported => EmitLane::Unpriceable,
+        }
+    }
+
+    /// Stable lowercase token for logs/telemetry.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::V2CycleSizeable => "v2_cycle_sizeable",
+            Self::V3MultilegUnsupported => "v3_multileg_unsupported",
+        }
+    }
+}
+
+/// The single source of truth for "is this leg's protocol a V3 family?".
+///
+/// Mirrors `size_optimizer::leg_is_v3` exactly (it tests the leg's
+/// `protocol_type` string with a case-insensitive `contains("v3")`), routed
+/// through the ONE protocol-name table
+/// [`protocol_type_to_str`] so the bridge and the kernel can never disagree.
+pub fn protocol_is_v3(pt: ProtocolType) -> bool {
+    protocol_type_to_str(pt).to_ascii_lowercase().contains("v3")
+}
+
+/// Classify a cycle from its per-leg protocol families.
+pub fn kernel_capability_of_protocols<'a>(
+    protocols: impl IntoIterator<Item = &'a ProtocolType>,
+) -> KernelCapability {
+    if protocols.into_iter().any(|p| protocol_is_v3(*p)) {
+        KernelCapability::V3MultilegUnsupported
+    } else {
+        KernelCapability::V2CycleSizeable
+    }
+}
+
+/// Classify an admitted intent (its legs are what `bridge_leg` renders onto the
+/// `RoutePlan`, so this is the same predicate the kernel will evaluate).
+pub fn kernel_capability(intent: &RouteIntent) -> KernelCapability {
+    kernel_capability_of_protocols(intent.legs.iter().map(|l| &l.protocol_type))
+}
+
+/// Order one tick's discovered cycles so the per-(chain, block) budget is
+/// offered to the cycles the kernel can actually price FIRST.
+///
+/// Stable within each lane: the finder's own order is preserved inside
+/// [`EmitLane::Sizeable`] and inside [`EmitLane::Unpriceable`], so the change is
+/// a pure lane partition — it never re-ranks within a lane and never drops an
+/// item. `prefer_sizeable == false` returns the input order verbatim (the
+/// pre-patch admission sequence).
+///
+/// Bounded by construction: one pass, one `Vec` of `len` references (the tick's
+/// route set is already capped by `max_routes_per_tick`).
+pub fn order_for_budget(routes: &[RouteCandidate], prefer_sizeable: bool) -> Vec<&RouteCandidate> {
+    if !prefer_sizeable {
+        return routes.iter().collect();
+    }
+    let mut ordered: Vec<&RouteCandidate> = Vec::with_capacity(routes.len());
+    ordered.extend(routes.iter().filter(|c| {
+        kernel_capability_of_protocols(c.protocols.iter()) == KernelCapability::V2CycleSizeable
+    }));
+    ordered.extend(routes.iter().filter(|c| {
+        kernel_capability_of_protocols(c.protocols.iter())
+            == KernelCapability::V3MultilegUnsupported
+    }));
+    ordered
 }
 
 // ---------------------------------------------------------------------------
@@ -160,6 +317,13 @@ pub struct MultihopEmitBudget {
     epoch: AtomicU64,
     used: AtomicU64,
     dropped: AtomicU64,
+    /// PERHOP-RESERVES-01 lane accounting: slots spent by cycles the kernel can
+    /// price, slots spent by cycles it can only refuse, and — the figure R8
+    /// demands be visible — how many unpriceable cycles were refused because the
+    /// budget was already spent (i.e. deferred behind the sizeable lane).
+    sizeable_used: AtomicU64,
+    unpriceable_used: AtomicU64,
+    unpriceable_refused: AtomicU64,
 }
 
 impl MultihopEmitBudget {
@@ -173,6 +337,9 @@ impl MultihopEmitBudget {
             epoch: AtomicU64::new(u64::MAX),
             used: AtomicU64::new(0),
             dropped: AtomicU64::new(0),
+            sizeable_used: AtomicU64::new(0),
+            unpriceable_used: AtomicU64::new(0),
+            unpriceable_refused: AtomicU64::new(0),
         }
     }
 
@@ -182,6 +349,15 @@ impl MultihopEmitBudget {
 
     /// Claim one slot for `epoch`. `true` = admitted (caller may build + emit).
     pub fn claim(&self, epoch: u64) -> bool {
+        self.claim_lane(epoch, EmitLane::Sizeable)
+    }
+
+    /// PERHOP-RESERVES-01 — claim one slot for `epoch` **in `lane`**.
+    ///
+    /// The hard cap (`per_epoch`) is unchanged and shared: the lane only decides
+    /// which counter observes the spend. Ordering is the caller's job
+    /// ([`order_for_budget`]); the budget's job is to make the outcome countable.
+    pub fn claim_lane(&self, epoch: u64, lane: EmitLane) -> bool {
         loop {
             let observed = self.epoch.load(Ordering::Acquire);
             if observed != epoch {
@@ -194,6 +370,9 @@ impl MultihopEmitBudget {
                 {
                     self.used.store(0, Ordering::Release);
                     self.dropped.store(0, Ordering::Release);
+                    self.sizeable_used.store(0, Ordering::Release);
+                    self.unpriceable_used.store(0, Ordering::Release);
+                    self.unpriceable_refused.store(0, Ordering::Release);
                 }
                 continue;
             }
@@ -206,6 +385,10 @@ impl MultihopEmitBudget {
                 .compare_exchange(used, used + 1, Ordering::AcqRel, Ordering::Acquire)
                 .is_ok()
             {
+                match lane {
+                    EmitLane::Sizeable => self.sizeable_used.fetch_add(1, Ordering::Relaxed),
+                    EmitLane::Unpriceable => self.unpriceable_used.fetch_add(1, Ordering::Relaxed),
+                };
                 return true;
             }
             // Lost the race against a concurrent claim → retry.
@@ -215,10 +398,25 @@ impl MultihopEmitBudget {
     /// Record one refused admission (cap reached) for `epoch` — the observable
     /// half of the truncation contract.
     pub fn note_dropped(&self, epoch: u64) {
+        self.note_refused(epoch, EmitLane::Sizeable)
+    }
+
+    /// PERHOP-RESERVES-01 — record one refused admission for `epoch` in `lane`.
+    ///
+    /// An [`EmitLane::Unpriceable`] refusal additionally bumps
+    /// [`Self::unpriceable_refused_in`]: with [`order_for_budget`] having
+    /// already offered the budget to every sizeable cycle this epoch, such a
+    /// refusal means the cap was spent on priceable work — the deferred count
+    /// the operator needs in order to see *why* unpriceable cycles stop
+    /// appearing. Never silent (R8).
+    pub fn note_refused(&self, epoch: u64, lane: EmitLane) {
         // Only count drops belonging to the CURRENT epoch: a late drop from a
         // previous block must not inflate this block's truncation figure.
         if self.epoch.load(Ordering::Acquire) == epoch {
             self.dropped.fetch_add(1, Ordering::Relaxed);
+            if lane == EmitLane::Unpriceable {
+                self.unpriceable_refused.fetch_add(1, Ordering::Relaxed);
+            }
         }
     }
 
@@ -236,6 +434,34 @@ impl MultihopEmitBudget {
     pub fn dropped_in(&self, epoch: u64) -> u64 {
         if self.epoch.load(Ordering::Acquire) == epoch {
             self.dropped.load(Ordering::Acquire)
+        } else {
+            0
+        }
+    }
+
+    /// Slots in `epoch` spent on cycles the sizing kernel can price.
+    pub fn sizeable_used_in(&self, epoch: u64) -> u64 {
+        if self.epoch.load(Ordering::Acquire) == epoch {
+            self.sizeable_used.load(Ordering::Acquire)
+        } else {
+            0
+        }
+    }
+
+    /// Slots in `epoch` spent on cycles the sizing kernel can only refuse.
+    pub fn unpriceable_used_in(&self, epoch: u64) -> u64 {
+        if self.epoch.load(Ordering::Acquire) == epoch {
+            self.unpriceable_used.load(Ordering::Acquire)
+        } else {
+            0
+        }
+    }
+
+    /// PERHOP-RESERVES-01 — unpriceable cycles refused in `epoch` because the
+    /// budget had already been offered to (and spent by) priceable work.
+    pub fn unpriceable_refused_in(&self, epoch: u64) -> u64 {
+        if self.epoch.load(Ordering::Acquire) == epoch {
+            self.unpriceable_refused.load(Ordering::Acquire)
         } else {
             0
         }
@@ -342,6 +568,13 @@ pub fn cycle_geometry(intent: &RouteIntent) -> Result<usize, BridgeSkip> {
 /// per-(chain, block) budget. On success returns the candidate the caller must
 /// size and emit; on refusal NOTHING is built (and, for [`BridgeSkip::CapReached`],
 /// the truncation is recorded on the budget).
+///
+/// PERHOP-RESERVES-01: the slot is claimed in the lane its
+/// [`KernelCapability`] belongs to, so the budget can report how much of the
+/// block's allowance went to work the kernel can price versus work it can only
+/// refuse. The ORDER in which cycles reach this function is the caller's
+/// ([`order_for_budget`]); this function never drops a row on its own account —
+/// a refused cycle is refused by the cap, and counted.
 pub fn admit(
     intent: &RouteIntent,
     budget: &MultihopEmitBudget,
@@ -351,8 +584,9 @@ pub fn admit(
         return Err(BridgeSkip::Disabled);
     }
     cycle_geometry(intent)?;
-    if !budget.claim(epoch) {
-        budget.note_dropped(epoch);
+    let lane = kernel_capability(intent).lane();
+    if !budget.claim_lane(epoch, lane) {
+        budget.note_refused(epoch, lane);
         return Err(BridgeSkip::CapReached);
     }
     Ok(cycle_candidate_from_intent(intent))
@@ -875,6 +1109,268 @@ mod tests {
         let err = admit(&intent, &budget, 7).expect_err("cap 0 admits nothing");
         assert_eq!(err, BridgeSkip::CapReached);
         assert_eq!(budget.dropped_in(7), 1);
+    }
+
+    // ── PERHOP-RESERVES-01: kernel capability = the budget lane ─────────────
+
+    /// A `hops`-cycle with one leg's protocol family overridden — the production
+    /// shape (`["uniswap-v2","uniswap-v3","uniswap-v3","uniswap-v3"]`).
+    fn make_mixed_route_candidate(hops: usize, v3_legs: &[usize]) -> RouteCandidate {
+        let mut c = make_route_candidate(hops);
+        for &i in v3_legs {
+            c.protocols[i] = ProtocolType::V3;
+        }
+        c
+    }
+
+    fn make_mixed_intent(hops: usize, v3_legs: &[usize], block: u64) -> RouteIntent {
+        let c = make_mixed_route_candidate(hops, v3_legs);
+        let mut intent = build_intent(&c).expect("canonical build_intent must succeed");
+        intent.observed_block_number = Some(block);
+        intent
+    }
+
+    #[test]
+    fn capability_mirrors_the_kernel_v3_predicate() {
+        // All-V2 ⇒ the N-leg constant-product kernel owns it.
+        for hops in MIN_BRIDGE_HOPS..=MAX_BRIDGE_HOPS {
+            assert_eq!(
+                kernel_capability(&make_intent(hops, 1)),
+                KernelCapability::V2CycleSizeable,
+                "{hops}-hop all-V2 cycle must be sizeable"
+            );
+        }
+        // Any V3 leg (at any position) ⇒ V3MultilegUnsupported, the reason the
+        // optimizer emits — NOT a V2 reserve miss.
+        for v3_at in 0..4usize {
+            let intent = make_mixed_intent(4, &[v3_at], 1);
+            assert_eq!(
+                kernel_capability(&intent),
+                KernelCapability::V3MultilegUnsupported,
+                "a V3 leg at index {v3_at} must classify the cycle as unpriceable"
+            );
+        }
+        // The predicate is the SAME table the kernel reads (`leg_is_v3` tests the
+        // rendered `protocol_type` string for "v3").
+        assert!(protocol_is_v3(ProtocolType::V3));
+        assert!(!protocol_is_v3(ProtocolType::V2));
+        assert_eq!(KernelCapability::V2CycleSizeable.lane(), EmitLane::Sizeable);
+        assert_eq!(
+            KernelCapability::V3MultilegUnsupported.lane(),
+            EmitLane::Unpriceable
+        );
+    }
+
+    #[test]
+    fn budget_lanes_are_counted_separately_and_reset_per_epoch() {
+        const EPOCH: u64 = 5_000;
+        let budget = MultihopEmitBudget::new(4);
+        assert!(budget.claim_lane(EPOCH, EmitLane::Sizeable));
+        assert!(budget.claim_lane(EPOCH, EmitLane::Unpriceable));
+        assert!(budget.claim_lane(EPOCH, EmitLane::Unpriceable));
+        assert_eq!(budget.sizeable_used_in(EPOCH), 1);
+        assert_eq!(budget.unpriceable_used_in(EPOCH), 2);
+        assert_eq!(budget.used_in(EPOCH), 3);
+        // The cap is SHARED — the lane never widens it.
+        assert!(budget.claim_lane(EPOCH, EmitLane::Sizeable));
+        assert!(!budget.claim_lane(EPOCH, EmitLane::Unpriceable));
+        budget.note_refused(EPOCH, EmitLane::Unpriceable);
+        assert_eq!(budget.dropped_in(EPOCH), 1);
+        assert_eq!(budget.unpriceable_refused_in(EPOCH), 1);
+        // A plain sizeable refusal is NOT an ordering deferral.
+        budget.note_refused(EPOCH, EmitLane::Sizeable);
+        assert_eq!(budget.dropped_in(EPOCH), 2);
+        assert_eq!(budget.unpriceable_refused_in(EPOCH), 1);
+        // New epoch ⇒ every lane counter resets.
+        let next = EPOCH + 1;
+        assert!(budget.claim_lane(next, EmitLane::Unpriceable));
+        assert_eq!(budget.sizeable_used_in(next), 0);
+        assert_eq!(budget.unpriceable_used_in(next), 1);
+        assert_eq!(budget.unpriceable_refused_in(next), 0);
+        assert_eq!(budget.dropped_in(next), 0);
+    }
+
+    #[test]
+    fn ordering_is_a_stable_lane_partition_and_reversible() {
+        // The production shape: the finder's gross-score order puts V3-bearing
+        // cycles first and the (rare) all-V2 cycle last.
+        let routes = vec![
+            make_mixed_route_candidate(4, &[0, 1, 2, 3]),
+            make_mixed_route_candidate(4, &[1, 2, 3]),
+            make_route_candidate(4),
+            make_mixed_route_candidate(5, &[4]),
+            make_route_candidate(3),
+        ];
+
+        let ordered = order_for_budget(&routes, true);
+        assert_eq!(ordered.len(), routes.len(), "ordering never drops an item");
+        let hops: Vec<u8> = ordered.iter().map(|c| c.hops).collect();
+        assert_eq!(
+            hops,
+            vec![4, 3, 4, 4, 5],
+            "sizeable cycles keep the finder's relative order and come first; \
+             unpriceable cycles follow in their own finder order"
+        );
+        assert!(
+            ordered[..2]
+                .iter()
+                .all(|c| kernel_capability_of_protocols(c.protocols.iter())
+                    == KernelCapability::V2CycleSizeable),
+            "the head of the ordered set must be the sizeable lane"
+        );
+
+        // Reversibility: the knob OFF reproduces the pre-patch sequence exactly.
+        let off = order_for_budget(&routes, false);
+        let off_hashes: Vec<&str> = off.iter().map(|c| c.route_hash.as_str()).collect();
+        let in_hashes: Vec<&str> = routes.iter().map(|c| c.route_hash.as_str()).collect();
+        assert_eq!(
+            off_hashes, in_hashes,
+            "ARBX_MULTIHOP_PREFER_SIZEABLE=off must restore finder order verbatim"
+        );
+    }
+
+    #[test]
+    fn prefer_sizeable_knob_is_default_on_and_explicitly_reversible() {
+        assert!(prefer_sizeable_from_raw(None), "absent ⇒ ON (default)");
+        assert!(prefer_sizeable_from_raw(Some("")));
+        assert!(prefer_sizeable_from_raw(Some("true")));
+        assert!(prefer_sizeable_from_raw(Some("ON")));
+        assert!(!prefer_sizeable_from_raw(Some("off")));
+        assert!(!prefer_sizeable_from_raw(Some(" OFF ")));
+        assert!(!prefer_sizeable_from_raw(Some("false")));
+        assert!(!prefer_sizeable_from_raw(Some("0")));
+        assert!(
+            prefer_sizeable_from_raw(Some("banana")),
+            "a foreign value is never interpreted as a verdict (R8)"
+        );
+    }
+
+    /// GATE (e) — PERHOP-RESERVES-01, the brief's ordering gate.
+    ///
+    /// With the per-block cap SATURATED, the admitted set must be the cycles the
+    /// kernel can price, and the cycles deferred behind them must be COUNTED
+    /// (R8 — never a silent skip). Before this patch the admitted set was the
+    /// first `cap` cycles of the finder's order — which in production is 100 %
+    /// V3-bearing, i.e. 100 % unpriceable, so the block's whole allowance bought
+    /// nothing that could reach a ledger.
+    #[tokio::test]
+    async fn gate_e_saturated_cap_admits_the_sizeable_set_and_counts_the_deferral() {
+        const CAP: usize = 2;
+        const EPOCH: u64 = 21_000_042;
+        let budget = MultihopEmitBudget::new(CAP);
+
+        // Finder order: five unpriceable cycles, then two sizeable ones — exactly
+        // the production starvation shape.
+        let routes = vec![
+            make_mixed_route_candidate(4, &[0, 1, 2, 3]),
+            make_mixed_route_candidate(4, &[1]),
+            make_mixed_route_candidate(5, &[4]),
+            make_mixed_route_candidate(3, &[0]),
+            make_mixed_route_candidate(6, &[3]),
+            make_route_candidate(3),
+            make_route_candidate(4),
+        ];
+
+        let mut admitted_hops: Vec<usize> = Vec::new();
+        let mut deferred_unpriceable = 0usize;
+        for c in order_for_budget(&routes, true) {
+            let mut intent = build_intent(c).expect("canonical build_intent");
+            intent.observed_block_number = Some(EPOCH);
+            let capability = kernel_capability(&intent);
+            match admit(&intent, &budget, EPOCH) {
+                Ok(cand) => {
+                    assert_eq!(
+                        capability,
+                        KernelCapability::V2CycleSizeable,
+                        "only sizeable cycles may be admitted while one is waiting"
+                    );
+                    admitted_hops.push(cand.route_plan.legs.len());
+                }
+                Err(BridgeSkip::CapReached) => {
+                    if capability == KernelCapability::V3MultilegUnsupported {
+                        deferred_unpriceable += 1;
+                    }
+                }
+                Err(other) => panic!("unexpected skip: {}", other.as_str()),
+            }
+        }
+
+        assert_eq!(
+            admitted_hops,
+            vec![3, 4],
+            "the saturated cap must be spent on the sizeable cycles, not on the \
+             unpriceable ones that precede them in finder order"
+        );
+        assert_eq!(budget.used_in(EPOCH), CAP as u64);
+        assert_eq!(
+            budget.sizeable_used_in(EPOCH),
+            CAP as u64,
+            "every spent slot went to priceable work"
+        );
+        assert_eq!(budget.unpriceable_used_in(EPOCH), 0);
+        assert_eq!(
+            budget.dropped_in(EPOCH),
+            5,
+            "every refused cycle is still counted"
+        );
+        assert_eq!(
+            budget.unpriceable_refused_in(EPOCH),
+            deferred_unpriceable as u64,
+            "the deferred-behind-sizeable count must equal the observed deferrals"
+        );
+        assert_eq!(
+            budget.unpriceable_refused_in(EPOCH),
+            5,
+            "all five unpriceable cycles were deferred (observable, R8)"
+        );
+
+        // Reversibility: with the knob OFF the pre-patch first-K slice is spent
+        // on the unpriceable cycles — the exact production defect.
+        let legacy = MultihopEmitBudget::new(CAP);
+        let mut legacy_hops: Vec<usize> = Vec::new();
+        for c in order_for_budget(&routes, false) {
+            let mut intent = build_intent(c).expect("canonical build_intent");
+            intent.observed_block_number = Some(EPOCH);
+            if let Ok(cand) = admit(&intent, &legacy, EPOCH) {
+                legacy_hops.push(cand.route_plan.legs.len());
+            }
+        }
+        assert_eq!(
+            legacy_hops,
+            vec![4, 4],
+            "pre-patch behaviour: the cap goes to the first cycles in finder order"
+        );
+        assert_eq!(
+            legacy.sizeable_used_in(EPOCH),
+            0,
+            "pre-patch, zero slots reached the sizeable lane"
+        );
+    }
+
+    /// GATE (f) — the four production V3-bearing shapes must be classified
+    /// unpriceable, and the one all-V2 shape sizeable.
+    #[test]
+    fn gate_f_production_shapes_classify_as_measured() {
+        let measured: [(&[usize], KernelCapability); 5] = [
+            (&[0, 1, 2, 3], KernelCapability::V3MultilegUnsupported),
+            (&[1, 2, 3], KernelCapability::V3MultilegUnsupported),
+            (&[2, 3], KernelCapability::V3MultilegUnsupported),
+            (&[0, 1, 2, 3, 4], KernelCapability::V3MultilegUnsupported),
+            (&[], KernelCapability::V2CycleSizeable),
+        ];
+        for (v3_legs, expected) in measured {
+            let hops = if v3_legs.is_empty() {
+                3
+            } else {
+                v3_legs.iter().max().copied().unwrap() + 1
+            };
+            let c = make_mixed_route_candidate(hops, v3_legs);
+            assert_eq!(
+                kernel_capability_of_protocols(c.protocols.iter()),
+                expected,
+                "hops={hops} v3_legs={v3_legs:?}"
+            );
+        }
     }
 
     // ── Reversibility knob ──────────────────────────────────────────────────
