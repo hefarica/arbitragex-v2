@@ -316,9 +316,33 @@ function OpportunityTradeCardImpl({
   //   · `"canonical"`: `gross − net`, the wire's OWN documented relation
   //     (`net_expected_profit_usd` is "gross - costs" on that same row).
   const costRows = ledger.cost_rows;
-  const knownCostSum = ledger.total_cost_usd;
+  const knownCostSum =
+    ledger.total_cost_usd ??
+    (ledger.basis === "canonical" ? opp.economics?.total_cost_usd ?? null : null);
   /** Label → value for the rendered cost rows (values exist only on the SIM basis). */
   const costValueByLabel = new Map(costRows.map((r) => [r.label, r.value]));
+  // ALWAYS-COMPUTE (2026-09-27): on the CANONICAL basis the searcher's own
+  // decomposition (the `economics` object) fills the component cells. This is
+  // the SAME arithmetic the ladder is painting on that basis — one producer,
+  // one size, and the object closes (total == Σ components, net == gross −
+  // total), so it cannot mix notionals (CARDS-NOTIONAL-01 doctrine intact).
+  // Components the kernel genuinely does not price (dex fees / slippage are
+  // inside amount_out; capital/failure/copied are SIM-model components) stay
+  // quiet dashes with their reason. Pure display — no React-side math.
+  if (ledger.basis === "canonical" && opp.economics && opp.economics.computation_status !== "error") {
+    const e = opp.economics;
+    const fill: Array<[string, number | null]> = [
+      ["Gas", e.gas_usd],
+      ["LP fees", e.dex_fees_usd],
+      ["Decoherence (slippage)", e.slippage_usd],
+      ["TLS fee (flash)", e.flash_fee_usd],
+      ["Relay fee", e.bribe_usd],
+      ["Ops overhead", e.other_costs_usd],
+    ];
+    for (const [label, v] of fill) {
+      if (v != null) costValueByLabel.set(label, v);
+    }
+  }
   /** True when a wire figure was suppressed because it belongs to another notional. */
   const ledgerIsQuiet = ledger.quiet;
 
@@ -492,6 +516,33 @@ function OpportunityTradeCardImpl({
           <ChainBadge chain_id={opp.chain_id} />
           <StrategyBadge strategy_kind={opp.strategy_kind} />
           <StatusPill status={opp.status} rejection_reason={opp.rejection_reason} />
+          {/* ALWAYS-COMPUTE (2026-09-27): the honest computation-status chip.
+              Pure display of the wire's `economics.computation_status` —
+              "computed" = the full arithmetic exists (PASS or FAIL),
+              "partial" = some real figures + reasons,
+              "error" = no quote existed (title carries the reason).
+              COMPUTED ≠ PROFITABLE: a FAIL row with a quote shows ECON
+              computed, its numbers below. */}
+          {opp.economics && (
+            <span
+              title={
+                opp.economics.computation_status === "error"
+                  ? `Sin quote computable — motivo: ${opp.economics.error_reason ?? "desconocido"} (R8: números ausentes, no inventados)`
+                  : opp.economics.computation_status === "partial"
+                    ? "Cálculo parcial: algunas cifras reales existen; los huecos viajan con su motivo (not_computed_reasons)"
+                    : "Cálculo completo del searcher: gross/costs/net/roi/target — COMPUTED ≠ PROFITABLE"
+              }
+              className={`text-[10px] px-1.5 py-0.5 rounded border font-mono uppercase tracking-wide ${
+                opp.economics.computation_status === "computed"
+                  ? "bg-muted/50 text-muted-foreground border-border/60"
+                  : opp.economics.computation_status === "partial"
+                    ? "bg-info/10 text-info border-info/30"
+                    : "bg-muted/60 text-muted-foreground/70 border-border/60"
+              }`}
+            >
+              ECON {opp.economics.computation_status === "computed" ? "✓" : opp.economics.computation_status === "partial" ? "◐" : "✗"}
+            </span>
+          )}
           {opp.confirmations != null && opp.confirmations > 1 && (
             <span
               title={`Ruta re-detectada ${opp.confirmations} veces en la ventana (confirmaciones)`}
@@ -716,6 +767,43 @@ function OpportunityTradeCardImpl({
           >
             {targetVerdict.label}
           </div>
+          {/* ALWAYS-COMPUTE (2026-09-27): the FAIL card's OWN arithmetic —
+              displayed verbatim from the searcher's economics object
+              (target vs achieved vs delta). Pure display: this block never
+              computes, it renders what the producer persisted on the rejected
+              row ("si el resultado da -$50, la card debe decir -$50"). */}
+          {opp.economics &&
+            opp.economics.computation_status !== "error" &&
+            (opp.economics.target_net_usd != null || opp.economics.net_profit_usd != null) && (
+              <div
+                className="mt-1 font-mono text-[10px] leading-tight text-muted-foreground"
+                title="Aritmética del searcher (objeto economics): target / logrado / delta — el FAIL muestra sus números, no guiones."
+              >
+                {opp.economics.target_net_usd != null && (
+                  <div>
+                    target {usd(opp.economics.target_net_usd)}
+                  </div>
+                )}
+                {opp.economics.net_profit_usd != null && (
+                  <div className={opp.economics.net_profit_usd >= 0 ? "text-success" : "text-destructive"}>
+                    logrado {usd(opp.economics.net_profit_usd)}
+                  </div>
+                )}
+                {opp.economics.target_delta_usd != null && (
+                  <div className={opp.economics.target_delta_usd >= 0 ? "text-success" : "text-destructive"}>
+                    delta {usd(opp.economics.target_delta_usd)}
+                  </div>
+                )}
+              </div>
+            )}
+          {opp.economics?.computation_status === "error" && (
+            <div
+              className="mt-1 font-mono text-[10px] leading-tight text-muted-foreground/80"
+              title={`Sin quote computable — motivo del productor: ${opp.economics.error_reason ?? "desconocido"}`}
+            >
+              sin quote: {opp.economics.error_reason ?? "—"}
+            </div>
+          )}
         </div>
       </div>
 

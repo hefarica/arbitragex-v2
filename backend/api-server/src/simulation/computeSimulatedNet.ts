@@ -178,10 +178,26 @@ export interface InverseSizingResult {
     | "tie";
   /**
    * Amount_in (USD) the linear model says is needed to satisfy BOTH floors,
-   * BEFORE capital cap. Infinity when binding_floor is "roi-unreachable" or
-   * "net-per-usd-nonpositive".
+   * BEFORE capital cap.
+   *
+   * ALWAYS-COMPUTE (operator mandate 2026-09-27): `"Infinity"` — the STRING —
+   * when binding_floor is "roi-unreachable" or "net-per-usd-nonpositive".
+   * Why a string: JSON has no Infinity literal, and `JSON.stringify(Infinity)`
+   * is `null` — which is indistinguishable from "not computed" and is exactly
+   * how the field used to vanish silently on the `net-per-usd-nonpositive`
+   * branch (41/41 live rows). The sentinel string is lossless and
+   * self-describing; consumers that only accept numbers keep seeing `null`
+   * semantics via `required_is_infinite`, and `Number(v)` recovers ±Infinity
+   * for anyone who wants the numeric value. Frontend tolerance: the store
+   * mapper normalizes `"Infinity"` → `Number.POSITIVE_INFINITY`.
    */
-  required_amount_in_usd: number;
+  required_amount_in_usd: number | "Infinity";
+  /**
+   * Machine-friendly companion: true exactly when `required_amount_in_usd`
+   * is the `"Infinity"` sentinel (no finite amount reaches the target). A
+   * filter/branch never has to string-compare.
+   */
+  required_is_infinite: boolean;
   /** Effective capital cap for this (token, strategy) pair from trading_config. */
   cap_amount_in_usd: number;
   /** min(required, cap) — what we'd actually trade with. */
@@ -616,7 +632,13 @@ export function inverseSize(
       target_roi_pct: target.roi_pct,
       target_source: target.source,
       binding_floor: binding,
-      required_amount_in_usd: required,
+      // ALWAYS-COMPUTE: the "Infinity" STRING, never the number —
+      // JSON.stringify(Infinity) === null is how this field used to vanish
+      // silently on this exact branch (41/41 live rows null while the kernel
+      // HAD computed the verdict). The companion boolean is the machine
+      // filter; Number("Infinity") === Infinity recovers the numeric value.
+      required_amount_in_usd: "Infinity",
+      required_is_infinite: true,
       cap_amount_in_usd: capAmountInUsd,
       suggested_amount_in_usd: 0,
       suggested_net_usd: forward?.net_usd ?? 0,
@@ -661,6 +683,7 @@ export function inverseSize(
     target_source: target.source,
     binding_floor: binding,
     required_amount_in_usd: required,
+    required_is_infinite: false,
     cap_amount_in_usd: capAmountInUsd,
     suggested_amount_in_usd: suggestedAmountInUsd,
     suggested_net_usd: suggestedNet,

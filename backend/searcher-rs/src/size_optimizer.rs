@@ -458,6 +458,18 @@ pub enum OptimizeOutcome {
         Option<f64>,
         Option<(Vec<String>, Vec<String>)>,
     ),
+    /// ALWAYS-COMPUTE (operator mandate 2026-09-27): a rejection whose path
+    /// HAD computed the full economics BEFORE the pass/fail decision — the
+    /// boxed `SizedCandidate` carries the exact figures (gross, net, sheet-07
+    /// cost components, sized amount, per-leg ledger) the rejecting evaluation
+    /// produced. "COMPUTED ≠ PROFITABLE": the row rejects (reason verbatim)
+    /// AND keeps every number, so a FAIL card renders the full arithmetic —
+    /// if the result is −$50 the card says −$50, not "no computado".
+    ///
+    /// Callers stamp these figures onto the rejected row (gross AND net — the
+    /// legacy `Rejected` payload carried only one scalar) and attach the
+    /// `EconomicsComputation` object built by `economics::economics_from_sized`.
+    RejectedComputed(OptimizeRejectReason, Box<SizedCandidate>),
 }
 
 impl OptimizeOutcome {
@@ -467,26 +479,33 @@ impl OptimizeOutcome {
             Self::Sized(_) => None,
             Self::Rejected(r, _) => Some(r.as_str()),
             Self::RejectedWithLedger(r, _, _) => Some(r.as_str()),
+            Self::RejectedComputed(r, _) => Some(r.as_str()),
         }
     }
 
-    /// Returns the gross profit in USD, or `None` for `Rejected`.
+    /// Returns the gross profit in USD. `None` for the legacy reject variants
+    /// (they never carried it); `Some` for `Sized` and `RejectedComputed`
+    /// (both computed it — ALWAYS-COMPUTE surfaces the figure on rejects too).
     pub fn gross_profit_usd(&self) -> Option<f64> {
         match self {
             Self::Sized(s) => Some(s.gross_profit_usd),
             Self::Rejected(_, _) => None,
             Self::RejectedWithLedger(_, _, _) => None,
+            Self::RejectedComputed(_, s) => Some(s.gross_profit_usd),
         }
     }
 
     /// Returns the net profit in USD. For `Rejected`, this is the kernel's
     /// computed value when the rejecting path had one (R8: `None` = not
     /// computed, `Some(v)` = computed and exactly `v`, usually `v <= 0`).
+    /// For `RejectedComputed` it is the boxed figure's net (same semantics,
+    /// explicitly separated from the gross there).
     pub fn net_profit_usd(&self) -> Option<f64> {
         match self {
             Self::Sized(s) => Some(s.estimated_net_profit_usd),
             Self::Rejected(_, net) => *net,
             Self::RejectedWithLedger(_, net, _) => *net,
+            Self::RejectedComputed(_, s) => Some(s.estimated_net_profit_usd),
         }
     }
 
@@ -496,15 +515,33 @@ impl OptimizeOutcome {
             Self::Sized(s) => Some(s.optimal_amount_in),
             Self::Rejected(_, _) => None,
             Self::RejectedWithLedger(_, _, _) => None,
+            Self::RejectedComputed(_, s) => Some(s.optimal_amount_in),
         }
     }
 
     /// PER-HOP: the per-leg wei ledger (amounts_in, amounts_out) when the
     /// rejecting path had computed it. `None` on every other path (R8) —
     /// including `Sized`, whose ledger travels through `SizedCandidate`.
-    pub fn leg_ledger(&self) -> Option<&(Vec<String>, Vec<String>)> {
+    /// Owned (cloned) because `RejectedComputed` stores the two arrays inside
+    /// its boxed `SizedCandidate`, not as a tuple.
+    pub fn leg_ledger(&self) -> Option<(Vec<String>, Vec<String>)> {
         match self {
-            Self::RejectedWithLedger(_, _, legs) => legs.as_ref(),
+            Self::RejectedWithLedger(_, _, legs) => legs.clone(),
+            Self::RejectedComputed(_, s) => {
+                match (s.leg_amounts_in.clone(), s.leg_amounts_out.clone()) {
+                    (Some(ins), Some(outs)) => Some((ins, outs)),
+                    _ => None,
+                }
+            }
+            _ => None,
+        }
+    }
+
+    /// ALWAYS-COMPUTE: the full sized figures when the rejecting path computed
+    /// them (`RejectedComputed`). `None` everywhere else.
+    pub fn rejected_figures(&self) -> Option<&SizedCandidate> {
+        match self {
+            Self::RejectedComputed(_, s) => Some(s),
             _ => None,
         }
     }
@@ -904,10 +941,14 @@ impl SizeOptimizer {
             OptimizeOutcome::Sized(boxed) => *boxed,
             // Rejected outcomes pass through — kernel already named the reason
             // and computed whatever USD value it could (R8 payload). The
-            // ledger-carrying variant passes through intact (PER-HOP).
+            // ledger-carrying variant passes through intact (PER-HOP); the
+            // figures-carrying variant too (ALWAYS-COMPUTE).
             OptimizeOutcome::Rejected(r, net) => return OptimizeOutcome::Rejected(r, net),
             OptimizeOutcome::RejectedWithLedger(r, net, legs) => {
                 return OptimizeOutcome::RejectedWithLedger(r, net, legs)
+            }
+            OptimizeOutcome::RejectedComputed(r, s) => {
+                return OptimizeOutcome::RejectedComputed(r, s)
             }
         };
 
@@ -938,7 +979,13 @@ impl SizeOptimizer {
                 multiplier = state.kelly_gas_safety_multiplier,
             );
             // Payload = the computed net (positive but below the floor).
-            return OptimizeOutcome::Rejected(OptimizeRejectReason::GasFloorBreach, Some(net_usd));
+            // ALWAYS-COMPUTE: the FULL sized figures travel on the reject —
+            // gross, net, components, sized amount, ledger. The row rejects
+            // AND keeps every number ("COMPUTED ≠ PROFITABLE").
+            return OptimizeOutcome::RejectedComputed(
+                OptimizeRejectReason::GasFloorBreach,
+                Box::new(sized),
+            );
         }
 
         // Constrained Fractional Kelly (operator directive #1).
@@ -965,9 +1012,11 @@ impl SizeOptimizer {
                 w_ratio,
             );
             // Payload = the computed net the edge test rejected.
-            return OptimizeOutcome::Rejected(
+            // ALWAYS-COMPUTE: full figures on the reject (same doctrine as the
+            // gas-floor arm above).
+            return OptimizeOutcome::RejectedComputed(
                 OptimizeRejectReason::KellyNegativeEdge,
-                Some(net_usd),
+                Box::new(sized),
             );
         }
 
@@ -1043,7 +1092,20 @@ impl SizeOptimizer {
         // not worth running at all.
         if new_net < cost_proxy_usd * state.kelly_gas_safety_multiplier {
             // Payload = the Kelly-capped net (positive but below the floor).
-            return OptimizeOutcome::Rejected(OptimizeRejectReason::GasFloorBreach, Some(new_net));
+            // ALWAYS-COMPUTE: stamp the RESCALED figures (the numbers this
+            // verdict actually judged) before rejecting — gross at the Kelly
+            // size, net at the Kelly size, same sized amount the ledger was
+            // re-derived for. Never the pre-rescale figures.
+            sized.optimal_amount_in = kelly_cap_wei;
+            sized.gross_profit_usd = new_gross;
+            sized.estimated_net_profit_usd = new_net;
+            let (ins, outs) = self.reledger_at(&sized, kelly_cap_wei).await;
+            sized.leg_amounts_in = ins;
+            sized.leg_amounts_out = outs;
+            return OptimizeOutcome::RejectedComputed(
+                OptimizeRejectReason::GasFloorBreach,
+                Box::new(sized),
+            );
         }
 
         sized.optimal_amount_in = kelly_cap_wei;
@@ -1160,6 +1222,7 @@ impl SizeOptimizer {
             OptimizeOutcome::Sized(s) => Ok(Some(*s)),
             OptimizeOutcome::Rejected(_, _) => Ok(None),
             OptimizeOutcome::RejectedWithLedger(_, _, _) => Ok(None),
+            OptimizeOutcome::RejectedComputed(_, _) => Ok(None),
         }
     }
 
@@ -1243,11 +1306,43 @@ impl SizeOptimizer {
             CycleEvalOutcome::Profitable(r) => r,
             // Deuda 4-B: the kernel DID compute a clamped-size profit ≤ 0 —
             // stamp it (the #617 USD payload contract).
+            //
+            // ALWAYS-COMPUTE (2026-09-27): the cycle evaluator computed the
+            // gross (≤ 0) at its clamped size; the fixed cost components
+            // (gas + ops) are config-sourced and computable here. The clamped
+            // AMOUNT is not exposed by this outcome, so amount_in and the
+            // per-leg ledger stay honestly absent (R8 + reasons) — a
+            // flash-wrapped variant additionally keeps net_economics absent
+            // because its fee needs the unknown principal (never assumed 0).
             CycleEvalOutcome::NonPositive { profit_usd } => {
-                return OptimizeOutcome::Rejected(
+                let gas_cost = state.gas_cost_usd();
+                let ops_overhead = state.ops_overhead_usd_per_attempt;
+                let net_usd = profit_usd - gas_cost - ops_overhead;
+                let own_capital = candidate.base_strategy.is_none();
+                let mut cand = candidate.clone();
+                cand.opportunity.expected_profit_usd = Some(profit_usd);
+                cand.opportunity.net_expected_profit_usd = Some(net_usd);
+                return OptimizeOutcome::RejectedComputed(
                     OptimizeRejectReason::NonPositiveProfit,
-                    Some(profit_usd),
-                )
+                    Box::new(SizedCandidate {
+                        candidate: cand,
+                        optimal_amount_in: U256::zero(),
+                        gross_profit_usd: profit_usd,
+                        estimated_net_profit_usd: net_usd,
+                        net_negative: true,
+                        net_economics: own_capital.then(|| {
+                            crate::net_bps_ranking::RouteNetEconomics::from_kernel(
+                                0.0,
+                                profit_usd,
+                                gas_cost,
+                                ops_overhead,
+                                0.0,
+                            )
+                        }),
+                        leg_amounts_in: None,
+                        leg_amounts_out: None,
+                    }),
+                );
             }
             // R8: evaluate_cycle computed nothing — no value to stamp.
             CycleEvalOutcome::NotComputed => {
@@ -1282,11 +1377,75 @@ impl SizeOptimizer {
             Some(g) if g > 0.0 => g,
             // R8: pass the computed gross through verbatim (Some(<=0)); None
             // stays None — `evaluate_cycle` computed nothing.
-            _ => {
-                return OptimizeOutcome::Rejected(
+            //
+            // ALWAYS-COMPUTE (2026-09-27): a computed (≤ 0) gross at a KNOWN
+            // clamped amount upgrades to the full figures — the post-clamp
+            // re-evaluation produced the per-leg outputs (WO-LEGS-TRIANGULAR-01
+            // consumes them below), so the ledger rides the reject too.
+            computed_gross => {
+                let (g, has_figures) = match computed_gross {
+                    Some(g) => (g, true),
+                    None => (0.0, false),
+                };
+                if !has_figures {
+                    return OptimizeOutcome::Rejected(
+                        OptimizeRejectReason::NonPositiveGrossUsd,
+                        None,
+                    );
+                }
+                let gas_cost = state.gas_cost_usd();
+                let ops_overhead = state.ops_overhead_usd_per_attempt;
+                let start_amount_usd = (clamped_to_i128(eval_result.amount_in_wei) as f64)
+                    / 10f64.powi(decimals as i32)
+                    * token_price_usd;
+                let borrow_usd = if candidate.base_strategy.is_some() {
+                    start_amount_usd
+                } else {
+                    0.0
+                };
+                let flash_fee_usd =
+                    borrow_usd * crate::financing::selected_mode(borrow_usd).fee_bps() / 10_000.0;
+                let net_usd = g - gas_cost - ops_overhead - flash_fee_usd;
+                let (legs_in, legs_out) = match eval_result.leg_outputs.as_ref() {
+                    Some(outs) if outs.len() == legs.len() => {
+                        let x = eval_result.amount_in_wei;
+                        let mut ins = Vec::with_capacity(outs.len());
+                        ins.push(x.to_string());
+                        for out in outs.iter().take(outs.len().saturating_sub(1)) {
+                            ins.push(out.to_string());
+                        }
+                        (
+                            Some(ins),
+                            Some(outs.iter().map(|o| o.to_string()).collect::<Vec<_>>()),
+                        )
+                    }
+                    _ => (None, None),
+                };
+                let mut cand = candidate.clone();
+                cand.opportunity.amount_in_wei = eval_result.amount_in_wei.to_string();
+                cand.opportunity.expected_profit_usd = Some(g);
+                cand.opportunity.net_expected_profit_usd = Some(net_usd);
+                return OptimizeOutcome::RejectedComputed(
                     OptimizeRejectReason::NonPositiveGrossUsd,
-                    eval_result.expected_profit_usd,
-                )
+                    Box::new(SizedCandidate {
+                        candidate: cand,
+                        optimal_amount_in: eval_result.amount_in_wei,
+                        gross_profit_usd: g,
+                        estimated_net_profit_usd: net_usd,
+                        net_negative: true,
+                        net_economics: Some(
+                            crate::net_bps_ranking::RouteNetEconomics::from_kernel(
+                                start_amount_usd,
+                                g,
+                                gas_cost,
+                                ops_overhead,
+                                borrow_usd,
+                            ),
+                        ),
+                        leg_amounts_in: legs_in,
+                        leg_amounts_out: legs_out,
+                    }),
+                );
             }
         };
 
@@ -1760,17 +1919,87 @@ impl SizeOptimizer {
                 probes_attempted,
                 profit_wei,
             );
-            return OptimizeOutcome::RejectedWithLedger(
+            // ALWAYS-COMPUTE (2026-09-27 rebase over #700): #700 already
+            // carried the priced chain + gross on this reject
+            // (`RejectedWithLedger`); the operator's mandate upgrades the SAME
+            // payload to the FULL figures — cost components, net, and the
+            // complete economics object ride the boxed `SizedCandidate`.
+            // Nothing from #700 is dropped: its ledger and gross survive
+            // verbatim inside the richer variant ("el máximo de campos con
+            // dato").
+            let gas_cost = state.gas_cost_usd();
+            let ops_overhead = state.ops_overhead_usd_per_attempt;
+            let start_amount_usd =
+                (clamped_to_i128(amount_in) as f64) / 10f64.powi(decimals as i32) * token_price_usd;
+            let borrow_usd = if candidate.base_strategy.is_some() {
+                start_amount_usd
+            } else {
+                0.0
+            };
+            let flash_fee_usd =
+                borrow_usd * crate::financing::selected_mode(borrow_usd).fee_bps() / 10_000.0;
+            let net_usd = gross_usd - gas_cost - ops_overhead - flash_fee_usd;
+            let mut cand = candidate.clone();
+            cand.opportunity.amount_in_wei = amount_in.to_string();
+            cand.opportunity.expected_profit_usd = Some(gross_usd);
+            cand.opportunity.net_expected_profit_usd = Some(net_usd);
+            return OptimizeOutcome::RejectedComputed(
                 OptimizeRejectReason::NonPositiveProfit,
-                Some(gross_usd),
-                Some((ins, outs)),
+                Box::new(SizedCandidate {
+                    candidate: cand,
+                    optimal_amount_in: amount_in,
+                    gross_profit_usd: gross_usd,
+                    estimated_net_profit_usd: net_usd,
+                    net_negative: true,
+                    net_economics: Some(crate::net_bps_ranking::RouteNetEconomics::from_kernel(
+                        start_amount_usd,
+                        gross_usd,
+                        gas_cost,
+                        ops_overhead,
+                        borrow_usd,
+                    )),
+                    leg_amounts_in: Some(ins),
+                    leg_amounts_out: Some(outs),
+                }),
             );
         }
         if gross_usd <= 0.0 {
-            return OptimizeOutcome::RejectedWithLedger(
+            // Same enrichment on the degenerate-pricing arm (gross priced ≤ 0
+            // with a complete priced chain — the ledger still rides, R8).
+            let gas_cost = state.gas_cost_usd();
+            let ops_overhead = state.ops_overhead_usd_per_attempt;
+            let start_amount_usd =
+                (clamped_to_i128(amount_in) as f64) / 10f64.powi(decimals as i32) * token_price_usd;
+            let borrow_usd = if candidate.base_strategy.is_some() {
+                start_amount_usd
+            } else {
+                0.0
+            };
+            let flash_fee_usd =
+                borrow_usd * crate::financing::selected_mode(borrow_usd).fee_bps() / 10_000.0;
+            let net_usd = gross_usd - gas_cost - ops_overhead - flash_fee_usd;
+            let mut cand = candidate.clone();
+            cand.opportunity.amount_in_wei = amount_in.to_string();
+            cand.opportunity.expected_profit_usd = Some(gross_usd);
+            cand.opportunity.net_expected_profit_usd = Some(net_usd);
+            return OptimizeOutcome::RejectedComputed(
                 OptimizeRejectReason::NonPositiveGrossUsd,
-                Some(gross_usd),
-                Some((ins, outs)),
+                Box::new(SizedCandidate {
+                    candidate: cand,
+                    optimal_amount_in: amount_in,
+                    gross_profit_usd: gross_usd,
+                    estimated_net_profit_usd: net_usd,
+                    net_negative: true,
+                    net_economics: Some(crate::net_bps_ranking::RouteNetEconomics::from_kernel(
+                        start_amount_usd,
+                        gross_usd,
+                        gas_cost,
+                        ops_overhead,
+                        borrow_usd,
+                    )),
+                    leg_amounts_in: Some(ins),
+                    leg_amounts_out: Some(outs),
+                }),
             );
         }
 
@@ -2034,6 +2263,7 @@ impl SizeOptimizer {
             OptimizeOutcome::Sized(s) => Some(*s),
             OptimizeOutcome::Rejected(_, _) => None,
             OptimizeOutcome::RejectedWithLedger(_, _, _) => None,
+            OptimizeOutcome::RejectedComputed(_, _) => None,
         }
     }
 
@@ -2150,11 +2380,50 @@ impl SizeOptimizer {
         );
 
         if profit_wei <= 0 {
-            // Payload = the golden-section profit converted to USD (<= 0).
+            // ALWAYS-COMPUTE (operator mandate 2026-09-27): the golden-section
+            // evaluation DID price both legs at its optimum `x_star` (local
+            // CPMM math over the same cached reserves) — re-derive the exact
+            // chain there so the rejection carries the FULL figures it
+            // computed: gross (≤ 0), the cost components it was judged
+            // against, net, and the per-leg ledger. "FAIL = se hizo el cálculo
+            // y no cumple el criterio", never "no tengo números".
             let profit_usd = (profit_wei as f64) / 10f64.powi(decimals as i32) * token_price_usd;
-            return OptimizeOutcome::Rejected(
+            let out_a = v2_amount_out(x_star, reserve_in_a, reserve_out_a, fee_a);
+            let out_b = v2_amount_out(out_a, reserve_in_b, reserve_out_b, fee_b);
+            let gas_cost = state.gas_cost_usd();
+            let ops_overhead = state.ops_overhead_usd_per_attempt;
+            let start_amount_usd =
+                (clamped_to_i128(x_star) as f64) / 10f64.powi(decimals as i32) * token_price_usd;
+            let borrow_usd = if candidate.base_strategy.is_some() {
+                start_amount_usd
+            } else {
+                0.0
+            };
+            let flash_fee_usd =
+                borrow_usd * crate::financing::selected_mode(borrow_usd).fee_bps() / 10_000.0;
+            let net_usd = profit_usd - gas_cost - ops_overhead - flash_fee_usd;
+            let mut cand = candidate.clone();
+            cand.opportunity.amount_in_wei = x_star.to_string();
+            cand.opportunity.expected_profit_usd = Some(profit_usd);
+            cand.opportunity.net_expected_profit_usd = Some(net_usd);
+            return OptimizeOutcome::RejectedComputed(
                 OptimizeRejectReason::NonPositiveProfit,
-                Some(profit_usd),
+                Box::new(SizedCandidate {
+                    candidate: cand,
+                    optimal_amount_in: x_star,
+                    gross_profit_usd: profit_usd,
+                    estimated_net_profit_usd: net_usd,
+                    net_negative: true,
+                    net_economics: Some(crate::net_bps_ranking::RouteNetEconomics::from_kernel(
+                        start_amount_usd,
+                        profit_usd,
+                        gas_cost,
+                        ops_overhead,
+                        borrow_usd,
+                    )),
+                    leg_amounts_in: Some(vec![x_star.to_string(), out_a.to_string()]),
+                    leg_amounts_out: Some(vec![out_a.to_string(), out_b.to_string()]),
+                }),
             );
         }
 
@@ -2182,13 +2451,45 @@ impl SizeOptimizer {
             // same values the accepted path below turns into the ledger. Carry
             // them so the rejected row can still show each hop's movement
             // (operator's per-hop request) instead of "not computed".
-            return OptimizeOutcome::RejectedWithLedger(
+            //
+            // ALWAYS-COMPUTE (2026-09-27): upgraded from RejectedWithLedger to
+            // RejectedComputed — the full gross/costs/net arithmetic travels
+            // with the ledger (the same construction the accepted tail uses,
+            // one comparison earlier).
+            let gas_cost = state.gas_cost_usd();
+            let ops_overhead = state.ops_overhead_usd_per_attempt;
+            let start_amount_usd =
+                (clamped_to_i128(amount_in) as f64) / 10f64.powi(decimals as i32) * token_price_usd;
+            let borrow_usd = if candidate.base_strategy.is_some() {
+                start_amount_usd
+            } else {
+                0.0
+            };
+            let flash_fee_usd =
+                borrow_usd * crate::financing::selected_mode(borrow_usd).fee_bps() / 10_000.0;
+            let net_usd = profit_usd - gas_cost - ops_overhead - flash_fee_usd;
+            let mut cand = candidate.clone();
+            cand.opportunity.amount_in_wei = amount_in.to_string();
+            cand.opportunity.expected_profit_usd = Some(profit_usd);
+            cand.opportunity.net_expected_profit_usd = Some(net_usd);
+            return OptimizeOutcome::RejectedComputed(
                 OptimizeRejectReason::NonPositiveProfit,
-                Some(profit_usd),
-                Some((
-                    vec![amount_in.to_string(), out_a.to_string()],
-                    vec![out_a.to_string(), out_b.to_string()],
-                )),
+                Box::new(SizedCandidate {
+                    candidate: cand,
+                    optimal_amount_in: amount_in,
+                    gross_profit_usd: profit_usd,
+                    estimated_net_profit_usd: net_usd,
+                    net_negative: true,
+                    net_economics: Some(crate::net_bps_ranking::RouteNetEconomics::from_kernel(
+                        start_amount_usd,
+                        profit_usd,
+                        gas_cost,
+                        ops_overhead,
+                        borrow_usd,
+                    )),
+                    leg_amounts_in: Some(vec![amount_in.to_string(), out_a.to_string()]),
+                    leg_amounts_out: Some(vec![out_a.to_string(), out_b.to_string()]),
+                }),
             );
         }
 
@@ -2484,12 +2785,55 @@ impl SizeOptimizer {
                 }
                 // R8: payload only when a probe actually computed a profit
                 // (best = Some with profit_wei <= 0); no probe answered → None.
-                let computed_usd =
-                    best.map(|b| (b.3 as f64) / 10f64.powi(decimals as i32) * token_price_usd);
-                return OptimizeOutcome::Rejected(
-                    OptimizeRejectReason::NonPositiveProfit,
-                    computed_usd,
-                );
+                //
+                // ALWAYS-COMPUTE (2026-09-27): when a probe DID answer, its
+                // round-trip is a REAL QuoterV2 quote at that size — carry the
+                // full figures (gross ≤ 0 priced, cost components, net, the
+                // exact per-leg chain) on the reject. No probe answered at all
+                // → legacy payload-None reject (nothing was computed; the
+                // caller stamps computation_status:"error").
+                if let Some((x, mid, out, pw)) = best {
+                    let computed_usd = (pw as f64) / 10f64.powi(decimals as i32) * token_price_usd;
+                    let gas_cost = state.gas_cost_usd();
+                    let ops_overhead = state.ops_overhead_usd_per_attempt;
+                    let start_amount_usd =
+                        (clamped_to_i128(x) as f64) / 10f64.powi(decimals as i32) * token_price_usd;
+                    let borrow_usd = if candidate.base_strategy.is_some() {
+                        start_amount_usd
+                    } else {
+                        0.0
+                    };
+                    let flash_fee_usd = borrow_usd
+                        * crate::financing::selected_mode(borrow_usd).fee_bps()
+                        / 10_000.0;
+                    let net_usd = computed_usd - gas_cost - ops_overhead - flash_fee_usd;
+                    let mut cand = candidate.clone();
+                    cand.opportunity.amount_in_wei = x.to_string();
+                    cand.opportunity.expected_profit_usd = Some(computed_usd);
+                    cand.opportunity.net_expected_profit_usd = Some(net_usd);
+                    return OptimizeOutcome::RejectedComputed(
+                        OptimizeRejectReason::NonPositiveProfit,
+                        Box::new(SizedCandidate {
+                            candidate: cand,
+                            optimal_amount_in: x,
+                            gross_profit_usd: computed_usd,
+                            estimated_net_profit_usd: net_usd,
+                            net_negative: true,
+                            net_economics: Some(
+                                crate::net_bps_ranking::RouteNetEconomics::from_kernel(
+                                    start_amount_usd,
+                                    computed_usd,
+                                    gas_cost,
+                                    ops_overhead,
+                                    borrow_usd,
+                                ),
+                            ),
+                            leg_amounts_in: Some(vec![x.to_string(), mid.to_string()]),
+                            leg_amounts_out: Some(vec![mid.to_string(), out.to_string()]),
+                        }),
+                    );
+                }
+                return OptimizeOutcome::Rejected(OptimizeRejectReason::NonPositiveProfit, None);
             }
         };
 
@@ -2802,6 +3146,7 @@ impl SizeOptimizer {
             OptimizeOutcome::Sized(s) => Some(*s),
             OptimizeOutcome::Rejected(_, _) => None,
             OptimizeOutcome::RejectedWithLedger(_, _, _) => None,
+            OptimizeOutcome::RejectedComputed(_, _) => None,
         }
     }
 }
@@ -3263,6 +3608,7 @@ mod tests {
             pipeline_latency_ms: None,
             detected_at: Utc::now(),
             trace_id: Uuid::new_v4(),
+            economics: None,
         };
 
         let candidate_inner = OpportunityCandidate {
@@ -3514,6 +3860,7 @@ mod tests {
             pipeline_latency_ms: None,
             detected_at: Utc::now(),
             trace_id: Uuid::new_v4(),
+            economics: None,
         };
 
         let candidate_inner = OpportunityCandidate {
@@ -4245,6 +4592,7 @@ mod tests {
             pipeline_latency_ms: None,
             detected_at: Utc::now(),
             trace_id: Uuid::new_v4(),
+            economics: None,
         };
 
         let route_plan = RoutePlan {
@@ -4447,6 +4795,7 @@ mod tests {
             pipeline_latency_ms: None,
             detected_at: Utc::now(),
             trace_id: Uuid::new_v4(),
+            economics: None,
         };
 
         let route_plan = RoutePlan {
@@ -4736,11 +5085,22 @@ mod tests {
             ) => {
                 // Expected: gas destroys any micro-profit.
             }
+            // ALWAYS-COMPUTE (2026-09-27): the converted reject paths carry the
+            // FULL figures — same reasons, richer (honest) payload.
+            OptimizeOutcome::RejectedComputed(
+                OptimizeRejectReason::NonPositiveProfit
+                | OptimizeRejectReason::NonPositiveNetUsd
+                | OptimizeRejectReason::NonPositiveGrossUsd,
+                _,
+            ) => {
+                // Expected: gas destroys any micro-profit — WITH the numbers.
+            }
             other => {
                 let reason = match other {
                     OptimizeOutcome::Sized(_) => "Sized (unexpected — profit survived high gas)",
                     OptimizeOutcome::Rejected(r, _)
-                    | OptimizeOutcome::RejectedWithLedger(r, _, _) => r.as_str(),
+                    | OptimizeOutcome::RejectedWithLedger(r, _, _)
+                    | OptimizeOutcome::RejectedComputed(r, _) => r.as_str(),
                 };
                 panic!("unexpected outcome: {reason}");
             }
@@ -5006,7 +5366,9 @@ mod tests {
                 assert_eq!(s.gross_profit_usd, sized.gross_profit_usd);
                 assert_eq!(s.estimated_net_profit_usd, sized.estimated_net_profit_usd);
             }
-            OptimizeOutcome::Rejected(r, _) | OptimizeOutcome::RejectedWithLedger(r, _, _) => {
+            OptimizeOutcome::Rejected(r, _)
+            | OptimizeOutcome::RejectedWithLedger(r, _, _)
+            | OptimizeOutcome::RejectedComputed(r, _) => {
                 panic!("unexpected reject {:?}", r)
             }
         }
@@ -5044,7 +5406,9 @@ mod tests {
                     "gross should scale down when amount caps down",
                 );
             }
-            OptimizeOutcome::Rejected(r, _) | OptimizeOutcome::RejectedWithLedger(r, _, _) => {
+            OptimizeOutcome::Rejected(r, _)
+            | OptimizeOutcome::RejectedWithLedger(r, _, _)
+            | OptimizeOutcome::RejectedComputed(r, _) => {
                 // The scaled net may drop below gas floor at very tight caps;
                 // both Sized-with-smaller-amount and Rejected(GasFloorBreach
                 // / NonPositiveNetUsd) are doctrinally correct outcomes.
@@ -5076,10 +5440,24 @@ mod tests {
         )
         .await;
         match result {
-            OptimizeOutcome::Rejected(OptimizeRejectReason::GasFloorBreach, payload) => {
-                // Deuda 4-(B): the computed net (4.0, positive but below the
-                // floor) must travel on the reject — R8 Some = computed.
-                assert_eq!(payload, Some(4.0), "GasFloorBreach must stamp net_usd");
+            // ALWAYS-COMPUTE (operator mandate 2026-09-27): the gas-floor
+            // reject now carries the FULL sized figures — "COMPUTED ≠
+            // PROFITABLE": the row rejects AND keeps gross, net, components,
+            // sized amount and ledger. The -$card shows its arithmetic.
+            OptimizeOutcome::RejectedComputed(OptimizeRejectReason::GasFloorBreach, s) => {
+                // Deuda 4-(B) upgraded: the computed net (4.0, positive but
+                // below the floor) still travels — R8 Some = computed.
+                assert_eq!(
+                    s.estimated_net_profit_usd, 4.0,
+                    "net must survive the reject"
+                );
+                assert_eq!(
+                    s.gross_profit_usd, 10.0,
+                    "the gross it was judged on survives too"
+                );
+                // NOTE: sheet-07 components are None on this HAND-BUILT fixture
+                // (make_sized constructs no net_economics — ARBX-0009); kernel
+                // paths always populate them (the V3 gate test asserts that).
             }
             other => panic!("expected GasFloorBreach, got {:?}", other.reason_str()),
         }
@@ -5122,7 +5500,11 @@ mod tests {
         )
         .await;
         match result {
-            OptimizeOutcome::Rejected(OptimizeRejectReason::KellyNegativeEdge, _) => {}
+            // ALWAYS-COMPUTE: negative-edge reject keeps the full figures.
+            OptimizeOutcome::RejectedComputed(OptimizeRejectReason::KellyNegativeEdge, s) => {
+                assert_eq!(s.estimated_net_profit_usd, 70.0);
+                assert_eq!(s.gross_profit_usd, 100.0);
+            }
             other => panic!("expected KellyNegativeEdge, got {:?}", other.reason_str()),
         }
     }
@@ -5209,7 +5591,9 @@ mod tests {
                     "ledger must be absent when the reserves are not derivable (R8)"
                 );
             }
-            OptimizeOutcome::Rejected(r, _) | OptimizeOutcome::RejectedWithLedger(r, _, _) => {
+            OptimizeOutcome::Rejected(r, _)
+            | OptimizeOutcome::RejectedWithLedger(r, _, _)
+            | OptimizeOutcome::RejectedComputed(r, _) => {
                 panic!("unexpected reject {:?}", r)
             }
         }
@@ -5265,7 +5649,9 @@ mod tests {
 
         let s = match result {
             OptimizeOutcome::Sized(s) => s,
-            OptimizeOutcome::Rejected(r, _) | OptimizeOutcome::RejectedWithLedger(r, _, _) => {
+            OptimizeOutcome::Rejected(r, _)
+            | OptimizeOutcome::RejectedWithLedger(r, _, _)
+            | OptimizeOutcome::RejectedComputed(r, _) => {
                 panic!("unexpected reject {:?}", r)
             }
         };
@@ -5371,7 +5757,9 @@ mod tests {
                 assert!(s.leg_amounts_in.is_some(), "ledger must survive");
                 assert!(s.leg_amounts_out.is_some(), "ledger must survive");
             }
-            OptimizeOutcome::Rejected(r, _) | OptimizeOutcome::RejectedWithLedger(r, _, _) => {
+            OptimizeOutcome::Rejected(r, _)
+            | OptimizeOutcome::RejectedWithLedger(r, _, _)
+            | OptimizeOutcome::RejectedComputed(r, _) => {
                 panic!("unexpected reject {:?}", r)
             }
         }
@@ -5523,7 +5911,9 @@ mod tests {
                 assert!(s.gross_profit_usd > 0.0, "gross must be positive");
                 assert!(s.estimated_net_profit_usd > 0.0, "net must be positive");
             }
-            OptimizeOutcome::Rejected(r, _) | OptimizeOutcome::RejectedWithLedger(r, _, _) => {
+            OptimizeOutcome::Rejected(r, _)
+            | OptimizeOutcome::RejectedWithLedger(r, _, _)
+            | OptimizeOutcome::RejectedComputed(r, _) => {
                 panic!(
                     "expected Sized for a profitable V3 route, got {}",
                     r.as_str()
@@ -5580,23 +5970,32 @@ mod tests {
             .await
             .expect("optimize must not error");
 
-        assert!(
-            matches!(
-                outcome,
-                OptimizeOutcome::Rejected(OptimizeRejectReason::NonPositiveProfit, _)
+        // ALWAYS-COMPUTE (2026-09-27) gate: a route the quoter ANSWERED for
+        // but that is unprofitable rejects WITH its full arithmetic — the
+        // real QuoterV2(-mock) round-trip figures, cost components, net, and
+        // the per-leg chain — never "no tengo números".
+        match outcome {
+            OptimizeOutcome::RejectedComputed(OptimizeRejectReason::NonPositiveProfit, s) => {
+                let n = s.estimated_net_profit_usd;
+                assert!(
+                    n <= 0.0 && n.is_finite(),
+                    "computed reject net must be finite and <= 0, got {n}"
+                );
+                assert!(
+                    s.gross_profit_usd <= 0.0 && s.gross_profit_usd.is_finite(),
+                    "the gross the verdict judged must ride the reject, got {}",
+                    s.gross_profit_usd
+                );
+                assert!(s.net_economics.is_some(), "sheet-07 components present");
+                assert!(
+                    s.leg_amounts_in.is_some() && s.leg_amounts_out.is_some(),
+                    "the exact per-leg chain the probes computed rides the reject"
+                );
+            }
+            other => panic!(
+                "answered-but-unprofitable must be RejectedComputed(NonPositiveProfit) with figures, got {:?}",
+                other.reason_str()
             ),
-            "answered-but-unprofitable must be NonPositiveProfit, got {:?}",
-            outcome.reason_str()
-        );
-        // Deuda 4-(B): when the quoter answered, the grid computed a real
-        // (negative) profit — it must travel as Some(<= 0), never be dropped
-        // back to None (R8).
-        if let OptimizeOutcome::Rejected(_, payload) = outcome {
-            let n = payload.expect("answered-but-unprofitable must stamp the computed USD");
-            assert!(
-                n <= 0.0 && n.is_finite(),
-                "computed reject payload must be finite and <= 0, got {n}"
-            );
         }
     }
 
@@ -5712,6 +6111,7 @@ mod tests {
             cartridge_id: None,
             detector_id: None,
             pipeline_latency_ms: None,
+            economics: None, // ALWAYS-COMPUTE: stamped at the emit boundary
             detected_at: Utc::now(),
             trace_id: Uuid::new_v4(),
         };
@@ -5809,7 +6209,9 @@ mod tests {
                 assert!(s.gross_profit_usd > 0.0, "gross must be positive");
                 assert!(s.estimated_net_profit_usd > 0.0, "net must be positive");
             }
-            OptimizeOutcome::Rejected(r, _) | OptimizeOutcome::RejectedWithLedger(r, _, _) => {
+            OptimizeOutcome::Rejected(r, _)
+            | OptimizeOutcome::RejectedWithLedger(r, _, _)
+            | OptimizeOutcome::RejectedComputed(r, _) => {
                 panic!(
                     "expected Sized for spA>spB profitable curve, got {}",
                     r.as_str()
@@ -5857,9 +6259,9 @@ mod tests {
         assert!(
             matches!(
                 outcome,
-                OptimizeOutcome::Rejected(OptimizeRejectReason::NonPositiveProfit, _)
+                OptimizeOutcome::RejectedComputed(OptimizeRejectReason::NonPositiveProfit, _)
             ),
-            "negative-spread V3 curve must be NonPositiveProfit, got {:?}",
+            "negative-spread V3 curve must be NonPositiveProfit with its figures (ALWAYS-COMPUTE), got {:?}",
             outcome.reason_str()
         );
     }
@@ -6144,6 +6546,7 @@ mod tests {
             pipeline_latency_ms: None,
             detected_at: Utc::now(),
             trace_id: Uuid::new_v4(),
+            economics: None,
         };
 
         let candidate_inner = OpportunityCandidate {

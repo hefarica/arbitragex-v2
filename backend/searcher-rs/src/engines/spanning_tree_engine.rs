@@ -477,6 +477,7 @@ impl SpanningTreeEngine {
             pipeline_latency_ms: None,
             detected_at: Utc::now(),
             trace_id,
+            economics: None,
         };
 
         let pool_addresses: Vec<String> = cycle

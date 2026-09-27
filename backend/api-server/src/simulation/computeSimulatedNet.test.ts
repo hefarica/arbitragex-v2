@@ -423,7 +423,11 @@ describe("inverseSize", () => {
     // netPerUsd ≈ 3.05%, ask for 10% ROI floor → unreachable.
     const inv = inverseSize(row, cfg, { net_usd: 10, roi_pct: 10, source: "strategy_config" }, fwd)!;
     expect(inv.binding_floor).toBe("roi-unreachable");
-    expect(inv.required_amount_in_usd).toBe(Infinity);
+    // ALWAYS-COMPUTE (2026-09-27): the non-finite required amount serializes
+    // as the "Infinity" SENTINEL STRING + boolean companion — the number used
+    // to vanish to null through JSON.stringify on exactly this branch.
+    expect(inv.required_amount_in_usd).toBe("Infinity");
+    expect(inv.required_is_infinite).toBe(true);
     expect(inv.suggested_amount_in_usd).toBe(0);
     expect(inv.meets_target_at_cap).toBe(false);
     expect(inv.notes).toContain("roi-unreachable");
@@ -461,7 +465,11 @@ describe("inverseSize", () => {
     const inv = inverseSize(row, cfg, { net_usd: 50, roi_pct: null, source: "strategy_config" }, fwd)!;
     expect(inv.binding_floor).toBe("net-per-usd-nonpositive");
     expect(inv.notes).toContain("net-per-usd-nonpositive");
-    expect(inv.required_amount_in_usd).toBe(Infinity);
+    // ALWAYS-COMPUTE (2026-09-27): the non-finite required amount serializes
+    // as the "Infinity" SENTINEL STRING + boolean companion — the number used
+    // to vanish to null through JSON.stringify on exactly this branch.
+    expect(inv.required_amount_in_usd).toBe("Infinity");
+    expect(inv.required_is_infinite).toBe(true);
     expect(inv.meets_target_at_cap).toBe(false);
     expect(inv.suggested_amount_in_usd).toBe(0);
   });
@@ -505,5 +513,67 @@ describe("inverseSize", () => {
     // USD-only target with no forward → no way to assume a rate → null per R8.
     const inv = inverseSize(row, cfg, { net_usd: 10, roi_pct: null, source: "strategy_config" }, null);
     expect(inv).toBeNull();
+  });
+});
+
+// ── ALWAYS-COMPUTE (operator mandate 2026-09-27): the required floor can no
+// longer vanish silently on the non-finite branches ──────────────────────────
+
+describe("inverseSize — Infinity serialization (ALWAYS-COMPUTE)", () => {
+  it("net-per-usd-nonpositive: required_amount_in_usd survives the JSON round-trip as the \"Infinity\" sentinel (pre-patch: null)", () => {
+    // Same shape as the existing Path-B nonpositive test: assumed 0.5% ROI
+    // cannot cover the variable-cost rate → r ≤ 0 → no finite size exists.
+    const cfg = baseCfg();
+    cfg.capital_usd = 100_000;
+    const row = baseRow();
+    const inv = inverseSize(row, cfg, { net_usd: 10, roi_pct: 0.5, source: "strategy_config" }, null)!;
+    expect(inv.binding_floor).toBe("net-per-usd-nonpositive");
+
+    // THE GATE: JSON.stringify(Infinity) === null was how this field used to
+    // disappear on exactly this branch (41/41 live rows). The sentinel string
+    // is lossless through the wire.
+    const onWire = JSON.parse(JSON.stringify(inv));
+    expect(onWire.required_amount_in_usd).toBe("Infinity");
+    expect(onWire.required_is_infinite).toBe(true);
+    // The verdict's numeric value is recoverable for any numeric consumer.
+    expect(Number(onWire.required_amount_in_usd)).toBe(Number.POSITIVE_INFINITY);
+  });
+
+  it("roi-unreachable: same sentinel + companion on the other non-finite branch", () => {
+    const cfg = baseCfg();
+    // Observed-gross path with gross 200 on a $2350 principal: grossPerUsd
+    // ≈ 0.0851 → effective ≈ 0.0809 → netPerUsd ≈ 0.0709 (r > 0, so the
+    // nonpositive branch does NOT fire), but the ROI floor of 50% sits far
+    // above r → no finite amount can satisfy it → roi-unreachable.
+    const row = baseRow({ expected_profit_usd: 200 });
+    const forward = forwardSimulate(row, cfg);
+    expect(forward).not.toBeNull();
+    const inv = inverseSize(
+      row,
+      cfg,
+      { net_usd: null, roi_pct: 50, source: "simulation_tab" },
+      forward,
+    )!;
+    expect(inv.binding_floor).toBe("roi-unreachable");
+    expect(inv.required_amount_in_usd).toBe("Infinity");
+    expect(inv.required_is_infinite).toBe(true);
+    const onWire = JSON.parse(JSON.stringify(inv));
+    expect(onWire.required_amount_in_usd).toBe("Infinity");
+  });
+
+  it("finite branch: required stays a NUMBER with required_is_infinite=false", () => {
+    const cfg = baseCfg();
+    cfg.simulation_target_profit_usd = 10;
+    cfg.simulation_target_roi_pct = null;
+    const row = baseRow();
+    const target = resolveTarget(cfg, "dex_arb")!;
+    const forward = forwardSimulate(row, cfg);
+    const inv = inverseSize(row, cfg, target, forward)!;
+    expect(inv.binding_floor).not.toBe("net-per-usd-nonpositive");
+    expect(inv.binding_floor).not.toBe("roi-unreachable");
+    expect(typeof inv.required_amount_in_usd).toBe("number");
+    expect(inv.required_is_infinite).toBe(false);
+    const onWire = JSON.parse(JSON.stringify(inv));
+    expect(onWire.required_amount_in_usd).toBe(inv.required_amount_in_usd);
   });
 });

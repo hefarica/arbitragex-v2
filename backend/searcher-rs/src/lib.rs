@@ -274,3 +274,7 @@ pub mod telemetry_publisher;
 pub mod telemetry_observability;
 
 pub mod candidate_simulation;
+// ALWAYS-COMPUTE (2026-09-27): the one economics computation object built
+// before the pass/fail decision + the missing_economics census. Exposed on
+// the lib so integration tests can drive the builders directly.
+pub mod economics;

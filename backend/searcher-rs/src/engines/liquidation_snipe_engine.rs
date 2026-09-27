@@ -364,6 +364,7 @@ impl LiquidationSnipeEngine {
             pipeline_latency_ms: None,
             detected_at: Utc::now(),
             trace_id,
+            economics: None,
         };
 
         let pool_addresses = vec![format!("0x{:040x}", position.user)]; // Position being liquidated
