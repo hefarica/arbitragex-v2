@@ -37,9 +37,10 @@ use crate::strategy_label::StrategyLabel;
 use crate::workers::triangular_worker::{
     clamp_to_cap_wei, evaluate_cycle_detailed, CycleEvalOutcome, EvalInput,
 };
-use ethers::types::{Address, U256};
+use ethers::types::{Address, Sign, I256, U256};
 use prioritization_spine::route_plan::RouteLeg;
 use shared_rs::chains::USDT_MAINNET_LC;
+use shared_rs::contracts::EconomicsComputation;
 use shared_rs::trading_config::TradingConfigState;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -583,6 +584,214 @@ pub struct SizedCandidate {
     /// fabricated. Exact wei strings, NOT f64 (precision loss above 2^53).
     pub leg_amounts_in: Option<Vec<String>>,
     pub leg_amounts_out: Option<Vec<String>>,
+}
+
+// ---------------------------------------------------------------------------
+// CANDIDATE-LEDGER-STRUCT-01 — ONE explicit ledger for a sized cycle
+// ---------------------------------------------------------------------------
+
+/// One hop of a [`SizedCycleLedger`]: the tokens the hop crosses plus the EXACT
+/// wei amounts the sizing kernel MEASURED for it.
+///
+/// Provenance: `amount_in_wei`/`amount_out_wei` are the kernel's own per-leg
+/// ledger entries (`SizedCandidate::leg_amounts_in` / `leg_amounts_out`,
+/// HOPS-LEDGER-04) — the numbers the on-chain QuoterV2 round-trip / the local
+/// CPMM arithmetic produced at the sized input. Nothing here is re-derived,
+/// re-quoted or extrapolated.
+///
+/// The endpoints are `Option<Address>`: the route plan carries addresses as
+/// verbatim strings and a legacy/fixture row ("0xweth") does not parse. R8 —
+/// an unparseable endpoint stays ABSENT; it is never replaced by a sentinel or
+/// the zero address.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SizedLeg {
+    /// Token entering this hop (`None` ⇔ the plan string is not an address).
+    pub token_in: Option<Address>,
+    /// Token leaving this hop (`None` ⇔ the plan string is not an address).
+    pub token_out: Option<Address>,
+    /// Exact wei entering the hop (kernel ledger entry `i`).
+    pub amount_in_wei: U256,
+    /// Exact wei leaving the hop (kernel ledger entry `i` — the measured one).
+    pub amount_out_wei: U256,
+}
+
+/// CANDIDATE-LEDGER-STRUCT-01: ONE explicit ledger for a sized cycle.
+///
+/// It is built ([`SizedCycleLedger::from_sized`]) from figures that were
+/// ALREADY measured by the sizing kernel plus the economics object the kernel's
+/// own figures produced — no new swap simulation, no sqrtPrice/tick math, no
+/// binary search, no re-quote: every field is a copy (or, for
+/// `gross_profit_wei`, one signed subtraction of two measured wei amounts).
+///
+/// Consumers (the stamping tail in `orchestrator::stamp_sized_figures`) read
+/// the figures from HERE, so the `Opportunity`, the outer `StrategyCandidate`
+/// and the inner `OpportunityCandidate` cannot disagree: one ledger, one
+/// number, one provenance.
+///
+/// R8 honesty — every field that this repo does not measure stays ABSENT:
+///
+/// * `amount_out_wei` = `None` when the kernel exposed no per-leg math
+///   (triangular final-amount-only kernel, Kelly re-bound without re-quote,
+///   hand-built fixtures) — never `amount_in_wei` standing in for an output, so
+///   no 1:1 rate is ever implied.
+/// * `gross_profit_wei` = `None` when the measured output is absent OR the
+///   route is NOT a closed cycle (subtracting the base units of two DIFFERENT
+///   tokens is not a profit, so no number is offered for it).
+/// * `gas_cost_usd` = `None` when the sheet-07 components were not computed
+///   (`net_economics` absent) — the gas figure is never defaulted.
+#[derive(Debug, Clone)]
+pub struct SizedCycleLedger {
+    /// Opening token of the cycle (== `token_out` for a closed cycle). `None`
+    /// when the route's endpoint string is not a parseable address.
+    pub token_in: Option<Address>,
+    /// Closing token of the cycle. `None` as above.
+    pub token_out: Option<Address>,
+    /// The kernel's sized optimal input, exact wei
+    /// (`SizedCandidate::optimal_amount_in`, clamped to the capital cap).
+    pub amount_in_wei: U256,
+    /// The LAST measured leg output (cycle close), exact wei — parsed from
+    /// `EconomicsComputation::amount_out_wei`, which
+    /// `economics::economics_from_sized` sets to `leg_amounts_out.last()`.
+    /// `None` = no per-leg measurement on this path (R8).
+    pub amount_out_wei: Option<U256>,
+    /// Signed `amount_out_wei − amount_in_wei` (closed cycles only).
+    /// `None` when either side is absent or the route is open.
+    pub gross_profit_wei: Option<I256>,
+    /// GROSS profit in USD at `amount_in_wei`
+    /// (`SizedCandidate::gross_profit_usd`) — the f64 figure the wire carries.
+    pub gross_profit_usd: f64,
+    /// Net profit in USD after gas + fees + ops overhead
+    /// (`SizedCandidate::estimated_net_profit_usd`).
+    pub net_expected_profit_usd: f64,
+    /// Per-hop MEASURED amounts, aligned with `route_plan.legs`. Empty when the
+    /// kernel measured no chain (R8 — never a partial ledger).
+    pub legs: Vec<SizedLeg>,
+    /// Gas cost in USD, verbatim from the economics object's `gas_usd` (the
+    /// sheet-07 `RouteNetEconomics::gas_usd` the net arithmetic already
+    /// consumed). `None` when that component was not computed.
+    pub gas_cost_usd: Option<f64>,
+    /// Block the priced state belongs to (`Opportunity::block_number`).
+    pub block_number: Option<u64>,
+    /// Which measurement produced the per-hop amounts, one entry per route leg
+    /// as `"<protocol_type>:<measurement path>"`, joined by `'>'` — e.g.
+    /// `"uniswap-v2:amm_math.v2_amount_out>uniswap-v3:quoter_v2_onchain"`.
+    ///
+    /// The repo records no quoter NAME on the sized figures, so this is derived
+    /// from the kernel's OWN dispatch predicate (`leg_is_v3`, i.e. the leg's
+    /// verbatim `protocol_type`) rather than invented: V2-style legs are priced
+    /// by the local CPMM (`amm_math::v2_amount_out`, zero RPC) and V3 legs by
+    /// the on-chain QuoterV2 (`RouteQuoteProvider::quote_leg` →
+    /// `StateProjector::project_v3_quote_checked`). Empty string when the
+    /// candidate carries no route legs.
+    pub quoter_provenance: String,
+}
+
+/// The candidate's own route endpoints, verbatim: `route_plan.legs` first
+/// (`.first().token_in` / `.last().token_out`) and `candidate.token_addresses`
+/// as the fallback — the precedence the stamping tail has always used.
+///
+/// One selection point for both consumers: the ledger parses these into
+/// `Address` endpoints and `stamp_sized_figures` resolves their decimals.
+pub(crate) fn route_endpoint_tokens(c: &StrategyCandidate) -> (Option<&str>, Option<&str>) {
+    let plan_in = c.route_plan.legs.first().map(|l| l.token_in.as_str());
+    let plan_out = c.route_plan.legs.last().map(|l| l.token_out.as_str());
+    (
+        plan_in.or_else(|| c.candidate.token_addresses.first().map(String::as_str)),
+        plan_out.or_else(|| c.candidate.token_addresses.last().map(String::as_str)),
+    )
+}
+
+/// Per-leg measurement provenance (see [`SizedCycleLedger::quoter_provenance`]).
+fn measurement_provenance(legs: &[RouteLeg]) -> String {
+    legs.iter()
+        .map(|leg| {
+            let protocol = leg.protocol_type.to_ascii_lowercase();
+            if leg_is_v3(leg) {
+                format!("{protocol}:quoter_v2_onchain")
+            } else {
+                format!("{protocol}:amm_math.v2_amount_out")
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(">")
+}
+
+impl SizedCycleLedger {
+    /// Build the ledger from the measured kernel outcome.
+    ///
+    /// NO new computation. Every field is copied from `sized`
+    /// ([`SizedCandidate`] — the kernel's own sized figures) or from `econ`
+    /// ([`EconomicsComputation`], which MUST be the object built from THIS
+    /// `sized` by `economics::economics_from_sized`, so the gas figure and the
+    /// measured cycle close come from the one economics resolution instead of a
+    /// second derivation).
+    ///
+    /// `gross_profit_wei` is the only arithmetic here: one signed subtraction
+    /// of two measured wei amounts (`amount_out_wei − amount_in_wei`), computed
+    /// ONLY for a closed cycle (opening token == closing token, compared
+    /// case-insensitively on the route's own strings) and only when both sides
+    /// are measured; otherwise it stays `None` (R8).
+    pub fn from_sized(sized: &SizedCandidate, econ: &EconomicsComputation) -> Self {
+        let route = &sized.candidate.route_plan.legs;
+        let (raw_in, raw_out) = route_endpoint_tokens(&sized.candidate);
+
+        // All-or-nothing per-leg ledger (same convention as
+        // `economics::computed_legs`): `econ.legs` is already zipped with the
+        // plan, so a length mismatch yields NO legs here either — a partial
+        // ledger would misalign hop i with token i+1.
+        let mut legs = Vec::with_capacity(econ.legs.len());
+        for leg in &econ.legs {
+            let (Ok(amount_in_wei), Ok(amount_out_wei)) = (
+                U256::from_dec_str(&leg.amount_in_wei),
+                U256::from_dec_str(&leg.amount_out_wei),
+            ) else {
+                // A kernel-emitted amount that does not parse is not a number we
+                // can carry: drop the whole chain rather than ship a hole in it.
+                legs.clear();
+                break;
+            };
+            legs.push(SizedLeg {
+                token_in: leg.token_in.parse::<Address>().ok(),
+                token_out: leg.token_out.parse::<Address>().ok(),
+                amount_in_wei,
+                amount_out_wei,
+            });
+        }
+
+        // The economics object's cycle close IS `leg_amounts_out.last()`; parse
+        // it here so an unparseable string leaves the field absent (the stamping
+        // tail then keeps its honest "not measured" marker).
+        let amount_out_wei = econ
+            .amount_out_wei
+            .as_deref()
+            .and_then(|raw| U256::from_dec_str(raw).ok());
+
+        // Signed wei gross — closed cycles only (see the struct docs).
+        let closed = matches!((raw_in, raw_out), (Some(a), Some(b)) if a.eq_ignore_ascii_case(b));
+        let gross_profit_wei = match amount_out_wei {
+            Some(out) if closed && out >= sized.optimal_amount_in => {
+                I256::checked_from_sign_and_abs(Sign::Positive, out - sized.optimal_amount_in)
+            }
+            Some(out) if closed => {
+                I256::checked_from_sign_and_abs(Sign::Negative, sized.optimal_amount_in - out)
+            }
+            _ => None,
+        };
+
+        Self {
+            token_in: raw_in.and_then(|s| s.parse::<Address>().ok()),
+            token_out: raw_out.and_then(|s| s.parse::<Address>().ok()),
+            amount_in_wei: sized.optimal_amount_in,
+            amount_out_wei,
+            gross_profit_wei,
+            gross_profit_usd: sized.gross_profit_usd,
+            net_expected_profit_usd: sized.estimated_net_profit_usd,
+            legs,
+            gas_cost_usd: econ.gas_usd,
+            block_number: sized.candidate.opportunity.block_number,
+            quoter_provenance: measurement_provenance(route),
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -6033,6 +6242,213 @@ mod tests {
                 other.reason_str()
             ),
         }
+    }
+
+    // ── CANDIDATE-LEDGER-STRUCT-01 — the ledger carries the MEASURED figures ──
+    //
+    // Both tests below drive a REAL sizing kernel (the same mock QuoterV2 the
+    // V3 fixtures use) and build the ledger the way the orchestrator does:
+    // `SizedCandidate` → `economics_from_sized` → `SizedCycleLedger::from_sized`.
+    // They pin (1) per-hop amounts == the kernel's own leg ledger, (2) the cycle
+    // close == the LAST leg's measured output and never the input, and (3) the
+    // sign of the signed wei gross on a profitable and on a losing cycle.
+
+    /// Losing-cycle ledger fixture: the 2-leg V3 route priced by a proportional
+    /// mock at `num/den` per leg (0.8 ⇒ always a loss). The losing path returns
+    /// `RejectedComputed` carrying the kernel's full measured figures.
+    async fn run_losing_v3_fixture(num: u64, den: u64) -> (OptimizeOutcome, TradingConfigState) {
+        let cache = Arc::new(ReservesCache::new()); // V3 legs don't read reserves
+        let provider = Arc::new(ProportionalV3Mock { num, den });
+        let projector = Arc::new(StateProjector::new(
+            cache,
+            Some(provider),
+            v3_test_fee_catalog(),
+        ));
+        let optimizer = SizeOptimizer::new(projector);
+
+        let candidate = make_v3_dex_candidate(addr(0x10), addr(0x11), addr(0xAAAA), addr(0xBBBB));
+        let intent = make_intent(addr(0xAAAA), addr(0xBBBB));
+        let mut cfg = make_cfg(10_000.0);
+        cfg.min_landing_probability = 0.9; // positive Kelly edge (as the sibling tests)
+
+        let outcome = optimizer
+            .optimize_with_reason(candidate, &intent, Some(&cfg))
+            .await
+            .expect("optimize must not error");
+        (outcome, cfg)
+    }
+
+    #[tokio::test]
+    async fn sized_cycle_ledger_carries_the_kernel_measured_legs() {
+        // PROFITABLE fixture: the 4-leg all-V2 cycle WETH → T1 → T2 → T3 → WETH
+        // (spot product ≈ 1.894) sized by the REAL N-leg cycle kernel over cached
+        // reserves. The Kelly budget is deliberately non-binding here (cap ≈ $900k
+        // ≈ 300 tokens at the WETH price vs a sized optimum of ≈ 9.45 tokens), so
+        // the ledger this test reads is the KERNEL's own, untouched by the Step-8
+        // overlay (whose re-derivation has its own contract, HOPS-LEDGER-05).
+        let pools = [addr(0x20), addr(0x21), addr(0x22), addr(0x23)];
+        let cache = Arc::new(ReservesCache::new());
+        insert_oriented(&cache, pools[0], WETH_T, T1, unit(100), unit(90)).await;
+        insert_oriented(&cache, pools[1], T1, T2, unit(100), unit(95)).await;
+        insert_oriented(&cache, pools[2], T2, T3, unit(100), unit(150)).await;
+        insert_oriented(&cache, pools[3], T3, WETH_T, unit(100), unit(150)).await;
+
+        let projector = Arc::new(StateProjector::new(cache, None, empty_v3_fee_catalog()));
+        let optimizer = SizeOptimizer::new(projector);
+
+        let candidate = make_multileg_candidate(
+            &pools,
+            &["uniswap-v2", "uniswap-v2", "uniswap-v2", "uniswap-v2"],
+            StrategyLabel::DexArbV2V2,
+        );
+        let intent = make_intent(addr(0xAAAA), addr(0xBBBB));
+        let cfg = make_cfg_kelly(1_000_000.0, 1.0, 1.0, 1.0, 0.9);
+
+        let outcome = optimizer
+            .optimize_with_reason(candidate, &intent, Some(&cfg))
+            .await
+            .expect("optimize must not error");
+        let s = match outcome {
+            OptimizeOutcome::Sized(s) => s,
+            other => panic!(
+                "profitable V2 cycle must size, got {:?}",
+                other.reason_str()
+            ),
+        };
+        let econ = crate::economics::economics_from_sized(&s, Some(&cfg));
+        let ledger = SizedCycleLedger::from_sized(&s, &econ);
+
+        let ins = s
+            .leg_amounts_in
+            .clone()
+            .expect("profitable kernel must expose leg_amounts_in");
+        let outs = s
+            .leg_amounts_out
+            .clone()
+            .expect("profitable kernel must expose leg_amounts_out");
+        assert_eq!(ins.len(), 4, "4-hop fixture → 4 hops of kernel ledger");
+
+        // (1) Every hop's wei amounts ARE the kernel's ledger entries.
+        assert_eq!(
+            ledger.legs.len(),
+            ins.len(),
+            "one SizedLeg per measured hop"
+        );
+        for (i, leg) in ledger.legs.iter().enumerate() {
+            assert_eq!(leg.amount_in_wei.to_string(), ins[i], "hop {i} input");
+            assert_eq!(leg.amount_out_wei.to_string(), outs[i], "hop {i} output");
+        }
+        assert_eq!(
+            ledger.legs[0].amount_in_wei, s.optimal_amount_in,
+            "hop 0 opens at the sized amount the kernel optimized"
+        );
+
+        // (2) The cycle close is the LAST leg's MEASURED output, never the input.
+        let measured_close = U256::from_dec_str(outs.last().expect("non-empty"))
+            .expect("kernel wei strings are decimal");
+        assert_eq!(ledger.amount_out_wei, Some(measured_close));
+        assert_eq!(
+            ledger.legs.last().expect("legs").amount_out_wei,
+            measured_close,
+            "the ledger's cycle close IS the last leg's measured output"
+        );
+        assert_eq!(ledger.amount_in_wei, s.optimal_amount_in);
+        assert_ne!(
+            ledger.amount_out_wei,
+            Some(ledger.amount_in_wei),
+            "a measured output must never be the input"
+        );
+        assert!(
+            measured_close > ledger.amount_in_wei,
+            "the profitable cycle closes ABOVE the input (spot product ≈ 1.894)"
+        );
+        // (3) Signed wei gross: profitable → strictly positive, and equal to the
+        // one subtraction of the two measured wei amounts.
+        let gross_wei = ledger
+            .gross_profit_wei
+            .expect("a closed cycle with a measured close carries a signed wei gross");
+        assert!(
+            gross_wei.is_positive(),
+            "profitable cycle must carry a POSITIVE wei gross, got {gross_wei:?}"
+        );
+        assert_eq!(
+            gross_wei,
+            I256::checked_from_sign_and_abs(Sign::Positive, measured_close - ledger.amount_in_wei)
+                .expect("difference fits in I256"),
+        );
+        assert!(
+            s.gross_profit_usd > 0.0,
+            "the kernel's USD gross agrees on the sign"
+        );
+
+        // Gas: copied from the economics object's own component (one source).
+        assert_eq!(ledger.gas_cost_usd, econ.gas_usd);
+        // Provenance names the dispatch path the kernel actually used — one
+        // entry per route leg, from the kernel's own `leg_is_v3` predicate.
+        assert_eq!(
+            ledger.quoter_provenance,
+            "uniswap-v2:amm_math.v2_amount_out>uniswap-v2:amm_math.v2_amount_out>\
+             uniswap-v2:amm_math.v2_amount_out>uniswap-v2:amm_math.v2_amount_out"
+        );
+        assert_eq!(
+            ledger.token_in, ledger.token_out,
+            "the fixture is a closed cycle: it opens and closes on the same token"
+        );
+    }
+
+    #[tokio::test]
+    async fn sized_cycle_ledger_wei_gross_is_negative_on_a_losing_cycle() {
+        let (outcome, cfg) = run_losing_v3_fixture(8, 10).await; // 0.8x/leg → a loss
+        let s = match outcome {
+            // ALWAYS-COMPUTE: the quoter ANSWERED, so the losing cycle still
+            // carries the full measured figures (same carrier shape as Sized).
+            OptimizeOutcome::RejectedComputed(OptimizeRejectReason::NonPositiveProfit, s) => s,
+            other => panic!(
+                "0.8x/leg must be RejectedComputed(NonPositiveProfit), got {:?}",
+                other.reason_str()
+            ),
+        };
+        let econ = crate::economics::economics_from_sized(&s, Some(&cfg));
+        let ledger = SizedCycleLedger::from_sized(&s, &econ);
+
+        let ins = s
+            .leg_amounts_in
+            .clone()
+            .expect("losing cycle still carries the measured leg chain");
+        let outs = s
+            .leg_amounts_out
+            .clone()
+            .expect("losing cycle still carries the measured leg chain");
+        assert_eq!(ledger.legs.len(), ins.len());
+        for (i, leg) in ledger.legs.iter().enumerate() {
+            assert_eq!(leg.amount_in_wei.to_string(), ins[i], "hop {i} input");
+            assert_eq!(leg.amount_out_wei.to_string(), outs[i], "hop {i} output");
+        }
+
+        let measured_close = U256::from_dec_str(outs.last().expect("non-empty"))
+            .expect("kernel wei strings are decimal");
+        assert_eq!(ledger.amount_out_wei, Some(measured_close));
+        assert!(
+            measured_close < ledger.amount_in_wei,
+            "0.8x/leg closes BELOW the input"
+        );
+
+        let gross_wei = ledger
+            .gross_profit_wei
+            .expect("closed cycle with a measured close → signed wei gross");
+        assert!(
+            gross_wei.is_negative(),
+            "a losing cycle must carry a NEGATIVE wei gross, got {gross_wei:?}"
+        );
+        assert_eq!(
+            gross_wei,
+            I256::checked_from_sign_and_abs(Sign::Negative, ledger.amount_in_wei - measured_close)
+                .expect("difference fits in I256"),
+        );
+        assert!(
+            s.gross_profit_usd <= 0.0,
+            "the kernel's USD gross agrees on the sign"
+        );
     }
 
     // R8 honesty (adversarial-review fix): when the quoter ANSWERS with 0 (a
