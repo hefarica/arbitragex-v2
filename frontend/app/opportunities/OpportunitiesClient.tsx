@@ -44,7 +44,7 @@ import { DegradedBanner } from "@/components/DegradedBanner";
 import { useUserPrefs } from "@/lib/user-prefs";
 // CARDS-NOTIONAL-01 — the notifier's gate is the SAME SSOT the card ladder
 // uses, so the toast can never announce a figure the card refuses to paint.
-import { decideOpportunityNotification } from "@/lib/opportunity-ledger";
+import { decideOpportunityNotification, isRealLiveEconomicCard } from "@/lib/opportunity-ledger";
 
 // Stable route identity for the card grid key. A re-detected route (same
 // chain + strategy + token pair + DEX path) must update the SAME card in place
@@ -350,7 +350,15 @@ export default function OpportunitiesClient({
     () => applyExchangeFilters(opportunities, filters),
     [opportunities, filters],
   );
-  const visible = useMemo(() => filtered.slice(0, cap), [filtered, cap]);
+  // REAL-LIVE-CARDS-SSOT-01: a trading card is not a detection shell. Rejected
+  // rows remain visible when they were genuinely computed; source failures stay
+  // diagnostics until the producer can calculate them.
+  const economicCards = useMemo(
+    () => filtered.filter(isRealLiveEconomicCard),
+    [filtered],
+  );
+  const diagnosticOnlyCount = filtered.length - economicCards.length;
+  const visible = useMemo(() => economicCards.slice(0, cap), [economicCards, cap]);
 
   // Familias presentes en el feed (motor del exchange, sin estilos atlas).
   const families = useMemo(() => {
@@ -650,6 +658,12 @@ export default function OpportunitiesClient({
           Exit animations retained DOM nodes for 250ms every poll; with 200 live
           cards that accumulated nodes/memory. Items still animate on enter via
           motion.div initial/animate. */}
+      {diagnosticOnlyCount > 0 && (
+        <div className="mb-3 rounded-lg border border-border bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
+          {diagnosticOnlyCount} detecciones no se presentan como cards económicas porque aún no tienen
+          economics.computed + aritmética cerrada. Permanecen como diagnóstico de fuente; no se rellenan con supuestos.
+        </div>
+      )}
       <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
         {visible.map((opp) => (
           <OpportunityTradeCard
@@ -666,11 +680,11 @@ export default function OpportunitiesClient({
       </div>
 
       {/* Motor de memoria (portado del exchange): revelar lo diferido + cargar más */}
-      {filtered.length > visible.length && (
+      {economicCards.length > visible.length && (
         <div className="mt-6 flex flex-col items-center gap-2">
           <p className="text-xs text-muted-foreground">
             Showing <span className="text-foreground font-semibold">{visible.length}</span> of{" "}
-            <span className="text-foreground font-semibold">{filtered.length}</span> matching — the rest are
+            <span className="text-foreground font-semibold">{economicCards.length}</span> real/live cards — the rest are
             deferred (memory-discipline cap).
           </p>
           <button
@@ -678,7 +692,7 @@ export default function OpportunitiesClient({
             onClick={() => setCap((c) => c + VISIBLE_CAP)}
             className="flex items-center gap-2 px-3 py-1.5 rounded-lg border border-border bg-muted hover:bg-accent transition-colors text-xs font-semibold"
           >
-            <ChevronDown size={12} /> Show {Math.min(VISIBLE_CAP, filtered.length - visible.length)} more
+            <ChevronDown size={12} /> Show {Math.min(VISIBLE_CAP, economicCards.length - visible.length)} more
           </button>
         </div>
       )}

@@ -1140,21 +1140,17 @@ export function mountOpportunitiesLive(
         };
         const forward = forwardSimulate(simRow, snapshot);
         const target = resolveTarget(snapshot, r.strategy_kind);
-        // Inverse sizing has TWO paths:
-        //   Path A (observed-gross): forward exists → linear extrap.
-        //   Path B (roi-assumed):    forward null but target.roi_pct set →
-        //                            use operator's min_roi_pct as assumed
-        //                            gross_per_usd to size against USD floor.
-        //                            Unblocks the dashboard when 100% of rows
-        //                            arrive with expected_profit_usd=null
-        //                            (workers reject before profit math).
-        // When neither path is available (no forward AND no roi target),
-        // inverse stays null and the dashboard renders "—".
-        const inverse = target
+        // REAL-LIVE-CARDS-SSOT-01: the live wire may inverse-size ONLY
+        // from an observed/computed forward result. A configured min_roi_pct is
+        // a TARGET, not market evidence; using it as assumed gross_per_usd made
+        // a row look numerically populated even when no quote/gross existed.
+        // Explicit what-if tooling may still call inverseSize() with no forward,
+        // but /opportunities/live never publishes that assumption as live data.
+        const inverse = target && forward
           ? inverseSize(simRow, snapshot, target, forward)
           : null;
-        // Record a SimContext when EITHER forward or inverse produced output,
-        // so Path-B rows still get a target hint even without a forward block.
+        // Record simulation context only when a real forward computation exists
+        // (inverse, when present, is derived from that same observed basis).
         if (forward || inverse) {
           simByRowId.set(r.id, { forward, inverse, simulated_at: simulatedAt });
         }

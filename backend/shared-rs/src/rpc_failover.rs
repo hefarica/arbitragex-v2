@@ -1046,21 +1046,69 @@ fn push_uniquely_named(out: &mut Vec<(String, String)>, name: String, url: Strin
     out.push((format!("{name}-{i}"), url));
 }
 
+/// ARBX-R-0003 env overrides — OPERATOR ORDER 2026-09-27 ("quita los gates que
+/// sean necesarios para que los datos fluyan", "ADELANTE CON TODO").
+///
+/// MEASURED DEFECT this exists for. A 429 floors the breaker cooldown at
+/// `RATE_LIMIT_MIN_COOLDOWN` (120s) and the reopen backoff caps at
+/// `REOPEN_BACKOFF_CAP` (600s). With every free endpoint rate-limited, the whole
+/// pool reported `AllUnhealthy(chain_id=1)` and the V3 quoter stopped ATTEMPTING
+/// any call — live evidence 2026-09-27: `state_projector.v3_quote_failed:
+/// "v3 quote rpc failover exhausted: all providers unhealthy for chain_id=1"`
+/// 3 187×/60s, `v3_quote_unavailable` 34 500 rows/10min, 96% of emitted rows
+/// without economics. The cooldowns were compile-time constants, so no
+/// deployment could shorten the lockout without a rebuild.
+///
+/// Defaults remain the measured-safe values; a deployment may lower them per
+/// environment. Fail-honest parse: malformed/zero ⇒ default.
+fn env_cooldown_ms(key: &str, default: Duration) -> Duration {
+    std::env::var(key)
+        .ok()
+        .and_then(|v| v.trim().parse::<u64>().ok())
+        .filter(|ms| *ms > 0)
+        .map(Duration::from_millis)
+        .unwrap_or(default)
+}
+
+/// `RPC_CB_OPEN_MS` — default `CB_OPEN_DURATION` (30s).
+pub fn cb_open_duration() -> Duration {
+    static V: std::sync::OnceLock<Duration> = std::sync::OnceLock::new();
+    *V.get_or_init(|| env_cooldown_ms("RPC_CB_OPEN_MS", CB_OPEN_DURATION))
+}
+
+/// `RPC_CB_RATE_LIMIT_FLOOR_MS` — default `RATE_LIMIT_MIN_COOLDOWN` (120s).
+pub fn rate_limit_min_cooldown() -> Duration {
+    static V: std::sync::OnceLock<Duration> = std::sync::OnceLock::new();
+    *V.get_or_init(|| env_cooldown_ms("RPC_CB_RATE_LIMIT_FLOOR_MS", RATE_LIMIT_MIN_COOLDOWN))
+}
+
+/// `RPC_CB_STICKY_MS` — default `RATE_LIMIT_STICKY` (60s).
+pub fn rate_limit_sticky() -> Duration {
+    static V: std::sync::OnceLock<Duration> = std::sync::OnceLock::new();
+    *V.get_or_init(|| env_cooldown_ms("RPC_CB_STICKY_MS", RATE_LIMIT_STICKY))
+}
+
+/// `RPC_CB_REOPEN_CAP_MS` — default `REOPEN_BACKOFF_CAP` (600s).
+pub fn reopen_backoff_cap() -> Duration {
+    static V: std::sync::OnceLock<Duration> = std::sync::OnceLock::new();
+    *V.get_or_init(|| env_cooldown_ms("RPC_CB_REOPEN_CAP_MS", REOPEN_BACKOFF_CAP))
+}
+
 /// ARBX-R-0003: cooldown before the breaker may half-open. Base `CB_OPEN_DURATION`
 /// (30s); a rate-limit opening floors it at `RATE_LIMIT_MIN_COOLDOWN` (120s);
 /// each reopen doubles it (`open_count − 1` exponent), capped at
 /// `REOPEN_BACKOFF_CAP`. Exponential backoff against the open/close/reopen
-/// hammer loop of the 429-storm incident.
+/// hammer loop of the 429-storm incident. All three are env-overridable above.
 pub fn effective_cooldown(cb: &CircuitState) -> Duration {
     let base = if cb.opened_by_rate_limit {
-        RATE_LIMIT_MIN_COOLDOWN
+        rate_limit_min_cooldown()
     } else {
-        CB_OPEN_DURATION
+        cb_open_duration()
     };
     let exp = cb.open_count.saturating_sub(1).min(3);
     let ms = base.as_millis() as u64;
     let scaled = ms.saturating_mul(1u64 << exp);
-    Duration::from_millis(scaled.min(REOPEN_BACKOFF_CAP.as_millis() as u64))
+    Duration::from_millis(scaled.min(reopen_backoff_cap().as_millis() as u64))
 }
 
 /// ARBX-R-0003: `with_retry`'s inter-attempt backoff — a rate-limit-class
@@ -1084,7 +1132,7 @@ pub fn is_rate_limit_sticky(entry: &HttpEntry, now: Instant) -> bool {
         .try_read()
         .map(|cb| {
             cb.last_rate_limit_at
-                .is_some_and(|t| now.duration_since(t) < RATE_LIMIT_STICKY)
+                .is_some_and(|t| now.duration_since(t) < rate_limit_sticky())
         })
         .unwrap_or(false)
 }

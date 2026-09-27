@@ -224,6 +224,27 @@ function simulatedCostRows(opp: OmniOpportunity): LedgerCostRow[] {
   return rows;
 }
 
+/** Real cost rows emitted by the Rust searcher economics object.
+ * DEX fees/slippage remain absent as separate numbers when the producer says
+ * they are already embedded in amount_out; absence here is NOT rewritten to 0.
+ */
+function canonicalCostRows(opp: OmniOpportunity): LedgerCostRow[] {
+  const e = opp.economics;
+  if (e == null || e.computation_status !== "computed") return [];
+  const rows: LedgerCostRow[] = [];
+  const add = (label: LedgerCostRowLabel, value: number | null | undefined) => {
+    const v = num(value);
+    if (v != null) rows.push({ label, value: v });
+  };
+  add("Gas", e.gas_usd);
+  add("LP fees", e.dex_fees_usd);
+  add("Decoherence (slippage)", e.slippage_usd);
+  add("TLS fee (flash)", e.flash_fee_usd);
+  add("Relay fee", e.bribe_usd);
+  add("Ops overhead", e.other_costs_usd);
+  return rows;
+}
+
 /**
  * Decide, per row, which closed arithmetic the ladder may paint.
  *
@@ -239,7 +260,45 @@ export function buildLedger(opp: OmniOpportunity): LedgerView {
   const simCostsTotal = num(opp.simulated_costs_total_usd);
   const principal = num(opp.simulated_amount_in_usd);
 
-  // ── Basis 1: the SIM triple ───────────────────────────────────────────────
+  // ── Basis 1: Rust searcher economics (REAL/LIVE SSOT) ────────────────────
+  // #711 now persists one computation object at the sized notional on both
+  // PASS and rejected-but-computed paths. It is therefore the first and only
+  // source allowed to define a REAL/LIVE trading card.
+  const e = opp.economics;
+  if (e?.computation_status === "computed") {
+    const ePrincipal = num(e.amount_in_usd);
+    const eGross = num(e.gross_profit_usd);
+    const eTotal = num(e.total_cost_usd);
+    const eNet = num(e.net_profit_usd);
+    if (ePrincipal != null && eGross != null && eTotal != null && eNet != null) {
+      const rows = canonicalCostRows(opp);
+      const rowSum = rows.reduce((a, r) => a + r.value, 0);
+      const closed = Math.abs(eNet - (eGross - eTotal)) <= LEDGER_TOLERANCE_USD;
+      const componentsClose = Math.abs(rowSum - eTotal) <= LEDGER_TOLERANCE_USD;
+      if (
+        ePrincipal > 0 &&
+        eTotal >= 0 &&
+        closed &&
+        componentsClose &&
+        grossIsAttributableToPrincipal(eGross, ePrincipal)
+      ) {
+        return {
+          basis: "canonical",
+          gross_usd: eGross,
+          total_cost_usd: eTotal,
+          net_usd: eNet,
+          principal_usd: ePrincipal,
+          cost_rows: rows,
+          quiet: false,
+          reason: null,
+        };
+      }
+    }
+  }
+
+  // ── Basis 2: legacy TS SIM triple ────────────────────────────────────────
+  // Kept only for legacy/detail compatibility. isRealLiveEconomicCard() below
+  // explicitly rejects this basis, so it can never qualify a live trading card.
   // Preferred because it is the only triple the wire PROVES to be one
   // computation at one notional, and the only one that carries that notional.
   let simReject: string | null = null;
@@ -339,6 +398,22 @@ export function buildLedger(opp: OmniOpportunity): LedgerView {
   return quiet(
     simReject ??
       "no closed (gross, net, cost) triple on the wire for this row",
+  );
+}
+
+/** Strict trading-card gate.
+ * A FAIL/rejected row is welcome when the searcher actually computed it.
+ * Partial/error rows remain diagnostics until their source can produce a quote.
+ */
+export function isRealLiveEconomicCard(opp: OmniOpportunity): boolean {
+  if (opp.economics?.computation_status !== "computed") return false;
+  const ledger = buildLedger(opp);
+  return (
+    ledger.basis === "canonical" &&
+    ledger.principal_usd != null &&
+    ledger.gross_usd != null &&
+    ledger.total_cost_usd != null &&
+    ledger.net_usd != null
   );
 }
 
