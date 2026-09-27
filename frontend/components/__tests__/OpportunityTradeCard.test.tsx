@@ -612,9 +612,15 @@ describe("OpportunityTradeCard — CARDS-NOTIONAL-01 SSR gate (one ladder, one n
     // The row's real numbers are still shown — quiet is not blindness (R8).
     expect(html).toContain("$822.2k"); // gross, and the derived total cost
     expect(html).toContain("-$0.0000"); // the kernel's net, verbatim
-    // …and the machine reason travels with every suppressed cell.
+    // …and the machine reason travels with every cell.
     expect(html).toContain("CARDS-NOTIONAL-01");
-    expect(html).toContain('data-testid="ledger-basis-note"');
+    // OPERATOR ORDER 2026-09-27 (verbatim): "QUITA EL MALDITO RENDER QUE ESCONDE
+    // LOS NUMEROS." This row no longer goes quiet, so the "las celdas van en
+    // guion a proposito" footer is intentionally GONE — the caveat now travels in
+    // each cell's `title` (covered by the CARDS-NOTIONAL-01 assertion above)
+    // instead of silencing the capital path. The footer is asserted ABSENT so a
+    // regression that brings the blanking back is caught here.
+    expect(html).not.toContain('data-testid="ledger-basis-note"');
   });
 
   it("the omitted cost component is back: the 9-row ladder includes the copied buffer", () => {
