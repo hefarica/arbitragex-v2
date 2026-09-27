@@ -354,27 +354,46 @@ impl Orchestrator {
                 use crate::route_discovery::hop_cycle_bridge::BridgeSkip;
                 match skip {
                     // The cap is a hard bound, so hitting it is operator
-                    // information, not a per-item noise line (R9): one warn
-                    // per refused cycle, with the epoch's aggregate counts.
-                    BridgeSkip::CapReached => warn!(
-                        event = "v2.hop_cycle_bridge.cap_reached",
-                        chain_id,
-                        tx_hash = %intent.tx_hash,
-                        hops,
-                        epoch,
-                        cap = budget.per_epoch(),
-                        used = budget.used_in(epoch),
-                        dropped = budget.dropped_in(epoch),
-                        // PERHOP-RESERVES-01: the lane split of the epoch's
-                        // allowance. `unpriceable_refused` is the counted
-                        // deferral — cycles the sizing kernel can only refuse
-                        // (`v3_multileg_unsupported`) that lost the budget to
-                        // priceable work. R8: the skip is explicit, never silent.
-                        sizeable_used = budget.sizeable_used_in(epoch),
-                        unpriceable_used = budget.unpriceable_used_in(epoch),
-                        unpriceable_refused = budget.unpriceable_refused_in(epoch),
-                        "per-block multihop emission cap reached — cycle not emitted (R8 truncation)"
-                    ),
+                    // information, not a per-item noise line (R9): ONE warn per
+                    // epoch, carrying that epoch's aggregate counts, plus a
+                    // per-item debug line. LOGFLOOD-02: this site used to warn on
+                    // every refused cycle (~40/s measured), which is the per-item
+                    // noise line the comment above says it must not be.
+                    BridgeSkip::CapReached => {
+                        if budget.claim_cap_report(epoch) {
+                            warn!(
+                                event = "v2.hop_cycle_bridge.cap_reached",
+                                chain_id,
+                                tx_hash = %intent.tx_hash,
+                                hops,
+                                epoch,
+                                cap = budget.per_epoch(),
+                                used = budget.used_in(epoch),
+                                dropped = budget.dropped_in(epoch),
+                                // PERHOP-RESERVES-01: the lane split of the epoch's
+                                // allowance. `unpriceable_refused` is the counted
+                                // deferral — cycles the sizing kernel can only refuse
+                                // (`v3_multileg_unsupported`) that lost the budget to
+                                // priceable work. R8: the skip is explicit, never silent.
+                                sizeable_used = budget.sizeable_used_in(epoch),
+                                unpriceable_used = budget.unpriceable_used_in(epoch),
+                                unpriceable_refused = budget.unpriceable_refused_in(epoch),
+                                "per-block multihop emission cap reached — cycle not emitted (R8 truncation); this epoch's single aggregate line"
+                            )
+                        } else {
+                            debug!(
+                                event = "v2.hop_cycle_bridge.cap_reached",
+                                chain_id,
+                                tx_hash = %intent.tx_hash,
+                                hops,
+                                epoch,
+                                cap = budget.per_epoch(),
+                                used = budget.used_in(epoch),
+                                dropped = budget.dropped_in(epoch),
+                                "per-block multihop emission cap reached — cycle not emitted (R8 truncation; epoch already reported at warn)"
+                            )
+                        }
+                    }
                     other => debug!(
                         event = "v2.hop_cycle_bridge.skip",
                         chain_id,
@@ -1018,25 +1037,44 @@ impl Orchestrator {
                     {
                         if skip == crate::route_discovery::hop_cycle_bridge::BridgeSkip::CapReached
                         {
-                            warn!(
-                                event = "v2.hop_cycle_bridge.cap_reached",
-                                chain_id,
-                                tx_hash = %intent.tx_hash,
-                                hops = intent.legs.len(),
-                                epoch,
-                                cap = budget.per_epoch(),
-                                used = budget.used_in(epoch),
-                                dropped = budget.dropped_in(epoch),
-                                // PERHOP-RESERVES-01 lane split (see
-                                // `emit_discovered_cycle`): the per-epoch
-                                // allowance spent on priceable vs unpriceable
-                                // cycles, and how many unpriceable cycles were
-                                // deferred behind priceable work.
-                                sizeable_used = budget.sizeable_used_in(epoch),
-                                unpriceable_used = budget.unpriceable_used_in(epoch),
-                                unpriceable_refused = budget.unpriceable_refused_in(epoch),
-                                "per-block multihop emission cap reached — cycle not emitted (R8 truncation)"
-                            );
+                            // LOGFLOOD-02 (R9): ONE warn per epoch with that
+                            // epoch's aggregate counts; every further refusal of
+                            // the same epoch is a per-item debug line. The
+                            // truncation stays fully visible (aggregate + counted
+                            // `dropped_in`), it just stops being ~40 warn/s.
+                            if budget.claim_cap_report(epoch) {
+                                warn!(
+                                    event = "v2.hop_cycle_bridge.cap_reached",
+                                    chain_id,
+                                    tx_hash = %intent.tx_hash,
+                                    hops = intent.legs.len(),
+                                    epoch,
+                                    cap = budget.per_epoch(),
+                                    used = budget.used_in(epoch),
+                                    dropped = budget.dropped_in(epoch),
+                                    // PERHOP-RESERVES-01 lane split (see
+                                    // `emit_discovered_cycle`): the per-epoch
+                                    // allowance spent on priceable vs unpriceable
+                                    // cycles, and how many unpriceable cycles were
+                                    // deferred behind priceable work.
+                                    sizeable_used = budget.sizeable_used_in(epoch),
+                                    unpriceable_used = budget.unpriceable_used_in(epoch),
+                                    unpriceable_refused = budget.unpriceable_refused_in(epoch),
+                                    "per-block multihop emission cap reached — cycle not emitted (R8 truncation); this epoch's single aggregate line"
+                                );
+                            } else {
+                                debug!(
+                                    event = "v2.hop_cycle_bridge.cap_reached",
+                                    chain_id,
+                                    tx_hash = %intent.tx_hash,
+                                    hops = intent.legs.len(),
+                                    epoch,
+                                    cap = budget.per_epoch(),
+                                    used = budget.used_in(epoch),
+                                    dropped = budget.dropped_in(epoch),
+                                    "per-block multihop emission cap reached — cycle not emitted (R8 truncation; epoch already reported at warn)"
+                                );
+                            }
                         } else {
                             debug!(
                                 event = "v2.hop_cycle_bridge.skip",
