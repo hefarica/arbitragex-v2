@@ -551,6 +551,72 @@ impl StateProjector {
         );
     }
 
+    /// V3-MULTILEG-SIZING-01 — warm the provider's TTL cache for ONE V3 pool at
+    /// SEVERAL probe sizes in a single batched aggregate3 multicall.
+    ///
+    /// The N-leg V3 sizing kernel probes the same pool at more than one size;
+    /// the first V3 leg's per-probe inputs are known without any quote (leg 0's
+    /// input IS the probe; a preceding V2 leg's output is exact local CPMM), so
+    /// those lookups collapse into ONE `eth_call` instead of one per probe —
+    /// the same B1 batching contract as [`Self::prefetch_v3_quotes`], with the
+    /// provider's own `ARBX_V3_QUOTE_BATCH_*` chunking/backoff applying.
+    ///
+    /// The unary path stays AUTHORITATIVE: this prefetch is best-effort, the
+    /// provider never writes per-key negatives on a batch transport failure, and
+    /// an uncatalogued pool/pair is skipped here (0 RPC) so the unary path still
+    /// reports its exact WO-06 label.
+    ///
+    /// Returns the number of quote sub-calls handed to the provider (0 when
+    /// nothing was dispatched) — the kernel counts them against its budget.
+    pub(crate) async fn prefetch_v3_quotes_multi_amount(
+        &self,
+        pool: &PoolRef,
+        zero_for_one: bool,
+        amounts: &[U256],
+    ) -> usize {
+        if amounts.is_empty() {
+            return 0;
+        }
+        let Some(provider) = self.v3_provider.as_ref() else {
+            return 0;
+        };
+        let fee_pips = match self.resolve_fee_pips(pool) {
+            Ok(f) => f,
+            // R8: skip — the unary path reports the exact catalog-gap label.
+            Err(_) => return 0,
+        };
+        let (token_in, token_out) = if zero_for_one {
+            (pool.token0, pool.token1)
+        } else {
+            (pool.token1, pool.token0)
+        };
+        let reqs: Vec<crate::amm_math::V3QuoteRequest> = amounts
+            .iter()
+            .filter(|a| !a.is_zero())
+            .map(|a| crate::amm_math::V3QuoteRequest {
+                pool_addr: pool.address,
+                token_in,
+                token_out,
+                amount_in: *a,
+                fee_bps: fee_pips,
+            })
+            .collect();
+        if reqs.is_empty() {
+            return 0;
+        }
+        let requested = reqs.len();
+        let dispatched = provider.quote_batch(reqs).await;
+        let ok_count = dispatched.iter().filter(|(_, r)| r.is_ok()).count();
+        debug!(
+            event = "state_projector.v3_multileg_prefetch_batch",
+            pool = %pool.address,
+            requested,
+            dispatched = dispatched.len(),
+            ok = ok_count,
+        );
+        requested
+    }
+
     // -----------------------------------------------------------------------
     // Triangular cycle projection
     // -----------------------------------------------------------------------

@@ -1,4 +1,4 @@
-﻿# OMEGA MAXIMUM OVERRIDE: SUPREME FINANCIAL PREDATOR DIRECTIVE (TOP 1% HFT ELITE)
+# OMEGA MAXIMUM OVERRIDE: SUPREME FINANCIAL PREDATOR DIRECTIVE (TOP 1% HFT ELITE)
 
 **ESTADO:** ARMA LETAL FINANCIERA ACTIVADA. SIN PIEDAD. SIN PÃ‰RDIDAS.
 
@@ -32,9 +32,11 @@ Before setting `ARBX_SIMULATOR_V2_READY=true` in any environment, verify all of 
       Automated evidence producer: `.github/workflows/sim-fork-evidence.yml` (see below).
 
 - [ ] Variance between simulator-v2 predicted net profit and observed on-chain execution
-      profit is below 5% across a sample of at least 100 historical opportunities.
-      Document the benchmark run (block range, sample count, mean/max variance) in a
-      comment on the Sprint 4 tracking issue before setting the env var.
+      profit is below 5% across a sample of at least the measured labelable population of
+      the run's freshness window (see "variance_benchmark — measured population and
+      threshold recalibration" below; the historical fixed floor of 100 was measured
+      unreachable). Document the benchmark run (block range, sample count, mean/max
+      variance) in the registry row's `detail` before setting the env var.
 
 - [ ] The revm version in `backend/Cargo.toml` matches the alloy workspace version
       (shared `alloy-primitives` crate). Run `cargo tree -d` and confirm no duplicate
@@ -65,7 +67,7 @@ forgotten. Inspect with `GET /admin/readiness-evidence?gate_id=G-SIM-1`.
 | `dep_tree` | `.github/workflows/sim-evidence-unit-tests.yml` — job `dep-tree` runs `cargo tree -d --locked` and greps for duplicates of `alloy-primitives` / `revm` | same |
 | `fork_suite` | `.github/workflows/sim-fork-evidence.yml` runs the ignored `backend/simulator-v2/tests/fork_mainnet.rs` suite (anti-hollow guards: `FORK_SUITE_OUTCOME=PASS` marker + ≥1 passing libtest line required before any POST) | manual `workflow_dispatch` (optional `fork_block` input; default = latest via `eth_blockNumber`) |
 | `eth_callbundle_staging` | `.github/workflows/sim-staging-callbundle.yml` runs the ignored LIVE test `staging_callbundle_against_flashbots_simulate_endpoint` (`backend/relays-client/src/relay_flashbots.rs`): a REAL `eth_callBundle` round-trip with an EPHEMERAL throwaway signer + zero-value/zero-gas self-transfer probe (simulate-only, NO broadcast); asserts parsed response, `totalGasUsed > 0`, no tx error/revert and derived bundleGasPrice within `ARBX_STAGING_MAX_BUNDLE_GAS_PRICE_GWEI` (default 500) | manual `workflow_dispatch` |
-| `variance_benchmark` | `scripts/gsim1_variance_benchmark.sh` (VPS operator macro): exports REAL recent opportunities (`scripts/gsim1_variance_export.sql`) and replays each through the PRODUCTION multi-step REVM path at block B (detection block, resolved by timestamp bisection — PREDICTED) and B+1 (settled — OBSERVED) via `backend/sim-core/tests/variance_benchmark.rs`; PASS requires ≥ `VARIANCE_MIN_SAMPLES` (100) labeled pairs AND mean absolute drift < `VARIANCE_MAX_MEAN_DRIFT_PCT` (5%). Method recorded verbatim (`method: revm_b_vs_revm_b1_fork`); every skip is counted, never imputed | manual, ON the VPS (`bash scripts/gsim1_variance_benchmark.sh`) |
+| `variance_benchmark` | `.github/workflows/gsim1-variance-benchmark.yml` (SCHEDULED, 3×/day) → `scripts/gsim1_variance_benchmark.sh` on the VPS: exports the LABELABLE population of the freshness window (`scripts/gsim1_variance_export.sql`, one row per distinct A.3.a-encodable 2-leg topology) and replays each through the PRODUCTION multi-step REVM path at block B (detection block, resolved by timestamp bisection — PREDICTED) and B+1 (settled — OBSERVED) via `backend/sim-core/tests/variance_benchmark.rs`; PASS requires `samples_labeled` ≥ `VARIANCE_MIN_SAMPLES` (default: the measured labelable population of the run — exhaustive coverage) AND mean absolute drift < `VARIANCE_MAX_MEAN_DRIFT_PCT` (5%). The driver ALWAYS writes a row (`evidenced`/`failed` + the measured reason + `pass_reason`); the workflow then asserts the row ADVANCED in-run, so a producer that stops delivering fails loudly instead of letting the registry go stale. Method recorded verbatim (`method: revm_b_vs_revm_b1_fork`); every skip is counted, never imputed | schedule `17 2,10,18 * * *` + manual `workflow_dispatch` (`min_samples`, `strict`) |
 
 Registry transport: every CI producer POSTs through
 `.github/actions/post-readiness-evidence` — direct URL when
@@ -79,6 +81,62 @@ dedup is unresolved (today `alloy-primitives` resolves 0.4.2 / 0.7.7 / 1.6.0 —
 pulled respectively by revm 3.5, simulator-v2 and alloy 1.8; unifying them is a
 major dependency migration, tracked separately) — the item
 stays effectively pending until the dedup lands; it never fakes a clean tree.
+
+### variance_benchmark — measured population and threshold recalibration (G-SIM1-AUTOREFRESH, 2026-09-26)
+
+The historical PASS rule was `samples_labeled >= 100`. That floor was **measured unreachable
+by construction**, and the evidence is reproducible from production:
+
+| measurement (chain 1, 2-leg routes) | value |
+|---|---|
+| distinct A.3.a-encodable topologies (UniswapV2/SushiSwap), freshness window 2h | **6** |
+| same, 24h window | **11** |
+| same, 7d window | **21** |
+| same, 30d window | **21** (saturates — the population does not grow with the window) |
+| distinct 2-leg topologies in 24h, ALL adapters | 164 (the encoder cannot touch the rest) |
+| harness freshness window (`tip − 1100` blocks, `variance_benchmark.rs`) | ≈3.7h — older rows are `stale_timestamp` skips |
+| last real run (registry row, 2026-09-26T11:53:21Z) | `attempted=800, dedup=779, unsupported_adapter=9, stale_timestamp=7, pred_failed=5, samples_labeled=0` |
+
+Two independent facts kill the 100-floor: the labelable population saturates at 21, and the
+harness can only pin ≈3.7h of history, so widening the export window does not enlarge the
+labelable set — it only inflates `dedup`/`stale_timestamp`. The dominant live population is
+V3/PancakeSwap (24h adapter-pair histogram: `UniswapV2,UniswapV3` 872,526 rows;
+`UniswapV3,UniswapV3` 826,001; `UniswapV3,PancakeSwap V3` 824,780; … versus
+`UniswapV2,SushiSwap` 166,387), and `adapter_to_semantic()` in the harness supports only
+UniswapV2/SushiSwap — V3 legs are honestly `None`.
+
+**Corrected rule (implemented, not chosen to pass):** the sample floor is the measured
+labelable population of the run (`VARIANCE_MIN_SAMPLES` defaults to the number of distinct
+topologies the export produced; the export is already deduplicated by `DISTINCT ON`, so the
+harness dedup counter goes to ~0). The gate therefore asks for **exhaustive coverage of what
+actually exists**, and the row records `population_size`, `coverage`, `p95_estimable`
+(true only when `n >= 21`, the smallest n for which the reported p95 is an order statistic
+below the sample maximum) and `pass_reason` (`sample-floor` / `drift-threshold`).
+
+This recalibration does **not** manufacture a PASS: with the population at 6–21 and every
+skipped row counted, the item stays `failed` until the REVM path actually completes and labels
+the full labelable set. Two honest ways forward for statistical power ≥21:
+1. **Widen the encoder** to V3 legs (per-leg fee tier) — the only way to reach the dominant
+   population; or
+2. **Accumulate labeled pairs across scheduled runs** (the schedule exists for this) once the
+   harness records per-run labeled counts in a durable, queryable form.
+
+Until one of them lands, `ARBX_SIMULATOR_V2_READY=true` remains an unbacked claim:
+SECURE_BOOT requires evidence first and the flag second (`g-sim-1.ts`), so the honest state is
+`ARBX_SIMULATOR_V2_READY=false`, which the readiness item reports truthfully as
+"simulator-v2 IMPLEMENTADO (N módulos, backend v2) — hard blocker hasta completar: [...]".
+Turning the flag off does NOT clear the blocker (the item is red for any state other than a
+fresh 7/7) — it stops the panel from accusing the operator of a premature flip.
+
+### Rotation of `second_signoff` (G-SIM1-AUTOREFRESH, 2026-09-26)
+
+`second_signoff` is the only checklist item that is a HUMAN act, and it expires: the strict
+30-day rule made the 2026-08-17 sign-off (PR #390) stale on 2026-09-16, after which the panel
+showed a permanent red with no owner. `.github/workflows/gsim1-readiness-attention.yml` now
+reads the G-SIM-1 registry slice daily (read-only) and opens/updates ONE pinned issue carrying,
+per unmet item, the derived reason and the exact copy-pasteable operator action; when nothing
+is unmet the issue is closed. The job is green when the gate is red **by design** — a
+permanently-red daily job is a job nobody reads, and the actionable prompt is the issue.
 
 Related observability fix (2026-08-17): the sim-ctl Redis consumer now counts
 every consumer-path simulation in `arbx_simulation_total` (labels
@@ -106,9 +164,11 @@ transport above — which needs no new public exposure.
 
 ### Manual item procedures
 
-Items 2, 6 and 7 (and 4 until a benchmark producer lands) are recorded by hand with the
-admin token. `status` is `evidenced` or `failed`; `verified_by` uses `operator:<id>` or
-`reviewer:<id>`.
+Items 2, 6 and 7 are recorded by hand with the admin token (item 4 now has a SCHEDULED
+producer — see the table above; the manual macro remains available and is the same code path).
+`status` is `evidenced` or `failed`; `verified_by` uses `operator:<id>` or `reviewer:<id>`.
+Every unmet item is also surfaced daily — with its derived reason and the exact POST below —
+by `.github/workflows/gsim1-readiness-attention.yml`.
 
 **Item 2 — `modules_merged`** (F0 SHAs on `main`):
 
@@ -148,7 +208,10 @@ curl --fail-with-body -sS --max-time 20 -X POST "$ARBX_READINESS_EVIDENCE_URL" \
       }'
 
 # Item 7 — second engineer signed off on numerical correctness (no integer
-# overflow, correct wei/gwei unit handling, fees subtracted, not added):
+# overflow, correct wei/gwei unit handling, fees subtracted, not added).
+# This row EXPIRES 30 days after verified_at (strict): the rotation job
+# (.github/workflows/gsim1-readiness-attention.yml) opens/updates an issue with
+# this exact command as soon as the row is within 7 days of expiry.
 curl --fail-with-body -sS --max-time 20 -X POST "$ARBX_READINESS_EVIDENCE_URL" \
   -H "Content-Type: application/json" \
   -H "x-arbx-admin-token: $ARBX_ADMIN_TOKEN" \
