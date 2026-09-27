@@ -577,3 +577,123 @@ describe("inverseSize — Infinity serialization (ALWAYS-COMPUTE)", () => {
     expect(onWire.required_amount_in_usd).toBe(inv.required_amount_in_usd);
   });
 });
+
+// ── SIM-COST-NONNEGATIVE-01 (2026-09-27): a cost component is never a CREDIT ─
+//
+// The measured defect these tests pin: `copied_buffer_usd` was
+// `grossUsd × cfg.p_copied_max` with NO lower bound. The wire's
+// `expected_profit_usd` is negative on essentially every live row (arbitrage
+// that does not pay), so at the operator's live `p_copied_max = 0.5` a row
+// carrying gross = −1000 booked a "cost" of −500, `costsTotalUsd()` returned a
+// NEGATIVE total (−490.15), and downstream
+// `frontend/lib/opportunity-ledger.ts::buildLedger` suppressed the entire
+// capital-path ladder on `simulated_costs_total_usd < 0`
+// ("CARDS-NOTIONAL-01: simulated total cost is negative — not a closed ladder")
+// — a 500+ card census recorded 196 such counter resets, 100 % of them this one
+// reason, while the card still painted `Net yield = −509.85`: a net BETTER than
+// the gross, paid for by a cost that does not exist.
+//
+// The consumer's contract is therefore two-fold and is what these tests assert:
+// every published component is ≥ 0, `costs_total_usd` is ≥ 0, and
+// `tripleIsClosed(gross, net, costs_total_usd)` holds — so the ladder can never
+// be suppressed for a negativity reason again.
+describe("SIM-COST-NONNEGATIVE-01 — a cost component is never a credit", () => {
+  /** Every component of SimulatedCostBreakdown, in kernel order. */
+  const COMPONENT_KEYS = [
+    "gas_usd",
+    "lp_fees_usd",
+    "slippage_usd",
+    "failure_buffer_usd",
+    "copied_buffer_usd",
+    "capital_cost_usd",
+    "ops_overhead_usd",
+    "flashloan_fee_usd",
+    "relay_fee_usd",
+  ] as const;
+
+  /** The live operator value — the cap the measured rows were charged at. */
+  function liveCfg(): TradingConfigSnapshot {
+    const cfg = baseCfg();
+    cfg.p_copied_max = 0.5; // the live operator value (see CARDS-NOTIONAL-01)
+    return cfg;
+  }
+
+  it("negative gross: copied buffer is 0, NOT a −500 credit, at p_copied_max = 0.5", () => {
+    const r = forwardSimulate(baseRow({ expected_profit_usd: -1000 }), liveCfg())!;
+    expect(r).not.toBeNull();
+    expect(r.gross_usd).toBe(-1000);
+    // THE FIX: the buffer is bounded at zero (it is a cost, not a rebate).
+    expect(r.cost_breakdown.copied_buffer_usd).toBe(0);
+    // …and the total the card reads is no longer negative.
+    expect(r.costs_total_usd).toBeGreaterThanOrEqual(0);
+  });
+
+  it("positive gross: the worst-case copy of the upside is still charged in full", () => {
+    // Producer intent preserved — the bound removes the sign flip only.
+    const r = forwardSimulate(baseRow({ expected_profit_usd: 1000 }), liveCfg())!;
+    expect(r.cost_breakdown.copied_buffer_usd).toBeCloseTo(1000 * 0.5, 9);
+    // gross 1000: the buffer is half the upside, as the operator's cap declares.
+    expect(r.costs_total_usd).toBeGreaterThanOrEqual(500);
+  });
+
+  it("negative gross: tripleIsClosed(gross, net, costs_total_usd) HOLDS (the card's invariant)", () => {
+    const r = forwardSimulate(baseRow({ expected_profit_usd: -1000 }), liveCfg())!;
+    // The exact gate `buildLedger` failed on: `simulated_costs_total_usd < 0`.
+    expect(r.costs_total_usd).toBeGreaterThanOrEqual(0);
+    // Closure is an identity of forwardSimulate, in the display's own rounding.
+    expect(
+      Math.abs(r.net_usd - (r.gross_usd - r.costs_total_usd)),
+    ).toBeLessThanOrEqual(COST_CLOSURE_TOLERANCE_USD);
+    expect(tripleIsClosed(r.gross_usd, r.net_usd, r.costs_total_usd)).toBe(true);
+  });
+
+  it("negative gross: the row is not subsidised by its own failure (net ≤ gross)", () => {
+    const r = forwardSimulate(baseRow({ expected_profit_usd: -1000 }), liveCfg())!;
+    // Pre-fix this row painted net = −509.85 against gross = −1000: the phantom
+    // −500 copy credit bought back 490.15 of real costs. Costs are real, so a
+    // losing route must come out WORSE than its gross.
+    expect(r.net_usd).toBeLessThanOrEqual(r.gross_usd);
+    expect(r.net_usd).toBeCloseTo(-1000 - r.costs_total_usd, 9);
+  });
+
+  it("relay fee negative-gross branch: max(gross × 5%, $0.50) is not a rebate", () => {
+    // Explicitly exercise the negative-gross branch of `relayFeeUsd`:
+    // gross −1000 ⇒ gross × 5% = −50, and the $0.50 floor must bind.
+    const r = forwardSimulate(baseRow({ expected_profit_usd: -1000 }), liveCfg())!;
+    expect(r.cost_breakdown.relay_fee_usd).toBeCloseTo(0.5, 9);
+    expect(r.cost_breakdown.relay_fee_usd).toBeGreaterThanOrEqual(0);
+  });
+
+  it("PROPERTY: gross ∈ {−1e6, −1000, −0.01, 0, 0.01, 100} ⇒ no negative component, non-negative total, closed triple", () => {
+    // Sweep across the sign boundary with the shared fixtures (`baseRow` =
+    // 1 WETH = $2350 principal; `baseCfg` = the operator's cost model). No
+    // capital is hardcoded here — every number comes from those helpers.
+    for (const gross of [-1e6, -1000, -0.01, 0, 0.01, 100]) {
+      const r = forwardSimulate(baseRow({ expected_profit_usd: gross }), liveCfg());
+      expect(r, `forwardSimulate(gross=${gross}) must compute`).not.toBeNull();
+      const res = r!;
+
+      for (const key of COMPONENT_KEYS) {
+        expect(
+          res.cost_breakdown[key],
+          `${key} must be a cost (≥ 0) at gross=${gross}`,
+        ).toBeGreaterThanOrEqual(0);
+      }
+      expect(
+        Number.isFinite(res.costs_total_usd),
+        `costs_total_usd must be finite at gross=${gross}`,
+      ).toBe(true);
+      expect(
+        res.costs_total_usd,
+        `costs_total_usd must be ≥ 0 at gross=${gross}`,
+      ).toBeGreaterThanOrEqual(0);
+      // Published total is Σ of the PUBLISHED object — never a second formula.
+      expect(res.costs_total_usd).toBeCloseTo(costsTotalUsd(res.cost_breakdown), 12);
+      // The invariant the card's ladder requires, for every gross.
+      expect(
+        tripleIsClosed(res.gross_usd, res.net_usd, res.costs_total_usd),
+        `triple must close at gross=${gross}`,
+      ).toBe(true);
+    }
+  });
+});
