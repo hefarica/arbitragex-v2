@@ -271,7 +271,12 @@ function OpportunityTradeCardImpl({
   // notional is published on the wire; on the `"canonical"` basis they go quiet
   // with `quietReason` in their `title` rather than borrowing the SIM's number.
   const capitalInUsd = ledger.principal_usd;
-  const cb = ledger.basis === "simulated" ? opp.simulated_cost_breakdown : null;
+  // OPERATOR ORDER 2026-09-27: "QUITA EL MALDITO RENDER QUE ESCONDE LOS NUMEROS."
+  // This gate handed the 9 cost components to the render ONLY on the "simulated"
+  // basis, so every component row painted "—" even with
+  // `simulated_cost_breakdown` present on the wire. The breakdown is used
+  // whenever the wire carries it; each row declares its own basis in its title.
+  const cb = opp.simulated_cost_breakdown ?? null;
 
   // ── WO-PRICE-EXCHANGE-V1 (FE) — CEX-premium treatment on the EXISTING card ──
   // Flash memory in refs (useValueFlash): a WS/polling batch that changes
