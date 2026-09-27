@@ -1711,9 +1711,11 @@ impl SizeOptimizer {
         let probes = match local_best {
             Some((idx, _)) => Self::probes_around_best(&grid, idx, max_probes),
             // No local model (a leg did not resolve, or a V3 leg has no slot0
-            // snapshot): a deterministic coarse bracket from the middle of the
-            // same grid is the honest alternative to guessing an optimum.
-            None => Self::middle_probes(&grid, max_probes),
+            // snapshot): spend the budget at the AUTHORIZED CAPITAL end of the
+            // same grid. Taking the grid's centre instead sized the row at
+            // ~`cap_wei^(8/15)` (dust) and published every figure at that
+            // notional — NLEG-SIZE-BAND-01.
+            None => Self::capital_band_probes(&grid, max_probes),
         };
 
         // ── 4. Quote allowance (per candidate AND per (chain, block)) ─────────
@@ -2220,6 +2222,10 @@ impl SizeOptimizer {
 
     /// Fallback bracket when no local model is available: the centred `max`
     /// points of the same log grid. Deterministic, never a guessed optimum.
+    ///
+    /// Kept for callers whose grid is NOT anchored on the authorized capital;
+    /// the V3 N-leg model-free path uses [`Self::capital_band_probes`] instead
+    /// (NLEG-SIZE-BAND-01 — see that function for the measured defect).
     fn middle_probes(grid: &[U256], max: usize) -> Vec<U256> {
         if grid.is_empty() {
             return vec![U256::one()];
@@ -2229,6 +2235,32 @@ impl SizeOptimizer {
         }
         let start = (grid.len() - max) / 2;
         grid[start..start + max].to_vec()
+    }
+
+    /// NLEG-SIZE-BAND-01 — model-free bracket anchored on the AUTHORIZED capital.
+    ///
+    /// MEASURED DEFECT. The V3 N-leg path builds its local grid as
+    /// `geom_probes(1 wei, cap_wei, 16)` — log-spaced from one wei to the
+    /// operator's capital. When no local model exists (a leg did not resolve, or
+    /// a V3 leg has no slot0 snapshot) the probe budget used to be spent on the
+    /// **centre** of that grid: for `cap_usd = $1000` on an 18-decimals token
+    /// (`cap_wei ≈ 3.7e17`) the centred points are `≈ cap_wei^(8/15) ≈ 2.3e9 wei
+    /// ≈ $0.000006`. Every figure the row then published — gross, net, roi_pct,
+    /// and the whole cost ladder — was computed at that dust notional, which is
+    /// why live cards carried `gross = 0.00000000` next to `amount_in_wei = 1e18`
+    /// and why rejected rows looked like they had "no economics".
+    ///
+    /// The decision the sizing kernel exists to make is "how much of the
+    /// AUTHORIZED capital should this route take", so a model-free row must be
+    /// probed at the capital end of the same grid. This returns the largest
+    /// `max` points of the grid, i.e. the top of the authorized band; the
+    /// largest probe is exactly `cap_wei`.
+    fn capital_band_probes(grid: &[U256], max: usize) -> Vec<U256> {
+        if grid.is_empty() || max == 0 {
+            return vec![U256::one()];
+        }
+        let take = max.min(grid.len());
+        grid[grid.len() - take..].to_vec()
     }
 
     /// The earliest RESOLVED V3 leg: `(index, pool, zero_for_one)`. `None` when
@@ -7395,5 +7427,85 @@ mod tests {
         );
         assert_eq!(SizeOptimizer::middle_probes(&grid, 99), grid);
         assert_eq!(SizeOptimizer::middle_probes(&[], 4), vec![U256::one()]);
+    }
+
+    /// NLEG-SIZE-BAND-01 — the model-free bracket must be anchored on the
+    /// AUTHORIZED CAPITAL, not on the geometric centre of the log grid.
+    ///
+    /// This is the regression that produced live cards with
+    /// `amount_in_wei = 1e18` next to `gross = 0.00000000`: with
+    /// `cap_usd = $1000` on an 18-decimals token the centred probes are
+    /// `≈ cap_wei^(8/15) ≈ 2.3e9 wei ≈ $0.000006`, so gross, net, roi and the
+    /// whole cost ladder were all computed at dust.
+    #[test]
+    fn model_free_bracket_is_anchored_on_the_authorized_capital() {
+        // The exact live shape: $1000 cap, token at $2698.80, 18 decimals.
+        let cap_usd = 1000.0_f64;
+        let price = 2698.797_5_f64;
+        let decimals = 18u8;
+        let cap_wei = clamp_to_cap_wei(U256::MAX, cap_usd, price, decimals)
+            .expect("cap_wei must resolve for a live-shaped configuration");
+        let grid = geom_probes(U256::one(), cap_wei, 16);
+        assert_eq!(grid.len(), 16, "grid shape is part of the contract");
+        // The grid's TOP is the capital end. `geom_probes` rounds every point,
+        // so the top lands within rounding of `cap_wei` — measured 320 wei ABOVE
+        // a 3.7e17 cap (8.6e-16 relative). The kernel's own anti-BUG-3 clamp
+        // (`min(x_star, cap_wei)`, documented in this file's header) bounds the
+        // size actually executed; this test asserts the band is the capital end,
+        // not the exact integer.
+        let top = *grid.last().unwrap();
+        let tolerance = cap_wei / U256::from(100_000u64); // 0.001%
+        let diff = if top >= cap_wei {
+            top - cap_wei
+        } else {
+            cap_wei - top
+        };
+        assert!(
+            diff <= tolerance,
+            "grid top {top} is not the capital end (cap_wei {cap_wei}, diff {diff})"
+        );
+
+        let probes = SizeOptimizer::capital_band_probes(&grid, 2);
+        assert_eq!(probes.len(), 2, "bounded by max_probes");
+
+        // 1. The largest probe IS the capital end of the grid.
+        assert_eq!(*probes.last().unwrap(), top);
+
+        // 2. Every probe sits in the top decade of the band, i.e. within an
+        //    order of magnitude of the capital the operator authorized.
+        let floor = cap_wei / U256::from(16u64);
+        for p in &probes {
+            assert!(
+                *p >= floor,
+                "model-free probe {p} is below cap_wei/16 ({floor}) — dust sizing"
+            );
+        }
+
+        // 3. The dust point the old centre-of-grid fallback selected is GONE.
+        let dust = SizeOptimizer::middle_probes(&grid, 2);
+        for d in &dust {
+            assert!(
+                !probes.contains(d),
+                "the centred (dust) point {d} must not be probed as the capital band"
+            );
+        }
+        // …and that centred point really was orders of magnitude below the cap
+        // (documents the size of the defect rather than asserting a constant).
+        let centre = dust[0];
+        assert!(
+            centre < cap_wei / U256::from(1_000_000u64),
+            "the old fallback point {centre} was not dust-sized; the premise changed"
+        );
+
+        // 4. Degenerate inputs keep the old honest behaviour.
+        assert_eq!(
+            SizeOptimizer::capital_band_probes(&[], 4),
+            vec![U256::one()]
+        );
+        assert_eq!(
+            SizeOptimizer::capital_band_probes(&grid, 0),
+            vec![U256::one()]
+        );
+        assert_eq!(SizeOptimizer::capital_band_probes(&grid, 99), grid);
     }
 }
