@@ -735,7 +735,10 @@ mod tests {
         // Serialized absence is the wire's "no producer declared one" — the
         // fields must NOT be emitted as null (additive + R8: absent is a state).
         let json = serde_json::to_string(&rm).expect("serialize");
-        assert!(!json.contains("economics_"), "absent fields must not serialize: {json}");
+        assert!(
+            !json.contains("economics_"),
+            "absent fields must not serialize: {json}"
+        );
     }
 
     #[test]
@@ -762,7 +765,8 @@ mod tests {
 
         // Round-trip preserves the declaration verbatim (it rides JSONB).
         let back: RouteMetadata =
-            serde_json::from_str(&serde_json::to_string(&rm).expect("serialize")).expect("deserialize");
+            serde_json::from_str(&serde_json::to_string(&rm).expect("serialize"))
+                .expect("deserialize");
         assert_eq!(back.economics_amount_in_wei, rm.economics_amount_in_wei);
         assert_eq!(back.economics_basis, rm.economics_basis);
     }
@@ -801,7 +805,10 @@ mod tests {
     #[test]
     fn test_has_declared_notional_requires_a_wei_string() {
         let mut rm = RouteMetadata::empty();
-        assert!(!rm.has_declared_notional(), "absent must never read as declared");
+        assert!(
+            !rm.has_declared_notional(),
+            "absent must never read as declared"
+        );
         rm.declare_economics(
             Some("0".to_string()),
             EconomicsBasis {
