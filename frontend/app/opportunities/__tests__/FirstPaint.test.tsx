@@ -121,6 +121,24 @@ const liveRow = mapToOmniOpportunity({
   },
 });
 
+// GATE-D (operator order 2026-09-27, verbatim: "APLICA LA D"): the SAME shape as
+// `liveRow` — rejected, priced, ladder closed — but with the arithmetic POSITIVE
+// (net +1.50). This is the shape that must reach the first paint; `liveRow`
+// (net −0.00001) is exactly what the gate now declares instead of painting.
+const profitRow = {
+  ...liveRow,
+  id: "opp-profit-1",
+  rejection_reason: "gas_floor_breach:own_capital",
+  economics: {
+    ...liveRow.economics,
+    gross_profit_usd: 24.54258007,
+    net_profit_usd: 1.5,
+    amount_out_usd: 2711.622017672,
+    roi_pct: 0.055822,
+    target_delta_usd: 48.5,
+  },
+} as ReturnType<typeof mapToOmniOpportunity>;
+
 const render = (opportunities: ReturnType<typeof mapToOmniOpportunity>[]) =>
   renderToStaticMarkup(
     React.createElement(OpportunitiesClient, {
@@ -134,9 +152,9 @@ const render = (opportunities: ReturnType<typeof mapToOmniOpportunity>[]) =>
 
 describe("SSR-FIRSTPAINT-01 — the server snapshot reaches the first paint", () => {
   it("renders the snapshot's cards (and their computed figures) with an empty store", () => {
-    const html = render([liveRow]);
+    const html = render([profitRow]);
     // the card is IN the server markup — not deferred to a mount effect
-    expect(html).toContain('data-opp-id="opp-firstpaint-1"');
+    expect(html).toContain('data-opp-id="opp-profit-1"');
     expect(html).toContain("Capital path (USD)");
     expect(html).toContain("Applied strategy config");
     // …carrying the computed values, not placeholders
@@ -146,6 +164,18 @@ describe("SSR-FIRSTPAINT-01 — the server snapshot reaches the first paint", ()
     // one row per hop, on the first paint
     expect((html.match(/Hop 1\/2/g) ?? []).length).toBe(1);
     expect((html.match(/Hop 2\/2/g) ?? []).length).toBe(1);
+  });
+
+  it("GATE-D: a rejected row priced NEGATIVE is declared with its reason, not painted", () => {
+    const html = render([liveRow]);
+    expect(html).not.toContain('data-opp-id="opp-firstpaint-1"');
+    // the gate says what it did, with the real numbers — never silent
+    expect(html).toContain("Gate D");
+    expect(html).toContain("Gate D activo");
+    expect(html).toContain("non_positive_profit 1");
+    expect(html).toContain("quedan fuera por net ≤ 0");
+    // …and the one-click way to inspect them is on screen
+    expect(html).toContain('data-testid="banner-toggle-show-rejected"');
   });
 
   it("an empty snapshot renders the honest empty grid (never a fabricated card)", () => {
@@ -177,21 +207,23 @@ describe("SHOW-REJECTED-01 — toggle 'Mostrar rechazadas'", () => {
     economics: { computation_status: "error", error_reason: "v3_quote_unavailable" },
   });
 
-  it("renders the filter-bar control and the banner action, OFF by default", () => {
-    const html = render([liveRow, errorRow]);
+  it("renders the control, the window selector and the banner action, OFF by default", () => {
+    const html = render([profitRow, errorRow]);
     expect(html).toContain('data-testid="toggle-show-rejected"');
     expect(html).toContain("Mostrar rechazadas");
     expect(html).toContain('data-testid="banner-toggle-show-rejected"');
+    expect(html).toContain('data-testid="window-seconds"');
     expect(html).toMatch(
       /data-testid="toggle-show-rejected"[^>]{0,240}aria-pressed="false"/,
     );
   });
 
-  it("default OFF: paints the real/live card and COUNTS the diagnostic (no silent drop)", () => {
-    const html = render([liveRow, errorRow]);
-    expect(html).toContain('data-opp-id="opp-firstpaint-1"');
+  it("default OFF: paints the profitable card and DECLARES the unpriced detection", () => {
+    const html = render([profitRow, errorRow]);
+    expect(html).toContain('data-opp-id="opp-profit-1"');
     expect(html).not.toContain('data-opp-id="opp-diagnostic-1"');
-    expect(html).toContain("1 detecciones no se presentan como cards económicas");
-    expect(html).toContain("no se rellenan con supuestos");
+    expect(html).toContain("1 detecciones sin economía computada");
+    expect(html).toContain("v3_quote_unavailable 1");
+    expect(html).toContain("nunca rellenadas con supuestos");
   });
 });

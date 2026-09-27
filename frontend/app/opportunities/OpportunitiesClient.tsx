@@ -66,6 +66,34 @@ const POLL_INTERVAL_MS = 4_000;
  *  (portado del motor de la página exchange, sin cambio de estilo). */
 const VISIBLE_CAP = 60;
 
+/** Declared-reason breakdown for the gate-D banner, e.g.
+ *  "spread_zero_equilibrium 12 · non_positive_profit 3". Pure; counts only. */
+function reasonBreakdown(rows: OmniOpportunity[]): string {
+  const counts = new Map<string, number>();
+  for (const r of rows) {
+    const key = r.rejection_reason ?? "sin_razon";
+    counts.set(key, (counts.get(key) ?? 0) + 1);
+  }
+  return Array.from(counts.entries())
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 4)
+    .map(([k, n]) => `${k} ${n}`)
+    .join(" · ");
+}
+
+/** Human label for the lookback selector. */
+const WINDOW_CHOICES: Array<{ seconds: number; label: string }> = [
+  { seconds: 300, label: "5 min" },
+  { seconds: 900, label: "15 min" },
+  { seconds: 3600, label: "1 h" },
+  { seconds: 21600, label: "6 h" },
+  { seconds: 86400, label: "24 h" },
+];
+
+function windowLabel(seconds: number): string {
+  return WINDOW_CHOICES.find((w) => w.seconds === seconds)?.label ?? `${seconds}s`;
+}
+
 export type OpportunitiesSnapshot = {
   opportunities: OmniOpportunity[];
   serverTime: string | null;
@@ -75,11 +103,16 @@ export type OpportunitiesSnapshot = {
 export default function OpportunitiesClient({
   initialSnapshot,
   initialShowRejected = false,
+  initialWindowSeconds = 300,
 }: {
   initialSnapshot: OpportunitiesSnapshot;
   /** SHOW-REJECTED-01: server-read deep link (`?show_rejected=1`) for the
    *  "Mostrar rechazadas" toggle. Default OFF — the real/live card set. */
   initialShowRejected?: boolean;
+  /** WINDOW-01: server-read deep link (`?window_seconds=3600`) for the live
+   *  lookback, in seconds. Default 300 s — the api-server's own default, so the
+   *  behaviour is unchanged unless the operator widens it. */
+  initialWindowSeconds?: number;
 }) {
   // ─── Omni-Store Integration ───────────────────────────────────────────────
   // Connect WebSocket stream to the store (replaces useOpportunitiesStream)
@@ -89,10 +122,17 @@ export default function OpportunitiesClient({
   // host-only admin session cookie, which would not travel cross-origin.
   const PUBLIC_EDGE_URL = getPublicEdgeBaseUrl();
   const [viableOnly, setViableOnly] = useState(false);
-  
+  // WINDOW-01 (operator order 2026-09-27): the profitable detections are
+  // REJECTED rows, and the canonical one (+1.7712 net) was 936 s old when it
+  // was invisible — outside the 5-minute live window, not hidden by a filter.
+  // The lookback is operator-controlled and rides the snapshot request; the
+  // store's vigency TTL follows the same value.
+  const [windowSeconds, setWindowSeconds] = useState<number>(initialWindowSeconds);
+
   useOmniOpportunities({
     viableOnly,
     initialOpportunities: initialSnapshot.opportunities,
+    maxAgeSeconds: windowSeconds,
   });
 
   // Selectors from Omni-Store (SSOT)
@@ -365,10 +405,12 @@ export default function OpportunitiesClient({
   // figure. OFF ⇒ grid === real/live cards (unchanged behaviour).
   const {
     economic: economicCards,
-    diagnostics: diagnosticRows,
+    inScope,
+    hiddenByGate: hiddenRejectedRows,
+    noData: noDataRows,
     grid: gridRows,
   } = useMemo(() => selectGridRows(filtered, filters.showRejected), [filtered, filters.showRejected]);
-  const diagnosticOnlyCount = diagnosticRows.length;
+  const declaredCount = noDataRows.length;
   const visible = useMemo(() => gridRows.slice(0, cap), [gridRows, cap]);
 
   /** "Mostrar rechazadas" (operator order 2026-09-27). Turning it ON must also
@@ -602,6 +644,22 @@ export default function OpportunitiesClient({
           className="px-2.5 py-1 rounded-lg border border-border bg-muted text-foreground w-28"
           title="Minimum expected yield (USD)"
         />
+        {/* WINDOW-01: lookback del feed (max_age_seconds del api-server, clamp
+            [10s, 24h]). Las ganancias son rechazadas que expiran de la ventana
+            de 5 min: sin ampliarla, la fila +1.7712 no está en el wire. */}
+        <select
+          value={String(windowSeconds)}
+          onChange={(e) => setWindowSeconds(Number(e.target.value))}
+          data-testid="window-seconds"
+          className="px-2.5 py-1 rounded-lg border border-border bg-muted text-foreground"
+          title="Ventana de lookback del feed (max_age_seconds)"
+        >
+          {WINDOW_CHOICES.map((w) => (
+            <option key={w.seconds} value={String(w.seconds)}>
+              ventana {w.label}
+            </option>
+          ))}
+        </select>
         {/* SHOW-REJECTED-01 (operator order 2026-09-27): paint the detections
             that have no closed real/live ladder — each with its own recorded
             reason. It reveals rows; it never substitutes a figure. */}
@@ -704,12 +762,20 @@ export default function OpportunitiesClient({
           Exit animations retained DOM nodes for 250ms every poll; with 200 live
           cards that accumulated nodes/memory. Items still animate on enter via
           motion.div initial/animate. */}
-      {diagnosticOnlyCount > 0 && (
+      {(hiddenRejectedRows.length > 0 || declaredCount > 0) && (
         <div className="mb-3 flex flex-wrap items-center gap-2 rounded-lg border border-border bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
           <span>
-            {filters.showRejected
-              ? `${diagnosticOnlyCount} detecciones rechazadas / sin economía computada se pintan abajo como diagnóstico: cada una con su razón real registrada, ninguna rellenada con supuestos.`
-              : `${diagnosticOnlyCount} detecciones no se presentan como cards económicas porque aún no tienen economics.computed + aritmética cerrada. Permanecen como diagnóstico de fuente; no se rellenan con supuestos.`}
+            <span className="font-semibold text-foreground">Gate D</span>
+            {": se muestran las rechazadas con economía computada y net > 0"}
+            {hiddenRejectedRows.length > 0
+              ? ` · ${hiddenRejectedRows.length} rechazadas CON datos y net ≤ 0 ` +
+                `${filters.showRejected ? "se están mostrando" : "quedan fuera"} ` +
+                `(${reasonBreakdown(hiddenRejectedRows)})`
+              : ""}
+            {declaredCount > 0
+              ? ` · ${declaredCount} detecciones sin economía computada, declaradas y nunca rellenadas con supuestos ` +
+                `(${reasonBreakdown(noDataRows)})`
+              : ""}
           </span>
           <button
             type="button"
@@ -717,8 +783,22 @@ export default function OpportunitiesClient({
             onClick={toggleShowRejected}
             className="px-2 py-1 rounded border border-border bg-background hover:bg-accent transition-colors text-xs font-semibold"
           >
-            {filters.showRejected ? "Ocultar rechazadas" : "Mostrar rechazadas"}
+            {filters.showRejected ? "Aplicar gate D" : "Mostrar rechazadas"}
           </button>
+        </div>
+      )}
+
+      {/* Gate D con la grilla vacía: se dice POR QUÉ, con los números reales,
+          en vez de dejar que el silencio parezca un sistema caído. */}
+      {opportunities.length > 0 && gridRows.length === 0 && (
+        <div className="mb-6 rounded-xl border border-border bg-muted/40 px-4 py-3 text-sm text-muted-foreground">
+          Gate D activo: en la ventana de <span className="text-foreground font-semibold">{windowLabel(windowSeconds)}</span>{" "}
+          no hay filas viables ni rechazadas con net &gt; 0.
+          {hiddenRejectedRows.length > 0
+            ? ` ${hiddenRejectedRows.length} rechazadas con datos quedan fuera por net ≤ 0.`
+            : ""}
+          {declaredCount > 0 ? ` ${declaredCount} detecciones sin economía computada.` : ""}{" "}
+          Usá «Mostrar rechazadas» para inspeccionarlas o ampliá la ventana.
         </div>
       )}
       <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">

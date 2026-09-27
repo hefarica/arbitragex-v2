@@ -418,41 +418,129 @@ export function isRealLiveEconomicCard(opp: OmniOpportunity): boolean {
 }
 
 /**
- * Grid scope for the live card grid — operator order 2026-09-27 (verbatim):
- * "agregar un toggle 'Mostrar rechazadas'".
+ * Does this row carry a COMPUTED economics object with figures on it?
  *
- * `economic`    — rows whose ladder closes on a real notional: the real/live
- *                 trading cards (`isRealLiveEconomicCard`).
- * `diagnostics` — every other detection of the SAME snapshot: gate rejections
- *                 whose producer never priced them (e.g. `v3_quote_unavailable`,
- *                 `single_pool_no_spread`) and rows whose economics are
- *                 `partial`/`error`. They are neither hidden nor rewritten and
- *                 never filled with assumptions — the toggle only decides
- *                 whether they are PAINTED with their own reason instead of
- *                 being summarised as a count.
+ * This is what separates a rejection the searcher actually PRICED (its gross /
+ * cost / net are real numbers, rejection included) from a detection whose
+ * producer never produced a number at all (`error` / `partial`, e.g.
+ * `v3_quote_unavailable`). Operator order 2026-09-27 (verbatim): "las mostrar
+ * rechazadas las muestra SIN DATOS > 0, esas [con datos] son las que deben
+ * mostrarse" — the data-carrying rejections are the ones to paint.
+ */
+export function hasComputedFigures(opp: OmniOpportunity): boolean {
+  const e = opp.economics;
+  if (e == null || e.computation_status !== "computed") return false;
+  return (
+    num(e.amount_in_usd) != null ||
+    num(e.gross_profit_usd) != null ||
+    num(e.total_cost_usd) != null ||
+    num(e.net_profit_usd) != null
+  );
+}
+
+/** Net for the profit filter: canonical economics first, then the wire pair,
+ *  then the SIM triple — the same precedence every card cell already uses. */
+export function netOf(opp: OmniOpportunity): number | null {
+  const e = opp.economics;
+  return (
+    num(e?.net_profit_usd) ??
+    num(opp.net_expected_profit_usd) ??
+    num(opp.simulated_net_profit_usd)
+  );
+}
+
+/** A row the pipeline itself marked as a rejection (either lifecycle status or
+ *  an explicit reason — the same union the api-server's paper_status uses). */
+export function isRejectedRow(opp: OmniOpportunity): boolean {
+  return (
+    opp.status === "rejected" ||
+    opp.status === "failed" ||
+    (opp.rejection_reason != null && opp.rejection_reason !== "")
+  );
+}
+
+/**
+ * OPERATOR ORDER 2026-09-27 (verbatim): "APLICA LA D" —
  *
- * OFF (default) ⇒ the grid is exactly the real/live card set, i.e. the previous
- * behaviour, byte-for-byte. Pure: no I/O, no mutation, input order preserved
- * (economics first, then diagnostics).
+ *   WHERE (rejection_reason IS NULL
+ *          OR (computation_status = 'computed' AND net_amount > 0))
+ *
+ * A rejection is welcome on the grid when the searcher actually PRICED it and
+ * the arithmetic came out POSITIVE (the `gas_floor_breach:own_capital` row with
+ * net +1.7712 is the canonical case). A rejection priced NEGATIVE (e.g.
+ * `non_positive_profit` at −68.08) or never priced at all (`error`:
+ * `v3_quote_unavailable`) is not a gain and stays out of the default view —
+ * still counted, still listed in the audit trail, one toggle away.
+ *
+ * Non-rejected rows are always in scope (the clause's `rejection_reason IS
+ * NULL` arm); this function never invents figures — it only classifies.
+ */
+export function inDefaultScope(opp: OmniOpportunity): boolean {
+  if (!isRejectedRow(opp)) return true;
+  if (!hasComputedFigures(opp)) return false;
+  const net = netOf(opp);
+  return net != null && net > 0;
+}
+
+/**
+ * Grid scope for the live card grid — operator orders 2026-09-27:
+ *   · "agregar un toggle 'Mostrar rechazadas'"
+ *   · "las mostrar rechazadas las muestra sin datos > 0, esas son las que deben
+ *     mostrarse"
+ *   · "APLICA LA D" (rejected rows only when computed AND net > 0)
+ *
+ * Buckets:
+ *   `economic`  — ladder closed on a real notional: real/live trading cards.
+ *   `inScope`   — the DEFAULT grid: every non-rejected row, plus the rejected
+ *                 rows with computed POSITIVE economics (gate D).
+ *   `withData`  — rejected rows the searcher priced but that the default scope
+ *                 leaves out (negative net) — revealed by the toggle.
+ *   `noData`    — detections with no computed figure at all (`error`/`partial`).
+ *                 NEVER painted as economic cards, never filled with an
+ *                 assumption; always DECLARED (counted, with reason, in the
+ *                 audit trail).
+ *
+ * OFF (default) ⇒ grid === the D scope. ON ⇒ every row that carries data
+ * (cards first), i.e. the pre-D view.
+ *
+ * Pure: no I/O, no mutation, input order preserved inside each bucket.
  */
 export function selectGridRows(
   filtered: OmniOpportunity[],
   showRejected: boolean,
 ): {
   economic: OmniOpportunity[];
-  diagnostics: OmniOpportunity[];
+  inScope: OmniOpportunity[];
+  withData: OmniOpportunity[];
+  hiddenByGate: OmniOpportunity[];
+  noData: OmniOpportunity[];
   grid: OmniOpportunity[];
 } {
   const economic: OmniOpportunity[] = [];
-  const diagnostics: OmniOpportunity[] = [];
+  const inScope: OmniOpportunity[] = [];
+  const withData: OmniOpportunity[] = [];
+  const hiddenByGate: OmniOpportunity[] = [];
+  const noData: OmniOpportunity[] = [];
   for (const opp of filtered) {
-    if (isRealLiveEconomicCard(opp)) economic.push(opp);
-    else diagnostics.push(opp);
+    const isCard = isRealLiveEconomicCard(opp);
+    const hasData = isCard || hasComputedFigures(opp);
+    const inD = inDefaultScope(opp);
+    if (isCard) economic.push(opp);
+    if (hasData) withData.push(opp);
+    else noData.push(opp);
+    if (inD) inScope.push(opp);
+    else if (hasData) hiddenByGate.push(opp);
   }
   return {
     economic,
-    diagnostics,
-    grid: showRejected ? [...economic, ...diagnostics] : economic,
+    inScope,
+    withData,
+    hiddenByGate,
+    noData,
+    // OFF ⇒ gate D (viable + rejected with computed net > 0).
+    // ON  ⇒ every row that carries data (the pre-D view); a row with NO figure
+    //       is never painted on either setting — it stays declared.
+    grid: showRejected ? withData : inScope,
   };
 }
 

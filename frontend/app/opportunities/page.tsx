@@ -8,12 +8,17 @@ import { mapToOmniOpportunity } from "@/lib/store/types";
 
 export const dynamic = "force-dynamic";
 
-async function getInitialOpportunities(): Promise<OpportunitiesSnapshot> {
+async function getInitialOpportunities(windowSeconds: number): Promise<OpportunitiesSnapshot> {
   const EDGE_URL = process.env.INTERNAL_EDGE_URL || getApiBaseUrl();
   try {
-    const res = await fetch(`${EDGE_URL}/api/opportunities/live?order=profit_usd`, {
-      cache: "no-store",
-    });
+    // WINDOW-01: the lookback rides the snapshot (api-server clamps it to
+    // [10 s, 86400 s]). Default 300 s = previous behaviour.
+    const res = await fetch(
+      `${EDGE_URL}/api/opportunities/live?order=profit_usd&max_age_seconds=${windowSeconds}`,
+      {
+        cache: "no-store",
+      },
+    );
 
     if (!res.ok) {
       return {
@@ -51,21 +56,28 @@ export default async function OpportunitiesPage({
    * the "Mostrar rechazadas" toggle in its ON state. Read on the SERVER and
    * handed to the client as its initial state, so the first paint is identical
    * on both sides (R1) and the ON rendering is verifiable without a click.
-   * Absent/other value ⇒ OFF, i.e. the real/live card set only.
+   * Absent/other value ⇒ OFF, i.e. the gate-D scope (viable + rejected with
+   * computed net > 0).
+   *
+   * WINDOW-01: `?window_seconds=3600` deep-links the live lookback.
    */
-  searchParams?: { show_rejected?: string | string[] };
+  searchParams?: { show_rejected?: string | string[]; window_seconds?: string | string[] };
 }) {
-  const initialSnapshot = await getInitialOpportunities();
-  const showRejected =
-    (Array.isArray(searchParams?.show_rejected)
-      ? searchParams?.show_rejected[0]
-      : searchParams?.show_rejected) === "1";
+  const first = (v: string | string[] | undefined) => (Array.isArray(v) ? v[0] : v);
+  const showRejected = first(searchParams?.show_rejected) === "1";
+  const requested = Number(first(searchParams?.window_seconds) ?? 300);
+  const windowSeconds = Number.isFinite(requested)
+    ? Math.max(10, Math.min(86_400, Math.trunc(requested)))
+    : 300;
+
+  const initialSnapshot = await getInitialOpportunities(windowSeconds);
 
   return (
     <div className="min-h-screen">
       <OpportunitiesClient
         initialSnapshot={initialSnapshot}
         initialShowRejected={showRejected}
+        initialWindowSeconds={windowSeconds}
       />
     </div>
   );

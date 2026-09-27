@@ -60,6 +60,15 @@ const OPP_TTL_MS = 5 * 60_000;
 interface UseOmniOpportunitiesOptions {
   viableOnly?: boolean;
   initialOpportunities?: OmniOpportunity[];
+  /**
+   * Server lookback for the snapshot reconcile, in seconds (WINDOW-01, operator
+   * order 2026-09-27: the profitable detections are rejected rows that expire
+   * out of the 5-minute live window). Forwarded to the api-server as
+   * `max_age_seconds` (it clamps to [10, 86400]) and used as the local vigency
+   * TTL so a wider window is not immediately pruned away by the store.
+   * Default 300 s — the previous behaviour, unchanged.
+   */
+  maxAgeSeconds?: number;
 }
 
 // =============================================================================
@@ -84,6 +93,7 @@ interface UseOmniOpportunitiesOptions {
 export function useOmniOpportunities({
   viableOnly = false,
   initialOpportunities = [],
+  maxAgeSeconds = OPP_TTL_MS / 1000,
 }: UseOmniOpportunitiesOptions) {
   // Store actions (stable references)
   const setOpportunities = useOmniStore((state) => state.setOpportunities);
@@ -96,6 +106,9 @@ export function useOmniOpportunities({
   const usingPollingRef = useRef(false);
   const pollingTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const viableOnlyRef = useRef(viableOnly);
+  // WINDOW-01: the live lookback lives in a ref so the ≤5s reconcile loop reads
+  // the CURRENT window without being torn down and rebuilt on every change.
+  const maxAgeRef = useRef(maxAgeSeconds);
   const initializedRef = useRef(false);
   // MEM-RENDER-01: WS ingest buffer — upsert by id, flushed on WS_FLUSH_MS.
   // (Same per-render-allocation parity as the old `useRef(new Map())`.)
@@ -105,6 +118,12 @@ export function useOmniOpportunities({
   useEffect(() => {
     viableOnlyRef.current = viableOnly;
   }, [viableOnly]);
+
+  // WINDOW-01: keep the lookback ref in sync (and widen the local vigency TTL
+  // with it, so the snapshot's older rows survive the next prune).
+  useEffect(() => {
+    maxAgeRef.current = maxAgeSeconds;
+  }, [maxAgeSeconds]);
 
   // Initialize store with initial opportunities (once)
   useEffect(() => {
@@ -125,8 +144,10 @@ export function useOmniOpportunities({
       const viable = viableOnlyRef.current;
       // FE-EDGE-DIRECT-01: snapshot reconcile delivered edge-direct — the cards
       // feed has ONE origin (public edge), no Next double-hop proxy.
+      // WINDOW-01: the lookback rides the same request (api-server clamps it).
+      const maxAge = maxAgeRef.current;
       const res = await fetch(
-        `${getPublicEdgeBaseUrl()}/api/opportunities/live?viable_only=${viable}&limit=50`,
+        `${getPublicEdgeBaseUrl()}/api/opportunities/live?viable_only=${viable}&limit=50&max_age_seconds=${maxAge}`,
         {
           headers: { accept: "application/json" },
           signal: AbortSignal.timeout(POLL_INTERVAL_MS),
@@ -145,7 +166,9 @@ export function useOmniOpportunities({
       setWindowTotal(parseWindowTotal(data));
       // MEM-RENDER-01: vigency applies on every path, not only the WS flush —
       // a stale row inside the server snapshot must not resurrect a card.
-      pruneStale(OPP_TTL_MS);
+      // WINDOW-01: the TTL IS the requested lookback, so widening the window is
+      // not undone by the very next prune (pruning is by detection time).
+      pruneStale(maxAge * 1000);
     } catch {
       // Swallow — R8: the status badge (LIVE/POLLING/STALE) owns surfacing.
     }
@@ -193,7 +216,9 @@ export function useOmniOpportunities({
       const batch = buffer.flush();
       if (batch.length === 0) return;
       setOpportunities(batch);
-      pruneStale(OPP_TTL_MS);
+      // WINDOW-01: same TTL as the reconcile — the 1 Hz flush must not evict the
+      // wider window's rows a second after the snapshot delivered them.
+      pruneStale(maxAgeRef.current * 1000);
     };
     const flushTimer = setInterval(flushPending, WS_FLUSH_MS);
 
