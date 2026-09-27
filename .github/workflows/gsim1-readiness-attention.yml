@@ -1,0 +1,124 @@
+name: G-SIM-1 readiness — operator attention (rotation)
+
+# G-SIM-1 freshness + failure rotation (G-SIM1-AUTOREFRESH, 2026-09-26).
+#
+# WHY: the strict 30-day freshness rule silently turned the `second_signoff`
+# row into a red "stale (>30d)" with no owner and no prompt, and a
+# `variance_benchmark` row recorded as `failed` was reported as "missing
+# evidence". Both are the same class of failure: a red gate with no actionable
+# notice. This job reads the G-SIM-1 registry slice (READ-ONLY) every day and
+# publishes ONE pinned issue carrying, per unmet item, the derived reason and
+# the exact copy-pasteable operator action. When nothing is unmet the issue is
+# closed — the absence of the issue is the signal that the checklist is fresh.
+#
+# HONESTY (RULE 00 / R8): every token of the issue body is derived from the
+# registry rows + the clock by scripts/ci/gsim1_evidence_state.py. The job never
+# edits readiness_evidence (it cannot: no write path) and never claims an item
+# is satisfied.
+#
+# This job is deliberately GREEN when the gate is red: the purpose is the
+# actionable prompt, and a permanently-red daily job is a job nobody reads.
+
+on:
+  schedule:
+    - cron: '41 6 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: gsim1-readiness-attention
+  cancel-in-progress: false
+
+jobs:
+  attention:
+    name: read G-SIM-1 registry slice → actionable operator issue
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+        with:
+          persist-credentials: false
+
+      - name: Setup SSH
+        env:
+          VPS_KEY: ${{ secrets.VPS_SSH_KEY }}
+          VPS_HOST: ${{ secrets.VPS_SSH_HOST }}
+          VPS_PORT: ${{ secrets.VPS_PORT || '22' }}
+        run: |
+          set -euo pipefail
+          test -n "$VPS_KEY" && test -n "$VPS_HOST"
+          install -m 700 -d ~/.ssh
+          umask 077
+          printf '%s\n' "$VPS_KEY" > ~/.ssh/deploy_key
+          ssh-keyscan -T 10 -p "$VPS_PORT" -H "$VPS_HOST" > ~/.ssh/known_hosts
+          test -s ~/.ssh/known_hosts
+
+      - name: Read the G-SIM-1 registry rows (read-only)
+        env:
+          VPS_HOST: ${{ secrets.VPS_SSH_HOST }}
+          VPS_USER: ${{ secrets.VPS_SSH_USER }}
+          VPS_PORT: ${{ secrets.VPS_PORT || '22' }}
+        run: |
+          set -euo pipefail
+          ssh -i ~/.ssh/deploy_key -p "$VPS_PORT" -o BatchMode=yes -o IdentitiesOnly=yes \
+            "$VPS_USER@$VPS_HOST" \
+            'docker exec -e PGTZ=UTC arbitragex-v2-postgres-1 psql -U postgres -d arbitragex -t -A -c "SELECT row_to_json(t) FROM (SELECT item_key, status, evidence_ref, detail, verified_at FROM readiness_evidence WHERE gate_id = '"'"'G-SIM-1'"'"') t;"' \
+            > gsim1-rows.jsonl
+          test -s gsim1-rows.jsonl || { echo "::error::empty registry read-back — cannot interpret the gate state"; exit 1; }
+          wc -l gsim1-rows.jsonl
+
+      - name: Interpret the gate state (derived-only)
+        id: state
+        run: |
+          set -euo pipefail
+          python3 scripts/ci/gsim1_evidence_state.py attention \
+            --rows gsim1-rows.jsonl \
+            --now "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            --warn-days 7 \
+            --out attention.md \
+            --github-output "$GITHUB_OUTPUT"
+
+      - name: Publish the report as the job summary
+        if: always()
+        run: cat attention.md >> "$GITHUB_STEP_SUMMARY" 2>/dev/null || true
+
+      - name: Open / refresh the actionable operator issue
+        if: steps.state.outputs.needs_attention == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          TITLE="G-SIM-1 readiness: unmet checklist items (auto)"
+          NUM=$(gh issue list --state open --limit 100 --json number,title \
+                  --jq ".[] | select(.title == \"$TITLE\") | .number" | head -n 1)
+          if [ -n "$NUM" ]; then
+            gh issue edit "$NUM" --body-file attention.md
+            echo "refreshed issue #$NUM"
+          else
+            gh issue create --title "$TITLE" --body-file attention.md
+          fi
+
+      - name: Close the issue when nothing is unmet
+        if: steps.state.outputs.needs_attention != 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          TITLE="G-SIM-1 readiness: unmet checklist items (auto)"
+          NUM=$(gh issue list --state open --limit 100 --json number,title \
+                  --jq ".[] | select(.title == \"$TITLE\") | .number" | head -n 1)
+          if [ -n "$NUM" ]; then
+            gh issue close "$NUM" --comment "All G-SIM-1 checklist items are evidenced and fresh (verified by $(date -u +%Y-%m-%dT%H:%M:%SZ))."
+            echo "closed issue #$NUM"
+          else
+            echo "nothing unmet and no open issue"
+          fi
+
+      - name: Cleanup SSH key
+        if: always()
+        run: rm -f ~/.ssh/deploy_key
