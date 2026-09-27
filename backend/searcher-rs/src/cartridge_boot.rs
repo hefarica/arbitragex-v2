@@ -2535,6 +2535,23 @@ pub async fn active_evaluate_and_emit(
     );
 }
 
+/// REASON-TAG-NOT-DEBUG-01 — the stable snake_case label for a spine rejection.
+///
+/// `RejectReason::tag()` exists for exactly this purpose; its own doc says it
+/// "Avoids leaking enum variant Debug formatting (which can change across Rust
+/// versions)" (`prioritization-spine/src/decision.rs`). Both rejection sites in
+/// this file formatted the reason with `{:?}` instead, so the wire carried the
+/// Rust VARIANT NAME in PascalCase.
+///
+/// MEASURED (VPS PostgreSQL, 2026-09-27, 87 697 rows / 30 min): `NegativeNetProfit`
+/// on 14 rows, while the code's own mapping defines `negative_net_profit` (and the
+/// other six gate reasons are snake_case). A consumer matching the documented tag
+/// silently missed those rows, and the reason histogram split one condition into
+/// two buckets. Every rejection label in this file goes through here now.
+fn reject_reason_label(reason: &prioritization_spine::decision::RejectReason) -> String {
+    reason.tag().to_string()
+}
+
 /// Process a cartridge-generated candidate through the full evaluation + emission pipeline.
 /// Mirrors `Orchestrator::process_candidate` but accessible from cartridge_boot context.
 /// `price_snapshot` is the live Redis price map fetched once per intent by the caller.
@@ -2642,7 +2659,7 @@ async fn process_cartridge_candidate(
         } => {
             match rejection {
                 Some(reject_reason) => {
-                    let reason = format!("{:?}", reject_reason);
+                    let reason = reject_reason_label(&reject_reason);
                     let mut opp = sc.opportunity.clone();
                     opp.rejection_reason = Some(reason.clone());
                     emitter
@@ -2681,7 +2698,7 @@ async fn process_cartridge_candidate(
         ConfigGateOutcome::StrategyConfigGateBlocked {
             reason: reject_reason,
         } => {
-            let reason = format!("StrategyConfigGateBlocked:{:?}", reject_reason);
+            let reason = format!("StrategyConfigGateBlocked:{}", reject_reason_label(&reject_reason));
             let mut opp = sc.opportunity.clone();
             opp.rejection_reason = Some(reason.clone());
             emitter
@@ -2773,6 +2790,35 @@ pub async fn publish_cartridge_registry(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// REASON-TAG-NOT-DEBUG-01. El defecto medido: la fila viva llevaba
+    /// `NegativeNetProfit` (Debug del variante) mientras el propio codigo define
+    /// `negative_net_profit` como tag estable.
+    #[test]
+    fn reject_reason_label_is_the_stable_snake_case_tag() {
+        use prioritization_spine::decision::RejectReason as R;
+        assert_eq!(
+            reject_reason_label(&R::NegativeNetProfit),
+            "negative_net_profit"
+        );
+        assert_eq!(reject_reason_label(&R::LowLiquidity), "low_liquidity");
+        assert_eq!(
+            reject_reason_label(&R::ExcessiveSlippage),
+            "excessive_slippage"
+        );
+    }
+
+    #[test]
+    fn reject_reason_label_never_leaks_debug_formatting() {
+        use prioritization_spine::decision::RejectReason as R;
+        let label = reject_reason_label(&R::NegativeNetProfit);
+        // La firma exacta del defecto: `{:?}` daba el nombre del variante.
+        assert_ne!(label, format!("{:?}", R::NegativeNetProfit));
+        assert!(
+            !label.chars().any(|c| c.is_ascii_uppercase()),
+            "el label debe ser snake_case, llego: {label}"
+        );
+    }
 
     #[test]
     fn parse_defaults_to_off_for_unset_or_unknown() {
