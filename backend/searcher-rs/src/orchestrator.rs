@@ -1446,6 +1446,8 @@ impl Orchestrator {
                 leg_amounts_in: None,
                 leg_amounts_out: None,
                 leg_zero_for_one: None,
+                economics_amount_in_wei: None,
+                economics_basis: None,
             };
             let from_plan = crate::persistence::build_route_metadata_from_plan(&sc.route_plan);
             // Prefer the source with the longer (more complete) token path.

@@ -72,9 +72,74 @@
  */
 
 import type { OmniOpportunity, SimulatedCostBreakdown } from "@/lib/store/types";
+import { routeTokenDecimals } from "@/lib/store/types";
+import { readEconomicsDeclaration, type FigureBasis } from "@/lib/opportunity-declaration";
 
 /** Same rounding as the display: half a cent (cells render 2 decimals). */
 export const LEDGER_TOLERANCE_USD = 0.005;
+
+/**
+ * ECON-DECLARE-01 — the notional a producer DECLARED for this row's economics.
+ *
+ * Until this existed the ladder band could only say *"sin notional"*: the wire
+ * carried `expected_profit_usd` with no statement of the size it was computed at,
+ * so a renderer had to treat the figure as size-less — which is why the operator
+ * saw values that "no se ven, no están declarados".
+ *
+ * `usd` is null whenever the declared notional cannot be priced (no live price,
+ * or the token's decimals are unknown). That is the honest state: the exact wei
+ * is still declared and displayed; only the USD twin is withheld (R8 — never
+ * priced with a guessed decimals value).
+ */
+export interface LedgerNotional {
+  /** Exact wei, verbatim from the producer's declaration. */
+  wei: string;
+  /** Priced USD twin, or null when neither price nor decimals are known. */
+  usd: number | null;
+  /** The declared basis word, or null when the producer declared none. */
+  basis: FigureBasis | null;
+}
+
+/**
+ * Price the declared notional against the live PriceBus snapshot.
+ *
+ * BigInt integer/fraction split: a `Number(wei)` on an 18-decimal amount silently
+ * drops low digits (f64 carries 53 bits) and the USD twin would inherit the
+ * error. Absent decimals or price ⇒ null, never a guessed 18 (that guess is the
+ * HOPS-UNITS-01 defect: a USDC route read at 18 decimals reported 1e12 USDC).
+ */
+function declaredNotionalUsd(opp: OmniOpportunity, wei: string): number | null {
+  const rm = opp.route_metadata;
+  if (rm == null) return null;
+  const decimals = routeTokenDecimals(rm, opp.token_in);
+  if (decimals == null) return null;
+  const symbol = (
+    opp.token_in_info?.symbol ?? opp.token_in_info?.registry_symbol
+  )?.toUpperCase();
+  const price = symbol ? opp.token_prices_usd?.[symbol] : undefined;
+  if (price == null || !Number.isFinite(price) || price <= 0) return null;
+  let value: bigint;
+  try {
+    value = BigInt(wei);
+  } catch {
+    return null;
+  }
+  const base = 10n ** BigInt(decimals);
+  const units = Number(value / base) + Number(value % base) / Number(base);
+  const usd = units * price;
+  return Number.isFinite(usd) ? usd : null;
+}
+
+/** The producer's declaration, projected onto the ladder's own vocabulary. */
+function declaredNotional(opp: OmniOpportunity): LedgerNotional | null {
+  const decl = readEconomicsDeclaration(opp.route_metadata);
+  if (decl.notionalWei == null) return null;
+  return {
+    wei: decl.notionalWei,
+    usd: declaredNotionalUsd(opp, decl.notionalWei),
+    basis: decl.gross ?? decl.net ?? decl.amount ?? null,
+  };
+}
 
 /**
  * Twin of the SEARCHER'S OWN gross-vs-principal sanity gate — not a new
@@ -126,6 +191,13 @@ export interface LedgerView {
   quiet: boolean;
   /** Machine reason, rendered verbatim in every suppressed cell's `title`. */
   reason: string | null;
+  /**
+   * ECON-DECLARE-01: the notional the producer DECLARED for this row's economics,
+   * or null when no producer declared one. The ladder band renders this so the
+   * card states the size its figures belong to instead of the blanket
+   * "sin notional" it could only say while the wire carried no declaration.
+   */
+  notional: LedgerNotional | null;
 }
 
 const DASH_REASON_PREFIX = "CARDS-NOTIONAL-01";
@@ -135,7 +207,7 @@ function num(v: number | null | undefined): number | null {
   return typeof v === "number" && Number.isFinite(v) ? v : null;
 }
 
-function quiet(reason: string): LedgerView {
+function quiet(reason: string, notional: LedgerNotional | null = null): LedgerView {
   return {
     basis: "none",
     gross_usd: null,
@@ -145,6 +217,7 @@ function quiet(reason: string): LedgerView {
     cost_rows: [],
     quiet: true,
     reason: `${DASH_REASON_PREFIX}: ${reason}`,
+    notional,
   };
 }
 
@@ -238,6 +311,9 @@ export function buildLedger(opp: OmniOpportunity): LedgerView {
   const simNet = num(opp.simulated_net_profit_usd);
   const simCostsTotal = num(opp.simulated_costs_total_usd);
   const principal = num(opp.simulated_amount_in_usd);
+  // ECON-DECLARE-01: read the producer's own statement of which size its figures
+  // belong to. Present on the row only when a producer declared one.
+  const declared = declaredNotional(opp);
 
   // ── Basis 1: the SIM triple ───────────────────────────────────────────────
   // Preferred because it is the only triple the wire PROVES to be one
@@ -276,6 +352,7 @@ export function buildLedger(opp: OmniOpportunity): LedgerView {
           cost_rows,
           quiet: false,
           reason: null,
+          notional: declared,
         };
       }
       simReject = "simulated cost components do not sum to the simulated total";
@@ -305,6 +382,10 @@ export function buildLedger(opp: OmniOpportunity): LedgerView {
           `${DASH_REASON_PREFIX}: ladder shown on the searcher's own (gross, net) pair ` +
           `— principal not rendered (no notional published for it)` +
           (simReject != null ? `; simulated ladder suppressed: ${simReject}` : ""),
+        // ECON-DECLARE-01: even on the canonical basis the producer's declared
+        // notional is stated — it is the size those two figures were computed
+        // at, and saying so is exactly what turns "sin notional" into a value.
+        notional: declared,
       };
     }
   }
@@ -312,6 +393,7 @@ export function buildLedger(opp: OmniOpportunity): LedgerView {
   return quiet(
     simReject ??
       "no closed (gross, net, cost) triple on the wire for this row",
+    declared,
   );
 }
 

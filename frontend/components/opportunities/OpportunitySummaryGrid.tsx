@@ -43,6 +43,17 @@ import {
   buildLedger,
   grossIsAttributableToPrincipal,
 } from "@/lib/opportunity-ledger";
+// ECON-DECLARE-01 — the notional-basis declaration the producer writes, and the
+// label every economic cell must carry so a value is never read as one ladder
+// with a figure of a different provenance.
+import {
+  BASIS_LABEL,
+  figureBasis,
+  declarationOf,
+  formatWeiNotional,
+  undeclaredReason,
+  type FigureBasis,
+} from "@/lib/opportunity-declaration";
 
 const DASH = "—";
 export const NOT_EMITTED = "no emitido";
@@ -79,10 +90,17 @@ function usd(v: number, digits = 2): string {
   return `${sign}$${abs.toFixed(digits)}`;
 }
 
+/**
+ * ECON-DECLARE-01 — exact wei → a readable notional. Shared with the card's
+ * ladder band so one notional never renders two ways.
+ */
+const formatWei = formatWeiNotional;
+
 function summaryCells(opp: OmniOpportunity): Array<{
   label: string;
   value: string;
   title: string;
+  basis: FigureBasis;
 }> {
   // CARDS-NOTIONAL-01 (2026-09-26): this grid is where the two figures that
   // contradict each other on the live card are painted side by side —
@@ -139,22 +157,80 @@ function summaryCells(opp: OmniOpportunity): Array<{
     label: string,
     v: string | null,
     title: string,
-  ): { label: string; value: string; title: string } =>
+    basis: FigureBasis = "wire",
+  ): { label: string; value: string; title: string; basis: FigureBasis } =>
     v != null
-      ? { label, value: v, title }
+      ? { label, value: v, title, basis }
       : {
           label,
           value: DASH,
+          basis,
           title:
             opp.rejection_reason != null
               ? `${title} · no computado: ${opp.rejection_reason} (R8)`
               : title,
         };
+
+  // ECON-DECLARE-01: the bases are read ONCE per row so every cell that belongs
+  // to the same producer carries the same label.
+  const basisGross = figureBasis(opp, "gross");
+  const basisNet = opp.net_expected_profit_usd != null ? figureBasis(opp, "net") : "sim";
+  const basisAmount = figureBasis(opp, "amount");
+  const declaration = declarationOf(opp);
+
+  // ECON-DECLARE-01 — the `in` cell.
+  //
+  // CARDS-NOTIONAL-01 made this cell go QUIET whenever the shown gross could not
+  // be attributed to `simulated_amount_in_usd`, so that `IN $0.00` could never sit
+  // beside `GROSS $1.47M`. That is correct about the ARITHMETIC and wrong about
+  // the DISPLAY: on the live feed it hid a value the wire carried (7 of the 18
+  // rows with a gross, measured 2026-09-27T02:06Z). The declaration is what lets
+  // both survive: the value is shown and its basis is stated, so a reader sees
+  // two figures of two different producers instead of one broken ladder.
+  //
+  // Precedence: the SIM notional (the only priced one) → the producer's DECLARED
+  // notional → the row's own amount (exact wei, never unit-guessed).
+  const inValue: string | null =
+    opp.simulated_amount_in_usd != null
+      ? usd(opp.simulated_amount_in_usd)
+      : declaration.notionalWei != null
+        ? `${formatWei(declaration.notionalWei)} wei`
+        : opp.amount_in_wei != null && opp.amount_in_wei !== "0"
+          ? `${formatWei(opp.amount_in_wei)} wei`
+          : null;
+  const inBasis: FigureBasis =
+    opp.simulated_amount_in_usd != null
+      ? "sim"
+      : declaration.notionalWei != null
+        ? basisAmount
+        : "undeclared";
+  const inMisattributed =
+    opp.simulated_amount_in_usd != null &&
+    !grossIsAttributableToPrincipal(opp.expected_profit_usd, opp.simulated_amount_in_usd);
+  const inTitle = [
+    opp.simulated_amount_in_usd != null
+      ? `amount_in_wei=${opp.amount_in_wei ?? "no emitido"} valorado al precio vivo — notional del ladder SIM`
+      : declaration.notionalWei != null
+        ? `notional DECLARADO por el productor (route_metadata.economics_amount_in_wei=${declaration.notionalWei}) — es el tamaño al que pertenecen las cifras económicas de esta fila`
+        : opp.amount_in_wei != null
+          ? `amount_in_wei=${opp.amount_in_wei} — el wire trae el monto en wei; sin precio no hay notional en USD (R8)`
+          : `amount_in_wei no emitido y ningún productor declaró notional (R8)`,
+    inMisattributed
+      ? `CARDS-NOTIONAL-01: el bruto mostrado (${opp.expected_profit_usd}) NO es atribuible a este notional (${opp.simulated_amount_in_usd}) — se midieron en tamaños distintos; ambos se muestran, cada uno con su basis`
+      : null,
+    declaration.declared
+      ? `basis declarada por el productor: gross=${BASIS_LABEL[basisGross]} net=${BASIS_LABEL[basisNet]} amount=${BASIS_LABEL[basisAmount]}`
+      : undeclaredReason("route_metadata.economics_basis"),
+  ]
+    .filter((s): s is string => s != null)
+    .join(" · ");
+
   return [
     {
       label: "ruta",
       value: opp.dex_a ? (opp.dex_b ? `${opp.dex_a} → ${opp.dex_b}` : opp.dex_a) : DASH,
       title: "dex_a → dex_b del wire",
+      basis: "wire",
     },
     {
       label: "strategy",
@@ -163,16 +239,16 @@ function summaryCells(opp: OmniOpportunity): Array<{
         opp.strategy_kind == null
           ? "strategy_kind ausente en el payload (§28)"
           : "strategy_kind del wire",
+      basis: "wire",
     },
     {
-      // CARDS-QUIET-01: same precedence rule as `cell` — a computed detector_id
-      // wins; absent goes QUIET (the "no emitido" marker moves to the title).
       label: "detector",
       value: opp.detector_id ?? DASH,
       title:
         opp.detector_id == null
           ? "detector_id ausente en el payload — no emitido (nivel-(b) resuelto, R8)"
           : "detector_id del wire",
+      basis: "wire",
     },
     {
       label: "hops",
@@ -181,47 +257,19 @@ function summaryCells(opp: OmniOpportunity): Array<{
         opp.hop_count == null
           ? "sin route_metadata persistida — hop_count null (FE-0028), jamás el conteo sintético §29"
           : "hop_count = route_metadata.dex_adapters.length",
+      basis: "wire",
     },
-    cell(
-      "in",
-      // CARDS-NOTIONAL-01: a notional is published only when the gross shown
-      // beside it can be attributed to it — same arithmetic, one size, checked
-      // with the searcher's OWN `SANITY_PROFIT_MULT_OF_CAP` (5×) bound rather
-      // than a threshold re-invented here. On the live feed that bound is what
-      // separates a legitimate «in $2688.25 / Gross $52.14» pair from the
-      // `in $0.00` beside `Gross $1.47M` the operator photographed; the latter
-      // renders the dash with the machine reason in the title.
-      grossIsAttributableToPrincipal(
-        opp.expected_profit_usd,
-        opp.simulated_amount_in_usd,
-      ) && opp.simulated_amount_in_usd != null
-        ? usd(opp.simulated_amount_in_usd)
-        : null,
-      opp.simulated_amount_in_usd == null
-        ? `amount_in_wei=${opp.amount_in_wei ?? "no emitido"} — sin precio no hay notional en USD (R8)`
-        : grossIsAttributableToPrincipal(
-              opp.expected_profit_usd,
-              opp.simulated_amount_in_usd,
-            )
-          ? `amount_in_wei=${opp.amount_in_wei ?? "no emitido"} valorado al precio vivo — notional del ladder SIM (basis=${ledger.basis})`
-          : `CARDS-NOTIONAL-01: el bruto mostrado (${opp.expected_profit_usd}) no es atribuible a este notional (${opp.simulated_amount_in_usd}) — se midieron en tamaños distintos, no se publica principal`,
-    ),
+    cell("in", inValue, inTitle, inBasis),
     cell(
       "Gross",
       opp.expected_profit_usd != null ? usd(opp.expected_profit_usd) : null,
       ledger.basis === "simulated"
         ? "simulated_gross_usd (bruto del ladder SIM, mismo notional que `in`)"
-        : "expected_profit_usd — bruto del searcher (dex_engine fast-filter) en SU propio tamaño; sin notional en el wire (CARDS-NOTIONAL-01)",
+        : "expected_profit_usd — bruto del searcher (dex_engine fast-filter) en SU propio tamaño; el basis declara a qué productor pertenece",
+      basisGross,
     ),
     cell(
       "Net",
-      // CARDS-PRECEDENCE-02: the CARD HEADLINE already renders
-      // `net_expected_profit_usd ?? simulated_net_profit_usd` (canonical spine
-      // net, else the TS forward-sim net). This cell used only the canonical
-      // field, so a row whose ONLY computed net is the simulated one rendered a
-      // quiet dash here while the same card showed `~$x SIM` two rows above —
-      // one field, two precedence rules, i.e. a computed value losing to a
-      // placeholder. Same rule here now, with the same `~` source mark.
       opp.net_expected_profit_usd != null
         ? usd(opp.net_expected_profit_usd)
         : opp.simulated_net_profit_usd != null
@@ -230,20 +278,11 @@ function summaryCells(opp: OmniOpportunity): Array<{
       opp.net_expected_profit_usd != null
         ? "net_expected_profit_usd (spine canónico)"
         : "simulated_net_profit_usd (TS forward-sim; canónico pendiente) — '~' marca el origen",
+      basisNet,
     ),
     cell(
       "bps",
       bps,
-      // CARDS-PRECEDENCE-02: same rule — `roi_pct` is the canonical ratio and it
-      // is null on 38/38 live rows today, while `simulated_roi_pct` IS computed
-      // on 3 of them. The cell fell back to nothing instead of to that computed
-      // value; `~` marks the simulated source.
-      //
-      // CARDS-NOTIONAL-01: the ratio is now the one measured on the RENDERED
-      // ladder's notional (see the precedence above), so `bps` is bounded by the
-      // same notional as the cells it sits beside — `~1513332276940974` was
-      // `net_sim / $0.0000045 × 100`, i.e. a ratio whose denominator the reader
-      // could not see.
       roiIsSimulated
         ? `simulated_roi_pct ${(opp.simulated_roi_pct ?? 0).toFixed(4)}% × 100 — '~' marca el origen; medido sobre el notional del ladder (basis=${ledger.basis})`
         : opp.roi_pct != null
@@ -251,14 +290,13 @@ function summaryCells(opp: OmniOpportunity): Array<{
           : opp.simulated_roi_pct != null
             ? `simulated_roi_pct ${opp.simulated_roi_pct.toFixed(4)}% × 100 — '~' marca el origen (canónico pendiente)`
             : "roi_pct no computado (R8)",
+      roiIsSimulated || (opp.roi_pct == null && opp.simulated_roi_pct != null) ? "sim" : "undeclared",
     ),
     cell(
       "Risk",
-      // FRONT-05 fix (2026-09-24): risk_score is a 0-1 FRACTION on the wire;
-      // the raw display (0.11) contradicted formatRiskOrDash's "11.0%" for
-      // the same field. Unify to percent via the same formula.
       opp.risk_score != null ? `${(opp.risk_score * 100).toFixed(1)}%` : null,
       "risk_score del wire (fracción 0-1, renderizada como %)",
+      figureBasis(opp, "risk"),
     ),
     cell(
       "Sim",
@@ -266,15 +304,16 @@ function summaryCells(opp: OmniOpportunity): Array<{
         ? `~${usd(opp.simulated_net_profit_usd)}`
         : null,
       "forward-sim net como VALOR — el wire no persiste veredicto PASS/FAIL de simulación (§79); PASS/FAIL solo vive en el target verdict",
+      "sim",
     ),
     {
-      // CARDS-QUIET-01: computed latency wins; absent goes QUIET.
       label: "latencia",
       value: opp.pipeline_latency_ms != null ? `${opp.pipeline_latency_ms}ms` : DASH,
       title:
         opp.pipeline_latency_ms == null
           ? "pipeline_latency_ms ausente en el payload — no emitido (nivel-(b) resuelto, R8)"
           : "pipeline_latency_ms del wire (detección → emisión)",
+      basis: "wire",
     },
   ];
 }
@@ -291,7 +330,22 @@ export function OpportunitySummaryGrid({ opp }: { opp: OmniOpportunity }) {
             <div className="text-[9px] uppercase tracking-wide text-muted-foreground">
               {c.label}
             </div>
-            <div className="truncate">{c.value}</div>
+            {/* ECON-DECLARE-01: the value cell carries the value AND its basis.
+                `data-testid` is the hook gate (ii) reads: a cell must never
+                render — while the wire carries a value for its field. The basis
+                label is rendered only beside a real value, so a dash is never
+                dressed up with a provenance it does not have. */}
+            <div className="truncate">
+              <span data-testid={`opp-cell-${c.label}`}>{c.value}</span>
+              {c.value !== DASH && (
+                <span
+                  data-basis={c.basis}
+                  className="ml-1 text-[9px] text-muted-foreground/70"
+                >
+                  {BASIS_LABEL[c.basis]}
+                </span>
+              )}
+            </div>
           </div>
         ))}
       </div>

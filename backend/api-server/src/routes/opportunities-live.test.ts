@@ -443,3 +443,126 @@ describe("WO-G2-PARITY — block_number wire normalization (int8-as-string)", ()
     expect(result.block_number).toBeNull();
   });
 });
+
+// ── ECON-DECLARE-01 (2026-09-27) ─────────────────────────────────────────────
+// The operator's complaint: "hay muchos valores que no se ven, no están
+// declarados." The census is how the closure is MEASURED from outside the
+// producer instead of asserted. Baseline it must reproduce, measured on the live
+// feed (33 rows, 2026-09-27T02:06Z):
+//
+//     route_metadata present            33/33
+//     economics_amount_in_wei declared   0/33   ← the entire gap
+//     economics_basis declared           0/33
+//     expected_profit_usd present       18/33
+//     net_expected_profit_usd present   15/33
+//     roi_pct present                    0/33
+//     risk_score present                 0/33
+
+describe("ECON-DECLARE-01 — economics-declaration census", () => {
+  /** One live-shaped item: the fields the census reads, and nothing else. */
+  const item = (over: Record<string, unknown> = {}) => ({
+    amount_in_wei: "1000000000000000000",
+    expected_profit_usd: 12.5,
+    net_expected_profit_usd: -50,
+    roi_pct: null,
+    risk_score: null,
+    route_metadata: { dex_adapters: ["uniswap-v2", "sushiswap"] },
+    ...over,
+  });
+
+  it("reproduces the measured baseline: route present, NOTHING declared", async () => {
+    const { __forTesting } = await import("./opportunities-live.js");
+    const census = __forTesting.censusEconomicsDeclaration([
+      item(),
+      item({ expected_profit_usd: null }),
+      item({ net_expected_profit_usd: null, amount_in_wei: "0" }),
+    ]);
+    expect(census.rows).toBe(3);
+    expect(census.rows_with_route_metadata).toBe(3);
+    // The gap, stated as a number: 0 of 3 rows declare what the figures are.
+    expect(census.rows_with_declared_notional).toBe(0);
+    expect(census.rows_with_declared_basis).toBe(0);
+    expect(census.declaration_rate_pct).toBe(0);
+    // Every figure that IS present counts against the declaration rate.
+    expect(census.present_but_undeclared["expected_profit_usd"]).toBe(2);
+    expect(census.present_but_undeclared["net_expected_profit_usd"]).toBe(2);
+    // amount "0" is not a carried amount — it is the lost-decoder state (R8).
+    expect(census.present_but_undeclared["amount_in_wei"]).toBe(2);
+  });
+
+  it("goes to 100% once a producer declares the notional and the basis", async () => {
+    const { __forTesting } = await import("./opportunities-live.js");
+    const census = __forTesting.censusEconomicsDeclaration([
+      item({
+        route_metadata: {
+          dex_adapters: ["uniswap-v2", "sushiswap"],
+          economics_amount_in_wei: "1000000",
+          economics_basis: { gross: "probe", net: "kernel", amount: "intent" },
+        },
+      }),
+      item({
+        route_metadata: {
+          dex_adapters: ["uniswap-v2", "sushiswap"],
+          economics_amount_in_wei: "1000000000000000000",
+          economics_basis: { gross: "probe", net: "kernel", amount: "stamped" },
+        },
+      }),
+    ]);
+    expect(census.rows_with_declared_notional).toBe(2);
+    expect(census.rows_with_declared_basis).toBe(2);
+    expect(census.declaration_rate_pct).toBe(100);
+    expect(census.declared_basis_words).toEqual({
+      probe: 2, kernel: 2, intent: 1, stamped: 1,
+    });
+    // gross + net + amount are all declared ⇒ nothing counts against the rate.
+    expect(census.present_but_undeclared).toEqual({});
+  });
+
+  it("counts roi_pct / risk_score as undeclared when present — no vocabulary exists", async () => {
+    const { __forTesting } = await import("./opportunities-live.js");
+    const census = __forTesting.censusEconomicsDeclaration([
+      item({ roi_pct: 0.12, risk_score: 0.34 }),
+    ]);
+    // These two have no basis word on the wire at all (0/33 live) — the census
+    // must report the gap rather than treat their presence as declared.
+    expect(census.present_but_undeclared["roi_pct"]).toBe(1);
+    expect(census.present_but_undeclared["risk_score"]).toBe(1);
+    expect(census.economic_figures_present["roi_pct"]).toBe(1);
+  });
+
+  it("a malformed declaration is NOT counted as declared (no repair)", async () => {
+    const { __forTesting } = await import("./opportunities-live.js");
+    const census = __forTesting.censusEconomicsDeclaration([
+      item({
+        route_metadata: {
+          dex_adapters: ["uniswap-v2"],
+          economics_amount_in_wei: "not-a-number",
+          economics_basis: { gross: "  " },
+        },
+      }),
+    ]);
+    expect(census.rows_with_declared_notional).toBe(0);
+    expect(census.rows_with_declared_basis).toBe(0);
+    expect(census.declaration_rate_pct).toBe(0);
+  });
+
+  it("R8: an empty batch reports 0, never null and never a fabricated rate", async () => {
+    const { __forTesting } = await import("./opportunities-live.js");
+    const census = __forTesting.censusEconomicsDeclaration([]);
+    expect(census.rows).toBe(0);
+    expect(census.declaration_rate_pct).toBe(0);
+    expect(census.declared_basis_words).toEqual({});
+    expect(census.present_but_undeclared).toEqual({});
+  });
+
+  it("counts a row with no route_metadata without inventing one", async () => {
+    const { __forTesting } = await import("./opportunities-live.js");
+    const census = __forTesting.censusEconomicsDeclaration([
+      item({ route_metadata: null }),
+    ]);
+    expect(census.rows_with_route_metadata).toBe(0);
+    expect(census.rows_with_declared_notional).toBe(0);
+    // The figure is still present and still undeclared — stated, not hidden.
+    expect(census.present_but_undeclared["expected_profit_usd"]).toBe(1);
+  });
+});

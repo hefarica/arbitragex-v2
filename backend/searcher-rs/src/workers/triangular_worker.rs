@@ -612,6 +612,8 @@ fn build_triangular_route_metadata(
         leg_amounts_in: None,
         leg_amounts_out: None,
         leg_zero_for_one: None,
+        economics_amount_in_wei: None,
+        economics_basis: None,
     }
 }
 

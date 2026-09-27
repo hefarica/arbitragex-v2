@@ -1053,6 +1053,41 @@ export function mountOpportunitiesLive(
         }),
       );
 
+      const items = q.rows.map((r) => {
+        const item = rowToOpportunity(
+          r,
+          simByRowId.get(r.id),
+          snapshots.get(r.chain_id)?.base_token_symbol ?? null,
+          validations,
+          legSymbols,
+        );
+        // CARDS-PRICES-01: attach live PriceBus prices for every token symbol on
+        // the card (endpoints + legs). Absent key = no live price (R8).
+        const pm = priceMaps.get(r.chain_id);
+        if (!pm) return { ...item, token_prices_usd: null };
+        const syms = new Set<string>();
+        const push = (
+          info: { symbol?: string | null; registry_symbol?: string | null } | null | undefined,
+        ): void => {
+          const s = info?.symbol ?? info?.registry_symbol;
+          if (s) syms.add(s.trim().toUpperCase());
+        };
+        push(item.token_in_info);
+        push(item.token_out_info);
+        if (item.leg_symbols) {
+          for (const s of Object.values(item.leg_symbols)) syms.add(s.toUpperCase());
+        }
+        const prices: Record<string, number> = {};
+        for (const s of syms) {
+          const p = pm.get(s);
+          if (p != null) prices[s] = p;
+        }
+        return {
+          ...item,
+          token_prices_usd: Object.keys(prices).length > 0 ? prices : null,
+        };
+      });
+
       res.status(200).json({
         count:           q.rows.length,
         // WO-H4 (2026-09-07): ALL detections in the live window (COUNT over
@@ -1063,41 +1098,15 @@ export function mountOpportunitiesLive(
         window:          "latest",
         viable_only:     viableOnly,
         max_age_seconds: maxAgeSeconds,
-        items:           q.rows.map((r) => {
-                           const item = rowToOpportunity(
-                             r,
-                             simByRowId.get(r.id),
-                             snapshots.get(r.chain_id)?.base_token_symbol ?? null,
-                             validations,
-                             legSymbols,
-                           );
-                           // CARDS-PRICES-01: attach live PriceBus prices for
-                           // every token symbol on the card (endpoints + legs).
-                           // Absent key = no live price (R8 fail-honest).
-                           const pm = priceMaps.get(r.chain_id);
-                           if (!pm) return { ...item, token_prices_usd: null };
-                           const syms = new Set<string>();
-                           const push = (
-                             info: { symbol?: string | null; registry_symbol?: string | null } | null | undefined,
-                           ): void => {
-                             const s = info?.symbol ?? info?.registry_symbol;
-                             if (s) syms.add(s.trim().toUpperCase());
-                           };
-                           push(item.token_in_info);
-                           push(item.token_out_info);
-                           if (item.leg_symbols) {
-                             for (const s of Object.values(item.leg_symbols)) syms.add(s.toUpperCase());
-                           }
-                           const prices: Record<string, number> = {};
-                           for (const s of syms) {
-                             const p = pm.get(s);
-                             if (p != null) prices[s] = p;
-                           }
-                           return {
-                             ...item,
-                             token_prices_usd: Object.keys(prices).length > 0 ? prices : null,
-                           };
-                         }),
+        items,
+        // ECON-DECLARE-01 (2026-09-27): how much of the feed DECLARES the
+        // notional basis of its economics. The operator's complaint was that
+        // figures "no están declarados"; this census is how the closure is
+        // measured from outside instead of asserted. R8/R10: counts only —
+        // presence and absence are both stated, neither is dressed as success.
+        diagnostics: {
+          economics_declaration: censusEconomicsDeclaration(items),
+        },
         ts:              new Date().toISOString(),
       });
     } catch (e) {
@@ -1111,4 +1120,106 @@ export function mountOpportunitiesLive(
 }
 
 // Pure mapper exposed for regression inputs, never mounted as an endpoint.
-export const __forTesting = { rowToOpportunity };
+export const __forTesting = { rowToOpportunity, censusEconomicsDeclaration };
+
+/**
+ * ECON-DECLARE-01 (2026-09-27) — the declaration census of one live batch.
+ *
+ * The operator's complaint: *"hay muchos valores que no se ven, no están
+ * declarados."* The measured baseline (33 rows, 2026-09-27T02:06Z):
+ *
+ *     route_metadata present          33/33
+ *     economics_amount_in_wei declared 0/33   ← the whole gap
+ *     economics_basis declared         0/33
+ *
+ * This function states, per batch, how much of the feed DECLARES the notional
+ * basis of its economics and which economic figures are PRESENT but still
+ * undeclared. It counts; it never repairs. A field the row does not carry is not
+ * a defect (R8: absence is a state) — only a figure that is present with no
+ * producer statement counts against the declaration rate.
+ *
+ * Pure: no I/O, no clock — so it is unit-testable against production-shaped
+ * fixtures and safe to call per request.
+ */
+export function censusEconomicsDeclaration(
+  items: ReadonlyArray<Record<string, unknown>>,
+): {
+  rows: number;
+  rows_with_route_metadata: number;
+  rows_with_declared_notional: number;
+  rows_with_declared_basis: number;
+  declaration_rate_pct: number;
+  declared_basis_words: Record<string, number>;
+  present_but_undeclared: Record<string, number>;
+  economic_figures_present: Record<string, number>;
+} {
+  const words: Record<string, number> = {};
+  const undeclared: Record<string, number> = {};
+  const present: Record<string, number> = {};
+  let withRoute = 0;
+  let withNotional = 0;
+  let withBasis = 0;
+
+  const isNum = (v: unknown): boolean => typeof v === "number" && Number.isFinite(v);
+
+  for (const item of items) {
+    const rm = item["route_metadata"];
+    const rmObj =
+      rm != null && typeof rm === "object" && !Array.isArray(rm)
+        ? (rm as Record<string, unknown>)
+        : null;
+    if (rmObj != null) withRoute += 1;
+
+    const notional = rmObj?.["economics_amount_in_wei"];
+    const hasNotional = typeof notional === "string" && /^[0-9]{1,78}$/.test(notional);
+    if (hasNotional) withNotional += 1;
+
+    const basisRaw = rmObj?.["economics_basis"];
+    const basis =
+      basisRaw != null && typeof basisRaw === "object" && !Array.isArray(basisRaw)
+        ? (basisRaw as Record<string, unknown>)
+        : null;
+    let anyBasis = false;
+    for (const figure of ["gross", "net", "amount"] as const) {
+      const w = basis?.[figure];
+      if (typeof w !== "string" || w.trim() === "") continue;
+      anyBasis = true;
+      const key = w.trim().toLowerCase();
+      words[key] = (words[key] ?? 0) + 1;
+    }
+    if (anyBasis) withBasis += 1;
+
+    // A figure the row CARRIES with no producer statement about its origin.
+    const figures: Array<[string, unknown, boolean]> = [
+      ["expected_profit_usd", item["expected_profit_usd"], basis?.["gross"] != null],
+      ["net_expected_profit_usd", item["net_expected_profit_usd"], basis?.["net"] != null],
+      ["amount_in_wei", item["amount_in_wei"], basis?.["amount"] != null],
+      // roi_pct / risk_score have no vocabulary word on the wire at all.
+      ["roi_pct", item["roi_pct"], false],
+      ["risk_score", item["risk_score"], false],
+    ];
+    for (const [name, raw, declared] of figures) {
+      const carries =
+        name === "amount_in_wei"
+          ? typeof raw === "string" && raw !== "" && raw !== "0"
+          : isNum(raw);
+      if (!carries) continue;
+      present[name] = (present[name] ?? 0) + 1;
+      if (!declared) undeclared[name] = (undeclared[name] ?? 0) + 1;
+    }
+  }
+
+  const rows = items.length;
+  return {
+    rows,
+    rows_with_route_metadata: withRoute,
+    rows_with_declared_notional: withNotional,
+    rows_with_declared_basis: withBasis,
+    // Integer-free ratio kept as a number; 0 rows ⇒ 0 (computed-and-exactly-zero,
+    // never null — R8).
+    declaration_rate_pct: rows === 0 ? 0 : Math.round((withNotional / rows) * 1000) / 10,
+    declared_basis_words: words,
+    present_but_undeclared: undeclared,
+    economic_figures_present: present,
+  };
+}

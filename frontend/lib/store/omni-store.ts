@@ -265,6 +265,22 @@ const RAW_ABSENT_NULL_FIELDS: ReadonlyArray<keyof OmniOpportunity> = [
   "simulated_notes",
   // REST-only lifecycle derivation (websocket.ts:510).
   "paper_status",
+  // ECON-DECLARE-01 (2026-09-27): the persisted route topology is REST-only —
+  // `publisher::publish` serializes the `Opportunity` row and `route_metadata`
+  // lives in its OWN JSONB column, so a raw WS row's mapper value is `null`.
+  // Spreading it over the snapshot therefore WIPED the topology on the first live
+  // update, taking with it `hop_count` and the per-hop ledger. That wipe is also
+  // what would have re-opened the operator's declaration gap at runtime: the
+  // notional-basis declaration rides the same JSONB
+  // (`economics_amount_in_wei` / `economics_basis`), so losing the column turns a
+  // fully declared row back into `@undeclared` mid-session — a value that shows
+  // and then vanishes, which is worse than one that never showed.
+  //
+  // Safe to preserve: `routeGroupKeyOf` (chain, chain_out, strategy, token_in,
+  // token_out, dex_a, dex_b — the LIVE_QUERY GROUP BY twin) does NOT include
+  // `route_metadata`, so a different topology is a different route group and can
+  // never be hidden by this rule. Same reasoning as the SIM ladder above.
+  "route_metadata",
 ];
 
 /**
