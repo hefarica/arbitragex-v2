@@ -216,6 +216,7 @@ impl DexEngine {
                         pool,
                         StrategyLabel::DexArbV2V2,
                         intent.observed_block(),
+                        intent,
                     );
                     candidates.push(StrategyCandidate {
                         label: StrategyLabel::DexArbV2V2,
@@ -324,6 +325,7 @@ impl DexEngine {
                             pool_b,
                             label,
                             intent.observed_block(),
+                            intent,
                         );
                         candidates.push(StrategyCandidate {
                             label,
@@ -441,6 +443,7 @@ impl DexEngine {
                             pool_b,
                             label,
                             intent.observed_block(),
+                            intent,
                         );
                         // ALWAYS-COMPUTE (orden del operador 2026-09-27: "todos
                         // sin excepcion deben tener sus calculos y el 100% de sus
@@ -481,6 +484,7 @@ impl DexEngine {
                         gross_profit_usd,
                         intent.amount_in,
                         intent.observed_block(),
+                        intent,
                     );
 
                     debug!(
@@ -988,8 +992,40 @@ pub(crate) fn canonical_token_decimals_str(token: &str) -> u8 {
 // Opportunity constructors
 // ---------------------------------------------------------------------------
 
+/// ECONOMIC DENOMINATION (CANDIDATE-POSTSIZE-SYNC-01 (c)): the base token of the
+/// CLOSED cycle this candidate trades — the token its path opens AND closes in
+/// (`route.token[0] == route.token[N]`).
+///
+/// Source of truth is the `RouteIntent` the engine actually measured:
+/// `probe_amount` is one native unit of `intent.legs[0].token_in`,
+/// `orient_reserves` orients every pool by it and `compute_gross_usd` prices the
+/// chained cycle profit with it — so the intent's entry token IS the token this
+/// engine's numbers are denominated in. `pool_a.token0/token1` is only the pool's
+/// on-chain ordering and says nothing about the direction the observed
+/// transaction took.
+///
+/// Fallback (never a guess): an intent whose entry token is NOT one of this pair's
+/// tokens leaves the pair's direction undetermined — `orient_reserves` then keeps
+/// the pool's canonical token0→token1 order, so `pool_a.token0` is exactly what
+/// the engine measured for that shape.
+fn economic_base_token(pool_a: &PoolRef, intent: &RouteIntent) -> Address {
+    match intent.legs.first().map(|l| l.token_in) {
+        Some(t) if t == pool_a.token0 || t == pool_a.token1 => t,
+        _ => pool_a.token0,
+    }
+}
+
 /// Builds an `Opportunity`, `OpportunityCandidate`, and `RoutePlan` for
 /// an accepted (engine-level) DEX arb candidate.
+///
+/// CANDIDATE-POSTSIZE-SYNC-01 (2026-09-27): the ECONOMIC token identity comes
+/// from `intent` (the route the engine measured), never from `pool_a`'s on-chain
+/// ordering. A closed cycle opens and closes in its base token, so
+/// `Opportunity.token_in`/`token_out` — the P&L denomination — are BOTH that base
+/// token, while the counter (intermediate) token stays on the route legs and the
+/// persisted `route_metadata` for allowlist/pricing/audit. See the field comments
+/// below for why `expected_amount_out` starts as `NaN` instead of a fabricated
+/// 1:1.
 #[allow(clippy::too_many_arguments)]
 fn build_accepted_opportunity(
     chain_id: u64,
@@ -1000,14 +1036,30 @@ fn build_accepted_opportunity(
     gross_profit_usd: Option<f64>,
     amount_in_wei: U256,
     block_number: Option<u64>,
+    intent: &RouteIntent,
 ) -> (Opportunity, OpportunityCandidate, RoutePlan) {
     let strategy_kind: StrategyKind = label.to_contract_strategy_kind();
     let id = Uuid::new_v4();
     let trace_id = Uuid::new_v4();
 
-    let token_in_str = format!("0x{:040x}", pool_a.token0);
-    let token_out_str = format!("0x{:040x}", pool_a.token1);
-    let pair_symbol = format!("{}…/{}…", &token_in_str[2..8], &token_out_str[2..8],);
+    // Closed cycle: base = opens and closes the path; counter = the other token
+    // of the traded pair (the intermediate hop token, NOT the P&L denomination).
+    let base_token = economic_base_token(pool_a, intent);
+    let counter_token = if base_token == pool_a.token0 {
+        pool_a.token1
+    } else {
+        pool_a.token0
+    };
+
+    // BOTH economic sides are the base token: `Opportunity.token_in`/`token_out`
+    // are the P&L denomination of a closed cycle, and the spine prices the input
+    // with `candidate.token_addresses[0]` and the measured output with
+    // `candidate.token_addresses[1]` (config_aware.rs). Denomination ≠ traded
+    // pair: the pair stays visible in `pair_symbol` and on the route legs.
+    let token_in_str = format!("0x{:040x}", base_token);
+    let token_out_str = token_in_str.clone();
+    let counter_token_str = format!("0x{:040x}", counter_token);
+    let pair_symbol = format!("{}…/{}…", &token_in_str[2..8], &counter_token_str[2..8],);
 
     let amount_in_wei_str = amount_in_wei.to_string();
     let amount_in_f64: f64 = u256_to_f64_lossy(amount_in_wei) / 1e18_f64;
@@ -1044,17 +1096,46 @@ fn build_accepted_opportunity(
     let pool_b_lower = format!("0x{:040x}", pool_b.address);
 
     let candidate = OpportunityCandidate {
-        route_fingerprint: format!("{}_{}_{}", pool_a.dex_name, token_in_str, token_out_str),
+        // Fingerprint = venue + the pair's two tokens (direction-aware) so two
+        // different pairs on the same venue and base token never collapse.
+        route_fingerprint: format!("{}_{}_{}", pool_a.dex_name, token_in_str, counter_token_str),
         pool_addresses: vec![pool_a_lower.clone(), pool_b_lower.clone()],
+        // SPINE CONTRACT (config_aware.rs §3): index 0 denominates `amount_in`,
+        // index 1 denominates `expected_amount_out`. A closed cycle's output is
+        // denominated in the base token it returns to, so both slots are the base
+        // token — putting the counter token in slot 1 would price a
+        // base-denominated output at the counter's price and trip the spread
+        // sanity gate on a row the kernel computed correctly. The FULL traversal
+        // path (base → counter → base) rides `route_plan.legs` and the persisted
+        // `route_metadata` (`build_route_metadata_from_plan`), which is where
+        // allowlist/pricing/audit read the intermediate from.
         token_addresses: vec![token_in_str.clone(), token_out_str.clone()],
         dex_adapters: vec![pool_a.dex_name.clone(), pool_b.dex_name.clone()],
         amount_in: amount_in_f64,
-        expected_amount_out: amount_in_f64, // best estimate without real reserves
+        // NOT MEASURED — deliberately `NaN`, never `amount_in` (R8).
+        //
+        // This field is a bare `f64`: R8's `None` ("not computed") has no
+        // representation here, and `0.0` is reserved for "computed and exactly
+        // zero" — writing it would ALSO hand `observed_rate = 0` to the spread
+        // sanity gate (a false `ImplausibleSpread`) and `0` to the evidence's
+        // `min_amount_out`. The previous `amount_in` claimed a 1:1 cycle nobody
+        // measured. IEEE-754 `NaN` is the one honest marker available: it is this
+        // crate's existing "not computable" value (`scoring.rs` → InvalidEvidence,
+        // `sim_encoder::convert_amount_to_wei` refuses it), it cannot be read as a
+        // rate, and it fails the second evaluation CLOSED (net = NaN ⇒ `is_viable`
+        // false ⇒ the risk gate rejects) instead of certifying a fabricated
+        // parity. The orchestrator's sized path overwrites it with the kernel's
+        // measured final-hop output (`orchestrator::stamp_sized_figures`) whenever
+        // that measurement exists.
+        expected_amount_out: f64::NAN,
         gross_profit: gross_profit_usd.unwrap_or(0.0),
     };
 
-    let leg_a = build_route_leg(pool_a, &token_in_str, &token_out_str, amount_in_f64);
-    let leg_b = build_route_leg(pool_b, &token_out_str, &token_in_str, amount_in_f64);
+    // Route direction = the cycle's own: base → counter on `pool_a`, counter →
+    // base on `pool_b`. The kernel orients each leg by these tokens, so the
+    // ledger and the plan agree on one direction.
+    let leg_a = build_route_leg(pool_a, &token_in_str, &counter_token_str, amount_in_f64);
+    let leg_b = build_route_leg(pool_b, &counter_token_str, &token_out_str, amount_in_f64);
 
     let route_plan = RoutePlan {
         route_id: Some(format!("{}-{}-{:x}", pool_a_lower, pool_b_lower, tx_hash)),
@@ -1082,6 +1163,7 @@ fn build_rejected_opportunity(
     pool_b: &PoolRef,
     label: StrategyLabel,
     block_number: Option<u64>,
+    intent: &RouteIntent,
 ) -> (Opportunity, OpportunityCandidate, RoutePlan) {
     build_accepted_opportunity(
         chain_id,
@@ -1092,6 +1174,7 @@ fn build_rejected_opportunity(
         None,                                      // R8: no profit for rejected candidates
         U256::from(10u128).pow(U256::from(18u32)), // unit probe
         block_number,
+        intent,
     )
 }
 
@@ -1141,10 +1224,26 @@ pub(crate) fn protocol_type_to_str(pt: ProtocolType) -> String {
 /// Lossless-truncating `U256` → `f64`. The same helper used in scanner.rs.
 /// Lossy past ~15 significant figures (f64 mantissa); acceptable on the
 /// scoring/display path. Never re-fed into on-chain arithmetic.
-fn u256_to_f64_lossy(v: U256) -> f64 {
+///
+/// `pub(crate)`: CANDIDATE-POSTSIZE-SYNC-01's orchestrator-side sync applies the
+/// SAME truncation when it has no decimals entry for a token (legacy `1e18` rule)
+/// — one conversion primitive, never a second divergent one.
+pub(crate) fn u256_to_f64_lossy(v: U256) -> f64 {
     // U256 → u128 (truncates top 128 bits — negligible for amounts
     // that fit in u128, which is all practical EVM balances).
     v.low_u128() as f64
+}
+
+/// CANDIDATE-POSTSIZE-SYNC-01: wei → token units (f64) with the token's REAL
+/// decimals — the exact inverse of the `10^decimals` scaling
+/// `canonical_token_decimals` already applies on the USD side.
+///
+/// Used by the orchestrator to express the sizing kernel's `optimal_amount_in`
+/// and its measured final-hop output in the token-unit convention
+/// `OpportunityCandidate` documents (`amount_in` / `expected_amount_out` as f64
+/// token units), instead of the legacy blanket `1e18`.
+pub(crate) fn wei_to_token_units(wei: U256, decimals: u8) -> f64 {
+    u256_to_f64_lossy(wei) / 10f64.powi(i32::from(decimals))
 }
 
 // ---------------------------------------------------------------------------
@@ -1359,6 +1458,123 @@ mod tests {
                 StrategyLabel::DexArbV2V2,
                 "must classify as DexArbV2V2"
             );
+        }
+    }
+
+    // ── dex_engine::tests::closed_cycle_reports_base_token_economically ───────
+    //
+    // CANDIDATE-POSTSIZE-SYNC-01 (c)+(b): the economic token identity of a CLOSED
+    // cycle comes from the RouteIntent direction, not from `pool_a`'s on-chain
+    // ordering, and the candidate never claims a 1:1 output it did not measure.
+    //
+    // Fixture: pool_a lists the tokens as (counter, base) — the OLD code reported
+    // `pool_a.token0` (= counter) as `token_in`, i.e. the wrong leg of the cycle.
+    // The intent enters at the base token, which is the token every kernel number
+    // is denominated in (`probe_amount`, `orient_reserves`, `compute_gross_usd`).
+
+    #[tokio::test]
+    async fn closed_cycle_reports_base_token_economically() {
+        let base = addr(0x1); // cycle base: opens AND closes the path
+        let counter = addr(0x2); // intermediate hop token
+        let pool_addr1 = addr(0x10);
+        let pool_addr2 = addr(0x11);
+        // Deliberately inverted vs the pool's canonical ordering: the pool says
+        // token0 = counter, the INTENT enters at base.
+        let pool1 = make_pool(pool_addr1, counter, base, ProtocolType::V2);
+        let pool2 = make_pool(pool_addr2, counter, base, ProtocolType::V2);
+        let intent = make_intent(base, counter);
+        let impact = make_impact(vec![pool1, pool2]);
+
+        let unit = U256::from(10u128).pow(U256::from(18u32)) * U256::from(1_000u32);
+        let engine =
+            make_engine_with_reserves(vec![(pool_addr1, unit, unit), (pool_addr2, unit, unit)])
+                .await;
+
+        let candidates = engine
+            .build_from_impacted_pairs(&intent, &impact, None)
+            .await
+            .expect("engine must not error");
+
+        let base_str = format!("0x{:040x}", base);
+        let counter_str = format!("0x{:040x}", counter);
+
+        let accepted: Vec<_> = candidates
+            .iter()
+            .filter(|c| c.rejection_reason.is_none())
+            .collect();
+        assert!(
+            !accepted.is_empty(),
+            "fixture must reach the accepted path (real reserves on both pools)"
+        );
+
+        for c in accepted {
+            // (c) ECONOMIC denomination: both sides of a closed cycle are the base
+            // token — never `pool_a.token0/token1`.
+            assert_eq!(
+                c.opportunity.token_in, base_str,
+                "closed cycle must open in its base token, not pool_a.token0"
+            );
+            assert_eq!(
+                c.opportunity.token_out, base_str,
+                "closed cycle must close in its base token, not pool_a.token1"
+            );
+            assert_ne!(
+                c.opportunity.token_in, counter_str,
+                "the counter token is NOT the P&L denomination"
+            );
+
+            // Spine pricing contract: slot 0 denominates `amount_in`, slot 1 the
+            // expected output — for a closed cycle both are the base token.
+            assert_eq!(
+                c.candidate.token_addresses,
+                vec![base_str.clone(), base_str.clone()],
+                "the spine's two pricing slots must both be the base token"
+            );
+
+            // The intermediate token is NOT lost: it rides the traversal path.
+            assert_eq!(
+                c.route_plan.legs[0].token_in, base_str,
+                "leg 0 enters at the cycle base"
+            );
+            assert_eq!(
+                c.route_plan.legs[0].token_out, counter_str,
+                "leg 0 exits into the counter (intermediate) token"
+            );
+            assert_eq!(
+                c.route_plan.legs[1].token_out, base_str,
+                "leg 1 closes the cycle back into the base token"
+            );
+            let metadata = crate::persistence::build_route_metadata_from_plan(&c.route_plan);
+            assert_eq!(
+                metadata.token_addresses,
+                vec![base_str.clone(), counter_str.clone(), base_str.clone()],
+                "persisted route_metadata must keep the full traversal path \
+                 (base → counter → base) for allowlist/pricing/audit"
+            );
+
+            // (b) NOT MEASURED: construction time has no cycle output, so the
+            // candidate must not claim a 1:1 — `NaN` is the honest marker.
+            assert!(
+                c.candidate.expected_amount_out.is_nan(),
+                "unmeasured output must be NaN, got {}",
+                c.candidate.expected_amount_out
+            );
+            assert_ne!(
+                c.candidate.expected_amount_out, c.candidate.amount_in,
+                "a 1:1 output would be a fabricated measurement"
+            );
+        }
+
+        // The rejected shape (no reserves) carries the same economic identity.
+        let no_reserves_engine = make_engine();
+        let rejected = no_reserves_engine
+            .build_from_impacted_pairs(&intent, &impact, None)
+            .await
+            .expect("engine must not error");
+        assert!(!rejected.is_empty(), "must still emit rejection rows");
+        for c in &rejected {
+            assert_eq!(c.opportunity.token_in, base_str);
+            assert_eq!(c.opportunity.token_out, base_str);
         }
     }
 

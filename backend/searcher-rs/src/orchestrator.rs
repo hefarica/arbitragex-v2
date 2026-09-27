@@ -1305,23 +1305,24 @@ impl Orchestrator {
                 // object from the sized figures BEFORE `s.candidate` is moved
                 // out (the builder reads the whole candidate).
                 let economics_obj = crate::economics::economics_from_sized(&s, cfg_snapshot);
+                // CANDIDATE-POSTSIZE-SYNC-01 (a): the measured final-hop output the
+                // kernel's own ledger carries (`economics_obj.amount_out_wei` is
+                // exactly `leg_amounts_out.last()` — one computation, one
+                // provenance). Cloned before the object is moved onto the row.
+                let measured_out_wei = economics_obj.amount_out_wei.clone();
                 let mut c = s.candidate;
-                c.gross_profit_usd = Some(s.gross_profit_usd);
-                c.net_expected_profit_usd = Some(s.estimated_net_profit_usd);
-                // FIX (review V2 #8): synchronize the Opportunity row that
-                // process_candidate actually evaluates/emits. Without this,
-                // the DB/API records pre-sizing figures while the optimizer's
-                // post-sizing numbers only live on the StrategyCandidate —
-                // an inconsistent audit trail (RULE 00 violation surface).
-                c.opportunity.expected_profit_usd = Some(s.gross_profit_usd);
-                c.opportunity.net_expected_profit_usd = Some(s.estimated_net_profit_usd);
-                // B1 FIX (math-audit AUDIT-MATH-OPPS-2026-09-26): the kernel's
-                // optimal size was computed but never reached the row —
-                // amount_in_wei kept the pre-sizing probe (or "0"), so the
-                // persisted economics and the recorded notional disagreed and
-                // the SIM-TS ladder ran on a notional the searcher never sized
-                // for. Record the exact amount the kernel optimized.
-                c.opportunity.amount_in_wei = s.optimal_amount_in.to_string();
+                // FIX (review V2 #8) + B1 FIX (math-audit AUDIT-MATH-OPPS-2026-09-26)
+                // + CANDIDATE-POSTSIZE-SYNC-01 (a): ONE stamping site for the sized
+                // figures on BOTH layers — the outer StrategyCandidate/`Opportunity`
+                // row AND the INNER spine candidate that `ConfigAwareEvaluator`
+                // re-evaluates below. See `stamp_sized_figures`.
+                stamp_sized_figures(
+                    &mut c,
+                    s.optimal_amount_in,
+                    s.gross_profit_usd,
+                    s.estimated_net_profit_usd,
+                    measured_out_wei.as_deref(),
+                );
                 // ALWAYS-COMPUTE (2026-09-27): the ONE complete economics
                 // object travels on the accepted row too (additive wire).
                 if crate::economics::always_compute_enabled() {
@@ -1979,6 +1980,116 @@ fn detection_source_as_str(src: crate::route_intent::DetectionSource) -> &'stati
     src.as_str()
 }
 
+/// Decimals the row carries for `address`, or `None` when the address is not a
+/// parseable `0x` address (then it has no entry in any decimals map either).
+///
+/// CANDIDATE-POSTSIZE-SYNC-01 (a): this is the SAME canonical immutable-protocol
+/// table (`canonical_token_decimals`, re-exported as
+/// `dex_engine::canonical_token_decimals_str`: USDC/USDT = 6, WBTC = 8, the
+/// dominant ERC-20 case = 18) that `process_candidate` uses to fill the row's
+/// `route_metadata.decimals.map`. `Opportunity` has no `route_metadata` field —
+/// the metadata is built later and handed to the emitter beside the row — so the
+/// map itself is not readable at sizing time; reading the same function on the
+/// same address yields the identical value it will carry.
+fn row_token_decimals(address: &str) -> Option<u8> {
+    address
+        .parse::<Address>()
+        .ok()
+        .map(|_| crate::engines::dex_engine::canonical_token_decimals_str(address))
+}
+
+/// CANDIDATE-POSTSIZE-SYNC-01 (a): stamp the kernel's sized figures onto BOTH
+/// layers of a candidate — the outer `StrategyCandidate`/`Opportunity` row AND the
+/// INNER spine candidate (`StrategyCandidate::candidate`) that
+/// `ConfigAwareEvaluator` re-evaluates.
+///
+/// Why the inner layer matters: only the outer layer used to be synchronized, so
+/// the second evaluation still read the engine's pre-sizing probe with a
+/// fabricated 1:1 rate (`expected_amount_out == amount_in` written at
+/// construction). A row whose kernel correctly computed a real closed cycle could
+/// therefore be re-judged at the OLD notional, with `observed_rate = 1.0` firing
+/// `ImplausibleSpread` (and poisoning the ROI/cost paths) on numbers nobody
+/// measured. "Un cálculo. Un tamaño. Un ledger. Una procedencia."
+///
+/// Inner units: token units as `f64` — the convention `OpportunityCandidate`
+/// documents for `amount_in`/`expected_amount_out` (its consumer multiplies by
+/// `10^decimals`/price, never by a raw wei integer).
+///
+/// * `amount_in` — ALWAYS the kernel's `optimal_amount_in`, converted with the
+///   row's own entry-token decimals when they are known, else the legacy `1e18`
+///   rule (applied to the SIZED amount). The stale probe is never kept.
+/// * `expected_amount_out` — the kernel's measured final-hop wei, converted with
+///   the row's exit-token decimals (same fallback rule). `None` (the kernel
+///   exposed no per-leg math: triangular final-amount-only, Kelly re-bound
+///   without re-quote, hand-built fixtures) leaves the honest `NaN` marker
+///   `build_accepted_opportunity` wrote — deliberately NOT `amount_in`, so no 1:1
+///   rate is ever implied by this sync.
+fn stamp_sized_figures(
+    c: &mut StrategyCandidate,
+    sized_optimal_amount_in: U256,
+    gross_profit_usd: f64,
+    net_expected_profit_usd: f64,
+    measured_out_wei: Option<&str>,
+) {
+    // ── Outer layer ─────────────────────────────────────────────────────────
+    c.gross_profit_usd = Some(gross_profit_usd);
+    c.net_expected_profit_usd = Some(net_expected_profit_usd);
+    // FIX (review V2 #8): synchronize the Opportunity row that process_candidate
+    // actually evaluates/emits. Without this, the DB/API records pre-sizing
+    // figures while the optimizer's post-sizing numbers only live on the
+    // StrategyCandidate — an inconsistent audit trail (RULE 00 violation surface).
+    c.opportunity.expected_profit_usd = Some(gross_profit_usd);
+    c.opportunity.net_expected_profit_usd = Some(net_expected_profit_usd);
+    // B1 FIX (math-audit AUDIT-MATH-OPPS-2026-09-26): the kernel's optimal size
+    // was computed but never reached the row — amount_in_wei kept the pre-sizing
+    // probe (or "0"), so the persisted economics and the recorded notional
+    // disagreed and the SIM-TS ladder ran on a notional the searcher never sized
+    // for. Record the exact amount the kernel optimized.
+    c.opportunity.amount_in_wei = sized_optimal_amount_in.to_string();
+
+    // ── Inner layer (the ONE the evaluator re-reads) ─────────────────────────
+    // Entry/exit token DECIMALS of the row's OWN route, resolved before the
+    // mutation so no borrow of `c` stays alive across it. On a closed cycle the
+    // exit token IS the entry token (route.token[0] == route.token[N]).
+    let in_decimals = c
+        .route_plan
+        .legs
+        .first()
+        .map(|l| l.token_in.as_str())
+        .or_else(|| c.candidate.token_addresses.first().map(String::as_str))
+        .and_then(row_token_decimals);
+    let out_decimals = c
+        .route_plan
+        .legs
+        .last()
+        .map(|l| l.token_out.as_str())
+        .or_else(|| c.candidate.token_addresses.last().map(String::as_str))
+        .and_then(row_token_decimals);
+
+    c.candidate.amount_in = match in_decimals {
+        Some(decimals) => {
+            crate::engines::dex_engine::wei_to_token_units(sized_optimal_amount_in, decimals)
+        }
+        // No decimals for this token → keep the previous 1e18 conversion rule,
+        // applied to the SIZED amount (never to the stale probe).
+        None => crate::engines::dex_engine::u256_to_f64_lossy(sized_optimal_amount_in) / 1e18_f64,
+    };
+
+    // Only a genuinely measured output replaces the marker (R8: absent ⇒ the
+    // field keeps its "not measured" value, never a fabricated one).
+    if let Some(raw) = measured_out_wei {
+        if let Ok(out_wei) = U256::from_dec_str(raw) {
+            let measured = match out_decimals {
+                Some(decimals) => crate::engines::dex_engine::wei_to_token_units(out_wei, decimals),
+                None => crate::engines::dex_engine::u256_to_f64_lossy(out_wei) / 1e18_f64,
+            };
+            if measured.is_finite() {
+                c.candidate.expected_amount_out = measured;
+            }
+        }
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
@@ -2245,6 +2356,124 @@ mod tests {
         assert!(
             !candidates.is_empty(),
             "dex_engine must produce at least one candidate for a known pair"
+        );
+    }
+
+    // ── orchestrator::tests::sized_sync_stamps_kernel_notional_and_output ─────
+    //
+    // CANDIDATE-POSTSIZE-SYNC-01 (a): the SIZED arm must synchronize the INNER
+    // spine candidate, not only the outer StrategyCandidate/`Opportunity`. The
+    // evaluator re-reads `candidate.amount_in` / `candidate.expected_amount_out`
+    // on the second pass, so leaving them at the pre-sizing probe with a
+    // fabricated 1:1 rate re-judged a kernel-certified cycle on unmeasured
+    // numbers (`ImplausibleSpread`, ROI and cost paths).
+    //
+    // Fixture: a closed cycle whose base token is USDC (6 decimals) — the sized
+    // notional is expressed with the row's REAL decimals (a `1e18` blanket would
+    // report 1e-9 instead of 1 000 units) — and whose measured final-hop output
+    // differs from the notional.
+
+    #[test]
+    fn sized_sync_stamps_kernel_notional_and_output() {
+        // Canonical mainnet contracts (canonical_token_decimals: USDC = 6).
+        let usdc = "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48";
+        let weth = "0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2";
+
+        let mut c = make_candidate(StrategyLabel::DexArbV2V2, None);
+        // Closed cycle: USDC → WETH → USDC (base = USDC, opens and closes).
+        c.route_plan.legs[0].token_in = usdc.to_string();
+        c.route_plan.legs[0].token_out = weth.to_string();
+        c.route_plan.legs[1].token_in = weth.to_string();
+        c.route_plan.legs[1].token_out = usdc.to_string();
+        c.candidate.token_addresses = vec![usdc.to_string(), usdc.to_string()];
+        // The STALE pre-sizing probe (the engine's 1:1 fabrication).
+        let probe_notional = c.candidate.amount_in;
+        assert_eq!(probe_notional, 1.0, "fixture probe must be the stale 1.0");
+
+        // Kernel sized the cycle at 1 000 USDC (1e9 in 6-dec wei), MEASURED
+        // 1 000.5 USDC leaving the final hop (1_000_500_000 wei), gross $12.50,
+        // net $7.00.
+        let optimal_amount_in = U256::from(1_000_000_000u64);
+        let measured_out = U256::from(1_000_500_000u64).to_string();
+        stamp_sized_figures(
+            &mut c,
+            optimal_amount_in,
+            12.5,
+            7.0,
+            Some(measured_out.as_str()),
+        );
+
+        // Outer layer (review V2 #8 / B1 FIX) still stamped…
+        assert_eq!(c.gross_profit_usd, Some(12.5));
+        assert_eq!(c.net_expected_profit_usd, Some(7.0));
+        assert_eq!(c.opportunity.expected_profit_usd, Some(12.5));
+        assert_eq!(c.opportunity.net_expected_profit_usd, Some(7.0));
+        assert_eq!(
+            c.opportunity.amount_in_wei,
+            optimal_amount_in.to_string(),
+            "the row must record the exact amount the kernel optimized"
+        );
+
+        // …and the INNER candidate (the object the evaluator re-reads) is now
+        // synchronized with the SAME notional/output.
+        assert_eq!(
+            c.candidate.amount_in, 1_000.0,
+            "amount_in must be the SIZED notional in the row's real token units \
+             (USDC 6-dec), not the stale probe and not a 1e18 mis-scaling"
+        );
+        assert_ne!(
+            c.candidate.amount_in, probe_notional,
+            "the pre-sizing probe must never survive the sized path"
+        );
+        assert_eq!(
+            c.candidate.expected_amount_out, 1_000.5,
+            "expected_amount_out must be the kernel's MEASURED cycle output"
+        );
+        assert_ne!(
+            c.candidate.expected_amount_out, c.candidate.amount_in,
+            "a measured output that differs from the notional must never be flattened to 1:1"
+        );
+        assert!(
+            c.candidate.expected_amount_out.is_finite(),
+            "a genuinely measured output must be finite"
+        );
+
+        // OBSERVED RATE (config_aware.rs): the second evaluation now sees the
+        // real closed-cycle rate instead of the fabricated 1.0.
+        let observed_rate = c.candidate.expected_amount_out / c.candidate.amount_in;
+        assert!(
+            (observed_rate - 1.0005).abs() < 1e-12,
+            "observed_rate must be the real cycle rate, got {observed_rate}"
+        );
+
+        // NO MEASUREMENT → the honest "not measured" marker survives the sync and
+        // no 1:1 rate is implied.
+        let mut unmeasured = c.clone();
+        unmeasured.candidate.expected_amount_out = f64::NAN;
+        stamp_sized_figures(&mut unmeasured, optimal_amount_in, 12.5, 7.0, None);
+        assert!(
+            unmeasured.candidate.expected_amount_out.is_nan(),
+            "an absent measurement must stay 'not measured' (NaN), got {}",
+            unmeasured.candidate.expected_amount_out
+        );
+        assert_ne!(
+            unmeasured.candidate.expected_amount_out, unmeasured.candidate.amount_in,
+            "an unmeasured output must not imply a 1:1 rate"
+        );
+        assert_eq!(
+            unmeasured.candidate.amount_in, 1_000.0,
+            "the notional is still the SIZED one when only the output is missing"
+        );
+
+        // LEGACY ADDRESS SHAPE: no decimals entry (the helper's "0xweth"/"0xusdc"
+        // strings do not parse) → the previous 1e18 rule, applied to the SIZED
+        // amount.
+        let mut legacy = make_candidate(StrategyLabel::DexArbV2V2, None);
+        let three_units = U256::from(10u128).pow(U256::from(18u32)) * U256::from(3u32);
+        stamp_sized_figures(&mut legacy, three_units, 1.0, 0.5, None);
+        assert_eq!(
+            legacy.candidate.amount_in, 3.0,
+            "without decimals the legacy 1e18 rule applies to the SIZED amount"
         );
     }
 
