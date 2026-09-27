@@ -442,12 +442,27 @@ impl DexEngine {
                             label,
                             intent.observed_block(),
                         );
+                        // ALWAYS-COMPUTE (orden del operador 2026-09-27: "todos
+                        // sin excepcion deben tener sus calculos y el 100% de sus
+                        // valores, independiente que den o no ganancia").
+                        //
+                        // `SpreadZeroEquilibrium` NO es un dato ausente: es una
+                        // MEDICION — ambas patas cotizaron el mismo importe, asi
+                        // que el gross del ciclo es EXACTAMENTE cero. Se publica
+                        // como cero COMPUTADO (Some(0.0)), que es distinto de
+                        // "no computado" (None) y es lo que permite que la fila
+                        // siga el camino de economics y muestre su aritmetica
+                        // (costes reales, net negativo) en vez de quedar en guion.
+                        let computed_gross: Option<f64> = match v3_gross_usd {
+                            V3GrossOutcome::SpreadZeroEquilibrium => Some(0.0),
+                            _ => None,
+                        };
                         candidates.push(StrategyCandidate {
                             label,
                             opportunity: opp,
                             candidate: cand,
                             route_plan: rp,
-                            gross_profit_usd: None,
+                            gross_profit_usd: computed_gross,
                             net_expected_profit_usd: None,
                             rejection_reason: Some(reason.to_owned()),
                             source_intent_hash: tx_hash,
