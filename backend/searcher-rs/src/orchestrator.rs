@@ -62,7 +62,7 @@ use crate::route_intent::RouteIntent;
 use crate::size_optimizer::{OptimizeOutcome, OptimizeRejectReason, SizeOptimizer};
 use crate::state_projector::StateProjector;
 use crate::strategy_label::StrategyLabel;
-use ethers::types::Address;
+use ethers::types::{Address, U256};
 use shared_rs::price_oracle::RedisCachedPriceOracle;
 use shared_rs::trading_config::TradingConfigState;
 use std::collections::HashMap;
@@ -1280,7 +1280,8 @@ impl Orchestrator {
             result = match &outcome {
                 OptimizeOutcome::Sized(_) => "sized",
                 OptimizeOutcome::Rejected(_, _)
-                | OptimizeOutcome::RejectedWithLedger(_, _, _) => "rejected",
+                | OptimizeOutcome::RejectedWithLedger(_, _, _)
+                | OptimizeOutcome::RejectedComputed(_, _) => "rejected",
             },
             reason = ?outcome.reason_str(),
             gross_profit_usd = ?outcome.gross_profit_usd(),
@@ -1290,19 +1291,20 @@ impl Orchestrator {
 
         // PER-HOP (math-audit AUDIT-MATH-OPPS-2026-09-26): the rejection path
         // can ALREADY carry the kernel's exact per-leg wei
-        // (OptimizeOutcome::RejectedWithLedger). Capture it before the match
-        // so the tail persists it onto the RouteMetadata exactly like the
-        // Sized path does — this is what lets a rejected card show each
-        // hop's movement instead of "not computed".
-        let rejected_ledger = match &outcome {
-            OptimizeOutcome::RejectedWithLedger(_, _, legs) => legs.clone(),
-            _ => None,
-        };
+        // (OptimizeOutcome::RejectedWithLedger / RejectedComputed). Capture it
+        // before the match so the tail persists it onto the RouteMetadata
+        // exactly like the Sized path does — this is what lets a rejected card
+        // show each hop's movement instead of "not computed".
+        let rejected_ledger = outcome.leg_ledger();
 
         match outcome {
             OptimizeOutcome::Sized(sized) => {
                 // Unbox and update the candidate with optimal sizing data.
                 let s = *sized;
+                // ALWAYS-COMPUTE (2026-09-27): build the complete economics
+                // object from the sized figures BEFORE `s.candidate` is moved
+                // out (the builder reads the whole candidate).
+                let economics_obj = crate::economics::economics_from_sized(&s, cfg_snapshot);
                 let mut c = s.candidate;
                 c.gross_profit_usd = Some(s.gross_profit_usd);
                 c.net_expected_profit_usd = Some(s.estimated_net_profit_usd);
@@ -1320,6 +1322,11 @@ impl Orchestrator {
                 // the SIM-TS ladder ran on a notional the searcher never sized
                 // for. Record the exact amount the kernel optimized.
                 c.opportunity.amount_in_wei = s.optimal_amount_in.to_string();
+                // ALWAYS-COMPUTE (2026-09-27): the ONE complete economics
+                // object travels on the accepted row too (additive wire).
+                if crate::economics::always_compute_enabled() {
+                    c.opportunity.economics = Some(economics_obj);
+                }
                 // ARBX-0009: sheet-07 components from the kernel for the
                 // batch's Net_bps ranking (None ⇒ not computable ⇒ last).
                 // HOPS-LEDGER-04: thread the kernel's exact per-leg wei to
@@ -1331,6 +1338,47 @@ impl Orchestrator {
                     _ => None,
                 };
                 (c, s.net_economics, legs)
+            }
+            // ALWAYS-COMPUTE (2026-09-27): a rejection whose path HAD computed
+            // the full economics — the row keeps every number (gross AND net,
+            // the sized amount, the ledger) plus the complete computation
+            // object. "FAIL = se hizo el cálculo y no cumple el criterio".
+            OptimizeOutcome::RejectedComputed(reason, boxed) => {
+                let bare = reason.as_str();
+                REJECTED_NO_PROFIT_TOTAL
+                    .with_label_values(&[chain_str, candidate.label.as_str(), bare])
+                    .inc();
+                let rejection = if reason.is_net_dependent() {
+                    let mode = crate::financing::selected_mode(u8::from(
+                        candidate.base_strategy.is_some(),
+                    ) as f64);
+                    format!("{bare}:{}", mode.as_str())
+                } else {
+                    bare.to_owned()
+                };
+                let s = *boxed;
+                let mut c = candidate;
+                c.rejection_reason = Some(rejection.clone());
+                // The kernel's OWN figures, both of them: the legacy reject
+                // path could only carry one scalar (net); this variant proves
+                // the gross it judged. Knob-gated so OFF restores the
+                // pre-mandate wire exactly (one scalar payload).
+                if crate::economics::always_compute_enabled() {
+                    c.gross_profit_usd = Some(s.gross_profit_usd);
+                    c.net_expected_profit_usd = Some(s.estimated_net_profit_usd);
+                    c.opportunity.expected_profit_usd = Some(s.gross_profit_usd);
+                    c.opportunity.net_expected_profit_usd = Some(s.estimated_net_profit_usd);
+                    if s.optimal_amount_in > U256::zero() {
+                        c.opportunity.amount_in_wei = s.optimal_amount_in.to_string();
+                    }
+                    c.opportunity.economics =
+                        Some(crate::economics::economics_from_sized(&s, cfg_snapshot));
+                } else if let Some(net) = Some(s.estimated_net_profit_usd) {
+                    // Knob OFF: legacy semantics — only the net payload.
+                    c.net_expected_profit_usd = Some(net);
+                    c.opportunity.net_expected_profit_usd = Some(net);
+                }
+                (c, None, rejected_ledger)
             }
             OptimizeOutcome::Rejected(reason, rejected_net)
             | OptimizeOutcome::RejectedWithLedger(reason, rejected_net, _) => {
@@ -1371,6 +1419,21 @@ impl Orchestrator {
                 // detección. La tarjeta debe mostrar los números reales para
                 // que el operador vea POR QUÉ no es viable.
                 // c.opportunity.expected_profit_usd = None;  ← REMOVIDO
+                // ALWAYS-COMPUTE (2026-09-27): the no-quote rejects get their
+                // honest object — a real payload figure ⇒ "partial" with the
+                // number; nothing ⇒ "error" + the verbatim reason (gate 2:
+                // never fabricated numbers).
+                if crate::economics::always_compute_enabled() {
+                    c.opportunity.economics = Some(match rejected_net {
+                        Some(v) => crate::economics::economics_partial(
+                            c.opportunity.expected_profit_usd,
+                            Some(v),
+                            c.opportunity.roi_pct,
+                            Some(bare),
+                        ),
+                        None => crate::economics::economics_error(bare),
+                    });
+                }
                 // PER-HOP: the ledger captured above travels in the third
                 // tuple slot exactly like the Sized path's, so the common
                 // tail attaches it to the rejected row's RouteMetadata.
@@ -1995,6 +2058,7 @@ mod tests {
             pipeline_latency_ms: None,
             detected_at: Utc::now(),
             trace_id: Uuid::new_v4(),
+            economics: None,
         }
     }
 

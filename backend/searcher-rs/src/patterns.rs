@@ -62,6 +62,7 @@ pub fn build_dex_arb_candidate(ctx: &TxContext, swap: &DecodedSwap) -> Opportuni
         pipeline_latency_ms: None,
         detected_at: Utc::now(),
         trace_id: Uuid::new_v4(),
+        economics: None,
     }
 }
 

@@ -72,6 +72,73 @@ function toFiniteNumber(v: string | undefined, fallback: number): number {
   return Number.isFinite(n) ? n : fallback;
 }
 
+/** Truncate a derived reason for the readiness line (never re-words it). */
+function clip(s: string): string {
+  const t = s.trim().replace(/\s+/g, " ");
+  return t.length > 180 ? `${t.slice(0, 177)}...` : t;
+}
+
+/**
+ * G-SIM1-AUTOREFRESH: compact, DERIVED summary of a `status='failed'` registry
+ * row, so the readiness blocker explains WHY the item is unmet instead of
+ * claiming the evidence is missing.
+ *
+ * Zero-Mocks: every token comes from the row itself. The function reads a
+ * closed set of producer-written keys (`detail.error`, `detail.note`, and the
+ * variance harness' measurement shape `samples_labeled` /
+ * `min_samples_required` / `skips`) and falls back to the row's `evidence_ref`.
+ * It NEVER synthesizes a cause for a key it cannot read — the final fallback
+ * says so explicitly.
+ */
+function failureReasonFromRow(row: {
+  evidence_ref?: string | null;
+  detail?: unknown;
+}): string {
+  const d =
+    row.detail && typeof row.detail === "object"
+      ? (row.detail as Record<string, unknown>)
+      : null;
+  if (d) {
+    for (const k of ["error", "fail_reason", "note"] as const) {
+      const v = d[k];
+      if (typeof v === "string" && v.trim()) return clip(v);
+    }
+    const labeled = d["samples_labeled"];
+    const required = d["min_samples_required"];
+    if (typeof labeled === "number" && typeof required === "number") {
+      const parts = [`samples_labeled=${labeled} < min_samples=${required}`];
+      const skips =
+        d["skips"] && typeof d["skips"] === "object"
+          ? (d["skips"] as Record<string, unknown>)
+          : null;
+      if (skips) {
+        // Deterministic order, positive counts only — the histogram IS the
+        // evidence (R8), so only measured non-zero skips are quoted.
+        const hist = [
+          "unsupported_adapter",
+          "stale_timestamp",
+          "pred_failed",
+          "obs_failed",
+          "dedup",
+        ]
+          .filter((k) => typeof skips[k] === "number" && (skips[k] as number) > 0)
+          .map((k) => `${k}=${String(skips[k])}`);
+        if (hist.length > 0) parts.push(hist.join(", "));
+      }
+      const population = skips
+        ? (skips["attempted"] as number | undefined)
+        : undefined;
+      if (typeof population === "number" && typeof skips?.["dedup"] === "number") {
+        parts.push(`distinct=${population - (skips["dedup"] as number)}`);
+      }
+      return clip(parts.join("; "));
+    }
+  }
+  const ref = row.evidence_ref;
+  if (typeof ref === "string" && ref.trim()) return clip(ref);
+  return "producer recorded no reason in detail";
+}
+
 export async function verifyGSIM1(opts?: {
   simCtlUrl?: string;
   /** Override the capabilities path (default /capabilities) — for tests. */
@@ -132,14 +199,27 @@ export async function verifyGSIM1(opts?: {
 
   // (2) readiness_evidence registry — latest row per checklist item (the
   // table is keyed (gate_id, item_key), so each row IS the latest).
+  //
+  // G-SIM1-AUTOREFRESH (2026-09-26): `evidence_ref` + `detail` are read too so
+  // a status='failed' row can be reported as the MEASURED failure it is
+  // (RULE 00 / R8 — an existing dated measurement must never be re-dressed as
+  // "missing evidence"). Both columns are optional at the SQL level: a registry
+  // schema without them still answers, and the reason then falls back to the
+  // recorded ref instead of inventing a cause.
   let registryProblem: string | null = null;
-  let rows: Array<{ item_key: string; status: string; verified_at: Date | string }> = [];
+  let rows: Array<{
+    item_key: string;
+    status: string;
+    verified_at: Date | string;
+    evidence_ref?: string | null;
+    detail?: unknown;
+  }> = [];
   if (!opts?.pool) {
     registryProblem = "registry unavailable (pool not configured)";
   } else {
     try {
       const r = await opts.pool.query(
-        `SELECT item_key, status, verified_at
+        `SELECT item_key, status, verified_at, evidence_ref, detail
            FROM readiness_evidence
           WHERE gate_id = $1`,
         [GATE_ID],
@@ -154,10 +234,13 @@ export async function verifyGSIM1(opts?: {
   // (3) Classify the closed 7-key checklist. evidenced = latest row is
   // status='evidenced' AND fresh (verified_at > now-30d, strict — same rule
   // as the FASE 2 reader). Everything else is pending; a pending key whose
-  // row exists but is old is additionally flagged stale.
+  // row exists but is old is additionally flagged stale, and a pending key
+  // whose row exists with status='failed' is additionally flagged as a
+  // RECORDED failure carrying its own measured reason.
   const evidenced: string[] = [];
   const pending: string[] = [];
   const stale: string[] = [];
+  const failed: Array<{ key: string; reason: string }> = [];
   for (const key of G_SIM_1_ITEM_KEYS) {
     const row = rows.find((x) => x.item_key === key);
     const fresh = row ? computeIsFresh(row.verified_at, at) : false;
@@ -166,12 +249,29 @@ export async function verifyGSIM1(opts?: {
     } else {
       pending.push(key);
       if (row && !fresh) stale.push(key);
+      // Zero-Mocks: only a row that EXISTS and says status='failed' is
+      // reported as a failure, and its reason is READ from the row's own
+      // detail/ref — never synthesized from the key name.
+      if (row && row.status === "failed") {
+        failed.push({ key, reason: failureReasonFromRow(row) });
+      }
     }
   }
   const total = G_SIM_1_ITEM_KEYS.length;
   const checklist = `evidencia de checklist ${evidenced.length}/${total}`;
   const pendingList = pending.length > 0 ? `[${pending.join(", ")}]` : "";
   const staleNote = stale.length > 0 ? ` — stale (>30d): ${stale.join(", ")}` : "";
+  const failedNote =
+    failed.length > 0
+      ? ` — recorded failures (measured, not missing): ${failed
+          .map((f) => `${f.key} (${f.reason})`)
+          .join("; ")}`
+      : "";
+  // G-SIM1-AUTOREFRESH: "missing evidence" is only TRUE when no row exists for
+  // the pending key. With at least one recorded failure the honest wording is
+  // "unmet items" plus the measured reason — otherwise the operator reads
+  // "missing" for a benchmark that ran, produced a full histogram, and failed.
+  const unmetList = failed.length > 0 ? `unmet items: ${pendingList}` : `missing evidence: ${pendingList}`;
   const registryNote = registryProblem ? ` — readiness_evidence ${registryProblem}` : "";
 
   const v2_ready = process.env["ARBX_SIMULATOR_V2_READY"] === "true";
@@ -188,7 +288,7 @@ export async function verifyGSIM1(opts?: {
       const reason =
         pending.length === 0
           ? `simulator-v2 IMPLEMENTADO (${modules.length} módulos, backend ${backend} disponible); ${checklist} completa; hard blocker de checklist resuelto — único paso restante: ARBX_SIMULATOR_V2_READY=false`
-          : `simulator-v2 IMPLEMENTADO (${modules.length} módulos, backend ${backend} disponible); ${checklist}; hard blocker hasta completar: ${pendingList}${staleNote}${registryNote}`;
+          : `simulator-v2 IMPLEMENTADO (${modules.length} módulos, backend ${backend} disponible); ${checklist}; hard blocker hasta completar: ${pendingList}${staleNote}${failedNote}${registryNote}`;
       return {
         ...base,
         status: "red",
@@ -206,7 +306,7 @@ export async function verifyGSIM1(opts?: {
       return {
         ...base,
         status: "red",
-        reason: `sim-ctl alive, ARBX_SIMULATOR_V2_READY=false; ${simCtl}${capsPath} unavailable — topología real no verificable, módulos no enumerables; ${checklist}${pendingList ? `; hard blocker hasta completar: ${pendingList}` : ""}${staleNote}${registryNote}`,
+        reason: `sim-ctl alive, ARBX_SIMULATOR_V2_READY=false; ${simCtl}${capsPath} unavailable — topología real no verificable, módulos no enumerables; ${checklist}${pendingList ? `; hard blocker hasta completar: ${pendingList}` : ""}${staleNote}${failedNote}${registryNote}`,
         evidence: {
           kind: "endpoint",
           ref: `${simCtl}/health (alive) + ${simCtl}${capsPath} (unavailable) + readiness_evidence ${evidenced.length}/${total}`,
@@ -220,7 +320,7 @@ export async function verifyGSIM1(opts?: {
       return {
         ...base,
         status: "red",
-        reason: `sim-ctl reports backend ${caps.simulator_backend} with ${modules.length} modules — simulator-v2 still a stub in this build (audit A3); ARBX_SIMULATOR_V2_READY=false; ${checklist}${pendingList ? `; hard blocker hasta completar: ${pendingList}` : ""}${staleNote}${registryNote}`,
+        reason: `sim-ctl reports backend ${caps.simulator_backend} with ${modules.length} modules — simulator-v2 still a stub in this build (audit A3); ARBX_SIMULATOR_V2_READY=false; ${checklist}${pendingList ? `; hard blocker hasta completar: ${pendingList}` : ""}${staleNote}${failedNote}${registryNote}`,
         evidence: {
           kind: "endpoint",
           ref: `${simCtl}${capsPath} (${modules.length} modules) + readiness_evidence ${evidenced.length}/${total}`,
@@ -236,7 +336,7 @@ export async function verifyGSIM1(opts?: {
     return {
       ...base,
       status: "red",
-      reason: `inconsistencia en /capabilities: backend ${backendClaim} con 0 módulos enumerados — un backend v2 debe declarar al menos 1 módulo; topología real no verificable; ARBX_SIMULATOR_V2_READY=false; ${checklist}${pendingList ? `; hard blocker hasta completar: ${pendingList}` : ""}${staleNote}${registryNote}`,
+      reason: `inconsistencia en /capabilities: backend ${backendClaim} con 0 módulos enumerados — un backend v2 debe declarar al menos 1 módulo; topología real no verificable; ARBX_SIMULATOR_V2_READY=false; ${checklist}${pendingList ? `; hard blocker hasta completar: ${pendingList}` : ""}${staleNote}${failedNote}${registryNote}`,
       evidence: {
         kind: "endpoint",
         ref: `${simCtl}${capsPath} (backend ${backendClaim}, 0 modules) + readiness_evidence ${evidenced.length}/${total}`,
@@ -251,7 +351,7 @@ export async function verifyGSIM1(opts?: {
     return {
       ...base,
       status: "red",
-      reason: `premature flag — SECURE_BOOT violated: ARBX_SIMULATOR_V2_READY=true with ${checklist}; missing evidence: ${pendingList}${staleNote}${registryNote}`,
+      reason: `premature flag — SECURE_BOOT violated: ARBX_SIMULATOR_V2_READY=true with ${checklist}; ${unmetList}${staleNote}${failedNote}${registryNote}`,
       evidence: {
         kind: "endpoint",
         ref: `ARBX_SIMULATOR_V2_READY=true + readiness_evidence ${evidenced.length}/${total}`,
