@@ -2698,7 +2698,10 @@ async fn process_cartridge_candidate(
         ConfigGateOutcome::StrategyConfigGateBlocked {
             reason: reject_reason,
         } => {
-            let reason = format!("StrategyConfigGateBlocked:{}", reject_reason_label(&reject_reason));
+            let reason = format!(
+                "StrategyConfigGateBlocked:{}",
+                reject_reason_label(&reject_reason)
+            );
             let mut opp = sc.opportunity.clone();
             opp.rejection_reason = Some(reason.clone());
             emitter
