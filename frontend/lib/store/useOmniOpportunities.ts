@@ -146,8 +146,10 @@ export function useOmniOpportunities({
       // feed has ONE origin (public edge), no Next double-hop proxy.
       // WINDOW-01: the lookback rides the same request (api-server clamps it).
       const maxAge = maxAgeRef.current;
+      // ORDER-01: same ordering the SSR snapshot asks for, so the reconcile
+      // cannot silently re-order the grid by arrival time.
       const res = await fetch(
-        `${getPublicEdgeBaseUrl()}/api/opportunities/live?viable_only=${viable}&limit=50&max_age_seconds=${maxAge}`,
+        `${getPublicEdgeBaseUrl()}/api/opportunities/live?viable_only=${viable}&limit=50&max_age_seconds=${maxAge}&order=profit_usd`,
         {
           headers: { accept: "application/json" },
           signal: AbortSignal.timeout(POLL_INTERVAL_MS),

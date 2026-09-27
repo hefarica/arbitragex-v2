@@ -418,6 +418,33 @@ export function isRealLiveEconomicCard(opp: OmniOpportunity): boolean {
 }
 
 /**
+ * Operator order 2026-09-27: the grid is ordered by PROFIT DESCENDING — the row
+ * that makes money sits first, whatever the arrival order of the WebSocket
+ * stream or of a snapshot batch was. The wire's own `order=profit_usd` cannot
+ * be relied on for the grid: the WS path and the batch merge deliver rows in
+ * arrival order, so the ordering has to be decided where the grid is built.
+ *
+ * Pure: returns a NEW array, never mutates the input. Ties break on the most
+ * recent detection and then on the route id, so the order is deterministic and
+ * two identical polls cannot shuffle the cards.
+ */
+export function sortRowsByNetDesc(rows: OmniOpportunity[]): OmniOpportunity[] {
+  const net = (opp: OmniOpportunity): number => {
+    const v = netOf(opp);
+    return v != null && Number.isFinite(v) ? v : Number.NEGATIVE_INFINITY;
+  };
+  return [...rows].sort((a, b) => {
+    const netA = net(a);
+    const netB = net(b);
+    if (netA !== netB) return netB - netA;
+    const tA = Date.parse(String(a.detected_at ?? "")) || 0;
+    const tB = Date.parse(String(b.detected_at ?? "")) || 0;
+    if (tA !== tB) return tB - tA;
+    return String(a.id ?? "").localeCompare(String(b.id ?? ""));
+  });
+}
+
+/**
  * Does this row carry a COMPUTED economics object with figures on it?
  *
  * This is what separates a rejection the searcher actually PRICED (its gross /

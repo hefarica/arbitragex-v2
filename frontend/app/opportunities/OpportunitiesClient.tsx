@@ -44,7 +44,11 @@ import { DegradedBanner } from "@/components/DegradedBanner";
 import { useUserPrefs } from "@/lib/user-prefs";
 // CARDS-NOTIONAL-01 — the notifier's gate is the SAME SSOT the card ladder
 // uses, so the toast can never announce a figure the card refuses to paint.
-import { decideOpportunityNotification, selectGridRows } from "@/lib/opportunity-ledger";
+import {
+  decideOpportunityNotification,
+  selectGridRows,
+  sortRowsByNetDesc,
+} from "@/lib/opportunity-ledger";
 
 // Stable route identity for the card grid key. A re-detected route (same
 // chain + strategy + token pair + DEX path) must update the SAME card in place
@@ -411,7 +415,10 @@ export default function OpportunitiesClient({
     grid: gridRows,
   } = useMemo(() => selectGridRows(filtered, filters.showRejected), [filtered, filters.showRejected]);
   const declaredCount = noDataRows.length;
-  const visible = useMemo(() => gridRows.slice(0, cap), [gridRows, cap]);
+  // ORDER-01 (operator order 2026-09-27): profit descending — the row with the
+  // gain is the first card, independent of WS arrival order or batch merge.
+  const orderedRows = useMemo(() => sortRowsByNetDesc(gridRows), [gridRows]);
+  const visible = useMemo(() => orderedRows.slice(0, cap), [orderedRows, cap]);
 
   /** "Mostrar rechazadas" (operator order 2026-09-27). Turning it ON must also
    *  release the viable-only narrowing (both the filter-object flag and the
@@ -817,11 +824,11 @@ export default function OpportunitiesClient({
       </div>
 
       {/* Motor de memoria (portado del exchange): revelar lo diferido + cargar más */}
-      {gridRows.length > visible.length && (
+      {orderedRows.length > visible.length && (
         <div className="mt-6 flex flex-col items-center gap-2">
           <p className="text-xs text-muted-foreground">
             Showing <span className="text-foreground font-semibold">{visible.length}</span> of{" "}
-            <span className="text-foreground font-semibold">{gridRows.length}</span>{" "}
+            <span className="text-foreground font-semibold">{orderedRows.length}</span>{" "}
             {filters.showRejected ? "detecciones" : "real/live cards"} — the rest are
             deferred (memory-discipline cap).
           </p>
@@ -830,7 +837,7 @@ export default function OpportunitiesClient({
             onClick={() => setCap((c) => c + VISIBLE_CAP)}
             className="flex items-center gap-2 px-3 py-1.5 rounded-lg border border-border bg-muted hover:bg-accent transition-colors text-xs font-semibold"
           >
-            <ChevronDown size={12} /> Show {Math.min(VISIBLE_CAP, gridRows.length - visible.length)} more
+            <ChevronDown size={12} /> Show {Math.min(VISIBLE_CAP, orderedRows.length - visible.length)} more
           </button>
         </div>
       )}
