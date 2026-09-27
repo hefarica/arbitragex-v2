@@ -345,7 +345,35 @@ export function forwardSimulate(
   // Component 5: copied buffer — apply the cap as a worst-case proxy.
   // (The spine has the actual p_copied per-pool from dex_chain_metrics; we
   // assume the max as a conservative upper bound.)
-  const copied_buffer_usd = grossUsd * cfg.p_copied_max;
+  //
+  // SIM-COST-NONNEGATIVE-01 (2026-09-27): `Math.max(0, grossUsd)` — a COST
+  // component may never be a CREDIT.
+  //
+  // WHY: this component scales with `grossUsd`, and `grossUsd` is the wire's
+  // `expected_profit_usd`, which is NEGATIVE on essentially every live row
+  // (arbitrage that does not pay). Unbounded, the buffer flipped sign with it:
+  // at the operator's live `p_copied_max = 0.5`, `grossUsd = -1000` produced
+  // `copied_buffer_usd = -500`, so `costsTotalUsd()` returned a NEGATIVE total
+  // (-490.15) and the whole ladder collapsed downstream —
+  // `frontend/lib/opportunity-ledger.ts::buildLedger` refuses any
+  // `simulated_costs_total_usd < 0` ("CARDS-NOTIONAL-01: simulated total cost is
+  // negative — not a closed ladder"), which blanked EVERY capital-path cell of
+  // `frontend/components/OpportunityTradeCard.tsx` (Gross out, Repay/principal,
+  // Gas, LP fees, Decoherence/slippage, TLS fee, Relay fee, Capital cost,
+  // Failure buffer, Ops overhead, Copied buffer, Total cost) while still
+  // painting `Net yield = -509.85` — a net BETTER than the gross, paid for by a
+  // cost that does not exist. Measured over a 500+ card census of the live
+  // feed: 196 counter resets, 100 % of them carrying this exact reason (card
+  // ids fb6148d0-4c4a-4181-a4e1-912f0341c956,
+  // 9ee1e291-5f9b-4136-befe-23505b3c39de,
+  // d3d3b19a-401b-49bc-80b6-e89981c2f420).
+  //
+  // The producer's intent survives verbatim — "in the worst case a competing
+  // searcher copies the upside" — because there IS no upside to copy when the
+  // gross is ≤ 0: the honest worst-case buffer is 0, not a rebate. Same guard
+  // class as `relayFeeUsd` below (`Math.max(gross × 5%, $0.50)`), which is
+  // exactly why the relay fee never showed this defect.
+  const copied_buffer_usd = Math.max(0, grossUsd) * cfg.p_copied_max;
   if (cfg.p_copied_max > 0) notes.push(`p-copied-max=${cfg.p_copied_max}`);
 
   // Component 6: capital opportunity cost.
