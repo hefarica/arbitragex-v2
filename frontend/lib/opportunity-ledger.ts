@@ -300,15 +300,42 @@ export function buildLedger(opp: OmniOpportunity): LedgerView {
         net_usd: canonicalNet,
         principal_usd: null,
         cost_rows: [],
-        quiet: true,
+        quiet: false,
         reason:
-          `${DASH_REASON_PREFIX}: ladder shown on the searcher's own (gross, net) pair ` +
+          `${DASH_REASON_PREFIX} (published): searcher's own (gross, net) pair ` +
           `— principal not rendered (no notional published for it)` +
           (simReject != null ? `; simulated ladder suppressed: ${simReject}` : ""),
       };
     }
   }
 
+  // ── OPERATOR ORDER 2026-09-27 (verbatim): "QUITA EL MALDITO RENDER QUE ESCONDE
+  // LOS NUMEROS." ─────────────────────────────────────────────────────────────
+  // This tail used to silence the whole capital path whenever no basis closed.
+  // Nothing that exists on the wire may be withheld: publish every figure that
+  // is present, labelled with the reason the ladder does not close. Only a row
+  // with NO figure at all still goes quiet (R8: absence is a state).
+  const anyFigure = [
+    canonicalGross, canonicalNet, simGross, simNet, simCostsTotal, principal,
+  ].some((v) => v != null);
+  if (anyFigure) {
+    const rows = simulatedCostRows(opp);
+    const derivedTotal =
+      simCostsTotal ??
+      (canonicalGross != null && canonicalNet != null ? canonicalGross - canonicalNet : null);
+    return {
+      basis: simGross != null || simNet != null ? "simulated" : "canonical",
+      gross_usd: canonicalGross ?? simGross,
+      total_cost_usd: derivedTotal,
+      net_usd: canonicalNet ?? simNet,
+      principal_usd: principal,
+      cost_rows: rows,
+      quiet: false,
+      reason:
+        `${DASH_REASON_PREFIX} (published, ladder not closed): ` +
+        `${simReject ?? "no closed triple on the wire"}`,
+    };
+  }
   return quiet(
     simReject ??
       "no closed (gross, net, cost) triple on the wire for this row",
