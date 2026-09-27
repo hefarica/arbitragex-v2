@@ -2625,20 +2625,46 @@ impl SizeOptimizer {
         );
 
         if profit_wei <= 0 {
-            // ALWAYS-COMPUTE (operator mandate 2026-09-27): the golden-section
-            // evaluation DID price both legs at its optimum `x_star` (local
-            // CPMM math over the same cached reserves) — re-derive the exact
-            // chain there so the rejection carries the FULL figures it
-            // computed: gross (≤ 0), the cost components it was judged
-            // against, net, and the per-leg ledger. "FAIL = se hizo el cálculo
-            // y no cumple el criterio", never "no tengo números".
-            let profit_usd = (profit_wei as f64) / 10f64.powi(decimals as i32) * token_price_usd;
-            let out_a = v2_amount_out(x_star, reserve_in_a, reserve_out_a, fee_a);
+            // ALWAYS-COMPUTE (operator mandate 2026-09-27): the kernel priced
+            // both legs (local CPMM math over the same cached reserves), so the
+            // rejection carries the FULL figures it computed: gross (≤ 0), the
+            // cost components it was judged against, net, and the per-leg
+            // ledger. "FAIL = se hizo el cálculo y no cumple el criterio",
+            // never "no tengo números".
+            //
+            // DUST-NOTIONAL-01 (operator order 2026-09-27, measured defect):
+            // when the WHOLE bracket is unprofitable, `x_star` is the argmax of
+            // an everywhere-negative curve — for two pools at (near) parity it
+            // lands at the dust end of the bracket. Production evidence: 4 087
+            // rows/20 min (12.7 % of every `computed` row) published a principal
+            // of $0.001842 with `roi_pct` down to −7.84e13 %, from this exact
+            // arm. A figure computed at an arbitrary sub-cent notional is not a
+            // fact about this route; the AUTHORIZED-CAPITAL end of the SAME
+            // bracket is (the NLEG-SIZE-BAND-01 precedent, which did this for
+            // the 3..=7-leg grid but never for this 2-leg kernel). The kernel's
+            // argmax is kept in the telemetry, not in the published notional.
+            let x_band = x_hi;
+            let out_a = v2_amount_out(x_band, reserve_in_a, reserve_out_a, fee_a);
             let out_b = v2_amount_out(out_a, reserve_in_b, reserve_out_b, fee_b);
+            // The argmax is the MAXIMUM over the bracket and it is ≤ 0, so the
+            // band's own gross is ≤ 0 too — the reason stays NonPositiveProfit.
+            let profit_band_wei = clamped_to_i128(out_b).saturating_sub(clamped_to_i128(x_band));
+            debug!(
+                event = "size_optimizer.two_leg_nonpositive_published_at_capital_band",
+                label = candidate.label.as_str(),
+                kernel_argmax_wei = %x_star,
+                kernel_argmax_profit_wei = profit_wei,
+                published_notional_wei = %x_band,
+                published_profit_wei = profit_band_wei,
+                "no profitable size in the bracket — publishing at the authorized \
+                 capital end instead of the negative curve's dust argmax"
+            );
+            let profit_usd =
+                (profit_band_wei as f64) / 10f64.powi(decimals as i32) * token_price_usd;
             let gas_cost = state.gas_cost_usd();
             let ops_overhead = state.ops_overhead_usd_per_attempt;
             let start_amount_usd =
-                (clamped_to_i128(x_star) as f64) / 10f64.powi(decimals as i32) * token_price_usd;
+                (clamped_to_i128(x_band) as f64) / 10f64.powi(decimals as i32) * token_price_usd;
             let borrow_usd = if candidate.base_strategy.is_some() {
                 start_amount_usd
             } else {
@@ -2648,14 +2674,14 @@ impl SizeOptimizer {
                 borrow_usd * crate::financing::selected_mode(borrow_usd).fee_bps() / 10_000.0;
             let net_usd = profit_usd - gas_cost - ops_overhead - flash_fee_usd;
             let mut cand = candidate.clone();
-            cand.opportunity.amount_in_wei = x_star.to_string();
+            cand.opportunity.amount_in_wei = x_band.to_string();
             cand.opportunity.expected_profit_usd = Some(profit_usd);
             cand.opportunity.net_expected_profit_usd = Some(net_usd);
             return OptimizeOutcome::RejectedComputed(
                 OptimizeRejectReason::NonPositiveProfit,
                 Box::new(SizedCandidate {
                     candidate: cand,
-                    optimal_amount_in: x_star,
+                    optimal_amount_in: x_band,
                     gross_profit_usd: profit_usd,
                     estimated_net_profit_usd: net_usd,
                     net_negative: true,
@@ -2666,7 +2692,7 @@ impl SizeOptimizer {
                         ops_overhead,
                         borrow_usd,
                     )),
-                    leg_amounts_in: Some(vec![x_star.to_string(), out_a.to_string()]),
+                    leg_amounts_in: Some(vec![x_band.to_string(), out_a.to_string()]),
                     leg_amounts_out: Some(vec![out_a.to_string(), out_b.to_string()]),
                 }),
             );
@@ -4053,6 +4079,96 @@ mod tests {
         assert!(
             result.is_none(),
             "symmetric pools produce no profit — must return None"
+        );
+    }
+
+    // ── DUST-NOTIONAL-01 (operator order 2026-09-27) ─────────────────────────
+    //
+    // Production evidence (measured on the live feed): 4 087 rows / 20 min
+    // (12.7 % of every `computed` row) published a principal of $0.001842 with
+    // `roi_pct` down to −7.84e13 %. Cause: when the WHOLE bracket is
+    // unprofitable, `x_star` is the argmax of an everywhere-negative curve,
+    // which for two pools at (near) parity lands at the DUST end of the
+    // bracket — and every published figure was computed there.
+    //
+    // Contract: the rejection is published at the AUTHORIZED-CAPITAL end of the
+    // same bracket (`min(cap_wei, reserve_in)`; the NLEG-SIZE-BAND-01
+    // precedent), the row's `amount_in_wei` IS that notional, and the leg
+    // ledger opens on it. A sub-cent notional is never the published basis.
+    #[tokio::test]
+    async fn two_leg_nonpositive_is_published_at_the_capital_band_not_at_dust() {
+        let pool_a = addr(0x10);
+        let pool_b = addr(0x11);
+        let tok_weth = addr(0xAAAA);
+        let tok_usdc = addr(0xBBBB);
+
+        let cache = Arc::new(ReservesCache::new());
+        // Perfect parity (equal reserves, equal fees) ⇒ every size loses.
+        // One unit of reserves so the bracket ceiling IS the reserve side.
+        let r = unit(1);
+        cache.insert(pool_a, r, r).await;
+        cache.insert(pool_b, r, r).await;
+
+        let projector = Arc::new(StateProjector::new(cache, None, empty_v3_fee_catalog()));
+        let optimizer = SizeOptimizer::new(projector);
+
+        let candidate = make_dex_candidate(
+            pool_a,
+            pool_b,
+            tok_weth,
+            tok_usdc,
+            StrategyLabel::DexArbV2V2,
+        );
+        let intent = make_intent(tok_weth, tok_usdc);
+        let cfg = make_cfg(100_000.0);
+
+        let outcome = optimizer
+            .optimize_with_reason(candidate, &intent, Some(&cfg))
+            .await
+            .expect("optimize must not error");
+
+        let s = match outcome {
+            OptimizeOutcome::RejectedComputed(OptimizeRejectReason::NonPositiveProfit, s) => s,
+            other => panic!(
+                "an unprofitable 2-leg bracket must be RejectedComputed(NonPositiveProfit), got {:?}",
+                other.reason_str()
+            ),
+        };
+
+        // The published notional is the capital band (== the reserve ceiling
+        // here), NOT the dust argmax the negative curve hands back.
+        assert_eq!(
+            s.optimal_amount_in, r,
+            "published notional must be the capital band, not the negative curve's dust argmax"
+        );
+        assert_eq!(
+            s.candidate.opportunity.amount_in_wei,
+            s.optimal_amount_in.to_string(),
+            "the row's published amount_in_wei IS the notional the figures were computed at"
+        );
+        let ins = s
+            .leg_amounts_in
+            .as_ref()
+            .expect("the leg ledger rides the rejection");
+        assert_eq!(
+            ins[0],
+            s.optimal_amount_in.to_string(),
+            "hop 0 opens on the published notional"
+        );
+        assert!(
+            s.gross_profit_usd <= 0.0,
+            "a losing bracket keeps a non-positive gross"
+        );
+        assert!(
+            s.estimated_net_profit_usd <= s.gross_profit_usd,
+            "net carries the costs on top of the (≤ 0) gross"
+        );
+        // Dust would sit ~1e-7 below the reserve; require the capital band.
+        assert!(
+            s.optimal_amount_in >= r / U256::from(2u64),
+            "dust publication: {} is far below the capital band {}",
+            s.optimal_amount_in,
+            r
         );
     }
 
