@@ -2220,12 +2220,16 @@ impl SizeOptimizer {
         out
     }
 
-    /// Fallback bracket when no local model is available: the centred `max`
-    /// points of the same log grid. Deterministic, never a guessed optimum.
+    /// The SUPERSEDED model-free bracket: the centred `max` points of the log
+    /// grid. NLEG-SIZE-BAND-01 replaced its only production call site with
+    /// [`Self::capital_band_probes`] (the centre of a grid over `[1, cap_wei]`
+    /// is dust — see that function for the measurement), and this is kept for
+    /// exactly one purpose: the regression test that documents what the old
+    /// bracket selected, so the defect cannot come back unnoticed.
     ///
-    /// Kept for callers whose grid is NOT anchored on the authorized capital;
-    /// the V3 N-leg model-free path uses [`Self::capital_band_probes`] instead
-    /// (NLEG-SIZE-BAND-01 — see that function for the measured defect).
+    /// `#[cfg(test)]` because production must not have a second, dust-sized
+    /// bracket available to call.
+    #[cfg(test)]
     fn middle_probes(grid: &[U256], max: usize) -> Vec<U256> {
         if grid.is_empty() {
             return vec![U256::one()];
@@ -7441,7 +7445,7 @@ mod tests {
     fn model_free_bracket_is_anchored_on_the_authorized_capital() {
         // The exact live shape: $1000 cap, token at $2698.80, 18 decimals.
         let cap_usd = 1000.0_f64;
-        let price = 2698.797_5_f64;
+        let price = 2_698.797_5_f64;
         let decimals = 18u8;
         let cap_wei = clamp_to_cap_wei(U256::MAX, cap_usd, price, decimals)
             .expect("cap_wei must resolve for a live-shaped configuration");
