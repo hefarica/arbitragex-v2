@@ -18,8 +18,16 @@ Two modes, one interpretation contract:
 `rows.jsonl` is one `row_to_json(readiness_evidence)` object per line, produced
 by the workflow with a READ-ONLY psql query. Nothing here writes, and nothing
 here invents a value: every token of the output comes from the row, the clock,
-or the checklist constant below (which mirrors G_SIM_1_ITEM_KEYS in
-backend/api-server/src/routes/readiness-evidence.ts — a test pins the mirror).
+or the checklist constant below.
+
+The checklist constant DOES duplicate the server contract
+(`G_SIM_1_ITEM_KEYS` / `FRESHNESS_DAYS` in
+backend/api-server/src/routes/readiness-evidence.ts) because this script runs in
+a GitHub runner, not inside the api-server process. A duplicate without a check
+is how a gate quietly starts enforcing a checklist the server would reject, so
+`assert_mirror()` reads the real TypeScript source and fails the run on any
+drift. Outside a repo checkout there is nothing to compare against and the
+script says so instead of pretending it verified.
 
 Exit codes
     0  interpretation produced (including "unmet" — failing the pipeline is not
@@ -32,8 +40,10 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 
 # Mirror of G_SIM_1_ITEM_KEYS (backend/api-server/src/routes/readiness-evidence.ts).
 ITEM_KEYS = (
@@ -48,6 +58,51 @@ ITEM_KEYS = (
 
 # Mirror of FRESHNESS_DAYS (same file). A row older than this is NOT evidence.
 FRESHNESS_DAYS = 30
+
+# Where the mirrored contract actually lives, relative to the repo root.
+MIRROR_SOURCE = ("backend", "api-server", "src", "routes", "readiness-evidence.ts")
+
+
+def assert_mirror() -> list[str]:
+    """Read the real TS contract and fail loudly if this mirror drifted.
+
+    Returns the checks performed. Exits non-zero (with a GitHub ::error::) on
+    drift, on a malformed source, or when the source is present but the expected
+    declarations are gone — a renamed constant must break the build, not quietly
+    disable the check.
+    """
+    root = Path(__file__).resolve().parents[2]
+    src = root.joinpath(*MIRROR_SOURCE)
+    if not src.is_file():
+        print(f"::notice::mirror source {src} not found — TS contract NOT verified in this run")
+        return []
+    text = src.read_text(encoding="utf-8")
+    keys_match = re.search(r"G_SIM_1_ITEM_KEYS\s*=\s*\[(.*?)\]", text, re.S)
+    if keys_match is None:
+        raise SystemExit(
+            "::error::G_SIM_1_ITEM_KEYS not found in "
+            f"{'/'.join(MIRROR_SOURCE)} — the contract moved; update MIRROR_SOURCE "
+            "instead of deleting the check"
+        )
+    ts_keys = tuple(re.findall(r'"([^"]+)"', keys_match.group(1)))
+    fresh_match = re.search(r"FRESHNESS_DAYS\s*=\s*(\d+)", text)
+    if fresh_match is None:
+        raise SystemExit(
+            "::error::FRESHNESS_DAYS not found in "
+            f"{'/'.join(MIRROR_SOURCE)} — the contract moved; update MIRROR_SOURCE "
+            "instead of deleting the check"
+        )
+    ts_freshness = int(fresh_match.group(1))
+    problems: list[str] = []
+    if ts_keys != ITEM_KEYS:
+        problems.append(f"item keys: ts={list(ts_keys)} script={list(ITEM_KEYS)}")
+    if ts_freshness != FRESHNESS_DAYS:
+        problems.append(f"freshness days: ts={ts_freshness} script={FRESHNESS_DAYS}")
+    if problems:
+        raise SystemExit("::error::G-SIM-1 checklist mirror drift — " + "; ".join(problems))
+    checks = [f"item keys == ts ({len(ts_keys)} keys)", f"freshness == ts ({ts_freshness}d)"]
+    print("mirror OK: " + "; ".join(checks))
+    return checks
 
 
 def parse_ts(value: str) -> datetime:
@@ -77,12 +132,38 @@ def load_rows(path: str) -> list[dict]:
     return rows
 
 
+def newest_row(rows: list[dict], key: str) -> dict | None:
+    """The newest row for `item_key`, by `verified_at`.
+
+    `readiness_evidence` is keyed (gate_id, item_key) so there is normally ONE
+    row per key and this is that row. It takes the max anyway: if the workflow is
+    ever pointed at `readiness_evidence_history`, or a read-back query returns
+    more than one row per key, "first line in the file" would silently report an
+    OLD row as the current state — the exact misreading this gate exists to
+    prevent.
+    """
+    candidates = [r for r in rows if r.get("item_key") == key]
+    if not candidates:
+        return None
+
+    def verified_at(row: dict) -> datetime:
+        try:
+            return parse_ts(str(row.get("verified_at")))
+        except (TypeError, ValueError):
+            # An unparseable timestamp cannot be the newest evidence: it is
+            # ranked oldest and still reported (with its raw value) rather than
+            # dropped.
+            return datetime.min.replace(tzinfo=timezone.utc)
+
+    return max(candidates, key=verified_at)
+
+
 def classify(rows: list[dict], now: datetime) -> list[dict]:
     """Latest row per item_key → evidenced / stale / failed / missing."""
     cutoff = now - timedelta(days=FRESHNESS_DAYS)
     out: list[dict] = []
     for key in ITEM_KEYS:
-        row = next((r for r in rows if r.get("item_key") == key), None)
+        row = newest_row(rows, key)
         if row is None:
             out.append({"item_key": key, "state": "missing", "reason": None,
                         "verified_at": None, "age_days": None, "detail": None,
@@ -269,10 +350,12 @@ def main(argv: list[str]) -> int:
     t.add_argument("--github-output", default="", help="append needs_attention/unmet to this GITHUB_OUTPUT file")
 
     args = ap.parse_args(argv)
+    # Verify the mirrored contract BEFORE interpreting anything with it.
+    assert_mirror()
     rows = load_rows(args.rows)
 
     if args.mode == "assert-fresh":
-        row = next((r for r in rows if r.get("item_key") == args.item), None)
+        row = newest_row(rows, args.item)
         if row is None:
             print(f"::error::G-SIM-1 item {args.item} has NO row — the producer did not deliver")
             return 1
