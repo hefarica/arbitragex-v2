@@ -557,31 +557,79 @@ impl DexEngine {
             return V3GrossOutcome::QuoteUnavailable;
         }
 
-        // Spread = |out_a - out_b| if both are quoting the same direction.
-        let spread = if out_a >= out_b {
-            out_a.saturating_sub(out_b)
-        } else {
-            out_b.saturating_sub(out_a)
+        // ── V3-CYCLE-GROSS-01 (2026-09-27): the CHAINED cycle identity ───────
+        //
+        // MEASURED DEFECT this replaces. The previous code compared two
+        // INDEPENDENT probes of the same size:
+        //
+        //     out_a = quote(pool_a, probe_amount)          // forward
+        //     out_b = quote(pool_b, probe_amount)          // forward, SAME input
+        //     spread = |out_a − out_b|                     // a VENUE PRICE GAP
+        //     gross  = spread / 1e18 × price(token_out)    // hardcoded scale
+        //
+        // A venue price gap is not a round-trip return: it ignores the return
+        // leg's price impact AND both fees, and `|out_a − out_b|` is largest
+        // exactly where one venue is broken (an empty or near-empty pool), which
+        // is why live rows carried `expected_profit_usd = 369_506_963_197.84`
+        // and `710_273.79750992` on principals of $1000 and $1 — a "profit" of
+        // 10^8 times the capital. The file's own note records the 6-decimals
+        // half of it as the "UNIT-SCALE (Bug $69M)".
+        //
+        // The V2/V2 path was already corrected to the chained identity
+        // (`v2_cycle_profit`, see its doc above); V3 kept the legacy form. This
+        // applies the SAME identity to V3:
+        //
+        //   buy where the probe returns MORE, then SELL the proceeds back on
+        //   the other venue, and measure the raw profit of that round trip in
+        //   token_in units (token_in → … → token_in), scaled by token_in's real
+        //   decimals and priced at token_in's live USD price.
+        //
+        // Cost: one extra quote (3 instead of 2). Only the orientation the
+        // forward probes already favour is chained — the other is dominated by
+        // construction, so no budget is spent on it.
+        let token_in = intent.legs.first().map(|l| l.token_in);
+        let token_out = intent.legs.first().map(|l| l.token_out);
+        let (Some(token_in), Some(token_out)) = (token_in, token_out) else {
+            // No intent direction → cannot chain a cycle (R8: refuse, never
+            // fall back to the venue gap).
+            return V3GrossOutcome::QuoteUnavailable;
         };
 
-        if spread.is_zero() {
-            // Both legs quoted an IDENTICAL amount out — the honest reading is
-            // an efficient market with no spread to capture, NOT a missing price.
+        // Buy on the venue the probe says is cheaper (more out for the same in).
+        let (buy_out, sell_pool) = if out_a >= out_b {
+            (out_a, pool_b)
+        } else {
+            (out_b, pool_a)
+        };
+        let returned = match self
+            .get_pool_quote_dir(sell_pool, buy_out, projector, token_out)
+            .await
+        {
+            Ok(v) => v,
+            Err(V3QuoteLegError::V3(label)) => return V3GrossOutcome::V3Labeled(label),
+            Err(V3QuoteLegError::ReservesMiss) => return V3GrossOutcome::QuoteUnavailable,
+        };
+
+        // Raw profit of the round trip, in token_in units. U256 saturates: a
+        // cycle that does not pay returns zero (computed-and-zero, which
+        // `compute_gross_usd` maps to None per R8) — never a negative gross and
+        // never a venue gap passed off as a return.
+        let profit_units = returned.saturating_sub(probe_amount);
+        if profit_units.is_zero() {
+            // No capturable spread at this size: either the venues agree after
+            // fees and impact, or the cycle loses money. Both are the honest
+            // "no positive profit here".
             return V3GrossOutcome::SpreadZeroEquilibrium;
         }
 
-        // Price by the ACTUAL denomination token (token_out), NOT a blanket
-        // base_token_price_usd — same fix as compute_gross_usd (root 1A). The
-        // prior code returned None for ALL V3 pairs when base_token_price_usd=0,
-        // causing the no_price_oracle pre-rejection flood (45/62 pools are V3).
-        let spread_f64 = u256_to_f64_lossy(spread) / 1e18_f64;
-        let token_out = intent.legs.first().map(|l| l.token_out);
-        let Some(price_usd) =
-            canonical_token_price_usd(token_out, cfg.base_token_price_usd, &cfg.token_prices_usd)
-        else {
-            return V3GrossOutcome::NoTokenPrice;
-        };
-        V3GrossOutcome::Usd(spread_f64 * price_usd)
+        // Denomination: a cycle opens AND closes in token_in, so the profit is
+        // token_in raw units. This replaces the hardcoded `/1e18` with the
+        // token's real decimals (18 for WETH/DAI, 6 for USDC/USDT, 8 for WBTC)
+        // and prices it at token_in's live USD price.
+        match compute_gross_usd(&profit_units, cfg_opt, Some(token_in)) {
+            Some(v) => V3GrossOutcome::Usd(v),
+            None => V3GrossOutcome::NoTokenPrice,
+        }
     }
 
     /// Get amount_out for `probe_amount` of token_in from a V3 pool using
@@ -602,10 +650,28 @@ impl DexEngine {
         projector: &StateProjector,
         intent: &RouteIntent,
     ) -> Result<U256, V3QuoteLegError> {
+        let token_in = intent.legs.first().map(|l| l.token_in).unwrap_or_default();
+        self.get_pool_quote_dir(pool, probe_amount, projector, token_in)
+            .await
+    }
+
+    /// V3-CYCLE-GROSS-01: quote `amount` through `pool` in the direction implied
+    /// by an EXPLICIT `token_in`, not by the intent's first leg.
+    ///
+    /// The chained-cycle identity needs the RETURN leg (token_out → token_in),
+    /// which is the opposite direction of the intent's first leg — deriving the
+    /// direction from the intent (as the original helper did) can only ever
+    /// quote the forward leg.
+    async fn get_pool_quote_dir(
+        &self,
+        pool: &PoolRef,
+        amount: U256,
+        projector: &StateProjector,
+        token_in: Address,
+    ) -> Result<U256, V3QuoteLegError> {
         // V3 pools: virtual quote via state_projector (checked — label preserved).
         if matches!(pool.protocol_type, ProtocolType::V3) {
-            let intent_token_in = intent.legs.first().map(|l| l.token_in).unwrap_or_default();
-            let zero_for_one = intent_token_in == pool.token0 || intent_token_in == Address::zero();
+            let zero_for_one = token_in == pool.token0 || token_in == Address::zero();
             let sp_pool = crate::state_projector::PoolRef {
                 address: pool.address,
                 token0: pool.token0,
@@ -613,7 +679,7 @@ impl DexEngine {
                 fee_bps: pool.fee_bps,
             };
             projector
-                .project_v3_quote_checked(&sp_pool, probe_amount, zero_for_one)
+                .project_v3_quote_checked(&sp_pool, amount, zero_for_one)
                 .await
                 .map(|q| q.amount_out)
                 .map_err(|e| V3QuoteLegError::V3(e.as_label()))
@@ -628,9 +694,18 @@ impl DexEngine {
             let Some((r0, r1)) = self.reserves_cache.get(&pool.address).await else {
                 return Err(V3QuoteLegError::ReservesMiss);
             };
-            let (r_in, r_out) = orient_reserves((r0, r1), pool, intent);
+            // Orientation from the EXPLICIT token_in (same rule as
+            // `orient_reserves`, kept local so both directions are expressible).
+            let (r_in, r_out) = if token_in == pool.token1
+                && token_in != Address::zero()
+                && token_in != pool.token0
+            {
+                (r1, r0)
+            } else {
+                (r0, r1)
+            };
             let fee = pool.fee_bps.unwrap_or(30);
-            Ok(amm_math::v2_amount_out(probe_amount, r_in, r_out, fee))
+            Ok(amm_math::v2_amount_out(amount, r_in, r_out, fee))
         }
     }
 }
@@ -1979,6 +2054,100 @@ mod tests {
         assert!(
             reasons.iter().any(|r| r == "v3_quote_unavailable"),
             "provider RPC failure must keep v3_quote_unavailable, got {reasons:?}"
+        );
+    }
+
+    // ── V3-CYCLE-GROSS-01 ────────────────────────────────────────────────────
+
+    /// The counterexample the operator's reference package encodes
+    /// (`VALIDACION.md`: *"dos cotizaciones de ida difieren positivamente pero
+    /// los dos ciclos de ida y vuelta pierden"*), as a regression on the identity
+    /// the discovery fast-filter uses.
+    ///
+    /// Pool A is the deep venue; pool B is nearly empty on the return side.
+    /// `|out_a − out_b|` — the identity V3 used until this change — is a large
+    /// POSITIVE number (a venue price gap). The actual round trip (buy on A at
+    /// `probe`, sell the proceeds back on B) returns LESS than `probe`, so the
+    /// honest profit is zero. Publishing the gap is what put
+    /// `expected_profit_usd = 369_506_963_197.84` on a $1000 principal.
+    #[test]
+    fn chained_cycle_identity_rejects_a_positive_venue_gap() {
+        let probe = U256::from(1_000u64) * U256::from(10u64).pow(U256::from(18u32));
+        let deep = probe * U256::from(10u64);
+        // A: price 1:1.
+        let (a_in, a_out) = (deep, deep);
+        // B: price 1.004:1 — a 0.4% better forward quote.
+        let (b_in, b_out) = (deep, deep + deep * U256::from(4u64) / U256::from(1_000u64));
+
+        let out_a = amm_math::v2_amount_out(probe, a_in, a_out, 30);
+        let out_b = amm_math::v2_amount_out(probe, b_in, b_out, 30);
+
+        // The legacy identity: two INDEPENDENT forward probes, differenced. It is
+        // positive whenever the venues disagree by ANY amount.
+        let gap = if out_a >= out_b {
+            out_a - out_b
+        } else {
+            out_b - out_a
+        };
+        assert!(
+            !gap.is_zero(),
+            "fixture must reproduce a positive venue gap (out_a={out_a} out_b={out_b})"
+        );
+
+        // The chained identity: buy where the probe returns more, then sell the
+        // proceeds back on the other venue (REVERSE orientation: the return leg
+        // consumes token_out, so the selling pool is oriented out→in).
+        let (buy_out, sell_in, sell_out) = if out_a >= out_b {
+            (out_a, b_out, b_in)
+        } else {
+            (out_b, a_out, a_in)
+        };
+        let returned = amm_math::v2_amount_out(buy_out, sell_in, sell_out, 30);
+        let chained = returned.saturating_sub(probe);
+
+        // 0.4% of venue edge does not cover the round trip's two 0.3% fees, so
+        // the cycle LOSES even though the forward gap is positive.
+        assert!(
+            returned < probe,
+            "fixture must make the round trip lose: returned {returned} vs probe {probe}"
+        );
+        assert!(
+            chained.is_zero(),
+            "a losing round trip has NO gross profit — chained identity returned {chained}"
+        );
+        assert!(
+            gap > chained,
+            "the venue gap ({gap}) must never be published as the cycle's profit (chained {chained})"
+        );
+    }
+
+    /// The other half of the measured absurdity: the removed code divided the
+    /// profit by a HARDCODED `1e18` regardless of the swapped token's decimals
+    /// (the file documents it as "UNIT-SCALE (Bug $69M)" — a 6-decimals token
+    /// inflated by ~1e12).
+    ///
+    /// The cycle opens AND closes in `token_in`, so the profit is token_in raw
+    /// units and must be scaled by token_in's canonical decimals.
+    #[test]
+    fn chained_profit_is_scaled_by_token_in_decimals_not_a_hardcoded_1e18() {
+        let usdc: Address = "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48"
+            .parse()
+            .expect("canonical USDC address");
+        let mut cfg = make_cfg();
+        cfg.token_prices_usd = HashMap::from([("USDC".to_string(), 1.0)]);
+
+        // 1_000_000 raw USDC = 1.00 USDC, priced at the live $1.00 print.
+        let usd = compute_gross_usd(&U256::from(1_000_000u64), &Some(cfg), Some(usdc))
+            .expect("USDC resolves through the live price map");
+        assert!(
+            (usd - 1.0).abs() < 1e-9,
+            "1e6 raw USDC must be $1.00 with 6 decimals, got {usd}"
+        );
+        // What the removed `/1e18` produced for the same input: ~1e-12.
+        let legacy = 1_000_000f64 / 1e18 * 1.0;
+        assert!(
+            legacy < 1e-11 && usd > 1e-3,
+            "the hardcoded-1e18 scale ({legacy}) must not be reachable any more (got {usd})"
         );
     }
 }
