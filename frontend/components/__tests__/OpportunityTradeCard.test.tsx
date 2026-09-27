@@ -789,3 +789,83 @@ describe("OpportunityTradeCard — ALWAYS-COMPUTE FAIL arithmetic", () => {
     expect(html).toContain("2.12");
   });
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// CARDS-ROI-FALLBACK-01 — la celda ROI del header publica el ratio que el
+// productor SÍ calculó, en vez de un guion sobre un número existente.
+//
+// Medido en vivo (2026-09-27, tunel al VPS, motor local APAGADO):
+//   `roi_pct` de nivel superior ........ 0/39 filas (la clave NO existe)
+//   `simulated_roi_pct` ................ 25/39 filas
+//   celdas ROI pintadas con número ..... 0/39  ← el defecto
+// La celda hermana de net ya publica su base (`ledger.basis`) con `~` + badge
+// SIM; esta suite fija esa misma regla para el ROI, rama por rama.
+// ─────────────────────────────────────────────────────────────────────────────
+describe("CARDS-ROI-FALLBACK-01 — la celda ROI nunca esconde un ratio calculado", () => {
+  const roiCard = (over: Record<string, unknown>) =>
+    card(
+      mapToOmniOpportunity(
+        wire({
+          expected_profit_usd: 5,
+          net_expected_profit_usd: 4,
+          ...over,
+        }),
+      ),
+    );
+
+  // La MISMA celda que se midió en vivo: el div cuyo `title` empieza con el
+  // rótulo. Aislarla evita que la aserción dependa de otras celdas de la card
+  // (p.ej. el grid de resumen). Ojo: el SSR escapa las comillas del título a
+  // `&#x27;`, así que las agujas se eligen sin comillas; y el icono TrendingUp
+  // va DENTRO de la celda, por eso el valor se extrae quitando etiquetas.
+  const roiCell = (html: string): string =>
+    html.match(/title="Net Convergence Ratio \(ROI %\)[^"]*">[\s\S]*?<\/div>/)?.[0] ?? "";
+  const roiText = (html: string): string =>
+    roiCell(html)
+      .replace(/^[^>]*>/, "")
+      .replace(/<\/div>$/, "")
+      .replace(/<[^>]*>/g, "")
+      .trim();
+
+  it("roi_pct canónico presente -> se pinta tal cual, sin marca de origen", () => {
+    const html = roiCard({ roi_pct: 1.25, simulated_roi_pct: 0.75 });
+    expect(roiText(html)).toBe("1.25%");
+    // El canónico gana: el ratio simulado NO se cuela en la misma celda.
+    expect(roiCell(html)).not.toContain("~0.75%");
+    expect(roiCell(html)).toContain("canónico (roi_pct del wire)");
+  });
+
+  it("REGRESIÓN: roi_pct ausente + simulated_roi_pct presente -> publica ~ratio + SIM", () => {
+    // Este es el caso de producción: 25/39 filas. Antes: 39/39 guiones.
+    const html = roiCard({ simulated_roi_pct: 0.75 });
+    expect(roiText(html)).toContain("~0.75%");
+    expect(roiText(html)).toContain("SIM");
+    expect(roiCell(html)).toContain("ratio del forward-sim TS");
+    // Y jamás la leyenda de no-computado sobre un número que sí existe.
+    expect(roiCell(html)).not.toContain("fail-honest");
+  });
+
+  it("sin ningún ratio -> guion con la leyenda honesta (R8)", () => {
+    const html = roiCard({ roi_pct: null, simulated_roi_pct: null });
+    expect(roiText(html)).toBe("—");
+    expect(roiCell(html)).toContain("fail-honest");
+    expect(roiCell(html)).not.toContain("ratio del forward-sim TS");
+    expect(roiCell(html)).not.toContain("canónico (roi_pct del wire)");
+  });
+
+  it('un "Infinity" de cable no se pinta como ratio (clase observada en producción)', () => {
+    // Producción emite literalmente la CADENA "Infinity" en
+    // simulated_target.required_amount_in_usd. Si esa clase de valor llega a un
+    // campo de ratio, la celda debe degradar a guion, no pintar un número falso.
+    const html = roiCard({ simulated_roi_pct: "Infinity" as unknown as number });
+    expect(roiText(html)).toBe("—");
+    expect(roiCell(html)).toContain("fail-honest");
+    expect(roiCell(html)).not.toContain("Infinity");
+  });
+
+  it("NaN no se pinta como ratio", () => {
+    const html = roiCard({ simulated_roi_pct: Number.NaN });
+    expect(roiText(html)).toBe("—");
+    expect(roiCell(html)).not.toContain("NaN");
+  });
+});

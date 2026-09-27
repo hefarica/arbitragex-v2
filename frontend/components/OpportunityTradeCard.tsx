@@ -261,7 +261,28 @@ function OpportunityTradeCardImpl({
   const net = formatProfitUSD(netUsd);
   const gross = formatProfitUSD(grossUsd);
 
-  const roi = opp.roi_pct;
+  // ── CARDS-ROI-FALLBACK-01 (orden del operador 2026-09-27) ──────────────────
+  // "QUITA EL MALDITO RENDER QUE ESCONDE LOS NUMEROS." This cell read ONLY
+  // `opp.roi_pct`, which the live wire does not carry at all (0/39 rows: the key
+  // is absent, not null), while the producer DOES compute a ratio and publishes
+  // it as `simulated_roi_pct` (25/39 rows). Result: 39/39 cards painted "—" over
+  // a ratio that had been computed — the exact defect the net cell next door
+  // avoids via `ledger.basis`.
+  //
+  // Precedence mirrors that cell (and CARDS-PRECEDENCE-02 in
+  // OpportunitySummaryGrid): the canonical `roi_pct` wins outright; the
+  // forward-sim ratio is published only when no canonical ratio exists, marked
+  // with `~` plus a SIM badge so its origin is never disguised. A non-finite
+  // value is not a ratio — it is not painted (R8).
+  const roiCanonical =
+    opp.roi_pct != null && Number.isFinite(opp.roi_pct) ? opp.roi_pct : null;
+  const roiSimulated =
+    opp.simulated_roi_pct != null && Number.isFinite(opp.simulated_roi_pct)
+      ? opp.simulated_roi_pct
+      : null;
+  const roi = roiCanonical ?? roiSimulated;
+  const roiSource: "canonical" | "simulated" | "none" =
+    roiCanonical != null ? "canonical" : roiSimulated != null ? "simulated" : "none";
   const roiTone: "pos" | "neg" | "muted" =
     roi == null ? "muted" : roi > 0 ? "pos" : roi < 0 ? "neg" : "muted";
 
@@ -566,10 +587,21 @@ function OpportunityTradeCardImpl({
           className={`flex items-center gap-1 font-bold text-base whitespace-nowrap ${
             roiTone === "pos" ? "text-success" : roiTone === "neg" ? "text-destructive" : "text-muted-foreground"
           }`}
-          title="Net Convergence Ratio (ROI %) — fail-honest '—' when not computed"
+          title={
+            roiSource === "canonical"
+              ? "Net Convergence Ratio (ROI %) — canónico (roi_pct del wire)"
+              : roiSource === "simulated"
+                ? "Net Convergence Ratio (ROI %) — ratio del forward-sim TS (canónico pendiente)"
+                : "Net Convergence Ratio (ROI %) — fail-honest '—' when not computed"
+          }
         >
           {roiTone === "pos" && <TrendingUp size={14} />}
-          {formatPctOrDash(opp.roi_pct)}
+          {roiSource === "simulated" ? `~${formatPctOrDash(roi)}` : formatPctOrDash(roi)}
+          {roiSource === "simulated" && (
+            <span className="text-[9px] font-bold px-1 rounded bg-info/15 text-info border border-info/40">
+              SIM
+            </span>
+          )}
         </div>
       </div>
 
