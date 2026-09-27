@@ -1239,7 +1239,10 @@ mod tests {
         budget.note_refused(EPOCH, EmitLane::Unpriceable);
         assert_eq!(budget.dropped_in(EPOCH), 1);
 
-        assert!(budget.claim_cap_report(EPOCH), "first refusal of the epoch reports");
+        assert!(
+            budget.claim_cap_report(EPOCH),
+            "first refusal of the epoch reports"
+        );
         for _ in 0..1_000 {
             budget.note_refused(EPOCH, EmitLane::Unpriceable);
             assert!(
