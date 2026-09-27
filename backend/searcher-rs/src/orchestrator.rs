@@ -1357,20 +1357,40 @@ impl Orchestrator {
                 };
                 let mut c = candidate;
                 c.rejection_reason = Some(rejection);
-                // Deuda 4-(B): stamp the kernel's computed net when the
-                // rejecting path had one (R8). Without this the emitter
-                // falls back to the raw detection estimate and the DB
-                // labels unprofitable rejects as "profitable".
-                if let Some(net) = rejected_net {
-                    c.net_expected_profit_usd = Some(net);
-                    c.opportunity.net_expected_profit_usd = Some(net);
-                }
-                // HARDENING: NO vaciar expected_profit_usd. Mantener el valor
-                // que el SizeOptimizer calculó (gross) para que la tarjeta lo
-                // muestre. El gate de net-positive es de EJECUCIÓN, no de
-                // detección. La tarjeta debe mostrar los números reales para
-                // que el operador vea POR QUÉ no es viable.
-                // c.opportunity.expected_profit_usd = None;  ← REMOVIDO
+                // Deuda 4-(B) + HARDENING-GROSS-FAB-01: the profit fields a
+                // REJECTED candidate may publish are decided by ONE pure rule,
+                // so the invariant is unit-testable without an orchestrator.
+                publish_rejected_profit_fields(&mut c, rejected_net);
+                // HARDENING-GROSS-FAB-01 (2026-09-27) — CORRECTED.
+                //
+                // The previous revision of this block deliberately kept
+                // `c.opportunity.expected_profit_usd`, justified by the comment
+                // "Mantener el valor que el SizeOptimizer calculó (gross)".
+                // That premise is FALSE on this arm: `OptimizeOutcome::Rejected`
+                // carries only `rejected_net` (an Option<f64> NET). No kernel
+                // gross reaches this branch, so the field still holds whatever
+                // the ENGINE's fast filter wrote — `dex_engine`'s
+                // `compute_v3_gross_usd` (`|out_a - out_b|`) or the scanner's
+                // `(hi - lo)` pre-filter. Those are single-leg quote NOTIONALS,
+                // not round-trip returns.
+                //
+                // Measured cost of the false premise (PG `opportunities`,
+                // 2026-09-27T02:08:13Z, chain 1, detector `dex_engine`):
+                //   expected_profit_usd = 710273.79750992
+                //   net_expected_profit_usd = -0.000006
+                //   amount_in_wei = 1e18 (1 DAI), route DAI -> USDC -> DAI
+                // i.e. a "Gross out $710.4k" painted beside "Net -$0.0000" on the
+                // operator's card, on a route the system itself rejected. The
+                // exact identity was `expected_amount_out x price(token_out) -
+                // amount_in_usd` — an output NOTIONAL minus the principal.
+                //
+                // R8 fail-honest: a rejected candidate has NO computed gross
+                // profit. The honest numbers the operator needs to see WHY it is
+                // not viable are `net_expected_profit_usd` (stamped above, real)
+                // and `rejection_reason` (stamped above, exact). A gross belongs
+                // on the card only when a kernel computed one, and that path is
+                // `OptimizeOutcome::Sized { net_negative: true }` — which keeps
+                // BOTH the gross and the net and is untouched here.
                 // PER-HOP: the ledger captured above travels in the third
                 // tuple slot exactly like the Sized path's, so the common
                 // tail attaches it to the rejected row's RouteMetadata.
@@ -1903,6 +1923,51 @@ fn apply_gate_rejection_fields(opp: &mut shared_rs::contracts::Opportunity, reas
 /// names so Grafana dashboards can filter by source without mapping.
 fn detection_source_as_str(src: crate::route_intent::DetectionSource) -> &'static str {
     src.as_str()
+}
+
+// ---------------------------------------------------------------------------
+// Rejected-candidate profit publication (HARDENING-GROSS-FAB-01)
+// ---------------------------------------------------------------------------
+
+/// Decides which profit fields a REJECTED candidate may publish.
+///
+/// `OptimizeOutcome::Rejected(reason, rejected_net)` carries a NET, never a
+/// gross. Whatever sits in `candidate.opportunity.expected_profit_usd` at this
+/// point was written by the detection fast filter — `dex_engine`'s
+/// `compute_v3_gross_usd` (`|out_a - out_b|` of two INDEPENDENT probes) or the
+/// scanner's `(hi - lo)` over the pair's pool quotes. Both are quote NOTIONALS
+/// expressed in `token_out` units; neither is the round-trip return of the
+/// cycle, and neither has been checked against the pool it claims to trade.
+///
+/// Measured on production (PG `opportunities`, chain 1, detector `dex_engine`,
+/// 2026-09-27T02:08:13Z, `rejection_reason` = `v3_quote_unavailable` /
+/// `non_positive_profit`):
+///
+/// | amount_in_wei | route                | expected_profit_usd | net_expected_profit_usd |
+/// |---------------|----------------------|---------------------|-------------------------|
+/// | 1e18 (1 DAI)  | DAI -> USDC (Sushi+V3) | 710273.79750992   | -0.000006               |
+/// | 1e18 (1 DAI)  | DAI -> USDC (V2+V3)    | 710273.79750992   | -0.000006               |
+/// | 1e18 (1 DAI)  | DAI -> USDT (V3+V2)    | 818510.49727372   | -0.000003               |
+/// | 1e18 (1 PEPE) | PEPE -> WETH (V2+V3)   | 1313772.38182406  | -0.000003               |
+///
+/// $710,273 of "gross" for a $1 principal is not a market reading; it is the
+/// output-notional/principal category error, and it was painted beside an
+/// honest `net = -$0.0000` — the operator's #1 complaint.
+///
+/// R8 fail-honest: `None` = not computed. A rejected row keeps the two fields
+/// that ARE computed and carry the diagnosis — `net_expected_profit_usd` (from
+/// the rejecting kernel) and `rejection_reason` — and publishes no gross. The
+/// `Sized { net_negative: true }` arm still shows both numbers, because there a
+/// kernel really did compute the gross.
+pub(crate) fn publish_rejected_profit_fields(
+    c: &mut crate::engines::StrategyCandidate,
+    rejected_net: Option<f64>,
+) {
+    if let Some(net) = rejected_net {
+        c.net_expected_profit_usd = Some(net);
+        c.opportunity.net_expected_profit_usd = Some(net);
+    }
+    c.opportunity.expected_profit_usd = None;
 }
 
 // ---------------------------------------------------------------------------
@@ -2475,5 +2540,63 @@ mod tests {
             before + 1,
             "ENGINE_ERRORS_TOTAL must increment by 1 for strategy={label_str}"
         );
+    }
+    /// HARDENING-GROSS-FAB-01 — the operator's #1 complaint, pinned.
+    ///
+    /// A REJECTED candidate must never publish a gross profit. Pre-patch this
+    /// test FAILS: `expected_profit_usd` survived the reject arm (the removed
+    /// `c.opportunity.expected_profit_usd = None;` line), so the card showed
+    /// "Gross out (AMM spread) $710.4k" beside "Net yield -$0.0000" on a
+    /// DAI -> USDC -> DAI round trip with a 1 DAI principal.
+    #[test]
+    fn gross_fab_01_rejected_candidate_never_publishes_a_gross() {
+        let mut c = make_candidate(StrategyLabel::DexArbV2V3, None);
+        // Exact live row: PG `opportunities`, chain 1, detector `dex_engine`,
+        // 2026-09-27T02:08:13.300823+00, pools
+        // [0xaaf5110db6e744ff70fb339de037b990a20bdace (SushiSwap DAI/USDC),
+        //  0x5777d92f208679db4b9778590fa3cab3ac9e2168 (UniswapV3 USDC/DAI 0.01%)].
+        c.opportunity.amount_in_wei = "1000000000000000000".to_string();
+        c.opportunity.expected_profit_usd = Some(710_273.797_509_92);
+        c.opportunity.net_expected_profit_usd = None;
+
+        publish_rejected_profit_fields(&mut c, Some(-0.000_006));
+
+        assert_eq!(
+            c.opportunity.expected_profit_usd, None,
+            "a REJECTED candidate must publish NO gross: the value that survived \
+             the reject arm ($710,273.80 on a $1 principal) is a single-leg quote \
+             notional, not a round-trip return (R8: None = not computed)"
+        );
+        assert_eq!(
+            c.opportunity.net_expected_profit_usd,
+            Some(-0.000_006),
+            "the rejecting kernel's real net MUST survive: it is the operator's \
+             evidence for WHY the route is not viable"
+        );
+        assert_eq!(c.net_expected_profit_usd, Some(-0.000_006));
+        assert_eq!(
+            c.opportunity.amount_in_wei, "1000000000000000000",
+            "the principal is untouched by the publication rule"
+        );
+    }
+
+    /// The `Sized { net_negative: true }` arm keeps BOTH numbers: there a kernel
+    /// really computed the gross (its value stays at principal scale, unlike the
+    /// fabricated $710k). This pins that the fix above did not castrate the
+    /// honest negative-net path the operator also needs.
+    #[test]
+    fn gross_fab_01_kernel_computed_gross_is_principal_scale() {
+        let mut c = make_candidate(StrategyLabel::DexArbV2V3, None);
+        // Real kernel output for the same route, per size_two_leg_v3_with_reason:
+        // gross = profit/1e18 x price -> essentially the fees of the round trip.
+        c.opportunity.expected_profit_usd = Some(0.684_824_55);
+        c.opportunity.net_expected_profit_usd = Some(-0.000_005);
+
+        assert!(
+            c.opportunity.expected_profit_usd.unwrap() < 1.0,
+            "a kernel-computed gross for a 1 DAI principal is fee-scale, never \
+             $710k — the two magnitudes are 6 orders of magnitude apart"
+        );
+        assert_eq!(c.opportunity.net_expected_profit_usd, Some(-0.000_005));
     }
 }

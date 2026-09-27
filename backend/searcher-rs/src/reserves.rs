@@ -111,10 +111,27 @@ pub fn key_token(chain_id: u64, addr_lower: &str) -> String {
     format!("arbx:tokens:{}:{}", chain_id, addr_lower)
 }
 
-pub fn key_v3_quote(chain_id: u64, pool_addr_lower: &str, amount_in_dec: &str) -> String {
+/// HARDENING-GROSS-FAB-01 (2026-09-27): the identity of a V3 quote is
+/// `(pool, token_in, token_out, amount_in, fee_tier)` — NOT `(pool, amount_in)`.
+/// The previous key omitted the SWAP DIRECTION and the FEE TIER, so a quote
+/// obtained for one direction/tier was served to a consumer asking for the
+/// opposite direction (or another tier) at the same `amount_in`: `amount_out`
+/// for `USDC -> DAI` is ~1e12x the `DAI -> USDC` figure for the same input, and
+/// the fast filter differences/values quotes blindly. Keys are opaque cache
+/// identities, never market data, so widening the key with the two fields that
+/// were silently assumed is the honest fix: a miss costs one RPC (the unary
+/// path stays authoritative), a wrong hit costs a fabricated gross.
+pub fn key_v3_quote(
+    chain_id: u64,
+    pool_addr_lower: &str,
+    amount_in_dec: &str,
+    token_in_lower: &str,
+    token_out_lower: &str,
+    fee_bps: u32,
+) -> String {
     format!(
-        "arbx:v3_quote:{}:{}:{}",
-        chain_id, pool_addr_lower, amount_in_dec
+        "arbx:v3_quote:{}:{}:{}:{}:{}:{}",
+        chain_id, pool_addr_lower, amount_in_dec, token_in_lower, token_out_lower, fee_bps
     )
 }
 
@@ -323,21 +340,34 @@ pub async fn get_pools_for_pair_v3(
         .unwrap_or_default())
 }
 
-/// Cache a V3 quote result. Key is keyed by (chain, pool, amount_in) so two
-/// candidates with the same trade size against the same pool reuse the quote
-/// for up to 5s — that aligns with the PoolSyncWorker tick on V2, so V3 quote
-/// staleness matches V2 reserves staleness.
+/// Cache a V3 quote result. Keyed by the FULL quote identity — `(chain, pool,
+/// amount_in, token_in, token_out, fee_bps)` via [`key_v3_quote`] — so two
+/// candidates with the same trade size against the same pool AND the same
+/// direction/tier reuse the quote for up to 5s (matching the PoolSyncWorker tick
+/// on V2), while a different direction or fee tier can never be served this
+/// pool's figure. See `key_v3_quote` for the HARDENING-GROSS-FAB-01 rationale.
+#[allow(clippy::too_many_arguments)]
 pub async fn set_v3_quote(
     redis: &mut ConnectionManager,
     chain_id: u64,
     pool_addr_lower: &str,
     amount_in_dec: &str,
+    token_in_lower: &str,
+    token_out_lower: &str,
+    fee_bps: u32,
     amount_out_dec: &str,
     ttl_secs: u64,
 ) -> redis::RedisResult<()> {
     let _: () = redis
         .set_ex(
-            key_v3_quote(chain_id, pool_addr_lower, amount_in_dec),
+            key_v3_quote(
+                chain_id,
+                pool_addr_lower,
+                amount_in_dec,
+                token_in_lower,
+                token_out_lower,
+                fee_bps,
+            ),
             amount_out_dec,
             ttl_secs,
         )
@@ -350,9 +380,19 @@ pub async fn get_v3_quote(
     chain_id: u64,
     pool_addr_lower: &str,
     amount_in_dec: &str,
+    token_in_lower: &str,
+    token_out_lower: &str,
+    fee_bps: u32,
 ) -> redis::RedisResult<Option<String>> {
     redis
-        .get(key_v3_quote(chain_id, pool_addr_lower, amount_in_dec))
+        .get(key_v3_quote(
+            chain_id,
+            pool_addr_lower,
+            amount_in_dec,
+            token_in_lower,
+            token_out_lower,
+            fee_bps,
+        ))
         .await
 }
 
@@ -575,8 +615,57 @@ mod tests {
 
     #[test]
     fn v3_quote_key_layout() {
-        let key = key_v3_quote(1, "0xpool", "1000000000000000000");
-        assert_eq!(key, "arbx:v3_quote:1:0xpool:1000000000000000000");
+        let key = key_v3_quote(
+            1,
+            "0x5777d92f208679db4b9778590fa3cab3ac9e2168",
+            "1000000000000000000",
+            "0x6b175474e89094c44da98b954eedeac495271d0f",
+            "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48",
+            100,
+        );
+        assert_eq!(
+            key,
+            "arbx:v3_quote:1:0x5777d92f208679db4b9778590fa3cab3ac9e2168:\
+             1000000000000000000:0x6b175474e89094c44da98b954eedeac495271d0f:\
+             0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48:100"
+        );
+    }
+
+    /// HARDENING-GROSS-FAB-01: the quote cache key MUST carry the swap direction
+    /// and the fee tier. Before this gate the key was `(chain, pool, amount_in)`,
+    /// so a quote obtained for `USDC -> DAI` at 1e18 in (≈1e12x the reverse
+    /// figure) was served verbatim to a `DAI -> USDC` lookup at the same
+    /// `amount_in`, and that wrong figure flowed into the fast filter's
+    /// `hi`/`lo` and out to the card as "gross profit".
+    #[test]
+    fn v3_quote_key_separates_direction_and_fee_tier() {
+        let dai = "0x6b175474e89094c44da98b954eedeac495271d0f";
+        let usdc = "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48";
+        let pool = "0x5777d92f208679db4b9778590fa3cab3ac9e2168";
+        let amount = "1000000000000000000";
+
+        let forward = key_v3_quote(1, pool, amount, dai, usdc, 100);
+        let reverse = key_v3_quote(1, pool, amount, usdc, dai, 100);
+        let other_tier = key_v3_quote(1, pool, amount, dai, usdc, 500);
+
+        assert_ne!(
+            forward, reverse,
+            "the opposite swap direction must NOT share a cache entry: its \
+             amount_out is a different quantity (decimals 18 <-> 6) and serving \
+             it fabricates a gross"
+        );
+        assert_ne!(
+            forward, other_tier,
+            "different fee tiers are different pools on Uniswap V3 \
+             (factory.getPool(tokenIn, tokenOut, fee)) and must not share an entry"
+        );
+        // And the identity is stable for the SAME question (real cache reuse).
+        assert_eq!(
+            forward,
+            key_v3_quote(1, pool, amount, dai, usdc, 100),
+            "the same (pool, direction, amount, tier) must map to one key so the \
+             5s reuse window still works"
+        );
     }
 
     #[test]
