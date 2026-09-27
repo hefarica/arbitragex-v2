@@ -1992,10 +1992,13 @@ fn detection_source_as_str(src: crate::route_intent::DetectionSource) -> &'stati
 /// map itself is not readable at sizing time; reading the same function on the
 /// same address yields the identical value it will carry.
 fn row_token_decimals(address: &str) -> Option<u8> {
-    address
-        .parse::<Address>()
-        .ok()
-        .map(|_| crate::engines::dex_engine::canonical_token_decimals_str(address))
+    // Review nit (CANDIDATE-POSTSIZE-SYNC-01): the parse is the VALIDITY CHECK of
+    // the address, not a source of the value — spell it as an early return so the
+    // guard reads as a guard instead of a `map` that discards its input.
+    address.parse::<Address>().ok()?;
+    Some(crate::engines::dex_engine::canonical_token_decimals_str(
+        address,
+    ))
 }
 
 /// CANDIDATE-POSTSIZE-SYNC-01 (a): stamp the kernel's sized figures onto BOTH
