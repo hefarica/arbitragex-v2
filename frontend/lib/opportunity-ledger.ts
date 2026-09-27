@@ -417,6 +417,45 @@ export function isRealLiveEconomicCard(opp: OmniOpportunity): boolean {
   );
 }
 
+/**
+ * Grid scope for the live card grid — operator order 2026-09-27 (verbatim):
+ * "agregar un toggle 'Mostrar rechazadas'".
+ *
+ * `economic`    — rows whose ladder closes on a real notional: the real/live
+ *                 trading cards (`isRealLiveEconomicCard`).
+ * `diagnostics` — every other detection of the SAME snapshot: gate rejections
+ *                 whose producer never priced them (e.g. `v3_quote_unavailable`,
+ *                 `single_pool_no_spread`) and rows whose economics are
+ *                 `partial`/`error`. They are neither hidden nor rewritten and
+ *                 never filled with assumptions — the toggle only decides
+ *                 whether they are PAINTED with their own reason instead of
+ *                 being summarised as a count.
+ *
+ * OFF (default) ⇒ the grid is exactly the real/live card set, i.e. the previous
+ * behaviour, byte-for-byte. Pure: no I/O, no mutation, input order preserved
+ * (economics first, then diagnostics).
+ */
+export function selectGridRows(
+  filtered: OmniOpportunity[],
+  showRejected: boolean,
+): {
+  economic: OmniOpportunity[];
+  diagnostics: OmniOpportunity[];
+  grid: OmniOpportunity[];
+} {
+  const economic: OmniOpportunity[] = [];
+  const diagnostics: OmniOpportunity[] = [];
+  for (const opp of filtered) {
+    if (isRealLiveEconomicCard(opp)) economic.push(opp);
+    else diagnostics.push(opp);
+  }
+  return {
+    economic,
+    diagnostics,
+    grid: showRejected ? [...economic, ...diagnostics] : economic,
+  };
+}
+
 // ── Notifier ────────────────────────────────────────────────────────────────
 
 export interface NotificationDecision {

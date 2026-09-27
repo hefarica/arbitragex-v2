@@ -44,7 +44,7 @@ import { DegradedBanner } from "@/components/DegradedBanner";
 import { useUserPrefs } from "@/lib/user-prefs";
 // CARDS-NOTIONAL-01 — the notifier's gate is the SAME SSOT the card ladder
 // uses, so the toast can never announce a figure the card refuses to paint.
-import { decideOpportunityNotification, isRealLiveEconomicCard } from "@/lib/opportunity-ledger";
+import { decideOpportunityNotification, selectGridRows } from "@/lib/opportunity-ledger";
 
 // Stable route identity for the card grid key. A re-detected route (same
 // chain + strategy + token pair + DEX path) must update the SAME card in place
@@ -74,8 +74,12 @@ export type OpportunitiesSnapshot = {
 
 export default function OpportunitiesClient({
   initialSnapshot,
+  initialShowRejected = false,
 }: {
   initialSnapshot: OpportunitiesSnapshot;
+  /** SHOW-REJECTED-01: server-read deep link (`?show_rejected=1`) for the
+   *  "Mostrar rechazadas" toggle. Default OFF — the real/live card set. */
+  initialShowRejected?: boolean;
 }) {
   // ─── Omni-Store Integration ───────────────────────────────────────────────
   // Connect WebSocket stream to the store (replaces useOpportunitiesStream)
@@ -122,7 +126,10 @@ export default function OpportunitiesClient({
   const [lastRefresh, setLastRefresh] = useState<Date | null>(
     initialSnapshot.serverTime ? new Date(initialSnapshot.serverTime) : null
   );
-  const [filters, setFilters] = useState<ExchangeFilters>(DEFAULT_FILTERS);
+  const [filters, setFilters] = useState<ExchangeFilters>(() => ({
+    ...DEFAULT_FILTERS,
+    showRejected: initialShowRejected,
+  }));
   const [cap, setCap] = useState<number>(VISIBLE_CAP);
 
   // ── R1 Mounted Snapshot Pattern: which source owns the grid ────────────────
@@ -353,12 +360,25 @@ export default function OpportunitiesClient({
   // REAL-LIVE-CARDS-SSOT-01: a trading card is not a detection shell. Rejected
   // rows remain visible when they were genuinely computed; source failures stay
   // diagnostics until the producer can calculate them.
-  const economicCards = useMemo(
-    () => filtered.filter(isRealLiveEconomicCard),
-    [filtered],
-  );
-  const diagnosticOnlyCount = filtered.length - economicCards.length;
-  const visible = useMemo(() => economicCards.slice(0, cap), [economicCards, cap]);
+  // SHOW-REJECTED-01 (operator order 2026-09-27): the diagnostics are one toggle
+  // away instead of a bare count — same rows, same reasons, never a substitute
+  // figure. OFF ⇒ grid === real/live cards (unchanged behaviour).
+  const {
+    economic: economicCards,
+    diagnostics: diagnosticRows,
+    grid: gridRows,
+  } = useMemo(() => selectGridRows(filtered, filters.showRejected), [filtered, filters.showRejected]);
+  const diagnosticOnlyCount = diagnosticRows.length;
+  const visible = useMemo(() => gridRows.slice(0, cap), [gridRows, cap]);
+
+  /** "Mostrar rechazadas" (operator order 2026-09-27). Turning it ON must also
+   *  release the viable-only narrowing (both the filter-object flag and the
+   *  stream flag), otherwise the rows it reveals are dropped before the grid. */
+  const toggleShowRejected = () => {
+    const next = !filters.showRejected;
+    setFilters({ ...filters, showRejected: next, viableOnly: false });
+    if (next) setViableOnly(false);
+  };
 
   // Familias presentes en el feed (motor del exchange, sin estilos atlas).
   const families = useMemo(() => {
@@ -582,6 +602,32 @@ export default function OpportunitiesClient({
           className="px-2.5 py-1 rounded-lg border border-border bg-muted text-foreground w-28"
           title="Minimum expected yield (USD)"
         />
+        {/* SHOW-REJECTED-01 (operator order 2026-09-27): paint the detections
+            that have no closed real/live ladder — each with its own recorded
+            reason. It reveals rows; it never substitutes a figure. */}
+        <button
+          type="button"
+          data-testid="toggle-show-rejected"
+          onClick={toggleShowRejected}
+          aria-pressed={filters.showRejected}
+          className={`px-2.5 py-1 rounded-lg border font-semibold transition-colors ${
+            filters.showRejected
+              ? "bg-primary/10 border-primary/40 text-primary hover:bg-primary/20"
+              : "bg-muted border-border text-muted-foreground hover:bg-accent"
+          }`}
+          title={
+            filters.showRejected
+              ? "Mostrando TODAS las detecciones (rechazadas / sin economía computada incluidas) — click para volver a solo real/live"
+              : "Mostrar rechazadas: pinta también las detecciones rechazadas o sin economía computada, con su razón real"
+          }
+        >
+          {filters.showRejected ? (
+            <Eye size={12} className="inline align-[-2px]" />
+          ) : (
+            <EyeOff size={12} className="inline align-[-2px]" />
+          )}{" "}
+          Mostrar rechazadas
+        </button>
         <span className={`px-2.5 py-1 rounded-full border font-bold ${
           modeLabel === "paper"
             ? "bg-info/10 border-info/40 text-info"
@@ -659,9 +705,20 @@ export default function OpportunitiesClient({
           cards that accumulated nodes/memory. Items still animate on enter via
           motion.div initial/animate. */}
       {diagnosticOnlyCount > 0 && (
-        <div className="mb-3 rounded-lg border border-border bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
-          {diagnosticOnlyCount} detecciones no se presentan como cards económicas porque aún no tienen
-          economics.computed + aritmética cerrada. Permanecen como diagnóstico de fuente; no se rellenan con supuestos.
+        <div className="mb-3 flex flex-wrap items-center gap-2 rounded-lg border border-border bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
+          <span>
+            {filters.showRejected
+              ? `${diagnosticOnlyCount} detecciones rechazadas / sin economía computada se pintan abajo como diagnóstico: cada una con su razón real registrada, ninguna rellenada con supuestos.`
+              : `${diagnosticOnlyCount} detecciones no se presentan como cards económicas porque aún no tienen economics.computed + aritmética cerrada. Permanecen como diagnóstico de fuente; no se rellenan con supuestos.`}
+          </span>
+          <button
+            type="button"
+            data-testid="banner-toggle-show-rejected"
+            onClick={toggleShowRejected}
+            className="px-2 py-1 rounded border border-border bg-background hover:bg-accent transition-colors text-xs font-semibold"
+          >
+            {filters.showRejected ? "Ocultar rechazadas" : "Mostrar rechazadas"}
+          </button>
         </div>
       )}
       <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
@@ -680,11 +737,12 @@ export default function OpportunitiesClient({
       </div>
 
       {/* Motor de memoria (portado del exchange): revelar lo diferido + cargar más */}
-      {economicCards.length > visible.length && (
+      {gridRows.length > visible.length && (
         <div className="mt-6 flex flex-col items-center gap-2">
           <p className="text-xs text-muted-foreground">
             Showing <span className="text-foreground font-semibold">{visible.length}</span> of{" "}
-            <span className="text-foreground font-semibold">{economicCards.length}</span> real/live cards — the rest are
+            <span className="text-foreground font-semibold">{gridRows.length}</span>{" "}
+            {filters.showRejected ? "detecciones" : "real/live cards"} — the rest are
             deferred (memory-discipline cap).
           </p>
           <button
@@ -692,7 +750,7 @@ export default function OpportunitiesClient({
             onClick={() => setCap((c) => c + VISIBLE_CAP)}
             className="flex items-center gap-2 px-3 py-1.5 rounded-lg border border-border bg-muted hover:bg-accent transition-colors text-xs font-semibold"
           >
-            <ChevronDown size={12} /> Show {Math.min(VISIBLE_CAP, economicCards.length - visible.length)} more
+            <ChevronDown size={12} /> Show {Math.min(VISIBLE_CAP, gridRows.length - visible.length)} more
           </button>
         </div>
       )}

@@ -159,3 +159,39 @@ describe("SSR-FIRSTPAINT-01 — the server snapshot reaches the first paint", ()
     expect(render([liveRow])).toBe(render([liveRow]));
   });
 });
+
+// SHOW-REJECTED-01 — operator order 2026-09-27 (verbatim): "agregar un toggle
+// 'Mostrar rechazadas'". The control must be ON the page, OFF by default, and
+// the default paint must stay exactly the real/live card set (the diagnostics
+// are counted — never silently dropped, never painted with a substituted
+// figure until the operator asks for them).
+describe("SHOW-REJECTED-01 — toggle 'Mostrar rechazadas'", () => {
+  const errorRow = mapToOmniOpportunity({
+    id: "opp-diagnostic-1",
+    chain_id: 1,
+    chain_base_token_symbol: "WETH",
+    strategy_kind: "dex_arb",
+    detected_at: "2026-09-26T18:16:00.000Z",
+    status: "rejected",
+    rejection_reason: "v3_quote_unavailable",
+    economics: { computation_status: "error", error_reason: "v3_quote_unavailable" },
+  });
+
+  it("renders the filter-bar control and the banner action, OFF by default", () => {
+    const html = render([liveRow, errorRow]);
+    expect(html).toContain('data-testid="toggle-show-rejected"');
+    expect(html).toContain("Mostrar rechazadas");
+    expect(html).toContain('data-testid="banner-toggle-show-rejected"');
+    expect(html).toMatch(
+      /data-testid="toggle-show-rejected"[^>]{0,240}aria-pressed="false"/,
+    );
+  });
+
+  it("default OFF: paints the real/live card and COUNTS the diagnostic (no silent drop)", () => {
+    const html = render([liveRow, errorRow]);
+    expect(html).toContain('data-opp-id="opp-firstpaint-1"');
+    expect(html).not.toContain('data-opp-id="opp-diagnostic-1"');
+    expect(html).toContain("1 detecciones no se presentan como cards económicas");
+    expect(html).toContain("no se rellenan con supuestos");
+  });
+});

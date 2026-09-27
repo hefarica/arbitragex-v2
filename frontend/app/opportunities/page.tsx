@@ -43,12 +43,30 @@ async function getInitialOpportunities(): Promise<OpportunitiesSnapshot> {
   }
 }
 
-export default async function OpportunitiesPage() {
+export default async function OpportunitiesPage({
+  searchParams,
+}: {
+  /**
+   * SHOW-REJECTED-01 (operator order 2026-09-27): `?show_rejected=1` deep-links
+   * the "Mostrar rechazadas" toggle in its ON state. Read on the SERVER and
+   * handed to the client as its initial state, so the first paint is identical
+   * on both sides (R1) and the ON rendering is verifiable without a click.
+   * Absent/other value ⇒ OFF, i.e. the real/live card set only.
+   */
+  searchParams?: { show_rejected?: string | string[] };
+}) {
   const initialSnapshot = await getInitialOpportunities();
+  const showRejected =
+    (Array.isArray(searchParams?.show_rejected)
+      ? searchParams?.show_rejected[0]
+      : searchParams?.show_rejected) === "1";
 
   return (
     <div className="min-h-screen">
-      <OpportunitiesClient initialSnapshot={initialSnapshot} />
+      <OpportunitiesClient
+        initialSnapshot={initialSnapshot}
+        initialShowRejected={showRejected}
+      />
     </div>
   );
 }
