@@ -1953,6 +1953,17 @@ impl Orchestrator {
 /// `Some(0.0)` convention (scanner.rs "rejection volume" doctrine) — its
 /// adjudication is a separate anomaly, NOT this WO.
 fn apply_gate_rejection_fields(opp: &mut shared_rs::contracts::Opportunity, reason: String) {
+    // ECON-ON-REJECT-PATHS-01 (2026-09-27, measured). WO-GAP2 nulls the figures
+    // here because a gate rejection has NOT computed them — correct: a
+    // non-computed zero must never be published. But the typed payload was never
+    // attached either, so these rows reached the wire with `economics: null`.
+    // MEASURED on 43 live rows served by the VPS: `economics` present on 0/43 and
+    // `roi_pct` on 0/43 — nothing for the card's capital path to paint. The
+    // api-server already falls back to the typed payload
+    // (`opportunities-live.ts`: `econNum("roi_pct")`), so attaching it here turns
+    // SILENCE into a DECLARED absence: `economics_error` carries the verbatim
+    // gate reason, and the figures stay null (R8/WO-GAP2 intact).
+    opp.economics = Some(crate::economics::economics_error(&reason));
     opp.rejection_reason = Some(reason);
     // WO-GAP2 (2026-09-07): None = not computed — NEVER a non-computed zero.
     opp.roi_pct = None;
@@ -2316,6 +2327,30 @@ mod tests {
             opp.rejection_reason.as_deref(),
             Some("TokenNotAllowed:AGLD"),
             "rejection reason must survive the helper verbatim"
+        );
+
+        // ECON-ON-REJECT-PATHS-01 (2026-09-27): the helper must ALSO attach the
+        // typed payload. MEASURED on 43 live rows served by the VPS: `economics`
+        // present on 0/43 and `roi_pct` on 0/43 — the card had nothing to paint
+        // because these rows arrived as silence. The payload names the gate
+        // verbatim while every figure stays absent (R8/WO-GAP2 intact): a
+        // DECLARED absence, never a fabricated zero.
+        let econ = opp
+            .economics
+            .as_ref()
+            .expect("gate-rejected row must carry the typed economics payload");
+        assert_eq!(
+            econ.computation_status, "error",
+            "a gate rejection computed no figures — status must be error"
+        );
+        assert_eq!(
+            econ.error_reason.as_deref(),
+            Some("TokenNotAllowed:AGLD"),
+            "the payload must name the gate reason verbatim"
+        );
+        assert_eq!(
+            econ.amount_in_usd, None,
+            "R8: the payload must not carry a figure the gate never computed"
         );
 
         // Idempotence across the whole rejection-reason family: every branch
