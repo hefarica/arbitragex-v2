@@ -689,3 +689,97 @@ describe("OpportunityTradeCard — CARDS-NOTIONAL-01 SSR gate (one ladder, one n
     expect(html).toContain("CARDS-NOTIONAL-01");
   });
 });
+
+// ── ALWAYS-COMPUTE (operator mandate 2026-09-27): the FAIL card shows its
+// arithmetic, not dashes. "Si el resultado da -$50, la card debe decir -$50,
+// no NO COMPUTADO." Everything below is DISPLAY of wire-owned figures — the
+// card computes nothing.
+describe("OpportunityTradeCard — ALWAYS-COMPUTE FAIL arithmetic", () => {
+  const econ = {
+    computation_status: "computed",
+    error_reason: null,
+    amount_in_wei: "1000000000000000000",
+    amount_out_wei: "990000000000000000",
+    amount_in_usd: 2350,
+    amount_out_usd: 2362.5,
+    gross_profit_usd: 12.5,
+    gas_usd: 0.18,
+    dex_fees_usd: null,
+    flash_fee_usd: 2.12,
+    bribe_usd: 0,
+    slippage_usd: null,
+    other_costs_usd: 0.01,
+    total_cost_usd: 2.31,
+    net_profit_usd: -50,
+    roi_pct: -2.13,
+    target_net_usd: 25,
+    target_delta_usd: -75,
+    meets_target: false,
+    quote_block: 123,
+    simulation_block: null,
+    legs: [],
+    not_computed_reasons: {},
+  };
+
+  it("rejected row with computed economics renders ECON chip + target/logrado/delta", () => {
+    const opp = mapToOmniOpportunity(
+      wire({
+        status: "rejected",
+        rejection_reason: "non_positive_profit",
+        expected_profit_usd: 12.5,
+        net_expected_profit_usd: -50,
+        economics: econ,
+      }),
+    );
+    const html = card(opp);
+    // Honest status chip — COMPUTED ≠ PROFITABLE.
+    expect(html).toContain("ECON");
+    expect(html).toContain("computed");
+    // The FAIL arithmetic from the economics object (target vs achieved vs delta).
+    expect(html).toContain("target");
+    expect(html).toContain("logrado");
+    expect(html).toContain("delta");
+    expect(html).toContain("25.00");
+    expect(html).toContain("50.00");
+  });
+
+  it("error-status economics renders the honest reason, never fabricated numbers", () => {
+    const opp = mapToOmniOpportunity(
+      wire({
+        status: "rejected",
+        rejection_reason: "missing_reserves_pool_b",
+        expected_profit_usd: null,
+        net_expected_profit_usd: null,
+        economics: {
+          ...econ,
+          computation_status: "error",
+          error_reason: "missing_reserves_pool_b",
+          gross_profit_usd: null,
+          net_profit_usd: null,
+          target_net_usd: null,
+          target_delta_usd: null,
+        },
+      }),
+    );
+    const html = card(opp);
+    expect(html).toContain("sin quote");
+    expect(html).toContain("missing_reserves_pool_b");
+  });
+
+  it("canonical-basis ladder fills cost cells from the economics decomposition", () => {
+    const opp = mapToOmniOpportunity(
+      wire({
+        status: "rejected",
+        rejection_reason: "non_positive_profit",
+        expected_profit_usd: 12.5,
+        net_expected_profit_usd: -50,
+        economics: econ,
+      }),
+    );
+    const html = card(opp);
+    expect(html).toContain("Gas");
+    expect(html).toContain("0.18");
+    expect(html).toContain("TLS fee");
+    expect(html).toContain("2.12");
+  });
+});
