@@ -42,9 +42,11 @@
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::Duration;
 
+use ethers::types::U256;
 use shared_rs::contracts::{ComputedLeg, EconomicsComputation};
 use shared_rs::trading_config::TradingConfigState;
 
+use crate::engines::StrategyCandidate;
 use crate::size_optimizer::SizedCandidate;
 
 /// Redis key holding the last flushed window snapshot (JSON, TTL 10 min).
@@ -294,6 +296,83 @@ fn computed_legs(sized: &SizedCandidate) -> Vec<ComputedLeg> {
             amount_out_wei: o.clone(),
         })
         .collect()
+}
+
+/// ALWAYS-COMPUTE-03 (2026-09-27): the CLOSED `computed` object for a REJECTED
+/// row whose gross was already MEASURED by its producer (`Some(gross)`, even a
+/// measured `0.0`) but which never reached the sizing kernel.
+///
+/// MEASURED DEFECT this closes (production PG, 30 min): the engine's
+/// `spread_zero_equilibrium` early-exit publishes a measured gross
+/// (`Some(0.0)` — both legs quoted the same amount, so the cycle gross is
+/// exactly zero), yet its economics object was still produced by the
+/// emit boundary's nothing-computed arm (`economics_error` ⇒
+/// `computation_status: "error"`, every figure null). The card therefore read
+/// "not computed" on a row whose arithmetic WAS computed — the inversion the
+/// operator's mandate removes (`Some(0.0)` = computed and exactly zero;
+/// `None` = not computed).
+///
+/// Reuse, not re-derivation — three existing sources, one closure:
+///   * cost components: the SAME config oracle the sizing kernel reads at its
+///     own reject arms (`TradingConfigState::gas_cost_usd()` /
+///     `ops_overhead_usd_per_attempt` — `size_optimizer`'s call sites), never a
+///     literal gas price or gas-unit table;
+///   * sheet-07 arithmetic: [`crate::net_bps_ranking::RouteNetEconomics::from_kernel`],
+///     the kernel's own constructor (flash fee via `financing::selected_mode`);
+///   * wire object: [`economics_from_sized`], so `total_cost_usd` (Σ present
+///     components), `net_profit_usd` (gross − costs) and `roi_pct`
+///     (`net / amount_in × 100`) are the accepted row's exact closure.
+///
+/// R8: the caller passes only figures it MEASURED (`gross_profit_usd`,
+/// `amount_in_wei`) plus the principal it PRICED from the live source
+/// (`amount_in_usd`). Nothing is invented, and a component this path cannot
+/// know (per-leg wei — the reject came from the probe, not the leg-by-leg
+/// kernel) stays absent WITH its reason. `None` when the principal is not a
+/// usable positive finite figure: without the capital there is no closed
+/// arithmetic to claim, so the caller keeps the row's honest diagnostic.
+pub fn economics_from_measured_gross(
+    candidate: &StrategyCandidate,
+    amount_in_wei: U256,
+    amount_in_usd: f64,
+    gross_profit_usd: f64,
+    cfg: &TradingConfigState,
+) -> Option<EconomicsComputation> {
+    if !amount_in_usd.is_finite() || amount_in_usd <= 0.0 || !gross_profit_usd.is_finite() {
+        return None;
+    }
+    let gas_usd = cfg.gas_cost_usd();
+    let other_cost_usd = cfg.ops_overhead_usd_per_attempt;
+    // Financing: an engine-level candidate carries no flash wrapper yet
+    // (`StrategyCandidate::base_strategy` is `None` on every engine rejection),
+    // so the borrow is zero and the fee is zero — exactly the policy the kernel
+    // prices for a non-flash candidate (`financing::selected_mode(0.0)` ⇒
+    // `OwnCapital`, fee 0 bps).
+    let borrow_usd = if candidate.base_strategy.is_some() {
+        amount_in_usd
+    } else {
+        0.0
+    };
+    let net_economics = crate::net_bps_ranking::RouteNetEconomics::from_kernel(
+        amount_in_usd,
+        gross_profit_usd,
+        gas_usd,
+        other_cost_usd,
+        borrow_usd,
+    );
+    let net_profit_usd = net_economics.net_profit_usd();
+    let sized = SizedCandidate {
+        candidate: candidate.clone(),
+        optimal_amount_in: amount_in_wei,
+        gross_profit_usd,
+        estimated_net_profit_usd: net_profit_usd,
+        net_negative: net_profit_usd <= 0.0,
+        net_economics: Some(net_economics),
+        // No per-leg chain on this path (R8 — never a repeated probe amount
+        // dressed as a ledger).
+        leg_amounts_in: None,
+        leg_amounts_out: None,
+    };
+    Some(economics_from_sized(&sized, Some(cfg)))
 }
 
 /// The emit-boundary fallback for rows whose producer never attached an
