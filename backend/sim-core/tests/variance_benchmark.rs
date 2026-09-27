@@ -516,6 +516,31 @@ async fn variance_benchmark_predicted_vs_settled_block() {
     let pass = hist.labeled >= min_samples && mean_abs < max_mean_drift;
     let outcome = if pass { "PASS" } else { "FAIL" };
 
+    // G-SIM1-AUTOREFRESH (2026-09-26): R8 — with zero labeled pairs the drift
+    // statistics are NOT COMPUTED. `drifts_abs` is empty, so `mean_abs` is the
+    // empty-sum artefact 0.0 and p95/max are NaN; serializing that as 0.0 makes
+    // a zero-sample run read as "measured zero drift" (and 0.0 < threshold, so
+    // only the sample clause would ever fail). `None = not computed` must stay
+    // distinct from `Some(0.0)`.
+    let measured = hist.labeled > 0;
+    let round4 = |v: f64| (v * 10_000.0).round() / 10_000.0;
+    let stat = |v: f64| {
+        if measured {
+            serde_json::json!(round4(v))
+        } else {
+            serde_json::Value::Null
+        }
+    };
+    // Which clause failed — so the registry row and the readiness blocker can
+    // quote the real cause instead of re-deriving it.
+    let pass_reason = if pass {
+        "samples-and-drift"
+    } else if hist.labeled < min_samples {
+        "sample-floor"
+    } else {
+        "drift-threshold"
+    };
+
     let stats = serde_json::json!({
         "method": "revm_b_vs_revm_b1_fork",
         "simulator": "simulator-v2 multi-step REVM (sim_core::sim_multistep::execute_multistep_revm)",
@@ -524,10 +549,15 @@ async fn variance_benchmark_predicted_vs_settled_block() {
         "block_window": [first_pred_block, last_pred_block],
         "samples_labeled": hist.labeled,
         "min_samples_required": min_samples,
-        "mean_abs_drift_pct": (mean_abs * 10_000.0).round() / 10_000.0,
-        "p95_abs_drift_pct": (p95 * 10_000.0).round() / 10_000.0,
-        "max_abs_drift_pct": (max * 10_000.0).round() / 10_000.0,
+        // null (not 0) when no pair was labeled — see `measured` above.
+        "mean_abs_drift_pct": stat(mean_abs),
+        "p95_abs_drift_pct": stat(p95),
+        "max_abs_drift_pct": stat(max),
         "threshold_mean_pct": max_mean_drift,
+        // Population actually exported for this run (after the export's own
+        // dedup/DISTINCT): the denominator of the sample floor.
+        "distinct_topologies_exported": hist.attempted - hist.dedup,
+        "pass_reason": pass_reason,
         "skips": {
             "attempted": hist.attempted,
             "dedup": hist.dedup,
@@ -542,9 +572,22 @@ async fn variance_benchmark_predicted_vs_settled_block() {
         },
     });
 
+    // Same honesty on the greppable line: `n/a` (not 0.0000) when nothing was
+    // measured. The driver greps only VARIANCE_BENCH_OUTCOME.
+    let fmt = |v: f64| {
+        if measured {
+            format!("{v:.4}")
+        } else {
+            "n/a".to_string()
+        }
+    };
     println!(
-        "VARIANCE_BENCH_OUTCOME={outcome} samples={} mean_abs_drift_pct={:.4} p95={:.4} max={:.4} (min_samples={min_samples}, threshold={max_mean_drift}%)",
-        hist.labeled, mean_abs, p95, max
+        "VARIANCE_BENCH_OUTCOME={outcome} samples={} mean_abs_drift_pct={} p95={} max={} (min_samples={min_samples}, threshold={max_mean_drift}%, distinct_exported={})",
+        hist.labeled,
+        fmt(mean_abs),
+        fmt(p95),
+        fmt(max),
+        hist.attempted - hist.dedup
     );
     println!("VARIANCE_BENCH_JSON={stats}");
 }
