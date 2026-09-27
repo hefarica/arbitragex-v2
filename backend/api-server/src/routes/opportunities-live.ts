@@ -232,6 +232,13 @@ interface OpportunityLiveRow extends QueryResultRow {
   // full A→B cycle (2..N legs) per opportunity (R8: empty {} = no topology,
   // caller falls back to dex_a/dex_b).
   route_metadata: Record<string, unknown> | null;
+  // ALWAYS-COMPUTE (operator mandate 2026-09-27, migration 126): the ONE
+  // complete economics computation object (computation_status computed |
+  // partial | error + amounts + per-component costs + net/roi + target
+  // arithmetic + per-leg ledger). NULL on pre-migration rows and rows emitted
+  // with ARBX_ALWAYS_COMPUTE_ECONOMICS=off (R8: absence is a state, never a
+  // fabricated zero). Hardened on the way out by hardenEconomics().
+  economics: Record<string, unknown> | null;
   // CARDS-DEDUP-HOPS (2026-09-20): route-group aggregates from the `grouped`
   // CTE — exact GROUP BY outputs (R8, never synthesised). first/last_seen_at
   // are TIMESTAMPTZ (node-postgres → Date); confirmations = COUNT(*) >= 1 by
@@ -350,6 +357,9 @@ SELECT
   o.bridge,
   o.bridge_fee_usd::float               AS bridge_fee_usd,
   o.route_metadata                       AS route_metadata,
+  -- ALWAYS-COMPUTE (2026-09-27, migration 126): the complete economics
+  -- computation object on EVERY row — accepted and rejected alike.
+  o.economics                            AS economics,
   -- WO-H4 (2026-09-17): real total of the live window, UNBOUNDED by LIMIT.
   -- Window functions evaluate before LIMIT, so COUNT(*) OVER () counts every
   -- row matching the WHERE (time window + viable_only filter) even when only
@@ -580,6 +590,156 @@ interface SimContext {
   simulated_at: string;
 }
 
+// ── ALWAYS-COMPUTE (operator mandate 2026-09-27) ─────────────────────────────
+
+/**
+ * USD fields of the economics object that accept numeric-string tolerance at
+ * this JSON boundary (`typeof v === "string" && v.trim() !== "" → Number(v)`).
+ * Defense-in-depth: the searcher emits native numbers on this path (verified
+ * by the operator's audit), but the column is JSONB — a drifted producer must
+ * degrade to null (R8), never ship a string downstream as if it were a value.
+ */
+const ECONOMICS_USD_FIELDS = [
+  "amount_in_usd",
+  "amount_out_usd",
+  "gross_profit_usd",
+  "gas_usd",
+  "dex_fees_usd",
+  "flash_fee_usd",
+  "bribe_usd",
+  "slippage_usd",
+  "other_costs_usd",
+  "total_cost_usd",
+  "net_profit_usd",
+  "roi_pct",
+  "target_net_usd",
+  "target_delta_usd",
+] as const;
+
+/** Wei fields: decimal strings, optional sign, digits only (`/^-?\d+$/`). */
+const ECONOMICS_WEI_FIELDS = ["amount_in_wei", "amount_out_wei"] as const;
+
+/** Fields whose type is number|boolean|string|null and passes through. */
+const ECONOMICS_PASSTHROUGH_FIELDS = [
+  "computation_status",
+  "error_reason",
+  "meets_target",
+  "quote_block",
+  "simulation_block",
+  "legs",
+  "not_computed_reasons",
+] as const;
+
+/**
+ * Harden the `economics` JSONB at this boundary: USD fields accept native
+ * numbers OR non-empty numeric strings; wei fields accept digit strings only;
+ * anything unparseable degrades to null (R8 — never a coerced 0). Unknown
+ * extra fields ride along verbatim (additive wire). Returns null for a
+ * null/absent/non-object column (pre-migration rows).
+ */
+function hardenEconomics(raw: Record<string, unknown> | null): Record<string, unknown> | null {
+  if (raw == null || typeof raw !== "object" || Array.isArray(raw)) return null;
+  const out: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(raw)) {
+    if ((ECONOMICS_USD_FIELDS as readonly string[]).includes(k)) {
+      if (typeof v === "number" && Number.isFinite(v)) {
+        out[k] = v;
+      } else if (typeof v === "string" && v.trim() !== "" && Number.isFinite(Number(v))) {
+        out[k] = Number(v);
+      } else {
+        out[k] = null;
+      }
+    } else if ((ECONOMICS_WEI_FIELDS as readonly string[]).includes(k)) {
+      out[k] = typeof v === "string" && /^-?\d+$/.test(v) ? v : null;
+    } else if ((ECONOMICS_PASSTHROUGH_FIELDS as readonly string[]).includes(k)) {
+      out[k] = v ?? null;
+    } else {
+      out[k] = v ?? null;
+    }
+  }
+  return out;
+}
+
+/** One field of the census. Counted per served row. */
+export interface MissingEconomicsCensus {
+  window: "request";
+  rows: number;
+  fields: {
+    amount_in_usd: number;
+    gross_usd: number;
+    costs_usd: number;
+    net_usd: number;
+    roi_pct: number;
+    target_usd: number;
+    achieved_usd: number;
+    required_amount_usd: number;
+    ledger: number;
+  };
+}
+
+/**
+ * ALWAYS-COMPUTE deliverable #3: the per-field `missing_economics` census over
+ * the rows THIS response serves (the consumption-side half; the searcher logs
+ * the producer-side window summary + mirrors it to
+ * `arbx:diagnostics:missing_economics`). A field counts as missing when NO
+ * producer on the wire supplied it (canonical columns, SIM block, economics
+ * object). Counts near zero on quoted rows is the production expectation;
+ * non-zero counts on legacy-shaped rows measure TODAY's gap — this is exactly
+ * "WHERE data dies".
+ */
+export function missingEconomicsCensus(
+  rows: OpportunityLiveRow[],
+  simByRowId: Map<string, SimContext>,
+): MissingEconomicsCensus {
+  const c = {
+    amount_in_usd: 0,
+    gross_usd: 0,
+    costs_usd: 0,
+    net_usd: 0,
+    roi_pct: 0,
+    target_usd: 0,
+    achieved_usd: 0,
+    required_amount_usd: 0,
+    ledger: 0,
+  };
+  for (const r of rows) {
+    const sim = simByRowId.get(r.id);
+    const e = hardenEconomics(r.economics);
+    const econNum = (f: string): number | null =>
+      typeof (e as Record<string, unknown> | null)?.[f] === "number"
+        ? ((e as Record<string, unknown>)[f] as number)
+        : null;
+    const ledgerOnEconomics =
+      Array.isArray((e as Record<string, unknown> | null)?.["legs"]) &&
+      ((e as Record<string, unknown>)["legs"] as unknown[]).length > 0;
+    const rm = r.route_metadata as { leg_amounts_in?: unknown } | null;
+    const ledgerOnRoute = Array.isArray(rm?.leg_amounts_in) && (rm?.leg_amounts_in as unknown[]).length > 0;
+
+    if (sim?.forward?.amount_in_usd == null && econNum("amount_in_usd") == null) c.amount_in_usd++;
+    if (
+      r.expected_profit_usd == null &&
+      sim?.forward?.gross_usd == null &&
+      econNum("gross_profit_usd") == null
+    ) c.gross_usd++;
+    if (sim?.forward?.costs_total_usd == null && econNum("total_cost_usd") == null) c.costs_usd++;
+    if (
+      r.net_expected_profit_usd == null &&
+      sim?.forward?.net_usd == null &&
+      econNum("net_profit_usd") == null
+    ) c.net_usd++;
+    if (r.roi_pct == null && sim?.forward?.roi_pct == null && econNum("roi_pct") == null) c.roi_pct++;
+    if (sim?.inverse?.target_net_usd == null && econNum("target_net_usd") == null) c.target_usd++;
+    if (sim?.inverse?.suggested_net_usd == null && econNum("net_profit_usd") == null) c.achieved_usd++;
+    // required_amount_usd: PRESENT when an inverse block exists — including
+    // its "Infinity" sentinel (required_is_infinite true means COMPUTED, the
+    // verdict was "no finite size reaches the target"). Missing = no target
+    // block at all.
+    if (sim?.inverse == null) c.required_amount_usd++;
+    if (!ledgerOnRoute && !ledgerOnEconomics) c.ledger++;
+  }
+  return { window: "request", rows: rows.length, fields: c };
+}
+
 function rowToOpportunity(
   row: OpportunityLiveRow,
   sim: SimContext | undefined,
@@ -714,6 +874,10 @@ function rowToOpportunity(
       Object.keys(row.route_metadata).length > 0
         ? row.route_metadata
         : null,
+    // ALWAYS-COMPUTE (2026-09-27): the complete economics object — hardened at
+    // this boundary (USD numeric-string tolerance, wei digit-strings, R8 null
+    // on unparseable). Present on BOTH accepted and rejected rows.
+    economics:                  hardenEconomics(row.economics),
     // Target-driven simulation (R8 fail-honest: all nullable, source-labeled).
     // Computed only when net_expected_profit_usd is null (the canonical Rust
     // spine output wins when present).
@@ -1063,6 +1227,12 @@ export function mountOpportunitiesLive(
         window:          "latest",
         viable_only:     viableOnly,
         max_age_seconds: maxAgeSeconds,
+        // ALWAYS-COMPUTE (2026-09-27): per-field missing_economics census over
+        // the rows this response serves — the queryable "WHERE data dies"
+        // artifact (additive; ignored by consumers that don't read it).
+        diagnostics: {
+          missing_economics: missingEconomicsCensus(q.rows, simByRowId),
+        },
         items:           q.rows.map((r) => {
                            const item = rowToOpportunity(
                              r,
@@ -1111,4 +1281,8 @@ export function mountOpportunitiesLive(
 }
 
 // Pure mapper exposed for regression inputs, never mounted as an endpoint.
-export const __forTesting = { rowToOpportunity };
+export const __forTesting = {
+  rowToOpportunity,
+  hardenEconomics,
+  missingEconomicsCensus,
+};

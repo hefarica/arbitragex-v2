@@ -443,3 +443,162 @@ describe("WO-G2-PARITY — block_number wire normalization (int8-as-string)", ()
     expect(result.block_number).toBeNull();
   });
 });
+
+// ── ALWAYS-COMPUTE (operator mandate 2026-09-27) ─────────────────────────────
+// Deliverables under test (unit level; the testcontainers file covers the SQL
+// column): (2) required_amount_in_usd can no longer vanish via JSON, (3) the
+// per-field missing_economics census, (4) numeric-string hardening at this
+// JSON boundary, (1) the economics object passes through to the wire shape.
+
+describe("ALWAYS-COMPUTE — hardenEconomics (boundary hardening)", () => {
+  it("accepts native numbers verbatim and numeric strings for USD fields", async () => {
+    const { __forTesting } = await import("./opportunities-live.js");
+    const out = __forTesting.hardenEconomics({
+      computation_status: "computed",
+      gross_profit_usd: 12.5,
+      net_profit_usd: "-50",          // drifted producer → tolerated
+      total_cost_usd: "62.5",
+      amount_in_wei: "1000000000000000000",
+      amount_out_wei: "990000000000000000",
+    });
+    expect(out).not.toBeNull();
+    expect(out!.gross_profit_usd).toBe(12.5);
+    expect(out!.net_profit_usd).toBe(-50);
+    expect(out!.total_cost_usd).toBe(62.5);
+    expect(out!.amount_in_wei).toBe("1000000000000000000");
+  });
+
+  it("degrades unparseable USD strings and non-digit wei strings to null (R8, never 0)", async () => {
+    const { __forTesting } = await import("./opportunities-live.js");
+    const out = __forTesting.hardenEconomics({
+      computation_status: "partial",
+      gross_profit_usd: "  ",          // empty-after-trim → null
+      net_profit_usd: "abc",
+      roi_pct: "1e999",                // Infinity → not finite → null
+      amount_in_wei: "0xdeadbeef",     // not /^-?\d+$/ → null
+      amount_out_wei: 12345,           // number where wei-string expected → null
+    });
+    expect(out!.gross_profit_usd).toBeNull();
+    expect(out!.net_profit_usd).toBeNull();
+    expect(out!.roi_pct).toBeNull();
+    expect(out!.amount_in_wei).toBeNull();
+    expect(out!.amount_out_wei).toBeNull();
+  });
+
+  it("returns null for absent/non-object columns (pre-migration rows)", async () => {
+    const { __forTesting } = await import("./opportunities-live.js");
+    expect(__forTesting.hardenEconomics(null)).toBeNull();
+    expect(__forTesting.hardenEconomics(undefined as never)).toBeNull();
+    expect(__forTesting.hardenEconomics("nope" as never)).toBeNull();
+  });
+});
+
+describe("ALWAYS-COMPUTE — missingEconomicsCensus (deliverable #3)", () => {
+  it("counts non-zero on TODAY's production shape (nulls everywhere) — measures the gap", async () => {
+    const { __forTesting } = await import("./opportunities-live.js");
+    // The operator's audit shape: rejected row, gross/net/roi null, no
+    // economics object, no sim context, no ledger.
+    const row = fixtureRow({
+      expected_profit_usd: null,
+      net_expected_profit_usd: null,
+      roi_pct: null,
+      route_metadata: null,
+      economics: null,
+    });
+    const census = __forTesting.missingEconomicsCensus([row as never], new Map());
+    expect(census.rows).toBe(1);
+    expect(census.fields.amount_in_usd).toBe(1);
+    expect(census.fields.gross_usd).toBe(1);
+    expect(census.fields.costs_usd).toBe(1);
+    expect(census.fields.net_usd).toBe(1);
+    expect(census.fields.roi_pct).toBe(1);
+    expect(census.fields.target_usd).toBe(1);
+    expect(census.fields.achieved_usd).toBe(1);
+    expect(census.fields.required_amount_usd).toBe(1);
+    expect(census.fields.ledger).toBe(1);
+  });
+
+  it("near-zero for a fully-computed rejected row (the post-patch expectation)", async () => {
+    const { __forTesting } = await import("./opportunities-live.js");
+    const econ = {
+      computation_status: "computed",
+      amount_in_usd: 2350,
+      gross_profit_usd: 12.5,
+      gas_usd: 0.18,
+      flash_fee_usd: 2.12,
+      bribe_usd: 0,
+      other_costs_usd: 0.01,
+      total_cost_usd: 2.31,
+      net_profit_usd: -50,
+      roi_pct: -2.13,
+      target_net_usd: 25,
+      target_delta_usd: -75,
+      meets_target: false,
+      legs: [{ token_in: "0xa", token_out: "0xb", amount_in_wei: "1", amount_out_wei: "1" }],
+    };
+    const row = fixtureRow({
+      expected_profit_usd: 12.5,
+      net_expected_profit_usd: -50,
+      roi_pct: -2.13,
+      route_metadata: { leg_amounts_in: ["1"] },
+      economics: econ,
+    });
+    const sim = new Map([
+      [row.id as string, {
+        forward: null,
+        inverse: {
+          target_net_usd: 25, target_roi_pct: null, target_source: "simulation_tab",
+          binding_floor: "net-per-usd-nonpositive",
+          required_amount_in_usd: "Infinity", required_is_infinite: true,
+          cap_amount_in_usd: 1000, suggested_amount_in_usd: 0, suggested_net_usd: -50,
+          suggested_roi_pct: 0, meets_target_at_cap: false,
+          estimation_basis: "observed-gross", notes: [],
+        },
+        simulated_at: new Date().toISOString(),
+      }],
+    ]);
+    const census = __forTesting.missingEconomicsCensus([row as never], sim as never);
+    expect(census.fields.amount_in_usd).toBe(0);
+    expect(census.fields.gross_usd).toBe(0);
+    expect(census.fields.costs_usd).toBe(0);
+    expect(census.fields.net_usd).toBe(0);
+    expect(census.fields.roi_pct).toBe(0);
+    expect(census.fields.target_usd).toBe(0);
+    expect(census.fields.achieved_usd).toBe(0);
+    // The "Infinity" sentinel is a COMPUTED verdict, not a missing field.
+    expect(census.fields.required_amount_usd).toBe(0);
+    expect(census.fields.ledger).toBe(0);
+  });
+});
+
+describe("ALWAYS-COMPUTE — rowToOpportunity economics passthrough (deliverable #1)", () => {
+  it("carries the economics object into the wire shape, hardened", async () => {
+    const { __forTesting } = await import("./opportunities-live.js");
+    const result = __forTesting.rowToOpportunity(
+      fixtureRow({
+        economics: {
+          computation_status: "computed",
+          gross_profit_usd: "12.5",
+          net_profit_usd: -50,
+          amount_in_wei: "1000",
+          not_computed_reasons: { dex_fees_usd: "included_in_amount_out_post_fee" },
+        },
+      }) as never,
+      undefined, null, new Map(), new Map(),
+    ) as Record<string, unknown>;
+    const econ = result.economics as Record<string, unknown>;
+    expect(econ).not.toBeNull();
+    expect(econ.computation_status).toBe("computed");
+    expect(econ.gross_profit_usd).toBe(12.5); // numeric string hardened → number
+    expect(econ.net_profit_usd).toBe(-50);
+  });
+
+  it("emits economics:null on legacy rows (absence is a state, R8)", async () => {
+    const { __forTesting } = await import("./opportunities-live.js");
+    const result = __forTesting.rowToOpportunity(
+      fixtureRow({ economics: null }) as never,
+      undefined, null, new Map(), new Map(),
+    ) as Record<string, unknown>;
+    expect(result.economics).toBeNull();
+  });
+});

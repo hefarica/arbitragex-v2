@@ -947,6 +947,7 @@ fn build_accepted_opportunity(
         pipeline_latency_ms: None,
         detected_at: Utc::now(),
         trace_id,
+        economics: None,
     };
 
     let pool_a_lower = format!("0x{:040x}", pool_a.address);

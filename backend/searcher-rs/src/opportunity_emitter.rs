@@ -390,6 +390,10 @@ impl OpportunityEmitter {
         // construction by the engine/cartridge that built the row.
         admission.opportunity.pipeline_latency_ms =
             pipeline_latency_ms_now(admission.opportunity.detected_at);
+        // ALWAYS-COMPUTE (2026-09-27): the single publish gate guarantees the
+        // economics object exists on the accepted row too — producers that
+        // attached one keep it verbatim (only quote_block backfills).
+        crate::economics::stamp_on_emit(&mut admission.opportunity);
         let opportunity = &admission.opportunity;
         // WO-FUNNEL-01 (2026-09-17): chain bucket of the opportunity, not legacy chain 0.
         chain_counters(opportunity.chain_id)
@@ -431,6 +435,10 @@ impl OpportunityEmitter {
         // ── Redis publish ─────────────────────────────────────────────────
         let mut redis = self.redis.clone();
         publisher::publish(&mut redis, opportunity).await?;
+        // ALWAYS-COMPUTE: per-field census at the emit boundary + the R9
+        // one-line-per-window summary flush (both branches, both honest).
+        crate::economics::observe_missing(opportunity);
+        crate::economics::maybe_flush_window(&mut redis).await;
         // WO-10 (2026-09-06): two cuts of the same completed emission:
         // (a) monotonic emit-boundary span (real-I/O entry → XADD complete);
         // (b) wall-clock construction→publish span from the `detected_at`
@@ -537,12 +545,16 @@ impl OpportunityEmitter {
         // emit-boundary `pipeline_latency_ms` is stamped — rejected rows carry
         // the same two wire fields as accepted ones.
         let rejected = stamped_for_emit(opportunity, Some(rejection_reason));
+        // ALWAYS-COMPUTE (2026-09-27): census at the emit boundary (rejected
+        // branch). `stamped_for_emit` already guaranteed the object exists.
+        crate::economics::observe_missing(&rejected);
 
         let pg_ok = self.try_insert_pg_with_route(&rejected, route).await;
 
         // ── Redis publish ─────────────────────────────────────────────────
         let mut redis = self.redis.clone();
         publisher::publish(&mut redis, &rejected).await?;
+        crate::economics::maybe_flush_window(&mut redis).await;
         // WO-10 (2026-09-06): same two cuts as the accepted path. The rejected
         // clone preserves `detected_at` verbatim — the construction→publish
         // wall-clock span reflects the FULL evaluation this row survived
@@ -842,6 +854,11 @@ fn stamped_for_emit(opportunity: &Opportunity, rejection_reason: Option<&str>) -
         o.amount_in_wei = probe.to_string();
     }
     o.pipeline_latency_ms = pipeline_latency_ms_now(opportunity.detected_at);
+    // ALWAYS-COMPUTE (2026-09-27): the publish gate's final guarantee — every
+    // row that reaches the wire carries the computation object (partial when
+    // only probe figures exist, error with the reason when nothing was
+    // computed). Idempotent: a producer-attached object wins verbatim.
+    crate::economics::stamp_on_emit(&mut o);
     o
 }
 
@@ -984,6 +1001,7 @@ mod tests {
             // WO-CARDS-COMPLETE-01: construction-site field (the detector).
             detector_id: Some("dex_engine".to_owned()),
             pipeline_latency_ms: None, // stamped at emit entry, not construction
+            economics: None,           // ALWAYS-COMPUTE: stamped at the emit boundary
             detected_at: Utc::now(),
             trace_id: Uuid::new_v4(),
         }
@@ -1417,5 +1435,64 @@ mod tests {
         let json_legacy = serde_json::to_value(&opp).unwrap();
         assert_eq!(json_legacy["pipeline_latency_ms"], serde_json::Value::Null);
         assert_eq!(json_legacy["detector_id"], "dex_engine");
+    }
+
+    // ── ALWAYS-COMPUTE (operator mandate 2026-09-27): the wire contract ────
+    // "FAIL debe significar 'se hizo el cálculo y no cumple el criterio', no
+    // 'no tengo números'. Si el resultado da -$50, la card debe decir -$50."
+
+    /// Gate 1 (rejected-with-quote): a rejected row that carries computed
+    /// figures keeps them AND gains the economics object at the publish gate —
+    /// serialized with its status so the card can render the full arithmetic.
+    #[test]
+    fn always_compute_rejected_row_with_figures_carries_economics() {
+        let mut opp = make_opp(
+            Uuid::new_v4(),
+            Some(12.5),
+            Some("non_positive_profit".to_string()),
+        );
+        opp.net_expected_profit_usd = Some(-50.0);
+        let stamped = stamped_for_emit(&opp, Some("non_positive_profit"));
+        let json = serde_json::to_value(&stamped).unwrap();
+        // The figures survive verbatim — gross AND net.
+        assert_eq!(json["expected_profit_usd"], 12.5);
+        assert_eq!(json["net_expected_profit_usd"], -50.0);
+        // The computation object is present with the honest status.
+        assert_eq!(json["economics"]["computation_status"], "partial");
+        assert_eq!(json["economics"]["gross_profit_usd"], 12.5);
+        assert_eq!(json["economics"]["net_profit_usd"], -50.0);
+        // Absent components carry reasons, never fabricated zeros (R8).
+        let reasons = json["economics"]["not_computed_reasons"]
+            .as_object()
+            .unwrap();
+        assert!(reasons.contains_key("total_cost_usd"));
+    }
+
+    /// Gate 2 (quote genuinely failed): NO numbers, the verbatim reason, and
+    /// computation_status:"error" — the only honest absence.
+    #[test]
+    fn always_compute_no_quote_row_is_error_with_reason() {
+        let mut opp = make_opp(Uuid::new_v4(), None, None);
+        opp.amount_in_wei = "0".to_owned();
+        let stamped = stamped_for_emit(&opp, Some("missing_reserves_pool_b"));
+        let json = serde_json::to_value(&stamped).unwrap();
+        assert_eq!(json["economics"]["computation_status"], "error");
+        assert_eq!(json["economics"]["error_reason"], "missing_reserves_pool_b");
+        assert!(json["economics"]["gross_profit_usd"].is_null());
+        assert!(json["economics"]["net_profit_usd"].is_null());
+        assert!(json["economics"]["total_cost_usd"].is_null());
+    }
+
+    /// A producer-attached object wins verbatim at the gate (idempotence) —
+    /// the emitter only backfills `quote_block` from the row's own evidence.
+    #[test]
+    fn always_compute_producer_object_wins_verbatim() {
+        let mut opp = make_opp(Uuid::new_v4(), Some(1.5), None);
+        opp.economics = Some(crate::economics::economics_error("producer_reason"));
+        let stamped = stamped_for_emit(&opp, None);
+        let e = stamped.economics.as_ref().unwrap();
+        assert_eq!(e.computation_status, "error");
+        assert_eq!(e.error_reason.as_deref(), Some("producer_reason"));
+        assert_eq!(e.quote_block, Some(12_345_678), "quote_block backfilled");
     }
 }

@@ -37,6 +37,9 @@ mod chain_client;
 mod chain_supervisor;
 mod counters;
 mod dedup;
+// ALWAYS-COMPUTE (2026-09-27): one economics computation object on BOTH
+// branches + the missing_economics census (operator mandate).
+mod economics;
 // Phase A.3.a: OpportunityCandidate → RoundTripContext encoder. Pure bridge
 // from the abstract candidate to the typed simulator input. NO REVM dispatch
 // here (that lands with execute_round_trip); only validation + payload pre-shaping.
