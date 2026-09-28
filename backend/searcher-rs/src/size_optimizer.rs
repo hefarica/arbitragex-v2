@@ -2597,13 +2597,44 @@ impl SizeOptimizer {
         let fee_b = legs[1].fee_bps.unwrap_or(30);
 
         // Search bounds.
+        //
+        // DEPTH-BOUND-SIZING-01 (2026-09-28, measured defect): the bracket used
+        // to be `min(cap_wei, reserve_in_a)` — the CAPITAL cap bounded only by
+        // the FIRST leg's reserve. A route whose later hop is shallow was then
+        // priced at a size it cannot absorb, and the kernel published the
+        // (arithmetically correct) catastrophic fill as an "opportunity":
+        // measured 995.379 USDC sent into the Sushi DAI/USDC pool that holds
+        // 824.057 USDC ⇒ −55 % gross with a $1000 principal, painted on a card.
+        //
+        // The tradable size is bounded by the route's SLIPPAGE BUDGET, not by the
+        // capital alone: for a CPMM the marginal impact of an input `x` against
+        // reserve `R` is ≈ x/R, so `x ≤ s·R` keeps the impact inside the
+        // operator's `max_slippage_pct` (live mainnet config: 0.0050 = 0.5 %).
+        // Leg B's depth is expressed in leg A's INPUT token — leg A converts
+        // token_in → token_out at reserve_out_a/reserve_in_a.
+        //
+        // A route that cannot absorb a size worth its gas now yields a small,
+        // honest negative (or a rejection) instead of a −55 %/−101 % card.
         let x_lo = U256::from(1u64);
+        let slip = state.max_slippage_pct;
+        // Fail-safe: the field is a FRACTION in (0,1). Anything outside that
+        // (0, or the 1.0 the unit fixtures carry) falls back to the live 0.5 %.
+        let slip = if slip > 0.0 && slip < 1.0 {
+            slip
+        } else {
+            0.005
+        };
+        let slip_bps = ((slip * 10_000.0).round().max(1.0)) as u64;
+        let impact_bound = |reserve: U256| -> U256 {
+            reserve.saturating_mul(U256::from(slip_bps)) / U256::from(10_000u64)
+        };
+        let depth_b_in_input =
+            reserve_in_b.saturating_mul(reserve_in_a) / reserve_out_a.max(U256::one());
         let x_hi = {
-            let ceiling = if cap_wei < reserve_in_a {
-                cap_wei
-            } else {
-                reserve_in_a
-            };
+            let ceiling = cap_wei
+                .min(reserve_in_a)
+                .min(impact_bound(reserve_in_a))
+                .min(impact_bound(depth_b_in_input));
             if ceiling > x_lo {
                 ceiling
             } else {
@@ -4135,11 +4166,14 @@ mod tests {
             ),
         };
 
-        // The published notional is the capital band (== the reserve ceiling
-        // here), NOT the dust argmax the negative curve hands back.
+        // The published notional is the TRADABLE band of the same bracket —
+        // after DEPTH-BOUND-SIZING-01 that is the slippage budget of the
+        // shallowest leg (0.5 % of one unit here), NOT the dust argmax the
+        // negative curve hands back.
+        let band = r * U256::from(50u64) / U256::from(10_000u64);
         assert_eq!(
-            s.optimal_amount_in, r,
-            "published notional must be the capital band, not the negative curve's dust argmax"
+            s.optimal_amount_in, band,
+            "published notional must be the tradable band, not the negative curve's dust argmax"
         );
         assert_eq!(
             s.candidate.opportunity.amount_in_wei,
@@ -4163,12 +4197,77 @@ mod tests {
             s.estimated_net_profit_usd <= s.gross_profit_usd,
             "net carries the costs on top of the (≤ 0) gross"
         );
-        // Dust would sit ~1e-7 below the reserve; require the capital band.
+        // Dust would sit ~1e-7 below the reserve; require the tradable band.
         assert!(
-            s.optimal_amount_in >= r / U256::from(2u64),
-            "dust publication: {} is far below the capital band {}",
+            s.optimal_amount_in >= band / U256::from(2u64),
+            "dust publication: {} is far below the tradable band {}",
             s.optimal_amount_in,
             r
+        );
+    }
+
+    // ── DEPTH-BOUND-SIZING-01 (2026-09-28) ───────────────────────────────────
+    //
+    // Measured defect: a 2-leg route whose SECOND pool is shallow was sized at
+    // the capital cap and the kernel published the (correct) catastrophic fill
+    // as an opportunity — 995.379 USDC into a Sushi DAI/USDC pool holding
+    // 824.057 USDC ⇒ −55 % gross on a $1000 principal.
+    //
+    // Contract: the bracket is bounded by the route's SLIPPAGE BUDGET
+    // (`max_slippage_pct`, live 0.0050 = 0.5 %), not by the capital alone. With
+    // pool A holding 1000 units and pool B holding 1, the tradable size is
+    // 0.5 % of ONE unit — the shallow leg's depth, converted into the input
+    // token — regardless of how much capital the operator authorized.
+    #[tokio::test]
+    async fn two_leg_bracket_is_bounded_by_the_shallow_leg_slippage_budget() {
+        let pool_a = addr(0x10);
+        let pool_b = addr(0x11);
+        let tok_weth = addr(0xAAAA);
+        let tok_usdc = addr(0xBBBB);
+
+        let cache = Arc::new(ReservesCache::new());
+        let deep = unit(1000); // leg A: deep
+        let shallow = unit(1); // leg B: 1/1000 of A
+        cache.insert(pool_a, deep, deep).await;
+        cache.insert(pool_b, shallow, shallow).await;
+
+        let projector = Arc::new(StateProjector::new(cache, None, empty_v3_fee_catalog()));
+        let optimizer = SizeOptimizer::new(projector);
+
+        let candidate = make_dex_candidate(
+            pool_a,
+            pool_b,
+            tok_weth,
+            tok_usdc,
+            StrategyLabel::DexArbV2V2,
+        );
+        let intent = make_intent(tok_weth, tok_usdc);
+        let cfg = make_cfg(100_000.0); // capital far above the route's depth
+
+        let outcome = optimizer
+            .optimize_with_reason(candidate, &intent, Some(&cfg))
+            .await
+            .expect("optimize must not error");
+
+        let s = match outcome {
+            OptimizeOutcome::RejectedComputed(_, s) => s,
+            other => panic!(
+                "a parity route must reject with figures, got {:?}",
+                other.reason_str()
+            ),
+        };
+
+        // 0.5 % of the shallow leg's one unit, converted to the input token.
+        let expected_bound = shallow * U256::from(50u64) / U256::from(10_000u64);
+        assert_eq!(
+            s.optimal_amount_in, expected_bound,
+            "the published notional must be the shallow leg's slippage budget"
+        );
+        // …and it must be far below what the capital cap would have allowed.
+        let capital_cap = U256::from(10u64).pow(U256::from(18u64)) * U256::from(1000u64);
+        assert!(
+            s.optimal_amount_in < capital_cap,
+            "the capital cap must NOT be reachable on this route"
         );
     }
 
