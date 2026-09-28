@@ -93,6 +93,13 @@ pub const V3_MULTILEG_QUOTES_PER_BLOCK_ENV: &str = "ARBX_V3_MULTILEG_QUOTES_PER_
 /// exhaustive search but far finer than the 2-leg V3 path's 8-point RPC grid, and
 /// it costs no network at all (integer math only).
 const V3_MULTILEG_LOCAL_POINTS: usize = 16;
+
+/// DUST-NOTIONAL-02 (2026-09-28): the smallest notional worth publishing on a
+/// card. Below this the ROI is a ratio computed against a size no operator could
+/// trade — measured post-deploy: 362 rows in three minutes with a $8.7e-13
+/// principal and `roi_pct` −7.84e13 %. Both the 2-leg kernel and (later) the
+/// N-leg kernel re-price at their tradable band instead of publishing dust.
+const DUST_NOTIONAL_USD: f64 = 0.01;
 /// Default RPC probes per candidate: the local argmax plus its best neighbour.
 const DEFAULT_V3_MULTILEG_MAX_PROBES: usize = 2;
 /// Hard ceiling for the probe knob (each probe costs one quote per V3 leg).
@@ -358,6 +365,11 @@ pub enum OptimizeRejectReason {
     /// (`v3_quote_unavailable`) nor as a spread verdict
     /// (`non_positive_profit`), and it carries no ledger (no chain was quoted).
     V3MultilegBudgetExhausted,
+    /// DUST-NOTIONAL-02 (2026-09-28): the route's tradable band — the capital
+    /// cap already bounded by the per-leg slippage budget — is itself below the
+    /// dust floor, so NO tradable size exists for this route. Explicit (R8)
+    /// instead of publishing a sub-cent notional whose ROI is meaningless.
+    NoTradableSize,
 }
 
 impl OptimizeRejectReason {
@@ -386,6 +398,7 @@ impl OptimizeRejectReason {
             Self::UnsupportedLegCount => "unsupported_leg_count",
             Self::V3MultilegUnsupported => "v3_multileg_unsupported",
             Self::V3MultilegBudgetExhausted => "v3_multileg_budget_exhausted",
+            Self::NoTradableSize => "no_tradable_size",
         }
     }
 
@@ -2645,7 +2658,7 @@ impl SizeOptimizer {
         let hop_reserves_a = vec![(reserve_in_a, reserve_out_a)];
         let hop_reserves_b = vec![(reserve_in_b, reserve_out_b)];
 
-        let (x_star, profit_wei) = golden_section_search_2leg(
+        let (x_star_raw, profit_wei_raw) = golden_section_search_2leg(
             x_lo,
             x_hi,
             &hop_reserves_a,
@@ -2654,6 +2667,46 @@ impl SizeOptimizer {
             fee_b,
             25,
         );
+
+        // DUST-NOTIONAL-02 (2026-09-28, measured post-deploy): the kernel's
+        // argmax is only a MEANINGFUL publication size when it is tradable. For a
+        // hair-thin edge the optimum sits at the dust end of the bracket and the
+        // row went out with a $8.7e-13 principal and `roi_pct` −7.84e13 %
+        // (measured: 362 such rows in the first three minutes of the new binary —
+        // 4.9 % of its computed 2-leg rows). A sub-cent notional is not a fact
+        // about the route: re-price at the tradable band `x_hi` — already bounded
+        // by the capital AND by the route's slippage budget — and publish THAT.
+        // If even the band is sub-cent, no tradable size exists: reject
+        // explicitly (R8) instead of publishing a meaningless ratio.
+        let usd_of = |wei: U256| -> f64 {
+            (clamped_to_i128(wei) as f64) / 10f64.powi(decimals as i32) * token_price_usd
+        };
+        let (x_star, profit_wei) = if usd_of(x_star_raw) < DUST_NOTIONAL_USD {
+            if usd_of(x_hi) < DUST_NOTIONAL_USD {
+                debug!(
+                    event = "size_optimizer.two_leg_no_tradable_size",
+                    label = candidate.label.as_str(),
+                    band_usd = usd_of(x_hi),
+                    "tradable band below the dust floor — no tradable size exists (R8)"
+                );
+                return OptimizeOutcome::Rejected(OptimizeRejectReason::NoTradableSize, None);
+            }
+            let out_a = v2_amount_out(x_hi, reserve_in_a, reserve_out_a, fee_a);
+            let out_b = v2_amount_out(out_a, reserve_in_b, reserve_out_b, fee_b);
+            let profit_band = clamped_to_i128(out_b).saturating_sub(clamped_to_i128(x_hi));
+            debug!(
+                event = "size_optimizer.two_leg_dust_optimum_repriced_at_band",
+                label = candidate.label.as_str(),
+                kernel_argmax_wei = %x_star_raw,
+                kernel_argmax_usd = usd_of(x_star_raw),
+                published_notional_wei = %x_hi,
+                published_notional_usd = usd_of(x_hi),
+                "dust optimum is not a tradable size — publishing at the band"
+            );
+            (x_hi, profit_band)
+        } else {
+            (x_star_raw, profit_wei_raw)
+        };
 
         if profit_wei <= 0 {
             // ALWAYS-COMPUTE (operator mandate 2026-09-27): the kernel priced
@@ -4268,6 +4321,59 @@ mod tests {
         assert!(
             s.optimal_amount_in < capital_cap,
             "the capital cap must NOT be reachable on this route"
+        );
+    }
+
+    // ── DUST-NOTIONAL-02 (2026-09-28) ────────────────────────────────────────
+    //
+    // Measured post-deploy: 362 rows in three minutes published a $8.7e-13
+    // principal with `roi_pct` −7.84e13 % — the kernel's argmax sitting at the
+    // dust end of the bracket. When even the tradable band is sub-cent, no
+    // tradable size exists at all: the honest verdict is an explicit rejection,
+    // never a ratio computed against dust.
+    #[tokio::test]
+    async fn two_leg_with_dust_reserves_has_no_tradable_size() {
+        let pool_a = addr(0x10);
+        let pool_b = addr(0x11);
+        let tok_weth = addr(0xAAAA);
+        let tok_usdc = addr(0xBBBB);
+
+        let cache = Arc::new(ReservesCache::new());
+        // Both pools hold 1e6 wei (1e-12 tokens): 0.5 % of that is ~$1e-11, far
+        // below the dust floor — this route cannot be traded at any size.
+        let dust = U256::from(1_000_000u64);
+        cache.insert(pool_a, dust, dust).await;
+        cache.insert(pool_b, dust, dust).await;
+
+        let projector = Arc::new(StateProjector::new(cache, None, empty_v3_fee_catalog()));
+        let optimizer = SizeOptimizer::new(projector);
+
+        let candidate = make_dex_candidate(
+            pool_a,
+            pool_b,
+            tok_weth,
+            tok_usdc,
+            StrategyLabel::DexArbV2V2,
+        );
+        let intent = make_intent(tok_weth, tok_usdc);
+        let cfg = make_cfg(100_000.0);
+
+        let outcome = optimizer
+            .optimize_with_reason(candidate, &intent, Some(&cfg))
+            .await
+            .expect("optimize must not error");
+
+        assert!(
+            matches!(
+                outcome,
+                OptimizeOutcome::Rejected(OptimizeRejectReason::NoTradableSize, None)
+            ),
+            "a route whose band is sub-cent must be rejected explicitly, got {:?}",
+            outcome.reason_str()
+        );
+        assert_eq!(
+            OptimizeRejectReason::NoTradableSize.as_str(),
+            "no_tradable_size"
         );
     }
 
