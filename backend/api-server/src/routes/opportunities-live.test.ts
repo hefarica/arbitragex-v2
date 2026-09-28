@@ -356,9 +356,12 @@ describe("CARDS-DEDUP-HOPS — grouped CTE + route-group aggregates on the wire"
     expect(text).toContain("MAX(o.detected_at) AS last_seen_at");
     expect(text).toContain("COUNT(*)::int      AS confirmations");
     // id DESC tiebreaker: same-burst detections must resolve to the same
-    // latest row every poll (economics stability, WARN-1 review WO-3).
+    // representative row every poll (economics stability, WARN-1 review WO-3).
+    // ROUTE-REP-01 (2026-09-28): the primary key is `$6`-gated — with
+    // route_representative=best_net the group is represented by its computed
+    // best net, so a later re-detection cannot bury a real gain.
     expect(text).toContain(
-      "(ARRAY_AGG(o.id ORDER BY o.detected_at DESC, o.id DESC))[1] AS latest_id",
+      "(ARRAY_AGG(o.id ORDER BY\n       CASE WHEN $6::bool\n            THEN (o.economics->>'net_profit_usd')::numeric\n            ELSE NULL END DESC NULLS LAST,\n       o.detected_at DESC, o.id DESC))[1] AS latest_id",
     );
     expect(text).toContain("GROUP BY 1");
     expect(text).toContain("JOIN opportunities o");
@@ -368,6 +371,35 @@ describe("CARDS-DEDUP-HOPS — grouped CTE + route-group aggregates on the wire"
     expect(text).toContain(
       "concat_ws('|',\n      o.chain_id::text,\n      COALESCE(o.chain_id_out::text, ''),\n      COALESCE(o.strategy_kind, ''),\n      o.token_in,\n      o.token_out,\n      o.dex_a,\n      COALESCE(o.dex_b, '')\n    ) AS route_group_key",
     );
+  });
+
+  // ROUTE-REP-01 (2026-09-28): the representative selector is opt-in. The
+  // default must stay `latest` (previous behaviour for every other consumer),
+  // and an unknown value must never open a third silent mode.
+  it("(h) ROUTE-REP-01: best_net rides the query as $6; latest is the default", async () => {
+    const poolBest = fakePool({ rows: [] });
+    const appBest = await buildApp(poolBest);
+    const resBest = await request(appBest).get(
+      "/api/v1/opportunities/live?limit=50&route_representative=best_net",
+    );
+    const paramsBest = (poolBest.query as ReturnType<typeof vi.fn>).mock.calls[0]?.[1] as unknown[];
+    expect(paramsBest?.[5]).toBe(true);
+    expect(resBest.body?.route_representative).toBe("best_net");
+
+    const poolDefault = fakePool({ rows: [] });
+    const appDefault = await buildApp(poolDefault);
+    const resDefault = await request(appDefault).get("/api/v1/opportunities/live?limit=50");
+    const paramsDefault = (poolDefault.query as ReturnType<typeof vi.fn>).mock.calls[0]?.[1] as unknown[];
+    expect(paramsDefault?.[5]).toBe(false);
+    expect(resDefault.body?.route_representative).toBe("latest");
+
+    const poolBogus = fakePool({ rows: [] });
+    const appBogus = await buildApp(poolBogus);
+    const resBogus = await request(appBogus).get(
+      "/api/v1/opportunities/live?limit=50&route_representative=cuac",
+    );
+    expect((poolBogus.query as ReturnType<typeof vi.fn>).mock.calls[0]?.[1]?.[5]).toBe(false);
+    expect(resBogus.body?.route_representative).toBe("latest");
   });
 
   it("(g) route-group aggregates forward verbatim; TIMESTAMPTZ Date → ISO string", async () => {

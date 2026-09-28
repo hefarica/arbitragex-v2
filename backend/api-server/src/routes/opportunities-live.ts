@@ -304,10 +304,21 @@ WITH grouped AS (
     MIN(o.detected_at) AS first_seen_at,
     MAX(o.detected_at) AS last_seen_at,
     COUNT(*)::int      AS confirmations,
-    -- Latest detection per group: its economics become the card's values.
+    -- Representative row per group: its economics become the card's values.
+    -- ROUTE-REP-01 (2026-09-28): with the $6 flag TRUE the representative is the
+    -- COMPUTED row with the highest net inside the window. Measured defect: a
+    -- later re-detection of the same route (net −12.93, computed) buried a real
+    -- computed gain (+0.1198 at 11:51) and the wire carried ZERO net>0 rows
+    -- while PG held six. With the flag FALSE every sort key is NULL (NULLS LAST)
+    -- and the order falls back to the previous rule — latest detection —
+    -- byte-for-byte.
     -- id DESC tiebreaker: bursts sharing one detected_at must pick the same
-    -- latest row every poll, or the card's economics flicker between polls.
-    (ARRAY_AGG(o.id ORDER BY o.detected_at DESC, o.id DESC))[1] AS latest_id
+    -- row every poll, or the card's economics flicker between polls.
+    (ARRAY_AGG(o.id ORDER BY
+       CASE WHEN $6::bool
+            THEN (o.economics->>'net_profit_usd')::numeric
+            ELSE NULL END DESC NULLS LAST,
+       o.detected_at DESC, o.id DESC))[1] AS latest_id
   FROM opportunities o
   -- Same window + viability filter as the pre-grouping query, applied INSIDE
   -- the CTE so both the aggregates and the outer row set share one boundary.
@@ -922,6 +933,18 @@ export function mountOpportunitiesLive(
 
     const limit = Math.max(1, Math.min(200, Number(req.query["limit"] ?? 50)));
 
+    // ROUTE-REP-01 (operator order 2026-09-28): which row of a route group
+    // becomes the card. `latest` (default) = previous behaviour, so no other
+    // consumer changes; `best_net` = the computed row with the highest net in
+    // the window, which is what surfaces a real gain instead of letting a later
+    // re-detection bury it. Unknown values fall back to `latest` (never a
+    // silent third mode).
+    const routeRepresentative =
+      String(req.query["route_representative"] ?? "latest").toLowerCase() === "best_net"
+        ? "best_net"
+        : "latest";
+    const bestNet = routeRepresentative === "best_net";
+
     // viable_only filters out rows persisted as gate rejections (rejection_reason
     // populated by spine when an opportunity is rejected before profit eval).
     // CARDS-MIRROR-01: viable_only is an opt-in filter, NOT the default. Default
@@ -963,6 +986,7 @@ export function mountOpportunitiesLive(
         maxAgeSeconds,
         [...VIABLE_STATUSES],
         order,
+        bestNet,
       ]);
 
       // 2026-05-10 operator request: every token row must surface a symbol
@@ -1223,6 +1247,9 @@ export function mountOpportunitiesLive(
         window:          "latest",
         viable_only:     viableOnly,
         max_age_seconds: maxAgeSeconds,
+        // ROUTE-REP-01: which row of each route group this response served
+        // (`latest` = previous behaviour, `best_net` = computed best net).
+        route_representative: routeRepresentative,
         // ALWAYS-COMPUTE (2026-09-27): per-field missing_economics census over
         // the rows this response serves — the queryable "WHERE data dies"
         // artifact (additive; ignored by consumers that don't read it).

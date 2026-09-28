@@ -108,15 +108,19 @@ export default function OpportunitiesClient({
   initialSnapshot,
   initialShowRejected = false,
   initialWindowSeconds = 300,
+  initialRouteRep = "best_net",
 }: {
   initialSnapshot: OpportunitiesSnapshot;
   /** SHOW-REJECTED-01: server-read deep link (`?show_rejected=1`) for the
-   *  "Mostrar rechazadas" toggle. Default OFF — the real/live card set. */
+   *  "Mostrar rechazadas" toggle. Default OFF — the gate-D scope. */
   initialShowRejected?: boolean;
   /** WINDOW-01: server-read deep link (`?window_seconds=3600`) for the live
    *  lookback, in seconds. Default 300 s — the api-server's own default, so the
    *  behaviour is unchanged unless the operator widens it. */
   initialWindowSeconds?: number;
+  /** ROUTE-REP-01: which row represents a route (`?route_rep=latest` opts out).
+   *  Default `best_net` — the gain is shown, not buried by a later detection. */
+  initialRouteRep?: "latest" | "best_net";
 }) {
   // ─── Omni-Store Integration ───────────────────────────────────────────────
   // Connect WebSocket stream to the store (replaces useOpportunitiesStream)
@@ -137,6 +141,7 @@ export default function OpportunitiesClient({
     viableOnly,
     initialOpportunities: initialSnapshot.opportunities,
     maxAgeSeconds: windowSeconds,
+    routeRepresentative: initialRouteRep,
   });
 
   // Selectors from Omni-Store (SSOT)

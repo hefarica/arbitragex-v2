@@ -69,6 +69,15 @@ interface UseOmniOpportunitiesOptions {
    * Default 300 s — the previous behaviour, unchanged.
    */
   maxAgeSeconds?: number;
+  /**
+   * ROUTE-REP-01 (operator order 2026-09-28): which row of a route group the
+   * server uses to represent it. `latest` (default) keeps the previous
+   * behaviour; `best_net` returns the COMPUTED row with the highest net in the
+   * window, so a later re-detection cannot bury a real gain. The SSR snapshot
+   * and this reconcile loop MUST send the same value, or the gains would appear
+   * on the first paint and vanish on the next 5-second reconcile.
+   */
+  routeRepresentative?: "latest" | "best_net";
 }
 
 // =============================================================================
@@ -94,6 +103,7 @@ export function useOmniOpportunities({
   viableOnly = false,
   initialOpportunities = [],
   maxAgeSeconds = OPP_TTL_MS / 1000,
+  routeRepresentative = "latest",
 }: UseOmniOpportunitiesOptions) {
   // Store actions (stable references)
   const setOpportunities = useOmniStore((state) => state.setOpportunities);
@@ -109,6 +119,8 @@ export function useOmniOpportunities({
   // WINDOW-01: the live lookback lives in a ref so the ≤5s reconcile loop reads
   // the CURRENT window without being torn down and rebuilt on every change.
   const maxAgeRef = useRef(maxAgeSeconds);
+  // ROUTE-REP-01: same seam for the representative selector.
+  const routeRepRef = useRef(routeRepresentative);
   const initializedRef = useRef(false);
   // MEM-RENDER-01: WS ingest buffer — upsert by id, flushed on WS_FLUSH_MS.
   // (Same per-render-allocation parity as the old `useRef(new Map())`.)
@@ -124,6 +136,10 @@ export function useOmniOpportunities({
   useEffect(() => {
     maxAgeRef.current = maxAgeSeconds;
   }, [maxAgeSeconds]);
+
+  useEffect(() => {
+    routeRepRef.current = routeRepresentative;
+  }, [routeRepresentative]);
 
   // Initialize store with initial opportunities (once)
   useEffect(() => {
@@ -148,8 +164,9 @@ export function useOmniOpportunities({
       const maxAge = maxAgeRef.current;
       // ORDER-01: same ordering the SSR snapshot asks for, so the reconcile
       // cannot silently re-order the grid by arrival time.
+      // ROUTE-REP-01: same representative selector as the SSR snapshot.
       const res = await fetch(
-        `${getPublicEdgeBaseUrl()}/api/opportunities/live?viable_only=${viable}&limit=50&max_age_seconds=${maxAge}&order=profit_usd`,
+        `${getPublicEdgeBaseUrl()}/api/opportunities/live?viable_only=${viable}&limit=50&max_age_seconds=${maxAge}&order=profit_usd&route_representative=${routeRepRef.current}`,
         {
           headers: { accept: "application/json" },
           signal: AbortSignal.timeout(POLL_INTERVAL_MS),
