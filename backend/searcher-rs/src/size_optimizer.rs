@@ -3036,8 +3036,40 @@ impl SizeOptimizer {
         let leg0_v3 = matches!(eval0, LegEval::V3 { .. });
         let leg1_v3 = matches!(eval1, LegEval::V3 { .. });
 
-        // Log-spaced probe bracket over [1, cap_wei].
-        let probes = geom_probes(U256::one(), cap_wei, V3_BRACKET_POINTS);
+        // Log-spaced probe bracket over [dust floor, cap_wei].
+        //
+        // DUST-NOTIONAL-03 (2026-09-28, measured): this bracket started at ONE
+        // WEI, so on a near-parity route the best probe sat at the dust end and
+        // the row went out with a $8.6e-13 principal and `roi_pct` −7.85e13 %
+        // (measured post-deploy: 501 such rows in nine minutes — ALL of them
+        // carrying a V3 leg, while the V2/V2 kernel published NONE after
+        // DUST-NOTIONAL-02). A sub-cent notional is not a fact about the route:
+        // the grid now starts at the smallest size worth a card, and a route
+        // whose capital cap sits below that floor is rejected explicitly (R8).
+        let x_lo = {
+            let wei_per_usd = if token_price_usd > 0.0 {
+                10f64.powi(decimals as i32) / token_price_usd
+            } else {
+                0.0
+            };
+            let lo = (DUST_NOTIONAL_USD * wei_per_usd).ceil();
+            if lo.is_finite() && lo >= 1.0 {
+                f64_to_u256_clamped(lo)
+            } else {
+                U256::one()
+            }
+        };
+        if x_lo >= cap_wei {
+            debug!(
+                event = "size_optimizer.two_leg_v3_no_tradable_size",
+                label = candidate.label.as_str(),
+                cap_usd,
+                dust_floor_usd = DUST_NOTIONAL_USD,
+                "capital cap below the dust floor — no size worth a card exists (R8)"
+            );
+            return OptimizeOutcome::Rejected(OptimizeRejectReason::NoTradableSize, None);
+        }
+        let probes = geom_probes(x_lo, cap_wei, V3_BRACKET_POINTS);
 
         // Plan B.1 — 0-RPC within-tick early-reject. When slot0 is cached for
         // every V3 leg, the within-tick model is a provable upper bound on the
@@ -6991,6 +7023,59 @@ mod tests {
                 )
             }
         }
+    }
+
+    // ── DUST-NOTIONAL-03 (2026-09-28) ────────────────────────────────────────
+    //
+    // The V3-leg bracket used to start at ONE WEI, so on a near-parity route the
+    // best probe sat at the dust end and the row went out with a $8.6e-13
+    // principal and `roi_pct` −7.85e13 % (measured post-deploy: 501 such rows in
+    // nine minutes — ALL of them carrying a V3 leg, while the V2/V2 kernel
+    // published none after DUST-NOTIONAL-02). When even the operator's capital
+    // cap sits below the dust floor there is no size worth a card: reject
+    // explicitly (R8) instead of pricing dust.
+    #[tokio::test]
+    async fn two_leg_v3_with_capital_below_the_dust_floor_has_no_tradable_size() {
+        let token0 = addr(0xAAAA);
+        let token1 = addr(0xBBBB);
+        let pool_a = addr(0x10);
+        let pool_b = addr(0x11);
+        let q96 = U256::one() << 96;
+        let sp_a = q96 * U256::from(12u32) / U256::from(10u32);
+        let sp_b = q96;
+        let liq = U256::one() << 100;
+
+        let cache = Arc::new(ReservesCache::new());
+        let curves = HashMap::from([(pool_a, (sp_a, liq)), (pool_b, (sp_b, liq))]);
+        let provider = Arc::new(CurveV3Mock {
+            curves,
+            calls: AtomicU64::new(0),
+        });
+        let projector = Arc::new(StateProjector::new(
+            cache,
+            Some(provider),
+            v3_test_fee_catalog(),
+        ));
+        let optimizer = SizeOptimizer::new(projector);
+
+        let candidate = make_v3_curve_candidate(pool_a, pool_b, token0, token1);
+        let intent = make_intent(token0, token1);
+        // Capital under the $0.01 dust floor ⇒ no tradable size exists.
+        let cfg = make_cfg(0.005);
+
+        let outcome = optimizer
+            .optimize_with_reason(candidate, &intent, Some(&cfg))
+            .await
+            .expect("optimize must not error");
+
+        assert!(
+            matches!(
+                outcome,
+                OptimizeOutcome::Rejected(OptimizeRejectReason::NoTradableSize, None)
+            ),
+            "capital below the dust floor must reject explicitly, got {:?}",
+            outcome.reason_str()
+        );
     }
 
     // Negative spread (spA < spB ⇒ round-trip factor < 1) → NonPositiveProfit.
