@@ -277,11 +277,14 @@ impl HttpRpcPool {
                 .unwrap_or(10_000);
             // `with_reqwest` hands the closure alloy's OWN reqwest::ClientBuilder, so we set the
             // timeout without any reqwest-version-mismatch on the Client type.
+            // RPC-USER-AGENT-01: the UA is NOT cosmetic — without it 6 of the 8
+            // configured providers answer 403 (measured, see `rpc_user_agent`).
             let provider = Arc::new(
                 ProviderBuilder::new()
                     .disable_recommended_fillers()
                     .with_reqwest(parsed_url, |b| {
-                        b.timeout(std::time::Duration::from_millis(http_timeout_ms))
+                        b.user_agent(rpc_user_agent())
+                            .timeout(std::time::Duration::from_millis(http_timeout_ms))
                             .build()
                             .expect("build reqwest client with request timeout")
                     }),
@@ -1070,6 +1073,41 @@ fn env_cooldown_ms(key: &str, default: Duration) -> Duration {
         .unwrap_or(default)
 }
 
+/// RPC-USER-AGENT-01 (measured 2026-09-28): `reqwest` sends **no** `User-Agent`
+/// header unless one is set, and the free public endpoints sit behind a WAF that
+/// answers a UA-less request with **HTTP 403**. Measured on the VPS with the
+/// exact call shapes the quoter issues (`eth_blockNumber`, `eth_call` to
+/// Multicall3, `eth_call` with an 8 KB payload) against the 8 configured
+/// providers:
+///
+///   · no `User-Agent`  → **6 of 8 returned 403** (`error code: 1010` on the
+///     Cloudflare-fronted ones); only `oxrpc` and `tenderly` answered.
+///   · any explicit UA (`curl/8.5.0`, a browser UA, or this project's) → the
+///     same 8 providers answer **200**.
+///
+/// That asymmetry is the whole reason the failover kept logging
+/// `v3 quote rpc failover exhausted: all providers unhealthy for chain_id=1`
+/// while a `curl`-based probe showed every provider healthy: the pool was
+/// effectively down to two endpoints, and their 429s then took the pool to zero.
+///
+/// `ARBX_RPC_USER_AGENT` overrides it per environment. A blank/whitespace value
+/// falls back to the default — never send an empty UA, that IS the blocked case.
+pub const RPC_USER_AGENT_DEFAULT: &str =
+    "arbitragex-v2/searcher-rs (+https://github.com/hefarica/arbitragex-v2; free sovereign RPC client)";
+
+/// The `User-Agent` every RPC request must carry. Never empty.
+pub fn rpc_user_agent() -> &'static str {
+    static V: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    V.get_or_init(|| {
+        std::env::var("ARBX_RPC_USER_AGENT")
+            .ok()
+            .map(|v| v.trim().to_string())
+            .filter(|v| !v.is_empty())
+            .unwrap_or_else(|| RPC_USER_AGENT_DEFAULT.to_string())
+    })
+    .as_str()
+}
+
 /// `RPC_CB_OPEN_MS` — default `CB_OPEN_DURATION` (30s).
 pub fn cb_open_duration() -> Duration {
     static V: std::sync::OnceLock<Duration> = std::sync::OnceLock::new();
@@ -1247,6 +1285,23 @@ fn emit_rotation_needed_if_credential_error(entry: &HttpEntry, cause: &str) {
 mod tests {
     use super::*;
     use std::time::Duration;
+
+    /// RPC-USER-AGENT-01 (measured 2026-09-28): a UA-less request is answered
+    /// with HTTP 403 by 6 of the 8 configured providers, so the pool must NEVER
+    /// send an empty User-Agent — and it must not rotate per request either.
+    #[test]
+    fn rpc_user_agent_is_never_empty_and_identifies_the_client() {
+        let ua = rpc_user_agent();
+        assert!(
+            !ua.trim().is_empty(),
+            "an empty UA is the measured-blocked case (HTTP 403)"
+        );
+        assert!(
+            ua.contains("arbitragex-v2"),
+            "the UA must identify this client, got: {ua}"
+        );
+        assert_eq!(ua, rpc_user_agent(), "the UA is stable for the process");
+    }
 
     #[test]
     fn parse_named_csv() {
