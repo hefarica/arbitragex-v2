@@ -25,6 +25,7 @@ import {
   verdictVariant,
   windowReadout,
   type QuantDashboard,
+  type QuantGridRow,
   type QuantLayersResponse,
   type QuantPnl,
   type QuantRoute,
@@ -238,6 +239,97 @@ describe("not_computed y embudo", () => {
     expect(steps[0]?.of).toBeNull();
     expect(steps[1]?.of).toBe(40);
     expect(steps[5]?.of).toBe(4);
+  });
+});
+
+describe("fila REAL medida: nada en pantalla puede ser NaN ni un cero falso", () => {
+  // Fila del 2026-09-29 (WETH→USDC vía UniV2+SushiSwap) tal como viaja en el
+  // wire, con el P&L que produce la capa tras QUANT-PNL-01:
+  //   principal 718.4076042743945 · gross −7.939065547407876
+  //   escalera 16.0115413 (gas 14 + flash + tip + haircut) · net −23.9506070
+  const PRINCIPAL = 718.4076042743945;
+  const GROSS = -7.939065547407876;
+  const LADDER = 14 + (PRINCIPAL * 5) / 10_000 + (PRINCIPAL * 3) / 10_000 + (PRINCIPAL * 20) / 10_000;
+  const NET = GROSS - LADDER;
+
+  const realRow = (): QuantGridRow =>
+    buildGrid(
+      [
+        route({
+          routeKey: "1||dex_arb|0xc02a…|0xa0b8…|UniswapV2|SushiSwap",
+          hops: 2,
+          quoteBlock: 20_000_000,
+          legs: [
+            {
+              legIndex: 1,
+              poolAddress: "0xb4e16d0168e52d35cacd2c6185b44281ec28c9dc",
+              dex: "UniswapV2",
+              poolType: "V2",
+              tokenIn: "0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2",
+              tokenOut: "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48",
+              amountIn: 0.269181439690948096,
+              amountOut: 715.431071,
+              spot: 715.431071 / 0.269181439690948096,
+              fair: 715.431071 / 0.269181439690948096,
+              factor: 1,
+              weight: 0,
+              boundUsd: null,
+              boundReason: "route_depth_not_on_wire",
+              feeIncludedInSpot: true,
+            },
+          ],
+        }),
+      ],
+      [
+        pnl({
+          routeKey: "1||dex_arb|0xc02a…|0xa0b8…|UniswapV2|SushiSwap",
+          sizingUsd: PRINCIPAL,
+          finalUsd: PRINCIPAL + GROSS,
+          grossUsd: GROSS,
+          grossBps: (GROSS / PRINCIPAL) * 10_000,
+          totalCostUsd: LADDER,
+          netUsd: NET,
+          netBps: (NET / PRINCIPAL) * 10_000,
+          deviationVsFairUsd: -GROSS,
+          fairChainUsd: PRINCIPAL,
+        }),
+      ],
+    );
+
+  it("reproduce la aritmética medida (net = gross − escalera, sin doble conteo)", () => {
+    const r = realRow()[0]!;
+    expect(r.grossUsd).toBeCloseTo(-7.9391, 4);
+    expect(r.totalCostUsd).toBeCloseTo(16.0115, 4);
+    expect(r.netUsd).toBeCloseTo(-23.9506, 4);
+    expect(r.netBps).toBeCloseTo(-333.38, 1);
+    expect(r.grossBps).toBeCloseTo(-110.51, 1);
+  });
+
+  it("ningún formateador emite NaN/undefined/Infinity con la fila real", () => {
+    const r = realRow()[0]!;
+    const rendered = [
+      fmtUsd(r.sizingUsd),
+      fmtUsd(r.finalUsd),
+      fmtUsd(r.grossUsd),
+      fmtBps(r.grossBps),
+      fmtUsd(r.deviationVsFairUsd),
+      fmtUsd(r.fairChainUsd),
+      fmtUsd(r.totalCostUsd),
+      fmtUsd(r.netUsd),
+      fmtBps(r.netBps),
+      fmtWeight(r.sumW),
+      fmtPct(r.discoveryReturnPct),
+      fmtUsd(r.bindingBoundUsd),
+    ].join(" | ");
+    expect(rendered).not.toMatch(/NaN|undefined|Infinity/);
+  });
+
+  it("la pata sin profundidad en el wire se declara, no se dibuja como 0", () => {
+    const r = realRow()[0]!;
+    expect(r.legs[0]?.boundUsd).toBeNull();
+    expect(r.legs[0]?.boundReason).toBe("route_depth_not_on_wire");
+    expect(fmtUsd(r.legs[0]?.boundUsd)).toBe(NOT_COMPUTED);
+    expect(fmtUsd(r.bindingBoundUsd)).toBe("$1,500.00"); // el factory sí trae bound
   });
 });
 
