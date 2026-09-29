@@ -54,8 +54,16 @@ export interface QuantLeg {
   amountOut: number | null;
   /** Tasa realizada medida (post-fee). */
   spot: number | null;
-  /** Tasa de referencia del par (mediana del cross-section de la ventana). */
+  /** Tasa de referencia del par (oráculo USD o mediana declarada). */
   fair: number | null;
+  /**
+   * QUANT-FAIR-01 — procedencia del `fair`. `oracle_usd` = price_usd del stack
+   * soberano (Binance WS + Chainlink); `cross_section_median` = mediana de las
+   * tasas medidas del mismo par (estimador degenerado cuando el par aparece una
+   * sola vez: F_e ≡ 1 y la capa no ve nada); `null` = sin referencia, no
+   * computado.
+   */
+  fairBasis: "oracle_usd" | "cross_section_median" | null;
   /** F_e = spot/fair — el fee ya está dentro del spot medido. */
   factor: number | null;
   /** w = −LN(F_e). */
@@ -74,6 +82,7 @@ export interface QuantRoute {
   discoveryReturnPct: number | null;
   signal: boolean;
   bindingBoundUsd: number | null;
+  /** QUANT-SIZING-NULL-01: null = no computado (sin bound vinculante no hay tamaño defendible). */
   sizingUsd: number | null;
   maxBlockAgeBlocks: number | null;
   quoteBlock: number | null;
@@ -134,6 +143,16 @@ export interface QuantLayersResponse {
   generated_at: string;
   config: QuantConfig;
   rows_in_window: number;
+  /**
+   * QUANT-FAIR-01 — de dónde salió cada `fair`. Si `aristas.oracle_usd` es 0 y
+   * todo cae en `cross_section_median`, la capa está comparando cada pool
+   * consigo mismo (F_e ≡ 1) y no puede ver ninguna anomalía: eso se muestra.
+   */
+  fair_basis: {
+    chains_con_oraculo: number;
+    tokens_con_precio: number;
+    aristas: Record<string, number>;
+  };
   layers: {
     routes: QuantRoute[];
     pnl: QuantPnl[];
@@ -292,6 +311,7 @@ export interface QuantGridRow {
   sumW: number | null;
   discoveryReturnPct: number | null;
   bindingBoundUsd: number | null;
+  /** QUANT-SIZING-NULL-01: null = no computado (sin bound vinculante no hay tamaño defendible). */
   sizingUsd: number | null;
   finalUsd: number | null;
   grossUsd: number | null;

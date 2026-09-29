@@ -73,6 +73,33 @@ export interface LegInput {
   priceInUsd: number | null;
 }
 
+/**
+ * QUANT-FAIR-01 (2026-09-29, medido en vivo) — de dónde sale el `fair` de cada
+ * arista. Es la decisión que hace o rompe la capa entera:
+ *
+ *   · `oracle_usd` — fair = price_usd(token_in) / price_usd(token_out), con los
+ *     precios del stack soberano del operador (Binance WS + Chainlink, servidos
+ *     por trading_config.token_prices_usd). Es el equivalente real de la hoja
+ *     04_ORACLE y la ÚNICA forma de que F_e ≠ 1.
+ *
+ *   · `cross_section_median` — mediana de las tasas realizadas del mismo par
+ *     dirigido en la ventana. Es un estimador DEGENERADO cuando el par aparece
+ *     una sola vez: spot == fair ⇒ F_e = 1 ⇒ w = 0 ⇒ Σw = 0 ⇒ "sin señal"
+ *     siempre. Medido en producción el 2026-09-29: 40/40 rutas con Σw = 0 y
+ *     `NO_NEGATIVE_CYCLE`, la capa no podía decir nada. Se conserva SÓLO como
+ *     relleno declarado cuando el token no tiene precio, y se publica cuál se usó.
+ *
+ * Si ninguna de las dos existe, `fairBasis = null` y la arista se declara no
+ * computada (R8) — nunca se inventa una tasa.
+ */
+export type FairBasis = "oracle_usd" | "cross_section_median";
+
+export interface FairRef {
+  /** Tasa de referencia del par dirigido (token_out por token_in). */
+  rate: number;
+  basis: FairBasis;
+}
+
 export interface LegView {
   legIndex: number;
   poolAddress: string;
@@ -84,8 +111,10 @@ export interface LegView {
   amountOut: number;
   /** Tasa realizada de la pata (post-fee). */
   spot: number;
-  /** Tasa de referencia del par (mediana del cross-section de la ventana). */
+  /** Tasa de referencia del par (oráculo USD o mediana declarada). */
   fair: number;
+  /** Procedencia del `fair`: sin ella, F_e no es auditable. */
+  fairBasis: FairBasis | null;
   /** F_e = spot/fair — con el fee YA dentro del spot medido. */
   factor: number;
   /** w = −LN(F_e). */
@@ -109,7 +138,13 @@ export interface RouteView {
   discoveryReturnPct: number | null;
   signal: boolean;
   bindingBoundUsd: number | null;
-  sizingUsd: number;
+  /**
+   * QUANT-SIZING-NULL-01: tamaño que el modelo autorizaría. **null = no
+   * computado** (sin bound vinculante no hay tamaño que el modelo pueda
+   * defender). Antes se publicaba `0`, que se lee como "tamaño cero" y no como
+   * "no sé" — y encima convive con filas cuyo principal medido es $718.
+   */
+  sizingUsd: number | null;
   maxBlockAgeBlocks: number | null;
   /** Bloque de la cotización (la clave de snapshot del wire). */
   quoteBlock: number | null;
@@ -220,12 +255,13 @@ export function legBoundUsd(leg: LegInput, cfg: QuantConfig): { boundUsd: number
 /** 05_EDGES · F_e y w por pata, contra el `fair` del par. */
 export function buildLegs(
   legs: Array<Omit<LegInput, "depthUsd" | "liquidity" | "sqrtPriceX96" | "priceInUsd"> & Partial<LegInput>>,
-  fairByPair: Map<string, number>,
+  fairByPair: Map<string, FairRef>,
   cfg: QuantConfig,
 ): LegView[] {
   return legs.map((leg, i) => {
     const spot = leg.amountIn > 0 ? leg.amountOut / leg.amountIn : NaN;
-    const fair = fairByPair.get(pairKey(leg.tokenIn, leg.tokenOut)) ?? NaN;
+    const ref = fairByPair.get(pairKey(leg.tokenIn, leg.tokenOut));
+    const fair = ref?.rate ?? NaN;
     const factor = isNum(spot) && isNum(fair) && fair > 0 ? spot / fair : NaN;
     const weight = isNum(factor) && factor > 0 ? -ln(factor) : NaN;
     const { boundUsd, reason } = legBoundUsd(leg as LegInput, cfg);
@@ -240,6 +276,7 @@ export function buildLegs(
       amountOut: leg.amountOut,
       spot,
       fair,
+      fairBasis: ref?.basis ?? null,
       factor,
       weight,
       boundUsd,
@@ -263,7 +300,7 @@ export function buildRoutes(
   const bounds = legs.map((l) => l.boundUsd).filter(isNum);
   const bindingBoundUsd = bounds.length === legs.length && bounds.length > 0 ? Math.min(...bounds) : null;
   const sizingUsd =
-    bindingBoundUsd == null ? 0 : Math.max(cfg.dustUsd, Math.min(cfg.capitalUsd, bindingBoundUsd * cfg.utilizationCap));
+    bindingBoundUsd == null ? null : Math.max(cfg.dustUsd, Math.min(cfg.capitalUsd, bindingBoundUsd * cfg.utilizationCap));
   const discoveryReturnPct = complete ? (Math.exp(-sumW) - 1) * 100 : null;
 
   let whyNot: string | null = null;
@@ -283,7 +320,7 @@ export function buildRoutes(
   } else if (bindingBoundUsd < cfg.minBoundUsd) {
     whyNot = "profundidad insuficiente";
     status = "INSUFFICIENT_DEPTH";
-  } else if (sizingUsd <= cfg.dustUsd) {
+  } else if (sizingUsd == null || sizingUsd <= cfg.dustUsd) {
     whyNot = "sin tamaño operable";
     status = "SLIPPAGE_OR_SIZE";
   } else {
@@ -313,7 +350,14 @@ export function buildPnl(
   measured: { finalUsd: number | null; principalUsd: number | null },
   cfg: QuantConfig,
 ): PnlView {
-  const sizingUsd = isNum(measured.principalUsd) && measured.principalUsd > 0 ? measured.principalUsd : route.sizingUsd;
+  // El tamaño REALMENTE medido manda; si no hay medición se usa el del modelo
+  // (null = no computado ⇒ NaN ⇒ null en el wire, jamás un 0 falso).
+  const sizingUsd =
+    isNum(measured.principalUsd) && measured.principalUsd > 0
+      ? measured.principalUsd
+      : isNum(route.sizingUsd)
+        ? (route.sizingUsd as number)
+        : NaN;
   const finalUsd = isNum(measured.finalUsd) ? (measured.finalUsd as number) : NaN;
   const grossUsd = finalUsd - sizingUsd;
   const gasUsd = cfg.gasBaseUsd + route.hops * cfg.gasPerHopUsd;
@@ -439,12 +483,14 @@ export function buildDashboard(routes: RouteView[], pnls: PnlView[], topN = 10):
 
 /**
  * Cross-section de la ventana: la tasa `fair` de cada par dirigido, tomada como
- * la MEDIANA de las tasas realizadas por todos los pools del mismo par. Es el
- * equivalente data-driven de la hoja 04_ORACLE: no necesita oráculo externo y no
- * inventa nada — si un par sólo aparece una vez, su propio spot es su `fair` y
- * su factor queda 1 (sin señal), que es la lectura honesta.
+ * la MEDIANA de las tasas realizadas por todos los pools del mismo par.
+ *
+ * QUANT-FAIR-01 — esto es un RELLENO DECLARADO, no el oráculo. Cuando el par
+ * aparece una sola vez (lo normal en ventanas cortas) la mediana es la propia
+ * tasa ⇒ F_e = 1 ⇒ w = 0, y la capa no ve nada. Se marca con su basis para que
+ * la pantalla pueda decir de dónde salió cada F_e.
  */
-export function fairByPair(spots: Array<{ tokenIn: string; tokenOut: string; spot: number }>): Map<string, number> {
+export function fairByPair(spots: Array<{ tokenIn: string; tokenOut: string; spot: number }>): Map<string, FairRef> {
   const acc = new Map<string, number[]>();
   for (const s of spots) {
     if (!isNum(s.spot) || s.spot <= 0) continue;
@@ -453,10 +499,58 @@ export function fairByPair(spots: Array<{ tokenIn: string; tokenOut: string; spo
     list.push(s.spot);
     acc.set(k, list);
   }
-  const out = new Map<string, number>();
+  const out = new Map<string, FairRef>();
   for (const [k, list] of acc) {
     const m = median(list);
-    if (m != null) out.set(k, m);
+    if (m != null) out.set(k, { rate: m, basis: "cross_section_median" });
+  }
+  return out;
+}
+
+/**
+ * QUANT-FAIR-01 — el oráculo: fair = price_usd(token_in) / price_usd(token_out).
+ *
+ * Los precios vienen del stack soberano del operador (Binance WS + Chainlink)
+ * vía `trading_config.token_prices_usd`, el mismo dato que alimenta el scoring y
+ * la simulación. Sin precio de alguno de los dos tokens, el par NO entra: la
+ * arista quedará sin `fair` (basis null) y la ruta se declarará no computada en
+ * vez de fabricar una tasa con su propia medición.
+ */
+export function fairFromUsdPrices(
+  pairs: Array<{ tokenIn: string; tokenOut: string }>,
+  priceUsdByToken: Map<string, number>,
+): Map<string, FairRef> {
+  const out = new Map<string, FairRef>();
+  for (const p of pairs) {
+    const k = pairKey(p.tokenIn, p.tokenOut);
+    if (out.has(k)) continue;
+    const pin = priceUsdByToken.get(p.tokenIn.toLowerCase());
+    const pout = priceUsdByToken.get(p.tokenOut.toLowerCase());
+    if (!isNum(pin) || !isNum(pout) || pin <= 0 || pout <= 0) continue;
+    out.set(k, { rate: pin / pout, basis: "oracle_usd" });
+  }
+  return out;
+}
+
+/**
+ * El oráculo manda; la mediana del cross-section sólo rellena los pares que el
+ * oráculo no cubre, y cada entrada conserva su procedencia. Un `fair` sin
+ * procedencia no existe.
+ */
+export function mergeFair(oracle: Map<string, FairRef>, fallback: Map<string, FairRef>): Map<string, FairRef> {
+  const out = new Map<string, FairRef>(oracle);
+  for (const [k, v] of fallback) {
+    if (!out.has(k)) out.set(k, v);
+  }
+  return out;
+}
+
+/** Cuántas aristas se resolvieron con cada procedencia (visible en la respuesta). */
+export function fairBasisCounts(legs: LegView[]): Record<string, number> {
+  const out: Record<string, number> = { oracle_usd: 0, cross_section_median: 0, none: 0 };
+  for (const l of legs) {
+    if (l.fairBasis == null) out["none"] = (out["none"] ?? 0) + 1;
+    else out[l.fairBasis] = (out[l.fairBasis] ?? 0) + 1;
   }
   return out;
 }

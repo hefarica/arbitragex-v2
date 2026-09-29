@@ -163,6 +163,7 @@ function LegPanel({ row }: { row: QuantGridRow }) {
             <Th right>fair</Th>
             <Th right>F_e</Th>
             <Th right>w</Th>
+            <Th>fair de</Th>
             <Th right>bound USD</Th>
           </tr>
         </thead>
@@ -205,6 +206,22 @@ function LegPanel({ row }: { row: QuantGridRow }) {
               </Td>
               <Td right mono>
                 {fmtWeight(l.weight)}
+              </Td>
+              {/* QUANT-FAIR-01: sin la procedencia del fair, F_e no es auditable. */}
+              <Td>
+                {l.fairBasis === "oracle_usd" ? (
+                  <Badge variant="success" className="text-[10px]" title="fair = price_usd(in)/price_usd(out) del stack soberano">
+                    oráculo
+                  </Badge>
+                ) : l.fairBasis === "cross_section_median" ? (
+                  <Badge variant="warning" className="text-[10px]" title="mediana de las tasas medidas del mismo par: estimador degenerado si el par aparece una sola vez">
+                    mediana
+                  </Badge>
+                ) : (
+                  <Badge variant="destructive" className="text-[10px]" title="sin referencia de precio: arista no computada">
+                    sin fair
+                  </Badge>
+                )}
               </Td>
               <Td right mono title={l.boundReason ?? undefined}>
                 {l.boundUsd == null ? `— (${l.boundReason ?? "no computado"})` : fmtUsd(l.boundUsd)}
@@ -279,6 +296,11 @@ export default function QuantClient({
   const readout = useMemo(() => windowReadout(rows), [rows]);
   const grid = showNoComputado ? rows : withFigures;
   const reasons = useMemo(() => (data ? reasonBreakdown(data.not_computed) : []), [data]);
+  // QUANT-FAIR-01: procedencia del fair, contada por arista.
+  const fairOracle = data?.fair_basis.aristas["oracle_usd"] ?? 0;
+  const fairMedian = data?.fair_basis.aristas["cross_section_median"] ?? 0;
+  const fairNone = data?.fair_basis.aristas["none"] ?? 0;
+  const fairTotal = fairOracle + fairMedian + fairNone;
 
   const pickWindow = (minutes: number) => {
     setWindowMinutes(minutes);
@@ -399,6 +421,15 @@ export default function QuantClient({
               label="Con cifras"
               value={readout.withFigures.toLocaleString("en-US")}
               hint="net_bps computado"
+            />
+            {/* QUANT-FAIR-01: la procedencia del fair decide si la capa puede ver
+                algo. Si el oráculo no cubre las aristas, se dice aquí mismo. */}
+            <Metric
+              testId="quant-fair-basis"
+              label="Fair del oráculo"
+              value={`${fairOracle}/${fairTotal}`}
+              tone={fairOracle > 0 ? "success" : "danger"}
+              hint={`${data.fair_basis.tokens_con_precio} tokens con precio · mediana ${fairMedian} · sin fair ${fairNone}`}
             />
             <Metric
               testId="quant-execute"

@@ -563,7 +563,7 @@ mountPools(app, { pool, logger });
 // QUANT-LAYERS-01 (2026-09-28): el libro cuantitativo servido por la dapp —
 // TOKENS→POOLS→EDGES→ROUTES→LEGS→ROUTE_PNL→DASHBOARD sobre las detecciones
 // MEDIDAS de la ventana (álgebra en src/quant/layers.ts, testeada).
-mountQuantLayers(app, { pool, logger });
+mountQuantLayers(app, { pool, redis, logger });
 // EMIT-06 (FE-MASTER P5 §13): effective pair universe — PG registry (the
 // same table the Rust side loads) + live reserves + undrained dirty set.
 mountPairs(app, { pool, redis, logger });

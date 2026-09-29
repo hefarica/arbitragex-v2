@@ -271,6 +271,7 @@ describe("fila REAL medida: nada en pantalla puede ser NaN ni un cero falso", ()
               amountOut: 715.431071,
               spot: 715.431071 / 0.269181439690948096,
               fair: 715.431071 / 0.269181439690948096,
+              fairBasis: "cross_section_median",
               factor: 1,
               weight: 0,
               boundUsd: null,
