@@ -105,6 +105,7 @@ import { mountPricesLive } from "./routes/prices-live.js";
 import { attachPriceRooms, subscribeToPriceUpdates } from "./prices-stream.js";
 import { mountDexes } from "./routes/dexes.js";
 import { mountPools } from "./routes/pools.js";
+import { mountQuantLayers } from "./routes/quant-layers.js";
 import { mountPairs } from "./routes/pairs.js";
 import { mountStubs } from "./routes/stubs.js";
 import { buildServiceControlRouter } from "./routes/service-control.js";
@@ -559,6 +560,10 @@ const carnotStore = new CarnotStore();
 mountCarnotCycles(app, { store: carnotStore, logger });
 mountDexes(app, { pool, logger });
 mountPools(app, { pool, logger });
+// QUANT-LAYERS-01 (2026-09-28): el libro cuantitativo servido por la dapp —
+// TOKENS→POOLS→EDGES→ROUTES→LEGS→ROUTE_PNL→DASHBOARD sobre las detecciones
+// MEDIDAS de la ventana (álgebra en src/quant/layers.ts, testeada).
+mountQuantLayers(app, { pool, logger });
 // EMIT-06 (FE-MASTER P5 §13): effective pair universe — PG registry (the
 // same table the Rust side loads) + live reserves + undrained dirty set.
 mountPairs(app, { pool, redis, logger });
