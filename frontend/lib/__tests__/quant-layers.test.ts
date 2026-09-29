@@ -252,7 +252,7 @@ describe("fila REAL medida: nada en pantalla puede ser NaN ni un cero falso", ()
   const LADDER = 14 + (PRINCIPAL * 5) / 10_000 + (PRINCIPAL * 3) / 10_000 + (PRINCIPAL * 20) / 10_000;
   const NET = GROSS - LADDER;
 
-  const realRow = (): QuantGridRow =>
+  const realRow = (): QuantGridRow[] =>
     buildGrid(
       [
         route({
@@ -376,6 +376,11 @@ describe("fetchQuantLayers: falla honestamente", () => {
         minBoundUsd: 100,
       },
       rows_in_window: 1,
+      fair_basis: {
+        chains_con_oraculo: 1,
+        tokens_con_precio: 21,
+        aristas: { oracle_usd: 2, cross_section_median: 0, none: 0 },
+      },
       layers: {
         routes: [route()],
         pnl: [pnl()],
