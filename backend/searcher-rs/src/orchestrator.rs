@@ -2947,8 +2947,8 @@ mod tests {
 
     /// The `Sized { net_negative: true }` arm keeps BOTH numbers: there a kernel
     /// really computed the gross (its value stays at principal scale, unlike the
-    /// fabricated $710k). This pins that the fix above did not castrate the
-    /// honest negative-net path the operator also needs.
+    /// fabricated $710k). Pinned so the honest negative-net path the operator also
+    /// needs is never confused with the fabricated-gross case.
     #[test]
     fn gross_fab_01_kernel_computed_gross_is_principal_scale() {
         let mut c = make_candidate(StrategyLabel::DexArbV2V3, None);
