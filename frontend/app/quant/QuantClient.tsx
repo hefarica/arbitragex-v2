@@ -140,6 +140,15 @@ function LegPanel({ row }: { row: QuantGridRow }) {
         <span>
           sizing = <span className="font-mono text-foreground">{fmtUsd(row.sizingUsd)}</span>
         </span>
+        <span>
+          cadena fair = <span className="font-mono text-foreground">{fmtUsd(row.fairChainUsd)}</span>
+        </span>
+        <span>
+          bloque de cotización ={" "}
+          <span className="font-mono text-foreground">
+            {row.quoteBlock == null ? "no publicado" : row.quoteBlock.toLocaleString("en-US")}
+          </span>
+        </span>
       </div>
       <table className="w-full border-collapse">
         <thead>
@@ -534,6 +543,8 @@ export default function QuantClient({
                       <Th right>Sizing</Th>
                       <Th right>Final</Th>
                       <Th right>Gross</Th>
+                      <Th right>Gross bps</Th>
+                      <Th right>Desv. fair</Th>
                       <Th right>Costes</Th>
                       <Th right>Net USD</Th>
                       <Th right>Net bps</Th>
@@ -585,6 +596,15 @@ export default function QuantClient({
                             {fmtUsd(r.grossUsd)}
                           </Td>
                           <Td right mono>
+                            {fmtBps(r.grossBps)}
+                          </Td>
+                          {/* QUANT-PNL-01: diagnóstico publicado y visible — el
+                              impacto ya vive dentro del gross, así que esta
+                              columna NO se suma a los costes. */}
+                          <Td right mono title="desviación de la cadena medida contra la cadena fair (diagnóstico, no coste)">
+                            {fmtUsd(r.deviationVsFairUsd)}
+                          </Td>
+                          <Td right mono>
                             {fmtUsd(r.totalCostUsd)}
                           </Td>
                           <Td
@@ -617,7 +637,7 @@ export default function QuantClient({
                         </tr>
                         {expanded === r.routeKey ? (
                           <tr data-testid={`quant-detail-${r.routeKey}`}>
-                            <td colSpan={14} className="p-0">
+                            <td colSpan={16} className="p-0">
                               <LegPanel row={r} />
                             </td>
                           </tr>

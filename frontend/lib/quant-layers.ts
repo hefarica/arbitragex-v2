@@ -295,10 +295,15 @@ export interface QuantGridRow {
   sizingUsd: number | null;
   finalUsd: number | null;
   grossUsd: number | null;
+  grossBps: number | null;
+  /** QUANT-PNL-01: desviación vs la cadena fair (diagnóstico, NO suma al coste). */
+  deviationVsFairUsd: number | null;
+  fairChainUsd: number | null;
   totalCostUsd: number | null;
   netUsd: number | null;
   netBps: number | null;
   whyNot: string | null;
+  quoteBlock: number | null;
   legs: QuantLeg[];
 }
 
@@ -322,10 +327,14 @@ export function buildGrid(routes: QuantRoute[], pnls: QuantPnl[]): QuantGridRow[
       sizingUsd: numOrNull(p?.sizingUsd ?? r.sizingUsd),
       finalUsd: numOrNull(p?.finalUsd),
       grossUsd: numOrNull(p?.grossUsd),
+      grossBps: numOrNull(p?.grossBps),
+      deviationVsFairUsd: numOrNull(p?.deviationVsFairUsd),
+      fairChainUsd: numOrNull(p?.fairChainUsd),
       totalCostUsd: numOrNull(p?.totalCostUsd),
       netUsd: numOrNull(p?.netUsd),
       netBps: numOrNull(p?.netBps),
       whyNot: p?.whyNot ?? r.whyNot,
+      quoteBlock: numOrNull(r.quoteBlock),
       legs: r.legs,
     };
   });

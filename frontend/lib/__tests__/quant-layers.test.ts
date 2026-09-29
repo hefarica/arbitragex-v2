@@ -150,6 +150,22 @@ describe("buildGrid: 06_ROUTES ⨝ 08_ROUTE_PNL", () => {
     expect(rows[0]?.whyNot).toBe("cadena medida incompleta");
   });
 
+  it("expone los diagnósticos del P&L y el bloque de cotización (nada computado queda oculto)", () => {
+    const rows = buildGrid(
+      [route({ routeKey: "D", quoteBlock: 26_000_000 })],
+      [pnl({ routeKey: "D", grossBps: -110, deviationVsFairUsd: 7.61, fairChainUsd: 718.41, netBps: -332 })],
+    );
+    expect(rows[0]?.grossBps).toBe(-110);
+    expect(rows[0]?.deviationVsFairUsd).toBeCloseTo(7.61, 6);
+    expect(rows[0]?.fairChainUsd).toBeCloseTo(718.41, 6);
+    expect(rows[0]?.quoteBlock).toBe(26_000_000);
+  });
+
+  it("sin bloque de cotización publica null (no un 0 que parezca un bloque real)", () => {
+    const rows = buildGrid([route({ routeKey: "E", quoteBlock: null })], [pnl({ routeKey: "E" })]);
+    expect(rows[0]?.quoteBlock).toBeNull();
+  });
+
   it("las filas sin cifras van al final, nunca intercaladas", () => {
     const rows = sortRows([
       { ...buildGrid([route({ routeKey: "N" })], [])[0]!, routeKey: "N", netBps: null },
