@@ -489,6 +489,16 @@ export default function QuantClient({
                   <span className="font-mono text-foreground">{noFigures.length}</span> declaradas no computadas ·
                   mostrando <span className="font-mono text-foreground">{grid.length}</span> filas
                 </p>
+                {/* QUANT-PNL-01: dos "net" conviven en la dapp y NO son el mismo
+                    número. Decirlo aquí evita que parezca una contradicción. */}
+                <p className="text-[11px] text-muted-foreground mt-1">
+                  <span className="text-foreground">Net USD / Net bps</span> de esta tabla = gross{" "}
+                  <span className="text-foreground">medido</span> − escalera de costes del modelo (gas base + por
+                  pata, flash, tip, haircut). El net del feed de tarjetas es la medición del searcher, que ya lleva su
+                  propio gas: son dos cuentas distintas, cada una con su procedencia. La desviación contra la cadena{" "}
+                  <span className="font-mono">fair</span> se publica aparte y no se suma (ya vive dentro del gross
+                  medido).
+                </p>
               </div>
               <button
                 type="button"

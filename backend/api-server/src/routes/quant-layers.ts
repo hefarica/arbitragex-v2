@@ -187,6 +187,7 @@ export function mountQuantLayers(app: Express, deps: { pool: Pool | null; logger
           "F_e = spot/fair con el spot MEDIDO (post-fee): el fee ya está dentro del spot.",
           "fair = mediana de las tasas realizadas del mismo par dirigido en la ventana (equivalente data-driven de 04_ORACLE).",
           "bound_usd = 0.5% × profundidad: en el wire no viaja la profundidad por pata, así que el bound queda 'no computado' y el sizing usa el principal medido.",
+          "QUANT-PNL-01: net_usd = gross MEDIDO − escalera (gas + flash + tip + haircut). La desviación contra la cadena fair se publica aparte (deviation_vs_fair_usd) y NO suma al coste: el impacto ya está dentro del gross medido, sumarla contaría la misma pérdida dos veces.",
           "verdict: EJECUTAR ⇔ net_bps ≥ 200 (2%), MARGINAL ⇔ 0 < net_bps < 200.",
         ],
       });

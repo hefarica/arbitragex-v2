@@ -145,7 +145,15 @@ export interface PnlView {
   flashUsd: number;
   tipUsd: number;
   haircutUsd: number;
-  slippageUsd: number;
+  /**
+   * QUANT-PNL-01 — desviación de la cadena MEDIDA contra la cadena `fair` (≥ 0).
+   * Es DIAGNÓSTICO, no un coste: `grossUsd` sale de la medición (post-fee y
+   * post-impacto), así que esta desviación ya está dentro de él. Sumarla a la
+   * escalera restaría la misma pérdida dos veces.
+   */
+  deviationVsFairUsd: number;
+  /** Valor de la cartera si la cadena se hubiera ejecutado a las tasas `fair`. */
+  fairChainUsd: number;
   totalCostUsd: number;
   netUsd: number;
   netBps: number;
@@ -312,16 +320,26 @@ export function buildPnl(
   const flashUsd = (sizingUsd * cfg.flashBps) / 10_000;
   const tipUsd = (sizingUsd * cfg.tipBps) / 10_000;
   const haircutUsd = (sizingUsd * cfg.riskHaircutBps) / 10_000;
-  // Slippage = cadena al precio `fair` menos la cadena real (≥ 0). No vuelve a
-  // cobrar el fee: el spot medido ya lo incluye, así que lo que queda aquí es
-  // impacto/ineficiencia.
+  // QUANT-PNL-01 (2026-09-29) — la desviación contra `fair` es DIAGNÓSTICO, no
+  // coste. El `gross` de esta capa sale de la cadena MEDIDA (post-fee y
+  // post-impacto): la ineficiencia frente a `fair` ya está dentro del gross. Si
+  // se sumara otra vez al coste, la misma pérdida se contaría dos veces —
+  // medido en la fila real WETH→USDC del 2026-09-29: gross −$7.94, desviación
+  // $7.61 ⇒ el net publicado habría sido −$31.48 en vez de −$23.87, un número
+  // que no reconcilia con la medición del searcher (net_profit_usd −$8.62 antes
+  // de la escalera de gas propia de esta capa).
+  //
+  // Se conserva el valor de la cadena `fair` para poder auditar de dónde sale la
+  // desviación: fairChain − final = lo que la ruta dejó sobre la mesa frente a
+  // la mediana del par. Es información, no una línea de coste.
   const fairChainUsd = route.legs.reduce((acc, l, i) => {
     const prev = i === 0 ? sizingUsd : acc;
     return isNum(l.fair) ? prev * l.fair : NaN;
   }, sizingUsd);
-  const slippageUsd = isNum(fairChainUsd) && isNum(finalUsd) ? Math.max(0, fairChainUsd - finalUsd) : NaN;
+  const deviationVsFairUsd =
+    isNum(fairChainUsd) && isNum(finalUsd) ? Math.max(0, fairChainUsd - finalUsd) : NaN;
   const variableCosts = flashUsd + tipUsd + haircutUsd;
-  const totalCostUsd = isNum(slippageUsd) ? gasUsd + variableCosts + slippageUsd : NaN;
+  const totalCostUsd = gasUsd + variableCosts;
   const netUsd = isNum(totalCostUsd) ? grossUsd - totalCostUsd : NaN;
   const netBps = isNum(netUsd) && sizingUsd > 0 ? (netUsd / sizingUsd) * 10_000 : NaN;
 
@@ -364,7 +382,8 @@ export function buildPnl(
     flashUsd,
     tipUsd,
     haircutUsd,
-    slippageUsd,
+    deviationVsFairUsd,
+    fairChainUsd,
     totalCostUsd,
     netUsd,
     netBps,

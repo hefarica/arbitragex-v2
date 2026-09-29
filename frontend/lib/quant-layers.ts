@@ -94,7 +94,14 @@ export interface QuantPnl {
   flashUsd: number | null;
   tipUsd: number | null;
   haircutUsd: number | null;
-  slippageUsd: number | null;
+  /**
+   * QUANT-PNL-01 — desviación de la cadena medida contra la cadena `fair` (≥ 0).
+   * DIAGNÓSTICO: el impacto ya está dentro del gross medido, así que NO suma a
+   * `totalCostUsd` (hacerlo restaría la misma pérdida dos veces).
+   */
+  deviationVsFairUsd: number | null;
+  /** Valor de la cartera si la cadena se hubiera ejecutado a las tasas `fair`. */
+  fairChainUsd: number | null;
   totalCostUsd: number | null;
   netUsd: number | null;
   netBps: number | null;

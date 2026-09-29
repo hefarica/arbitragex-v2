@@ -119,7 +119,7 @@ describe("quant layers · 06_ROUTES", () => {
 });
 
 describe("quant layers · 08_ROUTE_PNL", () => {
-  it("escalera completa: gross = final − principal ; net = gross − (gas+flash+tip+haircut+slippage)", () => {
+  it("escalera completa: gross = final − principal ; net = gross − (gas+flash+tip+haircut)", () => {
     const fair = new Map([
       [pairKey("0xAAA", "0xBBB"), 1.0],
       [pairKey("0xBBB", "0xAAA"), 1.0],
@@ -138,11 +138,44 @@ describe("quant layers · 08_ROUTE_PNL", () => {
     expect(pnl.grossBps).toBeCloseTo(200, 6);
     expect(pnl.gasUsd).toBeCloseTo(cfg.gasBaseUsd + 2 * cfg.gasPerHopUsd, 9);
     expect(pnl.flashUsd).toBeCloseTo((1000 * cfg.flashBps) / 10_000, 9);
-    expect(pnl.totalCostUsd).toBeCloseTo(pnl.gasUsd + pnl.flashUsd + pnl.tipUsd + pnl.haircutUsd + pnl.slippageUsd, 9);
+    // QUANT-PNL-01: la escalera de costes NO incluye la desviación contra fair
+    // (ya vive dentro del gross medido).
+    expect(pnl.totalCostUsd).toBeCloseTo(pnl.gasUsd + pnl.flashUsd + pnl.tipUsd + pnl.haircutUsd, 9);
     expect(pnl.netUsd).toBeCloseTo(pnl.grossUsd - pnl.totalCostUsd, 9);
     expect(pnl.netBps).toBeCloseTo((pnl.netUsd / 1000) * 10_000, 6);
     // 20 USD de gross contra ~14 de gas de 2 patas + variables ⇒ margen real
     expect(pnl.verdict).toBe("MARGINAL");
+  });
+
+  it("QUANT-PNL-01: la pérdida medida NO se resta dos veces (regresión del doble conteo)", () => {
+    // Fila real del 2026-09-29 (WETH→USDC vía UniV2+Sushi): principal $718.41,
+    // final $710.47, gross −$7.94, desviación contra fair ≈ $7.61. Con el doble
+    // conteo el net publicado era −$31.48; el correcto es gross − escalera.
+    const fair = new Map([
+      [pairKey("0xAAA", "0xBBB"), 1.0],
+      [pairKey("0xBBB", "0xAAA"), 1.0],
+    ]);
+    const legs = buildLegs(
+      [
+        leg({ amountIn: 1000, amountOut: 990, depthUsd: 1_000_000 }),
+        leg({ tokenIn: "0xBBB", tokenOut: "0xAAA", amountIn: 990, amountOut: 980, depthUsd: 1_000_000 }),
+      ],
+      fair,
+      cfg,
+    );
+    const route = buildRoutes("r3b", legs, cfg);
+    const pnl = buildPnl(route, { finalUsd: 980, principalUsd: 1000 }, cfg);
+
+    expect(pnl.grossUsd).toBeCloseTo(-20, 9);
+    // La desviación contra fair es exactamente la pérdida: por eso NO puede ser
+    // una línea de coste (sería contarla dos veces).
+    expect(pnl.fairChainUsd).toBeCloseTo(1000, 9);
+    expect(pnl.deviationVsFairUsd).toBeCloseTo(20, 9);
+    const ladder = pnl.gasUsd + pnl.flashUsd + pnl.tipUsd + pnl.haircutUsd;
+    expect(pnl.totalCostUsd).toBeCloseTo(ladder, 9);
+    expect(pnl.netUsd).toBeCloseTo(-20 - ladder, 9);
+    // El error que este test bloquea: net = gross − escalera − desviación.
+    expect(pnl.netUsd).toBeGreaterThan(-20 - ladder - pnl.deviationVsFairUsd + 1e-9);
   });
 
   it("sin cadena medida NO se publica veredicto (R8), y se dice por qué", () => {
