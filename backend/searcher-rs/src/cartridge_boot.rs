@@ -1994,6 +1994,7 @@ pub async fn active_evaluate_and_emit(
                         pipeline_latency_ms: None,
                         detected_at: chrono::Utc::now(),
                         trace_id: uuid::Uuid::new_v4(),
+                        economics: None,
                     };
                     if let Err(e) = emitter
                         .emit_rejected(
@@ -2095,6 +2096,7 @@ pub async fn active_evaluate_and_emit(
                     pipeline_latency_ms: None,
                     detected_at: chrono::Utc::now(),
                     trace_id: Uuid::new_v4(), // Generate new trace ID for cartridge path
+                    economics: None,
                 };
 
                 // ── STRAT-IDENT-01: publish THIS strategy's declared-combo §IV
@@ -2350,12 +2352,22 @@ pub async fn active_evaluate_and_emit(
                             // Update the candidate with optimal sizing data (mirrors
                             // native: gross/net on both candidate + opportunity row).
                             let s = *sized;
+                            // ALWAYS-COMPUTE (2026-09-27): the complete economics
+                            // object on the accepted row too (additive wire). Built
+                            // before `s.candidate` moves out of `s`.
+                            let economics_obj =
+                                crate::economics::economics_from_sized(&s, cfg_snapshot.as_ref());
                             let mut c = s.candidate;
                             c.gross_profit_usd = Some(s.gross_profit_usd);
                             c.net_expected_profit_usd = Some(s.estimated_net_profit_usd);
                             c.opportunity.expected_profit_usd = Some(s.gross_profit_usd);
                             c.opportunity.net_expected_profit_usd =
                                 Some(s.estimated_net_profit_usd);
+                            // ALWAYS-COMPUTE (2026-09-27): the complete economics
+                            // object on the accepted row too (additive wire).
+                            if crate::economics::always_compute_enabled() {
+                                c.opportunity.economics = Some(economics_obj);
+                            }
                             // HOPS-LEDGER-04: thread the kernel's exact per-leg
                             // wei through to persistence — attached there onto
                             // the plan-built RouteMetadata. Some only when BOTH
@@ -2367,6 +2379,64 @@ pub async fn active_evaluate_and_emit(
                                 _ => None,
                             };
                             (c, legs)
+                        }
+                        // ALWAYS-COMPUTE (2026-09-27): a rejection whose path HAD
+                        // computed the full economics. The pre-mandate code wiped
+                        // `expected_profit_usd = None` at this exact line — the
+                        // null factory behind the audit's 39/40 null gross on the
+                        // live feed. The row now keeps EVERY number (gross AND
+                        // net, the sized amount, the ledger, the full computation
+                        // object): FAIL = "se hizo el cálculo y no cumple el
+                        // criterio", not "no tengo números".
+                        OptimizeOutcome::RejectedComputed(reason, boxed) => {
+                            let reason_str = reason.as_str().to_owned();
+                            REJECTED_NO_PROFIT_TOTAL
+                                .with_label_values(&[&chain_str, label.as_str(), &reason_str])
+                                .inc();
+                            let s = *boxed;
+                            let mut opp = strategy_candidate.opportunity.clone();
+                            opp.rejection_reason = Some(reason_str.clone());
+                            if crate::economics::always_compute_enabled() {
+                                opp.expected_profit_usd = Some(s.gross_profit_usd);
+                                opp.net_expected_profit_usd = Some(s.estimated_net_profit_usd);
+                                if s.optimal_amount_in > ethers::types::U256::zero() {
+                                    opp.amount_in_wei = s.optimal_amount_in.to_string();
+                                }
+                                opp.economics = Some(crate::economics::economics_from_sized(
+                                    &s,
+                                    cfg_snapshot.as_ref(),
+                                ));
+                            } else {
+                                // Knob OFF: pre-mandate semantics — gross wiped,
+                                // net = the kernel's single scalar payload.
+                                opp.expected_profit_usd = None;
+                                opp.net_expected_profit_usd = Some(s.estimated_net_profit_usd);
+                            }
+                            // PER-HOP upgrade: the rejected ledger attaches to
+                            // the row's RouteMetadata exactly like the native
+                            // path (all-or-nothing; a mismatched length skips).
+                            let route_with_ledger = route_ref.map(|rm| {
+                                let mut rm = rm.clone();
+                                if let (Some(ins), Some(outs)) =
+                                    (s.leg_amounts_in.clone(), s.leg_amounts_out.clone())
+                                {
+                                    let _ = rm.attach_leg_ledger(&ins, &outs);
+                                }
+                                rm
+                            });
+                            if let Err(e) = emitter
+                                .emit_rejected(&opp, label, &reason_str, route_with_ledger.as_ref())
+                                .await
+                            {
+                                warn!(
+                                    event = "cartridge.emit_rejected_failed",
+                                    chain_id,
+                                    cartridge_id = %cartridge_id,
+                                    error = %e,
+                                    "failed to emit optimizer-rejected cartridge candidate"
+                                );
+                            }
+                            continue;
                         }
                         // PER-HOP: the ledger-carrying variant is treated exactly
                         // like Rejected here; the cartridge emission path does not
@@ -2387,6 +2457,20 @@ pub async fn active_evaluate_and_emit(
                             opp.rejection_reason = Some(reason_str.clone());
                             opp.expected_profit_usd = None;
                             opp.net_expected_profit_usd = rejected_net;
+                            // ALWAYS-COMPUTE: no-quote reject ⇒ honest object —
+                            // "partial" when a payload figure exists, else "error"
+                            // with the verbatim reason (gate 2: never fabricated).
+                            if crate::economics::always_compute_enabled() {
+                                opp.economics = Some(match rejected_net {
+                                    Some(v) => crate::economics::economics_partial(
+                                        None,
+                                        Some(v),
+                                        None,
+                                        Some(&reason_str),
+                                    ),
+                                    None => crate::economics::economics_error(&reason_str),
+                                });
+                            }
                             if let Err(e) = emitter
                                 .emit_rejected(&opp, label, &reason_str, route_ref)
                                 .await
@@ -2449,6 +2533,23 @@ pub async fn active_evaluate_and_emit(
         reasons = ?negative_reasons,
         "cartridge active eval summary (per-reason negatives)"
     );
+}
+
+/// REASON-TAG-NOT-DEBUG-01 — the stable snake_case label for a spine rejection.
+///
+/// `RejectReason::tag()` exists for exactly this purpose; its own doc says it
+/// "Avoids leaking enum variant Debug formatting (which can change across Rust
+/// versions)" (`prioritization-spine/src/decision.rs`). Both rejection sites in
+/// this file formatted the reason with `{:?}` instead, so the wire carried the
+/// Rust VARIANT NAME in PascalCase.
+///
+/// MEASURED (VPS PostgreSQL, 2026-09-27, 87 697 rows / 30 min): `NegativeNetProfit`
+/// on 14 rows, while the code's own mapping defines `negative_net_profit` (and the
+/// other six gate reasons are snake_case). A consumer matching the documented tag
+/// silently missed those rows, and the reason histogram split one condition into
+/// two buckets. Every rejection label in this file goes through here now.
+fn reject_reason_label(reason: &prioritization_spine::decision::RejectReason) -> String {
+    reason.tag().to_string()
 }
 
 /// Process a cartridge-generated candidate through the full evaluation + emission pipeline.
@@ -2558,7 +2659,7 @@ async fn process_cartridge_candidate(
         } => {
             match rejection {
                 Some(reject_reason) => {
-                    let reason = format!("{:?}", reject_reason);
+                    let reason = reject_reason_label(&reject_reason);
                     let mut opp = sc.opportunity.clone();
                     opp.rejection_reason = Some(reason.clone());
                     emitter
@@ -2597,7 +2698,10 @@ async fn process_cartridge_candidate(
         ConfigGateOutcome::StrategyConfigGateBlocked {
             reason: reject_reason,
         } => {
-            let reason = format!("StrategyConfigGateBlocked:{:?}", reject_reason);
+            let reason = format!(
+                "StrategyConfigGateBlocked:{}",
+                reject_reason_label(&reject_reason)
+            );
             let mut opp = sc.opportunity.clone();
             opp.rejection_reason = Some(reason.clone());
             emitter
@@ -2689,6 +2793,35 @@ pub async fn publish_cartridge_registry(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// REASON-TAG-NOT-DEBUG-01. El defecto medido: la fila viva llevaba
+    /// `NegativeNetProfit` (Debug del variante) mientras el propio codigo define
+    /// `negative_net_profit` como tag estable.
+    #[test]
+    fn reject_reason_label_is_the_stable_snake_case_tag() {
+        use prioritization_spine::decision::RejectReason as R;
+        assert_eq!(
+            reject_reason_label(&R::NegativeNetProfit),
+            "negative_net_profit"
+        );
+        assert_eq!(reject_reason_label(&R::LowLiquidity), "low_liquidity");
+        assert_eq!(
+            reject_reason_label(&R::ExcessiveSlippage),
+            "excessive_slippage"
+        );
+    }
+
+    #[test]
+    fn reject_reason_label_never_leaks_debug_formatting() {
+        use prioritization_spine::decision::RejectReason as R;
+        let label = reject_reason_label(&R::NegativeNetProfit);
+        // La firma exacta del defecto: `{:?}` daba el nombre del variante.
+        assert_ne!(label, format!("{:?}", R::NegativeNetProfit));
+        assert!(
+            !label.chars().any(|c| c.is_ascii_uppercase()),
+            "el label debe ser snake_case, llego: {label}"
+        );
+    }
 
     #[test]
     fn parse_defaults_to_off_for_unset_or_unknown() {

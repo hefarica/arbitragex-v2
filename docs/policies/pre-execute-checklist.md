@@ -1,4 +1,4 @@
-﻿# OMEGA MAXIMUM OVERRIDE: SUPREME FINANCIAL PREDATOR DIRECTIVE (TOP 1% HFT ELITE)
+# OMEGA MAXIMUM OVERRIDE: SUPREME FINANCIAL PREDATOR DIRECTIVE (TOP 1% HFT ELITE)
 
 **ESTADO:** ARMA LETAL FINANCIERA ACTIVADA. SIN PIEDAD. SIN PÃ‰RDIDAS.
 
@@ -29,7 +29,7 @@ attempt was not blind.
 
 ## Gate 1 â€” Killswitch
 
-- **Source of truth:** Redis key `arbx:killswitch:enabled` (canonical)
+- **Source of truth:** Redis key `arbx:killswitch` (canonical)
   with file fallback `killswitch.json` at boot and config default in
   `configs/app.toml [system].kill_switch_enabled_default`.
 - **Behavior:** if `enabled=1`, **abort immediately**. No further gates

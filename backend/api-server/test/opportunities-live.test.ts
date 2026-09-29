@@ -103,6 +103,10 @@ beforeAll(async () => {
     // 099/102: without it the testcontainer query fails 503 query_failed
     // ("column detector_id does not exist") on every happy-path GET.
     "121_opportunities_detector_id_pipeline_latency.sql",
+    // 126 adds opportunities.economics (ALWAYS-COMPUTE, 2026-09-27): the live
+    // route SELECTs it. Same drift family as 099/102/121 — without it every
+    // happy-path GET returns 503 ("column economics does not exist").
+    "126_opportunities_economics_computation.sql",
   ]) {
     await pool.query(loadMigration(f));
   }

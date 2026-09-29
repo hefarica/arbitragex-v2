@@ -277,11 +277,14 @@ impl HttpRpcPool {
                 .unwrap_or(10_000);
             // `with_reqwest` hands the closure alloy's OWN reqwest::ClientBuilder, so we set the
             // timeout without any reqwest-version-mismatch on the Client type.
+            // RPC-USER-AGENT-01: the UA is NOT cosmetic — without it 6 of the 8
+            // configured providers answer 403 (measured, see `rpc_user_agent`).
             let provider = Arc::new(
                 ProviderBuilder::new()
                     .disable_recommended_fillers()
                     .with_reqwest(parsed_url, |b| {
-                        b.timeout(std::time::Duration::from_millis(http_timeout_ms))
+                        b.user_agent(rpc_user_agent())
+                            .timeout(std::time::Duration::from_millis(http_timeout_ms))
                             .build()
                             .expect("build reqwest client with request timeout")
                     }),
@@ -406,12 +409,31 @@ impl HttpRpcPool {
     /// sorts behind every clean Healthy entry (the selection weight: a
     /// recently-429ing provider is only chosen when it is the only Healthy
     /// option); if none Healthy, lowest EWMA latency among Degraded; never
-    /// Open.
+    /// Open — SALVO el caso de abajo.
+    ///
+    /// QUOTE-LOCKOUT-01 (2026-09-29, incidente medido en producción): cuando
+    /// TODOS los proveedores están `Open`, esta función devolvía `AllUnhealthy`
+    /// y **ninguna petición se intentaba nunca** ⇒ ningún éxito podía observarse
+    /// ⇒ el breaker no cerraba JAMÁS. El pool quedaba en un bloqueo permanente
+    /// que sólo un reinicio rompía. Medido: 10 horas seguidas con 0,0 % de
+    /// cotizaciones no cacheadas (`arbx_v3_quote_total`, ventanas de 10 min) con
+    /// apenas 128 errores de transporte en 6 h — el searcher no estaba fallando,
+    /// había dejado de intentar — y recuperación instantánea a 80-85 % al
+    /// reiniciar (deploy).
+    ///
+    /// Ahora, si no hay ningún candidato sano, se fuerza UNA sonda *half-open*
+    /// sobre el proveedor abierto de menor latencia: al menos se intenta, y el
+    /// éxito cierra el circuito (el camino `report_success_after_half_open_...`
+    /// ya existía, pero era inalcanzable sin un intento). `AllUnhealthy` se
+    /// reserva para el pool sin proveedores; `BudgetExhausted` (throttle local
+    /// deliberado del operador) mantiene su precedencia.
     pub fn pick(&self) -> Result<Arc<HttpEntry>, PoolError> {
         let now = Instant::now();
         let mut best_clean: Option<&Arc<HttpEntry>> = None;
         let mut best_sticky: Option<&Arc<HttpEntry>> = None;
         let mut best_degraded: Option<&Arc<HttpEntry>> = None;
+        // QUOTE-LOCKOUT-01: candidato para la sonda forzada si todo está Open.
+        let mut best_open: Option<&Arc<HttpEntry>> = None;
         // WO-13: a pick failure where at least one entry was blocked by its
         // client-side budget reports BudgetExhausted (not AllUnhealthy) so
         // callers can distinguish a local throttle from provider failures.
@@ -428,7 +450,16 @@ impl HttpRpcPool {
                 continue;
             }
             match e.snapshot_state() {
-                ProviderState::Open => continue,
+                ProviderState::Open => {
+                    let lat = e.snapshot_latency_ms();
+                    if best_open
+                        .map(|b| lat < b.snapshot_latency_ms() || b.snapshot_latency_ms() == 0)
+                        .unwrap_or(true)
+                    {
+                        best_open = Some(e);
+                    }
+                    continue;
+                }
                 ProviderState::Healthy => {
                     let lat = e.snapshot_latency_ms();
                     let better = |b: Option<&Arc<HttpEntry>>| {
@@ -455,7 +486,9 @@ impl HttpRpcPool {
             }
         }
 
-        match best_clean.or(best_sticky).or(best_degraded) {
+        // QUOTE-LOCKOUT-01: `best_open` entra en la cadena como ÚLTIMO recurso —
+        // es la sonda half-open que rompe el bloqueo permanente.
+        match best_clean.or(best_sticky).or(best_degraded).or(best_open) {
             Some(e) => Ok(Arc::clone(e)),
             None if budget_blocked => Err(PoolError::BudgetExhausted(self.chain_id)),
             None => Err(PoolError::AllUnhealthy(self.chain_id)),
@@ -1046,21 +1079,104 @@ fn push_uniquely_named(out: &mut Vec<(String, String)>, name: String, url: Strin
     out.push((format!("{name}-{i}"), url));
 }
 
+/// ARBX-R-0003 env overrides — OPERATOR ORDER 2026-09-27 ("quita los gates que
+/// sean necesarios para que los datos fluyan", "ADELANTE CON TODO").
+///
+/// MEASURED DEFECT this exists for. A 429 floors the breaker cooldown at
+/// `RATE_LIMIT_MIN_COOLDOWN` (120s) and the reopen backoff caps at
+/// `REOPEN_BACKOFF_CAP` (600s). With every free endpoint rate-limited, the whole
+/// pool reported `AllUnhealthy(chain_id=1)` and the V3 quoter stopped ATTEMPTING
+/// any call — live evidence 2026-09-27: `state_projector.v3_quote_failed:
+/// "v3 quote rpc failover exhausted: all providers unhealthy for chain_id=1"`
+/// 3 187×/60s, `v3_quote_unavailable` 34 500 rows/10min, 96% of emitted rows
+/// without economics. The cooldowns were compile-time constants, so no
+/// deployment could shorten the lockout without a rebuild.
+///
+/// Defaults remain the measured-safe values; a deployment may lower them per
+/// environment. Fail-honest parse: malformed/zero ⇒ default.
+fn env_cooldown_ms(key: &str, default: Duration) -> Duration {
+    std::env::var(key)
+        .ok()
+        .and_then(|v| v.trim().parse::<u64>().ok())
+        .filter(|ms| *ms > 0)
+        .map(Duration::from_millis)
+        .unwrap_or(default)
+}
+
+/// RPC-USER-AGENT-01 (measured 2026-09-28): `reqwest` sends **no** `User-Agent`
+/// header unless one is set, and the free public endpoints sit behind a WAF that
+/// answers a UA-less request with **HTTP 403**. Measured on the VPS with the
+/// exact call shapes the quoter issues (`eth_blockNumber`, `eth_call` to
+/// Multicall3, `eth_call` with an 8 KB payload) against the 8 configured
+/// providers:
+///
+///   · no `User-Agent`  → **6 of 8 returned 403** (`error code: 1010` on the
+///     Cloudflare-fronted ones); only `oxrpc` and `tenderly` answered.
+///   · any explicit UA (`curl/8.5.0`, a browser UA, or this project's) → the
+///     same 8 providers answer **200**.
+///
+/// That asymmetry is the whole reason the failover kept logging
+/// `v3 quote rpc failover exhausted: all providers unhealthy for chain_id=1`
+/// while a `curl`-based probe showed every provider healthy: the pool was
+/// effectively down to two endpoints, and their 429s then took the pool to zero.
+///
+/// `ARBX_RPC_USER_AGENT` overrides it per environment. A blank/whitespace value
+/// falls back to the default — never send an empty UA, that IS the blocked case.
+pub const RPC_USER_AGENT_DEFAULT: &str =
+    "arbitragex-v2/searcher-rs (+https://github.com/hefarica/arbitragex-v2; free sovereign RPC client)";
+
+/// The `User-Agent` every RPC request must carry. Never empty.
+pub fn rpc_user_agent() -> &'static str {
+    static V: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    V.get_or_init(|| {
+        std::env::var("ARBX_RPC_USER_AGENT")
+            .ok()
+            .map(|v| v.trim().to_string())
+            .filter(|v| !v.is_empty())
+            .unwrap_or_else(|| RPC_USER_AGENT_DEFAULT.to_string())
+    })
+    .as_str()
+}
+
+/// `RPC_CB_OPEN_MS` — default `CB_OPEN_DURATION` (30s).
+pub fn cb_open_duration() -> Duration {
+    static V: std::sync::OnceLock<Duration> = std::sync::OnceLock::new();
+    *V.get_or_init(|| env_cooldown_ms("RPC_CB_OPEN_MS", CB_OPEN_DURATION))
+}
+
+/// `RPC_CB_RATE_LIMIT_FLOOR_MS` — default `RATE_LIMIT_MIN_COOLDOWN` (120s).
+pub fn rate_limit_min_cooldown() -> Duration {
+    static V: std::sync::OnceLock<Duration> = std::sync::OnceLock::new();
+    *V.get_or_init(|| env_cooldown_ms("RPC_CB_RATE_LIMIT_FLOOR_MS", RATE_LIMIT_MIN_COOLDOWN))
+}
+
+/// `RPC_CB_STICKY_MS` — default `RATE_LIMIT_STICKY` (60s).
+pub fn rate_limit_sticky() -> Duration {
+    static V: std::sync::OnceLock<Duration> = std::sync::OnceLock::new();
+    *V.get_or_init(|| env_cooldown_ms("RPC_CB_STICKY_MS", RATE_LIMIT_STICKY))
+}
+
+/// `RPC_CB_REOPEN_CAP_MS` — default `REOPEN_BACKOFF_CAP` (600s).
+pub fn reopen_backoff_cap() -> Duration {
+    static V: std::sync::OnceLock<Duration> = std::sync::OnceLock::new();
+    *V.get_or_init(|| env_cooldown_ms("RPC_CB_REOPEN_CAP_MS", REOPEN_BACKOFF_CAP))
+}
+
 /// ARBX-R-0003: cooldown before the breaker may half-open. Base `CB_OPEN_DURATION`
 /// (30s); a rate-limit opening floors it at `RATE_LIMIT_MIN_COOLDOWN` (120s);
 /// each reopen doubles it (`open_count − 1` exponent), capped at
 /// `REOPEN_BACKOFF_CAP`. Exponential backoff against the open/close/reopen
-/// hammer loop of the 429-storm incident.
+/// hammer loop of the 429-storm incident. All three are env-overridable above.
 pub fn effective_cooldown(cb: &CircuitState) -> Duration {
     let base = if cb.opened_by_rate_limit {
-        RATE_LIMIT_MIN_COOLDOWN
+        rate_limit_min_cooldown()
     } else {
-        CB_OPEN_DURATION
+        cb_open_duration()
     };
     let exp = cb.open_count.saturating_sub(1).min(3);
     let ms = base.as_millis() as u64;
     let scaled = ms.saturating_mul(1u64 << exp);
-    Duration::from_millis(scaled.min(REOPEN_BACKOFF_CAP.as_millis() as u64))
+    Duration::from_millis(scaled.min(reopen_backoff_cap().as_millis() as u64))
 }
 
 /// ARBX-R-0003: `with_retry`'s inter-attempt backoff — a rate-limit-class
@@ -1084,7 +1200,7 @@ pub fn is_rate_limit_sticky(entry: &HttpEntry, now: Instant) -> bool {
         .try_read()
         .map(|cb| {
             cb.last_rate_limit_at
-                .is_some_and(|t| now.duration_since(t) < RATE_LIMIT_STICKY)
+                .is_some_and(|t| now.duration_since(t) < rate_limit_sticky())
         })
         .unwrap_or(false)
 }
@@ -1199,6 +1315,23 @@ fn emit_rotation_needed_if_credential_error(entry: &HttpEntry, cause: &str) {
 mod tests {
     use super::*;
     use std::time::Duration;
+
+    /// RPC-USER-AGENT-01 (measured 2026-09-28): a UA-less request is answered
+    /// with HTTP 403 by 6 of the 8 configured providers, so the pool must NEVER
+    /// send an empty User-Agent — and it must not rotate per request either.
+    #[test]
+    fn rpc_user_agent_is_never_empty_and_identifies_the_client() {
+        let ua = rpc_user_agent();
+        assert!(
+            !ua.trim().is_empty(),
+            "an empty UA is the measured-blocked case (HTTP 403)"
+        );
+        assert!(
+            ua.contains("arbitragex-v2"),
+            "the UA must identify this client, got: {ua}"
+        );
+        assert_eq!(ua, rpc_user_agent(), "the UA is stable for the process");
+    }
 
     #[test]
     fn parse_named_csv() {
@@ -1345,13 +1478,35 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn pick_returns_all_unhealthy_when_only_open() {
+    async fn pick_forces_half_open_probe_when_all_providers_open() {
+        // QUOTE-LOCKOUT-01: antes esto devolvía AllUnhealthy y, al no intentar
+        // nada, NINGÚN éxito podía observarse ⇒ el breaker no cerraba nunca
+        // (medido: 10 h al 0,0 % de cotizaciones hasta reiniciar). Ahora se
+        // devuelve exactamente UN proveedor abierto para sondearlo.
         let pool = HttpRpcPool {
             chain_id: 1,
             entries: vec![dummy_entry("a"), dummy_entry("b")],
         };
         pool.entries[0].set_state(ProviderState::Open);
         pool.entries[1].set_state(ProviderState::Open);
+
+        let probe = pool.pick().expect("debe forzar una sonda, no fallar");
+        assert!(
+            probe.name == "a" || probe.name == "b",
+            "la sonda debe salir del pool, no inventarse un proveedor"
+        );
+        // Determinista: dos picks seguidos eligen el mismo.
+        let again = pool.pick().expect("segunda sonda");
+        assert_eq!(probe.name, again.name);
+    }
+
+    #[tokio::test]
+    async fn pick_returns_all_unhealthy_when_pool_is_empty() {
+        // El único caso que sigue siendo AllUnhealthy: no hay proveedores.
+        let pool = HttpRpcPool {
+            chain_id: 1,
+            entries: vec![],
+        };
         let err = pool.pick().unwrap_err();
         assert!(matches!(err, PoolError::AllUnhealthy(1)));
     }

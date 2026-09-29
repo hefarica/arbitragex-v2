@@ -2249,6 +2249,12 @@ async fn decode_and_score_tx<'a>(
         chain_counters(client.chain_id)
             .gate_no_config
             .fetch_add(1, Ordering::Relaxed);
+        // ECON-ON-REJECT-PATHS-01 (2026-09-27): this path persists a raw
+        // observation with no figures — correct — but it left `economics: null`,
+        // so the row reached the wire as silence instead of a DECLARED absence.
+        // MEASURED on 43 live rows: `economics` on 0/43. The typed payload names
+        // the gate verbatim; every figure stays null (R8 intact).
+        opportunity.economics = Some(crate::economics::economics_error("gate_no_config"));
         opportunity.roi_pct = None;
         opportunity.risk_score = None;
         if let Some(pool) = db {

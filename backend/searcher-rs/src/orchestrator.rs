@@ -59,10 +59,12 @@ use crate::metrics::{
 };
 use crate::opportunity_emitter::{EmitOutcome, OpportunityEmitter};
 use crate::route_intent::RouteIntent;
-use crate::size_optimizer::{OptimizeOutcome, OptimizeRejectReason, SizeOptimizer};
+use crate::size_optimizer::{
+    OptimizeOutcome, OptimizeRejectReason, SizeOptimizer, SizedCycleLedger,
+};
 use crate::state_projector::StateProjector;
 use crate::strategy_label::StrategyLabel;
-use ethers::types::Address;
+use ethers::types::{Address, U256};
 use shared_rs::price_oracle::RedisCachedPriceOracle;
 use shared_rs::trading_config::TradingConfigState;
 use std::collections::HashMap;
@@ -1318,7 +1320,8 @@ impl Orchestrator {
             result = match &outcome {
                 OptimizeOutcome::Sized(_) => "sized",
                 OptimizeOutcome::Rejected(_, _)
-                | OptimizeOutcome::RejectedWithLedger(_, _, _) => "rejected",
+                | OptimizeOutcome::RejectedWithLedger(_, _, _)
+                | OptimizeOutcome::RejectedComputed(_, _) => "rejected",
             },
             reason = ?outcome.reason_str(),
             gross_profit_usd = ?outcome.gross_profit_usd(),
@@ -1328,36 +1331,39 @@ impl Orchestrator {
 
         // PER-HOP (math-audit AUDIT-MATH-OPPS-2026-09-26): the rejection path
         // can ALREADY carry the kernel's exact per-leg wei
-        // (OptimizeOutcome::RejectedWithLedger). Capture it before the match
-        // so the tail persists it onto the RouteMetadata exactly like the
-        // Sized path does — this is what lets a rejected card show each
-        // hop's movement instead of "not computed".
-        let rejected_ledger = match &outcome {
-            OptimizeOutcome::RejectedWithLedger(_, _, legs) => legs.clone(),
-            _ => None,
-        };
+        // (OptimizeOutcome::RejectedWithLedger / RejectedComputed). Capture it
+        // before the match so the tail persists it onto the RouteMetadata
+        // exactly like the Sized path does — this is what lets a rejected card
+        // show each hop's movement instead of "not computed".
+        let rejected_ledger = outcome.leg_ledger();
 
         match outcome {
             OptimizeOutcome::Sized(sized) => {
                 // Unbox and update the candidate with optimal sizing data.
                 let s = *sized;
+                // ALWAYS-COMPUTE (2026-09-27): build the complete economics
+                // object from the sized figures BEFORE `s.candidate` is moved
+                // out (the builder reads the whole candidate).
+                let economics_obj = crate::economics::economics_from_sized(&s, cfg_snapshot);
+                // CANDIDATE-LEDGER-STRUCT-01: ONE explicit ledger for this sized
+                // cycle, built from the kernel's measured figures + the economics
+                // object they produced (measured final-hop output, gas component,
+                // sheet-07 block). It is the single source the stamping tail
+                // below consumes, so the three layers cannot drift apart.
+                let ledger = SizedCycleLedger::from_sized(&s, &economics_obj);
                 let mut c = s.candidate;
-                c.gross_profit_usd = Some(s.gross_profit_usd);
-                c.net_expected_profit_usd = Some(s.estimated_net_profit_usd);
-                // FIX (review V2 #8): synchronize the Opportunity row that
-                // process_candidate actually evaluates/emits. Without this,
-                // the DB/API records pre-sizing figures while the optimizer's
-                // post-sizing numbers only live on the StrategyCandidate —
-                // an inconsistent audit trail (RULE 00 violation surface).
-                c.opportunity.expected_profit_usd = Some(s.gross_profit_usd);
-                c.opportunity.net_expected_profit_usd = Some(s.estimated_net_profit_usd);
-                // B1 FIX (math-audit AUDIT-MATH-OPPS-2026-09-26): the kernel's
-                // optimal size was computed but never reached the row —
-                // amount_in_wei kept the pre-sizing probe (or "0"), so the
-                // persisted economics and the recorded notional disagreed and
-                // the SIM-TS ladder ran on a notional the searcher never sized
-                // for. Record the exact amount the kernel optimized.
-                c.opportunity.amount_in_wei = s.optimal_amount_in.to_string();
+                // FIX (review V2 #8) + B1 FIX (math-audit AUDIT-MATH-OPPS-2026-09-26)
+                // + CANDIDATE-POSTSIZE-SYNC-01 (a) + CANDIDATE-LEDGER-STRUCT-01:
+                // ONE stamping site for the sized figures on BOTH layers — the
+                // outer StrategyCandidate/`Opportunity` row AND the INNER spine
+                // candidate that `ConfigAwareEvaluator` re-evaluates below — fed
+                // by exactly ONE ledger. See `stamp_sized_figures`.
+                stamp_sized_figures(&mut c, &ledger);
+                // ALWAYS-COMPUTE (2026-09-27): the ONE complete economics
+                // object travels on the accepted row too (additive wire).
+                if crate::economics::always_compute_enabled() {
+                    c.opportunity.economics = Some(economics_obj);
+                }
                 // ARBX-0009: sheet-07 components from the kernel for the
                 // batch's Net_bps ranking (None ⇒ not computable ⇒ last).
                 // HOPS-LEDGER-04: thread the kernel's exact per-leg wei to
@@ -1369,6 +1375,47 @@ impl Orchestrator {
                     _ => None,
                 };
                 (c, s.net_economics, legs)
+            }
+            // ALWAYS-COMPUTE (2026-09-27): a rejection whose path HAD computed
+            // the full economics — the row keeps every number (gross AND net,
+            // the sized amount, the ledger) plus the complete computation
+            // object. "FAIL = se hizo el cálculo y no cumple el criterio".
+            OptimizeOutcome::RejectedComputed(reason, boxed) => {
+                let bare = reason.as_str();
+                REJECTED_NO_PROFIT_TOTAL
+                    .with_label_values(&[chain_str, candidate.label.as_str(), bare])
+                    .inc();
+                let rejection = if reason.is_net_dependent() {
+                    let mode = crate::financing::selected_mode(u8::from(
+                        candidate.base_strategy.is_some(),
+                    ) as f64);
+                    format!("{bare}:{}", mode.as_str())
+                } else {
+                    bare.to_owned()
+                };
+                let s = *boxed;
+                let mut c = candidate;
+                c.rejection_reason = Some(rejection.clone());
+                // The kernel's OWN figures, both of them: the legacy reject
+                // path could only carry one scalar (net); this variant proves
+                // the gross it judged. Knob-gated so OFF restores the
+                // pre-mandate wire exactly (one scalar payload).
+                if crate::economics::always_compute_enabled() {
+                    c.gross_profit_usd = Some(s.gross_profit_usd);
+                    c.net_expected_profit_usd = Some(s.estimated_net_profit_usd);
+                    c.opportunity.expected_profit_usd = Some(s.gross_profit_usd);
+                    c.opportunity.net_expected_profit_usd = Some(s.estimated_net_profit_usd);
+                    if s.optimal_amount_in > U256::zero() {
+                        c.opportunity.amount_in_wei = s.optimal_amount_in.to_string();
+                    }
+                    c.opportunity.economics =
+                        Some(crate::economics::economics_from_sized(&s, cfg_snapshot));
+                } else if let Some(net) = Some(s.estimated_net_profit_usd) {
+                    // Knob OFF: legacy semantics — only the net payload.
+                    c.net_expected_profit_usd = Some(net);
+                    c.opportunity.net_expected_profit_usd = Some(net);
+                }
+                (c, None, rejected_ledger)
             }
             OptimizeOutcome::Rejected(reason, rejected_net)
             | OptimizeOutcome::RejectedWithLedger(reason, rejected_net, _) => {
@@ -1409,6 +1456,21 @@ impl Orchestrator {
                 // detección. La tarjeta debe mostrar los números reales para
                 // que el operador vea POR QUÉ no es viable.
                 // c.opportunity.expected_profit_usd = None;  ← REMOVIDO
+                // ALWAYS-COMPUTE (2026-09-27): the no-quote rejects get their
+                // honest object — a real payload figure ⇒ "partial" with the
+                // number; nothing ⇒ "error" + the verbatim reason (gate 2:
+                // never fabricated numbers).
+                if crate::economics::always_compute_enabled() {
+                    c.opportunity.economics = Some(match rejected_net {
+                        Some(v) => crate::economics::economics_partial(
+                            c.opportunity.expected_profit_usd,
+                            Some(v),
+                            c.opportunity.roi_pct,
+                            Some(bare),
+                        ),
+                        None => crate::economics::economics_error(bare),
+                    });
+                }
                 // PER-HOP: the ledger captured above travels in the third
                 // tuple slot exactly like the Sized path's, so the common
                 // tail attaches it to the rejected row's RouteMetadata.
@@ -1740,7 +1802,12 @@ impl Orchestrator {
 
             ConfigGateOutcome::StrategyConfigGateBlocked { reason } => {
                 let tag = reason.tag();
-                let reason_str = format!("{tag}:{reason:?}");
+                // REASON-TAG-ORCH-01 (audit 2026-09-29): the payload used to be
+                // `{:?}`, i.e. the Rust variant name, which is not a stable wire
+                // identity. `tag()` is what the codebase defines for metrics and
+                // dashboards (decision.rs), so the rejection reason now travels
+                // entirely in snake_case and a consumer can match it.
+                let reason_str = tag.to_string();
                 let mut opp = sc.opportunity.clone();
                 // WO-GAP2 (2026-09-07): R8 — roi_pct None, never a Some(0.0) placeholder.
                 apply_gate_rejection_fields(&mut opp, reason_str.clone());
@@ -1775,7 +1842,14 @@ impl Orchestrator {
 
                 if let Some(rej_reason) = rejection {
                     // Math gate rejected — this is a genuine evaluation failure.
-                    let reason_str = format!("{rej_reason:?}");
+                    // REASON-TAG-ORCH-01 (audit 2026-09-29): this was `{:?}`, so the
+                    // wire carried the Rust variant name ("NegativeNetProfit") while
+                    // the codebase's own stable identity is `RejectReason::tag()`
+                    // ("negative_net_profit", decision.rs). Measured consequence in
+                    // production: 1 290 rows/24 h with the PascalCase form, splitting
+                    // ONE gate into two histogram buckets and breaking any consumer
+                    // that matches the documented snake_case tag.
+                    let reason_str = rej_reason.tag().to_string();
                     // WO-GAP2 (2026-09-07): R8 — roi_pct None, never a Some(0.0) placeholder.
                     apply_gate_rejection_fields(&mut opp, reason_str.clone());
                     // Propagate net_expected_profit_usd when gross is available (R8).
@@ -1819,7 +1893,10 @@ impl Orchestrator {
                         let gate = MacroMevGate;
                         if let Some(gate_outcome) = gate.evaluate(&opp, &gate_config) {
                             if gate_outcome.reject {
-                                let reason_str = format!("{:?}", gate_outcome.reason);
+                                // REASON-TAG-ORCH-01: `{:?}` leaked the local
+                                // (gates.rs) variant name to the wire; `tag()` is the
+                                // stable snake_case identity dashboards already read.
+                                let reason_str = gate_outcome.reason.tag().to_string();
                                 // WO-GAP2 (2026-09-07): the spine DID compute
                                 // net_roi_pct above (the Some(outcome.net_roi_pct)
                                 // assignment), but the trajectory diverged
@@ -1928,6 +2005,17 @@ impl Orchestrator {
 /// `Some(0.0)` convention (scanner.rs "rejection volume" doctrine) — its
 /// adjudication is a separate anomaly, NOT this WO.
 fn apply_gate_rejection_fields(opp: &mut shared_rs::contracts::Opportunity, reason: String) {
+    // ECON-ON-REJECT-PATHS-01 (2026-09-27, measured). WO-GAP2 nulls the figures
+    // here because a gate rejection has NOT computed them — correct: a
+    // non-computed zero must never be published. But the typed payload was never
+    // attached either, so these rows reached the wire with `economics: null`.
+    // MEASURED on 43 live rows served by the VPS: `economics` present on 0/43 and
+    // `roi_pct` on 0/43 — nothing for the card's capital path to paint. The
+    // api-server already falls back to the typed payload
+    // (`opportunities-live.ts`: `econNum("roi_pct")`), so attaching it here turns
+    // SILENCE into a DECLARED absence: `economics_error` carries the verbatim
+    // gate reason, and the figures stay null (R8/WO-GAP2 intact).
+    opp.economics = Some(crate::economics::economics_error(&reason));
     opp.rejection_reason = Some(reason);
     // WO-GAP2 (2026-09-07): None = not computed — NEVER a non-computed zero.
     opp.roi_pct = None;
@@ -1941,6 +2029,113 @@ fn apply_gate_rejection_fields(opp: &mut shared_rs::contracts::Opportunity, reas
 /// names so Grafana dashboards can filter by source without mapping.
 fn detection_source_as_str(src: crate::route_intent::DetectionSource) -> &'static str {
     src.as_str()
+}
+
+/// Decimals the row carries for `address`, or `None` when the address is not a
+/// parseable `0x` address (then it has no entry in any decimals map either).
+///
+/// CANDIDATE-POSTSIZE-SYNC-01 (a): this is the SAME canonical immutable-protocol
+/// table (`canonical_token_decimals`, re-exported as
+/// `dex_engine::canonical_token_decimals_str`: USDC/USDT = 6, WBTC = 8, the
+/// dominant ERC-20 case = 18) that `process_candidate` uses to fill the row's
+/// `route_metadata.decimals.map`. `Opportunity` has no `route_metadata` field —
+/// the metadata is built later and handed to the emitter beside the row — so the
+/// map itself is not readable at sizing time; reading the same function on the
+/// same address yields the identical value it will carry.
+fn row_token_decimals(address: &str) -> Option<u8> {
+    // Review nit (CANDIDATE-POSTSIZE-SYNC-01): the parse is the VALIDITY CHECK of
+    // the address, not a source of the value — spell it as an early return so the
+    // guard reads as a guard instead of a `map` that discards its input.
+    address.parse::<Address>().ok()?;
+    Some(crate::engines::dex_engine::canonical_token_decimals_str(
+        address,
+    ))
+}
+
+/// CANDIDATE-POSTSIZE-SYNC-01 (a) + CANDIDATE-LEDGER-STRUCT-01: stamp the
+/// SIZED figures onto BOTH layers of a candidate — the outer
+/// `StrategyCandidate`/`Opportunity` row AND the INNER spine candidate
+/// (`StrategyCandidate::candidate`) that `ConfigAwareEvaluator` re-evaluates.
+///
+/// The figures come from ONE place: the [`SizedCycleLedger`] the sizing kernel's
+/// own measured values built (`SizedCycleLedger::from_sized`). This function
+/// computes nothing economic — it copies `gross_profit_usd`,
+/// `net_expected_profit_usd` and `amount_in_wei` from the ledger, and converts
+/// the ledger's exact wei amounts to the inner layer's token units.
+///
+/// Why the inner layer matters: only the outer layer used to be synchronized, so
+/// the second evaluation still read the engine's pre-sizing probe with a
+/// fabricated 1:1 rate (`expected_amount_out == amount_in` written at
+/// construction). A row whose kernel correctly computed a real closed cycle could
+/// therefore be re-judged at the OLD notional, with `observed_rate = 1.0` firing
+/// `ImplausibleSpread` (and poisoning the ROI/cost paths) on numbers nobody
+/// measured. "Un cálculo. Un tamaño. Un ledger. Una procedencia."
+///
+/// Inner units: token units as `f64` — the convention `OpportunityCandidate`
+/// documents for `amount_in`/`expected_amount_out` (its consumer multiplies by
+/// `10^decimals`/price, never by a raw wei integer).
+///
+/// * `amount_in` — ALWAYS the ledger's `amount_in_wei` (the kernel's sized
+///   amount), converted with the row's own entry-token decimals when they are
+///   known, else the legacy `1e18` rule (applied to the SIZED amount). The stale
+///   probe is never kept.
+/// * `expected_amount_out` — the ledger's `amount_out_wei` (the kernel's
+///   MEASURED final-hop wei, cycle close), converted with the row's exit-token
+///   decimals (same fallback rule). `None` (the kernel exposed no per-leg math:
+///   triangular final-amount-only, Kelly re-bound without re-quote, hand-built
+///   fixtures) leaves the honest `NaN` marker `build_accepted_opportunity` wrote
+///   — deliberately NOT `amount_in`, so no 1:1 rate is ever implied by this sync.
+///
+/// Decimals are NOT a ledger field: they are the row's own canonical table
+/// entry for the same two endpoint addresses the ledger parsed
+/// (`row_token_decimals` → `canonical_token_decimals_str`), read through
+/// `size_optimizer::route_endpoint_tokens` so the endpoint selection has one
+/// definition.
+fn stamp_sized_figures(c: &mut StrategyCandidate, ledger: &SizedCycleLedger) {
+    // ── Outer layer ─────────────────────────────────────────────────────────
+    c.gross_profit_usd = Some(ledger.gross_profit_usd);
+    c.net_expected_profit_usd = Some(ledger.net_expected_profit_usd);
+    // FIX (review V2 #8): synchronize the Opportunity row that process_candidate
+    // actually evaluates/emits. Without this, the DB/API records pre-sizing
+    // figures while the optimizer's post-sizing numbers only live on the
+    // StrategyCandidate — an inconsistent audit trail (RULE 00 violation surface).
+    c.opportunity.expected_profit_usd = Some(ledger.gross_profit_usd);
+    c.opportunity.net_expected_profit_usd = Some(ledger.net_expected_profit_usd);
+    // B1 FIX (math-audit AUDIT-MATH-OPPS-2026-09-26): the kernel's optimal size
+    // was computed but never reached the row — amount_in_wei kept the pre-sizing
+    // probe (or "0"), so the persisted economics and the recorded notional
+    // disagreed and the SIM-TS ladder ran on a notional the searcher never sized
+    // for. Record the exact amount the kernel optimized.
+    c.opportunity.amount_in_wei = ledger.amount_in_wei.to_string();
+
+    // ── Inner layer (the ONE the evaluator re-reads) ─────────────────────────
+    // Entry/exit token DECIMALS of the row's OWN route, resolved before the
+    // mutation so no borrow of `c` stays alive across it. On a closed cycle the
+    // exit token IS the entry token (route.token[0] == route.token[N]).
+    let (endpoint_in, endpoint_out) = crate::size_optimizer::route_endpoint_tokens(c);
+    let in_decimals = endpoint_in.and_then(row_token_decimals);
+    let out_decimals = endpoint_out.and_then(row_token_decimals);
+
+    c.candidate.amount_in = match in_decimals {
+        Some(decimals) => {
+            crate::engines::dex_engine::wei_to_token_units(ledger.amount_in_wei, decimals)
+        }
+        // No decimals for this token → keep the previous 1e18 conversion rule,
+        // applied to the SIZED amount (never to the stale probe).
+        None => crate::engines::dex_engine::u256_to_f64_lossy(ledger.amount_in_wei) / 1e18_f64,
+    };
+
+    // Only a genuinely measured output replaces the marker (R8: absent ⇒ the
+    // field keeps its "not measured" value, never a fabricated one).
+    if let Some(out_wei) = ledger.amount_out_wei {
+        let measured = match out_decimals {
+            Some(decimals) => crate::engines::dex_engine::wei_to_token_units(out_wei, decimals),
+            None => crate::engines::dex_engine::u256_to_f64_lossy(out_wei) / 1e18_f64,
+        };
+        if measured.is_finite() {
+            c.candidate.expected_amount_out = measured;
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -2033,6 +2228,7 @@ mod tests {
             pipeline_latency_ms: None,
             detected_at: Utc::now(),
             trace_id: Uuid::new_v4(),
+            economics: None,
         }
     }
 
@@ -2211,6 +2407,254 @@ mod tests {
         );
     }
 
+    // ── orchestrator::tests::sized_sync_stamps_kernel_notional_and_output ─────
+    //
+    // CANDIDATE-POSTSIZE-SYNC-01 (a): the SIZED arm must synchronize the INNER
+    // spine candidate, not only the outer StrategyCandidate/`Opportunity`. The
+    // evaluator re-reads `candidate.amount_in` / `candidate.expected_amount_out`
+    // on the second pass, so leaving them at the pre-sizing probe with a
+    // fabricated 1:1 rate re-judged a kernel-certified cycle on unmeasured
+    // numbers (`ImplausibleSpread`, ROI and cost paths).
+    //
+    // Fixture: a closed cycle whose base token is USDC (6 decimals) — the sized
+    // notional is expressed with the row's REAL decimals (a `1e18` blanket would
+    // report 1e-9 instead of 1 000 units) — and whose measured final-hop output
+    // differs from the notional.
+
+    /// CANDIDATE-LEDGER-STRUCT-01: build the ledger the way
+    /// `size_candidate_for_emit` does — a `SizedCandidate` fixture (the kernel's
+    /// own carrier) → the economics object built FROM that carrier → the ledger.
+    /// Returns the candidate the stamping mutates plus the ledger it must obey.
+    fn sized_ledger_fixture(
+        candidate: StrategyCandidate,
+        optimal_amount_in: U256,
+        gross_profit_usd: f64,
+        net_expected_profit_usd: f64,
+        leg_amounts_in: Option<Vec<String>>,
+        leg_amounts_out: Option<Vec<String>>,
+    ) -> (StrategyCandidate, SizedCycleLedger) {
+        let sized = crate::size_optimizer::SizedCandidate {
+            candidate,
+            optimal_amount_in,
+            gross_profit_usd,
+            estimated_net_profit_usd: net_expected_profit_usd,
+            net_negative: net_expected_profit_usd <= 0.0,
+            // Sheet-07 components are not the subject here: `None` is the
+            // documented R8 shape for a carrier that has none (gas then stays
+            // absent on the ledger too).
+            net_economics: None,
+            leg_amounts_in,
+            leg_amounts_out,
+        };
+        let econ = crate::economics::economics_from_sized(&sized, None);
+        let ledger = SizedCycleLedger::from_sized(&sized, &econ);
+        (sized.candidate, ledger)
+    }
+
+    #[test]
+    fn sized_sync_stamps_kernel_notional_and_output() {
+        // Canonical mainnet contracts (canonical_token_decimals: USDC = 6).
+        let usdc = "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48";
+        let weth = "0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2";
+
+        let mut seeded = make_candidate(StrategyLabel::DexArbV2V2, None);
+        // Closed cycle: USDC → WETH → USDC (base = USDC, opens and closes).
+        seeded.route_plan.legs[0].token_in = usdc.to_string();
+        seeded.route_plan.legs[0].token_out = weth.to_string();
+        seeded.route_plan.legs[1].token_in = weth.to_string();
+        seeded.route_plan.legs[1].token_out = usdc.to_string();
+        seeded.candidate.token_addresses = vec![usdc.to_string(), usdc.to_string()];
+        // The STALE pre-sizing probe (the engine's 1:1 fabrication).
+        let probe_notional = seeded.candidate.amount_in;
+        assert_eq!(probe_notional, 1.0, "fixture probe must be the stale 1.0");
+
+        // Kernel sized the cycle at 1 000 USDC (1e9 in 6-dec wei), MEASURED
+        // 1 000.5 USDC leaving the final hop (1_000_500_000 wei), gross $12.50,
+        // net $7.00. The per-hop chain is the kernel's own ledger (HOPS-LEDGER-04
+        // shape: in[i+1] == out[i], the closing amount differs from the input).
+        let optimal_amount_in = U256::from(1_000_000_000u64);
+        let bridge_wei = "500000000000000000".to_string();
+        let (mut c, ledger) = sized_ledger_fixture(
+            seeded,
+            optimal_amount_in,
+            12.5,
+            7.0,
+            Some(vec![optimal_amount_in.to_string(), bridge_wei.clone()]),
+            Some(vec![
+                bridge_wei.clone(),
+                U256::from(1_000_500_000u64).to_string(),
+            ]),
+        );
+        stamp_sized_figures(&mut c, &ledger);
+
+        // Outer layer (review V2 #8 / B1 FIX) still stamped…
+        assert_eq!(c.gross_profit_usd, Some(12.5));
+        assert_eq!(c.net_expected_profit_usd, Some(7.0));
+        assert_eq!(c.opportunity.expected_profit_usd, Some(12.5));
+        assert_eq!(c.opportunity.net_expected_profit_usd, Some(7.0));
+        assert_eq!(
+            c.opportunity.amount_in_wei,
+            optimal_amount_in.to_string(),
+            "the row must record the exact amount the kernel optimized"
+        );
+
+        // …and the INNER candidate (the object the evaluator re-reads) is now
+        // synchronized with the SAME notional/output.
+        assert_eq!(
+            c.candidate.amount_in, 1_000.0,
+            "amount_in must be the SIZED notional in the row's real token units \
+             (USDC 6-dec), not the stale probe and not a 1e18 mis-scaling"
+        );
+        assert_ne!(
+            c.candidate.amount_in, probe_notional,
+            "the pre-sizing probe must never survive the sized path"
+        );
+        assert_eq!(
+            c.candidate.expected_amount_out, 1_000.5,
+            "expected_amount_out must be the kernel's MEASURED cycle output"
+        );
+        assert_ne!(
+            c.candidate.expected_amount_out, c.candidate.amount_in,
+            "a measured output that differs from the notional must never be flattened to 1:1"
+        );
+        assert!(
+            c.candidate.expected_amount_out.is_finite(),
+            "a genuinely measured output must be finite"
+        );
+
+        // OBSERVED RATE (config_aware.rs): the second evaluation now sees the
+        // real closed-cycle rate instead of the fabricated 1.0.
+        let observed_rate = c.candidate.expected_amount_out / c.candidate.amount_in;
+        assert!(
+            (observed_rate - 1.0005).abs() < 1e-12,
+            "observed_rate must be the real cycle rate, got {observed_rate}"
+        );
+
+        // NO MEASUREMENT → the honest "not measured" marker survives the sync and
+        // no 1:1 rate is implied. The ledger itself carries no output (R8).
+        let unmeasured_seed = c.clone();
+        let (mut unmeasured, no_measurement) =
+            sized_ledger_fixture(unmeasured_seed, optimal_amount_in, 12.5, 7.0, None, None);
+        assert!(
+            no_measurement.amount_out_wei.is_none(),
+            "no kernel per-leg math ⇒ the ledger exposes NO output, never the input"
+        );
+        unmeasured.candidate.expected_amount_out = f64::NAN;
+        stamp_sized_figures(&mut unmeasured, &no_measurement);
+        assert!(
+            unmeasured.candidate.expected_amount_out.is_nan(),
+            "an absent measurement must stay 'not measured' (NaN), got {}",
+            unmeasured.candidate.expected_amount_out
+        );
+        assert_ne!(
+            unmeasured.candidate.expected_amount_out, unmeasured.candidate.amount_in,
+            "an unmeasured output must not imply a 1:1 rate"
+        );
+        assert_eq!(
+            unmeasured.candidate.amount_in, 1_000.0,
+            "the notional is still the SIZED one when only the output is missing"
+        );
+
+        // LEGACY ADDRESS SHAPE: no decimals entry (the helper's "0xweth"/"0xusdc"
+        // strings do not parse) → the previous 1e18 rule, applied to the SIZED
+        // amount.
+        let legacy_seed = make_candidate(StrategyLabel::DexArbV2V2, None);
+        let three_units = U256::from(10u128).pow(U256::from(18u32)) * U256::from(3u32);
+        let (mut legacy, legacy_ledger) =
+            sized_ledger_fixture(legacy_seed, three_units, 1.0, 0.5, None, None);
+        stamp_sized_figures(&mut legacy, &legacy_ledger);
+        assert_eq!(
+            legacy.candidate.amount_in, 3.0,
+            "without decimals the legacy 1e18 rule applies to the SIZED amount"
+        );
+    }
+
+    // ── orchestrator::tests::stamped_layers_follow_the_ledger_and_nothing_else ─
+    //
+    // CANDIDATE-LEDGER-STRUCT-01 (b): the figures stamped on the three layers
+    // (`Opportunity`, the outer `StrategyCandidate`, the INNER
+    // `OpportunityCandidate`) provably come from ONE place — the
+    // `SizedCycleLedger`. Proof: every layer starts poisoned with a different
+    // stale value, and after the stamp the layers carry the ledger's numbers;
+    // then the LEDGER is mutated (nothing else) and re-stamped, and the three
+    // layers follow it again. Any second source would break the second pass.
+
+    #[test]
+    fn stamped_layers_follow_the_ledger_and_nothing_else() {
+        let usdc = "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48";
+        let weth = "0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2";
+
+        let mut seeded = make_candidate(StrategyLabel::DexArbV2V2, None);
+        seeded.route_plan.legs[0].token_in = usdc.to_string();
+        seeded.route_plan.legs[0].token_out = weth.to_string();
+        seeded.route_plan.legs[1].token_in = weth.to_string();
+        seeded.route_plan.legs[1].token_out = usdc.to_string();
+        seeded.candidate.token_addresses = vec![usdc.to_string(), usdc.to_string()];
+        // POISON every layer this function is allowed to touch.
+        seeded.gross_profit_usd = Some(-999.0);
+        seeded.net_expected_profit_usd = Some(-999.0);
+        seeded.opportunity.expected_profit_usd = Some(-999.0);
+        seeded.opportunity.net_expected_profit_usd = Some(-999.0);
+        seeded.opportunity.amount_in_wei = "777".to_string();
+        seeded.candidate.amount_in = 42.0;
+        seeded.candidate.expected_amount_out = 42.0;
+
+        let (mut c, ledger) = sized_ledger_fixture(
+            seeded,
+            U256::from(1_000_000_000u64),
+            12.5,
+            7.0,
+            Some(vec![
+                "1000000000".to_string(),
+                "500000000000000000".to_string(),
+            ]),
+            Some(vec![
+                "500000000000000000".to_string(),
+                "1000500000".to_string(),
+            ]),
+        );
+        stamp_sized_figures(&mut c, &ledger);
+
+        // The three layers now agree with the LEDGER — every poison is gone.
+        assert_eq!(c.gross_profit_usd, Some(ledger.gross_profit_usd));
+        assert_eq!(
+            c.net_expected_profit_usd,
+            Some(ledger.net_expected_profit_usd)
+        );
+        assert_eq!(
+            c.opportunity.expected_profit_usd,
+            Some(ledger.gross_profit_usd)
+        );
+        assert_eq!(
+            c.opportunity.net_expected_profit_usd,
+            Some(ledger.net_expected_profit_usd)
+        );
+        assert_eq!(
+            c.opportunity.amount_in_wei,
+            ledger.amount_in_wei.to_string()
+        );
+        assert_eq!(c.candidate.amount_in, 1_000.0);
+        assert_eq!(c.candidate.expected_amount_out, 1_000.5);
+
+        // MUTATE THE LEDGER ONLY: the layers must follow it. A second source of
+        // truth (a kept scalar, a re-read candidate, a recomputation) would keep
+        // the old numbers here and fail.
+        let mut updated = ledger.clone();
+        updated.amount_in_wei = U256::from(2_000_000_000u64);
+        updated.amount_out_wei = Some(U256::from(2_010_000_000u64));
+        updated.gross_profit_usd = 31.25;
+        updated.net_expected_profit_usd = 11.5;
+        stamp_sized_figures(&mut c, &updated);
+
+        assert_eq!(c.gross_profit_usd, Some(31.25));
+        assert_eq!(c.net_expected_profit_usd, Some(11.5));
+        assert_eq!(c.opportunity.expected_profit_usd, Some(31.25));
+        assert_eq!(c.opportunity.net_expected_profit_usd, Some(11.5));
+        assert_eq!(c.opportunity.amount_in_wei, "2000000000");
+        assert_eq!(c.candidate.amount_in, 2_000.0);
+        assert_eq!(c.candidate.expected_amount_out, 2_010.0);
+    }
+
     // ── orchestrator::tests::rejected_candidate_carries_reason ───────────────
 
     #[test]
@@ -2290,6 +2734,30 @@ mod tests {
             opp.rejection_reason.as_deref(),
             Some("TokenNotAllowed:AGLD"),
             "rejection reason must survive the helper verbatim"
+        );
+
+        // ECON-ON-REJECT-PATHS-01 (2026-09-27): the helper must ALSO attach the
+        // typed payload. MEASURED on 43 live rows served by the VPS: `economics`
+        // present on 0/43 and `roi_pct` on 0/43 — the card had nothing to paint
+        // because these rows arrived as silence. The payload names the gate
+        // verbatim while every figure stays absent (R8/WO-GAP2 intact): a
+        // DECLARED absence, never a fabricated zero.
+        let econ = opp
+            .economics
+            .as_ref()
+            .expect("gate-rejected row must carry the typed economics payload");
+        assert_eq!(
+            econ.computation_status, "error",
+            "a gate rejection computed no figures — status must be error"
+        );
+        assert_eq!(
+            econ.error_reason.as_deref(),
+            Some("TokenNotAllowed:AGLD"),
+            "the payload must name the gate reason verbatim"
+        );
+        assert_eq!(
+            econ.amount_in_usd, None,
+            "R8: the payload must not carry a figure the gate never computed"
         );
 
         // Idempotence across the whole rejection-reason family: every branch

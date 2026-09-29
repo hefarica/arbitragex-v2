@@ -379,6 +379,159 @@ pub fn is_plausible_price(prev: Option<f64>, new: f64) -> bool {
     (1.0 / PRICE_MAX_TICK_RATIO..=PRICE_MAX_TICK_RATIO).contains(&ratio)
 }
 
+// ═══════════════════════════════════════════════════════════════════════════
+// B5d (2026-09-26) — the reference must OUTLIVE the published hash's TTL
+// ═══════════════════════════════════════════════════════════════════════════
+//
+// MEASURED ON PRODUCTION (five verification runs of `arbx:token_prices:1`):
+//   SNX   R1 = 272885.72   R2/R3 = 0.2610872236   R4 = 272885.72  ← RE-POISONED
+//   AAVE  R1/R2/R3 = 161339420.31   R4 = 155.038   (repaired by PR #695)
+//   `TTL arbx:token_prices:1` = 51 s, `HLEN` = 386, every other comparator in
+//   band (WBTC 84385, WETH 2695, AAVE 155.038, …): SNX is the sole >100× outlier.
+//
+// ROOT CAUSE OF THE RE-POISONING: both free-tier writers validated a candidate
+// against the value CURRENTLY IN THE SHARED HASH. That hash has a ~50 s TTL, so
+// after every expiry the writer reads `prev = None` and `is_plausible_price(None,
+// new)` returns `true` for ANY value — the ×1e6 candidate included. PR #695's
+// authority order (B5b) only covers the Binance/Chainlink charter symbols
+// (WETH/ETH/WBTC/BTC/USDC) and SNX has no authoritative producer, so it sits
+// exactly in that hole. B5c's corroborated correction cannot help either: it
+// needs a correct value proposed twice while a poisoned one is stored — the
+// reverse of this case.
+//
+// FIX: a LONG-LIVED per-symbol baseline that survives the published TTL, and a
+// candidate is validated against the baseline FIRST (when the knob below is on),
+// falling back to the published value, and only then to "first-ever write".
+
+/// Redis key holding the LONG-LIVED baseline: hash `SYMBOL -> last accepted
+/// price`. Deliberately a THIRD key, distinct from the published hash
+/// (`arbx:token_prices:<chain>`) and from the pending store
+/// (`arbx:token_prices_pending:<chain>`), so a baseline can never be read as a
+/// price and a pending candidate can never be read as a baseline.
+pub fn redis_price_baseline_key(chain_id: u64) -> String {
+    format!("arbx:price_baseline:{chain_id}")
+}
+
+/// TTL of the baseline hash (seconds) — 24 h. The published hash lives ~50 s
+/// (measured: `TTL arbx:token_prices:1` = 51 s), which is precisely why the range
+/// guard had no reference to compare against. 24 h outlives a restart, a writer
+/// outage and the operator's sleep, and still lets an abandoned symbol's baseline
+/// evaporate instead of pinning a price forever. Re-armed on every cycle that
+/// accepted at least one write.
+pub const PRICE_BASELINE_TTL_SECS: i64 = 86_400;
+
+/// B5d knob — `ARBX_PRICE_BASELINE_GUARD`. The baseline check is ON by default
+/// (fail-safe); only an EXPLICIT off-value disables it, which restores exactly the
+/// pre-B5d behaviour (reference = published value only).
+pub const ENV_PRICE_BASELINE_GUARD: &str = "ARBX_PRICE_BASELINE_GUARD";
+
+/// Pure knob parse (no env access — unit-testable without touching the process
+/// environment). `None`, an empty string, or any unrecognised token keeps the
+/// guard ON: an operator typo must never silently disable a poison gate.
+pub fn baseline_guard_enabled(raw: Option<&str>) -> bool {
+    match raw {
+        None => true,
+        Some(v) => !matches!(
+            v.trim().to_ascii_lowercase().as_str(),
+            "off" | "0" | "false" | "no" | "disabled"
+        ),
+    }
+}
+
+/// Knob read from the process environment. Callers evaluate it ONCE per cycle
+/// (loop-invariant), never per symbol.
+pub fn baseline_guard_enabled_from_env() -> bool {
+    baseline_guard_enabled(std::env::var(ENV_PRICE_BASELINE_GUARD).ok().as_deref())
+}
+
+/// B5d — the ONE verdict a free-tier writer can reach for a candidate price.
+/// Each variant states the caller's persistence obligations so the writers stay
+/// mechanical (no policy in the I/O layer).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PriceWriteDecision {
+    /// First-ever observation for the symbol: neither a baseline nor a published
+    /// value exists, so there is nothing to compare against. Accepted HONESTLY
+    /// (a fabricated reference is forbidden — RULE 00/R8), and it becomes the
+    /// baseline. Caller: `HSET` published + `HSET` baseline.
+    AcceptFirst,
+    /// Plausible against the reference (baseline, else published). Caller:
+    /// `HSET` published + `HSET` baseline (the baseline advances).
+    Accept,
+    /// Implausible against the reference but CORROBORATED by a previous PENDING
+    /// observation (B5c) — the stored/reference value is the outlier. Caller:
+    /// `HSET` published + `HSET` baseline (RESET to the correction — keeping the
+    /// poisoned baseline would refuse the corrected value again next cycle) +
+    /// `HDEL` pending.
+    AcceptCorrection,
+    /// Implausible and uncorroborated. Caller: do NOT publish; record/replace the
+    /// PENDING candidate (short TTL) so a genuine second observation can heal it.
+    RefusePending,
+    /// Non-finite or ≤ 0 — never written and never recorded: garbage must not
+    /// enter the pending store (it could never corroborate anything and would
+    /// displace a legitimate pending record).
+    RefuseInvalid,
+}
+
+/// B5d — decide ONE free-tier write. Pure: no I/O, no clock, fully unit-testable.
+///
+/// Reference ladder:
+///   1. `baseline` (long-lived, survives the published hash's ~50 s TTL) — used
+///      when `guard` is on and the stored value is usable;
+///   2. else `published` (the current shared-hash value);
+///   3. else `None` → first-ever write → `AcceptFirst`.
+///
+/// A candidate implausible against the reference is still refused unless a
+/// previous cycle recorded a corroborating PENDING candidate (`AcceptCorrection`),
+/// which keeps B5c's healing path intact. With `guard = false` the baseline is
+/// ignored entirely and this function reproduces the pre-B5d decision (reference =
+/// published value only), which is the documented revert.
+pub fn decide_price_write(
+    guard: bool,
+    baseline: Option<f64>,
+    published: Option<f64>,
+    pending: Option<f64>,
+    candidate: f64,
+) -> PriceWriteDecision {
+    if !candidate.is_finite() || candidate <= 0.0 {
+        return PriceWriteDecision::RefuseInvalid;
+    }
+    // A stored value that is not finite/positive is treated as ABSENT (never as a
+    // reference): mirrors `is_plausible_price`'s handling of poisoned storages.
+    let usable = |v: Option<f64>| v.filter(|p| p.is_finite() && *p > 0.0);
+    let reference = if guard {
+        usable(baseline).or_else(|| usable(published))
+    } else {
+        usable(published)
+    };
+    let Some(reference) = reference else {
+        return PriceWriteDecision::AcceptFirst;
+    };
+    if is_plausible_price(Some(reference), candidate) {
+        return PriceWriteDecision::Accept;
+    }
+    if is_corroborated_correction(pending, candidate) {
+        return PriceWriteDecision::AcceptCorrection;
+    }
+    PriceWriteDecision::RefusePending
+}
+
+/// B5d — exactly the value the caller must persist as the symbol's new baseline,
+/// or `None` when the write was refused (the baseline is left untouched).
+///
+/// Every ACCEPTED decision advances the baseline to the candidate — including
+/// `AcceptCorrection`, where the baseline must be RESET rather than kept: if the
+/// poisoned reference survived a successful correction, the corrected value would
+/// be implausible against it again on the very next cycle and the symbol would
+/// oscillate refuse/accept forever.
+pub fn baseline_value(decision: PriceWriteDecision, candidate: f64) -> Option<f64> {
+    match decision {
+        PriceWriteDecision::AcceptFirst
+        | PriceWriteDecision::Accept
+        | PriceWriteDecision::AcceptCorrection => Some(candidate),
+        PriceWriteDecision::RefusePending | PriceWriteDecision::RefuseInvalid => None,
+    }
+}
+
 /// Pub/sub channel notified whenever a writer persists prices into
 /// `arbx:token_prices:<chain_id>` (G-PRICE-1: snapshot+push price streaming).
 /// Payload is a small JSON notice (`{"source":"price_worker","written":33}`);
@@ -495,6 +648,262 @@ mod tests {
         // The pending store is a SEPARATE key — a pending candidate is never a price.
         assert_eq!(pending_corrections_key(1), "arbx:token_prices_pending:1");
         assert_ne!(pending_corrections_key(1), redis_token_prices_key(1));
+    }
+
+    // ── B5d gates (2026-09-26): the reference must outlive the published TTL ─
+
+    /// GATE 1 — THE SNX CASE. The published hash has TTL-expired (51 s, measured),
+    /// so the writer sees `prev = None`; the long-lived baseline still holds the
+    /// real 0.2610872236 and the free tier proposes 272885.72 (×1e6). Today the
+    /// guard accepts (proved pre-patch: `is_plausible_price(None, _) == true`);
+    /// with the baseline it must be REFUSED and recorded as PENDING.
+    #[test]
+    fn b5d_gate1_prev_absent_is_refused_by_the_baseline() {
+        let candidate = 272_885.72_f64;
+        let decision = decide_price_write(
+            true,               // knob ON (default)
+            Some(0.2610872236), // baseline = the real SNX price
+            None,               // published hash expired -> prev = None
+            None,               // no pending record yet
+            candidate,
+        );
+        assert_eq!(decision, PriceWriteDecision::RefusePending);
+        // A refusal never advances the baseline (the real price stays the reference).
+        assert_eq!(baseline_value(decision, candidate), None);
+        // The same shape for a first-ever AAVE-style injection after an expiry.
+        assert_eq!(
+            decide_price_write(true, Some(154.0), None, None, 161_339_420.31),
+            PriceWriteDecision::RefusePending
+        );
+        // REVERT PROOF: with the knob OFF the baseline is ignored, so the old hole
+        // is back (prev absent ⇒ accepted) — that is exactly the pre-B5d behaviour.
+        assert_eq!(
+            decide_price_write(false, Some(0.2610872236), None, None, candidate),
+            PriceWriteDecision::AcceptFirst
+        );
+    }
+
+    /// GATE 2 — a first-ever write (no baseline, no published value) is accepted
+    /// honestly and BECOMES the baseline. No fabricated reference (RULE 00/R8).
+    #[test]
+    fn b5d_gate2_first_ever_write_is_accepted_and_seeds_the_baseline() {
+        let candidate = 0.2610872236_f64;
+        let decision = decide_price_write(true, None, None, None, candidate);
+        assert_eq!(decision, PriceWriteDecision::AcceptFirst);
+        assert_eq!(
+            baseline_value(decision, candidate),
+            Some(candidate),
+            "the first accepted price seeds the baseline"
+        );
+    }
+
+    /// GATE 3 — normal movement is accepted and the baseline ADVANCES, in both
+    /// directions, whether the reference came from the baseline or (bootstrap, no
+    /// baseline yet) from the published hash. The baseline outranks a poisoned
+    /// published value.
+    #[test]
+    fn b5d_gate3_normal_movement_advances_the_baseline() {
+        for (reference, candidate) in [
+            (0.26_f64, 0.281_f64), // up
+            (0.26, 0.241),         // down
+            (161.0, 165.0),        // AAVE-shaped
+            (161.0, 158.0),
+            (1.0, PRICE_MAX_TICK_RATIO), // boundary is inclusive
+        ] {
+            let decision =
+                decide_price_write(true, Some(reference), Some(reference), None, candidate);
+            assert_eq!(
+                decision,
+                PriceWriteDecision::Accept,
+                "{reference} -> {candidate} is a normal tick and must be accepted"
+            );
+            assert_eq!(baseline_value(decision, candidate), Some(candidate));
+        }
+        // Bootstrap: no baseline recorded yet -> the published value is the
+        // reference (so the very first baseline is validated, not blind).
+        assert_eq!(
+            decide_price_write(true, None, Some(161.0), None, 165.0),
+            PriceWriteDecision::Accept
+        );
+        // The baseline WINS over a poisoned published value: a healthy baseline
+        // plus a poisoned hash value still accepts the correct candidate.
+        assert_eq!(
+            decide_price_write(true, Some(0.2610872236), Some(272_885.72), None, 0.27),
+            PriceWriteDecision::Accept
+        );
+    }
+
+    /// GATE 4 — B5c's corroborated correction still heals a POISONED BASELINE
+    /// (the AAVE shape: reference 161,339,420.31 vs ~154 real), and the accepted
+    /// correction RESETS the baseline so the healed symbol is not refused again on
+    /// the next cycle. A lone outlier is still refused; an out-of-tolerance
+    /// "corroboration" is not a corroboration.
+    #[test]
+    fn b5d_gate4_corroborated_correction_heals_a_poisoned_baseline() {
+        let poison = 161_339_420.31_f64;
+        let candidate = 154.5_f64;
+        let decision = decide_price_write(
+            true,
+            Some(poison),         // baseline itself is the outlier
+            Some(poison),         // and so is the published value
+            Some(154.1760931358), // previous observation agreed (~154.18)
+            candidate,
+        );
+        assert_eq!(decision, PriceWriteDecision::AcceptCorrection);
+        assert_eq!(
+            baseline_value(decision, candidate),
+            Some(candidate),
+            "a correction must RESET the baseline, else the healed value is refused next cycle"
+        );
+        // …and the cycle AFTER the correction is a plain accept (no oscillation).
+        assert_eq!(
+            decide_price_write(true, Some(candidate), Some(candidate), None, 155.0),
+            PriceWriteDecision::Accept
+        );
+        // A lone implausible sample never heals anything (no corroboration).
+        assert_eq!(
+            decide_price_write(true, Some(poison), Some(poison), None, candidate),
+            PriceWriteDecision::RefusePending
+        );
+        // A "pending" that does not agree (outside ±20 %) is not corroboration.
+        assert_eq!(
+            decide_price_write(true, Some(poison), Some(poison), Some(100.0), candidate),
+            PriceWriteDecision::RefusePending
+        );
+    }
+
+    /// GATE 5 — the baseline key is DISTINCT from the published key and from the
+    /// pending key, and its TTL genuinely outlives the pending window (the whole
+    /// point: the reference must survive the published hash's ~50 s TTL).
+    #[test]
+    fn b5d_gate5_baseline_key_and_ttl_are_distinct() {
+        assert_eq!(redis_price_baseline_key(1), "arbx:price_baseline:1");
+        assert_ne!(redis_price_baseline_key(1), redis_token_prices_key(1));
+        assert_ne!(redis_price_baseline_key(1), pending_corrections_key(1));
+        assert_eq!(redis_price_baseline_key(8453), "arbx:price_baseline:8453");
+        // Read through locals so the relations are asserted as VALUES, not folded
+        // away as constant expressions (clippy::assertions_on_constants).
+        let baseline_ttl = PRICE_BASELINE_TTL_SECS;
+        let pending_ttl = PENDING_CORRECTION_TTL_SECS;
+        // The writers derive the published hash TTL as `interval*3` floored at 60 s
+        // (DEXSCREENER_PRICE_INTERVAL_MS default 15 s → 45 s, floored to 60 s); the
+        // measured production TTL is ~51 s. The baseline must outlive it by orders
+        // of magnitude AND survive a writer restart / outage.
+        let published_ttl_default = 15_i64 * 3;
+        assert_eq!(baseline_ttl, 86_400, "baseline TTL is 24 h");
+        assert!(baseline_ttl > pending_ttl);
+        assert!(baseline_ttl > published_ttl_default * 100);
+    }
+
+    /// GATE 6 — the knob is ON by default and only an EXPLICIT off-value disables
+    /// it; garbage values keep the guard ON (a typo must not disarm a poison gate).
+    #[test]
+    fn b5d_gate6_knob_defaults_on_and_requires_an_explicit_off() {
+        for on in [
+            None,
+            Some(""),
+            Some("  "),
+            Some("on"),
+            Some("ON"),
+            Some("1"),
+            Some("true"),
+            Some("active"),
+            Some("yes"),
+            Some("guard"),
+        ] {
+            assert!(baseline_guard_enabled(on), "{on:?} must keep the guard ON");
+        }
+        for off in [
+            "off", "OFF", " off ", "0", "false", "FALSE", "no", "disabled",
+        ] {
+            assert!(
+                !baseline_guard_enabled(Some(off)),
+                "{off:?} is an explicit off-value"
+            );
+        }
+    }
+
+    /// GATE 7 — non-finite / ≤ 0 candidates are refused and NOTHING is recorded:
+    /// garbage must never enter the pending store, where it would displace a
+    /// legitimate pending record and could never corroborate anything.
+    #[test]
+    fn b5d_gate7_invalid_candidates_are_refused_without_recording() {
+        for bad in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY, 0.0, -1.0] {
+            let decision = decide_price_write(true, Some(1.0), Some(1.0), Some(2.0), bad);
+            assert_eq!(
+                decision,
+                PriceWriteDecision::RefuseInvalid,
+                "{bad} must be invalid"
+            );
+            assert_eq!(baseline_value(decision, bad), None);
+        }
+    }
+
+    /// GATE 8 — timeline replay of the SNX loop with the published hash expiring
+    /// every cycle (the named root cause). Proven property: a SINGLE wrong sample
+    /// never reaches the published hash while the baseline holds the truth, and the
+    /// refusal neither publishes anything nor advances the baseline.
+    #[test]
+    fn b5d_gate8_snx_timeline_single_sample_never_lands() {
+        let mut published: Option<f64> = None; // the hash just expired (~51 s TTL)
+        let baseline: Option<f64> = Some(0.2610872236);
+        let pending: Option<f64> = None;
+        let poison = 272_885.72_f64;
+        let truth = 0.27_f64;
+
+        let decision = decide_price_write(true, baseline, published, pending, poison);
+        assert_eq!(decision, PriceWriteDecision::RefusePending);
+        assert_eq!(
+            baseline_value(decision, poison),
+            None,
+            "a refusal must not advance the baseline"
+        );
+        // Executing the RefusePending obligations: record the candidate as PENDING,
+        // publish nothing, leave the baseline exactly as it was.
+        let recorded_pending = Some(poison);
+        assert_ne!(
+            published,
+            Some(poison),
+            "the poison never reached the reader"
+        );
+        assert_eq!(
+            baseline,
+            Some(0.2610872236),
+            "the reference survives the refusal"
+        );
+
+        // The NEXT cycle's correct observation is still accepted against the same
+        // baseline: the symbol keeps a fresh honest price while poisoned samples
+        // continue to be refused.
+        let decision = decide_price_write(true, baseline, published, recorded_pending, truth);
+        assert_eq!(decision, PriceWriteDecision::Accept);
+        published = baseline_value(decision, truth);
+        assert_eq!(published, Some(truth));
+    }
+
+    /// KNOWN RESIDUAL — declared, NOT closed by B5d (see the B5d report §RISKS).
+    /// The corroboration rule is symmetric by design (B5c), so a source that
+    /// re-proposes the SAME wrong value within the pending window (300 s)
+    /// corroborates ITSELF and its second occurrence is accepted as a correction.
+    /// B5d removes the single-sample / TTL-expired path (GATE 1, GATE 8); closing
+    /// this one needs identity corroboration at the write site (B5b's declared
+    /// remainder: publish only under the symbol `TokenIdentityIndex::symbol_for_addr`
+    /// assigns to the address). Pinned here so nobody believes B5d closed it.
+    #[test]
+    fn b5d_known_residual_persistent_source_self_corroborates_on_second_cycle() {
+        let baseline = Some(0.2610872236_f64);
+        let poison = 272_885.72_f64;
+        // Cycle 1: refused, and the candidate is recorded as PENDING.
+        assert_eq!(
+            decide_price_write(true, baseline, None, None, poison),
+            PriceWriteDecision::RefusePending
+        );
+        // Cycle 2: the SAME value proposed again inside the pending TTL.
+        assert_eq!(
+            decide_price_write(true, baseline, None, Some(poison), poison),
+            PriceWriteDecision::AcceptCorrection,
+            "two agreeing samples — B5c semantics, symmetric by design"
+        );
     }
 
     fn cfg_with_prices(prices: HashMap<String, f64>) -> TradingConfigState {

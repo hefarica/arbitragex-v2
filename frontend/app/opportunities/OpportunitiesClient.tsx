@@ -44,7 +44,11 @@ import { DegradedBanner } from "@/components/DegradedBanner";
 import { useUserPrefs } from "@/lib/user-prefs";
 // CARDS-NOTIONAL-01 — the notifier's gate is the SAME SSOT the card ladder
 // uses, so the toast can never announce a figure the card refuses to paint.
-import { decideOpportunityNotification } from "@/lib/opportunity-ledger";
+import {
+  decideOpportunityNotification,
+  selectGridRows,
+  sortRowsByNetDesc,
+} from "@/lib/opportunity-ledger";
 
 // Stable route identity for the card grid key. A re-detected route (same
 // chain + strategy + token pair + DEX path) must update the SAME card in place
@@ -66,6 +70,34 @@ const POLL_INTERVAL_MS = 4_000;
  *  (portado del motor de la página exchange, sin cambio de estilo). */
 const VISIBLE_CAP = 60;
 
+/** Declared-reason breakdown for the gate-D banner, e.g.
+ *  "spread_zero_equilibrium 12 · non_positive_profit 3". Pure; counts only. */
+function reasonBreakdown(rows: OmniOpportunity[]): string {
+  const counts = new Map<string, number>();
+  for (const r of rows) {
+    const key = r.rejection_reason ?? "sin_razon";
+    counts.set(key, (counts.get(key) ?? 0) + 1);
+  }
+  return Array.from(counts.entries())
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 4)
+    .map(([k, n]) => `${k} ${n}`)
+    .join(" · ");
+}
+
+/** Human label for the lookback selector. */
+const WINDOW_CHOICES: Array<{ seconds: number; label: string }> = [
+  { seconds: 300, label: "5 min" },
+  { seconds: 900, label: "15 min" },
+  { seconds: 3600, label: "1 h" },
+  { seconds: 21600, label: "6 h" },
+  { seconds: 86400, label: "24 h" },
+];
+
+function windowLabel(seconds: number): string {
+  return WINDOW_CHOICES.find((w) => w.seconds === seconds)?.label ?? `${seconds}s`;
+}
+
 export type OpportunitiesSnapshot = {
   opportunities: OmniOpportunity[];
   serverTime: string | null;
@@ -74,8 +106,21 @@ export type OpportunitiesSnapshot = {
 
 export default function OpportunitiesClient({
   initialSnapshot,
+  initialShowRejected = false,
+  initialWindowSeconds = 300,
+  initialRouteRep = "best_net",
 }: {
   initialSnapshot: OpportunitiesSnapshot;
+  /** SHOW-REJECTED-01: server-read deep link (`?show_rejected=1`) for the
+   *  "Mostrar rechazadas" toggle. Default OFF — the gate-D scope. */
+  initialShowRejected?: boolean;
+  /** WINDOW-01: server-read deep link (`?window_seconds=3600`) for the live
+   *  lookback, in seconds. Default 300 s — the api-server's own default, so the
+   *  behaviour is unchanged unless the operator widens it. */
+  initialWindowSeconds?: number;
+  /** ROUTE-REP-01: which row represents a route (`?route_rep=latest` opts out).
+   *  Default `best_net` — the gain is shown, not buried by a later detection. */
+  initialRouteRep?: "latest" | "best_net";
 }) {
   // ─── Omni-Store Integration ───────────────────────────────────────────────
   // Connect WebSocket stream to the store (replaces useOpportunitiesStream)
@@ -85,10 +130,18 @@ export default function OpportunitiesClient({
   // host-only admin session cookie, which would not travel cross-origin.
   const PUBLIC_EDGE_URL = getPublicEdgeBaseUrl();
   const [viableOnly, setViableOnly] = useState(false);
-  
+  // WINDOW-01 (operator order 2026-09-27): the profitable detections are
+  // REJECTED rows, and the canonical one (+1.7712 net) was 936 s old when it
+  // was invisible — outside the 5-minute live window, not hidden by a filter.
+  // The lookback is operator-controlled and rides the snapshot request; the
+  // store's vigency TTL follows the same value.
+  const [windowSeconds, setWindowSeconds] = useState<number>(initialWindowSeconds);
+
   useOmniOpportunities({
     viableOnly,
     initialOpportunities: initialSnapshot.opportunities,
+    maxAgeSeconds: windowSeconds,
+    routeRepresentative: initialRouteRep,
   });
 
   // Selectors from Omni-Store (SSOT)
@@ -122,7 +175,10 @@ export default function OpportunitiesClient({
   const [lastRefresh, setLastRefresh] = useState<Date | null>(
     initialSnapshot.serverTime ? new Date(initialSnapshot.serverTime) : null
   );
-  const [filters, setFilters] = useState<ExchangeFilters>(DEFAULT_FILTERS);
+  const [filters, setFilters] = useState<ExchangeFilters>(() => ({
+    ...DEFAULT_FILTERS,
+    showRejected: initialShowRejected,
+  }));
   const [cap, setCap] = useState<number>(VISIBLE_CAP);
 
   // ── R1 Mounted Snapshot Pattern: which source owns the grid ────────────────
@@ -350,7 +406,33 @@ export default function OpportunitiesClient({
     () => applyExchangeFilters(opportunities, filters),
     [opportunities, filters],
   );
-  const visible = useMemo(() => filtered.slice(0, cap), [filtered, cap]);
+  // REAL-LIVE-CARDS-SSOT-01: a trading card is not a detection shell. Rejected
+  // rows remain visible when they were genuinely computed; source failures stay
+  // diagnostics until the producer can calculate them.
+  // SHOW-REJECTED-01 (operator order 2026-09-27): the diagnostics are one toggle
+  // away instead of a bare count — same rows, same reasons, never a substitute
+  // figure. OFF ⇒ grid === real/live cards (unchanged behaviour).
+  const {
+    economic: economicCards,
+    inScope,
+    hiddenByGate: hiddenRejectedRows,
+    noData: noDataRows,
+    grid: gridRows,
+  } = useMemo(() => selectGridRows(filtered, filters.showRejected), [filtered, filters.showRejected]);
+  const declaredCount = noDataRows.length;
+  // ORDER-01 (operator order 2026-09-27): profit descending — the row with the
+  // gain is the first card, independent of WS arrival order or batch merge.
+  const orderedRows = useMemo(() => sortRowsByNetDesc(gridRows), [gridRows]);
+  const visible = useMemo(() => orderedRows.slice(0, cap), [orderedRows, cap]);
+
+  /** "Mostrar rechazadas" (operator order 2026-09-27). Turning it ON must also
+   *  release the viable-only narrowing (both the filter-object flag and the
+   *  stream flag), otherwise the rows it reveals are dropped before the grid. */
+  const toggleShowRejected = () => {
+    const next = !filters.showRejected;
+    setFilters({ ...filters, showRejected: next, viableOnly: false });
+    if (next) setViableOnly(false);
+  };
 
   // Familias presentes en el feed (motor del exchange, sin estilos atlas).
   const families = useMemo(() => {
@@ -574,6 +656,48 @@ export default function OpportunitiesClient({
           className="px-2.5 py-1 rounded-lg border border-border bg-muted text-foreground w-28"
           title="Minimum expected yield (USD)"
         />
+        {/* WINDOW-01: lookback del feed (max_age_seconds del api-server, clamp
+            [10s, 24h]). Las ganancias son rechazadas que expiran de la ventana
+            de 5 min: sin ampliarla, la fila +1.7712 no está en el wire. */}
+        <select
+          value={String(windowSeconds)}
+          onChange={(e) => setWindowSeconds(Number(e.target.value))}
+          data-testid="window-seconds"
+          className="px-2.5 py-1 rounded-lg border border-border bg-muted text-foreground"
+          title="Ventana de lookback del feed (max_age_seconds)"
+        >
+          {WINDOW_CHOICES.map((w) => (
+            <option key={w.seconds} value={String(w.seconds)}>
+              ventana {w.label}
+            </option>
+          ))}
+        </select>
+        {/* SHOW-REJECTED-01 (operator order 2026-09-27): paint the detections
+            that have no closed real/live ladder — each with its own recorded
+            reason. It reveals rows; it never substitutes a figure. */}
+        <button
+          type="button"
+          data-testid="toggle-show-rejected"
+          onClick={toggleShowRejected}
+          aria-pressed={filters.showRejected}
+          className={`px-2.5 py-1 rounded-lg border font-semibold transition-colors ${
+            filters.showRejected
+              ? "bg-primary/10 border-primary/40 text-primary hover:bg-primary/20"
+              : "bg-muted border-border text-muted-foreground hover:bg-accent"
+          }`}
+          title={
+            filters.showRejected
+              ? "Mostrando TODAS las detecciones (rechazadas / sin economía computada incluidas) — click para volver a solo real/live"
+              : "Mostrar rechazadas: pinta también las detecciones rechazadas o sin economía computada, con su razón real"
+          }
+        >
+          {filters.showRejected ? (
+            <Eye size={12} className="inline align-[-2px]" />
+          ) : (
+            <EyeOff size={12} className="inline align-[-2px]" />
+          )}{" "}
+          Mostrar rechazadas
+        </button>
         <span className={`px-2.5 py-1 rounded-full border font-bold ${
           modeLabel === "paper"
             ? "bg-info/10 border-info/40 text-info"
@@ -650,6 +774,45 @@ export default function OpportunitiesClient({
           Exit animations retained DOM nodes for 250ms every poll; with 200 live
           cards that accumulated nodes/memory. Items still animate on enter via
           motion.div initial/animate. */}
+      {(hiddenRejectedRows.length > 0 || declaredCount > 0) && (
+        <div className="mb-3 flex flex-wrap items-center gap-2 rounded-lg border border-border bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
+          <span>
+            <span className="font-semibold text-foreground">Gate D</span>
+            {": se muestran las rechazadas con economía computada y net > 0"}
+            {hiddenRejectedRows.length > 0
+              ? ` · ${hiddenRejectedRows.length} rechazadas CON datos y net ≤ 0 ` +
+                `${filters.showRejected ? "se están mostrando" : "quedan fuera"} ` +
+                `(${reasonBreakdown(hiddenRejectedRows)})`
+              : ""}
+            {declaredCount > 0
+              ? ` · ${declaredCount} detecciones sin economía computada, declaradas y nunca rellenadas con supuestos ` +
+                `(${reasonBreakdown(noDataRows)})`
+              : ""}
+          </span>
+          <button
+            type="button"
+            data-testid="banner-toggle-show-rejected"
+            onClick={toggleShowRejected}
+            className="px-2 py-1 rounded border border-border bg-background hover:bg-accent transition-colors text-xs font-semibold"
+          >
+            {filters.showRejected ? "Aplicar gate D" : "Mostrar rechazadas"}
+          </button>
+        </div>
+      )}
+
+      {/* Gate D con la grilla vacía: se dice POR QUÉ, con los números reales,
+          en vez de dejar que el silencio parezca un sistema caído. */}
+      {opportunities.length > 0 && gridRows.length === 0 && (
+        <div className="mb-6 rounded-xl border border-border bg-muted/40 px-4 py-3 text-sm text-muted-foreground">
+          Gate D activo: en la ventana de <span className="text-foreground font-semibold">{windowLabel(windowSeconds)}</span>{" "}
+          no hay filas viables ni rechazadas con net &gt; 0.
+          {hiddenRejectedRows.length > 0
+            ? ` ${hiddenRejectedRows.length} rechazadas con datos quedan fuera por net ≤ 0.`
+            : ""}
+          {declaredCount > 0 ? ` ${declaredCount} detecciones sin economía computada.` : ""}{" "}
+          Usá «Mostrar rechazadas» para inspeccionarlas o ampliá la ventana.
+        </div>
+      )}
       <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
         {visible.map((opp) => (
           <OpportunityTradeCard
@@ -666,11 +829,12 @@ export default function OpportunitiesClient({
       </div>
 
       {/* Motor de memoria (portado del exchange): revelar lo diferido + cargar más */}
-      {filtered.length > visible.length && (
+      {orderedRows.length > visible.length && (
         <div className="mt-6 flex flex-col items-center gap-2">
           <p className="text-xs text-muted-foreground">
             Showing <span className="text-foreground font-semibold">{visible.length}</span> of{" "}
-            <span className="text-foreground font-semibold">{filtered.length}</span> matching — the rest are
+            <span className="text-foreground font-semibold">{orderedRows.length}</span>{" "}
+            {filters.showRejected ? "detecciones" : "real/live cards"} — the rest are
             deferred (memory-discipline cap).
           </p>
           <button
@@ -678,7 +842,7 @@ export default function OpportunitiesClient({
             onClick={() => setCap((c) => c + VISIBLE_CAP)}
             className="flex items-center gap-2 px-3 py-1.5 rounded-lg border border-border bg-muted hover:bg-accent transition-colors text-xs font-semibold"
           >
-            <ChevronDown size={12} /> Show {Math.min(VISIBLE_CAP, filtered.length - visible.length)} more
+            <ChevronDown size={12} /> Show {Math.min(VISIBLE_CAP, orderedRows.length - visible.length)} more
           </button>
         </div>
       )}
