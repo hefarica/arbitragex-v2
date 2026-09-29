@@ -409,12 +409,31 @@ impl HttpRpcPool {
     /// sorts behind every clean Healthy entry (the selection weight: a
     /// recently-429ing provider is only chosen when it is the only Healthy
     /// option); if none Healthy, lowest EWMA latency among Degraded; never
-    /// Open.
+    /// Open — SALVO el caso de abajo.
+    ///
+    /// QUOTE-LOCKOUT-01 (2026-09-29, incidente medido en producción): cuando
+    /// TODOS los proveedores están `Open`, esta función devolvía `AllUnhealthy`
+    /// y **ninguna petición se intentaba nunca** ⇒ ningún éxito podía observarse
+    /// ⇒ el breaker no cerraba JAMÁS. El pool quedaba en un bloqueo permanente
+    /// que sólo un reinicio rompía. Medido: 10 horas seguidas con 0,0 % de
+    /// cotizaciones no cacheadas (`arbx_v3_quote_total`, ventanas de 10 min) con
+    /// apenas 128 errores de transporte en 6 h — el searcher no estaba fallando,
+    /// había dejado de intentar — y recuperación instantánea a 80-85 % al
+    /// reiniciar (deploy).
+    ///
+    /// Ahora, si no hay ningún candidato sano, se fuerza UNA sonda *half-open*
+    /// sobre el proveedor abierto de menor latencia: al menos se intenta, y el
+    /// éxito cierra el circuito (el camino `report_success_after_half_open_...`
+    /// ya existía, pero era inalcanzable sin un intento). `AllUnhealthy` se
+    /// reserva para el pool sin proveedores; `BudgetExhausted` (throttle local
+    /// deliberado del operador) mantiene su precedencia.
     pub fn pick(&self) -> Result<Arc<HttpEntry>, PoolError> {
         let now = Instant::now();
         let mut best_clean: Option<&Arc<HttpEntry>> = None;
         let mut best_sticky: Option<&Arc<HttpEntry>> = None;
         let mut best_degraded: Option<&Arc<HttpEntry>> = None;
+        // QUOTE-LOCKOUT-01: candidato para la sonda forzada si todo está Open.
+        let mut best_open: Option<&Arc<HttpEntry>> = None;
         // WO-13: a pick failure where at least one entry was blocked by its
         // client-side budget reports BudgetExhausted (not AllUnhealthy) so
         // callers can distinguish a local throttle from provider failures.
@@ -431,7 +450,16 @@ impl HttpRpcPool {
                 continue;
             }
             match e.snapshot_state() {
-                ProviderState::Open => continue,
+                ProviderState::Open => {
+                    let lat = e.snapshot_latency_ms();
+                    if best_open
+                        .map(|b| lat < b.snapshot_latency_ms() || b.snapshot_latency_ms() == 0)
+                        .unwrap_or(true)
+                    {
+                        best_open = Some(e);
+                    }
+                    continue;
+                }
                 ProviderState::Healthy => {
                     let lat = e.snapshot_latency_ms();
                     let better = |b: Option<&Arc<HttpEntry>>| {
@@ -458,7 +486,9 @@ impl HttpRpcPool {
             }
         }
 
-        match best_clean.or(best_sticky).or(best_degraded) {
+        // QUOTE-LOCKOUT-01: `best_open` entra en la cadena como ÚLTIMO recurso —
+        // es la sonda half-open que rompe el bloqueo permanente.
+        match best_clean.or(best_sticky).or(best_degraded).or(best_open) {
             Some(e) => Ok(Arc::clone(e)),
             None if budget_blocked => Err(PoolError::BudgetExhausted(self.chain_id)),
             None => Err(PoolError::AllUnhealthy(self.chain_id)),
@@ -1448,13 +1478,35 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn pick_returns_all_unhealthy_when_only_open() {
+    async fn pick_forces_half_open_probe_when_all_providers_open() {
+        // QUOTE-LOCKOUT-01: antes esto devolvía AllUnhealthy y, al no intentar
+        // nada, NINGÚN éxito podía observarse ⇒ el breaker no cerraba nunca
+        // (medido: 10 h al 0,0 % de cotizaciones hasta reiniciar). Ahora se
+        // devuelve exactamente UN proveedor abierto para sondearlo.
         let pool = HttpRpcPool {
             chain_id: 1,
             entries: vec![dummy_entry("a"), dummy_entry("b")],
         };
         pool.entries[0].set_state(ProviderState::Open);
         pool.entries[1].set_state(ProviderState::Open);
+
+        let probe = pool.pick().expect("debe forzar una sonda, no fallar");
+        assert!(
+            probe.name == "a" || probe.name == "b",
+            "la sonda debe salir del pool, no inventarse un proveedor"
+        );
+        // Determinista: dos picks seguidos eligen el mismo.
+        let again = pool.pick().expect("segunda sonda");
+        assert_eq!(probe.name, again.name);
+    }
+
+    #[tokio::test]
+    async fn pick_returns_all_unhealthy_when_pool_is_empty() {
+        // El único caso que sigue siendo AllUnhealthy: no hay proveedores.
+        let pool = HttpRpcPool {
+            chain_id: 1,
+            entries: vec![],
+        };
         let err = pool.pick().unwrap_err();
         assert!(matches!(err, PoolError::AllUnhealthy(1)));
     }
