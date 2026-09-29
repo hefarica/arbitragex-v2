@@ -1297,10 +1297,51 @@ impl PriceWorker {
         prices: &HashMap<String, f64>,
     ) -> anyhow::Result<()> {
         let key = redis_token_prices_key(self.cfg.chain_id);
+        // PRICE-PLAUSIBILITY-WIRE-01 (audit 2026-09-29): this writer used to HSET
+        // every symbol with no sanity check — the ONLY one of the three writers of
+        // this hash with no guard. The others consult B5d's decision ladder; this
+        // one wrote unconditionally.
+        //
+        // Why it matters: this is the tier-0 writer (Chainlink anchors + free
+        // sources) feeding the same `arbx:token_prices:<chain>` hash the detector
+        // reads. A scale/decimal error in ANY source lands here unfiltered and
+        // contaminates every gross computation downstream. It already happened
+        // once: AAVE shipped as 161_339_420.31 against a real ~161 and SNX as
+        // 272_885.72 against ~0.27 — both exactly x1e6. Those two values are
+        // literally the fixtures of `is_plausible_price`'s own tests
+        // (shared-rs/src/price_oracle.rs:561,563), i.e. the guard was written for
+        // exactly this incident and then never wired into the writer that caused it.
+        //
+        // HONEST LIMIT (measured, not assumed): `is_plausible_price` needs a
+        // `prev`, and the published hash has a ~50 s TTL that `persist_prices`
+        // refreshes each cycle, so `prev` is normally present; after an expiry the
+        // hash reads empty and the first write per symbol is a first-ever write
+        // (accepted by design — see the guard's own doc, price_oracle.rs:394).
+        // This closes the "poisoned value keeps being accepted" path, not the
+        // "no reference exists yet" one. The latter needs B5d's long-lived
+        // baseline (`decide_price_write` / `baseline_value`), which has zero
+        // production callers today and is left as a separate, operator-visible
+        // step because refusing writes changes what the detector can see.
+        let published: HashMap<String, f64> = redis.hgetall(&key).await.unwrap_or_default();
+        let mut refused: Vec<&str> = Vec::new();
         // Pipeline: HSET each field then EXPIRE on the hash key.
         let mut pipe = redis::pipe();
         pipe.atomic();
         for (sym, price) in prices {
+            let prev = published.get(sym).copied();
+            if !shared_rs::price_oracle::is_plausible_price(prev, *price) {
+                refused.push(sym.as_str());
+                warn!(
+                    event = "price_worker.implausible_refused",
+                    chain_id = self.cfg.chain_id,
+                    symbol = %sym,
+                    prev = ?prev,
+                    candidate = %price,
+                    "price outside the plausible tick ratio vs the published value; \
+                     keeping the previous value (never persist a suspect price)"
+                );
+                continue;
+            }
             // Serialise as decimal string — `RedisCachedPriceOracle` parses it
             // back to f64 with `f64::from_str`. Avoids any locale issues.
             pipe.hset(&key, sym, format!("{}", price)).ignore();
@@ -1323,6 +1364,11 @@ impl PriceWorker {
                     "source": "price_worker",
                     "chain_id": self.cfg.chain_id,
                     "written": prices.len(),
+                    // PRICE-PLAUSIBILITY-WIRE-01: a suppressed write is a real
+                    // upstream event, so it is declared rather than silently
+                    // dropped. Additive field — the existing consumer reads
+                    // `written`/`chain_id` and re-reads the hash for data.
+                    "refused": refused.len(),
                 })
                 .to_string(),
             )
