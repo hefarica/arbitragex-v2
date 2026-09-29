@@ -362,6 +362,26 @@ jobs:
           # Thanos is started separately at [7c] AFTER the arbx-metrics bucket
           # exists — the sidecar's first-boot upload fails if the bucket is absent.
           # socket-proxy (api-server dependency) is started here explicitly.
+          # DEPLOY-DISK-GUARD-02 (2026-09-29, incidente medido): el guard de [1/9]
+          # poda ANTES de construir y exige 15 GB libres, pero un build --no-cache
+          # de 24 contenedores consume ~20 GB DURANTE el build. El 2026-09-29 el
+          # disco llegó a 0 bytes con el stack a medio construir y PostgreSQL
+          # entró en bucle de reinicio ("could not write lock file postmaster.pid:
+          # No space left on device"), dejando la API en `Created` y el deploy
+          # fallando en el paso SSH. Ahora se poda TAMBIÉN después de construir
+          # (las imágenes ya existen: la caché es peso muerto) y se exige espacio
+          # antes de levantar los contenedores.
+          FREE_GB=$(df -BG --output=avail / | tail -1 | tr -dc '0-9')
+          echo "[7a-bis/9] Post-build disk guard: free=${FREE_GB}GB — pruning build cache (images are already built)"
+          docker builder prune -af >/dev/null 2>&1 || true
+          docker image prune -f >/dev/null 2>&1 || true
+          FREE_GB=$(df -BG --output=avail / | tail -1 | tr -dc '0-9')
+          echo "    free=${FREE_GB}GB (after post-build prune)"
+          if [ "${FREE_GB:-0}" -lt 5 ]; then
+            echo "::error::DEPLOY-DISK-GUARD-02: only ${FREE_GB}GB free after the build (<5GB) — refusing to start the stack on a nearly-full disk (PostgreSQL cannot write postmaster.pid at 0 bytes). Free space, then re-run."
+            exit 1
+          fi
+
           docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" up -d --force-recreate --remove-orphans \
             postgres redis anvil socket-proxy \
             searcher-rs sim-ctl relays-client recon selector-api math-engine \
