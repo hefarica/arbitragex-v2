@@ -117,13 +117,12 @@ function summaryCells(opp: OmniOpportunity): Array<{
   // than a fixed field order. A ratio measured on the ladder's own notional is
   // bounded by that notional; a ratio borrowed from another producer is not.
   const roiPct =
-    ledger.basis === "simulated"
-      ? opp.simulated_roi_pct ?? opp.roi_pct ?? null
-      : opp.roi_pct ?? opp.simulated_roi_pct ?? null;
-  const roiIsSimulated =
-    ledger.basis === "simulated"
-      ? opp.simulated_roi_pct != null
-      : opp.roi_pct == null && opp.simulated_roi_pct != null;
+    ledger.basis === "canonical"
+      ? opp.economics?.roi_pct ?? opp.roi_pct ?? null
+      : ledger.basis === "simulated"
+        ? opp.simulated_roi_pct ?? null
+        : null;
+  const roiIsSimulated = ledger.basis === "simulated" && roiPct != null;
   const bps = roiPct != null ? `${roiIsSimulated ? "~" : ""}${(roiPct * 100).toFixed(0)}` : null;
   // CARDS-NOTIONAL-02 (2026-09-27) — the `in` cell stops hiding a computed
   // notional.
@@ -224,30 +223,41 @@ function summaryCells(opp: OmniOpportunity): Array<{
     },
     cell(
       "in",
-      // CARDS-NOTIONAL-01/02: a notional is published with the `~` SIM mark
-      // whenever the forward-sim computed one, and without the mark only when the
-      // gross shown beside it can be attributed to that same notional — checked
-      // with the searcher's OWN `SANITY_PROFIT_MULT_OF_CAP` (5×) bound rather
-      // than a threshold re-invented here. On the live feed that bound is what
-      // separates a legitimate «in $2688.25 / Gross $52.14» pair from the
-      // `in $0.00` beside `Gross $1.47M` the operator photographed; in the
-      // latter case the figure is still SHOWN — marked as the SIM's own notional
-      // — and the machine reason travels in the `title`.
-      notionalUsd != null
-        ? `${notionalAttributable ? "" : "~"}${usd(notionalUsd)}`
-        : null,
-      notionalUsd == null
-        ? `amount_in_wei=${opp.amount_in_wei ?? "no emitido"} — sin precio no hay notional en USD (R8)`
-        : notionalAttributable
-          ? `amount_in_wei=${opp.amount_in_wei ?? "no emitido"} valorado al precio vivo — notional del ladder SIM (basis=${ledger.basis})`
-          : `CARDS-NOTIONAL-01/02: notional del forward-sim (amount_in_wei=${opp.amount_in_wei ?? "no emitido"}); el bruto mostrado (${opp.expected_profit_usd}) se midió en OTRO tamaño (>${GROSS_OVER_PRINCIPAL_SANITY_MULT}× este principal) — '~' marca el origen y el ladder no publica principal`,
+      // CARDS-NOTIONAL-01/02: the notional published here is the CLOSED ladder's
+      // own principal (`ledger.principal_usd`) whenever it is verifiable — the
+      // exact size the `Gross` cell beside it was measured at. `buildLedger`
+      // returns `principal_usd: null` for the case this cell used to hide: a gross
+      // measured at ANOTHER size (the `in $0.00` beside `Gross $1.47M` the
+      // operator photographed). main rendered the dash there; this fix shows the
+      // forward-sim's own notional instead, marked `~` unless the searcher's gross
+      // is attributable to it under the searcher's OWN
+      // `SANITY_PROFIT_MULT_OF_CAP` (5×) bound rather than a threshold
+      // re-invented here. The two surfaces stay separated: the LADDER never
+      // publishes a principal beside a gross of another size, and the GRID never
+      // hides a figure the forward-sim did compute — the machine reason (the two
+      // sizes, the 5× bound) travels in the `title`. R8: an absent notional keeps
+      // its dash, never a fabricated 0.
+      ledger.principal_usd != null
+        ? usd(ledger.principal_usd)
+        : notionalUsd != null
+          ? `${notionalAttributable ? "" : "~"}${usd(notionalUsd)}`
+          : null,
+      ledger.principal_usd != null
+        ? ledger.basis === "canonical"
+          ? `economics.amount_in_usd del sizing kernel; amount_in_wei=${opp.economics?.amount_in_wei ?? opp.amount_in_wei ?? "no emitido"}`
+          : `simulated_amount_in_usd del mismo forward-sim (basis=${ledger.basis})`
+        : notionalUsd == null
+          ? `sin principal verificable para el basis=${ledger.basis} (R8)`
+          : notionalAttributable
+            ? `simulated_amount_in_usd del forward-sim valorado al precio vivo (amount_in_wei=${opp.amount_in_wei ?? "no emitido"}) — el ladder no publica principal (basis=${ledger.basis})`
+            : `CARDS-NOTIONAL-01/02: notional del forward-sim (amount_in_wei=${opp.amount_in_wei ?? "no emitido"}); el bruto mostrado (${opp.expected_profit_usd}) se midió en OTRO tamaño (>${GROSS_OVER_PRINCIPAL_SANITY_MULT}× este principal) — '~' marca el origen y el ladder no publica principal`,
     ),
     cell(
       "Gross",
-      opp.expected_profit_usd != null ? usd(opp.expected_profit_usd) : null,
-      ledger.basis === "simulated"
-        ? "simulated_gross_usd (bruto del ladder SIM, mismo notional que `in`)"
-        : "expected_profit_usd — bruto del searcher (dex_engine fast-filter) en SU propio tamaño; sin notional en el wire (CARDS-NOTIONAL-01)",
+      ledger.gross_usd != null ? usd(ledger.gross_usd) : null,
+      ledger.basis === "canonical"
+        ? "economics.gross_profit_usd del searcher al mismo sized notional que `in`"
+        : "simulated_gross_usd del mismo forward-sim",
     ),
     cell(
       "Net",
@@ -258,14 +268,12 @@ function summaryCells(opp: OmniOpportunity): Array<{
       // quiet dash here while the same card showed `~$x SIM` two rows above —
       // one field, two precedence rules, i.e. a computed value losing to a
       // placeholder. Same rule here now, with the same `~` source mark.
-      opp.net_expected_profit_usd != null
-        ? usd(opp.net_expected_profit_usd)
-        : opp.simulated_net_profit_usd != null
-          ? `~${usd(opp.simulated_net_profit_usd)}`
-          : null,
-      opp.net_expected_profit_usd != null
-        ? "net_expected_profit_usd (spine canónico)"
-        : "simulated_net_profit_usd (TS forward-sim; canónico pendiente) — '~' marca el origen",
+      ledger.net_usd != null
+        ? `${ledger.basis === "simulated" ? "~" : ""}${usd(ledger.net_usd)}`
+        : null,
+      ledger.basis === "canonical"
+        ? "economics.net_profit_usd del searcher; mismo sized notional"
+        : "simulated_net_profit_usd del mismo forward-sim — '~' marca el origen",
     ),
     cell(
       "bps",
@@ -280,13 +288,9 @@ function summaryCells(opp: OmniOpportunity): Array<{
       // same notional as the cells it sits beside — `~1513332276940974` was
       // `net_sim / $0.0000045 × 100`, i.e. a ratio whose denominator the reader
       // could not see.
-      roiIsSimulated
-        ? `simulated_roi_pct ${(opp.simulated_roi_pct ?? 0).toFixed(4)}% × 100 — '~' marca el origen; medido sobre el notional del ladder (basis=${ledger.basis})`
-        : opp.roi_pct != null
-          ? `roi_pct ${opp.roi_pct.toFixed(4)}% × 100 — conversión de unidad, no un veredicto (basis=${ledger.basis})`
-          : opp.simulated_roi_pct != null
-            ? `simulated_roi_pct ${opp.simulated_roi_pct.toFixed(4)}% × 100 — '~' marca el origen (canónico pendiente)`
-            : "roi_pct no computado (R8)",
+      roiPct != null
+        ? `${roiIsSimulated ? "simulated_roi_pct" : "economics.roi_pct"} ${roiPct.toFixed(4)}% × 100 — mismo basis=${ledger.basis}`
+        : "roi_pct no computado (R8)",
     ),
     cell(
       "Risk",
@@ -297,11 +301,9 @@ function summaryCells(opp: OmniOpportunity): Array<{
       "risk_score del wire (fracción 0-1, renderizada como %)",
     ),
     cell(
-      "Sim",
-      opp.simulated_net_profit_usd != null
-        ? `~${usd(opp.simulated_net_profit_usd)}`
-        : null,
-      "forward-sim net como VALOR — el wire no persiste veredicto PASS/FAIL de simulación (§79); PASS/FAIL solo vive en el target verdict",
+      "block",
+      opp.economics?.quote_block != null ? String(opp.economics.quote_block) : null,
+      "economics.quote_block — bloque real de la quote/reservas usada por el searcher",
     ),
     {
       // CARDS-QUIET-01: computed latency wins; absent goes QUIET.

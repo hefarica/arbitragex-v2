@@ -63,7 +63,7 @@ describe("OpportunitySummaryGrid (§36)", () => {
       "Net",
       "bps",
       "Risk",
-      "Sim",
+      "block",
       "latencia",
     ]) {
       expect(html).toContain(label);
@@ -75,8 +75,10 @@ describe("OpportunitySummaryGrid (§36)", () => {
     expect(html).toContain("$8.25"); // Net
     expect(html).toContain("12"); // bps = 0.12% × 100
     expect(html).toContain("34.0%"); // Risk
-    expect(html).toContain("$4500.00"); // in (simulated USD)
-    expect(html).toContain("~$7.90"); // Sim VALUE
+    // REAL-LIVE-CARDS-SSOT-01: el `in` sólo existe con principal verificable del
+    // basis renderizado; sin él la celda declara su ausencia (nunca un cero).
+    expect(html).toContain("sin principal verificable");
+    expect(html).toContain("economics.quote_block"); // celda block (reemplaza Sim)
   });
 
   it("honest nulls: uncomputed economics render the dash, never a zero", () => {
@@ -84,7 +86,7 @@ describe("OpportunitySummaryGrid (§36)", () => {
     const html = renderToStaticMarkup(
       React.createElement(OpportunitySummaryGrid, { opp }),
     );
-    for (const absent of ["Gross", "Net", "bps", "Risk", "Sim", "in"]) {
+    for (const absent of ["Gross", "Net", "bps", "Risk", "block", "in"]) {
       expect(html).toContain(absent);
     }
     // the dash cells carry the R8 titles
@@ -173,8 +175,9 @@ describe("OpportunitySummaryGrid (§36)", () => {
       React.createElement(OpportunitySummaryGrid, { opp }),
     );
     expect(html).toContain("$52.14"); // Gross — the computed value, not a dash
-    expect(html).toContain("$2688.25"); // in
-    expect(html).toContain("~$7.90"); // Sim
+    // `in` exige principal verificable del basis; sin él la celda es honesta.
+    expect(html).toContain("sin principal verificable");
+    expect(html).toContain("economics.quote_block"); // celda block
     expect(html).toContain("det-1"); // detector
     expect(html).toContain("7ms"); // latencia
     // No placeholder occupies a VALUE slot. Scoped to the value `<div>`s: the
@@ -208,21 +211,24 @@ describe("OpportunitySummaryGrid (§36)", () => {
     expect(html).toContain("$8.25");
     expect(html).toContain("12"); // bps
     expect(html).toContain("34.0%");
-    expect(html).toContain("$4500.00");
-    expect(html).toContain("~$7.90");
+    expect(html).toContain("sin principal verificable"); // `in` honesto sin principal
+    expect(html).toContain("economics.quote_block");
     expect(html).not.toContain(NOT_COMPUTED); // full data row never shows the placeholder
   });
 
-  it("§79: the Sim cell carries a VALUE, never a PASS/FAIL verdict", () => {
+  it("la celda `block` publica el quote_block del searcher, nunca un veredicto", () => {
+    // REAL-LIVE-CARDS-SSOT-01 sustituye la antigua celda `Sim` (proxy) por el
+    // `quote_block` REAL que el searcher usó. Sigue siendo un slot de VALOR: no
+    // admite palabras de veredicto.
     const opp = mapToOmniOpportunity(
       wire({ route_metadata: rm2hop, simulated_net_profit_usd: 3.2 }),
     );
     const html = renderToStaticMarkup(
       React.createElement(OpportunitySummaryGrid, { opp }),
     );
-    expect(html).toContain("~$3.20");
-    expect(html).toContain("el wire no persiste veredicto PASS/FAIL");
-    // no verdict words in the Sim value cell
+    expect(html).toContain("block");
+    expect(html).toContain("economics.quote_block");
+    // no verdict words in a value cell
     expect(html).not.toContain("PASS</div>");
   });
 

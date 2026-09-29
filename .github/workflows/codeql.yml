@@ -15,7 +15,16 @@ concurrency:
 jobs:
   analyze:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    # DEPLOY-GATE-FIX (2026-09-28, medido): con 30 min, `analyze (rust)` — que
+    # compila el workspace en release para el extractor — terminaba CANCELADO
+    # exactamente a los 30:00 (run 36444403710: 15:32:54 → 16:03:00). Como
+    # `codeql.yml` está en `scripts/ci/deploy-gates.json`, el gate de deploy exige
+    # una corrida EXITOSA del mismo SHA: un job cancelado bloqueaba el deploy
+    # ("Wait for all deployment gates: Failing after 30m" →
+    # "Deploy to VPS: Skipped") aunque el código estuviera verificado.
+    # El límite se sube para que el análisis pueda TERMINAR: el gate sigue
+    # existiendo y sigue bloqueando ante un fallo real de seguridad.
+    timeout-minutes: 90
     permissions:
       actions: read
       contents: read

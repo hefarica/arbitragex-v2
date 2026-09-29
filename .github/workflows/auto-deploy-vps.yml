@@ -123,13 +123,57 @@ jobs:
             exit 1
           fi
           cd "$DEPLOY_PATH"
-          echo "[-1/9] Disk guard (APT-GPG-02): pruning build cache and checking free space"
-          docker builder prune -f >/dev/null 2>&1 || true
+          echo "[-1/9] Disk guard (APT-GPG-02 + DEPLOY-DISK-GUARD-01): freeing build cache and checking free space"
+          # DEPLOY-DISK-GUARD-01 (2026-09-27, measured). This guard shipped with
+          # `prune -f`, which removes only DANGLING build cache. The cache that
+          # filled the disk was NOT dangling, so the guard freed nothing and the
+          # disk hit 100% twice in one hour (04:39Z and 05:45Z) with Postgres
+          # crash-looping on
+          #   FATAL: could not write lock file "postmaster.pid": No space left on device
+          # and every data route returning 500 (operator: "NO SE VE NADA").
+          # `-a` removes the WHOLE builder cache — 16.88 GB measured on the second
+          # occurrence — all of it rebuildable by definition, and this runs BEFORE
+          # the --no-cache build that regenerates it, so each deploy frees its own
+          # cache first instead of inheriting the previous one.
+          BEFORE_GB=$(df -BG --output=avail / | tail -1 | tr -dc '0-9')
+          docker builder prune -af >/dev/null 2>&1 || true
+          AFTER_GB=$(df -BG --output=avail / | tail -1 | tr -dc '0-9')
+          echo "    builder cache pruned: free ${BEFORE_GB}GB -> ${AFTER_GB}GB"
+          # Dangling images (no tag, no container) are pure build residue too.
+          docker image prune -f >/dev/null 2>&1 || true
           FREE_GB=$(df -BG --output=avail / | tail -1 | tr -dc '0-9')
-          echo "    free=${FREE_GB}GB"
+          echo "    free=${FREE_GB}GB (after image prune)"
+          # DEPLOY-DISK-GUARD-03 (orden del operador, 2026-09-29): el guard decía
+          # CUÁNTO espacio hay pero nunca DÓNDE se fue — y esa ceguera costó un
+          # incidente de disco 100%. `docker system df` desglosa imágenes /
+          # contenedores / volúmenes locales / caché de build. Es instrumentación
+          # pura (no cambia ninguna decisión) y queda en el log del run, que es lo
+          # único que sobrevive cuando el VPS se queda sin poder escribir.
+          echo "    docker system df (dónde está el espacio, antes de construir):"
+          docker system df 2>&1 | sed 's/^/      /' || true
           if [ "${FREE_GB}" -lt 15 ]; then
             echo "::error::APT-GPG-02: only ${FREE_GB}GB free (<15GB) — refusing to build on a full disk (the 2026-09-24 incident: disk 100% -> apt GPG invalid signature -> corrupted redis AOF). Stack stays on the previous release; free space first."
             exit 1
+          fi
+          # DEPLOY-DISK-GUARD-01: refusing to build does NOT resurrect a stack
+          # whose database is already crash-looping on a full disk — which is
+          # exactly the state the operator found. If the prune freed enough to
+          # write again, the database comes back BEFORE the build; if it does not
+          # recover, the deploy stops loudly instead of building on a dead DB.
+          if ! docker exec arbitragex-v2-postgres-1 pg_isready -U postgres >/dev/null 2>&1; then
+            echo "::warning::DEPLOY-DISK-GUARD-01: Postgres is not accepting connections after freeing ${BEFORE_GB}GB -> ${FREE_GB}GB — restarting it before the build"
+            docker start arbitragex-v2-postgres-1 >/dev/null 2>&1 || true
+            for _ in 1 2 3 4 5 6 7 8 9 10; do
+              if docker exec arbitragex-v2-postgres-1 pg_isready -U postgres >/dev/null 2>&1; then
+                echo "    postgres is accepting connections again"
+                break
+              fi
+              sleep 3
+            done
+            if ! docker exec arbitragex-v2-postgres-1 pg_isready -U postgres >/dev/null 2>&1; then
+              echo "::error::DEPLOY-DISK-GUARD-01: Postgres did not recover after freeing space. Refusing to build on a dead database (this is NOT a code regression)."
+              exit 1
+            fi
           fi
 
           # DEPLOY-WATCHDOG-RACE gate (GEN-CI-FAIL attempts 1+3, 2026-08-31):
@@ -326,6 +370,33 @@ jobs:
           # Thanos is started separately at [7c] AFTER the arbx-metrics bucket
           # exists — the sidecar's first-boot upload fails if the bucket is absent.
           # socket-proxy (api-server dependency) is started here explicitly.
+          # DEPLOY-DISK-GUARD-02 (2026-09-29, incidente medido): el guard de [1/9]
+          # poda ANTES de construir y exige 15 GB libres, pero un build --no-cache
+          # de 24 contenedores consume ~20 GB DURANTE el build. El 2026-09-29 el
+          # disco llegó a 0 bytes con el stack a medio construir y PostgreSQL
+          # entró en bucle de reinicio ("could not write lock file postmaster.pid:
+          # No space left on device"), dejando la API en `Created` y el deploy
+          # fallando en el paso SSH. Ahora se poda TAMBIÉN después de construir
+          # (las imágenes ya existen: la caché es peso muerto) y se exige espacio
+          # antes de levantar los contenedores.
+          FREE_GB=$(df -BG --output=avail / | tail -1 | tr -dc '0-9')
+          echo "[7a-bis/9] Post-build disk guard: free=${FREE_GB}GB — pruning build cache (images are already built)"
+          # DEPLOY-DISK-GUARD-03: el desglose ANTES/DESPUÉS de la poda es lo que
+          # permite verificar que la poda hizo lo que dice (y cuánto pesan las
+          # imágenes que el stack realmente necesita, para no podar de más).
+          echo "    docker system df — antes de podar:"
+          docker system df 2>&1 | sed 's/^/      /' || true
+          docker builder prune -af >/dev/null 2>&1 || true
+          docker image prune -f >/dev/null 2>&1 || true
+          FREE_GB=$(df -BG --output=avail / | tail -1 | tr -dc '0-9')
+          echo "    free=${FREE_GB}GB (after post-build prune)"
+          echo "    docker system df — después de podar:"
+          docker system df 2>&1 | sed 's/^/      /' || true
+          if [ "${FREE_GB:-0}" -lt 5 ]; then
+            echo "::error::DEPLOY-DISK-GUARD-02: only ${FREE_GB}GB free after the build (<5GB) — refusing to start the stack on a nearly-full disk (PostgreSQL cannot write postmaster.pid at 0 bytes). Free space, then re-run."
+            exit 1
+          fi
+
           docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" up -d --force-recreate --remove-orphans \
             postgres redis anvil socket-proxy \
             searcher-rs sim-ctl relays-client recon selector-api math-engine \

@@ -516,7 +516,10 @@ const NOT_PAINTED_BY_CARD: Array<keyof OmniOpportunity> = [
   "raw_net_expected_profit_usd",
   "raw_simulated_net_profit_usd",
   "paper_status",
-  "block_number",
+  // `block_number` is NOT listed here on purpose: main's comparator compares it
+  // (`p.block_number === n.block_number`, kept by this merge), and a field the
+  // comparator compares cannot be declared unpainted — the gate below asserts
+  // that changing it breaks memo equality, which is exactly what it now does.
   "bridge",
   "bridge_fee_usd",
   "chains_used",

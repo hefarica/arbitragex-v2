@@ -224,6 +224,27 @@ function simulatedCostRows(opp: OmniOpportunity): LedgerCostRow[] {
   return rows;
 }
 
+/** Real cost rows emitted by the Rust searcher economics object.
+ * DEX fees/slippage remain absent as separate numbers when the producer says
+ * they are already embedded in amount_out; absence here is NOT rewritten to 0.
+ */
+function canonicalCostRows(opp: OmniOpportunity): LedgerCostRow[] {
+  const e = opp.economics;
+  if (e == null || e.computation_status !== "computed") return [];
+  const rows: LedgerCostRow[] = [];
+  const add = (label: LedgerCostRowLabel, value: number | null | undefined) => {
+    const v = num(value);
+    if (v != null) rows.push({ label, value: v });
+  };
+  add("Gas", e.gas_usd);
+  add("LP fees", e.dex_fees_usd);
+  add("Decoherence (slippage)", e.slippage_usd);
+  add("TLS fee (flash)", e.flash_fee_usd);
+  add("Relay fee", e.bribe_usd);
+  add("Ops overhead", e.other_costs_usd);
+  return rows;
+}
+
 /**
  * Decide, per row, which closed arithmetic the ladder may paint.
  *
@@ -239,7 +260,45 @@ export function buildLedger(opp: OmniOpportunity): LedgerView {
   const simCostsTotal = num(opp.simulated_costs_total_usd);
   const principal = num(opp.simulated_amount_in_usd);
 
-  // ── Basis 1: the SIM triple ───────────────────────────────────────────────
+  // ── Basis 1: Rust searcher economics (REAL/LIVE SSOT) ────────────────────
+  // #711 now persists one computation object at the sized notional on both
+  // PASS and rejected-but-computed paths. It is therefore the first and only
+  // source allowed to define a REAL/LIVE trading card.
+  const e = opp.economics;
+  if (e?.computation_status === "computed") {
+    const ePrincipal = num(e.amount_in_usd);
+    const eGross = num(e.gross_profit_usd);
+    const eTotal = num(e.total_cost_usd);
+    const eNet = num(e.net_profit_usd);
+    if (ePrincipal != null && eGross != null && eTotal != null && eNet != null) {
+      const rows = canonicalCostRows(opp);
+      const rowSum = rows.reduce((a, r) => a + r.value, 0);
+      const closed = Math.abs(eNet - (eGross - eTotal)) <= LEDGER_TOLERANCE_USD;
+      const componentsClose = Math.abs(rowSum - eTotal) <= LEDGER_TOLERANCE_USD;
+      if (
+        ePrincipal > 0 &&
+        eTotal >= 0 &&
+        closed &&
+        componentsClose &&
+        grossIsAttributableToPrincipal(eGross, ePrincipal)
+      ) {
+        return {
+          basis: "canonical",
+          gross_usd: eGross,
+          total_cost_usd: eTotal,
+          net_usd: eNet,
+          principal_usd: ePrincipal,
+          cost_rows: rows,
+          quiet: false,
+          reason: null,
+        };
+      }
+    }
+  }
+
+  // ── Basis 2: legacy TS SIM triple ────────────────────────────────────────
+  // Kept only for legacy/detail compatibility. isRealLiveEconomicCard() below
+  // explicitly rejects this basis, so it can never qualify a live trading card.
   // Preferred because it is the only triple the wire PROVES to be one
   // computation at one notional, and the only one that carries that notional.
   let simReject: string | null = null;
@@ -300,19 +359,216 @@ export function buildLedger(opp: OmniOpportunity): LedgerView {
         net_usd: canonicalNet,
         principal_usd: null,
         cost_rows: [],
-        quiet: true,
+        quiet: false,
         reason:
-          `${DASH_REASON_PREFIX}: ladder shown on the searcher's own (gross, net) pair ` +
+          `${DASH_REASON_PREFIX} (published): searcher's own (gross, net) pair ` +
           `— principal not rendered (no notional published for it)` +
           (simReject != null ? `; simulated ladder suppressed: ${simReject}` : ""),
       };
     }
   }
 
+  // ── OPERATOR ORDER 2026-09-27 (verbatim): "QUITA EL MALDITO RENDER QUE ESCONDE
+  // LOS NUMEROS." ─────────────────────────────────────────────────────────────
+  // This tail used to silence the whole capital path whenever no basis closed.
+  // Nothing that exists on the wire may be withheld: publish every figure that
+  // is present, labelled with the reason the ladder does not close. Only a row
+  // with NO figure at all still goes quiet (R8: absence is a state).
+  const anyFigure = [
+    canonicalGross, canonicalNet, simGross, simNet, simCostsTotal, principal,
+  ].some((v) => v != null);
+  if (anyFigure) {
+    const rows = simulatedCostRows(opp);
+    const derivedTotal =
+      simCostsTotal ??
+      (canonicalGross != null && canonicalNet != null ? canonicalGross - canonicalNet : null);
+    return {
+      basis: simGross != null || simNet != null ? "simulated" : "canonical",
+      gross_usd: canonicalGross ?? simGross,
+      total_cost_usd: derivedTotal,
+      net_usd: canonicalNet ?? simNet,
+      principal_usd: principal,
+      cost_rows: rows,
+      quiet: false,
+      reason:
+        `${DASH_REASON_PREFIX} (published, ladder not closed): ` +
+        `${simReject ?? "no closed triple on the wire"}`,
+    };
+  }
   return quiet(
     simReject ??
       "no closed (gross, net, cost) triple on the wire for this row",
   );
+}
+
+/** Strict trading-card gate.
+ * A FAIL/rejected row is welcome when the searcher actually computed it.
+ * Partial/error rows remain diagnostics until their source can produce a quote.
+ */
+export function isRealLiveEconomicCard(opp: OmniOpportunity): boolean {
+  if (opp.economics?.computation_status !== "computed") return false;
+  const ledger = buildLedger(opp);
+  return (
+    ledger.basis === "canonical" &&
+    ledger.principal_usd != null &&
+    ledger.gross_usd != null &&
+    ledger.total_cost_usd != null &&
+    ledger.net_usd != null
+  );
+}
+
+/**
+ * Operator order 2026-09-27: the grid is ordered by PROFIT DESCENDING — the row
+ * that makes money sits first, whatever the arrival order of the WebSocket
+ * stream or of a snapshot batch was. The wire's own `order=profit_usd` cannot
+ * be relied on for the grid: the WS path and the batch merge deliver rows in
+ * arrival order, so the ordering has to be decided where the grid is built.
+ *
+ * Pure: returns a NEW array, never mutates the input. Ties break on the most
+ * recent detection and then on the route id, so the order is deterministic and
+ * two identical polls cannot shuffle the cards.
+ */
+export function sortRowsByNetDesc(rows: OmniOpportunity[]): OmniOpportunity[] {
+  const net = (opp: OmniOpportunity): number => {
+    const v = netOf(opp);
+    return v != null && Number.isFinite(v) ? v : Number.NEGATIVE_INFINITY;
+  };
+  return [...rows].sort((a, b) => {
+    const netA = net(a);
+    const netB = net(b);
+    if (netA !== netB) return netB - netA;
+    const tA = Date.parse(String(a.detected_at ?? "")) || 0;
+    const tB = Date.parse(String(b.detected_at ?? "")) || 0;
+    if (tA !== tB) return tB - tA;
+    return String(a.id ?? "").localeCompare(String(b.id ?? ""));
+  });
+}
+
+/**
+ * Does this row carry a COMPUTED economics object with figures on it?
+ *
+ * This is what separates a rejection the searcher actually PRICED (its gross /
+ * cost / net are real numbers, rejection included) from a detection whose
+ * producer never produced a number at all (`error` / `partial`, e.g.
+ * `v3_quote_unavailable`). Operator order 2026-09-27 (verbatim): "las mostrar
+ * rechazadas las muestra SIN DATOS > 0, esas [con datos] son las que deben
+ * mostrarse" — the data-carrying rejections are the ones to paint.
+ */
+export function hasComputedFigures(opp: OmniOpportunity): boolean {
+  const e = opp.economics;
+  if (e == null || e.computation_status !== "computed") return false;
+  return (
+    num(e.amount_in_usd) != null ||
+    num(e.gross_profit_usd) != null ||
+    num(e.total_cost_usd) != null ||
+    num(e.net_profit_usd) != null
+  );
+}
+
+/** Net for the profit filter: canonical economics first, then the wire pair,
+ *  then the SIM triple — the same precedence every card cell already uses. */
+export function netOf(opp: OmniOpportunity): number | null {
+  const e = opp.economics;
+  return (
+    num(e?.net_profit_usd) ??
+    num(opp.net_expected_profit_usd) ??
+    num(opp.simulated_net_profit_usd)
+  );
+}
+
+/** A row the pipeline itself marked as a rejection (either lifecycle status or
+ *  an explicit reason — the same union the api-server's paper_status uses). */
+export function isRejectedRow(opp: OmniOpportunity): boolean {
+  return (
+    opp.status === "rejected" ||
+    opp.status === "failed" ||
+    (opp.rejection_reason != null && opp.rejection_reason !== "")
+  );
+}
+
+/**
+ * OPERATOR ORDER 2026-09-27 (verbatim): "APLICA LA D" —
+ *
+ *   WHERE (rejection_reason IS NULL
+ *          OR (computation_status = 'computed' AND net_amount > 0))
+ *
+ * A rejection is welcome on the grid when the searcher actually PRICED it and
+ * the arithmetic came out POSITIVE (the `gas_floor_breach:own_capital` row with
+ * net +1.7712 is the canonical case). A rejection priced NEGATIVE (e.g.
+ * `non_positive_profit` at −68.08) or never priced at all (`error`:
+ * `v3_quote_unavailable`) is not a gain and stays out of the default view —
+ * still counted, still listed in the audit trail, one toggle away.
+ *
+ * Non-rejected rows are always in scope (the clause's `rejection_reason IS
+ * NULL` arm); this function never invents figures — it only classifies.
+ */
+export function inDefaultScope(opp: OmniOpportunity): boolean {
+  if (!isRejectedRow(opp)) return true;
+  if (!hasComputedFigures(opp)) return false;
+  const net = netOf(opp);
+  return net != null && net > 0;
+}
+
+/**
+ * Grid scope for the live card grid — operator orders 2026-09-27:
+ *   · "agregar un toggle 'Mostrar rechazadas'"
+ *   · "las mostrar rechazadas las muestra sin datos > 0, esas son las que deben
+ *     mostrarse"
+ *   · "APLICA LA D" (rejected rows only when computed AND net > 0)
+ *
+ * Buckets:
+ *   `economic`  — ladder closed on a real notional: real/live trading cards.
+ *   `inScope`   — the DEFAULT grid: every non-rejected row, plus the rejected
+ *                 rows with computed POSITIVE economics (gate D).
+ *   `withData`  — rejected rows the searcher priced but that the default scope
+ *                 leaves out (negative net) — revealed by the toggle.
+ *   `noData`    — detections with no computed figure at all (`error`/`partial`).
+ *                 NEVER painted as economic cards, never filled with an
+ *                 assumption; always DECLARED (counted, with reason, in the
+ *                 audit trail).
+ *
+ * OFF (default) ⇒ grid === the D scope. ON ⇒ every row that carries data
+ * (cards first), i.e. the pre-D view.
+ *
+ * Pure: no I/O, no mutation, input order preserved inside each bucket.
+ */
+export function selectGridRows(
+  filtered: OmniOpportunity[],
+  showRejected: boolean,
+): {
+  economic: OmniOpportunity[];
+  inScope: OmniOpportunity[];
+  withData: OmniOpportunity[];
+  hiddenByGate: OmniOpportunity[];
+  noData: OmniOpportunity[];
+  grid: OmniOpportunity[];
+} {
+  const economic: OmniOpportunity[] = [];
+  const inScope: OmniOpportunity[] = [];
+  const withData: OmniOpportunity[] = [];
+  const hiddenByGate: OmniOpportunity[] = [];
+  const noData: OmniOpportunity[] = [];
+  for (const opp of filtered) {
+    const isCard = isRealLiveEconomicCard(opp);
+    const hasData = isCard || hasComputedFigures(opp);
+    const inD = inDefaultScope(opp);
+    if (isCard) economic.push(opp);
+    if (hasData) withData.push(opp);
+    else noData.push(opp);
+    if (inD) inScope.push(opp);
+    else if (hasData) hiddenByGate.push(opp);
+  }
+  return {
+    economic,
+    inScope,
+    withData,
+    hiddenByGate,
+    noData,
+    // OFF ⇒ gate D (viable + rejected with computed net > 0).
+    // ON  ⇒ every row that carries data (the pre-D view); a row with NO figure
+    //       is never painted on either setting — it stays declared.
+    grid: showRejected ? withData : inScope,
+  };
 }
 
 // ── Notifier ────────────────────────────────────────────────────────────────

@@ -12,6 +12,9 @@ secrets/
 # Operator secrets SSOT workbook — NEVER commit (real credentials live here).
 *Secrets_Config.xlsx
 ArbitrageX_Secrets_Config.xlsx
+# Office lock files (~$name.xlsx) materialise while a workbook is open and are
+# pure noise in `git status` (AUDIT-2026-09-29 hygiene).
+~$*
 *.pem
 *.key
 *.jks
@@ -111,11 +114,29 @@ scripts/extract-skills.js
 .claude/skills/arbitragex-omega-supreme-agent/references/567-skills-catalog.md
 .env.enc
 ArbitrageX_Secrets_Config.xlsx
+# Office lock files (~$name.xlsx) materialise while a workbook is open and are
+# pure noise in `git status` (AUDIT-2026-09-29 hygiene).
+~$*
 # RU-2 — canonical math catalog XLSX is operator-local source of truth; only the
 # distilled cartridges/manifests/math_map.json is committed (scripts/gen_math_manifest.py).
 ArbitrageX_264_Cartridge_Math_Architecture*.xlsx
 .claude/settings.local.json
 .claude/settings.local.json.bak
+# AUDIT-2026-09-29 (SECRETS-TRACKED-01): .claude/settings.json is an OPERATOR-LOCAL
+# file (harness/LLM routing config incl. ANTHROPIC_AUTH_TOKEN). It was tracked and
+# therefore published in a PUBLIC repo with secret-scanning disabled. Never track it
+# again: the session-local counterpart above is already ignored for the same reason.
+.claude/settings.json
+.claude/settings.json.bak
+.claude/settings.json.pre-*.bak
+
+# AUDIT-2026-09-29 (SECRETS-TRACKED-01): .env.crucible is an OPERATOR-LOCAL testnet
+# env holding REAL explorer API keys (ETHERSCAN/ARBISCAN/POLYGONSCAN). The `.env.*`
+# rule above is neutralised for this path by an explicit `!` negation elsewhere in
+# history; ignoring it explicitly makes the intent unambiguous. Keep only a
+# placeholder template if one is needed.
+.env.crucible
+.env.venice
 
 # RunFullSyncCycle (FASE 2): operator credential manifests NEVER live in the repo
 # (env ARBX_CRED_MANIFEST points at a path outside the checkout). Defensive

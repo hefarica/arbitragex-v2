@@ -18,7 +18,11 @@
 //! ## R8 invariants
 //!
 //! - `gross_profit_usd = None` when ANY token cannot be priced.
-//! - `net_expected_profit_usd = None` always at this phase (evaluator fills later).
+//! - `net_expected_profit_usd = None` at this phase (evaluator fills later) —
+//!   EXCEPT on the measured-gross rejection path (ALWAYS-COMPUTE-03): when the
+//!   gross IS measured the row carries the CLOSED `computed` economics
+//!   (`amount_in`, gross, real costs, net, roi), so the net is the kernel-grade
+//!   figure instead of a gap.
 //! - `rejection_reason` is always `Some(...)` for rejected candidates.
 //! - `pool_address` on `RouteLeg` is always `Some(...)` (we know the address
 //!   from `PoolRef`).
@@ -176,7 +180,9 @@ impl DexEngine {
     /// ## R8 invariants
     ///
     /// - `gross_profit_usd = None` when either token cannot be priced.
-    /// - `net_expected_profit_usd = None` (always — evaluator fills later).
+    /// - `net_expected_profit_usd = None` (evaluator fills later) — except on the
+    ///   measured-gross rejection path, which carries the closed economics
+    ///   (ALWAYS-COMPUTE-03, see the module header).
     /// - `pool_address` on every `RouteLeg` is `Some(...)`.
     ///
     /// `cfg`: live operator config snapshot taken once per intent by the
@@ -216,6 +222,7 @@ impl DexEngine {
                         pool,
                         StrategyLabel::DexArbV2V2,
                         intent.observed_block(),
+                        intent,
                     );
                     candidates.push(StrategyCandidate {
                         label: StrategyLabel::DexArbV2V2,
@@ -290,9 +297,12 @@ impl DexEngine {
                     // B1 FIX (math-audit 2026-09-26): ONE NATIVE UNIT of token_in
                     // (10^decimals) — see the prefetch site above for the full
                     // rationale; the fixed 1e18 was a $1T notional for 6-dec tokens.
-                    let probe_amount = U256::from(10u128).pow(U256::from(
-                        canonical_token_decimals(intent.legs.first().map(|l| l.token_in)),
-                    ));
+                    // The cycle's entry token: denominates the probe principal
+                    // below AND resolves the live USD price for the
+                    // measured-gross economics stamped on this candidate.
+                    let token_in_opt = intent.legs.first().map(|l| l.token_in);
+                    let probe_amount =
+                        U256::from(10u128).pow(U256::from(canonical_token_decimals(token_in_opt)));
 
                     let a_is_v2 = matches!(
                         pool_a.protocol_type,
@@ -324,6 +334,7 @@ impl DexEngine {
                             pool_b,
                             label,
                             intent.observed_block(),
+                            intent,
                         );
                         candidates.push(StrategyCandidate {
                             label,
@@ -441,18 +452,73 @@ impl DexEngine {
                             pool_b,
                             label,
                             intent.observed_block(),
+                            intent,
                         );
-                        candidates.push(StrategyCandidate {
+                        // ALWAYS-COMPUTE (orden del operador 2026-09-27: "todos
+                        // sin excepcion deben tener sus calculos y el 100% de sus
+                        // valores, independiente que den o no ganancia").
+                        //
+                        // `SpreadZeroEquilibrium` NO es un dato ausente: es una
+                        // MEDICION — ambas patas cotizaron el mismo importe, asi
+                        // que el gross del ciclo es EXACTAMENTE cero. Se publica
+                        // como cero COMPUTADO (Some(0.0)), que es distinto de
+                        // "no computado" (None) y es lo que permite que la fila
+                        // siga el camino de economics y muestre su aritmetica
+                        // (costes reales, net negativo) en vez de quedar en guion.
+                        let computed_gross: Option<f64> = match v3_gross_usd {
+                            V3GrossOutcome::SpreadZeroEquilibrium => Some(0.0),
+                            _ => None,
+                        };
+                        let mut sc = StrategyCandidate {
                             label,
                             opportunity: opp,
                             candidate: cand,
                             route_plan: rp,
-                            gross_profit_usd: None,
+                            gross_profit_usd: computed_gross,
                             net_expected_profit_usd: None,
                             rejection_reason: Some(reason.to_owned()),
                             source_intent_hash: tx_hash,
                             base_strategy: None,
+                        };
+                        // ALWAYS-COMPUTE-03 (2026-09-27): publishing the measured
+                        // gross was necessary but NOT sufficient — the emit
+                        // boundary still stamped `economics_error(reason)` on this
+                        // row (`computation_status: "error"`, all figures null)
+                        // because the Opportunity carried no figures, so the card
+                        // rendered a MEASURED row as "not computed". A row whose
+                        // gross exists gets the CLOSED `computed` object here
+                        // (amount_in, gross, REAL costs, net, roi), built by the
+                        // shared economics builder from the same config oracle the
+                        // sizing kernel reads.
+                        //
+                        // Trigger = the measured gross itself (`Some(..)`, even
+                        // zero). Rows whose gross is `None` (no quote, catalog gap,
+                        // unpriced token) keep their honest diagnostic untouched.
+                        let measured_economics = computed_gross.and_then(|gross| {
+                            let cfg = cfg_opt.as_ref()?;
+                            let amount_in_usd =
+                                probe_amount_in_usd(probe_amount, token_in_opt, cfg)?;
+                            crate::economics::economics_from_measured_gross(
+                                &sc,
+                                probe_amount,
+                                amount_in_usd,
+                                gross,
+                                cfg,
+                            )
                         });
+                        if let Some(econ) = measured_economics {
+                            // The row's scalar fields are copied from the ONE
+                            // closed object, so the card, PG and the payload
+                            // cannot disagree; `amount_in_wei` records the
+                            // principal the gross was actually measured at (the
+                            // probe), replacing the 1e18 placeholder that
+                            // mis-scales every non-18-dec entry token.
+                            sc.opportunity.expected_profit_usd = econ.gross_profit_usd;
+                            sc.opportunity.net_expected_profit_usd = econ.net_profit_usd;
+                            sc.opportunity.amount_in_wei = probe_amount.to_string();
+                            sc.opportunity.economics = Some(econ);
+                        }
+                        candidates.push(sc);
                         continue;
                     }
 
@@ -466,6 +532,7 @@ impl DexEngine {
                         gross_profit_usd,
                         intent.amount_in,
                         intent.observed_block(),
+                        intent,
                     );
 
                     debug!(
@@ -557,31 +624,79 @@ impl DexEngine {
             return V3GrossOutcome::QuoteUnavailable;
         }
 
-        // Spread = |out_a - out_b| if both are quoting the same direction.
-        let spread = if out_a >= out_b {
-            out_a.saturating_sub(out_b)
-        } else {
-            out_b.saturating_sub(out_a)
+        // ── V3-CYCLE-GROSS-01 (2026-09-27): the CHAINED cycle identity ───────
+        //
+        // MEASURED DEFECT this replaces. The previous code compared two
+        // INDEPENDENT probes of the same size:
+        //
+        //     out_a = quote(pool_a, probe_amount)          // forward
+        //     out_b = quote(pool_b, probe_amount)          // forward, SAME input
+        //     spread = |out_a − out_b|                     // a VENUE PRICE GAP
+        //     gross  = spread / 1e18 × price(token_out)    // hardcoded scale
+        //
+        // A venue price gap is not a round-trip return: it ignores the return
+        // leg's price impact AND both fees, and `|out_a − out_b|` is largest
+        // exactly where one venue is broken (an empty or near-empty pool), which
+        // is why live rows carried `expected_profit_usd = 369_506_963_197.84`
+        // and `710_273.79750992` on principals of $1000 and $1 — a "profit" of
+        // 10^8 times the capital. The file's own note records the 6-decimals
+        // half of it as the "UNIT-SCALE (Bug $69M)".
+        //
+        // The V2/V2 path was already corrected to the chained identity
+        // (`v2_cycle_profit`, see its doc above); V3 kept the legacy form. This
+        // applies the SAME identity to V3:
+        //
+        //   buy where the probe returns MORE, then SELL the proceeds back on
+        //   the other venue, and measure the raw profit of that round trip in
+        //   token_in units (token_in → … → token_in), scaled by token_in's real
+        //   decimals and priced at token_in's live USD price.
+        //
+        // Cost: one extra quote (3 instead of 2). Only the orientation the
+        // forward probes already favour is chained — the other is dominated by
+        // construction, so no budget is spent on it.
+        let token_in = intent.legs.first().map(|l| l.token_in);
+        let token_out = intent.legs.first().map(|l| l.token_out);
+        let (Some(token_in), Some(token_out)) = (token_in, token_out) else {
+            // No intent direction → cannot chain a cycle (R8: refuse, never
+            // fall back to the venue gap).
+            return V3GrossOutcome::QuoteUnavailable;
         };
 
-        if spread.is_zero() {
-            // Both legs quoted an IDENTICAL amount out — the honest reading is
-            // an efficient market with no spread to capture, NOT a missing price.
+        // Buy on the venue the probe says is cheaper (more out for the same in).
+        let (buy_out, sell_pool) = if out_a >= out_b {
+            (out_a, pool_b)
+        } else {
+            (out_b, pool_a)
+        };
+        let returned = match self
+            .get_pool_quote_dir(sell_pool, buy_out, projector, token_out)
+            .await
+        {
+            Ok(v) => v,
+            Err(V3QuoteLegError::V3(label)) => return V3GrossOutcome::V3Labeled(label),
+            Err(V3QuoteLegError::ReservesMiss) => return V3GrossOutcome::QuoteUnavailable,
+        };
+
+        // Raw profit of the round trip, in token_in units. U256 saturates: a
+        // cycle that does not pay returns zero (computed-and-zero, which
+        // `compute_gross_usd` maps to None per R8) — never a negative gross and
+        // never a venue gap passed off as a return.
+        let profit_units = returned.saturating_sub(probe_amount);
+        if profit_units.is_zero() {
+            // No capturable spread at this size: either the venues agree after
+            // fees and impact, or the cycle loses money. Both are the honest
+            // "no positive profit here".
             return V3GrossOutcome::SpreadZeroEquilibrium;
         }
 
-        // Price by the ACTUAL denomination token (token_out), NOT a blanket
-        // base_token_price_usd — same fix as compute_gross_usd (root 1A). The
-        // prior code returned None for ALL V3 pairs when base_token_price_usd=0,
-        // causing the no_price_oracle pre-rejection flood (45/62 pools are V3).
-        let spread_f64 = u256_to_f64_lossy(spread) / 1e18_f64;
-        let token_out = intent.legs.first().map(|l| l.token_out);
-        let Some(price_usd) =
-            canonical_token_price_usd(token_out, cfg.base_token_price_usd, &cfg.token_prices_usd)
-        else {
-            return V3GrossOutcome::NoTokenPrice;
-        };
-        V3GrossOutcome::Usd(spread_f64 * price_usd)
+        // Denomination: a cycle opens AND closes in token_in, so the profit is
+        // token_in raw units. This replaces the hardcoded `/1e18` with the
+        // token's real decimals (18 for WETH/DAI, 6 for USDC/USDT, 8 for WBTC)
+        // and prices it at token_in's live USD price.
+        match compute_gross_usd(&profit_units, cfg_opt, Some(token_in)) {
+            Some(v) => V3GrossOutcome::Usd(v),
+            None => V3GrossOutcome::NoTokenPrice,
+        }
     }
 
     /// Get amount_out for `probe_amount` of token_in from a V3 pool using
@@ -602,10 +717,28 @@ impl DexEngine {
         projector: &StateProjector,
         intent: &RouteIntent,
     ) -> Result<U256, V3QuoteLegError> {
+        let token_in = intent.legs.first().map(|l| l.token_in).unwrap_or_default();
+        self.get_pool_quote_dir(pool, probe_amount, projector, token_in)
+            .await
+    }
+
+    /// V3-CYCLE-GROSS-01: quote `amount` through `pool` in the direction implied
+    /// by an EXPLICIT `token_in`, not by the intent's first leg.
+    ///
+    /// The chained-cycle identity needs the RETURN leg (token_out → token_in),
+    /// which is the opposite direction of the intent's first leg — deriving the
+    /// direction from the intent (as the original helper did) can only ever
+    /// quote the forward leg.
+    async fn get_pool_quote_dir(
+        &self,
+        pool: &PoolRef,
+        amount: U256,
+        projector: &StateProjector,
+        token_in: Address,
+    ) -> Result<U256, V3QuoteLegError> {
         // V3 pools: virtual quote via state_projector (checked — label preserved).
         if matches!(pool.protocol_type, ProtocolType::V3) {
-            let intent_token_in = intent.legs.first().map(|l| l.token_in).unwrap_or_default();
-            let zero_for_one = intent_token_in == pool.token0 || intent_token_in == Address::zero();
+            let zero_for_one = token_in == pool.token0 || token_in == Address::zero();
             let sp_pool = crate::state_projector::PoolRef {
                 address: pool.address,
                 token0: pool.token0,
@@ -613,7 +746,7 @@ impl DexEngine {
                 fee_bps: pool.fee_bps,
             };
             projector
-                .project_v3_quote_checked(&sp_pool, probe_amount, zero_for_one)
+                .project_v3_quote_checked(&sp_pool, amount, zero_for_one)
                 .await
                 .map(|q| q.amount_out)
                 .map_err(|e| V3QuoteLegError::V3(e.as_label()))
@@ -628,9 +761,18 @@ impl DexEngine {
             let Some((r0, r1)) = self.reserves_cache.get(&pool.address).await else {
                 return Err(V3QuoteLegError::ReservesMiss);
             };
-            let (r_in, r_out) = orient_reserves((r0, r1), pool, intent);
+            // Orientation from the EXPLICIT token_in (same rule as
+            // `orient_reserves`, kept local so both directions are expressible).
+            let (r_in, r_out) = if token_in == pool.token1
+                && token_in != Address::zero()
+                && token_in != pool.token0
+            {
+                (r1, r0)
+            } else {
+                (r0, r1)
+            };
             let fee = pool.fee_bps.unwrap_or(30);
-            Ok(amm_math::v2_amount_out(probe_amount, r_in, r_out, fee))
+            Ok(amm_math::v2_amount_out(amount, r_in, r_out, fee))
         }
     }
 }
@@ -796,6 +938,30 @@ fn compute_gross_usd(
     Some(spread_f64 * price_usd)
 }
 
+/// ALWAYS-COMPUTE-03 (2026-09-27): USD value of the probe PRINCIPAL that a
+/// measured engine gross belongs to.
+///
+/// Same two real sources `compute_gross_usd` already uses for the gross itself
+/// — the canonical decimals table ([`canonical_token_decimals`], immutable
+/// protocol constants) and the live price lookup
+/// ([`canonical_token_price_usd`]: Redis-merged `token_prices_usd`, WETH
+/// `base_token_price_usd` fallback). `None` when the entry token is not priced
+/// (R8 — no fabricated capital) or the result is not a usable positive finite
+/// figure; the caller then keeps the row's honest diagnostic instead of
+/// claiming a closed arithmetic it cannot price.
+fn probe_amount_in_usd(
+    probe_amount: U256,
+    token_in: Option<Address>,
+    cfg: &TradingConfigState,
+) -> Option<f64> {
+    let price_usd =
+        canonical_token_price_usd(token_in, cfg.base_token_price_usd, &cfg.token_prices_usd)?;
+    let decimals = canonical_token_decimals(token_in);
+    let units = u256_to_f64_lossy(probe_amount) / 10f64.powi(decimals as i32);
+    let usd = units * price_usd;
+    (usd.is_finite() && usd > 0.0).then_some(usd)
+}
+
 /// Canonical verified USD price for a known mainnet token, for the
 /// `compute_gross_usd` / `compute_v3_gross_usd` fast-filter. Checks:
 /// 1. Canonical tokens (stables included) → LIVE Redis price
@@ -838,7 +1004,16 @@ fn canonical_token_symbol(addr: &str) -> Option<&'static str> {
         // Stables mapped for the LIVE price lookup (WO-PC4: no $1 shortcut).
         "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48" => Some("USDC"),
         "0xdac17f958d2ee523a2206206994597c13d831ec7" => Some("USDT"),
-        "0x6b175474e8f94a44ad05d02b745dcc163a999080" => Some("DAI"),
+        // DAI-SYMBOL-ADDR-01 (audit 2026-09-29): this arm used to read
+        // "0x6b175474e8f94a44ad05d02b745dcc163a999080", which differs from the
+        // canonical DAI address in 27 of its 42 characters. Consequence: the REAL
+        // DAI address fell through to `None` (so DAI — present in
+        // `allowed_token_symbols` — was silently unpriced, the `no_price_oracle`
+        // family), while an address that is NOT DAI was labelled "DAI". The
+        // canonical constant is already imported at the top of this file
+        // (shared_rs::chains), so use it instead of a literal
+        // (arbx-no-hardcode-doctrine: one source of truth).
+        DAI_MAINNET_LC => Some("DAI"),
         "0x2260fac5e5542a773aa44fbcfedf7c193bc2c599" => Some("WBTC"),
         "0x1f9840a85d5af5bf1d1762f925bdaddc4201f984" => Some("UNI"),
         "0x514910771af9ca656af840dff83e8264ecf986ca" => Some("LINK"),
@@ -898,8 +1073,40 @@ pub(crate) fn canonical_token_decimals_str(token: &str) -> u8 {
 // Opportunity constructors
 // ---------------------------------------------------------------------------
 
+/// ECONOMIC DENOMINATION (CANDIDATE-POSTSIZE-SYNC-01 (c)): the base token of the
+/// CLOSED cycle this candidate trades — the token its path opens AND closes in
+/// (`route.token[0] == route.token[N]`).
+///
+/// Source of truth is the `RouteIntent` the engine actually measured:
+/// `probe_amount` is one native unit of `intent.legs[0].token_in`,
+/// `orient_reserves` orients every pool by it and `compute_gross_usd` prices the
+/// chained cycle profit with it — so the intent's entry token IS the token this
+/// engine's numbers are denominated in. `pool_a.token0/token1` is only the pool's
+/// on-chain ordering and says nothing about the direction the observed
+/// transaction took.
+///
+/// Fallback (never a guess): an intent whose entry token is NOT one of this pair's
+/// tokens leaves the pair's direction undetermined — `orient_reserves` then keeps
+/// the pool's canonical token0→token1 order, so `pool_a.token0` is exactly what
+/// the engine measured for that shape.
+fn economic_base_token(pool_a: &PoolRef, intent: &RouteIntent) -> Address {
+    match intent.legs.first().map(|l| l.token_in) {
+        Some(t) if t == pool_a.token0 || t == pool_a.token1 => t,
+        _ => pool_a.token0,
+    }
+}
+
 /// Builds an `Opportunity`, `OpportunityCandidate`, and `RoutePlan` for
 /// an accepted (engine-level) DEX arb candidate.
+///
+/// CANDIDATE-POSTSIZE-SYNC-01 (2026-09-27): the ECONOMIC token identity comes
+/// from `intent` (the route the engine measured), never from `pool_a`'s on-chain
+/// ordering. A closed cycle opens and closes in its base token, so
+/// `Opportunity.token_in`/`token_out` — the P&L denomination — are BOTH that base
+/// token, while the counter (intermediate) token stays on the route legs and the
+/// persisted `route_metadata` for allowlist/pricing/audit. See the field comments
+/// below for why `expected_amount_out` starts as `NaN` instead of a fabricated
+/// 1:1.
 #[allow(clippy::too_many_arguments)]
 fn build_accepted_opportunity(
     chain_id: u64,
@@ -910,14 +1117,30 @@ fn build_accepted_opportunity(
     gross_profit_usd: Option<f64>,
     amount_in_wei: U256,
     block_number: Option<u64>,
+    intent: &RouteIntent,
 ) -> (Opportunity, OpportunityCandidate, RoutePlan) {
     let strategy_kind: StrategyKind = label.to_contract_strategy_kind();
     let id = Uuid::new_v4();
     let trace_id = Uuid::new_v4();
 
-    let token_in_str = format!("0x{:040x}", pool_a.token0);
-    let token_out_str = format!("0x{:040x}", pool_a.token1);
-    let pair_symbol = format!("{}…/{}…", &token_in_str[2..8], &token_out_str[2..8],);
+    // Closed cycle: base = opens and closes the path; counter = the other token
+    // of the traded pair (the intermediate hop token, NOT the P&L denomination).
+    let base_token = economic_base_token(pool_a, intent);
+    let counter_token = if base_token == pool_a.token0 {
+        pool_a.token1
+    } else {
+        pool_a.token0
+    };
+
+    // BOTH economic sides are the base token: `Opportunity.token_in`/`token_out`
+    // are the P&L denomination of a closed cycle, and the spine prices the input
+    // with `candidate.token_addresses[0]` and the measured output with
+    // `candidate.token_addresses[1]` (config_aware.rs). Denomination ≠ traded
+    // pair: the pair stays visible in `pair_symbol` and on the route legs.
+    let token_in_str = format!("0x{:040x}", base_token);
+    let token_out_str = token_in_str.clone();
+    let counter_token_str = format!("0x{:040x}", counter_token);
+    let pair_symbol = format!("{}…/{}…", &token_in_str[2..8], &counter_token_str[2..8],);
 
     let amount_in_wei_str = amount_in_wei.to_string();
     let amount_in_f64: f64 = u256_to_f64_lossy(amount_in_wei) / 1e18_f64;
@@ -947,23 +1170,53 @@ fn build_accepted_opportunity(
         pipeline_latency_ms: None,
         detected_at: Utc::now(),
         trace_id,
+        economics: None,
     };
 
     let pool_a_lower = format!("0x{:040x}", pool_a.address);
     let pool_b_lower = format!("0x{:040x}", pool_b.address);
 
     let candidate = OpportunityCandidate {
-        route_fingerprint: format!("{}_{}_{}", pool_a.dex_name, token_in_str, token_out_str),
+        // Fingerprint = venue + the pair's two tokens (direction-aware) so two
+        // different pairs on the same venue and base token never collapse.
+        route_fingerprint: format!("{}_{}_{}", pool_a.dex_name, token_in_str, counter_token_str),
         pool_addresses: vec![pool_a_lower.clone(), pool_b_lower.clone()],
+        // SPINE CONTRACT (config_aware.rs §3): index 0 denominates `amount_in`,
+        // index 1 denominates `expected_amount_out`. A closed cycle's output is
+        // denominated in the base token it returns to, so both slots are the base
+        // token — putting the counter token in slot 1 would price a
+        // base-denominated output at the counter's price and trip the spread
+        // sanity gate on a row the kernel computed correctly. The FULL traversal
+        // path (base → counter → base) rides `route_plan.legs` and the persisted
+        // `route_metadata` (`build_route_metadata_from_plan`), which is where
+        // allowlist/pricing/audit read the intermediate from.
         token_addresses: vec![token_in_str.clone(), token_out_str.clone()],
         dex_adapters: vec![pool_a.dex_name.clone(), pool_b.dex_name.clone()],
         amount_in: amount_in_f64,
-        expected_amount_out: amount_in_f64, // best estimate without real reserves
+        // NOT MEASURED — deliberately `NaN`, never `amount_in` (R8).
+        //
+        // This field is a bare `f64`: R8's `None` ("not computed") has no
+        // representation here, and `0.0` is reserved for "computed and exactly
+        // zero" — writing it would ALSO hand `observed_rate = 0` to the spread
+        // sanity gate (a false `ImplausibleSpread`) and `0` to the evidence's
+        // `min_amount_out`. The previous `amount_in` claimed a 1:1 cycle nobody
+        // measured. IEEE-754 `NaN` is the one honest marker available: it is this
+        // crate's existing "not computable" value (`scoring.rs` → InvalidEvidence,
+        // `sim_encoder::convert_amount_to_wei` refuses it), it cannot be read as a
+        // rate, and it fails the second evaluation CLOSED (net = NaN ⇒ `is_viable`
+        // false ⇒ the risk gate rejects) instead of certifying a fabricated
+        // parity. The orchestrator's sized path overwrites it with the kernel's
+        // measured final-hop output (`orchestrator::stamp_sized_figures`) whenever
+        // that measurement exists.
+        expected_amount_out: f64::NAN,
         gross_profit: gross_profit_usd.unwrap_or(0.0),
     };
 
-    let leg_a = build_route_leg(pool_a, &token_in_str, &token_out_str, amount_in_f64);
-    let leg_b = build_route_leg(pool_b, &token_out_str, &token_in_str, amount_in_f64);
+    // Route direction = the cycle's own: base → counter on `pool_a`, counter →
+    // base on `pool_b`. The kernel orients each leg by these tokens, so the
+    // ledger and the plan agree on one direction.
+    let leg_a = build_route_leg(pool_a, &token_in_str, &counter_token_str, amount_in_f64);
+    let leg_b = build_route_leg(pool_b, &counter_token_str, &token_out_str, amount_in_f64);
 
     let route_plan = RoutePlan {
         route_id: Some(format!("{}-{}-{:x}", pool_a_lower, pool_b_lower, tx_hash)),
@@ -991,6 +1244,7 @@ fn build_rejected_opportunity(
     pool_b: &PoolRef,
     label: StrategyLabel,
     block_number: Option<u64>,
+    intent: &RouteIntent,
 ) -> (Opportunity, OpportunityCandidate, RoutePlan) {
     build_accepted_opportunity(
         chain_id,
@@ -1001,6 +1255,7 @@ fn build_rejected_opportunity(
         None,                                      // R8: no profit for rejected candidates
         U256::from(10u128).pow(U256::from(18u32)), // unit probe
         block_number,
+        intent,
     )
 }
 
@@ -1050,10 +1305,26 @@ pub(crate) fn protocol_type_to_str(pt: ProtocolType) -> String {
 /// Lossless-truncating `U256` → `f64`. The same helper used in scanner.rs.
 /// Lossy past ~15 significant figures (f64 mantissa); acceptable on the
 /// scoring/display path. Never re-fed into on-chain arithmetic.
-fn u256_to_f64_lossy(v: U256) -> f64 {
+///
+/// `pub(crate)`: CANDIDATE-POSTSIZE-SYNC-01's orchestrator-side sync applies the
+/// SAME truncation when it has no decimals entry for a token (legacy `1e18` rule)
+/// — one conversion primitive, never a second divergent one.
+pub(crate) fn u256_to_f64_lossy(v: U256) -> f64 {
     // U256 → u128 (truncates top 128 bits — negligible for amounts
     // that fit in u128, which is all practical EVM balances).
     v.low_u128() as f64
+}
+
+/// CANDIDATE-POSTSIZE-SYNC-01: wei → token units (f64) with the token's REAL
+/// decimals — the exact inverse of the `10^decimals` scaling
+/// `canonical_token_decimals` already applies on the USD side.
+///
+/// Used by the orchestrator to express the sizing kernel's `optimal_amount_in`
+/// and its measured final-hop output in the token-unit convention
+/// `OpportunityCandidate` documents (`amount_in` / `expected_amount_out` as f64
+/// token units), instead of the legacy blanket `1e18`.
+pub(crate) fn wei_to_token_units(wei: U256, decimals: u8) -> f64 {
+    u256_to_f64_lossy(wei) / 10f64.powi(i32::from(decimals))
 }
 
 // ---------------------------------------------------------------------------
@@ -1271,6 +1542,123 @@ mod tests {
         }
     }
 
+    // ── dex_engine::tests::closed_cycle_reports_base_token_economically ───────
+    //
+    // CANDIDATE-POSTSIZE-SYNC-01 (c)+(b): the economic token identity of a CLOSED
+    // cycle comes from the RouteIntent direction, not from `pool_a`'s on-chain
+    // ordering, and the candidate never claims a 1:1 output it did not measure.
+    //
+    // Fixture: pool_a lists the tokens as (counter, base) — the OLD code reported
+    // `pool_a.token0` (= counter) as `token_in`, i.e. the wrong leg of the cycle.
+    // The intent enters at the base token, which is the token every kernel number
+    // is denominated in (`probe_amount`, `orient_reserves`, `compute_gross_usd`).
+
+    #[tokio::test]
+    async fn closed_cycle_reports_base_token_economically() {
+        let base = addr(0x1); // cycle base: opens AND closes the path
+        let counter = addr(0x2); // intermediate hop token
+        let pool_addr1 = addr(0x10);
+        let pool_addr2 = addr(0x11);
+        // Deliberately inverted vs the pool's canonical ordering: the pool says
+        // token0 = counter, the INTENT enters at base.
+        let pool1 = make_pool(pool_addr1, counter, base, ProtocolType::V2);
+        let pool2 = make_pool(pool_addr2, counter, base, ProtocolType::V2);
+        let intent = make_intent(base, counter);
+        let impact = make_impact(vec![pool1, pool2]);
+
+        let unit = U256::from(10u128).pow(U256::from(18u32)) * U256::from(1_000u32);
+        let engine =
+            make_engine_with_reserves(vec![(pool_addr1, unit, unit), (pool_addr2, unit, unit)])
+                .await;
+
+        let candidates = engine
+            .build_from_impacted_pairs(&intent, &impact, None)
+            .await
+            .expect("engine must not error");
+
+        let base_str = format!("0x{:040x}", base);
+        let counter_str = format!("0x{:040x}", counter);
+
+        let accepted: Vec<_> = candidates
+            .iter()
+            .filter(|c| c.rejection_reason.is_none())
+            .collect();
+        assert!(
+            !accepted.is_empty(),
+            "fixture must reach the accepted path (real reserves on both pools)"
+        );
+
+        for c in accepted {
+            // (c) ECONOMIC denomination: both sides of a closed cycle are the base
+            // token — never `pool_a.token0/token1`.
+            assert_eq!(
+                c.opportunity.token_in, base_str,
+                "closed cycle must open in its base token, not pool_a.token0"
+            );
+            assert_eq!(
+                c.opportunity.token_out, base_str,
+                "closed cycle must close in its base token, not pool_a.token1"
+            );
+            assert_ne!(
+                c.opportunity.token_in, counter_str,
+                "the counter token is NOT the P&L denomination"
+            );
+
+            // Spine pricing contract: slot 0 denominates `amount_in`, slot 1 the
+            // expected output — for a closed cycle both are the base token.
+            assert_eq!(
+                c.candidate.token_addresses,
+                vec![base_str.clone(), base_str.clone()],
+                "the spine's two pricing slots must both be the base token"
+            );
+
+            // The intermediate token is NOT lost: it rides the traversal path.
+            assert_eq!(
+                c.route_plan.legs[0].token_in, base_str,
+                "leg 0 enters at the cycle base"
+            );
+            assert_eq!(
+                c.route_plan.legs[0].token_out, counter_str,
+                "leg 0 exits into the counter (intermediate) token"
+            );
+            assert_eq!(
+                c.route_plan.legs[1].token_out, base_str,
+                "leg 1 closes the cycle back into the base token"
+            );
+            let metadata = crate::persistence::build_route_metadata_from_plan(&c.route_plan);
+            assert_eq!(
+                metadata.token_addresses,
+                vec![base_str.clone(), counter_str.clone(), base_str.clone()],
+                "persisted route_metadata must keep the full traversal path \
+                 (base → counter → base) for allowlist/pricing/audit"
+            );
+
+            // (b) NOT MEASURED: construction time has no cycle output, so the
+            // candidate must not claim a 1:1 — `NaN` is the honest marker.
+            assert!(
+                c.candidate.expected_amount_out.is_nan(),
+                "unmeasured output must be NaN, got {}",
+                c.candidate.expected_amount_out
+            );
+            assert_ne!(
+                c.candidate.expected_amount_out, c.candidate.amount_in,
+                "a 1:1 output would be a fabricated measurement"
+            );
+        }
+
+        // The rejected shape (no reserves) carries the same economic identity.
+        let no_reserves_engine = make_engine();
+        let rejected = no_reserves_engine
+            .build_from_impacted_pairs(&intent, &impact, None)
+            .await
+            .expect("engine must not error");
+        assert!(!rejected.is_empty(), "must still emit rejection rows");
+        for c in &rejected {
+            assert_eq!(c.opportunity.token_in, base_str);
+            assert_eq!(c.opportunity.token_out, base_str);
+        }
+    }
+
     // ── dex_engine::tests::v2_v2_no_cache_emits_reserves_cache_miss ──────────
     // Bug 2 fix: V2 pool not in cache → rejected with reserves_cache_miss.
 
@@ -1336,6 +1724,53 @@ mod tests {
         );
         assert_eq!(canonical_token_decimals_str("not-an-address"), 18);
         assert_eq!(canonical_token_decimals_str(""), 18);
+    }
+
+    // ── dex_engine::tests::dai_symbol_addr_01 ────────────────────────────────
+
+    /// DAI-SYMBOL-ADDR-01 (audit 2026-09-29) — regression gate.
+    ///
+    /// The DAI arm of [`canonical_token_symbol`] used to be a literal that was
+    /// NOT the DAI address (27 of 42 chars wrong). Two failures followed from it:
+    /// the real DAI address resolved to `None` (no price lookup ⇒ DAI routes
+    /// silently unpriced), and a non-DAI address was labelled "DAI" on the wire.
+    /// This test fails if the typo ever comes back, and it also rejects any
+    /// malformed address in the map (same error class: a hand-copied literal).
+    #[test]
+    fn dai_symbol_addr_01_canonical_address_resolves_and_map_is_well_formed() {
+        assert_eq!(
+            canonical_token_symbol(DAI_MAINNET_LC),
+            Some("DAI"),
+            "the canonical DAI address must resolve to its symbol"
+        );
+        let typo = concat!("0x6b175474e8f94a44ad05d02b745", "dcc163a999080");
+        assert_eq!(
+            canonical_token_symbol(typo),
+            None,
+            "the mistyped address is not DAI and must never resolve"
+        );
+        assert_ne!(typo, DAI_MAINNET_LC);
+        for addr in [
+            "0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2",
+            "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48",
+            "0xdac17f958d2ee523a2206206994597c13d831ec7",
+            "0x2260fac5e5542a773aa44fbcfedf7c193bc2c599",
+            "0x1f9840a85d5af5bf1d1762f925bdaddc4201f984",
+        ] {
+            assert!(
+                canonical_token_symbol(addr).is_some(),
+                "canonical address must resolve: {addr}"
+            );
+            assert_eq!(addr.len(), 42, "an address is 0x + 40 hex chars: {addr}");
+            assert!(
+                addr.strip_prefix("0x").is_some_and(|h| h
+                    .chars()
+                    .all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase())),
+                "the map is keyed by lowercase 0x-prefixed hex: {addr}"
+            );
+        }
+        assert_eq!(canonical_token_symbol("0xdeadbeef"), None);
+        assert_eq!(canonical_token_symbol(""), None);
     }
 
     // ── dex_engine::tests::b1_probe_is_one_native_unit ───────────────────────
@@ -1979,5 +2414,413 @@ mod tests {
             reasons.iter().any(|r| r == "v3_quote_unavailable"),
             "provider RPC failure must keep v3_quote_unavailable, got {reasons:?}"
         );
+    }
+
+    // ── V3-CYCLE-GROSS-01 ────────────────────────────────────────────────────
+
+    /// The counterexample the operator's reference package encodes
+    /// (`VALIDACION.md`: *"dos cotizaciones de ida difieren positivamente pero
+    /// los dos ciclos de ida y vuelta pierden"*), as a regression on the identity
+    /// the discovery fast-filter uses.
+    ///
+    /// Pool A is the deep venue; pool B is nearly empty on the return side.
+    /// `|out_a − out_b|` — the identity V3 used until this change — is a large
+    /// POSITIVE number (a venue price gap). The actual round trip (buy on A at
+    /// `probe`, sell the proceeds back on B) returns LESS than `probe`, so the
+    /// honest profit is zero. Publishing the gap is what put
+    /// `expected_profit_usd = 369_506_963_197.84` on a $1000 principal.
+    #[test]
+    fn chained_cycle_identity_rejects_a_positive_venue_gap() {
+        let probe = U256::from(1_000u64) * U256::from(10u64).pow(U256::from(18u32));
+        let deep = probe * U256::from(10u64);
+        // A: price 1:1.
+        let (a_in, a_out) = (deep, deep);
+        // B: price 1.004:1 — a 0.4% better forward quote.
+        let (b_in, b_out) = (deep, deep + deep * U256::from(4u64) / U256::from(1_000u64));
+
+        let out_a = amm_math::v2_amount_out(probe, a_in, a_out, 30);
+        let out_b = amm_math::v2_amount_out(probe, b_in, b_out, 30);
+
+        // The legacy identity: two INDEPENDENT forward probes, differenced. It is
+        // positive whenever the venues disagree by ANY amount.
+        let gap = if out_a >= out_b {
+            out_a - out_b
+        } else {
+            out_b - out_a
+        };
+        assert!(
+            !gap.is_zero(),
+            "fixture must reproduce a positive venue gap (out_a={out_a} out_b={out_b})"
+        );
+
+        // The chained identity: buy where the probe returns more, then sell the
+        // proceeds back on the other venue (REVERSE orientation: the return leg
+        // consumes token_out, so the selling pool is oriented out→in).
+        let (buy_out, sell_in, sell_out) = if out_a >= out_b {
+            (out_a, b_out, b_in)
+        } else {
+            (out_b, a_out, a_in)
+        };
+        let returned = amm_math::v2_amount_out(buy_out, sell_in, sell_out, 30);
+        let chained = returned.saturating_sub(probe);
+
+        // 0.4% of venue edge does not cover the round trip's two 0.3% fees, so
+        // the cycle LOSES even though the forward gap is positive.
+        assert!(
+            returned < probe,
+            "fixture must make the round trip lose: returned {returned} vs probe {probe}"
+        );
+        assert!(
+            chained.is_zero(),
+            "a losing round trip has NO gross profit — chained identity returned {chained}"
+        );
+        assert!(
+            gap > chained,
+            "the venue gap ({gap}) must never be published as the cycle's profit (chained {chained})"
+        );
+    }
+
+    /// The other half of the measured absurdity: the removed code divided the
+    /// profit by a HARDCODED `1e18` regardless of the swapped token's decimals
+    /// (the file documents it as "UNIT-SCALE (Bug $69M)" — a 6-decimals token
+    /// inflated by ~1e12).
+    ///
+    /// The cycle opens AND closes in `token_in`, so the profit is token_in raw
+    /// units and must be scaled by token_in's canonical decimals.
+    #[test]
+    fn chained_profit_is_scaled_by_token_in_decimals_not_a_hardcoded_1e18() {
+        let usdc: Address = "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48"
+            .parse()
+            .expect("canonical USDC address");
+        let mut cfg = make_cfg();
+        cfg.token_prices_usd = HashMap::from([("USDC".to_string(), 1.0)]);
+
+        // 1_000_000 raw USDC = 1.00 USDC, priced at the live $1.00 print.
+        let usd = compute_gross_usd(&U256::from(1_000_000u64), &Some(cfg), Some(usdc))
+            .expect("USDC resolves through the live price map");
+        assert!(
+            (usd - 1.0).abs() < 1e-9,
+            "1e6 raw USDC must be $1.00 with 6 decimals, got {usd}"
+        );
+        // What the removed `/1e18` produced for the same input: ~1e-12.
+        let legacy = 1_000_000f64 / 1e18 * 1.0;
+        assert!(
+            legacy < 1e-11 && usd > 1e-3,
+            "the hardcoded-1e18 scale ({legacy}) must not be reachable any more (got {usd})"
+        );
+    }
+
+    // ── ALWAYS-COMPUTE-03 (2026-09-27): MEASURED gross ⇒ CLOSED `computed` ────
+    //
+    // MEASURED DEFECT (production PG): the `spread_zero_equilibrium` early-exit
+    // published a measured gross (`Some(0.0)` — both legs quoted the same
+    // amount, so the cycle gross is exactly zero) while the emit boundary still
+    // stamped `economics_error(reason)`: `computation_status: "error"`, every
+    // figure null. A MEASURED row rendered as "not computed" is the inversion
+    // the operator's mandate removes.
+
+    /// Fixture: BOTH pools V3 and catalogued at the same tier, the provider
+    /// answering a CONSTANT quote → the two forward probes agree, the chained
+    /// round trip returns exactly the probe back, and the engine measures the
+    /// honest `spread_zero_equilibrium` (cycle gross exactly zero).
+    async fn spread_zero_candidate(
+        token_in: Address,
+        token_out: Address,
+        cfg: &TradingConfigState,
+    ) -> StrategyCandidate {
+        let catalog = Arc::new(V3FeeCatalog::new());
+        catalog.record_observed(addr(0x10), token_in, token_out, 500);
+        catalog.record_observed(addr(0x11), token_in, token_out, 500);
+        let projector = Arc::new(StateProjector::new(
+            Arc::new(ReservesCache::new()),
+            Some(Arc::new(OkV3Mock)),
+            catalog,
+        ));
+        let engine = DexEngine::new(Arc::new(ReservesCache::new()), None, Some(projector));
+        let pool_a = make_pool(addr(0x10), token_in, token_out, ProtocolType::V3);
+        let pool_b = make_pool(addr(0x11), token_in, token_out, ProtocolType::V3);
+        let intent = make_intent(token_in, token_out);
+        let impact = make_impact(vec![pool_a, pool_b]);
+
+        let candidates = engine
+            .build_from_impacted_pairs(&intent, &impact, Some(cfg))
+            .await
+            .expect("engine must not error");
+
+        candidates
+            .into_iter()
+            .find(|c| c.rejection_reason.as_deref() == Some("spread_zero_equilibrium"))
+            .expect("two identical forward quotes must measure a zero cycle gross")
+    }
+
+    /// Regression on the production defect: a rejected row whose gross IS
+    /// measured carries the CLOSED `computed` object — amount_in, gross, REAL
+    /// costs, explicit negative net and the matching roi — and keeps it through
+    /// the emit boundary.
+    #[tokio::test]
+    async fn measured_gross_rejection_carries_closed_computed_economics() {
+        let weth: Address = "0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2"
+            .parse()
+            .expect("canonical WETH address");
+        let usdc: Address = "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48"
+            .parse()
+            .expect("canonical USDC address");
+        let mut cfg = make_cfg();
+        // Non-zero ops overhead so the sheet-07 OtherCost column is really
+        // exercised (a 0.0 would hide a dropped component).
+        cfg.ops_overhead_usd_per_attempt = 0.25;
+        cfg.token_prices_usd = HashMap::from([("USDC".to_string(), 1.0)]);
+
+        let c = spread_zero_candidate(weth, usdc, &cfg).await;
+        assert_eq!(
+            c.gross_profit_usd,
+            Some(0.0),
+            "fixture must MEASURE a zero cycle gross"
+        );
+
+        let e = c
+            .opportunity
+            .economics
+            .as_ref()
+            .expect("a MEASURED gross must carry the economics object");
+        assert_eq!(
+            e.computation_status, "computed",
+            "measured gross ⇒ computed (never error/partial)"
+        );
+        assert_eq!(e.error_reason, None);
+        assert_eq!(
+            e.gross_profit_usd,
+            Some(0.0),
+            "the measured zero is published as computed-and-exactly-zero"
+        );
+
+        // Principal = ONE native unit of token_in (the probe the gross was
+        // measured at), priced by the same live source the gross conversion uses.
+        let amount_in_usd = e.amount_in_usd.expect("priced principal");
+        assert!(
+            (amount_in_usd - 3_000.0).abs() < 1e-9,
+            "1 WETH at the configured base price must be $3000, got {amount_in_usd}"
+        );
+        assert_eq!(
+            c.opportunity.amount_in_wei,
+            U256::from(10u128).pow(U256::from(18u32)).to_string(),
+            "the row records the principal the gross was measured at"
+        );
+
+        // REAL costs — the gas figure IS the config oracle's, no literal.
+        let gas = e.gas_usd.expect("gas from the real oracle");
+        assert!(
+            (gas - cfg.gas_cost_usd()).abs() < 1e-9,
+            "gas must be TradingConfigState::gas_cost_usd(), got {gas} vs {}",
+            cfg.gas_cost_usd()
+        );
+        assert!(gas > 0.0, "200k gas × 20 gwei × $3000 must be positive");
+        assert_eq!(
+            e.other_costs_usd,
+            Some(cfg.ops_overhead_usd_per_attempt),
+            "OtherCost comes from the operator config, never a table"
+        );
+        assert_eq!(
+            e.flash_fee_usd,
+            Some(0.0),
+            "no flash wrapper at engine altitude ⇒ own capital ⇒ zero fee (computed)"
+        );
+        assert_eq!(e.bribe_usd, Some(0.0), "no bid path ⇒ computed zero");
+        let total = e.total_cost_usd.expect("total_cost must be present");
+        assert!(total.is_finite() && total > 0.0, "total={total}");
+        assert!(
+            (total - (gas + 0.25)).abs() < 1e-9,
+            "total must be the sum of the present components, got {total}"
+        );
+
+        // Rule 4: the loss is EXPLICIT — Some, finite and negative.
+        let net = e
+            .net_profit_usd
+            .expect("net must be Some on a closed loss, never None");
+        assert!(
+            net.is_finite() && net < 0.0,
+            "zero gross minus real costs must be negative, got {net}"
+        );
+        assert!((net - (0.0 - total)).abs() < 1e-9, "net vs gross − costs");
+
+        // roi consistent with net / amount_in × 100.
+        let roi = e.roi_pct.expect("roi of a priced principal");
+        assert!(
+            (roi - net / amount_in_usd * 100.0).abs() < 1e-12,
+            "roi {roi} must equal net/amount_in×100"
+        );
+
+        // Row and payload are one closure (no drift between the two layers).
+        assert_eq!(c.opportunity.expected_profit_usd, Some(0.0));
+        assert_eq!(c.opportunity.net_expected_profit_usd, Some(net));
+
+        // The emit boundary (opportunity_emitter::stamped_for_emit →
+        // economics::stamp_on_emit) keeps the producer object verbatim.
+        let mut wire = c.opportunity.clone();
+        crate::economics::stamp_on_emit(&mut wire);
+        let stamped = wire
+            .economics
+            .as_ref()
+            .expect("the object survives the boundary");
+        assert_eq!(stamped.computation_status, "computed");
+        assert_eq!(stamped.net_profit_usd, Some(net));
+        assert_eq!(stamped.total_cost_usd, Some(total));
+    }
+
+    /// The other half of the contract: a rejected row WITHOUT a measured gross
+    /// keeps its diagnostic status and its verbatim reason — no figures are
+    /// invented for it.
+    #[tokio::test]
+    async fn unmeasured_gross_rejection_keeps_its_diagnostic_status() {
+        // PRICED entry token (WETH ⇒ base_token_price_usd) so the ONLY thing that
+        // can withhold the closed object on this row is the missing GROSS — the
+        // discrimination the test is about.
+        let tok_a: Address = "0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2"
+            .parse()
+            .expect("canonical WETH address");
+        let tok_b: Address = "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48"
+            .parse()
+            .expect("canonical USDC address");
+        // Pool B absent from the by_pool index → leg B resolves
+        // `v3_pool_not_catalogued` with ZERO RPC: no quote, so no gross.
+        let catalog = Arc::new(V3FeeCatalog::new());
+        catalog.record_observed(addr(0x10), tok_a, tok_b, 3_000);
+        let projector = Arc::new(StateProjector::new(
+            Arc::new(ReservesCache::new()),
+            Some(Arc::new(OkV3Mock)),
+            catalog,
+        ));
+        let engine = DexEngine::new(Arc::new(ReservesCache::new()), None, Some(projector));
+        let pool_a = make_pool(addr(0x10), tok_a, tok_b, ProtocolType::V3);
+        let pool_b = make_pool(addr(0x11), tok_a, tok_b, ProtocolType::V3);
+        let intent = make_intent(tok_a, tok_b);
+        let impact = make_impact(vec![pool_a, pool_b]);
+        let cfg = make_cfg();
+
+        let candidates = engine
+            .build_from_impacted_pairs(&intent, &impact, Some(&cfg))
+            .await
+            .expect("engine must not error");
+        let c = candidates
+            .iter()
+            .find(|c| c.rejection_reason.as_deref() == Some("v3_pool_not_catalogued"))
+            .expect("catalog gap must produce its precise-label candidate");
+
+        assert!(
+            c.gross_profit_usd.is_none(),
+            "no quote ⇒ the gross is NOT measured"
+        );
+        assert!(
+            c.opportunity.economics.is_none(),
+            "the engine must not attach an economics object without a measured gross"
+        );
+
+        // Orchestrator engine-rejection arm (reason onto the row) + emit
+        // boundary: the row keeps a DECLARED absence naming the reason.
+        let mut row = c.opportunity.clone();
+        row.rejection_reason = c.rejection_reason.clone();
+        crate::economics::stamp_on_emit(&mut row);
+        let e = row
+            .economics
+            .as_ref()
+            .expect("the boundary stamps the honest object");
+        assert_eq!(e.computation_status, "error");
+        assert_eq!(e.error_reason.as_deref(), Some("v3_pool_not_catalogued"));
+        assert!(
+            e.amount_in_usd.is_none()
+                && e.gross_profit_usd.is_none()
+                && e.total_cost_usd.is_none()
+                && e.net_profit_usd.is_none()
+                && e.roi_pct.is_none(),
+            "a not-computed row carries NO figure (R8)"
+        );
+        assert_eq!(row.expected_profit_usd, None);
+        assert_eq!(row.net_expected_profit_usd, None);
+    }
+
+    /// Anti-literal guard: the closed object's gas figure TRACKS the operator's
+    /// gas oracle — raise the configured gas price 3× and the row's gas, total
+    /// cost and net follow. A hardcoded gas figure (or table) cannot pass this.
+    #[tokio::test]
+    async fn measured_gross_cost_tracks_the_real_gas_oracle() {
+        let weth: Address = "0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2"
+            .parse()
+            .expect("canonical WETH address");
+        let usdc: Address = "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48"
+            .parse()
+            .expect("canonical USDC address");
+        let mut cfg = make_cfg();
+        cfg.ops_overhead_usd_per_attempt = 0.25;
+
+        let base = spread_zero_candidate(weth, usdc, &cfg).await;
+        let base_econ = base
+            .opportunity
+            .economics
+            .as_ref()
+            .expect("measured gross ⇒ object");
+        let g1 = base_econ.gas_usd.expect("gas");
+        let total1 = base_econ.total_cost_usd.expect("total");
+        let net1 = base_econ.net_profit_usd.expect("net");
+
+        // Same gas units, 3× the price the operator configured.
+        cfg.fixed_gas_price_gwei = Some(60.0);
+        let tripled = spread_zero_candidate(weth, usdc, &cfg).await;
+        let tripled_econ = tripled
+            .opportunity
+            .economics
+            .as_ref()
+            .expect("measured gross ⇒ object");
+        let g3 = tripled_econ.gas_usd.expect("gas");
+        let total3 = tripled_econ.total_cost_usd.expect("total");
+        let net3 = tripled_econ.net_profit_usd.expect("net");
+
+        assert!(g1 > 0.0, "fixture gas must be priced, got {g1}");
+        assert!(
+            (g3 - 3.0 * g1).abs() < 1e-9,
+            "gas must scale with the config oracle: {g1} → {g3}"
+        );
+        assert!((total1 - (g1 + 0.25)).abs() < 1e-9, "total1={total1}");
+        assert!((total3 - (g3 + 0.25)).abs() < 1e-9, "total3={total3}");
+        assert!(
+            net3 < net1 && net3 < 0.0,
+            "a 3× gas price must worsen the closed loss: {net1} → {net3}"
+        );
+    }
+
+    /// Boundary, documented: a MEASURED gross whose entry token has no live USD
+    /// price cannot be closed — the principal would have to be invented. The row
+    /// then keeps its honest `error` + verbatim reason instead of a fabricated
+    /// capital figure (R8 beats a cosmetic "computed").
+    #[tokio::test]
+    async fn measured_gross_with_unpriced_principal_never_invents_capital() {
+        let tok_a = addr(0x1); // not in the canonical price table
+        let tok_b = addr(0x2);
+        let cfg = make_cfg();
+
+        let c = spread_zero_candidate(tok_a, tok_b, &cfg).await;
+        assert_eq!(
+            c.gross_profit_usd,
+            Some(0.0),
+            "the cycle measurement happened..."
+        );
+        assert!(
+            c.opportunity.economics.is_none(),
+            "...but an unpriced principal has no closed arithmetic to claim (R8)"
+        );
+        assert!(
+            c.opportunity.expected_profit_usd.is_none(),
+            "no USD figure is invented for the row either"
+        );
+
+        let mut row = c.opportunity.clone();
+        row.rejection_reason = c.rejection_reason.clone();
+        crate::economics::stamp_on_emit(&mut row);
+        let e = row.economics.as_ref().expect("object");
+        assert_eq!(
+            e.computation_status, "error",
+            "no price ⇒ honest not-computed, never a fabricated $ principal"
+        );
+        assert_eq!(e.error_reason.as_deref(), Some("spread_zero_equilibrium"));
+        assert!(e.amount_in_usd.is_none() && e.net_profit_usd.is_none());
     }
 }

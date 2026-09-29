@@ -310,7 +310,12 @@ function OpportunityTradeCardImpl({
   const net = formatProfitUSD(headlineNetUsd);
   const gross = formatProfitUSD(grossUsd);
 
-  const roi = opp.roi_pct;
+  const roi =
+    ledger.basis === "canonical"
+      ? opp.economics?.roi_pct ?? opp.roi_pct
+      : ledger.basis === "simulated"
+        ? opp.simulated_roi_pct
+        : null;
   const roiTone: "pos" | "neg" | "muted" =
     roi == null ? "muted" : roi > 0 ? "pos" : roi < 0 ? "neg" : "muted";
 
@@ -320,7 +325,12 @@ function OpportunityTradeCardImpl({
   // notional is published on the wire; on the `"canonical"` basis they go quiet
   // with `quietReason` in their `title` rather than borrowing the SIM's number.
   const capitalInUsd = ledger.principal_usd;
-  const cb = ledger.basis === "simulated" ? opp.simulated_cost_breakdown : null;
+  // OPERATOR ORDER 2026-09-27: "QUITA EL MALDITO RENDER QUE ESCONDE LOS NUMEROS."
+  // This gate handed the 9 cost components to the render ONLY on the "simulated"
+  // basis, so every component row painted "—" even with
+  // `simulated_cost_breakdown` present on the wire. The breakdown is used
+  // whenever the wire carries it; each row declares its own basis in its title.
+  const cb = opp.simulated_cost_breakdown ?? null;
 
   // ── WO-PRICE-EXCHANGE-V1 (FE) — CEX-premium treatment on the EXISTING card ──
   // Flash memory in refs (useValueFlash): a WS/polling batch that changes
@@ -343,13 +353,29 @@ function OpportunityTradeCardImpl({
   const sourceFreshness = freshnessLevel(isMounted ? lastAgeSecs : null);
 
   // Repay = capital in + flash-convergence fee (TLS principal + fee).
-  const flashFee = cb?.flashloan_fee_usd ?? null;
+  const flashFee =
+    ledger.basis === "canonical"
+      ? opp.economics?.flash_fee_usd ?? null
+      : cb?.flashloan_fee_usd ?? null;
   const repayUsd: number | null =
     capitalInUsd != null && flashFee != null ? capitalInUsd + flashFee : null;
 
-  // Applied strategy config (from /strategies) the route was sized against.
-  const tgt = opp.simulated_target;
+  // REAL-LIVE-CARDS-SSOT-01: a configured ROI floor is never promoted to
+  // observed market economics. Keep only simulations based on an observed gross.
+  const tgt =
+    opp.simulated_target?.estimation_basis === "observed-gross"
+      ? opp.simulated_target
+      : null;
+  const canonicalTarget =
+    opp.economics?.computation_status === "computed" &&
+    opp.economics.target_net_usd != null
+      ? opp.economics
+      : null;
   const targetVerdict: { label: string; tone: "pass" | "fail" | "na" } = (() => {
+    if (canonicalTarget?.meets_target != null)
+      return canonicalTarget.meets_target
+        ? { label: "PASS", tone: "pass" }
+        : { label: "FAIL", tone: "fail" };
     if (tgt == null) return { label: "no target", tone: "na" };
     const infeasible =
       tgt.binding_floor === "roi-unreachable" ||
@@ -368,9 +394,33 @@ function OpportunityTradeCardImpl({
   //   · `"canonical"`: `gross − net`, the wire's OWN documented relation
   //     (`net_expected_profit_usd` is "gross - costs" on that same row).
   const costRows = ledger.cost_rows;
-  const knownCostSum = ledger.total_cost_usd;
+  const knownCostSum =
+    ledger.total_cost_usd ??
+    (ledger.basis === "canonical" ? opp.economics?.total_cost_usd ?? null : null);
   /** Label → value for the rendered cost rows (values exist only on the SIM basis). */
   const costValueByLabel = new Map(costRows.map((r) => [r.label, r.value]));
+  // ALWAYS-COMPUTE (2026-09-27): on the CANONICAL basis the searcher's own
+  // decomposition (the `economics` object) fills the component cells. This is
+  // the SAME arithmetic the ladder is painting on that basis — one producer,
+  // one size, and the object closes (total == Σ components, net == gross −
+  // total), so it cannot mix notionals (CARDS-NOTIONAL-01 doctrine intact).
+  // Components the kernel genuinely does not price (dex fees / slippage are
+  // inside amount_out; capital/failure/copied are SIM-model components) stay
+  // quiet dashes with their reason. Pure display — no React-side math.
+  if (ledger.basis === "canonical" && opp.economics && opp.economics.computation_status !== "error") {
+    const e = opp.economics;
+    const fill: Array<[string, number | null]> = [
+      ["Gas", e.gas_usd],
+      ["LP fees", e.dex_fees_usd],
+      ["Decoherence (slippage)", e.slippage_usd],
+      ["TLS fee (flash)", e.flash_fee_usd],
+      ["Relay fee", e.bribe_usd],
+      ["Ops overhead", e.other_costs_usd],
+    ];
+    for (const [label, v] of fill) {
+      if (v != null) costValueByLabel.set(label, v);
+    }
+  }
   /** True when a wire figure was suppressed because it belongs to another notional. */
   const ledgerIsQuiet = ledger.quiet;
 
@@ -544,6 +594,33 @@ function OpportunityTradeCardImpl({
           <ChainBadge chain_id={opp.chain_id} />
           <StrategyBadge strategy_kind={opp.strategy_kind} />
           <StatusPill status={opp.status} rejection_reason={opp.rejection_reason} />
+          {/* ALWAYS-COMPUTE (2026-09-27): the honest computation-status chip.
+              Pure display of the wire's `economics.computation_status` —
+              "computed" = the full arithmetic exists (PASS or FAIL),
+              "partial" = some real figures + reasons,
+              "error" = no quote existed (title carries the reason).
+              COMPUTED ≠ PROFITABLE: a FAIL row with a quote shows ECON
+              computed, its numbers below. */}
+          {opp.economics && (
+            <span
+              title={
+                opp.economics.computation_status === "error"
+                  ? `Sin quote computable — motivo: ${opp.economics.error_reason ?? "desconocido"} (R8: números ausentes, no inventados)`
+                  : opp.economics.computation_status === "partial"
+                    ? "Cálculo parcial: algunas cifras reales existen; los huecos viajan con su motivo (not_computed_reasons)"
+                    : "Cálculo completo del searcher: gross/costs/net/roi/target — COMPUTED ≠ PROFITABLE"
+              }
+              className={`text-[10px] px-1.5 py-0.5 rounded border font-mono uppercase tracking-wide ${
+                opp.economics.computation_status === "computed"
+                  ? "bg-muted/50 text-muted-foreground border-border/60"
+                  : opp.economics.computation_status === "partial"
+                    ? "bg-info/10 text-info border-info/30"
+                    : "bg-muted/60 text-muted-foreground/70 border-border/60"
+              }`}
+            >
+              ECON {opp.economics.computation_status === "computed" ? "✓" : opp.economics.computation_status === "partial" ? "◐" : "✗"}
+            </span>
+          )}
           {opp.confirmations != null && opp.confirmations > 1 && (
             <span
               title={`Ruta re-detectada ${opp.confirmations} veces en la ventana (confirmaciones)`}
@@ -565,7 +642,7 @@ function OpportunityTradeCardImpl({
           title="Net Convergence Ratio (ROI %) — fail-honest '—' when not computed"
         >
           {roiTone === "pos" && <TrendingUp size={14} />}
-          {formatPctOrDash(opp.roi_pct)}
+          {formatPctOrDash(roi)}
         </div>
       </div>
 
@@ -749,7 +826,7 @@ function OpportunityTradeCardImpl({
         </div>
         <div className="rounded-lg bg-muted/40 p-2">
           <div className="text-[9px] uppercase tracking-wide text-muted-foreground">
-            Target · {tgt?.target_source === "strategy_config" ? "/strategies" : tgt?.target_source === "simulation_tab" ? "Sim tab" : "none"}
+            Target · {canonicalTarget ? "searcher" : tgt?.target_source === "strategy_config" ? "/strategies" : tgt?.target_source === "simulation_tab" ? "Sim tab" : "none"}
           </div>
           <div
             className={`font-mono text-lg font-bold ${
@@ -762,6 +839,43 @@ function OpportunityTradeCardImpl({
           >
             {targetVerdict.label}
           </div>
+          {/* ALWAYS-COMPUTE (2026-09-27): the FAIL card's OWN arithmetic —
+              displayed verbatim from the searcher's economics object
+              (target vs achieved vs delta). Pure display: this block never
+              computes, it renders what the producer persisted on the rejected
+              row ("si el resultado da -$50, la card debe decir -$50"). */}
+          {opp.economics &&
+            opp.economics.computation_status !== "error" &&
+            (opp.economics.target_net_usd != null || opp.economics.net_profit_usd != null) && (
+              <div
+                className="mt-1 font-mono text-[10px] leading-tight text-muted-foreground"
+                title="Aritmética del searcher (objeto economics): target / logrado / delta — el FAIL muestra sus números, no guiones."
+              >
+                {opp.economics.target_net_usd != null && (
+                  <div>
+                    target {usd(opp.economics.target_net_usd)}
+                  </div>
+                )}
+                {opp.economics.net_profit_usd != null && (
+                  <div className={opp.economics.net_profit_usd >= 0 ? "text-success" : "text-destructive"}>
+                    logrado {usd(opp.economics.net_profit_usd)}
+                  </div>
+                )}
+                {opp.economics.target_delta_usd != null && (
+                  <div className={opp.economics.target_delta_usd >= 0 ? "text-success" : "text-destructive"}>
+                    delta {usd(opp.economics.target_delta_usd)}
+                  </div>
+                )}
+              </div>
+            )}
+          {opp.economics?.computation_status === "error" && (
+            <div
+              className="mt-1 font-mono text-[10px] leading-tight text-muted-foreground/80"
+              title={`Sin quote computable — motivo del productor: ${opp.economics.error_reason ?? "desconocido"}`}
+            >
+              sin quote: {opp.economics.error_reason ?? "—"}
+            </div>
+          )}
         </div>
       </div>
 
@@ -783,7 +897,7 @@ function OpportunityTradeCardImpl({
             · {ledger.basis === "simulated"
               ? "forward-sim @ amount_in_wei"
               : ledger.basis === "canonical"
-                ? "searcher gross/net (sin notional)"
+                ? (ledger.principal_usd != null ? "searcher kernel @ sized notional" : "searcher legacy gross/net")
                 : "sin aritmética cerrada"}
           </span>
         </div>
@@ -794,7 +908,9 @@ function OpportunityTradeCardImpl({
             value={capitalInUsd}
             title={
               capitalInUsd != null
-                ? `Notional del ladder = simulated_amount_in_usd (amount_in_wei=${opp.amount_in_wei ?? "no emitido"} valorado al precio vivo).`
+                ? ledger.basis === "canonical"
+                  ? `Notional real del sizing kernel = economics.amount_in_usd (amount_in_wei=${opp.economics?.amount_in_wei ?? opp.amount_in_wei ?? "no emitido"}).`
+                  : `Notional del ladder = simulated_amount_in_usd (amount_in_wei=${opp.amount_in_wei ?? "no emitido"} valorado al precio vivo).`
                 : quietReason ??
                   "Principal no computado — no se pinta un notional de otro productor."
             }
@@ -837,7 +953,9 @@ function OpportunityTradeCardImpl({
             title={
               ledger.basis === "simulated"
                 ? "simulated_gross_usd — el bruto de ESTE ladder (misma llamada que el net y los costos)."
-                : "expected_profit_usd — bruto del searcher en SU propio tamaño; el wire no publica el notional de este par, así que el ladder no pinta principal."
+                : opp.economics?.gross_profit_usd != null
+                  ? "economics.gross_profit_usd — bruto del searcher al MISMO sized notional del ladder."
+                  : "expected_profit_usd legacy — bruto del searcher sin notional declarado."
             }
           />
           <div className="my-1 border-t border-border/50" />
@@ -856,21 +974,43 @@ function OpportunityTradeCardImpl({
               layout + the operator can see WHICH component is missing); their
               VALUES exist only on the basis that owns a breakdown. A row with
               no value for this basis is a quiet dash carrying `quietReason`. */}
-          {LEDGER_COST_ROW_LABELS.map((label) => (
-            <LedgerRow
-              key={label}
-              down
-              label={label}
-              value={costValueByLabel.get(label) ?? null}
-              small
-              title={
-                costValueByLabel.has(label)
-                  ? undefined
-                  : quietReason ??
-                    "Componente no computado para el notional mostrado (R8)."
-              }
-            />
-          ))}
+          {(ledger.basis === "canonical"
+            ? LEDGER_COST_ROW_LABELS.filter(
+                (label) => !["Capital cost", "Failure buffer", "Copied buffer"].includes(label),
+              )
+            : LEDGER_COST_ROW_LABELS
+          ).map((label) => {
+            const embedded =
+              ledger.basis === "canonical" &&
+              !costValueByLabel.has(label) &&
+              (label === "LP fees" || label === "Decoherence (slippage)");
+            const reasonKey = label === "LP fees" ? "dex_fees_usd" : "slippage_usd";
+            const embeddedReason = embedded
+              ? opp.economics?.not_computed_reasons?.[reasonKey] ?? null
+              : null;
+            return (
+              <LedgerRow
+                key={label}
+                down
+                label={label}
+                value={costValueByLabel.get(label) ?? null}
+                valueNode={
+                  embedded ? (
+                    <span className="text-[10px] text-muted-foreground/80">
+                      {label === "LP fees" ? "incl. en quote" : "incl. en curva"}
+                    </span>
+                  ) : undefined
+                }
+                small
+                title={
+                  costValueByLabel.has(label)
+                    ? undefined
+                    : embeddedReason ?? quietReason ??
+                      "Componente no computado para el notional mostrado (R8)."
+                }
+              />
+            );
+          })}
           <div className="my-1 border-t border-border/50" />
           <LedgerRow
             label="Total cost"
@@ -933,7 +1073,13 @@ function OpportunityTradeCardImpl({
         <div className="text-[9px] uppercase tracking-wide text-muted-foreground font-semibold mb-1.5">
           Applied strategy config
         </div>
-        {tgt ? (
+        {canonicalTarget ? (
+          <div className="grid grid-cols-1 gap-y-1 font-mono text-[11px]">
+            <ConfigRow label="min net USD" value={canonicalTarget.target_net_usd != null ? usd(canonicalTarget.target_net_usd) : "—"} />
+            <ConfigRow label="achieved net" value={canonicalTarget.net_profit_usd != null ? usd(canonicalTarget.net_profit_usd) : "—"} tone={canonicalTarget.net_profit_usd != null && canonicalTarget.net_profit_usd < 0 ? "text-destructive" : "text-success"} />
+            <ConfigRow label="delta" value={canonicalTarget.target_delta_usd != null ? usd(canonicalTarget.target_delta_usd) : "—"} tone={canonicalTarget.target_delta_usd != null && canonicalTarget.target_delta_usd < 0 ? "text-destructive" : "text-success"} />
+          </div>
+        ) : tgt ? (
           // CARDS-LAYOUT-02 (2026-09-26, operator report — PROVEN on the live
           // card): this block was `grid grid-cols-2`, which Tailwind compiles to
           // `repeat(2, minmax(0,1fr))`. A `minmax(0,1fr)` track may be NARROWER
@@ -1106,6 +1252,16 @@ export function opportunityTradeCardPropsEqual(
     // Summary grid (OpportunitySummaryGrid — rendered INSIDE this card)
     p.detector_id === n.detector_id &&
     p.pipeline_latency_ms === n.pipeline_latency_ms &&
+    // main's comparator also covered `block_number` and the `economics` blob;
+    // both are KEPT here so this merge cannot regress that coverage. `economics`
+    // is not cosmetic: the summary grid's `block` cell renders
+    // `economics.quote_block` and the card paints `opp.economics` in dozens of
+    // places, so a changed blob MUST repaint — the failure this gate exists for is
+    // a value painted one frame late, or never. A field the comparator compares
+    // can no longer be declared "not painted by the card" in
+    // `CardCellPaint.gate.test.tsx`, so `block_number` leaves that list.
+    p.block_number === n.block_number &&
+    sameJson(p.economics, n.economics) &&
     p.hop_count === n.hop_count &&
     p.risk_score === n.risk_score &&
     p.pair_symbol === n.pair_symbol &&
