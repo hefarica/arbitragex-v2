@@ -1893,7 +1893,35 @@ impl SizeOptimizer {
         // ── 2. LOCAL 0-RPC pass: within-tick V3 + CPMM over the log grid ──────
         // Only available when EVERY leg resolved (otherwise there is no local
         // model at all, and the bracket falls back below).
-        let grid = geom_probes(U256::one(), cap_wei, V3_MULTILEG_LOCAL_POINTS);
+        // P0 · NLEG-SIZE-SPAN-01: la grilla arranca en el PISO DE POLVO, no en
+        // 1 wei — el mismo contrato que ya cumplen el kernel V2 y el V3 de 2
+        // patas (DUST-NOTIONAL-02/03). Un tamaño sub-centavo no es un hecho
+        // sobre la ruta; y si el cap del operador está por debajo del piso, no
+        // existe tamaño que valga una card: razón explícita (R8).
+        let x_lo = {
+            let wei_per_usd = if token_price_usd > 0.0 {
+                10f64.powi(decimals as i32) / token_price_usd
+            } else {
+                0.0
+            };
+            let lo = (DUST_NOTIONAL_USD * wei_per_usd).ceil();
+            if lo.is_finite() && lo >= 1.0 {
+                f64_to_u256_clamped(lo)
+            } else {
+                U256::one()
+            }
+        };
+        if x_lo >= cap_wei {
+            debug!(
+                event = "size_optimizer.v3_multileg_no_tradable_size",
+                label = candidate.label.as_str(),
+                cap_usd,
+                dust_floor_usd = DUST_NOTIONAL_USD,
+                "capital cap below the dust floor — no size worth a card exists (R8)"
+            );
+            return OptimizeOutcome::Rejected(OptimizeRejectReason::NoTradableSize, None);
+        }
+        let grid = geom_probes(x_lo, cap_wei, V3_MULTILEG_LOCAL_POINTS);
         let local_best = match first_unresolved {
             Some(_) => None,
             None => {
@@ -2481,12 +2509,46 @@ impl SizeOptimizer {
     /// probed at the capital end of the same grid. This returns the largest
     /// `max` points of the grid, i.e. the top of the authorized band; the
     /// largest probe is exactly `cap_wei`.
+    /// P0 · NLEG-SIZE-SPAN-01 (2026-09-28, medido): el set sin modelo local debe
+    /// ABARCAR la banda autorizada, no sólo su techo.
+    ///
+    /// NLEG-SIZE-BAND-01 lo movió del centro geométrico (polvo) al extremo de
+    /// capital, y sobre-corrigió: con `ARBX_V3_MULTILEG_MAX_PROBES=2` se probaban
+    /// únicamente los DOS tamaños más grandes de la grilla. En una ruta cuya
+    /// profundidad real está muy por debajo del cap — medido: 4 patas UniswapV3
+    /// con pools de fee 0.01 %, principal $67.41 y gross −$67.42 (= ROI −101 %)
+    /// en 372 filas — TODOS los probes caían más allá de la profundidad y el
+    /// kernel publicaba el fill catastrófico como cifra de la ruta.
+    ///
+    /// Contrato nuevo: el extremo de CAPITAL siempre presente (la decisión que
+    /// este kernel existe para tomar) MÁS el extremo BAJO de la grilla cuando hay
+    /// presupuesto para más de un probe, para que una ruta delgada reciba al
+    /// menos un tamaño que pueda absorber y publique un negativo chico y honesto.
     fn capital_band_probes(grid: &[U256], max: usize) -> Vec<U256> {
         if grid.is_empty() || max == 0 {
             return vec![U256::one()];
         }
-        let take = max.min(grid.len());
-        grid[grid.len() - take..].to_vec()
+        if max == 1 || grid.len() == 1 {
+            return vec![grid[grid.len() - 1]];
+        }
+        let mut out: Vec<U256> = Vec::with_capacity(max);
+        out.push(grid[0]);
+        if max > 2 {
+            let inner = max - 2;
+            let span = grid.len() - 1;
+            for k in 1..=inner {
+                let idx = (k * span) / (inner + 1);
+                let p = grid[idx.min(span)];
+                if !out.contains(&p) {
+                    out.push(p);
+                }
+            }
+        }
+        let top = grid[grid.len() - 1];
+        if out.last() != Some(&top) {
+            out.push(top);
+        }
+        out
     }
 
     /// The earliest RESOLVED V3 leg: `(index, pool, zero_for_one)`. `None` when
@@ -8297,15 +8359,23 @@ mod tests {
         // 1. The largest probe IS the capital end of the grid.
         assert_eq!(*probes.last().unwrap(), top);
 
-        // 2. Every probe sits in the top decade of the band, i.e. within an
-        //    order of magnitude of the capital the operator authorized.
-        let floor = cap_wei / U256::from(16u64);
-        for p in &probes {
-            assert!(
-                *p >= floor,
-                "model-free probe {p} is below cap_wei/16 ({floor}) — dust sizing"
-            );
-        }
+        // 2. P0 · NLEG-SIZE-SPAN-01 (2026-09-28): the set SPANS the authorized
+        //    band — the grid's LOW end is probed as well as its capital end. The
+        //    previous "top `max` points" contract probed only sizes ≈ the cap;
+        //    on a route whose real depth sits far below the cap (measured: 4 V3
+        //    legs over 0.01 %-fee pools) every probe fell beyond the depth and the
+        //    kernel published the catastrophic fill as the route's figure
+        //    ($67.41 principal, −$67.42 gross ⇒ ROI −101 %, 372 rows).
+        assert_eq!(
+            *probes.first().unwrap(),
+            grid[0],
+            "the band's LOW end must be probed, or a thin route has no viable probe"
+        );
+        assert_eq!(
+            *probes.last().unwrap(),
+            top,
+            "the capital end must stay in the set — it is the decision this kernel exists to take"
+        );
 
         // 3. The dust point the old centre-of-grid fallback selected is GONE.
         let dust = SizeOptimizer::middle_probes(&grid, 2);
