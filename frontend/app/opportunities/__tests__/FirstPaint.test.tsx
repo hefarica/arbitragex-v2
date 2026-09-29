@@ -68,6 +68,34 @@ const liveRow = mapToOmniOpportunity({
   pipeline_latency_ms: 24,
   expected_profit_usd: 23.04257007,
   net_expected_profit_usd: -0.00001,
+  // REAL-LIVE-CARDS-SSOT-01: una fila es CARD sólo con `economics.computed` y
+  // aritmética cerrada (net = gross − cost, roi = net/amount_in×100). Este
+  // payload es el que la convierte en card real; sin él es diagnóstico.
+  economics: {
+    computation_status: "computed",
+    error_reason: null,
+    amount_in_wei: "1000000000000000000",
+    amount_out_wei: "1008314000000000000",
+    amount_in_usd: 2687.079437602,
+    amount_out_usd: 2710.121007672,
+    gross_profit_usd: 23.04257007,
+    gas_usd: 0.18,
+    dex_fees_usd: null,
+    flash_fee_usd: 22.85258007,
+    bribe_usd: 0,
+    slippage_usd: null,
+    other_costs_usd: 0.01,
+    total_cost_usd: 23.04258007,
+    net_profit_usd: -0.00001,
+    roi_pct: -3.7216e-7,
+    target_net_usd: 50,
+    target_delta_usd: -50.00001,
+    meets_target: false,
+    quote_block: 26068721,
+    simulation_block: null,
+    legs: [],
+    not_computed_reasons: {},
+  },
   simulated_net_profit_usd: -15.304361738499997,
   simulated_amount_in_usd: 2687.2794,
   simulated_target: {
@@ -93,6 +121,24 @@ const liveRow = mapToOmniOpportunity({
   },
 });
 
+// GATE-D (operator order 2026-09-27, verbatim: "APLICA LA D"): the SAME shape as
+// `liveRow` — rejected, priced, ladder closed — but with the arithmetic POSITIVE
+// (net +1.50). This is the shape that must reach the first paint; `liveRow`
+// (net −0.00001) is exactly what the gate now declares instead of painting.
+const profitRow = {
+  ...liveRow,
+  id: "opp-profit-1",
+  rejection_reason: "gas_floor_breach:own_capital",
+  economics: {
+    ...liveRow.economics,
+    gross_profit_usd: 24.54258007,
+    net_profit_usd: 1.5,
+    amount_out_usd: 2711.622017672,
+    roi_pct: 0.055822,
+    target_delta_usd: 48.5,
+  },
+} as ReturnType<typeof mapToOmniOpportunity>;
+
 const render = (opportunities: ReturnType<typeof mapToOmniOpportunity>[]) =>
   renderToStaticMarkup(
     React.createElement(OpportunitiesClient, {
@@ -106,9 +152,9 @@ const render = (opportunities: ReturnType<typeof mapToOmniOpportunity>[]) =>
 
 describe("SSR-FIRSTPAINT-01 — the server snapshot reaches the first paint", () => {
   it("renders the snapshot's cards (and their computed figures) with an empty store", () => {
-    const html = render([liveRow]);
+    const html = render([profitRow]);
     // the card is IN the server markup — not deferred to a mount effect
-    expect(html).toContain('data-opp-id="opp-firstpaint-1"');
+    expect(html).toContain('data-opp-id="opp-profit-1"');
     expect(html).toContain("Capital path (USD)");
     expect(html).toContain("Applied strategy config");
     // …carrying the computed values, not placeholders
@@ -120,6 +166,18 @@ describe("SSR-FIRSTPAINT-01 — the server snapshot reaches the first paint", ()
     expect((html.match(/Hop 2\/2/g) ?? []).length).toBe(1);
   });
 
+  it("GATE-D: a rejected row priced NEGATIVE is declared with its reason, not painted", () => {
+    const html = render([liveRow]);
+    expect(html).not.toContain('data-opp-id="opp-firstpaint-1"');
+    // the gate says what it did, with the real numbers — never silent
+    expect(html).toContain("Gate D");
+    expect(html).toContain("Gate D activo");
+    expect(html).toContain("non_positive_profit 1");
+    expect(html).toContain("quedan fuera por net ≤ 0");
+    // …and the one-click way to inspect them is on screen
+    expect(html).toContain('data-testid="banner-toggle-show-rejected"');
+  });
+
   it("an empty snapshot renders the honest empty grid (never a fabricated card)", () => {
     const html = render([]);
     expect(html).not.toContain("data-opp-id");
@@ -129,5 +187,43 @@ describe("SSR-FIRSTPAINT-01 — the server snapshot reaches the first paint", ()
 
   it("R1: the pure render is byte-identical across invocations", () => {
     expect(render([liveRow])).toBe(render([liveRow]));
+  });
+});
+
+// SHOW-REJECTED-01 — operator order 2026-09-27 (verbatim): "agregar un toggle
+// 'Mostrar rechazadas'". The control must be ON the page, OFF by default, and
+// the default paint must stay exactly the real/live card set (the diagnostics
+// are counted — never silently dropped, never painted with a substituted
+// figure until the operator asks for them).
+describe("SHOW-REJECTED-01 — toggle 'Mostrar rechazadas'", () => {
+  const errorRow = mapToOmniOpportunity({
+    id: "opp-diagnostic-1",
+    chain_id: 1,
+    chain_base_token_symbol: "WETH",
+    strategy_kind: "dex_arb",
+    detected_at: "2026-09-26T18:16:00.000Z",
+    status: "rejected",
+    rejection_reason: "v3_quote_unavailable",
+    economics: { computation_status: "error", error_reason: "v3_quote_unavailable" },
+  });
+
+  it("renders the control, the window selector and the banner action, OFF by default", () => {
+    const html = render([profitRow, errorRow]);
+    expect(html).toContain('data-testid="toggle-show-rejected"');
+    expect(html).toContain("Mostrar rechazadas");
+    expect(html).toContain('data-testid="banner-toggle-show-rejected"');
+    expect(html).toContain('data-testid="window-seconds"');
+    expect(html).toMatch(
+      /data-testid="toggle-show-rejected"[^>]{0,240}aria-pressed="false"/,
+    );
+  });
+
+  it("default OFF: paints the profitable card and DECLARES the unpriced detection", () => {
+    const html = render([profitRow, errorRow]);
+    expect(html).toContain('data-opp-id="opp-profit-1"');
+    expect(html).not.toContain('data-opp-id="opp-diagnostic-1"');
+    expect(html).toContain("1 detecciones sin economía computada");
+    expect(html).toContain("v3_quote_unavailable 1");
+    expect(html).toContain("nunca rellenadas con supuestos");
   });
 });

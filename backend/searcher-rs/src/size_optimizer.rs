@@ -37,9 +37,10 @@ use crate::strategy_label::StrategyLabel;
 use crate::workers::triangular_worker::{
     clamp_to_cap_wei, evaluate_cycle_detailed, CycleEvalOutcome, EvalInput,
 };
-use ethers::types::{Address, U256};
+use ethers::types::{Address, Sign, I256, U256};
 use prioritization_spine::route_plan::RouteLeg;
 use shared_rs::chains::USDT_MAINNET_LC;
+use shared_rs::contracts::EconomicsComputation;
 use shared_rs::trading_config::TradingConfigState;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -92,6 +93,13 @@ pub const V3_MULTILEG_QUOTES_PER_BLOCK_ENV: &str = "ARBX_V3_MULTILEG_QUOTES_PER_
 /// exhaustive search but far finer than the 2-leg V3 path's 8-point RPC grid, and
 /// it costs no network at all (integer math only).
 const V3_MULTILEG_LOCAL_POINTS: usize = 16;
+
+/// DUST-NOTIONAL-02 (2026-09-28): the smallest notional worth publishing on a
+/// card. Below this the ROI is a ratio computed against a size no operator could
+/// trade — measured post-deploy: 362 rows in three minutes with a $8.7e-13
+/// principal and `roi_pct` −7.84e13 %. Both the 2-leg kernel and (later) the
+/// N-leg kernel re-price at their tradable band instead of publishing dust.
+const DUST_NOTIONAL_USD: f64 = 0.01;
 /// Default RPC probes per candidate: the local argmax plus its best neighbour.
 const DEFAULT_V3_MULTILEG_MAX_PROBES: usize = 2;
 /// Hard ceiling for the probe knob (each probe costs one quote per V3 leg).
@@ -357,6 +365,11 @@ pub enum OptimizeRejectReason {
     /// (`v3_quote_unavailable`) nor as a spread verdict
     /// (`non_positive_profit`), and it carries no ledger (no chain was quoted).
     V3MultilegBudgetExhausted,
+    /// DUST-NOTIONAL-02 (2026-09-28): the route's tradable band — the capital
+    /// cap already bounded by the per-leg slippage budget — is itself below the
+    /// dust floor, so NO tradable size exists for this route. Explicit (R8)
+    /// instead of publishing a sub-cent notional whose ROI is meaningless.
+    NoTradableSize,
 }
 
 impl OptimizeRejectReason {
@@ -385,6 +398,7 @@ impl OptimizeRejectReason {
             Self::UnsupportedLegCount => "unsupported_leg_count",
             Self::V3MultilegUnsupported => "v3_multileg_unsupported",
             Self::V3MultilegBudgetExhausted => "v3_multileg_budget_exhausted",
+            Self::NoTradableSize => "no_tradable_size",
         }
     }
 
@@ -458,6 +472,18 @@ pub enum OptimizeOutcome {
         Option<f64>,
         Option<(Vec<String>, Vec<String>)>,
     ),
+    /// ALWAYS-COMPUTE (operator mandate 2026-09-27): a rejection whose path
+    /// HAD computed the full economics BEFORE the pass/fail decision — the
+    /// boxed `SizedCandidate` carries the exact figures (gross, net, sheet-07
+    /// cost components, sized amount, per-leg ledger) the rejecting evaluation
+    /// produced. "COMPUTED ≠ PROFITABLE": the row rejects (reason verbatim)
+    /// AND keeps every number, so a FAIL card renders the full arithmetic —
+    /// if the result is −$50 the card says −$50, not "no computado".
+    ///
+    /// Callers stamp these figures onto the rejected row (gross AND net — the
+    /// legacy `Rejected` payload carried only one scalar) and attach the
+    /// `EconomicsComputation` object built by `economics::economics_from_sized`.
+    RejectedComputed(OptimizeRejectReason, Box<SizedCandidate>),
 }
 
 impl OptimizeOutcome {
@@ -467,26 +493,33 @@ impl OptimizeOutcome {
             Self::Sized(_) => None,
             Self::Rejected(r, _) => Some(r.as_str()),
             Self::RejectedWithLedger(r, _, _) => Some(r.as_str()),
+            Self::RejectedComputed(r, _) => Some(r.as_str()),
         }
     }
 
-    /// Returns the gross profit in USD, or `None` for `Rejected`.
+    /// Returns the gross profit in USD. `None` for the legacy reject variants
+    /// (they never carried it); `Some` for `Sized` and `RejectedComputed`
+    /// (both computed it — ALWAYS-COMPUTE surfaces the figure on rejects too).
     pub fn gross_profit_usd(&self) -> Option<f64> {
         match self {
             Self::Sized(s) => Some(s.gross_profit_usd),
             Self::Rejected(_, _) => None,
             Self::RejectedWithLedger(_, _, _) => None,
+            Self::RejectedComputed(_, s) => Some(s.gross_profit_usd),
         }
     }
 
     /// Returns the net profit in USD. For `Rejected`, this is the kernel's
     /// computed value when the rejecting path had one (R8: `None` = not
     /// computed, `Some(v)` = computed and exactly `v`, usually `v <= 0`).
+    /// For `RejectedComputed` it is the boxed figure's net (same semantics,
+    /// explicitly separated from the gross there).
     pub fn net_profit_usd(&self) -> Option<f64> {
         match self {
             Self::Sized(s) => Some(s.estimated_net_profit_usd),
             Self::Rejected(_, net) => *net,
             Self::RejectedWithLedger(_, net, _) => *net,
+            Self::RejectedComputed(_, s) => Some(s.estimated_net_profit_usd),
         }
     }
 
@@ -496,15 +529,33 @@ impl OptimizeOutcome {
             Self::Sized(s) => Some(s.optimal_amount_in),
             Self::Rejected(_, _) => None,
             Self::RejectedWithLedger(_, _, _) => None,
+            Self::RejectedComputed(_, s) => Some(s.optimal_amount_in),
         }
     }
 
     /// PER-HOP: the per-leg wei ledger (amounts_in, amounts_out) when the
     /// rejecting path had computed it. `None` on every other path (R8) —
     /// including `Sized`, whose ledger travels through `SizedCandidate`.
-    pub fn leg_ledger(&self) -> Option<&(Vec<String>, Vec<String>)> {
+    /// Owned (cloned) because `RejectedComputed` stores the two arrays inside
+    /// its boxed `SizedCandidate`, not as a tuple.
+    pub fn leg_ledger(&self) -> Option<(Vec<String>, Vec<String>)> {
         match self {
-            Self::RejectedWithLedger(_, _, legs) => legs.as_ref(),
+            Self::RejectedWithLedger(_, _, legs) => legs.clone(),
+            Self::RejectedComputed(_, s) => {
+                match (s.leg_amounts_in.clone(), s.leg_amounts_out.clone()) {
+                    (Some(ins), Some(outs)) => Some((ins, outs)),
+                    _ => None,
+                }
+            }
+            _ => None,
+        }
+    }
+
+    /// ALWAYS-COMPUTE: the full sized figures when the rejecting path computed
+    /// them (`RejectedComputed`). `None` everywhere else.
+    pub fn rejected_figures(&self) -> Option<&SizedCandidate> {
+        match self {
+            Self::RejectedComputed(_, s) => Some(s),
             _ => None,
         }
     }
@@ -546,6 +597,214 @@ pub struct SizedCandidate {
     /// fabricated. Exact wei strings, NOT f64 (precision loss above 2^53).
     pub leg_amounts_in: Option<Vec<String>>,
     pub leg_amounts_out: Option<Vec<String>>,
+}
+
+// ---------------------------------------------------------------------------
+// CANDIDATE-LEDGER-STRUCT-01 — ONE explicit ledger for a sized cycle
+// ---------------------------------------------------------------------------
+
+/// One hop of a [`SizedCycleLedger`]: the tokens the hop crosses plus the EXACT
+/// wei amounts the sizing kernel MEASURED for it.
+///
+/// Provenance: `amount_in_wei`/`amount_out_wei` are the kernel's own per-leg
+/// ledger entries (`SizedCandidate::leg_amounts_in` / `leg_amounts_out`,
+/// HOPS-LEDGER-04) — the numbers the on-chain QuoterV2 round-trip / the local
+/// CPMM arithmetic produced at the sized input. Nothing here is re-derived,
+/// re-quoted or extrapolated.
+///
+/// The endpoints are `Option<Address>`: the route plan carries addresses as
+/// verbatim strings and a legacy/fixture row ("0xweth") does not parse. R8 —
+/// an unparseable endpoint stays ABSENT; it is never replaced by a sentinel or
+/// the zero address.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SizedLeg {
+    /// Token entering this hop (`None` ⇔ the plan string is not an address).
+    pub token_in: Option<Address>,
+    /// Token leaving this hop (`None` ⇔ the plan string is not an address).
+    pub token_out: Option<Address>,
+    /// Exact wei entering the hop (kernel ledger entry `i`).
+    pub amount_in_wei: U256,
+    /// Exact wei leaving the hop (kernel ledger entry `i` — the measured one).
+    pub amount_out_wei: U256,
+}
+
+/// CANDIDATE-LEDGER-STRUCT-01: ONE explicit ledger for a sized cycle.
+///
+/// It is built ([`SizedCycleLedger::from_sized`]) from figures that were
+/// ALREADY measured by the sizing kernel plus the economics object the kernel's
+/// own figures produced — no new swap simulation, no sqrtPrice/tick math, no
+/// binary search, no re-quote: every field is a copy (or, for
+/// `gross_profit_wei`, one signed subtraction of two measured wei amounts).
+///
+/// Consumers (the stamping tail in `orchestrator::stamp_sized_figures`) read
+/// the figures from HERE, so the `Opportunity`, the outer `StrategyCandidate`
+/// and the inner `OpportunityCandidate` cannot disagree: one ledger, one
+/// number, one provenance.
+///
+/// R8 honesty — every field that this repo does not measure stays ABSENT:
+///
+/// * `amount_out_wei` = `None` when the kernel exposed no per-leg math
+///   (triangular final-amount-only kernel, Kelly re-bound without re-quote,
+///   hand-built fixtures) — never `amount_in_wei` standing in for an output, so
+///   no 1:1 rate is ever implied.
+/// * `gross_profit_wei` = `None` when the measured output is absent OR the
+///   route is NOT a closed cycle (subtracting the base units of two DIFFERENT
+///   tokens is not a profit, so no number is offered for it).
+/// * `gas_cost_usd` = `None` when the sheet-07 components were not computed
+///   (`net_economics` absent) — the gas figure is never defaulted.
+#[derive(Debug, Clone)]
+pub struct SizedCycleLedger {
+    /// Opening token of the cycle (== `token_out` for a closed cycle). `None`
+    /// when the route's endpoint string is not a parseable address.
+    pub token_in: Option<Address>,
+    /// Closing token of the cycle. `None` as above.
+    pub token_out: Option<Address>,
+    /// The kernel's sized optimal input, exact wei
+    /// (`SizedCandidate::optimal_amount_in`, clamped to the capital cap).
+    pub amount_in_wei: U256,
+    /// The LAST measured leg output (cycle close), exact wei — parsed from
+    /// `EconomicsComputation::amount_out_wei`, which
+    /// `economics::economics_from_sized` sets to `leg_amounts_out.last()`.
+    /// `None` = no per-leg measurement on this path (R8).
+    pub amount_out_wei: Option<U256>,
+    /// Signed `amount_out_wei − amount_in_wei` (closed cycles only).
+    /// `None` when either side is absent or the route is open.
+    pub gross_profit_wei: Option<I256>,
+    /// GROSS profit in USD at `amount_in_wei`
+    /// (`SizedCandidate::gross_profit_usd`) — the f64 figure the wire carries.
+    pub gross_profit_usd: f64,
+    /// Net profit in USD after gas + fees + ops overhead
+    /// (`SizedCandidate::estimated_net_profit_usd`).
+    pub net_expected_profit_usd: f64,
+    /// Per-hop MEASURED amounts, aligned with `route_plan.legs`. Empty when the
+    /// kernel measured no chain (R8 — never a partial ledger).
+    pub legs: Vec<SizedLeg>,
+    /// Gas cost in USD, verbatim from the economics object's `gas_usd` (the
+    /// sheet-07 `RouteNetEconomics::gas_usd` the net arithmetic already
+    /// consumed). `None` when that component was not computed.
+    pub gas_cost_usd: Option<f64>,
+    /// Block the priced state belongs to (`Opportunity::block_number`).
+    pub block_number: Option<u64>,
+    /// Which measurement produced the per-hop amounts, one entry per route leg
+    /// as `"<protocol_type>:<measurement path>"`, joined by `'>'` — e.g.
+    /// `"uniswap-v2:amm_math.v2_amount_out>uniswap-v3:quoter_v2_onchain"`.
+    ///
+    /// The repo records no quoter NAME on the sized figures, so this is derived
+    /// from the kernel's OWN dispatch predicate (`leg_is_v3`, i.e. the leg's
+    /// verbatim `protocol_type`) rather than invented: V2-style legs are priced
+    /// by the local CPMM (`amm_math::v2_amount_out`, zero RPC) and V3 legs by
+    /// the on-chain QuoterV2 (`RouteQuoteProvider::quote_leg` →
+    /// `StateProjector::project_v3_quote_checked`). Empty string when the
+    /// candidate carries no route legs.
+    pub quoter_provenance: String,
+}
+
+/// The candidate's own route endpoints, verbatim: `route_plan.legs` first
+/// (`.first().token_in` / `.last().token_out`) and `candidate.token_addresses`
+/// as the fallback — the precedence the stamping tail has always used.
+///
+/// One selection point for both consumers: the ledger parses these into
+/// `Address` endpoints and `stamp_sized_figures` resolves their decimals.
+pub(crate) fn route_endpoint_tokens(c: &StrategyCandidate) -> (Option<&str>, Option<&str>) {
+    let plan_in = c.route_plan.legs.first().map(|l| l.token_in.as_str());
+    let plan_out = c.route_plan.legs.last().map(|l| l.token_out.as_str());
+    (
+        plan_in.or_else(|| c.candidate.token_addresses.first().map(String::as_str)),
+        plan_out.or_else(|| c.candidate.token_addresses.last().map(String::as_str)),
+    )
+}
+
+/// Per-leg measurement provenance (see [`SizedCycleLedger::quoter_provenance`]).
+fn measurement_provenance(legs: &[RouteLeg]) -> String {
+    legs.iter()
+        .map(|leg| {
+            let protocol = leg.protocol_type.to_ascii_lowercase();
+            if leg_is_v3(leg) {
+                format!("{protocol}:quoter_v2_onchain")
+            } else {
+                format!("{protocol}:amm_math.v2_amount_out")
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(">")
+}
+
+impl SizedCycleLedger {
+    /// Build the ledger from the measured kernel outcome.
+    ///
+    /// NO new computation. Every field is copied from `sized`
+    /// ([`SizedCandidate`] — the kernel's own sized figures) or from `econ`
+    /// ([`EconomicsComputation`], which MUST be the object built from THIS
+    /// `sized` by `economics::economics_from_sized`, so the gas figure and the
+    /// measured cycle close come from the one economics resolution instead of a
+    /// second derivation).
+    ///
+    /// `gross_profit_wei` is the only arithmetic here: one signed subtraction
+    /// of two measured wei amounts (`amount_out_wei − amount_in_wei`), computed
+    /// ONLY for a closed cycle (opening token == closing token, compared
+    /// case-insensitively on the route's own strings) and only when both sides
+    /// are measured; otherwise it stays `None` (R8).
+    pub fn from_sized(sized: &SizedCandidate, econ: &EconomicsComputation) -> Self {
+        let route = &sized.candidate.route_plan.legs;
+        let (raw_in, raw_out) = route_endpoint_tokens(&sized.candidate);
+
+        // All-or-nothing per-leg ledger (same convention as
+        // `economics::computed_legs`): `econ.legs` is already zipped with the
+        // plan, so a length mismatch yields NO legs here either — a partial
+        // ledger would misalign hop i with token i+1.
+        let mut legs = Vec::with_capacity(econ.legs.len());
+        for leg in &econ.legs {
+            let (Ok(amount_in_wei), Ok(amount_out_wei)) = (
+                U256::from_dec_str(&leg.amount_in_wei),
+                U256::from_dec_str(&leg.amount_out_wei),
+            ) else {
+                // A kernel-emitted amount that does not parse is not a number we
+                // can carry: drop the whole chain rather than ship a hole in it.
+                legs.clear();
+                break;
+            };
+            legs.push(SizedLeg {
+                token_in: leg.token_in.parse::<Address>().ok(),
+                token_out: leg.token_out.parse::<Address>().ok(),
+                amount_in_wei,
+                amount_out_wei,
+            });
+        }
+
+        // The economics object's cycle close IS `leg_amounts_out.last()`; parse
+        // it here so an unparseable string leaves the field absent (the stamping
+        // tail then keeps its honest "not measured" marker).
+        let amount_out_wei = econ
+            .amount_out_wei
+            .as_deref()
+            .and_then(|raw| U256::from_dec_str(raw).ok());
+
+        // Signed wei gross — closed cycles only (see the struct docs).
+        let closed = matches!((raw_in, raw_out), (Some(a), Some(b)) if a.eq_ignore_ascii_case(b));
+        let gross_profit_wei = match amount_out_wei {
+            Some(out) if closed && out >= sized.optimal_amount_in => {
+                I256::checked_from_sign_and_abs(Sign::Positive, out - sized.optimal_amount_in)
+            }
+            Some(out) if closed => {
+                I256::checked_from_sign_and_abs(Sign::Negative, sized.optimal_amount_in - out)
+            }
+            _ => None,
+        };
+
+        Self {
+            token_in: raw_in.and_then(|s| s.parse::<Address>().ok()),
+            token_out: raw_out.and_then(|s| s.parse::<Address>().ok()),
+            amount_in_wei: sized.optimal_amount_in,
+            amount_out_wei,
+            gross_profit_wei,
+            gross_profit_usd: sized.gross_profit_usd,
+            net_expected_profit_usd: sized.estimated_net_profit_usd,
+            legs,
+            gas_cost_usd: econ.gas_usd,
+            block_number: sized.candidate.opportunity.block_number,
+            quoter_provenance: measurement_provenance(route),
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -904,10 +1163,14 @@ impl SizeOptimizer {
             OptimizeOutcome::Sized(boxed) => *boxed,
             // Rejected outcomes pass through — kernel already named the reason
             // and computed whatever USD value it could (R8 payload). The
-            // ledger-carrying variant passes through intact (PER-HOP).
+            // ledger-carrying variant passes through intact (PER-HOP); the
+            // figures-carrying variant too (ALWAYS-COMPUTE).
             OptimizeOutcome::Rejected(r, net) => return OptimizeOutcome::Rejected(r, net),
             OptimizeOutcome::RejectedWithLedger(r, net, legs) => {
                 return OptimizeOutcome::RejectedWithLedger(r, net, legs)
+            }
+            OptimizeOutcome::RejectedComputed(r, s) => {
+                return OptimizeOutcome::RejectedComputed(r, s)
             }
         };
 
@@ -938,7 +1201,13 @@ impl SizeOptimizer {
                 multiplier = state.kelly_gas_safety_multiplier,
             );
             // Payload = the computed net (positive but below the floor).
-            return OptimizeOutcome::Rejected(OptimizeRejectReason::GasFloorBreach, Some(net_usd));
+            // ALWAYS-COMPUTE: the FULL sized figures travel on the reject —
+            // gross, net, components, sized amount, ledger. The row rejects
+            // AND keeps every number ("COMPUTED ≠ PROFITABLE").
+            return OptimizeOutcome::RejectedComputed(
+                OptimizeRejectReason::GasFloorBreach,
+                Box::new(sized),
+            );
         }
 
         // Constrained Fractional Kelly (operator directive #1).
@@ -965,9 +1234,11 @@ impl SizeOptimizer {
                 w_ratio,
             );
             // Payload = the computed net the edge test rejected.
-            return OptimizeOutcome::Rejected(
+            // ALWAYS-COMPUTE: full figures on the reject (same doctrine as the
+            // gas-floor arm above).
+            return OptimizeOutcome::RejectedComputed(
                 OptimizeRejectReason::KellyNegativeEdge,
-                Some(net_usd),
+                Box::new(sized),
             );
         }
 
@@ -1043,7 +1314,20 @@ impl SizeOptimizer {
         // not worth running at all.
         if new_net < cost_proxy_usd * state.kelly_gas_safety_multiplier {
             // Payload = the Kelly-capped net (positive but below the floor).
-            return OptimizeOutcome::Rejected(OptimizeRejectReason::GasFloorBreach, Some(new_net));
+            // ALWAYS-COMPUTE: stamp the RESCALED figures (the numbers this
+            // verdict actually judged) before rejecting — gross at the Kelly
+            // size, net at the Kelly size, same sized amount the ledger was
+            // re-derived for. Never the pre-rescale figures.
+            sized.optimal_amount_in = kelly_cap_wei;
+            sized.gross_profit_usd = new_gross;
+            sized.estimated_net_profit_usd = new_net;
+            let (ins, outs) = self.reledger_at(&sized, kelly_cap_wei).await;
+            sized.leg_amounts_in = ins;
+            sized.leg_amounts_out = outs;
+            return OptimizeOutcome::RejectedComputed(
+                OptimizeRejectReason::GasFloorBreach,
+                Box::new(sized),
+            );
         }
 
         sized.optimal_amount_in = kelly_cap_wei;
@@ -1160,6 +1444,7 @@ impl SizeOptimizer {
             OptimizeOutcome::Sized(s) => Ok(Some(*s)),
             OptimizeOutcome::Rejected(_, _) => Ok(None),
             OptimizeOutcome::RejectedWithLedger(_, _, _) => Ok(None),
+            OptimizeOutcome::RejectedComputed(_, _) => Ok(None),
         }
     }
 
@@ -1243,11 +1528,43 @@ impl SizeOptimizer {
             CycleEvalOutcome::Profitable(r) => r,
             // Deuda 4-B: the kernel DID compute a clamped-size profit ≤ 0 —
             // stamp it (the #617 USD payload contract).
+            //
+            // ALWAYS-COMPUTE (2026-09-27): the cycle evaluator computed the
+            // gross (≤ 0) at its clamped size; the fixed cost components
+            // (gas + ops) are config-sourced and computable here. The clamped
+            // AMOUNT is not exposed by this outcome, so amount_in and the
+            // per-leg ledger stay honestly absent (R8 + reasons) — a
+            // flash-wrapped variant additionally keeps net_economics absent
+            // because its fee needs the unknown principal (never assumed 0).
             CycleEvalOutcome::NonPositive { profit_usd } => {
-                return OptimizeOutcome::Rejected(
+                let gas_cost = state.gas_cost_usd();
+                let ops_overhead = state.ops_overhead_usd_per_attempt;
+                let net_usd = profit_usd - gas_cost - ops_overhead;
+                let own_capital = candidate.base_strategy.is_none();
+                let mut cand = candidate.clone();
+                cand.opportunity.expected_profit_usd = Some(profit_usd);
+                cand.opportunity.net_expected_profit_usd = Some(net_usd);
+                return OptimizeOutcome::RejectedComputed(
                     OptimizeRejectReason::NonPositiveProfit,
-                    Some(profit_usd),
-                )
+                    Box::new(SizedCandidate {
+                        candidate: cand,
+                        optimal_amount_in: U256::zero(),
+                        gross_profit_usd: profit_usd,
+                        estimated_net_profit_usd: net_usd,
+                        net_negative: true,
+                        net_economics: own_capital.then(|| {
+                            crate::net_bps_ranking::RouteNetEconomics::from_kernel(
+                                0.0,
+                                profit_usd,
+                                gas_cost,
+                                ops_overhead,
+                                0.0,
+                            )
+                        }),
+                        leg_amounts_in: None,
+                        leg_amounts_out: None,
+                    }),
+                );
             }
             // R8: evaluate_cycle computed nothing — no value to stamp.
             CycleEvalOutcome::NotComputed => {
@@ -1282,11 +1599,75 @@ impl SizeOptimizer {
             Some(g) if g > 0.0 => g,
             // R8: pass the computed gross through verbatim (Some(<=0)); None
             // stays None — `evaluate_cycle` computed nothing.
-            _ => {
-                return OptimizeOutcome::Rejected(
+            //
+            // ALWAYS-COMPUTE (2026-09-27): a computed (≤ 0) gross at a KNOWN
+            // clamped amount upgrades to the full figures — the post-clamp
+            // re-evaluation produced the per-leg outputs (WO-LEGS-TRIANGULAR-01
+            // consumes them below), so the ledger rides the reject too.
+            computed_gross => {
+                let (g, has_figures) = match computed_gross {
+                    Some(g) => (g, true),
+                    None => (0.0, false),
+                };
+                if !has_figures {
+                    return OptimizeOutcome::Rejected(
+                        OptimizeRejectReason::NonPositiveGrossUsd,
+                        None,
+                    );
+                }
+                let gas_cost = state.gas_cost_usd();
+                let ops_overhead = state.ops_overhead_usd_per_attempt;
+                let start_amount_usd = (clamped_to_i128(eval_result.amount_in_wei) as f64)
+                    / 10f64.powi(decimals as i32)
+                    * token_price_usd;
+                let borrow_usd = if candidate.base_strategy.is_some() {
+                    start_amount_usd
+                } else {
+                    0.0
+                };
+                let flash_fee_usd =
+                    borrow_usd * crate::financing::selected_mode(borrow_usd).fee_bps() / 10_000.0;
+                let net_usd = g - gas_cost - ops_overhead - flash_fee_usd;
+                let (legs_in, legs_out) = match eval_result.leg_outputs.as_ref() {
+                    Some(outs) if outs.len() == legs.len() => {
+                        let x = eval_result.amount_in_wei;
+                        let mut ins = Vec::with_capacity(outs.len());
+                        ins.push(x.to_string());
+                        for out in outs.iter().take(outs.len().saturating_sub(1)) {
+                            ins.push(out.to_string());
+                        }
+                        (
+                            Some(ins),
+                            Some(outs.iter().map(|o| o.to_string()).collect::<Vec<_>>()),
+                        )
+                    }
+                    _ => (None, None),
+                };
+                let mut cand = candidate.clone();
+                cand.opportunity.amount_in_wei = eval_result.amount_in_wei.to_string();
+                cand.opportunity.expected_profit_usd = Some(g);
+                cand.opportunity.net_expected_profit_usd = Some(net_usd);
+                return OptimizeOutcome::RejectedComputed(
                     OptimizeRejectReason::NonPositiveGrossUsd,
-                    eval_result.expected_profit_usd,
-                )
+                    Box::new(SizedCandidate {
+                        candidate: cand,
+                        optimal_amount_in: eval_result.amount_in_wei,
+                        gross_profit_usd: g,
+                        estimated_net_profit_usd: net_usd,
+                        net_negative: true,
+                        net_economics: Some(
+                            crate::net_bps_ranking::RouteNetEconomics::from_kernel(
+                                start_amount_usd,
+                                g,
+                                gas_cost,
+                                ops_overhead,
+                                borrow_usd,
+                            ),
+                        ),
+                        leg_amounts_in: legs_in,
+                        leg_amounts_out: legs_out,
+                    }),
+                );
             }
         };
 
@@ -1512,7 +1893,35 @@ impl SizeOptimizer {
         // ── 2. LOCAL 0-RPC pass: within-tick V3 + CPMM over the log grid ──────
         // Only available when EVERY leg resolved (otherwise there is no local
         // model at all, and the bracket falls back below).
-        let grid = geom_probes(U256::one(), cap_wei, V3_MULTILEG_LOCAL_POINTS);
+        // P0 · NLEG-SIZE-SPAN-01: la grilla arranca en el PISO DE POLVO, no en
+        // 1 wei — el mismo contrato que ya cumplen el kernel V2 y el V3 de 2
+        // patas (DUST-NOTIONAL-02/03). Un tamaño sub-centavo no es un hecho
+        // sobre la ruta; y si el cap del operador está por debajo del piso, no
+        // existe tamaño que valga una card: razón explícita (R8).
+        let x_lo = {
+            let wei_per_usd = if token_price_usd > 0.0 {
+                10f64.powi(decimals as i32) / token_price_usd
+            } else {
+                0.0
+            };
+            let lo = (DUST_NOTIONAL_USD * wei_per_usd).ceil();
+            if lo.is_finite() && lo >= 1.0 {
+                f64_to_u256_clamped(lo)
+            } else {
+                U256::one()
+            }
+        };
+        if x_lo >= cap_wei {
+            debug!(
+                event = "size_optimizer.v3_multileg_no_tradable_size",
+                label = candidate.label.as_str(),
+                cap_usd,
+                dust_floor_usd = DUST_NOTIONAL_USD,
+                "capital cap below the dust floor — no size worth a card exists (R8)"
+            );
+            return OptimizeOutcome::Rejected(OptimizeRejectReason::NoTradableSize, None);
+        }
+        let grid = geom_probes(x_lo, cap_wei, V3_MULTILEG_LOCAL_POINTS);
         let local_best = match first_unresolved {
             Some(_) => None,
             None => {
@@ -1552,9 +1961,11 @@ impl SizeOptimizer {
         let probes = match local_best {
             Some((idx, _)) => Self::probes_around_best(&grid, idx, max_probes),
             // No local model (a leg did not resolve, or a V3 leg has no slot0
-            // snapshot): a deterministic coarse bracket from the middle of the
-            // same grid is the honest alternative to guessing an optimum.
-            None => Self::middle_probes(&grid, max_probes),
+            // snapshot): spend the budget at the AUTHORIZED CAPITAL end of the
+            // same grid. Taking the grid's centre instead sized the row at
+            // ~`cap_wei^(8/15)` (dust) and published every figure at that
+            // notional — NLEG-SIZE-BAND-01.
+            None => Self::capital_band_probes(&grid, max_probes),
         };
 
         // ── 4. Quote allowance (per candidate AND per (chain, block)) ─────────
@@ -1760,17 +2171,87 @@ impl SizeOptimizer {
                 probes_attempted,
                 profit_wei,
             );
-            return OptimizeOutcome::RejectedWithLedger(
+            // ALWAYS-COMPUTE (2026-09-27 rebase over #700): #700 already
+            // carried the priced chain + gross on this reject
+            // (`RejectedWithLedger`); the operator's mandate upgrades the SAME
+            // payload to the FULL figures — cost components, net, and the
+            // complete economics object ride the boxed `SizedCandidate`.
+            // Nothing from #700 is dropped: its ledger and gross survive
+            // verbatim inside the richer variant ("el máximo de campos con
+            // dato").
+            let gas_cost = state.gas_cost_usd();
+            let ops_overhead = state.ops_overhead_usd_per_attempt;
+            let start_amount_usd =
+                (clamped_to_i128(amount_in) as f64) / 10f64.powi(decimals as i32) * token_price_usd;
+            let borrow_usd = if candidate.base_strategy.is_some() {
+                start_amount_usd
+            } else {
+                0.0
+            };
+            let flash_fee_usd =
+                borrow_usd * crate::financing::selected_mode(borrow_usd).fee_bps() / 10_000.0;
+            let net_usd = gross_usd - gas_cost - ops_overhead - flash_fee_usd;
+            let mut cand = candidate.clone();
+            cand.opportunity.amount_in_wei = amount_in.to_string();
+            cand.opportunity.expected_profit_usd = Some(gross_usd);
+            cand.opportunity.net_expected_profit_usd = Some(net_usd);
+            return OptimizeOutcome::RejectedComputed(
                 OptimizeRejectReason::NonPositiveProfit,
-                Some(gross_usd),
-                Some((ins, outs)),
+                Box::new(SizedCandidate {
+                    candidate: cand,
+                    optimal_amount_in: amount_in,
+                    gross_profit_usd: gross_usd,
+                    estimated_net_profit_usd: net_usd,
+                    net_negative: true,
+                    net_economics: Some(crate::net_bps_ranking::RouteNetEconomics::from_kernel(
+                        start_amount_usd,
+                        gross_usd,
+                        gas_cost,
+                        ops_overhead,
+                        borrow_usd,
+                    )),
+                    leg_amounts_in: Some(ins),
+                    leg_amounts_out: Some(outs),
+                }),
             );
         }
         if gross_usd <= 0.0 {
-            return OptimizeOutcome::RejectedWithLedger(
+            // Same enrichment on the degenerate-pricing arm (gross priced ≤ 0
+            // with a complete priced chain — the ledger still rides, R8).
+            let gas_cost = state.gas_cost_usd();
+            let ops_overhead = state.ops_overhead_usd_per_attempt;
+            let start_amount_usd =
+                (clamped_to_i128(amount_in) as f64) / 10f64.powi(decimals as i32) * token_price_usd;
+            let borrow_usd = if candidate.base_strategy.is_some() {
+                start_amount_usd
+            } else {
+                0.0
+            };
+            let flash_fee_usd =
+                borrow_usd * crate::financing::selected_mode(borrow_usd).fee_bps() / 10_000.0;
+            let net_usd = gross_usd - gas_cost - ops_overhead - flash_fee_usd;
+            let mut cand = candidate.clone();
+            cand.opportunity.amount_in_wei = amount_in.to_string();
+            cand.opportunity.expected_profit_usd = Some(gross_usd);
+            cand.opportunity.net_expected_profit_usd = Some(net_usd);
+            return OptimizeOutcome::RejectedComputed(
                 OptimizeRejectReason::NonPositiveGrossUsd,
-                Some(gross_usd),
-                Some((ins, outs)),
+                Box::new(SizedCandidate {
+                    candidate: cand,
+                    optimal_amount_in: amount_in,
+                    gross_profit_usd: gross_usd,
+                    estimated_net_profit_usd: net_usd,
+                    net_negative: true,
+                    net_economics: Some(crate::net_bps_ranking::RouteNetEconomics::from_kernel(
+                        start_amount_usd,
+                        gross_usd,
+                        gas_cost,
+                        ops_overhead,
+                        borrow_usd,
+                    )),
+                    leg_amounts_in: Some(ins),
+                    leg_amounts_out: Some(outs),
+                }),
             );
         }
 
@@ -1989,8 +2470,16 @@ impl SizeOptimizer {
         out
     }
 
-    /// Fallback bracket when no local model is available: the centred `max`
-    /// points of the same log grid. Deterministic, never a guessed optimum.
+    /// The SUPERSEDED model-free bracket: the centred `max` points of the log
+    /// grid. NLEG-SIZE-BAND-01 replaced its only production call site with
+    /// [`Self::capital_band_probes`] (the centre of a grid over `[1, cap_wei]`
+    /// is dust — see that function for the measurement), and this is kept for
+    /// exactly one purpose: the regression test that documents what the old
+    /// bracket selected, so the defect cannot come back unnoticed.
+    ///
+    /// `#[cfg(test)]` because production must not have a second, dust-sized
+    /// bracket available to call.
+    #[cfg(test)]
     fn middle_probes(grid: &[U256], max: usize) -> Vec<U256> {
         if grid.is_empty() {
             return vec![U256::one()];
@@ -2000,6 +2489,66 @@ impl SizeOptimizer {
         }
         let start = (grid.len() - max) / 2;
         grid[start..start + max].to_vec()
+    }
+
+    /// NLEG-SIZE-BAND-01 — model-free bracket anchored on the AUTHORIZED capital.
+    ///
+    /// MEASURED DEFECT. The V3 N-leg path builds its local grid as
+    /// `geom_probes(1 wei, cap_wei, 16)` — log-spaced from one wei to the
+    /// operator's capital. When no local model exists (a leg did not resolve, or
+    /// a V3 leg has no slot0 snapshot) the probe budget used to be spent on the
+    /// **centre** of that grid: for `cap_usd = $1000` on an 18-decimals token
+    /// (`cap_wei ≈ 3.7e17`) the centred points are `≈ cap_wei^(8/15) ≈ 2.3e9 wei
+    /// ≈ $0.000006`. Every figure the row then published — gross, net, roi_pct,
+    /// and the whole cost ladder — was computed at that dust notional, which is
+    /// why live cards carried `gross = 0.00000000` next to `amount_in_wei = 1e18`
+    /// and why rejected rows looked like they had "no economics".
+    ///
+    /// The decision the sizing kernel exists to make is "how much of the
+    /// AUTHORIZED capital should this route take", so a model-free row must be
+    /// probed at the capital end of the same grid. This returns the largest
+    /// `max` points of the grid, i.e. the top of the authorized band; the
+    /// largest probe is exactly `cap_wei`.
+    /// P0 · NLEG-SIZE-SPAN-01 (2026-09-28, medido): el set sin modelo local debe
+    /// ABARCAR la banda autorizada, no sólo su techo.
+    ///
+    /// NLEG-SIZE-BAND-01 lo movió del centro geométrico (polvo) al extremo de
+    /// capital, y sobre-corrigió: con `ARBX_V3_MULTILEG_MAX_PROBES=2` se probaban
+    /// únicamente los DOS tamaños más grandes de la grilla. En una ruta cuya
+    /// profundidad real está muy por debajo del cap — medido: 4 patas UniswapV3
+    /// con pools de fee 0.01 %, principal $67.41 y gross −$67.42 (= ROI −101 %)
+    /// en 372 filas — TODOS los probes caían más allá de la profundidad y el
+    /// kernel publicaba el fill catastrófico como cifra de la ruta.
+    ///
+    /// Contrato nuevo: el extremo de CAPITAL siempre presente (la decisión que
+    /// este kernel existe para tomar) MÁS el extremo BAJO de la grilla cuando hay
+    /// presupuesto para más de un probe, para que una ruta delgada reciba al
+    /// menos un tamaño que pueda absorber y publique un negativo chico y honesto.
+    fn capital_band_probes(grid: &[U256], max: usize) -> Vec<U256> {
+        if grid.is_empty() || max == 0 {
+            return vec![U256::one()];
+        }
+        if max == 1 || grid.len() == 1 {
+            return vec![grid[grid.len() - 1]];
+        }
+        let mut out: Vec<U256> = Vec::with_capacity(max);
+        out.push(grid[0]);
+        if max > 2 {
+            let inner = max - 2;
+            let span = grid.len() - 1;
+            for k in 1..=inner {
+                let idx = (k * span) / (inner + 1);
+                let p = grid[idx.min(span)];
+                if !out.contains(&p) {
+                    out.push(p);
+                }
+            }
+        }
+        let top = grid[grid.len() - 1];
+        if out.last() != Some(&top) {
+            out.push(top);
+        }
+        out
     }
 
     /// The earliest RESOLVED V3 leg: `(index, pool, zero_for_one)`. `None` when
@@ -2034,6 +2583,7 @@ impl SizeOptimizer {
             OptimizeOutcome::Sized(s) => Some(*s),
             OptimizeOutcome::Rejected(_, _) => None,
             OptimizeOutcome::RejectedWithLedger(_, _, _) => None,
+            OptimizeOutcome::RejectedComputed(_, _) => None,
         }
     }
 
@@ -2122,13 +2672,44 @@ impl SizeOptimizer {
         let fee_b = legs[1].fee_bps.unwrap_or(30);
 
         // Search bounds.
+        //
+        // DEPTH-BOUND-SIZING-01 (2026-09-28, measured defect): the bracket used
+        // to be `min(cap_wei, reserve_in_a)` — the CAPITAL cap bounded only by
+        // the FIRST leg's reserve. A route whose later hop is shallow was then
+        // priced at a size it cannot absorb, and the kernel published the
+        // (arithmetically correct) catastrophic fill as an "opportunity":
+        // measured 995.379 USDC sent into the Sushi DAI/USDC pool that holds
+        // 824.057 USDC ⇒ −55 % gross with a $1000 principal, painted on a card.
+        //
+        // The tradable size is bounded by the route's SLIPPAGE BUDGET, not by the
+        // capital alone: for a CPMM the marginal impact of an input `x` against
+        // reserve `R` is ≈ x/R, so `x ≤ s·R` keeps the impact inside the
+        // operator's `max_slippage_pct` (live mainnet config: 0.0050 = 0.5 %).
+        // Leg B's depth is expressed in leg A's INPUT token — leg A converts
+        // token_in → token_out at reserve_out_a/reserve_in_a.
+        //
+        // A route that cannot absorb a size worth its gas now yields a small,
+        // honest negative (or a rejection) instead of a −55 %/−101 % card.
         let x_lo = U256::from(1u64);
+        let slip = state.max_slippage_pct;
+        // Fail-safe: the field is a FRACTION in (0,1). Anything outside that
+        // (0, or the 1.0 the unit fixtures carry) falls back to the live 0.5 %.
+        let slip = if slip > 0.0 && slip < 1.0 {
+            slip
+        } else {
+            0.005
+        };
+        let slip_bps = ((slip * 10_000.0).round().max(1.0)) as u64;
+        let impact_bound = |reserve: U256| -> U256 {
+            reserve.saturating_mul(U256::from(slip_bps)) / U256::from(10_000u64)
+        };
+        let depth_b_in_input =
+            reserve_in_b.saturating_mul(reserve_in_a) / reserve_out_a.max(U256::one());
         let x_hi = {
-            let ceiling = if cap_wei < reserve_in_a {
-                cap_wei
-            } else {
-                reserve_in_a
-            };
+            let ceiling = cap_wei
+                .min(reserve_in_a)
+                .min(impact_bound(reserve_in_a))
+                .min(impact_bound(depth_b_in_input));
             if ceiling > x_lo {
                 ceiling
             } else {
@@ -2139,7 +2720,7 @@ impl SizeOptimizer {
         let hop_reserves_a = vec![(reserve_in_a, reserve_out_a)];
         let hop_reserves_b = vec![(reserve_in_b, reserve_out_b)];
 
-        let (x_star, profit_wei) = golden_section_search_2leg(
+        let (x_star_raw, profit_wei_raw) = golden_section_search_2leg(
             x_lo,
             x_hi,
             &hop_reserves_a,
@@ -2149,12 +2730,117 @@ impl SizeOptimizer {
             25,
         );
 
+        // DUST-NOTIONAL-02 (2026-09-28, measured post-deploy): the kernel's
+        // argmax is only a MEANINGFUL publication size when it is tradable. For a
+        // hair-thin edge the optimum sits at the dust end of the bracket and the
+        // row went out with a $8.7e-13 principal and `roi_pct` −7.84e13 %
+        // (measured: 362 such rows in the first three minutes of the new binary —
+        // 4.9 % of its computed 2-leg rows). A sub-cent notional is not a fact
+        // about the route: re-price at the tradable band `x_hi` — already bounded
+        // by the capital AND by the route's slippage budget — and publish THAT.
+        // If even the band is sub-cent, no tradable size exists: reject
+        // explicitly (R8) instead of publishing a meaningless ratio.
+        let usd_of = |wei: U256| -> f64 {
+            (clamped_to_i128(wei) as f64) / 10f64.powi(decimals as i32) * token_price_usd
+        };
+        let (x_star, profit_wei) = if usd_of(x_star_raw) < DUST_NOTIONAL_USD {
+            if usd_of(x_hi) < DUST_NOTIONAL_USD {
+                debug!(
+                    event = "size_optimizer.two_leg_no_tradable_size",
+                    label = candidate.label.as_str(),
+                    band_usd = usd_of(x_hi),
+                    "tradable band below the dust floor — no tradable size exists (R8)"
+                );
+                return OptimizeOutcome::Rejected(OptimizeRejectReason::NoTradableSize, None);
+            }
+            let out_a = v2_amount_out(x_hi, reserve_in_a, reserve_out_a, fee_a);
+            let out_b = v2_amount_out(out_a, reserve_in_b, reserve_out_b, fee_b);
+            let profit_band = clamped_to_i128(out_b).saturating_sub(clamped_to_i128(x_hi));
+            debug!(
+                event = "size_optimizer.two_leg_dust_optimum_repriced_at_band",
+                label = candidate.label.as_str(),
+                kernel_argmax_wei = %x_star_raw,
+                kernel_argmax_usd = usd_of(x_star_raw),
+                published_notional_wei = %x_hi,
+                published_notional_usd = usd_of(x_hi),
+                "dust optimum is not a tradable size — publishing at the band"
+            );
+            (x_hi, profit_band)
+        } else {
+            (x_star_raw, profit_wei_raw)
+        };
+
         if profit_wei <= 0 {
-            // Payload = the golden-section profit converted to USD (<= 0).
-            let profit_usd = (profit_wei as f64) / 10f64.powi(decimals as i32) * token_price_usd;
-            return OptimizeOutcome::Rejected(
+            // ALWAYS-COMPUTE (operator mandate 2026-09-27): the kernel priced
+            // both legs (local CPMM math over the same cached reserves), so the
+            // rejection carries the FULL figures it computed: gross (≤ 0), the
+            // cost components it was judged against, net, and the per-leg
+            // ledger. "FAIL = se hizo el cálculo y no cumple el criterio",
+            // never "no tengo números".
+            //
+            // DUST-NOTIONAL-01 (operator order 2026-09-27, measured defect):
+            // when the WHOLE bracket is unprofitable, `x_star` is the argmax of
+            // an everywhere-negative curve — for two pools at (near) parity it
+            // lands at the dust end of the bracket. Production evidence: 4 087
+            // rows/20 min (12.7 % of every `computed` row) published a principal
+            // of $0.001842 with `roi_pct` down to −7.84e13 %, from this exact
+            // arm. A figure computed at an arbitrary sub-cent notional is not a
+            // fact about this route; the AUTHORIZED-CAPITAL end of the SAME
+            // bracket is (the NLEG-SIZE-BAND-01 precedent, which did this for
+            // the 3..=7-leg grid but never for this 2-leg kernel). The kernel's
+            // argmax is kept in the telemetry, not in the published notional.
+            let x_band = x_hi;
+            let out_a = v2_amount_out(x_band, reserve_in_a, reserve_out_a, fee_a);
+            let out_b = v2_amount_out(out_a, reserve_in_b, reserve_out_b, fee_b);
+            // The argmax is the MAXIMUM over the bracket and it is ≤ 0, so the
+            // band's own gross is ≤ 0 too — the reason stays NonPositiveProfit.
+            let profit_band_wei = clamped_to_i128(out_b).saturating_sub(clamped_to_i128(x_band));
+            debug!(
+                event = "size_optimizer.two_leg_nonpositive_published_at_capital_band",
+                label = candidate.label.as_str(),
+                kernel_argmax_wei = %x_star,
+                kernel_argmax_profit_wei = profit_wei,
+                published_notional_wei = %x_band,
+                published_profit_wei = profit_band_wei,
+                "no profitable size in the bracket — publishing at the authorized \
+                 capital end instead of the negative curve's dust argmax"
+            );
+            let profit_usd =
+                (profit_band_wei as f64) / 10f64.powi(decimals as i32) * token_price_usd;
+            let gas_cost = state.gas_cost_usd();
+            let ops_overhead = state.ops_overhead_usd_per_attempt;
+            let start_amount_usd =
+                (clamped_to_i128(x_band) as f64) / 10f64.powi(decimals as i32) * token_price_usd;
+            let borrow_usd = if candidate.base_strategy.is_some() {
+                start_amount_usd
+            } else {
+                0.0
+            };
+            let flash_fee_usd =
+                borrow_usd * crate::financing::selected_mode(borrow_usd).fee_bps() / 10_000.0;
+            let net_usd = profit_usd - gas_cost - ops_overhead - flash_fee_usd;
+            let mut cand = candidate.clone();
+            cand.opportunity.amount_in_wei = x_band.to_string();
+            cand.opportunity.expected_profit_usd = Some(profit_usd);
+            cand.opportunity.net_expected_profit_usd = Some(net_usd);
+            return OptimizeOutcome::RejectedComputed(
                 OptimizeRejectReason::NonPositiveProfit,
-                Some(profit_usd),
+                Box::new(SizedCandidate {
+                    candidate: cand,
+                    optimal_amount_in: x_band,
+                    gross_profit_usd: profit_usd,
+                    estimated_net_profit_usd: net_usd,
+                    net_negative: true,
+                    net_economics: Some(crate::net_bps_ranking::RouteNetEconomics::from_kernel(
+                        start_amount_usd,
+                        profit_usd,
+                        gas_cost,
+                        ops_overhead,
+                        borrow_usd,
+                    )),
+                    leg_amounts_in: Some(vec![x_band.to_string(), out_a.to_string()]),
+                    leg_amounts_out: Some(vec![out_a.to_string(), out_b.to_string()]),
+                }),
             );
         }
 
@@ -2182,13 +2868,45 @@ impl SizeOptimizer {
             // same values the accepted path below turns into the ledger. Carry
             // them so the rejected row can still show each hop's movement
             // (operator's per-hop request) instead of "not computed".
-            return OptimizeOutcome::RejectedWithLedger(
+            //
+            // ALWAYS-COMPUTE (2026-09-27): upgraded from RejectedWithLedger to
+            // RejectedComputed — the full gross/costs/net arithmetic travels
+            // with the ledger (the same construction the accepted tail uses,
+            // one comparison earlier).
+            let gas_cost = state.gas_cost_usd();
+            let ops_overhead = state.ops_overhead_usd_per_attempt;
+            let start_amount_usd =
+                (clamped_to_i128(amount_in) as f64) / 10f64.powi(decimals as i32) * token_price_usd;
+            let borrow_usd = if candidate.base_strategy.is_some() {
+                start_amount_usd
+            } else {
+                0.0
+            };
+            let flash_fee_usd =
+                borrow_usd * crate::financing::selected_mode(borrow_usd).fee_bps() / 10_000.0;
+            let net_usd = profit_usd - gas_cost - ops_overhead - flash_fee_usd;
+            let mut cand = candidate.clone();
+            cand.opportunity.amount_in_wei = amount_in.to_string();
+            cand.opportunity.expected_profit_usd = Some(profit_usd);
+            cand.opportunity.net_expected_profit_usd = Some(net_usd);
+            return OptimizeOutcome::RejectedComputed(
                 OptimizeRejectReason::NonPositiveProfit,
-                Some(profit_usd),
-                Some((
-                    vec![amount_in.to_string(), out_a.to_string()],
-                    vec![out_a.to_string(), out_b.to_string()],
-                )),
+                Box::new(SizedCandidate {
+                    candidate: cand,
+                    optimal_amount_in: amount_in,
+                    gross_profit_usd: profit_usd,
+                    estimated_net_profit_usd: net_usd,
+                    net_negative: true,
+                    net_economics: Some(crate::net_bps_ranking::RouteNetEconomics::from_kernel(
+                        start_amount_usd,
+                        profit_usd,
+                        gas_cost,
+                        ops_overhead,
+                        borrow_usd,
+                    )),
+                    leg_amounts_in: Some(vec![amount_in.to_string(), out_a.to_string()]),
+                    leg_amounts_out: Some(vec![out_a.to_string(), out_b.to_string()]),
+                }),
             );
         }
 
@@ -2380,8 +3098,40 @@ impl SizeOptimizer {
         let leg0_v3 = matches!(eval0, LegEval::V3 { .. });
         let leg1_v3 = matches!(eval1, LegEval::V3 { .. });
 
-        // Log-spaced probe bracket over [1, cap_wei].
-        let probes = geom_probes(U256::one(), cap_wei, V3_BRACKET_POINTS);
+        // Log-spaced probe bracket over [dust floor, cap_wei].
+        //
+        // DUST-NOTIONAL-03 (2026-09-28, measured): this bracket started at ONE
+        // WEI, so on a near-parity route the best probe sat at the dust end and
+        // the row went out with a $8.6e-13 principal and `roi_pct` −7.85e13 %
+        // (measured post-deploy: 501 such rows in nine minutes — ALL of them
+        // carrying a V3 leg, while the V2/V2 kernel published NONE after
+        // DUST-NOTIONAL-02). A sub-cent notional is not a fact about the route:
+        // the grid now starts at the smallest size worth a card, and a route
+        // whose capital cap sits below that floor is rejected explicitly (R8).
+        let x_lo = {
+            let wei_per_usd = if token_price_usd > 0.0 {
+                10f64.powi(decimals as i32) / token_price_usd
+            } else {
+                0.0
+            };
+            let lo = (DUST_NOTIONAL_USD * wei_per_usd).ceil();
+            if lo.is_finite() && lo >= 1.0 {
+                f64_to_u256_clamped(lo)
+            } else {
+                U256::one()
+            }
+        };
+        if x_lo >= cap_wei {
+            debug!(
+                event = "size_optimizer.two_leg_v3_no_tradable_size",
+                label = candidate.label.as_str(),
+                cap_usd,
+                dust_floor_usd = DUST_NOTIONAL_USD,
+                "capital cap below the dust floor — no size worth a card exists (R8)"
+            );
+            return OptimizeOutcome::Rejected(OptimizeRejectReason::NoTradableSize, None);
+        }
+        let probes = geom_probes(x_lo, cap_wei, V3_BRACKET_POINTS);
 
         // Plan B.1 — 0-RPC within-tick early-reject. When slot0 is cached for
         // every V3 leg, the within-tick model is a provable upper bound on the
@@ -2484,12 +3234,55 @@ impl SizeOptimizer {
                 }
                 // R8: payload only when a probe actually computed a profit
                 // (best = Some with profit_wei <= 0); no probe answered → None.
-                let computed_usd =
-                    best.map(|b| (b.3 as f64) / 10f64.powi(decimals as i32) * token_price_usd);
-                return OptimizeOutcome::Rejected(
-                    OptimizeRejectReason::NonPositiveProfit,
-                    computed_usd,
-                );
+                //
+                // ALWAYS-COMPUTE (2026-09-27): when a probe DID answer, its
+                // round-trip is a REAL QuoterV2 quote at that size — carry the
+                // full figures (gross ≤ 0 priced, cost components, net, the
+                // exact per-leg chain) on the reject. No probe answered at all
+                // → legacy payload-None reject (nothing was computed; the
+                // caller stamps computation_status:"error").
+                if let Some((x, mid, out, pw)) = best {
+                    let computed_usd = (pw as f64) / 10f64.powi(decimals as i32) * token_price_usd;
+                    let gas_cost = state.gas_cost_usd();
+                    let ops_overhead = state.ops_overhead_usd_per_attempt;
+                    let start_amount_usd =
+                        (clamped_to_i128(x) as f64) / 10f64.powi(decimals as i32) * token_price_usd;
+                    let borrow_usd = if candidate.base_strategy.is_some() {
+                        start_amount_usd
+                    } else {
+                        0.0
+                    };
+                    let flash_fee_usd = borrow_usd
+                        * crate::financing::selected_mode(borrow_usd).fee_bps()
+                        / 10_000.0;
+                    let net_usd = computed_usd - gas_cost - ops_overhead - flash_fee_usd;
+                    let mut cand = candidate.clone();
+                    cand.opportunity.amount_in_wei = x.to_string();
+                    cand.opportunity.expected_profit_usd = Some(computed_usd);
+                    cand.opportunity.net_expected_profit_usd = Some(net_usd);
+                    return OptimizeOutcome::RejectedComputed(
+                        OptimizeRejectReason::NonPositiveProfit,
+                        Box::new(SizedCandidate {
+                            candidate: cand,
+                            optimal_amount_in: x,
+                            gross_profit_usd: computed_usd,
+                            estimated_net_profit_usd: net_usd,
+                            net_negative: true,
+                            net_economics: Some(
+                                crate::net_bps_ranking::RouteNetEconomics::from_kernel(
+                                    start_amount_usd,
+                                    computed_usd,
+                                    gas_cost,
+                                    ops_overhead,
+                                    borrow_usd,
+                                ),
+                            ),
+                            leg_amounts_in: Some(vec![x.to_string(), mid.to_string()]),
+                            leg_amounts_out: Some(vec![mid.to_string(), out.to_string()]),
+                        }),
+                    );
+                }
+                return OptimizeOutcome::Rejected(OptimizeRejectReason::NonPositiveProfit, None);
             }
         };
 
@@ -2802,6 +3595,7 @@ impl SizeOptimizer {
             OptimizeOutcome::Sized(s) => Some(*s),
             OptimizeOutcome::Rejected(_, _) => None,
             OptimizeOutcome::RejectedWithLedger(_, _, _) => None,
+            OptimizeOutcome::RejectedComputed(_, _) => None,
         }
     }
 }
@@ -3263,6 +4057,7 @@ mod tests {
             pipeline_latency_ms: None,
             detected_at: Utc::now(),
             trace_id: Uuid::new_v4(),
+            economics: None,
         };
 
         let candidate_inner = OpportunityCandidate {
@@ -3465,6 +4260,217 @@ mod tests {
         );
     }
 
+    // ── DUST-NOTIONAL-01 (operator order 2026-09-27) ─────────────────────────
+    //
+    // Production evidence (measured on the live feed): 4 087 rows / 20 min
+    // (12.7 % of every `computed` row) published a principal of $0.001842 with
+    // `roi_pct` down to −7.84e13 %. Cause: when the WHOLE bracket is
+    // unprofitable, `x_star` is the argmax of an everywhere-negative curve,
+    // which for two pools at (near) parity lands at the DUST end of the
+    // bracket — and every published figure was computed there.
+    //
+    // Contract: the rejection is published at the AUTHORIZED-CAPITAL end of the
+    // same bracket (`min(cap_wei, reserve_in)`; the NLEG-SIZE-BAND-01
+    // precedent), the row's `amount_in_wei` IS that notional, and the leg
+    // ledger opens on it. A sub-cent notional is never the published basis.
+    #[tokio::test]
+    async fn two_leg_nonpositive_is_published_at_the_capital_band_not_at_dust() {
+        let pool_a = addr(0x10);
+        let pool_b = addr(0x11);
+        let tok_weth = addr(0xAAAA);
+        let tok_usdc = addr(0xBBBB);
+
+        let cache = Arc::new(ReservesCache::new());
+        // Perfect parity (equal reserves, equal fees) ⇒ every size loses.
+        // One unit of reserves so the bracket ceiling IS the reserve side.
+        let r = unit(1);
+        cache.insert(pool_a, r, r).await;
+        cache.insert(pool_b, r, r).await;
+
+        let projector = Arc::new(StateProjector::new(cache, None, empty_v3_fee_catalog()));
+        let optimizer = SizeOptimizer::new(projector);
+
+        let candidate = make_dex_candidate(
+            pool_a,
+            pool_b,
+            tok_weth,
+            tok_usdc,
+            StrategyLabel::DexArbV2V2,
+        );
+        let intent = make_intent(tok_weth, tok_usdc);
+        let cfg = make_cfg(100_000.0);
+
+        let outcome = optimizer
+            .optimize_with_reason(candidate, &intent, Some(&cfg))
+            .await
+            .expect("optimize must not error");
+
+        let s = match outcome {
+            OptimizeOutcome::RejectedComputed(OptimizeRejectReason::NonPositiveProfit, s) => s,
+            other => panic!(
+                "an unprofitable 2-leg bracket must be RejectedComputed(NonPositiveProfit), got {:?}",
+                other.reason_str()
+            ),
+        };
+
+        // The published notional is the TRADABLE band of the same bracket —
+        // after DEPTH-BOUND-SIZING-01 that is the slippage budget of the
+        // shallowest leg (0.5 % of one unit here), NOT the dust argmax the
+        // negative curve hands back.
+        let band = r * U256::from(50u64) / U256::from(10_000u64);
+        assert_eq!(
+            s.optimal_amount_in, band,
+            "published notional must be the tradable band, not the negative curve's dust argmax"
+        );
+        assert_eq!(
+            s.candidate.opportunity.amount_in_wei,
+            s.optimal_amount_in.to_string(),
+            "the row's published amount_in_wei IS the notional the figures were computed at"
+        );
+        let ins = s
+            .leg_amounts_in
+            .as_ref()
+            .expect("the leg ledger rides the rejection");
+        assert_eq!(
+            ins[0],
+            s.optimal_amount_in.to_string(),
+            "hop 0 opens on the published notional"
+        );
+        assert!(
+            s.gross_profit_usd <= 0.0,
+            "a losing bracket keeps a non-positive gross"
+        );
+        assert!(
+            s.estimated_net_profit_usd <= s.gross_profit_usd,
+            "net carries the costs on top of the (≤ 0) gross"
+        );
+        // Dust would sit ~1e-7 below the reserve; require the tradable band.
+        assert!(
+            s.optimal_amount_in >= band / U256::from(2u64),
+            "dust publication: {} is far below the tradable band {}",
+            s.optimal_amount_in,
+            r
+        );
+    }
+
+    // ── DEPTH-BOUND-SIZING-01 (2026-09-28) ───────────────────────────────────
+    //
+    // Measured defect: a 2-leg route whose SECOND pool is shallow was sized at
+    // the capital cap and the kernel published the (correct) catastrophic fill
+    // as an opportunity — 995.379 USDC into a Sushi DAI/USDC pool holding
+    // 824.057 USDC ⇒ −55 % gross on a $1000 principal.
+    //
+    // Contract: the bracket is bounded by the route's SLIPPAGE BUDGET
+    // (`max_slippage_pct`, live 0.0050 = 0.5 %), not by the capital alone. With
+    // pool A holding 1000 units and pool B holding 1, the tradable size is
+    // 0.5 % of ONE unit — the shallow leg's depth, converted into the input
+    // token — regardless of how much capital the operator authorized.
+    #[tokio::test]
+    async fn two_leg_bracket_is_bounded_by_the_shallow_leg_slippage_budget() {
+        let pool_a = addr(0x10);
+        let pool_b = addr(0x11);
+        let tok_weth = addr(0xAAAA);
+        let tok_usdc = addr(0xBBBB);
+
+        let cache = Arc::new(ReservesCache::new());
+        let deep = unit(1000); // leg A: deep
+        let shallow = unit(1); // leg B: 1/1000 of A
+        cache.insert(pool_a, deep, deep).await;
+        cache.insert(pool_b, shallow, shallow).await;
+
+        let projector = Arc::new(StateProjector::new(cache, None, empty_v3_fee_catalog()));
+        let optimizer = SizeOptimizer::new(projector);
+
+        let candidate = make_dex_candidate(
+            pool_a,
+            pool_b,
+            tok_weth,
+            tok_usdc,
+            StrategyLabel::DexArbV2V2,
+        );
+        let intent = make_intent(tok_weth, tok_usdc);
+        let cfg = make_cfg(100_000.0); // capital far above the route's depth
+
+        let outcome = optimizer
+            .optimize_with_reason(candidate, &intent, Some(&cfg))
+            .await
+            .expect("optimize must not error");
+
+        let s = match outcome {
+            OptimizeOutcome::RejectedComputed(_, s) => s,
+            other => panic!(
+                "a parity route must reject with figures, got {:?}",
+                other.reason_str()
+            ),
+        };
+
+        // 0.5 % of the shallow leg's one unit, converted to the input token.
+        let expected_bound = shallow * U256::from(50u64) / U256::from(10_000u64);
+        assert_eq!(
+            s.optimal_amount_in, expected_bound,
+            "the published notional must be the shallow leg's slippage budget"
+        );
+        // …and it must be far below what the capital cap would have allowed.
+        let capital_cap = U256::from(10u64).pow(U256::from(18u64)) * U256::from(1000u64);
+        assert!(
+            s.optimal_amount_in < capital_cap,
+            "the capital cap must NOT be reachable on this route"
+        );
+    }
+
+    // ── DUST-NOTIONAL-02 (2026-09-28) ────────────────────────────────────────
+    //
+    // Measured post-deploy: 362 rows in three minutes published a $8.7e-13
+    // principal with `roi_pct` −7.84e13 % — the kernel's argmax sitting at the
+    // dust end of the bracket. When even the tradable band is sub-cent, no
+    // tradable size exists at all: the honest verdict is an explicit rejection,
+    // never a ratio computed against dust.
+    #[tokio::test]
+    async fn two_leg_with_dust_reserves_has_no_tradable_size() {
+        let pool_a = addr(0x10);
+        let pool_b = addr(0x11);
+        let tok_weth = addr(0xAAAA);
+        let tok_usdc = addr(0xBBBB);
+
+        let cache = Arc::new(ReservesCache::new());
+        // Both pools hold 1e6 wei (1e-12 tokens): 0.5 % of that is ~$1e-11, far
+        // below the dust floor — this route cannot be traded at any size.
+        let dust = U256::from(1_000_000u64);
+        cache.insert(pool_a, dust, dust).await;
+        cache.insert(pool_b, dust, dust).await;
+
+        let projector = Arc::new(StateProjector::new(cache, None, empty_v3_fee_catalog()));
+        let optimizer = SizeOptimizer::new(projector);
+
+        let candidate = make_dex_candidate(
+            pool_a,
+            pool_b,
+            tok_weth,
+            tok_usdc,
+            StrategyLabel::DexArbV2V2,
+        );
+        let intent = make_intent(tok_weth, tok_usdc);
+        let cfg = make_cfg(100_000.0);
+
+        let outcome = optimizer
+            .optimize_with_reason(candidate, &intent, Some(&cfg))
+            .await
+            .expect("optimize must not error");
+
+        assert!(
+            matches!(
+                outcome,
+                OptimizeOutcome::Rejected(OptimizeRejectReason::NoTradableSize, None)
+            ),
+            "a route whose band is sub-cent must be rejected explicitly, got {:?}",
+            outcome.reason_str()
+        );
+        assert_eq!(
+            OptimizeRejectReason::NoTradableSize.as_str(),
+            "no_tradable_size"
+        );
+    }
+
     // ── N-LEG CYCLE DISPATCH (CARDS-HOPS 2026-09-20) ─────────────────────────
     //
     // Root cause of "only 2 hops in the cards": route_graph/amm_curve engines
@@ -3514,6 +4520,7 @@ mod tests {
             pipeline_latency_ms: None,
             detected_at: Utc::now(),
             trace_id: Uuid::new_v4(),
+            economics: None,
         };
 
         let candidate_inner = OpportunityCandidate {
@@ -4245,6 +5252,7 @@ mod tests {
             pipeline_latency_ms: None,
             detected_at: Utc::now(),
             trace_id: Uuid::new_v4(),
+            economics: None,
         };
 
         let route_plan = RoutePlan {
@@ -4447,6 +5455,7 @@ mod tests {
             pipeline_latency_ms: None,
             detected_at: Utc::now(),
             trace_id: Uuid::new_v4(),
+            economics: None,
         };
 
         let route_plan = RoutePlan {
@@ -4736,11 +5745,22 @@ mod tests {
             ) => {
                 // Expected: gas destroys any micro-profit.
             }
+            // ALWAYS-COMPUTE (2026-09-27): the converted reject paths carry the
+            // FULL figures — same reasons, richer (honest) payload.
+            OptimizeOutcome::RejectedComputed(
+                OptimizeRejectReason::NonPositiveProfit
+                | OptimizeRejectReason::NonPositiveNetUsd
+                | OptimizeRejectReason::NonPositiveGrossUsd,
+                _,
+            ) => {
+                // Expected: gas destroys any micro-profit — WITH the numbers.
+            }
             other => {
                 let reason = match other {
                     OptimizeOutcome::Sized(_) => "Sized (unexpected — profit survived high gas)",
                     OptimizeOutcome::Rejected(r, _)
-                    | OptimizeOutcome::RejectedWithLedger(r, _, _) => r.as_str(),
+                    | OptimizeOutcome::RejectedWithLedger(r, _, _)
+                    | OptimizeOutcome::RejectedComputed(r, _) => r.as_str(),
                 };
                 panic!("unexpected outcome: {reason}");
             }
@@ -5006,7 +6026,9 @@ mod tests {
                 assert_eq!(s.gross_profit_usd, sized.gross_profit_usd);
                 assert_eq!(s.estimated_net_profit_usd, sized.estimated_net_profit_usd);
             }
-            OptimizeOutcome::Rejected(r, _) | OptimizeOutcome::RejectedWithLedger(r, _, _) => {
+            OptimizeOutcome::Rejected(r, _)
+            | OptimizeOutcome::RejectedWithLedger(r, _, _)
+            | OptimizeOutcome::RejectedComputed(r, _) => {
                 panic!("unexpected reject {:?}", r)
             }
         }
@@ -5044,7 +6066,9 @@ mod tests {
                     "gross should scale down when amount caps down",
                 );
             }
-            OptimizeOutcome::Rejected(r, _) | OptimizeOutcome::RejectedWithLedger(r, _, _) => {
+            OptimizeOutcome::Rejected(r, _)
+            | OptimizeOutcome::RejectedWithLedger(r, _, _)
+            | OptimizeOutcome::RejectedComputed(r, _) => {
                 // The scaled net may drop below gas floor at very tight caps;
                 // both Sized-with-smaller-amount and Rejected(GasFloorBreach
                 // / NonPositiveNetUsd) are doctrinally correct outcomes.
@@ -5076,10 +6100,24 @@ mod tests {
         )
         .await;
         match result {
-            OptimizeOutcome::Rejected(OptimizeRejectReason::GasFloorBreach, payload) => {
-                // Deuda 4-(B): the computed net (4.0, positive but below the
-                // floor) must travel on the reject — R8 Some = computed.
-                assert_eq!(payload, Some(4.0), "GasFloorBreach must stamp net_usd");
+            // ALWAYS-COMPUTE (operator mandate 2026-09-27): the gas-floor
+            // reject now carries the FULL sized figures — "COMPUTED ≠
+            // PROFITABLE": the row rejects AND keeps gross, net, components,
+            // sized amount and ledger. The -$card shows its arithmetic.
+            OptimizeOutcome::RejectedComputed(OptimizeRejectReason::GasFloorBreach, s) => {
+                // Deuda 4-(B) upgraded: the computed net (4.0, positive but
+                // below the floor) still travels — R8 Some = computed.
+                assert_eq!(
+                    s.estimated_net_profit_usd, 4.0,
+                    "net must survive the reject"
+                );
+                assert_eq!(
+                    s.gross_profit_usd, 10.0,
+                    "the gross it was judged on survives too"
+                );
+                // NOTE: sheet-07 components are None on this HAND-BUILT fixture
+                // (make_sized constructs no net_economics — ARBX-0009); kernel
+                // paths always populate them (the V3 gate test asserts that).
             }
             other => panic!("expected GasFloorBreach, got {:?}", other.reason_str()),
         }
@@ -5122,7 +6160,11 @@ mod tests {
         )
         .await;
         match result {
-            OptimizeOutcome::Rejected(OptimizeRejectReason::KellyNegativeEdge, _) => {}
+            // ALWAYS-COMPUTE: negative-edge reject keeps the full figures.
+            OptimizeOutcome::RejectedComputed(OptimizeRejectReason::KellyNegativeEdge, s) => {
+                assert_eq!(s.estimated_net_profit_usd, 70.0);
+                assert_eq!(s.gross_profit_usd, 100.0);
+            }
             other => panic!("expected KellyNegativeEdge, got {:?}", other.reason_str()),
         }
     }
@@ -5209,7 +6251,9 @@ mod tests {
                     "ledger must be absent when the reserves are not derivable (R8)"
                 );
             }
-            OptimizeOutcome::Rejected(r, _) | OptimizeOutcome::RejectedWithLedger(r, _, _) => {
+            OptimizeOutcome::Rejected(r, _)
+            | OptimizeOutcome::RejectedWithLedger(r, _, _)
+            | OptimizeOutcome::RejectedComputed(r, _) => {
                 panic!("unexpected reject {:?}", r)
             }
         }
@@ -5265,7 +6309,9 @@ mod tests {
 
         let s = match result {
             OptimizeOutcome::Sized(s) => s,
-            OptimizeOutcome::Rejected(r, _) | OptimizeOutcome::RejectedWithLedger(r, _, _) => {
+            OptimizeOutcome::Rejected(r, _)
+            | OptimizeOutcome::RejectedWithLedger(r, _, _)
+            | OptimizeOutcome::RejectedComputed(r, _) => {
                 panic!("unexpected reject {:?}", r)
             }
         };
@@ -5371,7 +6417,9 @@ mod tests {
                 assert!(s.leg_amounts_in.is_some(), "ledger must survive");
                 assert!(s.leg_amounts_out.is_some(), "ledger must survive");
             }
-            OptimizeOutcome::Rejected(r, _) | OptimizeOutcome::RejectedWithLedger(r, _, _) => {
+            OptimizeOutcome::Rejected(r, _)
+            | OptimizeOutcome::RejectedWithLedger(r, _, _)
+            | OptimizeOutcome::RejectedComputed(r, _) => {
                 panic!("unexpected reject {:?}", r)
             }
         }
@@ -5523,7 +6571,9 @@ mod tests {
                 assert!(s.gross_profit_usd > 0.0, "gross must be positive");
                 assert!(s.estimated_net_profit_usd > 0.0, "net must be positive");
             }
-            OptimizeOutcome::Rejected(r, _) | OptimizeOutcome::RejectedWithLedger(r, _, _) => {
+            OptimizeOutcome::Rejected(r, _)
+            | OptimizeOutcome::RejectedWithLedger(r, _, _)
+            | OptimizeOutcome::RejectedComputed(r, _) => {
                 panic!(
                     "expected Sized for a profitable V3 route, got {}",
                     r.as_str()
@@ -5580,24 +6630,240 @@ mod tests {
             .await
             .expect("optimize must not error");
 
-        assert!(
-            matches!(
-                outcome,
-                OptimizeOutcome::Rejected(OptimizeRejectReason::NonPositiveProfit, _)
+        // ALWAYS-COMPUTE (2026-09-27) gate: a route the quoter ANSWERED for
+        // but that is unprofitable rejects WITH its full arithmetic — the
+        // real QuoterV2(-mock) round-trip figures, cost components, net, and
+        // the per-leg chain — never "no tengo números".
+        match outcome {
+            OptimizeOutcome::RejectedComputed(OptimizeRejectReason::NonPositiveProfit, s) => {
+                let n = s.estimated_net_profit_usd;
+                assert!(
+                    n <= 0.0 && n.is_finite(),
+                    "computed reject net must be finite and <= 0, got {n}"
+                );
+                assert!(
+                    s.gross_profit_usd <= 0.0 && s.gross_profit_usd.is_finite(),
+                    "the gross the verdict judged must ride the reject, got {}",
+                    s.gross_profit_usd
+                );
+                assert!(s.net_economics.is_some(), "sheet-07 components present");
+                assert!(
+                    s.leg_amounts_in.is_some() && s.leg_amounts_out.is_some(),
+                    "the exact per-leg chain the probes computed rides the reject"
+                );
+            }
+            other => panic!(
+                "answered-but-unprofitable must be RejectedComputed(NonPositiveProfit) with figures, got {:?}",
+                other.reason_str()
             ),
-            "answered-but-unprofitable must be NonPositiveProfit, got {:?}",
-            outcome.reason_str()
-        );
-        // Deuda 4-(B): when the quoter answered, the grid computed a real
-        // (negative) profit — it must travel as Some(<= 0), never be dropped
-        // back to None (R8).
-        if let OptimizeOutcome::Rejected(_, payload) = outcome {
-            let n = payload.expect("answered-but-unprofitable must stamp the computed USD");
-            assert!(
-                n <= 0.0 && n.is_finite(),
-                "computed reject payload must be finite and <= 0, got {n}"
-            );
         }
+    }
+
+    // ── CANDIDATE-LEDGER-STRUCT-01 — the ledger carries the MEASURED figures ──
+    //
+    // Both tests below drive a REAL sizing kernel (the same mock QuoterV2 the
+    // V3 fixtures use) and build the ledger the way the orchestrator does:
+    // `SizedCandidate` → `economics_from_sized` → `SizedCycleLedger::from_sized`.
+    // They pin (1) per-hop amounts == the kernel's own leg ledger, (2) the cycle
+    // close == the LAST leg's measured output and never the input, and (3) the
+    // sign of the signed wei gross on a profitable and on a losing cycle.
+
+    /// Losing-cycle ledger fixture: the 2-leg V3 route priced by a proportional
+    /// mock at `num/den` per leg (0.8 ⇒ always a loss). The losing path returns
+    /// `RejectedComputed` carrying the kernel's full measured figures.
+    async fn run_losing_v3_fixture(num: u64, den: u64) -> (OptimizeOutcome, TradingConfigState) {
+        let cache = Arc::new(ReservesCache::new()); // V3 legs don't read reserves
+        let provider = Arc::new(ProportionalV3Mock { num, den });
+        let projector = Arc::new(StateProjector::new(
+            cache,
+            Some(provider),
+            v3_test_fee_catalog(),
+        ));
+        let optimizer = SizeOptimizer::new(projector);
+
+        let candidate = make_v3_dex_candidate(addr(0x10), addr(0x11), addr(0xAAAA), addr(0xBBBB));
+        let intent = make_intent(addr(0xAAAA), addr(0xBBBB));
+        let mut cfg = make_cfg(10_000.0);
+        cfg.min_landing_probability = 0.9; // positive Kelly edge (as the sibling tests)
+
+        let outcome = optimizer
+            .optimize_with_reason(candidate, &intent, Some(&cfg))
+            .await
+            .expect("optimize must not error");
+        (outcome, cfg)
+    }
+
+    #[tokio::test]
+    async fn sized_cycle_ledger_carries_the_kernel_measured_legs() {
+        // PROFITABLE fixture: the 4-leg all-V2 cycle WETH → T1 → T2 → T3 → WETH
+        // (spot product ≈ 1.894) sized by the REAL N-leg cycle kernel over cached
+        // reserves. The Kelly budget is deliberately non-binding here (cap ≈ $900k
+        // ≈ 300 tokens at the WETH price vs a sized optimum of ≈ 9.45 tokens), so
+        // the ledger this test reads is the KERNEL's own, untouched by the Step-8
+        // overlay (whose re-derivation has its own contract, HOPS-LEDGER-05).
+        let pools = [addr(0x20), addr(0x21), addr(0x22), addr(0x23)];
+        let cache = Arc::new(ReservesCache::new());
+        insert_oriented(&cache, pools[0], WETH_T, T1, unit(100), unit(90)).await;
+        insert_oriented(&cache, pools[1], T1, T2, unit(100), unit(95)).await;
+        insert_oriented(&cache, pools[2], T2, T3, unit(100), unit(150)).await;
+        insert_oriented(&cache, pools[3], T3, WETH_T, unit(100), unit(150)).await;
+
+        let projector = Arc::new(StateProjector::new(cache, None, empty_v3_fee_catalog()));
+        let optimizer = SizeOptimizer::new(projector);
+
+        let candidate = make_multileg_candidate(
+            &pools,
+            &["uniswap-v2", "uniswap-v2", "uniswap-v2", "uniswap-v2"],
+            StrategyLabel::DexArbV2V2,
+        );
+        let intent = make_intent(addr(0xAAAA), addr(0xBBBB));
+        let cfg = make_cfg_kelly(1_000_000.0, 1.0, 1.0, 1.0, 0.9);
+
+        let outcome = optimizer
+            .optimize_with_reason(candidate, &intent, Some(&cfg))
+            .await
+            .expect("optimize must not error");
+        let s = match outcome {
+            OptimizeOutcome::Sized(s) => s,
+            other => panic!(
+                "profitable V2 cycle must size, got {:?}",
+                other.reason_str()
+            ),
+        };
+        let econ = crate::economics::economics_from_sized(&s, Some(&cfg));
+        let ledger = SizedCycleLedger::from_sized(&s, &econ);
+
+        let ins = s
+            .leg_amounts_in
+            .clone()
+            .expect("profitable kernel must expose leg_amounts_in");
+        let outs = s
+            .leg_amounts_out
+            .clone()
+            .expect("profitable kernel must expose leg_amounts_out");
+        assert_eq!(ins.len(), 4, "4-hop fixture → 4 hops of kernel ledger");
+
+        // (1) Every hop's wei amounts ARE the kernel's ledger entries.
+        assert_eq!(
+            ledger.legs.len(),
+            ins.len(),
+            "one SizedLeg per measured hop"
+        );
+        for (i, leg) in ledger.legs.iter().enumerate() {
+            assert_eq!(leg.amount_in_wei.to_string(), ins[i], "hop {i} input");
+            assert_eq!(leg.amount_out_wei.to_string(), outs[i], "hop {i} output");
+        }
+        assert_eq!(
+            ledger.legs[0].amount_in_wei, s.optimal_amount_in,
+            "hop 0 opens at the sized amount the kernel optimized"
+        );
+
+        // (2) The cycle close is the LAST leg's MEASURED output, never the input.
+        let measured_close = U256::from_dec_str(outs.last().expect("non-empty"))
+            .expect("kernel wei strings are decimal");
+        assert_eq!(ledger.amount_out_wei, Some(measured_close));
+        assert_eq!(
+            ledger.legs.last().expect("legs").amount_out_wei,
+            measured_close,
+            "the ledger's cycle close IS the last leg's measured output"
+        );
+        assert_eq!(ledger.amount_in_wei, s.optimal_amount_in);
+        assert_ne!(
+            ledger.amount_out_wei,
+            Some(ledger.amount_in_wei),
+            "a measured output must never be the input"
+        );
+        assert!(
+            measured_close > ledger.amount_in_wei,
+            "the profitable cycle closes ABOVE the input (spot product ≈ 1.894)"
+        );
+        // (3) Signed wei gross: profitable → strictly positive, and equal to the
+        // one subtraction of the two measured wei amounts.
+        let gross_wei = ledger
+            .gross_profit_wei
+            .expect("a closed cycle with a measured close carries a signed wei gross");
+        assert!(
+            gross_wei.is_positive(),
+            "profitable cycle must carry a POSITIVE wei gross, got {gross_wei:?}"
+        );
+        assert_eq!(
+            gross_wei,
+            I256::checked_from_sign_and_abs(Sign::Positive, measured_close - ledger.amount_in_wei)
+                .expect("difference fits in I256"),
+        );
+        assert!(
+            s.gross_profit_usd > 0.0,
+            "the kernel's USD gross agrees on the sign"
+        );
+
+        // Gas: copied from the economics object's own component (one source).
+        assert_eq!(ledger.gas_cost_usd, econ.gas_usd);
+        // Provenance names the dispatch path the kernel actually used — one
+        // entry per route leg, from the kernel's own `leg_is_v3` predicate.
+        assert_eq!(
+            ledger.quoter_provenance,
+            "uniswap-v2:amm_math.v2_amount_out>uniswap-v2:amm_math.v2_amount_out>\
+             uniswap-v2:amm_math.v2_amount_out>uniswap-v2:amm_math.v2_amount_out"
+        );
+        assert_eq!(
+            ledger.token_in, ledger.token_out,
+            "the fixture is a closed cycle: it opens and closes on the same token"
+        );
+    }
+
+    #[tokio::test]
+    async fn sized_cycle_ledger_wei_gross_is_negative_on_a_losing_cycle() {
+        let (outcome, cfg) = run_losing_v3_fixture(8, 10).await; // 0.8x/leg → a loss
+        let s = match outcome {
+            // ALWAYS-COMPUTE: the quoter ANSWERED, so the losing cycle still
+            // carries the full measured figures (same carrier shape as Sized).
+            OptimizeOutcome::RejectedComputed(OptimizeRejectReason::NonPositiveProfit, s) => s,
+            other => panic!(
+                "0.8x/leg must be RejectedComputed(NonPositiveProfit), got {:?}",
+                other.reason_str()
+            ),
+        };
+        let econ = crate::economics::economics_from_sized(&s, Some(&cfg));
+        let ledger = SizedCycleLedger::from_sized(&s, &econ);
+
+        let ins = s
+            .leg_amounts_in
+            .clone()
+            .expect("losing cycle still carries the measured leg chain");
+        let outs = s
+            .leg_amounts_out
+            .clone()
+            .expect("losing cycle still carries the measured leg chain");
+        assert_eq!(ledger.legs.len(), ins.len());
+        for (i, leg) in ledger.legs.iter().enumerate() {
+            assert_eq!(leg.amount_in_wei.to_string(), ins[i], "hop {i} input");
+            assert_eq!(leg.amount_out_wei.to_string(), outs[i], "hop {i} output");
+        }
+
+        let measured_close = U256::from_dec_str(outs.last().expect("non-empty"))
+            .expect("kernel wei strings are decimal");
+        assert_eq!(ledger.amount_out_wei, Some(measured_close));
+        assert!(
+            measured_close < ledger.amount_in_wei,
+            "0.8x/leg closes BELOW the input"
+        );
+
+        let gross_wei = ledger
+            .gross_profit_wei
+            .expect("closed cycle with a measured close → signed wei gross");
+        assert!(
+            gross_wei.is_negative(),
+            "a losing cycle must carry a NEGATIVE wei gross, got {gross_wei:?}"
+        );
+        assert_eq!(
+            gross_wei,
+            I256::checked_from_sign_and_abs(Sign::Negative, ledger.amount_in_wei - measured_close)
+                .expect("difference fits in I256"),
+        );
+        assert!(
+            s.gross_profit_usd <= 0.0,
+            "the kernel's USD gross agrees on the sign"
+        );
     }
 
     // R8 honesty (adversarial-review fix): when the quoter ANSWERS with 0 (a
@@ -5712,6 +6978,7 @@ mod tests {
             cartridge_id: None,
             detector_id: None,
             pipeline_latency_ms: None,
+            economics: None, // ALWAYS-COMPUTE: stamped at the emit boundary
             detected_at: Utc::now(),
             trace_id: Uuid::new_v4(),
         };
@@ -5809,13 +7076,68 @@ mod tests {
                 assert!(s.gross_profit_usd > 0.0, "gross must be positive");
                 assert!(s.estimated_net_profit_usd > 0.0, "net must be positive");
             }
-            OptimizeOutcome::Rejected(r, _) | OptimizeOutcome::RejectedWithLedger(r, _, _) => {
+            OptimizeOutcome::Rejected(r, _)
+            | OptimizeOutcome::RejectedWithLedger(r, _, _)
+            | OptimizeOutcome::RejectedComputed(r, _) => {
                 panic!(
                     "expected Sized for spA>spB profitable curve, got {}",
                     r.as_str()
                 )
             }
         }
+    }
+
+    // ── DUST-NOTIONAL-03 (2026-09-28) ────────────────────────────────────────
+    //
+    // The V3-leg bracket used to start at ONE WEI, so on a near-parity route the
+    // best probe sat at the dust end and the row went out with a $8.6e-13
+    // principal and `roi_pct` −7.85e13 % (measured post-deploy: 501 such rows in
+    // nine minutes — ALL of them carrying a V3 leg, while the V2/V2 kernel
+    // published none after DUST-NOTIONAL-02). When even the operator's capital
+    // cap sits below the dust floor there is no size worth a card: reject
+    // explicitly (R8) instead of pricing dust.
+    #[tokio::test]
+    async fn two_leg_v3_with_capital_below_the_dust_floor_has_no_tradable_size() {
+        let token0 = addr(0xAAAA);
+        let token1 = addr(0xBBBB);
+        let pool_a = addr(0x10);
+        let pool_b = addr(0x11);
+        let q96 = U256::one() << 96;
+        let sp_a = q96 * U256::from(12u32) / U256::from(10u32);
+        let sp_b = q96;
+        let liq = U256::one() << 100;
+
+        let cache = Arc::new(ReservesCache::new());
+        let curves = HashMap::from([(pool_a, (sp_a, liq)), (pool_b, (sp_b, liq))]);
+        let provider = Arc::new(CurveV3Mock {
+            curves,
+            calls: AtomicU64::new(0),
+        });
+        let projector = Arc::new(StateProjector::new(
+            cache,
+            Some(provider),
+            v3_test_fee_catalog(),
+        ));
+        let optimizer = SizeOptimizer::new(projector);
+
+        let candidate = make_v3_curve_candidate(pool_a, pool_b, token0, token1);
+        let intent = make_intent(token0, token1);
+        // Capital under the $0.01 dust floor ⇒ no tradable size exists.
+        let cfg = make_cfg(0.005);
+
+        let outcome = optimizer
+            .optimize_with_reason(candidate, &intent, Some(&cfg))
+            .await
+            .expect("optimize must not error");
+
+        assert!(
+            matches!(
+                outcome,
+                OptimizeOutcome::Rejected(OptimizeRejectReason::NoTradableSize, None)
+            ),
+            "capital below the dust floor must reject explicitly, got {:?}",
+            outcome.reason_str()
+        );
     }
 
     // Negative spread (spA < spB ⇒ round-trip factor < 1) → NonPositiveProfit.
@@ -5857,9 +7179,9 @@ mod tests {
         assert!(
             matches!(
                 outcome,
-                OptimizeOutcome::Rejected(OptimizeRejectReason::NonPositiveProfit, _)
+                OptimizeOutcome::RejectedComputed(OptimizeRejectReason::NonPositiveProfit, _)
             ),
-            "negative-spread V3 curve must be NonPositiveProfit, got {:?}",
+            "negative-spread V3 curve must be NonPositiveProfit with its figures (ALWAYS-COMPUTE), got {:?}",
             outcome.reason_str()
         );
     }
@@ -6144,6 +7466,7 @@ mod tests {
             pipeline_latency_ms: None,
             detected_at: Utc::now(),
             trace_id: Uuid::new_v4(),
+            economics: None,
         };
 
         let candidate_inner = OpportunityCandidate {
@@ -6992,5 +8315,93 @@ mod tests {
         );
         assert_eq!(SizeOptimizer::middle_probes(&grid, 99), grid);
         assert_eq!(SizeOptimizer::middle_probes(&[], 4), vec![U256::one()]);
+    }
+
+    /// NLEG-SIZE-BAND-01 — the model-free bracket must be anchored on the
+    /// AUTHORIZED CAPITAL, not on the geometric centre of the log grid.
+    ///
+    /// This is the regression that produced live cards with
+    /// `amount_in_wei = 1e18` next to `gross = 0.00000000`: with
+    /// `cap_usd = $1000` on an 18-decimals token the centred probes are
+    /// `≈ cap_wei^(8/15) ≈ 2.3e9 wei ≈ $0.000006`, so gross, net, roi and the
+    /// whole cost ladder were all computed at dust.
+    #[test]
+    fn model_free_bracket_is_anchored_on_the_authorized_capital() {
+        // The exact live shape: $1000 cap, token at $2698.80, 18 decimals.
+        let cap_usd = 1000.0_f64;
+        let price = 2_698.797_5_f64;
+        let decimals = 18u8;
+        let cap_wei = clamp_to_cap_wei(U256::MAX, cap_usd, price, decimals)
+            .expect("cap_wei must resolve for a live-shaped configuration");
+        let grid = geom_probes(U256::one(), cap_wei, 16);
+        assert_eq!(grid.len(), 16, "grid shape is part of the contract");
+        // The grid's TOP is the capital end. `geom_probes` rounds every point,
+        // so the top lands within rounding of `cap_wei` — measured 320 wei ABOVE
+        // a 3.7e17 cap (8.6e-16 relative). The kernel's own anti-BUG-3 clamp
+        // (`min(x_star, cap_wei)`, documented in this file's header) bounds the
+        // size actually executed; this test asserts the band is the capital end,
+        // not the exact integer.
+        let top = *grid.last().unwrap();
+        let tolerance = cap_wei / U256::from(100_000u64); // 0.001%
+        let diff = if top >= cap_wei {
+            top - cap_wei
+        } else {
+            cap_wei - top
+        };
+        assert!(
+            diff <= tolerance,
+            "grid top {top} is not the capital end (cap_wei {cap_wei}, diff {diff})"
+        );
+
+        let probes = SizeOptimizer::capital_band_probes(&grid, 2);
+        assert_eq!(probes.len(), 2, "bounded by max_probes");
+
+        // 1. The largest probe IS the capital end of the grid.
+        assert_eq!(*probes.last().unwrap(), top);
+
+        // 2. P0 · NLEG-SIZE-SPAN-01 (2026-09-28): the set SPANS the authorized
+        //    band — the grid's LOW end is probed as well as its capital end. The
+        //    previous "top `max` points" contract probed only sizes ≈ the cap;
+        //    on a route whose real depth sits far below the cap (measured: 4 V3
+        //    legs over 0.01 %-fee pools) every probe fell beyond the depth and the
+        //    kernel published the catastrophic fill as the route's figure
+        //    ($67.41 principal, −$67.42 gross ⇒ ROI −101 %, 372 rows).
+        assert_eq!(
+            *probes.first().unwrap(),
+            grid[0],
+            "the band's LOW end must be probed, or a thin route has no viable probe"
+        );
+        assert_eq!(
+            *probes.last().unwrap(),
+            top,
+            "the capital end must stay in the set — it is the decision this kernel exists to take"
+        );
+
+        // 3. The dust point the old centre-of-grid fallback selected is GONE.
+        let dust = SizeOptimizer::middle_probes(&grid, 2);
+        for d in &dust {
+            assert!(
+                !probes.contains(d),
+                "the centred (dust) point {d} must not be probed as the capital band"
+            );
+        }
+        // …and that centred point really was orders of magnitude below the cap
+        // (documents the size of the defect rather than asserting a constant).
+        let centre = dust[0];
+        assert!(
+            centre < cap_wei / U256::from(1_000_000u64),
+            "the old fallback point {centre} was not dust-sized; the premise changed"
+        );
+
+        // 4. Degenerate inputs keep the old honest behaviour.
+        assert_eq!(
+            SizeOptimizer::capital_band_probes(&[], 4),
+            vec![U256::one()]
+        );
+        assert_eq!(
+            SizeOptimizer::capital_band_probes(&grid, 0),
+            vec![U256::one()]
+        );
+        assert_eq!(SizeOptimizer::capital_band_probes(&grid, 99), grid);
     }
 }

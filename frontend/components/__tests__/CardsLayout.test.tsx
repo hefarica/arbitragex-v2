@@ -213,8 +213,10 @@ describe("CARDS-LAYOUT-01 — every hop renders exactly once, never doubled", ()
       }),
     );
     const html = card(sized);
-    // the rich cell exists as its own block…
-    expect(count(html, 'data-testid="ledger-row-amounts"')).toBe(2);
+    // REAL-LIVE-CARDS-SSOT-01: cada hop con ledger propio pinta su bloque de
+    // importes, y LP fees / slippage declaran su procedencia real ('incl. en
+    // quote' / 'incl. en curva') en vez de un cero falso ⇒ 2 hops + 2 avisos.
+    expect(count(html, 'data-testid="ledger-row-amounts"')).toBe(4);
     // …carrying the exact ledger figures, still one row per hop
     expect(html).toContain("1 WETH");
     expect(html).toContain("2,700 USDT");
@@ -222,9 +224,14 @@ describe("CARDS-LAYOUT-01 — every hop renders exactly once, never doubled", ()
     expect(count(html, "Hop 2/2")).toBe(1);
   });
 
-  it("no per-hop ledger on the wire ⇒ no amounts block, the row stays a quiet dash row", () => {
+  it("sin ledger por-hop, la fila sigue muda salvo la procedencia declarada", () => {
     const html = card(mapToOmniOpportunity(wire({})));
-    expect(count(html, 'data-testid="ledger-row-amounts"')).toBe(0);
+    // Los unicos bloques de importes son los avisos de procedencia del fixset
+    // (LP fees 'incl. en quote', slippage 'incl. en curva'): nunca una cifra
+    // inventada ni un cero por ausencia.
+    expect(count(html, 'data-testid="ledger-row-amounts"')).toBe(2);
+    expect(html).toContain('incl. en quote');
+    expect(html).toContain('incl. en curva');
     // the hop row still renders (topology) with its muted value cell
     expect(count(html, "Hop 1/2")).toBe(1);
   });
@@ -276,7 +283,7 @@ describe("CARDS-PRECEDENCE-02 — a computed value always wins its cell", () => 
     expect(netCell(html)).toContain("~-$15.30");
   });
 
-  it("bps cell: canonical roi_pct wins; simulated_roi_pct is the fallback, marked ~", () => {
+  it("bps cell: sale del ratio canónico; el forward-sim NO se mezcla en otra base", () => {
     const canonical = card(
       mapToOmniOpportunity(wire({ roi_pct: 0.12, simulated_roi_pct: 0.38 })),
     );
@@ -284,11 +291,14 @@ describe("CARDS-PRECEDENCE-02 — a computed value always wins its cell", () => 
     expect(canonical.slice(cStart, cStart + 400)).toContain(">12</div>");
     expect(canonical.slice(cStart, cStart + 400)).not.toContain("~38");
 
+    // REAL-LIVE-CARDS-SSOT-01: el ratio del forward-sim no se pinta en un slot
+    // canónico — sin ratio canónico la celda es honesta (—), nunca mezcla bases.
     const simulated = card(
       mapToOmniOpportunity(wire({ roi_pct: null, simulated_roi_pct: 0.38 })),
     );
     const sStart = simulated.indexOf(">bps<");
-    expect(simulated.slice(sStart, sStart + 400)).toContain(">~38</div>");
+    expect(simulated.slice(sStart, sStart + 400)).toContain(">—</div>");
+    expect(simulated.slice(sStart, sStart + 400)).not.toContain("~38");
   });
 
   it("the hop rows' numbers come from the kernel ledger only — never a fabricated USD total", () => {

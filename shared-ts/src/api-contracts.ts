@@ -199,13 +199,50 @@ export const SimulatedTargetSchema = z.object({
    *                      the dashboard tooltip.
    */
   estimation_basis: z.enum(["observed-gross", "roi-assumed"]),
-  required_amount_in_usd: z.number(),
+  /**
+   * ECON-SENTINEL-CONTRACT-01. The capital that would reach the operator's floor,
+   * or the `"Infinity"` SENTINEL when no finite capital reaches it.
+   *
+   * Why a sentinel instead of plain null: `JSON.stringify(Infinity) === null`, so
+   * emitting the NUMBER made this field *vanish into null* — indistinguishable
+   * from "not computed", which is exactly the ambiguity R8 exists to prevent.
+   * The producer (computeSimulatedNet.ts, ALWAYS-COMPUTE) therefore emits the
+   * STRING; consumers recover the value with `Number(v)`.
+   *
+   * This schema previously declared `z.number()`, which REJECTED the string the
+   * wire actually carries on the overwhelming majority of live rows (measured
+   * 2026-09-27: 38-42 of 42 rows carry `"Infinity"`). Nothing validated the live
+   * wire yet, so the lie was latent — but any consumer that trusted this contract
+   * would have rejected almost every row. The union below is the wire.
+   */
+  required_amount_in_usd: z.union([z.number(), z.literal("Infinity")]),
+  /**
+   * Machine-readable companion: true exactly when `required_amount_in_usd` is the
+   * `"Infinity"` sentinel. It is what lets a reader tell "computed and unbounded"
+   * apart from "not computed" without string-sniffing.
+   */
+  required_is_infinite: z.boolean(),
   cap_amount_in_usd: z.number().nonnegative(),
   suggested_amount_in_usd: z.number().nonnegative(),
   suggested_net_usd: z.number(),
   suggested_roi_pct: z.number(),
   meets_target_at_cap: z.boolean(),
   notes: z.array(z.string()),
+}).superRefine((t, ctx) => {
+  // The sentinel and its flag are one datum: a consumer must never see one
+  // without the other. The producer upholds this invariant in both of its
+  // branches (computeSimulatedNet.ts: finite → `required_is_infinite: false`;
+  // unbounded → `"Infinity"` + `true`).
+  const infinite = t.required_amount_in_usd === "Infinity";
+  if (infinite !== t.required_is_infinite) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["required_is_infinite"],
+      message: infinite
+        ? 'required_is_infinite must be true when required_amount_in_usd is the "Infinity" sentinel'
+        : 'required_is_infinite must be false when required_amount_in_usd is a finite number',
+    });
+  }
 });
 
 export const OpportunityListItemSchema = z.object({

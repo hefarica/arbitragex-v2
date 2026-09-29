@@ -303,6 +303,7 @@ mod wo7_tests {
             pipeline_latency_ms: None,
             detected_at: chrono::Utc::now(),
             trace_id: Uuid::new_v4(),
+            economics: None,
         }
     }
 
@@ -382,6 +383,7 @@ mod wo7b_tests {
             pipeline_latency_ms: None,
             detected_at: chrono::Utc::now(),
             trace_id: Uuid::new_v4(),
+            economics: None,
         }
     }
 
