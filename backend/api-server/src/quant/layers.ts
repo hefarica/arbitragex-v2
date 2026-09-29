@@ -322,12 +322,19 @@ export function buildPnl(
   const haircutUsd = (sizingUsd * cfg.riskHaircutBps) / 10_000;
   // QUANT-PNL-01 (2026-09-29) — la desviación contra `fair` es DIAGNÓSTICO, no
   // coste. El `gross` de esta capa sale de la cadena MEDIDA (post-fee y
-  // post-impacto): la ineficiencia frente a `fair` ya está dentro del gross. Si
-  // se sumara otra vez al coste, la misma pérdida se contaría dos veces —
-  // medido en la fila real WETH→USDC del 2026-09-29: gross −$7.94, desviación
-  // $7.61 ⇒ el net publicado habría sido −$31.48 en vez de −$23.87, un número
-  // que no reconcilia con la medición del searcher (net_profit_usd −$8.62 antes
-  // de la escalera de gas propia de esta capa).
+  // post-impacto): la ineficiencia frente a `fair` ya está dentro del gross.
+  //
+  // Aritmética de la fila real WETH→USDC del 2026-09-29 (UniV2+SushiSwap,
+  // principal $718.4076, gross −$7.9391, 2 patas):
+  //   escalera       = gas (6 + 2×4) + flash (5 bps) + tip (3 bps) + haircut (20 bps)
+  //                  = 14 + 0.3592 + 0.2155 + 1.4368 = $16.0115
+  //   net correcto   = −7.9391 − 16.0115            = −$23.9506
+  //   con el doble conteo (fair ≈ 1: el ciclo cierra en ≈ principal, así que
+  //   desviación ≈ la pérdida misma ≈ $7.9391):
+  //   net erróneo    = −7.9391 − 16.0115 − 7.9391   = −$31.8897
+  // Ese −$31.89 no reconcilia con nada del sistema (el net medido del wire era
+  // −$8.62, que ya lleva el gas del searcher). De ahí que la desviación se
+  // publique como diagnóstico y no se sume.
   //
   // Se conserva el valor de la cadena `fair` para poder auditar de dónde sale la
   // desviación: fairChain − final = lo que la ruta dejó sobre la mesa frente a

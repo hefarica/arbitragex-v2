@@ -148,9 +148,10 @@ describe("quant layers · 08_ROUTE_PNL", () => {
   });
 
   it("QUANT-PNL-01: la pérdida medida NO se resta dos veces (regresión del doble conteo)", () => {
-    // Fila real del 2026-09-29 (WETH→USDC vía UniV2+Sushi): principal $718.41,
-    // final $710.47, gross −$7.94, desviación contra fair ≈ $7.61. Con el doble
-    // conteo el net publicado era −$31.48; el correcto es gross − escalera.
+    // Fila real del 2026-09-29 (WETH→USDC vía UniV2+Sushi): principal $718.4076,
+    // gross −$7.9391. Con fair ≈ 1 el ciclo cierra en ≈ principal, así que la
+    // desviación ≈ la pérdida misma ($7.9391) y el doble conteo habría publicado
+    // −$31.8897 en vez de −$23.9506.
     const fair = new Map([
       [pairKey("0xAAA", "0xBBB"), 1.0],
       [pairKey("0xBBB", "0xAAA"), 1.0],
