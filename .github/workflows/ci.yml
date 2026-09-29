@@ -120,6 +120,29 @@ jobs:
         run: bash -n scripts/pg_retention.sh
       - name: Reproduce old error and validate fix on disposable PostgreSQL 15
         run: python3 scripts/ci/test_retention_vacuum.py
+      # CRON-SCRIPTS-TRACKED-01 (audit 2026-09-29): every script the production
+      # VPS runs from cron MUST exist in the repo and parse. Measured on the live
+      # host: `crontab -l` invokes pg_retention.sh, disk_guard.sh and
+      # price_seeder.sh, but only the first two were tracked — price_seeder.sh
+      # was an untracked, unversioned 2751-byte root script running every 2
+      # minutes to refresh `arbx:token_prices:1` (TTL 51s). It was one
+      # `git clean -fd` away from silent deletion, which would blind the whole
+      # pipeline in under a minute. This step makes that class of loss a red CI
+      # instead of an outage.
+      - name: Production cron scripts are versioned and parse (CRON-SCRIPTS-TRACKED-01)
+        run: |
+          set -euo pipefail
+          missing=0
+          for s in scripts/pg_retention.sh scripts/disk_guard.sh scripts/price_seeder.sh; do
+            if [ ! -s "$s" ]; then
+              echo "::error file=$s::production cron script is missing or empty — the VPS runs it from this path"
+              missing=1
+              continue
+            fi
+            bash -n "$s"
+            echo "ok: $s ($(wc -c < "$s") bytes, syntax valid)"
+          done
+          exit "$missing"
 
   liquidity-catalog-contract:
     permissions:
