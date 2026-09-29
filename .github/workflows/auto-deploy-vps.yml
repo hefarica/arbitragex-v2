@@ -143,6 +143,14 @@ jobs:
           docker image prune -f >/dev/null 2>&1 || true
           FREE_GB=$(df -BG --output=avail / | tail -1 | tr -dc '0-9')
           echo "    free=${FREE_GB}GB (after image prune)"
+          # DEPLOY-DISK-GUARD-03 (orden del operador, 2026-09-29): el guard decía
+          # CUÁNTO espacio hay pero nunca DÓNDE se fue — y esa ceguera costó un
+          # incidente de disco 100%. `docker system df` desglosa imágenes /
+          # contenedores / volúmenes locales / caché de build. Es instrumentación
+          # pura (no cambia ninguna decisión) y queda en el log del run, que es lo
+          # único que sobrevive cuando el VPS se queda sin poder escribir.
+          echo "    docker system df (dónde está el espacio, antes de construir):"
+          docker system df 2>&1 | sed 's/^/      /' || true
           if [ "${FREE_GB}" -lt 15 ]; then
             echo "::error::APT-GPG-02: only ${FREE_GB}GB free (<15GB) — refusing to build on a full disk (the 2026-09-24 incident: disk 100% -> apt GPG invalid signature -> corrupted redis AOF). Stack stays on the previous release; free space first."
             exit 1
@@ -373,10 +381,17 @@ jobs:
           # antes de levantar los contenedores.
           FREE_GB=$(df -BG --output=avail / | tail -1 | tr -dc '0-9')
           echo "[7a-bis/9] Post-build disk guard: free=${FREE_GB}GB — pruning build cache (images are already built)"
+          # DEPLOY-DISK-GUARD-03: el desglose ANTES/DESPUÉS de la poda es lo que
+          # permite verificar que la poda hizo lo que dice (y cuánto pesan las
+          # imágenes que el stack realmente necesita, para no podar de más).
+          echo "    docker system df — antes de podar:"
+          docker system df 2>&1 | sed 's/^/      /' || true
           docker builder prune -af >/dev/null 2>&1 || true
           docker image prune -f >/dev/null 2>&1 || true
           FREE_GB=$(df -BG --output=avail / | tail -1 | tr -dc '0-9')
           echo "    free=${FREE_GB}GB (after post-build prune)"
+          echo "    docker system df — después de podar:"
+          docker system df 2>&1 | sed 's/^/      /' || true
           if [ "${FREE_GB:-0}" -lt 5 ]; then
             echo "::error::DEPLOY-DISK-GUARD-02: only ${FREE_GB}GB free after the build (<5GB) — refusing to start the stack on a nearly-full disk (PostgreSQL cannot write postmaster.pid at 0 bytes). Free space, then re-run."
             exit 1
