@@ -1764,7 +1764,12 @@ impl Orchestrator {
 
             ConfigGateOutcome::StrategyConfigGateBlocked { reason } => {
                 let tag = reason.tag();
-                let reason_str = format!("{tag}:{reason:?}");
+                // REASON-TAG-ORCH-01 (audit 2026-09-29): the payload used to be
+                // `{:?}`, i.e. the Rust variant name, which is not a stable wire
+                // identity. `tag()` is what the codebase defines for metrics and
+                // dashboards (decision.rs), so the rejection reason now travels
+                // entirely in snake_case and a consumer can match it.
+                let reason_str = tag.to_string();
                 let mut opp = sc.opportunity.clone();
                 // WO-GAP2 (2026-09-07): R8 — roi_pct None, never a Some(0.0) placeholder.
                 apply_gate_rejection_fields(&mut opp, reason_str.clone());
@@ -1799,7 +1804,14 @@ impl Orchestrator {
 
                 if let Some(rej_reason) = rejection {
                     // Math gate rejected — this is a genuine evaluation failure.
-                    let reason_str = format!("{rej_reason:?}");
+                    // REASON-TAG-ORCH-01 (audit 2026-09-29): this was `{:?}`, so the
+                    // wire carried the Rust variant name ("NegativeNetProfit") while
+                    // the codebase's own stable identity is `RejectReason::tag()`
+                    // ("negative_net_profit", decision.rs). Measured consequence in
+                    // production: 1 290 rows/24 h with the PascalCase form, splitting
+                    // ONE gate into two histogram buckets and breaking any consumer
+                    // that matches the documented snake_case tag.
+                    let reason_str = rej_reason.tag().to_string();
                     // WO-GAP2 (2026-09-07): R8 — roi_pct None, never a Some(0.0) placeholder.
                     apply_gate_rejection_fields(&mut opp, reason_str.clone());
                     // Propagate net_expected_profit_usd when gross is available (R8).
@@ -1843,7 +1855,10 @@ impl Orchestrator {
                         let gate = MacroMevGate;
                         if let Some(gate_outcome) = gate.evaluate(&opp, &gate_config) {
                             if gate_outcome.reject {
-                                let reason_str = format!("{:?}", gate_outcome.reason);
+                                // REASON-TAG-ORCH-01: `{:?}` leaked the local
+                                // (gates.rs) variant name to the wire; `tag()` is the
+                                // stable snake_case identity dashboards already read.
+                                let reason_str = gate_outcome.reason.tag().to_string();
                                 // WO-GAP2 (2026-09-07): the spine DID compute
                                 // net_roi_pct above (the Some(outcome.net_roi_pct)
                                 // assignment), but the trajectory diverged

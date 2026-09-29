@@ -1004,7 +1004,16 @@ fn canonical_token_symbol(addr: &str) -> Option<&'static str> {
         // Stables mapped for the LIVE price lookup (WO-PC4: no $1 shortcut).
         "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48" => Some("USDC"),
         "0xdac17f958d2ee523a2206206994597c13d831ec7" => Some("USDT"),
-        "0x6b175474e8f94a44ad05d02b745dcc163a999080" => Some("DAI"),
+        // DAI-SYMBOL-ADDR-01 (audit 2026-09-29): this arm used to read
+        // "0x6b175474e8f94a44ad05d02b745dcc163a999080", which differs from the
+        // canonical DAI address in 27 of its 42 characters. Consequence: the REAL
+        // DAI address fell through to `None` (so DAI — present in
+        // `allowed_token_symbols` — was silently unpriced, the `no_price_oracle`
+        // family), while an address that is NOT DAI was labelled "DAI". The
+        // canonical constant is already imported at the top of this file
+        // (shared_rs::chains), so use it instead of a literal
+        // (arbx-no-hardcode-doctrine: one source of truth).
+        DAI_MAINNET_LC => Some("DAI"),
         "0x2260fac5e5542a773aa44fbcfedf7c193bc2c599" => Some("WBTC"),
         "0x1f9840a85d5af5bf1d1762f925bdaddc4201f984" => Some("UNI"),
         "0x514910771af9ca656af840dff83e8264ecf986ca" => Some("LINK"),
@@ -1715,6 +1724,53 @@ mod tests {
         );
         assert_eq!(canonical_token_decimals_str("not-an-address"), 18);
         assert_eq!(canonical_token_decimals_str(""), 18);
+    }
+
+    // ── dex_engine::tests::dai_symbol_addr_01 ────────────────────────────────
+
+    /// DAI-SYMBOL-ADDR-01 (audit 2026-09-29) — regression gate.
+    ///
+    /// The DAI arm of [`canonical_token_symbol`] used to be a literal that was
+    /// NOT the DAI address (27 of 42 chars wrong). Two failures followed from it:
+    /// the real DAI address resolved to `None` (no price lookup ⇒ DAI routes
+    /// silently unpriced), and a non-DAI address was labelled "DAI" on the wire.
+    /// This test fails if the typo ever comes back, and it also rejects any
+    /// malformed address in the map (same error class: a hand-copied literal).
+    #[test]
+    fn dai_symbol_addr_01_canonical_address_resolves_and_map_is_well_formed() {
+        assert_eq!(
+            canonical_token_symbol(DAI_MAINNET_LC),
+            Some("DAI"),
+            "the canonical DAI address must resolve to its symbol"
+        );
+        let typo = concat!("0x6b175474e8f94a44ad05d02b745", "dcc163a999080");
+        assert_eq!(
+            canonical_token_symbol(typo),
+            None,
+            "the mistyped address is not DAI and must never resolve"
+        );
+        assert_ne!(typo, DAI_MAINNET_LC);
+        for addr in [
+            "0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2",
+            "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48",
+            "0xdac17f958d2ee523a2206206994597c13d831ec7",
+            "0x2260fac5e5542a773aa44fbcfedf7c193bc2c599",
+            "0x1f9840a85d5af5bf1d1762f925bdaddc4201f984",
+        ] {
+            assert!(
+                canonical_token_symbol(addr).is_some(),
+                "canonical address must resolve: {addr}"
+            );
+            assert_eq!(addr.len(), 42, "an address is 0x + 40 hex chars: {addr}");
+            assert!(
+                addr.strip_prefix("0x").is_some_and(|h| h
+                    .chars()
+                    .all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase())),
+                "the map is keyed by lowercase 0x-prefixed hex: {addr}"
+            );
+        }
+        assert_eq!(canonical_token_symbol("0xdeadbeef"), None);
+        assert_eq!(canonical_token_symbol(""), None);
     }
 
     // ── dex_engine::tests::b1_probe_is_one_native_unit ───────────────────────
