@@ -697,6 +697,13 @@ app.get("/api/operator/credentials/status", (c) => proxy(c, "/api/operator/crede
 app.get("/api/operator/selftest", (c) => proxy(c, "/api/operator/selftest", "arbx:cache:operator-selftest", 10));
 
 app.get("/api/opportunities/live", (c) => proxy(c, "/api/v1/opportunities/live", "arbx:cache:opps", 2));
+// QUANT-LAYERS-01 — las 7 capas del libro cuantitativo (05_EDGES → 09_DASHBOARD)
+// que sirve el api-server sobre las detecciones MEDIDAS de la ventana.
+// Pass-through SIN KV cache: la capa es una ventana móvil (el cliente la pide
+// cada 15 s con su propio window_minutes); cachearla convertiría una medición
+// viva en un snapshot viejo con la misma pinta. El edge no tiene catch-all para
+// /api/*, así que esta fila es la diferencia entre 200 y 404 en el navegador.
+app.get("/api/quant/layers", (c) => proxyPassThrough(c, "/api/quant/layers"));
 // G-PRICE-1 — USD token-price snapshot (WS `prices:snapshot` equivalent).
 // Pass-through, NO KV cache: freshness is the entire point of this route.
 app.get("/api/prices/live", (c) => proxyPassThrough(c, "/api/v1/prices/live"));

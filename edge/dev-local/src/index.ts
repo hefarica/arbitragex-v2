@@ -336,6 +336,9 @@ app.get("/api/v1/carnot/snapshot", (req, res) => proxy("/api/v1/carnot/snapshot"
 app.get("/api/v1/live-testnet/config", (req, res) => proxy("/api/v1/live-testnet/config", req, res));
 
 app.get("/api/opportunities/live", (req, res) => proxy("/api/v1/opportunities/live", req, res));
+// QUANT-LAYERS-01 — paridad con edge/worker: el libro cuantitativo (05_EDGES →
+// 09_DASHBOARD) del api-server. Sin esta fila la ruta 404ea en el edge shim.
+app.get("/api/quant/layers", (req, res) => proxy("/api/quant/layers", req, res));
 // Token-icon resolver — proxies api-server's cascade (Redis → Registry → PG
 // tokens.logo_url → DexScreener → jazzicon). REQUIRED by the frontend's
 // useTokenIcon network tier: without this route it 404s at the edge and every
