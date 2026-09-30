@@ -26,7 +26,18 @@ COPY sed-core ./sed-core
 COPY semiotic-bridge ./semiotic-bridge
 # Build ONLY the math-engine binary (feature `api` exposes the axum router).
 # --locked (not --frozen) so the registry index may refresh inside the build.
-RUN cargo build --release --locked -p math-engine --features api --bin math-engine
+# OPS-DOCKER-CACHE-01: cache mounts para el target/ y el registry de cargo.
+# Sin esto, target/ (varios GB: alloy, revm, aws-lc-sys, ark-*) se guardaba como
+# CAPA de imagen: BuildKit lo retenia en su cache y los 6 servicios Rust compilaban
+# el MISMO grafo por separado (medido: Build Cache 21 GB / 186 entradas tras UN
+# deploy). Con cache mount el target/ vive en el almacen de cache, se COMPARTE
+# entre los 6 (mismo target) y no entra en la capa. `sharing=locked` explicito:
+# correcto antes que rapido. El binario se copia FUERA del mount porque un cache
+# mount no forma parte del filesystem de la imagen y el COPY --from=builder no lo veria.
+RUN --mount=type=cache,target=/build/target,sharing=locked \
+    --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
+    cargo build --release --locked -p math-engine --features api --bin math-engine \
+ && mkdir -p /build/out && cp /build/target/release/math-engine /build/out/math-engine
 
 FROM debian:bookworm-slim AS runtime
 RUN m1="http://deb.debian.org"; m2="http://ftp.de.debian.org"; s="/etc/apt/sources.list.d/debian.sources"; u=0; for i in 1 2 3 4 5 6 7 8; do if apt-get update; then u=1; break; fi; if [ $((i % 2)) = 1 ]; then sed -i "s|$m1|$m2|g" "$s" 2>/dev/null || true; else sed -i "s|$m2|$m1|g" "$s" 2>/dev/null || true; fi; sleep 10; done; [ "$u" = 1 ] || { echo "APT-GPG-02: apt update fallo 8 intentos con rotacion de espejo"; exit 1; } && apt-get install -y --no-install-recommends ca-certificates && sed -i "s|http://deb.debian.org|https://deb.debian.org|g" "$s" && apt-get update && apt-get install -y --no-install-recommends \
@@ -34,7 +45,7 @@ RUN m1="http://deb.debian.org"; m2="http://ftp.de.debian.org"; s="/etc/apt/sourc
     && rm -rf /var/lib/apt/lists/* \
     && groupadd -r arbx && useradd -r -g arbx arbx
 WORKDIR /app
-COPY --from=builder /build/target/release/math-engine /usr/local/bin/math-engine
+COPY --from=builder /build/out/math-engine /usr/local/bin/math-engine
 USER arbx
 ENV MATH_ENGINE_PORT=3006
 ENV RUST_LOG=info
