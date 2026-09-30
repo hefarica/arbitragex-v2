@@ -897,22 +897,24 @@ pub(crate) fn economics_declaration(
         .and_then(|v| v.first())
         .cloned();
 
-    let mut basis = EconomicsBasis::default();
-    // amount_in_wei's own provenance is always knowable.
-    basis.amount = Some(
-        match (stamped_probe, kernel_sized_at.is_some()) {
-            (Some(_), _) => B::STAMPED_PROBE,
-            (None, true) => B::KERNEL,
-            (None, false) => B::INTENT,
-        }
-        .to_string(),
-    );
-    if opp.expected_profit_usd.is_some() {
-        basis.gross = Some(B::PROBE.to_string());
-    }
-    if opp.net_expected_profit_usd.is_some() {
-        basis.net = Some(B::KERNEL.to_string());
-    }
+    // clippy::field_reassign_with_default (CI bloqueante, `-D warnings`): el struct
+    // se construye ENTERO en el inicializador — con `..Default::default()` para el
+    // resto de campos — en vez de nacer de `Default::default()` y recibir
+    // asignaciones campo a campo. Mismo contenido, misma semántica.
+    let basis = EconomicsBasis {
+        // amount_in_wei's own provenance is always knowable.
+        amount: Some(
+            match (stamped_probe, kernel_sized_at.is_some()) {
+                (Some(_), _) => B::STAMPED_PROBE,
+                (None, true) => B::KERNEL,
+                (None, false) => B::INTENT,
+            }
+            .to_string(),
+        ),
+        gross: opp.expected_profit_usd.map(|_| B::PROBE.to_string()),
+        net: opp.net_expected_profit_usd.map(|_| B::KERNEL.to_string()),
+        ..Default::default()
+    };
 
     // The size the ECONOMICS belong to. Proven, never assumed.
     let notional = if !has_economics {
