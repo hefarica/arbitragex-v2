@@ -423,7 +423,11 @@ describe("inverseSize", () => {
     // netPerUsd ≈ 3.05%, ask for 10% ROI floor → unreachable.
     const inv = inverseSize(row, cfg, { net_usd: 10, roi_pct: 10, source: "strategy_config" }, fwd)!;
     expect(inv.binding_floor).toBe("roi-unreachable");
-    expect(inv.required_amount_in_usd).toBe(Infinity);
+    // ALWAYS-COMPUTE (2026-09-27): the non-finite required amount serializes
+    // as the "Infinity" SENTINEL STRING + boolean companion — the number used
+    // to vanish to null through JSON.stringify on exactly this branch.
+    expect(inv.required_amount_in_usd).toBe("Infinity");
+    expect(inv.required_is_infinite).toBe(true);
     expect(inv.suggested_amount_in_usd).toBe(0);
     expect(inv.meets_target_at_cap).toBe(false);
     expect(inv.notes).toContain("roi-unreachable");
@@ -461,7 +465,11 @@ describe("inverseSize", () => {
     const inv = inverseSize(row, cfg, { net_usd: 50, roi_pct: null, source: "strategy_config" }, fwd)!;
     expect(inv.binding_floor).toBe("net-per-usd-nonpositive");
     expect(inv.notes).toContain("net-per-usd-nonpositive");
-    expect(inv.required_amount_in_usd).toBe(Infinity);
+    // ALWAYS-COMPUTE (2026-09-27): the non-finite required amount serializes
+    // as the "Infinity" SENTINEL STRING + boolean companion — the number used
+    // to vanish to null through JSON.stringify on exactly this branch.
+    expect(inv.required_amount_in_usd).toBe("Infinity");
+    expect(inv.required_is_infinite).toBe(true);
     expect(inv.meets_target_at_cap).toBe(false);
     expect(inv.suggested_amount_in_usd).toBe(0);
   });
@@ -505,5 +513,187 @@ describe("inverseSize", () => {
     // USD-only target with no forward → no way to assume a rate → null per R8.
     const inv = inverseSize(row, cfg, { net_usd: 10, roi_pct: null, source: "strategy_config" }, null);
     expect(inv).toBeNull();
+  });
+});
+
+// ── ALWAYS-COMPUTE (operator mandate 2026-09-27): the required floor can no
+// longer vanish silently on the non-finite branches ──────────────────────────
+
+describe("inverseSize — Infinity serialization (ALWAYS-COMPUTE)", () => {
+  it("net-per-usd-nonpositive: required_amount_in_usd survives the JSON round-trip as the \"Infinity\" sentinel (pre-patch: null)", () => {
+    // Same shape as the existing Path-B nonpositive test: assumed 0.5% ROI
+    // cannot cover the variable-cost rate → r ≤ 0 → no finite size exists.
+    const cfg = baseCfg();
+    cfg.capital_usd = 100_000;
+    const row = baseRow();
+    const inv = inverseSize(row, cfg, { net_usd: 10, roi_pct: 0.5, source: "strategy_config" }, null)!;
+    expect(inv.binding_floor).toBe("net-per-usd-nonpositive");
+
+    // THE GATE: JSON.stringify(Infinity) === null was how this field used to
+    // disappear on exactly this branch (41/41 live rows). The sentinel string
+    // is lossless through the wire.
+    const onWire = JSON.parse(JSON.stringify(inv));
+    expect(onWire.required_amount_in_usd).toBe("Infinity");
+    expect(onWire.required_is_infinite).toBe(true);
+    // The verdict's numeric value is recoverable for any numeric consumer.
+    expect(Number(onWire.required_amount_in_usd)).toBe(Number.POSITIVE_INFINITY);
+  });
+
+  it("roi-unreachable: same sentinel + companion on the other non-finite branch", () => {
+    const cfg = baseCfg();
+    // Observed-gross path with gross 200 on a $2350 principal: grossPerUsd
+    // ≈ 0.0851 → effective ≈ 0.0809 → netPerUsd ≈ 0.0709 (r > 0, so the
+    // nonpositive branch does NOT fire), but the ROI floor of 50% sits far
+    // above r → no finite amount can satisfy it → roi-unreachable.
+    const row = baseRow({ expected_profit_usd: 200 });
+    const forward = forwardSimulate(row, cfg);
+    expect(forward).not.toBeNull();
+    const inv = inverseSize(
+      row,
+      cfg,
+      { net_usd: null, roi_pct: 50, source: "simulation_tab" },
+      forward,
+    )!;
+    expect(inv.binding_floor).toBe("roi-unreachable");
+    expect(inv.required_amount_in_usd).toBe("Infinity");
+    expect(inv.required_is_infinite).toBe(true);
+    const onWire = JSON.parse(JSON.stringify(inv));
+    expect(onWire.required_amount_in_usd).toBe("Infinity");
+  });
+
+  it("finite branch: required stays a NUMBER with required_is_infinite=false", () => {
+    const cfg = baseCfg();
+    cfg.simulation_target_profit_usd = 10;
+    cfg.simulation_target_roi_pct = null;
+    const row = baseRow();
+    const target = resolveTarget(cfg, "dex_arb")!;
+    const forward = forwardSimulate(row, cfg);
+    const inv = inverseSize(row, cfg, target, forward)!;
+    expect(inv.binding_floor).not.toBe("net-per-usd-nonpositive");
+    expect(inv.binding_floor).not.toBe("roi-unreachable");
+    expect(typeof inv.required_amount_in_usd).toBe("number");
+    expect(inv.required_is_infinite).toBe(false);
+    const onWire = JSON.parse(JSON.stringify(inv));
+    expect(onWire.required_amount_in_usd).toBe(inv.required_amount_in_usd);
+  });
+});
+
+// ── SIM-COST-NONNEGATIVE-01 (2026-09-27): a cost component is never a CREDIT ─
+//
+// The measured defect these tests pin: `copied_buffer_usd` was
+// `grossUsd × cfg.p_copied_max` with NO lower bound. The wire's
+// `expected_profit_usd` is negative on essentially every live row (arbitrage
+// that does not pay), so at the operator's live `p_copied_max = 0.5` a row
+// carrying gross = −1000 booked a "cost" of −500, `costsTotalUsd()` returned a
+// NEGATIVE total (−490.15), and downstream
+// `frontend/lib/opportunity-ledger.ts::buildLedger` suppressed the entire
+// capital-path ladder on `simulated_costs_total_usd < 0`
+// ("CARDS-NOTIONAL-01: simulated total cost is negative — not a closed ladder")
+// — a 500+ card census recorded 196 such counter resets, 100 % of them this one
+// reason, while the card still painted `Net yield = −509.85`: a net BETTER than
+// the gross, paid for by a cost that does not exist.
+//
+// The consumer's contract is therefore two-fold and is what these tests assert:
+// every published component is ≥ 0, `costs_total_usd` is ≥ 0, and
+// `tripleIsClosed(gross, net, costs_total_usd)` holds — so the ladder can never
+// be suppressed for a negativity reason again.
+describe("SIM-COST-NONNEGATIVE-01 — a cost component is never a credit", () => {
+  /** Every component of SimulatedCostBreakdown, in kernel order. */
+  const COMPONENT_KEYS = [
+    "gas_usd",
+    "lp_fees_usd",
+    "slippage_usd",
+    "failure_buffer_usd",
+    "copied_buffer_usd",
+    "capital_cost_usd",
+    "ops_overhead_usd",
+    "flashloan_fee_usd",
+    "relay_fee_usd",
+  ] as const;
+
+  /** The live operator value — the cap the measured rows were charged at. */
+  function liveCfg(): TradingConfigSnapshot {
+    const cfg = baseCfg();
+    cfg.p_copied_max = 0.5; // the live operator value (see CARDS-NOTIONAL-01)
+    return cfg;
+  }
+
+  it("negative gross: copied buffer is 0, NOT a −500 credit, at p_copied_max = 0.5", () => {
+    const r = forwardSimulate(baseRow({ expected_profit_usd: -1000 }), liveCfg())!;
+    expect(r).not.toBeNull();
+    expect(r.gross_usd).toBe(-1000);
+    // THE FIX: the buffer is bounded at zero (it is a cost, not a rebate).
+    expect(r.cost_breakdown.copied_buffer_usd).toBe(0);
+    // …and the total the card reads is no longer negative.
+    expect(r.costs_total_usd).toBeGreaterThanOrEqual(0);
+  });
+
+  it("positive gross: the worst-case copy of the upside is still charged in full", () => {
+    // Producer intent preserved — the bound removes the sign flip only.
+    const r = forwardSimulate(baseRow({ expected_profit_usd: 1000 }), liveCfg())!;
+    expect(r.cost_breakdown.copied_buffer_usd).toBeCloseTo(1000 * 0.5, 9);
+    // gross 1000: the buffer is half the upside, as the operator's cap declares.
+    expect(r.costs_total_usd).toBeGreaterThanOrEqual(500);
+  });
+
+  it("negative gross: tripleIsClosed(gross, net, costs_total_usd) HOLDS (the card's invariant)", () => {
+    const r = forwardSimulate(baseRow({ expected_profit_usd: -1000 }), liveCfg())!;
+    // The exact gate `buildLedger` failed on: `simulated_costs_total_usd < 0`.
+    expect(r.costs_total_usd).toBeGreaterThanOrEqual(0);
+    // Closure is an identity of forwardSimulate, in the display's own rounding.
+    expect(
+      Math.abs(r.net_usd - (r.gross_usd - r.costs_total_usd)),
+    ).toBeLessThanOrEqual(COST_CLOSURE_TOLERANCE_USD);
+    expect(tripleIsClosed(r.gross_usd, r.net_usd, r.costs_total_usd)).toBe(true);
+  });
+
+  it("negative gross: the row is not subsidised by its own failure (net ≤ gross)", () => {
+    const r = forwardSimulate(baseRow({ expected_profit_usd: -1000 }), liveCfg())!;
+    // Pre-fix this row painted net = −509.85 against gross = −1000: the phantom
+    // −500 copy credit bought back 490.15 of real costs. Costs are real, so a
+    // losing route must come out WORSE than its gross.
+    expect(r.net_usd).toBeLessThanOrEqual(r.gross_usd);
+    expect(r.net_usd).toBeCloseTo(-1000 - r.costs_total_usd, 9);
+  });
+
+  it("relay fee negative-gross branch: max(gross × 5%, $0.50) is not a rebate", () => {
+    // Explicitly exercise the negative-gross branch of `relayFeeUsd`:
+    // gross −1000 ⇒ gross × 5% = −50, and the $0.50 floor must bind.
+    const r = forwardSimulate(baseRow({ expected_profit_usd: -1000 }), liveCfg())!;
+    expect(r.cost_breakdown.relay_fee_usd).toBeCloseTo(0.5, 9);
+    expect(r.cost_breakdown.relay_fee_usd).toBeGreaterThanOrEqual(0);
+  });
+
+  it("PROPERTY: gross ∈ {−1e6, −1000, −0.01, 0, 0.01, 100} ⇒ no negative component, non-negative total, closed triple", () => {
+    // Sweep across the sign boundary with the shared fixtures (`baseRow` =
+    // 1 WETH = $2350 principal; `baseCfg` = the operator's cost model). No
+    // capital is hardcoded here — every number comes from those helpers.
+    for (const gross of [-1e6, -1000, -0.01, 0, 0.01, 100]) {
+      const r = forwardSimulate(baseRow({ expected_profit_usd: gross }), liveCfg());
+      expect(r, `forwardSimulate(gross=${gross}) must compute`).not.toBeNull();
+      const res = r!;
+
+      for (const key of COMPONENT_KEYS) {
+        expect(
+          res.cost_breakdown[key],
+          `${key} must be a cost (≥ 0) at gross=${gross}`,
+        ).toBeGreaterThanOrEqual(0);
+      }
+      expect(
+        Number.isFinite(res.costs_total_usd),
+        `costs_total_usd must be finite at gross=${gross}`,
+      ).toBe(true);
+      expect(
+        res.costs_total_usd,
+        `costs_total_usd must be ≥ 0 at gross=${gross}`,
+      ).toBeGreaterThanOrEqual(0);
+      // Published total is Σ of the PUBLISHED object — never a second formula.
+      expect(res.costs_total_usd).toBeCloseTo(costsTotalUsd(res.cost_breakdown), 12);
+      // The invariant the card's ladder requires, for every gross.
+      expect(
+        tripleIsClosed(res.gross_usd, res.net_usd, res.costs_total_usd),
+        `triple must close at gross=${gross}`,
+      ).toBe(true);
+    }
   });
 });

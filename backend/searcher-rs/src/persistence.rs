@@ -151,14 +151,16 @@ pub async fn insert_opportunity_with_route(
             expected_profit_usd, net_expected_profit_usd, roi_pct, risk_score,
             block_number, status, rejection_reason, trace_id, detected_at,
             route_metadata, cartridge_id,
-            detector_id, pipeline_latency_ms
+            detector_id, pipeline_latency_ms,
+            economics
         ) VALUES (
             $1, $2, $3, $4, $5, $6,
             $7, $8, $9,
             $10, $11, $12, $13,
             $14, $20, $15, $16, $17,
             $18, $19,
-            $21, $22
+            $21, $22,
+            $23
         )
         ON CONFLICT (id) DO NOTHING
         "#,
@@ -187,6 +189,16 @@ pub async fn insert_opportunity_with_route(
     // latency (migration 121). Both NULL-able — legacy rows carry None (R8).
     .bind(o.detector_id.as_deref())
     .bind(o.pipeline_latency_ms.map(|m| m as i64))
+    // ALWAYS-COMPUTE (2026-09-27, migration 126): the one complete economics
+    // computation object on BOTH branches. NULL on pre-migration rows and
+    // when ARBX_ALWAYS_COMPUTE_ECONOMICS=off (R8 — never backfilled).
+    .bind(
+        o.economics
+            .as_ref()
+            .map(serde_json::to_value)
+            .transpose()
+            .context("serialize economics")?,
+    )
     .execute(pool)
     .await
     .context("insert opportunity")?;

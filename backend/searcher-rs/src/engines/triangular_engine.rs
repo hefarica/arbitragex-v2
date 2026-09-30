@@ -604,6 +604,7 @@ fn build_opportunity(
         pipeline_latency_ms: None,
         detected_at: Utc::now(),
         trace_id,
+        economics: None,
     };
 
     // TRIANGULAR-PRICE-SCALE-01 (2026-09-17): convert the USD profit to

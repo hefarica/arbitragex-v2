@@ -677,6 +677,7 @@ pub fn cycle_candidate_from_intent(intent: &RouteIntent) -> StrategyCandidate {
         pipeline_latency_ms: None,
         detected_at: chrono::Utc::now(),
         trace_id: Uuid::new_v4(),
+        economics: None,
     };
 
     let candidate = OpportunityCandidate {
@@ -1411,7 +1412,9 @@ mod tests {
 
         let sized = match outcome {
             OptimizeOutcome::Sized(s) => *s,
-            OptimizeOutcome::Rejected(r, _) | OptimizeOutcome::RejectedWithLedger(r, _, _) => {
+            OptimizeOutcome::Rejected(r, _)
+            | OptimizeOutcome::RejectedWithLedger(r, _, _)
+            | OptimizeOutcome::RejectedComputed(r, _) => {
                 panic!(
                     "4-hop profitable cycle must size, got Rejected({})",
                     r.as_str()
@@ -1473,6 +1476,9 @@ mod tests {
             .expect("sizing must not error");
 
         match outcome {
+            // ALWAYS-COMPUTE note: a missing-reserves reject NEVER carries
+            // figures (nothing was computed) — it stays on the legacy
+            // payload-None variant; RejectedComputed here would be a bug.
             OptimizeOutcome::Rejected(reason, net)
             | OptimizeOutcome::RejectedWithLedger(reason, net, _) => {
                 assert_eq!(
@@ -1486,6 +1492,10 @@ mod tests {
                     "no economics may be stamped when the cycle could not be evaluated"
                 );
             }
+            OptimizeOutcome::RejectedComputed(reason, _) => panic!(
+                "missing reserves must never carry figures — got RejectedComputed({})",
+                reason.as_str()
+            ),
             OptimizeOutcome::Sized(s) => panic!(
                 "a missing hop must never size — got Sized with ledger {:?}",
                 s.leg_amounts_in
@@ -1506,7 +1516,8 @@ mod tests {
             .expect("sizing must not error");
         match outcome {
             OptimizeOutcome::Rejected(reason, _)
-            | OptimizeOutcome::RejectedWithLedger(reason, _, _) => {
+            | OptimizeOutcome::RejectedWithLedger(reason, _, _)
+            | OptimizeOutcome::RejectedComputed(reason, _) => {
                 assert_eq!(reason, OptimizeRejectReason::MissingReservesPoolA)
             }
             OptimizeOutcome::Sized(_) => panic!("missing hop 0 must never size"),
@@ -1534,7 +1545,8 @@ mod tests {
             .expect("sizing must not error");
         match outcome {
             OptimizeOutcome::Rejected(reason, _)
-            | OptimizeOutcome::RejectedWithLedger(reason, _, _) => {
+            | OptimizeOutcome::RejectedWithLedger(reason, _, _)
+            | OptimizeOutcome::RejectedComputed(reason, _) => {
                 assert_eq!(reason, OptimizeRejectReason::MissingPoolAddress)
             }
             OptimizeOutcome::Sized(_) => panic!("a leg without a pool must never size"),

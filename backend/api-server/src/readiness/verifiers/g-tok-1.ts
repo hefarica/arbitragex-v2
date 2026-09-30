@@ -82,25 +82,52 @@ export async function verifyGTOK1(opts?: {
     };
   }
 
-  // Layer 3: state evidence (DB or Redis). Best-effort; skip if no pool.
-  let state_evidence: string = "no DB pool";
-  if (opts?.pool) {
-    try {
-      const r = await opts.pool.query(
-        `SELECT COUNT(*)::int AS n FROM token_safety_cache`,
-      );
-      const n = r.rows[0]?.n ?? 0;
-      state_evidence = `${n} token_safety_cache rows`;
-    } catch (e) {
-      // Table may be absent in older schemas; not fatal for this gate.
-      state_evidence = `token_safety_cache query error: ${(e as Error).message.slice(0, 80)}`;
-    }
+  // Layer 3: state evidence (DB only today). Best-effort; skip if no pool.
+  //
+  // KS-TOK-01 (2026-09-29, medido): esta capa se anunciaba "DB or Redis" pero sólo
+  // consultaba `token_safety_cache` y devolvía **green incondicional** — con 0
+  // filas, con la tabla ausente o incluso SIN POOL. Es decir: el gate no podía
+  // fallar nunca y afirmaba tener evidencia de estado que no había leído (falso
+  // verde, R10). Ahora el estado se reporta por lo que se midió: verde sólo con
+  // filas reales; amarillo si no hay pool, si la tabla no responde o si está vacía.
+  if (!opts?.pool) {
+    return {
+      ...base,
+      status: "yellow",
+      reason: "code (3 modules) + selector-api healthy, but token-safety state NOT computed (no DB pool)",
+      evidence: { kind: "endpoint", ref: `${selector}/health` },
+    };
+  }
+  let state_rows: number | null = null;
+  let state_error: string | null = null;
+  try {
+    const r = await opts.pool.query(`SELECT COUNT(*)::int AS n FROM token_safety_cache`);
+    state_rows = r.rows[0]?.n ?? 0;
+  } catch (e) {
+    state_error = (e as Error).message.slice(0, 80);
+  }
+
+  if (state_error != null) {
+    return {
+      ...base,
+      status: "yellow",
+      reason: `code (3 modules) + selector-api healthy, but token_safety_cache unreadable: ${state_error}`,
+      evidence: { kind: "endpoint", ref: `${selector}/health` },
+    };
+  }
+  if ((state_rows ?? 0) === 0) {
+    return {
+      ...base,
+      status: "yellow",
+      reason: "code (3 modules) + selector-api healthy, but token_safety_cache is EMPTY (no token screened yet)",
+      evidence: { kind: "endpoint", ref: `${selector}/health` },
+    };
   }
 
   return {
     ...base,
     status: "green",
-    reason: `code (3 modules) + selector-api healthy + ${state_evidence}`,
+    reason: `code (3 modules) + selector-api healthy + ${state_rows} token_safety_cache rows`,
     evidence: { kind: "endpoint", ref: `${selector}/health` },
   };
 }

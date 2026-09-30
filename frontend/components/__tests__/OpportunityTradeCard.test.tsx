@@ -612,12 +612,22 @@ describe("OpportunityTradeCard — CARDS-NOTIONAL-01 SSR gate (one ladder, one n
     // The row's real numbers are still shown — quiet is not blindness (R8).
     expect(html).toContain("$822.2k"); // gross, and the derived total cost
     expect(html).toContain("-$0.0000"); // the kernel's net, verbatim
-    // …and the machine reason travels with every suppressed cell.
+    // …and the machine reason travels with every cell.
     expect(html).toContain("CARDS-NOTIONAL-01");
-    expect(html).toContain('data-testid="ledger-basis-note"');
+    // OPERATOR ORDER 2026-09-27 (verbatim): "QUITA EL MALDITO RENDER QUE ESCONDE
+    // LOS NUMEROS." This row no longer goes quiet, so the "las celdas van en
+    // guion a proposito" footer is intentionally GONE — the caveat now travels in
+    // each cell's `title` (covered by the CARDS-NOTIONAL-01 assertion above)
+    // instead of silencing the capital path. The footer is asserted ABSENT so a
+    // regression that brings the blanking back is caught here.
+    expect(html).not.toContain('data-testid="ledger-basis-note"');
   });
 
-  it("the omitted cost component is back: the 9-row ladder includes the copied buffer", () => {
+  it("la escalera canónica pinta SUS filas y no finge las del basis simulado", () => {
+    // REAL-LIVE-CARDS-SSOT-01: en la base canónica `Capital cost`,
+    // `Failure buffer` y `Copied buffer` pertenecen al basis SIM, así que no se
+    // renderizan como filas vacías (ni cero falso ni notional mezclado). Las
+    // filas que la base canónica SÍ posee están todas presentes.
     const html = card(mapToOmniOpportunity(probeVsKernelWire()));
     for (const label of [
       "Gas",
@@ -625,12 +635,12 @@ describe("OpportunityTradeCard — CARDS-NOTIONAL-01 SSR gate (one ladder, one n
       "Decoherence (slippage)",
       "TLS fee (flash)",
       "Relay fee",
-      "Capital cost",
-      "Failure buffer",
       "Ops overhead",
-      "Copied buffer",
     ]) {
       expect(html).toContain(`>${label}</span>`);
+    }
+    for (const simulatedOnly of ["Capital cost", "Failure buffer", "Copied buffer"]) {
+      expect(html).not.toContain(`>${simulatedOnly}</span>`);
     }
   });
 
@@ -687,5 +697,176 @@ describe("OpportunityTradeCard — CARDS-NOTIONAL-01 SSR gate (one ladder, one n
     expect(cellUsd(cell(cells, "Total cost"))).toBeNull();
     expect(cells.find((c) => c.label.startsWith("Net yield"))?.value).toBe("—");
     expect(html).toContain("CARDS-NOTIONAL-01");
+  });
+});
+
+// ── ALWAYS-COMPUTE (operator mandate 2026-09-27): the FAIL card shows its
+// arithmetic, not dashes. "Si el resultado da -$50, la card debe decir -$50,
+// no NO COMPUTADO." Everything below is DISPLAY of wire-owned figures — the
+// card computes nothing.
+describe("OpportunityTradeCard — ALWAYS-COMPUTE FAIL arithmetic", () => {
+  const econ = {
+    computation_status: "computed",
+    error_reason: null,
+    amount_in_wei: "1000000000000000000",
+    amount_out_wei: "990000000000000000",
+    amount_in_usd: 2350,
+    amount_out_usd: 2362.5,
+    gross_profit_usd: 12.5,
+    gas_usd: 0.18,
+    dex_fees_usd: null,
+    flash_fee_usd: 2.12,
+    bribe_usd: 0,
+    slippage_usd: null,
+    other_costs_usd: 0.01,
+    total_cost_usd: 2.31,
+    net_profit_usd: -50,
+    roi_pct: -2.13,
+    target_net_usd: 25,
+    target_delta_usd: -75,
+    meets_target: false,
+    quote_block: 123,
+    simulation_block: null,
+    legs: [],
+    not_computed_reasons: {},
+  };
+
+  it("rejected row with computed economics renders ECON chip + target/logrado/delta", () => {
+    const opp = mapToOmniOpportunity(
+      wire({
+        status: "rejected",
+        rejection_reason: "non_positive_profit",
+        expected_profit_usd: 12.5,
+        net_expected_profit_usd: -50,
+        economics: econ,
+      }),
+    );
+    const html = card(opp);
+    // Honest status chip — COMPUTED ≠ PROFITABLE.
+    expect(html).toContain("ECON");
+    expect(html).toContain("computed");
+    // The FAIL arithmetic from the economics object (target vs achieved vs delta).
+    expect(html).toContain("target");
+    expect(html).toContain("logrado");
+    expect(html).toContain("delta");
+    expect(html).toContain("25.00");
+    expect(html).toContain("50.00");
+  });
+
+  it("error-status economics renders the honest reason, never fabricated numbers", () => {
+    const opp = mapToOmniOpportunity(
+      wire({
+        status: "rejected",
+        rejection_reason: "missing_reserves_pool_b",
+        expected_profit_usd: null,
+        net_expected_profit_usd: null,
+        economics: {
+          ...econ,
+          computation_status: "error",
+          error_reason: "missing_reserves_pool_b",
+          gross_profit_usd: null,
+          net_profit_usd: null,
+          target_net_usd: null,
+          target_delta_usd: null,
+        },
+      }),
+    );
+    const html = card(opp);
+    expect(html).toContain("sin quote");
+    expect(html).toContain("missing_reserves_pool_b");
+  });
+
+  it("canonical-basis ladder fills cost cells from the economics decomposition", () => {
+    const opp = mapToOmniOpportunity(
+      wire({
+        status: "rejected",
+        rejection_reason: "non_positive_profit",
+        expected_profit_usd: 12.5,
+        net_expected_profit_usd: -50,
+        economics: econ,
+      }),
+    );
+    const html = card(opp);
+    expect(html).toContain("Gas");
+    expect(html).toContain("0.18");
+    expect(html).toContain("TLS fee");
+    expect(html).toContain("2.12");
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// REAL-LIVE-CARDS-SSOT-01 (fixset del operador 2026-09-27) — la celda ROI sigue
+// la BASE renderizada, y las bases NUNCA se mezclan:
+//   canonical → economics.roi_pct del searcher, luego el campo canónico del wire;
+//   simulated → el ratio del forward-sim SOLAMENTE;
+//   none      → guion honesto (esa fila es diagnóstico, no card numérica).
+// ─────────────────────────────────────────────────────────────────────────────
+describe("REAL-LIVE-CARDS-SSOT-01 — la celda ROI sigue la base renderizada", () => {
+  const econBase = {
+    computation_status: "computed",
+    error_reason: null,
+    amount_in_wei: "1000000000000000000",
+    amount_out_wei: "990000000000000000",
+    amount_in_usd: 2350,
+    amount_out_usd: 2362.5,
+    gross_profit_usd: 12.5,
+    gas_usd: 0.18,
+    dex_fees_usd: null,
+    flash_fee_usd: 2.12,
+    bribe_usd: 0,
+    slippage_usd: null,
+    other_costs_usd: 0.01,
+    total_cost_usd: 2.31,
+    net_profit_usd: -50,
+    roi_pct: -2.13,
+    target_net_usd: 25,
+    target_delta_usd: -75,
+    meets_target: false,
+    quote_block: 123,
+    simulation_block: null,
+    legs: [],
+    not_computed_reasons: {},
+  };
+
+  // `expected/net` cerrados ⇒ buildLedger elige la base CANÓNICA (la que rige).
+  const roiCard = (over: Record<string, unknown>) =>
+    card(
+      mapToOmniOpportunity(
+        wire({ expected_profit_usd: 5, net_expected_profit_usd: 4, ...over }),
+      ),
+    );
+
+  // La MISMA celda del header: el div cuyo `title` empieza con el rótulo.
+  const roiCell = (html: string): string =>
+    html.match(/title="Net Convergence Ratio \(ROI %\)[^"]*">[\s\S]*?<\/div>/)?.[0] ?? "";
+  const roiText = (html: string): string =>
+    roiCell(html).replace(/^[^>]*>/, "").replace(/<\/div>$/, "").replace(/<[^>]*>/g, "").trim();
+
+  it("base canónica: manda economics.roi_pct del searcher", () => {
+    const html = roiCard({ economics: { ...econBase, roi_pct: -3.5 }, roi_pct: 1.25 });
+    expect(roiText(html)).toBe("-3.50%");
+  });
+
+  it("base canónica sin economics.roi_pct: usa el campo canónico del wire", () => {
+    const html = roiCard({ roi_pct: 1.25, simulated_roi_pct: 0.75 });
+    expect(roiText(html)).toBe("1.25%");
+    // Las bases no se mezclan: el ratio del forward-sim no entra en una canónica.
+    expect(roiText(html)).not.toContain("0.75");
+  });
+
+  it("base canónica con SOLO ratio simulado: guion — no se mezclan bases", () => {
+    const html = roiCard({ simulated_roi_pct: 0.75 });
+    expect(roiText(html)).toBe("—");
+  });
+
+  it("sin economics y sin ratios: guion honesto (R8)", () => {
+    const html = roiCard({ roi_pct: null, simulated_roi_pct: null });
+    expect(roiText(html)).toBe("—");
+  });
+
+  it("NaN no se pinta como ratio (formatPctOrDash degrada a guion)", () => {
+    const html = roiCard({ roi_pct: Number.NaN });
+    expect(roiText(html)).toBe("—");
+    expect(roiCell(html)).not.toContain("NaN");
   });
 });

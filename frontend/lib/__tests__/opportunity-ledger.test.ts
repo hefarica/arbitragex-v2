@@ -96,7 +96,11 @@ const closedRow = () =>
   );
 
 describe("CARDS-NOTIONAL-01 — buildLedger: one ladder, one notional", () => {
-  it("REFUSES the simulated ladder when its gross is not attributable to its own principal", () => {
+  // OPERATOR ORDER 2026-09-27 (verbatim): "QUITA EL MALDITO RENDER QUE ESCONDE
+  // LOS NUMEROS." The contradiction is still NOT closed — the gross and the
+  // principal belong to different sizes and the cell titles say so — but the
+  // figures are PUBLISHED instead of the whole capital path going to dashes.
+  it("PUBLISHES the searcher's own pair when the gross is not attributable to its principal", () => {
     const opp = liveContradictionRow();
     const ledger = buildLedger(opp);
 
@@ -105,7 +109,9 @@ describe("CARDS-NOTIONAL-01 — buildLedger: one ladder, one notional", () => {
     // No principal is published for a basis that has no notional on the wire.
     expect(ledger.principal_usd).toBeNull();
     expect(ledger.cost_rows).toEqual([]);
-    expect(ledger.quiet).toBe(true);
+    // Published, NOT silenced: both figures the wire carries are rendered.
+    expect(ledger.quiet).toBe(false);
+    expect(ledger.gross_usd).toBe(822215.98);
     expect(ledger.reason).toContain("CARDS-NOTIONAL-01");
     // The reason NAMES the mechanism, so the operator is not left guessing.
     expect(ledger.reason).toMatch(/principal|size|notional/i);
@@ -157,10 +163,24 @@ describe("CARDS-NOTIONAL-01 — buildLedger: one ladder, one notional", () => {
     expect(ledger.total_cost_usd!).toBeGreaterThan(ledger.gross_usd! * 0.9);
   });
 
-  it("goes QUIET (basis none) when neither producer offers a closed triple", () => {
+  // OPERATOR ORDER 2026-09-27: a figure that EXISTS is shown even when its
+  // partner figure does not. Only a row with NO figure at all goes quiet.
+  it("PUBLISHES the lone gross when no producer offers a closed triple", () => {
     const opp = mapToOmniOpportunity(
       wire({ expected_profit_usd: 10, net_expected_profit_usd: null }),
     );
+    const ledger = buildLedger(opp);
+    expect(ledger.basis).toBe("canonical");
+    expect(ledger.gross_usd).toBe(10);
+    // Absent partners stay absent — never invented, never borrowed.
+    expect(ledger.net_usd).toBeNull();
+    expect(ledger.total_cost_usd).toBeNull();
+    expect(ledger.quiet).toBe(false);
+    expect(ledger.reason).toBeTruthy();
+  });
+
+  it("goes QUIET (basis none) only when the wire carries NO figure at all", () => {
+    const opp = mapToOmniOpportunity(wire({}));
     const ledger = buildLedger(opp);
     expect(ledger.basis).toBe("none");
     expect(ledger.gross_usd).toBeNull();

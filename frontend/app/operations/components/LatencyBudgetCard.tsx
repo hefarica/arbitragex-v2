@@ -41,8 +41,14 @@ interface Props {
   stages: LatencyStageRow[] | null;
   /** PASS_p95 vs the canonical discovery SLA. null = no completed cycles. */
   passP95: boolean | null;
-  /** Completed cycles the window aggregates over. */
-  cycles: number;
+  /**
+   * Completed cycles the window aggregates over.
+   * LAT-CYCLES-NO-FAKE-ZERO-01 (audit 2026-09-29): `null` = the snapshot did not
+   * carry the key. That is NOT zero cycles — a fabricated 0 reads as "measured and
+   * free" when the truth is "not computed". The producer comment on `passP95`
+   * above already draws that line; this prop now does too.
+   */
+  cycles: number | null;
   /** Honest fetch/absence reason rendered when stages is null (R8). */
   error: string | null;
 }
@@ -85,7 +91,8 @@ export function LatencyBudgetCard({ stages, passP95, cycles, error }: Props) {
                 </span>
               )}
               <span className="text-muted-foreground">
-                cycles: <span className="tabular-nums">{cycles}</span>
+                cycles:{" "}
+                <span className="tabular-nums">{cycles === null ? "—" : cycles}</span>
               </span>
             </div>
             <div className="overflow-x-auto">
