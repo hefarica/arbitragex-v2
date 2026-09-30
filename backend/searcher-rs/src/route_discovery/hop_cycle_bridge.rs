@@ -324,6 +324,9 @@ pub struct MultihopEmitBudget {
     sizeable_used: AtomicU64,
     unpriceable_used: AtomicU64,
     unpriceable_refused: AtomicU64,
+    /// LOGFLOOD-02 (R9): epoch whose single aggregate cap-hit line has already
+    /// been emitted. `u64::MAX` = none yet.
+    cap_reported_epoch: AtomicU64,
 }
 
 impl MultihopEmitBudget {
@@ -340,6 +343,40 @@ impl MultihopEmitBudget {
             sizeable_used: AtomicU64::new(0),
             unpriceable_used: AtomicU64::new(0),
             unpriceable_refused: AtomicU64::new(0),
+            cap_reported_epoch: AtomicU64::new(u64::MAX),
+        }
+    }
+
+    /// LOGFLOOD-02 — `true` exactly once per epoch: the caller may emit that
+    /// epoch's single aggregate cap-hit line. Every other refusal of the same
+    /// epoch stays a per-item `debug!`.
+    ///
+    /// This is what the callers always MEANT ("one warn ... not a per-item noise
+    /// line (R9)") but not what they did: at the measured refusal rate the
+    /// per-cycle `warn!` was ~20 % of the container's log volume and collapsed
+    /// the 50 MB window to under 10 minutes (2026-09-27: 23 920 `cap_reached`
+    /// lines in 9m47s of retained logs), destroying the forensic window R9
+    /// exists to protect. The truncation is still never hidden: the aggregate
+    /// line carries the epoch's totals, the per-item line survives at `debug`,
+    /// and `dropped_in` remains the counted truth (R8).
+    ///
+    /// Out-of-order epochs cannot re-report: the claim is strictly monotonic in
+    /// the epoch id, so a late-arriving older block never earns a second line.
+    pub fn claim_cap_report(&self, epoch: u64) -> bool {
+        let mut seen = self.cap_reported_epoch.load(Ordering::Acquire);
+        loop {
+            if seen != u64::MAX && epoch <= seen {
+                return false;
+            }
+            match self.cap_reported_epoch.compare_exchange_weak(
+                seen,
+                epoch,
+                Ordering::AcqRel,
+                Ordering::Acquire,
+            ) {
+                Ok(_) => return true,
+                Err(actual) => seen = actual,
+            }
         }
     }
 
@@ -1189,6 +1226,40 @@ mod tests {
         assert_eq!(budget.unpriceable_used_in(next), 1);
         assert_eq!(budget.unpriceable_refused_in(next), 0);
         assert_eq!(budget.dropped_in(next), 0);
+    }
+
+    #[test]
+    fn cap_report_is_claimed_once_per_epoch_and_per_item_lines_stay_debug() {
+        // LOGFLOOD-02 (R9): the aggregate cap-hit line is emitted once per epoch,
+        // no matter how many cycles the cap refuses — the volume that collapsed
+        // the container's log window came from warning on EVERY refusal.
+        const EPOCH: u64 = 5_100;
+        let budget = MultihopEmitBudget::new(1);
+        assert!(budget.claim(EPOCH));
+        assert!(!budget.claim(EPOCH));
+        budget.note_refused(EPOCH, EmitLane::Unpriceable);
+        assert_eq!(budget.dropped_in(EPOCH), 1);
+
+        assert!(
+            budget.claim_cap_report(EPOCH),
+            "first refusal of the epoch reports"
+        );
+        for _ in 0..1_000 {
+            budget.note_refused(EPOCH, EmitLane::Unpriceable);
+            assert!(
+                !budget.claim_cap_report(EPOCH),
+                "every further refusal of the same epoch must stay a debug line"
+            );
+        }
+        // The counting is untouched: the cap still bounds, the drops still count.
+        assert_eq!(budget.dropped_in(EPOCH), 1_001);
+
+        // A new epoch earns its own single aggregate line, and the previous
+        // epoch cannot claim a second one.
+        let next = EPOCH + 1;
+        assert!(budget.claim_cap_report(next));
+        assert!(!budget.claim_cap_report(next));
+        assert!(!budget.claim_cap_report(EPOCH));
     }
 
     #[test]
