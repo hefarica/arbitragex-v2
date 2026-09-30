@@ -463,7 +463,16 @@ services:
       EDGE_PORT: '8787'
       REDIS_URL: ${REDIS_URL:-redis://redis:6379}
     ports:
-    - 0.0.0.0:8787:8787
+    # SEC-EDGE-BYPASS-01: antes `0.0.0.0:8787:8787` — el edge era alcanzable
+    # desde Internet sin pasar por Cloudflare (medido: 200 con 167 KB de datos en
+    # /api/opportunities/live, rate limit spoofeable por X-Forwarded-For, y los
+    # 403 por ASN/threatScore saltados porque `request.cf` sólo existe si la
+    # petición entró por Cloudflare).
+    # Ahora sólo loopback: nginx escucha en 8787 con allowlist de los rangos de
+    # Cloudflare y proxya a 127.0.0.1:8788 (ver config/nginx/arbitragex.conf).
+    # El puerto INTERNO del contenedor sigue siendo 8787 (EDGE_PORT + healthcheck
+    # + INTERNAL_EDGE_URL=http://edge:8787 no cambian).
+    - 127.0.0.1:8788:8787
     depends_on:
     - api-server
     healthcheck:
