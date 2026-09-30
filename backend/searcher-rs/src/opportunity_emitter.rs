@@ -898,9 +898,11 @@ pub(crate) fn economics_declaration(
         .cloned();
 
     // clippy::field_reassign_with_default (CI bloqueante, `-D warnings`): el struct
-    // se construye ENTERO en el inicializador — con `..Default::default()` para el
-    // resto de campos — en vez de nacer de `Default::default()` y recibir
-    // asignaciones campo a campo. Mismo contenido, misma semántica.
+    // se construye ENTERO en el inicializador — `EconomicsBasis` tiene exactamente
+    // estos tres campos (`gross`/`net`/`amount`), así que no lleva
+    // `..Default::default()` (`clippy::needless_update` también está denegado) — en
+    // vez de nacer de `Default::default()` y recibir asignaciones campo a campo.
+    // Mismo contenido, misma semántica.
     let basis = EconomicsBasis {
         // amount_in_wei's own provenance is always knowable.
         amount: Some(
@@ -913,7 +915,6 @@ pub(crate) fn economics_declaration(
         ),
         gross: opp.expected_profit_usd.map(|_| B::PROBE.to_string()),
         net: opp.net_expected_profit_usd.map(|_| B::KERNEL.to_string()),
-        ..Default::default()
     };
 
     // The size the ECONOMICS belong to. Proven, never assumed.
