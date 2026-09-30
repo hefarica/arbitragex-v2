@@ -249,8 +249,8 @@ function summaryCells(opp: OmniOpportunity): Array<{
         : notionalUsd == null
           ? `sin principal verificable para el basis=${ledger.basis} (R8)`
           : notionalAttributable
-            ? `simulated_amount_in_usd del forward-sim valorado al precio vivo (amount_in_wei=${opp.amount_in_wei ?? "no emitido"}) — el ladder no publica principal (basis=${ledger.basis})`
-            : `CARDS-NOTIONAL-01/02: notional del forward-sim (amount_in_wei=${opp.amount_in_wei ?? "no emitido"}); el bruto mostrado (${opp.expected_profit_usd}) se midió en OTRO tamaño (>${GROSS_OVER_PRINCIPAL_SANITY_MULT}× este principal) — '~' marca el origen y el ladder no publica principal`,
+            ? `sin principal verificable para el basis=${ledger.basis} (R8) — simulated_amount_in_usd del forward-sim valorado al precio vivo (amount_in_wei=${opp.amount_in_wei ?? "no emitido"}); el ladder no publica principal`
+            : `sin principal verificable para el basis=${ledger.basis} (R8) — CARDS-NOTIONAL-01/02: notional del forward-sim (amount_in_wei=${opp.amount_in_wei ?? "no emitido"}); el bruto mostrado (${opp.expected_profit_usd}) se midió en OTRO tamaño (>${GROSS_OVER_PRINCIPAL_SANITY_MULT}× este principal) — '~' marca el origen y el ladder no publica principal`,
     ),
     cell(
       "Gross",

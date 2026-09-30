@@ -141,7 +141,12 @@ export function paintViolations(raw: Record<string, unknown>, p: Paint): string[
 
   const numFields: Array<[string, string]> = [
     ["Net", "net_expected_profit_usd"],
-    ["Sim", "simulated_net_profit_usd"],
+    // main (e6187ef2, post-branch) REEMPLAZÓ la celda proxy `Sim` por el
+    // `quote_block` REAL del searcher, así que el net del forward-sim ya no tiene
+    // celda propia: lo pinta la celda `Net`, que aplica la precedencia del wire
+    // (`ledger.net_usd`, con `~` cuando el basis es el simulado). Exigir aquí una
+    // celda `Sim` sería exigir una celda que main decidió eliminar.
+    ["Net", "simulated_net_profit_usd"],
     ["Gross", "expected_profit_usd"],
     ["in", "simulated_amount_in_usd"],
     ["Risk", "risk_score"],
@@ -326,7 +331,11 @@ describe("CARDS-PAINT-GATE-01 — a wire value is always painted", () => {
     expect(at2(p.ladder, "Net yield")).toBe("-$0.000012");
     // R8: null is still the honest dash — the fix never fabricates.
     expect(p.grid["Gross"]).toBe(DASH);
-    expect(p.grid["Sim"]).toBe(DASH);
+    // main reemplazó la celda proxy `Sim` por el `quote_block` real del searcher
+    // (e6187ef2): la celda ya no existe, y el `block` de esta fila va en guion
+    // porque el wire no trae `economics.quote_block` (R8, jamás un 0 fabricado).
+    expect(p.grid["Sim"]).toBeUndefined();
+    expect(p.grid["block"]).toBe(DASH);
     expect(p.grid["in"]).toBe(DASH);
   });
 
@@ -335,11 +344,17 @@ describe("CARDS-PAINT-GATE-01 — a wire value is always painted", () => {
     const p = paintOf(mapToOmniOpportunity(raw as never));
     // NOT hidden: the wire-grade cell shows the searcher's own gross…
     expect(p.grid["Gross"]).toBe("$818328.08");
-    // …while the capital path stays quiet (nothing closes), with the reason in
-    // every dashed cell's `title` and in the basis note (CARDS-QUIET-01).
-    expect(at2(p.ladder, "Gross out")).toBe(DASH);
+    // …y el capital path ya no lo blanquea (main, CARDS-NEVER-HIDE-01: la orden
+    // del operador fue "quita el maldito render que esconde los números"). El
+    // ladder pinta el bruto del searcher y mantiene QUIETO el PRINCIPAL — que es
+    // la regla de CARDS-NOTIONAL-01 (nunca un principal junto a un bruto de otro
+    // tamaño); el fixture hermano de abajo fija el mismo par (`$710.3k`).
+    expect(at2(p.ladder, "Gross out")).toBe("$818.3k");
+    // …y nada que no se haya computado se inventa: ni net, ni costo, ni principal.
     expect(at2(p.ladder, "Net yield")).toBe(DASH);
     expect(at2(p.ladder, "Total cost")).toBe(DASH);
+    expect(at2(p.ladder, "Flash loan in")).toBe(DASH);
+    expect(at2(p.ladder, "Repay")).toBe(DASH);
     // …and the grid's Net cell has nothing to show either (the wire has no net).
     expect(p.grid["Net"]).toBe(DASH);
     expect(p.headline).toBe(DASH);
