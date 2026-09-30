@@ -151,8 +151,22 @@ jobs:
           # único que sobrevive cuando el VPS se queda sin poder escribir.
           echo "    docker system df (dónde está el espacio, antes de construir):"
           docker system df 2>&1 | sed 's/^/      /' || true
-          if [ "${FREE_GB}" -lt 15 ]; then
-            echo "::error::APT-GPG-02: only ${FREE_GB}GB free (<15GB) — refusing to build on a full disk (the 2026-09-24 incident: disk 100% -> apt GPG invalid signature -> corrupted redis AOF). Stack stays on the previous release; free space first."
+          # OPS-DEPLOY-DISKGUARD-03 (2026-09-30, MEDIDO): el umbral era 15 GB pero el
+          # build costaba ~29 GB, así que pasaba el guard y llenaba el disco (incidente
+          # de hoy: Postgres PANIC + 142 "No space left on device" + errores de AOF en
+          # Redis). Medición real en el VPS del build de los 6 servicios Rust:
+          #   ANTES (sin cache mounts): pico ~29 GB -> 18 GB libres NO bastaban
+          #   DESPUÉS de OPS-DOCKER-CACHE-01: 17,6 GB -> mínimo 7,6 GB = pico ~10 GB
+          #     (cota inferior; bruto <=16 GB), y el build terminó rc=0
+          # El umbral se calibra contra ESA medida, no contra una estimación. Se elige
+          # 16 GB: por encima de los ~10 GB netos medidos y con margen sobre los ~16 GB
+          # brutos, y por DEBAJO del régimen estacionario real del VPS tras los cache
+          # mounts (17 GB libres) — un umbral superior bloquearía deploys sanos.
+          # NO se sube a 30 GB: llegar a 30 GB libres exige cambiar la retención de
+          # opportunities + scored_opportunities (58 GB, ventana 60 días), decisión del
+          # operador y no de este PR.
+          if [ "${FREE_GB}" -lt 16 ]; then
+            echo "::error::APT-GPG-02: only ${FREE_GB}GB free (<16GB) — refusing to build on a full disk (the 2026-09-24 incident: disk 100% -> apt GPG invalid signature -> corrupted redis AOF; and the 2026-09-30 repeat: Postgres PANIC). Coste medido del build con cache mounts: ~10-16 GB. Stack stays on the previous release; free space first."
             exit 1
           fi
           # DEPLOY-DISK-GUARD-01: refusing to build does NOT resurrect a stack
@@ -361,10 +375,36 @@ jobs:
 
           echo "[6/9] Building core + hot-path services (sequential — lower peak disk/RAM)..."
           # RULE 03: no-cache, explicit environment, one service build at a time.
+          #
+          # OPS-DEPLOY-DISKGUARD-04 (2026-09-30, MEDIDO): el guard de [1/9] poda ANTES
+          # y el de [7/9] DESPUÉS, pero NADA protege DURANTE el build — y es durante
+          # cuando el disco se llena. En la medición del build completo (845s, 6
+          # servicios Rust) el libre cayó de 17.600 MB a 7.645 MB y fue una poda a
+          # mitad de build la que evitó llegar a 0; el build terminó rc=0 igualmente.
+          # Este suelo replica exactamente eso: si el libre cae por debajo de 6 GB
+          # mientras se construye, se poda la caché (peso muerto: las imágenes ya
+          # construidas no dependen de ella) en vez de esperar a que el disco llegue a
+          # 0 y Postgres entre en PANIC.
+          DISK_FLOOR_MB=$((6 * 1024))
+          (
+            while true; do
+              F=$(df -m / | awk 'NR==2 {print $4}')
+              if [ "${F:-0}" -lt "$DISK_FLOOR_MB" ]; then
+                echo "::warning::DEPLOY-DISK-FLOOR: free=${F}MB < ${DISK_FLOOR_MB}MB durante el build — podando builder cache"
+                docker builder prune -af >/dev/null 2>&1 || true
+                docker image prune -f >/dev/null 2>&1 || true
+              fi
+              sleep 15
+            done
+          ) &
+          DISK_FLOOR_PID=$!
           for service in api-server edge frontend searcher-rs sim-ctl relays-client \
                          recon selector-api anvil math-engine token-enricher socket-proxy; do
             docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" build --no-cache "$service"
           done
+          kill "$DISK_FLOOR_PID" 2>/dev/null || true
+          wait "$DISK_FLOOR_PID" 2>/dev/null || true
+          echo "    build completo; libre=$(df -BG --output=avail / | tail -1 | tr -dc '0-9')GB"
 
           echo "[7/9] Starting stack (infra + hot-path + operator plane + observability + minio/vault)..."
           # Thanos is started separately at [7c] AFTER the arbx-metrics bucket
