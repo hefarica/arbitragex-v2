@@ -114,6 +114,7 @@ async fn leg_token_decimals(
 /// R8 fail-honest: si los decimales de CUALQUIERA de los dos tokens no están
 /// disponibles, la pierna se OMITE. Nunca se asume 18, nunca se normaliza a
 /// medias. Si ninguna pierna sobrevive → `None` (`insufficient_state`).
+#[allow(clippy::too_many_arguments)] // market-state inputs (reservas + piernas + contexto de bloque + features); mismo criterio que evaluate_math_evidence
 pub async fn build_market_state(
     reserves_cache: &Arc<ReservesCache>,
     pool_legs: &[(Address, Address, Address)],
