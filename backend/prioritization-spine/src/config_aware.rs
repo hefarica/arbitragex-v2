@@ -1032,8 +1032,36 @@ impl<'a> ConfigAwareEvaluator<'a> {
         // a regression catch for any future math error producing absurd values.
         const ANOMALOUS_ROI_THRESHOLD_PCT: f64 = 999.0;
         const ANOMALOUS_PROFIT_THRESHOLD_USD: f64 = 1_000_000.0;
+        // HARDENING-GROSS-FAB-01 (2026-09-27): the flat $1M bound above is both
+        // too coarse and — as measured live — insufficient. It let
+        // `gross_profit_usd = 710273.79750992` through on a 1 DAI -> USDC route
+        // (honest chained net: -5e-06) because the fabricated figure happened to
+        // sit below $1M. The bound that actually holds is PRINCIPAL-RELATIVE: an
+        // AMM spread cannot return more than a small multiple of the capital
+        // deployed in the same atomic round trip. `gross_profit_usd` here is
+        // `expected_amount_out_usd - amount_in_usd`, where `expected_amount_out`
+        // is the ABSOLUTE quote of the first leg — so a decimals/orientation
+        // error between the two legs (18 <-> 6) shows up as an arbitrarily large
+        // "gross". Anything above this multiple of the traded principal is a
+        // units artefact, never a market reading. Same spirit as
+        // `SANITY_PROFIT_MULT_OF_CAP` (5.0) in the searcher's triangular engine.
+        const MAX_GROSS_MULT_OF_PRINCIPAL: f64 = 5.0;
+        let principal_bound_exceeded = amount_in_usd > 0.0
+            && outcome_raw.gross_profit_usd > MAX_GROSS_MULT_OF_PRINCIPAL * amount_in_usd;
         let anomalous = outcome_raw.net_roi_pct.abs() > ANOMALOUS_ROI_THRESHOLD_PCT
-            || outcome_raw.gross_profit_usd.abs() > ANOMALOUS_PROFIT_THRESHOLD_USD;
+            || outcome_raw.gross_profit_usd.abs() > ANOMALOUS_PROFIT_THRESHOLD_USD
+            || principal_bound_exceeded;
+        if principal_bound_exceeded && !unknown_price {
+            tracing::warn!(
+                event = "spine.gross_exceeds_principal_bound",
+                chain_id,
+                amount_in_usd,
+                gross_profit_usd = outcome_raw.gross_profit_usd,
+                max_gross_mult_of_principal = MAX_GROSS_MULT_OF_PRINCIPAL,
+                "gross profit exceeds principal x {MAX_GROSS_MULT_OF_PRINCIPAL} — \
+                 clamped to 0.0 (units/orientation artefact, not a market reading)"
+            );
+        }
         let outcome = if anomalous {
             DefiArbitrageOutcome {
                 is_viable: false,
@@ -2714,5 +2742,145 @@ mod tests {
             "v2_reserve_snapshot=None must produce same result as no reserves; \
              default={net_default:.8} explicit_none={net_explicit_none:.8}",
         );
+    } // ================================================================
+      // HARDENING-GROSS-FAB-01 (2026-09-27)
+      // ================================================================
+
+    fn fab01_cfg() -> TradingConfigState {
+        let mut c = cfg();
+        c.allowed_token_symbols = vec!["WETH".into(), "DAI".into(), "USDC".into(), "PEPE".into()];
+        c.enabled_strategies = vec!["dex_arb_v2v2".into(), "dex_arb_v2v3".into()];
+        c.token_prices_usd.insert("DAI".into(), 0.99987154);
+        c.token_prices_usd.insert("USDC".into(), 0.9999150954143999);
+        c.token_prices_usd.insert("PEPE".into(), 0.00000436471361);
+        c.base_token_price_usd = 2698.9382435372;
+        c
+    }
+
+    fn fab01_candidate(in_sym: &str, out_sym: &str, out_units: f64) -> OpportunityCandidate {
+        OpportunityCandidate {
+            route_fingerprint: format!("{in_sym}_{out_sym}"),
+            pool_addresses: vec![
+                "0xaaf5110db6e744ff70fb339de037b990a20bdace".into(),
+                "0x5777d92f208679db4b9778590fa3cab3ac9e2168".into(),
+            ],
+            token_addresses: vec![in_sym.into(), out_sym.into()],
+            dex_adapters: vec!["sushiswap".into(), "uniswapv3".into()],
+            amount_in: 1.0,
+            expected_amount_out: out_units,
+            gross_profit: 0.0,
+        }
+    }
+
+    fn fab01_evaluate(
+        c: &TradingConfigState,
+        cand: &OpportunityCandidate,
+    ) -> (f64, Option<RejectReason>) {
+        match ConfigAwareEvaluator::new(c, signals()).evaluate(
+            cand,
+            "dex_arb_v2v3",
+            1,
+            "rpc".into(),
+            10,
+        ) {
+            ConfigGateOutcome::Evaluated {
+                outcome, rejection, ..
+            } => (outcome.gross_profit_usd, rejection),
+            other => panic!("expected Evaluated, got {other:?}"),
+        }
+    }
+
+    /// The live defect, pinned by its own numeric fingerprint.
+    ///
+    /// PG `opportunities`, chain 1, detector `dex_engine`, 2026-09-27T02:08:13Z:
+    /// `expected_profit_usd = 710273.79750992` on `amount_in_wei = 1e18` (1 DAI),
+    /// `net_expected_profit_usd = -0.000006`, pools [SushiSwap DAI/USDC,
+    /// UniswapV3 USDC/DAI 0.01%]. The published figure is exactly
+    /// `expected_amount_out x price(token_out) - amount_in_usd` with
+    /// `expected_amount_out = 710335.1080894495` USDC — an output NOTIONAL for a
+    /// 1 DAI input, i.e. the decimals/orientation category error the spine's own
+    /// spread gate detects (`observed_rate / reference_rate = 710366`, mult 3).
+    #[test]
+    fn gross_fab_01_live_fixture_is_rejected_and_never_priced_as_profit() {
+        let c = fab01_cfg();
+        // The fast-filter output that the scanner's `hi` produced live.
+        let cand = fab01_candidate("DAI", "USDC", 710_335.108_089_449_5);
+        let (gross, rejection) = fab01_evaluate(&c, &cand);
+
+        match rejection {
+            Some(RejectReason::ImplausibleSpread {
+                observed_rate,
+                reference_rate,
+                threshold_mult,
+            }) => {
+                assert!(
+                    (observed_rate - 710_335.108_089_449_5).abs() < 1e-6,
+                    "the gate must report the FAST FILTER's implied rate verbatim; \
+                     got {observed_rate}"
+                );
+                assert!((reference_rate - 0.999_956_44).abs() < 1e-6);
+                assert_eq!(threshold_mult, 3.0);
+            }
+            other => panic!(
+                "a 1 DAI -> 710,335 USDC quote MUST trip the spread sanity gate, \
+                 got rejection = {other:?}"
+            ),
+        }
+        assert_eq!(
+            gross, 0.0,
+            "an implausible rate is clamped, never priced as gross profit"
+        );
+        // And the arithmetic the card was painted with is exactly this identity:
+        // expected_amount_out x price(token_out) - amount_in_usd.
+        let published = 710_335.108_089_449_5_f64 * 0.999_915_095_414_399_9 - 1.0 * 0.999_871_54;
+        assert!(
+            (published - 710_273.797_509_92).abs() < 1e-6,
+            "identity check: got {published}"
+        );
+    }
+
+    /// HARDENING-UNITS-01 — unit/decimals consistency gate for BOTH leg-pair
+    /// shapes. The gate is decimals-agnostic by construction: `observed_rate`
+    /// and `reference_rate` are both in HUMAN token units, so it holds for an
+    /// 18 -> 6 pair (DAI/USDC) and for an 18 -> 18 pair (PEPE/WETH) alike.
+    /// A CONSISTENT quote passes; a quote carrying the decimals/orientation
+    /// error (the 18 -> 6 leg's output mistaken for the cycle return) is
+    /// refused.
+    #[test]
+    fn units_gate_holds_for_18_to_6_and_18_to_18_leg_pairs() {
+        let c = fab01_cfg();
+
+        // (a) 18 -> 6 CONSISTENT: 1 DAI -> 0.9975 USDC (a real rate).
+        let (_, rej_18_6_ok) = fab01_evaluate(&c, &fab01_candidate("DAI", "USDC", 0.997_5));
+        assert!(
+            !matches!(rej_18_6_ok, Some(RejectReason::ImplausibleSpread { .. })),
+            "a real 18 -> 6 rate must NOT trip the units gate, got {rej_18_6_ok:?}"
+        );
+
+        // (b) 18 -> 6 INCONSISTENT: the live fabricated notional.
+        let (gross_bad_18_6, rej_18_6_bad) =
+            fab01_evaluate(&c, &fab01_candidate("DAI", "USDC", 710_335.108_089_449_5));
+        assert!(
+            matches!(rej_18_6_bad, Some(RejectReason::ImplausibleSpread { .. })),
+            "the fabricated 18 -> 6 notional must trip the units gate, got {rej_18_6_bad:?}"
+        );
+        assert_eq!(gross_bad_18_6, 0.0);
+
+        // (c) 18 -> 18 CONSISTENT: 1 PEPE -> 1.6174e-9 WETH (a real rate).
+        let (_, rej_18_18_ok) = fab01_evaluate(&c, &fab01_candidate("PEPE", "WETH", 1.617_4e-9));
+        assert!(
+            !matches!(rej_18_18_ok, Some(RejectReason::ImplausibleSpread { .. })),
+            "a real 18 -> 18 rate must NOT trip the units gate, got {rej_18_18_ok:?}"
+        );
+
+        // (d) 18 -> 18 INCONSISTENT: the live PEPE row's notional (486.77 WETH
+        // for 1 PEPE, i.e. ~$1.31M gross on a $4.4e-6 principal).
+        let (gross_bad_18_18, rej_18_18_bad) =
+            fab01_evaluate(&c, &fab01_candidate("PEPE", "WETH", 486.773_784_088_741_7));
+        assert!(
+            matches!(rej_18_18_bad, Some(RejectReason::ImplausibleSpread { .. })),
+            "the fabricated 18 -> 18 notional must trip the units gate, got {rej_18_18_bad:?}"
+        );
+        assert_eq!(gross_bad_18_18, 0.0);
     }
 }
