@@ -850,9 +850,19 @@ mod tests {
     }
 
     // ── observe_missing: the census counts today's production gap ──────────
+    //
+    // Los contadores del censo son `static` de PROCESO y el harness de tests corre
+    // los tests en hilos paralelos, así que estos DOS tests — los únicos que llaman
+    // a `observe_missing` — se pisan: el incremento de uno cae entre el snapshot
+    // `before` del otro y su aserción (`left: 1, right: 0`). La carrera es
+    // preexistente en main; se manifiesta cuando algo cambia el CONJUNTO de tests
+    // del binario (el harness re-agenda los hilos). El lock hace determinista el
+    // par sin tocar el comportamiento bajo prueba.
+    static CENSUS_SERIAL: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
     #[test]
     fn census_counts_absent_fields_on_legacy_shaped_row() {
+        let _serial = CENSUS_SERIAL.lock().unwrap_or_else(|e| e.into_inner());
         // Production shape TODAY (the operator's audit): economics absent,
         // gross/net/roi all null on a rejected row.
         let before = MISSING.gross_usd.load(Ordering::Relaxed);
@@ -864,6 +874,7 @@ mod tests {
 
     #[test]
     fn census_does_not_count_present_fields() {
+        let _serial = CENSUS_SERIAL.lock().unwrap_or_else(|e| e.into_inner());
         let before = MISSING.gross_usd.load(Ordering::Relaxed);
         let mut opp = row_opp(Some(2.0), Some(-0.5), Some("gas_floor_breach"));
         let mut e = economics_partial(Some(2.0), Some(-0.5), None, None);

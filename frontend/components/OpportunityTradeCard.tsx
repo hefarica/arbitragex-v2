@@ -85,6 +85,9 @@ import {
 // paint". Shared with the high-value notifier so the two surfaces cannot
 // disagree about what a row's numbers mean.
 import { buildLedger, LEDGER_COST_ROW_LABELS } from "@/lib/opportunity-ledger";
+// ECON-DECLARE-01 — the notional-basis declaration the producer writes. The
+// ladder band states the DECLARED notional instead of a blanket "sin notional".
+import { BASIS_LABEL, formatWeiNotional } from "@/lib/opportunity-declaration";
 
 // ─── Tone → token-based class map ────────────────────────────────────────────
 const TONE_CLASS: Record<string, string> = {
@@ -885,11 +888,16 @@ function OpportunityTradeCardImpl({
 
            CARDS-NOTIONAL-01: every row here belongs to ONE basis, chosen by
            `buildLedger`. A figure whose producer computed it at a DIFFERENT
-           size than the row's own notional is not painted at all — its cell
-           renders the honest dash and `quietReason` travels in the `title`.
-           That is what removes `IN $0.00` beside `Total cost $73.4k`,
-           `Total cost $72.4k` beside `Net yield -$0.0000`, and `GROSS $1.45M`
-           on a `$0.00`/`$1.00` principal. */}
+           size than the row's own notional is not painted as if it belonged to
+           that ladder — its cell carries the honest dash and `quietReason`
+           travels in the `title`.
+
+           ECON-DECLARE-01 (2026-09-27): the band below used to read
+           "sin notional" unconditionally, because the wire carried the figures
+           with no statement of the size they were computed at. The producer now
+           DECLARES that size (`route_metadata.economics_amount_in_wei`) and the
+           basis of each figure, so the band states the real notional — and only
+           falls back to naming the absence when no producer declared one. */}
       <div className="rounded-lg border border-border bg-muted/20 mb-3 overflow-hidden">
         <div className="px-2.5 py-1.5 border-b border-border/60 text-[9px] uppercase tracking-wide text-muted-foreground font-semibold">
           Capital path (USD)
@@ -897,7 +905,9 @@ function OpportunityTradeCardImpl({
             · {ledger.basis === "simulated"
               ? "forward-sim @ amount_in_wei"
               : ledger.basis === "canonical"
-                ? (ledger.principal_usd != null ? "searcher kernel @ sized notional" : "searcher legacy gross/net")
+                ? ledger.notional != null
+                  ? `searcher gross/net @ ${ledger.notional.usd != null ? usd(ledger.notional.usd) : ""}${formatWeiNotional(ledger.notional.wei)}${ledger.notional.basis != null ? ` (${BASIS_LABEL[ledger.notional.basis]})` : " (@undeclared)"} declarado`
+                  : "searcher gross/net — sin notional declarado"
                 : "sin aritmética cerrada"}
           </span>
         </div>
@@ -953,9 +963,9 @@ function OpportunityTradeCardImpl({
             title={
               ledger.basis === "simulated"
                 ? "simulated_gross_usd — el bruto de ESTE ladder (misma llamada que el net y los costos)."
-                : opp.economics?.gross_profit_usd != null
-                  ? "economics.gross_profit_usd — bruto del searcher al MISMO sized notional del ladder."
-                  : "expected_profit_usd legacy — bruto del searcher sin notional declarado."
+                : ledger.notional != null
+                  ? `expected_profit_usd — bruto del searcher, en el notional DECLARADO por su productor (${formatWeiNotional(ledger.notional.wei)} wei)${ledger.notional.basis != null ? ` con basis ${BASIS_LABEL[ledger.notional.basis]}` : " (basis @undeclared)"}.`
+                  : "expected_profit_usd — bruto del searcher en SU propio tamaño; ningún productor declaró el notional de este par, así que el ladder no pinta principal."
             }
           />
           <div className="my-1 border-t border-border/50" />

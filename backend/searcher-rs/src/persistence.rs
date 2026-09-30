@@ -279,6 +279,8 @@ pub fn build_route_metadata_from_plan(plan: &RoutePlan) -> RouteMetadata {
         leg_amounts_in: None,
         leg_amounts_out: None,
         leg_zero_for_one: None,
+        economics_amount_in_wei: None,
+        economics_basis: None,
     }
 }
 
@@ -458,6 +460,8 @@ mod fidelity_tests {
             leg_amounts_in: None,
             leg_amounts_out: None,
             leg_zero_for_one: None,
+            economics_amount_in_wei: None,
+            economics_basis: None,
         };
         assert_ne!(
             candidate_flattened.token_addresses.len(),

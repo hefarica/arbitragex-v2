@@ -77,13 +77,28 @@ function cardHtml(opp: Mapped, isMounted = false): string {
   );
 }
 
-/** Grid cells in document order — label → value (`summaryCells` order). */
+/**
+ * Grid cells in document order — label → value (`summaryCells` order).
+ *
+ * ECON-DECLARE-01 (merge con `feat/econ-declare-01`): el grid de esa rama envuelve
+ * el valor en `<span data-testid="opp-cell-…">` y añade a su lado un badge de
+ * procedencia (`@wire`/`@sim`/`@undeclared`). El extractor original exigía el valor
+ * DESNUDO dentro del `div.truncate`, así que con el markup nuevo no encontraba
+ * ninguna celda (`undefined`) y todos los gates caían en falso. Se lee el valor del
+ * span cuando existe y, si no, del texto plano: el badge NUNCA forma parte del
+ * valor (es una etiqueta, no la cifra).
+ */
 function gridCells(html: string): Array<{ label: string; value: string }> {
   const out: Array<{ label: string; value: string }> = [];
   const re =
-    /<div class="text-\[9px\] uppercase tracking-wide text-muted-foreground">([^<]*)<\/div><div class="truncate">([^<]*)<\/div>/g;
+    /<div class="text-\[9px\] uppercase tracking-wide text-muted-foreground">([^<]*)<\/div><div class="truncate">([\s\S]*?)<\/div>/g;
   let m: RegExpExecArray | null;
-  while ((m = re.exec(html)) !== null) out.push({ label: m[1]!, value: m[2]! });
+  while ((m = re.exec(html)) !== null) {
+    const label = m[1]!;
+    const inner = m[2]!;
+    const span = /<span[^>]*data-testid="opp-cell-[^"]*"[^>]*>([\s\S]*?)<\/span>/.exec(inner);
+    out.push({ label, value: span ? span[1]! : inner });
+  }
   return out;
 }
 
@@ -597,7 +612,14 @@ describe("CARDS-MEMO-COVER-01 — the comparator covers every painted field", ()
     // …and the paint really does differ (the mechanism, end to end).
     const before = paintOf(withoutSim);
     const after = paintOf(withSim);
-    expect(before.grid["in"]).toBe(DASH);
+    // ECON-DECLARE-01 (merge con `feat/econ-declare-01`): sin el bloque sim no hay
+    // notional en USD, pero la celda `in` NO queda en guion — publica el monto EXACTO
+    // en wei que el wire SÍ trae, etiquetado con su unidad (`inValue`) y con la razón
+    // en el `title`. Un guion ahí escondería un dato presente, que es justo lo que la
+    // orden del operador prohíbe ("quita el maldito render que esconde los números").
+    // Lo que este test fija es el MECANISMO — que el lote del forward-sim REPINTA la
+    // celda — y eso se mantiene intacto: el valor cambia en ambos sentidos.
+    expect(before.grid["in"]).toBe("1e21 wei");
     expect(after.grid["in"]).toBe("$1000.00");
   });
 });

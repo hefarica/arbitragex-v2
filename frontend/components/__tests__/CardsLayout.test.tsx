@@ -159,6 +159,21 @@ function netCell(html: string): string {
   return html.slice(start, end);
 }
 
+/**
+ * ECON-DECLARE-01: the VALUE a summary cell actually renders.
+ *
+ * The cell now carries its notional basis beside the value
+ * (`<span data-testid="opp-cell-bps">12</span><span data-basis=…>@undeclared</span>`),
+ * so a raw `>12</div>` substring no longer identifies the value. Reading the
+ * testid span is equivalent and narrower — it asserts the value AND leaves the
+ * basis markup free to evolve.
+ */
+function cellValue(html: string, label: string): string {
+  const m = new RegExp(`data-testid="opp-cell-${label}">([^<]*)<`).exec(html);
+  expect(m, `cell ${label} must be rendered`).not.toBeNull();
+  return m![1]!;
+}
+
 describe("CARDS-LAYOUT-01 — every hop renders exactly once, never doubled", () => {
   it("a 2-hop live route renders exactly one row per hop (the operator's doubling)", () => {
     const html = card(mapToOmniOpportunity(wire({})));
@@ -287,9 +302,10 @@ describe("CARDS-PRECEDENCE-02 — a computed value always wins its cell", () => 
     const canonical = card(
       mapToOmniOpportunity(wire({ roi_pct: 0.12, simulated_roi_pct: 0.38 })),
     );
-    const cStart = canonical.indexOf(">bps<");
-    expect(canonical.slice(cStart, cStart + 400)).toContain(">12</div>");
-    expect(canonical.slice(cStart, cStart + 400)).not.toContain("~38");
+    // ECON-DECLARE-01: the canonical ratio wins its cell — asserted on the cell's
+    // own value span, which is what the operator reads.
+    expect(cellValue(canonical, "bps")).toBe("12");
+    expect(cellValue(canonical, "bps")).not.toContain("~38");
 
     // REAL-LIVE-CARDS-SSOT-01: el ratio del forward-sim no se pinta en un slot
     // canónico — sin ratio canónico la celda es honesta (—), nunca mezcla bases.
@@ -297,7 +313,13 @@ describe("CARDS-PRECEDENCE-02 — a computed value always wins its cell", () => 
       mapToOmniOpportunity(wire({ roi_pct: null, simulated_roi_pct: 0.38 })),
     );
     const sStart = simulated.indexOf(">bps<");
-    expect(simulated.slice(sStart, sStart + 400)).toContain(">—</div>");
+    // El grid de esta rama envuelve cada valor en un `<span data-testid="opp-cell-…">`,
+    // así que la búsqueda cruda de `>—</div>` (la de main, escrita contra el markup
+    // anterior) no encuentra el guion aunque la celda SÍ lo pinte. Se afirma con el
+    // MISMO helper que el resto del archivo: la doctrina no cambia — sin ratio
+    // canónico la celda es honesta (`—`) y el forward-sim no se mezcla en un slot
+    // canónico.
+    expect(cellValue(simulated, "bps")).toBe("—");
     expect(simulated.slice(sStart, sStart + 400)).not.toContain("~38");
   });
 

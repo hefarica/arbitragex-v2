@@ -161,6 +161,33 @@ export interface RouteMetadataWire {
   leg_amounts_in?: string[];
   leg_amounts_out?: string[];
   leg_zero_for_one?: boolean[];
+  /**
+   * ECON-DECLARE-01 — the notional in EXACT WEI at which this row's economic
+   * figures were computed, as DECLARED by the producer (searcher-rs).
+   *
+   * This is the declaration the operator's complaint named ("no están
+   * declarados"): three producers write economic figures onto one row, each at
+   * its own size, and without this key a renderer cannot know whether the gross
+   * and the amount it sits beside are ONE arithmetic or two different sizes — so
+   * it can only hide them behind `—`. Mirrors
+   * `shared_rs::candidates::RouteMetadata::economics_amount_in_wei`.
+   *
+   * `undefined` = no producer declared one (legacy rows, or a row with no
+   * economics to attribute). Absence is a STATE: the renderer prints
+   * `@undeclared` and never guesses (R8 / RULE 00).
+   */
+  economics_amount_in_wei?: string;
+  /**
+   * ECON-DECLARE-01 — which producer computed each figure. Mirrors
+   * `shared_rs::candidates::EconomicsBasis`. Every member is optional: a figure
+   * whose producer did not declare a basis stays absent and renders
+   * `@undeclared`.
+   */
+  economics_basis?: {
+    gross?: string;
+    net?: string;
+    amount?: string;
+  };
 }
 
 /**
@@ -836,6 +863,27 @@ export function parseRouteMetadata(
     leg_amounts_in: legAmountsIn,
     leg_amounts_out: legAmountsOut,
     leg_zero_for_one: legZeroForOne,
+    // ECON-DECLARE-01: the notional declaration is OPTIONAL and never coerced.
+    // A malformed/absent value stays undefined (= undeclared) rather than being
+    // repaired into a plausible-looking basis (R8: absence is a state).
+    economics_amount_in_wei:
+      typeof obj.economics_amount_in_wei === "string" &&
+      /^[0-9]{1,78}$/.test(obj.economics_amount_in_wei)
+        ? obj.economics_amount_in_wei
+        : undefined,
+    economics_basis: (() => {
+      const raw = obj.economics_basis;
+      if (raw == null || typeof raw !== "object" || Array.isArray(raw)) return undefined;
+      const src = raw as Record<string, unknown>;
+      const pick = (k: string): string | undefined =>
+        typeof src[k] === "string" && (src[k] as string).trim() !== ""
+          ? (src[k] as string)
+          : undefined;
+      const out = { gross: pick("gross"), net: pick("net"), amount: pick("amount") };
+      return out.gross === undefined && out.net === undefined && out.amount === undefined
+        ? undefined
+        : out;
+    })(),
   };
 }
 
