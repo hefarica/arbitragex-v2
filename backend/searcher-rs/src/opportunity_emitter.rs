@@ -952,7 +952,11 @@ fn route_with_economics_declaration(
     let mut declared = route?.clone();
     if let Some((notional, basis)) = economics_declaration(opp, route, stamped_probe) {
         declared.declare_economics(
-            if notional.is_empty() { None } else { Some(notional) },
+            if notional.is_empty() {
+                None
+            } else {
+                Some(notional)
+            },
             basis,
         );
     }
@@ -1383,7 +1387,11 @@ mod tests {
     /// stamp fired (the economics were computed against the engines' probe).
     #[test]
     fn econ_declare_applied_probe_is_declared_as_stamped_probe() {
-        let mut opp = make_opp(Uuid::new_v4(), Some(1.5), Some("non_positive_profit".into()));
+        let mut opp = make_opp(
+            Uuid::new_v4(),
+            Some(1.5),
+            Some("non_positive_profit".into()),
+        );
         opp.token_in = "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48".to_owned(); // USDC (6)
         opp.amount_in_wei = "0".to_owned();
 
@@ -1412,8 +1420,14 @@ mod tests {
         opp.amount_in_wei = "4353".to_owned(); // the live row's unrelated decoder amount
 
         let (notional, basis) = economics_declaration(&opp, None, None).expect("declaration");
-        assert_eq!(notional, "1000000000000000000", "the engine probe, not 4353");
-        assert_ne!(notional, opp.amount_in_wei, "never the decoder amount as notional");
+        assert_eq!(
+            notional, "1000000000000000000",
+            "the engine probe, not 4353"
+        );
+        assert_ne!(
+            notional, opp.amount_in_wei,
+            "never the decoder amount as notional"
+        );
         assert_eq!(basis.gross.as_deref(), Some("probe"));
         assert_eq!(basis.amount.as_deref(), Some("intent"));
         assert!(
