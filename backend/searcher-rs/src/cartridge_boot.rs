@@ -2109,8 +2109,16 @@ pub async fn active_evaluate_and_emit(
                     let runner_ev = runner.clone();
                     let registry_ev = math_registry.clone();
                     let reserves_ev = reserves_cache.clone();
-                    let pools_ev: Vec<Address> =
-                        intent.legs.iter().filter_map(|l| l.pool_hint).collect();
+                    // MATH-04-FOLLOWUP (2026-09-30): conservar el PAR de tokens de
+                    // cada pierna, no solo el pool — mismo fix que en
+                    // orchestrator.rs. `RouteIntentLeg` ya los lleva; sin ellos la
+                    // price_matrix solo puede llevar el ratio crudo r1/r0 y los
+                    // operadores devuelven `scalar: null`.
+                    let pools_ev: Vec<(Address, Address, Address)> = intent
+                        .legs
+                        .iter()
+                        .filter_map(|l| l.pool_hint.map(|p| (p, l.token_in, l.token_out)))
+                        .collect();
                     let strategy_key_ev = cartridge_id.clone();
                     let primary_ev = declared_primary_ops.clone();
                     let secondary_ev = declared_secondary_ops.clone();

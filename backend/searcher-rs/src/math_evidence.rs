@@ -40,15 +40,85 @@ fn price_from_reserves(r0: ethers::types::U256, r1: ethers::types::U256) -> Opti
     }
 }
 
+/// Precio del par en UNIDADES HUMANAS: `(r1 / 10^dec_out) / (r0 / 10^dec_in)`.
+///
+/// MATH-04-FOLLOWUP (2026-09-30): el ratio crudo `r1/r0` mezcla unidades mínimas
+/// de dos tokens con decimales distintos — WETH(18)/USDC(6) daba ~0.002 en vez
+/// de ~2000. Dividir cada lado por su propia escala lo lleva a unidades del
+/// token, el mismo criterio que `wei_str_to_token_units` / `weiUnits` en el
+/// resto del repo.
+///
+/// R8: escala no finita, reserva cero o resultado no finito/no positivo → `None`.
+fn normalized_price(
+    r0: ethers::types::U256,
+    r1: ethers::types::U256,
+    dec_in: u8,
+    dec_out: u8,
+) -> Option<f64> {
+    let raw = price_from_reserves(r0, r1)?;
+    let scale_in = 10f64.powi(dec_in as i32);
+    let scale_out = 10f64.powi(dec_out as i32);
+    if !scale_in.is_finite() || !scale_out.is_finite() || scale_in <= 0.0 || scale_out <= 0.0 {
+        return None;
+    }
+    // raw = r1/r0  ⇒  humano = (r1/scale_out)/(r0/scale_in) = raw · scale_in/scale_out
+    let human = raw * (scale_in / scale_out);
+    if human.is_finite() && human > 0.0 {
+        Some(human)
+    } else {
+        None
+    }
+}
+
+/// Decimales por token, cacheados por intent (mismo contrato que
+/// `cartridge_boot::v4_token_decimals`). R8: meta ausente/ilegible → `None`,
+/// y la pierna que lo necesite se OMITE — nunca se asume 18.
+async fn leg_token_decimals(
+    redis: &mut redis::aio::ConnectionManager,
+    chain_id: u64,
+    addr_lower: &str,
+    cache: &mut std::collections::HashMap<String, Option<u8>>,
+) -> Option<u8> {
+    if let Some(hit) = cache.get(addr_lower) {
+        return *hit;
+    }
+    let decimals = crate::reserves::get_token_meta(redis, chain_id, addr_lower)
+        .await
+        .ok()
+        .flatten()
+        .map(|meta| meta.decimals);
+    cache.insert(addr_lower.to_owned(), decimals);
+    decimals
+}
+
 /// Construye un `MarketState` desde el ReservesCache.
 ///
-/// `pool_addresses`: pools del candidato (las venues de la ruta). Para cada una
-/// con reservas, deriva el precio r1/r0 → una fila de la price_matrix (1 asset).
+/// `pool_legs`: `(pool, token_in, token_out)` por pierna, en el orden de la ruta.
+/// Para cada pool con reservas deriva el precio en UNIDADES HUMANAS del par:
+/// `(r1 / 10^dec_out) / (r0 / 10^dec_in)`.
+///
+/// MATH-04-FOLLOWUP (2026-09-30): cierra el "follow-up thread" que MATH-04 dejó
+/// abierto (2026-09-24). Antes la `price_matrix` llevaba el ratio CRUDO `r1/r0`:
+/// para WETH(18)/USDC(6) eso da ~0.002 en vez de ~2000, y los consumidores
+/// (op_27 path ordering, op_15/op_21 `reference_price` = media) calculaban
+/// spreads y medias sobre valores desviados por 10^3 — de modo que devolvían
+/// `scalar: null` y la evidencia salía con `operators_computed: 0`.
+///
+/// El insumo nunca faltó: `RouteIntentLeg` YA lleva `token_in`/`token_out`
+/// (`route_intent.rs:145,147`); el llamador los descartaba al quedarse solo con
+/// `pool_hint`. Aquí se conservan.
+///
 /// features: gas_price_gwei + cualquier feature de régimen provista por el
 /// caller (health_factor, parity_deviation, oracle/onchain si aplica).
+///
+/// R8 fail-honest: si los decimales de CUALQUIERA de los dos tokens no están
+/// disponibles, la pierna se OMITE. Nunca se asume 18, nunca se normaliza a
+/// medias. Si ninguna pierna sobrevive → `None` (`insufficient_state`).
 pub async fn build_market_state(
     reserves_cache: &Arc<ReservesCache>,
-    pool_addresses: &[Address],
+    pool_legs: &[(Address, Address, Address)],
+    chain_id: u64,
+    redis: &mut redis::aio::ConnectionManager,
     gas_price_gwei: f64,
     block_number: u64,
     block_timestamp: u64,
@@ -56,33 +126,38 @@ pub async fn build_market_state(
 ) -> Option<MarketState> {
     let mut price_matrix: Vec<Vec<f64>> = Vec::new();
     let mut liquidity_reserves: Vec<(f64, f64)> = Vec::new();
+    let mut decimal_cache: std::collections::HashMap<String, Option<u8>> =
+        std::collections::HashMap::new();
 
-    for pool in pool_addresses {
-        if let Some((r0, r1)) = reserves_cache.get(pool).await {
-            if let Some(price) = price_from_reserves(r0, r1) {
-                // MATH-04 fix (2026-09-24): price_from_reserves computes the
-                // RAW ratio r1/r0 without decimal normalization — for
-                // WETH(18)/USDC(6) this yields ~0.002 instead of ~2000.
-                // The price_matrix is consumed by op_27 (path ordering:
-                // "precio del mismo asset a través de venues") and op_15/
-                // op_21 (reference_price = media). Without normalization,
-                // cross-pair routes produce meaningless spreads/averages.
-                // NOTE: we do NOT have per-token decimals at this layer (the
-                // reserves cache stores raw U256 pairs). The normalization
-                // requires the DecimalsMap from the route metadata — a
-                // follow-up thread. For now, the raw ratio is annotated in
-                // the MarketState so consumers know the convention.
-                price_matrix.push(vec![price]);
-                liquidity_reserves.push((r0.as_u128() as f64, r1.as_u128() as f64));
-            }
+    for (pool, token_in, token_out) in pool_legs {
+        let Some((r0, r1)) = reserves_cache.get(pool).await else {
+            continue;
+        };
+        let in_lc = format!("0x{:040x}", token_in);
+        let out_lc = format!("0x{:040x}", token_out);
+        // R8: sin decimales de AMBOS tokens no hay precio honesto — se omite.
+        let (Some(dec_in), Some(dec_out)) = (
+            leg_token_decimals(redis, chain_id, &in_lc, &mut decimal_cache).await,
+            leg_token_decimals(redis, chain_id, &out_lc, &mut decimal_cache).await,
+        ) else {
+            debug!(
+                event = "math_evidence.leg_skipped_no_decimals",
+                chain_id,
+                pool = %pool,
+                token_in = %in_lc,
+                token_out = %out_lc,
+                "pierna omitida: decimales ausentes (R8, no se asume 18)"
+            );
+            continue;
+        };
+        if let Some(price) = normalized_price(r0, r1, dec_in, dec_out) {
+            price_matrix.push(vec![price]);
+            liquidity_reserves.push((r0.as_u128() as f64, r1.as_u128() as f64));
         }
     }
-    // MATH-04 note: price_matrix carries RAW reserve ratios (r1/r0 in
-    // smallest units). Consumers that need human-unit prices MUST normalize
-    // by 10^(dec_in − dec_out) per pair. See op_27's doc comment.
 
     if price_matrix.is_empty() {
-        return None; // insufficient_state — no reserves for any pool
+        return None; // insufficient_state — no priced pool with known decimals
     }
 
     Some(MarketState {
@@ -195,7 +270,7 @@ pub async fn publish_declared_combo_evidence(
     reserves_cache: &Arc<ReservesCache>,
     registry: &OperatorRegistry,
     redis: &mut redis::aio::ConnectionManager,
-    pool_addresses: &[Address],
+    pool_legs: &[(Address, Address, Address)],
     chain_id: u64,
     strategy_key: &str,
     primary_operator_ids: &[u32],
@@ -209,7 +284,9 @@ pub async fn publish_declared_combo_evidence(
     // None honestly.
     let state = match build_market_state(
         reserves_cache,
-        pool_addresses,
+        pool_legs,
+        chain_id,
+        &mut *redis,
         gas_price_gwei,
         block_number,
         block_timestamp,
@@ -223,7 +300,7 @@ pub async fn publish_declared_combo_evidence(
                 event = "math_evidence.combo_insufficient_state",
                 chain_id,
                 strategy_key,
-                pools = pool_addresses.len(),
+                pools = pool_legs.len(),
                 "declared-combo evidence skipped — no reserves to build MarketState"
             );
             return 0;
@@ -269,7 +346,7 @@ pub async fn evaluate_math_evidence(
     registry: &OperatorRegistry,
     router: &RegimeRouter,
     redis: &mut redis::aio::ConnectionManager,
-    pool_addresses: &[Address],
+    pool_legs: &[(Address, Address, Address)],
     chain_id: u64,
     gas_price_gwei: f64,
     block_number: u64,
@@ -279,7 +356,9 @@ pub async fn evaluate_math_evidence(
 ) -> usize {
     let state = match build_market_state(
         reserves_cache,
-        pool_addresses,
+        pool_legs,
+        chain_id,
+        &mut *redis,
         gas_price_gwei,
         block_number,
         block_timestamp,
@@ -293,7 +372,7 @@ pub async fn evaluate_math_evidence(
                 event = "math_evidence.insufficient_state",
                 chain_id,
                 strategy_kind,
-                pools = pool_addresses.len(),
+                pools = pool_legs.len(),
                 "math evidence skipped — no reserves to build MarketState"
             );
             return 0;
@@ -443,6 +522,39 @@ pub fn evidence_posterior_log_odds(
 mod evidence_tests {
     use super::*;
     use std::collections::HashMap;
+
+    // ── MATH-04-FOLLOWUP: vector dorado de normalización ────────────────────
+    // La puerta del PR. Sin esto, el cambio de escala es un cambio a ciegas.
+    #[test]
+    fn weth_usdc_normalizes_to_human_units_not_the_raw_ratio() {
+        // Pool WETH(18)/USDC(6) con reservas 1 WETH : 2000 USDC.
+        let r0 = ethers::types::U256::from(1_000_000_000_000_000_000u128); // 1 WETH
+        let r1 = ethers::types::U256::from(2_000_000_000u128); // 2000 USDC
+
+        // El ratio CRUDO es ~0.002: es exactamente el bug que este PR cierra.
+        let raw = price_from_reserves(r0, r1).expect("ratio crudo");
+        assert!(raw < 1.0, "ratio crudo esperado ~0.002, dio {raw}");
+
+        let human = normalized_price(r0, r1, 18, 6).expect("precio normalizado");
+        assert!(
+            (human - 2000.0).abs() < 0.01,
+            "WETH/USDC normalizado debe ser ~2000, no ~0.002 (dio {human})"
+        );
+    }
+
+    #[test]
+    fn degenerate_reserves_yield_none_never_a_fabricated_price() {
+        let r0 = ethers::types::U256::from(1_000_000_000_000_000_000u128);
+        let r1 = ethers::types::U256::from(2_000_000_000u128);
+
+        // Reserva de entrada cero → None (R8: nunca se inventa un precio).
+        assert!(normalized_price(ethers::types::U256::zero(), r1, 18, 6).is_none());
+        // Reserva de salida cero → None.
+        assert!(normalized_price(r0, ethers::types::U256::zero(), 18, 6).is_none());
+        // Extremos del rango de decimales siguen dando un valor finito y > 0.
+        let extreme = normalized_price(r0, r1, 0, 36).expect("escala extrema");
+        assert!(extreme.is_finite() && extreme > 0.0);
+    }
 
     #[test]
     fn build_evidence_vector_has_31_slots_and_none_to_zero() {
