@@ -42,6 +42,7 @@ import type { OmniOpportunity } from "@/lib/store/types";
 import {
   buildLedger,
   grossIsAttributableToPrincipal,
+  GROSS_OVER_PRINCIPAL_SANITY_MULT,
 } from "@/lib/opportunity-ledger";
 // ECON-DECLARE-01 — the notional-basis declaration the producer writes, and the
 // label every economic cell must carry so a value is never read as one ladder
@@ -54,6 +55,8 @@ import {
   undeclaredReason,
   type FigureBasis,
 } from "@/lib/opportunity-declaration";
+// CARDS-FALSEZERO-01 — the shared sub-cent renderer (see `lib/format.ts`).
+import { formatSubCentUsd, SUB_CENT_USD } from "@/lib/format";
 
 const DASH = "—";
 export const NOT_EMITTED = "no emitido";
@@ -83,10 +86,16 @@ function usd(v: number, digits = 2): string {
   if (!Number.isFinite(v)) return DASH;
   const abs = Math.abs(v);
   const sign = v < 0 ? "-" : "";
+  // CARDS-FALSEZERO-01 (2026-09-27): a real zero stays `$0.00` (R8: Some(0)),
+  // and a NONZERO figure below half a cent never collapses onto it. Measured on
+  // the live feed: `net_expected_profit_usd = -0.000012` painted `-$0.00` on 26
+  // of 323 unique rows — the operator read "exactly zero" for a computed loss.
+  if (abs === 0) return "$0.00";
   if (abs >= 1e15) return `${sign}$${abs.toExponential(2).replace("e+", "e")}`;
   if (abs >= 1e12) return `${sign}$${(abs / 1e12).toFixed(2)}T`;
   if (abs >= 1e9) return `${sign}$${(abs / 1e9).toFixed(2)}B`;
   if (abs >= 1e6) return `${sign}$${(abs / 1e6).toFixed(2)}M`;
+  if (abs < SUB_CENT_USD) return `${sign}$${formatSubCentUsd(abs)}`;
   return `${sign}$${abs.toFixed(digits)}`;
 }
 
@@ -133,6 +142,37 @@ function summaryCells(opp: OmniOpportunity): Array<{
         : null;
   const roiIsSimulated = ledger.basis === "simulated" && roiPct != null;
   const bps = roiPct != null ? `${roiIsSimulated ? "~" : ""}${(roiPct * 100).toFixed(0)}` : null;
+  // CARDS-NOTIONAL-02 (2026-09-27) — the `in` cell stops hiding a computed
+  // notional.
+  //
+  // Measured on the live feed (2026-09-27T02:0xZ): 5 rows carried
+  // `simulated_amount_in_usd` ($0.0000044 … $0.99987154) AND a searcher gross
+  // measured at another size (e.g. gross 710273.79750992 vs principal
+  // 0.99987154). `grossIsAttributableToPrincipal` rightly refuses to present the
+  // pair as ONE arithmetic, but the cell's only two options were "paint the
+  // number" or "paint the dash" — so it painted `—`: a figure the forward-sim
+  // HAD computed vanished from the card. The operator's rule is the opposite
+  // ("si el kernel computó una cifra, la card debe mostrarla").
+  //
+  // The fix keeps CARDS-NOTIONAL-01 intact by separating the two surfaces it
+  // always distinguished (see `opportunity-ledger.ts`: the canonical figures
+  // "are still displayed — in the summary grid, marked with their own basis —
+  // they simply stop masquerading as one capital path"):
+  //   · the LADDER (OpportunityTradeCard's "Capital path") stays quiet — no
+  //     principal is ever painted beside a gross of another size;
+  //   · the GRID publishes the notional with the SAME `~` mark the Net/bps/Sim
+  //     cells already use for "this figure comes from the forward-sim producer",
+  //     and the cell `title` states the machine reason verbatim (the 5× bound
+  //     and the two sizes), so nothing competes with a number and nothing hides.
+  // R8: still never a fabricated 0 — an absent notional keeps its dash.
+  const notionalUsd =
+    opp.simulated_amount_in_usd != null && Number.isFinite(opp.simulated_amount_in_usd)
+      ? opp.simulated_amount_in_usd
+      : null;
+  const notionalAttributable = grossIsAttributableToPrincipal(
+    opp.expected_profit_usd,
+    notionalUsd,
+  );
   // CARDS-QUIET-01 (2026-09-26, operator order): a null economic value renders
   // the QUIET empty state (`DASH`), never a loud "no computado" wall.
   //
@@ -268,26 +308,23 @@ function summaryCells(opp: OmniOpportunity): Array<{
     },
     cell(
       "in",
-      // CARDS-NOTIONAL-01: a notional is published only when the gross shown
-      // beside it can be attributed to it — same arithmetic, one size, checked
-      // with the searcher's OWN `SANITY_PROFIT_MULT_OF_CAP` (5×) bound rather
-      // than a threshold re-invented here. On the live feed that bound is what
-      // separates a legitimate «in $2688.25 / Gross $52.14» pair from the
-      // `in $0.00` beside `Gross $1.47M` the operator photographed.
-      //
-      // ECON-DECLARE-01 (resolución del merge): el principal del ladder CERRADO
-      // (`ledger.principal_usd`) manda cuando es verificable — es el tamaño exacto
-      // al que se midió el `Gross` de al lado. Cuando no lo es, NO se oculta la
-      // cifra que el forward-sim computó: se publica marcada `~`; y si tampoco hay
-      // notional en USD, cae al notional DECLARADO por el productor / al monto en
-      // wei de la fila (`inValue`), siempre con su unidad a la vista. La
-      // declaración viaja además en el `title` y en el `basis` de la celda, así
-      // que dos cifras de dos productores se leen como dos, nunca como un ladder
-      // roto. R8: sin ningún notional, la celda queda en guion.
+      // CARDS-NOTIONAL-01/02: el notional que se publica aquí es el principal del
+      // ladder CERRADO (`ledger.principal_usd`) cuando es verificable — el tamaño
+      // exacto al que se midió el `Gross` de al lado. `buildLedger` devuelve
+      // `principal_usd: null` en el caso que esta celda escondía: un bruto medido en
+      // OTRO tamaño (el `in $0.00` junto a `Gross $1.47M` que el operador fotografió).
+      // main pintaba ahí el guion; esta rama publica el notional del forward-sim
+      // marcado `~` salvo que el bruto del searcher SÍ le sea atribuible bajo la cota
+      // 5× del propio searcher, y si tampoco hay precio en USD cae al notional
+      // DECLARADO por el productor / al monto en wei de la fila (`inValue`), siempre
+      // con su unidad a la vista. Las dos superficies quedan separadas: el LADDER
+      // nunca publica un principal junto a un bruto de otro tamaño, y la GRID nunca
+      // esconde una cifra que el forward-sim SÍ computó — la razón de máquina (los
+      // dos tamaños, la cota 5×) viaja en el `title`. R8: sin ningún notional, guion.
       ledger.principal_usd != null
         ? usd(ledger.principal_usd)
-        : opp.simulated_amount_in_usd != null
-          ? `${inMisattributed ? "~" : ""}${usd(opp.simulated_amount_in_usd)}`
+        : notionalUsd != null
+          ? `${notionalAttributable ? "" : "~"}${usd(notionalUsd)}`
           : inValue,
       inTitle,
       inBasis,

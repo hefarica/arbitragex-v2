@@ -67,8 +67,10 @@ import { formatAgo } from "@/components/OpportunityTicker";
 import {
   formatPctOrDash,
   formatProfitUSD,
+  formatSubCentUsd,
   formatVigency,
   shortAddr,
+  SUB_CENT_USD,
 } from "@/lib/format";
 import {
   deriveLegs,
@@ -127,6 +129,13 @@ function usd(value: number | null | undefined, digits = 2): string {
   if (abs >= 1e6) return `${sign}${body(abs / 1e6, 2)}M`;
   if (abs >= 1e3) return `${sign}${body(abs / 1e3, 1)}k`;
   if (abs >= 1) return `${sign}${body(abs, digits)}`;
+  // CARDS-FALSEZERO-01: a REAL zero keeps the ladder's 4-decimal convention
+  // (`$0.0000` = computed and exactly zero, R8), while a NONZERO figure below the
+  // cell's resolution must not collapse onto it. Measured on the live feed: 26 of
+  // 323 unique rows carried `net_expected_profit_usd` ≈ -1.2e-5 and every cell
+  // that showed it painted `-$0.0000` — a computed loss displayed as zero.
+  if (abs === 0) return `${sign}${body(abs, 4)}`;
+  if (abs < SUB_CENT_USD) return `${sign}$${formatSubCentUsd(abs)}`;
   return `${sign}${body(abs, 4)}`;
 }
 
@@ -259,9 +268,49 @@ function OpportunityTradeCardImpl({
   const ledger = buildLedger(opp);
   const quietReason = ledger.reason;
   const grossUsd = ledger.gross_usd;
-  const netUsd = ledger.net_usd;
   const netSource: "canonical" | "simulated" | "none" = ledger.basis;
-  const net = formatProfitUSD(netUsd);
+  /**
+   * CARDS-PRECEDENCE-03 (2026-09-27) — the EXECUTIVE net is the wire's net.
+   *
+   * `ledger.net_usd` is the net of a CLOSED ladder, which is a strictly stronger
+   * requirement than "a net was computed": `buildLedger` refuses every basis
+   * when the row carries no canonical gross, or when its SIM triple exists but
+   * is not payable out of its own principal. Measured on the live feed
+   * (`GET /api/opportunities/live`, 323 unique rows over 45 polls,
+   * 2026-09-27T02:2xZ): 26 rows carried `net_expected_profit_usd` and the
+   * headline painted `—`, while the SAME figure was painted two rows below by
+   * the summary grid's `Net` cell — which is exactly the rule this card's own
+   * header comment documents for the headline ("the CARD HEADLINE already
+   * renders `net_expected_profit_usd ?? simulated_net_profit_usd`",
+   * OpportunitySummaryGrid.tsx).
+   *
+   * R8 honesty is preserved, not weakened: the fallback never invents a figure —
+   * it only ever shows a field THIS row carries, in the wire's own precedence
+   * (canonical spine net, else the TS forward-sim net), with the `~`/SIM mark
+   * naming the producer and `quietReason` in the `title` stating why the ladder
+   * itself did not close. Nothing is fabricated and nothing is hidden.
+   */
+  const netFromWire: { usd: number; source: "canonical" | "simulated" } | null =
+    opp.net_expected_profit_usd != null
+      ? { usd: opp.net_expected_profit_usd, source: "canonical" }
+      : opp.simulated_net_profit_usd != null
+        ? { usd: opp.simulated_net_profit_usd, source: "simulated" }
+        : null;
+  /** The net the operator is shown — the closed ladder's, else the wire's own. */
+  const headlineNetUsd = ledger.net_usd ?? netFromWire?.usd ?? null;
+  const headlineNetSource: "canonical" | "simulated" | "none" =
+    ledger.net_usd != null ? ledger.basis : (netFromWire?.source ?? "none");
+  const headlineNetTitle =
+    netSource !== "none"
+      ? netSource === "canonical"
+        ? "Canonical spine net = gross − all costs"
+        : "TS forward-sim net (canonical pending)"
+      : headlineNetSource === "canonical"
+        ? `net_expected_profit_usd — net del wire (spine canónico); el ladder no se cierra: ${quietReason ?? "sin aritmética cerrada"}`
+        : headlineNetSource === "simulated"
+          ? `simulated_net_profit_usd — net computado por el forward-sim; el ladder no se cierra: ${quietReason ?? "sin aritmética cerrada"}`
+          : "Not yet computed (R8: '—')";
+  const net = formatProfitUSD(headlineNetUsd);
   const gross = formatProfitUSD(grossUsd);
 
   const roi =
@@ -291,7 +340,10 @@ function OpportunityTradeCardImpl({
   // Gross/Net animates ONLY this card's value cells; identical values across
   // the 1s age-ticker re-renders animate nothing.
   const grossFlash = useValueFlash(grossUsd);
-  const netFlash = useValueFlash(netUsd);
+  // CARDS-PRECEDENCE-03: the flash tracks the figure actually PAINTED (the
+  // headline net), so a wire net arriving without a closed ladder still
+  // animates the cell that shows it.
+  const netFlash = useValueFlash(headlineNetUsd);
   // Sparkline feed: route_key = dex_a + pair, values from the stream already
   // flowing into this card. When the backend price_history mirror lands, the
   // same Sparkline consumes that source via its `points` prop.
@@ -766,17 +818,11 @@ function OpportunityTradeCardImpl({
               // one-shot flash replays on consecutive same-direction moves.
               key={netFlash.seq}
               className={`font-mono text-lg font-bold ${TONE_CLASS[net.tone] ?? "text-muted-foreground"} ${flashClass(netFlash) ?? ""}`}
-              title={
-                netSource === "canonical"
-                  ? "Canonical spine net = gross − all costs"
-                  : netSource === "simulated"
-                    ? "TS forward-sim net (canonical pending)"
-                    : "Not yet computed (R8: '—')"
-              }
+              title={headlineNetTitle}
             >
-              {netSource === "simulated" ? `~${net.display}` : net.display}
+              {headlineNetSource === "simulated" ? `~${net.display}` : net.display}
             </span>
-            {netSource === "simulated" && (
+            {headlineNetSource === "simulated" && (
               <span className="text-[9px] font-bold px-1 rounded bg-info/15 text-info border border-info/40">SIM</span>
             )}
           </div>
@@ -990,20 +1036,26 @@ function OpportunityTradeCardImpl({
             }
           />
           <LedgerRow
-            up={netUsd != null && netUsd > 0}
-            down={netUsd != null && netUsd < 0}
-            label={`Net yield${netSource === "simulated" ? " (SIM)" : netSource === "canonical" ? " (spine)" : ""}`}
-            value={netUsd}
-            tone={netUsd == null ? undefined : netUsd > 0 ? "text-success" : netUsd < 0 ? "text-destructive" : "text-muted-foreground"}
+            up={headlineNetUsd != null && headlineNetUsd > 0}
+            down={headlineNetUsd != null && headlineNetUsd < 0}
+            label={`Net yield${headlineNetSource === "simulated" ? " (SIM)" : headlineNetSource === "canonical" ? " (spine)" : ""}`}
+            value={headlineNetUsd}
+            tone={headlineNetUsd == null ? undefined : headlineNetUsd > 0 ? "text-success" : headlineNetUsd < 0 ? "text-destructive" : "text-muted-foreground"}
             strong
             flashCls={flashClass(netFlash)}
             flashSeq={netFlash.seq}
             title={
-              netSource === "simulated"
-                ? "simulated_net_profit_usd — net del MISMO ladder: net = gross − Σcostos, exacto."
-                : netSource === "canonical"
-                  ? "net_expected_profit_usd — net del searcher; por construcción net = gross − Total cost en este bloque."
-                  : quietReason ?? "Net no computado (R8)."
+              // CARDS-PRECEDENCE-03: when the ladder did NOT close, this row is
+              // the ONLY figure the block paints (principal/gross/cost rows stay
+              // quiet), so it cannot be read as one arithmetic with a figure from
+              // another notional — and the reason it is alone travels here.
+              headlineNetSource !== "none" && ledger.net_usd == null
+                ? `${headlineNetSource === "simulated" ? "simulated_net_profit_usd" : "net_expected_profit_usd"} — net del wire, mostrado solo (el ladder no se cierra: ${quietReason ?? "sin aritmética cerrada"}); ninguna otra fila del ladder pinta cifra.`
+                : netSource === "simulated"
+                  ? "simulated_net_profit_usd — net del MISMO ladder: net = gross − Σcostos, exacto."
+                  : netSource === "canonical"
+                    ? "net_expected_profit_usd — net del searcher; por construcción net = gross − Total cost en este bloque."
+                    : quietReason ?? "Net no computado (R8)."
             }
           />
         </div>
@@ -1015,7 +1067,13 @@ function OpportunityTradeCardImpl({
           >
             {ledger.basis === "canonical"
               ? "Ladder sobre el par (gross, net) del searcher: sin principal ni desglose por componente — esos viven en otro notional y no se mezclan (CARDS-NOTIONAL-01)."
-              : "Sin aritmética cerrada para esta fila: las celdas van en guion a propósito (R8)."}
+              : "Sin aritmética cerrada para esta fila: las celdas de la ruta de capital van en guion a propósito (R8)."}
+            {/* CARDS-PRECEDENCE-03: a dash in a non-closed ladder is only honest
+                if the operator is told WHERE the computed figure is shown — the
+                executive net above and the summary grid's `Net` cell. */}
+            {ledger.basis !== "canonical" && headlineNetUsd != null && (
+              <> El net computado sí se muestra: titular «Net yield» y celda «Net» de la grilla.</>
+            )}
           </div>
         )}
       </div>
@@ -1119,82 +1177,127 @@ function OpportunityTradeCardImpl({
 // only when its own data changed OR its displayed age (seconds) ticked over.
 // Business-equality fields are checked because the store emits a fresh array
 // after each batch replacement, so reference equality on `opp` would fail.
+//
+// CARDS-MEMO-COVER-01 (2026-09-27) — a memo comparator that omits a field the
+// card PAINTS is a cell that keeps hiding a value that has already arrived: the
+// store replaces the array every batch, the comparator says "equal", React skips
+// the render, and the screen keeps the previous frame's `—` for a figure the new
+// row carries. The list below used to cover only IDENTITY + the canonical
+// economics, while the summary grid and the ladder paint the whole `simulated_*`
+// block, `risk_score`, `detector_id`, `pipeline_latency_ms`, `amount_in_wei`,
+// `rejection_reason`, `chain_base_token_symbol` and `semantic_violations` — all
+// of them starved. It is now COMPLETE and machine-checked:
+// `components/__tests__/CardCellPaint.gate.test.tsx` mutates each field and
+// asserts the comparator (exported below for exactly that purpose) returns
+// false, and classifies every key of `OmniOpportunity` so a NEW wire field
+// cannot be added without an explicit compared/ignored decision.
+export function opportunityTradeCardPropsEqual(
+  prev: OpportunityTradeCardProps,
+  next: OpportunityTradeCardProps,
+): boolean {
+  const p = prev.opp;
+  const n = next.opp;
+  // FE-0029 (§28): null detected_at → NaN age; Object.is(NaN, NaN) = true so
+  // two undated rows stay memo-equal instead of re-rendering forever.
+  const ageOf = (o: typeof p, now: number) =>
+    Math.floor(
+      (now - (o.detected_at == null ? NaN : new Date(o.detected_at).getTime())) / 1000,
+    );
+  const agePrev = ageOf(p, prev.now);
+  const ageNext = ageOf(n, next.now);
+  // CARDS-DEDUP-HOPS: the dual vigency line keys on last_seen (✓ age renders
+  // seconds while < 60s), and the ×N badge keys on confirmations — a merged
+  // re-detection must re-render its card even when detected_at is unchanged.
+  const lastAgeOf = (o: typeof p, now: number) =>
+    Math.floor(
+      (now -
+        (o.last_seen_at == null
+          ? o.detected_at == null
+            ? NaN
+            : new Date(o.detected_at).getTime()
+          : new Date(o.last_seen_at).getTime())) /
+        1000,
+    );
+  const lastAgePrev = lastAgeOf(p, prev.now);
+  const lastAgeNext = lastAgeOf(n, next.now);
+  // HOPS-CARD-03: the ladder now renders route_metadata/leg_symbols (and the
+  // §29 fallback keys off dex_a/dex_b), so a batch that only changes the
+  // topology MUST re-render — same sameJson discipline the exchange card's
+  // comparator already applies (serialized content, small objects).
+  const sameJson = (a: unknown, b: unknown): boolean =>
+    a === b || JSON.stringify(a) === JSON.stringify(b);
+  return (
+    p.id === n.id &&
+    p.status === n.status &&
+    // The sim-evidence strip renders the trace id of the row the click captured
+    // (the handler closes over `opp`), so a changed trace must repaint.
+    p.trace_id === n.trace_id &&
+    p.expected_profit_usd === n.expected_profit_usd &&
+    p.net_expected_profit_usd === n.net_expected_profit_usd &&
+    p.roi_pct === n.roi_pct &&
+    p.detected_at === n.detected_at &&
+    p.first_seen_at === n.first_seen_at &&
+    p.last_seen_at === n.last_seen_at &&
+    p.confirmations === n.confirmations &&
+    sameJson(p.route_metadata, n.route_metadata) &&
+    sameJson(p.leg_symbols, n.leg_symbols) &&
+    sameJson(p.token_prices_usd, n.token_prices_usd) &&
+    p.dex_a === n.dex_a &&
+    p.dex_b === n.dex_b &&
+    p.token_in === n.token_in &&
+    p.token_out === n.token_out &&
+    p.token_in_info?.logo_url === n.token_in_info?.logo_url &&
+    p.token_out_info?.logo_url === n.token_out_info?.logo_url &&
+    p.token_in_info?.symbol === n.token_in_info?.symbol &&
+    p.token_out_info?.symbol === n.token_out_info?.symbol &&
+    p.token_in_info?.registry_symbol === n.token_in_info?.registry_symbol &&
+    p.token_out_info?.registry_symbol === n.token_out_info?.registry_symbol &&
+    // ── CARDS-MEMO-COVER-01: every other field the card/grid DRAWS ───────────
+    // Header / chips / quarantine strip
+    p.chain_id === n.chain_id &&
+    p.chain_id_out === n.chain_id_out &&
+    p.strategy_kind === n.strategy_kind &&
+    p.chain_base_token_symbol === n.chain_base_token_symbol &&
+    sameJson(p.semantic_violations, n.semantic_violations) &&
+    // Summary grid (OpportunitySummaryGrid — rendered INSIDE this card)
+    p.detector_id === n.detector_id &&
+    p.pipeline_latency_ms === n.pipeline_latency_ms &&
+    // main's comparator also covered `block_number` and the `economics` blob;
+    // both are KEPT here so this merge cannot regress that coverage. `economics`
+    // is not cosmetic: the summary grid's `block` cell renders
+    // `economics.quote_block` and the card paints `opp.economics` in dozens of
+    // places, so a changed blob MUST repaint — the failure this gate exists for is
+    // a value painted one frame late, or never. A field the comparator compares
+    // can no longer be declared "not painted by the card" in
+    // `CardCellPaint.gate.test.tsx`, so `block_number` leaves that list.
+    p.block_number === n.block_number &&
+    sameJson(p.economics, n.economics) &&
+    p.hop_count === n.hop_count &&
+    p.risk_score === n.risk_score &&
+    p.pair_symbol === n.pair_symbol &&
+    p.amount_in_wei === n.amount_in_wei &&
+    p.rejection_reason === n.rejection_reason &&
+    // The economics the grid, the ladder AND `buildLedger` read
+    p.simulated_net_profit_usd === n.simulated_net_profit_usd &&
+    p.simulated_amount_in_usd === n.simulated_amount_in_usd &&
+    p.simulated_roi_pct === n.simulated_roi_pct &&
+    p.simulated_gross_usd === n.simulated_gross_usd &&
+    p.simulated_costs_total_usd === n.simulated_costs_total_usd &&
+    sameJson(p.simulated_cost_breakdown, n.simulated_cost_breakdown) &&
+    sameJson(p.simulated_target, n.simulated_target) &&
+    prev.isMounted === next.isMounted &&
+    prev.simLoading === next.simLoading &&
+    prev.modeLabel === next.modeLabel &&
+    prev.onExecute === next.onExecute &&
+    prev.onInspect === next.onInspect &&
+    Object.is(agePrev, ageNext) &&
+    Object.is(lastAgePrev, lastAgeNext)
+  );
+}
+
 export const OpportunityTradeCard = React.memo(
   OpportunityTradeCardImpl,
-  (
-    prev: OpportunityTradeCardProps,
-    next: OpportunityTradeCardProps,
-  ): boolean => {
-    const p = prev.opp;
-    const n = next.opp;
-    // FE-0029 (§28): null detected_at → NaN age; Object.is(NaN, NaN) = true so
-    // two undated rows stay memo-equal instead of re-rendering forever.
-    const ageOf = (o: typeof p, now: number) =>
-      Math.floor(
-        (now - (o.detected_at == null ? NaN : new Date(o.detected_at).getTime())) / 1000,
-      );
-    const agePrev = ageOf(p, prev.now);
-    const ageNext = ageOf(n, next.now);
-    // CARDS-DEDUP-HOPS: the dual vigency line keys on last_seen (✓ age renders
-    // seconds while < 60s), and the ×N badge keys on confirmations — a merged
-    // re-detection must re-render its card even when detected_at is unchanged.
-    const lastAgeOf = (o: typeof p, now: number) =>
-      Math.floor(
-        (now -
-          (o.last_seen_at == null
-            ? o.detected_at == null
-              ? NaN
-              : new Date(o.detected_at).getTime()
-            : new Date(o.last_seen_at).getTime())) /
-          1000,
-      );
-    const lastAgePrev = lastAgeOf(p, prev.now);
-    const lastAgeNext = lastAgeOf(n, next.now);
-    // HOPS-CARD-03: the ladder now renders route_metadata/leg_symbols (and the
-    // §29 fallback keys off dex_a/dex_b), so a batch that only changes the
-    // topology MUST re-render — same sameJson discipline the exchange card's
-    // comparator already applies (serialized content, small objects).
-    const sameJson = (a: unknown, b: unknown): boolean =>
-      a === b || JSON.stringify(a) === JSON.stringify(b);
-    return (
-      p.id === n.id &&
-      p.status === n.status &&
-      p.expected_profit_usd === n.expected_profit_usd &&
-      p.net_expected_profit_usd === n.net_expected_profit_usd &&
-      p.roi_pct === n.roi_pct &&
-      p.risk_score === n.risk_score &&
-      p.detector_id === n.detector_id &&
-      p.pipeline_latency_ms === n.pipeline_latency_ms &&
-      p.block_number === n.block_number &&
-      sameJson(p.economics, n.economics) &&
-      p.simulated_net_profit_usd === n.simulated_net_profit_usd &&
-      p.simulated_amount_in_usd === n.simulated_amount_in_usd &&
-      p.simulated_gross_usd === n.simulated_gross_usd &&
-      p.simulated_costs_total_usd === n.simulated_costs_total_usd &&
-      sameJson(p.simulated_cost_breakdown, n.simulated_cost_breakdown) &&
-      sameJson(p.simulated_target, n.simulated_target) &&
-      p.detected_at === n.detected_at &&
-      p.first_seen_at === n.first_seen_at &&
-      p.last_seen_at === n.last_seen_at &&
-      p.confirmations === n.confirmations &&
-      sameJson(p.route_metadata, n.route_metadata) &&
-      sameJson(p.leg_symbols, n.leg_symbols) &&
-      sameJson(p.token_prices_usd, n.token_prices_usd) &&
-      p.dex_a === n.dex_a &&
-      p.dex_b === n.dex_b &&
-      p.token_in_info?.logo_url === n.token_in_info?.logo_url &&
-      p.token_out_info?.logo_url === n.token_out_info?.logo_url &&
-      p.token_in_info?.symbol === n.token_in_info?.symbol &&
-      p.token_out_info?.symbol === n.token_out_info?.symbol &&
-      prev.isMounted === next.isMounted &&
-      prev.simLoading === next.simLoading &&
-      prev.modeLabel === next.modeLabel &&
-      prev.onExecute === next.onExecute &&
-      prev.onInspect === next.onInspect &&
-      Object.is(agePrev, ageNext) &&
-      Object.is(lastAgePrev, lastAgeNext)
-    );
-  },
+  opportunityTradeCardPropsEqual,
 );
 
 // ─── Ledger row (capital path) ───────────────────────────────────────────────

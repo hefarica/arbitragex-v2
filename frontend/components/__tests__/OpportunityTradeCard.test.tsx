@@ -611,8 +611,13 @@ describe("OpportunityTradeCard — CARDS-NOTIONAL-01 SSR gate (one ladder, one n
 
     // The row's real numbers are still shown — quiet is not blindness (R8).
     expect(html).toContain("$822.2k"); // gross, and the derived total cost
-    expect(html).toContain("-$0.0000"); // the kernel's net, verbatim
-    // …and the machine reason travels with every cell.
+    // CARDS-FALSEZERO-01: the kernel's net is -0.000011, and the cell now prints
+    // THOSE digits. The previous assertion (`-$0.0000`) passed on the collapse —
+    // a nonzero net displayed as exactly zero — and only survived as a substring
+    // prefix of the correct value, so it could not detect a regression.
+    expect(html).toContain("-$0.000011"); // the kernel's net, verbatim
+    expect(html).not.toContain("-$0.0000</span>"); // never a false zero
+    // …and the machine reason travels with every suppressed cell.
     expect(html).toContain("CARDS-NOTIONAL-01");
     // OPERATOR ORDER 2026-09-27 (verbatim): "QUITA EL MALDITO RENDER QUE ESCONDE
     // LOS NUMEROS." This row no longer goes quiet, so the "las celdas van en
