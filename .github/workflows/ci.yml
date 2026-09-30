@@ -149,10 +149,28 @@ jobs:
       contents: read
     uses: ./.github/workflows/liquidity-catalog.yml
 
+  # RUST-BUILD-DOCTRINE-01 (2026-09-29): impide que vuelva la atribucion causal
+  # falsa sobre os error 4551 (decia que la causa era un `target/` frio en un
+  # worktree, y recomendaba compilar en el arbol principal). La causa real es
+  # Smart App Control en enforcement: firma + reputacion. Detalle en
+  # docs/development/WSL2-RUST.md. Va en `needs` del ci-gate ⇒ bloquea el deploy,
+  # no solo el PR.
+  rust-build-doctrine:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+        with:
+          persist-credentials: false
+      - name: Forbid the false 4551 causation claim (RUST-BUILD-DOCTRINE-01)
+        run: bash scripts/ci/check_rust_build_doctrine.sh
+
   ci-gate:
     if: always()
     runs-on: ubuntu-latest
-    needs: [lint-and-test-node, lint-and-test-rust, lint-and-test-frontend, lint-and-test-contracts, retention-vacuum-regression, liquidity-catalog-contract]
+    needs: [lint-and-test-node, lint-and-test-rust, lint-and-test-frontend, lint-and-test-contracts, retention-vacuum-regression, liquidity-catalog-contract, rust-build-doctrine]
     steps:
       - name: All checks must actually succeed, including the catalog
         env:
@@ -162,7 +180,8 @@ jobs:
           import json, os
           results = json.loads(os.environ['REQUIRED_RESULTS'])
           required = {'lint-and-test-node', 'lint-and-test-rust', 'lint-and-test-frontend',
-                      'lint-and-test-contracts', 'retention-vacuum-regression', 'liquidity-catalog-contract'}
+                      'lint-and-test-contracts', 'retention-vacuum-regression', 'liquidity-catalog-contract',
+                      'rust-build-doctrine'}
           if set(results) != required or any(v.get('result') != 'success' for v in results.values()):
               raise SystemExit('CI gate failed: missing, skipped, cancelled or failed required job')
           print('CI gate passed: every required job succeeded')
