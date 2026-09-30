@@ -519,7 +519,16 @@ services:
       # Same secret already used for edge↔api-server auth; reused here, not new.
       ARBX_EDGE_TOKEN: ${ARBX_EDGE_TOKEN:?ARBX_EDGE_TOKEN required}
     ports:
-    - 0.0.0.0:5173:5173
+    # SEC-NEXT-IMGOPT-01: el frontend se alcanza SIEMPRE por loopback — nginx
+    # (`config/nginx/arbitragex.conf`, `location /` → 127.0.0.1:5173) y todos los
+    # smoke tests / healthchecks de CI. Verificado: 0 consumidores usan la IP
+    # pública:5173 (auto-deploy-vps.yml, hardened-vps-audit.yml,
+    # hardened-vps-deploy.yml, hardened-vps-baseline.yml, e2e.yml, action-a-plus*.yml
+    # usan 127.0.0.1/localhost).
+    # Publicarlo en 0.0.0.0 dejaba el frontend ENTERO — y con él su Image Optimization
+    # API (GHSA-2xp9-vwfh-vxw4, RCE critical) — alcanzable desde Internet saltándose
+    # nginx y, por tanto, la CSP enforced de conf.d/security-headers.conf.
+    - 127.0.0.1:5173:5173
     depends_on:
     - edge
     healthcheck:
