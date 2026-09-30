@@ -2982,4 +2982,24 @@ mod tests {
             "ENGINE_ERRORS_TOTAL must increment by 1 for strategy={label_str}"
         );
     }
+
+    /// The `Sized { net_negative: true }` arm keeps BOTH numbers: there a kernel
+    /// really computed the gross (its value stays at principal scale, unlike the
+    /// fabricated $710k). Pinned so the honest negative-net path the operator also
+    /// needs is never confused with the fabricated-gross case.
+    #[test]
+    fn gross_fab_01_kernel_computed_gross_is_principal_scale() {
+        let mut c = make_candidate(StrategyLabel::DexArbV2V3, None);
+        // Real kernel output for the same route, per size_two_leg_v3_with_reason:
+        // gross = profit/1e18 x price -> essentially the fees of the round trip.
+        c.opportunity.expected_profit_usd = Some(0.684_824_55);
+        c.opportunity.net_expected_profit_usd = Some(-0.000_005);
+
+        assert!(
+            c.opportunity.expected_profit_usd.unwrap() < 1.0,
+            "a kernel-computed gross for a 1 DAI principal is fee-scale, never \
+             $710k — the two magnitudes are 6 orders of magnitude apart"
+        );
+        assert_eq!(c.opportunity.net_expected_profit_usd, Some(-0.000_005));
+    }
 }

@@ -2006,11 +2006,20 @@ async fn decode_and_score_tx<'a>(
                 let mut to_quote: Vec<amm_math::V3QuoteRequest> = Vec::new();
 
                 for info in &pools_v3 {
+                    // HARDENING-GROSS-FAB-01: the cache identity is the FULL
+                    // quote identity — direction (token_in/token_out) and fee
+                    // tier included. Reading it with only (pool, amount_in)
+                    // could serve the OPPOSITE direction's amount_out, which is
+                    // ~1e12x larger for the same nominal input on an 18<->6
+                    // decimal pair, straight into the `hi`/`lo` fast filter.
                     if let Ok(Some(cached)) = reserves::get_v3_quote(
                         redis,
                         client.chain_id,
                         &info.pool_addr,
                         &amount_in_dec,
+                        &token_in_lower,
+                        &token_out_lower,
+                        info.fee_bps,
                     )
                     .await
                     {
@@ -2088,9 +2097,18 @@ async fn decode_and_score_tx<'a>(
                                 .await
                             {
                                 Ok(results) => {
-                                    for r in &results {
+                                    // `results` is positionally aligned with the
+                                    // dispatched request set, so the request is
+                                    // the single source of truth for the quote's
+                                    // identity (direction + fee tier) — never a
+                                    // re-derivation from the response.
+                                    for (r, req) in results.iter().zip(to_quote.iter()) {
                                         if r.success && !r.amount_out.is_zero() {
-                                            // Cache + push.
+                                            // Cache + push. The cache entry is
+                                            // written under the FULL quote
+                                            // identity so it can only be read
+                                            // back by a caller asking the same
+                                            // question (HARDENING-GROSS-FAB-01).
                                             let pool_lower = format!("0x{:040x}", r.pool_addr);
                                             let amount_out_dec = r.amount_out.to_string();
                                             let _ = reserves::set_v3_quote(
@@ -2098,6 +2116,9 @@ async fn decode_and_score_tx<'a>(
                                                 client.chain_id,
                                                 &pool_lower,
                                                 &amount_in_dec,
+                                                &format!("0x{:040x}", req.token_in),
+                                                &format!("0x{:040x}", req.token_out),
+                                                req.fee_bps,
                                                 &amount_out_dec,
                                                 V3_QUOTE_CACHE_TTL_SECS,
                                             )
@@ -2739,12 +2760,43 @@ async fn decode_and_score_tx<'a>(
     // "we could not compute it at all". The evaluator zeroes gross_profit_usd
     // when UnknownTokenPrice fires; we must not persist that zero as a real value.
     let unknown_token_price = matches!(&config_rejection, Some(RejectReason::UnknownTokenPrice));
-    opportunity.expected_profit_usd = if unknown_token_price {
-        None // R8: not computed — token price unknown, gross_profit_usd=0.0 is synthetic
+    // HARDENING-GROSS-FAB-01 (2026-09-27): `math_outcome.gross_profit_usd` is
+    // `expected_amount_out_usd - amount_in_usd`, and `expected_amount_out` is
+    // the ABSOLUTE best single-pool quote for the FIRST leg — an output
+    // NOTIONAL, not the round-trip return of the cycle. When the candidate's
+    // implied rate contradicts the oracle reference rate (the spine's own
+    // `spread_sanity_mult` gate, live value 3.0), that "gross" is not a
+    // computed profit at all: it is a units/orientation artefact of the fast
+    // filter. Measured live: `expected_profit_usd = 710273.79750992` on a
+    // 1 DAI -> USDC route whose honest chained net was -5e-06 — i.e. a $710k
+    // "gross out" printed beside a zero net on the operator's card.
+    //
+    // R8 fail-honest: `None` = NOT COMPUTED / not trustworthy. `Some(0.0)`
+    // would assert "we computed it and it is exactly zero", a different claim.
+    // A gate that fires must PUBLISH the gate, never the number it rejected.
+    let rate_not_trustworthy = matches!(
+        &config_rejection,
+        Some(RejectReason::ImplausibleSpread { .. }) | Some(RejectReason::AnomalousMath)
+    );
+    let gross_not_computed = unknown_token_price || rate_not_trustworthy;
+    if rate_not_trustworthy {
+        warn!(
+            event = "scanner.gross_suppressed_by_sanity_gate",
+            hash = %hash,
+            rejection_reason = ?config_rejection,
+            suppressed_gross_profit_usd = math_outcome.gross_profit_usd,
+            amount_in = candidate.amount_in,
+            "gross profit suppressed: the implied rate contradicts the oracle \
+             rate (spread sanity) or exceeds the principal bound — publishing \
+             None (R8: not computed) instead of a fabricated figure"
+        );
+    }
+    opportunity.expected_profit_usd = if gross_not_computed {
+        None // R8: not computed — token price unknown, or rate rejected by the sanity gate
     } else {
         Some(math_outcome.gross_profit_usd)
     };
-    opportunity.roi_pct = if unknown_token_price {
+    opportunity.roi_pct = if gross_not_computed {
         None // R8: not computed — cascades from expected_profit_usd=None
     } else {
         Some(math_outcome.net_roi_pct)
