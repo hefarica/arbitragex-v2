@@ -313,7 +313,13 @@ describe("CARDS-PRECEDENCE-02 — a computed value always wins its cell", () => 
       mapToOmniOpportunity(wire({ roi_pct: null, simulated_roi_pct: 0.38 })),
     );
     const sStart = simulated.indexOf(">bps<");
-    expect(simulated.slice(sStart, sStart + 400)).toContain(">—</div>");
+    // El grid de esta rama envuelve cada valor en un `<span data-testid="opp-cell-…">`,
+    // así que la búsqueda cruda de `>—</div>` (la de main, escrita contra el markup
+    // anterior) no encuentra el guion aunque la celda SÍ lo pinte. Se afirma con el
+    // MISMO helper que el resto del archivo: la doctrina no cambia — sin ratio
+    // canónico la celda es honesta (`—`) y el forward-sim no se mezcla en un slot
+    // canónico.
+    expect(cellValue(simulated, "bps")).toBe("—");
     expect(simulated.slice(sStart, sStart + 400)).not.toContain("~38");
   });
 

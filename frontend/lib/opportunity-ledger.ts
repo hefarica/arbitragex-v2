@@ -367,6 +367,10 @@ export function buildLedger(opp: OmniOpportunity): LedgerView {
           cost_rows: rows,
           quiet: false,
           reason: null,
+          // ECON-DECLARE-01: `LedgerView.notional` es obligatorio, así que TODA
+          // ruta de `buildLedger` declara lo que el productor declaró (o `null`).
+          // Esta ruta venía de main y no lo traía: el auto-merge dejó el tipo roto.
+          notional: declared,
         };
       }
     }
@@ -474,6 +478,9 @@ export function buildLedger(opp: OmniOpportunity): LedgerView {
       reason:
         `${DASH_REASON_PREFIX} (published, ladder not closed): ` +
         `${simReject ?? "no closed triple on the wire"}`,
+      // ECON-DECLARE-01: misma razón que arriba — `notional` es obligatorio en
+      // `LedgerView` y esta ruta (de main) no lo declaraba.
+      notional: declared,
     };
   }
   return quiet(

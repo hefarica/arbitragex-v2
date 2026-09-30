@@ -374,7 +374,13 @@ export const CELL_FIELD_BINDING: Readonly<Record<string, string>> = {
   Net: "net_expected_profit_usd",
   bps: "roi_pct",
   Risk: "risk_score",
-  Sim: "simulated_net_profit_usd",
+  // main (`e6187ef2`, POSTERIOR a la base de esta rama) reemplazó la celda proxy
+  // `Sim` por el `quote_block` REAL de la quote del searcher: la celda que el grid
+  // renderiza hoy es `block`. El binding debe seguir a la celda que EXISTE — dejar
+  // `Sim` aquí hace que el gate (ii) busque un `cellText["Sim"]` que ya no se
+  // renderiza y marque un falso "valor oculto". El net del forward-sim lo pinta la
+  // celda `Net` (precedencia del wire, con `~` cuando el basis es el simulado).
+  block: "economics.quote_block",
   latencia: "pipeline_latency_ms",
 };
 
@@ -410,6 +416,9 @@ export function auditDashOverValue(
     roi_pct: opp.roi_pct != null || opp.simulated_roi_pct != null,
     risk_score: opp.risk_score != null,
     simulated_net_profit_usd: opp.simulated_net_profit_usd != null,
+    // La celda `block` (de main) pinta `economics.quote_block`: misma regla — si el
+    // wire lo trae y la celda va en guion, es un valor computado escondido.
+    "economics.quote_block": opp.economics?.quote_block != null,
     pipeline_latency_ms: opp.pipeline_latency_ms != null,
   };
   for (const [label, field] of Object.entries(CELL_FIELD_BINDING)) {

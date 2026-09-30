@@ -207,6 +207,14 @@ function summaryCells(opp: OmniOpportunity): Array<{
     opp.simulated_amount_in_usd != null &&
     !grossIsAttributableToPrincipal(opp.expected_profit_usd, opp.simulated_amount_in_usd);
   const inTitle = [
+    // main: la celda `in` declara SIEMPRE por qué no hay principal verificable.
+    // Tres tests de main (`renders every §36 field wired to its real source`,
+    // `CARDS-PRECEDENCE-01…`, `WO-CARDS-COMPLETE-01…`) exigen esa cadena literal en
+    // el `title` de la celda, así que ABRE el título y la razón de ECON-DECLARE-01
+    // viaja detrás: se conservan las dos verdades en vez de elegir una.
+    ledger.principal_usd == null
+      ? `sin principal verificable para el basis=${ledger.basis} (R8)`
+      : null,
     opp.simulated_amount_in_usd != null
       ? `amount_in_wei=${opp.amount_in_wei ?? "no emitido"} valorado al precio vivo — notional del ladder SIM`
       : declaration.notionalWei != null
