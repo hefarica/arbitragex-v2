@@ -36,7 +36,11 @@ COPY edge/dev-local/package.json ./edge/dev-local/
 COPY frontend/package.json ./frontend/
 
 # Full lockfile install. No --silent: CI must surface install errors.
-RUN npm ci --no-audit --no-fund
+# OPS-DOCKER-CACHE-01: el registry de npm (1333 paquetes) va a un cache mount
+# en vez de re-descargarse en cada build. node_modules sigue en la capa (lo
+# necesita el build de Next), pero los tarballs se reutilizan entre deploys.
+RUN --mount=type=cache,target=/root/.npm,sharing=locked \
+    npm ci --no-audit --no-fund
 
 # App sources after install so dependency layer stays cacheable.
 COPY frontend ./frontend

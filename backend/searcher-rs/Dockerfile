@@ -44,7 +44,18 @@ COPY mcp-sim-engine ./mcp-sim-engine
 # --frozen would also enable --offline, which requires a pre-populated
 # ~/.cargo/registry index — not available in this fresh build context.
 # token-enricher Dockerfile dropped --frozen for the same reason in 8d9b5f3.
-RUN cargo build --release --locked -p searcher-rs
+# OPS-DOCKER-CACHE-01: cache mounts para el target/ y el registry de cargo.
+# Sin esto, target/ (varios GB: alloy, revm, aws-lc-sys, ark-*) se guardaba como
+# CAPA de imagen: BuildKit lo retenia en su cache y los 6 servicios Rust compilaban
+# el MISMO grafo por separado (medido: Build Cache 21 GB / 186 entradas tras UN
+# deploy). Con cache mount el target/ vive en el almacen de cache, se COMPARTE
+# entre los 6 (mismo target) y no entra en la capa. `sharing=locked` explicito:
+# correcto antes que rapido. El binario se copia FUERA del mount porque un cache
+# mount no forma parte del filesystem de la imagen y el COPY --from=builder no lo veria.
+RUN --mount=type=cache,target=/build/target,sharing=locked \
+    --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
+    cargo build --release --locked -p searcher-rs \
+ && mkdir -p /build/out && cp /build/target/release/searcher-rs /build/out/searcher-rs
 
 FROM debian:bookworm-slim AS runtime
 # wget added for compose healthcheck (M2 Capa1 Fase 2 — 2026-05-15).
@@ -53,7 +64,7 @@ RUN m1="http://deb.debian.org"; m2="http://ftp.de.debian.org"; s="/etc/apt/sourc
     && rm -rf /var/lib/apt/lists/* \
     && groupadd -r arbx && useradd -r -g arbx arbx
 WORKDIR /app
-COPY --from=builder /build/target/release/searcher-rs /usr/local/bin/searcher-rs
+COPY --from=builder /build/out/searcher-rs /usr/local/bin/searcher-rs
 # FASE OMEGA fix: ship the master cartridges so the filesystem auto-loader
 # (cartridge_loader::load_cartridges_from_dir, CWD-relative "cartridges") finds
 # them on a cold boot. Without this the dir is absent and boot-load returns 0

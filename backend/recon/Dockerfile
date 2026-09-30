@@ -24,7 +24,18 @@ COPY semiotic-bridge ./semiotic-bridge
 # even though it is never built here, else "failed to load manifest" aborts.
 COPY mcp-sim-engine ./mcp-sim-engine
 ENV SQLX_OFFLINE=true
-RUN cargo build --release -p recon
+# OPS-DOCKER-CACHE-01: cache mounts para el target/ y el registry de cargo.
+# Sin esto, target/ (varios GB: alloy, revm, aws-lc-sys, ark-*) se guardaba como
+# CAPA de imagen: BuildKit lo retenia en su cache y los 6 servicios Rust compilaban
+# el MISMO grafo por separado (medido: Build Cache 21 GB / 186 entradas tras UN
+# deploy). Con cache mount el target/ vive en el almacen de cache, se COMPARTE
+# entre los 6 (mismo target) y no entra en la capa. `sharing=locked` explicito:
+# correcto antes que rapido. El binario se copia FUERA del mount porque un cache
+# mount no forma parte del filesystem de la imagen y el COPY --from=builder no lo veria.
+RUN --mount=type=cache,target=/build/target,sharing=locked \
+    --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
+    cargo build --release -p recon \
+ && mkdir -p /build/out && cp /build/target/release/recon /build/out/recon
 
 FROM debian:bookworm-slim AS runtime
 # wget added for compose healthcheck (M2 Capa1 Fase 2 — 2026-05-15).
@@ -32,7 +43,7 @@ RUN m1="http://deb.debian.org"; m2="http://ftp.de.debian.org"; s="/etc/apt/sourc
     && rm -rf /var/lib/apt/lists/* \
     && groupadd -r arbx && useradd -r -g arbx arbx
 WORKDIR /app
-COPY --from=builder /build/target/release/recon /usr/local/bin/recon
+COPY --from=builder /build/out/recon /usr/local/bin/recon
 USER arbx
 ENV ARBX_CONFIG_PATH=/app/configs/app.toml
 EXPOSE 3004
