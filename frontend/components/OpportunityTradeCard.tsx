@@ -464,7 +464,15 @@ function OpportunityTradeCardImpl({
    * decimals are known, verbatim `·wei` when they are not), plus the price-
    * marked leg Δ and — closing leg only — the exact whole-cycle delta.
    * Every figure is conditional on real inputs: a missing price or decimals
-   * removes that figure instead of rendering a fabricated 0 (R8).
+   * NEVER renders a fabricated 0 (R8).
+   *
+   * HOPS-DELTA-01 (2026-09-30, orden del operador: "que se visualice en todas las
+   * legs"): la celda Δ se pinta SIEMPRE, en toda leg. Antes se omitía cuando faltaba
+   * un precio o los decimales, y el hueco resultante era indistinguible de un fallo
+   * de layout — el operador no sabía si faltaba el dato o el render. Ahora, cuando no
+   * se puede valorar, se muestra `Δ —` con el motivo exacto en el title (R10: la
+   * ausencia de cómputo se declara, jamás se viste de éxito ni se esconde). El número
+   * sigue sin inventarse nunca.
    */
   const hopAmountNode = (leg: RouteLeg, entry: LegLedgerEntry): React.ReactNode => {
     const rm = opp.route_metadata;
@@ -477,6 +485,27 @@ function OpportunityTradeCardImpl({
     const inUsd = inView?.numeric != null && pxIn != null ? inView.numeric * pxIn : null;
     const outUsd = outView?.numeric != null && pxOut != null ? outView.numeric * pxOut : null;
     const legDeltaUsd = inUsd != null && outUsd != null ? outUsd - inUsd : null;
+    // HOPS-DELTA-01: motivo REAL de la ausencia de Δ, por lado. Se distingue la causa
+    // (sin precio en vivo / decimales o monto no escalables / magnitud fuera de rango)
+    // en vez de un genérico "no disponible": es lo que permite al operador saber si
+    // falta un productor de datos o si el dato llegó malformado.
+    const legDeltaReason =
+      legDeltaUsd != null
+        ? undefined
+        : [
+            pxIn == null ? `sin precio en vivo (PriceBus) para ${symIn}` : null,
+            pxOut == null ? `sin precio en vivo (PriceBus) para ${symOut}` : null,
+            inView == null ? `monto o decimales de ${symIn} no escalables` : null,
+            outView == null ? `monto o decimales de ${symOut} no escalables` : null,
+            inView?.numeric == null && inView != null
+              ? `magnitud de ${symIn} fuera de rango`
+              : null,
+            outView?.numeric == null && outView != null
+              ? `magnitud de ${symOut} fuera de rango`
+              : null,
+          ]
+            .filter(Boolean)
+            .join(" · ") || "Δ no computable con los datos de esta leg";
     // Closing leg: delta of the whole cycle in the opening token's wei. The
     // closing leg's OUT token IS the opening token, so its decimals denominate.
     const cycleView =
@@ -507,9 +536,20 @@ function OpportunityTradeCardImpl({
           {" → "}
           {outView != null ? `${outView.text} ${symOut}` : `${entry.amount_out_wei}·wei`}
         </span>
-        {legDeltaUsd != null && (
+        {/* HOPS-DELTA-01: presente en TODAS las legs. Con número si se puede valorar
+            a precios en vivo; si no, `Δ —` + motivo en el title — nunca un $0
+            inventado (R8) ni un hueco mudo (R10). */}
+        {legDeltaUsd != null ? (
           <span className={`max-w-full truncate ${legDeltaUsd >= 0 ? "text-success" : "text-destructive"}`}>
             Δ {usd(legDeltaUsd)}
+          </span>
+        ) : (
+          <span
+            className="max-w-full truncate text-muted-foreground"
+            title={`Δ no computado — ${legDeltaReason}`}
+            data-testid="leg-delta-not-computed"
+          >
+            Δ —
           </span>
         )}
         {cycleText != null && (
@@ -517,6 +557,49 @@ function OpportunityTradeCardImpl({
             ciclo {cycleText} {cycleView != null ? symOut : "wei"}
           </span>
         )}
+      </span>
+    );
+  };
+
+  /**
+   * HOPS-DELTA-01 (2026-09-30) — celda de la escalera cuando NO existe ledger
+   * por-hop. Es el caso REAL de las cards triangulares en producción.
+   *
+   * `deriveLegLedger` es all-or-nothing y exige `leg_amounts_in`,
+   * `leg_amounts_out` Y `leg_zero_for_one` alineados con los hops. Cuando el
+   * kernel de sizing no emite esa cadena (kernel triangular "final-amount-only":
+   * solo mide el cierre del ciclo, no los hops intermedios) devuelve `null`, y
+   * antes esta rama pasaba `valueNode={undefined}`: el operador veía un hueco
+   * MUDO, indistinguible de un fallo de layout (violación de R10 — la ausencia
+   * de cómputo debe declararse con `reason`, jamás esconderse).
+   *
+   * Ahora la fila SIEMPRE pinta su Δ: con número si hay ledger, y `Δ —` con el
+   * motivo exacto si no lo hay. Nunca un $0 inventado (R8).
+   */
+  const hopNotComputedNode = (leg: RouteLeg): React.ReactNode => {
+    const reason =
+      opp.route_ledger_invalid === true
+        ? "topología marcada inválida (route_ledger_invalid)"
+        : leg.synthetic === true
+          ? "leg sintética §29 — fallback sin montos reales"
+          : opp.route_metadata == null
+            ? "sin route_metadata persistida (no hay topología que valorar)"
+            : `el kernel de sizing no emitió montos por hop (ledger ausente en route_metadata${
+                opp.strategy_kind ? ` · ${opp.strategy_kind}` : ""
+              })`;
+    return (
+      <span
+        className="flex w-full min-w-0 flex-col items-end leading-tight text-right text-[10px] font-mono whitespace-nowrap"
+        title={`Δ no computado — ${reason}. R10: la ausencia de cómputo se declara, nunca se pinta como 0.`}
+        data-testid="ledger-hop-not-computed"
+      >
+        <span className="max-w-full truncate text-muted-foreground">—</span>
+        <span
+          className="max-w-full truncate text-muted-foreground"
+          data-testid="leg-delta-not-computed"
+        >
+          Δ —
+        </span>
       </span>
     );
   };
@@ -936,7 +1019,7 @@ function OpportunityTradeCardImpl({
                   value={null}
                   muted
                   hint={`${l.dex || "—"}${l.synthetic ? " · syn" : ""}`}
-                  valueNode={entry != null ? hopAmountNode(l, entry) : undefined}
+                  valueNode={entry != null ? hopAmountNode(l, entry) : hopNotComputedNode(l)}
                 />
               );
             })

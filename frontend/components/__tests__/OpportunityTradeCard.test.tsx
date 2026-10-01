@@ -344,7 +344,9 @@ describe("OpportunityTradeCard — AUDIT-CARDS-MINOR (§3) fallback chip-row mar
 // hop of a 2..7-leg cycle shows ITS numbers (exact wei in→out) on the row that
 // already owns that hop, plus the price-marked leg Δ and the closed-cycle delta
 // on the closing leg. Fail-honest gates: no ledger ⇒ no figures; unknown
-// decimals ⇒ raw wei (never a guessed unit); no live price ⇒ no Δ (never $0).
+// decimals ⇒ raw wei (never a guessed unit); no live price ⇒ Δ NOT computable
+// (never $0) — y desde HOPS-DELTA-01 el slot Δ se pinta igualmente como `Δ —`
+// con el motivo, para que la leg nunca quede con un hueco mudo.
 // ─────────────────────────────────────────────────────────────────────────────
 describe("OpportunityTradeCard — HOPS-LEDGER-04 per-hop amounts", () => {
   const WETH = A;
@@ -442,9 +444,13 @@ describe("OpportunityTradeCard — HOPS-LEDGER-04 per-hop amounts", () => {
     // no unit claim anywhere on those legs; the cycle delta falls back to raw wei
     expect(html).not.toContain("Δ $");
     expect(html).toContain("ciclo 2000000000000000 wei");
+    // HOPS-DELTA-01: sin decimales el Δ no es computable, pero el slot SIGUE ahí
+    // (con `—`), en vez de desaparecer y dejar la leg con un hueco mudo.
+    expect(html).toContain("Δ —");
+    expect(html).toContain("no escalables");
   });
 
-  it("no live price for a leg's symbol ⇒ that leg shows amounts but NO Δ (never a $0)", () => {
+  it("no live price for a leg's symbol ⇒ Δ NO computado: el slot `Δ —` sigue visible con motivo (nunca un $0)", () => {
     const priced = {
       ...sized,
       token_prices_usd: { WETH: 2700 }, // USDC price absent
@@ -452,6 +458,46 @@ describe("OpportunityTradeCard — HOPS-LEDGER-04 per-hop amounts", () => {
     };
     const html = card(priced);
     expect(html).toContain("2,700 USDC");
+    expect(html).not.toContain("Δ $");
+    // HOPS-DELTA-01 (orden del operador: "que se visualice en todas las legs"): antes
+    // esta leg quedaba SIN celda Δ y el hueco era indistinguible de un fallo de
+    // layout. Ahora el slot está siempre, con `—` y la causa concreta.
+    expect(html).toContain("Δ —");
+    expect(html).toContain("sin precio en vivo (PriceBus) para USDC");
+    expect(html).toContain('data-testid="leg-delta-not-computed"');
+  });
+
+  it("ledger AUSENTE (kernel triangular final-amount-only) ⇒ monto y Δ NO computados, DECLARADOS con motivo en todas las legs (R10: jamás un hueco mudo)", () => {
+    // Forma REAL de producción (medida el 2026-09-30 contra
+    // /api/opportunities/live): strategy_kind=triangular con route_metadata de
+    // claves ['decimals','dex_adapters','economics_basis','pool_addresses',
+    // 'token_addresses'] — SIN leg_amounts_in / leg_amounts_out /
+    // leg_zero_for_one. `deriveLegLedger` es all-or-nothing y exige las tres, así
+    // que devuelve null: antes NINGUNA leg recibía celda (valueNode=undefined) y
+    // el operador veía un hueco indistinguible de un fallo de layout.
+    const triangular = mapToOmniOpportunity(
+      wire({
+        strategy_kind: "triangular",
+        token_in: A,
+        token_out: A,
+        route_metadata: {
+          dex_adapters: ["uniswap_v2_router", "uniswap_v3", "sushiswap"],
+          token_addresses: [A, B, C, A],
+          pool_addresses: ["0xpool1", "0xpool2", "0xpool3"],
+        },
+      }),
+    );
+    const html = card(triangular);
+    // Las 3 legs conservan su fila Y su celda: ninguna queda en blanco.
+    expect(html).toContain("Hop 1/3");
+    expect(html).toContain("Hop 2/3");
+    expect(html).toContain("Hop 3/3");
+    // El Δ se declara NO computado, con el motivo REAL del productor.
+    expect(html).toContain("Δ —");
+    expect(html).toContain("ledger ausente en route_metadata");
+    expect(html).toContain("triangular");
+    expect(html).toContain('data-testid="ledger-hop-not-computed"');
+    // R8: nunca un 0 inventado.
     expect(html).not.toContain("Δ $");
   });
 

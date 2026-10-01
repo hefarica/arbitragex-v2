@@ -239,16 +239,24 @@ describe("CARDS-LAYOUT-01 — every hop renders exactly once, never doubled", ()
     expect(count(html, "Hop 2/2")).toBe(1);
   });
 
-  it("sin ledger por-hop, la fila sigue muda salvo la procedencia declarada", () => {
+  it("sin ledger por-hop, la fila DECLARA el Δ no computado (ya no muda) sin inventar cifra alguna", () => {
     const html = card(mapToOmniOpportunity(wire({})));
-    // Los unicos bloques de importes son los avisos de procedencia del fixset
-    // (LP fees 'incl. en quote', slippage 'incl. en curva'): nunca una cifra
-    // inventada ni un cero por ausencia.
-    expect(count(html, 'data-testid="ledger-row-amounts"')).toBe(2);
+    // HOPS-DELTA-01 (orden del operador 2026-09-30: "que se visualice en todas
+    // las legs"): la fila de hop YA NO queda muda. El contrato anterior pintaba
+    // SOLO los 2 avisos de procedencia del fixset (LP fees 'incl. en quote',
+    // slippage 'incl. en curva') y dejaba la leg sin celda — un hueco
+    // indistinguible de un fallo de layout (R10). Ahora cada hop añade su celda
+    // con `Δ —` y el motivo ⇒ 2 hops + 2 avisos = 4. Sigue sin haber una sola
+    // cifra inventada ni un cero por ausencia (R8).
+    expect(count(html, 'data-testid="ledger-row-amounts"')).toBe(4);
     expect(html).toContain('incl. en quote');
     expect(html).toContain('incl. en curva');
     // the hop row still renders (topology) with its muted value cell
     expect(count(html, "Hop 1/2")).toBe(1);
+    // Una celda declarada por hop, con el motivo, y jamás un importe fabricado.
+    expect(count(html, 'data-testid="ledger-hop-not-computed"')).toBe(2);
+    expect(html).toContain("Δ —");
+    expect(html).not.toContain("Δ $");
   });
 });
 
