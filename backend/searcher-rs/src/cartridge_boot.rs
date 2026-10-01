@@ -1747,6 +1747,9 @@ pub async fn active_evaluate_and_emit(
     }
 
     let mut v4_registered = false;
+    // OBSERVABILITY-V4-EDGES-01: capturar el censo ANTES del move a
+    // build_v4_intent_bundle — el summary se emite al final de la función.
+    let v4_edges_built = v4_edges.len();
     if v4_edges.is_empty() {
         debug!(
             event = "cartridge.v4_intent_no_edges",
@@ -2626,6 +2629,15 @@ pub async fn active_evaluate_and_emit(
         negative = negative_total,
         positive = positive_total,
         reasons = ?negative_reasons,
+        // OBSERVABILITY-V4-EDGES-01 (2026-10-01): censo del grafo v4 dentro del
+        // summary que YA existe. Una línea por tx, nunca por intent: esto corre
+        // ~24.800 veces por ventana y un log por ítem reproduciría LOGFLOOD-01
+        // (R9). Sin este dato no se puede distinguir si los cartuchos que
+        // buscan lo hacen sobre un grafo vacío o sobre uno real con piernas
+        // descartadas — todo el diagnóstico de esa ruta estaba en `debug!` y
+        // producción emite en `INFO`, así que la pregunta era inrespondible.
+        v4_edges_built,
+        v4_legs_skipped = ?v4_skip_reasons,
         "cartridge active eval summary (per-reason negatives)"
     );
 }
