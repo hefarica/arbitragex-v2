@@ -70,6 +70,26 @@ fn normalized_price(
     }
 }
 
+/// Clave canonica de un par de tokens: los dos en minusculas, ordenados
+/// lexicograficamente y unidos por `'|'`, p.ej. `"0xaaa...|0xbbb..."`.
+///
+/// FEATURES-01b: `MarketState.pair_keys` lleva una clave por fila de
+/// `price_matrix`, y `RegimeRouter` agrupa por esa clave para calcular el gap de
+/// arbitraje SOLO entre venues del MISMO par. El orden lexicografico hace que
+/// `(A,B)` y `(B,A)` den la misma clave (el precio normalizado de un pool ya se
+/// calcula en la direccion `token_in -> token_out` de la pierna, asi que invertir
+/// la pierna no invierte este precio) y no hay dependencia del checksum EIP-55.
+///
+/// Los llamadores ya pasan direcciones en minusculas (`format!("0x{:040x}", ...)`),
+/// por eso no se normaliza de nuevo aqui.
+fn canonical_pair_key(a_lower: &str, b_lower: &str) -> String {
+    if a_lower <= b_lower {
+        format!("{a_lower}|{b_lower}")
+    } else {
+        format!("{b_lower}|{a_lower}")
+    }
+}
+
 /// Decimales por token, cacheados por intent (mismo contrato que
 /// `cartridge_boot::v4_token_decimals`). R8: meta ausente/ilegible → `None`,
 /// y la pierna que lo necesite se OMITE — nunca se asume 18.
@@ -96,6 +116,13 @@ async fn leg_token_decimals(
 /// `pool_legs`: `(pool, token_in, token_out)` por pierna, en el orden de la ruta.
 /// Para cada pool con reservas deriva el precio en UNIDADES HUMANAS del par:
 /// `(r1 / 10^dec_out) / (r0 / 10^dec_in)`.
+///
+/// FEATURES-01b (2026-09-30): cada fila precio de `price_matrix` viaja con su
+/// `pair_keys[i]` = `canonical_pair_key(token_in, token_out)` de esa pierna, en el
+/// MISMO orden e igual longitud. Sin esa identidad el `RegimeRouter` comparaba el
+/// precio de un pool A/B contra el de un pool B/C (hops de una misma ruta, pares
+/// distintos) y publicaba un gap de arbitraje falso; con ella el gap se calcula
+/// solo entre venues del mismo par, o queda en `None` (R8).
 ///
 /// MATH-04-FOLLOWUP (2026-09-30): cierra el "follow-up thread" que MATH-04 dejó
 /// abierto (2026-09-24). Antes la `price_matrix` llevaba el ratio CRUDO `r1/r0`:
@@ -126,6 +153,11 @@ pub async fn build_market_state(
     features: std::collections::HashMap<String, f64>,
 ) -> Option<MarketState> {
     let mut price_matrix: Vec<Vec<f64>> = Vec::new();
+    // FEATURES-01b: identidad de par, una clave por fila de `price_matrix` y en
+    // el MISMO orden. Se empuja SIEMPRE junto al precio (mismo bloque `if let`),
+    // de modo que la invariante `pair_keys.len() == price_matrix.len()` no depende
+    // de los `continue` previos (reservas o decimales ausentes).
+    let mut pair_keys: Vec<String> = Vec::new();
     let mut liquidity_reserves: Vec<(f64, f64)> = Vec::new();
     let mut decimal_cache: std::collections::HashMap<String, Option<u8>> =
         std::collections::HashMap::new();
@@ -153,9 +185,19 @@ pub async fn build_market_state(
         };
         if let Some(price) = normalized_price(r0, r1, dec_in, dec_out) {
             price_matrix.push(vec![price]);
+            pair_keys.push(canonical_pair_key(&in_lc, &out_lc));
             liquidity_reserves.push((r0.as_u128() as f64, r1.as_u128() as f64));
         }
     }
+
+    // La invariante se verifica aqui mismo: cualquier rama futura que empuje un
+    // precio sin su clave (o al reves) revienta en debug/tests en vez de producir
+    // un desalineamiento silencioso que el router leeria como otro par.
+    debug_assert_eq!(
+        pair_keys.len(),
+        price_matrix.len(),
+        "invariante FEATURES-01b: una pair_key por fila de price_matrix"
+    );
 
     if price_matrix.is_empty() {
         return None; // insufficient_state — no priced pool with known decimals
@@ -163,6 +205,7 @@ pub async fn build_market_state(
 
     Some(MarketState {
         price_matrix,
+        pair_keys,
         liquidity_reserves,
         gas_price_gwei,
         block_timestamp,
@@ -557,11 +600,42 @@ mod evidence_tests {
         assert!(extreme.is_finite() && extreme > 0.0);
     }
 
+    // ── FEATURES-01b: clave canonica de par ─────────────────────────────────
+    #[test]
+    fn canonical_pair_key_is_order_independent_and_lowercase() {
+        let weth = "0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2";
+        let usdc = "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48";
+        let ab = canonical_pair_key(weth, usdc);
+        // Orden lexicografico: usdc (0xa0..) < weth (0xc0..) ⇒ usdc primero.
+        assert_eq!(ab, format!("{usdc}|{weth}"));
+        // Invertir la pierna NO cambia la identidad del par.
+        assert_eq!(canonical_pair_key(usdc, weth), ab);
+        // Minusculas: el checksum EIP-55 no parte en dos un mismo par.
+        let checksummed = "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2".to_lowercase();
+        assert_eq!(canonical_pair_key(&checksummed, usdc), ab);
+        // Pares distintos dan claves distintas (nunca se agrupan por accidente).
+        let dai = "0x6b175474e89094c44da98b954eedeac495271d0f";
+        assert_ne!(canonical_pair_key(weth, dai), ab);
+    }
+
+    #[test]
+    fn canonical_pair_key_is_the_same_for_two_venues_of_one_pair() {
+        // Cross-venue legitimo: el MISMO par en 2 pools distintos debe producir la
+        // MISMA clave, para que el router pueda comparar sus precios.
+        let weth = "0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2";
+        let usdc = "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48";
+        assert_eq!(
+            canonical_pair_key(weth, usdc),
+            canonical_pair_key(usdc, weth)
+        );
+    }
+
     #[test]
     fn build_evidence_vector_has_31_slots_and_none_to_zero() {
         // Estado degenerado (sin reservas ⇒ operadores devuelven None) ⇒ 31 ceros.
         let state = MarketState {
             price_matrix: vec![],
+            pair_keys: vec![],
             liquidity_reserves: vec![],
             gas_price_gwei: 0.0,
             block_timestamp: 0,

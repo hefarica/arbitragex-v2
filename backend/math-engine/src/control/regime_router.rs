@@ -14,6 +14,7 @@
 //!   por toggle y (b) los `applicable_operators` de la estrategia (264×31).
 
 use crate::operators::MarketState;
+use std::collections::HashMap;
 
 /// Régimen de mercado observable derivado del MarketState.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -110,23 +111,54 @@ impl RegimeRouter {
             }
         }
 
-        // Gap de arbitraje: max/min del activo 0 entre venues (filas) - 1.
-        let venue_prices: Vec<f64> = state
-            .price_matrix
-            .iter()
-            .filter_map(|row| row.first().copied())
-            .filter(|p| p.is_finite() && *p > 0.0)
-            .collect();
-        if venue_prices.len() >= 2 {
-            let max = venue_prices
-                .iter()
-                .cloned()
-                .fold(f64::NEG_INFINITY, f64::max);
-            let min = venue_prices.iter().cloned().fold(f64::INFINITY, f64::min);
-            if min > 0.0 {
-                m.arbitrage_gap = Some(max / min - 1.0);
+        // Gap de arbitraje: max/min - 1 SOLO entre venues del MISMO par.
+        //
+        // `price_matrix` lleva una fila por pool, y los pools de una ruta son
+        // pares DISTINTOS (hop1 = A/B, hop2 = B/C, ...): comparar el precio de un
+        // pool A/B contra el de un pool B/C no mide ningun arbitraje, solo produce
+        // un numero plausible-pero-falso que contamina la clasificacion de
+        // regimen. En cambio un arbitraje cross-venue legitimo (MISMO par en 2
+        // DEXes distintos) SI es exactamente max/min - 1. La identidad que separa
+        // ambos casos es `pair_keys` (FEATURES-01b).
+        //
+        // FEATURES-01b: se agrupa por par y se publica el MAYOR gap entre los
+        // pares con >=2 venues. Filas sin identidad (`""`) no se agrupan. Si
+        // ningun par tiene >=2 venues -> `None` (R8: ausencia, no 0.0 y jamas un
+        // gap cruzado entre pares distintos).
+        //
+        // Acumulador por par: (precio_max, precio_min, n_venues).
+        let mut venues_por_par: HashMap<&str, (f64, f64, usize)> = HashMap::new();
+        for (row, pair_key) in state.price_matrix.iter().zip(state.pair_keys.iter()) {
+            if pair_key.is_empty() {
+                continue; // sin identidad de par: no se agrupa (R8)
             }
+            let Some(price) = row.first().copied() else {
+                continue;
+            };
+            if !price.is_finite() || price <= 0.0 {
+                continue; // mismo filtro que la volatilidad
+            }
+            let entry = venues_por_par
+                .entry(pair_key.as_str())
+                .or_insert((f64::NEG_INFINITY, f64::INFINITY, 0));
+            entry.0 = entry.0.max(price);
+            entry.1 = entry.1.min(price);
+            entry.2 += 1;
         }
+
+        // El mayor gap entre pares con >=2 venues (orden-independiente: es un max).
+        let mut arbitrage_gap: Option<f64> = None;
+        for &(max, min, n_venues) in venues_por_par.values() {
+            if n_venues < 2 || min <= 0.0 {
+                continue; // 1 sola venue no tiene gap entre venues
+            }
+            let gap = max / min - 1.0;
+            arbitrage_gap = Some(match arbitrage_gap {
+                Some(prev) => prev.max(gap),
+                None => gap,
+            });
+        }
+        m.arbitrage_gap = arbitrage_gap;
 
         // Health factor (de features).
         if let Some(&hf) = state.features.get("health_factor") {
@@ -238,9 +270,22 @@ mod tests {
     use super::*;
     use std::collections::HashMap;
 
-    fn state(prices: &[f64]) -> MarketState {
+    /// Clave canonica del par simulado A/B: dos tokens hex en minusculas,
+    /// ordenados lexicograficamente y unidos por '|' (mismo formato que produce
+    /// `canonical_pair_key` en searcher-rs).
+    const PAR_AB: &str =
+        "0xaaaa0000000000000000000000000000000000aa|0xbbbb0000000000000000000000000000000000bb";
+    /// Clave canonica del par simulado A/C (hop 2 de una ruta A/B -> C/B).
+    const PAR_AC: &str =
+        "0xaaaa0000000000000000000000000000000000aa|0xcccc0000000000000000000000000000000000cc";
+    /// Clave canonica del par simulado C/D.
+    const PAR_CD: &str =
+        "0xcccc0000000000000000000000000000000000cc|0xdddd0000000000000000000000000000000000dd";
+
+    fn state_from(prices: &[f64], pair_keys: Vec<String>) -> MarketState {
         MarketState {
             price_matrix: prices.iter().map(|p| vec![*p]).collect(),
+            pair_keys,
             liquidity_reserves: Vec::new(),
             gas_price_gwei: 20.0,
             block_timestamp: 1_700_000_000,
@@ -249,20 +294,119 @@ mod tests {
         }
     }
 
+    /// Serie de precios del MISMO par simulado (una fila por observacion):
+    /// todas las filas comparten la clave, que es el caso cross-venue/serie.
+    fn state(prices: &[f64]) -> MarketState {
+        state_from(prices, vec![PAR_AB.to_string(); prices.len()])
+    }
+
     #[test]
     fn detects_arbitrage_gap_across_venues() {
-        // Two venues with a 1% price gap.
-        let st = MarketState {
-            price_matrix: vec![vec![100.0], vec![101.0]],
-            liquidity_reserves: Vec::new(),
-            gas_price_gwei: 20.0,
-            block_timestamp: 1_700_000_000,
-            block_number: 18_000_000,
-            features: HashMap::new(),
-        };
+        // Two venues of the SAME pair with a 1% price gap. Contrato
+        // FEATURES-01b: el gap solo se calcula entre venues del mismo par
+        // (`pair_keys` identicas); este es el caso cross-venue legitimo donde
+        // max/min - 1 SI es la metrica correcta, y sigue calculandose.
+        let st = state_from(&[100.0, 101.0], vec![PAR_AB.to_string(), PAR_AB.to_string()]);
         let (_r, metrics, _ops) = RegimeRouter::default().route(&st);
         let gap = metrics.arbitrage_gap.unwrap();
         assert!((gap - 0.01).abs() < 1e-6, "gap should be ~1% (got {gap})");
+    }
+
+    // ── FEATURES-01b: el gap exige identidad de par ──────────────────────────
+    // Sin `pair_keys` el router comparaba el precio de un pool A/B contra el de
+    // un pool B/C (hops de una MISMA ruta, pares distintos) y publicaba un numero
+    // plausible-pero-falso. Estos tests fijan el contrato nuevo: agrupar por par,
+    // publicar el mayor gap entre pares con >=2 venues, y `None` cuando ningun
+    // par tiene 2 venues (R8: ausencia, jamas un valor fabricado).
+
+    #[test]
+    fn distinct_pairs_never_produce_a_gap() {
+        // 3 filas = 3 hops de pares DISTINTOS (A/B, A/C, C/D): no hay 2 venues de
+        // un mismo par, asi que no hay arbitraje cross-venue medible -> None.
+        let st = state_from(
+            &[100.0, 101.0, 130.0],
+            vec![PAR_AB.to_string(), PAR_AC.to_string(), PAR_CD.to_string()],
+        );
+        let (_r, metrics, _ops) = RegimeRouter::default().route(&st);
+        assert!(
+            metrics.arbitrage_gap.is_none(),
+            "pares distintos no son venues comparables (got {:?})",
+            metrics.arbitrage_gap
+        );
+    }
+
+    #[test]
+    fn same_pair_two_venues_gap_is_one_percent() {
+        // Mismo par en 2 venues: 100.0 y 101.0 -> 1%.
+        let st = state_from(&[100.0, 101.0], vec![PAR_AB.to_string(), PAR_AB.to_string()]);
+        let (_r, metrics, _ops) = RegimeRouter::default().route(&st);
+        let gap = metrics.arbitrage_gap.expect("2 venues del mismo par => gap");
+        assert!(
+            (gap - 0.01).abs() < 1e-9,
+            "gap esperado 0.01, obtenido {gap}"
+        );
+    }
+
+    #[test]
+    fn largest_gap_wins_across_pairs() {
+        // Par A/B en 2 venues (1%) y par C/D en 2 venues (5%) -> se publica 0.05.
+        let st = state_from(
+            &[100.0, 101.0, 100.0, 105.0],
+            vec![
+                PAR_AB.to_string(),
+                PAR_AB.to_string(),
+                PAR_CD.to_string(),
+                PAR_CD.to_string(),
+            ],
+        );
+        let (_r, metrics, _ops) = RegimeRouter::default().route(&st);
+        let gap = metrics.arbitrage_gap.expect("ambos pares tienen 2 venues");
+        assert!(
+            (gap - 0.05).abs() < 1e-9,
+            "debe publicarse el MAYOR gap (0.05), obtenido {gap}"
+        );
+    }
+
+    #[test]
+    fn single_venue_pair_has_no_gap() {
+        // Dos filas con pares DISTINTOS y una sola venue cada uno: ninguno llega a
+        // 2 venues -> None (1 venue no tiene "gap entre venues").
+        let st = state_from(&[100.0, 100.0], vec![PAR_AB.to_string(), PAR_CD.to_string()]);
+        let (_r, metrics, _ops) = RegimeRouter::default().route(&st);
+        assert!(
+            metrics.arbitrage_gap.is_none(),
+            "una sola venue por par no es un gap (got {:?})",
+            metrics.arbitrage_gap
+        );
+    }
+
+    #[test]
+    fn rows_without_pair_identity_are_ignored() {
+        // Dos filas con la MISMA clave vacia ("") no se agrupan entre si: sin
+        // identidad conocida no se afirma que sean el mismo par (R8) -> None.
+        let st = state_from(&[100.0, 101.0], vec![String::new(), String::new()]);
+        let (_r, metrics, _ops) = RegimeRouter::default().route(&st);
+        assert!(
+            metrics.arbitrage_gap.is_none(),
+            "filas sin identidad no se agrupan (got {:?})",
+            metrics.arbitrage_gap
+        );
+    }
+
+    #[test]
+    fn empty_pair_key_does_not_hide_a_real_gap() {
+        // La fila sin identidad se ignora, pero las 2 venues identificadas del
+        // mismo par SI producen su gap (no se contamina ni se pierde).
+        let st = state_from(
+            &[100.0, 999.0, 101.0],
+            vec![PAR_AB.to_string(), String::new(), PAR_AB.to_string()],
+        );
+        let (_r, metrics, _ops) = RegimeRouter::default().route(&st);
+        let gap = metrics.arbitrage_gap.expect("2 venues identificadas del mismo par");
+        assert!(
+            (gap - 0.01).abs() < 1e-9,
+            "la fila sin identidad no debe entrar en el max/min (got {gap})"
+        );
     }
 
     #[test]
@@ -309,6 +453,7 @@ mod tests {
     fn fail_honest_on_empty_state() {
         let st = MarketState {
             price_matrix: Vec::new(),
+            pair_keys: Vec::new(),
             liquidity_reserves: Vec::new(),
             gas_price_gwei: 20.0,
             block_timestamp: 0,
