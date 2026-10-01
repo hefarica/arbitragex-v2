@@ -576,7 +576,16 @@ pub fn economic_check(
     } else {
         None
     };
-    let mut policy_ok = policy.enabled && policy.control_state == "ON";
+    // POLICY-GATE-01 (2026-10-01): the producer set for `control_state` never
+    // emitted the literal "ON" — cartridge_boot.rs builds the real bundle with
+    // `"operator_config_enabled"` (cfg.enabled) and the Phase-1 v4 DATA_GAP stub
+    // with `"phase1_data_gap"`. Comparing against "ON" alone made `policy_ok`
+    // STRUCTURALLY false for every cartridge in every mode: a dead gate that no
+    // amount of data wiring could satisfy. Accept the canonical states the
+    // producers actually emit; the stub keeps its own value and stays
+    // fail-closed (an empty DATA_GAP bundle must never pass the policy gate).
+    const CONTROL_STATE_ON: [&str; 2] = ["ON", "operator_config_enabled"];
+    let mut policy_ok = policy.enabled && CONTROL_STATE_ON.contains(&policy.control_state.as_str());
     let capital = quote
         .capital_usd
         .as_deref()
