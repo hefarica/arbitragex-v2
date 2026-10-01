@@ -398,7 +398,17 @@ pub async fn evaluate_math_evidence(
                 "op": id,
                 "name": out.operator_name,
                 "scalar": out.scalar_value,
-                "computed": out.metadata.get("computed").copied().unwrap_or(0.0),
+                // COMPUTED-HONESTY-01 (2026-10-01): `computed` NO lleva un 0 por
+                // defecto. Antes era `unwrap_or(0.0)`: si el operador no publicaba
+                // la clave, el JSON decia `"computed": 0.0`, que se lee como
+                // "computo exactamente cero" cuando en realidad NO computo. La
+                // evidencia viva mostraba justo eso: dos operadores con
+                // `"computed": 0.0` y `"scalar": null`. Ahora la ausencia viaja
+                // como `null` (no computado) — la distincion R8/R10 entre
+                // "ausente" y "cero" se conserva en el wire. Misma doctrina que el
+                // Δ de las cards: `None = no computado`, `Some(0.0) = computado y
+                // exactamente cero`.
+                "computed": out.metadata.get("computed").copied(),
             }));
         }
     }
