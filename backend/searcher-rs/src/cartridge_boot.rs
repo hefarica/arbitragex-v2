@@ -210,7 +210,16 @@ pub fn spawn_cartridge_runtime(
         route_support: Default::default(),
         domain_plans: Default::default(),
         canonical_payloads: Default::default(),
-        manifest_digests: Default::default(),
+        // ADMISSION-MANIFEST-01 (2026-10-01): el stub Phase-1 es el contexto
+        // que se usa cuando el intent no arma aristas (v4_edges vacío) o el
+        // router no está disponible. Antes llevaba `manifest_digests` VACÍO,
+        // así que un cartucho DESPLEGADO —cuyo digest SÍ está en el escaneo
+        // de CARTRIDGE_DIR— fallaba la admisión con
+        // `manifest_not_admitted_by_backend` por un mapa que se construía
+        // vacío en este camino y lleno en el del intent. Medido en producción:
+        // ese motivo explica 2.488 de 20.000 outcomes. Los digests describen
+        // la librería desplegada, que se conoce en boot: no se fabrica nada.
+        manifest_digests: v4_manifest_digests().clone(),
         max_evaluations: 1,
     });
     // Single-revision Phase-1 guard: this process serves exactly the bundle it
