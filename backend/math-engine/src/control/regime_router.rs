@@ -138,9 +138,11 @@ impl RegimeRouter {
             if !price.is_finite() || price <= 0.0 {
                 continue; // mismo filtro que la volatilidad
             }
-            let entry = venues_por_par
-                .entry(pair_key.as_str())
-                .or_insert((f64::NEG_INFINITY, f64::INFINITY, 0));
+            let entry = venues_por_par.entry(pair_key.as_str()).or_insert((
+                f64::NEG_INFINITY,
+                f64::INFINITY,
+                0,
+            ));
             entry.0 = entry.0.max(price);
             entry.1 = entry.1.min(price);
             entry.2 += 1;
@@ -306,7 +308,10 @@ mod tests {
         // FEATURES-01b: el gap solo se calcula entre venues del mismo par
         // (`pair_keys` identicas); este es el caso cross-venue legitimo donde
         // max/min - 1 SI es la metrica correcta, y sigue calculandose.
-        let st = state_from(&[100.0, 101.0], vec![PAR_AB.to_string(), PAR_AB.to_string()]);
+        let st = state_from(
+            &[100.0, 101.0],
+            vec![PAR_AB.to_string(), PAR_AB.to_string()],
+        );
         let (_r, metrics, _ops) = RegimeRouter::default().route(&st);
         let gap = metrics.arbitrage_gap.unwrap();
         assert!((gap - 0.01).abs() < 1e-6, "gap should be ~1% (got {gap})");
@@ -338,9 +343,14 @@ mod tests {
     #[test]
     fn same_pair_two_venues_gap_is_one_percent() {
         // Mismo par en 2 venues: 100.0 y 101.0 -> 1%.
-        let st = state_from(&[100.0, 101.0], vec![PAR_AB.to_string(), PAR_AB.to_string()]);
+        let st = state_from(
+            &[100.0, 101.0],
+            vec![PAR_AB.to_string(), PAR_AB.to_string()],
+        );
         let (_r, metrics, _ops) = RegimeRouter::default().route(&st);
-        let gap = metrics.arbitrage_gap.expect("2 venues del mismo par => gap");
+        let gap = metrics
+            .arbitrage_gap
+            .expect("2 venues del mismo par => gap");
         assert!(
             (gap - 0.01).abs() < 1e-9,
             "gap esperado 0.01, obtenido {gap}"
@@ -371,7 +381,10 @@ mod tests {
     fn single_venue_pair_has_no_gap() {
         // Dos filas con pares DISTINTOS y una sola venue cada uno: ninguno llega a
         // 2 venues -> None (1 venue no tiene "gap entre venues").
-        let st = state_from(&[100.0, 100.0], vec![PAR_AB.to_string(), PAR_CD.to_string()]);
+        let st = state_from(
+            &[100.0, 100.0],
+            vec![PAR_AB.to_string(), PAR_CD.to_string()],
+        );
         let (_r, metrics, _ops) = RegimeRouter::default().route(&st);
         assert!(
             metrics.arbitrage_gap.is_none(),
@@ -402,7 +415,9 @@ mod tests {
             vec![PAR_AB.to_string(), String::new(), PAR_AB.to_string()],
         );
         let (_r, metrics, _ops) = RegimeRouter::default().route(&st);
-        let gap = metrics.arbitrage_gap.expect("2 venues identificadas del mismo par");
+        let gap = metrics
+            .arbitrage_gap
+            .expect("2 venues identificadas del mismo par");
         assert!(
             (gap - 0.01).abs() < 1e-9,
             "la fila sin identidad no debe entrar en el max/min (got {gap})"
