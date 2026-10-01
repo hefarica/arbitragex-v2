@@ -171,6 +171,69 @@ pub async fn build_market_state(
     })
 }
 
+/// FEATURES-01a (2026-10-01): features de régimen desde fuentes VIVAS.
+///
+/// El call site pasaba `std::collections::HashMap::new()` — el mapa nacía vacío y
+/// moría vacío. Por eso `regime_router` deja las 5 métricas en `null`, clasifica
+/// siempre `["Neutral"]` (que recomienda solo 2 operadores) y la evidencia sale
+/// con `operators_computed: 0` y `scalar: null`.
+///
+/// Esta entrega alimenta `parity_deviation` desde el PriceBus
+/// (`arbx:token_prices:<chain>`): la MAYOR desviación de paridad de un stablecoin
+/// respecto a $1. Es la única de las cinco con fuente Redis viva y verificada
+/// (medido: USDC 1.0000972 · USDT 0.99949749 · DAI 0.99985272 · LUSD 1.0056).
+///
+/// Lo que NO se alimenta aquí, y por qué (R8: no se inventa):
+/// * `oracle_price` / `onchain_price` (sesgo oracle): las anclas Chainlink viven
+///   en el PriceBus en proceso, NO en Redis. `arbx:quote:anchor:1` se inspeccionó
+///   y es salud del grafo (`cross_dex`/`liquidity`/`stability`/`venues`), no
+///   precios de oráculo. Requiere productor propio.
+/// * `health_factor`: estado de lending, sin productor.
+///
+/// R8 fail-honest: sin ningún stable con precio, el mapa va VACÍO y
+/// `regime_router` deja la métrica en `null` — nunca un cero fabricado.
+pub async fn regime_features_from_redis(
+    redis: &mut redis::aio::ConnectionManager,
+    chain_id: u64,
+) -> std::collections::HashMap<String, f64> {
+    let mut out = std::collections::HashMap::new();
+    let key = format!("arbx:token_prices:{}", chain_id);
+    let raw: Option<std::collections::HashMap<String, String>> =
+        redis::AsyncCommands::hgetall(&mut *redis, &key).await.ok();
+    let Some(map) = raw else {
+        return out;
+    };
+    if let Some(dev) = worst_stable_deviation(&map) {
+        out.insert("parity_deviation".to_owned(), dev);
+    }
+    out
+}
+
+/// Stables reconocidos. La paridad se mide contra $1; el símbolo debe existir en
+/// el PriceBus para contar (si no hay dato, no hay métrica).
+const PARITY_STABLES: &[&str] = &[
+    "USDC", "USDT", "DAI", "FRAX", "TUSD", "USDP", "GUSD", "LUSD", "USDD", "PYUSD",
+];
+
+/// MAYOR desviación de paridad de un stable respecto a $1, o `None` si ninguno
+/// tiene precio parseable. Pura (sin Redis) y por tanto testeable.
+///
+/// R8: precios no finitos o ≤ 0 se ignoran en vez de contar como desviación;
+/// sin ningún stable válido devuelve `None` y el llamador NO inserta la métrica.
+fn worst_stable_deviation(map: &std::collections::HashMap<String, String>) -> Option<f64> {
+    let mut worst: Option<f64> = None;
+    for sym in PARITY_STABLES {
+        let Some(v) = map.get(*sym) else { continue };
+        let Ok(px) = v.parse::<f64>() else { continue };
+        if !px.is_finite() || px <= 0.0 {
+            continue;
+        }
+        let dev = (px - 1.0).abs();
+        worst = Some(worst.map_or(dev, |w: f64| w.max(dev)));
+    }
+    worst
+}
+
 /// Evalúa el régimen y los operadores recomendados sobre un candidato, y emite
 /// evidencia estructurada (observe-only). Devuelve el número de operadores que
 /// computaron un valor (para el log).
@@ -523,6 +586,46 @@ pub fn evidence_posterior_log_odds(
 mod evidence_tests {
     use super::*;
     use std::collections::HashMap;
+
+    // ── FEATURES-01a: parity_deviation desde el PriceBus ────────────────────
+    #[test]
+    fn parity_deviation_is_the_worst_stable_and_ignores_the_rest() {
+        let mut m = HashMap::new();
+        // Valores REALES medidos en produccion (2026-09-30/10-01).
+        m.insert("USDC".to_owned(), "1.000097188494".to_owned());
+        m.insert("USDT".to_owned(), "0.99949749".to_owned());
+        m.insert("DAI".to_owned(), "0.99985272".to_owned());
+        m.insert("LUSD".to_owned(), "1.0056".to_owned());
+        // Un no-stable con desviacion enorme NO debe contar como paridad.
+        m.insert("PEPE".to_owned(), "0.0000042".to_owned());
+        let d = worst_stable_deviation(&m).expect("hay stables");
+        assert!(
+            (d - 0.0056).abs() < 1e-9,
+            "debe ser la PEOR desviacion de stable (LUSD 0.0056), dio {d}"
+        );
+    }
+
+    #[test]
+    fn parity_deviation_is_none_without_a_usable_stable_never_a_fabricated_zero() {
+        // Sin ningun stable: None (el llamador NO inserta la metrica).
+        let mut m = HashMap::new();
+        m.insert("PEPE".to_owned(), "0.0000042".to_owned());
+        assert!(worst_stable_deviation(&m).is_none());
+        // Map vacio: None.
+        assert!(worst_stable_deviation(&HashMap::new()).is_none());
+        // Stable con basura / no positivo: se ignora, no cuenta como desviacion.
+        let mut bad = HashMap::new();
+        bad.insert("USDC".to_owned(), "no-es-un-numero".to_owned());
+        bad.insert("USDT".to_owned(), "0".to_owned());
+        bad.insert("DAI".to_owned(), "-1.0".to_owned());
+        assert!(worst_stable_deviation(&bad).is_none());
+        // Un solo stable valido entre basura SI cuenta.
+        let mut one = HashMap::new();
+        one.insert("USDC".to_owned(), "0.998".to_owned());
+        one.insert("USDT".to_owned(), "NaN".to_owned());
+        let d = worst_stable_deviation(&one).expect("USDC es valido");
+        assert!((d - 0.002).abs() < 1e-9, "dio {d}");
+    }
 
     // ── MATH-04-FOLLOWUP: vector dorado de normalización ────────────────────
     // La puerta del PR. Sin esto, el cambio de escala es un cambio a ciegas.
