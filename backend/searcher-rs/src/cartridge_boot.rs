@@ -1844,7 +1844,95 @@ pub async fn active_evaluate_and_emit(
     let mut negative_total: u64 = 0;
     let mut positive_total: u64 = 0;
 
+    // ── EVIDENCE-WIRING-01 (paso 2/2, 2026-10-01) ───────────────────────────
+    // Ultimo instante (epoch secs) en que se publico evidencia por cartucho. El
+    // bucle corre por cada intent sobre 269 cartuchos, asi que sin este registro
+    // serian 269 escrituras Redis POR TRANSACCION (diluvio, R9). La decision vive
+    // en `should_publish_evidence`, que es pura y esta cubierta por tests.
+    fn evidence_publish_last() -> &'static std::sync::Mutex<std::collections::HashMap<String, u64>>
+    {
+        static LAST: std::sync::OnceLock<
+            std::sync::Mutex<std::collections::HashMap<String, u64>>,
+        > = std::sync::OnceLock::new();
+        LAST.get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()))
+    }
+
     for (cartridge_id, category, declared_primary_ops, declared_secondary_ops) in pertinent {
+        // ── EVIDENCE-WIRING-01: publicar la evidencia declarada de ESTE cartucho
+        // AQUI, en el bucle de EVALUACION y ANTES del gate de dispatch de abajo.
+        //
+        // Antes el unico call site vivia dentro del bloque que construye el
+        // `Opportunity` de cartucho (ruta de emision de candidato). Con
+        // `positive=0` en cada tx ese bloque NUNCA corre, asi que la evidencia
+        // por-cartucho nunca se publicaba y en Redis solo existia la clave
+        // regime-keyed (`arbx:math_evidence:1:dex_arb`). Es una dependencia
+        // circular: la evidencia por-cartucho requiere un positivo, el positivo
+        // requiere operadores computando, y esa evidencia es justo lo que
+        // serviria para diagnosticarlo.
+        //
+        // Ponerlo ANTES del gate importa: los 174 `dispatch_needs_route_data`
+        // hacen `continue` abajo sin evaluarse, y son precisamente los que mas
+        // necesitan quedar diagnosticables.
+        //
+        // R9: el throttle limita a una publicacion por cartucho cada
+        // EVIDENCE_PUBLISH_SECS (muy por debajo del TTL de 120s de la clave), de
+        // modo que la clave se mantiene viva con ~4.5 escrituras/s para 269
+        // cartuchos (269/60) en vez de 269 por transaccion.
+        {
+            const EVIDENCE_PUBLISH_SECS: u64 = 60;
+            let due = {
+                let mut last = evidence_publish_last()
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner());
+                crate::math_evidence::should_publish_evidence(
+                    &mut last,
+                    &cartridge_id,
+                    chrono::Utc::now().timestamp().max(0) as u64,
+                    EVIDENCE_PUBLISH_SECS,
+                )
+            };
+            if due {
+                let runner_ev = runner.clone();
+                let registry_ev = math_registry.clone();
+                let reserves_ev = reserves_cache.clone();
+                // MATH-04-FOLLOWUP: el par de tokens viaja con el pool — sin el,
+                // `build_market_state` no puede normalizar la price_matrix y los
+                // operadores devuelven `scalar: null`.
+                let pools_ev: Vec<(Address, Address, Address)> = intent
+                    .legs
+                    .iter()
+                    .filter_map(|l| l.pool_hint.map(|p| (p, l.token_in, l.token_out)))
+                    .collect();
+                let strategy_key_ev = cartridge_id.clone();
+                let primary_ev = declared_primary_ops.clone();
+                let secondary_ev = declared_secondary_ops.clone();
+                let chain_ev = chain_id;
+                tokio::spawn(async move {
+                    let mut redis_ev = runner_ev.redis_connection().await;
+                    let block_number = runner_ev
+                        .host_block_number_handle()
+                        .load(std::sync::atomic::Ordering::Relaxed);
+                    // CORE-01/MATH-01: el atomico guarda MILLI-gwei (wei/1e6);
+                    // `host_gas_price_gwei()` ya decodifica ÷1e3.
+                    let base_fee_gwei = runner_ev.host_gas_price_gwei();
+                    crate::math_evidence::publish_declared_combo_evidence(
+                        &reserves_ev,
+                        &registry_ev,
+                        &mut redis_ev,
+                        &pools_ev,
+                        chain_ev,
+                        &strategy_key_ev,
+                        &primary_ev,
+                        &secondary_ev,
+                        base_fee_gwei,
+                        block_number,
+                        0, // block_timestamp — no viaja en el intent (observe-only)
+                    )
+                    .await;
+                });
+            }
+        }
+
         // ── CORE-04 fix (2026-09-24): apply the workbook dispatch doctrine ──
         // (strategy_dispatch_status.rs) on the CANDIDATE path too. Previously
         // only route_discovery_worker consulted it — a NEEDS_ROUTE_DATA or
