@@ -1851,9 +1851,8 @@ pub async fn active_evaluate_and_emit(
     // en `should_publish_evidence`, que es pura y esta cubierta por tests.
     fn evidence_publish_last() -> &'static std::sync::Mutex<std::collections::HashMap<String, u64>>
     {
-        static LAST: std::sync::OnceLock<
-            std::sync::Mutex<std::collections::HashMap<String, u64>>,
-        > = std::sync::OnceLock::new();
+        static LAST: std::sync::OnceLock<std::sync::Mutex<std::collections::HashMap<String, u64>>> =
+            std::sync::OnceLock::new();
         LAST.get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()))
     }
 

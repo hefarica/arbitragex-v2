@@ -572,31 +572,76 @@ mod evidence_tests {
     fn evidence_publish_throttle_fires_once_per_interval_per_cartridge() {
         let mut last = HashMap::new();
         // Primer avistamiento de un cartucho: publica.
-        assert!(should_publish_evidence(&mut last, "mev_01_001_x", 1_000, 60));
+        assert!(should_publish_evidence(
+            &mut last,
+            "mev_01_001_x",
+            1_000,
+            60
+        ));
         // Dentro de la ventana: NO.
-        assert!(!should_publish_evidence(&mut last, "mev_01_001_x", 1_001, 60));
-        assert!(!should_publish_evidence(&mut last, "mev_01_001_x", 1_059, 60));
+        assert!(!should_publish_evidence(
+            &mut last,
+            "mev_01_001_x",
+            1_001,
+            60
+        ));
+        assert!(!should_publish_evidence(
+            &mut last,
+            "mev_01_001_x",
+            1_059,
+            60
+        ));
         // Justo en el borde (t + interval): publica.
-        assert!(should_publish_evidence(&mut last, "mev_01_001_x", 1_060, 60));
+        assert!(should_publish_evidence(
+            &mut last,
+            "mev_01_001_x",
+            1_060,
+            60
+        ));
         // Y el registro avanzo: el siguiente ciclo vuelve a esperar.
-        assert!(!should_publish_evidence(&mut last, "mev_01_001_x", 1_100, 60));
+        assert!(!should_publish_evidence(
+            &mut last,
+            "mev_01_001_x",
+            1_100,
+            60
+        ));
     }
 
     #[test]
     fn evidence_publish_throttle_is_per_cartridge_not_global() {
         let mut last = HashMap::new();
-        assert!(should_publish_evidence(&mut last, "mev_01_001_x", 1_000, 60));
+        assert!(should_publish_evidence(
+            &mut last,
+            "mev_01_001_x",
+            1_000,
+            60
+        ));
         // Otro cartucho NO queda bloqueado por el primero: si no, 269 cartuchos
         // competirian por un unico slot y solo uno publicaria.
-        assert!(should_publish_evidence(&mut last, "mev_01_002_y", 1_000, 60));
-        assert!(should_publish_evidence(&mut last, "mev_01_003_z", 1_000, 60));
+        assert!(should_publish_evidence(
+            &mut last,
+            "mev_01_002_y",
+            1_000,
+            60
+        ));
+        assert!(should_publish_evidence(
+            &mut last,
+            "mev_01_003_z",
+            1_000,
+            60
+        ));
         assert_eq!(last.len(), 3);
     }
 
     #[test]
     fn evidence_publish_throttle_never_floods_on_clock_skew() {
         let mut last = HashMap::new();
-        assert!(should_publish_evidence(&mut last, "mev_01_001_x", 5_000, 60));
+        assert!(should_publish_evidence(
+            &mut last,
+            "mev_01_001_x",
+            5_000,
+            60
+        ));
         // Reloj que RETROCEDE: saturating_sub da 0 < 60 -> no republica.
         assert!(!should_publish_evidence(&mut last, "mev_01_001_x", 10, 60));
         assert!(!should_publish_evidence(&mut last, "mev_01_001_x", 0, 60));
