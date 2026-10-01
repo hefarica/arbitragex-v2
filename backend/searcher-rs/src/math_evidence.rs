@@ -650,6 +650,47 @@ mod evidence_tests {
         assert!(should_publish_evidence(&mut last, "mev_01_001_x", 10, 0));
     }
 
+    // ── FEATURES-01a: parity_deviation desde el PriceBus ────────────────────
+    #[test]
+    fn parity_deviation_is_the_worst_stable_and_ignores_the_rest() {
+        let mut m = HashMap::new();
+        // Valores REALES medidos en produccion (2026-09-30/10-01).
+        m.insert("USDC".to_owned(), "1.000097188494".to_owned());
+        m.insert("USDT".to_owned(), "0.99949749".to_owned());
+        m.insert("DAI".to_owned(), "0.99985272".to_owned());
+        m.insert("LUSD".to_owned(), "1.0056".to_owned());
+        // Un no-stable con desviacion enorme NO debe contar como paridad.
+        m.insert("PEPE".to_owned(), "0.0000042".to_owned());
+        let d = worst_stable_deviation(&m).expect("hay stables");
+        assert!(
+            (d - 0.0056).abs() < 1e-9,
+            "debe ser la PEOR desviacion de stable (LUSD 0.0056), dio {d}"
+        );
+    }
+
+    #[test]
+    fn parity_deviation_is_none_without_a_usable_stable_never_a_fabricated_zero() {
+        // Sin ningun stable: None (el llamador NO inserta la metrica).
+        let mut m = HashMap::new();
+        m.insert("PEPE".to_owned(), "0.0000042".to_owned());
+        assert!(worst_stable_deviation(&m).is_none());
+        // Map vacio: None.
+        assert!(worst_stable_deviation(&HashMap::new()).is_none());
+        // Stable con basura / no positivo: se ignora, no cuenta como desviacion.
+        let mut bad = HashMap::new();
+        bad.insert("USDC".to_owned(), "no-es-un-numero".to_owned());
+        bad.insert("USDT".to_owned(), "0".to_owned());
+        bad.insert("DAI".to_owned(), "-1.0".to_owned());
+        assert!(worst_stable_deviation(&bad).is_none());
+        // Un solo stable valido entre basura SI cuenta.
+        let mut one = HashMap::new();
+        one.insert("USDC".to_owned(), "0.998".to_owned());
+        one.insert("USDT".to_owned(), "NaN".to_owned());
+        let d = worst_stable_deviation(&one).expect("USDC es valido");
+        assert!((d - 0.002).abs() < 1e-9, "dio {d}");
+    }
+
+
     // ── MATH-04-FOLLOWUP: vector dorado de normalización ────────────────────
     // La puerta del PR. Sin esto, el cambio de escala es un cambio a ciegas.
     #[test]
