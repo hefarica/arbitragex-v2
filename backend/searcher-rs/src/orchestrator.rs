@@ -633,6 +633,36 @@ impl Orchestrator {
                 .iter()
                 .filter_map(|leg| leg.pool_hint.map(|p| (p, leg.token_in, leg.token_out)))
                 .collect();
+            // FEATURES-02 (2026-10-01): health_factor desde el indexer CACHEADO
+            // del motor de liquidacion. Se calcula aqui, ANTES del spawn, porque
+            // `self` no se mueve al spawn y el indexer vive en `self.ctx`.
+            //
+            // El motor es dirigido por impacto (nunca sondea el universo de
+            // lending), asi que NO existe un "HF actual" global: solo se puede
+            // reportar el de las posiciones que este intent ya impacto.
+            //
+            // R8 fail-honest:
+            //  * lista vacia -> `None` -> el feature NO se inserta y
+            //    `regime_router` deja la metrica en `None`;
+            //  * cache miss (ninguna posicion indexada) -> `None`, igual;
+            //  * NUNCA un 1.0 por defecto: eso AFIRMA "todo sano", que es una
+            //    asercion, no una ausencia de dato.
+            // Se publica el MINIMO, no la media: la posicion mas cerca de
+            // liquidar es la significativa para el regimen.
+            let mut hf_feature: Option<f64> = None;
+            if !impact.impacted_lending_positions.is_empty() {
+                let idx = self.ctx.liquidation_engine.indexer.lock().await;
+                let mut worst: Option<f64> = None;
+                for p in &impact.impacted_lending_positions {
+                    if let Some(pos) = idx.get_position(p.protocol, p.user).await {
+                        let hf = pos.health_factor;
+                        if hf.is_finite() && hf > 0.0 {
+                            worst = Some(worst.map_or(hf, |w: f64| w.min(hf)));
+                        }
+                    }
+                }
+                hf_feature = worst;
+            }
             if !pool_legs.is_empty() {
                 // CORE-01/MATH-01 fix (2026-09-24): the §IV evidence previously
                 // received gas_price_gwei=0.0 ("not carried in RouteIntent yet"),
@@ -651,17 +681,24 @@ impl Orchestrator {
                     None => (0.0, 0), // R8 fail-honest: no runner → no head data
                 };
                 tokio::spawn(async move {
-                    // FEATURES-01a (2026-10-01): features de régimen desde fuentes
-                    // VIVAS. Antes iba literalmente `HashMap::new()` — el mapa nacía
-                    // vacío, `regime_router` dejaba las 5 métricas en `null`,
-                    // clasificaba siempre `["Neutral"]` (2 operadores) y la evidencia
-                    // salía con `operators_computed: 0`. Hoy alimenta
-                    // `parity_deviation` desde el PriceBus; las otras cuatro siguen
-                    // sin productor y NO se inventan (ver
-                    // `math_evidence::regime_features_from_redis`).
-                    let features =
+                    // FEATURES-01a (de main): features de régimen desde fuentes VIVAS.
+                    // Antes iba literalmente `HashMap::new()` — el mapa nacía vacío,
+                    // `regime_router` dejaba las 5 métricas en `null`, clasificaba
+                    // siempre `["Neutral"]` (2 operadores) y la evidencia salía con
+                    // `operators_computed: 0`. Alimenta `parity_deviation` desde el
+                    // PriceBus; el resto sigue sin productor y NO se inventa.
+                    //
+                    // FEATURES-02 (esta rama): sobre esa base se añade `health_factor`
+                    // desde el indexer CACHEADO del motor de liquidación. Sin
+                    // posiciones de lending impactadas, o sin entrada en el indexer,
+                    // la clave NO se inserta y `regime_router` la deja en `None` —
+                    // nunca en 1.0, que afirmaría "todo sano".
+                    let mut features =
                         crate::math_evidence::regime_features_from_redis(&mut math_redis, chain_id)
                             .await;
+                    if let Some(hf) = hf_feature {
+                        features.insert("health_factor".to_owned(), hf);
+                    }
                     crate::math_evidence::evaluate_math_evidence(
                         &reserves_cache,
                         &registry,
