@@ -633,6 +633,36 @@ impl Orchestrator {
                 .iter()
                 .filter_map(|leg| leg.pool_hint.map(|p| (p, leg.token_in, leg.token_out)))
                 .collect();
+            // FEATURES-02 (2026-10-01): health_factor desde el indexer CACHEADO
+            // del motor de liquidacion. Se calcula aqui, ANTES del spawn, porque
+            // `self` no se mueve al spawn y el indexer vive en `self.ctx`.
+            //
+            // El motor es dirigido por impacto (nunca sondea el universo de
+            // lending), asi que NO existe un "HF actual" global: solo se puede
+            // reportar el de las posiciones que este intent ya impacto.
+            //
+            // R8 fail-honest:
+            //  * lista vacia -> `None` -> el feature NO se inserta y
+            //    `regime_router` deja la metrica en `None`;
+            //  * cache miss (ninguna posicion indexada) -> `None`, igual;
+            //  * NUNCA un 1.0 por defecto: eso AFIRMA "todo sano", que es una
+            //    asercion, no una ausencia de dato.
+            // Se publica el MINIMO, no la media: la posicion mas cerca de
+            // liquidar es la significativa para el regimen.
+            let mut hf_feature: Option<f64> = None;
+            if !impact.impacted_lending_positions.is_empty() {
+                let idx = self.ctx.liquidation_engine.indexer.lock().await;
+                let mut worst: Option<f64> = None;
+                for p in &impact.impacted_lending_positions {
+                    if let Some(pos) = idx.get_position(p.protocol, p.user).await {
+                        let hf = pos.health_factor;
+                        if hf.is_finite() && hf > 0.0 {
+                            worst = Some(worst.map_or(hf, |w: f64| w.min(hf)));
+                        }
+                    }
+                }
+                hf_feature = worst;
+            }
             if !pool_legs.is_empty() {
                 // CORE-01/MATH-01 fix (2026-09-24): the §IV evidence previously
                 // received gas_price_gwei=0.0 ("not carried in RouteIntent yet"),
@@ -651,6 +681,15 @@ impl Orchestrator {
                     None => (0.0, 0), // R8 fail-honest: no runner → no head data
                 };
                 tokio::spawn(async move {
+                    // FEATURES-02: unico feature que se alimenta hoy (el mapa
+                    // llegaba literalmente vacio: `HashMap::new()`). Sin
+                    // posiciones de lending impactadas, o sin entrada en el
+                    // indexer, el mapa va VACIO y `regime_router` deja
+                    // `health_factor` en `None` — nunca en 1.0.
+                    let mut features = std::collections::HashMap::new();
+                    if let Some(hf) = hf_feature {
+                        features.insert("health_factor".to_owned(), hf);
+                    }
                     crate::math_evidence::evaluate_math_evidence(
                         &reserves_cache,
                         &registry,
@@ -661,7 +700,7 @@ impl Orchestrator {
                         gas_price_gwei,
                         block_number,
                         0, // block_timestamp — still not carried on the intent (observe-only)
-                        std::collections::HashMap::new(),
+                        features,
                         &strategy_kind,
                     )
                     .await;
