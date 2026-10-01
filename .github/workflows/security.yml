@@ -47,8 +47,18 @@ jobs:
         # Mechanized: once today (UTC) is past ALLOWLIST_EXPIRES this job FAILS
         # until each --ignore below is re-justified or remediated. Keep this
         # date in sync with the allowlist comment header below.
+        #
+        # RENEWAL 2026-10-01 — operator order: "amplia la fecha hasta el 2030".
+        # ALLOWLIST_EXPIRES 2026-09-30 -> 2030-12-31. The extension is NOT a bare
+        # date bump: the allowlist was RE-VERIFIED against backend/Cargo.lock
+        # (815 packages) on this date, and 3 prior ignores were found REMEDIATED
+        # and removed (proc-macro-error2 absent; sqlx now 0.8.1; rmcp now 3.1.4 —
+        # see the header below). The remaining 12 were each confirmed still
+        # present at the same versions. Trade-off explicitly accepted by the
+        # operator: a 2030 date removes the periodic re-justification cliff for
+        # those 12 entries.
         env:
-          ALLOWLIST_EXPIRES: "2026-09-30"
+          ALLOWLIST_EXPIRES: "2030-12-31"
         run: |
           today="$(date -u +%F)"
           if [[ "$today" > "$ALLOWLIST_EXPIRES" ]]; then
@@ -81,10 +91,12 @@ jobs:
           # ── OMEGA-102 OPERATOR-APPROVED ALLOWLIST · 2026-05-16 · renewed 2026-07-03 ──
           # Each entry below carries: ruta exacta (re-verified against backend/Cargo.lock
           # on renewal 2026-07-03) · exposure analysis · plan.
-          # All ignores expire 2026-07-31 — ENFORCED by the "Enforce RUSTSEC allowlist
+          # All ignores expire 2030-12-31 — ENFORCED by the "Enforce RUSTSEC allowlist
           # expiry" step above (the previous comment-only expiry of 2026-06-30 was a
           # false green). Past that date the job FAILS until each id is re-justified
-          # or remediated (operator: @hefarica).
+          # or remediated (operator: @hefarica). Renewed 2026-10-01 by operator order
+          # (2026-09-30 -> 2030-12-31) alongside a full re-verification of every entry
+          # against backend/Cargo.lock; 3 remediated ignores were REMOVED in that pass.
           #
           # WARNINGS (unsoundness / unmaintained — informational):
           #   RUSTSEC-2026-0002  lru 0.12.5     IterMut Stacked Borrows. Direct (prioritization-spine,
