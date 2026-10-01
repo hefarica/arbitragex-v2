@@ -651,6 +651,17 @@ impl Orchestrator {
                     None => (0.0, 0), // R8 fail-honest: no runner → no head data
                 };
                 tokio::spawn(async move {
+                    // FEATURES-01a (2026-10-01): features de régimen desde fuentes
+                    // VIVAS. Antes iba literalmente `HashMap::new()` — el mapa nacía
+                    // vacío, `regime_router` dejaba las 5 métricas en `null`,
+                    // clasificaba siempre `["Neutral"]` (2 operadores) y la evidencia
+                    // salía con `operators_computed: 0`. Hoy alimenta
+                    // `parity_deviation` desde el PriceBus; las otras cuatro siguen
+                    // sin productor y NO se inventan (ver
+                    // `math_evidence::regime_features_from_redis`).
+                    let features =
+                        crate::math_evidence::regime_features_from_redis(&mut math_redis, chain_id)
+                            .await;
                     crate::math_evidence::evaluate_math_evidence(
                         &reserves_cache,
                         &registry,
@@ -661,7 +672,7 @@ impl Orchestrator {
                         gas_price_gwei,
                         block_number,
                         0, // block_timestamp — still not carried on the intent (observe-only)
-                        std::collections::HashMap::new(),
+                        features,
                         &strategy_kind,
                     )
                     .await;
