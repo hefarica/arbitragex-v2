@@ -686,7 +686,316 @@ impl Orchestrator {
                     // posiciones de lending impactadas, o sin entrada en el
                     // indexer, el mapa va VACIO y `regime_router` deja
                     // `health_factor` en `None` — nunca en 1.0.
-                    let mut features = std::collections::HashMap::new();
+}
+// M11 allow: test modules use .unwrap()/.expect() for readability;
+// production paths use ? / anyhow throughout.
+//! Orchestrator — Live Engine Pipeline (Phases 8-11 wired).
+//!
+//! ## Design (spec §3.5)
+//!
+//! The orchestrator is the single entry point for every `RouteIntent` decoded
+//! from a mempool transaction. It:
+//!
+//!   1. Converts the intent into its `ImpactSet` via `ImpactIndex`.
+//!   2. Fans out to strategy engines (`DexEngine`, `TriangularEngine`,
+//!      `LiquidationEngine`, then `FlashloanEngine` wrapping).
+//!   3. Evaluates each `StrategyCandidate` through `ConfigAwareEvaluator`.
+//!   4. Emits accepted or rejected candidates via `OpportunityEmitter`.
+//!
+//! ## Current scope (updated)
+//!
+//! - `DexEngine`, `TriangularEngine`, and `LiquidationEngine` are invoked in
+//!   the intent pipeline; their candidates are merged into `base_candidates`.
+//! - `FlashloanEngine` runs after base-candidate assembly to wrap net-positive
+//!   routes.
+//! - `state_projector` and `size_optimizer` are wired in context and used by
+//!   downstream optimization/evaluation paths.
+//! - Scanner/orchestrator integration status depends on boot wiring in
+//!   `main.rs`; do not infer production enablement from this file header alone.
+//!
+//! ## Critical rule: no hardcoded strategy strings
+//!
+//! The orchestrator NEVER writes `strategy_kind = "dex_arb_v2v2"` or any
+//! other literal strategy string. Every strategy label comes from
+//! `StrategyLabel` returned by an engine. This is the primary invariant
+//! that the Phase 14 migration enforces system-wide.
+//!
+//! ## R8 invariants
+//!
+//! - Errors from individual engines are caught, logged, and counted. One
+//!   engine failure does NOT crash the orchestrator loop.
+//! - `emit_accepted` / `emit_rejected` errors (Redis publish failure)
+//!   propagate as `Err` so the caller can decide whether to reconnect.
+//! - `gross_profit_usd = None` from an engine propagates unchanged through
+//!   the evaluator and emitter paths.
+
+use crate::cartridge::runner::CartridgeRunner;
+use crate::engines::dex_engine::DexEngine;
+use crate::engines::flashloan_engine::FlashloanEngine;
+use crate::engines::liquidation_engine::LiquidationEngine;
+use crate::engines::triangular_engine::TriangularEngine;
+// Task 3: New engines
+use crate::engines::cross_chain_bridge_engine::CrossChainBridgeEngine;
+use crate::engines::liquidation_snipe_engine::LiquidationSnipeEngine;
+use crate::engines::spanning_tree_engine::SpanningTreeEngine;
+use crate::engines::StrategyCandidate;
+use crate::gates::{MacroMevGate, MacroMevGateConfig};
+use crate::impact_index::ImpactIndex;
+use crate::metrics::{
+    CANDIDATES_TOTAL, DECODED_INTENTS_TOTAL, ENGINE_ERRORS_TOTAL, IMPACTED_ROUTES_TOTAL,
+    OPPORTUNITIES_PUBLISHED_TOTAL, REJECTED_CONFIG_TOTAL, REJECTED_NO_PROFIT_TOTAL,
+    SIMULATION_FAILED_TOTAL,
+};
+use crate::opportunity_emitter::{EmitOutcome, OpportunityEmitter};
+use crate::route_intent::RouteIntent;
+use crate::size_optimizer::{
+    OptimizeOutcome, OptimizeRejectReason, SizeOptimizer, SizedCycleLedger,
+};
+use crate::state_projector::StateProjector;
+use crate::strategy_label::StrategyLabel;
+use ethers::types::{Address, U256};
+use shared_rs::price_oracle::RedisCachedPriceOracle;
+use shared_rs::trading_config::TradingConfigState;
+use std::collections::HashMap;
+use std::sync::Arc;
+use tokio::sync::RwLock;
+use tracing::{debug, error, info, warn};
+
+use prioritization_spine::config_aware::{ConfigAwareEvaluator, ConfigGateOutcome, NetworkSignals};
+
+// ---------------------------------------------------------------------------
+// OrchestratorContext
+// ---------------------------------------------------------------------------
+
+/// All shared dependencies the orchestrator needs. Constructed at boot and
+/// passed into `Orchestrator::new`. Every field is `Arc`-wrapped for
+/// concurrent access across the tokio task tree.
+pub struct OrchestratorContext {
+    /// Live pool/cycle registry — read-lock per intent.
+    pub impact_index: Arc<RwLock<ImpactIndex>>,
+    /// DEX arb V2/V3 engine (Phase 8).
+    pub dex_engine: Arc<DexEngine>,
+    /// Triangular arb engine — evaluates impacted cycles (Phase 9).
+    pub triangular_engine: Arc<TriangularEngine>,
+    /// Flashloan capital wrapper — wraps net-positive base candidates (Phase 10).
+    pub flashloan_engine: Arc<FlashloanEngine>,
+    /// Liquidation engine — emits candidates when impacted lending positions
+    /// drop below health_factor 1.0 (Phase 11).
+    pub liquidation_engine: Arc<LiquidationEngine>,
+    /// StateProjector — virtual post-tx pool state (Phase 12).
+    /// Stored here so Phase 15 can access it directly from the context for
+    /// on-demand per-candidate projection. Currently accessed indirectly via
+    /// `size_optimizer` which owns a clone of the same `Arc`.
+    #[allow(dead_code)]
+    pub state_projector: Arc<StateProjector>,
+    /// SizeOptimizer — optimal amount_in per candidate (Phase 13).
+    pub size_optimizer: Arc<SizeOptimizer>,
+    /// SpanningTreeEngine — Bellman-Ford graph cycle detection (Task 3).
+    pub spanning_tree_engine: Option<Arc<SpanningTreeEngine>>,
+    /// CrossChainBridgeEngine — cross-chain opportunity detection (Task 3).
+    pub cross_chain_engine: Option<Arc<CrossChainBridgeEngine>>,
+    /// LiquidationSnipeEngine — Aave/Compound liquidation sniping (Task 3).
+    pub liquidation_snipe_engine: Option<Arc<LiquidationSnipeEngine>>,
+    /// Single-point emit path (PG + Redis).
+    pub emitter: Arc<OpportunityEmitter>,
+    /// Asynchronously fetches the live `TradingConfigState` for `chain_id`.
+    /// `None` return → no operator config for this chain (observe-only path).
+    pub config_provider: Arc<ConfigProvider>,
+    /// Pool discovery service for on-the-fly resolution of unmapped pairs.
+    pub pool_discovery: Arc<crate::pool_discovery::PoolDiscoveryService>,
+    /// EVM chain ID for this orchestrator instance.
+    pub chain_id: u64,
+    /// `ARBX_NATIVE_ENGINES` gate (default `on`). When `off`, the orchestrator
+    /// skips the Dex/Triangular/Liquidation/Flashloan fan-out so ONLY cartridge
+    /// candidates flow (Plan C.3 — avoids duplicate/ghost opportunities when
+    /// cartridges are the intended source). Backward-compatible: unset/on = the
+    /// native engines run exactly as before. R8: off = empty vecs, never fakes.
+    pub native_engines_enabled: bool,
+    /// FASE OMEGA — cartridge runtime for shadow/active evaluation. `Some` only when
+    /// `ARBX_CARTRIDGE_MODE` is enabled AND the runtime booted. When present, each
+    /// route intent is evaluated against active cartridges OFF the hot path.
+    /// In `Shadow` mode: observe-only (logs/telemetry, never a StrategyCandidate).
+    /// In `Active` mode: full wiring — CartridgeEvalResult → StrategyCandidate →
+    /// process_candidate → OpportunityEmitter (Redis/Postgres/API).
+    pub cartridge_runner: Option<Arc<CartridgeRunner>>,
+    /// Cartridge runtime mode (shadow/active) resolved from ARBX_CARTRIDGE_MODE.
+    /// Controls whether cartridge evaluation produces StrategyCandidates (active)
+    /// or only telemetry (shadow).
+    pub cartridge_mode: crate::cartridge_boot::CartridgeMode,
+    /// AGENT v4 Fase 3a — per-chain ContextRouter (from
+    /// `spawn_cartridge_runtime`). `Some` only when the cartridge runtime
+    /// booted with a router; the ACTIVE evaluation registers the per-intent
+    /// real SnapshotBundle there (id "intent-{uuid}") and removes it on
+    /// completion. The shadow path does not consume it.
+    pub cartridge_context_router: Option<Arc<crate::context_router::ContextRouter>>,
+    /// Fix B — math evidence (observe-only). The 31-operator registry and the
+    /// regime decision tree. Used to evaluate route intents against the math
+    /// operators recommended for the detected market regime; outputs are
+    /// logged as telemetry only (never alter scoring in this phase).
+    pub math_registry: Arc<math_engine::OperatorRegistry>,
+    /// Fix B — regime decision tree for operator selection.
+    pub regime_router: math_engine::RegimeRouter,
+    /// Fix B — Redis handle for persisting math-evidence snapshots (regime +
+    /// operator values per strategy) so the api-server can serve them to the
+    /// dashboard in real time. Cheap multiplexed clone.
+    pub math_redis: redis::aio::ConnectionManager,
+    // WO-16 EXCISED (orquestador, 2026-09-07): un fixer del Loop aterrizó a
+    // medias el companion §5.4 de WO-02 (hot-sim stage del V2 live leg) con
+    // paths `crate::scanner::…` imposibles desde la lib (scanner es módulo
+    // del bin) y un método del emitter jamás definido — el árbol quedó sin
+    // compilar. El companion queda DISEÑADO en WO-02-DESIGN §5.4 para un PR
+    // futuro aprobado por el operador (requiere mover los tipos compartidos
+    // a la lib + `emit_hot_simulated` en el emitter).
+    /// SED Bridge — connects to sed-core math pipeline (paper-shadow only).
+    /// When `Some`, feeds gas observations and enriches candidates with
+    /// stochastic convergence metrics. When `None`, orchestrator runs
+    /// without mathematical overlay (standard V2 mode).
+    #[cfg(feature = "paper-shadow")]
+    pub sed_bridge: Option<Arc<crate::sed_bridge::SedBridge>>,
+}
+
+// ---------------------------------------------------------------------------
+// ConfigProvider
+// ---------------------------------------------------------------------------
+
+/// Provides a `TradingConfigState` snapshot per chain.
+///
+/// Separated from `OrchestratorContext` so tests can inject a stub.
+/// The production implementation wraps `TradingConfigClient`.
+pub struct ConfigProvider {
+    pub trading_config: shared_rs::trading_config::TradingConfigClient,
+}
+
+impl ConfigProvider {
+    /// Fetches the current `TradingConfigState` for `chain_id` from Redis.
+    /// Returns `None` when no config exists for this chain (observe-only mode).
+    pub async fn snapshot(&self, chain_id: u64) -> Option<TradingConfigState> {
+        match self.trading_config.state(chain_id).await {
+            Ok(opt) => opt,
+            Err(e) => {
+                warn!(
+                    event = "orchestrator.trading_config_read_failed",
+                    chain_id,
+                    error = %e,
+                    "continuing without evaluator"
+                );
+                None
+            }
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Orchestrator
+// ---------------------------------------------------------------------------
+
+/// Result of one sizing pass, as the emit tail consumes it: the finalized
+/// candidate, its sheet-07 net economics (`None` = not computable ⇒ ranked
+/// last; ranking never gates or drops) and the kernel's exact per-leg wei
+/// ledger when it produced one (R8: absent ⇒ `None`, never a repeated intent
+/// amount dressed as a ledger).
+type SizedForEmit = (
+    StrategyCandidate,
+    Option<crate::net_bps_ranking::RouteNetEconomics>,
+    Option<(Vec<String>, Vec<String>)>,
+);
+
+/// Main orchestrator. Constructed once per chain and shared across tasks via `Arc`.
+pub struct Orchestrator {
+    ctx: OrchestratorContext,
+    risk_ranker: crate::live_risk_ranker::LiveRiskRanker,
+}
+
+impl Orchestrator {
+    /// Constructs a new `Orchestrator` from a fully-initialised context.
+    pub fn new(ctx: OrchestratorContext) -> Self {
+        // Plan C.3: log once at startup which native-engine mode is active so the
+        // operator can confirm cartridges-only vs. full fan-out. Logged here
+        // (constructed once per chain) rather than per intent.
+        info!(
+            event = "orchestrator.native_engines",
+            chain_id = ctx.chain_id,
+            mode = if ctx.native_engines_enabled {
+                "native_on"
+            } else {
+                "native_off_cartridges_only"
+            },
+            enabled = ctx.native_engines_enabled,
+            "native strategy engines {} (ARBX_NATIVE_ENGINES={})",
+            if ctx.native_engines_enabled {
+                "ENABLED — dex/triangular/liquidation/flashloan fan-out active"
+            } else {
+                "DISABLED — ONLY cartridge candidates will flow"
+            },
+            if ctx.native_engines_enabled {
+                "on"
+            } else {
+                "off"
+            }
+        );
+        Self {
+            ctx,
+            risk_ranker: Default::default(),
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // Main entry point
+    // -----------------------------------------------------------------------
+
+    /// Process one `RouteIntent` decoded from a mempool transaction.
+    ///
+    /// Flow:
+    ///   1. Increment `decoded_intents_total` metric.
+    ///   2. Resolve `ImpactSet` from `ImpactIndex`.
+    ///   3. Increment `impacted_routes_total` metric.
+    ///   4. Fan out to `DexEngine`, `TriangularEngine`, and `LiquidationEngine`, then wrap with `FlashloanEngine`.
+    ///   5. For each `StrategyCandidate`:
+    ///      a. Snapshot config (once per intent, not per candidate).
+    ///      b. Call `evaluate_with_route_plan`.
+    ///      c. Emit via `OpportunityEmitter`.
+    ///   6. Engine errors are caught, logged, and counted — never crash the loop.
+    ///
+    /// Returns `Err` only when a Redis publish fails (the emitter propagates
+    /// it so the caller can reconnect). Evaluation / gate / PG errors are
+    /// swallowed per-candidate with a logged counter increment.
+    /// Feed a RouteIntent to the ACTIVE cartridge runtime ONLY (no native engines).
+    /// Used by route_discovery to route closed-cycle candidates directly to the
+    /// canonical cartridge path — each cartridge evaluates the cycle and emits its
+    /// OWN `strategy_kind` (its .rhai stem). Deliberately bypasses the native
+    /// engines so cartridges are the sole canonical detector for discovered cycles
+    /// (no duplicate rows, no native spread path). No-op when cartridge_mode !=
+    /// Active or no runner loaded. Paper mode, capital=0.
+    pub fn spawn_cartridge_eval(&self, intent: RouteIntent) {
+        let chain_id = self.ctx.chain_id;
+        let runner = match self.ctx.cartridge_runner.clone() {
+            Some(r) => r,
+            None => return,
+        };
+        if self.ctx.cartridge_mode != crate::cartridge_boot::CartridgeMode::Active {
+            return;
+        }
+        let emitter = self.ctx.emitter.clone();
+        let cfg_provider = self.ctx.config_provider.clone();
+        let size_optimizer = self.ctx.size_optimizer.clone();
+        let ctx_chain_id = self.ctx.chain_id;
+        let math_registry = self.ctx.math_registry.clone();
+        let reserves_cache = self.ctx.dex_engine.reserves_cache.clone();
+        let v4_router = self.ctx.cartridge_context_router.clone();
+        tokio::spawn(async move {
+            crate::cartridge_boot::active_evaluate_and_emit(
+                runner,
+                intent,
+                chain_id,
+                emitter,
+                cfg_provider,
+                size_optimizer,
+                ctx_chain_id,
+                math_registry,
+                reserves_cache,
+                v4_router,
+            )
+            .await;
                     if let Some(hf) = hf_feature {
                         features.insert("health_factor".to_owned(), hf);
                     }
