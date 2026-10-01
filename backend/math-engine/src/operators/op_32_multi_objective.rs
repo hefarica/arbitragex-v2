@@ -750,6 +750,13 @@ mod tests {
     use super::*;
     use std::collections::HashMap;
 
+    /// Clave canonica del par simulado por estos fixtures (tokens hex en
+    /// minusculas, orden lexicografico, unidos por '|' — formato de FEATURES-01b).
+    /// Las filas de un fixture son el MISMO par en varias venues (mismo precio
+    /// 1.01, distinta profundidad), de ahi que la clave se repita.
+    const PAR_FIXTURE: &str =
+        "0xaaaa0000000000000000000000000000000000aa|0xbbbb0000000000000000000000000000000000bb";
+
     /// 3 venues con profundidades/edges distintos ⇒ trade-off real de 3 vias.
     fn three_pool_state() -> MarketState {
         let mut features = HashMap::new();
@@ -759,6 +766,8 @@ mod tests {
         features.insert("fee_bps".to_string(), 30.0);
         MarketState {
             price_matrix: vec![vec![1.01], vec![1.01], vec![1.01]],
+            // 3 filas, mismo par (una venue por fila).
+            pair_keys: vec![PAR_FIXTURE.to_string(); 3],
             liquidity_reserves: vec![
                 (1_000_000.0, 1_010_000.0), // edge 1%
                 (2_000_000.0, 2_008_000.0), // profundo, edge 0.4%
@@ -782,6 +791,8 @@ mod tests {
         features.insert("fee_bps".to_string(), 30.0);
         MarketState {
             price_matrix: vec![vec![1.01], vec![1.01], vec![1.01]],
+            // 3 filas, mismo par (fixture de 1 pool con edge).
+            pair_keys: vec![PAR_FIXTURE.to_string(); 3],
             liquidity_reserves: vec![(1_000_000.0, 1_010_000.0)],
             gas_price_gwei: 20.0,
             block_timestamp: 1_700_000_000,

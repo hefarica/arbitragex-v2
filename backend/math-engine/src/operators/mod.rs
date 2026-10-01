@@ -61,6 +61,31 @@ pub const OPERATOR_COUNT: u8 = 32;
 pub struct MarketState {
     /// Matriz de precios (n_venues × n_assets)
     pub price_matrix: Vec<Vec<f64>>,
+    /// Clave canonica del par (pool) descrito por CADA fila de `price_matrix`.
+    ///
+    /// Formato: los dos tokens del pool en minusculas, ordenados
+    /// lexicograficamente y unidos por `'|'`, p.ej. `"0xaaa...|0xbbb..."`. El
+    /// orden lexicografico hace que `(A,B)` y `(B,A)` den la MISMA clave, y las
+    /// minusculas evitan que el checksum EIP-55 parta en dos un mismo par.
+    ///
+    /// Por que existe (FEATURES-01b): `price_matrix` lleva una fila por pool y
+    /// los pools de una ruta son pares DISTINTOS (hop1 = A/B, hop2 = B/C, ...).
+    /// Sin identidad de par, `RegimeRouter::analyze` no puede distinguir "el
+    /// mismo par en 2 venues" (arbitraje cross-venue legitimo, donde max/min - 1
+    /// SI es correcto) de "2 hops de pares distintos" (donde max/min - 1 es un
+    /// numero plausible-pero-falso). Con la clave el gap se calcula SOLO entre
+    /// venues del mismo par; si no hay 2 venues de un mismo par, el gap queda
+    /// en `None` (R8 fail-honest: nunca un valor fabricado).
+    ///
+    /// Invariante: `pair_keys.len() == price_matrix.len()`, MISMO orden
+    /// (`pair_keys[i]` describe la fila `i`). Una fila sin identidad conocida
+    /// lleva cadena vacia `""` y queda fuera de cualquier agrupamiento por par.
+    ///
+    /// `serde(default)`: los clientes del API (`ComputeRequest`, api.rs) que
+    /// mandan el JSON previo a este campo siguen deserializando; el default
+    /// vacio significa "sin identidad" (fail-honest), nunca "mismo par".
+    #[serde(default)]
+    pub pair_keys: Vec<String>,
     /// Reservas de liquidez por venue (n_venues × 2 para par token0/token1)
     pub liquidity_reserves: Vec<(f64, f64)>,
     /// Gas price estimado en gwei
