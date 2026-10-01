@@ -171,9 +171,16 @@ mod tests {
     use super::*;
     use crate::operators::{OperatorRegistry, OPERATOR_COUNT};
 
+    /// Clave canonica del par simulado (tokens hex en minusculas, orden
+    /// lexicografico, unidos por '|' — formato de FEATURES-01b).
+    const PAR_FIXTURE: &str =
+        "0xaaaa0000000000000000000000000000000000aa|0xbbbb0000000000000000000000000000000000bb";
+
     fn state() -> MarketState {
         MarketState {
             price_matrix: vec![vec![1.0, 2.0], vec![2.0, 3.0]],
+            // 2 filas = 2 venues del MISMO par de la columna 0.
+            pair_keys: vec![PAR_FIXTURE.to_string(); 2],
             liquidity_reserves: Vec::new(),
             gas_price_gwei: 1.0,
             block_timestamp: 1,
