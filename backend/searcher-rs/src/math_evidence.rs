@@ -635,10 +635,136 @@ pub fn evidence_posterior_log_odds(
     (log_odds, ctx)
 }
 
+/// EVIDENCE-WIRING-01 (2026-10-01) — ¿toca republicar la evidencia declarada de
+/// este cartucho AHORA?
+///
+/// Por qué existe esta función (causa raíz medida):
+/// `publish_declared_combo_evidence` se llama en `cartridge_boot.rs:2127`, pero
+/// ese call site vive DENTRO del bloque que construye el `Opportunity` de
+/// cartucho (`cartridge_boot.rs:2054`). Es la RUTA DE EMISION DE CANDIDATO: con
+/// `positive=0` en cada tx, el bloque NUNCA corre, así que la evidencia
+/// por-cartucho nunca se publica y en Redis solo existe la clave regime-keyed
+/// (`arbx:math_evidence:1:dex_arb`). Es una dependencia circular: la evidencia
+/// por-cartucho requiere un positivo, el positivo requiere operadores
+/// computando, y esa evidencia es justo lo que serviría para diagnosticarlo.
+///
+/// El fix mueve la publicación al BUCLE DE EVALUACION — y ahí aparece el
+/// segundo problema: ese bucle corre por cada intent con 269 cartuchos, así que
+/// publicar sin freno serían 269 escrituras Redis por transacción (un diluvio,
+/// R9/LOGFLOOD-01). La evidencia tiene TTL 120s, de modo que basta republicar
+/// cada `interval_secs` por cartucho: 269/60s ≈ 4.5 escrituras/s, y la clave
+/// nunca expira mientras el searcher esté vivo.
+///
+/// Esta función es PURA y testeable a propósito: la decisión de throttle —la
+/// parte con semántica delicada— queda FUERA del hot-path y verificada por
+/// tests, de modo que el cableado en el bucle solo tenga que llamarla.
+///
+/// Devuelve `true` y ACTUALIZA el registro cuando toca publicar; `false` cuando
+/// todavía no. Un reloj que retrocede (`now < t`) NO republica: `saturating_sub`
+/// da 0, que es menor que cualquier intervalo positivo — así un salto de reloj
+/// nunca provoca un flood.
+pub fn should_publish_evidence(
+    last: &mut std::collections::HashMap<String, u64>,
+    cartridge_id: &str,
+    now_secs: u64,
+    interval_secs: u64,
+) -> bool {
+    match last.get(cartridge_id) {
+        Some(&t) if now_secs.saturating_sub(t) < interval_secs => false,
+        _ => {
+            last.insert(cartridge_id.to_owned(), now_secs);
+            true
+        }
+    }
+}
+
 #[cfg(test)]
 mod evidence_tests {
     use super::*;
     use std::collections::HashMap;
+
+    // ── EVIDENCE-WIRING-01: throttle del publicador por cartucho ────────────
+    #[test]
+    fn evidence_publish_throttle_fires_once_per_interval_per_cartridge() {
+        let mut last = HashMap::new();
+        // Primer avistamiento de un cartucho: publica.
+        assert!(should_publish_evidence(
+            &mut last,
+            "mev_01_001_x",
+            1_000,
+            60
+        ));
+        // Dentro de la ventana: NO.
+        assert!(!should_publish_evidence(
+            &mut last,
+            "mev_01_001_x",
+            1_001,
+            60
+        ));
+        assert!(!should_publish_evidence(
+            &mut last,
+            "mev_01_001_x",
+            1_059,
+            60
+        ));
+        // Justo en el borde (t + interval): publica.
+        assert!(should_publish_evidence(
+            &mut last,
+            "mev_01_001_x",
+            1_060,
+            60
+        ));
+        // Y el registro avanzo: el siguiente ciclo vuelve a esperar.
+        assert!(!should_publish_evidence(
+            &mut last,
+            "mev_01_001_x",
+            1_100,
+            60
+        ));
+    }
+
+    #[test]
+    fn evidence_publish_throttle_is_per_cartridge_not_global() {
+        let mut last = HashMap::new();
+        assert!(should_publish_evidence(
+            &mut last,
+            "mev_01_001_x",
+            1_000,
+            60
+        ));
+        // Otro cartucho NO queda bloqueado por el primero: si no, 269 cartuchos
+        // competirian por un unico slot y solo uno publicaria.
+        assert!(should_publish_evidence(
+            &mut last,
+            "mev_01_002_y",
+            1_000,
+            60
+        ));
+        assert!(should_publish_evidence(
+            &mut last,
+            "mev_01_003_z",
+            1_000,
+            60
+        ));
+        assert_eq!(last.len(), 3);
+    }
+
+    #[test]
+    fn evidence_publish_throttle_never_floods_on_clock_skew() {
+        let mut last = HashMap::new();
+        assert!(should_publish_evidence(
+            &mut last,
+            "mev_01_001_x",
+            5_000,
+            60
+        ));
+        // Reloj que RETROCEDE: saturating_sub da 0 < 60 -> no republica.
+        assert!(!should_publish_evidence(&mut last, "mev_01_001_x", 10, 60));
+        assert!(!should_publish_evidence(&mut last, "mev_01_001_x", 0, 60));
+        // Un intervalo de 0 degrada a "siempre publica" (no es el default; se
+        // documenta el borde en vez de dejarlo implicito).
+        assert!(should_publish_evidence(&mut last, "mev_01_001_x", 10, 0));
+    }
 
     // ── FEATURES-01a: parity_deviation desde el PriceBus ────────────────────
     #[test]
