@@ -89,24 +89,47 @@ impl RegimeRouter {
     pub fn analyze(state: &MarketState) -> RegimeMetrics {
         let mut m = RegimeMetrics::default();
 
-        // Volatilidad: std dev de retornos logarítmicos de la serie (col 0 por fila).
-        let prices: Vec<f64> = state
-            .price_matrix
-            .iter()
-            .filter_map(|row| row.first().copied())
-            .filter(|p| p.is_finite() && *p > 0.0)
-            .collect();
-        if prices.len() >= 3 {
-            let rets: Vec<f64> = prices
-                .windows(2)
-                .filter(|w| w[0] > 0.0)
-                .map(|w| (w[1] / w[0]).ln())
+        // FEATURES-01c (2026-10-01): si el caller aporta `volatility` medida sobre
+        // un EJE TEMPORAL REAL, prevalece sobre el proxy de abajo.
+        //
+        // Por que: el bloque siguiente trata las FILAS del `price_matrix` como una
+        // "serie", pero cada fila es un POOL de la ruta — y los hops de una ruta
+        // son pares DISTINTOS (A/B, B/C, ...). Los log-ratios entre esos precios
+        // no son retornos temporales: son dispersion entre pares etiquetada como
+        // volatilidad. El router no puede corregirlo por si mismo porque
+        // `MarketState` no lleva eje de tiempo; la unica salida honesta es aceptar
+        // el dato de quien SI lo tiene.
+        //
+        // R8 fail-honest: solo se acepta si es finito y >= 0 — una volatilidad
+        // negativa es un dato invalido, no un cero. Y sin feature se conserva el
+        // proxy EXACTAMENTE como estaba (cero cambio de comportamiento).
+        if let Some(&v) = state.features.get("volatility") {
+            if v.is_finite() && v >= 0.0 {
+                m.volatility = Some(v);
+            }
+        }
+
+        // Proxy cross-venue: SOLO cuando ninguna fuente con eje temporal aporto el
+        // dato (ver FEATURES-01c arriba).
+        if m.volatility.is_none() {
+            let prices: Vec<f64> = state
+                .price_matrix
+                .iter()
+                .filter_map(|row| row.first().copied())
+                .filter(|p| p.is_finite() && *p > 0.0)
                 .collect();
-            if rets.len() >= 2 {
-                let n = rets.len() as f64;
-                let mu = rets.iter().sum::<f64>() / n;
-                let var = rets.iter().map(|r| (r - mu).powi(2)).sum::<f64>() / n;
-                m.volatility = Some(var.sqrt());
+            if prices.len() >= 3 {
+                let rets: Vec<f64> = prices
+                    .windows(2)
+                    .filter(|w| w[0] > 0.0)
+                    .map(|w| (w[1] / w[0]).ln())
+                    .collect();
+                if rets.len() >= 2 {
+                    let n = rets.len() as f64;
+                    let mu = rets.iter().sum::<f64>() / n;
+                    let var = rets.iter().map(|r| (r - mu).powi(2)).sum::<f64>() / n;
+                    m.volatility = Some(var.sqrt());
+                }
             }
         }
 
