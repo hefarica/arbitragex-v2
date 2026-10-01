@@ -118,6 +118,9 @@ mod tests {
     fn st(feats: &[(&str, f64)]) -> MarketState {
         MarketState {
             price_matrix: Vec::new(),
+            // Sin precios no hay par que identificar (invariante FEATURES-01b:
+            // pair_keys.len() == price_matrix.len() == 0).
+            pair_keys: Vec::new(),
             liquidity_reserves: Vec::new(),
             gas_price_gwei: 20.0,
             block_timestamp: 0,

@@ -15,9 +15,19 @@ mod tests {
     };
     use std::collections::HashMap;
 
+    /// Clave canonica del par simulado por los fixtures de este modulo (tokens
+    /// hex en minusculas, orden lexicografico, unidos por '|' — formato de
+    /// FEATURES-01b). Todas las filas de un fixture son el MISMO par observado en
+    /// varias venues/snapshots, de ahi que la clave se repita: asi el gap de
+    /// arbitraje del `RegimeRouter` sigue siendo computable donde ya lo era.
+    const PAR_FIXTURE: &str =
+        "0xaaaa0000000000000000000000000000000000aa|0xbbbb0000000000000000000000000000000000bb";
+
     fn state_from_prices(prices: &[f64]) -> MarketState {
         MarketState {
             price_matrix: prices.iter().map(|p| vec![*p]).collect(),
+            // Una clave por fila: invariante pair_keys.len() == price_matrix.len().
+            pair_keys: vec![PAR_FIXTURE.to_string(); prices.len()],
             liquidity_reserves: Vec::new(),
             gas_price_gwei: 20.0,
             block_timestamp: 1_700_000_000,
@@ -138,6 +148,8 @@ mod tests {
                 vec![103.0, 206.0, 48.0],
                 vec![104.0, 208.0, 52.0],
             ],
+            // 5 filas = 5 snapshots del MISMO par de la columna 0.
+            pair_keys: vec![PAR_FIXTURE.to_string(); 5],
             liquidity_reserves: Vec::new(),
             gas_price_gwei: 20.0,
             block_timestamp: 1_700_000_000,
@@ -242,6 +254,8 @@ mod tests {
         // price_matrix col0 ≈ 1.01 ⇒ p_ref ≈ 1.01 (gas cost scale).
         MarketState {
             price_matrix: vec![vec![1.01], vec![1.01], vec![1.01]],
+            // 3 filas, mismo par (fixture de 1 pool con edge).
+            pair_keys: vec![PAR_FIXTURE.to_string(); 3],
             liquidity_reserves: vec![(1_000_000.0, 1_010_000.0)],
             gas_price_gwei: 20.0,
             block_timestamp: 1_700_000_000,
@@ -374,6 +388,7 @@ mod tests {
         // r1/r0 = 1.0 ⇒ γ·p_pool = 0.997 < 1 ⇒ sin edge ⇒ None.
         let no_edge = MarketState {
             price_matrix: vec![vec![1.0]],
+            pair_keys: vec![PAR_FIXTURE.to_string()],
             liquidity_reserves: vec![(1_000_000.0, 1_000_000.0)],
             gas_price_gwei: 20.0,
             block_timestamp: 1_700_000_000,
@@ -432,6 +447,8 @@ mod tests {
                 vec![105.0, 210.0, 50.0],
                 vec![106.0, 212.0, 51.0],
             ],
+            // 7 filas, mismo par de la columna 0.
+            pair_keys: vec![PAR_FIXTURE.to_string(); 7],
             // Pool primario con edge (r1/r0=1.05) + referencia 1:1 → op_26 edge.
             liquidity_reserves: vec![(1_000_000.0, 1_050_000.0), (500_000.0, 500_000.0)],
             gas_price_gwei: 20.0,
@@ -474,6 +491,7 @@ mod tests {
         features.insert("nsga2.2.latency_ms".to_string(), 150.0);
         let state = MarketState {
             price_matrix: vec![vec![1.01], vec![1.01], vec![1.01]],
+            pair_keys: vec![PAR_FIXTURE.to_string(); 3],
             liquidity_reserves: vec![
                 (1_000_000.0, 1_010_000.0),
                 (2_000_000.0, 2_008_000.0),
@@ -502,6 +520,7 @@ mod tests {
         // Fail-honest por registry: sin objetivos nsga2.* → computed=0, sin escalar.
         let empty = MarketState {
             price_matrix: state.price_matrix.clone(),
+            pair_keys: state.pair_keys.clone(),
             liquidity_reserves: state.liquidity_reserves.clone(),
             gas_price_gwei: state.gas_price_gwei,
             block_timestamp: state.block_timestamp,
@@ -533,6 +552,7 @@ mod tests {
                 vec![105.0, 210.0, 50.0],
                 vec![106.0, 212.0, 51.0],
             ],
+            pair_keys: vec![PAR_FIXTURE.to_string(); 7],
             liquidity_reserves: vec![(1_000_000.0, 1_050_000.0), (500_000.0, 500_000.0)],
             gas_price_gwei: 20.0,
             block_timestamp: 1_700_000_000,

@@ -681,12 +681,21 @@ impl Orchestrator {
                     None => (0.0, 0), // R8 fail-honest: no runner → no head data
                 };
                 tokio::spawn(async move {
-                    // FEATURES-02: unico feature que se alimenta hoy (el mapa
-                    // llegaba literalmente vacio: `HashMap::new()`). Sin
-                    // posiciones de lending impactadas, o sin entrada en el
-                    // indexer, el mapa va VACIO y `regime_router` deja
-                    // `health_factor` en `None` — nunca en 1.0.
-                    let mut features = std::collections::HashMap::new();
+                    // FEATURES-01a (de main): features de régimen desde fuentes VIVAS.
+                    // Antes iba literalmente `HashMap::new()` — el mapa nacía vacío,
+                    // `regime_router` dejaba las 5 métricas en `null`, clasificaba
+                    // siempre `["Neutral"]` (2 operadores) y la evidencia salía con
+                    // `operators_computed: 0`. Alimenta `parity_deviation` desde el
+                    // PriceBus; el resto sigue sin productor y NO se inventa.
+                    //
+                    // FEATURES-02 (esta rama): sobre esa base se añade `health_factor`
+                    // desde el indexer CACHEADO del motor de liquidación. Sin
+                    // posiciones de lending impactadas, o sin entrada en el indexer,
+                    // la clave NO se inserta y `regime_router` la deja en `None` —
+                    // nunca en 1.0, que afirmaría "todo sano".
+                    let mut features =
+                        crate::math_evidence::regime_features_from_redis(&mut math_redis, chain_id)
+                            .await;
                     if let Some(hf) = hf_feature {
                         features.insert("health_factor".to_owned(), hf);
                     }

@@ -70,6 +70,26 @@ fn normalized_price(
     }
 }
 
+/// Clave canonica de un par de tokens: los dos en minusculas, ordenados
+/// lexicograficamente y unidos por `'|'`, p.ej. `"0xaaa...|0xbbb..."`.
+///
+/// FEATURES-01b: `MarketState.pair_keys` lleva una clave por fila de
+/// `price_matrix`, y `RegimeRouter` agrupa por esa clave para calcular el gap de
+/// arbitraje SOLO entre venues del MISMO par. El orden lexicografico hace que
+/// `(A,B)` y `(B,A)` den la misma clave (el precio normalizado de un pool ya se
+/// calcula en la direccion `token_in -> token_out` de la pierna, asi que invertir
+/// la pierna no invierte este precio) y no hay dependencia del checksum EIP-55.
+///
+/// Los llamadores ya pasan direcciones en minusculas (`format!("0x{:040x}", ...)`),
+/// por eso no se normaliza de nuevo aqui.
+fn canonical_pair_key(a_lower: &str, b_lower: &str) -> String {
+    if a_lower <= b_lower {
+        format!("{a_lower}|{b_lower}")
+    } else {
+        format!("{b_lower}|{a_lower}")
+    }
+}
+
 /// Decimales por token, cacheados por intent (mismo contrato que
 /// `cartridge_boot::v4_token_decimals`). R8: meta ausente/ilegible → `None`,
 /// y la pierna que lo necesite se OMITE — nunca se asume 18.
@@ -96,6 +116,13 @@ async fn leg_token_decimals(
 /// `pool_legs`: `(pool, token_in, token_out)` por pierna, en el orden de la ruta.
 /// Para cada pool con reservas deriva el precio en UNIDADES HUMANAS del par:
 /// `(r1 / 10^dec_out) / (r0 / 10^dec_in)`.
+///
+/// FEATURES-01b (2026-09-30): cada fila precio de `price_matrix` viaja con su
+/// `pair_keys[i]` = `canonical_pair_key(token_in, token_out)` de esa pierna, en el
+/// MISMO orden e igual longitud. Sin esa identidad el `RegimeRouter` comparaba el
+/// precio de un pool A/B contra el de un pool B/C (hops de una misma ruta, pares
+/// distintos) y publicaba un gap de arbitraje falso; con ella el gap se calcula
+/// solo entre venues del mismo par, o queda en `None` (R8).
 ///
 /// MATH-04-FOLLOWUP (2026-09-30): cierra el "follow-up thread" que MATH-04 dejó
 /// abierto (2026-09-24). Antes la `price_matrix` llevaba el ratio CRUDO `r1/r0`:
@@ -126,6 +153,11 @@ pub async fn build_market_state(
     features: std::collections::HashMap<String, f64>,
 ) -> Option<MarketState> {
     let mut price_matrix: Vec<Vec<f64>> = Vec::new();
+    // FEATURES-01b: identidad de par, una clave por fila de `price_matrix` y en
+    // el MISMO orden. Se empuja SIEMPRE junto al precio (mismo bloque `if let`),
+    // de modo que la invariante `pair_keys.len() == price_matrix.len()` no depende
+    // de los `continue` previos (reservas o decimales ausentes).
+    let mut pair_keys: Vec<String> = Vec::new();
     let mut liquidity_reserves: Vec<(f64, f64)> = Vec::new();
     let mut decimal_cache: std::collections::HashMap<String, Option<u8>> =
         std::collections::HashMap::new();
@@ -153,9 +185,19 @@ pub async fn build_market_state(
         };
         if let Some(price) = normalized_price(r0, r1, dec_in, dec_out) {
             price_matrix.push(vec![price]);
+            pair_keys.push(canonical_pair_key(&in_lc, &out_lc));
             liquidity_reserves.push((r0.as_u128() as f64, r1.as_u128() as f64));
         }
     }
+
+    // La invariante se verifica aqui mismo: cualquier rama futura que empuje un
+    // precio sin su clave (o al reves) revienta en debug/tests en vez de producir
+    // un desalineamiento silencioso que el router leeria como otro par.
+    debug_assert_eq!(
+        pair_keys.len(),
+        price_matrix.len(),
+        "invariante FEATURES-01b: una pair_key por fila de price_matrix"
+    );
 
     if price_matrix.is_empty() {
         return None; // insufficient_state — no priced pool with known decimals
@@ -163,12 +205,76 @@ pub async fn build_market_state(
 
     Some(MarketState {
         price_matrix,
+        pair_keys,
         liquidity_reserves,
         gas_price_gwei,
         block_timestamp,
         block_number,
         features,
     })
+}
+
+/// FEATURES-01a (2026-10-01): features de régimen desde fuentes VIVAS.
+///
+/// El call site pasaba `std::collections::HashMap::new()` — el mapa nacía vacío y
+/// moría vacío. Por eso `regime_router` deja las 5 métricas en `null`, clasifica
+/// siempre `["Neutral"]` (que recomienda solo 2 operadores) y la evidencia sale
+/// con `operators_computed: 0` y `scalar: null`.
+///
+/// Esta entrega alimenta `parity_deviation` desde el PriceBus
+/// (`arbx:token_prices:<chain>`): la MAYOR desviación de paridad de un stablecoin
+/// respecto a $1. Es la única de las cinco con fuente Redis viva y verificada
+/// (medido: USDC 1.0000972 · USDT 0.99949749 · DAI 0.99985272 · LUSD 1.0056).
+///
+/// Lo que NO se alimenta aquí, y por qué (R8: no se inventa):
+/// * `oracle_price` / `onchain_price` (sesgo oracle): las anclas Chainlink viven
+///   en el PriceBus en proceso, NO en Redis. `arbx:quote:anchor:1` se inspeccionó
+///   y es salud del grafo (`cross_dex`/`liquidity`/`stability`/`venues`), no
+///   precios de oráculo. Requiere productor propio.
+/// * `health_factor`: estado de lending, sin productor.
+///
+/// R8 fail-honest: sin ningún stable con precio, el mapa va VACÍO y
+/// `regime_router` deja la métrica en `null` — nunca un cero fabricado.
+pub async fn regime_features_from_redis(
+    redis: &mut redis::aio::ConnectionManager,
+    chain_id: u64,
+) -> std::collections::HashMap<String, f64> {
+    let mut out = std::collections::HashMap::new();
+    let key = format!("arbx:token_prices:{}", chain_id);
+    let raw: Option<std::collections::HashMap<String, String>> =
+        redis::AsyncCommands::hgetall(&mut *redis, &key).await.ok();
+    let Some(map) = raw else {
+        return out;
+    };
+    if let Some(dev) = worst_stable_deviation(&map) {
+        out.insert("parity_deviation".to_owned(), dev);
+    }
+    out
+}
+
+/// Stables reconocidos. La paridad se mide contra $1; el símbolo debe existir en
+/// el PriceBus para contar (si no hay dato, no hay métrica).
+const PARITY_STABLES: &[&str] = &[
+    "USDC", "USDT", "DAI", "FRAX", "TUSD", "USDP", "GUSD", "LUSD", "USDD", "PYUSD",
+];
+
+/// MAYOR desviación de paridad de un stable respecto a $1, o `None` si ninguno
+/// tiene precio parseable. Pura (sin Redis) y por tanto testeable.
+///
+/// R8: precios no finitos o ≤ 0 se ignoran en vez de contar como desviación;
+/// sin ningún stable válido devuelve `None` y el llamador NO inserta la métrica.
+fn worst_stable_deviation(map: &std::collections::HashMap<String, String>) -> Option<f64> {
+    let mut worst: Option<f64> = None;
+    for sym in PARITY_STABLES {
+        let Some(v) = map.get(*sym) else { continue };
+        let Ok(px) = v.parse::<f64>() else { continue };
+        if !px.is_finite() || px <= 0.0 {
+            continue;
+        }
+        let dev = (px - 1.0).abs();
+        worst = Some(worst.map_or(dev, |w: f64| w.max(dev)));
+    }
+    worst
 }
 
 /// Evalúa el régimen y los operadores recomendados sobre un candidato, y emite
@@ -398,7 +504,17 @@ pub async fn evaluate_math_evidence(
                 "op": id,
                 "name": out.operator_name,
                 "scalar": out.scalar_value,
-                "computed": out.metadata.get("computed").copied().unwrap_or(0.0),
+                // COMPUTED-HONESTY-01 (2026-10-01): `computed` NO lleva un 0 por
+                // defecto. Antes era `unwrap_or(0.0)`: si el operador no publicaba
+                // la clave, el JSON decia `"computed": 0.0`, que se lee como
+                // "computo exactamente cero" cuando en realidad NO computo. La
+                // evidencia viva mostraba justo eso: dos operadores con
+                // `"computed": 0.0` y `"scalar": null`. Ahora la ausencia viaja
+                // como `null` (no computado) — la distincion R8/R10 entre
+                // "ausente" y "cero" se conserva en el wire. Misma doctrina que el
+                // Δ de las cards: `None = no computado`, `Some(0.0) = computado y
+                // exactamente cero`.
+                "computed": out.metadata.get("computed").copied(),
             }));
         }
     }
@@ -524,6 +640,46 @@ mod evidence_tests {
     use super::*;
     use std::collections::HashMap;
 
+    // ── FEATURES-01a: parity_deviation desde el PriceBus ────────────────────
+    #[test]
+    fn parity_deviation_is_the_worst_stable_and_ignores_the_rest() {
+        let mut m = HashMap::new();
+        // Valores REALES medidos en produccion (2026-09-30/10-01).
+        m.insert("USDC".to_owned(), "1.000097188494".to_owned());
+        m.insert("USDT".to_owned(), "0.99949749".to_owned());
+        m.insert("DAI".to_owned(), "0.99985272".to_owned());
+        m.insert("LUSD".to_owned(), "1.0056".to_owned());
+        // Un no-stable con desviacion enorme NO debe contar como paridad.
+        m.insert("PEPE".to_owned(), "0.0000042".to_owned());
+        let d = worst_stable_deviation(&m).expect("hay stables");
+        assert!(
+            (d - 0.0056).abs() < 1e-9,
+            "debe ser la PEOR desviacion de stable (LUSD 0.0056), dio {d}"
+        );
+    }
+
+    #[test]
+    fn parity_deviation_is_none_without_a_usable_stable_never_a_fabricated_zero() {
+        // Sin ningun stable: None (el llamador NO inserta la metrica).
+        let mut m = HashMap::new();
+        m.insert("PEPE".to_owned(), "0.0000042".to_owned());
+        assert!(worst_stable_deviation(&m).is_none());
+        // Map vacio: None.
+        assert!(worst_stable_deviation(&HashMap::new()).is_none());
+        // Stable con basura / no positivo: se ignora, no cuenta como desviacion.
+        let mut bad = HashMap::new();
+        bad.insert("USDC".to_owned(), "no-es-un-numero".to_owned());
+        bad.insert("USDT".to_owned(), "0".to_owned());
+        bad.insert("DAI".to_owned(), "-1.0".to_owned());
+        assert!(worst_stable_deviation(&bad).is_none());
+        // Un solo stable valido entre basura SI cuenta.
+        let mut one = HashMap::new();
+        one.insert("USDC".to_owned(), "0.998".to_owned());
+        one.insert("USDT".to_owned(), "NaN".to_owned());
+        let d = worst_stable_deviation(&one).expect("USDC es valido");
+        assert!((d - 0.002).abs() < 1e-9, "dio {d}");
+    }
+
     // ── MATH-04-FOLLOWUP: vector dorado de normalización ────────────────────
     // La puerta del PR. Sin esto, el cambio de escala es un cambio a ciegas.
     #[test]
@@ -557,11 +713,42 @@ mod evidence_tests {
         assert!(extreme.is_finite() && extreme > 0.0);
     }
 
+    // ── FEATURES-01b: clave canonica de par ─────────────────────────────────
+    #[test]
+    fn canonical_pair_key_is_order_independent_and_lowercase() {
+        let weth = "0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2";
+        let usdc = "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48";
+        let ab = canonical_pair_key(weth, usdc);
+        // Orden lexicografico: usdc (0xa0..) < weth (0xc0..) ⇒ usdc primero.
+        assert_eq!(ab, format!("{usdc}|{weth}"));
+        // Invertir la pierna NO cambia la identidad del par.
+        assert_eq!(canonical_pair_key(usdc, weth), ab);
+        // Minusculas: el checksum EIP-55 no parte en dos un mismo par.
+        let checksummed = "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2".to_lowercase();
+        assert_eq!(canonical_pair_key(&checksummed, usdc), ab);
+        // Pares distintos dan claves distintas (nunca se agrupan por accidente).
+        let dai = "0x6b175474e89094c44da98b954eedeac495271d0f";
+        assert_ne!(canonical_pair_key(weth, dai), ab);
+    }
+
+    #[test]
+    fn canonical_pair_key_is_the_same_for_two_venues_of_one_pair() {
+        // Cross-venue legitimo: el MISMO par en 2 pools distintos debe producir la
+        // MISMA clave, para que el router pueda comparar sus precios.
+        let weth = "0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2";
+        let usdc = "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48";
+        assert_eq!(
+            canonical_pair_key(weth, usdc),
+            canonical_pair_key(usdc, weth)
+        );
+    }
+
     #[test]
     fn build_evidence_vector_has_31_slots_and_none_to_zero() {
         // Estado degenerado (sin reservas ⇒ operadores devuelven None) ⇒ 31 ceros.
         let state = MarketState {
             price_matrix: vec![],
+            pair_keys: vec![],
             liquidity_reserves: vec![],
             gas_price_gwei: 0.0,
             block_timestamp: 0,
