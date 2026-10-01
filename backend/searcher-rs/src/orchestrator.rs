@@ -620,8 +620,20 @@ impl Orchestrator {
                     "dex_arb".to_string()
                 }
             };
-            let pools: Vec<Address> = intent.legs.iter().filter_map(|leg| leg.pool_hint).collect();
-            if !pools.is_empty() {
+            // MATH-04-FOLLOWUP (2026-09-30): conservar el PAR de tokens de cada
+            // pierna, no solo el pool. `RouteIntentLeg` ya lleva
+            // `token_in`/`token_out` (`route_intent.rs:145,147`); quedarse solo
+            // con `pool_hint` los descartaba aquí — y esa era la razón por la que
+            // `build_market_state` "no tenía decimales": los tenía, y se perdían
+            // una línea antes. Sin ellos la `price_matrix` solo podía llevar el
+            // ratio CRUDO r1/r0 (~0.002 para WETH/USDC en vez de ~2000), y por eso
+            // los operadores devolvían `scalar: null` y `operators_computed: 0`.
+            let pool_legs: Vec<(Address, Address, Address)> = intent
+                .legs
+                .iter()
+                .filter_map(|leg| leg.pool_hint.map(|p| (p, leg.token_in, leg.token_out)))
+                .collect();
+            if !pool_legs.is_empty() {
                 // CORE-01/MATH-01 fix (2026-09-24): the §IV evidence previously
                 // received gas_price_gwei=0.0 ("not carried in RouteIntent yet"),
                 // making every gas-sensitive operator (op_15/op_21/op_26) compute
@@ -644,7 +656,7 @@ impl Orchestrator {
                         &registry,
                         &router,
                         &mut math_redis,
-                        &pools,
+                        &pool_legs,
                         chain_id,
                         gas_price_gwei,
                         block_number,
