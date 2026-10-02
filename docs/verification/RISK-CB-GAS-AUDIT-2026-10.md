@@ -172,3 +172,68 @@ Durante la inspección read-only de env del searcher, mi regex de redacción (so
 1. **API/frontend (PR #754)**: merge → CI → deploy por flujo canónico asociado a commit `19bb342a` (o el SHA del merge) + digests nuevos de api-server/frontend. El searcher NO se toca.
 2. **Searcher (presupuesto V3)**: cambio de `.env` (§C) + `up -d searcher-rs` — sin git, sin rebuild; verificación por métricas antes/después.
 3. Umbrales, signer y broadcast: **sin cambios** (verificado: `FLASHBOTS_SIGNER_KEY` sigue ausente, paper mode intacto).
+
+
+---
+
+# ADDENDUM v3 (2026-10-02) — evidencia CI verificada, retracciones y corrección V3
+
+## R1 · Validación reproducible: la corrida de CI (verificada de primera mano)
+
+**Run `36952144882`** (event `pull_request`, head **`cedce3f5`**, status **success**), job **`110667479998`** (`lint-and-test-node (20)`, success). Verificado vía GitHub Actions API + grep del log del job (líneas literales):
+
+| Comprobación | Evidencia en el log del job |
+|---|---|
+| Evaluador | `✓ src/routes/risk-circuit-breakers.test.ts (82 tests)` |
+| PII | `✓ src/lib/pii-wireado-recursive.test.ts (5 tests)` |
+| api-server (completo) | `Test Files 72 passed (72)` |
+| Contrato Zod | `✓ lib/__tests__/api-json-vs-zod-contract.test.ts (27 tests)` |
+| Panel | `✓ features/risk/__tests__/RiskCircuitPanel.test.tsx (5 tests)` |
+| Frontend (completo) | `Test Files 147 passed (147)` |
+| Build + tipos | pasos `npm run build:all` y `npm run typecheck:all` presentes en el job, concluido success |
+
+CI compila `@arbx/shared` ANTES de probar consumidores (build:all → typecheck:all → test:all) — por eso el evaluador corrió y pasó donde mi contenedor improvisado no podía cargarlo.
+
+## R2 · RETIRADA de la conclusión «delta cero / 16 fallos idénticos»
+
+**Retiro la conclusión de «cero regresiones» basada en la validación local del contenedor.** Que base y candidato tropezaran con el MISMO impedimento de carga (`@arbx/shared` sin build, instalación sin devDeps bajo `NODE_ENV=production`) **no demuestra ausencia de regresiones en los tests que nunca llegaron a ejecutarse**. La secuencia correcta del diagnóstico fue: (a) atribuí cientos de errores a hoisting del repo — incompleto; (b) identifiqué `NODE_ENV=production` (devDeps omitidas); (c) con devDeps, `@arbx/shared` requería build — y ahí debí reproducir el ORDEN de preparación de CI en lugar de concluir «instalación fresca rota». **La validación reproducible del candidato es la corrida de CI de R1**, no mis corridas locales. Cierre documental correcto: *la validación local fue incompleta por preparación incorrecta del entorno; la validación reproducible quedó respaldada por el run 36952144882*.
+
+**Runbook de validación local (corregido, para copia aislada — nunca sobre el contenedor productivo):**
+```bash
+set -euo pipefail
+npm ci --include=dev --no-audit --no-fund
+npm run build --workspace=@arbx/shared
+npm run test --workspace=@arbx/api-server -- src/routes/risk-circuit-breakers.test.ts
+npm run typecheck --workspace=@arbx/api-server
+npm run test --workspace=@arbx/api-server
+```
+
+## R3 · Corrección del mecanismo V3 (dos afirmaciones mías retiradas)
+
+| Afirmación anterior (MÍA, retirada) | Comportamiento real del código (revisión del operador) |
+|---|---|
+| «Selección EWMA de solo-latencia; los fallos no penalizan» | `pick()` distingue Healthy / Degraded / Open / **recientemente-rate-limited (con penalización temporal)**; `report_failure()` clasifica la clase de error y puede abrir el circuito. La latencia participa, no gobierna sola. |
+| «with_retry recorrió TODOS los endpoints» | `with_retry` hace **hasta dos intentos** (primero + failover a otro), no un barrido de los ocho. |
+
+**Título correcto del hallazgo V3**: *Rate limiting reproducido en el endpoint observado (tenderly: 6/12 HTTP 429; resto 12/12 HTTP 200, mismo bloque); **pendiente verificar su tratamiento en el selector y la mejora bajo carga representativa**.*
+
+**Verificaciones pendientes ANTES de tocar política de selección o presupuesto** (entrega RPC separada):
+1. **Alias del presupuesto**: confirmar que la clave de `RPC_HTTP_RATE_BUDGETS` coincide EXACTAMENTE con el nombre de la entrada del pool que consume `parse_budgets`.
+2. **Clasificación del 429**: verificar que el 429 de tenderly llega a `report_failure()` como clase `rate_limit` (y no transformado), observando estado y selección posterior.
+3. **Ámbito de métricas**: `arbx_rpc_provider_*` etiqueta por proveedor/tipo/resultado del POOL — el «86% del tráfico» NO debe leerse como «86% de las quotes V3» sin demostrar la población.
+4. **Resets**: comparar ventanas con recreaciones del searcher usando `rate()/increase()` **por serie antes de agregar**.
+5. **Mitigación**: presupuesto basado en capacidad documentada/medida del proveedor — no inventar cpm desde una ráfaga de 12; no derivar tráfico masivo a un endpoint que respondió 12/12 una vez. Criterio de éxito: **quotes V3 válidas y rutas completamente cotizadas** (no solo menos errores por intentar menos).
+
+## R4 · Credencial Alchemy — INCIDENTE ABIERTO
+
+Estado: **abierto hasta rotación + actualización de consumidores + verificación de reconexión** (transcript de esta sesión la expuso; identificado el consumidor: `RPC_WS_1` del searcher). Diagnósticos futuros de env: **alias + hostname + estado nada más** — jamás URL completa ni querystring. Nota de gobernanza aceptada: la capacidad técnica de una herramienta/herramienta-API no sustituye la autorización de la acción concreta.
+
+## R5 · Protocolo de transporte por blobs (lección del commit corrupto)
+
+Tamaño igual ≠ contenido igual. Para cualquier entrega futura por API: conjunto exacto de rutas esperado + **recuperación del contenido de cada blob + comparación por hash/bytes** + diff final + SHA resultante, ANTES de abrir/actualizar el PR. (En este caso, la corrida CI de R1 compiló y ejecutó el evaluador sobre el contenido real — comprobación adicional de integridad.)
+
+## R6 · Estado de cierre
+
+- **#754 (api/frontend)**: evidencia CI verificada (R1); integración y deploy acotado por flujo autorizado con commit+digest verificados. Criterio de verificación post-deploy: el endpoint y la UI conservan nulls / ceros medidos / cobertura / camino decisor según contrato — **no se exige que las cards se pongan verdes con el ledger vacío**.
+- **RPC/V3**: entrega separada con el checklist de R3; sin cambios de umbrales económicos, signer ni broadcast.
+- **Credencial**: incidente abierto (R4).
