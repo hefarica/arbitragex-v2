@@ -2071,16 +2071,17 @@ pub async fn active_evaluate_and_emit(
     // mal orientado. Sin estado → no se adjunta dispatch (receipts honestos).
     let v4_dispatch_state: Option<std::sync::Arc<math_engine::MarketState>>;
     // COST-PRODUCERS-01: gas observado del intent — alimenta el MarketState y
-    // la línea de coste de gas del bundle (una sola lectura del getter).
-    let mut v4_intent_gas_gwei: f64 = 0.0;
+    // la línea de coste de gas del bundle (una sola lectura del getter;
+    // inicialización diferida: se asigna exactamente una vez abajo).
+    let v4_intent_gas_gwei: f64;
     {
         let block = runner
             .host_block_number_handle()
             .load(std::sync::atomic::Ordering::Relaxed);
         // CORE-01/MATH-01: el atómico guarda MILLI-gwei; el getter decodifica.
-        let gas = runner.host_gas_price_gwei();
-        v4_intent_gas_gwei = gas;
-        v4_dispatch_state = v4_market_state_from_edges(&v4_edges, block, gas);
+        v4_intent_gas_gwei = runner.host_gas_price_gwei();
+        v4_dispatch_state =
+            v4_market_state_from_edges(&v4_edges, block, v4_intent_gas_gwei);
     }
     if v4_edges.is_empty() {
         debug!(
