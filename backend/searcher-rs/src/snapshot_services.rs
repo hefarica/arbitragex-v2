@@ -1014,9 +1014,7 @@ mod plan_support_wiring_tests {
         assert_eq!(out, "997", "out con PISO (997); techo daría 998");
         // sqrt_price_x96_next vive en la métrica de la pierna (agent_graph
         // L381-383), no como campo plano del ledger.
-        let sp_next = legs[0]["metrics"]["sqrt_price_x96_next"]
-            .as_str()
-            .unwrap();
+        let sp_next = legs[0]["metrics"]["sqrt_price_x96_next"].as_str().unwrap();
         assert_eq!(
             sp_next, "79228162514264337593543951334",
             "Q96+998 con PISO; techo daria Q96+999"
