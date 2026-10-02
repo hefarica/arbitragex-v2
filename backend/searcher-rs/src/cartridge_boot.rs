@@ -1215,6 +1215,106 @@ async fn v4_slot0(
     slot0
 }
 
+// ── OPERATOR-DISPATCH-WIRING-01 (2026-10-02) ─────────────────────────────────
+// El bundle del intent construía SnapshotServices SIN dispatcher de operadores:
+// `operators()` caía al soporte derivado (evidencia vacía) y los recibos nativos
+// quedaban FAIL constante. Esto adjunta el registro nativo REAL cuando el
+// intent produjo un MarketState con precios observados.
+
+/// MarketState desde los edges del intent — SOLO piernas V2 (reservas
+/// orientadas por token0_addr + decimales ya resueltos). El precio V3 desde
+/// slot0 exige la verificación contra referencia de EXACT-CLASS-01 y queda
+/// como seguimiento: jamás alimentar a los operadores un precio posiblemente
+/// mal orientado. Sin precios → None → no se adjunta dispatch (R8).
+fn v4_market_state_from_edges(
+    edges: &[crate::agent_graph::Edge],
+    block_number: u64,
+    gas_price_gwei: f64,
+) -> Option<std::sync::Arc<math_engine::MarketState>> {
+    use math_engine::MarketState;
+    let mut price_matrix: Vec<Vec<f64>> = Vec::new();
+    let mut pair_keys: Vec<String> = Vec::new();
+    let mut liquidity_reserves: Vec<(f64, f64)> = Vec::new();
+    for e in edges {
+        if e.protocol != "cpmm_v2" {
+            continue;
+        }
+        let (Some(ri_raw), Some(ro_raw)) = (&e.reserve_in_raw, &e.reserve_out_raw) else {
+            continue;
+        };
+        let (Ok(ri), Ok(ro)) = (
+            ethers::types::U256::from_dec_str(ri_raw),
+            ethers::types::U256::from_dec_str(ro_raw),
+        ) else {
+            continue;
+        };
+        let Some(price) = crate::math_evidence::normalized_price(
+            ri,
+            ro,
+            e.token_in_decimals,
+            e.token_out_decimals,
+        ) else {
+            continue;
+        };
+        price_matrix.push(vec![price]);
+        pair_keys.push(crate::math_evidence::canonical_pair_key(
+            &e.token_in,
+            &e.token_out,
+        ));
+        liquidity_reserves.push((
+            ri_raw.parse::<f64>().unwrap_or(0.0),
+            ro_raw.parse::<f64>().unwrap_or(0.0),
+        ));
+    }
+    if price_matrix.is_empty() {
+        return None;
+    }
+    Some(std::sync::Arc::new(MarketState {
+        price_matrix,
+        pair_keys,
+        liquidity_reserves,
+        gas_price_gwei,
+        block_timestamp: 0, // no viaja en el intent — honesto (observe-only)
+        block_number,
+        features: std::collections::HashMap::new(),
+    }))
+}
+
+/// Admission ESTRUCTURAL de los inputs compartidos del MarketState. Alcance
+/// declarado: valida que el estado que consumen los operadores tiene precios,
+/// claves de par alineadas, gas finito positivo y bloque conocido — y emite un
+/// recibo con la identidad del plan. NO es la admisión por-operador con
+/// lineage completo (varios operadores viejos no la satisfacen — skill
+/// arbx-rhai-cartridge-v4); esa es seguimiento. Un operador que consuma inputs
+/// no cubiertos por esta validación estructural reparte su propio DATA_GAP.
+struct V4StructuralInputAdmission;
+impl crate::native_operator_adapter::OperatorInputAdmission for V4StructuralInputAdmission {
+    fn validate(
+        &self,
+        _id: u8,
+        state: &math_engine::MarketState,
+        snapshot_id: &str,
+        plan_hash: &str,
+    ) -> Result<String, String> {
+        if state.price_matrix.is_empty() {
+            return Err("market_state_price_matrix_empty".into());
+        }
+        if state.pair_keys.len() != state.price_matrix.len() {
+            return Err("market_state_pair_keys_misaligned".into());
+        }
+        if !state.gas_price_gwei.is_finite() || state.gas_price_gwei <= 0.0 {
+            return Err("market_state_gas_not_positive".into());
+        }
+        if state.block_number == 0 {
+            return Err("market_state_block_unknown".into());
+        }
+        Ok(format!(
+            "structural:{snapshot_id}:{plan_hash}:{}px",
+            state.price_matrix.len()
+        ))
+    }
+}
+
 // ── AGENT v4 Fase 3b — admisión EXPLÍCITA de manifiestos ─────────────────────
 // El backend ADMITE el par (mev_id, source_digest) que cada script v4-sellado
 // desplegado declara en su PROPIO agent_manifest() (escaneo de texto del
@@ -1826,6 +1926,21 @@ pub async fn active_evaluate_and_emit(
     // OBSERVABILITY-V4-EDGES-01: capturar el censo ANTES del move a
     // build_v4_intent_bundle — el summary se emite al final de la función.
     let v4_edges_built = v4_edges.len();
+    // OPERATOR-DISPATCH-WIRING-01 (2026-10-02): MarketState REAL desde los
+    // edges ya computados (reservas V2 orientadas + decimales), para adjuntar
+    // el dispatcher de operadores nativos al contexto del intent. Sólo edges
+    // V2: su precio por reservas es no ambiguo; el precio V3 desde slot0
+    // exige la verificación contra referencia del EXACT-CLASS-01 y queda como
+    // seguimiento — jamás alimentar a los operadores un precio posiblemente
+    // mal orientado. Sin estado → no se adjunta dispatch (receipts honestos).
+    let v4_dispatch_state: Option<std::sync::Arc<math_engine::MarketState>> = {
+        let block = runner
+            .host_block_number_handle()
+            .load(std::sync::atomic::Ordering::Relaxed);
+        // CORE-01/MATH-01: el atómico guarda MILLI-gwei; el getter decodifica.
+        let gas = runner.host_gas_price_gwei();
+        v4_market_state_from_edges(&v4_edges, block, gas)
+    };
     if v4_edges.is_empty() {
         debug!(
             event = "cartridge.v4_intent_no_edges",
@@ -1858,16 +1973,56 @@ pub async fn active_evaluate_and_emit(
                     Arc::new(|_: &str, _: &str| true);
                 match crate::snapshot_services::SnapshotServices::new(Arc::new(bundle), v4_revision)
                 {
-                    Ok(services) => match router.insert(v4_ctx_id.clone(), Arc::new(services)) {
-                        Ok(()) => v4_registered = true,
-                        Err(e) => debug!(
-                            event = "cartridge.v4_intent_insert_failed",
-                            chain_id,
-                            tx_hash = %intent.tx_hash,
-                            reason = %e,
-                            "router sin capacidad para el contexto del intent; contexto estático"
-                        ),
-                    },
+                    Ok(services) => {
+                        // OPERATOR-DISPATCH-WIRING-01: adjuntar el dispatcher
+                        // del registro nativo cuando hay MarketState real. Sin
+                        // estado, los servicios quedan sin dispatch y los
+                        // recibos nativos siguen FAIL honesto.
+                        let services = match v4_dispatch_state.clone() {
+                            Some(state) => {
+                                let registry = math_registry.clone();
+                                services.with_operator_dispatch(Arc::new(
+                                    move |ctx: &serde_json::Value,
+                                          spec: &serde_json::Value,
+                                          cand: &serde_json::Value|
+                                          -> Result<serde_json::Value, String> {
+                                        // Identidad del plan/snapshot desde el
+                                        // ctx y el candidato del propio flujo.
+                                        let snapshot_id = ctx
+                                            .get("snapshot_id")
+                                            .and_then(|v| v.as_str())
+                                            .unwrap_or_default()
+                                            .to_string();
+                                        let plan_hash = cand
+                                            .get("plan_hash")
+                                            .and_then(|v| v.as_str())
+                                            .unwrap_or_default()
+                                            .to_string();
+                                        crate::native_operator_adapter::evaluate_declared(
+                                            &registry,
+                                            &state,
+                                            spec,
+                                            &snapshot_id,
+                                            &plan_hash,
+                                            &V4StructuralInputAdmission,
+                                            crate::operator_toggles::is_disabled,
+                                        )
+                                    },
+                                ))
+                            }
+                            None => services,
+                        };
+                        match router.insert(v4_ctx_id.clone(), Arc::new(services)) {
+                            Ok(()) => v4_registered = true,
+                            Err(e) => debug!(
+                                event = "cartridge.v4_intent_insert_failed",
+                                chain_id,
+                                tx_hash = %intent.tx_hash,
+                                reason = %e,
+                                "router sin capacidad para el contexto del intent; contexto estático"
+                            ),
+                        }
+                    }
                     Err(e) => warn!(
                         event = "cartridge.v4_intent_bundle_rejected",
                         chain_id,

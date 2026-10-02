@@ -49,7 +49,7 @@ fn price_from_reserves(r0: ethers::types::U256, r1: ethers::types::U256) -> Opti
 /// resto del repo.
 ///
 /// R8: escala no finita, reserva cero o resultado no finito/no positivo → `None`.
-fn normalized_price(
+pub(crate) fn normalized_price(
     r0: ethers::types::U256,
     r1: ethers::types::U256,
     dec_in: u8,
@@ -82,7 +82,7 @@ fn normalized_price(
 ///
 /// Los llamadores ya pasan direcciones en minusculas (`format!("0x{:040x}", ...)`),
 /// por eso no se normaliza de nuevo aqui.
-fn canonical_pair_key(a_lower: &str, b_lower: &str) -> String {
+pub(crate) fn canonical_pair_key(a_lower: &str, b_lower: &str) -> String {
     if a_lower <= b_lower {
         format!("{a_lower}|{b_lower}")
     } else {

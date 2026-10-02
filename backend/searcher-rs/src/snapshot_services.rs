@@ -105,6 +105,13 @@ pub struct SnapshotServices {
     discovery: Mutex<Option<SearchReport>>,
     operator_dispatch: Option<OperatorDispatch>,
     payload_resolver: Option<PayloadResolver>,
+    /// OPERATOR-DISPATCH-WIRING-01: evidencia nativa cacheada por plan_hash.
+    /// La puebla `operators()` cuando el dispatcher REAL corre para ese plan;
+    /// la lee `derive_support()` para que el recibo
+    /// `native_risk_and_impact_policy` refleje el dispatch EFECTIVAMENTE
+    /// ejecutado (y no un FAIL constante). Orden del flujo del cartucho:
+    /// operators → verify; si verify llega antes, cache miss = FAIL honesto.
+    operator_evidence_cache: Mutex<std::collections::BTreeMap<String, Value>>,
 }
 fn now_ms() -> Result<u64, String> {
     SystemTime::now()
@@ -152,6 +159,7 @@ impl SnapshotServices {
             discovery: Mutex::new(None),
             operator_dispatch: None,
             payload_resolver: None,
+            operator_evidence_cache: Mutex::new(std::collections::BTreeMap::new()),
         })
     }
     /// Attach the actual registry dispatcher once at construction. The caller
@@ -411,20 +419,40 @@ impl SnapshotServices {
                 "edges_span_multiple_sync_rounds_or_snapshots",
             ),
             receipt("protocol_exact_quotes", protocol_exact, &protocol_reason),
-            // ── Verificaciones de CAPA NATIVA: no computables aquí ── El
-            // veredicto honesto es FAIL con la razón exacta; un PASS
-            // fabricado enmascararía el hueco real (el dispatcher de
-            // operadores sigue sin adjuntarse en la ruta del intent).
+            // ── Verificaciones de CAPA NATIVA ──
+            // strategy_specific_note_verified: restricciones particulares del
+            // manifiesto — genuinamente no computables aquí (FAIL honesto).
             receipt(
                 "strategy_specific_note_verified",
                 false,
                 "not_verifiable_at_discovery_layer",
             ),
-            receipt(
-                "native_risk_and_impact_policy",
-                false,
-                "native_evaluator_not_attached_to_intent_path",
-            ),
+            // native_risk_and_impact_policy (OPERATOR-DISPATCH-WIRING-01):
+            // PASS solo si el dispatcher REAL corrió para ESTE plan — la
+            // caché la puebla operators() con la evidencia nativa efectiva.
+            // Cache miss (dispatch ausente o verify llegó antes) = FAIL con
+            // la razón exacta. Jamás un PASS sin dispatch ejecutado.
+            {
+                let cached = self
+                    .operator_evidence_cache
+                    .lock()
+                    .ok()
+                    .and_then(|cache| cache.get(&plan_hash).cloned());
+                let (ok, reason) = match cached {
+                    Some(ev)
+                        if ev["snapshot_id"] == json!(self.data.snapshot_id)
+                            && ev["plan_hash"] == json!(plan_hash) =>
+                    {
+                        (true, None)
+                    }
+                    Some(_) => (false, Some("native_evidence_plan_or_snapshot_mismatch")),
+                    None if self.operator_dispatch.is_none() => {
+                        (false, Some("native_evaluator_not_attached_to_intent_path"))
+                    }
+                    None => (false, Some("native_operators_not_evaluated_for_this_plan")),
+                };
+                receipt("native_risk_and_impact_policy", ok, reason.unwrap_or(""))
+            },
         ];
         let operator_evidence = json!({
             "snapshot_id": snapshot_id,
@@ -674,6 +702,17 @@ impl AgentServices for SnapshotServices {
             return Ok(self.support(ctx, spec, c)?.operator_evidence);
         };
         let mut fresh = dispatch(ctx, spec, c)?;
+        // OPERATOR-DISPATCH-WIRING-01: poblar la caché por plan_hash ANTES de
+        // la fusión con recibos precomputados — el recibo nativo de
+        // derive_support() lee ESTA caché para certificar que el dispatcher
+        // REAL corrió para este plan exacto.
+        if let Some(plan_hash) = c.get("plan_hash").and_then(|p| p.as_str()) {
+            if !plan_hash.is_empty() {
+                if let Ok(mut cache) = self.operator_evidence_cache.lock() {
+                    cache.insert(plan_hash.to_string(), fresh.clone());
+                }
+            }
+        }
         // A disabled primary may be fulfilled only by an actual native
         // equivalent receipt already tied to this plan/snapshot. Preserve the
         // switch state separately, never pretend that the disabled op ran.
@@ -1018,6 +1057,98 @@ mod plan_support_wiring_tests {
         assert_eq!(
             sp_next, "79228162514264337593543951334",
             "Q96+998 con PISO; techo daria Q96+999"
+        );
+    }
+
+    /// OPERATOR-DISPATCH-WIRING-01: el recibo `native_risk_and_impact_policy`
+    /// refleja el dispatch EFECTIVAMENTE ejecutado para el plan. Con dispatch
+    /// adjunto y operators() corrido → PASS; sin dispatch → FAIL honesto con
+    /// la razón exacta; dispatch presente pero verify antes de operators →
+    /// FAIL con cache-miss. Jamás PASS sin dispatch ejecutado.
+    #[test]
+    fn native_risk_receipt_reflects_executed_dispatch() {
+        use crate::rhai_agent_bridge::AgentServices;
+        // 1) SIN dispatch: FAIL con la razón de ausencia.
+        let svc = SnapshotServices::new(Arc::new(mixed_bundle()), Arc::new(|_, _| true)).unwrap();
+        let ctx = json!({"context_id": "ctx-t", "snapshot_id": "snap-t"});
+        let spec_d = json!({
+            "mev_id": "MEV-01-001",
+            "detector_id": "R_CLOSED_CYCLE",
+            "source_digest": "digest1",
+            "logic": "closed_route",
+            "allowed_search_hops": [2],
+            "operator_requirements": [{"id": 27, "role": "primary", "requirement": "PRIMARY_REQUIRED"}],
+        });
+        let cand = candidate(json!(["0xpoolV2", "0xpoolV3"]), "1000000000000000000");
+        let receipts = svc
+            .verify_requirements(&ctx, &spec_d, &cand, &[])
+            .expect("recibos");
+        let nr = receipts
+            .iter()
+            .find(|r| r.name == "native_risk_and_impact_policy")
+            .unwrap();
+        assert_eq!(nr.status, "FAIL");
+        assert_eq!(
+            nr.reason.as_deref().unwrap(),
+            "native_evaluator_not_attached_to_intent_path"
+        );
+
+        // 2) CON dispatch: operators() corre para el plan → la caché se puebla
+        //    → el recibo PASA (el dispatcher real existió y ejecutó).
+        let svc2 = SnapshotServices::new(Arc::new(mixed_bundle()), Arc::new(|_, _| true))
+            .unwrap()
+            .with_operator_dispatch(Arc::new(|_ctx, _spec, c| {
+                // Stub del dispatcher REAL: hace eco del plan que se le pide
+                // (el dispatcher real recibe el candidato y liga su evidencia
+                // a SU plan_hash — evaluate_declared hace exactamente eso).
+                let ph = c
+                    .get("plan_hash")
+                    .and_then(|p| p.as_str())
+                    .unwrap_or_default();
+                Ok(json!({
+                    "snapshot_id": "snap-t",
+                    "plan_hash": ph,
+                    "operators": {"27": {"status": "COMPUTED", "value": 1.0}},
+                }))
+            }));
+        // El flujo del cartucho: operators() PRIMERO (puebla la caché)...
+        let ev = svc2.operators(&ctx, &spec_d, &cand).expect("evidencia");
+        assert_eq!(
+            ev["operators"]["27"]["status"].as_str().unwrap(),
+            "COMPUTED"
+        );
+        // ...verify_requirements DESPUÉS lee esa caché.
+        let receipts2 = svc2
+            .verify_requirements(&ctx, &spec_d, &cand, &[])
+            .expect("recibos 2");
+        let nr2 = receipts2
+            .iter()
+            .find(|r| r.name == "native_risk_and_impact_policy")
+            .unwrap();
+        assert_eq!(nr2.status, "PASS", "dispatch real corrió para este plan");
+
+        // 3) Dispatch presente pero verify ANTES de operators: cache miss →
+        //    FAIL honesto (no PASS especulativo).
+        let svc3 = SnapshotServices::new(Arc::new(mixed_bundle()), Arc::new(|_, _| true))
+            .unwrap()
+            .with_operator_dispatch(Arc::new(|_ctx, _spec, c| {
+                let ph = c
+                    .get("plan_hash")
+                    .and_then(|p| p.as_str())
+                    .unwrap_or_default();
+                Ok(json!({"snapshot_id": "snap-t", "plan_hash": ph, "operators": {}}))
+            }));
+        let receipts3 = svc3
+            .verify_requirements(&ctx, &spec_d, &cand, &[])
+            .expect("recibos 3");
+        let nr3 = receipts3
+            .iter()
+            .find(|r| r.name == "native_risk_and_impact_policy")
+            .unwrap();
+        assert_eq!(nr3.status, "FAIL");
+        assert_eq!(
+            nr3.reason.as_deref().unwrap(),
+            "native_operators_not_evaluated_for_this_plan"
         );
     }
 
