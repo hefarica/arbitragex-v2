@@ -694,6 +694,35 @@ fn invariant_of(protocol_debug: &str) -> &'static str {
 }
 
 /// Pure builder for the legacy `rd_outcome_v1` payload (flat single-leg).
+///
+/// REPAIRS-OBSERVABILITY-01 (2026-10-01): extrae el diagnóstico v4 del
+/// `metadata.proposal_v4` sellado — `status`, `reason` y los NOMBRES de los
+/// `repairs` — hacia el outcome durable. Sin esto, la razón dominante
+/// (`applicable_data_or_constraint_gap`, 69% medido) no permite saber CUÁL
+/// reparación bloquea: los nombres no aparecían ni en logs ni en outcomes
+/// (el mismo gap de observabilidad ya roto dos veces: grafo en `debug!`,
+/// histograma en Redis). Sólo observabilidad: sin cambios en reglas ni
+/// umbrales económicos; los números son los propios del proposal (R8).
+fn v4_repairs_summary(res: &CartridgeEvalResult) -> serde_json::Value {
+    let Some(p) = res.metadata.get("proposal_v4") else {
+        return serde_json::Value::Null;
+    };
+    let names: Vec<&str> = p
+        .get("repairs")
+        .and_then(|r| r.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|r| r.get("name").and_then(|n| n.as_str()))
+                .collect()
+        })
+        .unwrap_or_default();
+    serde_json::json!({
+        "status": p.get("status").cloned().unwrap_or(serde_json::Value::Null),
+        "reason": p.get("reason").cloned().unwrap_or(serde_json::Value::Null),
+        "repairs": names,
+    })
+}
+
 fn build_rd_outcome_v1(
     chain_id: u64,
     cartridge_id: &str,
@@ -724,6 +753,9 @@ fn build_rd_outcome_v1(
         "confidence": res.confidence,
         "urgency": res.urgency.clone(),
         "reason": res.reason.clone(),
+        // REPAIRS-OBSERVABILITY-01: diagnóstico v4 (status/reason/nombres de
+        // repairs) desde el proposal sellado. Null si no hay proposal_v4.
+        "v4_repairs": v4_repairs_summary(res),
         "had_reserves": had_reserves,
         "mode": "shadow",
     })
@@ -833,6 +865,8 @@ fn build_rd_outcome_v2(
         "priority_score": serde_json::Value::Null,
         "urgency": res.urgency.clone(),
         "reason": res.reason.clone(),
+        // REPAIRS-OBSERVABILITY-01: mismo diagnóstico v4 que v1.
+        "v4_repairs": v4_repairs_summary(res),
         "had_reserves": had_reserves,
         "simulation": {
             "status": "disabled",
@@ -3499,7 +3533,48 @@ mod tests {
         assert!(v["is_opportunity"].as_bool().unwrap());
         // v1 is flat: no topology object, no route[] array.
         assert!(v.get("topology").is_none());
+
+        // REPAIRS-OBSERVABILITY-01: sin proposal_v4 → null (fail-honest).
+        assert!(v["v4_repairs"].is_null(), "sin proposal_v4 debe ser null");
         assert!(v.get("route").is_none());
+    }
+
+    /// REPAIRS-OBSERVABILITY-01: los nombres de los repairs del proposal_v4
+    /// sellado llegan al outcome durable — el 69% medido de
+    /// `applicable_data_or_constraint_gap` deja de ser opaco.
+    #[test]
+    fn rd_outcome_v1_carries_v4_repair_names() {
+        let mut res = eval_result(false);
+        res.metadata.insert(
+            "proposal_v4".to_string(),
+            serde_json::json!({
+                "contract_version": "arbx.cartridge.agent/4",
+                "status": "DATA_GAP",
+                "reason": "applicable_data_or_constraint_gap",
+                "repairs": [
+                    {"name": "capital_usd", "reason": "capital_missing_or_cap_exceeded"},
+                    {"name": "operators", "reason": "operator_context_mismatch"}
+                ],
+                "net_profit_usd": null
+            }),
+        );
+        let v = build_rd_outcome_v1(
+            1,
+            "mev_01_015_two_leg_arbitrage",
+            &three_leg_intent(),
+            &res,
+            true,
+            1_700_000_000_000,
+        );
+        let r = &v["v4_repairs"];
+        assert_eq!(r["status"].as_str().unwrap(), "DATA_GAP");
+        let names: Vec<&str> = r["repairs"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|n| n.as_str())
+            .collect();
+        assert_eq!(names, vec!["capital_usd", "operators"]);
     }
 
     #[test]
