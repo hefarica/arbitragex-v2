@@ -198,7 +198,10 @@ mod tests {
             b.fast_forward(Duration::from_micros(10));
             let _ = b.tokens_remaining();
         }
-        assert!(b.try_acquire(), "1s of 10µs-granularity queries must still yield 1 token");
+        assert!(
+            b.try_acquire(),
+            "1s of 10µs-granularity queries must still yield 1 token"
+        );
     }
 
     /// Modelo: test_preserves_low_rate_fraction — 1/min: tras 30s hay 0.5

@@ -361,10 +361,7 @@ impl HttpRpcPool {
             // WO-13 + RPC-RECOVERY-01: compute the budget (with the explicit
             // burst override when configured) BEFORE the struct moves `name`.
             let budget = budgets.get(name.as_str()).map(|rpm| {
-                let burst = bursts
-                    .get(name.as_str())
-                    .copied()
-                    .unwrap_or(*rpm); // compat: burst = one minute of quota
+                let burst = bursts.get(name.as_str()).copied().unwrap_or(*rpm); // compat: burst = one minute of quota
                 info!(
                     event = "rpc_pool.rate_budget_set",
                     chain_id,
@@ -624,8 +621,8 @@ impl HttpRpcPool {
             },
             None => None, // no cap configured — no permit needed
         };
-        let first_eligible = first_acquired
-            && (first.concurrency.is_none() || first_permit.is_some());
+        let first_eligible =
+            first_acquired && (first.concurrency.is_none() || first_permit.is_some());
         if first_eligible {
             let _hold_permit = first_permit; // vive mientras viva la tentativa
             let started = Instant::now();
@@ -1638,7 +1635,9 @@ mod tests {
         };
         // El primario gana por latencia pero su único permiso está tomado.
         pool.entries[0].latency_ms_ewma.store(1, Ordering::Relaxed);
-        pool.entries[1].latency_ms_ewma.store(100, Ordering::Relaxed);
+        pool.entries[1]
+            .latency_ms_ewma
+            .store(100, Ordering::Relaxed);
         let external = pool.entries[0]
             .concurrency
             .as_ref()
@@ -1668,7 +1667,12 @@ mod tests {
             "saturación local NO tripó el breaker del primario"
         );
         assert!(
-            pool.entries[0].circuit.read().await.failures_window.is_empty(),
+            pool.entries[0]
+                .circuit
+                .read()
+                .await
+                .failures_window
+                .is_empty(),
             "sin fallos registrados contra el primario"
         );
     }
