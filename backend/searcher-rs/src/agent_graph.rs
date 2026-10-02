@@ -259,11 +259,19 @@ fn v3_spot_within_tick(
     let (sp_next, out) = if zero_for_one {
         let num = l * sp * q96;
         let den = l * q96 + dx_adj * sp;
-        let sp_next = num / den;
+        // V3-ROUNDING-01 (2026-10-01, contraejemplo de revisión): Uniswap
+        // redondea HACIA ARRIBA el siguiente precio raíz en exact-input de
+        // token0 (getNextSqrtPriceFromAmount0RoundingUp — el protocolo lo
+        // documenta para no entregar de más el token de salida). La división
+        // entera `num / den` redondeaba hacia abajo: divergencia reproducible
+        // de 1 unidad en sp_next y en amount_out frente al protocolo.
+        let sp_next = (num + den - U512::from(1u32)) / den;
         let out = l * (sp - sp_next) / q96;
         (sp_next, out)
     } else {
-        let sp_next = sp + dx_adj * q96 / l;
+        // Misma corrección para one_for_zero: el protocolo redondea hacia
+        // arriba el incremento del precio raíz (amount1 → sqrtP).
+        let sp_next = sp + (dx_adj * q96 + l - U512::from(1u32)) / l;
         let out = l * q96 * (sp_next - sp) / (sp_next * sp);
         (sp_next, out)
     };

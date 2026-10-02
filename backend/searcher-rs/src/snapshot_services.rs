@@ -328,13 +328,22 @@ impl SnapshotServices {
             && edges.iter().all(|e| {
                 e.snapshot_id == edges[0].snapshot_id && e.block_hash == edges[0].block_hash
             });
-        // Quote exacto por protocolo: cada PIerna cotizó con método exacto
-        // (cpmm_exact_integer / v3_spot_within_tick). Se mide por piernas
-        // cotizadas vs piernas de la ruta — NO con q.missing, que mezcla el
-        // hueco de COSTES (defecto A de la revisión: una ruta con todos sus
-        // swaps cotizados no debe fallar protocol_exact_quotes porque falte
-        // gas/financing; eso es economía, no quote de ruta).
-        let exact_methods = ["cpmm_exact_integer", "v3_spot_within_tick"];
+        // Quote exacto por protocolo: cada pierna cotizó con un método
+        // exacto. TRES modalidades: cpmm_exact_integer y v3_spot_within_tick
+        // (locales) MÁS protocol_exact_integer — la precisión que el camino
+        // de ExactHopQuote valida (identidad, monto, procedencia, comisiones
+        // e impacto incluidos) y publica como quote_method del ledger. Con
+        // solo las dos locales, una pierna correctamente abastecida por el
+        // adaptador exacto recibía FAIL: incompatibilidad productor/consumidor
+        // dentro del propio backend (defecto de revisión). Se mide por
+        // piernas cotizadas vs piernas de la ruta — NO con q.missing completo,
+        // que mezcla el hueco de COSTES (gas/financing son economía, no quote
+        // de ruta).
+        let exact_methods = [
+            "cpmm_exact_integer",
+            "v3_spot_within_tick",
+            "protocol_exact_integer",
+        ];
         let legs_with_exact_method = q
             .legs
             .iter()
@@ -345,6 +354,24 @@ impl SnapshotServices {
             })
             .count();
         let protocol_exact = !edges.is_empty() && legs_with_exact_method == edges.len();
+        // Causa CONCRETA del productor cuando una pierna no cotizó: quote()
+        // registra los fallos de hop como "hop_<n>:<razón>" en q.missing —
+        // se propagan tal cual (p.ej. "hop_0:missing_reserve_in"), nunca la
+        // razón genérica que ocultaba el defecto real.
+        let hop_failures: Vec<&str> = q
+            .missing
+            .iter()
+            .filter(|m| m.starts_with("hop_"))
+            .map(std::string::String::as_str)
+            .collect();
+        let protocol_reason = if !edges.is_empty()
+            && edges.len() > legs_with_exact_method
+            && !hop_failures.is_empty()
+        {
+            hop_failures.join(";")
+        } else {
+            "leg_missing_or_non_exact_quote_method".to_string()
+        };
 
         let receipt = |name: &str, ok: bool, reason_if_fail: &str| RequirementReceipt {
             name: name.into(),
@@ -370,11 +397,7 @@ impl SnapshotServices {
                 same_snapshot,
                 "edges_span_multiple_sync_rounds_or_snapshots",
             ),
-            receipt(
-                "protocol_exact_quotes",
-                protocol_exact,
-                "leg_missing_or_non_exact_quote_method",
-            ),
+            receipt("protocol_exact_quotes", protocol_exact, &protocol_reason),
             // ── Verificaciones de CAPA NATIVA: no computables aquí ── El
             // veredicto honesto es FAIL con la razón exacta; un PASS
             // fabricado enmascararía el hueco real (el dispatcher de
@@ -949,10 +972,10 @@ mod plan_support_wiring_tests {
         let receipts = svc
             .verify_requirements(&ctx, &spec(), &cand, &[])
             .expect("derived receipts");
-        // Enmienda: el recibo afectado es protocol_exact_quotes (la pierna no
-        // cotizó) con la razón REAL del fallo — nunca un PASS fabricado. La
-        // completitud de RUTA (closed/continuity/same_snapshot) es
-        // independiente del fallo económico de una pierna.
+        // Enmienda: el recibo protocol_exact_quotes lleva la CAUSA CONCRETA
+        // del productor (hop_0:missing_reserve_in) — no la genérica que
+        // ocultaba el defecto real del fixture. La completitud de RUTA es
+        // independiente del fallo de una pierna.
         let exact = receipts
             .iter()
             .find(|r| r.name == "protocol_exact_quotes")
@@ -963,13 +986,8 @@ mod plan_support_wiring_tests {
                 .reason
                 .as_deref()
                 .unwrap()
-                .contains("non_exact_quote_method")
-                || exact
-                    .reason
-                    .as_deref()
-                    .unwrap()
-                    .contains("missing_reserve_in"),
-            "razon real esperada: {:?}",
+                .contains("missing_reserve_in"),
+            "causa del PRODUCTOR esperada: {:?}",
             exact.reason
         );
         // Ruta y economía separadas: closed_token_cycle comprueba la FORMA
