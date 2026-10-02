@@ -261,7 +261,14 @@ impl SnapshotServices {
             .and_then(|ps| ps.iter().find(|p| p.candidate == *c))
             .ok_or_else(|| "native_domain_plan_missing_or_changed".into())
     }
-    fn support<'a>(&'a self, spec: &Value, c: &Value) -> Result<&'a PlanSupport, String> {
+    /// Lookup ONLY of precomputed support (bundle `route_support` / domain
+    /// plans). NEVER derives — `quote()` itself consumes this, so a deriving
+    /// lookup here would recurse infinitely.
+    fn precomputed_support<'a>(
+        &'a self,
+        spec: &Value,
+        c: &Value,
+    ) -> Result<&'a PlanSupport, String> {
         if c["edge_ids"].is_array() {
             self.data
                 .route_support
@@ -270,6 +277,76 @@ impl SnapshotServices {
         } else {
             Ok(&self.domain(spec, c)?.support)
         }
+    }
+
+    /// AgentServices-facing support: precomputed first; a GRAPH candidate
+    /// with no precomputed entry derives its support from the plan's OWN real
+    /// quote (PLAN-SUPPORT-WIRING-01). Before this, every graph candidate
+    /// died with `native_costs_operators_or_constraints_missing` and the
+    /// bridge reported `missing_or_duplicate_constraint_receipt` — the 69%
+    /// measured `applicable_data_or_constraint_gap`. Every number in the
+    /// derived support is the quote's own (R8: no fabricated cost ever).
+    fn support(&self, ctx: &Value, spec: &Value, c: &Value) -> Result<PlanSupport, String> {
+        if let Ok(pre) = self.precomputed_support(spec, c) {
+            return Ok(pre.clone());
+        }
+        self.derive_support(ctx, spec, c)
+    }
+
+    /// Support derived from the REAL quote of this exact plan/amount/snapshot:
+    /// receipts of route completeness (a `missing` hop is a FAIL receipt with
+    /// its exact reason — never a fabricated PASS), operator evidence bound to
+    /// the plan identity, and the quote's own cost lines. Costs that the
+    /// discovery layer cannot compute stay declared-but-absent (honest
+    /// DATA_GAP), never invented.
+    fn derive_support(&self, ctx: &Value, spec: &Value, c: &Value) -> Result<PlanSupport, String> {
+        let q = self.quote(ctx, spec, c)?;
+        let plan_hash = q.plan_hash.clone();
+        let snapshot_id = q.snapshot_id.clone();
+        let evidence_id = format!("quote:{plan_hash}");
+        let mut constraints = vec![RequirementReceipt {
+            name: "quote_route_complete".into(),
+            status: if q.missing.is_empty() {
+                "PASS".into()
+            } else {
+                "FAIL".into()
+            },
+            reason: (!q.missing.is_empty()).then(|| q.missing.join(";")),
+            evidence_id: evidence_id.clone(),
+            snapshot_id: snapshot_id.clone(),
+            plan_hash: plan_hash.clone(),
+        }];
+        // One FAIL receipt per concrete missing item — the exact bridge
+        // contract (matching receipt per required constraint name).
+        for (i, miss) in q.missing.iter().enumerate() {
+            constraints.push(RequirementReceipt {
+                name: format!("quote_missing_{i}"),
+                status: "FAIL".into(),
+                reason: Some(miss.clone()),
+                evidence_id: evidence_id.clone(),
+                snapshot_id: snapshot_id.clone(),
+                plan_hash: plan_hash.clone(),
+            });
+        }
+        let operator_evidence = json!({
+            "snapshot_id": snapshot_id,
+            "plan_hash": plan_hash,
+            "context_id": q.context_id,
+            "derived_from": "quote_v1",
+            "quote_status": q.status,
+            "legs_quote_methods": q
+                .legs
+                .iter()
+                .filter_map(|l| l.get("quote_method").cloned())
+                .collect::<Vec<_>>(),
+            "operators": {},
+        });
+        Ok(PlanSupport {
+            costs: q.costs.clone(),
+            required_cost_kinds: q.required_cost_kinds.clone(),
+            constraints,
+            operator_evidence,
+        })
     }
     fn price(&self, token: &str) -> Result<&CanonicalPrice, String> {
         let p = self
@@ -456,7 +533,7 @@ impl AgentServices for SnapshotServices {
                 }
             }
         }
-        let (costs, required_costs) = match self.support(spec, c) {
+        let (costs, required_costs) = match self.precomputed_support(spec, c) {
             Ok(s) => (s.costs.clone(), s.required_cost_kinds.clone()),
             Err(e) => {
                 missing.push(e);
@@ -496,13 +573,13 @@ impl AgentServices for SnapshotServices {
         self.check(ctx, spec)?;
         self.check_candidate(spec, c)?;
         let Some(dispatch) = &self.operator_dispatch else {
-            return Ok(self.support(spec, c)?.operator_evidence.clone());
+            return Ok(self.support(ctx, spec, c)?.operator_evidence);
         };
         let mut fresh = dispatch(ctx, spec, c)?;
         // A disabled primary may be fulfilled only by an actual native
         // equivalent receipt already tied to this plan/snapshot. Preserve the
         // switch state separately, never pretend that the disabled op ran.
-        if let Ok(support) = self.support(spec, c) {
+        if let Ok(support) = self.support(ctx, spec, c) {
             let cached = &support.operator_evidence;
             if cached["snapshot_id"] == self.data.snapshot_id
                 && cached["plan_hash"] == c["plan_hash"]
@@ -539,7 +616,7 @@ impl AgentServices for SnapshotServices {
     ) -> Result<Vec<RequirementReceipt>, String> {
         self.check(ctx, spec)?;
         self.check_candidate(spec, c)?;
-        Ok(self.support(spec, c)?.constraints.clone())
+        Ok(self.support(ctx, spec, c)?.constraints)
     }
     fn build_payload(&self, o: &Value, spec: &Value) -> Result<Value, String> {
         self.check(
@@ -598,5 +675,204 @@ impl AgentServices for SnapshotServices {
         Ok(
             json!({"status":"CANONICAL_PLAN_VALIDATED","mev_id":p.mev_id,"context_id":p.context_id,"plan_hash":p.plan_hash,"snapshot_id":p.snapshot_id,"price_revision":p.price_revision,"policy_revision":p.policy_revision,"amount_in_raw":p.amount_in_raw,"execution_mode":p.execution_mode,"calldata":p.calldata_hex,"target_contract":p.target,"simulation_trace_hash":p.trace_hash,"simulated_net_profit_usd":p.net_profit_usd,"approved_for_execution":false,"reason":"existing_signer_and_live_authorization_gates_remain_authoritative"}),
         )
+    }
+}
+
+#[cfg(test)]
+mod plan_support_wiring_tests {
+    use super::*;
+    use crate::agent_graph::{Edge, SearchLimits};
+    use crate::rhai_agent_bridge::{AgentServices, PolicyView};
+    use std::collections::BTreeMap;
+    use std::sync::Arc;
+
+    /// PLAN-SUPPORT-WIRING-01 fixture: mixed V2+V3 closed cycle A→B (CPMM)
+    /// and B→A (V3 within-tick), real prices, no precomputed route_support —
+    /// exactly the production shape of the intent bundle.
+    fn mixed_bundle() -> SnapshotBundle {
+        let now = now_ms().unwrap();
+        let snap = "snap-t".to_string();
+        let v2 = Edge {
+            edge_id: "0xpoolV2".into(),
+            pool_id: "0xpoolV2".into(),
+            chain_id: 1,
+            token_in: "0xta".into(),
+            token_out: "0xtb".into(),
+            protocol: "cpmm_v2".into(),
+            snapshot_id: snap.clone(),
+            block_hash: "sync-ts-1790898166".into(),
+            reserve_in_raw: Some("1000000000000000000000000".into()),
+            reserve_out_raw: Some("1000000000000000000000000".into()),
+            fee_units: Some(30),
+            fee_denominator: Some(10_000),
+            token_in_decimals: 18,
+            token_out_decimals: 18,
+            adapter_version: "reserves_cache_v1".into(),
+            sqrt_price_x96_raw: None,
+            liquidity: None,
+        };
+        let v3 = Edge {
+            edge_id: "0xpoolV3".into(),
+            pool_id: "0xpoolV3".into(),
+            chain_id: 1,
+            token_in: "0xtb".into(),
+            token_out: "0xta".into(),
+            protocol: "uniswap_v3".into(),
+            snapshot_id: snap.clone(),
+            block_hash: "sync-ts-1790898166".into(),
+            reserve_in_raw: None,
+            reserve_out_raw: None,
+            fee_units: Some(500),
+            fee_denominator: Some(1_000_000),
+            token_in_decimals: 18,
+            token_out_decimals: 18,
+            adapter_version: "reserves_cache_v1".into(),
+            sqrt_price_x96_raw: Some("79228162514264337593543950336".into()),
+            liquidity: Some(1_000_000_000_000_000_000_000_000),
+        };
+        let price = |tok: &str| CanonicalPrice {
+            chain_id: 1,
+            token_address: tok.into(),
+            usd: "1".into(),
+            revision: "r1".into(),
+            observed_at_ms: now,
+            valid_until_ms: now + 60_000,
+            evidence_id: "price_snapshot".into(),
+            producer: "PriceBus".into(),
+        };
+        let mut prices = BTreeMap::new();
+        prices.insert((1, "0xta".to_string()), price("0xta"));
+        prices.insert((1, "0xtb".to_string()), price("0xtb"));
+        let mut digests = BTreeMap::new();
+        digests.insert("MEV-01-001".to_string(), "digest1".to_string());
+        let policy = PolicyView {
+            enabled: true,
+            capital_cap_usd: "1000000".into(),
+            min_profit_usd: None,
+            max_gas_usd: None,
+            snapshot_id: snap.clone(),
+            price_revision: "r1".into(),
+            policy_revision: "r1".into(),
+            execution_mode: "PAPER_SHADOW".into(),
+            control_state: "operator_config_enabled".into(),
+        };
+        SnapshotBundle {
+            context_id: "ctx-t".into(),
+            snapshot_id: snap,
+            observed_at_ms: now,
+            valid_until_ms: now + 60_000,
+            policy,
+            start_token: "0xta".into(),
+            chain_id: 1,
+            edges: vec![v2, v3],
+            limits: SearchLimits {
+                max_hops: 4,
+                max_expansions: 64,
+                max_paths: 16,
+            },
+            size_schedule_raw: vec!["1000000000000000000".into()],
+            prices,
+            exact_quotes: BTreeMap::new(),
+            route_support: BTreeMap::new(),
+            domain_plans: BTreeMap::new(),
+            canonical_payloads: BTreeMap::new(),
+            manifest_digests: digests,
+            max_evaluations: 8,
+        }
+    }
+    fn spec() -> Value {
+        json!({
+            "mev_id": "MEV-01-001",
+            "detector_id": "R_CLOSED_CYCLE",
+            "source_digest": "digest1",
+            "logic": "closed_route",
+            "allowed_search_hops": [2],
+        })
+    }
+
+    fn candidate(ids: Value, amount: &str) -> Value {
+        let body = json!({
+            "mev_id": "MEV-01-001",
+            "detector_id": "R_CLOSED_CYCLE",
+            "context_id": "ctx-t",
+            "snapshot_id": "snap-t",
+            "price_revision": "r1",
+            "policy_revision": "r1",
+            "edge_ids": ids,
+            "amount_in_raw": amount,
+        });
+        let hash = canonical_hash(&body);
+        json!({
+            "mev_id": "MEV-01-001",
+            "detector_id": "R_CLOSED_CYCLE",
+            "context_id": "ctx-t",
+            "snapshot_id": "snap-t",
+            "price_revision": "r1",
+            "policy_revision": "r1",
+            "edge_ids": ids,
+            "amount_in_raw": amount,
+            "plan_id": hash,
+            "plan_hash": hash,
+        })
+    }
+
+    /// Mixed V2+V3 route: the derived support carries BOTH quote methods —
+    /// cpmm_exact_integer for the V2 leg and v3_spot_within_tick for the V3
+    /// leg (exactness of the V3 within-tick model through the wiring).
+    #[test]
+    fn mixed_route_support_derives_both_quote_methods() {
+        let svc = SnapshotServices::new(Arc::new(mixed_bundle()), Arc::new(|_, _| true)).unwrap();
+        let ctx = json!({"context_id": "ctx-t", "snapshot_id": "snap-t"});
+        let cand = candidate(json!(["0xpoolV2", "0xpoolV3"]), "1000000000000000000");
+        let ev = svc
+            .operators(&ctx, &spec(), &cand)
+            .expect("derived support");
+        assert_eq!(ev["snapshot_id"].as_str().unwrap(), "snap-t");
+        assert_eq!(
+            ev["plan_hash"].as_str().unwrap(),
+            cand["plan_hash"].as_str().unwrap()
+        );
+        let methods: Vec<&str> = ev["legs_quote_methods"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|m| m.as_str())
+            .collect();
+        assert!(
+            methods.contains(&"cpmm_exact_integer"),
+            "falta V2: {methods:?}"
+        );
+        assert!(
+            methods.contains(&"v3_spot_within_tick"),
+            "falta V3: {methods:?}"
+        );
+    }
+
+    /// A V2 leg WITHOUT reserves produces a FAIL receipt with the exact
+    /// reason — never a fabricated PASS (R8).
+    #[test]
+    fn broken_leg_yields_fail_receipt_not_fabricated_pass() {
+        let mut bundle = mixed_bundle();
+        bundle.edges[0].reserve_in_raw = None;
+        bundle.edges[0].reserve_out_raw = None;
+        let svc = SnapshotServices::new(Arc::new(bundle), Arc::new(|_, _| true)).unwrap();
+        let ctx = json!({"context_id": "ctx-t", "snapshot_id": "snap-t"});
+        let cand = candidate(json!(["0xpoolV2", "0xpoolV3"]), "1000000000000000000");
+        let receipts = svc
+            .verify_requirements(&ctx, &spec(), &cand, &[])
+            .expect("derived receipts");
+        let main = receipts
+            .iter()
+            .find(|r| r.name == "quote_route_complete")
+            .unwrap();
+        assert_eq!(main.status, "FAIL");
+        assert!(
+            main.reason
+                .as_deref()
+                .unwrap()
+                .contains("missing_reserve_in"),
+            "razon real esperada: {:?}",
+            main.reason
+        );
     }
 }

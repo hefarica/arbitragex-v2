@@ -1708,10 +1708,14 @@ pub async fn active_evaluate_and_emit(
                     .or_insert(0) += 1;
                 continue;
             };
-            // Identidad de bloque REAL observada (número de la entrada de
-            // reservas) con prefijo explícito "blk-": Edge no tiene campo
-            // para número de bloque y JAMÁS se fabrica un hash (R8).
-            (Some(pair), format!("blk-{}", entry.blk), None)
+            // Identidad de coherencia del ROUND DE SYNC (PLAN-SUPPORT-WIRING-
+            // 01): V2 y V3 del mismo round comparten ts (verificado en
+            // producción), mientras que blk solo existe en V2 y ts solo se
+            // usaba en V3 — con identidades distintas, quote_path_progress
+            // rechazaba TODA ruta mixta con mixed_block_or_domain. El ts del
+            // round ES la frontera real de coherencia (todas las entradas se
+            // escribieron juntas). JAMÁS se fabrica un hash (R8).
+            (Some(pair), format!("sync-ts-{}", entry.ts), None)
         };
         let Some(dec_in) =
             v4_token_decimals(&mut v4_redis, chain_id, &token_in, &mut v4_decimal_cache).await
