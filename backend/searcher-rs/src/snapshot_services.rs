@@ -293,41 +293,103 @@ impl SnapshotServices {
         self.derive_support(ctx, spec, c)
     }
 
-    /// Support derived from the REAL quote of this exact plan/amount/snapshot:
-    /// receipts of route completeness (a `missing` hop is a FAIL receipt with
-    /// its exact reason — never a fabricated PASS), operator evidence bound to
-    /// the plan identity, and the quote's own cost lines. Costs that the
-    /// discovery layer cannot compute stay declared-but-absent (honest
-    /// DATA_GAP), never invented.
+    /// Support derived from the REAL quote of this exact plan/amount/snapshot
+    /// (PLAN-SUPPORT-WIRING-01, enmienda). Recibos con los NOMBRES que los
+    /// cartuchos de ciclo cerrado DECLARAN en su manifiesto
+    /// (`required_constraints`): closed_token_cycle, protocol_exact_quotes,
+    /// same_snapshot, token_continuity, strategy_specific_note_verified,
+    /// native_risk_and_impact_policy — el bridge busca cada nombre EXACTO, y
+    /// con nombres propios (`quote_route_complete`) seguía reportando
+    /// missing_or_duplicate_constraint_receipt. Cada recibo afirma SOLO lo
+    /// que su verificación comprueba: los cuatro de ruta se calculan aquí
+    /// desde edges/ledger reales; los dos que exigen capa nativa se emiten
+    /// FAIL con la razón exacta — jamás un PASS fabricado (R8). La
+    /// completitud de RUTA queda separada de la económica: los costos que el
+    /// descubrimiento no computa viven en costs/required_cost_kinds (DATA_GAP
+    /// honesto), no disfrazados de recibo de ruta.
     fn derive_support(&self, ctx: &Value, spec: &Value, c: &Value) -> Result<PlanSupport, String> {
         let q = self.quote(ctx, spec, c)?;
         let plan_hash = q.plan_hash.clone();
         let snapshot_id = q.snapshot_id.clone();
         let evidence_id = format!("quote:{plan_hash}");
-        let mut constraints = vec![RequirementReceipt {
-            name: "quote_route_complete".into(),
-            status: if q.missing.is_empty() {
-                "PASS".into()
-            } else {
-                "FAIL".into()
-            },
-            reason: (!q.missing.is_empty()).then(|| q.missing.join(";")),
+        let edges = self.edges_for(c)?;
+
+        // ── Verificaciones de RUTA (computables aquí, con datos reales) ──
+        let closed = edges
+            .first()
+            .zip(edges.last())
+            .is_some_and(|(f, l)| !edges.is_empty() && l.token_out == f.token_in);
+        let continuity = edges.windows(2).all(|w| w[0].token_out == w[1].token_in);
+        // Coherencia de INGESTA: mismo snapshot y mismo round de sync en toda
+        // la ruta. NOTA (hallazgo de revisión): prueba round de sync común,
+        // NO que las lecturas consultaron el mismo bloque on-chain — el
+        // anclaje EIP-1898 por blockHash es trabajo posterior explícito.
+        let same_snapshot = !edges.is_empty()
+            && edges.iter().all(|e| {
+                e.snapshot_id == edges[0].snapshot_id && e.block_hash == edges[0].block_hash
+            });
+        // Quote exacto por protocolo: cada PIerna cotizó con método exacto
+        // (cpmm_exact_integer / v3_spot_within_tick). Se mide por piernas
+        // cotizadas vs piernas de la ruta — NO con q.missing, que mezcla el
+        // hueco de COSTES (defecto A de la revisión: una ruta con todos sus
+        // swaps cotizados no debe fallar protocol_exact_quotes porque falte
+        // gas/financing; eso es economía, no quote de ruta).
+        let exact_methods = ["cpmm_exact_integer", "v3_spot_within_tick"];
+        let legs_with_exact_method = q
+            .legs
+            .iter()
+            .filter(|l| {
+                l.get("quote_method")
+                    .and_then(|m| m.as_str())
+                    .is_some_and(|m| exact_methods.contains(&m))
+            })
+            .count();
+        let protocol_exact = !edges.is_empty() && legs_with_exact_method == edges.len();
+
+        let receipt = |name: &str, ok: bool, reason_if_fail: &str| RequirementReceipt {
+            name: name.into(),
+            status: if ok { "PASS".into() } else { "FAIL".into() },
+            reason: (!ok).then(|| reason_if_fail.into()),
             evidence_id: evidence_id.clone(),
             snapshot_id: snapshot_id.clone(),
             plan_hash: plan_hash.clone(),
-        }];
-        // One FAIL receipt per concrete missing item — the exact bridge
-        // contract (matching receipt per required constraint name).
-        for (i, miss) in q.missing.iter().enumerate() {
-            constraints.push(RequirementReceipt {
-                name: format!("quote_missing_{i}"),
-                status: "FAIL".into(),
-                reason: Some(miss.clone()),
-                evidence_id: evidence_id.clone(),
-                snapshot_id: snapshot_id.clone(),
-                plan_hash: plan_hash.clone(),
-            });
-        }
+        };
+        let constraints = vec![
+            receipt(
+                "closed_token_cycle",
+                closed,
+                "last_leg_token_out_does_not_match_first_leg_token_in",
+            ),
+            receipt(
+                "token_continuity",
+                continuity,
+                "leg_token_out_does_not_feed_next_leg_token_in",
+            ),
+            receipt(
+                "same_snapshot",
+                same_snapshot,
+                "edges_span_multiple_sync_rounds_or_snapshots",
+            ),
+            receipt(
+                "protocol_exact_quotes",
+                protocol_exact,
+                "leg_missing_or_non_exact_quote_method",
+            ),
+            // ── Verificaciones de CAPA NATIVA: no computables aquí ── El
+            // veredicto honesto es FAIL con la razón exacta; un PASS
+            // fabricado enmascararía el hueco real (el dispatcher de
+            // operadores sigue sin adjuntarse en la ruta del intent).
+            receipt(
+                "strategy_specific_note_verified",
+                false,
+                "not_verifiable_at_discovery_layer",
+            ),
+            receipt(
+                "native_risk_and_impact_policy",
+                false,
+                "native_evaluator_not_attached_to_intent_path",
+            ),
+        ];
         let operator_evidence = json!({
             "snapshot_id": snapshot_id,
             "plan_hash": plan_hash,
@@ -846,6 +908,32 @@ mod plan_support_wiring_tests {
             methods.contains(&"v3_spot_within_tick"),
             "falta V3: {methods:?}"
         );
+        // Enmienda: los recibos llevan los NOMBRES del manifiesto real y cada
+        // uno afirma SOLO su verificación. Ruta completa y coherente → los
+        // cuatro de ruta en PASS; los dos de capa nativa en FAIL honesto.
+        let receipts = svc
+            .verify_requirements(&ctx, &spec(), &cand, &[])
+            .expect("recibos derivados");
+        let by_name = |n: &str| {
+            receipts
+                .iter()
+                .find(|r| r.name == n)
+                .unwrap_or_else(|| panic!("falta el recibo {n} exigido por el manifiesto"))
+        };
+        for route_check in [
+            "closed_token_cycle",
+            "token_continuity",
+            "same_snapshot",
+            "protocol_exact_quotes",
+        ] {
+            assert_eq!(
+                by_name(route_check).status,
+                "PASS",
+                "{route_check} debe pasar en la ruta mixta completa"
+            );
+        }
+        assert_eq!(by_name("strategy_specific_note_verified").status, "FAIL");
+        assert_eq!(by_name("native_risk_and_impact_policy").status, "FAIL");
     }
 
     /// A V2 leg WITHOUT reserves produces a FAIL receipt with the exact
@@ -861,18 +949,35 @@ mod plan_support_wiring_tests {
         let receipts = svc
             .verify_requirements(&ctx, &spec(), &cand, &[])
             .expect("derived receipts");
-        let main = receipts
+        // Enmienda: el recibo afectado es protocol_exact_quotes (la pierna no
+        // cotizó) con la razón REAL del fallo — nunca un PASS fabricado. La
+        // completitud de RUTA (closed/continuity/same_snapshot) es
+        // independiente del fallo económico de una pierna.
+        let exact = receipts
             .iter()
-            .find(|r| r.name == "quote_route_complete")
+            .find(|r| r.name == "protocol_exact_quotes")
             .unwrap();
-        assert_eq!(main.status, "FAIL");
+        assert_eq!(exact.status, "FAIL");
         assert!(
-            main.reason
+            exact
+                .reason
                 .as_deref()
                 .unwrap()
-                .contains("missing_reserve_in"),
+                .contains("non_exact_quote_method")
+                || exact
+                    .reason
+                    .as_deref()
+                    .unwrap()
+                    .contains("missing_reserve_in"),
             "razon real esperada: {:?}",
-            main.reason
+            exact.reason
         );
+        // Ruta y economía separadas: closed_token_cycle comprueba la FORMA
+        // (A→B→A), no la cotización de sus piernas.
+        let closed = receipts
+            .iter()
+            .find(|r| r.name == "closed_token_cycle")
+            .unwrap();
+        assert_eq!(closed.status, "PASS");
     }
 }
