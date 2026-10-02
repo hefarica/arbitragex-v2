@@ -695,31 +695,39 @@ fn invariant_of(protocol_debug: &str) -> &'static str {
 
 /// Pure builder for the legacy `rd_outcome_v1` payload (flat single-leg).
 ///
-/// REPAIRS-OBSERVABILITY-01 (2026-10-01): extrae el diagnóstico v4 del
-/// `metadata.proposal_v4` sellado — `status`, `reason` y los NOMBRES de los
-/// `repairs` — hacia el outcome durable. Sin esto, la razón dominante
+/// REPAIRS-OBSERVABILITY-01 (2026-10-01, enmienda): extrae el diagnóstico v4
+/// hacia el outcome durable. Contrato del PRODUCTOR (rhai_agent_bridge.rs
+/// `repairs_push` L178): cada repair es `{"field": ..., "reason": ...}` — se
+/// conservan AMBOS: distinguir un fallo de identidad de plan de un operador
+/// sin resultado exige la causa, no solo el componente. El `reason` general
+/// usa el campo preservado por el parser (`CartridgeEvalResult.reason`, que
+/// el parser EXCLUYE del proposal sellado) y cae al del proposal solo si el
+/// parser no trajo ninguno. Sin esto, la razón dominante
 /// (`applicable_data_or_constraint_gap`, 69% medido) no permite saber CUÁL
-/// reparación bloquea: los nombres no aparecían ni en logs ni en outcomes
-/// (el mismo gap de observabilidad ya roto dos veces: grafo en `debug!`,
-/// histograma en Redis). Sólo observabilidad: sin cambios en reglas ni
-/// umbrales económicos; los números son los propios del proposal (R8).
+/// reparación bloquea. Sólo observabilidad: sin cambios en reglas ni
+/// umbrales; los números son los propios del proposal (R8).
 fn v4_repairs_summary(res: &CartridgeEvalResult) -> serde_json::Value {
     let Some(p) = res.metadata.get("proposal_v4") else {
         return serde_json::Value::Null;
     };
-    let names: Vec<&str> = p
+    let repairs: Vec<&serde_json::Value> = p
         .get("repairs")
         .and_then(|r| r.as_array())
-        .map(|arr| {
-            arr.iter()
-                .filter_map(|r| r.get("name").and_then(|n| n.as_str()))
-                .collect()
-        })
+        .map(|arr| arr.iter().collect())
         .unwrap_or_default();
     serde_json::json!({
         "status": p.get("status").cloned().unwrap_or(serde_json::Value::Null),
-        "reason": p.get("reason").cloned().unwrap_or(serde_json::Value::Null),
-        "repairs": names,
+        "reason": res
+            .reason
+            .clone()
+            .or_else(|| {
+                p.get("reason")
+                    .and_then(|r| r.as_str())
+                    .map(std::string::ToString::to_string)
+            })
+            .map(serde_json::Value::String)
+            .unwrap_or(serde_json::Value::Null),
+        "repairs": repairs,
     })
 }
 
@@ -3539,21 +3547,26 @@ mod tests {
         assert!(v.get("route").is_none());
     }
 
-    /// REPAIRS-OBSERVABILITY-01: los nombres de los repairs del proposal_v4
-    /// sellado llegan al outcome durable — el 69% medido de
-    /// `applicable_data_or_constraint_gap` deja de ser opaco.
+    /// REPAIRS-OBSERVABILITY-01 (enmienda): prueba el contrato del PRODUCTOR
+    /// real — `repairs_push` (rhai_agent_bridge.rs L178) emite
+    /// `{"field": ..., "reason": ...}`, y el parser promueve el `reason` del
+    /// mapa a CartridgeEvalResult.reason EXCLUYÉNDOLO del proposal sellado.
+    /// El primer test de este PR fabricaba objetos con "name" — certificaba
+    /// un contrato distinto del productivo y devolvía lista vacía ante
+    /// repairs reales (defecto señalado en revisión).
     #[test]
     fn rd_outcome_v1_carries_v4_repair_names() {
         let mut res = eval_result(false);
+        // El parser preserva el reason FUERA del proposal (exclusion list).
+        res.reason = Some("applicable_data_or_constraint_gap".to_string());
         res.metadata.insert(
             "proposal_v4".to_string(),
             serde_json::json!({
                 "contract_version": "arbx.cartridge.agent/4",
                 "status": "DATA_GAP",
-                "reason": "applicable_data_or_constraint_gap",
                 "repairs": [
-                    {"name": "capital_usd", "reason": "capital_missing_or_cap_exceeded"},
-                    {"name": "operators", "reason": "operator_context_mismatch"}
+                    {"field": "capital_usd", "reason": "capital_missing_or_cap_exceeded"},
+                    {"field": "operators", "reason": "operator_context_mismatch"}
                 ],
                 "net_profit_usd": null
             }),
@@ -3568,13 +3581,24 @@ mod tests {
         );
         let r = &v["v4_repairs"];
         assert_eq!(r["status"].as_str().unwrap(), "DATA_GAP");
-        let names: Vec<&str> = r["repairs"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .filter_map(|n| n.as_str())
-            .collect();
-        assert_eq!(names, vec!["capital_usd", "operators"]);
+        // El reason viene del campo preservado por el parser, no del proposal.
+        assert_eq!(
+            r["reason"].as_str().unwrap(),
+            "applicable_data_or_constraint_gap"
+        );
+        // Formato NATIVO: cada repair conserva field Y reason.
+        let repairs = r["repairs"].as_array().unwrap();
+        assert_eq!(repairs.len(), 2);
+        assert_eq!(repairs[0]["field"].as_str().unwrap(), "capital_usd");
+        assert_eq!(
+            repairs[0]["reason"].as_str().unwrap(),
+            "capital_missing_or_cap_exceeded"
+        );
+        assert_eq!(repairs[1]["field"].as_str().unwrap(), "operators");
+        assert_eq!(
+            repairs[1]["reason"].as_str().unwrap(),
+            "operator_context_mismatch"
+        );
     }
 
     #[test]
