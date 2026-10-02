@@ -195,6 +195,12 @@ pub struct HttpEntry {
     /// `with_retry` — `pick()` only consults (never consumes) so external
     /// pick() callers are unaffected.
     pub budget: Option<Arc<crate::rate_budget::TokenBucket>>,
+    /// RPC-RECOVERY-01: per-provider in-flight request cap. `None` =
+    /// unlimited (compat). Permits are taken per ATTEMPT (non-blocking:
+    /// a saturated provider is skipped like a budget-exhausted one, never
+    /// reported as a failure) and released on success, error, timeout or
+    /// cancellation (RAII drop of the owned permit).
+    pub concurrency: Option<Arc<tokio::sync::Semaphore>>,
 }
 
 impl HttpEntry {
@@ -253,6 +259,20 @@ impl HttpRpcPool {
         // WO-13: per-provider client-side rate budgets. Env absent/empty =
         // no budgets (backward compatible). Parsed once, matched by entry name.
         let budgets = parse_budgets(&std::env::var("RPC_HTTP_RATE_BUDGETS").unwrap_or_default());
+        // RPC-RECOVERY-01: burst (bucket capacity) and concurrency (in-flight
+        // cap) are INDEPENDENT knobs — same CSV grammar, matched by entry
+        // name. Absent = defaults (burst=one minute of quota for compat,
+        // concurrency=unlimited).
+        let bursts = parse_named_u32_csv(
+            &std::env::var("RPC_HTTP_RATE_BURSTS").unwrap_or_default(),
+            "rpc_pool.burst_malformed",
+            "burst tokens",
+        );
+        let concurrency_limits = parse_named_u32_csv(
+            &std::env::var("RPC_HTTP_CONCURRENCY").unwrap_or_default(),
+            "rpc_pool.concurrency_malformed",
+            "max in-flight requests",
+        );
         for (name, url) in raw_entries {
             let parsed_url = match url.parse::<reqwest::Url>() {
                 Ok(u) => u,
@@ -338,16 +358,32 @@ impl HttpRpcPool {
             if !admitted {
                 continue;
             }
-            // WO-13: compute the budget BEFORE the struct moves `name`.
+            // WO-13 + RPC-RECOVERY-01: compute the budget (with the explicit
+            // burst override when configured) BEFORE the struct moves `name`.
             let budget = budgets.get(name.as_str()).map(|rpm| {
+                let burst = bursts
+                    .get(name.as_str())
+                    .copied()
+                    .unwrap_or(*rpm); // compat: burst = one minute of quota
                 info!(
                     event = "rpc_pool.rate_budget_set",
                     chain_id,
                     name = name.as_str(),
                     calls_per_min = rpm,
+                    burst_tokens = burst,
                     "client-side rate budget active for provider"
                 );
-                Arc::new(crate::rate_budget::TokenBucket::new(*rpm))
+                Arc::new(crate::rate_budget::TokenBucket::with_burst(*rpm, burst))
+            });
+            let concurrency = concurrency_limits.get(name.as_str()).map(|n| {
+                info!(
+                    event = "rpc_pool.concurrency_set",
+                    chain_id,
+                    name = name.as_str(),
+                    max_in_flight = n,
+                    "client-side concurrency cap active for provider"
+                );
+                Arc::new(tokio::sync::Semaphore::new(*n as usize))
             });
             alive.push(Arc::new(HttpEntry {
                 name,
@@ -358,7 +394,42 @@ impl HttpRpcPool {
                 latency_ms_ewma: AtomicU64::new(0),
                 circuit: RwLock::new(CircuitState::default()),
                 budget,
+                concurrency,
             }));
+        }
+
+        // RPC-RECOVERY-01 (fail-honest config diagnostics): a profile alias
+        // that matches NO admitted entry is an operator error — warn loudly
+        // instead of silently running unlimited. A burst without a budget is
+        // equally meaningless (no refill rate to cap).
+        let admitted: std::collections::HashSet<&str> =
+            alive.iter().map(|e| e.name.as_str()).collect();
+        for (kind, map) in [
+            ("budget", &budgets),
+            ("burst", &bursts),
+            ("concurrency", &concurrency_limits),
+        ] {
+            for alias in map.keys() {
+                if !admitted.contains(alias.as_str()) {
+                    warn!(
+                        event = "rpc_pool.profile_alias_unknown",
+                        chain_id,
+                        kind,
+                        alias = %alias,
+                        "profile entry matches no admitted provider — it is NOT applied"
+                    );
+                }
+            }
+        }
+        for alias in bursts.keys() {
+            if !budgets.contains_key(alias) {
+                warn!(
+                    event = "rpc_pool.burst_without_budget",
+                    chain_id,
+                    alias = %alias,
+                    "burst configured without a rate budget — it is NOT applied"
+                );
+            }
         }
 
         if alive.is_empty() {
@@ -531,7 +602,32 @@ impl HttpRpcPool {
             }
             None => true,
         };
-        if first_acquired {
+        // RPC-RECOVERY-01: non-blocking in-flight cap. A saturated provider is
+        // skipped exactly like a budget-exhausted one — NEVER reported as a
+        // provider failure. The permit is RAII: released on success, error,
+        // timeout or cancellation (drop).
+        let first_permit = match &first.concurrency {
+            Some(sem) => match Arc::clone(sem).try_acquire_owned() {
+                Ok(p) => Some(p),
+                Err(_) => {
+                    crate::metrics::RPC_PROVIDER_BUDGET_THROTTLED_TOTAL
+                        .with_label_values(&[first.name.as_str(), "http"])
+                        .inc();
+                    debug!(
+                        event = "rpc_pool.concurrency_throttled_attempt",
+                        chain_id = self.chain_id,
+                        name = first.name.as_str(),
+                        "try-1 skipped: client-side concurrency cap saturated"
+                    );
+                    None
+                }
+            },
+            None => None, // no cap configured — no permit needed
+        };
+        let first_eligible = first_acquired
+            && (first.concurrency.is_none() || first_permit.is_some());
+        if first_eligible {
+            let _hold_permit = first_permit; // vive mientras viva la tentativa
             let started = Instant::now();
             match op(first.provider.clone()).await {
                 Ok(v) => {
@@ -586,6 +682,34 @@ impl HttpRpcPool {
                 None => true,
             };
             if bk_acquired {
+                // RPC-RECOVERY-01: in-flight cap del backup (misma semántica
+                // no bloqueante que try-1; saturado ≠ fallo del proveedor).
+                let bk_permit = match &bk.concurrency {
+                    Some(sem) => match Arc::clone(sem).try_acquire_owned() {
+                        Ok(p) => Some(p),
+                        Err(_) => {
+                            crate::metrics::RPC_PROVIDER_BUDGET_THROTTLED_TOTAL
+                                .with_label_values(&[bk.name.as_str(), "http"])
+                                .inc();
+                            debug!(
+                                event = "rpc_pool.concurrency_throttled_attempt",
+                                chain_id = self.chain_id,
+                                name = bk.name.as_str(),
+                                "try-2 skipped: client-side concurrency cap saturated"
+                            );
+                            None
+                        }
+                    },
+                    None => None,
+                };
+                if bk.concurrency.is_some() && bk_permit.is_none() {
+                    return if provider_error_seen {
+                        Err(PoolError::AllUnhealthy(self.chain_id))
+                    } else {
+                        Err(PoolError::BudgetExhausted(self.chain_id))
+                    };
+                }
+                let _hold_permit = bk_permit;
                 crate::metrics::RPC_POOL_FAILOVERS_TOTAL
                     .with_label_values(&[&self.chain_id.to_string()])
                     .inc();
@@ -1229,28 +1353,35 @@ pub fn budget_has_token(e: &HttpEntry) -> bool {
 /// Malformed tokens are skipped with a warn — one typo must not disarm the
 /// remaining budgets (same criterion as `parse_csv`, MC-RPC-1).
 pub fn parse_budgets(csv: &str) -> std::collections::HashMap<String, u32> {
+    parse_named_u32_csv(csv, "rpc_pool.budget_malformed", "calls_per_min")
+}
+
+/// RPC-RECOVERY-01: generic `name=N` CSV parser shared by budgets, bursts and
+/// concurrency limits. Malformed tokens warn-and-skip (never panic, never
+/// silently disarm the rest).
+fn parse_named_u32_csv(
+    csv: &str,
+    malformed_event: &str,
+    what: &str,
+) -> std::collections::HashMap<String, u32> {
     let mut out = std::collections::HashMap::new();
     for tok in csv.split(',') {
         let tok = tok.trim();
         if tok.is_empty() {
             continue;
         }
-        let Some((name, rpm)) = tok.split_once('=') else {
-            warn!(
-                event = "rpc_pool.budget_malformed",
-                token = %tok,
-                "expected name=calls_per_min"
-            );
+        let Some((name, n)) = tok.split_once('=') else {
+            warn!(event = malformed_event, token = %tok, "expected name={what}");
             continue;
         };
-        match rpm.trim().parse::<u32>() {
-            Ok(n) if n >= 1 => {
-                out.insert(name.trim().to_string(), n);
+        match n.trim().parse::<u32>() {
+            Ok(v) if v >= 1 => {
+                out.insert(name.trim().to_string(), v);
             }
             _ => warn!(
-                event = "rpc_pool.budget_invalid_rpm",
+                event = malformed_event,
                 token = %tok,
-                "calls_per_min must be an integer >= 1"
+                "{what} must be an integer >= 1"
             ),
         }
     }
@@ -1440,6 +1571,7 @@ mod tests {
             latency_ms_ewma: AtomicU64::new(0),
             circuit: RwLock::new(CircuitState::default()),
             budget: None,
+            concurrency: None,
         })
     }
 
@@ -1449,6 +1581,96 @@ mod tests {
         let mut inner = Arc::try_unwrap(e).ok().unwrap();
         inner.budget = Some(Arc::new(crate::rate_budget::TokenBucket::new(per_minute)));
         Arc::new(inner)
+    }
+
+    /// RPC-RECOVERY-01: dummy con tope de concurrencia `n`.
+    fn dummy_entry_capped(name: &str, n: u32) -> Arc<HttpEntry> {
+        let e = dummy_entry(name);
+        let mut inner = Arc::try_unwrap(e).ok().unwrap();
+        inner.concurrency = Some(Arc::new(tokio::sync::Semaphore::new(n as usize)));
+        Arc::new(inner)
+    }
+
+    /// RPC-RECOVERY-01 (aceptación): el permiso de concurrencia se libera en
+    /// ÉXITO, en ERROR y en CANCELACIÓN (drop del future) — nunca se fuga.
+    #[tokio::test]
+    async fn concurrency_permit_released_on_success_error_and_cancel() {
+        let pool = HttpRpcPool {
+            chain_id: 1,
+            entries: vec![dummy_entry_capped("solo", 1)],
+        };
+        let sem = pool.entries[0].concurrency.as_ref().unwrap();
+        // Éxito.
+        let r = pool
+            .with_retry(|_| async { Ok::<_, anyhow::Error>(7u8) })
+            .await
+            .unwrap();
+        assert_eq!(r, 7);
+        assert_eq!(sem.available_permits(), 1, "permiso liberado tras éxito");
+        // Error.
+        let _ = pool
+            .with_retry(|_| async { Err::<u8, _>(anyhow::anyhow!("boom")) })
+            .await;
+        assert_eq!(sem.available_permits(), 1, "permiso liberado tras error");
+        // Cancelación: el future se aborta a mitad de la tentativa.
+        let fut = pool.with_retry(|_| async {
+            tokio::time::sleep(std::time::Duration::from_secs(30)).await;
+            Ok::<u8, anyhow::Error>(0)
+        });
+        let handle = tokio::time::timeout(std::time::Duration::from_millis(20), fut).await;
+        assert!(handle.is_err(), "timeout externo = cancelación");
+        tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+        assert_eq!(
+            sem.available_permits(),
+            1,
+            "permiso liberado tras cancelación/drop"
+        );
+    }
+
+    /// RPC-RECOVERY-01 (aceptación): un proveedor saturado de concurrencia se
+    /// SALTA (como el presupuesto agotado) — no es fallo del proveedor: no
+    /// toca el breaker, y el backup ejecuta la solicitud.
+    #[tokio::test]
+    async fn concurrency_saturated_skips_to_backup_without_breaker_trip() {
+        let pool = HttpRpcPool {
+            chain_id: 1,
+            entries: vec![dummy_entry_capped("primario", 1), dummy_entry("backup")],
+        };
+        // El primario gana por latencia pero su único permiso está tomado.
+        pool.entries[0].latency_ms_ewma.store(1, Ordering::Relaxed);
+        pool.entries[1].latency_ms_ewma.store(100, Ordering::Relaxed);
+        let external = pool.entries[0]
+            .concurrency
+            .as_ref()
+            .unwrap()
+            .clone()
+            .try_acquire_owned()
+            .unwrap();
+        let used_calls = std::sync::atomic::AtomicUsize::new(0);
+        let r = pool
+            .with_retry(|p| {
+                let _ = p;
+                used_calls.fetch_add(1, Ordering::Relaxed);
+                async move { Ok::<u8, anyhow::Error>(42) }
+            })
+            .await
+            .unwrap();
+        drop(external);
+        assert_eq!(r, 42);
+        assert_eq!(
+            used_calls.load(Ordering::Relaxed),
+            1,
+            "la op ejecutó exactamente una vez (vía backup; el primario saturado jamás la llamó)"
+        );
+        assert_eq!(
+            pool.entries[0].snapshot_state(),
+            ProviderState::Healthy,
+            "saturación local NO tripó el breaker del primario"
+        );
+        assert!(
+            pool.entries[0].circuit.read().await.failures_window.is_empty(),
+            "sin fallos registrados contra el primario"
+        );
     }
 
     #[tokio::test]
