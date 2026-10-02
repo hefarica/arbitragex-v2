@@ -100,7 +100,7 @@ impl TokenBucket {
     fn refill_to(&self, st: &mut BucketState, now: Instant) {
         // Instant es monótono; un `now` anterior a `last` (imposible por
         // construcción salvo mocks) no resta crédito ni entra en pánico.
-        let elapsed_ns = now.saturating_duration_since(st.last).as_nanos() as u128;
+        let elapsed_ns = now.saturating_duration_since(st.last).as_nanos();
         if elapsed_ns == 0 {
             return;
         }
@@ -159,11 +159,11 @@ mod tests {
 
     // ── RPC-RECOVERY-01: regresiones trasladadas del modelo Python (6/6) ──
 
-    /// Regresión central (modelo: test_current_code_loses_submillisecond_refill
-    /// + test_proposed_refill_is_independent_of_inspection_frequency): un
-    /// bucket de 60/min agotado, inspeccionado cada 100µs durante 1s, DEBE
-    /// recuperar 1 token — independiente de la frecuencia de inspección.
-    /// (La implementación con truncado a ms + reset de reloj recuperaba 0.)
+    /// Regresión central del modelo Python (`loses_submillisecond_refill` +
+    /// `independent_of_inspection_frequency`), trasladada a Rust: un bucket de
+    /// 60/min agotado, inspeccionado cada 100µs durante 1s, DEBE recuperar 1
+    /// token — independiente de la frecuencia de inspección (la implementación
+    /// con truncado a ms + reset de reloj recuperaba 0).
     #[test]
     fn refill_independent_of_inspection_frequency() {
         let b = TokenBucket::new(60);
