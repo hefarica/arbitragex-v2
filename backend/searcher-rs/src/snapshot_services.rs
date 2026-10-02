@@ -329,31 +329,39 @@ impl SnapshotServices {
                 e.snapshot_id == edges[0].snapshot_id && e.block_hash == edges[0].block_hash
             });
         // Quote exacto por protocolo: cada pierna cotizó con un método
-        // exacto. TRES modalidades: cpmm_exact_integer y v3_spot_within_tick
-        // (locales) MÁS protocol_exact_integer — la precisión que el camino
-        // de ExactHopQuote valida (identidad, monto, procedencia, comisiones
-        // e impacto incluidos) y publica como quote_method del ledger. Con
-        // solo las dos locales, una pierna correctamente abastecida por el
-        // adaptador exacto recibía FAIL: incompatibilidad productor/consumidor
-        // dentro del propio backend (defecto de revisión). Se mide por
-        // piernas cotizadas vs piernas de la ruta — NO con q.missing completo,
-        // que mezcla el hueco de COSTES (gas/financing son economía, no quote
-        // de ruta).
-        let exact_methods = [
-            "cpmm_exact_integer",
-            "v3_spot_within_tick",
-            "protocol_exact_integer",
-        ];
-        let legs_with_exact_method = q
+        // VERIFICADO exacto contra el protocolo. EXACT-CLASS-01 (2026-10-02):
+        // v3_spot_within_tick es un cálculo BAJO HIPÓTESIS de liquidez
+        // constante dentro del tick (single_tick_assumption=true en su propia
+        // evidencia; el guard de movimiento relativo no puede demostrar
+        // ausencia de cruce — no recibe el siguiente tick inicializado).
+        // Mostrar el número y certificar su exactitud son decisiones
+        // SEPARADAS: la hipótesis no obtiene PASS por su etiqueta. Las que sí
+        // certifican: cpmm_exact_integer (entero exacto local) y
+        // protocol_exact_integer (ExactHopQuote valida identidad, monto,
+        // procedencia, comisiones e impacto incluidos). Se mide por piernas
+        // vs piernas de la ruta — NO con q.missing completo, que mezcla el
+        // hueco de COSTES (gas/financing son economía, no quote de ruta).
+        let verified_exact_methods = ["cpmm_exact_integer", "protocol_exact_integer"];
+        let legs_verified_exact = q
             .legs
             .iter()
             .filter(|l| {
                 l.get("quote_method")
                     .and_then(|m| m.as_str())
-                    .is_some_and(|m| exact_methods.contains(&m))
+                    .is_some_and(|m| verified_exact_methods.contains(&m))
             })
             .count();
-        let protocol_exact = !edges.is_empty() && legs_with_exact_method == edges.len();
+        // Pierna V3 bajo hipótesis: cuenta para la ruta pero NO certifica.
+        let legs_hypothesis_v3 = q
+            .legs
+            .iter()
+            .filter(|l| {
+                l.get("quote_method")
+                    .and_then(|m| m.as_str())
+                    .is_some_and(|m| m == "v3_spot_within_tick")
+            })
+            .count();
+        let protocol_exact = !edges.is_empty() && legs_verified_exact == edges.len();
         // Causa CONCRETA del productor cuando una pierna no cotizó: quote()
         // registra los fallos de hop como "hop_<n>:<razón>" en q.missing —
         // se propagan tal cual (p.ej. "hop_0:missing_reserve_in"), nunca la
@@ -365,10 +373,15 @@ impl SnapshotServices {
             .map(std::string::String::as_str)
             .collect();
         let protocol_reason = if !edges.is_empty()
-            && edges.len() > legs_with_exact_method
+            && edges.len() > legs_verified_exact + legs_hypothesis_v3
             && !hop_failures.is_empty()
         {
             hop_failures.join(";")
+        } else if legs_hypothesis_v3 > 0 && legs_verified_exact + legs_hypothesis_v3 == edges.len()
+        {
+            // Ruta completamente cotizada pero con pierna(s) V3 bajo
+            // hipótesis: el número se conserva, la certificación NO se otorga.
+            "v3_within_tick_is_hypothesis_not_protocol_verified".to_string()
         } else {
             "leg_missing_or_non_exact_quote_method".to_string()
         };
@@ -943,20 +956,71 @@ mod plan_support_wiring_tests {
                 .find(|r| r.name == n)
                 .unwrap_or_else(|| panic!("falta el recibo {n} exigido por el manifiesto"))
         };
-        for route_check in [
-            "closed_token_cycle",
-            "token_continuity",
-            "same_snapshot",
-            "protocol_exact_quotes",
-        ] {
+        for route_check in ["closed_token_cycle", "token_continuity", "same_snapshot"] {
             assert_eq!(
                 by_name(route_check).status,
                 "PASS",
                 "{route_check} debe pasar en la ruta mixta completa"
             );
         }
+        // EXACT-CLASS-01: la pierna V3 cotizó (método presente en la
+        // evidencia) pero BAJO HIPÓTESIS — el número se conserva y la
+        // certificación de exactitud NO se otorga. Mostrar ≠ certificar.
+        let exact_receipt = by_name("protocol_exact_quotes");
+        assert_eq!(exact_receipt.status, "FAIL");
+        assert_eq!(
+            exact_receipt.reason.as_deref().unwrap(),
+            "v3_within_tick_is_hypothesis_not_protocol_verified"
+        );
         assert_eq!(by_name("strategy_specific_note_verified").status, "FAIL");
         assert_eq!(by_name("native_risk_and_impact_policy").status, "FAIL");
+    }
+
+    /// V3-ROUNDING-02: el redondeo de one_for_zero es PISO (conforme a
+    /// getNextSqrtPriceFromAmount1RoundingDown). Contraejemplo de revisión con
+    /// división CON RESIDUO: liq=Q96+1, monto=1000, fee=500/1e6 → incremento
+    /// 998 (no 999 con techo) y out 997 (no 998).
+    #[test]
+    fn v3_one_for_zero_rounds_increment_down_with_remainder() {
+        use crate::agent_graph::quote_path;
+        use crate::agent_graph::ExactHopQuote;
+        use std::collections::BTreeMap;
+        let edge = Edge {
+            edge_id: "0xpoolV3".into(),
+            pool_id: "0xpoolV3".into(),
+            chain_id: 1,
+            token_in: "0xtb".into(),
+            // token_in > token_out en orden léxico → zero_for_one = false
+            // ("0xtb" > "0xta").
+            token_out: "0xta".into(),
+            protocol: "uniswap_v3".into(),
+            snapshot_id: "snap-t".into(),
+            block_hash: "sync-ts-1790898166".into(),
+            reserve_in_raw: None,
+            reserve_out_raw: None,
+            fee_units: Some(500),
+            fee_denominator: Some(1_000_000),
+            token_in_decimals: 18,
+            token_out_decimals: 18,
+            adapter_version: "reserves_cache_v1".into(),
+            sqrt_price_x96_raw: Some("79228162514264337593543950336".into()),
+            // Q96 + 1: división con residuo — distingue piso de techo.
+            liquidity: Some(79228162514264337593543950337),
+        };
+        let exact: BTreeMap<String, ExactHopQuote> = BTreeMap::new();
+        let legs = quote_path(&[edge], "1000", &exact).expect("quote V3 one_for_zero");
+        assert_eq!(legs.len(), 1);
+        let out = legs[0]["amount_out_raw"].as_str().unwrap();
+        assert_eq!(out, "997", "out con PISO (997); techo daría 998");
+        // sqrt_price_x96_next vive en la métrica de la pierna (agent_graph
+        // L381-383), no como campo plano del ledger.
+        let sp_next = legs[0]["metrics"]["sqrt_price_x96_next"]
+            .as_str()
+            .unwrap();
+        assert_eq!(
+            sp_next, "79228162514264337593543951334",
+            "Q96+998 con PISO; techo daria Q96+999"
+        );
     }
 
     /// A V2 leg WITHOUT reserves produces a FAIL receipt with the exact

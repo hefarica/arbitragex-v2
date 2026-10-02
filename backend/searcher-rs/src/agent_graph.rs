@@ -269,9 +269,15 @@ fn v3_spot_within_tick(
         let out = l * (sp - sp_next) / q96;
         (sp_next, out)
     } else {
-        // Misma corrección para one_for_zero: el protocolo redondea hacia
-        // arriba el incremento del precio raíz (amount1 → sqrtP).
-        let sp_next = sp + (dx_adj * q96 + l - U512::from(1u32)) / l;
+        // V3-ROUNDING-02 (2026-10-02, regresión de la enmienda anterior):
+        // Uniswap es DIRECCIONAL — getNextSqrtPriceFromInput redondea ARRIBA
+        // para entrada token0 y ABAJO para entrada token1
+        // (getNextSqrtPriceFromAmount1RoundingDown). La enmienda anterior
+        // aplicó techo a AMBAS direcciones: one_for_zero entregbó una unidad
+        // mínima de más (contraejemplo reproducido: liq=Q96+1, monto=1000,
+        // fee=500/1e6 → incremento 999 con techo vs 998 correcto; out 998 vs
+        // 997). Se restaura el PISO aquí; el techo de zero_for_one se conserva.
+        let sp_next = sp + dx_adj * q96 / l;
         let out = l * q96 * (sp_next - sp) / (sp_next * sp);
         (sp_next, out)
     };
