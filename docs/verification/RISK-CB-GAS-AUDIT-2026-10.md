@@ -117,3 +117,58 @@ gas_burn / revert_rate / drawdown = NOT_AVAILABLE (R8 correcto)
 5. Rollback: `git revert` + redeploy (§37).
 
 **Invariante de sesión**: sin deploy, sin broadcast, sin umbrales tocados, sin commits en el árbol compartido, secretos nunca impresos (env redactados), cada número de este documento es medido o marcado como supuesto.
+
+
+---
+
+# ADDENDUM v2 (2026-10-02) — PR, validación lockfile base/candidato, V3 y seguridad
+
+## A · PR y transporte
+
+- **PR #754**: https://github.com/hefarica/arbitragex-v2/pull/754 · base `main` · head `fix/risk-cb-gas-provenance`.
+- Commit final: **`19bb342a1361e8df1aa2645748bc5cdd4a90acc8`** (parent `af99f928`). El primer intento (`721ba162`) subió blobs corruptos (gh `-f @file` NO expande @file — era curl-ismo; los blobs contenían la ruta literal de 55 bytes) y fue **reemplazado por force-update del ref** (branch propio, minutos de vida, sin consumidores) — el commit corrupto ya no está en la historia del PR.
+- **R13**: `GET pulls/754/files` = exactamente los 5 archivos intencionales (2 backend, 2 frontend, 1 doc). Cero arrastre de sesiones ajenas (los cambios se elaboraron en el árbol compartido y se transfirieron a un worktree limpio sobre `origin/main`).
+
+## B · Validación con dependencias del lockfile (contenedor, base vs candidato)
+
+Método: clones depth-1 de `main` (base) y del branch (candidato) en `/tmp` del VPS; imagen `arbitragex-v2-api-server` (node 20.20.2/npm 10.8.2); `npm ci` del lockfile raíz con `NODE_ENV=development` (la imagen corre production por defecto y **npm ci omite devDeps bajo NODE_ENV=production** — hallazgo: sin esa env la instalación fresca carece de vitest y @types); misma imagen, misma máquina, ejecución secuencial.
+
+| Verificación | Base `af99f928` | Candidato `19bb342a` | Delta |
+|---|---|---|---|
+| `npm ci` (lockfile) | OK | OK | — |
+| PII suite ×3 (timeout default 5s) | **3/3 PASS** — 1.46s / 0.68s / 0.89s | **3/3 PASS** — 1.39s / 0.82s / 0.68s | 0 |
+| Suite completa api-server | 16 files FAIL (colección) · 56 pass · **728/728 tests** | 16 files FAIL · 56 pass · **728/728 tests** | **0** |
+| `tsc --noEmit` | 12 errores (todos `@arbx/shared`) | 12 errores (idénticos) | **0** |
+| Suite evaluador (risk-circuit-breakers) | fail de COLECCIÓN | fail de COLECCIÓN (misma causa) | 0 |
+
+**Los 16 files que fallan en instalación fresca fallan por una causa pre-existente, idéntica en base y candidato**: `Error: Failed to resolve entry for package "@arbx/shared"` — el paquete de workspace necesita un build que `npm ci` fresco no produce. Afecta a los 16 archivos que importan `@arbx/shared` (incluida la suite del evaluador en AMBAS versiones) y a los 12 errores de tsc. **Mi cambio no introduce ninguna falla nueva** (delta 0 en suite, tsc y PII). La suite del evaluador (82/82) pasó **solo en el entorno del árbol compartido** (node_modules con @arbx/shared resuelto) — no se reclama como validada-bajo-lockfile.
+
+**Hallazgo de repo (pre-existente, reportar)**: (1) instalación fresca del lockfile no puede correr los tests que importan `@arbx/shared` sin un paso de build del workspace; (2) bajo `NODE_ENV=production` la instalación omite TODAS las devDeps — la imagen api-server no sirve como entorno de validación sin la env de desarrollo. Los timeouts de 5s del test PII no se reproducen en el contenedor (3/3 PASS ambas ramas) — eran artefacto de carga de disco local, documentado aquí como pedía el operador.
+
+## C · V3: `v3_quote_unavailable` — desagregado, reproducido, causa y reparación
+
+**Desagregación (métricas del propio searcher, `arbx_v3_quote_total{outcome}`)**, última hora: rpc 22.557 intentos → ok 13.356 (59%) · **rpc_error 7.145 (32%)** · tier_revert 2.047 (9%); cache_hit 125.650/h; cache_neg_hit 21.487/h; batch_call 4.159 → **batch_call_error 1.222 (29%)**; batch_backoff_skip 4.459/h.
+
+**Por proveedor (`arbx_rpc_provider_*`, última hora)**: `tenderly` **20.679 req (86% del share) con 6.719 errores (32,5%)**; drpc 680 req/0 err; blockpi 229/0; publicnode 93/5; mevblocker 164/5; oxrpc 815/7; blastapi 850/14.
+
+**Reproducción contra el mismo estado** (bloque `0x18e4638` confirmado igual en ambos proveedores; eth_call QuoterV2 USDC→WETH tier 500, 12 intentos por proveedor desde el VPS, URLs nunca impresas): **tenderly = 6/12 HTTP 429**; drpc/blockpi/oxrpc/publicnode = **12/12 HTTP 200**.
+
+**Causa observada (mecanismo)**: (1) tenderly NO figura en `RPC_HTTP_RATE_BUDGETS` (los 7 presupuestados no lo incluyen) → sin tope client-side; (2) la selección del pool es **EWMA de solo-latencia** (`rpc_failover.rs:404` "lowest EWMA latency among Healthy") — los FALLOS no penalizan el ranking; (3) el breaker reabre por sonda barata (R-0003) tras 10-15s → ciclo: gana selección → 429s → breaker → reabre → gana de nuevo. Un proveedor rápido-pero-fluctuante captura el 86% del tráfico y fabrica el 32% de fallo transport que alimenta `v3_quote_unavailable` (26% de TODOS los rechazos del funnel).
+
+**Reparación de la causa observada (higiene, NO batching/reintentos — B1/R5 ya existen)**: añadir presupuesto a los dos proveedores sin budget en `/opt/arbitragex-v2/.env`:
+```
+# ANTES:  RPC_HTTP_RATE_BUDGETS=publicnode=240,merkle=120,drpc=240,mevblocker=240,blockpi=120,oxrpc=120,onelpc=60
+# DESPUÉS: RPC_HTTP_RATE_BUDGETS=publicnode=240,merkle=120,drpc=240,mevblocker=240,blockpi=120,oxrpc=120,onelpc=60,tenderly=60,blastapi=120
+```
+Deploy **separado y gated** (solo searcher): `cd /opt/arbitragex-v2 && docker compose --env-file .env up -d searcher-rs` (sin rebuild; digest de imagen sin cambio `e1bf4ee2…`, StartedAt nuevo = evidencia del recreate). **Métricas después (cierre)**: share de tenderly < ~10%, `increase(arbx_v3_quote_total{outcome="rpc_error"}[1h])` ≪ 7.145, `batch_call_error` ≪ 1.222/h, y `v3_quote_unavailable` deja de ser el 26% de los rechazos del funnel (SQL `opportunities`).
+**Follow-up (no en esta ronda)**: selección failure-aware en `shared-rs/rpc_failover.rs` (penalizar EWMA por tasa de error) — requiere compilación Rust controlada.
+
+## D · SEGURIDAD — rotación requerida
+
+Durante la inspección read-only de env del searcher, mi regex de redacción (solo `https?://`) dejó pasar la línea `RPC_WS_1`, exponiendo **una API key de Alchemy WS en el transcript de esta sesión** (precedente 2026-06-15). **Acción del operador: rotar esa clave** (los RPC públicos del stack soberano no se ven afectados).
+
+## E · Deploy separado (esperando OK del operador)
+
+1. **API/frontend (PR #754)**: merge → CI → deploy por flujo canónico asociado a commit `19bb342a` (o el SHA del merge) + digests nuevos de api-server/frontend. El searcher NO se toca.
+2. **Searcher (presupuesto V3)**: cambio de `.env` (§C) + `up -d searcher-rs` — sin git, sin rebuild; verificación por métricas antes/después.
+3. Umbrales, signer y broadcast: **sin cambios** (verificado: `FLASHBOTS_SIGNER_KEY` sigue ausente, paper mode intacto).
