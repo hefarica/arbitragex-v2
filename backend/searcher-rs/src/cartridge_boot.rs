@@ -221,6 +221,9 @@ pub fn spawn_cartridge_runtime(
         // la librería desplegada, que se conoce en boot: no se fabrica nada.
         manifest_digests: v4_manifest_digests().clone(),
         max_evaluations: 1,
+        // COST-PRODUCERS-01: el stub no computa costes (sin gas observado ni
+        // config del intent) → vacío = DATA_GAP honesto, nunca ceros.
+        base_cost_lines: Vec::new(),
     });
     // Single-revision Phase-1 guard: this process serves exactly the bundle it
     // booted with; a restart rebuilds a fresh (equally-honest) bundle.
@@ -1513,6 +1516,10 @@ fn build_v4_intent_bundle(
     identity: &shared_rs::token_identity::TokenIdentityIndex,
     price_snapshot: &std::collections::HashMap<String, f64>,
     manifest_digests: &std::collections::BTreeMap<String, String>,
+    // COST-PRODUCERS-01: gas OBSERVADO del runner (el getter ya decodifica
+    // milli-gwei → gwei) — el mismo que alimenta el MarketState del
+    // dispatcher. Sin observación la línea de gas no se emite (R8).
+    gas_price_gwei: f64,
 ) -> Option<crate::snapshot_services::SnapshotBundle> {
     let observed_at_ms = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -1587,6 +1594,17 @@ fn build_v4_intent_bundle(
             },
         );
     }
+    // COST-PRODUCERS-01: las líneas se computan ANTES del literal del struct
+    // (edges/prices se mueven dentro de él — evaluación de campos en orden).
+    let base_costs = v4_base_cost_lines(
+        cfg,
+        chain_id,
+        start_token,
+        amount_in_raw,
+        edges.first().map(|e| e.token_in_decimals).unwrap_or(18),
+        gas_price_gwei,
+        &prices,
+    );
     Some(crate::snapshot_services::SnapshotBundle {
         context_id: ctx_snapshot_id.to_owned(),
         snapshot_id: ctx_snapshot_id.to_owned(),
@@ -1613,7 +1631,118 @@ fn build_v4_intent_bundle(
         // (mev_id → source_digest auto-declarado por cada script).
         manifest_digests: manifest_digests.clone(),
         max_evaluations: 8,
+        // COST-PRODUCERS-01: líneas BASE con productores reales del dueño del
+        // contexto (gas observado × unidades de config, financiación según la
+        // tasa declarada, comisiones embebidas en las cotizaciones).
+        base_cost_lines: base_costs,
     })
+}
+
+/// COST-PRODUCERS-01 (2026-10-02): las tres líneas de coste que el bridge
+/// exige para `atomic_quote` (gas, financing, execution_fees), cada una con
+/// su PRODUCTOR real y su tratamiento declarado. Antes `quote()` dejaba
+/// `costs=[]` cuando el soporte precomputado por plan no existía (el caso de
+/// TODA ruta del grafo en la vía del intent) y el bridge reportaba
+/// `mandatory_route_cost_missing` — el bloqueo dominante medido en outcomes.
+///
+/// - **gas** (external, se resta una vez): unidades de la CONFIG del operador
+///   (`gas_estimate_units`) × gas OBSERVADO del runner × precio base. Sin
+///   alguno de los tres → la línea no se emite (DATA_GAP honesto, no cero).
+/// - **financiación**: reserva conservadora al importe del intent ×
+///   `flashloan_fee_pct` de la config — si el plan usa flash este es el
+///   coste; con capital propio el coste real es 0 y la reserva SOBREestima
+///   (sesgo conservador, jamás infla el neto). Tasa 0 (config actual) →
+///   `not_applicable` con evidencia explícita. La lectura on-chain del
+///   premium real (`FLASHLOAN_PREMIUM_TOTAL`) sigue pendiente (doctrina
+///   flash-loan: fees on-chain, jamás hardcode) — por eso la fuente ES la
+///   config del operador, no un literal.
+/// - **execution_fees** (embedded): las comisiones e impacto YA viven dentro
+///   de las cotizaciones del ledger (`fees_and_impact_embedded`) — se
+///   declara para satisfacer el contrato del bridge SIN restar dos veces.
+fn v4_base_cost_lines(
+    cfg: &shared_rs::trading_config::TradingConfigState,
+    chain_id: u64,
+    start_token: &str,
+    amount_in_raw: &str,
+    start_token_decimals: u8,
+    gas_price_gwei: f64,
+    prices: &std::collections::BTreeMap<(u64, String), crate::snapshot_services::CanonicalPrice>,
+) -> Vec<crate::rhai_agent_bridge::CostLine> {
+    use crate::rhai_agent_bridge::CostLine;
+    let mut lines: Vec<CostLine> = Vec::new();
+
+    // ── GAS: unidades de config × gwei observado × 1e-9 → ETH → USD base ──
+    let base_usd = cfg.base_token_price_usd;
+    if cfg.gas_estimate_units > 0 && gas_price_gwei > 0.0 && base_usd > 0.0 {
+        let gas_usd = cfg.gas_estimate_units as f64 * gas_price_gwei * 1e-9 * base_usd;
+        if gas_usd.is_finite() && gas_usd > 0.0 {
+            lines.push(CostLine {
+                kind: "gas".into(),
+                treatment: "external".into(),
+                usd: Some(format!("{gas_usd:.6}")),
+                reason: Some(format!(
+                    "{}units x {:.4}gwei x {:.4}usd (config:gas_estimate_units, runner:host_gas_price_gwei)",
+                    cfg.gas_estimate_units, gas_price_gwei, base_usd
+                )),
+                evidence_id: "config:gas_estimate_units+runner:observed_gas".into(),
+            });
+        }
+    }
+
+    // ── FINANCIACIÓN: tasa DECLARADA por el operador en la config ──
+    if cfg.flashloan_fee_pct > 0.0 {
+        // Importe del intent valorado al precio del start token del bundle.
+        let amount_usd = prices
+            .get(&(chain_id, start_token.to_string()))
+            .and_then(|p| p.usd.parse::<f64>().ok())
+            .and_then(|px| {
+                amount_in_raw
+                    .parse::<f64>()
+                    .ok()
+                    .map(|raw| raw / 10f64.powi(start_token_decimals as i32) * px)
+            });
+        if let Some(amount_usd_val) = amount_usd {
+            let fin_usd = amount_usd_val * cfg.flashloan_fee_pct / 100.0;
+            if fin_usd.is_finite() && fin_usd > 0.0 {
+                lines.push(CostLine {
+                    kind: "financing".into(),
+                    treatment: "external".into(),
+                    usd: Some(format!("{fin_usd:.6}")),
+                    reason: Some(format!(
+                        "reserva conservadora al flash: {:.4}usd x {:.4}% (config:flashloan_fee_pct; capital propio => coste real 0)",
+                        amount_usd_val, cfg.flashloan_fee_pct
+                    )),
+                    evidence_id: "config:flashloan_fee_pct".into(),
+                });
+            }
+        }
+    } else {
+        // Tasa 0 (config actual): capital propio — not_applicable con
+        // evidencia explícita (el contrato CostLine lo exige).
+        lines.push(CostLine {
+            kind: "financing".into(),
+            treatment: "not_applicable".into(),
+            usd: None,
+            reason: Some(
+                "flashloan_fee_pct=0 en trading_config (capital propio, sin reserva flash)".into(),
+            ),
+            evidence_id: "config:flashloan_fee_pct:zero".into(),
+        });
+    }
+
+    // ── COMISIONES: embebidas en las cotizaciones — declaradas, no restadas ──
+    lines.push(CostLine {
+        kind: "execution_fees".into(),
+        treatment: "embedded".into(),
+        usd: None,
+        reason: Some(
+            "fees_and_impact_embedded en el ledger de quotes (ya reflejadas; no se restan dos veces)"
+                .into(),
+        ),
+        evidence_id: "quote:ledger:fees_and_impact_embedded".into(),
+    });
+
+    lines
 }
 
 /// ACTIVE MODE — evaluate cartridges and emit real StrategyCandidates through the full pipeline.
@@ -1933,14 +2062,19 @@ pub async fn active_evaluate_and_emit(
     // exige la verificación contra referencia del EXACT-CLASS-01 y queda como
     // seguimiento — jamás alimentar a los operadores un precio posiblemente
     // mal orientado. Sin estado → no se adjunta dispatch (receipts honestos).
-    let v4_dispatch_state: Option<std::sync::Arc<math_engine::MarketState>> = {
+    let v4_dispatch_state: Option<std::sync::Arc<math_engine::MarketState>>;
+    // COST-PRODUCERS-01: gas observado del intent — alimenta el MarketState y
+    // la línea de coste de gas del bundle (una sola lectura del getter).
+    let mut v4_intent_gas_gwei: f64 = 0.0;
+    {
         let block = runner
             .host_block_number_handle()
             .load(std::sync::atomic::Ordering::Relaxed);
         // CORE-01/MATH-01: el atómico guarda MILLI-gwei; el getter decodifica.
         let gas = runner.host_gas_price_gwei();
-        v4_market_state_from_edges(&v4_edges, block, gas)
-    };
+        v4_intent_gas_gwei = gas;
+        v4_dispatch_state = v4_market_state_from_edges(&v4_edges, block, gas);
+    }
     if v4_edges.is_empty() {
         debug!(
             event = "cartridge.v4_intent_no_edges",
@@ -1964,6 +2098,9 @@ pub async fn active_evaluate_and_emit(
             identity,
             &price_snapshot,
             v4_manifest_digests(),
+            // COST-PRODUCERS-01: el gas observado que ya computamos para el
+            // MarketState del dispatcher alimenta también la línea de gas.
+            v4_intent_gas_gwei,
         ) {
             Some(bundle) => {
                 // Guarda de revisión de un solo bundle: este intent sirve
