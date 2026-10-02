@@ -89,6 +89,17 @@ pub struct SnapshotBundle {
     pub manifest_digests: BTreeMap<String, String>,
     /// Must bound candidate x size expansion as well as graph enumeration.
     pub max_evaluations: usize,
+    /// COST-PRODUCERS-01 (2026-10-02): líneas de coste BASE computadas por el
+    /// dueño del bundle con productores reales — gas (unidades de la config
+    /// del operador × gas observado × precio base), financiación (tasa
+    /// declarada en config; 0 → not_applicable con evidencia), comisiones
+    /// (embebidas en las cotizaciones, ya reflejadas — jamás restadas dos
+    /// veces). `quote()` las usa cuando el soporte precomputado por plan no
+    /// aporta costes: antes dejaba `costs=[]` y el bridge reportaba
+    /// `mandatory_route_cost_missing` para TODA ruta del grafo — el bloqueo
+    /// dominante medido en producción. Vacío = el dueño no pudo computarlas
+    /// (stub Phase-1 sin gas ni config) → DATA_GAP honesto (R8), nunca ceros.
+    pub base_cost_lines: Vec<CostLine>,
 }
 /// Revision liveness guard supplied by the owner (never invented here).
 pub type RevisionGuard = Arc<dyn Fn(&str, &str) -> bool + Send + Sync>;
@@ -660,13 +671,27 @@ impl AgentServices for SnapshotServices {
             }
         }
         let (costs, required_costs) = match self.precomputed_support(spec, c) {
-            Ok(s) => (s.costs.clone(), s.required_cost_kinds.clone()),
-            Err(e) => {
-                missing.push(e);
-                (
-                    Vec::new(),
-                    vec!["gas".into(), "financing".into(), "execution_fees".into()],
-                )
+            Ok(s) if !s.costs.is_empty() => (s.costs.clone(), s.required_cost_kinds.clone()),
+            // COST-PRODUCERS-01: sin soporte precomputado por plan (el caso de
+            // TODA ruta del grafo en la vía del intent) se usan las líneas
+            // BASE del bundle — productores reales del dueño del contexto. Si
+            // tampoco existen (stub), se mantiene el DATA_GAP honesto.
+            _ => {
+                if self.data.base_cost_lines.is_empty() {
+                    missing.push("native_costs_operators_or_constraints_missing".into());
+                    (
+                        Vec::new(),
+                        vec!["gas".into(), "financing".into(), "execution_fees".into()],
+                    )
+                } else {
+                    let kinds: Vec<String> = self
+                        .data
+                        .base_cost_lines
+                        .iter()
+                        .map(|l| l.kind.clone())
+                        .collect();
+                    (self.data.base_cost_lines.clone(), kinds)
+                }
             }
         };
         Ok(QuotedPlan {
@@ -915,6 +940,32 @@ mod plan_support_wiring_tests {
             canonical_payloads: BTreeMap::new(),
             manifest_digests: digests,
             max_evaluations: 8,
+            // COST-PRODUCERS-01: fixture con las tres líneas BASE reales —
+            // gas external calculado, financiación not_applicable (pct=0),
+            // comisiones embebidas. Igual que produce el camino del intent.
+            base_cost_lines: vec![
+                crate::rhai_agent_bridge::CostLine {
+                    kind: "gas".into(),
+                    treatment: "external".into(),
+                    usd: Some("1.200000".into()),
+                    reason: Some("200000units x 30gwei (fixture)".into()),
+                    evidence_id: "config:gas_estimate_units+runner:observed_gas".into(),
+                },
+                crate::rhai_agent_bridge::CostLine {
+                    kind: "financing".into(),
+                    treatment: "not_applicable".into(),
+                    usd: None,
+                    reason: Some("flashloan_fee_pct=0 (fixture capital propio)".into()),
+                    evidence_id: "config:flashloan_fee_pct:zero".into(),
+                },
+                crate::rhai_agent_bridge::CostLine {
+                    kind: "execution_fees".into(),
+                    treatment: "embedded".into(),
+                    usd: None,
+                    reason: Some("fees_and_impact_embedded (fixture)".into()),
+                    evidence_id: "quote:ledger:fees_and_impact_embedded".into(),
+                },
+            ],
         }
     }
     fn spec() -> Value {
