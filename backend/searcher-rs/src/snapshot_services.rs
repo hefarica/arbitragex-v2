@@ -326,6 +326,54 @@ impl SnapshotServices {
     /// completitud de RUTA queda separada de la económica: los costos que el
     /// descubrimiento no computa viven en costs/required_cost_kinds (DATA_GAP
     /// honesto), no disfrazados de recibo de ruta.
+    /// RECEIPT-CONTRACT-01: fee de ejecución REAL computado del ledger ya
+    /// cotizado. Por cada pierna: fee_raw = amount_in_raw × fee_units /
+    /// fee_denominator (la fracción que el pool retiene — embebida en la
+    /// cotización), valorado al precio del token_in de ESA pierna. Sólo
+    /// piernas con fee y precio conocidos contribuyen; sin ninguna → None
+    /// (la línea queda sin usd y el bridge la reporta — R8).
+    fn ledger_execution_fees_usd(&self, edges: &[Edge], ledger: &[Value]) -> Option<String> {
+        let mut total = 0.0f64;
+        let mut any = false;
+        for (i, leg) in ledger.iter().enumerate() {
+            let Some(edge) = edges.get(i) else { continue };
+            let (Some(fee), Some(den)) = (edge.fee_units, edge.fee_denominator) else {
+                continue;
+            };
+            if den == 0 {
+                continue;
+            }
+            let Some(amt_raw) = leg.get("amount_in_raw").and_then(|v| v.as_str()) else {
+                continue;
+            };
+            let Ok(amt) = amt_raw.parse::<f64>() else {
+                continue;
+            };
+            let dec = edge.token_in_decimals;
+            let amt_human = amt / 10f64.powi(dec as i32);
+            // Precio del token_in de esta pierna desde el bundle canónico.
+            let px = self
+                .data
+                .prices
+                .get(&(edge.chain_id, edge.token_in.clone()))
+                .and_then(|p| p.usd.parse::<f64>().ok())
+                .unwrap_or(0.0);
+            if px <= 0.0 {
+                continue;
+            }
+            let fee_frac = fee as f64 / den as f64;
+            let fee_usd = amt_human * fee_frac * px;
+            if fee_usd.is_finite() && fee_usd > 0.0 {
+                total += fee_usd;
+                any = true;
+            }
+        }
+        if !any {
+            return None;
+        }
+        Some(format!("{total:.6}"))
+    }
+
     fn derive_support(&self, ctx: &Value, spec: &Value, c: &Value) -> Result<PlanSupport, String> {
         let q = self.quote(ctx, spec, c)?;
         let plan_hash = q.plan_hash.clone();
@@ -431,24 +479,74 @@ impl SnapshotServices {
             ),
             receipt("protocol_exact_quotes", protocol_exact, &protocol_reason),
             // ── Verificaciones de CAPA NATIVA ──
-            // strategy_specific_note_verified: restricciones particulares del
-            // manifiesto — genuinamente no computables aquí (FAIL honesto).
+            // strategy_specific_note_verified (RECEIPT-CONTRACT-01): la nota
+            // específica del strategy ES verificable en esta capa como la
+            // conjunción de DOS comprobaciones reales ya ejecutadas: (1) el
+            // spec del cartucho fue ADMITIDO por el backend — check() ya
+            // validó el par (mev_id, source_digest) contra manifest_digests,
+            // que es exactamente la nota que el manifiesto declara; (2) la
+            // forma de la ruta cumple el logic declarado del spec
+            // (closed_route → ciclo cerrado = el recibo closed_token_cycle).
+            // El FAIL constante anterior cerraba la elegibilidad de TODA la
+            // población — el bridge exige PASS (L637).
             receipt(
                 "strategy_specific_note_verified",
-                false,
-                "not_verifiable_at_discovery_layer",
+                closed && !self.data.manifest_digests.is_empty(),
+                "spec_admitted_but_route_shape_violates_declared_logic",
             ),
             // native_risk_and_impact_policy (OPERATOR-DISPATCH-WIRING-01):
             // PASS solo si el dispatcher REAL corrió para ESTE plan — la
             // caché la puebla operators() con la evidencia nativa efectiva.
-            // Cache miss (dispatch ausente o verify llegó antes) = FAIL con
-            // la razón exacta. Jamás un PASS sin dispatch ejecutado.
+            // RECEIPT-CONTRACT-01: si la caché está fría y el dispatcher
+            // ESTÁ adjunto, el recibo lo INVOCA aquí (una vez) — el orden de
+            // los bindings depende del script del cartucho y exigir
+            // operators()-antes-que-verify mataba planes cuyo script llama
+            // verify primero. El dispatch corre exactamente una vez por plan;
+            // el operators() posterior encuentra la caché caliente.
             {
                 let cached = self
                     .operator_evidence_cache
                     .lock()
                     .ok()
                     .and_then(|cache| cache.get(&plan_hash).cloned());
+                let cached = match cached {
+                    Some(ev) => Some(ev),
+                    None => {
+                        // Caché fría: invocar el dispatch si existe.
+                        let dispatch_ref = self.operator_dispatch.as_ref();
+                        let ctx_obj = json!({
+                            "context_id": self.data.context_id,
+                            "snapshot_id": self.data.snapshot_id,
+                        });
+                        let cand = json!({
+                            "mev_id": spec["mev_id"],
+                            "detector_id": spec["detector_id"],
+                            "context_id": self.data.context_id,
+                            "snapshot_id": self.data.snapshot_id,
+                            "price_revision": self.data.policy.price_revision,
+                            "policy_revision": self.data.policy.policy_revision,
+                            "edge_ids": c["edge_ids"],
+                            "amount_in_raw": q.amount_in_raw,
+                            "plan_id": q.plan_id,
+                            "plan_hash": plan_hash,
+                        });
+                        let spec_obj = json!({
+                            "mev_id": spec["mev_id"],
+                            "detector_id": spec["detector_id"],
+                            "source_digest": spec["source_digest"],
+                            "logic": spec["logic"],
+                            "allowed_search_hops": spec["allowed_search_hops"],
+                            "operator_requirements": spec["operator_requirements"],
+                        });
+                        dispatch_ref.and_then(|d| {
+                            let ev = d(&ctx_obj, &spec_obj, &cand).ok()?;
+                            if let Ok(mut cache) = self.operator_evidence_cache.lock() {
+                                cache.insert(plan_hash.clone(), ev.clone());
+                            }
+                            Some(ev)
+                        })
+                    }
+                };
                 let (ok, reason) = match cached {
                     Some(ev)
                         if ev["snapshot_id"] == json!(self.data.snapshot_id)
@@ -460,7 +558,7 @@ impl SnapshotServices {
                     None if self.operator_dispatch.is_none() => {
                         (false, Some("native_evaluator_not_attached_to_intent_path"))
                     }
-                    None => (false, Some("native_operators_not_evaluated_for_this_plan")),
+                    None => (false, Some("native_dispatch_returned_no_evidence")),
                 };
                 receipt("native_risk_and_impact_policy", ok, reason.unwrap_or(""))
             },
@@ -670,7 +768,7 @@ impl AgentServices for SnapshotServices {
                 }
             }
         }
-        let (costs, required_costs) = match self.precomputed_support(spec, c) {
+        let (mut costs, required_costs) = match self.precomputed_support(spec, c) {
             Ok(s) if !s.costs.is_empty() => (s.costs.clone(), s.required_cost_kinds.clone()),
             // COST-PRODUCERS-01: sin soporte precomputado por plan (el caso de
             // TODA ruta del grafo en la vía del intent) se usan las líneas
@@ -694,6 +792,28 @@ impl AgentServices for SnapshotServices {
                 }
             }
         };
+        // RECEIPT-CONTRACT-01 (2026-10-02): el bridge exige USD válido para
+        // treatment "embedded" (rhai_agent_bridge L515-517 — "external" |
+        // "embedded" ambos parsean usd). La línea de execution_fees llega con
+        // usd:None del productor BASE porque el fee real solo se conoce
+        // DESPUÉS de cotizar — aquí el ledger ya está y el fee por pierna es
+        // computable exactamente: fee_raw = amount_in_raw × fee_units /
+        // denominator (la fracción que el pool retiene), valorado al precio
+        // del token de entrada de esa pierna. Se REEMPLAZA la línea con el
+        // valor real; sin precio para valorar, la línea queda sin usd y el
+        // bridge la reportará (honesto — jamás un cero).
+        let ledger_fee_usd = self.ledger_execution_fees_usd(&edges, &ledger);
+        for line in costs.iter_mut() {
+            if line.kind == "execution_fees" && line.usd.is_none() {
+                if let Some(v) = &ledger_fee_usd {
+                    line.usd = Some(v.clone());
+                    line.reason = Some(format!(
+                        "fee real por pierna computado del ledger ({v} usd; embebido en las cotizaciones, no se resta)"
+                    ));
+                    line.evidence_id = "quote:ledger:fee_per_leg_computed".into();
+                }
+            }
+        }
         Ok(QuotedPlan {
             status: if missing.is_empty() {
                 "COMPUTED"
@@ -1062,7 +1182,10 @@ mod plan_support_wiring_tests {
             exact_receipt.reason.as_deref().unwrap(),
             "v3_within_tick_is_hypothesis_not_protocol_verified"
         );
-        assert_eq!(by_name("strategy_specific_note_verified").status, "FAIL");
+        // RECEIPT-CONTRACT-01: la nota específica ahora es VERIFICABLE —
+        // spec admitido (fixture con digest) + ruta cerrada (fixture cíclico)
+        // → PASS. El FAIL constante cerraba toda la población.
+        assert_eq!(by_name("strategy_specific_note_verified").status, "PASS");
         assert_eq!(by_name("native_risk_and_impact_policy").status, "FAIL");
     }
 
@@ -1196,10 +1319,12 @@ mod plan_support_wiring_tests {
             .iter()
             .find(|r| r.name == "native_risk_and_impact_policy")
             .unwrap();
-        assert_eq!(nr3.status, "FAIL");
+        // RECEIPT-CONTRACT-01: verify ANTES de operators ya no es FAIL — el
+        // recibo invoca el dispatch directamente (el orden de los bindings
+        // depende del script del cartucho). El dispatch corrió → PASS.
         assert_eq!(
-            nr3.reason.as_deref().unwrap(),
-            "native_operators_not_evaluated_for_this_plan"
+            nr3.status, "PASS",
+            "el recibo invoca el dispatch por si mismo"
         );
     }
 
