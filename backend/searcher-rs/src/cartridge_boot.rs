@@ -572,8 +572,15 @@ fn outcomes_emission_enabled() -> bool {
 
 /// Outcomes stream — SEPARATE from `arbx:opps:detected` (which is never touched).
 const ROUTE_DISCOVERY_OUTCOMES_STREAM: &str = "arbx:route_discovery:outcomes";
-/// Approximate cap (`XADD ... MAXLEN ~`). ~2 weeks of ticks fit comfortably.
-const OUTCOMES_STREAM_MAXLEN: u64 = 1_000_000;
+/// Outcomes stream cap (`XADD ... MAXLEN ~`). STREAM-MAXLEN-01 (2026-10-02,
+/// incidente medido en producción): el tope anterior de 1.000.000 llenó Redis
+/// (maxmemory 1G, policy noeviction) y rechazó TODA escritura — heartbeat,
+/// quote anchor, tick y el propio stream quedaron congelados; los endpoints
+/// del DApp devolvían 404/503 fail-honest durante horas. Cada entrada pesa
+/// ~800B: 1M ≈ 800MB. El histórico vive en PG (route_discovery_outcomes,
+/// retención diaria); Redis es SOLO el bus caliente. 150.000 entradas ≈
+/// ~120-150MB — cabe con holgura junto al resto del keyspace (~75MB) en 1G.
+const OUTCOMES_STREAM_MAXLEN: u64 = 150_000;
 
 /// Persist a resolved shadow eval outcome (fire-and-forget, fail-closed).
 async fn emit_shadow_outcome(
