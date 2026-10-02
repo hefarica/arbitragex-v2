@@ -38,8 +38,6 @@ use std::time::Instant;
 
 /// 1 token en unidades internas (nano).
 const NANOS_PER_TOKEN: u128 = 1_000_000_000;
-/// Nanosegundos en un minuto — denominador de la recarga.
-const NANOS_PER_MINUTE: u128 = 60 * NANOS_PER_TOKEN;
 /// Capacidad máxima defensiva (tokens): 1M/min es más que cualquier plan real.
 const MAX_BURST_TOKENS: u32 = 1_000_000;
 
@@ -89,10 +87,16 @@ impl TokenBucket {
         }
     }
 
-    /// Materializa la recarga acumulada hasta `now` (nanosegundos + acarreo
-    /// del resto). PÉRDIDA CERO: la fracción que no alcanza un nano-token
-    /// completo queda en `rem` y se suma a la siguiente recarga. Consultar el
-    /// saldo no reduce lo que se acumula (idempotente en la frecuencia).
+    /// Materializa la recarga acumulada hasta `now`. PÉRDIDA CERO: la fracción
+    /// que no alcanza un nano-token completo queda en `rem` (mismas unidades
+    /// `rpm·ns`) y se suma a la siguiente recarga. Consultar el saldo no
+    /// reduce lo que se acumula (idempotente en la frecuencia).
+    ///
+    /// Unidades: `prod = rpm × elapsed_ns` mide (tokens/min)·ns. Un token =
+    /// 1e9 nano = `1e9 × 60 / rpm` unidades de prod… la identidad operativa
+    /// es: **nano-tokens = rpm × elapsed_ns / 60** (ej. 60 rpm, 1 s →
+    /// 60×1e9/60 = 1e9 nano = 1 token exacto). Divisor 60, NO 6e10 —
+    /// (regresión de unidades detectada por los propios tests trasladados).
     fn refill_to(&self, st: &mut BucketState, now: Instant) {
         // Instant es monótono; un `now` anterior a `last` (imposible por
         // construcción salvo mocks) no resta crédito ni entra en pánico.
@@ -104,8 +108,8 @@ impl TokenBucket {
         let prod = (self.per_minute as u128)
             .saturating_mul(elapsed_ns)
             .saturating_add(st.rem as u128);
-        let add_nano = (prod / NANOS_PER_MINUTE) as u64; // nano-tokens enteros
-        st.rem = (prod % NANOS_PER_MINUTE) as u64; // fracción acarreada — jamás se pierde
+        let add_nano = (prod / 60) as u64; // nano-tokens enteros (ver unidades arriba)
+        st.rem = (prod % 60) as u64; // fracción acarreada — jamás se pierde
         st.credit_nano = st.credit_nano.saturating_add(add_nano).min(self.cap_nano);
         st.last = now;
     }
@@ -167,8 +171,11 @@ mod tests {
             assert!(b.try_acquire());
         }
         assert!(!b.try_acquire(), "bucket exhausted");
-        // 1s total en pasos de 100µs, consultando el saldo en cada paso.
-        for _ in 0..10 {
+        // 1s total en pasos de 100µs (10.000 consultas), consultando el saldo
+        // en cada paso — el reloj se reinicia 10.000 veces con la fracción
+        // acarreada: el crédito acumulado debe ser idéntico al de una única
+        // espera de 1s.
+        for _ in 0..10_000 {
             b.fast_forward(Duration::from_micros(100));
             let _ = b.tokens_remaining(); // la lectura NO debe comer la recarga
         }
@@ -180,14 +187,14 @@ mod tests {
     }
 
     /// Variante adversarial: consultas MUCHO más frecuentes (10µs) durante
-    /// 1s deben acumular la fracción exacta: 1 token en total.
+    /// 1s (100.000 consultas) deben acumular la fracción exacta: 1 token.
     #[test]
     fn sub_microsecond_queries_preserve_fraction() {
         let b = TokenBucket::new(60);
         for _ in 0..60 {
             assert!(b.try_acquire());
         }
-        for _ in 0..1000 {
+        for _ in 0..100_000 {
             b.fast_forward(Duration::from_micros(10));
             let _ = b.tokens_remaining();
         }
