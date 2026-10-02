@@ -202,12 +202,36 @@ function BreakerList({ breakers }: { breakers: CircuitBreaker[] }) {
 
               <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
                 <KvTile k="state" v={b.state} />
-                <KvTile k="severity" v={b.severity} />
+                <div
+                  className="rounded border bg-muted/20 p-1.5"
+                  data-testid={`breaker-severity-${b.id}`}
+                  title="Severidad asignada por el evaluador según el estado (PASS→low, WARN→medium, resto→high). Consulta el estado y la evidencia para distinguir una incidencia real de información insuficiente: NOT_AVAILABLE ≠ falla."
+                >
+                  <div className="text-[9px] uppercase text-muted-foreground">severity</div>
+                  <div className="font-mono text-[11px]">{b.severity}</div>
+                </div>
                 <KvTile k="current" v={fmtValue(b.evidence.current_value, b.evidence.unit)} />
                 <KvTile k="threshold" v={fmtValue(b.evidence.threshold, b.evidence.unit)} />
                 <KvTile k="source" v={b.evidence.source} />
                 <KvTile k="operator_required" v={String(b.operator_required)} />
               </div>
+
+              {b.evidence.deciding_path && (
+                <div
+                  className="rounded-md border bg-muted/30 p-2 text-[11px]"
+                  data-testid={`breaker-deciding-path-${b.id}`}
+                >
+                  <span className="uppercase tracking-wider text-muted-foreground">Deciding path: </span>
+                  <span className="font-mono">{b.evidence.deciding_path}</span>
+                  {b.evidence.paths && (
+                    <span className="text-muted-foreground">
+                      {" "}· sim {b.evidence.paths.sim.measurements} measurement(s){" "}
+                      ({b.evidence.paths.sim.state ?? "off"}) · actual {b.evidence.paths.actual.measured}/
+                      {b.evidence.paths.actual.expected} measured ({b.evidence.paths.actual.state ?? "off"})
+                    </span>
+                  )}
+                </div>
+              )}
 
               <div className="rounded-md border bg-muted/30 p-2">
                 <div className="text-[10px] uppercase tracking-wider text-muted-foreground">Evidence</div>

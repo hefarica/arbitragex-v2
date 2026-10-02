@@ -47,6 +47,7 @@ const {
   overall,
   loadCbConfig,
   computeDrawdownStats,
+  toGasMeasurementOutcomes,
   DD_MIN_RUNS,
   DD_MIN_SPAN_HOURS,
   persistBreakerTrips,
@@ -92,6 +93,8 @@ const baseCtx = {
   gasBurn: null as null | { value: number; level: string; samples: number; sufficient: boolean },
   gasBurnReason: "operator risk thresholds not configured (ARBX_RISK_* env)",
   gasBurnCapUsd: null as number | null,
+  gasBurnWindowRows: null as number | null,
+  gasBurnWindowSecs: null as number | null,
   ledger: {
     drawdown: {
       marks: null as null | Array<{ markAt: string; runs: number; pnlUsd: number }>,
@@ -341,13 +344,39 @@ describe("makeGasBurnBreaker (A.6 actual-gas path)", () => {
     expect(b.state).toBe("NOT_AVAILABLE");
   });
 
-  it("actual-gas sum below cap → PASS with summed value", () => {
+  it("partial coverage under cap (120/500 measured) → WARN — under-cap NOT certified (audit 2026-10)", () => {
+    // The previous expectation (PASS on 120/500 measured) encoded the defect:
+    // an observed $10 over 24% coverage cannot certify the window total is
+    // under the $50 cap — the 380 unmeasured rows may carry the remainder.
     const b = makeGasBurnBreaker(gasCtx({ rowsInWindow: 500, withActualGas: 120, sumUsd: 10 }, 50));
+    expect(b.state).toBe("WARN");
+    expect(b.action).toBe("warn");
+    expect(b.evidence.current_value).toBe(10);
+    expect(b.evidence.threshold).toBe(50);
+    expect(b.evidence.unit).toBe("USD per window");
+    expect(b.evidence.detail).toContain("120/500");
+    expect(b.evidence.detail).toContain("NOT certified");
+    expect(b.blocks).toContain("LIVE");
+    expect(b.required_action).toContain("backfill");
+  });
+
+  it("full coverage under cap (500/500 measured) → PASS with summed value", () => {
+    const b = makeGasBurnBreaker(gasCtx({ rowsInWindow: 500, withActualGas: 500, sumUsd: 10 }, 50));
     expect(b.state).toBe("PASS");
     expect(b.evidence.current_value).toBe(10);
     expect(b.evidence.threshold).toBe(50);
     expect(b.evidence.unit).toBe("USD per window");
     expect(b.blocks).toEqual([]);
+  });
+
+  it("observed sum ≥ cap with coverage gaps → PAUSED — excess reported despite missing measurements", () => {
+    const b = makeGasBurnBreaker(gasCtx({ rowsInWindow: 100, withActualGas: 1, sumUsd: 60 }, 50));
+    expect(b.state).toBe("PAUSED");
+    expect(b.action).toBe("pause");
+    expect(b.evidence.current_value).toBe(60);
+    expect(b.evidence.detail).toContain("1/100");
+    expect(b.evidence.detail).toContain("unmeasured");
+    expect(b.blocks).toContain("LIVE");
   });
 
   it("actual-gas sum at/above cap → PAUSED + pause action", () => {
@@ -416,6 +445,103 @@ describe("makeGasBurnBreaker (A.6 actual-gas path)", () => {
     const b = makeGasBurnBreaker(ctx);
     expect(b.state).toBe("NOT_AVAILABLE");
     expect(b.evidence.current_value).toBe(null);
+  });
+
+  it("empty window NA carries the accumulate required_action (parity with revert_rate)", () => {
+    const b = makeGasBurnBreaker(gasCtx({ rowsInWindow: 0, withActualGas: 0, sumUsd: 0 }, 50));
+    expect(b.state).toBe("NOT_AVAILABLE");
+    expect(b.required_action).toContain("actual_gas_cost_usd");
+  });
+
+  it("dual-path: sim decides (cap unset) → deciding_path=sim, value+threshold from the sim path", () => {
+    const ctx = {
+      ...baseCtx,
+      gasBurn: { value: 5, level: "ok", samples: 70, sufficient: true },
+      gasBurnReason: "ok",
+      gasBurnCapUsd: 40,
+      gasBurnWindowRows: 70,
+      gasBurnWindowSecs: 86400,
+    };
+    const b = makeGasBurnBreaker(ctx);
+    expect(b.state).toBe("PASS");
+    expect(b.evidence.deciding_path).toBe("sim");
+    expect(b.evidence.current_value).toBe(5);
+    expect(b.evidence.threshold).toBe(40); // ARBX_RISK_GAS_CAP_USD, not the unset ARBX_CB cap
+    expect(b.evidence.paths?.sim.measurements).toBe(70);
+    expect(b.evidence.paths?.sim.window_rows).toBe(70);
+    expect(b.evidence.paths?.sim.scope).toBe("chain:1");
+  });
+
+  it("dual-path: actual decides → deciding_path=actual, provenance labels replay (never on-chain settled)", () => {
+    const ctx = {
+      ...gasCtx({ rowsInWindow: 100, withActualGas: 100, sumUsd: 20 }, 50),
+      gasBurn: { value: 5, level: "ok", samples: 70, sufficient: true },
+      gasBurnCapUsd: 40,
+    };
+    const b = makeGasBurnBreaker(ctx);
+    expect(b.state).toBe("PASS");
+    expect(b.evidence.deciding_path).toBe("actual");
+    expect(b.evidence.current_value).toBe(20);
+    expect(b.evidence.threshold).toBe(50);
+    expect(b.evidence.paths?.actual.provenance).toContain("sim-ctl replay");
+    expect(b.evidence.paths?.actual.provenance).toContain("not on-chain settled");
+    expect(b.evidence.paths?.actual.measured).toBe(100);
+    expect(b.evidence.paths?.actual.expected).toBe(100);
+  });
+
+  it("state/value alignment: sim is the worst path → displayed value is the SIM value, not A.6's", () => {
+    // actual PASS ($20 full coverage) + sim KILLED ($999 sim burn) → row KILLED
+    // by sim: the operator must see the sim number that caused it.
+    const ctx = {
+      ...gasCtx({ rowsInWindow: 100, withActualGas: 100, sumUsd: 20 }, 50),
+      gasBurn: { value: 999, level: "kill", samples: 70, sufficient: true },
+      gasBurnReason: "ok",
+      gasBurnCapUsd: 40,
+      gasBurnWindowRows: 70,
+      gasBurnWindowSecs: 86400,
+    };
+    const b = makeGasBurnBreaker(ctx);
+    expect(b.state).toBe("KILLED");
+    expect(b.evidence.deciding_path).toBe("sim");
+    expect(b.evidence.current_value).toBe(999);
+    expect(b.evidence.threshold).toBe(40);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// toGasMeasurementOutcomes — R8 loader contract: NULL ≠ 0.
+// ---------------------------------------------------------------------------
+
+describe("toGasMeasurementOutcomes (A.5 loader, NULL ≠ 0)", () => {
+  it("NULL gas rows are NOT measurements: 10 NULL rows + min_samples 10 → 0 measurements (the fabricated-PASS counterexample)", () => {
+    const rows = Array.from({ length: 10 }, (_, i) => ({ ts: 1000 + i, gas: null }));
+    const { outcomes, measured, windowRows } = toGasMeasurementOutcomes(rows);
+    expect(windowRows).toBe(10);
+    expect(measured).toBe(0);
+    expect(outcomes).toHaveLength(0);
+    // With 0 measurements computeBreakerWindow is insufficient by definition —
+    // the window can never reach sufficiency on gas-less rows again.
+  });
+
+  it("a stored 0.0 IS a valid measurement and is preserved verbatim (never dropped, never inflated)", () => {
+    const rows = [
+      { ts: 1, gas: 0.0 },
+      { ts: 2, gas: null },
+      { ts: 3, gas: 2.5 },
+    ];
+    const { outcomes, measured, windowRows } = toGasMeasurementOutcomes(rows);
+    expect(measured).toBe(2);
+    expect(windowRows).toBe(3);
+    expect(outcomes.map((o) => o.gasUsd)).toEqual([0, 2.5]);
+  });
+
+  it("non-finite values are rejected as measurements (defensive: NaN never sums)", () => {
+    const rows = [
+      { ts: 1, gas: Number.NaN },
+      { ts: 2, gas: 1.0 },
+    ];
+    const { measured } = toGasMeasurementOutcomes(rows);
+    expect(measured).toBe(1);
   });
 });
 

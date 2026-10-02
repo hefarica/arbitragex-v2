@@ -106,7 +106,62 @@ interface BreakerEvidence {
   threshold: string | number | null;
   unit: string | null;
   ref?: string;
+  /**
+   * Gas-burn dual-path transparency (audit 2026-10): the row state is the WORST
+   * of the A.5 sim path and the A.6 actual path, so the wire exposes BOTH
+   * evaluated paths plus which one determined the row state. Without this, a
+   * state decided by A.5 could display the A.6 number (state/value mismatch).
+   * Optional + wire-additive: other breakers simply omit it.
+   */
+  paths?: GasBurnPaths;
+  deciding_path?: "actual" | "sim" | "none";
 }
+
+/** A.5 simulated-gas path snapshot (sim_gas_cost_usd measurements only). */
+interface GasPathSim {
+  state: BreakerState | null;
+  value: number | null;
+  /** Rows carrying a recorded sim_gas_cost_usd (R8: NULL ≠ 0 — a NULL row is
+   *  NOT a zero-gas measurement and never inflates this count). */
+  measurements: number;
+  /** All paper rows in the window, including gas-less ones. */
+  window_rows: number;
+  window_secs: number | null;
+  scope: string;
+  reason: string;
+}
+
+/** A.6 actual-gas path snapshot (actual_gas_cost_usd measurements only). */
+interface GasPathActual {
+  state: BreakerState | null;
+  value: number | null;
+  /** Rows with an actual_gas_cost_usd measurement. */
+  measured: number;
+  /** Rows in the window expected to carry actual gas (coverage denominator —
+   *  conservative: every window run until an execution-kind marker exists). */
+  expected: number;
+  window_hours: number | null;
+  scope: string;
+  /** Provenance of the actual_* fields — verbatim, never a claim of on-chain
+   *  settlement. Today's only writer is recon/src/drift_tracker.rs (sim-ctl
+   *  re-execution on a later block). A source-marker column becomes mandatory
+   *  the moment a second writer (on-chain receipts) exists. */
+  provenance: string;
+  reason: string;
+}
+
+interface GasBurnPaths {
+  sim: GasPathSim;
+  actual: GasPathActual;
+}
+
+/**
+ * Sole writer of actual_* today is recon/src/drift_tracker.rs — it re-executes
+ * the route in sim-ctl against a later block. That is REPLAYED gas, not an
+ * on-chain settled spend; surfaced verbatim so a replayed sum is never
+ * presented as settled gas.
+ */
+const ACTUAL_GAS_PROVENANCE = "sim-ctl replay via drift_tracker (not on-chain settled)";
 
 interface CircuitBreaker {
   id: string;
@@ -342,8 +397,36 @@ interface EvalCtx {
   gasBurn: BreakerMetric | null;
   gasBurnReason: string;
   gasBurnCapUsd: number | null;
+  // A.5 window transparency (audit 2026-10): rows in the sim-gas window
+  // INCLUDING gas-less ones, and the window width — the reason string alone
+  // cannot carry structured counts.
+  gasBurnWindowRows: number | null;
+  gasBurnWindowSecs: number | null;
   // A.6 ledger-fed DD / revert-rate / actual-gas data.
   ledger: LedgerBreakerData;
+}
+
+/**
+ * Pure A.5 loader step (exported for tests): window rows → gas measurement
+ * outcomes. R8: only rows with a recorded (non-NULL) sim_gas_cost_usd are
+ * measurements — a NULL row must not become a zero-gas sample (sample-count
+ * inflation + fabricated $0 in the sum). A stored 0.0 IS a valid measurement
+ * and is preserved verbatim. `pnlUsd` is 0 because the A.5 DD metric is not
+ * consumed by this route (DD is owned by the A.6 hourly ledger marks).
+ */
+export function toGasMeasurementOutcomes(
+  rows: ReadonlyArray<{ ts: number; gas: number | null }>,
+): { outcomes: TradeOutcome[]; measured: number; windowRows: number } {
+  const measuredRows = rows.filter((r) => r.gas !== null && Number.isFinite(Number(r.gas)));
+  return {
+    outcomes: measuredRows.map((r) => ({
+      tsUnix: Number(r.ts),
+      pnlUsd: 0,
+      gasUsd: Number(r.gas),
+    })),
+    measured: measuredRows.length,
+    windowRows: rows.length,
+  };
 }
 
 async function collectCtx(deps: {
@@ -378,11 +461,23 @@ async function collectCtx(deps: {
   // /api/v1/scoring/status surface uses (scored_opportunities table presence).
   const scoringPipelineWired = await isScoringPipelineWired(deps.pool);
 
+  // Operator CB config (chain/window/actual-gas cap) — hoisted ABOVE the A.5
+  // loader so both paths share the SAME chain scope (audit 2026-10: A.5 used to
+  // scan all chains while A.6 filtered chain_id — incomparable populations).
+  const cb = loadCbConfig();
+
   // A.5 — rolling gas-burn breaker from paper_trade_runs (sim gas, ARBX_RISK_*
   // thresholds). Math is the TS mirror of shared-rs/src/risk_ledger.rs.
+  // R8 (audit 2026-10): only rows carrying a RECORDED sim_gas_cost_usd are gas
+  // measurements. The previous `COALESCE(sim_gas_cost_usd, 0)` turned absent
+  // measurements into zero-gas samples — inflating the sample count toward
+  // min_samples and summing a fabricated $0 — which could return PASS on a
+  // window full of NULL-gas rows. NULL ≠ 0; a stored 0.0 IS a valid measurement.
   let gasBurn: BreakerMetric | null = null;
   let gasBurnReason = "thresholds_not_configured";
   let gasBurnCapUsd: number | null = null;
+  let gasBurnWindowRows: number | null = null;
+  let gasBurnWindowSecs: number | null = null;
   const thresholds = loadThresholdsFromEnv();
   if (!thresholds) {
     gasBurnReason = "operator risk thresholds not configured (ARBX_RISK_* env)";
@@ -393,21 +488,24 @@ async function collectCtx(deps: {
     try {
       const r = await deps.pool.query(
         `SELECT extract(epoch from created_at)::float8 AS ts,
-                sim_expected_profit_usd::float8 AS pnl,
-                COALESCE(sim_gas_cost_usd, 0)::float8 AS gas
+                sim_gas_cost_usd::float8 AS gas
            FROM paper_trade_runs
-          WHERE created_at >= NOW() - make_interval(secs => $1)
+          WHERE chain_id = $2
+            AND created_at >= NOW() - make_interval(secs => $1)
           ORDER BY created_at ASC`,
-        [thresholds.windowSecs],
+        [thresholds.windowSecs, cb.chainId],
       );
-      const outcomes: TradeOutcome[] = (r.rows as Array<{ ts: number; pnl: number; gas: number }>).map(
-        (row) => ({ tsUnix: Number(row.ts), pnlUsd: Number(row.pnl), gasUsd: Number(row.gas) }),
+      const { outcomes, measured, windowRows } = toGasMeasurementOutcomes(
+        r.rows as Array<{ ts: number; gas: number | null }>,
       );
       const win = computeBreakerWindow(Date.now() / 1000, outcomes, thresholds);
       gasBurn = win.gasBurnUsd;
+      gasBurnWindowRows = windowRows;
+      gasBurnWindowSecs = thresholds.windowSecs;
       gasBurnReason = win.gasBurnUsd.sufficient
         ? "ok"
-        : `insufficient samples (${win.windowSamples}/${thresholds.minSamples})`;
+        : `insufficient gas measurements (${measured}/${thresholds.minSamples}) — ` +
+          `${windowRows - measured} window row(s) carry no sim_gas_cost_usd`;
     } catch (e) {
       gasBurnReason = `query_failed: ${(e as Error).message.slice(0, 80)}`;
     }
@@ -416,8 +514,6 @@ async function collectCtx(deps: {
   // A.6 — ledger-fed breakers. The paper ledger exists in prod; these are the
   // honest DD-curve / revert-rate / actual-gas feeds. Every failure path keeps
   // an R8 reason so the evaluator reports NOT_AVAILABLE, never a fabricated 0.
-  const cb = loadCbConfig();
-
   let ddMarks: DrawdownMark[] | null = null;
   let ddReason = "no database pool";
   if (deps.pool) {
@@ -529,6 +625,8 @@ async function collectCtx(deps: {
     gasBurn,
     gasBurnReason,
     gasBurnCapUsd,
+    gasBurnWindowRows,
+    gasBurnWindowSecs,
     ledger: {
       drawdown: { marks: ddMarks, reason: ddReason, navUsd: cb.navUsd, tiers: cb.ddTiers },
       revertRate: {
@@ -773,12 +871,32 @@ function makeGasBurnBreaker(ctx: EvalCtx): CircuitBreaker {
     };
   }
 
-  // --- A.6 path: actual gas burned, summed from the ledger window ---
+  // --- A.6 path: actual gas, summed ONLY from ledger rows that carry a
+  //     measurement. Coverage treatment (audit 2026-10):
+  //       · observed sum ≥ cap  → PAUSED (a proven excess is reported even
+  //         while other measurements are still missing — a gap never hides it);
+  //       · observed sum < cap with incomplete coverage → WARN (the unmeasured
+  //         rows may carry the remainder — under-cap is NOT certified);
+  //       · full coverage → normal comparison (PASS/PAUSED).
+  //     Coverage denominator is conservative: EVERY window run is expected to
+  //     carry actual gas until an execution-kind marker column exists (sim
+  //     runs and settled executions are different populations — see
+  //     ACTUAL_GAS_PROVENANCE).
   let cbState: BreakerState | null = null;
   let cbDetail = "";
   let cbValue: number | null = null;
   const cap = cbg.capUsd;
   const w = cbg.window;
+  const actualPath: GasPathActual = {
+    state: null,
+    value: null,
+    measured: w?.withActualGas ?? 0,
+    expected: w?.rowsInWindow ?? 0,
+    window_hours: cbg.windowHours,
+    scope: `chain:${ctx.chainId}`,
+    provenance: ACTUAL_GAS_PROVENANCE,
+    reason: cbg.reason,
+  };
   if (cbg.status !== "cap_not_configured") {
     if (!w) {
       cbState = "NOT_AVAILABLE";
@@ -792,18 +910,48 @@ function makeGasBurnBreaker(ctx: EvalCtx): CircuitBreaker {
       cbDetail = `${w.rowsInWindow} runs in the window but none has actual_gas_cost_usd recorded yet`;
     } else if (cap !== null) {
       cbValue = Number(w.sumUsd.toFixed(2));
-      cbState = w.sumUsd >= cap ? "PAUSED" : "PASS";
-      cbDetail =
-        `actual gas $${w.sumUsd.toFixed(2)} over ${w.withActualGas} runs with actuals ` +
-        `(${w.rowsInWindow} total) in ${cbg.windowHours}h`;
+      const unmeasured = w.rowsInWindow - w.withActualGas;
+      if (w.sumUsd >= cap) {
+        cbState = "PAUSED";
+        cbDetail =
+          `actual gas $${w.sumUsd.toFixed(2)} ≥ cap $${cap} over ${w.withActualGas}/${w.rowsInWindow} runs measured` +
+          (unmeasured > 0
+            ? ` (${unmeasured} still unmeasured — excess stands on the observed sum alone)`
+            : "") +
+          ` — ${ACTUAL_GAS_PROVENANCE} — in ${cbg.windowHours}h`;
+      } else if (unmeasured > 0) {
+        cbState = "WARN";
+        cbDetail =
+          `partial coverage: actual gas $${w.sumUsd.toFixed(2)} over ${w.withActualGas}/${w.rowsInWindow} runs measured in ${cbg.windowHours}h — ` +
+          `under-cap NOT certified while ${unmeasured} run(s) lack actual_gas_cost_usd (${ACTUAL_GAS_PROVENANCE})`;
+      } else {
+        cbState = "PASS";
+        cbDetail =
+          `actual gas $${w.sumUsd.toFixed(2)} over ${w.withActualGas}/${w.rowsInWindow} runs measured ` +
+          `(${ACTUAL_GAS_PROVENANCE}) in ${cbg.windowHours}h`;
+      }
     }
+    actualPath.state = cbState;
+    actualPath.value = cbValue;
+    actualPath.reason = cbDetail.length > 0 ? cbDetail : cbg.reason;
   }
 
-  // --- A.5 path: simulated gas vs ARBX_RISK_* thresholds (preserved) ---
+  // --- A.5 path: simulated gas vs ARBX_RISK_* thresholds (preserved). Samples
+  //     are MEASUREMENTS (rows with a recorded sim_gas_cost_usd), never raw
+  //     rows — the loader guarantees it (toGasMeasurementOutcomes, R8). ---
   const m = ctx.gasBurn;
   let simState: BreakerState | null = null;
   let simDetail = "";
   let simValue: number | null = null;
+  const simPath: GasPathSim = {
+    state: null,
+    value: null,
+    measurements: m?.samples ?? 0,
+    window_rows: ctx.gasBurnWindowRows ?? 0,
+    window_secs: ctx.gasBurnWindowSecs,
+    scope: `chain:${ctx.chainId}`,
+    reason: ctx.gasBurnReason,
+  };
   if (m) {
     simState =
       !m.sufficient ? "NOT_AVAILABLE"
@@ -813,8 +961,11 @@ function makeGasBurnBreaker(ctx: EvalCtx): CircuitBreaker {
       : "PAUSED";
     simValue = m.sufficient ? Number(m.value.toFixed(2)) : null;
     simDetail = m.sufficient
-      ? `simulated gas $${m.value.toFixed(2)} over ${m.samples} paper runs`
+      ? `simulated gas $${m.value.toFixed(2)} over ${m.samples} measured run(s)`
       : ctx.gasBurnReason;
+    simPath.state = simState;
+    simPath.value = simValue;
+    simPath.reason = simDetail;
   }
 
   if (cbState === null && simState === null) {
@@ -829,6 +980,8 @@ function makeGasBurnBreaker(ctx: EvalCtx): CircuitBreaker {
         current_value: null,
         threshold: cap ?? ctx.gasBurnCapUsd,
         unit,
+        paths: { sim: simPath, actual: actualPath },
+        deciding_path: "none",
       },
       blocks: ["LIVE"],
       required_action:
@@ -844,7 +997,18 @@ function makeGasBurnBreaker(ctx: EvalCtx): CircuitBreaker {
     (acc, s) => (ORDER_PRIORITY[s] < ORDER_PRIORITY[acc] ? s : acc),
     "PASS",
   );
+  // Which path determined the row state? On a tie the A.6 ledger path wins —
+  // it is the operator's actual-gas authority (ARBX_CB_MAX_GAS_BURN_USD).
+  const deciding: "actual" | "sim" =
+    cbState !== null && (simState === null || ORDER_PRIORITY[cbState] <= ORDER_PRIORITY[simState])
+      ? "actual"
+      : "sim";
   const details = [cbDetail, simDetail].filter((d) => d.length > 0).join(" · ");
+  // State/value alignment (audit 2026-10): the displayed value and threshold
+  // come from the DECIDING path — never a value from one path against a state
+  // decided by the other.
+  const decidingValue = deciding === "actual" ? cbValue : simValue;
+  const decidingThreshold = deciding === "actual" ? cap ?? ctx.gasBurnCapUsd : ctx.gasBurnCapUsd;
   return {
     ...base,
     state,
@@ -855,15 +1019,20 @@ function makeGasBurnBreaker(ctx: EvalCtx): CircuitBreaker {
       detail: details.length > 0 ? `${details}.` : "no gas evidence in window.",
       // Contract invariant: NOT_AVAILABLE never carries a fabricated value even
       // when the OTHER path (sim) has one — the row state must not lie.
-      current_value: state === "NOT_AVAILABLE" ? null : cbValue ?? simValue,
-      threshold: cap ?? ctx.gasBurnCapUsd,
+      current_value: state === "NOT_AVAILABLE" ? null : decidingValue,
+      threshold: state === "NOT_AVAILABLE" ? cap ?? ctx.gasBurnCapUsd : decidingThreshold,
       unit,
+      paths: { sim: simPath, actual: actualPath },
+      deciding_path: deciding,
     },
     blocks: state === "PASS" ? [] : ["LIVE"],
     required_action:
-      state === "PASS" || state === "NOT_AVAILABLE"
-        ? null
-        : "Investigate gas spend; reduce candidate volume or raise the operator cap if intended.",
+      state === "PASS" ? null
+      : state === "NOT_AVAILABLE"
+        ? "Accumulate paper runs with actual_gas_cost_usd in the window, then re-evaluate."
+      : state === "WARN"
+        ? "Coverage incomplete: wait for drift_tracker to backfill actual_gas_cost_usd on unmeasured window runs, then re-evaluate."
+      : "Investigate gas spend; reduce candidate volume or raise the operator cap if intended.",
   };
 }
 
@@ -928,18 +1097,23 @@ function makeSimErrorBreaker(ctx: EvalCtx): CircuitBreaker {
     : gsim?.status === "yellow" ? "WARN"
     : gsim?.status === "red" ? "PAUSED"
     : ctx.readinessError ? "UNKNOWN" : "NOT_AVAILABLE";
+  // Audit 2026-10: this breaker derives its state from the G-SIM-1 SECURE_BOOT
+  // checklist (variance_benchmark, second_signoff, …) — it does NOT count a
+  // consecutive-error streak. The old name/threshold ("Consecutive SIM_ERROR
+  // streak" / "5 consecutive") presented a readiness review as if it were a
+  // measured error run; labels now say what the evidence actually is.
   const evidence: BreakerEvidence = {
     source: gsim ? "readiness_verifier" : "not_configured",
     detail: gsim?.reason ?? "G-SIM-1 readiness verifier not loaded.",
     current_value: null,
-    threshold: "5 consecutive",
-    unit: "errors",
+    threshold: null,
+    unit: null,
   };
   // exactOptionalPropertyTypes: only set `ref` when present (never `undefined`).
   if (gsim) evidence.ref = "readiness:G-SIM-1";
   return {
     id: "sim_error_breaker",
-    name: "Consecutive SIM_ERROR streak",
+    name: "Simulator readiness gate (G-SIM-1)",
     category: "sim_error",
     state,
     severity: state === "PASS" ? "low" : "high",
@@ -948,8 +1122,12 @@ function makeSimErrorBreaker(ctx: EvalCtx): CircuitBreaker {
     blocks: state === "PASS" ? [] : ["LIVE"],
     operator_required: false,
     last_evaluated_at: ctx.now,
-    description: "Pause if consecutive simulation errors exceed threshold.",
-    required_action: state === "PASS" ? null : "Inspect simulator-v2 + searcher-rs logs; surface failing strategy.",
+    description:
+      "Derived from the G-SIM-1 SECURE_BOOT checklist (variance_benchmark + second_signoff) — NOT a consecutive-error streak counter.",
+    required_action:
+      state === "PASS"
+        ? null
+        : "Complete the G-SIM-1 checklist items cited in the evidence (benchmark samples, fresh sign-off); see /api/readiness/steps.",
   };
 }
 
@@ -1419,6 +1597,7 @@ export const __forTesting = {
   overall,
   loadCbConfig,
   computeDrawdownStats,
+  toGasMeasurementOutcomes,
   DD_MIN_RUNS,
   DD_MIN_SPAN_HOURS,
   persistBreakerTrips,

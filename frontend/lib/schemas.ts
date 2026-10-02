@@ -1121,6 +1121,32 @@ export const CircuitBreakerEvidenceSchema = z.object({
   threshold: z.union([z.string(), z.number(), z.null()]),
   unit: z.string().nullable(),
   ref: z.string().optional(),
+  // Gas-burn dual-path transparency (audit 2026-10). Optional + wire-additive:
+  // only gas_burn_breaker sets them today; other breakers omit them.
+  deciding_path: z.enum(["actual", "sim", "none"]).optional(),
+  paths: z
+    .object({
+      sim: z.object({
+        state: z.string().nullable(),
+        value: z.number().nullable(),
+        measurements: z.number().int().nonnegative(),
+        window_rows: z.number().int().nonnegative(),
+        window_secs: z.number().nullable(),
+        scope: z.string(),
+        reason: z.string(),
+      }),
+      actual: z.object({
+        state: z.string().nullable(),
+        value: z.number().nullable(),
+        measured: z.number().int().nonnegative(),
+        expected: z.number().int().nonnegative(),
+        window_hours: z.number().nullable(),
+        scope: z.string(),
+        provenance: z.string(),
+        reason: z.string(),
+      }),
+    })
+    .optional(),
 });
 
 export const CircuitBreakerSchema = z.object({
