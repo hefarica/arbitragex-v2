@@ -2080,8 +2080,7 @@ pub async fn active_evaluate_and_emit(
             .load(std::sync::atomic::Ordering::Relaxed);
         // CORE-01/MATH-01: el atómico guarda MILLI-gwei; el getter decodifica.
         v4_intent_gas_gwei = runner.host_gas_price_gwei();
-        v4_dispatch_state =
-            v4_market_state_from_edges(&v4_edges, block, v4_intent_gas_gwei);
+        v4_dispatch_state = v4_market_state_from_edges(&v4_edges, block, v4_intent_gas_gwei);
     }
     if v4_edges.is_empty() {
         debug!(
