@@ -1153,8 +1153,8 @@ async fn v4_slot0(
     redis: &mut redis::aio::ConnectionManager,
     chain_id: u64,
     pool_addr_lower: &str,
-    cache: &mut std::collections::HashMap<String, Option<(String, u128)>>,
-) -> Option<(String, u128)> {
+    cache: &mut std::collections::HashMap<String, Option<(String, u128, u64)>>,
+) -> Option<(String, u128, u64)> {
     if let Some(hit) = cache.get(pool_addr_lower) {
         return hit.clone();
     }
@@ -1164,7 +1164,10 @@ async fn v4_slot0(
         .flatten()
         .and_then(|entry| {
             let liquidity: u128 = entry.liquidity.parse().ok()?;
-            Some((entry.sqrt_price_x96, liquidity))
+            // V3-LEG-GRAPH-01: el ts del round de sync acompaña al slot0 — es
+            // la identidad de coherencia del Edge V3 (todas las entradas del
+            // mismo round comparten ts, verificado en producción).
+            Some((entry.sqrt_price_x96, liquidity, entry.ts))
         });
     cache.insert(pool_addr_lower.to_owned(), slot0.clone());
     slot0
@@ -1644,7 +1647,7 @@ pub async fn active_evaluate_and_emit(
         std::collections::BTreeMap::new();
     let mut v4_decimal_cache: std::collections::HashMap<String, Option<u8>> =
         std::collections::HashMap::new();
-    let mut v4_slot0_cache: std::collections::HashMap<String, Option<(String, u128)>> =
+    let mut v4_slot0_cache: std::collections::HashMap<String, Option<(String, u128, u64)>> =
         std::collections::HashMap::new();
     let mut v4_redis = runner.redis_connection().await;
     for leg in &intent.legs {
@@ -1660,26 +1663,55 @@ pub async fn active_evaluate_and_emit(
             *v4_skip_reasons.entry("degenerate_self_pair").or_insert(0) += 1;
             continue;
         }
-        let Some(entry) = runner.read_pool_reserves(&format!("{:#x}", pool)).await else {
-            *v4_skip_reasons.entry("reserves_missing").or_insert(0) += 1;
-            continue;
-        };
-        // Orientación exacta: token0_addr declara cuál reserva es "in" para
-        // esta pierna. Sin token0_addr o con token0 fuera de la ruta →
-        // OMITIR (R8: sin dual-orientation ni inferencia).
-        let Some(token0) = entry.token0_addr.as_deref() else {
-            *v4_skip_reasons.entry("token0_addr_missing").or_insert(0) += 1;
-            continue;
-        };
-        let (reserve_in, reserve_out) = if token0 == token_in {
-            (entry.r0.clone(), entry.r1.clone())
-        } else if token0 == token_out {
-            (entry.r1.clone(), entry.r0.clone())
+        // V3-LEG-GRAPH-01 (RESERVES-CACHE-01, 2026-10-01): el protocolo se
+        // computa ANTES del gate de reservas. Un pool V3 NO tiene
+        // getReserves(): su dato vive en `arbx:v3_slot0`, jamás en
+        // `arbx:pool_reserves`. Exigirle la entrada V2 descartaba TODA pierna
+        // V3 con el motivo engañoso `reserves_missing` — 98% de las piernas
+        // descartadas en producción (medido 2026-10-01), la misma confusión
+        // que PERHOP-RESERVES-01 documentó y prohibió en el sizing. El Edge
+        // ya soporta V3 (reserve_in_raw: Option) y quote_path lo resuelve con
+        // v3_spot_within_tick (orientación derivada de token_in/token_out).
+        let (edge_protocol, fee_units, fee_denominator) = v4_edge_protocol_and_fee(leg);
+        let pool_id = format!("{:#x}", pool);
+
+        let (reserve_pair, block_identity, v3_slot) = if edge_protocol == "uniswap_v3" {
+            // V3: reservas None por diseño. Identidad = round de sync (todas
+            // las entradas del mismo round comparten ts — verificado). Sin
+            // slot0 cacheado → skip con motivo PROPIO, no el engañoso.
+            match v4_slot0(&mut v4_redis, chain_id, &pool_id, &mut v4_slot0_cache).await {
+                Some((sp, liq, ts)) => (None, format!("sync-ts-{ts}"), Some((sp, liq))),
+                None => {
+                    *v4_skip_reasons.entry("v3_slot0_missing").or_insert(0) += 1;
+                    continue;
+                }
+            }
         } else {
-            *v4_skip_reasons
-                .entry("token0_addr_out_of_route")
-                .or_insert(0) += 1;
-            continue;
+            let Some(entry) = runner.read_pool_reserves(&pool_id).await else {
+                *v4_skip_reasons.entry("reserves_missing").or_insert(0) += 1;
+                continue;
+            };
+            // Orientación exacta: token0_addr declara cuál reserva es "in"
+            // para esta pierna. Sin token0_addr o con token0 fuera de la
+            // ruta → OMITIR (R8: sin dual-orientation ni inferencia).
+            let Some(token0) = entry.token0_addr.as_deref() else {
+                *v4_skip_reasons.entry("token0_addr_missing").or_insert(0) += 1;
+                continue;
+            };
+            let pair = if token0 == token_in {
+                (entry.r0.clone(), entry.r1.clone())
+            } else if token0 == token_out {
+                (entry.r1.clone(), entry.r0.clone())
+            } else {
+                *v4_skip_reasons
+                    .entry("token0_addr_out_of_route")
+                    .or_insert(0) += 1;
+                continue;
+            };
+            // Identidad de bloque REAL observada (número de la entrada de
+            // reservas) con prefijo explícito "blk-": Edge no tiene campo
+            // para número de bloque y JAMÁS se fabrica un hash (R8).
+            (Some(pair), format!("blk-{}", entry.blk), None)
         };
         let Some(dec_in) =
             v4_token_decimals(&mut v4_redis, chain_id, &token_in, &mut v4_decimal_cache).await
@@ -1700,21 +1732,13 @@ pub async fn active_evaluate_and_emit(
         if v4_first_token_in.is_none() {
             v4_first_token_in = Some(token_in.clone());
         }
-        let pool_id = format!("{:#x}", pool);
-        // Protocolo + fee del Edge: V2 → cpmm_v2 con la fee del intent
-        // (quote local); V3 → uniswap_v3 con fee PIPS del intent (rama
-        // within-tick si hay slot0 cacheado); resto → protocolo nominal sin
-        // fee (quote de productor exacto — sin fallback CPMM, doctrina v4).
-        let (edge_protocol, fee_units, fee_denominator) = v4_edge_protocol_and_fee(leg);
-        // V3: slot0 cacheado (misma fuente que get_v3_slot0) → campos del
-        // within-tick. Sin slot0 → None: quote de productor exacto (R8).
-        let (sqrt_price_x96_raw, liquidity) = if edge_protocol == "uniswap_v3" {
-            match v4_slot0(&mut v4_redis, chain_id, &pool_id, &mut v4_slot0_cache).await {
-                Some((sp, liq)) => (Some(sp), Some(liq)),
-                None => (None, None),
-            }
-        } else {
-            (None, None)
+        let (reserve_in_raw, reserve_out_raw) = match reserve_pair {
+            Some((ri, ro)) => (Some(ri), Some(ro)),
+            None => (None, None),
+        };
+        let (sqrt_price_x96_raw, liquidity) = match v3_slot {
+            Some((sp, liq)) => (Some(sp), Some(liq)),
+            None => (None, None),
         };
         v4_edges.push(crate::agent_graph::Edge {
             edge_id: pool_id.clone(),
@@ -1724,12 +1748,9 @@ pub async fn active_evaluate_and_emit(
             token_out,
             protocol: edge_protocol,
             snapshot_id: v4_ctx_id.clone(),
-            // Identidad de bloque REAL observada (número de la entrada de
-            // reservas) con prefijo explícito "blk-": Edge no tiene campo
-            // para número de bloque y JAMÁS se fabrica un hash (R8).
-            block_hash: format!("blk-{}", entry.blk),
-            reserve_in_raw: Some(reserve_in),
-            reserve_out_raw: Some(reserve_out),
+            block_hash: block_identity,
+            reserve_in_raw,
+            reserve_out_raw,
             fee_units,
             fee_denominator,
             token_in_decimals: dec_in,
