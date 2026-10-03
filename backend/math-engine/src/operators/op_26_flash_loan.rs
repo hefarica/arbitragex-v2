@@ -300,7 +300,7 @@ mod tests {
             Some(&1.0)
         );
         // Y no queda un `flash_premium` implicito publicado en metadata.
-        assert!(out.metadata.get("flash_premium").is_none());
+        assert!(!out.metadata.contains_key("flash_premium"));
     }
 
     /// Un CERO ACREDITADO si se conserva: el productor probo que el premium es 0
@@ -356,10 +356,9 @@ mod tests {
         assert_eq!(out.metadata.get("computed"), Some(&0.0));
         assert_eq!(out.metadata.get("gas_features_status"), Some(&0.0));
         // El hueco reportado es el de GAS, no el de fee/premium (ambos medidos).
-        assert!(out.metadata.get("reason_fee_unavailable").is_none());
-        assert!(out
+        assert!(!out.metadata.contains_key("reason_fee_unavailable"));
+        assert!(!out
             .metadata
-            .get("reason_flash_premium_unavailable")
-            .is_none());
+            .contains_key("reason_flash_premium_unavailable"));
     }
 }

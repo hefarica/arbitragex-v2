@@ -659,7 +659,7 @@ mod fabrication_ratchet {
                     // Enunciado = de la lectura al cierre del enunciado (`;` o
                     // `}`), la misma ventana que usa el gate del equipo.
                     let rest = &code[at..];
-                    let end = rest.find(|c| c == ';' || c == '}').unwrap_or(rest.len());
+                    let end = rest.find([';', '}']).unwrap_or(rest.len());
                     let stmt = &rest[..end];
                     if stmt.contains("unwrap_or(") || stmt.contains("unwrap_or_default(") {
                         offenders.push(format!("{file}: features.get(\"{key}\") → {stmt}"));
@@ -685,7 +685,7 @@ mod fabrication_ratchet {
         let needle = "get(\"fee_bps\")";
         let at = code.find(needle).expect("lectura sintetica presente");
         let rest = &code[at..];
-        let end = rest.find(|c| c == ';' || c == '}').unwrap_or(rest.len());
+        let end = rest.find([';', '}']).unwrap_or(rest.len());
         assert!(
             rest[..end].contains("unwrap_or("),
             "el escaner debe ver el unwrap_or literal: {}",
