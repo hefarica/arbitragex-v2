@@ -205,7 +205,10 @@ pub const CONTRACTS: &[FeatureContract] = &[
         source: "cupo de capital CONFIGURADO por el operador \
                  (`trading_config.capital_usd`) convertido con la escala REAL del \
                  numerario: `capital_usd / precio_usd × 10^decimales`, con precio y \
-                 `decimals()` leídos del token. Conversión, no estimación",
+                 `decimals()` leídos del token. Conversión, no estimación: el \
+                 productor es `cost_inputs.rs:432-433` (`max_capital_min_units`) sobre \
+                 `cost_inputs.rs:396-408` (`numeraire_min_units`), que rechaza un \
+                 resultado no finito, no positivo o fuera del rango de `u128`",
         window: "la revisión vigente de `trading_config` y el snapshot de precio de la \
                  ruta; ambas magnitudes deben ser del mismo tick",
         absent_means: "sin capital configurado, o sin precio/decimales del numerario, \
@@ -223,9 +226,12 @@ pub const CONTRACTS: &[FeatureContract] = &[
                op_21_newton.rs:123, la misma familia que `max_capital`",
         source: "objetivo de beneficio neto CONFIGURADO por el operador \
                  (`trading_config.min_profit_usd`) convertido con la escala real del \
-                 numerario (`/ precio_usd × 10^decimales`). El slot NO admite un \
-                 default: `unwrap_or(0.0)` equivale a 'el objetivo es el break-even \
-                 puro' y por tanto hace desaparecer el objetivo que el operador fijó",
+                 numerario (`/ precio_usd × 10^decimales`). El productor es \
+                 `cost_inputs.rs:448-449` (`break_even_min_units`) sobre la MISMA \
+                 conversión citada en `max_capital` (`cost_inputs.rs:396-408`). El slot \
+                 NO admite un default: `unwrap_or(0.0)` equivale a 'el objetivo es el \
+                 break-even puro' y por tanto hace desaparecer el objetivo que el \
+                 operador fijó",
         window: "la revisión vigente de `trading_config` y el snapshot de precio de la \
                  ruta; ambas magnitudes deben ser del mismo tick",
         absent_means: "sin objetivo configurado, o sin precio/decimales del numerario, \
