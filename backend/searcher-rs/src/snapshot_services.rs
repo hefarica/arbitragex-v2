@@ -100,6 +100,11 @@ pub struct SnapshotBundle {
     /// dominante medido en producción. Vacío = el dueño no pudo computarlas
     /// (stub Phase-1 sin gas ni config) → DATA_GAP honesto (R8), nunca ceros.
     pub base_cost_lines: Vec<CostLine>,
+    /// REDEMPTION-PRODUCER-01 fase 2: estado on-chain de los baskets
+    /// configurados por el operador (`ARBX_BASKET_CONTRACTS`). Dirección →
+    /// {max_redeem_raw, total_assets_raw, read_at_ms}. Vacío = sin baskets
+    /// configurados o sin RPC disponible → verificadores FAIL honesto.
+    pub redemption_state: BTreeMap<String, Value>,
 }
 /// Revision liveness guard supplied by the owner (never invented here).
 pub type RevisionGuard = Arc<dyn Fn(&str, &str) -> bool + Send + Sync>;
@@ -684,19 +689,51 @@ impl SnapshotServices {
             // completar — jamás un PASS fabricado.
             //
             // redemption_within_limits: el importe a redimir debe estar
-            // dentro de los límites del contrato (maxRedeem/maxWithdraw).
-            // El adaptador on-chain NO existe aún — el verificador NO puede
-            // confirmar el límite y por tanto NO pasa (R8: jamás PASS sin
-            // comprobación real). La razón informa exactamente qué producir.
-            receipt(
-                "redemption_within_limits",
-                false,
-                "redemption_contract_adapter_not_implemented_read_maxRedeem_via_rpc",
-            ),
-            // delay_costed: el coste de la demora entre iniciar la redención
-            // y recibir los componentes debe estar en el neto. Sin datos de
-            // demora del contrato (vesting, cooldown, settlement window) no
-            // es computable — FAIL honesto con el requisito exacto.
+            // dentro de los límites del contrato (maxRedeem). Con el estado
+            // on-chain del basket disponible (fase 2), se VERIFICA contra el
+            // max_redeem_raw real leído via RPC. Sin estado → FAIL honesto.
+            {
+                let basket_state = edges
+                    .first()
+                    .and_then(|e| self.data.redemption_state.get(&e.token_in))
+                    .or_else(|| {
+                        edges
+                            .last()
+                            .and_then(|e| self.data.redemption_state.get(&e.token_out))
+                    });
+                let (ok, reason) = match basket_state {
+                    Some(state) => {
+                        // max_redeem_raw es hex del uint256 retornado.
+                        // amount_in_raw debe ser <= max_redeem.
+                        let max_raw = state
+                            .get("max_redeem_raw")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("");
+                        let amount_ok = if max_raw.len() > 2 {
+                            let max_val =
+                                u128::from_str_radix(max_raw.trim_start_matches("0x"), 16)
+                                    .unwrap_or(0);
+                            let amt = q.amount_in_raw.parse::<u128>().unwrap_or(0);
+                            max_val >= amt
+                        } else {
+                            false
+                        };
+                        if amount_ok {
+                            (true, "")
+                        } else {
+                            (false, "redemption_amount_exceeds_onchain_maxRedeem")
+                        }
+                    }
+                    None => (
+                        false,
+                        "redemption_contract_state_not_available_configure_ARBX_BASKET_CONTRACTS",
+                    ),
+                };
+                receipt("redemption_within_limits", ok, reason)
+            },
+            // delay_costed: sin datos de demora del contrato (vesting,
+            // cooldown, settlement window) no es computable — FAIL honesto
+            // con el requisito exacto.
             receipt(
                 "delay_costed",
                 false,
@@ -1356,6 +1393,8 @@ mod plan_support_wiring_tests {
                     evidence_id: "quote:ledger:fees_and_impact_embedded".into(),
                 },
             ],
+            // REDEMPTION-PRODUCER-01: fixture sin baskets on-chain — vacío.
+            redemption_state: BTreeMap::new(),
         }
     }
     fn spec() -> Value {
