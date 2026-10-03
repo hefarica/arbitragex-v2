@@ -53,8 +53,45 @@ mod real_ops_tests;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
-/// Number of registered operators; strategy projection dimensions are separate.
+/// Number of operators REGISTERED IN THE RUNTIME, i.e. the size of the registry
+/// built by `register_all()` below (IDs 1..=32; op_32 = NSGA-II).
+///
+/// This is NOT the number the strategy catalog uses. See
+/// [`SOURCE_OPERATOR_COUNT`] — the two numbers are both true on different axes and
+/// the gap is a declared design decision, not drift.
 pub const OPERATOR_COUNT: u8 = 32;
+
+/// Number of operators of the SOURCE catalog: the 264-strategy Master Matrix
+/// (`strategy_mapping.json`, one record per `MEV-XX-YYY`) and the cartridge bridge
+/// (`searcher-rs::native_operator_adapter`) reference only IDs 1..=31.
+///
+/// ARSE-264-01 (`t3`) — DECISION, declared and machine-checked (see
+/// `real_ops_tests::source_catalog_boundary`): **op_32 stays compiled, registered
+/// and tested at runtime, and stays DELIBERATELY UNREACHABLE from a cartridge.**
+/// Reasons, in order of weight:
+///
+/// 1. **Shape mismatch.** op_32 = NSGA-II returns a Pareto FRONT (a non-dominated
+///    SET, exposed as `matrix_result` + `scalar_value` = front cardinality). The
+///    cartridge bridge builds one per-operator evidence receipt whose value is the
+///    operator's own scalar/vector/matrix (`native_operator_adapter.rs`); a
+///    multi-objective front has no single comparable figure to weight against the
+///    31 scalar/vector operators, so a "32nd role" would be a category error, not
+///    an addition.
+/// 2. **The data matrix does not have a 32nd column.** `strategy_mapping.json`
+///    (264 records) references exactly IDs 1..=31 — measured: union of
+///    `primary_operators` ∪ `secondary_operators` ∪ `applicable_operators` ∪
+///    `operator_weights` keys = {1..31}, zero occurrences of 32. Inventing the 32nd
+///    column to "make the numbers match" is forbidden: the matrix is the
+///    operator's data and the code adapts to it — never the reverse.
+/// 3. **Nothing becomes reachable by wiring it.** No cartridge declares op_32, so
+///    widening the bridge's admission range to 1..=32 would add a path with zero
+///    callers while weakening an explicit boundary.
+///
+/// The invariant that keeps the two numbers honest:
+/// `OPERATOR_COUNT == SOURCE_OPERATOR_COUNT + 1`, every ID in
+/// `1..=SOURCE_OPERATOR_COUNT` resolves in the registry, and the single extra ID is
+/// op_32. `real_ops_tests::source_catalog_boundary` fails if that arithmetic drifts.
+pub const SOURCE_OPERATOR_COUNT: u8 = 31;
 
 /// Estado de mercado normalizado — input universal para todos los operadores
 #[derive(Debug, Clone, Serialize, Deserialize)]
