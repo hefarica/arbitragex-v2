@@ -101,17 +101,18 @@ async fn eth_call_static(
         .filter(|s| s.len() >= 2)
 }
 
-/// Lee todos los baskets configurados y devuelve el mapa para el bundle.
-/// Sin baskets configurados → mapa vacío (honesto, no error).
-pub async fn read_all_baskets(rpc_urls: &[String]) -> BTreeMap<String, Value> {
+/// Lee el estado de redemption de los baskets INDICADOS — subconjunto
+/// RELEVANTE al intent que arma el llamador (BASKET-WORKER-01) — con failover
+/// entre endpoints: el primer RPC que responde por basket gana. Sin baskets o
+/// sin endpoints → mapa vacío (R8), sin tocar la red.
+pub async fn read_baskets(baskets: &[String], rpc_urls: &[String]) -> BTreeMap<String, Value> {
     let mut out = BTreeMap::new();
-    let baskets = baskets_from_env();
     if baskets.is_empty() || rpc_urls.is_empty() {
         return out;
     }
     // Owner = zero address (límite global del vault, no de una cuenta).
     let zero_owner = "0x0000000000000000000000000000000000000000";
-    for basket in &baskets {
+    for basket in baskets {
         for rpc in rpc_urls {
             if let Some(state) = read_redemption_state(rpc, basket, zero_owner).await {
                 out.insert(basket.clone(), state);
@@ -120,4 +121,13 @@ pub async fn read_all_baskets(rpc_urls: &[String]) -> BTreeMap<String, Value> {
         }
     }
     out
+}
+
+/// Lee todos los baskets configurados y devuelve el mapa para el bundle.
+/// Sin baskets configurados → mapa vacío (honesto, no error).
+///
+/// La ruta del intent NO usa esta variante (leería baskets ajenos a la ruta):
+/// usa `read_baskets` con el subconjunto filtrado por relevancia.
+pub async fn read_all_baskets(rpc_urls: &[String]) -> BTreeMap<String, Value> {
+    read_baskets(&baskets_from_env(), rpc_urls).await
 }

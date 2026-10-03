@@ -159,6 +159,13 @@ mod cartridge;
 mod cartridge_boot;
 #[allow(dead_code)]
 mod cartridge_loader;
+// BASKET-WORKER-01 (2026-10-03): `cartridge_boot` — compilado en AMBOS crates
+// (lib + bin) — lee el estado on-chain de los baskets ERC-4626 desde aquí, así
+// que el módulo debe existir también en el árbol del bin o `crate::basket_reader`
+// no resuelve al compilar el binario (el fallo exacto de la fase 2). Mismo
+// patrón que `snapshot_services` / `strategy_hop_mask`. Sin allow local: el
+// crate raíz de este binario ya permite `dead_code` (`#![allow(...)]` arriba).
+mod basket_reader;
 // FASE OMEGA — Block/log backrunning scanner (ARBX_MEMPOOL_MODE=block).
 mod block_scanner;
 // Observer telemetry — real-node head divergence (reorg) PUBLISH to arbx:telemetry:observability.
