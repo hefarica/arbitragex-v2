@@ -1,0 +1,13 @@
+GROUP GATES — UMBRALES INICIALES EDITABLES; CALIBRAR CON EVIDENCIA RECONCILIADA,,,,,,,,,,,,,,,,,,,,,,,,,
+Group,Family,TargetNetROI,MinEV_USD,MinRiskScore,MaxRevertProb,MinCaptureProb,MinSuccessProb,MaxDataAge_ms,MaxSlippage_bps,MinDepth_x,RequireSameBlock,RequireSimulation,RequireTests,RequireInvariants,RequireAtomicIfPossible,RequireOracleIfDep,RequireBridgeIfDep,RequireExternalIfDep,LambdaBase_day,LambdaComp_per_index,LambdaTech_day,BetaVol,MinReconciledTrades,Policy_Status,Source
+1,Arbitrajes spot DEX dentro de una misma cadena,0.02,0,80,0.02,0.1,0.98,500,50,5,YES,YES,YES,YES,YES,YES,YES,YES,1.2,0,0,0,20,CALIBRATE_BEFORE_LIVE,Alpha-decay draft prior
+2,Arbitrajes según la curva del AMM,0.02,0,80,0.02,0.1,0.98,500,50,5,YES,YES,YES,YES,YES,YES,YES,YES,0.25,0,0,0,20,CALIBRATE_BEFORE_LIVE,Alpha-decay draft prior
+3,Arbitrajes disparados por transacciones o cambios de estado,0.02,0,80,0.02,0.1,0.98,250,75,4,YES,YES,YES,YES,YES,YES,YES,YES,0.15,0,0,0,20,CALIBRATE_BEFORE_LIVE,Alpha-decay draft prior
+4,"Arbitrajes por equivalencia, paridad o redención del activo",0.02,0,80,0.02,0.1,0.98,1000,50,5,YES,YES,YES,YES,YES,YES,YES,YES,0.04,0,0,0,20,CALIBRATE_BEFORE_LIVE,Alpha-decay draft prior
+5,Arbitraje CEX–DEX y mercados externos,0.02,0,80,0.02,0.1,0.98,250,75,4,YES,YES,YES,YES,YES,YES,YES,YES,0.06,0,0,0,20,CALIBRATE_BEFORE_LIVE,Alpha-decay draft prior
+6,Arbitrajes cross-chain y cross-domain,0.02,0,80,0.02,0.1,0.98,5000,100,3,NO,YES,YES,YES,YES,YES,YES,YES,0.03,0,0,0,20,CALIBRATE_BEFORE_LIVE,Alpha-decay draft prior
+7,Derivados y volatilidad,0.02,0,80,0.02,0.1,0.98,500,75,4,YES,YES,YES,YES,YES,YES,YES,YES,0.1,0,0,0,20,CALIBRATE_BEFORE_LIVE,Global draft fallback; MUST CALIBRATE
+8,"Lending, crédito, liquidaciones y deuda",0.02,0,80,0.02,0.1,0.98,1000,100,4,YES,YES,YES,YES,YES,YES,YES,YES,0.1,0,0,0,20,CALIBRATE_BEFORE_LIVE,Global draft fallback; MUST CALIBRATE
+9,"Intents, solvers, subastas y order flow",0.02,0,80,0.02,0.1,0.98,1000,75,3,YES,YES,YES,YES,YES,YES,YES,YES,0.1,0,0,0,20,CALIBRATE_BEFORE_LIVE,Global draft fallback; MUST CALIBRATE
+10,"NFT, juegos y activos no fungibles",0.02,0,80,0.02,0.1,0.98,5000,150,2,NO,YES,YES,YES,YES,YES,YES,YES,0.1,0,0,0,20,CALIBRATE_BEFORE_LIVE,Global draft fallback; MUST CALIBRATE
+11,Prediction markets y mercados condicionales,0.02,0,80,0.02,0.1,0.98,5000,100,3,NO,YES,YES,YES,YES,YES,YES,YES,0.1,0,0,0,20,CALIBRATE_BEFORE_LIVE,Global draft fallback; MUST CALIBRATE

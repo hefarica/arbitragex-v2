@@ -1,0 +1,10 @@
+FLASH LIQUIDITY — CAPITAL PROPIO Y ACTIVOS SIN COLATERAL DENTRO DE LA TX,,,,,,,,,,,
+Mode,Enabled,Capacity_USD,Provider_Fee_bps,Extra_Gas_USD,Collateral_Upfront,Atomic,Primitive / callback,Repay_Rule,Constraint,Source,Note
+OWN_CAPITAL,YES,250000,0,0,N/A,YES,pre-funded balance,No flash repayment,Any enabled route,USER_INPUT,Baseline
+AAVE_V3_FLASHLOAN,YES,2000000,5,18,NO,YES,flashLoan / flashLoanSimple → executeOperation,principal + fee before tx end,Supported reserve + liquidity,https://aave.com/docs/aave-v3/guides/flash-loans,Fee editable / verify live
+BALANCER_FLASHLOAN,YES,1500000,0,15,NO,YES,Vault flashLoan → receiveFlashLoan,principal + fee before tx end,Vault asset liquidity,https://docs.balancer.fi/concepts/governance/protocol-fees.html,0 bps from source workbook; verify live
+UNISWAP_V2_FLASH_SWAP,YES,800000,30,10,NO,YES,pair.swap(data) → uniswapV2Call,repay adjusted invariant before tx end,Borrow from V2 pair,https://docs.uniswap.org/contracts/v2/guides/smart-contract-integration/using-flash-swaps,Fee proxy editable
+UNISWAP_V3_FLASH,YES,1000000,5,12,NO,YES,pool.flash → uniswapV3FlashCallback,repay principal + fee in callback,Pool liquidity / fee tier,https://docs.uniswap.org/contracts/v3/guides/flash-integrations/inheritance-constructors,Scenario fee
+ERC3156_FLASH,YES,750000,5,14,NO,YES,flashLoan → onFlashLoan,principal + fee before callback returns,Lender implements ERC-3156,https://eips.ethereum.org/EIPS/eip-3156,Generic standard
+MORPHO_FLASH,YES,1000000,0,13,NO,YES,protocol flash callback,principal (+ configured fee) in same tx,Asset liquidity,PROTOCOL_DOCS_VERIFY,Simulation input; verify current API/fee
+MAKER_DSSFLASH,YES,500000,0,14,NO,YES,ERC-3156 style callback,principal + fee in same tx,Supported asset / line,PROTOCOL_DOCS_VERIFY,Simulation input; verify current API/fee

@@ -1,0 +1,10 @@
+STRATEGY LIFECYCLE & PROMOTION SOP,,,,,,,,
+From,To,Allowed,Entry Requirement,Exit Test,Mandatory Evidence,Capital Policy,Failure Transition,Notes
+DRAFT,SHADOW,YES,Software spec + unit tests defined,T01-T04 PASS,CI report + config version,0,DRAFT/QUARANTINE,No money
+SHADOW,PAPER,YES,Stable shadow detection + exact quotes,T01-T05 PASS,candidate/economic logs,0,SHADOW,No signing
+PAPER,CANARY,YES,OOS/walk-forward evidence + simulation stability,T01-T06 + invariants PASS,test/sim report,minimal bounded,PAPER/QUARANTINE,Strict caps
+CANARY,LIVE,YES,Reconciled trades threshold + nonnegative reconciled PnL + approvals,T01-T07 + I01-I06 PASS,recon IDs + approval,bounded by policy,CANARY/QUARANTINE,No direct jump
+LIVE,QUARANTINE,YES,Any critical gate fail,incident triage,receipt/log/evidence,0 or kill,QUARANTINE,Fail closed
+QUARANTINE,CANARY,YES,Root cause fixed + regression suite PASS,all critical tests PASS,RCA + new version,minimal bounded,QUARANTINE,Never straight to LIVE
+LIVE,SUNSET,YES,Persistent negative EV/decay or strategy retired,reconciliation complete,sunset report,0,SUNSET,Archive evidence
+SUNSET,SHADOW,YES,New version/variant with new config and tests,fresh DRAFT checklist,change request,0,SUNSET,Treat as new lifecycle

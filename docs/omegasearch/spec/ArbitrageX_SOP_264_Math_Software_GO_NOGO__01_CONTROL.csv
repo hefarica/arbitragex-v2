@@ -1,0 +1,19 @@
+CONTROL GLOBAL — SOLO INPUTS DE SOP / NO DATOS DE MERCADO SIMULADOS,,,,,
+Parameter,Value,Units,Editable,Purpose,Source/Status
+SOP_VERSION,1.0,text,NO,Version del estándar,SOP
+GLOBAL_TARGET_NET_ROI,0.02,%,YES,Umbral neto mínimo por operación,User requirement; screening target
+GLOBAL_MIN_EV_USD,0,USD,YES,EV mínimo,SOP default
+GLOBAL_MIN_RISK_SCORE,80,0-100,YES,Riesgo mínimo aceptable,SOP default
+GLOBAL_MAX_REVERT_PROB,0.02,%,YES,Probabilidad máxima de revert,SOP default
+GLOBAL_MIN_CAPTURE_PROB,0.1,%,YES,Capture probability mínima,SOP default; calibrate
+GLOBAL_MIN_SUCCESS_PROB,0.98,%,YES,Success probability mínima condicional,SOP default; calibrate
+GLOBAL_MAX_DATA_AGE_MS,1000,ms,YES,Edad máxima de snapshot,SOP default; group override
+GLOBAL_MAX_SLIPPAGE_BPS,50,bps,YES,Slippage máximo,SOP default; group override
+GLOBAL_MIN_DEPTH_X,5,x notional,YES,Profundidad mínima relativa,SOP default; group override
+GLOBAL_MIN_RECONCILED_TRADES,20,trades,YES,Evidencia mínima antes de LIVE,SOP default
+GLOBAL_LAMBDA_FALLBACK_DAY,0.1,1/day,YES,Prior alpha-decay cuando no hay calibración,Draft global parameter
+GLOBAL_LAMBDA_COMP_PER_INDEX,0,1/day,YES,Competencia; 0 hasta calibrar,Must calibrate empirically
+GLOBAL_LAMBDA_TECH_DAY,0,1/day,YES,Leak/commoditization; 0 hasta calibrar,Must calibrate empirically
+GLOBAL_BETA_VOL,0,scalar,YES,Sensibilidad de alpha a volatilidad,Must calibrate empirically
+MANUAL_APPROVAL_REQUIRED,YES,YES/NO,YES,LIVE requiere aprobación explícita,SOP
+DEFAULT_STAGE,SHADOW,state,YES,Estado inicial,SOP

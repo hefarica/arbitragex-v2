@@ -1,0 +1,28 @@
+FÓRMULAS | especificación revisada y referencias verificables,,,,,,,
+"N01–N25 sustituyen decisiones binarias por objetivos, brechas y flujos cuantificables. Referencias 05/17/18 abreviadas corresponden a hojas del mismo prefijo.",,,,,,,
+ID,Concepto,Matematica,Formula_o_celda_Excel,Unidades_y_dominio,Fuente_del_dato,Prueba,Nota
+N01,Neto de éxito,NP=G-(Gas+Flash+BuilderExtra+External+Attempt),05!K5 = D5-SUM(E5:I5),USD; gross ya post swaps,Quote + cost ledger,Caso positivo=326; caso pérdida=-24,No ocultar signo; fees de swaps no se repiten.
+N02,Reserva y neto prudente,NPp=NP-Reserve,05!M5 = K5-L5,USD,Reserva parametrizada,Positivo=301; pérdida=-49,Reserva no es cash flow realizado.
+N03,ROI sobre notional,ROI=NP/Q; ROIp=NPp/Q,05!N5=K5/C5; O5=M5/C5,Q>0; porcentaje,"Notional de operación, no capital propio","326/10000=3,26%",Flash loan no vuelve infinita esta rentabilidad.
+N04,Objetivo >2%,"Target=max(MinUSD,Q*(ROI_target+margin_bps/10000))",05!P5,USD,Requisito usuario + margen editable,"Q=10000,2%+10bps ->210",No se infiere disponibilidad de oportunidades.
+N05,Gross necesario,G_required=Ctotal+Reserve+Target,05!Q5=J5+L5+P5,USD,Costes y objetivo,74+25+210=309,Separar requisito calculado de gross observado.
+N06,Brecha monetaria,"Gap=max(0,G_required-G_actual)","05!R5=MAX(0,Q5-D5)",USD,Quote/fixture y objetivo,G=260 ->49,"MAX se usa sólo para brecha, nunca para maquillar PnL."
+N07,Exceso de objetivo,Surplus=NPp-Target,05!S5=M5-P5,USD firmado,Cálculos anteriores,301-210=91,Puede ser negativo.
+N08,Pago extra máximo al builder,Bmax=G-Gas-Flash-External-Attempt-Reserve-Target,05!T5,USD firmado,Ledger desglosado,Bmax=121 en fixture base,Negativo significa que no hay presupuesto económico para ese pago.
+N09,Flash fee,Flash=P_borrow_token*price_USD*premium_bps/10000,05!F5,USD; proveedor concreto,Callback/fee quote; fixture 9bps,10000*1*9/10000=9,Premium real puede tener reglas/redondeo específicos.
+N10,Probabilidades sin solape,P(éxito)=pI*pS; P(revert)=pI*(1-pS); P(no inclusión)=1-pI,05!U5:W5 y contrato C22,pS condicional a inclusión,Datos observados; fixtures aparte,Las tres ramas suman1,No contar captura/inclusión dos veces.
+N11,EV atómico de dos ramas incluidas,EV=pI*[pS*(G-Cincluded)-(1-pS)*Cfail]-Cattempt,05!Y5,USD por intento,Quote+costes+probabilidades condicionales,"EV=141,58075 en fixture",Reserva no descontada como gasto; escenarios no atómicos exigen otras ramas.
+N12,EV genérico no atómico,EV=sum_j(p_j*net_j)-Cattempt; sum_j p_j=1,Backend scenario_ledger; contrato C21,USD/intento; distribución de escenarios,Settlement/fills + riesgos de inventario,Casos de fallo parcial y pérdidas profundas,No simular bridges/CEX con un revert universal.
+N13,Ganancia equivalente en token,NP_token_equiv=NP_USD/price_token_USD,05!Z5,token de referencia,Precio de valoración,326 USD / 1 =326 unidades SIM,No es una conversión ejecutada.
+N14,Mínimo de delta Caso A,MinDelta=(Gas+ExternalOutside+Attempt+Reserve+Target)/price,05!AA5,unidades humanas del token,Contrato C15–C19,20+10+5+25+210=270,Flash y builder debitados antes de medir delta.
+N15,Unidad mínima de contrato,minProfitRaw=ceil(MinDelta*10^decimals),Fuera de Excel con bigint,uint256; redondeo al alza,ABI + decimals,Vectores 6/18decimals y overflow,Float Excel no es serialización on-chain.
+N16,Condición on-chain,Bafter-Bbefore-NetExternalTransfers >= minProfitRaw,Executor después de repayment y pagos incluidos,mismo token y owner,Balance/trace,Fallar por 1 unidad raw revierte en prueba,No asegura cotización USD ni reembolsa gas fallido.
+N17,Neto reconciliado,NP_real=(After-Before-NetDeposits)*Price-Coutside-Cattempt,17!N5,USD firmado; alcance definido,Receipt/fills+balances,Caso de aporte debe neutralizarse,No restar gas de nuevo si ya está en saldo de activo nativo.
+N18,Avance de implementación,Completed/12; task counts only if HECHO+evidence+version,02!Q5; 03!M5,proporción,Artefactos de integración,HECHO sin evidence=pendiente,Declarar evidencia no equivale a auditoría automática del contenido.
+N19,Decay efectivo,lambda=lambda0+lambdaC*C+lambdaT*leak,18!I5,1/día,Calibración; escenario ilustrativo,Competencia aparece una sola vez,No gate obligatorio.
+N20,Hazard acumulado,Hnew=Hprev+lambda*dt,18!K5,adimensional,Estado persistido + reloj inyectado,"100 pasos de0,01d=1 paso1d si lambda fijo",No resetear a initial*exp(-lambda*ultimo_dt).
+N21,Edge ajustado,"edge=a0*exp(-Hnew)*V; V=max(floor,1+beta*(volRatio-1))",18!O5,bps; alpha no es Sharpe,Calibración por estrategia,Baseline volRatio=1 ->V=1,Floor es supuesto; no ley ni fuente de beneficio.
+N22,Half-life,ln(2)/lambda para lambda>0,18!P5,días,lambda del modelo,Lambda0 -> sin decaimiento finito,No sumar half-life de estrategias como capacidad de ingresos.
+N23,Prefiltro de ciclo,w=-ln((1-fee)*spot/fair); sum w<0,Fuente F008 / detector R_CLOSED_CYCLE,factor adimensional,Estado consistente de pools,exp(-sumw)=producto factores,Descubrimiento marginal no acredita neto a tamaño.
+N24,Quote de ruta,q_next_in=q_prev_out; PnL=q_n(...q_1(x))-x-costs,Fuente F009 + adapter protocolar,2–7 hops cerrados donde aplique,Quotes exactos y mismo snapshot,"Continuidad, units, rounding, debt",No sustituir matemática de Curve/V3 por proxy en ejecución.
+N25,Elección económica de tamaño,argmax_x NP(x) entre tamaños factibles que alcanzan Target(x),Tarea IMP06; grid + refinement fuera Excel,"x sujeto a liquidez, funding y estado",Adapter exacto + costes,Comparar tamaño óptimo vs máximo disponible,El óptimo puede no existir con beneficio positivo.

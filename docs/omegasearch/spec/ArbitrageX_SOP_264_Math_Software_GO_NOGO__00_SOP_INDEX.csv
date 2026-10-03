@@ -1,0 +1,20 @@
+ARBITRAGEX — SOP 264 | ESPECIFICACIÓN MATEMÁTICA + SOFTWARE + GO/NO-GO,,,,,,,
+Campo,Definición,,Secuencia SOP,Entrada,Control,Salida,Fail Action
+Propósito,Contrato operativo único para gobernar las 264 estrategias: datos → matemática → software → pruebas → invariants → simulación → GO/NO-GO → reconciliación.,,S0 Change control,Versión/commit/config,Aprobación + evidencia,Config congelada,NO-GO
+Alcance,SOP de control. No es un motor de firma ni una garantía de rentabilidad.,,S1 Data intake,RPC/quoter/oracle/venue,freshness + schema + block,Snapshot válido,Quarantine
+Regla económica,"Ninguna estrategia puede pasar LIVE sólo por spread/alpha teórico; debe pasar Net P&L, EV, simulación, invariants, dependencias y evidencia reconciliada.",,S2 Discovery,Detector + graph/state,ecuación detector,Candidate,Discard
+Regla de alpha,"Alpha/edge económico, Sharpe, capture probability y realized P&L son variables distintas.",,S3 Exact quote/sizing,Candidate + amount,protocol-correct quote,Sized candidate,Discard
+Regla de datos,Si faltan datos requeridos o no están frescos: NO-GO.,,S4 Economics,Gross + todos costos,Net P&L + EV,Economic PASS,NO-GO
+Regla de atomicidad,Si la estrategia requiere repayment atómico y éste no se prueba en simulación: NO-GO.,,S5 Simulation,Calldata/state,fork/eth_call/bundle,Simulation PASS,NO-GO
+Regla de estado,No se permite salto directo DRAFT/SHADOW → LIVE.,,S6 Invariants,Simulation evidence,conservation/snapshot/repay,Invariant PASS,NO-GO
+Target inicial,2% net ROI por operación como umbral editable de screening; no implica que existan oportunidades ni garantiza ejecución.,,S7 GO gate,All evidence,formula GO/NO-GO,GO or NO-GO,NO-GO
+Fuente primaria,ArbitrageX_Integrated_2_to_7_Hops_Flash_Atomic_Model(1).xlsx + especificación de alpha-decay proporcionada en la conversación.,,S8 Execution,GO + approval,private/public policy,Submitted,Kill/hold
+Versión SOP,1.0,,S9 Settlement,Receipt/balances,finality + receipt,Settled,Reconcile
+,,,S10 Reconciliation,before/after balances,realized net P&L,Reconciled,Incident
+,,,S11 Alpha update,reconciled history,decay/EV recalibration,Healthy/Pivot/Sunset,Reduce/kill
+SOP KPI,Valor,,,,,,
+Estrategias,264,,,,,,
+GO,0,,,,,,
+NO-GO,264,,,,,,
+Tests PASS,0,,,,,,
+Invariants PASS,0,,,,,,

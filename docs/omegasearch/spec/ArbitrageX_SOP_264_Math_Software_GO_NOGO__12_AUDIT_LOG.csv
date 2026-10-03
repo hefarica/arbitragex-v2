@@ -1,0 +1,2 @@
+EXECUTION / DECISION AUDIT LOG — TEMPLATE,,,,,,,,,,,,
+Timestamp,MEV_ID,Stage,Snapshot_ID,Candidate_ID,Gate_Result,NO_GO_Reason,Simulation_ID,Evidence_ID,Tx/Settlement_ID,Expected_EV_USD,Realized_Net_PnL_USD,Operator/Automation
