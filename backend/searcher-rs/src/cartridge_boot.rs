@@ -1381,10 +1381,21 @@ async fn v4_slot0(
 /// slot0 exige la verificación contra referencia de EXACT-CLASS-01 y queda
 /// como seguimiento: jamás alimentar a los operadores un precio posiblemente
 /// mal orientado. Sin precios → None → no se adjunta dispatch (R8).
+///
+/// MARKET-FEATURES-WIRE-01 (2026-10-03): `features` entra como PARÁMETRO. Este
+/// sitio construía el mapa con `HashMap::new()` — nacía vacío y moría vacío, de
+/// modo que todo lector de `features` en la ruta v4 recibía nada. Ante el hueco,
+/// varios operadores no repartían DATA_GAP: fabricaban un valor con
+/// `unwrap_or(...)` (premium flash a 0.0, `max_capital` a $1.0, fee a 30 bps).
+/// La lectura async de los productores vive en el llamador
+/// (`build_and_register_intent_context`, que es async); esta función es sync por
+/// contrato y sólo recibe el mapa YA producido. R8 fail-honest: una clave
+/// ausente significa "no computado" y aquí NO se rellena jamás con un default.
 fn v4_market_state_from_edges(
     edges: &[crate::agent_graph::Edge],
     block_number: u64,
     gas_price_gwei: f64,
+    features: std::collections::HashMap<String, f64>,
 ) -> Option<std::sync::Arc<math_engine::MarketState>> {
     use math_engine::MarketState;
     let mut price_matrix: Vec<Vec<f64>> = Vec::new();
@@ -1431,7 +1442,7 @@ fn v4_market_state_from_edges(
         gas_price_gwei,
         block_timestamp: 0, // no viaja en el intent — honesto (observe-only)
         block_number,
-        features: std::collections::HashMap::new(),
+        features,
     }))
 }
 
@@ -2541,7 +2552,20 @@ pub async fn build_and_register_intent_context(
             .host_block_number_handle()
             .load(std::sync::atomic::Ordering::Relaxed);
         v4_intent_gas_gwei = runner.host_gas_price_gwei();
-        v4_dispatch_state = v4_market_state_from_edges(&v4_edges, block, v4_intent_gas_gwei);
+        // MARKET-FEATURES-WIRE-01: features REALES para el MarketState del
+        // dispatch v4. La lectura async vive AQUÍ (el llamador async) y el
+        // constructor sync recibe el mapa ya producido — mismo idioma que
+        // `v4_basket_state` arriba. Hoy la única fuente viva alcanzable sin
+        // tocar la zona congelada es `regime_features_from_redis`
+        // (`parity_deviation` desde el PriceBus de Redis); no inserta la clave
+        // si ningún stable tiene precio válido, así que el mapa puede llegar
+        // VACÍO — y eso es "no computado", nunca un cero fabricado (R8).
+        let v4_features = {
+            let mut features_redis = runner.redis_connection().await;
+            crate::math_evidence::regime_features_from_redis(&mut features_redis, chain_id).await
+        };
+        v4_dispatch_state =
+            v4_market_state_from_edges(&v4_edges, block, v4_intent_gas_gwei, v4_features);
     }
     if v4_edges.is_empty() {
         // Nombre de evento CONSERVADO del bloque original de la ruta ACTIVE (las
@@ -5948,5 +5972,127 @@ mod shadow_canonical_tests {
         );
         assert_eq!(stub["mode"], "shadow");
         assert_eq!(stub["context_provenance"], "static_boot_stub");
+    }
+
+    // ── MARKET-FEATURES-WIRE-01 (2026-10-03): el mapa de features del v4 ──
+    //
+    // El defecto que estos tests cierran: `v4_market_state_from_edges`
+    // construía `features` con `HashMap::new()`. Todo lector de `features` en la
+    // ruta v4 recibía nada y varios operadores, ante el hueco, FABRICABAN un
+    // valor con `unwrap_or` (premium flash a 0.0, capital a $1.0, fee a 30 bps)
+    // en vez de repartir DATA_GAP. Los tests ejercitan el sitio REAL — la
+    // construcción del MarketState que va al dispatch v4 —, no una copia.
+
+    /// Las claves que los operadores nativos y `regime_router` LEEN del mapa.
+    /// Ante productor sin dato, NINGUNA debe existir.
+    const OPERATOR_READ_FEATURE_KEYS: [&str; 6] = [
+        "volatility",
+        "health_factor",
+        "oracle_price",
+        "onchain_price",
+        "parity_deviation",
+        "pool_fee",
+    ];
+
+    /// Pierna V2 mínima y BIEN FORMADA: es el único tipo de edge que el
+    /// constructor acepta (protocolo `cpmm_v2`, reservas orientadas y decimales
+    /// ya resueltos). Reservas no degeneradas para que `normalized_price`
+    /// compute — con decimales 6/18 la normalización es la que decide el precio.
+    fn market_state_edge() -> crate::agent_graph::Edge {
+        crate::agent_graph::Edge {
+            edge_id: "0xfeat".into(),
+            pool_id: "0xfeat".into(),
+            chain_id: 1,
+            token_in: "0xusdc".into(),
+            token_out: "0xweth".into(),
+            protocol: "cpmm_v2".into(),
+            snapshot_id: "snap".into(),
+            block_hash: "sync-ts-1".into(),
+            reserve_in_raw: Some("1000000000".into()), // 1_000 USDC (6 dec)
+            reserve_out_raw: Some("500000000000000000".into()), // 0.5 WETH (18 dec)
+            fee_units: Some(30),
+            fee_denominator: Some(10_000),
+            token_in_decimals: 6,
+            token_out_decimals: 18,
+            adapter_version: "reserves_cache_v1".into(),
+            sqrt_price_x96_raw: None,
+            liquidity: None,
+        }
+    }
+
+    #[test]
+    fn producer_with_data_reaches_the_v4_dispatch_state() {
+        let edges = vec![market_state_edge()];
+        let mut produced = HashMap::new();
+        produced.insert("parity_deviation".to_owned(), 0.000_5);
+        produced.insert("volatility".to_owned(), 0.42);
+        let state = v4_market_state_from_edges(&edges, 21_000_000, 12.5, produced)
+            .expect("una pierna V2 con decimales resueltos produce MarketState");
+        assert_eq!(state.features.len(), 2, "el mapa producido llega íntegro");
+        assert_eq!(state.features.get("parity_deviation"), Some(&0.000_5));
+        assert_eq!(state.features.get("volatility"), Some(&0.42));
+    }
+
+    #[test]
+    fn producer_without_data_leaves_the_v4_dispatch_state_featureless() {
+        let edges = vec![market_state_edge()];
+        let state = v4_market_state_from_edges(&edges, 21_000_000, 12.5, HashMap::new())
+            .expect("el MarketState se construye aunque no haya ninguna feature");
+        assert!(
+            state.features.is_empty(),
+            "sin productor el mapa queda VACÍO; llegó {:?}",
+            state.features
+        );
+    }
+
+    #[test]
+    fn no_operator_read_key_is_fabricated_when_the_producer_has_no_data() {
+        // Gate anti-fabricación. Si alguien vuelve a insertar un default en el
+        // sitio de construcción — 0.0 para `flash_premium`, 1.0 para
+        // `max_capital`, 0.003 para `fee_bps`/`pool_fee` — este test FALLA.
+        let edges = vec![market_state_edge()];
+        let state = v4_market_state_from_edges(&edges, 21_000_000, 12.5, HashMap::new())
+            .expect("el MarketState se construye aunque no haya ninguna feature");
+        for key in OPERATOR_READ_FEATURE_KEYS {
+            assert!(
+                !state.features.contains_key(key),
+                "features[{key}] NO debe existir sin productor: el hueco se declara, \
+                 no se rellena con un valor fabricado"
+            );
+        }
+    }
+
+    #[test]
+    fn a_produced_zero_is_a_measurement_and_survives_the_wire() {
+        // R8/R10: `None` = no computado, `Some(0.0)` = computado y exactamente
+        // cero. Una serie de precios plana sobre un lapso real es volatilidad
+        // CERO — es una medición y debe viajar. El test fija la distinción para
+        // que nadie "corrija" la fabricación borrando también los ceros reales.
+        let edges = vec![market_state_edge()];
+        let mut produced = HashMap::new();
+        produced.insert("volatility".to_owned(), 0.0);
+        let state = v4_market_state_from_edges(&edges, 21_000_000, 12.5, produced)
+            .expect("una pierna V2 con decimales resueltos produce MarketState");
+        assert_eq!(
+            state.features.get("volatility"),
+            Some(&0.0),
+            "un cero MEDIDO viaja; la ausencia se representa por clave ausente"
+        );
+    }
+
+    #[test]
+    fn wired_state_still_passes_structural_admission_before_dispatch() {
+        // El MarketState con features pobladas sigue pasando la admisión
+        // estructural que precede al dispatch de operadores: poblarlas no rompe
+        // el camino que las consume.
+        use crate::native_operator_adapter::OperatorInputAdmission;
+        let edges = vec![market_state_edge()];
+        let mut produced = HashMap::new();
+        produced.insert("parity_deviation".to_owned(), 0.000_5);
+        let state = v4_market_state_from_edges(&edges, 21_000_000, 12.5, produced)
+            .expect("una pierna V2 con decimales resueltos produce MarketState");
+        let receipt = V4StructuralInputAdmission.validate(1, &state, "snap", "plan");
+        assert!(receipt.is_ok(), "admisión estructural: {receipt:?}");
+        assert_eq!(state.features.len(), 1);
     }
 }
