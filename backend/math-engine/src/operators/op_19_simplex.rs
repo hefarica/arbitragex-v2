@@ -139,24 +139,26 @@ impl TopologicalOperator for SimplexOperator {
     }
 
     fn evaluate(&self, state: &MarketState) -> OperatorOutput {
+        let none_out = |reason: &str| OperatorOutput {
+            operator_id: self.id(),
+            operator_name: self.name().to_string(),
+            scalar_value: None,
+            vector_result: None,
+            matrix_result: None,
+            metadata: {
+                let mut m = HashMap::new();
+                m.insert("computed".to_string(), 0.0);
+                m.insert(format!("reason_{reason}"), 1.0);
+                m
+            },
+        };
+
         // Problema: asignar capital entre los assets (columnas) para maximizar
-        // el valor esperado (media por asset), sujeto a capital total (de
-        // features["max_capital"] o default 1.0) y caps por asset (reserves).
+        // el valor esperado (media por asset), sujeto a capital total
+        // (features["max_capital"]) y caps por asset (reserves).
         let n_assets = state.price_matrix.first().map(|r| r.len()).unwrap_or(0);
         if n_assets == 0 || state.price_matrix.is_empty() {
-            return OperatorOutput {
-                operator_id: self.id(),
-                operator_name: self.name().to_string(),
-                scalar_value: None,
-                vector_result: None,
-                matrix_result: None,
-                metadata: {
-                    let mut m = HashMap::new();
-                    m.insert("computed".to_string(), 0.0);
-                    m.insert("reason_no_assets".to_string(), 1.0);
-                    m
-                },
-            };
+            return none_out("no_assets");
         }
 
         // c_j = media del asset j (valor esperado) a través de las filas.
@@ -171,7 +173,17 @@ impl TopologicalOperator for SimplexOperator {
             c[j] = sum / n_rows;
         }
 
-        let max_capital = state.features.get("max_capital").copied().unwrap_or(1.0);
+        // FEATURES-DEFAULTS-01 (R8 / RULE 00): `max_capital` es el CAPITAL
+        // ASIGNABLE — una MEDICION del operador, no un parametro de modelo.
+        // Ausente NO es 1.0: el default anterior hacia que el simplex repartiera
+        // UN DOLAR inventado entre los assets y devolviera ese objetivo como si
+        // fuera el optimo de la cartera real. Un capital no medido ⇒ hueco
+        // declarado. Presente pero no finito/no positivo ⇒ tambien hueco (dato
+        // invalido), nunca un computo con capital degenerado.
+        let max_capital = match state.features.get("max_capital") {
+            Some(v) if v.is_finite() && *v > 0.0 => *v,
+            _ => return none_out("max_capital_unavailable"),
+        };
 
         // Constraints: sum(x) ≤ max_capital; x_j ≤ reserve_j (si hay reserves).
         let has_reserves = state.liquidity_reserves.len() >= n_assets;
@@ -204,19 +216,7 @@ impl TopologicalOperator for SimplexOperator {
                     metadata,
                 }
             }
-            None => OperatorOutput {
-                operator_id: self.id(),
-                operator_name: self.name().to_string(),
-                scalar_value: None,
-                vector_result: None,
-                matrix_result: None,
-                metadata: {
-                    let mut m = HashMap::new();
-                    m.insert("computed".to_string(), 0.0);
-                    m.insert("reason_lp_infeasible_or_unbounded".to_string(), 1.0);
-                    m
-                },
-            },
+            None => none_out("lp_infeasible_or_unbounded"),
         }
     }
 }
@@ -245,5 +245,78 @@ mod tests {
         let (obj, x) = SimplexOperator::simplex(&c, &a, &b).unwrap();
         assert!((obj - 204.0).abs() < 1e-6, "expected obj 204 (got {obj})");
         assert!(x[0] <= 4.0 + 1e-6, "x must respect its cap (got {})", x[0]);
+    }
+
+    // ── FEATURES-DEFAULTS-01: el capital no medido no se inventa ─────────────
+
+    /// Clave canonica del par del fixture (formato FEATURES-01b).
+    const PAR_FIXTURE: &str =
+        "0xaaaa0000000000000000000000000000000000aa|0xbbbb0000000000000000000000000000000000bb";
+
+    fn state_with(feats: &[(&str, f64)]) -> MarketState {
+        MarketState {
+            price_matrix: vec![vec![100.0, 200.0], vec![101.0, 202.0]],
+            pair_keys: vec![PAR_FIXTURE.to_string(); 2],
+            liquidity_reserves: Vec::new(),
+            gas_price_gwei: 20.0,
+            block_timestamp: 1_700_000_000,
+            block_number: 18_000_000,
+            features: feats.iter().map(|(k, v)| (k.to_string(), *v)).collect(),
+        }
+    }
+
+    /// El defecto que se corta: sin `max_capital` el operador repartia 1.0 USD
+    /// inventado y publicaba ese objetivo como optimo de cartera.
+    #[test]
+    fn max_capital_absent_declares_the_gap_instead_of_one_dollar() {
+        let op = SimplexOperator::new();
+        let out = op.evaluate(&state_with(&[]));
+        assert!(
+            out.scalar_value.is_none(),
+            "sin capital medido no hay asignacion publicable: {:?}",
+            out.scalar_value
+        );
+        assert!(out.vector_result.is_none());
+        assert_eq!(out.metadata.get("computed"), Some(&0.0));
+        assert_eq!(out.metadata.get("reason_max_capital_unavailable"), Some(&1.0));
+    }
+
+    /// Capital presente pero degenerado (0, negativo, NaN) ⇒ hueco, no computo.
+    #[test]
+    fn degenerate_present_capital_is_a_declared_gap() {
+        let op = SimplexOperator::new();
+        for bad in [0.0, -5.0, f64::NAN, f64::INFINITY] {
+            let out = op.evaluate(&state_with(&[("max_capital", bad)]));
+            assert!(out.scalar_value.is_none(), "capital {bad} ⇒ sin optimo");
+            assert_eq!(
+                out.metadata.get("reason_max_capital_unavailable"),
+                Some(&1.0)
+            );
+        }
+    }
+
+    /// Camino bueno intacto: con capital medido el optimo es el de siempre y
+    /// respeta el cap (max cᵀx con c = [100.5, 201.0] y capital 100 ⇒ todo a la
+    /// columna 1 ⇒ objetivo 100 × 201.0).
+    #[test]
+    fn measured_capital_computes_and_respects_the_cap() {
+        let op = SimplexOperator::new();
+        let out = op.evaluate(&state_with(&[("max_capital", 100.0)]));
+        assert_eq!(out.metadata.get("computed"), Some(&1.0));
+        assert_eq!(out.metadata.get("max_capital"), Some(&100.0));
+        let obj = out.scalar_value.expect("objetivo publicado");
+        assert!((obj - 20_100.0).abs() < 1e-6, "objetivo esperado 20100, {obj}");
+        // HALLAZGO F6-A (preexistente, NO corregido en este cambio): con m=1
+        // (una sola restriccion, `sum x ≤ capital`) la extraccion de la base en
+        // `SimplexOperator::simplex` marca como basicas TODAS las columnas cuyo
+        // coeficiente sea 1 en esa unica fila, y publica x = [100, 100]
+        // (suma 200 > capital 100) MIENTRAS el objetivo SI es el correcto
+        // (20100). Es un defecto de la extraccion de x*, no del tratamiento de
+        // `max_capital`, asi que se reporta con su contraejemplo en lugar de
+        // arreglarlo aqui (un PR = un ID; ver informe F6-defaults).
+        assert!(
+            out.vector_result.is_some(),
+            "el vector se publica (su exactitud en m=1 es el hallazgo F6-A)"
+        );
     }
 }

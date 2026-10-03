@@ -18,7 +18,10 @@
 //!
 //! R8 fail-honest: sin reservas, r0≤0, r1≤0, γ≤0, sin edge (x_peak≤0), raíz no
 //! rentable (f(x_peak)≤0), |f'|<1e-12 (divergencia), no-convergencia en 50 iters,
-//! o raíz fuera de (0, r0] ⇒ scalar_value None.
+//! o raíz fuera de (0, r0] ⇒ scalar_value None. FEATURES-DEFAULTS-01: sin
+//! NINGUNA clave de fee ⇒ `reason_fee_unavailable`; sin `break_even_target` ⇒
+//! `reason_break_even_target_unavailable` (nunca 30 bps ni un hurdle 0.0
+//! inventados).
 
 use super::{MarketState, OperatorOutput, TopologicalOperator};
 use std::collections::HashMap;
@@ -45,14 +48,18 @@ impl NewtonOperator {
         Some(col.iter().sum::<f64>() / col.len() as f64)
     }
 
-    /// Fee en bps (features["fee_bps"]/1e4) o fracción directa; default 0.003.
-    fn fee_fraction(state: &MarketState) -> f64 {
+    /// Fee del pool como FRACCION: `fee_bps`/1e4 o `pool_fee` directa.
+    ///
+    /// `None` si NINGUNA esta presente — un fee desconocido no se asume (antes
+    /// 0.003 por convencion V2). `gamma = 1 - fee` mueve la raiz de break-even,
+    /// asi que el numero inventado movia el resultado publicado
+    /// (FEATURES-DEFAULTS-01, R8).
+    fn fee_fraction(state: &MarketState) -> Option<f64> {
         state
             .features
             .get("fee_bps")
             .map(|bps| *bps / 10_000.0)
             .or_else(|| state.features.get("pool_fee").copied())
-            .unwrap_or(0.003)
     }
 }
 
@@ -92,7 +99,9 @@ impl TopologicalOperator for NewtonOperator {
             return none_out("degenerate_pool");
         }
 
-        let fee = Self::fee_fraction(state);
+        let Some(fee) = Self::fee_fraction(state) else {
+            return none_out("fee_unavailable");
+        };
         let gamma = 1.0 - fee;
         if !gamma.is_finite() || gamma <= 0.0 {
             return none_out("invalid_fee");
@@ -113,12 +122,17 @@ impl TopologicalOperator for NewtonOperator {
             .filter(|v| *v > 0.0 && v.is_finite())
             .unwrap_or(150_000.0);
         let gas = state.gas_price_gwei * gas_units * 1e-9 * price;
-        let break_even_target = state
-            .features
-            .get("break_even_target")
-            .copied()
-            .filter(|v| v.is_finite())
-            .unwrap_or(0.0);
+        // FEATURES-DEFAULTS-01: `break_even_target` es el HURDLE economico de la
+        // ecuacion — el yield neto que hay que superar para que la raiz siga
+        // significando "break-even". Ausente NO es 0.0: asumirlo convierte
+        // "nadie configuro hurdle" en "el break-even es exactamente el yield
+        // nulo" y el operador publica un tamaño para un umbral que nunca se fijo.
+        // Un 0.0 PRESENTE si se conserva: es un CERO ACREDITADO (hurdle declarado
+        // en cero), que es una medicion, no una ausencia.
+        let break_even_target = match state.features.get("break_even_target") {
+            Some(v) if v.is_finite() => *v,
+            _ => return none_out("break_even_target_unavailable"),
+        };
 
         // f(x)  = p·(r1·γ·x/(r0+γ·x) − x) − gas − break_even_target   [token0 numerary]
         // f'(x) = p·r1·γ·r0/(r0+γ·x)² − p
@@ -215,5 +229,118 @@ impl TopologicalOperator for NewtonOperator {
             matrix_result: None,
             metadata,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Clave canonica del par del fixture (formato FEATURES-01b):
+    /// pair_keys.len() == price_matrix.len(), mismo par en cada fila.
+    const PAR_FIXTURE: &str =
+        "0xaaaa0000000000000000000000000000000000aa|0xbbbb0000000000000000000000000000000000bb";
+
+    /// Pool primario con edge (r1/r0 = 1.05 ⇒ γ·p_pool > 1, hay x_peak) y
+    /// referencia cross-venue 1.01.
+    fn state_with(feats: &[(&str, f64)]) -> MarketState {
+        MarketState {
+            price_matrix: vec![vec![1.01], vec![1.01]],
+            pair_keys: vec![PAR_FIXTURE.to_string(); 2],
+            liquidity_reserves: vec![(1_000_000.0, 1_050_000.0)],
+            gas_price_gwei: 20.0,
+            block_timestamp: 1_700_000_000,
+            block_number: 18_000_000,
+            features: feats.iter().map(|(k, v)| (k.to_string(), *v)).collect(),
+        }
+    }
+
+    /// FEATURES-DEFAULTS-01: sin fee medido ⇒ hueco declarado (antes 30 bps de
+    /// convencion, que movia la raiz publicada).
+    #[test]
+    fn fee_absent_declares_the_gap() {
+        let op = NewtonOperator::new();
+        let out = op.evaluate(&state_with(&[("break_even_target", 0.0)]));
+        assert!(out.scalar_value.is_none());
+        assert_eq!(out.metadata.get("computed"), Some(&0.0));
+        assert_eq!(out.metadata.get("reason_fee_unavailable"), Some(&1.0));
+    }
+
+    /// FEATURES-DEFAULTS-01: sin `break_even_target` ⇒ hueco declarado (antes
+    /// un hurdle 0.0 implicito, que publicaba un break-even para un umbral que
+    /// nadie configuro).
+    #[test]
+    fn break_even_target_absent_declares_the_gap() {
+        let op = NewtonOperator::new();
+        let out = op.evaluate(&state_with(&[("fee_bps", 30.0)]));
+        assert!(out.scalar_value.is_none());
+        assert_eq!(out.metadata.get("computed"), Some(&0.0));
+        assert_eq!(
+            out.metadata.get("reason_break_even_target_unavailable"),
+            Some(&1.0)
+        );
+    }
+
+    /// Un `break_even_target` PRESENTE pero no finito es un dato invalido, no una
+    /// ausencia — se declara el mismo hueco sin publicar raiz.
+    #[test]
+    fn non_finite_break_even_target_is_rejected() {
+        let op = NewtonOperator::new();
+        let out = op.evaluate(&state_with(&[("fee_bps", 30.0), ("break_even_target", f64::NAN)]));
+        assert!(out.scalar_value.is_none());
+        assert_eq!(
+            out.metadata.get("reason_break_even_target_unavailable"),
+            Some(&1.0)
+        );
+    }
+
+    /// Camino bueno intacto: fee Y target medidos ⇒ computa como antes. El 0.0
+    /// PRESENTE es un CERO ACREDITADO (hurdle declarado en cero), no una
+    /// ausencia, y por eso SI computa.
+    #[test]
+    fn accredited_zero_target_still_computes() {
+        let op = NewtonOperator::new();
+        let out = op.evaluate(&state_with(&[("fee_bps", 30.0), ("break_even_target", 0.0)]));
+        assert_eq!(out.metadata.get("computed"), Some(&1.0));
+        let x = out.scalar_value.expect("raiz de break-even publicada");
+        assert!(x.is_finite() && x > 0.0);
+        assert!((out.metadata.get("gamma").unwrap() - 0.997).abs() < 1e-12);
+        assert!((out.metadata.get("break_even_size").unwrap() - x).abs() < 1e-12);
+    }
+
+    /// El hurdle es real: subirlo desplaza el break-even hacia arriba (prueba de
+    /// que `break_even_target` se usa de verdad y no era decorativo).
+    #[test]
+    fn larger_target_moves_the_break_even_up() {
+        let op = NewtonOperator::new();
+        let base = op
+            .evaluate(&state_with(&[("fee_bps", 30.0), ("break_even_target", 0.0)]))
+            .scalar_value
+            .expect("raiz con hurdle 0");
+        let raised = op
+            .evaluate(&state_with(&[("fee_bps", 30.0), ("break_even_target", 10.0)]))
+            .scalar_value
+            .expect("raiz con hurdle 10");
+        assert!(
+            raised > base,
+            "hurdle mayor ⇒ break-even mayor (base={base}, raised={raised})"
+        );
+    }
+
+    /// Mismo fee por las dos unidades ⇒ mismo resultado (precedencia preservada).
+    #[test]
+    fn fee_units_are_equivalent_and_bps_wins() {
+        let op = NewtonOperator::new();
+        let by_bps = op.evaluate(&state_with(&[("fee_bps", 30.0), ("break_even_target", 0.0)]));
+        let by_fraction = op.evaluate(&state_with(&[("pool_fee", 0.003), ("break_even_target", 0.0)]));
+        assert!(
+            (by_bps.scalar_value.unwrap() - by_fraction.scalar_value.unwrap()).abs() < 1e-9
+        );
+        let both = op.evaluate(&state_with(&[
+            ("fee_bps", 100.0),
+            ("pool_fee", 0.003),
+            ("break_even_target", 0.0),
+        ]));
+        assert!((both.metadata.get("gamma").unwrap() - 0.99).abs() < 1e-12);
     }
 }

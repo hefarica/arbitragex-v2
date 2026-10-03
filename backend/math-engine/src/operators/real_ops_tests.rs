@@ -252,6 +252,19 @@ mod tests {
     fn pool_state() -> MarketState {
         // r1/r0 = 1.01 ⇒ γ·p_pool = 0.997·1.01 ≈ 1.00697 > 1 (edge detectable).
         // price_matrix col0 ≈ 1.01 ⇒ p_ref ≈ 1.01 (gas cost scale).
+        //
+        // FEATURES-DEFAULTS-01: el `γ = 0.997` de la linea de arriba es un fee
+        // MEDIDO de 30 bps. Este fixture NO lo declaraba antes y el operador lo
+        // FABRICABA con su `unwrap_or(0.003)`: la deteccion de edge dependia de un
+        // default silencioso. Ahora que un fee ausente declara el hueco
+        // (`reason_fee_unavailable`), el fixture debe APORTAR el dato — que es lo
+        // que un fixture de mercado tiene que hacer. Las aserciones de los tests
+        // que lo usan no se tocaron.
+        // `break_even_target = 0.0` es un CERO ACREDITADO (hurdle declarado en
+        // cero), NO una ausencia: por eso op_21 computa con el.
+        let mut features = HashMap::new();
+        features.insert("fee_bps".to_string(), 30.0);
+        features.insert("break_even_target".to_string(), 0.0);
         MarketState {
             price_matrix: vec![vec![1.01], vec![1.01], vec![1.01]],
             // 3 filas, mismo par (fixture de 1 pool con edge).
@@ -260,7 +273,7 @@ mod tests {
             gas_price_gwei: 20.0,
             block_timestamp: 1_700_000_000,
             block_number: 18_000_000,
-            features: HashMap::new(),
+            features,
         }
     }
 
@@ -568,5 +581,115 @@ mod tests {
                 assert!(v.is_finite(), "operator {id} scalar must be finite: {v}");
             }
         }
+    }
+}
+
+/// RATCHET ANTI-REGRESION — FEATURES-DEFAULTS-01.
+///
+/// Los tests de comportamiento de cada operador prueban el EFECTO (clave ausente
+/// ⇒ hueco declarado). Este prueba el MECANISMO: que nadie vuelva a introducir un
+/// `unwrap_or(<literal>)` sobre una clave de `MarketState.features` que es una
+/// MEDICION. Es el mismo patron que vigila el gate del equipo
+/// (`docs/market-features/check-feature-producers.ps1`, regla R1), aqui dentro de
+/// `cargo test` para que la regresion no dependa de correr el script.
+#[cfg(test)]
+mod fabrication_ratchet {
+    /// Claves que son MEDICIONES del mercado/operador. Un default silencioso
+    /// sobre ellas convierte una AUSENCIA en un numero (RULE 00 / R8).
+    ///
+    /// NO incluye los prior de op_11 (`bayes_prior_alpha` / `bayes_prior_beta`):
+    /// esos son una DECISION DE MODELO declarada como constante nombrada
+    /// (`DECLARED_UNIFORM_PRIOR_*`) y por diseño tienen default explicito.
+    const MEASURED_KEYS: &[&str] = &[
+        "bayes_wins",
+        "bayes_losses",
+        "fee_bps",
+        "pool_fee",
+        "flash_premium",
+        "max_capital",
+        "break_even_target",
+    ];
+
+    /// Fuentes de produccion, embebidas en compilacion (independiente del cwd).
+    const SOURCES: &[(&str, &str)] = &[
+        ("op_11_bayes.rs", include_str!("op_11_bayes.rs")),
+        (
+            "op_15_golden_section.rs",
+            include_str!("op_15_golden_section.rs"),
+        ),
+        ("op_19_simplex.rs", include_str!("op_19_simplex.rs")),
+        ("op_21_newton.rs", include_str!("op_21_newton.rs")),
+        ("op_26_flash_loan.rs", include_str!("op_26_flash_loan.rs")),
+        (
+            "op_32_multi_objective.rs",
+            include_str!("op_32_multi_objective.rs"),
+        ),
+    ];
+
+    /// Descarta lineas de comentario para no confundir prosa con codigo (los
+    /// comentarios de estos archivos CITAN los defaults que se cortaron).
+    fn code_only(src: &str) -> String {
+        src.lines()
+            .map(|l| {
+                if l.trim_start().starts_with("//") {
+                    String::new()
+                } else {
+                    l.to_string()
+                }
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    /// Normaliza el espacio para que el ratchet no dependa del formato (rustfmt).
+    fn squish(s: &str) -> String {
+        s.chars().filter(|c| !c.is_whitespace()).collect()
+    }
+
+    #[test]
+    fn no_measured_feature_falls_back_to_a_literal_default() {
+        let mut offenders: Vec<String> = Vec::new();
+        for (file, src) in SOURCES {
+            let code = squish(&code_only(src));
+            for key in MEASURED_KEYS {
+                let needle = format!("get(\"{key}\")");
+                let mut from = 0usize;
+                while let Some(rel) = code[from..].find(needle.as_str()) {
+                    let at = from + rel;
+                    // Enunciado = de la lectura al cierre del enunciado (`;` o
+                    // `}`), la misma ventana que usa el gate del equipo.
+                    let rest = &code[at..];
+                    let end = rest.find(|c| c == ';' || c == '}').unwrap_or(rest.len());
+                    let stmt = &rest[..end];
+                    if stmt.contains("unwrap_or(") || stmt.contains("unwrap_or_default(") {
+                        offenders.push(format!("{file}: features.get(\"{key}\") → {stmt}"));
+                    }
+                    from = at + needle.len();
+                }
+            }
+        }
+        assert!(
+            offenders.is_empty(),
+            "un dato AUSENTE no puede volverse un numero inventado (RULE 00 / R8): \
+             declara el hueco en lugar del default.\n  {}",
+            offenders.join("\n  ")
+        );
+    }
+
+    /// Control negativo del ratchet: el escaner SI detecta una fabricacion real.
+    /// Sin esto, un bug que dejara `SOURCES` vacio pasaria por "verde".
+    #[test]
+    fn the_ratchet_actually_detects_a_fabrication() {
+        let synthetic = "let x = state.features.get(\"fee_bps\").copied().unwrap_or(0.003);";
+        let code = squish(&code_only(synthetic));
+        let needle = "get(\"fee_bps\")";
+        let at = code.find(needle).expect("lectura sintetica presente");
+        let rest = &code[at..];
+        let end = rest.find(|c| c == ';' || c == '}').unwrap_or(rest.len());
+        assert!(
+            rest[..end].contains("unwrap_or("),
+            "el escaner debe ver el unwrap_or literal: {}",
+            &rest[..end]
+        );
     }
 }
