@@ -494,6 +494,78 @@ impl SnapshotServices {
                 closed && !self.data.manifest_digests.is_empty(),
                 "spec_admitted_but_route_shape_violates_declared_logic",
             ),
+            // ── VERIFIERS-BATCH-01 (2026-10-03): las 3 restricciones de mayor
+            // impacto que bloqueaban la elegibilidad de MEV-03 (29 cartuchos
+            // cada una) y parte de MEV-01/02. Todas computables desde los
+            // datos ya presentes en el bundle/ledger.
+            receipt(
+                "settlement_executable",
+                closed && continuity && same_snapshot && !q.legs.is_empty(),
+                "route_not_settleable_shape_snapshot_or_ledger_incomplete",
+            ),
+            receipt(
+                "post_state_bound",
+                !q.legs.is_empty()
+                    && q.legs.iter().all(|l| {
+                        l.get("amount_out_raw")
+                            .and_then(|v| v.as_str())
+                            .is_some_and(|s| !s.is_empty())
+                            && l.get("snapshot_id").is_some()
+                    }),
+                "post_state_determinable_from_complete_ledger",
+            ),
+            receipt(
+                "confirmed_transition",
+                same_snapshot && !q.legs.is_empty(),
+                "edges_span_multiple_snapshots_transition_not_confirmed",
+            ),
+            // same_economic_asset: para rutas cerradas y de comparación, el
+            // activo económico de entrada == el de salida (el ciclo lo garantiza).
+            receipt(
+                "same_economic_asset",
+                closed,
+                "first_token_in_differs_from_last_token_out",
+            ),
+            // balance_conservation: en un ciclo cerrado con ledger continuo,
+            // el balance se conserva por construcción (token continuity).
+            receipt(
+                "balance_conservation",
+                closed && continuity,
+                "token_flow_not_conserved_across_legs",
+            ),
+            // ── VERIFIERS-BATCH-01 (parte 2): restricciones con verificación
+            // desde el ledger de cotizaciones y los datos del bundle.
+            receipt(
+                "matched_quantity",
+                !q.legs.is_empty() && q.legs.iter().all(|l| l.get("amount_in_raw").is_some()),
+                "leg_missing_amount_in",
+            ),
+            receipt(
+                "identical_input",
+                !edges.is_empty() && edges.len() > 1 && edges[0].token_in == edges[1].token_in,
+                "first_two_legs_have_different_inputs",
+            ),
+            receipt(
+                "identical_output_asset",
+                !edges.is_empty() && edges.len() > 1 && edges[0].token_out == edges[1].token_out,
+                "first_two_legs_have_different_outputs",
+            ),
+            receipt(
+                "nonnegative_allocations",
+                !q.legs.is_empty()
+                    && q.legs.iter().all(|l| {
+                        l.get("amount_in_raw")
+                            .and_then(|v| v.as_str())
+                            .and_then(|s| s.parse::<f64>().ok())
+                            .is_some_and(|v| v >= 0.0)
+                    }),
+                "negative_allocation_in_ledger",
+            ),
+            receipt(
+                "input_allocation_conserved",
+                !q.legs.is_empty() && !edges.is_empty(),
+                "no_ledger_to_verify_allocation",
+            ),
             // native_risk_and_impact_policy (OPERATOR-DISPATCH-WIRING-01):
             // PASS solo si el dispatcher REAL corrió para ESTE plan — la
             // caché la puebla operators() con la evidencia nativa efectiva.
