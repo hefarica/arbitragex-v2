@@ -646,7 +646,14 @@ async fn scan_block(
             }
             orch.spawn_cartridge_eval(intent);
         } else if let Some(r) = runner {
-            tokio::spawn(shadow_evaluate_intent(r.clone(), intent, chain_id));
+            // SHADOW-CANONICAL-01: sin orchestrator no existen la config del
+            // operador, el registro de operadores ni el router de contextos, así
+            // que la ruta shadow no puede componer el bundle real del intent y
+            // cae —declarándolo— al contexto DATA_GAP estático. Además esta rama
+            // es INALCANZABLE en la práctica: el worker retorna temprano cuando
+            // no hay ImpactIndex, y el ImpactIndex se construye en el MISMO sitio
+            // que el orchestrator (scanner.rs `run_chain`: ambos `None` a la vez).
+            tokio::spawn(shadow_evaluate_intent(r.clone(), intent, chain_id, None));
         }
         dispatched += 1;
         // WO-FUNNEL-01 (2026-09-17): wire the ACTIVE detection intake into the

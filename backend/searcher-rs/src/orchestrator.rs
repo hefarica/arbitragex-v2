@@ -576,11 +576,20 @@ impl Orchestrator {
                     )
                     .await;
                 } else {
-                    // SHADOW MODE: observe-only telemetry (legacy behavior)
+                    // SHADOW MODE: observe-only telemetry (legacy behavior) — but
+                    // SHADOW-CANONICAL-01: evaluada contra el MISMO contexto v4
+                    // real por intent que la ruta ACTIVE (§34.1), ya que aquí SÍ
+                    // están disponibles la config del operador, el registro de
+                    // operadores y el router de contextos.
                     crate::cartridge_boot::shadow_evaluate_intent(
                         runner,
                         intent_for_cart,
                         chain_id,
+                        Some(crate::cartridge_boot::IntentContextDeps {
+                            cfg_provider,
+                            math_registry,
+                            router: v4_router,
+                        }),
                     )
                     .await;
                 }

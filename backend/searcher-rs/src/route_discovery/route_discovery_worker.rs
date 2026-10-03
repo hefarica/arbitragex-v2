@@ -1563,7 +1563,14 @@ async fn run_loop(
                 if intent.observed_block_number.is_none() && current_block > 0 {
                     intent.observed_block_number = Some(current_block);
                 }
-                tokio::spawn(shadow_evaluate_intent(r.clone(), intent, chain_id));
+                // SHADOW-CANONICAL-01: sin orchestrator no hay config del
+                // operador, registro de operadores ni router de contextos, así
+                // que la ruta shadow no puede componer el bundle v4 real del
+                // intent: cae —declarándolo— al contexto DATA_GAP estático.
+                // Esta rama es además INALCANZABLE en la práctica: el worker
+                // retorna temprano sin ImpactIndex, que nace en el mismo sitio
+                // que el orchestrator (scanner.rs `run_chain`).
+                tokio::spawn(shadow_evaluate_intent(r.clone(), intent, chain_id, None));
             }
         }
 
