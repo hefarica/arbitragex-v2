@@ -40,6 +40,7 @@
 //! token orientation (intent.token_in == pool.token1) → swap reserves before math.
 
 use crate::amm_math::v2_amount_out;
+use crate::amm_math::{V3QuoteError, V3QuoteErrorKind};
 use crate::engines::triangular_engine::ReservesCache;
 use crate::route_intent::RouteIntent;
 use crate::v3_fee_catalog::{FeeResolution, V3FeeCatalog};
@@ -136,9 +137,18 @@ pub enum ProjectV3Error {
     PairHasNoV3Pools,
     /// No `V3QuoteProvider` wired (non-mainnet / absent at boot).
     ProviderUnavailable,
-    /// Provider present but the quote failed (RPC failure / revert), or the
-    /// amount was zero.
+    /// Provider present but the quote failed for a TRANSPORT reason (failover
+    /// exhausted / timeout / empty result set), or the amount was zero. The
+    /// pool was never actually asked.
     QuoteFailed(String),
+    /// V3-QUOTE-02 (2026-10-03): the QuoterV2 sub-call EXECUTED and the pool
+    /// reverted. This is a market/pool fact, not a transport failure, and it is
+    /// the shape a mis-catalogued fee tier also produces — measured live:
+    /// `IUniswapV3Factory.getPool(WETH, XPR, 100)` returns `0x0` while the
+    /// catalog described pool `0x464b…76b3` at that tier and the same pool's
+    /// real tier is 10000. It gets its OWN label instead of joining the
+    /// `v3_quote_unavailable` bucket that held 46% of all live rejections.
+    PoolRevert(String),
 }
 
 impl ProjectV3Error {
@@ -147,7 +157,10 @@ impl ProjectV3Error {
         match self {
             Self::PoolNotCatalogued => "v3_pool_not_catalogued",
             Self::PairHasNoV3Pools => "v3_pair_no_pools",
+            // Reserved for real PROVIDER (transport) failures + a missing
+            // provider — never a pool-level revert.
             Self::ProviderUnavailable | Self::QuoteFailed(_) => "v3_quote_unavailable",
+            Self::PoolRevert(_) => "v3_pool_revert",
         }
     }
 }
@@ -415,12 +428,24 @@ impl StateProjector {
                 })
             }
             Err(e) => {
+                // V3-QUOTE-02: separate a POOL revert from a TRANSPORT failure
+                // by downcasting the typed error the provider attaches. Both
+                // used to arrive here as an opaque message and both left as
+                // `v3_quote_unavailable`, which is why a catalogue defect and a
+                // rate-limited RPC were indistinguishable in production.
+                let err = match e.downcast_ref::<V3QuoteError>() {
+                    Some(v3) if matches!(v3.kind, V3QuoteErrorKind::PoolCall { .. }) => {
+                        ProjectV3Error::PoolRevert(v3.detail.clone())
+                    }
+                    _ => ProjectV3Error::QuoteFailed(e.to_string()),
+                };
                 debug!(
                     event = "state_projector.v3_quote_failed",
                     pool = %pool.address,
+                    label = err.as_label(),
                     error = %e,
                 );
-                Err(ProjectV3Error::QuoteFailed(e.to_string()))
+                Err(err)
             }
         }
     }
@@ -988,6 +1013,99 @@ mod tests {
         {
             Box::pin(async move { panic!("provider must never be invoked (zero-RPC test)") })
         }
+    }
+
+    /// V3-QUOTE-02 (2026-10-03): a provider whose QuoterV2 sub-call REVERTED.
+    /// Carries the typed error exactly as the real provider constructs it for
+    /// `aggregate3(allowFailure=true)` reporting `success == false`.
+    struct PoolRevertV3Mock {
+        failure: Option<crate::amm_math::V3CallFailure>,
+    }
+
+    impl V3QuoteProvider for PoolRevertV3Mock {
+        fn quote_exact_input_single(
+            &self,
+            _pool: Address,
+            _token_in: Address,
+            _token_out: Address,
+            _amount_in: U256,
+            _fee_bps: u32,
+        ) -> std::pin::Pin<Box<dyn std::future::Future<Output = anyhow::Result<U256>> + Send + '_>>
+        {
+            let err = V3QuoteError {
+                kind: V3QuoteErrorKind::PoolCall {
+                    failure: self.failure.clone(),
+                },
+                detail: "v3 quote failed (insufficient liquidity / wrong fee tier / pool revert)"
+                    .to_string(),
+            };
+            Box::pin(async move { Err(anyhow::Error::new(err)) })
+        }
+    }
+
+    /// A provider whose RPC never answered (failover exhausted).
+    struct TransportFailV3Mock;
+
+    impl V3QuoteProvider for TransportFailV3Mock {
+        fn quote_exact_input_single(
+            &self,
+            _pool: Address,
+            _token_in: Address,
+            _token_out: Address,
+            _amount_in: U256,
+            _fee_bps: u32,
+        ) -> std::pin::Pin<Box<dyn std::future::Future<Output = anyhow::Result<U256>> + Send + '_>>
+        {
+            let err = V3QuoteError {
+                kind: V3QuoteErrorKind::Transport,
+                detail: "v3 quote rpc failover exhausted: all providers unhealthy".to_string(),
+            };
+            Box::pin(async move { Err(anyhow::Error::new(err)) })
+        }
+    }
+
+    /// The load-bearing assertion of V3-QUOTE-02: a POOL revert and a TRANSPORT
+    /// failure must leave the projector with DIFFERENT labels. Pre-fix both
+    /// produced a bare string error and both surfaced as
+    /// `v3_quote_unavailable` — the bucket that held 46% of the live rejection
+    /// histogram (27,575 of ~70k rows in the measured hour).
+    #[tokio::test]
+    async fn pool_revert_and_transport_failure_get_distinct_labels() {
+        let catalog = Arc::new(V3FeeCatalog::new());
+        catalog.record_observed(addr(0x77), addr(0x1), addr(0x2), 500);
+        let pool = v3_pool(addr(0x77), addr(0x1), addr(0x2), Some(500));
+
+        // (a) The quoter executed and reverted with no payload — the shape the
+        //     measured wrong-tier call produces.
+        let reverting = StateProjector::new(
+            Arc::new(ReservesCache::new()),
+            Some(Arc::new(PoolRevertV3Mock {
+                failure: Some(crate::amm_math::V3CallFailure::RevertNoData),
+            })),
+            catalog.clone(),
+        );
+        let err = reverting
+            .project_v3_quote_checked(&pool, unit(1), true)
+            .await
+            .expect_err("a pool revert must not yield a quote");
+        assert_eq!(err.as_label(), "v3_pool_revert");
+        assert_ne!(
+            err.as_label(),
+            "v3_quote_unavailable",
+            "a pool fact must never be reported as a provider outage"
+        );
+
+        // (b) The provider never answered → the label reserved for transport.
+        let down = StateProjector::new(
+            Arc::new(ReservesCache::new()),
+            Some(Arc::new(TransportFailV3Mock)),
+            catalog,
+        );
+        let err_down = down
+            .project_v3_quote_checked(&pool, unit(1), true)
+            .await
+            .expect_err("a transport failure must not yield a quote");
+        assert_eq!(err_down.as_label(), "v3_quote_unavailable");
     }
 
     fn v3_pool(
