@@ -536,12 +536,28 @@ for spec in "${TABLES[@]}"; do
     # Each -c is a separate request. SET + VACUUM in one -c creates an
     # implicit transaction, where PostgreSQL refuses VACUUM (SQLSTATE 25001).
     # Keep this as ordinary VACUUM: never rewrite a relation with VACUUM FULL.
-    docker exec -i "$PG_CONTAINER" psql -U postgres -d arbitragex -X -qAt \
+    #
+    # OPS-PGSHM-01 (2026-09-30) — PARALLEL 0 y error OBSERVABLE:
+    #   a) PARALLEL 0: el VACUUM paralelo crea un segmento DSM en /dev/shm del
+    #      tamaño de maintenance_work_mem (512MB en el compose de prod). El
+    #      default de Docker para /dev/shm es 64MB, así que fallaba con
+    #      `could not resize shared memory segment ... No space left on device`.
+    #      Con PARALLEL 0 no hay segmento DSM. `shm_size: 2gb` en
+    #      docker/compose.prod.yml es la otra mitad (defensa en profundidad:
+    #      protege también a autovacuum y a los builds de índices).
+    #      Verificado en el VPS: `VACUUM (ANALYZE, PARALLEL 0) pool_reserves` → OK.
+    #   b) El anterior `>/dev/null 2>&1` TRAGABA el error: este VACUUM llevaba
+    #      fallando a diario sin que nada lo delatara, y el bloat resultante
+    #      (1.7GB de índices sobre 3 filas) acabó tumbando los deploys. R9: un
+    #      fallo de mantenimiento se registra, no se silencia.
+    VAC_OUT=$(docker exec -i "$PG_CONTAINER" psql -U postgres -d arbitragex -X -qAt \
       -v ON_ERROR_STOP=1 \
       -c "SET lock_timeout='$BATCH_LOCK_TIMEOUT'" \
       -c "SET statement_timeout='600s'" \
-      -c "VACUUM (ANALYZE) $tbl" >/dev/null 2>&1 \
-      || log "retention.vacuum table=$tbl failed (non-fatal)"
+      -c "VACUUM (ANALYZE, PARALLEL 0) $tbl" 2>&1)
+    if [ $? -ne 0 ]; then
+      log "retention.vacuum table=$tbl failed (non-fatal) err=$(printf '%s' "$VAC_OUT" | tr '\n' ' ' | cut -c1-300)"
+    fi
   fi
 done
 
