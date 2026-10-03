@@ -2351,6 +2351,17 @@ pub async fn active_evaluate_and_emit(
     let pertinent_count = pertinent.len();
     let mut negative_reasons: std::collections::BTreeMap<String, u64> =
         std::collections::BTreeMap::new();
+    // ACTIVE-REPAIRS-01 (2026-10-03): histograma de PARES (campo::razón) de los
+    // repairs v4 — el top-level `reason` es un agregado ("applicable_data_or_
+    // constraint_gap") que NO dice QUÉ requisito falta. Medición que lo destapó:
+    // el stream `arbx:route_discovery:outcomes` solo contiene la ruta SHADOW
+    // (mode=shadow, stub estático Phase-1, 100% de las filas), mientras la ruta
+    // ACTIVE —la única con bundles reales, costes y precios— publica únicamente
+    // este summary. Sin el drill-down aquí, los bloqueos reales de la ruta
+    // activa eran inobservables: cualquier histograma del stream describía el
+    // stub, no la evaluación real.
+    let mut negative_repairs: std::collections::BTreeMap<String, u64> =
+        std::collections::BTreeMap::new();
     let mut negative_total: u64 = 0;
     let mut positive_total: u64 = 0;
 
@@ -2501,10 +2512,22 @@ pub async fn active_evaluate_and_emit(
                         .clone()
                         .unwrap_or_else(|| "none".to_string());
                     *negative_reasons.entry(reason_key).or_insert(0) += 1;
+                    // ACTIVE-REPAIRS-01: drill-down por (campo::razón) del
+                    // proposal sellado de ESTA evaluación negativa.
+                    for r in v4_repairs_summary(&eval_result)["repairs"]
+                        .as_array()
+                        .map(Vec::as_slice)
+                        .unwrap_or_default()
+                    {
+                        let field = r["field"].as_str().unwrap_or("?");
+                        let why = r["reason"].as_str().unwrap_or("?");
+                        *negative_repairs
+                            .entry(format!("{field}::{why}"))
+                            .or_insert(0) += 1;
+                    }
                     negative_total += 1;
                     continue;
                 }
-
                 // ── AGENT v4 interception (integration/agent-cartridges-v4) ──────
                 // A v4 proposal must NEVER flow into the v3 candidate path: the
                 // v3 adapter rebuilds the plan from intent.legs (RHAI-12) and
@@ -3136,6 +3159,19 @@ pub async fn active_evaluate_and_emit(
         negative = negative_total,
         positive = positive_total,
         reasons = ?negative_reasons,
+        // ACTIVE-REPAIRS-01: top pares (campo::razón) de los repairs v4 de las
+        // evaluaciones negativas de ESTA tx — el drill-down que la ruta activa
+        // no publicaba en ningún sitio. Ordenado y truncado a 12 para no
+        // reproducir LOGFLOOD-01 (R9): una línea por tx.
+        top_repairs = ?{
+            let mut v: Vec<(String, u64)> = negative_repairs
+                .iter()
+                .map(|(k, n)| (k.clone(), *n))
+                .collect();
+            v.sort_by(|a, b| b.1.cmp(&a.1));
+            v.truncate(12);
+            v
+        },
         // OBSERVABILITY-V4-EDGES-01 (2026-10-01): censo del grafo v4 dentro del
         // summary que YA existe. Una línea por tx, nunca por intent: esto corre
         // ~24.800 veces por ventana y un log por ítem reproduciría LOGFLOOD-01
