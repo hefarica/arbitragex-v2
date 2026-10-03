@@ -73,7 +73,9 @@ const DEFAULT_W_LATENCY: f64 = 0.2;
 struct Nsga2Context {
     /// (r0, r1) por venue, ya validados finitos y > 0.
     pools: Vec<(f64, f64)>,
-    /// γ = 1 − fee (misma convencion que op_15: fee_bps/1e4 o pool_fee, default 0.003).
+    /// γ = 1 − fee (misma convencion que op_15: fee_bps/1e4 o pool_fee). Solo se
+    /// construye con un fee MEDIDO: sin ninguna de las dos claves el operador
+    /// declara el hueco y no llega a este contexto (FEATURES-DEFAULTS-01).
     gamma: f64,
     /// Costo de gas total en token1 (misma formula que op_15).
     gas: f64,
@@ -455,14 +457,16 @@ fn run_nsga2(
 }
 
 /// Fee en bps → fraccion (misma convencion exacta que op_15: fee_bps/1e4,
-/// fallback pool_fee, default 0.003).
-fn fee_fraction(state: &MarketState) -> f64 {
+/// fallback pool_fee). `None` si NINGUNA de las dos esta presente: un fee
+/// desconocido NO se asume. El `0.003` anterior fabricaba la friccion del pool y
+/// movia `gamma`, que entra en el yield y en el CVaR de todo el frente de Pareto
+/// (FEATURES-DEFAULTS-01).
+fn fee_fraction(state: &MarketState) -> Option<f64> {
     state
         .features
         .get("fee_bps")
         .map(|bps| *bps / 10_000.0)
         .or_else(|| state.features.get("pool_fee").copied())
-        .unwrap_or(0.003)
 }
 
 /// Lee un f64 de features validandolo finito y dentro de [min, max], con default.
@@ -609,7 +613,10 @@ impl TopologicalOperator for MultiObjectiveOperator {
         }
 
         // ── Contexto economico ───────────────────────────────────────────────
-        let gamma = 1.0 - fee_fraction(state);
+        let Some(fee) = fee_fraction(state) else {
+            return Self::none_out("fee_unavailable");
+        };
+        let gamma = 1.0 - fee;
         if !gamma.is_finite() || gamma <= 0.0 {
             return Self::none_out("invalid_fee");
         }
@@ -1044,5 +1051,36 @@ mod tests {
         assert_eq!(out.metadata.get("computed"), Some(&1.0));
         assert!(out.scalar_value.unwrap().is_finite());
         assert!(!out.matrix_result.unwrap().is_empty());
+    }
+
+    // ── FEATURES-DEFAULTS-01: el fee no medido no se inventa ─────────────────
+
+    /// Sin NINGUNA clave de fee el operador declara el hueco. Antes fabricaba
+    /// 0.003 y el frente de Pareto entero salia con una friccion inventada.
+    #[test]
+    fn fee_absent_declares_the_gap() {
+        let mut state = three_pool_state();
+        state.features.remove("fee_bps");
+        let out = MultiObjectiveOperator::new().evaluate(&state);
+        assert!(
+            out.scalar_value.is_none(),
+            "sin fee medido no hay frente publicable: {:?}",
+            out.scalar_value
+        );
+        assert_eq!(out.metadata.get("computed"), Some(&0.0));
+        assert_eq!(out.metadata.get("reason_fee_unavailable"), Some(&1.0));
+    }
+
+    /// El camino delegado a op_15 (solo-yield) declara el MISMO hueco: no hay dos
+    /// politicas distintas para el mismo fee ausente.
+    #[test]
+    fn fee_absent_is_honest_through_the_op15_delegation_too() {
+        let mut state = one_pool_state(Some([1.0, 0.0, 0.0]));
+        state.features.remove("fee_bps");
+        let out = MultiObjectiveOperator::new().evaluate(&state);
+        assert!(out.scalar_value.is_none());
+        assert_eq!(out.metadata.get("computed"), Some(&0.0));
+        assert_eq!(out.metadata.get("reason_fee_unavailable"), Some(&1.0));
+        assert_eq!(out.metadata.get("delegated_to_op"), Some(&15.0));
     }
 }
