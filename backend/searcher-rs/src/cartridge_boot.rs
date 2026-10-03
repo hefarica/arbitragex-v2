@@ -1504,6 +1504,113 @@ fn v4_edge_protocol_and_fee(
     }
 }
 
+/// BASKET-WORKER-01 (2026-10-03) — presupuesto TOTAL (wall-clock) de la lectura
+/// on-chain de baskets dentro de la ruta del intent. El lector ya acota cada
+/// `eth_call` a 3s; este tope acota la ESPERA COMPLETA del intent (≤2 baskets
+/// relevantes, 2 llamadas cada uno) para que un RPC degradado jamás estire el
+/// hot path. Presupuesto vencido ⇒ mapa vacío y FAIL honesto del verificador.
+const BASKET_READ_BUDGET_MS: u64 = 1_500;
+
+/// BASKET-WORKER-01 — los DOS tokens que `SnapshotServices::verify` consulta en
+/// `redemption_state`: el `token_in` de la PRIMERA arista y el `token_out` de la
+/// ÚLTIMA del grafo REAL que va al bundle (las aristas omitidas por R8 ya no
+/// cuentan). Puro: sin env ni RPC, para poder probarlo directamente.
+fn v4_redemption_tokens(edges: &[crate::agent_graph::Edge]) -> Vec<String> {
+    let mut tokens: Vec<String> = Vec::with_capacity(2);
+    if let Some(first) = edges.first() {
+        tokens.push(first.token_in.to_ascii_lowercase());
+    }
+    if let Some(last) = edges.last() {
+        let token_out = last.token_out.to_ascii_lowercase();
+        if !tokens.contains(&token_out) {
+            tokens.push(token_out);
+        }
+    }
+    tokens
+}
+
+/// BASKET-WORKER-01 — subconjunto RELEVANTE de los baskets del operador
+/// (`ARBX_BASKET_CONTRACTS`): sólo las direcciones que SON uno de los tokens
+/// consultados arriba. Gate de COSTE del hot path: un basket configurado que no
+/// participa en ESTA ruta no se consulta, y sin ningún basket relevante el
+/// llamador NO toca la red (cero RPC). Puro: sin env ni RPC.
+fn v4_relevant_baskets(configured: &[String], lookup_tokens: &[String]) -> Vec<String> {
+    configured
+        .iter()
+        .filter(|basket| lookup_tokens.contains(*basket))
+        .cloned()
+        .collect()
+}
+
+/// BASKET-WORKER-01 — estado on-chain de los baskets relevantes a este intent
+/// (o mapa vacío). Camino honesto y de coste acotado:
+///
+/// 1. Sin aristas, o sin basket configurado que participe en la ruta → mapa
+///    vacío SIN RPC (el verificador reporta el FAIL honesto con su razón).
+/// 2. Endpoints del operador: `RPC_HTTP_<chain_id>`, la MISMA var que alimenta
+///    `HttpRpcPool`/`price_worker` (jamás una URL literal:
+///    arbx-no-hardcode-doctrine). Sin endpoints → mapa vacío (R8).
+/// 3. Lectura acotada por `BASKET_READ_BUDGET_MS`: RPC caído, error o
+///    presupuesto vencido se registran a debug y dejan el mapa vacío — el
+///    intent NUNCA se rompe y jamás se fabrica un `max_redeem` (R8).
+///
+/// La lectura async vive AQUÍ, en el llamador async: `build_v4_intent_bundle`
+/// es sync por contrato y sólo recibe el resultado ya leído.
+async fn v4_relevant_basket_state(
+    chain_id: u64,
+    edges: &[crate::agent_graph::Edge],
+) -> std::collections::BTreeMap<String, serde_json::Value> {
+    use std::collections::BTreeMap;
+
+    let baskets = v4_relevant_baskets(
+        &crate::basket_reader::baskets_from_env(),
+        &v4_redemption_tokens(edges),
+    );
+    if baskets.is_empty() {
+        return BTreeMap::new(); // ningún basket en la ruta → CERO RPC
+    }
+    let rpc_urls: Vec<String> = crate::workers::price_worker::rpc_http_url_from_env(chain_id)
+        .into_iter()
+        .collect();
+    if rpc_urls.is_empty() {
+        debug!(
+            event = "cartridge.basket_rpc_unset",
+            chain_id,
+            baskets = baskets.len(),
+            "RPC_HTTP_<chain_id> sin endpoint HTTP; redemption_state vacío (R8 fail-honest)"
+        );
+        return BTreeMap::new();
+    }
+    let read = crate::basket_reader::read_baskets(&baskets, &rpc_urls);
+    match tokio::time::timeout(
+        std::time::Duration::from_millis(BASKET_READ_BUDGET_MS),
+        read,
+    )
+    .await
+    {
+        Ok(state) => {
+            debug!(
+                event = "cartridge.basket_state_read",
+                chain_id,
+                baskets = baskets.len(),
+                read = state.len(),
+                "estado de redemption on-chain adjuntado al bundle del intent"
+            );
+            state
+        }
+        Err(_) => {
+            debug!(
+                event = "cartridge.basket_read_timeout",
+                chain_id,
+                baskets = baskets.len(),
+                budget_ms = BASKET_READ_BUDGET_MS,
+                "lectura de baskets agotó el presupuesto; redemption_state vacío (R8)"
+            );
+            BTreeMap::new()
+        }
+    }
+}
+
 /// Fase 3a — construye el SnapshotBundle REAL del intent: policy honesta
 /// desde la config del operador (`TradingConfigState`), precios canónicos
 /// por token distinto de las piernas (dirección → símbolo del universo de
@@ -1514,6 +1621,10 @@ fn v4_edge_protocol_and_fee(
 /// el contrato v4 los reporta como DATA_GAP con razón explícita — nunca
 /// se fabrican (R8). `None` sólo si el reloj no permite una ventana temporal
 /// honesta.
+///
+/// BASKET-WORKER-01: el estado de redemption on-chain de los baskets
+/// RELEVANTES a este intent llega YA LEÍDO por el llamador async
+/// (`basket_state`); esta función es sync por contrato y nunca toca la red.
 #[allow(clippy::too_many_arguments)]
 fn build_v4_intent_bundle(
     chain_id: u64,
@@ -1529,6 +1640,12 @@ fn build_v4_intent_bundle(
     // milli-gwei → gwei) — el mismo que alimenta el MarketState del
     // dispatcher. Sin observación la línea de gas no se emite (R8).
     gas_price_gwei: f64,
+    // BASKET-WORKER-01: estado on-chain de los baskets RELEVANTES a este
+    // intent (token_in de la primera arista / token_out de la última), leído
+    // por el llamador async. Sin basket en la ruta, sin RPC configurado o con
+    // lectura fallida llega VACÍO: el verificador `redemption_within_limits`
+    // reporta entonces su FAIL honesto y jamás se fabrica un `max_redeem`.
+    basket_state: &std::collections::BTreeMap<String, serde_json::Value>,
 ) -> Option<crate::snapshot_services::SnapshotBundle> {
     let observed_at_ms = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -1644,9 +1761,10 @@ fn build_v4_intent_bundle(
         // contexto (gas observado × unidades de config, financiación según la
         // tasa declarada, comisiones embebidas en las cotizaciones).
         base_cost_lines: base_costs,
-        // REDEMPTION-PRODUCER-01 fase 2: mapa vacío (la lectura async del
-        // worker de baskets queda como seguimiento; verificadores honestos).
-        redemption_state: std::collections::BTreeMap::new(),
+        // BASKET-WORKER-01: estado on-chain REAL de los baskets del operador
+        // que participan en ESTA ruta (leído por el llamador async). Vacío =
+        // sin dato → el verificador reporta el FAIL honesto (R8).
+        redemption_state: basket_state.clone(),
     })
 }
 
@@ -2064,6 +2182,12 @@ pub async fn active_evaluate_and_emit(
     }
 
     let mut v4_registered = false;
+    // BASKET-WORKER-01 (2026-10-03): estado on-chain de los baskets ERC-4626
+    // RELEVANTES a este intent. La lectura async vive AQUÍ (el llamador) y el
+    // bundle sync la recibe ya leída. Gate de coste: sin basket del operador
+    // entre los tokens del grafo el mapa queda VACÍO SIN RPC; con RPC caído,
+    // timeout o presupuesto vencido el intent sigue igual (R8 fail-honest).
+    let v4_basket_state = v4_relevant_basket_state(chain_id, &v4_edges).await;
     // OBSERVABILITY-V4-EDGES-01: capturar el censo ANTES del move a
     // build_v4_intent_bundle — el summary se emite al final de la función.
     let v4_edges_built = v4_edges.len();
@@ -2113,6 +2237,9 @@ pub async fn active_evaluate_and_emit(
             // COST-PRODUCERS-01: el gas observado que ya computamos para el
             // MarketState del dispatcher alimenta también la línea de gas.
             v4_intent_gas_gwei,
+            // BASKET-WORKER-01: estado on-chain de los baskets del operador
+            // que participan en ESTA ruta (vacío sin coste si no hay ninguno).
+            &v4_basket_state,
         ) {
             Some(bundle) => {
                 // Guarda de revisión de un solo bundle: este intent sirve
@@ -4234,5 +4361,68 @@ mod v4_edge_protocol_tests {
             assert_eq!(units, None);
             assert_eq!(den, None);
         }
+    }
+
+    // ── BASKET-WORKER-01 (2026-10-03): relevancia de baskets ────────────
+
+    /// Arista mínima: sólo `token_in`/`token_out` importan a la relevancia.
+    fn basket_edge(token_in: &str, token_out: &str) -> crate::agent_graph::Edge {
+        crate::agent_graph::Edge {
+            edge_id: "0xpool".into(),
+            pool_id: "0xpool".into(),
+            chain_id: 1,
+            token_in: token_in.into(),
+            token_out: token_out.into(),
+            protocol: "cpmm_v2".into(),
+            snapshot_id: "snap".into(),
+            block_hash: "sync-ts-1".into(),
+            reserve_in_raw: Some("1".into()),
+            reserve_out_raw: Some("1".into()),
+            fee_units: Some(30),
+            fee_denominator: Some(10_000),
+            token_in_decimals: 18,
+            token_out_decimals: 18,
+            adapter_version: "reserves_cache_v1".into(),
+            sqrt_price_x96_raw: None,
+            liquidity: None,
+        }
+    }
+
+    #[test]
+    fn redemption_tokens_are_first_token_in_and_last_token_out() {
+        // Los DOS tokens que `SnapshotServices::verify` consulta en
+        // `redemption_state` — los del mismo grafo que va al bundle.
+        let edges = vec![basket_edge("0xAAA", "0xBBB"), basket_edge("0xBBB", "0xCCC")];
+        assert_eq!(v4_redemption_tokens(&edges), vec!["0xaaa", "0xccc"]);
+    }
+
+    #[test]
+    fn redemption_tokens_collapse_when_the_cycle_closes_on_one_token() {
+        // Ciclo cerrado A→B→A: primera `in` y última `out` son el MISMO token
+        // (una sola consulta, sin duplicar la lectura on-chain).
+        let edges = vec![basket_edge("0xAAA", "0xBBB"), basket_edge("0xBBB", "0xAAA")];
+        assert_eq!(v4_redemption_tokens(&edges), vec!["0xaaa"]);
+    }
+
+    #[test]
+    fn redemption_tokens_of_an_empty_graph_are_empty() {
+        // Sin grafo no hay tokens: el llamador devuelve mapa vacío sin RPC.
+        assert!(v4_redemption_tokens(&[]).is_empty());
+    }
+
+    #[test]
+    fn relevant_baskets_keep_only_tokens_present_in_the_route() {
+        let configured = vec!["0xaaa".to_string(), "0xbbb".to_string()];
+        let lookup = vec!["0xaaa".to_string()];
+        assert_eq!(v4_relevant_baskets(&configured, &lookup), vec!["0xaaa"]);
+    }
+
+    #[test]
+    fn relevant_baskets_is_empty_without_a_basket_in_the_route() {
+        // Gate de COSTE: sin basket del operador en la ruta el mapa queda
+        // vacío y NO se hace ninguna llamada RPC (hot path intacto).
+        let lookup = vec!["0xaaa".to_string(), "0xccc".to_string()];
+        assert!(v4_relevant_baskets(&["0xdead".to_string()], &lookup).is_empty());
+        assert!(v4_relevant_baskets(&[], &lookup).is_empty());
     }
 }
