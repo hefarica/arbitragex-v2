@@ -23,14 +23,6 @@ members = [
     "sed-core",
     # Fact-Forcing Gate Semiotic-Translation — english to math translations
     "semiotic-bridge",
-    # OMEGA-SEARCH-01 (prompt §6/§7) — bounded autonomous search engine: directed
-    # multigraph with per-pool/direction/version edges, bounded enumeration with
-    # named pruning rules, an exhaustive oracle to measure those prunings,
-    # generation turnover + invalidation, and fair-share budgeting. Zero external
-    # dependencies (std only). Declared as a member so workspace CI compiles and
-    # runs its contract tests like any other crate — an orphan crate is not
-    # covered by any gate.
-    "omega-search",
 ]
 
 [workspace.package]
