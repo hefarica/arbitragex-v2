@@ -589,8 +589,7 @@ impl SnapshotServices {
                     && self
                         .data
                         .prices
-                        .get(&(edges[0].chain_id, edges[0].token_in.clone()))
-                        .is_some(),
+                        .contains_key(&(edges[0].chain_id, edges[0].token_in.clone())),
                 "start_token_price_missing_in_bundle",
             ),
             // component_quotes_firm: todas las piernas cotizaron (equivalente
