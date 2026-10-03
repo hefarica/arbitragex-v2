@@ -156,22 +156,25 @@ pub fn fee_on_input_wrong_base(amount_in: &U256, fee_rate_raw: &U256) -> Result<
 }
 
 /// Aplica el escalado de versión a `self.fee` (StableSwap-NG).
-pub fn scaled_fee_rate(
-    invariant: &CurveInvariant,
-    fee_raw: &U256,
-) -> Result<U256, CostError> {
-    let (num, den) = invariant
-        .fee_scaling_num_den()
-        .ok_or_else(|| CostError::UnsupportedInvariant {
-            provider: "curve".into(),
-            why: "fee_scaling_unresolved_for_version".into(),
-        })?;
+pub fn scaled_fee_rate(invariant: &CurveInvariant, fee_raw: &U256) -> Result<U256, CostError> {
+    let (num, den) =
+        invariant
+            .fee_scaling_num_den()
+            .ok_or_else(|| CostError::UnsupportedInvariant {
+                provider: "curve".into(),
+                why: "fee_scaling_unresolved_for_version".into(),
+            })?;
     if den == 0 {
         return Err(CostError::ZeroDenominator {
             denominator: "curve:fee_scaling".into(),
         });
     }
-    super::proportion_floor(fee_raw, &U256::from(num), &U256::from(den), "curve:fee_scaling")
+    super::proportion_floor(
+        fee_raw,
+        &U256::from(num),
+        &U256::from(den),
+        "curve:fee_scaling",
+    )
 }
 
 /// Reparto admin/LP dentro de la comisión ya cobrada.
@@ -222,7 +225,7 @@ pub fn cryptoswap_dynamic_fee(
     let k = bd(k_1e18);
     let one = BigDecimal::from(PRECISION_1E18);
     let denom = &gamma + &one - &k;
-    if denom <= BigDecimal::from(0) {
+    if denom <= super::bd_zero() {
         return Err(CostError::InvalidRead {
             read: "curve:cryptoswap_fee".into(),
             why: "fee_gamma_plus_one_minus_k_not_positive".into(),
@@ -332,19 +335,22 @@ pub fn oracle_task(scope: &Scope, pool: &str) -> super::ResolutionTask {
 }
 
 /// Comisión LP de Curve como componente embebido en el output cotizado.
+///
+/// Emite la PARTE DEL LP (comisión total menos el corte del admin), no la
+/// comisión bruta: si emitiera la bruta, `lp_fee_component` +
+/// `admin_fee_component` sumarían más que la comisión realmente cobrada.
 pub fn lp_fee_component(
     ctx: &ComponentCtx<'_>,
-    fee_raw: &U256,
+    fee_rate_raw: &U256,
+    admin_fee_raw: &U256,
     gross_output: &U256,
     payer: &str,
     pool: &str,
 ) -> Result<CostComponent, CostError> {
-    let raw = fee_on_output(gross_output, fee_raw)?;
+    let total_fee = fee_on_output(gross_output, fee_rate_raw)?;
+    let (raw, admin) = admin_split(&total_fee, admin_fee_raw)?;
     let (state, usd) = if raw.is_zero() {
-        (
-            CostState::ZeroAttested,
-            Some(BigDecimal::from(0)),
-        )
+        (CostState::ZeroAttested, Some(BigDecimal::from(0)))
     } else {
         (CostState::Resolved, Some(ctx.value(&raw)?))
     };
@@ -358,15 +364,15 @@ pub fn lp_fee_component(
         usd,
         payer: payer.to_owned(),
         beneficiary: Some("lp_pool".into()),
-        source: format!("{pool}:fee_on_output(fee={fee_raw}/1e10,admin_fee=split)"),
+        source: format!("{pool}:fee_on_output(fee={fee_rate_raw}/1e10,admin_fee={admin_fee_raw})"),
         adapter_version: ADAPTER.into(),
         anchor: Some(ctx.anchor.clone()),
-        evidence_id: format!("{pool}:fee"),
+        evidence_id: format!("{pool}:fee:lp_share:{admin}"),
         state,
         treatment: Treatment::Embedded,
         embedded_in_quote: true,
         note: Some(
-            "comisión de Curve sobre la SALIDA del invariante; incluida en el quote, no se descuenta otra vez".into(),
+            "comisión de Curve sobre la SALIDA del invariante, neta del corte del admin; incluida en el quote, no se descuenta otra vez".into(),
         ),
     })
 }

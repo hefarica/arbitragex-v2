@@ -110,10 +110,7 @@ impl BuilderBid {
 }
 
 /// Componente del pago al builder, con el tratamiento que el MODO impone.
-pub fn bid_component(
-    ctx: &ComponentCtx<'_>,
-    bid: &BuilderBid,
-) -> Result<CostComponent, CostError> {
+pub fn bid_component(ctx: &ComponentCtx<'_>, bid: &BuilderBid) -> Result<CostComponent, CostError> {
     bid.validate()?;
     let treatment = bid.mode.treatment();
     if treatment == Treatment::NotApplicable {

@@ -139,13 +139,15 @@ impl V4FeeTerms {
     pub fn resolve(inputs: &V4FeeInputs, zero_for_one: bool) -> Result<Self, CostError> {
         let dynamic = inputs.key.is_dynamic_fee();
         let lp_pips = if dynamic {
-            let fee = inputs.dynamic_lp_fee_pips.ok_or_else(|| CostError::MissingRead {
-                provider: inputs.key.identity(),
-                read: format!(
+            let fee = inputs
+                .dynamic_lp_fee_pips
+                .ok_or_else(|| CostError::MissingRead {
+                    provider: inputs.key.identity(),
+                    read: format!(
                     "dynamic_lp_fee({}) [LPFeeLibrary.DYNAMIC_FEE_FLAG en PoolKey.fee=0x{:06x}]",
                     inputs.key.hooks, inputs.key.fee_raw
                 ),
-            })?;
+                })?;
             if fee > V4_FEE_DENOMINATOR {
                 return Err(CostError::InvalidRead {
                     read: format!("{}:dynamic_lp_fee", inputs.source),
@@ -244,6 +246,7 @@ impl V4FeeTerms {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn fee_component(
     ctx: &ComponentCtx<'_>,
     kind: &str,
@@ -256,7 +259,10 @@ fn fee_component(
 ) -> Result<CostComponent, CostError> {
     let raw = terms.raw_for_pips(amount_in, pips)?;
     let (state, usd) = if pips == 0 {
-        (CostState::ZeroAttested, Some(bigdecimal::BigDecimal::from(0)))
+        (
+            CostState::ZeroAttested,
+            Some(bigdecimal::BigDecimal::from(0)),
+        )
     } else {
         (CostState::Resolved, Some(ctx.value(&raw)?))
     };
@@ -374,7 +380,9 @@ pub fn hook_rebate_component(
         state: CostState::Resolved,
         treatment: Treatment::Embedded,
         embedded_in_quote: true,
-        note: Some("BeforeSwapDelta a favor del swapper: flujo con signo, no un coste negativo".into()),
+        note: Some(
+            "BeforeSwapDelta a favor del swapper: flujo con signo, no un coste negativo".into(),
+        ),
     })
 }
 

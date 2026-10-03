@@ -171,8 +171,8 @@ impl V2FeeTerms {
     pub fn fee_fraction(&self) -> bigdecimal::BigDecimal {
         use bigdecimal::BigDecimal;
         use std::str::FromStr;
-        let num =
-            BigDecimal::from_str(&self.numerator.to_string()).unwrap_or_else(|_| BigDecimal::from(0));
+        let num = BigDecimal::from_str(&self.numerator.to_string())
+            .unwrap_or_else(|_| BigDecimal::from(0));
         let den = BigDecimal::from_str(&self.denominator.to_string())
             .unwrap_or_else(|_| BigDecimal::from(1));
         (den.clone() - num) / den
@@ -223,7 +223,11 @@ pub fn amount_out(
     let reserve_scaled = mul_checked(reserve_in, &terms.denominator, "v2:reserve_in*denominator")?;
     let denominator = add_checked(&reserve_scaled, &amount_in_with_fee, "v2:denominator")?;
     let out = div_floor(&numerator, &denominator, "v2:getAmountOut")?;
-    let effective = div_floor(&amount_in_with_fee, &terms.denominator, "v2:amountInWithFee")?;
+    let effective = div_floor(
+        &amount_in_with_fee,
+        &terms.denominator,
+        "v2:amountInWithFee",
+    )?;
     let fee_raw = sub_checked(amount_in, &effective, "v2:fee")?;
     Ok(V2Out {
         amount_out: out,
@@ -342,7 +346,9 @@ pub fn flash_swap_premium_component(
         state: CostState::Resolved,
         treatment: Treatment::External,
         embedded_in_quote: false,
-        note: Some("premium del flash swap = tarifa de swap del propio pool sobre el principal".into()),
+        note: Some(
+            "premium del flash swap = tarifa de swap del propio pool sobre el principal".into(),
+        ),
     })
 }
 

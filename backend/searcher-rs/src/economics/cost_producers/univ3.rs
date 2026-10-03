@@ -207,10 +207,14 @@ pub fn protocol_fee_component(
             },
         )
     } else {
-        (CostState::Resolved, Some(ctx.value(&raw)?), format!(
-            "corte protocolar = {} de {} pips, tomado DE la comisión LP (no se suma)",
-            terms.protocol_pips, terms.fee_pips
-        ))
+        (
+            CostState::Resolved,
+            Some(ctx.value(&raw)?),
+            format!(
+                "corte protocolar = {} de {} pips, tomado DE la comisión LP (no se suma)",
+                terms.protocol_pips, terms.fee_pips
+            ),
+        )
     };
     Ok(CostComponent {
         kind: KIND_V3_PROTOCOL_FEE.into(),

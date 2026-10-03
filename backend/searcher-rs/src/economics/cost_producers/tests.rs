@@ -86,14 +86,7 @@ fn zero_fee_is_preserved_as_zero_not_absence() {
     let a = asset(1, "0xusdc", 6);
     let p = price_ref(1, "0xusdc", 6, "1.000000", "r1");
     let an = anchor(1);
-    let c = ctx(
-        Scope::leg(0, "v2pair", "evm:1"),
-        &a,
-        &p,
-        "r1",
-        1_500,
-        &an,
-    );
+    let c = ctx(Scope::leg(0, "v2pair", "evm:1"), &a, &p, "r1", 1_500, &an);
     // Deployment con numerator == denominator: comisión exactamente cero.
     let terms = univ2::V2FeeTerms::from_read(
         U256::from(10_000u64),
@@ -110,7 +103,10 @@ fn zero_fee_is_preserved_as_zero_not_absence() {
     let mut r = CostResolution::new(1, "snap", "r1", "before_financing", "atomic_quote");
     r.push(comp);
     let lines = r.to_cost_lines().unwrap();
-    let line = lines.iter().find(|l| l.kind == KIND_EXECUTION_FEES).unwrap();
+    let line = lines
+        .iter()
+        .find(|l| l.kind == KIND_EXECUTION_FEES)
+        .unwrap();
     assert_eq!(line.usd.as_deref(), Some("0"));
     // Cero computado: NO bloquea el neto (a diferencia de la ausencia).
     assert!(r.blocking().is_empty());
@@ -129,7 +125,10 @@ fn v3_protocol_fee_is_zero_when_no_tick_is_crossed() {
     };
     let t = univ3::V3FeeTerms::resolve(&reads).unwrap();
     assert_eq!(t.fee_pips, 3_000);
-    assert_eq!(t.protocol_pips, 0, "sin cruce de tick la comisión protocolar es 0");
+    assert_eq!(
+        t.protocol_pips, 0,
+        "sin cruce de tick la comisión protocolar es 0"
+    );
     assert_eq!(t.lp_pips, 3_000);
 
     // Con cruce sí se aplica el corte del factory.
@@ -199,7 +198,10 @@ fn missing_aave_premium_read_yields_a_task_never_a_default() {
 
     // Y la resolución degrada a un componente PENDIENTE, no a un cero.
     let mut r = CostResolution::new(1, "snap", "r1", "before_financing", "atomic_quote");
-    r.absorb(seed(funding::KIND_FINANCING_PREMIUM, Treatment::External), Err(err));
+    r.absorb(
+        seed(funding::KIND_FINANCING_PREMIUM, Treatment::External),
+        Err(err),
+    );
     assert_eq!(r.components.len(), 1);
     assert_eq!(r.components[0].state, CostState::PendingResolution);
     assert!(r.components[0].usd.is_none());
@@ -249,7 +251,9 @@ fn v2_fee_terms_are_read_and_a_documented_mismatch_raises_a_task() {
         "ev:fee",
     )
     .unwrap();
-    let task = terms.disagreement_task(&route_scope()).expect("discrepancia");
+    let task = terms
+        .disagreement_task(&route_scope())
+        .expect("discrepancia");
     assert_eq!(
         task.receipt.as_deref(),
         Some("exact_invariant_version_and_rates")
@@ -308,9 +312,16 @@ fn an_incomplete_leg_blocks_the_net_instead_of_contributing_zero() {
     assert!(r.external_usd().is_none());
     // La línea agregada NO inventa un importe: queda sin usd.
     let lines = r.to_cost_lines().unwrap();
-    let line = lines.iter().find(|l| l.kind == KIND_EXECUTION_FEES).unwrap();
+    let line = lines
+        .iter()
+        .find(|l| l.kind == KIND_EXECUTION_FEES)
+        .unwrap();
     assert!(line.usd.is_none());
-    assert!(line.reason.as_deref().unwrap().contains("pending_resolution"));
+    assert!(line
+        .reason
+        .as_deref()
+        .unwrap()
+        .contains("pending_resolution"));
 }
 
 // ═════════════════════════ CAMBIO DINÁMICO DE FEE ═════════════════════════
@@ -328,8 +339,14 @@ fn curve_cryptoswap_fee_moves_between_mid_and_out() {
 
     // Pool totalmente desequilibrado (K = 0) → la tarifa sube hacia out_fee.
     let imbalanced = curve::cryptoswap_dynamic_fee(&mid, &out, &gamma, &U256::zero()).unwrap();
-    assert!(imbalanced > bd("1000000"), "desequilibrio debe encarecer: {imbalanced}");
-    assert!(imbalanced < bd("50000000"), "y quedar por debajo de out_fee: {imbalanced}");
+    assert!(
+        imbalanced > bd("1000000"),
+        "desequilibrio debe encarecer: {imbalanced}"
+    );
+    assert!(
+        imbalanced < bd("50000000"),
+        "y quedar por debajo de out_fee: {imbalanced}"
+    );
 
     // Un mismo pool da dos tarifas distintas según el estado: NO es constante.
     assert_ne!(balanced, imbalanced);
@@ -516,7 +533,7 @@ fn rounding_is_floor_and_never_favours_the_net() {
         U256::from(3u64)
     );
     assert_eq!(
-        super::univ2::proportion_floor(
+        proportion_floor(
             &U256::from(999u64),
             &U256::from(997u64),
             &U256::from(1_000u64),
@@ -561,10 +578,7 @@ fn token_decimals_change_the_fee_valuation() {
     let usdc = price_ref(1, "0xusdc", 6, "1.0", "r1");
     let weth = price_ref(1, "0xweth", 18, "3000.0", "r1");
     assert_eq!(usdc.value_min_units(&amount).unwrap(), bd("1.0"));
-    assert_eq!(
-        weth.value_min_units(&amount).unwrap(),
-        bd("0.000000003000")
-    );
+    assert_eq!(weth.value_min_units(&amount).unwrap(), bd("0.000000003000"));
 
     // Un precio con decimals DISTINTOS a los del activo es procedencia inválida.
     let wrong = price_ref(1, "0xusdc", 18, "1.0", "r1");
@@ -580,9 +594,7 @@ fn token_decimals_change_the_fee_valuation() {
 #[test]
 fn stale_price_blocks_valuation_with_an_explicit_reason() {
     let p = price_ref(1, "0xusdc", 6, "1.0", "r1"); // valid_until_ms = 2_000
-    let err = p
-        .check(2_001, "r1", &asset(1, "0xusdc", 6))
-        .unwrap_err();
+    let err = p.check(2_001, "r1", &asset(1, "0xusdc", 6)).unwrap_err();
     match &err {
         CostError::StalePrice {
             observed_at_ms,
@@ -590,7 +602,10 @@ fn stale_price_blocks_valuation_with_an_explicit_reason() {
             now_ms,
             ..
         } => {
-            assert_eq!((*observed_at_ms, *valid_until_ms, *now_ms), (1_000, 2_000, 2_001));
+            assert_eq!(
+                (*observed_at_ms, *valid_until_ms, *now_ms),
+                (1_000, 2_000, 2_001)
+            );
         }
         other => panic!("esperaba StalePrice, obtuve {other:?}"),
     }
@@ -682,12 +697,18 @@ fn priority_fee_is_inside_gas_and_never_a_second_line() {
         legacy_gas_price: None,
     };
     // min(maxFee=15, base+tip=12) = 12 → el tip ya está dentro.
-    assert_eq!(gas::effective_gas_price(&market).unwrap(), U256::from(12u64));
+    assert_eq!(
+        gas::effective_gas_price(&market).unwrap(),
+        U256::from(12u64)
+    );
     let capped = gas::FeeMarket {
         max_fee_per_gas: Some(U256::from(11u64)),
         ..market
     };
-    assert_eq!(gas::effective_gas_price(&capped).unwrap(), U256::from(11u64));
+    assert_eq!(
+        gas::effective_gas_price(&capped).unwrap(),
+        U256::from(11u64)
+    );
     // Sin mercado de fees no se asume un precio.
     let empty = gas::FeeMarket {
         base_fee_per_gas: U256::zero(),
@@ -866,8 +887,8 @@ fn embedded_execution_fees_are_declared_but_not_subtracted() {
     .unwrap();
     // 0.01 WETH de comisión a 3000 USD/WETH. amount_in = 0.01 WETH (1e16 wei):
     // comisión = 1e16 × 3/1000 = 3e13 wei = 0.00003 WETH → 0.09 USD.
-    let comp = univ2::lp_fee_component(&c, &terms, &U256::from(10_000_000_000_000_000u64), "s")
-        .unwrap();
+    let comp =
+        univ2::lp_fee_component(&c, &terms, &U256::from(10_000_000_000_000_000u64), "s").unwrap();
     assert_eq!(comp.amount_raw, U256::from(30_000_000_000_000u64));
     assert_eq!(comp.usd.as_ref().unwrap(), &bd("0.09"));
 
@@ -883,7 +904,11 @@ fn embedded_execution_fees_are_declared_but_not_subtracted() {
         .find(|l| l.kind == KIND_EXECUTION_FEES)
         .unwrap();
     assert_eq!(line.treatment, "embedded");
-    assert!(line.reason.as_deref().unwrap().contains("incluido; no se descuenta otra vez"));
+    assert!(line
+        .reason
+        .as_deref()
+        .unwrap()
+        .contains("incluido; no se descuenta otra vez"));
 
     // Declarar esa comisión como external en un quote atómico es doble conteo.
     let mut rogue = r.clone();
@@ -910,8 +935,13 @@ fn v3_protocol_fee_external_is_flagged_as_double_count() {
         evidence_id: "ev:v3".into(),
     })
     .unwrap();
-    let mut comp = univ3::protocol_fee_component(&c, &terms, &U256::from(1_000_000u64), "s").unwrap();
-    assert_eq!(comp.treatment, Treatment::Embedded, "por defecto es un corte");
+    let mut comp =
+        univ3::protocol_fee_component(&c, &terms, &U256::from(1_000_000u64), "s").unwrap();
+    assert_eq!(
+        comp.treatment,
+        Treatment::Embedded,
+        "por defecto es un corte"
+    );
     let mut r = CostResolution::new(1, "snap", "r1", "before_financing", "atomic_quote");
     r.push(comp.clone());
     assert!(r.double_count_audit().is_empty());
@@ -951,8 +981,7 @@ fn financing_external_in_retained_spread_is_flagged() {
     assert_eq!(comp.treatment, Treatment::External);
 
     // Con `profit_basis = retained_after_repayment` ese externo es doble cobro.
-    let mut r =
-        CostResolution::new(1, "snap", "r1", "retained_after_repayment", "atomic_quote");
+    let mut r = CostResolution::new(1, "snap", "r1", "retained_after_repayment", "atomic_quote");
     r.push(comp);
     assert!(r
         .double_count_audit()
@@ -1249,8 +1278,7 @@ fn mixed_treatments_in_one_category_are_a_contract_conflict() {
     )
     .unwrap();
     let c = ctx(Scope::leg(0, "pair0", "evm:1"), &a, &p, "r1", 1_500, &an);
-    let mut embedded =
-        univ2::lp_fee_component(&c, &terms, &U256::from(1_000_000u64), "s").unwrap();
+    let mut embedded = univ2::lp_fee_component(&c, &terms, &U256::from(1_000_000u64), "s").unwrap();
     let mut external = embedded.clone();
     external.treatment = Treatment::External;
     external.embedded_in_quote = false;
@@ -1388,7 +1416,10 @@ fn bridge_kind_covers_every_emitted_granular_kind() {
         builder::KIND_BUILDER_BID,
         builder::KIND_BUILDER_REBATE,
     ] {
-        assert!(bridge_kind(k).is_some(), "kind sin categoría de bridge: {k}");
+        assert!(
+            bridge_kind(k).is_some(),
+            "kind sin categoría de bridge: {k}"
+        );
     }
     assert!(bridge_kind("invented_fee").is_none());
     // Los tres kinds que el bridge EXIGE para `atomic_quote` están cubiertos.
@@ -1399,7 +1430,10 @@ fn bridge_kind_covers_every_emitted_granular_kind() {
     ];
     let cats: Vec<&str> = covered.iter().filter_map(|k| bridge_kind(k)).collect();
     for required in [KIND_GAS, KIND_FINANCING, KIND_EXECUTION_FEES] {
-        assert!(cats.contains(&required), "categoría exigida ausente: {required}");
+        assert!(
+            cats.contains(&required),
+            "categoría exigida ausente: {required}"
+        );
     }
 }
 
@@ -1453,7 +1487,7 @@ fn curve_admin_split_and_resolution_are_consistent_end_to_end() {
     let fee_rate = U256::from(1_000_000u64); // 0.01% en 1e10
     let admin_fee = U256::from(5_000_000_000u64); // 50%
 
-    let lp = curve::lp_fee_component(&c, &fee_rate, &gross, "s", "3pool").unwrap();
+    let lp = curve::lp_fee_component(&c, &fee_rate, &admin_fee, &gross, "s", "3pool").unwrap();
     let admin =
         curve::admin_fee_component(&c, &admin_fee, &gross, &fee_rate, "s", "3pool").unwrap();
     let total_fee = curve::fee_on_output(&gross, &fee_rate).unwrap();
@@ -1462,6 +1496,11 @@ fn curve_admin_split_and_resolution_are_consistent_end_to_end() {
         lp.amount_raw + admin.amount_raw,
         total_fee,
         "LP + admin = comisión total, sin crear ni perder"
+    );
+    assert_eq!(
+        lp.amount_raw + admin.amount_raw,
+        curve::fee_on_output(&gross, &fee_rate).unwrap(),
+        "la suma de los dos componentes es EXACTAMENTE la comisión cobrada"
     );
     assert_eq!(lp.usd.as_ref().unwrap(), &bd("0.00005"));
     assert_eq!(admin.usd.as_ref().unwrap(), &bd("0.00005"));
@@ -1565,7 +1604,10 @@ fn per_kind_breakdown_keeps_traceability_after_aggregation() {
     // 1 USDC: v2 3/1000 → 0.003; v3 375/1e6 → 0.000375; protocol 125/1e6 → 0.000125.
     assert_eq!(per_kind.get(univ2::KIND_V2_LP_FEE), Some(&bd("0.003")));
     assert_eq!(per_kind.get(univ3::KIND_V3_LP_FEE), Some(&bd("0.000375")));
-    assert_eq!(per_kind.get(univ3::KIND_V3_PROTOCOL_FEE), Some(&bd("0.000125")));
+    assert_eq!(
+        per_kind.get(univ3::KIND_V3_PROTOCOL_FEE),
+        Some(&bd("0.000125"))
+    );
     assert_eq!(r.to_cost_lines().unwrap().len(), 1);
     assert_eq!(r.embedded_fee_usd(), Some(bd("0.0035")));
 }
