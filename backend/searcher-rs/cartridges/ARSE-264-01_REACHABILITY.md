@@ -185,11 +185,45 @@ y ya hubo un incidente (cartucho triangular con dos errores de sintaxis y un fal
 funcional). La única prueba válida es el intérprete real — que en este host no
 corre (§7) y en producción sí (271/271 cargados + evaluados).
 
-## 7. Gate de compilación
+## 7. Gate de compilación — ACREDITADO por CI en la rama `arse-264-01`
 
-`cargo check -p math-engine` en este host **NO puede pasar**: Windows AppControl
-bloquea la ejecución de los build scripts (`os error 4551`, exit 101) — los
-crates `libm`, `serde`, `icu_normalizer_data` ni siquiera llegan a ejecutarse.
-El gate se acredita con la corrida de CI (`rust.yml`/`ci.yml`) sobre esta rama
-única `arse-264-01`; el resultado crudo del run se adjunta en el reporte de la
-tarea, y si la corrida sale en rojo se reporta en rojo, nunca como verde.
+`cargo check -p math-engine` en el host de trabajo **NO puede pasar**: Windows
+AppControl bloquea la ejecución de los build scripts (`os error 4551`, exit 101) —
+los crates `libm`, `serde` e `icu_normalizer_data` ni siquiera llegan a
+ejecutarse. Por eso nada de lo que pasa localmente acredita compilación.
+
+El gate se acredita con la corrida de CI sobre la rama única de este ID:
+
+| Workflow | Run | Job | Resultado |
+|---|---|---|---|
+| Rust CI (`rust.yml`) | [37140401608](https://github.com/hefarica/arbitragex-v2/actions/runs/37140401608) | cargo check + clippy + test | **success** |
+| CI (`ci.yml`) | [37140401838](https://github.com/hefarica/arbitragex-v2/actions/runs/37140401838) | lint-and-test-rust + `ci-gate` | **success** |
+
+Pasos verdes del job de Rust: `cargo fmt --all -- --check` · `cargo check
+--workspace --locked` · `cargo clippy -p searcher-rs -p relays-client --locked
+--all-targets -- -D warnings` · `cargo clippy --workspace --locked -- -D warnings`
+· `cargo test --workspace --locked --lib --bin relays-client` → **2534 passed / 0
+failed**. Los 6 tests nuevos de esta tarea corren y pasan:
+
+```
+operators::real_ops_tests::source_catalog_boundary::op_32_is_the_only_multiobjective_operator_and_returns_a_front ... ok
+operators::real_ops_tests::source_catalog_boundary::runtime_registry_is_exactly_operator_count ... ok
+operators::real_ops_tests::source_catalog_boundary::source_catalog_is_31_and_op_32_is_the_single_extra_id ... ok
+cartridge::runner::tests::legacy_v3_result_stays_authoritative_for_v3_cartridges ... ok
+cartridge::runner::tests::v4_envelope_goes_through_proposal_v4_parse ... ok
+cartridge::runner::tests::map_size_is_cumulative_over_the_whole_tree ... ok
+```
+
+`map_size_is_cumulative_over_the_whole_tree` es, además, la prueba discriminante
+de la causa raíz de §3: el MISMO payload con 1_024 entradas acumuladas se rechaza
+y con 8_192 se acepta — no es una afirmación de prosa sobre rhai, es una medición
+ejecutada por el compilador real.
+
+**Registro honesto del ciclo:** la primera corrida de esta rama
+([37139767020](https://github.com/hefarica/arbitragex-v2/actions/runs/37139767020))
+salió **failure** en `cargo test --lib` — un `invalid format string` en
+`real_ops_tests.rs` (las llaves de `{0,1}` en el mensaje de un assert), defecto
+propio detectado por el gate y corregido en `3bcce4c2`. `cargo check` y
+`cargo clippy --workspace` NO lo veían (el clippy del workspace no usa
+`--all-targets`), así que sin este paso el defecto habría llegado a `main`.
+
