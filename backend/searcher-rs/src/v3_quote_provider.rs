@@ -35,9 +35,16 @@ use std::time::{Duration, Instant};
 use ethers::types::{Address, U256};
 
 use crate::amm_math::{
-    v3_quote_exact_in_multicall, V3CallFailure, V3QuoteError, V3QuoteErrorKind, V3QuoteRequest,
+    classify_pool_admission, v3_quote_exact_in_multicall, v3_quote_multicall_timeout,
+    PoolAdmission, PoolProbe, ProbeAnswer, V3CallFailure, V3QuoteError, V3QuoteErrorKind,
+    V3QuoteRequest,
 };
 use crate::state_projector::V3QuoteProvider;
+use crate::workers::pool_sync_worker::multicall_abi;
+use alloy::primitives::Address as AlloyAddress;
+use alloy::providers::Provider as AlloyProvider;
+use alloy::rpc::types::{TransactionInput, TransactionRequest};
+use alloy::sol_types::SolCall;
 use shared_rs::chains::{multicall3_for_chain, quoter_v2_for_chain};
 use shared_rs::rpc_failover::HttpRpcPool;
 
@@ -560,6 +567,106 @@ impl MulticallV3QuoteProvider {
         }
         out
     }
+
+    /// CATALOG-ADMISSION-WIRE-01: probe `fee()` + `liquidity()` for a set of
+    /// catalogue entries in ONE `aggregate3` (two sub-calls per pool, `fee`
+    /// first) and classify each with the pure `classify_pool_admission`.
+    ///
+    /// Every failure mode returns an EMPTY vec — transport down, timeout, or an
+    /// undecodable envelope — so the caller records NOTHING and the pool stays
+    /// exactly as it is. A probe we could not complete is not a verdict (R8).
+    async fn probe_admissions_impl(
+        &self,
+        pools: Vec<(Address, u32)>,
+    ) -> Vec<(Address, PoolAdmission)> {
+        if pools.is_empty() {
+            return Vec::new();
+        }
+        let fee_cd = crate::amm_math::encode_pool_probe_calldata(PoolProbe::Fee).to_vec();
+        let liq_cd = crate::amm_math::encode_pool_probe_calldata(PoolProbe::Liquidity).to_vec();
+        let mut calls: Vec<multicall_abi::Call3> = Vec::with_capacity(pools.len() * 2);
+        for (addr, _) in &pools {
+            let target = AlloyAddress::from_slice(addr.as_bytes());
+            calls.push(multicall_abi::Call3 {
+                target,
+                allowFailure: true,
+                callData: fee_cd.clone().into(),
+            });
+            calls.push(multicall_abi::Call3 {
+                target,
+                allowFailure: true,
+                callData: liq_cd.clone().into(),
+            });
+        }
+
+        quote_outcome_metric("admission_probe");
+        let rpc_pool = self.pool.clone();
+        let multicall = AlloyAddress::from_slice(self.multicall_addr.as_bytes());
+        let raw = match tokio::time::timeout(
+            v3_quote_multicall_timeout(),
+            rpc_pool.with_retry(|provider| {
+                // with_retry may re-run the closure after failover, so the
+                // envelope is rebuilt per attempt (same as the quote path).
+                let calldata = multicall_abi::aggregate3Call {
+                    calls: calls.clone(),
+                }
+                .abi_encode();
+                async move {
+                    let tx = TransactionRequest::default()
+                        .to(multicall)
+                        .input(TransactionInput::new(calldata.into()));
+                    provider.call(tx).await.map_err(|e| anyhow::anyhow!("{e}"))
+                }
+            }),
+        )
+        .await
+        {
+            Ok(Ok(b)) => b,
+            Ok(Err(e)) => {
+                quote_outcome_metric("admission_probe_error");
+                debug!(event = "v3_quote.admission_probe_rpc_err", error = %e);
+                return Vec::new();
+            }
+            Err(_) => {
+                quote_outcome_metric("admission_probe_timeout");
+                debug!(event = "v3_quote.admission_probe_timeout");
+                return Vec::new();
+            }
+        };
+
+        let results = match multicall_abi::aggregate3Call::abi_decode_returns(&raw) {
+            Ok(r) => r,
+            Err(e) => {
+                quote_outcome_metric("admission_probe_error");
+                debug!(event = "v3_quote.admission_probe_decode_err", error = %e);
+                return Vec::new();
+            }
+        };
+
+        let mut out = Vec::with_capacity(pools.len());
+        for (i, (addr, catalogue_fee)) in pools.iter().enumerate() {
+            let fee_answer = probe_answer(results.get(i * 2));
+            let liq_answer = probe_answer(results.get(i * 2 + 1));
+            out.push((
+                *addr,
+                classify_pool_admission(*catalogue_fee, fee_answer, liq_answer),
+            ));
+        }
+        out
+    }
+}
+
+/// Map ONE multicall sub-result to a `ProbeAnswer`.
+///
+/// The three states stay deliberately distinct: a REVERT (the chain answered
+/// "no") is evidence; a MISSING slot (short result set) is not, and must never
+/// be read as one.
+fn probe_answer(r: Option<&multicall_abi::Result>) -> ProbeAnswer<'_> {
+    match r {
+        Some(res) if res.success => ProbeAnswer::Answered(res.returnData.as_ref()),
+        Some(_) => ProbeAnswer::Reverted,
+        None => ProbeAnswer::Unavailable,
+    }
 }
 
 /// Resolve `(quoter, multicall)` for a chain. Order (no-hardcode, fail-honest):
@@ -711,6 +818,16 @@ impl V3QuoteProvider for MulticallV3QuoteProvider {
     ) -> Pin<Box<dyn Future<Output = crate::state_projector::V3BatchQuoteResults> + Send + '_>>
     {
         Box::pin(self.quote_batch_impl(reqs))
+    }
+
+    /// CATALOG-ADMISSION-WIRE-01: the production pool-identity probe. One
+    /// `aggregate3` carries two sub-calls per entry (`fee()`, `liquidity()`),
+    /// and the pure classifier turns the ABI answers into a verdict.
+    fn probe_pool_admissions(
+        &self,
+        pools: Vec<(Address, u32)>,
+    ) -> Pin<Box<dyn Future<Output = Vec<(Address, PoolAdmission)>> + Send + '_>> {
+        Box::pin(self.probe_admissions_impl(pools))
     }
 }
 
