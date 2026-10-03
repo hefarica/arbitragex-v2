@@ -15,11 +15,8 @@ use std::collections::BTreeMap;
 
 /// Selector de función (4 bytes keccak) para llamadas ERC-4626.
 /// maxRedeem(address) = 0xc63d32b8
-/// previewRedeem(uint256) = 0x3dd22e73
-/// convertToAssets(uint256) = 0x07a2d13a
 /// totalAssets() = 0x01e1d114
 const SEL_MAX_REDEEM: &str = "c63d32b8";
-const SEL_PREVIEW_REDEEM: &str = "3dd22e73";
 const SEL_TOTAL_ASSETS: &str = "01e1d114";
 
 /// Parsea la env var `ARBX_BASKET_CONTRACTS` (direcciones separadas por coma).

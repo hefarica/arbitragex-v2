@@ -1529,9 +1529,6 @@ fn build_v4_intent_bundle(
     // milli-gwei → gwei) — el mismo que alimenta el MarketState del
     // dispatcher. Sin observación la línea de gas no se emite (R8).
     gas_price_gwei: f64,
-    // REDEMPTION-PRODUCER-01 fase 2: direcciones de baskets configuradas por
-    // el operador — el bundle construye redemption_state desde ellas.
-    basket_addresses: &[String],
 ) -> Option<crate::snapshot_services::SnapshotBundle> {
     let observed_at_ms = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -1617,9 +1614,6 @@ fn build_v4_intent_bundle(
         gas_price_gwei,
         &prices,
     );
-    // REDEMPTION-PRODUCER-01 fase 2: las direcciones se aceptan para uso
-    // futuro (lectura async del worker); el bundle sync aún no las lee.
-    let _ = basket_addresses;
     Some(crate::snapshot_services::SnapshotBundle {
         context_id: ctx_snapshot_id.to_owned(),
         snapshot_id: ctx_snapshot_id.to_owned(),
@@ -2119,9 +2113,6 @@ pub async fn active_evaluate_and_emit(
             // COST-PRODUCERS-01: el gas observado que ya computamos para el
             // MarketState del dispatcher alimenta también la línea de gas.
             v4_intent_gas_gwei,
-            // REDEMPTION-PRODUCER-01 fase 2: estado on-chain de los baskets
-            // del operador (ARBX_BASKET_CONTRACTS). Sin env var → vacío.
-            &crate::basket_reader::baskets_from_env(),
         ) {
             Some(bundle) => {
                 // Guarda de revisión de un solo bundle: este intent sirve

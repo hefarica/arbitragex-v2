@@ -153,7 +153,7 @@ mod token_identity;
 mod token_resolve_signal;
 // FASE OMEGA — cartridge runtime (Rhai). `cartridge` + `cartridge_loader` are API-heavy
 // and mostly exercised via lib/integration tests; the binary only drives them through
-// `cartridge_boot` (called from the scanner boot path), so allow dead_code on the two.
+// the scanner boot path (lib `cartridge_boot`), so allow dead_code on the two.
 #[allow(dead_code, unused_imports, unused_variables)]
 mod cartridge;
 mod cartridge_boot;
