@@ -75,9 +75,12 @@
 //! module stays target-agnostic and unit-testable without booting `main.rs`.
 
 pub mod contract;
+pub mod cost_inputs;
 pub mod oracle_bias;
 pub mod realized_volatility;
 
+#[cfg(test)]
+mod cost_tests;
 #[cfg(test)]
 mod tests;
 
@@ -87,6 +90,12 @@ use std::sync::{Mutex, OnceLock};
 use shared_rs::price_bus::{PriceBus, PriceBusConfig, PriceSnapshot};
 
 pub use contract::{contract_for, owned_contracts, FeatureContract, Owner, CONTRACTS, OWNED_KEYS};
+pub use cost_inputs::{
+    flash_premium_fraction, flash_premium_requirement, numeraire_min_units, pool_fee_pair,
+    CostInputs, ExternalRequirement, PoolFeeRead, PremiumRead, RequirementStatus, TokenScale,
+    BPS_DENOMINATOR, BREAK_EVEN_TARGET_KEY, COST_KEYS, FEE_BPS_KEY, FLASH_PREMIUM_KEY,
+    MAX_CAPITAL_KEY, POOL_FEE_KEY,
+};
 pub use oracle_bias::{fresh_anchor_usd, oracle_bias_pair, ONCHAIN_PRICE_KEY, ORACLE_PRICE_KEY};
 pub use realized_volatility::{
     realized_volatility, volatility_for, Sample, SeriesStore, VolatilityWindow, DEFAULT_CAPACITY,
@@ -181,6 +190,67 @@ fn normalize_symbol(symbol: &str) -> String {
     symbol.trim().to_ascii_uppercase()
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// F7 — los productores que faltaban del censo
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Añade al mapa las cinco claves de F7 que sean computables, y **sólo** ésas.
+///
+/// Cada clave se inserta desde el VALOR que devuelve su productor puro
+/// (`cost_inputs`), nunca desde un literal: es la forma que el gate
+/// anti-fabricación exige (regla R2) y la razón por la que los `insert` viven
+/// aquí y la aritmética vive en `cost_inputs`.
+///
+/// Atomicidad y unidades, clave por clave:
+///
+/// * `pool_fee` + `fee_bps` — se emiten JUNTOS (`pool_fee_pair`): es el mismo
+///   hecho en las dos unidades que piden sus lectores (fracción y bps). Si el
+///   par `(fee_units, fee_denominator)` falta, no se emite ninguno de los dos.
+/// * `flash_premium` — fracción φ con `repayment = 1 + φ` (op_26:67). Sólo se
+///   emite desde la lectura autoritativa; sin ella la clave queda AUSENTE y el
+///   requisito externo exacto viaja en
+///   [`CostInputs::external_requirements`]. Nunca `0.0` sin acreditación.
+/// * `max_capital` — cupo del solver en unidades mínimas del numerario
+///   (`op_19:184`, misma familia que `b[1+j] = liquidity_reserves[j].0`).
+/// * `break_even_target` — objetivo del solver en unidades mínimas del numerario
+///   (`[token0 numerary]`, `op_21:123`).
+///
+/// Un `CostInputs::default()` (ninguna lectura) NO añade ninguna clave: el mapa
+/// queda exactamente como estaba. Eso es lo que mantiene verde
+/// `no_key_is_inserted_as_zero_when_the_data_is_missing`.
+pub fn add_cost_features(out: &mut HashMap<String, f64>, costs: &CostInputs<'_>) {
+    if let Some((fraction, bps)) = pool_fee_pair(costs.pool_fee.as_ref()) {
+        out.insert(POOL_FEE_KEY.to_owned(), fraction);
+        out.insert(FEE_BPS_KEY.to_owned(), bps);
+    }
+
+    if let Some(phi) = flash_premium_fraction(costs.flash_premium.as_ref()) {
+        out.insert(FLASH_PREMIUM_KEY.to_owned(), phi);
+    }
+
+    if let Some(cap) = costs.max_capital_min_units() {
+        out.insert(MAX_CAPITAL_KEY.to_owned(), cap);
+    }
+
+    if let Some(target) = costs.break_even_target_min_units() {
+        out.insert(BREAK_EVEN_TARGET_KEY.to_owned(), target);
+    }
+}
+
+/// [`produce`] + las claves de F7. Puro: todo entra como argumento.
+pub fn produce_with_costs(
+    store: &mut SeriesStore,
+    cfg: &FeatureConfig,
+    req: &FeatureRequest<'_>,
+    oracle: Option<OracleSources<'_>>,
+    costs: &CostInputs<'_>,
+    now_ns: u64,
+) -> HashMap<String, f64> {
+    let mut out = produce(store, cfg, req, oracle, now_ns);
+    add_cost_features(&mut out, costs);
+    out
+}
+
 /// Process-wide observation store. A singleton because the series must survive
 /// across candidates — a per-call store could never span time.
 static STORE: OnceLock<Mutex<SeriesStore>> = OnceLock::new();
@@ -236,6 +306,33 @@ pub fn produce_from_global_with(
     onchain_price_usd: Option<f64>,
     now_ns: u64,
 ) -> HashMap<String, f64> {
+    produce_from_global_with_costs(
+        cfg,
+        bus,
+        symbol,
+        onchain_price_usd,
+        &CostInputs::default(),
+        now_ns,
+    )
+}
+
+/// [`produce_from_global_with`] + las claves de F7 (fee del pool, premium de
+/// financiación, cupo y objetivo del solver).
+///
+/// `costs` es un PARÁMETRO y no una lectura interna por la misma razón que el
+/// `PriceBus` lo es: las lecturas de fee y de premium viven fuera de este módulo
+/// (grafo de pools y RPC del proveedor) y este módulo debe seguir siendo
+/// testeable y AJENO A I/O. Un `CostInputs::default()` degrada exactamente al
+/// comportamiento anterior — ninguna clave de coste — y eso es un hueco
+/// declarado, no un cero.
+pub fn produce_from_global_with_costs(
+    cfg: &FeatureConfig,
+    bus: Option<&PriceBus>,
+    symbol: &str,
+    onchain_price_usd: Option<f64>,
+    costs: &CostInputs<'_>,
+    now_ns: u64,
+) -> HashMap<String, f64> {
     // Poisoning must not silently disable a producer: recover the inner guard
     // exactly as `PriceBus::sample_divergence` does (price_bus.rs:334-337).
     let mut guard = match global_store().lock() {
@@ -250,7 +347,7 @@ pub fn produce_from_global_with(
                 onchain_price_usd,
                 live_price_usd: view.price_usd(symbol),
             };
-            produce(
+            produce_with_costs(
                 &mut guard,
                 cfg,
                 &req,
@@ -258,6 +355,7 @@ pub fn produce_from_global_with(
                     snapshot: view.snapshot(),
                     cfg: bus.config(),
                 }),
+                costs,
                 now_ns,
             )
         }
@@ -267,7 +365,7 @@ pub fn produce_from_global_with(
                 onchain_price_usd,
                 live_price_usd: None,
             };
-            produce(&mut guard, cfg, &req, None, now_ns)
+            produce_with_costs(&mut guard, cfg, &req, None, costs, now_ns)
         }
     }
 }

@@ -133,6 +133,106 @@ pub const CONTRACTS: &[FeatureContract] = &[
         monetary: true,
         owner: Owner::ThisModule,
     },
+    // ── F7: los productores que faltaban del censo ─────────────────────────
+    FeatureContract {
+        key: "pool_fee",
+        unit: "adimensional — fracción que el pool retiene por swap, en [0, 1); \
+               NO basis points. `gamma = 1.0 − fee` (op_26_flash_loan.rs:61)",
+        source: "el par REAL (fee_units, fee_denominator) leído del despliegue y ya \
+                 presente en el grafo: `agent_graph.rs:23-24`, poblado por \
+                 `cartridge_boot.rs:1756` (v4_edge_protocol_and_fee). Es la MISMA \
+                 lectura que `snapshot_services.rs:345` ya consume para el fee \
+                 embebido (`fee_raw = amount_in_raw × fee_units / fee_denominator`)",
+        window: "la lectura del edge del bloque/snapshot que alimentó el grafo de la \
+                 ruta (mismo snapshot que el quote del ledger)",
+        absent_means: "`fee_units` o `fee_denominator` ausentes en la pierna — el \
+                       `missing_fee_units` que el repo ya declara honesto \
+                       (snapshot_services.rs:345, cartridge_boot.rs:1623): la clave NO \
+                       se inserta y `fee_bps` tampoco (par atómico). Nunca 0.003: un \
+                       30 bps fabricado es una tarifa que nadie leyó. Un pool SIN \
+                       comisión sí emite 0.0 — es una medición, no una ausencia",
+        monetary: false,
+        owner: Owner::ThisModule,
+    },
+    FeatureContract {
+        key: "fee_bps",
+        unit: "basis points (diezmilésimas) del swap; denominador 10_000. \
+               `fee_bps / 10_000.0` (op_15_golden_section.rs:47)",
+        source: "el MISMO par (fee_units, fee_denominator) de `pool_fee`, convertido \
+                 con el único denominador de bps del camino de costes \
+                 (`cost_producers::funding::BPS_DENOMINATOR = 10_000`, \
+                 funding.rs:54 — reexportado, no duplicado)",
+        window: "idéntica a `pool_fee`: la lectura del edge del snapshot de la ruta",
+        absent_means: "idéntica a `pool_fee` y ATÓMICA con ella: los dos se emiten \
+                       juntos o ninguno. Publicar sólo uno dejaría a op_15/op_21/op_32 \
+                       leyendo `fee_bps` y a op_26 leyendo `pool_fee` sobre el mismo \
+                       hecho, con un lector sin dato y otro con él",
+        monetary: false,
+        owner: Owner::ThisModule,
+    },
+    FeatureContract {
+        key: "flash_premium",
+        unit: "adimensional — fracción del principal prestado: φ en \
+               `repayment = 1.0 + φ` (op_26_flash_loan.rs:67). Un premium de 5 bps \
+               vale 0.0005 aquí, NO 5.0 y NO 0.0",
+        source: "lectura ON-CHAIN del proveedor de financiación, jamás un literal: \
+                 `Pool.FLASHLOAN_PREMIUM_TOTAL() -> uint128` en basis points \
+                 (denominador 10_000), por el método declarado del proveedor \
+                 (AaveV3 flashLoan/flashLoanSimple; ERC-3156 flashFee). Lectores ya \
+                 existentes en el repo: shared-rs/src/flashloan_math.rs:165 y \
+                 relays-client/src/plan_validation.rs:336. PROHIBIDO como fuente \
+                 `financing::AAVE_FLASH_LOAN_FEE_BPS` (financing.rs:38), que es \
+                 exactamente el literal de 5 bps que el prompt §5 prohíbe copiar",
+        window: "el bloque/hash al que está anclada la lectura (EIP-1898) en la cadena \
+                 del proveedor — un timestamp de sincronización no demuestra estado",
+        absent_means: "la lectura autoritativa no llegó (no hay provider RPC, no hay \
+                       pool, o el cableado al camino del intent sigue pendiente — \
+                       cartridge_boot.rs:2107 lo declara): la clave NO se inserta y se \
+                       publica el requisito externo exacto (BLOCKED_EXTERNAL). Un 0.0 \
+                       SÓLO es admisible con la lectura presente (= 0) MÁS procedencia \
+                       citada (`zero_attested`, espejo de funding.rs:154-158); sin esa \
+                       acreditación, 0.0 sería 'financiación flash gratuita'",
+        monetary: false,
+        owner: Owner::ThisModule,
+    },
+    FeatureContract {
+        key: "max_capital",
+        unit: "unidades mínimas (raw) del token NUMERARIO de la ruta (token0): la \
+               familia de `b[0]` en op_19_simplex.rs:184, idéntica a la de \
+               `b[1+j] = liquidity_reserves[j].0` (op_19:188)",
+        source: "cupo de capital CONFIGURADO por el operador \
+                 (`trading_config.capital_usd`) convertido con la escala REAL del \
+                 numerario: `capital_usd / precio_usd × 10^decimales`, con precio y \
+                 `decimals()` leídos del token. Conversión, no estimación",
+        window: "la revisión vigente de `trading_config` y el snapshot de precio de la \
+                 ruta; ambas magnitudes deben ser del mismo tick",
+        absent_means: "sin capital configurado, o sin precio/decimales del numerario, \
+                       la conversión no existe y la clave NO se inserta. Nunca 1.0: el \
+                       default actual fabrica `sum(x) ≤ 1` — UNO de la unidad mínima \
+                       del token0 (≈1 wei), no un dólar, y con ello el solver elige \
+                       asignaciones que ningún cupo autorizó",
+        monetary: true,
+        owner: Owner::ThisModule,
+    },
+    FeatureContract {
+        key: "break_even_target",
+        unit: "unidades mínimas (raw) del token NUMERARIO de la ruta (token0) — \
+               unidad DECLARADA por el consumidor: `[token0 numerary]` en \
+               op_21_newton.rs:123, la misma familia que `max_capital`",
+        source: "objetivo de beneficio neto CONFIGURADO por el operador \
+                 (`trading_config.min_profit_usd`) convertido con la escala real del \
+                 numerario (`/ precio_usd × 10^decimales`). El slot NO admite un \
+                 default: `unwrap_or(0.0)` equivale a 'el objetivo es el break-even \
+                 puro' y por tanto hace desaparecer el objetivo que el operador fijó",
+        window: "la revisión vigente de `trading_config` y el snapshot de precio de la \
+                 ruta; ambas magnitudes deben ser del mismo tick",
+        absent_means: "sin objetivo configurado, o sin precio/decimales del numerario, \
+                       la clave NO se inserta: `f(0) = −(gas + target)` pierde su \
+                       término y op_21 devuelve `root_at_origin` (op_21:154) en vez de \
+                       un tamaño de break-even calculado con un objetivo inventado",
+        monetary: true,
+        owner: Owner::ThisModule,
+    },
     // ── Already produced elsewhere: reimplementing would be duplication ────
     FeatureContract {
         key: "parity_deviation",
@@ -187,7 +287,22 @@ pub const CONTRACTS: &[FeatureContract] = &[
 ];
 
 /// The keys this module is the authoritative producer of.
-pub const OWNED_KEYS: &[&str] = &["volatility", "oracle_price", "onchain_price"];
+///
+/// Three from F2 (`volatility`, `oracle_price`, `onchain_price`) and the five
+/// that F7 added once their READERS were measured
+/// (`cost_inputs.rs` documents each reader's unit). The other 16 `ABSENT` keys
+/// of the census are deliberately NOT here: no production line reads them, so
+/// producing them would be apparent coverage (see the F7 report).
+pub const OWNED_KEYS: &[&str] = &[
+    "volatility",
+    "oracle_price",
+    "onchain_price",
+    "pool_fee",
+    "fee_bps",
+    "flash_premium",
+    "max_capital",
+    "break_even_target",
+];
 
 /// Look up the contract of one key.
 pub fn contract_for(key: &str) -> Option<&'static FeatureContract> {

@@ -517,7 +517,17 @@ fn already_produced_keys_are_never_emitted_here() {
 
 #[test]
 fn every_owned_key_has_a_complete_contract() {
-    assert_eq!(OWNED_KEYS.len(), 3, "exactly the three unwritten keys");
+    // F2 escribio tres productores (`volatility`, `oracle_price`,
+    // `onchain_price`). F7 anadio los CINCO que el censo declaraba ABSENT y que
+    // tienen lector real (`pool_fee`, `fee_bps`, `flash_premium`,
+    // `max_capital`, `break_even_target`) — el porque de cada uno y la unidad
+    // que su lector exige estan medidos en `cost_inputs.rs`. Las 16 claves
+    // ABSENT restantes NO se producen: nadie las lee.
+    assert_eq!(
+        OWNED_KEYS.len(),
+        8,
+        "tres de F2 + los cinco del censo con lector real (F7)"
+    );
 
     for key in OWNED_KEYS {
         let c = contract_for(key).unwrap_or_else(|| panic!("no contract for `{key}`"));

@@ -64,21 +64,26 @@ $Manifest = @(
        note='clave via const ORACLE_PRICE_KEY; ancla Chainlink del PriceBus' }
     @{ key='onchain_price'; state='PRODUCED_PENDING_WIRE'; producer='backend/searcher-rs/src/native_operator_adapter/market_features/mod.rs:171';
        note='clave via const ONCHAIN_PRICE_KEY; par atomico con oracle_price' }
-    @{ key='pool_fee'; state='ABSENT'; producer=''; note='op_15/op_21/op_26/op_32 la leen; sin productor' }
-    @{ key='flash_premium'; state='ABSENT'; producer=''; note='op_26 la lee' }
+    @{ key='pool_fee'; state='PRODUCED_PENDING_WIRE'; producer='backend/searcher-rs/src/native_operator_adapter/market_features/mod.rs:223';
+       note='F7: par REAL (fee_units, fee_denominator) del edge — la MISMA lectura que snapshot_services.rs:345 ya consume; cableado pendiente (zona caliente)' }
+    @{ key='flash_premium'; state='PRODUCED_PENDING_WIRE'; producer='backend/searcher-rs/src/native_operator_adapter/market_features/mod.rs:228';
+       note='F7: lectura ON-CHAIN del proveedor (Pool.FLASHLOAN_PREMIUM_TOTAL()); si falta, la clave se OMITE y se publica el requisito BLOCKED_EXTERNAL. Nunca 0.0 sin acreditacion' }
     @{ key='bayes_wins'; state='ABSENT'; producer=''; note='op_11 la lee' }
     @{ key='bayes_losses'; state='ABSENT'; producer=''; note='op_11 la lee' }
     @{ key='bayes_prior_alpha'; state='ABSENT'; producer=''; note='op_11 la lee' }
     @{ key='bayes_prior_beta'; state='ABSENT'; producer=''; note='op_11 la lee' }
-    @{ key='fee_bps'; state='ABSENT'; producer=''; note='op_15/op_21/op_32 la leen; solo hay inserts en tests (real_ops_tests.rs:438)' }
+    @{ key='fee_bps'; state='PRODUCED_PENDING_WIRE'; producer='backend/searcher-rs/src/native_operator_adapter/market_features/mod.rs:224';
+       note='F7: el MISMO par del fee en la unidad de op_15/op_21/op_32 (bps, denominador 10_000 de cost_producers::funding); par atomico con pool_fee' }
     @{ key='eth_price_usd'; state='ABSENT'; producer=''; note='canonical_strategy la lee para valorar el gas en USD; sin productor' }
-    @{ key='break_even_target'; state='ABSENT'; producer=''; note='op_21 la lee' }
+    @{ key='break_even_target'; state='PRODUCED_PENDING_WIRE'; producer='backend/searcher-rs/src/native_operator_adapter/market_features/mod.rs:236';
+       note='F7: min_profit_usd configurado -> unidades minimas del numerario ([token0 numerary], op_21:123)' }
     @{ key='token0_per_eth'; state='ABSENT'; producer=''; note='op_26 la lee para convertir unidades' }
     @{ key='gas_units'; state='ABSENT'; producer=''; note='op_15/op_21/op_26 la leen' }
     @{ key='decoherencia'; state='ABSENT'; producer=''; note='canonical_strategy la lee (penalizacion nunca dispara)' }
     @{ key='jit_decay_rate'; state='ABSENT'; producer=''; note='op_28 la lee' }
     @{ key='min_liquidity'; state='ABSENT'; producer=''; note='op_28 la lee' }
-    @{ key='max_capital'; state='ABSENT'; producer=''; note='op_19 la lee' }
+    @{ key='max_capital'; state='PRODUCED_PENDING_WIRE'; producer='backend/searcher-rs/src/native_operator_adapter/market_features/mod.rs:232';
+       note='F7: capital_usd configurado -> unidades minimas del numerario (misma familia que b[1+j]=liquidity_reserves[j].0, op_19:188)' }
     @{ key='mo_weight_yield'; state='ABSENT'; producer=''; note='op_32 la lee' }
     @{ key='mo_weight_risk'; state='ABSENT'; producer=''; note='op_32 la lee' }
     @{ key='mo_weight_latency'; state='ABSENT'; producer=''; note='op_32 la lee' }
