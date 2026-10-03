@@ -85,7 +85,7 @@ fn run(state: &MarketState, ids: &[u8]) -> Value {
     .expect("evaluate_declared debe admitir el contexto de test")
 }
 
-fn receipt<'a>(out: &'a Value, id: u8) -> &'a Value {
+fn receipt(out: &Value, id: u8) -> &Value {
     &out["operators"][id.to_string()]
 }
 
