@@ -693,3 +693,159 @@ mod fabrication_ratchet {
         );
     }
 }
+
+/// ARSE-264-01 (`t3`) — frontera del catálogo de operadores: 31 vs 32.
+///
+/// En este proyecto los dos números son ciertos en EJES DISTINTOS y ambos deben
+/// seguir siéndolo:
+///
+///   * RUNTIME — [`OPERATOR_COUNT`] = 32: el registry compila, registra y despacha
+///     IDs 1..=32 (op_32 = NSGA-II). Los tests de dispatch 1..=32 ya lo cubren.
+///   * CATÁLOGO — [`SOURCE_OPERATOR_COUNT`] = 31: la Master Matrix 264 registros
+///     (`cartridges/strategy_mapping.json`) y el puente de cartuchos
+///     (`searcher-rs::native_operator_adapter`) sólo referencian 1..=31. op_32
+///     queda DELIBERADAMENTE DESCONECTADO de los cartuchos.
+///
+/// Este módulo convierte esa decisión escrita (ver el doc-comment de
+/// `SOURCE_OPERATOR_COUNT`) en un invariante ejecutable: si alguien cablea op_32
+/// "para que los números coincidan" o pierde un operador del catálogo, el contrato
+/// falla acá — antes de tocar la matriz de datos, que es del operador y no se
+/// ajusta por conveniencia.
+#[cfg(test)]
+mod source_catalog_boundary {
+    use crate::operators::{
+        MarketState, OperatorRegistry, TopologicalOperator, OPERATOR_COUNT, SOURCE_OPERATOR_COUNT,
+    };
+    use std::collections::HashMap;
+
+    /// Clave canónica de par (mismo formato que FEATURES-01b): irrelevante para
+    /// esta frontera, sólo debe respetar `pair_keys.len() == price_matrix.len()`.
+    const PAR: &str =
+        "0xaaaa0000000000000000000000000000000000aa|0xbbbb0000000000000000000000000000000000bb";
+
+    fn state(features: HashMap<String, f64>) -> MarketState {
+        MarketState {
+            price_matrix: vec![vec![1.01]],
+            pair_keys: vec![PAR.to_string()],
+            liquidity_reserves: vec![(1_000_000.0, 1_010_000.0)],
+            gas_price_gwei: 20.0,
+            block_timestamp: 1_700_000_000,
+            block_number: 18_000_000,
+            features,
+        }
+    }
+
+    /// El registry materializa EXACTAMENTE `OPERATOR_COUNT` operadores, con IDs
+    /// contiguos 1..=32 y ninguno por encima del declarado.
+    #[test]
+    fn runtime_registry_is_exactly_operator_count() {
+        let registry = OperatorRegistry::new();
+        assert_eq!(
+            registry.all().len(),
+            OPERATOR_COUNT as usize,
+            "el registry debe materializar exactamente OPERATOR_COUNT operadores"
+        );
+        for id in 1..=OPERATOR_COUNT {
+            let op: &dyn TopologicalOperator = registry.get(id).unwrap_or_else(|| {
+                panic!("id {id} está dentro de OPERATOR_COUNT pero falta del registry")
+            });
+            assert_eq!(
+                op.id(),
+                id,
+                "el operador registrado bajo {id} se identifica como {}",
+                op.id()
+            );
+        }
+        assert!(
+            registry.get(OPERATOR_COUNT + 1).is_none(),
+            "no puede existir un ID por encima del declarado"
+        );
+    }
+
+    /// La aritmética declarada: 32 = 31 + 1. Todo el rango del catálogo existe en
+    /// runtime y el ÚNICO ID fuera del catálogo es op_32.
+    #[test]
+    fn source_catalog_is_31_and_op_32_is_the_single_extra_id() {
+        assert_eq!(SOURCE_OPERATOR_COUNT, 31, "el catálogo fuente es 31");
+        assert_eq!(
+            OPERATOR_COUNT,
+            SOURCE_OPERATOR_COUNT + 1,
+            "la aritmética declarada es 32 = 31 + 1 (31 del catálogo + op_32): \
+             cualquier otra diferencia es drift, no una decisión"
+        );
+        let registry = OperatorRegistry::new();
+        for id in 1..=SOURCE_OPERATOR_COUNT {
+            assert!(
+                registry.get(id).is_some(),
+                "op_{id} pertenece al catálogo y debe existir en runtime"
+            );
+        }
+        let extra: Vec<u8> = registry
+            .all()
+            .into_iter()
+            .map(|op| op.id())
+            .filter(|id| *id > SOURCE_OPERATOR_COUNT)
+            .collect();
+        assert_eq!(
+            extra,
+            vec![OPERATOR_COUNT],
+            "op_32 debe ser el único ID fuera del catálogo de 31"
+        );
+    }
+
+    /// La RAZÓN de la desconexión, medida — no sólo el número: op_32 es el único
+    /// operador multi-objetivo del registry y su salida es un FRENTE (conjunto de
+    /// candidatos no dominados + los ÍNDICES de los supervivientes), no la métrica
+    /// de una estrategia. Por eso no es ponderable contra los 31 operadores
+    /// escalares/vectoriales del puente de cartuchos: cablearlo no agregaría señal,
+    /// agregaría una categoría distinta al contrato de receipts.
+    #[test]
+    fn op_32_is_the_only_multiobjective_operator_and_returns_a_front() {
+        let registry = OperatorRegistry::new();
+        let multi: Vec<u8> = registry
+            .all()
+            .into_iter()
+            .filter(|op| op.category() == "multiobjective_optimization")
+            .map(|op| op.id())
+            .collect();
+        assert_eq!(
+            multi,
+            vec![OPERATOR_COUNT],
+            "sólo op_32 declara la categoría multi-objetivo"
+        );
+
+        let mut features = HashMap::new();
+        features.insert("nsga2.count".to_string(), 3.0);
+        features.insert("nsga2.population_size".to_string(), 2.0);
+        // Candidatos {0,1} no dominados entre sí; {2} dominado por ambos.
+        for (i, (profit, risk, latency)) in
+            [(10.0, 5.0, 100.0), (12.0, 4.0, 120.0), (5.0, 9.0, 150.0)]
+                .into_iter()
+                .enumerate()
+        {
+            features.insert(format!("nsga2.{i}.net_profit_usd"), profit);
+            features.insert(format!("nsga2.{i}.risk_cvar_usd"), risk);
+            features.insert(format!("nsga2.{i}.latency_ms"), latency);
+        }
+        let out = registry
+            .dispatch(OPERATOR_COUNT, &state(features))
+            .expect("op_32 despacha con objetivos declarados");
+        // Escalar = cardinalidad del frente; vector = ÍNDICES de los supervivientes
+        // (no una métrica); matriz = el frente. Ninguno de los tres es "el valor de
+        // la estrategia" que un receipt ponderable necesita.
+        assert_eq!(
+            out.scalar_value,
+            Some(2.0),
+            "el frente de {0,1} tiene cardinalidad 2 (el candidato 2 está dominado)"
+        );
+        assert_eq!(
+            out.vector_result,
+            Some(vec![0.0, 1.0]),
+            "el vector de op_32 son los ÍNDICES de los supervivientes, no una métrica"
+        );
+        assert!(
+            out.matrix_result.is_some(),
+            "el frente completo viaja en matrix_result"
+        );
+    }
+}
