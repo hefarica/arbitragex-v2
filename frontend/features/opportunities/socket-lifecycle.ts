@@ -24,6 +24,16 @@ export interface OpportunitySocketOptions {
   onStatus: (status: WsStatus) => void;
   onOpportunity: (opp: Opportunity) => void;
   /**
+   * STREAM-SEQ-01 (§11.4): the ORDERED leg of the same feed. The producer
+   * publishes every row twice on the `opportunities` room — the raw
+   * `new_opportunity` (unchanged contract) and an
+   * `opportunity_stream_event` envelope carrying `seq` / `strategy_key` /
+   * `plan_key` / `progress`. Optional so every existing consumer of this factory
+   * keeps compiling and behaving identically; a caller that omits it simply
+   * keeps the arrival-order path (and the frontend's own clock fallback).
+   */
+  onStreamEvent?: (event: unknown) => void;
+  /**
    * FRONT-04 fix (2026-09-24): the original C4 comment claimed the backend
    * `setupWebSocketGateway` "rejects every handshake without an admin token"
    * — that was FALSE. The gateway is PUBLIC by design (websocket.ts:391-393
@@ -52,7 +62,7 @@ const CONNECT_OPTS = { reconnectionAttempts: 5, timeout: 2000 } as const;
 export function createOpportunitySocket(
   opts: OpportunitySocketOptions,
 ): OpportunitySocketHandle {
-  const { url, ioFactory, onStatus, onOpportunity, authToken } = opts;
+  const { url, ioFactory, onStatus, onOpportunity, onStreamEvent, authToken } = opts;
 
   // C4: assemble the auth payload the backend `extractHandshakeToken` expects.
   // Use ALL three transport channels for compatibility (auth + query + header).
@@ -76,11 +86,16 @@ export function createOpportunitySocket(
   const onDisconnect = () => onStatus("STALE");
   const onConnectError = () => onStatus("STALE");
   const onNewOpportunity = (opp: unknown) => onOpportunity(opp as Opportunity);
+  // STREAM-SEQ-01: the ordered leg. Registered ONLY when the caller asked for
+  // it, so a consumer on the raw path observes exactly the same socket it
+  // always did (no new listener, no new teardown obligation).
+  const onStream = (event: unknown) => onStreamEvent?.(event);
 
   socket.on("connect", onConnect);
   socket.on("disconnect", onDisconnect);
   socket.on("connect_error", onConnectError);
   socket.on("new_opportunity", onNewOpportunity);
+  if (onStreamEvent) socket.on("opportunity_stream_event", onStream);
 
   return {
     dispose: () => {
@@ -90,6 +105,7 @@ export function createOpportunitySocket(
       socket.off("disconnect", onDisconnect);
       socket.off("connect_error", onConnectError);
       socket.off("new_opportunity", onNewOpportunity);
+      if (onStreamEvent) socket.off("opportunity_stream_event", onStream);
       socket.disconnect();
     },
   };

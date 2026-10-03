@@ -53,15 +53,44 @@ describe("WO-10 broadcastOpportunity E2E observation", () => {
         const { io, emit } = fakeIo();
         const opp = { id: "abc", detected_at: new Date().toISOString() };
         broadcastOpportunity(io, opp);
-        expect(emit).toHaveBeenCalledTimes(1);
+        // STREAM-SEQ-01 (§11.4): the raw leg is asserted BY NAME, not by the
+        // total call count. `broadcastOpportunity` now also publishes the SAME
+        // row on the ordered `opportunity_stream_event` leg, so "called once"
+        // stopped being a way to say "the raw contract is untouched" — and a
+        // count-based assertion would have to be deleted, not corrected, the
+        // next time the room gains a leg. The contract being pinned is the
+        // payload passthrough of `new_opportunity`, which is asserted exactly.
         expect(emit).toHaveBeenCalledWith("new_opportunity", opp);
+        const rawCalls = emit.mock.calls.filter(([event]) => event === "new_opportunity");
+        expect(rawCalls).toHaveLength(1);
+    });
+
+    it("§11.4: also publishes the SAME row on the ordered envelope leg", () => {
+        const { io, emit } = fakeIo();
+        const opp = { id: "abc", detected_at: new Date().toISOString() };
+        broadcastOpportunity(io, opp);
+        const streamCalls = emit.mock.calls.filter(
+            ([event]) => event === "opportunity_stream_event",
+        );
+        expect(streamCalls).toHaveLength(1);
+        const envelope = streamCalls[0]![1] as {
+            schema_version: number;
+            seq: number;
+            payload: unknown;
+        };
+        expect(envelope.schema_version).toBe(2);
+        expect(envelope.seq).toBeGreaterThan(0);
+        // The envelope stamps identity+order; it never substitutes the row.
+        expect(envelope.payload).toBe(opp);
     });
 
     it("does not throw and still broadcasts when detected_at is absent (R8 skip, not fabricate)", () => {
         const { io, emit } = fakeIo();
         expect(() => broadcastOpportunity(io, { id: "abc" })).not.toThrow();
-        expect(emit).toHaveBeenCalledTimes(1);
         expect(emit).toHaveBeenCalledWith("new_opportunity", { id: "abc" });
+        expect(
+            emit.mock.calls.filter(([event]) => event === "new_opportunity"),
+        ).toHaveLength(1);
     });
 
     it("does not throw on unparseable detected_at", () => {
@@ -74,7 +103,11 @@ describe("WO-10 broadcastOpportunity E2E observation", () => {
     it("does not throw on a null payload object", () => {
         const { io, emit } = fakeIo();
         expect(() => broadcastOpportunity(io, null)).not.toThrow();
-        expect(emit).toHaveBeenCalledTimes(1);
         expect(emit).toHaveBeenCalledWith("new_opportunity", null);
+        // A null row has NO identity to stamp: the ordered leg is not emitted at
+        // all rather than carrying a fabricated key (R8).
+        expect(
+            emit.mock.calls.filter(([event]) => event === "opportunity_stream_event"),
+        ).toHaveLength(0);
     });
 });

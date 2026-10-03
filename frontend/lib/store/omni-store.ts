@@ -26,6 +26,17 @@ import { devtools } from "zustand/middleware";
 import type { Chain, DEX, Pool } from "@/lib/registries/types";
 import type { OmniOpportunity } from "./types";
 import { routeGroupKeyOf } from "./route-key";
+// STREAM-SEQ-01 (§11.4/§11.5): the sequencing contract + the visible search
+// state. The store is where an OLD event must be stopped from overwriting a
+// NEW one, so the decision lives here rather than in a component.
+import { decideUpsert } from "./stream-contract";
+import type { StreamPublisherProgress } from "./stream-contract";
+import {
+  EMPTY_STRATEGY_ENTRY,
+  recordObservation,
+  type StreamLedger,
+  type StrategyStreamEntry,
+} from "./search-state";
 import type { WalletRow } from "@/lib/api/wallets";
 import { getApiBaseUrl } from "@/lib/api-client";
 import {
@@ -145,6 +156,33 @@ interface OpportunitySlice {
   clearOpportunities: () => void;
   /** Update WS status (called by socket lifecycle) */
   setWsStatus: (status: WsStatus) => void;
+  /**
+   * STREAM-SEQ-01 (§11.3/§11.4): per-strategy ledger of what the stream actually
+   * did — applications, idempotent replays, REJECTED stale events — plus the
+   * last accepted improvement and the producer's own progress declaration.
+   * Read-only projection for the card's search-state panel; written ONLY by the
+   * accept paths below (never by a component).
+   */
+  streamLedger: StreamLedger;
+  /** Tests/ops seam: forget every strategy's ledger (e.g. a fresh session). */
+  clearStreamLedger: () => void;
+  /**
+   * STREAM-SEQ-01 (§11.3 "snapshot, antigüedad"): ms epoch at which the last
+   * source-of-truth snapshot envelope was ACCEPTED. null = never received →
+   * the card's snapshot-age cell is ABSENT with a reason, never 0 (R10).
+   */
+  snapshotReceivedAt: number | null;
+  /** Stamp the receive time of an accepted snapshot (caller-supplied clock). */
+  markSnapshotReceived: (atMs: number) => void;
+  /**
+   * STREAM-SEQ-01 (§11.3): store the PRODUCER's own progress declaration for a
+   * strategy. Kept separate from the accept paths so a census the client
+   * observed can never be written into the producer's slot (scope confusion is
+   * exactly what E2E-COMPUTE GUARD forbids). One batched write per flush.
+   */
+  setStrategyPublishers: (
+    entries: ReadonlyArray<readonly [string, StreamPublisherProgress]>,
+  ) => void;
 }
 
 // =============================================================================
@@ -486,6 +524,20 @@ function storeFactory(
       windowTotal: null, // AUDIT-CARDS-MINOR (§2) — absent until first snapshot (R8)
       wsStatus: "DISCONNECTED",
       lastUpdate: null,
+      streamLedger: new Map<string, StrategyStreamEntry>(),
+      clearStreamLedger: () => set({ streamLedger: new Map<string, StrategyStreamEntry>() }),
+      snapshotReceivedAt: null,
+      markSnapshotReceived: (atMs: number) => set({ snapshotReceivedAt: atMs }),
+      setStrategyPublishers: (entries) =>
+        set((state) => {
+          if (entries.length === 0) return state;
+          const next = new Map(state.streamLedger);
+          for (const [key, progress] of entries) {
+            const prev = next.get(key) ?? EMPTY_STRATEGY_ENTRY;
+            next.set(key, { ...prev, publisher: progress });
+          }
+          return { streamLedger: next };
+        }),
 
       connectStream: () => {
         set({ wsStatus: "CONNECTING" });
@@ -515,13 +567,18 @@ function storeFactory(
           if (idx !== -1) {
             if (state.opportunities[idx] === opp) return state;
             const prev = state.opportunities[idx]!;
+            // STREAM-SEQ-01 (§11.4): an event OLDER than the observation the card
+            // already holds may not overwrite it. The verdict is recorded in the
+            // ledger so the rejection is visible, never a silent discard.
+            const decision = decideUpsert(prev, opp);
+            const nextLedger = recordObservation(state.streamLedger, opp, decision.outcome);
+            if (!decision.apply) {
+              return { streamLedger: nextLedger };
+            }
             // CARDS-DEDUP-HOPS: a same-id row UPDATE is not a new detection —
             // keep the card's rolled vigency aggregates when the incoming row
             // doesn't carry them (single WS rows never do, R8).
             const next = state.opportunities.slice();
-            // CARDS-DEDUP-HOPS: a same-id row UPDATE is not a new detection —
-            // keep the card's rolled vigency aggregates when the incoming row
-            // doesn't carry them (single WS rows never do, R8).
             // ENRICH-PRESERVE-01 (adversarial-review fix): route it through the
             // SAME preserve path as re-detections — a same-id raw WS update must
             // not wipe token metadata, live prices or the SIM ladder either
@@ -529,6 +586,7 @@ function storeFactory(
             next[idx] = mergeRedetection(prev, opp, 0);
             return {
               opportunities: next,
+              streamLedger: nextLedger,
               lastUpdate: new Date().toISOString(),
             };
           }
@@ -544,15 +602,24 @@ function storeFactory(
           );
           if (gIdx !== -1) {
             const prev = state.opportunities[gIdx]!;
+            // STREAM-SEQ-01: same gate across ids — a delayed re-detection of the
+            // same route must not replace newer economics with older ones.
+            const decision = decideUpsert(prev, opp);
+            const nextLedger = recordObservation(state.streamLedger, opp, decision.outcome);
+            if (!decision.apply) {
+              return { streamLedger: nextLedger };
+            }
             const next = state.opportunities.slice();
             next[gIdx] = mergeRedetection(prev, opp, 1);
             return {
               opportunities: next,
+              streamLedger: nextLedger,
               lastUpdate: new Date().toISOString(),
             };
           }
           return {
             opportunities: [opp, ...state.opportunities].slice(0, MAX_OPPORTUNITIES),
+            streamLedger: recordObservation(state.streamLedger, opp, "accepted_new"),
             lastUpdate: new Date().toISOString(),
           };
         }),
@@ -602,6 +669,10 @@ function storeFactory(
           }
           const result: OmniOpportunity[] = [];
           const emitted = new Set<string>();
+          // STREAM-SEQ-01 (§11.4): this batch runs through the SAME sequencing
+          // contract as the per-row path, so a snapshot/WS batch cannot smuggle
+          // an older observation past the gate.
+          let ledger: StreamLedger = state.streamLedger;
           // Batch groups first (prepend, newest at top, first-appearance order).
           for (const [key, rows] of batchBy) {
             // Economics row: a row carrying server aggregates is SSOT; among
@@ -630,12 +701,19 @@ function storeFactory(
             }
             const idx = stateIdx.get(key);
             if (idx != null) {
-              result.push(mergeRedetection(state.opportunities[idx]!, econ, rows.length));
+              const prevRow = state.opportunities[idx]!;
+              const decision = decideUpsert(prevRow, econ);
+              ledger = recordObservation(ledger, econ, decision.outcome);
+              // An OLDER observation keeps the row already held (and its
+              // position): the inventory is never lost, the stale figure never
+              // wins. The rejection rides the ledger for the diagnostics panel.
+              result.push(decision.apply ? mergeRedetection(prevRow, econ, rows.length) : prevRow);
             } else if (
               econ.first_seen_at != null ||
               econ.confirmations != null ||
               rows.length === 1
             ) {
+              ledger = recordObservation(ledger, econ, "accepted_new");
               result.push(econ);
             } else {
               // Pure-WS batch group with re-detections: roll the aggregates
@@ -646,6 +724,7 @@ function storeFactory(
                 first = earlierIso(first, r.detected_at);
                 last = laterIso(last, r.detected_at);
               }
+              ledger = recordObservation(ledger, econ, "accepted_new");
               result.push({
                 ...econ,
                 first_seen_at: first,
@@ -665,6 +744,7 @@ function storeFactory(
           }
           return {
             opportunities: result.slice(0, MAX_OPPORTUNITIES),
+            streamLedger: ledger,
             lastUpdate: new Date().toISOString(),
           };
         }),
@@ -800,3 +880,17 @@ export const useQuoteAnchorUpdatedAt = () => useOmniStore((state) => state.quote
 // FE-MASTER realtime selectors (FE-0008 · §33) — FE-0009's posture bar.
 export const useRealtimeChannels = () => useOmniStore((state) => state.channels);
 export const useWsConnected = () => useOmniStore((state) => state.wsConnected);
+
+// STREAM-SEQ-01 (§11.3/§11.4) — the per-strategy sequencing ledger.
+export const useStreamLedger = () => useOmniStore((state) => state.streamLedger);
+export const useSnapshotReceivedAt = () => useOmniStore((state) => state.snapshotReceivedAt);
+
+/**
+ * Selector for ONE strategy's ledger entry. Returns the shared frozen
+ * `EMPTY_STRATEGY_ENTRY` when the strategy has no entry yet, so the selector's
+ * result is referentially stable and cannot cause a render loop.
+ */
+export const useStrategyStreamEntry = (strategyKey: string): StrategyStreamEntry =>
+  useOmniStore(
+    (state) => state.streamLedger.get(strategyKey) ?? (EMPTY_STRATEGY_ENTRY as StrategyStreamEntry),
+  );
