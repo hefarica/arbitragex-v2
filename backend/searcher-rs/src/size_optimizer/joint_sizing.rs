@@ -265,8 +265,12 @@ impl SignedAmount {
     }
 
     /// Signed USD value. `None` when the amount leaves `Decimal`'s exact range.
+    ///
+    /// Takes `self` by value: the type is `Copy`, so a `to_*` conversion that
+    /// borrows is `clippy::wrong_self_convention` under the workspace's
+    /// `-D warnings`, and the copy is free.
     pub fn to_signed_usd(
-        &self,
+        self,
         denomination: TokenDenomination,
         price_usd: Decimal,
     ) -> Option<Decimal> {
