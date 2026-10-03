@@ -894,11 +894,49 @@ impl AgentServices for SnapshotServices {
         ctx: &Value,
         spec: &Value,
         c: &Value,
-        _names: &[String],
+        names: &[String],
     ) -> Result<Vec<RequirementReceipt>, String> {
         self.check(ctx, spec)?;
         self.check_candidate(spec, c)?;
-        Ok(self.support(ctx, spec, c)?.constraints)
+        let support = self.support(ctx, spec, c)?;
+        // RECEIPT-COVERAGE-01 (2026-10-03): el catálogo declara 93 nombres
+        // de restricción distintos; el soporte derivado emitía 6 fijos y el
+        // bridge reportaba missing_or_duplicate para TODA familia con
+        // requisitos propios (937 outcomes medidos). Ahora se emite
+        // EXACTAMENTE UN recibo por cada nombre requerido: el primero que
+        // exista en el soporte se conserva (su verificador real); los que no
+        // existan se añaden con veredicto honesto según su naturaleza.
+        // names vacío (tests/compat) devuelve todo el soporte como antes.
+        if names.is_empty() {
+            return Ok(support.constraints);
+        }
+        let mut out: Vec<RequirementReceipt> = Vec::with_capacity(names.len());
+        let mut seen = std::collections::BTreeSet::new();
+        for name in names {
+            if !seen.insert(name.clone()) {
+                continue; // el bridge exige exactamente uno: no duplicar
+            }
+            if let Some(existing) = support.constraints.iter().find(|r| &r.name == name) {
+                out.push(existing.clone());
+            } else {
+                // Sin verificador en esta capa para ESTE nombre: recibo
+                // honesto con razón específica — no se fabrica PASS, pero
+                // TAMPOCO se deja al bridge reportando "missing".
+                out.push(RequirementReceipt {
+                    name: name.clone(),
+                    status: "FAIL".into(),
+                    reason: Some(format!("no_verifier_at_discovery_layer_for:{name}")),
+                    evidence_id: format!("coverage:{name}"),
+                    snapshot_id: self.data.snapshot_id.clone(),
+                    plan_hash: c
+                        .get("plan_hash")
+                        .and_then(|p| p.as_str())
+                        .unwrap_or_default()
+                        .to_string(),
+                });
+            }
+        }
+        Ok(out)
     }
     fn build_payload(&self, o: &Value, spec: &Value) -> Result<Value, String> {
         self.check(
