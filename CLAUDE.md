@@ -516,9 +516,32 @@ estabas en `main`.
 3. **Nunca asumas** que `git push origin main` empujÃ³ tu commit si no
    verificaste `git branch --show-current` primero.
 4. **Worktrees** (Â§16.2): para trabajo aislado sin tocar la working tree
-   compartida. Pero un worktree fresco tiene `target/` frÃ­o â†’ `cargo check`
-   falla por Windows AppControl (os error 4551); usa el Ã¡rbol principal con
-   `target/` caliente para compilar.
+   compartida. CORREGIDO 2026-09-29 (ver `docs/audits/E2E-AUDIT-2026-09-29.md`):
+   la version anterior de esta regla decia que un worktree fresco "tiene `target/`
+   frio" y que por eso `cargo check` fallaba, recomendando compilar en el arbol
+   principal. ESO ES FALSO y costo tiempo real. El bloqueo es **Smart App Control
+   en modo enforcement**, y su criterio es **firma + reputacion**, no la
+   temperatura del `target/`:
+   - El binario bloqueado es el `build-script-build.exe` que **cargo compila de
+     nuevo en cada build** — en un `target/` caliente o frio. Un `target/` caliente
+     evita recompilar, pero NO puede evitar que los build-scripts que si corren se
+     ejecuten.
+   - El arbol principal tambien falla: el `cargo check` que reprodujo `os error
+     4551` se corrio ahi, con su `target/` presente.
+   - Medido: los 64 worktrees de este repo **no tienen `target/`**, asi que la
+     premisa de partida ni siquiera se cumple.
+   - Prueba del criterio firma/reputacion: `rustfmt.exe` de la misma toolchain es
+     `NotSigned` y **ejecuta** (esta ampliamente distribuido: tiene prediccion);
+     un `build-script-build.exe` recien compilado es `NotSigned` **y sin
+     reputacion** y **se bloquea**. No es Mark-of-the-Web (sin `Zone.Identifier`).
+   - **NO** apagar Smart App Control: es irreversible sin reinstalar Windows, y no
+     hace falta.
+   **Via correcta: compilar y testear Rust dentro de WSL2** (no existe PE recien
+   compilado, asi que SAC nunca lo evalua). WSL2 corre en un kernel Linux, ajeno a
+   la politica de aplicaciones de Windows, y no modifica ninguna configuracion de
+   seguridad del host. Setup y comandos: `docs/development/WSL2-RUST.md`.
+   La disciplina de worktrees de los puntos 1-3 sigue vigente: lo que cambia es
+   DONDE se compila, no como se aisla el trabajo.
 
 <!-- END: concurrent-branch-discipline -->
 
