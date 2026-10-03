@@ -1102,11 +1102,8 @@ mod v3_tests {
 
     // ── V3-QUOTE-02: revert-payload classification ───────────────────────────
 
-    /// ABI `Error(string)` payload for `m`. Mirrors the compiler's encoding:
-    /// selector + [offset=32][len][padded utf8].
     // ── CATALOG-HYGIENE-01: pool-identity probes ─────────────────────────────
 
-    /// Big-endian 32-byte word from a u128 (ABI return payload shape).
     // ── QUOTE-TRUTH-ADMISSION-01: la evidencia de la cotización ──────────────
 
     /// EL CASO MEDIDO (AMPL/WETH, 2026-10-03): los metadatos son VÁLIDOS —
@@ -1172,6 +1169,7 @@ mod v3_tests {
         );
     }
 
+    /// Big-endian 32-byte word from a u128 (ABI return payload shape).
     fn word(v: u128) -> [u8; 32] {
         let mut w = [0u8; 32];
         U256::from(v).to_big_endian(&mut w);
@@ -1320,6 +1318,8 @@ mod v3_tests {
         );
     }
 
+    /// ABI `Error(string)` payload for `m`. Mirrors the compiler's encoding:
+    /// selector + [offset=32][len][padded utf8].
     fn abi_error_string(m: &str) -> Vec<u8> {
         let mut d = vec![0x08, 0xc3, 0x79, 0xa0];
         d.extend_from_slice(&[0u8; 32]); // offset placeholder

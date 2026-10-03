@@ -538,7 +538,7 @@ impl MulticallV3QuoteProvider {
                                 ))
                             }
                         };
-                        out.push((req.clone(), res.clone()));
+                        out.push((req.clone(), res.clone().map_err(|e| e.to_string())));
                         self.cache_put(*key, res);
                         self.inflight_clear(key);
                     }
@@ -559,7 +559,7 @@ impl MulticallV3QuoteProvider {
                         let res = Err(transport_error(format!(
                             "v3 quote batch rpc failover exhausted: {e}"
                         )));
-                        out.push((req.clone(), res.clone()));
+                        out.push((req.clone(), res.clone().map_err(|e| e.to_string())));
                         self.inflight_clear(key);
                     }
                 }
@@ -624,12 +624,12 @@ impl MulticallV3QuoteProvider {
             Ok(Ok(b)) => b,
             Ok(Err(e)) => {
                 quote_outcome_metric("admission_probe_error");
-                debug!(event = "v3_quote.admission_probe_rpc_err", error = %e);
+                tracing::debug!(event = "v3_quote.admission_probe_rpc_err", error = %e);
                 return Vec::new();
             }
             Err(_) => {
                 quote_outcome_metric("admission_probe_timeout");
-                debug!(event = "v3_quote.admission_probe_timeout");
+                tracing::debug!(event = "v3_quote.admission_probe_timeout");
                 return Vec::new();
             }
         };
@@ -638,7 +638,7 @@ impl MulticallV3QuoteProvider {
             Ok(r) => r,
             Err(e) => {
                 quote_outcome_metric("admission_probe_error");
-                debug!(event = "v3_quote.admission_probe_decode_err", error = %e);
+                tracing::debug!(event = "v3_quote.admission_probe_decode_err", error = %e);
                 return Vec::new();
             }
         };
