@@ -49,7 +49,7 @@
 //!   spine cascades to ConfigPriceOracle. NEVER fabricates a price.
 //! - Allowlist empty → worker logs and skips its tick (no input to fetch for).
 //!
-//! ## Token discovery
+//! ## Token discovery (PC2 — deterministic, route-graph complete)
 //!
 //! Fetches `(symbol, address)` tuples from two Redis sources:
 //!   1. `allowed_token_symbols` from `arbx:trading_config:<chain_id>` —
@@ -57,8 +57,25 @@
 //!   2. `arbx:tokens:<chain_id>:<address>` — every token the pool sync
 //!      worker has discovered (broad coverage).
 //!
-//! The intersection is bounded; if the cache balloons, the worker batches
-//! into chunks of `MAX_BATCH_SIZE` to stay under provider request limits.
+//! and one route-graph source:
+//!   3. `arbx:pool_index[:_v3]:<chain>:<sym0>:<sym1>` key names — the tokens
+//!      that are actually in a detected pool, i.e. the ones the graph can
+//!      route through and the cartridges therefore evaluate. Deduped against
+//!      the allowlist, **sorted ascending by symbol**.
+//!
+//! The two classes answer to different provider contracts, so they are bound
+//! differently:
+//!   - **Alchemy** (symbol-keyed, `MAX_BATCH_SIZE=5`): allowlist always fully
+//!     included, then a deterministic *rotating window* of the route graph up
+//!     to `MAX_PRICED_TOKENS` (<= 60 calls/tick, unchanged).
+//!   - **Coingecko** (by contract address, `MAX_COINGECKO_BATCH_SIZE=25`): the
+//!     allowlist leftovers first — capped at `budget - 1` whenever a route
+//!     graph exists — then a rotating window over the FULL route-graph set,
+//!     under one shared `MAX_COINGECKO_CALLS_PER_TICK` budget (<= 5 calls/tick).
+//!     This is what closes the coverage gap: the route graph
+//!     is swept completely every `ceil(len / window)` ticks instead of being
+//!     sampled by hash-set order, and the budget cannot be exceeded no matter
+//!     how many pools discovery enumerates.
 
 use crate::counters::counters;
 use crate::reserves::TokenMeta;
@@ -68,7 +85,7 @@ use serde::{Deserialize, Serialize};
 use shared_rs::price_oracle::redis_token_prices_key;
 use shared_rs::trading_config::{redis_key as trading_config_redis_key, TradingConfigState};
 use std::collections::HashMap;
-use std::sync::atomic::Ordering;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 use tokio::time::interval;
 use tracing::{debug, info, warn};
@@ -79,23 +96,50 @@ pub const DEFAULT_PERIOD_SECS: u64 = 30;
 /// single missed tick doesn't empty the cache (gives the worker one chance to
 /// recover before downstream `UnknownTokenPrice` rejections start firing).
 pub const CACHE_TTL_MULTIPLIER: u64 = 2;
-/// Provider request limit safety bound; chunk allowlist into this many
-/// tokens per HTTP call. Both Alchemy and Coingecko accept comfortably more
-/// but smaller batches recover faster from individual provider hiccups.
+/// Provider request limit safety bound for **Alchemy**; chunk its candidate
+/// list into this many tokens per HTTP call. Alchemy free tier rejects
+/// batches above ~10 addresses with 400 Bad Request (observed 2026-08-15), so
+/// this stays small — see `MAX_COINGECKO_BATCH_SIZE` for the Coingecko side,
+/// whose contract-address endpoint takes far more per request and must NOT
+/// inherit this Alchemy-driven limit.
 pub const MAX_BATCH_SIZE: usize = 5;
 /// Per-request HTTP timeout. Prices are best-effort; we never want a hung
 /// upstream to delay the next worker tick.
 pub const HTTP_TIMEOUT_SECS: u64 = 8;
-/// Hard cap on the total pricing universe per tick. Allowlist tokens are
-/// always included first; pool-resident tokens (recovered from
-/// `arbx:pool_index[:_v3]:<chain>:<sym0>:<sym1>` key names) fill the
-/// remainder up to this bound. Protects Alchemy (shared RPC key budget) and
-/// Coingecko (free-tier rate limit) from a blowout when pool discovery
-/// enumerates a long tail. At MAX_BATCH_SIZE=5 this is <= 60 Alchemy +
-/// <= 60 Coingecko batched calls per tick — Alchemy free tier rejects
-/// batches >~10 addresses with 400 Bad Request (observed 2026-08-15).
-/// Lower this if `price_worker.coingecko_failed` rises under sustained
-/// Alchemy outage; the allowlist always survives the cut.
+/// PC2 (PRICE-COVERAGE-02) — addresses per Coingecko request, decoupled from
+/// the Alchemy-driven `MAX_BATCH_SIZE`. `simple/token_price` accepts a
+/// comma-separated `contract_addresses` list; charging it 5 addresses per call
+/// is what turned a 300-token universe into 60 requests per tick, i.e. 120
+/// requests/min against a keyless public tier whose published band is 5–15
+/// requests/min — precisely the 429 the tier lives in (measured 2026-10-03:
+/// 16 of 17 consecutive ticks logged `price_worker.coingecko_failed` 429).
+/// 25 × 43 B ≈ 1.1 kB of query string: far below the public edge's request-line
+/// limit, while cutting the request count for the same coverage 5×.
+pub const MAX_COINGECKO_BATCH_SIZE: usize = 25;
+/// PC2 — hard ceiling of Coingecko requests per refresh tick. BOTH call sites
+/// (the allowlist/Chainlink/Alchemy leftovers and the pool-resident route-graph
+/// window) draw from this single budget, so the tier can never exceed it no
+/// matter how large the universe grows: 5 requests / 30 s = 10 requests/min,
+/// inside the keyless public band (5–15/min; 30/min with a free Demo key) and a
+/// 12× reduction from the 60 requests/tick the previous design targeted.
+pub const MAX_COINGECKO_CALLS_PER_TICK: usize = 5;
+/// PC2 — compile-time invariant: paying Alchemy's 5-address ceiling on Coingecko
+/// is what made a full sweep a rate-limit storm, so the by-address batch must
+/// stay strictly larger than `MAX_BATCH_SIZE`.
+const _: () = assert!(MAX_COINGECKO_BATCH_SIZE > MAX_BATCH_SIZE);
+/// Hard cap on the per-tick **Alchemy candidate list** (the symbol-keyed
+/// snapshot). Allowlist tokens are always included first; pool-resident tokens
+/// (recovered from `arbx:pool_index[:_v3]:<chain>:<sym0>:<sym1>` key names)
+/// fill the remainder up to this bound through a deterministic rotating window.
+/// Protects Alchemy's shared RPC-key budget: at `MAX_BATCH_SIZE=5` this is
+/// <= 60 Alchemy calls per tick — unchanged by PC2.
+///
+/// This cap does **not** bound the route graph any more. Coverage of the tokens
+/// carts actually evaluate comes from the deterministic Coingecko-by-address
+/// pass, which sweeps the FULL pool-resident set under its own budget
+/// (`MAX_COINGECKO_CALLS_PER_TICK`). Truncating this list no longer decides
+/// which pool tokens ever get a price — it only decides which of them are
+/// additionally offered to Alchemy.
 pub const MAX_PRICED_TOKENS: usize = 300;
 /// WO-PRICE-SOVEREIGN-01 f1 — per-provider exponential backoff base window
 /// (1s). Each consecutive backoff-worthy failure (429/5xx) doubles it.
@@ -285,12 +329,166 @@ struct AlchemyPriceQuote {
 
 // -------- Worker --------
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TokenRef {
     /// Canonical uppercase symbol used as the Redis hash field key.
     pub symbol: String,
     /// Lowercase 0x-prefixed address used by both upstreams.
     pub address_lower: String,
+}
+
+/// PC2 — the tick's pricing universe, split along the two provider contracts.
+///
+/// - `allowlist`: the operator's `allowed_token_symbols`, in the order the
+///   operator declared them, deduped and address-resolved. Never cut by any
+///   cap — the curated set is the highest-priority class.
+/// - `pool`: every symbol that appears in at least one detected pool
+///   (`arbx:pool_index[:_v3]:<chain>:*`) AND has an `arbx:tokens` identity —
+///   i.e. exactly the tokens the route graph can route through, which is what
+///   the cartridges evaluate. **Sorted ascending by symbol**, deduped against
+///   `allowlist`.
+///
+/// The sort is the determinism fix. The previous implementation collected these
+/// symbols into a `HashSet` and consumed them in hash-iteration order, so which
+/// of them survived `MAX_PRICED_TOKENS` was decided by a per-instance random
+/// seed and re-drawn every tick. A total order derived from data already in
+/// hand (the symbol) is stable across processes, restarts and SCAN order, and
+/// needs no extra Redis read.
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+struct PricingUniverse {
+    allowlist: Vec<TokenRef>,
+    pool: Vec<TokenRef>,
+}
+
+impl PricingUniverse {
+    fn is_empty(&self) -> bool {
+        self.allowlist.is_empty() && self.pool.is_empty()
+    }
+}
+
+/// PC2 — deterministic window over a sorted slice: `want` consecutive items
+/// starting at `cursor`, wrapping at the end. Pure: an identical
+/// `(items, cursor, want)` always yields an identical window, whatever the
+/// order the items were *inserted* in.
+///
+/// Rotation (rather than "take the first `want`") is what makes the budget
+/// honest. A fixed prefix would exclude the lexicographic tail forever — the
+/// same starvation defect as hash-order sampling, merely deterministic — while
+/// rotation reaches every item within `ceil(len / want)` windows. The caller
+/// advances `cursor` by the number of symbols it actually handed to a provider,
+/// so a full sweep of the route graph stays bounded even when a provider only
+/// serves part of a tick.
+fn rotating_window(items: &[TokenRef], cursor: usize, want: usize) -> Vec<TokenRef> {
+    if items.is_empty() || want == 0 {
+        return Vec::new();
+    }
+    let want = want.min(items.len());
+    let start = cursor % items.len();
+    let mut out = Vec::with_capacity(want);
+    for i in 0..want {
+        out.push(items[(start + i) % items.len()].clone());
+    }
+    out
+}
+
+/// PC2 — collect symbols into the single canonical order used by the pool side
+/// of the universe: UPPERCASE, deduped, ascending. Pure, so the same symbol set
+/// yields the same order regardless of the order it arrived in (Redis `SCAN`
+/// order is arbitrary and must not leak into selection).
+fn sorted_unique_symbols<I: IntoIterator<Item = String>>(symbols: I) -> Vec<String> {
+    symbols
+        .into_iter()
+        .filter(|s| !s.is_empty())
+        .collect::<std::collections::BTreeSet<String>>()
+        .into_iter()
+        .collect()
+}
+
+/// PC2 — record `symbol → address` deterministically.
+///
+/// A symbol can name several contracts (measured on production 2026-10-03:
+/// `FLUID` has 5 metas in `arbx:tokens:1:*`, `DMC`/`BTL`/`BAVAR`/`APPLE` 4
+/// each), and the previous `entry().or_insert()` kept whichever the SCAN order
+/// happened to yield first — a second, silent nondeterministic input into the
+/// universe (the same symbol could resolve to a different contract after a
+/// restart, and therefore be asked of the provider at a different address).
+/// Keeping the lexicographically smallest address makes the mapping a pure
+/// function of the meta set.
+fn record_symbol_addr(
+    sym_to_addr: &mut HashMap<String, String>,
+    symbol: &str,
+    address_lower: &str,
+) {
+    use std::collections::hash_map::Entry;
+    let upper = symbol.to_ascii_uppercase();
+    match sym_to_addr.entry(upper) {
+        Entry::Occupied(mut e) => {
+            if address_lower < e.get().as_str() {
+                e.insert(address_lower.to_string());
+            }
+        }
+        Entry::Vacant(e) => {
+            e.insert(address_lower.to_string());
+        }
+    }
+}
+
+/// PC2 — how many of the shared per-tick Coingecko calls the allowlist pass may
+/// use. The curated set keeps absolute priority over the leftovers the Alchemy
+/// snapshot did not price (21 unique symbols on `arbx:1`), but it may not
+/// consume the whole tier: when a route graph exists, one call is always held
+/// back so the sweep advances every tick. Starving the allowlist would break the
+/// "operator's set is always priced" invariant; starving the sweep is the exact
+/// defect this PR removes, so neither is allowed to win outright.
+fn allowlist_cg_call_budget(pool_len: usize) -> usize {
+    if pool_len == 0 {
+        MAX_COINGECKO_CALLS_PER_TICK
+    } else {
+        MAX_COINGECKO_CALLS_PER_TICK.saturating_sub(1)
+    }
+}
+
+/// PC2 — assemble the universe deterministically.
+///
+/// `pool_symbols` is expected UPPERCASE, deduped and sorted (see
+/// `scan_pool_resident_symbols`); `sym_to_addr` is only ever *looked up*, never
+/// iterated, so its internal layout cannot influence the result. Symbols with
+/// no `arbx:tokens` identity are dropped: an address we cannot name is not a
+/// token we may ask a provider about, and its honest absence stays an absence
+/// (R8 — no fabricated address, no invented price).
+fn build_universe(
+    allowlist: &[String],
+    sym_to_addr: &HashMap<String, String>,
+    pool_symbols: &[String],
+) -> PricingUniverse {
+    let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+    let mut universe = PricingUniverse::default();
+    for sym in allowlist {
+        let upper = sym.to_ascii_uppercase();
+        if !seen.insert(upper.clone()) {
+            continue;
+        }
+        if let Some(addr) = sym_to_addr.get(&upper) {
+            universe.allowlist.push(TokenRef {
+                symbol: upper,
+                address_lower: addr.clone(),
+            });
+        }
+    }
+    // `pool_symbols` is sorted, so the pushed order — and therefore the rotation
+    // stride, the wire order and the log — is fully reproducible.
+    for sym in pool_symbols {
+        if !seen.insert(sym.clone()) {
+            continue;
+        }
+        if let Some(addr) = sym_to_addr.get(sym) {
+            universe.pool.push(TokenRef {
+                symbol: sym.clone(),
+                address_lower: addr.clone(),
+            });
+        }
+    }
+    universe
 }
 
 /// Network identifier passed to Alchemy. Mainnet = "eth-mainnet". Other
@@ -500,6 +698,14 @@ pub struct PriceWorker {
     /// gate + record without taking `&mut self`.
     alchemy_backoff: std::sync::Mutex<ProviderBackoff>,
     coingecko_backoff: std::sync::Mutex<ProviderBackoff>,
+    /// PC2 — deterministic sweep cursors, in SYMBOL units, into
+    /// `PricingUniverse::pool`. Each tick advances a cursor by the number of
+    /// pool symbols actually handed to that provider, so route-graph coverage
+    /// advances monotonically (a full sweep every `ceil(len / window)` ticks)
+    /// instead of being re-sampled by hash order. Atomic for the same
+    /// one-task-per-chain reason as the breakers.
+    alchemy_cursor: AtomicU64,
+    coingecko_pool_cursor: AtomicU64,
 }
 
 /// Which provider a fetch went to — selects the breaker instance, the
@@ -530,6 +736,8 @@ impl PriceWorker {
             http,
             alchemy_backoff: std::sync::Mutex::new(ProviderBackoff::new()),
             coingecko_backoff: std::sync::Mutex::new(ProviderBackoff::new()),
+            alchemy_cursor: AtomicU64::new(0),
+            coingecko_pool_cursor: AtomicU64::new(0),
         })
     }
 
@@ -644,6 +852,11 @@ impl PriceWorker {
                         bus_fused_hits = stats.bus_fused_hits,
                         cache_misses = stats.cache_misses,
                         attempted = stats.attempted,
+                        // PC2 — route-graph coverage is observable: a full sweep
+                        // of `pool_resident` tokens takes
+                        // ceil(pool_resident / pool_cg_attempted) ticks.
+                        pool_resident = stats.pool_resident,
+                        pool_cg_attempted = stats.pool_cg_attempted,
                         elapsed_ms = stats.elapsed_ms,
                         "tick complete"
                     );
@@ -674,8 +887,8 @@ impl PriceWorker {
             prices.insert(sym, price);
         }
 
-        let tokens = self.discover_tokens(redis).await?;
-        if tokens.is_empty() {
+        let universe = self.discover_tokens(redis).await?;
+        if universe.is_empty() {
             // No allowlist tokens for the external APIs, but Chainlink prices (if
             // any) are still worth persisting so the cascade can serve them.
             if !prices.is_empty() {
@@ -695,16 +908,34 @@ impl PriceWorker {
             });
         }
 
+        // PC2 — the tick's Alchemy candidate list. Same bound as before
+        // (`MAX_PRICED_TOKENS`, `MAX_BATCH_SIZE=5` ⇒ <= 60 calls) but no longer
+        // hash-ordered: the operator allowlist is always fully included, and the
+        // pool-resident remainder is a deterministic rotating window, so every
+        // route-graph token is offered to Alchemy within `ceil(pool / remainder)`
+        // ticks instead of being re-sampled at random each tick.
+        let allow_n = universe.allowlist.len().min(MAX_PRICED_TOKENS);
+        let alchemy_budget = MAX_PRICED_TOKENS.saturating_sub(allow_n);
+        let alchemy_cursor = self.alchemy_cursor.load(Ordering::Relaxed) as usize;
+        let mut tokens: Vec<TokenRef> = universe.allowlist[..allow_n].to_vec();
+        tokens.extend(rotating_window(
+            &universe.pool,
+            alchemy_cursor,
+            alchemy_budget,
+        ));
+
         // Tier 1: Alchemy batch (fills only what Chainlink did NOT already price).
         // Circuit breaker (WO-PRICE-SOVEREIGN-01 f1): one 429/5xx opens an
         // exponential window; while it is open the loop breaks immediately —
         // a 158-token cache-miss tick must NOT become 158 Alchemy calls.
         let mut alchemy_hits = 0usize;
+        let mut alchemy_attempted = 0usize;
         if self.cfg.alchemy_api_key.is_some() {
             for chunk in tokens.chunks(MAX_BATCH_SIZE) {
                 if !self.gate_provider(PriceProvider::Alchemy, unix_now_ms()) {
                     break; // backoff active — skip early, no request, no retry.
                 }
+                alchemy_attempted += chunk.len();
                 match self.fetch_alchemy(chunk).await {
                     Ok(map) => {
                         self.record_provider_success(PriceProvider::Alchemy);
@@ -745,73 +976,100 @@ impl PriceWorker {
         counters()
             .price_alchemy_hits
             .fetch_add(alchemy_hits as u64, Ordering::Relaxed);
+        // PC2 — advance the Alchemy sweep by the symbols actually offered to it
+        // (a suppressed-backoff tick advances nothing, which is correct: no
+        // request was made, so nothing was covered). Modulo keeps the cursor
+        // inside the pool list even if the window covered all of it.
+        if !universe.pool.is_empty() {
+            let next = (alchemy_cursor + alchemy_attempted) % universe.pool.len();
+            self.alchemy_cursor.store(next as u64, Ordering::Relaxed);
+        }
 
-        // Tier 2: Coingecko fallback for anything Alchemy missed.
-        let missing: Vec<&TokenRef> = tokens
+        // Tier 2: Coingecko, by contract address, under ONE shared per-tick call
+        // budget (PC2). Two passes draw from the same budget, in priority order:
+        //
+        //   1. the operator allowlist's leftovers — the curated set is the
+        //      highest-priority class and may never be crowded out, but it also
+        //      may not eat the whole tier: one call is always reserved for pass 2
+        //      below whenever there is a route graph to sweep;
+        //   2. a deterministic ROTATING WINDOW over the FULL pool-resident
+        //      route-graph set, which `MAX_PRICED_TOKENS` does NOT bound.
+        //
+        // The capped snapshot's *pool* leftovers are deliberately NOT a third
+        // pass: they are a subset of the route-graph set that pass 2 sweeps in
+        // guaranteed order, so asking for them here would only burn the shared
+        // budget (and, with 295 unpriced snapshot tokens — the production shape —
+        // it would consume all 5 calls and starve the route graph entirely).
+        //
+        // Pass 2 is the coverage mechanism: it batches by contract address over
+        // the set the carts actually route through, so the tokens the graph can
+        // reach are swept completely every `ceil(pool / window)` ticks instead
+        // of being sampled by hash order. Provider behaviour is unchanged — both
+        // passes share the same breaker, counters and log events, and the budget
+        // means the tier can never exceed 5 requests per tick whatever the
+        // universe size.
+        let allow_calls_cap = allowlist_cg_call_budget(universe.pool.len());
+        let missing_allow: Vec<TokenRef> = universe
+            .allowlist
             .iter()
             .filter(|t| !prices.contains_key(&t.symbol))
+            .cloned()
             .collect();
         let mut coingecko_hits = 0usize;
-        if !missing.is_empty() {
-            for chunk in missing.chunks(MAX_BATCH_SIZE) {
-                // Circuit breaker (WO-PRICE-SOVEREIGN-01 f1, supersedes the
-                // fixed CG429-01 window): skip Coingecko entirely while the
-                // exponential backoff window is active — no request, no WARN.
-                // The missing tokens simply stay unpriced and cascade to
-                // ConfigPriceOracle downstream (R8).
+        let mut cg_calls = 0usize;
+        for chunk in missing_allow.chunks(MAX_COINGECKO_BATCH_SIZE) {
+            // Circuit breaker (WO-PRICE-SOVEREIGN-01 f1, supersedes the fixed
+            // CG429-01 window): skip Coingecko entirely while the exponential
+            // backoff window is active — no request, no WARN. The missing tokens
+            // simply stay unpriced and cascade to ConfigPriceOracle (R8).
+            if cg_calls >= allow_calls_cap
+                || !self.gate_provider(PriceProvider::Coingecko, unix_now_ms())
+            {
+                break;
+            }
+            cg_calls += 1;
+            coingecko_hits += self.coingecko_batch_into(chunk, &mut prices).await;
+        }
+
+        // Pass 2 — route-graph coverage, independent of the capped snapshot.
+        let mut pool_cg_attempted = 0usize;
+        if !universe.pool.is_empty() {
+            let cg_calls_left = MAX_COINGECKO_CALLS_PER_TICK.saturating_sub(cg_calls);
+            let pool_cursor = self.coingecko_pool_cursor.load(Ordering::Relaxed) as usize;
+            let window = rotating_window(
+                &universe.pool,
+                pool_cursor,
+                cg_calls_left * MAX_COINGECKO_BATCH_SIZE,
+            );
+            for chunk in window.chunks(MAX_COINGECKO_BATCH_SIZE) {
                 if !self.gate_provider(PriceProvider::Coingecko, unix_now_ms()) {
                     break;
                 }
-                let chunk_owned: Vec<TokenRef> = chunk.iter().map(|t| (*t).clone()).collect();
-                match self.fetch_coingecko(&chunk_owned).await {
-                    Ok(map) => {
-                        self.record_provider_success(PriceProvider::Coingecko);
-                        for (sym, price) in map {
-                            // Don't overwrite an existing Alchemy hit. Use Entry
-                            // API for clippy::map_entry compliance + clearer intent.
-                            if let std::collections::hash_map::Entry::Vacant(e) = prices.entry(sym)
-                            {
-                                e.insert(price);
-                                coingecko_hits += 1;
-                            }
-                        }
-                    }
-                    Err(e) => {
-                        let backoff_ms = self.record_provider_failure(
-                            PriceProvider::Coingecko,
-                            &e,
-                            unix_now_ms(),
-                        );
-                        counters()
-                            .price_worker_errors
-                            .fetch_add(1, Ordering::Relaxed);
-                        // INFO only when this failure actually opened/doubled a
-                        // window — ops sees the state once, not per tick.
-                        if let Some(retry_in_ms) = backoff_ms {
-                            info!(
-                                event = "price_worker.coingecko_backoff",
-                                chain_id = self.cfg.chain_id,
-                                provider = PriceProvider::Coingecko.as_str(),
-                                retry_in_ms,
-                                "Coingecko entering exponential backoff; affected tokens fall through to ConfigPriceOracle"
-                            );
-                        }
-                        warn!(
-                            event = "price_worker.coingecko_failed",
-                            chain_id = self.cfg.chain_id,
-                            chunk_size = chunk.len(),
-                            error = %e,
-                            "Coingecko batch failed; affected tokens will fall through to ConfigPriceOracle"
-                        );
-                    }
-                }
+                pool_cg_attempted += chunk.len();
+                coingecko_hits += self.coingecko_batch_into(chunk, &mut prices).await;
+            }
+            // Advance only by what was actually queried: a tick that served one
+            // chunk still moves the sweep one chunk forward, so a provider that
+            // answers slowly still reaches every route-graph token — the sweep
+            // can stretch, it cannot stall on a hash-ordered subset.
+            if pool_cg_attempted > 0 {
+                let next = (pool_cursor + pool_cg_attempted) % universe.pool.len();
+                self.coingecko_pool_cursor
+                    .store(next as u64, Ordering::Relaxed);
             }
         }
         counters()
             .price_coingecko_hits
             .fetch_add(coingecko_hits as u64, Ordering::Relaxed);
 
-        let cache_misses = tokens.len().saturating_sub(prices.len());
+        // PC2 — count the snapshot tokens still without a price directly instead
+        // of `tokens.len() - prices.len()`: `prices` now also carries the
+        // route-graph hits from the by-address pass, which are not members of the
+        // snapshot and would otherwise mask real misses in this gauge.
+        let cache_misses = tokens
+            .iter()
+            .filter(|t| !prices.contains_key(&t.symbol))
+            .count();
         counters()
             .price_cache_misses
             .fetch_add(cache_misses as u64, Ordering::Relaxed);
@@ -834,8 +1092,64 @@ impl PriceWorker {
             coingecko_hits,
             bus_fused_hits,
             cache_misses,
+            pool_resident: universe.pool.len(),
+            pool_cg_attempted,
             elapsed_ms: started.elapsed().as_millis() as u64,
         })
+    }
+
+    /// PC2 — one Coingecko batch, with the shared breaker/counter/log handling
+    /// and the merge rule in a single place so both passes (snapshot leftovers
+    /// and the pool-resident window) behave identically. Returns how many NEW
+    /// symbols this batch priced. A failing batch leaves `prices` untouched and
+    /// returns 0: nothing is invented for a symbol whose provider said nothing
+    /// (R8).
+    async fn coingecko_batch_into(
+        &self,
+        chunk: &[TokenRef],
+        prices: &mut HashMap<String, f64>,
+    ) -> usize {
+        match self.fetch_coingecko(chunk).await {
+            Ok(map) => {
+                self.record_provider_success(PriceProvider::Coingecko);
+                let mut hits = 0usize;
+                for (sym, price) in map {
+                    // Don't overwrite an existing Chainlink/Alchemy hit. Use Entry
+                    // API for clippy::map_entry compliance + clearer intent.
+                    if let std::collections::hash_map::Entry::Vacant(e) = prices.entry(sym) {
+                        e.insert(price);
+                        hits += 1;
+                    }
+                }
+                hits
+            }
+            Err(e) => {
+                let backoff_ms =
+                    self.record_provider_failure(PriceProvider::Coingecko, &e, unix_now_ms());
+                counters()
+                    .price_worker_errors
+                    .fetch_add(1, Ordering::Relaxed);
+                // INFO only when this failure actually opened/doubled a
+                // window — ops sees the state once, not per tick.
+                if let Some(retry_in_ms) = backoff_ms {
+                    info!(
+                        event = "price_worker.coingecko_backoff",
+                        chain_id = self.cfg.chain_id,
+                        provider = PriceProvider::Coingecko.as_str(),
+                        retry_in_ms,
+                        "Coingecko entering exponential backoff; affected tokens fall through to ConfigPriceOracle"
+                    );
+                }
+                warn!(
+                    event = "price_worker.coingecko_failed",
+                    chain_id = self.cfg.chain_id,
+                    chunk_size = chunk.len(),
+                    error = %e,
+                    "Coingecko batch failed; affected tokens will fall through to ConfigPriceOracle"
+                );
+                0
+            }
+        }
     }
 
     /// Reads the operator's allowlist from `trading_config` (provides symbol→
@@ -843,10 +1157,16 @@ impl PriceWorker {
     /// recover addresses. Tokens for which no meta entry exists are skipped
     /// silently — pool sync worker will eventually populate them, and on the
     /// next tick they'll be picked up.
+    ///
+    /// PC2 — returns the two classes separately (`PricingUniverse`) instead of
+    /// one capped `Vec`, because they answer to different providers with
+    /// different budgets. Nothing here is order-dependent: the allowlist keeps
+    /// the operator's declared order, the pool side is sorted, and the address
+    /// map is only ever looked up.
     async fn discover_tokens(
         &self,
         redis: &mut ConnectionManager,
-    ) -> anyhow::Result<Vec<TokenRef>> {
+    ) -> anyhow::Result<PricingUniverse> {
         // Step 1: load allowlist symbols.
         let cfg_key = trading_config_redis_key(self.cfg.chain_id);
         let raw_cfg: Option<String> = redis.get(&cfg_key).await?;
@@ -860,7 +1180,7 @@ impl PriceWorker {
                         error = %e,
                         "trading_config JSON malformed; skipping tick"
                     );
-                    return Ok(vec![]);
+                    return Ok(PricingUniverse::default());
                 }
             },
             None => {
@@ -869,11 +1189,11 @@ impl PriceWorker {
                     chain_id = self.cfg.chain_id,
                     "no trading_config in Redis yet (operator hasn't seeded); skipping tick"
                 );
-                return Ok(vec![]);
+                return Ok(PricingUniverse::default());
             }
         };
         if allowlist.is_empty() {
-            return Ok(vec![]);
+            return Ok(PricingUniverse::default());
         }
 
         // Step 2: scan all `arbx:tokens:<chain>:*` to build a symbol→address
@@ -905,73 +1225,47 @@ impl PriceWorker {
             let raw: Option<String> = redis.get(&k).await.unwrap_or(None);
             if let Some(s) = raw {
                 if let Ok(meta) = serde_json::from_str::<TokenMeta>(&s) {
-                    let upper = meta.symbol.to_ascii_uppercase();
-                    // Keep the FIRST address per symbol; allowlist is symbol-keyed
-                    // so we can't disambiguate further without operator input.
-                    sym_to_addr.entry(upper).or_insert(addr_lower);
+                    // PC2 — deterministic when a symbol names several contracts:
+                    // the lexicographically smallest address wins regardless of
+                    // the SCAN order this process happened to see.
+                    record_symbol_addr(&mut sym_to_addr, &meta.symbol, &addr_lower);
                 }
             }
         }
 
-        // Step 3: build the pricing universe. Allowlist first (operator's
-        // curated high-confidence set — always fully priced), THEN symbols
+        // Step 3: assemble the universe. Allowlist first (operator's curated
+        // high-confidence set — always fully priced), THEN every symbol
         // recovered from `arbx:pool_index[:_v3]:<chain>:<sym0>:<sym1>` key
-        // names (tokens that appear in at least one detected pool), deduped
-        // against the allowlist and capped to protect Alchemy/Coingecko rate
-        // limits. Closes the `no_price_oracle` gap for pool-resident tokens
-        // the allowlist doesn't name, without pricing every one of the 1,000+
-        // discovered tokens indiscriminately. Tokens with no `arbx:tokens`
-        // meta (no resolvable address) are skipped fail-honestly (R8).
-        let mut out: Vec<TokenRef> = Vec::new();
-        let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
-        for sym in &allowlist {
-            if out.len() >= MAX_PRICED_TOKENS {
-                break;
-            }
-            let upper = sym.to_ascii_uppercase();
-            if seen.insert(upper.clone()) {
-                if let Some(addr) = sym_to_addr.get(&upper) {
-                    out.push(TokenRef {
-                        symbol: upper,
-                        address_lower: addr.clone(),
-                    });
-                }
-            }
-        }
-        // Pool-resident tokens beyond the allowlist. `seen` dedupes against
-        // allowlist symbols already added, so only NEW pool tokens are priced.
-        if out.len() < MAX_PRICED_TOKENS {
-            for sym in self.scan_pool_resident_symbols(redis).await {
-                if out.len() >= MAX_PRICED_TOKENS {
-                    break;
-                }
-                if seen.insert(sym.clone()) {
-                    if let Some(addr) = sym_to_addr.get(&sym) {
-                        out.push(TokenRef {
-                            symbol: sym,
-                            address_lower: addr.clone(),
-                        });
-                    }
-                }
-            }
-        }
-        Ok(out)
+        // names that has an identity, deduped against the allowlist, in the
+        // single canonical sorted order. Tokens with no `arbx:tokens` meta (no
+        // resolvable address) are dropped fail-honestly (R8): we will not ask
+        // a provider about an address we cannot name.
+        //
+        // Where the budget bites is now decided by `run_one_tick`, per provider
+        // (rotating window for Alchemy, dedicated by-address pass for Coingecko)
+        // — never by hash order, and never for the route graph as a whole.
+        let pool_symbols = self.scan_pool_resident_symbols(redis).await;
+        Ok(build_universe(&allowlist, &sym_to_addr, &pool_symbols))
     }
 
     /// Scan `arbx:pool_index:<chain>:*` and `arbx:pool_index_v3:<chain>:*` key
-    /// names and return the set of UPPERCASE token symbols that appear in at
-    /// least one detected pool. Key names encode both symbols
-    /// (`arbx:pool_index:<chain>:<sym0>:<sym1>`); we take the last two
-    /// colon-separated segments and uppercase them to match the `sym_to_addr`
-    /// map (writers use mixed case: `pool_discovery` lowercases,
-    /// `pool_sync_worker` boot preserves the PG symbol). Returns an empty set
-    /// on SCAN failure — the pricing universe then falls back to allowlist
-    /// only (R8 fail-honest: no fabricated symbols).
-    async fn scan_pool_resident_symbols(
-        &self,
-        redis: &mut ConnectionManager,
-    ) -> std::collections::HashSet<String> {
-        let mut out = std::collections::HashSet::new();
+    /// names and return the UPPERCASE token symbols that appear in at least one
+    /// detected pool — **deduped and sorted ascending** (PC2). Key names encode
+    /// both symbols (`arbx:pool_index:<chain>:<sym0>:<sym1>`); we take the last
+    /// two colon-separated segments and uppercase them to match the
+    /// `sym_to_addr` map (writers use mixed case: `pool_discovery` lowercases,
+    /// `pool_sync_worker` boot preserves the PG symbol). Returns an empty list
+    /// on SCAN failure — the pricing universe then falls back to allowlist only
+    /// (R8 fail-honest: no fabricated symbols).
+    ///
+    /// The sorted order is the fix: the previous `HashSet` returned these in
+    /// hash-iteration order, so with more pool-resident tokens than the cap
+    /// allowed, *which* tokens got a price was re-drawn at random every tick —
+    /// long-tail tokens like LAR (`arbx:pool_index:1:lar:weth`, identity
+    /// present, price absent) were sampled probabilistically and effectively
+    /// never reached `arbx:token_prices:1`.
+    async fn scan_pool_resident_symbols(&self, redis: &mut ConnectionManager) -> Vec<String> {
+        let mut out: Vec<String> = Vec::new();
         for pattern in [
             format!("arbx:pool_index:{}:*", self.cfg.chain_id),
             format!("arbx:pool_index_v3:{}:*", self.cfg.chain_id),
@@ -1008,13 +1302,13 @@ impl PriceWorker {
                 for sym in &parts[0..2] {
                     let upper = sym.to_ascii_uppercase();
                     if !upper.is_empty() {
-                        out.insert(upper);
+                        out.push(upper);
                     }
                 }
             }
             drop(iter);
         }
-        out
+        sorted_unique_symbols(out)
     }
 
     /// POST one batch to Alchemy. Returns `symbol → price` for tokens that
@@ -1380,6 +1674,8 @@ impl PriceWorker {
 
 #[derive(Debug, Default, Clone)]
 pub struct TickStats {
+    /// Size of this tick's Alchemy candidate list (allowlist + rotating pool
+    /// window), i.e. the symbol-keyed snapshot.
     pub attempted: usize,
     pub chainlink_hits: usize,
     pub alchemy_hits: usize,
@@ -1388,6 +1684,13 @@ pub struct TickStats {
     /// (Binance bookTicker verified against the Chainlink anchor).
     pub bus_fused_hits: usize,
     pub cache_misses: usize,
+    /// PC2 — size of the pool-resident route-graph set (the tokens carts can
+    /// route through), independent of `attempted`.
+    pub pool_resident: usize,
+    /// PC2 — route-graph symbols actually handed to Coingecko this tick. The
+    /// sweep cursor advances by exactly this, so `pool_resident` symbols are
+    /// covered every `ceil(pool_resident / pool_cg_attempted)` ticks.
+    pub pool_cg_attempted: usize,
     pub elapsed_ms: u64,
 }
 
@@ -1796,5 +2099,370 @@ mod tests {
     fn coingecko_prices_url_uses_platform_slug() {
         let url = coingecko_prices_url("ethereum");
         assert!(url.contains("/simple/token_price/ethereum"));
+    }
+
+    // --------------- PC2: deterministic, route-graph-complete universe ---------------
+    //
+    // Fixture shaped from the production measurements of `arbx:1` (2026-10-03):
+    // 21 unique allowlist symbols, 478 pool-resident symbols with an identity
+    // (1_622 unique pool-resident symbols in total), 300-token cap that bound
+    // every single tick (`attempted=300`), and LAR
+    // (`arbx:pool_index:1:lar:weth`, identity present, price absent) sitting
+    // beyond the cap. Names are chosen so LAR sorts LAST, the worst case for
+    // any prefix-style cut.
+
+    const LAR_ADDR: &str = "0x6226caa1857afbc6dfb6ca66071eb241228031a1";
+
+    fn allowlist_21() -> Vec<String> {
+        [
+            "WETH", "USDC", "USDT", "DAI", "WBTC", "COMP", "MKR", "UNI", "SAND", "ENS", "SHIB",
+            "RETH", "APE", "MATIC", "SUSHI", "LINK", "LDO", "MANA", "PEPE", "AAVE", "CRV",
+        ]
+        .iter()
+        .map(|s| (*s).to_string())
+        .collect()
+    }
+
+    fn meta_map(entries: &[(&str, &str)]) -> HashMap<String, String> {
+        let mut m = HashMap::new();
+        for (sym, addr) in entries {
+            record_symbol_addr(&mut m, sym, addr);
+        }
+        m
+    }
+
+    fn shaped_addr(i: usize) -> String {
+        format!("0x{:040x}", i + 1)
+    }
+
+    /// 479 pool-resident symbols whose identities all resolve: `A0000..A0477`
+    /// (so they sort BEFORE `LAR`) plus the real defect token.
+    fn production_shaped_pool_source() -> Vec<String> {
+        let mut v: Vec<String> = (0..478).map(|i| format!("A{i:04}")).collect();
+        v.push("LAR".to_string());
+        v
+    }
+
+    fn production_shaped_meta_pairs() -> Vec<(String, String)> {
+        let mut pairs: Vec<(String, String)> = Vec::new();
+        for (i, sym) in allowlist_21().iter().enumerate() {
+            pairs.push((sym.clone(), shaped_addr(i)));
+        }
+        for (i, sym) in production_shaped_pool_source().iter().enumerate() {
+            let addr = if sym == "LAR" {
+                LAR_ADDR.to_string()
+            } else {
+                shaped_addr(1_000 + i)
+            };
+            pairs.push((sym.clone(), addr));
+        }
+        pairs
+    }
+
+    fn production_shaped_meta() -> HashMap<String, String> {
+        let mut m: HashMap<String, String> = HashMap::new();
+        for (sym, addr) in production_shaped_meta_pairs() {
+            record_symbol_addr(&mut m, &sym, &addr);
+        }
+        m
+    }
+
+    fn production_shaped_universe() -> PricingUniverse {
+        build_universe(
+            &allowlist_21(),
+            &production_shaped_meta(),
+            &sorted_unique_symbols(production_shaped_pool_source()),
+        )
+    }
+
+    /// Walk the Coingecko sweep the way `run_one_tick` does — advancing the
+    /// cursor by the symbols actually handed to the provider — and return every
+    /// symbol the sweep touches, tick by tick.
+    fn sweep_windows(universe: &PricingUniverse, window: usize) -> Vec<Vec<String>> {
+        let mut ticks: Vec<Vec<String>> = Vec::new();
+        let mut cursor = 0usize;
+        while ticks.len() < universe.pool.len() {
+            let w = rotating_window(&universe.pool, cursor, window);
+            if w.is_empty() {
+                break;
+            }
+            cursor = (cursor + w.len()) % universe.pool.len();
+            ticks.push(w.into_iter().map(|t| t.symbol).collect());
+            if cursor == 0 {
+                break;
+            }
+        }
+        ticks
+    }
+
+    #[test]
+    fn pc2_selection_is_deterministic_and_independent_of_insertion_order() {
+        // Same logical inputs, two different arrival orders (Redis SCAN order is
+        // arbitrary and must not leak into selection).
+        let forward = production_shaped_pool_source();
+        let mut reversed = forward.clone();
+        reversed.reverse();
+        let map_forward = production_shaped_meta();
+        let mut reversed_pairs = production_shaped_meta_pairs();
+        reversed_pairs.reverse();
+        let mut map_reversed: HashMap<String, String> = HashMap::new();
+        for (sym, addr) in &reversed_pairs {
+            record_symbol_addr(&mut map_reversed, sym, addr);
+        }
+
+        let a = build_universe(
+            &allowlist_21(),
+            &map_forward,
+            &sorted_unique_symbols(forward),
+        );
+        let b = build_universe(
+            &allowlist_21(),
+            &map_reversed,
+            &sorted_unique_symbols(reversed),
+        );
+        assert_eq!(a, b, "universe must not depend on input/insertion order");
+        // Repeated runs over the same input are identical too.
+        assert_eq!(a, production_shaped_universe());
+        assert_eq!(b, production_shaped_universe());
+
+        // The pool side is in the single canonical (sorted) order.
+        let symbols: Vec<&str> = a.pool.iter().map(|t| t.symbol.as_str()).collect();
+        let mut sorted = symbols.clone();
+        sorted.sort_unstable();
+        assert_eq!(symbols, sorted, "pool side must be sorted ascending");
+        assert_eq!(
+            a.allowlist
+                .iter()
+                .map(|t| t.symbol.as_str())
+                .collect::<Vec<_>>(),
+            allowlist_21()
+                .iter()
+                .map(|s| s.as_str())
+                .collect::<Vec<_>>(),
+            "allowlist keeps the operator's declared order"
+        );
+
+        // The rotating window is a pure function of (items, cursor, want).
+        let w1 = rotating_window(&a.pool, 137, 100);
+        let w2 = rotating_window(&b.pool, 137, 100);
+        assert_eq!(w1, w2);
+        assert_eq!(w1.len(), 100);
+        assert_eq!(
+            rotating_window(&a.pool, a.pool.len() + 37, 5),
+            rotating_window(&a.pool, 37, 5),
+            "cursor wraps"
+        );
+        assert!(rotating_window(&a.pool, 0, 0).is_empty());
+    }
+
+    #[test]
+    fn pc2_duplicate_symbols_resolve_to_the_smallest_address() {
+        // Production has symbols naming several contracts (FLUID x5, DMC x4,
+        // BTL x4, ...). The old `entry().or_insert()` kept whatever the SCAN
+        // order yielded first, so the address asked of the provider could
+        // change between restarts.
+        let asc = meta_map(&[("FLUID", "0xaaa"), ("FLUID", "0xbbb")]);
+        let desc = meta_map(&[("FLUID", "0xbbb"), ("FLUID", "0xaaa")]);
+        assert_eq!(asc.get("FLUID"), Some(&"0xaaa".to_string()));
+        assert_eq!(desc.get("FLUID"), Some(&"0xaaa".to_string()));
+        assert_eq!(asc, desc);
+        // Lowercase input is normalised to the uppercase field key.
+        assert_eq!(
+            meta_map(&[("lar", LAR_ADDR)]).get("LAR"),
+            Some(&LAR_ADDR.to_string())
+        );
+    }
+
+    #[test]
+    fn pc2_pool_resident_token_beyond_the_old_cap_is_now_covered() {
+        let universe = production_shaped_universe();
+        assert_eq!(universe.allowlist.len(), 21);
+        assert_eq!(universe.pool.len(), 479, "478 shaped + LAR");
+        assert!(
+            universe.pool.iter().any(|t| t.symbol == "LAR"),
+            "LAR must be in the universe with its real address"
+        );
+        assert_eq!(
+            universe
+                .pool
+                .iter()
+                .find(|t| t.symbol == "LAR")
+                .map(|t| t.address_lower.as_str()),
+            Some(LAR_ADDR)
+        );
+
+        // Alchemy's cap still applies to its own candidate list (that budget is
+        // real: 5-address batches on the shared RPC key)...
+        let alchemy_budget = MAX_PRICED_TOKENS - universe.allowlist.len();
+        assert_eq!(alchemy_budget, 279);
+        let alchemy_window = rotating_window(&universe.pool, 0, alchemy_budget);
+        assert_eq!(alchemy_window.len(), 279);
+        let cut = &universe.pool[alchemy_budget].symbol;
+        assert!(
+            !alchemy_window.iter().any(|t| &t.symbol == cut),
+            "{cut} is beyond the Alchemy window, as in production"
+        );
+        assert!(
+            !alchemy_window.iter().any(|t| t.symbol == "LAR"),
+            "LAR sorts last: no prefix-shaped cut can ever reach it"
+        );
+
+        // ...but the Coingecko by-address pass is NOT bound by that cap, and one
+        // sweep of the route graph covers every single token, LAR included.
+        let window = (MAX_COINGECKO_CALLS_PER_TICK - 1) * MAX_COINGECKO_BATCH_SIZE;
+        let ticks = sweep_windows(&universe, window);
+        let covered: std::collections::BTreeSet<&String> = ticks.iter().flatten().collect();
+        assert_eq!(
+            covered.len(),
+            universe.pool.len(),
+            "a full sweep must cover every route-graph token exactly"
+        );
+        let lar_tick = ticks
+            .iter()
+            .position(|w| w.iter().any(|s| s == "LAR"))
+            .expect("LAR must be covered by the sweep");
+        assert!(
+            lar_tick < universe.pool.len() / window + 1,
+            "LAR covered in tick {lar_tick}, sweep bound = ceil(479/{window})"
+        );
+        assert!(cut != "LAR");
+        assert!(
+            covered.contains(cut),
+            "the token the old cap cut is covered too"
+        );
+        // Determinism holds across sweeps: the same starting cursor replays the
+        // identical tick sequence.
+        assert_eq!(ticks, sweep_windows(&universe, window));
+    }
+
+    #[test]
+    fn pc2_unresolved_pool_symbol_is_never_fabricated() {
+        // A pool-resident symbol with no `arbx:tokens` identity has no address
+        // to ask about: it must stay out of the universe entirely, and the
+        // sweep must never invent it.
+        let mut map = production_shaped_meta();
+        map.remove("LAR");
+        let mut source = production_shaped_pool_source();
+        source.push("GHOST".to_string());
+        let universe = build_universe(&allowlist_21(), &map, &sorted_unique_symbols(source));
+        assert!(
+            !universe.pool.iter().any(|t| t.symbol == "LAR"),
+            "identity-less token is dropped, not guessed"
+        );
+        assert!(!universe.pool.iter().any(|t| t.symbol == "GHOST"));
+        assert_eq!(universe.pool.len(), 478);
+        let covered: std::collections::BTreeSet<String> = sweep_windows(&universe, 100)
+            .into_iter()
+            .flatten()
+            .collect();
+        assert_eq!(covered.len(), 478);
+        assert!(!covered.contains("LAR"));
+        assert!(!covered.contains("GHOST"));
+
+        // Every emitted TokenRef carries a real 0x address — nothing is
+        // synthesised from a symbol.
+        for t in universe.pool.iter().chain(universe.allowlist.iter()) {
+            assert!(t.address_lower.starts_with("0x"), "{:?}", t);
+        }
+    }
+
+    #[tokio::test]
+    async fn pc2_coingecko_ignores_addresses_it_did_not_ask_for() {
+        // Provider answers for an address outside the request (or answers
+        // nothing at all): no entry may appear — honest absence, never a
+        // fabricated price.
+        let server = MockServer::start().await;
+        let body = serde_json::json!({
+            "0x6226caa1857afbc6dfb6ca66071eb241228031a1": {"usd": 6.969e-05},
+            "0xdeadbeef00000000000000000000000000000000": {"usd": 123456.0},
+        });
+        Mock::given(method("GET"))
+            .and(path("/"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(body))
+            .mount(&server)
+            .await;
+        let worker = worker_pointing_at(None, Some(&format!("{}/", server.uri())));
+
+        let asked = vec![token_ref("LAR", LAR_ADDR)];
+        let parsed = worker.fetch_coingecko(&asked).await.expect("ok");
+        assert_eq!(parsed.len(), 1, "only the requested address is priced");
+        assert_eq!(parsed.get("LAR"), Some(&6.969e-05));
+
+        // A provider that returns nothing for the token that has no source
+        // leaves the price map untouched (R8).
+        let empty_server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({})))
+            .mount(&empty_server)
+            .await;
+        let silent = worker_pointing_at(None, Some(&format!("{}/", empty_server.uri())));
+        let mut prices: HashMap<String, f64> = HashMap::new();
+        let hits = silent.coingecko_batch_into(&asked, &mut prices).await;
+        assert_eq!(hits, 0);
+        assert!(
+            !prices.contains_key("LAR"),
+            "no price may be invented for a token with no source"
+        );
+    }
+
+    #[tokio::test]
+    async fn pc2_coingecko_budget_chunks_the_route_graph_not_the_symbol_snapshot() {
+        // The by-address pass must ask in MAX_COINGECKO_BATCH_SIZE chunks (25),
+        // not in Alchemy's 5-address chunks (invariant asserted at compile time
+        // next to the constants), and must never exceed the shared per-tick call
+        // budget.
+        let universe = production_shaped_universe();
+        let window = (MAX_COINGECKO_CALLS_PER_TICK - 1) * MAX_COINGECKO_BATCH_SIZE;
+        let w = rotating_window(&universe.pool, 0, window);
+        assert_eq!(w.len(), window);
+        let chunks: Vec<&[TokenRef]> = w.chunks(MAX_COINGECKO_BATCH_SIZE).collect();
+        assert_eq!(
+            chunks.len(),
+            MAX_COINGECKO_CALLS_PER_TICK - 1,
+            "the window must decompose into at most the remaining call budget"
+        );
+        assert!(chunks.iter().all(|c| c.len() <= MAX_COINGECKO_BATCH_SIZE));
+    }
+
+    #[test]
+    fn pc2_route_graph_sweep_is_never_starved_by_the_allowlist_pass() {
+        // The production shape is 295 unpriced snapshot tokens OUT of a
+        // 300-token snapshot. Feeding those to the allowlist pass would consume
+        // all 5 shared calls (ceil(295/25) = 12 chunks, budget-capped at 5) and
+        // leave ZERO for the route graph — the sweep would never advance, which
+        // is the same "LAR never gets priced" outcome this PR removes. The
+        // reserves one call: the allowlist pass draws only 4 of 5 when there is
+        // a route graph, and the whole 5 when there is nothing to sweep.
+        assert_eq!(allowlist_cg_call_budget(0), MAX_COINGECKO_CALLS_PER_TICK);
+        assert_eq!(
+            allowlist_cg_call_budget(479),
+            MAX_COINGECKO_CALLS_PER_TICK - 1
+        );
+        let allow_cap = allowlist_cg_call_budget(479);
+        assert!(
+            MAX_COINGECKO_CALLS_PER_TICK - allow_cap >= 1,
+            ">=1 sweep call"
+        );
+
+        // Worst case: the allowlist leftovers need more calls than the cap, so
+        // the sweep still gets its reserved call.
+        let leftovers: Vec<TokenRef> = (0..295)
+            .map(|i| token_ref(&format!("A{i:04}"), &shaped_addr(i)))
+            .collect();
+        let allow_calls = leftovers
+            .chunks(MAX_COINGECKO_BATCH_SIZE)
+            .count()
+            .min(allow_cap);
+        assert_eq!(allow_calls, allow_cap);
+        let sweep_calls = MAX_COINGECKO_CALLS_PER_TICK - allow_calls;
+        assert_eq!(sweep_calls, 1);
+        let universe = production_shaped_universe();
+        let swept = rotating_window(&universe.pool, 0, sweep_calls * MAX_COINGECKO_BATCH_SIZE);
+        assert_eq!(swept.len(), MAX_COINGECKO_BATCH_SIZE);
+        assert!(
+            !swept.is_empty(),
+            "the route graph must advance every tick, whatever the allowlist needs"
+        );
     }
 }
