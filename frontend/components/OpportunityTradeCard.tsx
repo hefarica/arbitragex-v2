@@ -58,6 +58,11 @@ import { ChainBadge } from "@/components/ChainBadge";
 import { StrategyBadge } from "@/components/StrategyBadge";
 import { QuarantineStrip } from "@/components/QuarantineStrip";
 import { OpportunitySummaryGrid } from "@/components/opportunities/OpportunitySummaryGrid";
+// §11.2/§11.3/§11.5 — the search-state block, ADDED to the approved card. It is
+// a child component with its own store subscription (the census is per-strategy,
+// not per-row), so this card's memo comparator and the CARDS-PAINT-GATE
+// classification are unchanged by its presence.
+import { OpportunitySearchStatePanel } from "@/components/opportunities/OpportunitySearchStatePanel";
 import { StatusPill } from "@/components/StatusPill";
 import { Sparkline } from "@/components/cex/Sparkline";
 import { FreshnessBadge, freshnessLevel } from "@/components/cex/FreshnessBadge";
@@ -952,6 +957,23 @@ function OpportunityTradeCardImpl({
                     delta {usd(opp.economics.target_delta_usd)}
                   </div>
                 )}
+                {/* §11.2 "objetivo y brecha" — the DISTANCE to the objective, as
+                    its own cell. `target_delta_usd` is `net − target` (negative =
+                    short of the floor); the brecha is its magnitude when the row
+                    is short, i.e. `max(0, target − net)`. It is rendered in the
+                    MUTED tone on purpose: a distance is not a sign, and painting
+                    it green would promise a state the wire has not declared
+                    (§11: "el color de un número debe reflejar su signo, no
+                    prometer un estado posterior"). */}
+                {opp.economics.target_delta_usd != null && opp.economics.target_delta_usd < 0 && (
+                  <div
+                    data-testid="target-gap"
+                    className="text-muted-foreground"
+                    title="brecha = max(0, objetivo − net): distancia que falta para el objetivo, no un resultado alcanzado"
+                  >
+                    brecha {usd(-opp.economics.target_delta_usd)}
+                  </div>
+                )}
               </div>
             )}
           {opp.economics?.computation_status === "error" && (
@@ -964,6 +986,13 @@ function OpportunityTradeCardImpl({
           )}
         </div>
       </div>
+
+      {/* ── §11 SEARCH STATE — strategy + search state, current/best route,
+             size, financing, gross, itemised costs, net, target, gap, real
+             progress and the sequencing diagnostics. ADDED here, between the
+             executive result and the capital ladder, where the operator already
+             reads the objective and the money. It replaces nothing. ── */}
+      <OpportunitySearchStatePanel opp={opp} isMounted={isMounted} now={now} />
 
       {/* ── STEP LADDER: capital path with running USD totals ──
            Each row shows its USD contribution so the operator reads where value

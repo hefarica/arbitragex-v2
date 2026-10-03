@@ -8,6 +8,11 @@ import {
 } from '@arbx/shared';
 import type { CarnotStore } from './services/carnotStore.js';
 import { registerCarnotWebSocket } from './websocket-carnot.js';
+// STREAM-SEQ-01 (§11.4): ordered/idempotent envelope for the card feed.
+import {
+    STREAM_EVENT_NAME,
+    opportunityStreamProducer,
+} from './stream/opportunity-stream.js';
 
 // ---------------------------------------------------------------------------
 // WO-10 (2026-09-06) — detection→WS-broadcast latency (informe §6.11 / MN-006)
@@ -513,6 +518,17 @@ export function broadcastOpportunity(io: Server, opp: any) {
     // leaves absent fields null — R8 honest "—", never fabricated). This
     // differential is the documented contract, not a bug.
     io.to('opportunities').emit('new_opportunity', opp);
+    // STREAM-SEQ-01 (§11.4): the SAME row also rides an ordered, idempotent
+    // envelope on the same room. The raw leg above is untouched (its
+    // byte-identity is the documented contract at websocket.ts:506-515); this
+    // leg ADDS the order authority the raw row does not carry — `seq` per
+    // strategy key, the stable `plan_key`, and a server-session `progress`
+    // census — so a delayed/replayed event can no longer overwrite a newer one.
+    // See backend/api-server/src/stream/opportunity-stream.ts.
+    const streamEvent = opportunityStreamProducer.build(opp);
+    if (streamEvent !== null) {
+        io.to('opportunities').emit(STREAM_EVENT_NAME, streamEvent);
+    }
     // WO-10 (2026-09-06): E2E detección→broadcast — origin
     // `opportunities.detected_at` (PG row_to_json via NOTIFY), terminus the
     // emit above (observed after it so the span includes the broadcast call).
