@@ -1547,10 +1547,16 @@ fn v4_relevant_baskets(configured: &[String], lookup_tokens: &[String]) -> Vec<S
 ///
 /// 1. Sin aristas, o sin basket configurado que participe en la ruta → mapa
 ///    vacío SIN RPC (el verificador reporta el FAIL honesto con su razón).
-/// 2. Endpoints del operador: `RPC_HTTP_<chain_id>`, la MISMA var que alimenta
+/// 2. BASKET-OWNER-01: con `ARBX_BASKET_CONTRACTS` configurado pero SIN
+///    `ARBX_BASKET_OWNER` utilizable (ausente o malformada) → mapa vacío SIN
+///    RPC. Sin owner no hay `maxRedeem` que consultar: el de `address(0)` es 0
+///    en cualquier ERC-4626 estándar y el verificador lo leería como "el
+///    importe excede el límite" — un diagnóstico FALSO. "Sin estado" es lo
+///    honesto mientras el operador no termine de configurar (R8).
+/// 3. Endpoints del operador: `RPC_HTTP_<chain_id>`, la MISMA var que alimenta
 ///    `HttpRpcPool`/`price_worker` (jamás una URL literal:
 ///    arbx-no-hardcode-doctrine). Sin endpoints → mapa vacío (R8).
-/// 3. Lectura acotada por `BASKET_READ_BUDGET_MS`: RPC caído, error o
+/// 4. Lectura acotada por `BASKET_READ_BUDGET_MS`: RPC caído, error o
 ///    presupuesto vencido se registran a debug y dejan el mapa vacío — el
 ///    intent NUNCA se rompe y jamás se fabrica un `max_redeem` (R8).
 ///
@@ -1560,15 +1566,32 @@ async fn v4_relevant_basket_state(
     chain_id: u64,
     edges: &[crate::agent_graph::Edge],
 ) -> std::collections::BTreeMap<String, serde_json::Value> {
+    use crate::basket_reader::{
+        basket_owner_from_env, baskets_from_env, plan_read, BasketReadPlan,
+    };
     use std::collections::BTreeMap;
 
-    let baskets = v4_relevant_baskets(
-        &crate::basket_reader::baskets_from_env(),
-        &v4_redemption_tokens(edges),
-    );
-    if baskets.is_empty() {
-        return BTreeMap::new(); // ningún basket en la ruta → CERO RPC
-    }
+    // BASKET-OWNER-01: el plan resuelve de una vez QUÉ baskets y CON QUÉ owner
+    // (executor del operador, `ARBX_BASKET_OWNER`). `NoOwner` corta antes de
+    // cualquier RPC: `maxRedeem(0x0)` sería un límite falso (R8).
+    let (baskets, owner) = match plan_read(
+        v4_relevant_baskets(&baskets_from_env(), &v4_redemption_tokens(edges)),
+        basket_owner_from_env(),
+    ) {
+        BasketReadPlan::Ready { baskets, owner } => (baskets, owner),
+        BasketReadPlan::NoContracts => return BTreeMap::new(), // ningún basket en la ruta → CERO RPC
+        BasketReadPlan::NoOwner { contracts, reason } => {
+            debug!(
+                event = "cartridge.basket_owner_unset",
+                chain_id,
+                contracts,
+                reason,
+                "ARBX_BASKET_CONTRACTS configurado sin ARBX_BASKET_OWNER utilizable; \
+                 redemption_state vacío, sin RPC (R8 fail-honest)"
+            );
+            return BTreeMap::new();
+        }
+    };
     let rpc_urls: Vec<String> = crate::workers::price_worker::rpc_http_url_from_env(chain_id)
         .into_iter()
         .collect();
@@ -1581,7 +1604,7 @@ async fn v4_relevant_basket_state(
         );
         return BTreeMap::new();
     }
-    let read = crate::basket_reader::read_baskets(&baskets, &rpc_urls);
+    let read = crate::basket_reader::read_baskets(&baskets, &rpc_urls, &owner);
     match tokio::time::timeout(
         std::time::Duration::from_millis(BASKET_READ_BUDGET_MS),
         read,
