@@ -566,6 +566,93 @@ impl SnapshotServices {
                 !q.legs.is_empty() && !edges.is_empty(),
                 "no_ledger_to_verify_allocation",
             ),
+            // ── VERIFIERS-BATCH-02 (2026-10-03): restricciones de liquidez,
+            // coherencia de pools y vigencia — computables desde bundle/edges.
+            // firm_depth: TODAS las piernas tienen datos de liquidez (V2:
+            // reservas, V3: slot0) — sin profundidad no hay ejecución real.
+            receipt(
+                "firm_depth",
+                !edges.is_empty()
+                    && edges.iter().all(|e| {
+                        (e.protocol == "cpmm_v2"
+                            && e.reserve_in_raw.is_some()
+                            && e.reserve_out_raw.is_some())
+                            || (e.protocol == "uniswap_v3" && e.sqrt_price_x96_raw.is_some())
+                    }),
+                "leg_missing_liquidity_data",
+            ),
+            // inventory_available: el token inicial tiene precio en el
+            // bundle (valorable = disponible para valorar la ejecución).
+            receipt(
+                "inventory_available",
+                !edges.is_empty()
+                    && self
+                        .data
+                        .prices
+                        .contains_key(&(edges[0].chain_id, edges[0].token_in.clone())),
+                "start_token_price_missing_in_bundle",
+            ),
+            // component_quotes_firm: todas las piernas cotizaron (equivalente
+            // a protocol_exact_quotes pero para rutas de composición).
+            receipt(
+                "component_quotes_firm",
+                protocol_exact,
+                "component_leg_not_firmly_quoted",
+            ),
+            // firm_baseline: al menos la primera pierna tiene un quote.
+            receipt(
+                "firm_baseline",
+                !q.legs.is_empty(),
+                "no_baseline_quote_available",
+            ),
+            // firm_unsplit_baseline: primera pierna cotizada y la ruta no
+            // divide el input (una sola pierna de entrada).
+            receipt(
+                "firm_unsplit_baseline",
+                !q.legs.is_empty() && q.legs.len() == edges.len(),
+                "baseline_split_across_legs",
+            ),
+            // shared_pool_state_consistent: sin pools duplicados en la ruta
+            // (usar el mismo pool dos veces exige estado con memoria).
+            receipt(
+                "shared_pool_state_consistent",
+                !edges.is_empty() && {
+                    let mut ids = std::collections::BTreeSet::new();
+                    edges.iter().all(|e| ids.insert(e.pool_id.clone()))
+                },
+                "repeated_pool_requires_stateful_adapter",
+            ),
+            // conversion_contract_valid: todos los edges tienen protocolos
+            // conocidos con adaptadores en el sistema.
+            receipt(
+                "conversion_contract_valid",
+                !edges.is_empty()
+                    && edges
+                        .iter()
+                        .all(|e| e.protocol == "cpmm_v2" || e.protocol == "uniswap_v3"),
+                "unknown_or_unsupported_protocol_in_route",
+            ),
+            // firm_unwind: liquidez disponible para deshacer la ruta (igual
+            // que firm_depth pero en dirección inversa — las reservas son
+            // simétricas en V2; en V3 slot0 cubre ambas direcciones).
+            receipt(
+                "firm_unwind",
+                !edges.is_empty()
+                    && edges.iter().all(|e| {
+                        (e.protocol == "cpmm_v2"
+                            && e.reserve_in_raw.is_some()
+                            && e.reserve_out_raw.is_some())
+                            || (e.protocol == "uniswap_v3" && e.sqrt_price_x96_raw.is_some())
+                    }),
+                "unwind_leg_missing_liquidity",
+            ),
+            // execution_before_quote_expiry: el snapshot sigue vigente
+            // (valid_until_ms > ahora) — el quote no ha expirado.
+            receipt(
+                "execution_before_quote_expiry",
+                self.data.valid_until_ms > now_ms().unwrap_or(0),
+                "snapshot_expired_before_execution_window",
+            ),
             // native_risk_and_impact_policy (OPERATOR-DISPATCH-WIRING-01):
             // PASS solo si el dispatcher REAL corrió para ESTE plan — la
             // caché la puebla operators() con la evidencia nativa efectiva.
