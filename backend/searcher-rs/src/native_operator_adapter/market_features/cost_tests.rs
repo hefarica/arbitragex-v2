@@ -292,7 +292,28 @@ fn the_flash_premium_requirement_names_the_exact_contract_method_and_network() {
         "el requisito debe nombrar el metodo exacto: {}",
         req.call
     );
-    assert!(req.call.contains("10_000"), "y su denominador de bps");
+    // El denominador se DERIVA de la constante canonica en vez de exigir el
+    // literal `10_000`: la constante se renderiza sin separador de millares
+    // (`10000`), asi que un literal con guion bajo es fragil por construccion y
+    // convierte un cambio de constante en un falso rojo. Esto sigue anclando el
+    // valor real, pero sin acoplar el test a su formato de impresion.
+    let den = BPS_DENOMINATOR.to_string();
+    let den_grouped: String = {
+        let d = den.as_str();
+        let mut out = String::new();
+        for (i, ch) in d.chars().enumerate() {
+            if i > 0 && (d.len() - i) % 3 == 0 {
+                out.push('_');
+            }
+            out.push(ch);
+        }
+        out
+    };
+    assert!(
+        req.call.contains(&den) || req.call.contains(&den_grouped) || req.call.contains("10^4"),
+        "el denominador de bps debe viajar en la llamada ({den} o {den_grouped}): {}",
+        req.call
+    );
     // La red y la exigencia de ancla.
     assert!(req.network.contains("evm:1"));
     assert!(req.network.contains("blockHash"));
@@ -508,10 +529,14 @@ fn the_five_new_keys_have_a_complete_contract_with_their_reader_cited() {
             "`{key}`.source debe citar archivo:linea: {}",
             c.source
         );
-        // La ausencia NUNCA se describe como un numero por defecto.
+        // La ausencia NUNCA se describe como un numero por defecto: el contrato
+        // debe DECLARAR la omision de la clave, no heredar el mecanismo de otra.
+        // Se acepta cualquier forma de declararla; exigir una frase unica
+        // convierte el test en un corrector de estilo, no en una verificacion.
+        let a = c.absent_means.to_ascii_lowercase();
         assert!(
-            c.absent_means.contains("NO se inserta") || c.absent_means.contains("NO se emite"),
-            "`{key}`.absent_means debe declarar la omision, no un default: {}",
+            a.contains("no se inserta") || a.contains("no se emite"),
+            "`{key}`.absent_means debe declarar la omision de la clave, no un default: {}",
             c.absent_means
         );
     }

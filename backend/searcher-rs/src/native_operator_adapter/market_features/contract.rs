@@ -164,9 +164,11 @@ pub const CONTRACTS: &[FeatureContract] = &[
                  funding.rs:54 — reexportado, no duplicado)",
         window: "idéntica a `pool_fee`: la lectura del edge del snapshot de la ruta",
         absent_means: "idéntica a `pool_fee` y ATÓMICA con ella: los dos se emiten \
-                       juntos o ninguno. Publicar sólo uno dejaría a op_15/op_21/op_32 \
-                       leyendo `fee_bps` y a op_26 leyendo `pool_fee` sobre el mismo \
-                       hecho, con un lector sin dato y otro con él",
+                       juntos o ninguno, y cuando falta `fee_units` o `fee_denominator` \
+                       en la pierna, `fee_bps` NO se inserta en el mapa — nunca se \
+                       rellena con un 30 bps por defecto. Publicar sólo uno dejaría a \
+                       op_15/op_21/op_32 leyendo `fee_bps` y a op_26 leyendo `pool_fee` \
+                       sobre el mismo hecho, con un lector sin dato y otro con él",
         monetary: false,
         owner: Owner::ThisModule,
     },
