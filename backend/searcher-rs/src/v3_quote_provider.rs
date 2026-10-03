@@ -34,8 +34,17 @@ use std::time::{Duration, Instant};
 
 use ethers::types::{Address, U256};
 
-use crate::amm_math::{v3_quote_exact_in_multicall, V3QuoteRequest};
+use crate::amm_math::{
+    classify_pool_admission, v3_quote_exact_in_multicall, v3_quote_multicall_timeout,
+    PoolAdmission, PoolProbe, ProbeAnswer, V3CallFailure, V3QuoteError, V3QuoteErrorKind,
+    V3QuoteRequest,
+};
 use crate::state_projector::V3QuoteProvider;
+use crate::workers::pool_sync_worker::multicall_abi;
+use alloy::primitives::Address as AlloyAddress;
+use alloy::providers::Provider as AlloyProvider;
+use alloy::rpc::types::{TransactionInput, TransactionRequest};
+use alloy::sol_types::SolCall;
 use shared_rs::chains::{multicall3_for_chain, quoter_v2_for_chain};
 use shared_rs::rpc_failover::HttpRpcPool;
 
@@ -161,7 +170,53 @@ const QUOTE_CACHE_MAX: usize = 4096;
 /// size, tier) at a given block.
 type QuoteKey = (Address, Address, Address, U256, u32);
 
-type QuoteResult = Result<U256, String>;
+/// Cache entry payload. V3-QUOTE-02 (2026-10-03): the error side is the TYPED
+/// `V3QuoteError`, not a flattened `String` — so a pool revert stays
+/// distinguishable from a transport failure on every later CACHE HIT too, not
+/// only on the RPC call that produced it. Before this change the type was
+/// erased at the cache boundary and both classes reached the projector as
+/// `v3_quote_unavailable`, which is the bucket that swallowed 46% of the live
+/// rejection histogram.
+type QuoteResult = Result<U256, V3QuoteError>;
+
+/// Build the typed error for a NON-transport quote failure: the QuoterV2
+/// sub-call executed and failed. `failure` carries the decoded revert class.
+///
+/// The detail string is the only thing the operator reads, so it names the
+/// decoded cause when there is one. The `RevertNoData` / unclassified shape
+/// keeps the pre-fix WO-06 wording VERBATIM: that string has been the grep
+/// anchor since 2026-09-19 and silently re-wording it would break existing
+/// dashboards and runbooks.
+fn pool_call_error(failure: Option<V3CallFailure>) -> V3QuoteError {
+    let detail = match &failure {
+        Some(V3CallFailure::RevertReason(reason)) => {
+            format!("v3 quote failed (pool reverted: {reason})")
+        }
+        Some(V3CallFailure::Panic(code)) => format!("v3 quote failed (pool panicked: 0x{code:x})"),
+        Some(V3CallFailure::RevertData(data)) => {
+            format!("v3 quote failed (pool revert data {data})")
+        }
+        Some(V3CallFailure::ShortReturnData) => {
+            "v3 quote failed (call target returned no quote payload)".to_string()
+        }
+        Some(V3CallFailure::RevertNoData) | None => {
+            "v3 quote failed (insufficient liquidity / wrong fee tier / pool revert)".to_string()
+        }
+    };
+    V3QuoteError {
+        kind: V3QuoteErrorKind::PoolCall { failure },
+        detail,
+    }
+}
+
+/// Build the typed error for a TRANSPORT failure: the pool was never asked
+/// (failover exhausted, timeout, empty result set).
+fn transport_error(detail: String) -> V3QuoteError {
+    V3QuoteError {
+        kind: V3QuoteErrorKind::Transport,
+        detail,
+    }
+}
 
 struct CacheEntry {
     result: QuoteResult,
@@ -464,17 +519,26 @@ impl MulticallV3QuoteProvider {
                                 Ok(r.amount_out)
                             }
                             // Per-pool revert inside a successful multicall:
-                            // same classification as the unary path (WO-06).
-                            Some(_) => {
+                            // same classification as the unary path (WO-06),
+                            // now carrying the decoded revert class so the
+                            // projector can label it precisely. `rpc_tier_revert`
+                            // is kept as the aggregate series (funnel
+                            // comparability) and the detailed split is added
+                            // alongside it.
+                            Some(r) => {
                                 quote_outcome_metric("rpc_tier_revert");
-                                Err("v3 quote failed (insufficient liquidity / wrong fee tier / pool revert)".to_string())
+                                let err = pool_call_error(r.failure.clone());
+                                quote_outcome_metric(err.outcome_label());
+                                Err(err)
                             }
                             None => {
                                 quote_outcome_metric("rpc_error");
-                                Err("v3 quote batch returned a short result set".to_string())
+                                Err(transport_error(
+                                    "v3 quote batch returned a short result set".to_string(),
+                                ))
                             }
                         };
-                        out.push((req.clone(), res.clone()));
+                        out.push((req.clone(), res.clone().map_err(|e| e.to_string())));
                         self.cache_put(*key, res);
                         self.inflight_clear(key);
                     }
@@ -492,14 +556,116 @@ impl MulticallV3QuoteProvider {
                     for (key, req, _guard) in chunk {
                         quote_outcome_metric("rpc");
                         quote_outcome_metric("rpc_error");
-                        let res = Err(format!("v3 quote batch rpc failover exhausted: {e}"));
-                        out.push((req.clone(), res.clone()));
+                        let res = Err(transport_error(format!(
+                            "v3 quote batch rpc failover exhausted: {e}"
+                        )));
+                        out.push((req.clone(), res.clone().map_err(|e| e.to_string())));
                         self.inflight_clear(key);
                     }
                 }
             }
         }
         out
+    }
+
+    /// CATALOG-ADMISSION-WIRE-01: probe `fee()` + `liquidity()` for a set of
+    /// catalogue entries in ONE `aggregate3` (two sub-calls per pool, `fee`
+    /// first) and classify each with the pure `classify_pool_admission`.
+    ///
+    /// Every failure mode returns an EMPTY vec — transport down, timeout, or an
+    /// undecodable envelope — so the caller records NOTHING and the pool stays
+    /// exactly as it is. A probe we could not complete is not a verdict (R8).
+    async fn probe_admissions_impl(
+        &self,
+        pools: Vec<(Address, u32)>,
+    ) -> Vec<(Address, PoolAdmission)> {
+        if pools.is_empty() {
+            return Vec::new();
+        }
+        let fee_cd = crate::amm_math::encode_pool_probe_calldata(PoolProbe::Fee).to_vec();
+        let liq_cd = crate::amm_math::encode_pool_probe_calldata(PoolProbe::Liquidity).to_vec();
+        let mut calls: Vec<multicall_abi::Call3> = Vec::with_capacity(pools.len() * 2);
+        for (addr, _) in &pools {
+            let target = AlloyAddress::from_slice(addr.as_bytes());
+            calls.push(multicall_abi::Call3 {
+                target,
+                allowFailure: true,
+                callData: fee_cd.clone().into(),
+            });
+            calls.push(multicall_abi::Call3 {
+                target,
+                allowFailure: true,
+                callData: liq_cd.clone().into(),
+            });
+        }
+
+        quote_outcome_metric("admission_probe");
+        let rpc_pool = self.pool.clone();
+        let multicall = AlloyAddress::from_slice(self.multicall_addr.as_bytes());
+        let raw = match tokio::time::timeout(
+            v3_quote_multicall_timeout(),
+            rpc_pool.with_retry(|provider| {
+                // with_retry may re-run the closure after failover, so the
+                // envelope is rebuilt per attempt (same as the quote path).
+                let calldata = multicall_abi::aggregate3Call {
+                    calls: calls.clone(),
+                }
+                .abi_encode();
+                async move {
+                    let tx = TransactionRequest::default()
+                        .to(multicall)
+                        .input(TransactionInput::new(calldata.into()));
+                    provider.call(tx).await.map_err(|e| anyhow::anyhow!("{e}"))
+                }
+            }),
+        )
+        .await
+        {
+            Ok(Ok(b)) => b,
+            Ok(Err(e)) => {
+                quote_outcome_metric("admission_probe_error");
+                tracing::debug!(event = "v3_quote.admission_probe_rpc_err", error = %e);
+                return Vec::new();
+            }
+            Err(_) => {
+                quote_outcome_metric("admission_probe_timeout");
+                tracing::debug!(event = "v3_quote.admission_probe_timeout");
+                return Vec::new();
+            }
+        };
+
+        let results = match multicall_abi::aggregate3Call::abi_decode_returns(&raw) {
+            Ok(r) => r,
+            Err(e) => {
+                quote_outcome_metric("admission_probe_error");
+                tracing::debug!(event = "v3_quote.admission_probe_decode_err", error = %e);
+                return Vec::new();
+            }
+        };
+
+        let mut out = Vec::with_capacity(pools.len());
+        for (i, (addr, catalogue_fee)) in pools.iter().enumerate() {
+            let fee_answer = probe_answer(results.get(i * 2));
+            let liq_answer = probe_answer(results.get(i * 2 + 1));
+            out.push((
+                *addr,
+                classify_pool_admission(*catalogue_fee, fee_answer, liq_answer),
+            ));
+        }
+        out
+    }
+}
+
+/// Map ONE multicall sub-result to a `ProbeAnswer`.
+///
+/// The three states stay deliberately distinct: a REVERT (the chain answered
+/// "no") is evidence; a MISSING slot (short result set) is not, and must never
+/// be read as one.
+fn probe_answer(r: Option<&multicall_abi::Result>) -> ProbeAnswer<'_> {
+    match r {
+        Some(res) if res.success => ProbeAnswer::Answered(res.returnData.as_ref()),
+        Some(_) => ProbeAnswer::Reverted,
+        None => ProbeAnswer::Unavailable,
     }
 }
 
@@ -558,7 +724,7 @@ impl V3QuoteProvider for MulticallV3QuoteProvider {
                 } else {
                     "cache_neg_hit"
                 });
-                return res.map_err(anyhow::Error::msg);
+                return res.map_err(anyhow::Error::new);
             }
 
             // 2. Single-flight per key: concurrent same-key callers await this
@@ -574,67 +740,73 @@ impl V3QuoteProvider for MulticallV3QuoteProvider {
                 } else {
                     "cache_neg_hit"
                 });
-                return res.map_err(anyhow::Error::msg);
+                return res.map_err(anyhow::Error::new);
             }
 
             // 4. One in-flight RPC for this key.
             quote_outcome_metric("rpc");
             let mut transport_fail = false;
-            let (outcome, rpc_result) = rpc_pool
-                .with_retry(|provider| {
-                    // with_retry engages circuit-breaker + failover; the closure
-                    // may run more than once, so build the (single-element)
-                    // request set per attempt.
-                    let reqs = vec![V3QuoteRequest {
-                        pool_addr: pool,
-                        token_in,
-                        token_out,
-                        amount_in,
-                        fee_bps,
-                    }];
-                    async move {
-                        v3_quote_exact_in_multicall(provider, quoter, multicall, reqs).await
-                    }
-                })
-                .await
-                .map_err(|e| {
-                    // R5: failover exhausted = TRANSPORT failure → long pacing TTL.
-                    transport_fail = true;
-                    anyhow::anyhow!("v3 quote rpc failover exhausted: {e}")
-                })
-                .map(|results| match results.into_iter().next() {
-                    Some(r) if r.success => ("rpc_ok", Ok(r.amount_out)),
-                    // Per-pool revert: the quoter call itself reverted at the
-                    // requested tier (insufficient liquidity / wrong tier /
-                    // pool revert). WO-06: split from transport failures — with
-                    // catalog-resolved tiers this label is the tier-mismatch
-                    // canary that used to hide inside `rpc_error`.
-                    Some(_) => (
-                        "rpc_tier_revert",
-                        Err(anyhow::anyhow!(
-                            "v3 quote failed (insufficient liquidity / wrong fee tier / pool revert)"
-                        )),
-                    ),
-                    None => (
-                        "rpc_error",
-                        Err(anyhow::anyhow!("v3 quote returned an empty result set")),
-                    ),
-                })
-                .unwrap_or_else(|e| ("rpc_error", Err(e)));
+            let (outcome, rpc_result): (_, QuoteResult) =
+                rpc_pool
+                    .with_retry(|provider| {
+                        // with_retry engages circuit-breaker + failover; the closure
+                        // may run more than once, so build the (single-element)
+                        // request set per attempt.
+                        let reqs = vec![V3QuoteRequest {
+                            pool_addr: pool,
+                            token_in,
+                            token_out,
+                            amount_in,
+                            fee_bps,
+                        }];
+                        async move {
+                            v3_quote_exact_in_multicall(provider, quoter, multicall, reqs).await
+                        }
+                    })
+                    .await
+                    .map_err(|e| {
+                        // R5: failover exhausted = TRANSPORT failure → long pacing TTL.
+                        transport_fail = true;
+                        transport_error(format!("v3 quote rpc failover exhausted: {e}"))
+                    })
+                    .map(|results| match results.into_iter().next() {
+                        Some(r) if r.success => ("rpc_ok", Ok(r.amount_out)),
+                        // Per-pool revert: the quoter call itself reverted at the
+                        // requested tier. WO-06 split it from transport failures;
+                        // V3-QUOTE-02 additionally carries the DECODED revert class
+                        // (no payload / Error(string) / Panic / raw) so the
+                        // projector stops collapsing every physical cause into
+                        // `v3_quote_unavailable`. `rpc_tier_revert` is emitted as the
+                        // aggregate series so the historical funnel stays
+                        // comparable, with the detailed split alongside it.
+                        Some(r) => {
+                            quote_outcome_metric("rpc_tier_revert");
+                            let err = pool_call_error(r.failure);
+                            (err.outcome_label(), Err(err))
+                        }
+                        None => (
+                            "rpc_error",
+                            Err(transport_error(
+                                "v3 quote returned an empty result set".to_string(),
+                            )),
+                        ),
+                    })
+                    .unwrap_or_else(|e| ("rpc_error", Err(e)));
 
             // 5. Store (success + negative, distinct TTLs), release the slot,
-            //    answer. The cache stores String errors (Clone); the returned
-            //    anyhow::Error is rebuilt from the stored String on hits.
-            let cached = rpc_result.as_ref().map_err(|e| e.to_string()).cloned();
+            //    answer. The cache stores the TYPED error (Clone), so a later
+            //    cache hit keeps the same class the RPC produced instead of
+            //    degrading to a string the projector can no longer classify.
+            let typed: QuoteResult = rpc_result.clone();
             if transport_fail {
                 // R5: transport-failure negative → long pacing TTL.
-                self.cache_put_neg_transport(key, cached);
+                self.cache_put_neg_transport(key, typed);
             } else {
-                self.cache_put(key, cached);
+                self.cache_put(key, typed);
             }
             self.inflight_clear(&key);
             quote_outcome_metric(outcome);
-            rpc_result
+            rpc_result.map_err(anyhow::Error::new)
         })
     }
 
@@ -646,6 +818,16 @@ impl V3QuoteProvider for MulticallV3QuoteProvider {
     ) -> Pin<Box<dyn Future<Output = crate::state_projector::V3BatchQuoteResults> + Send + '_>>
     {
         Box::pin(self.quote_batch_impl(reqs))
+    }
+
+    /// CATALOG-ADMISSION-WIRE-01: the production pool-identity probe. One
+    /// `aggregate3` carries two sub-calls per entry (`fee()`, `liquidity()`),
+    /// and the pure classifier turns the ABI answers into a verdict.
+    fn probe_pool_admissions(
+        &self,
+        pools: Vec<(Address, u32)>,
+    ) -> Pin<Box<dyn Future<Output = Vec<(Address, PoolAdmission)>> + Send + '_>> {
+        Box::pin(self.probe_admissions_impl(pools))
     }
 }
 
@@ -711,7 +893,7 @@ mod tests {
         cache.map.insert(
             key,
             CacheEntry {
-                result: Err("tier revert".to_string()),
+                result: Err(pool_call_error(Some(V3CallFailure::RevertNoData))),
                 stored_at: stale_ago,
                 neg: true,
                 neg_transport: false,
@@ -724,7 +906,7 @@ mod tests {
         cache.map.insert(
             key,
             CacheEntry {
-                result: Err("failover exhausted".to_string()),
+                result: Err(transport_error("failover exhausted".to_string())),
                 stored_at: stale_ago,
                 neg: true,
                 neg_transport: true,
@@ -735,9 +917,43 @@ mod tests {
             "30s transport negative must survive 3s"
         );
         let mut cache2 = TtlQuoteCache::default();
-        cache2.put_neg_transport(key, Err("x".to_string()));
+        cache2.put_neg_transport(key, Err(transport_error("x".to_string())));
         let e = cache2.map.get(&key).unwrap();
         assert!(e.neg && e.neg_transport);
+    }
+
+    /// V3-QUOTE-02: the CACHE must preserve the failure CLASS, not just the
+    /// fact of failure. A pool revert stored by the RPC path and read back on a
+    /// later cache hit must still be distinguishable from a transport failure —
+    /// otherwise the projector degrades to `v3_quote_unavailable` on every hit,
+    /// which is exactly the collapse this change removes.
+    #[test]
+    fn negative_cache_preserves_the_failure_class_across_hits() {
+        let mut c = TtlQuoteCache::default();
+        let k_revert = test_key(70);
+        let k_transport = test_key(71);
+        c.put(
+            k_revert,
+            Err(pool_call_error(Some(V3CallFailure::RevertNoData))),
+        );
+        c.put(
+            k_transport,
+            Err(transport_error("failover exhausted".to_string())),
+        );
+
+        let hit_revert = c.get_fresh(&k_revert).cloned().expect("fresh negative");
+        let hit_transport = c.get_fresh(&k_transport).cloned().expect("fresh negative");
+        let err_revert = hit_revert.expect_err("stored as an error");
+        let err_transport = hit_transport.expect_err("stored as an error");
+
+        assert_eq!(
+            err_revert.outcome_label(),
+            "rpc_pool_call_no_data",
+            "a cached pool revert must stay a pool revert"
+        );
+        assert_eq!(err_transport.outcome_label(), "rpc_error");
+        assert!(matches!(err_revert.kind, V3QuoteErrorKind::PoolCall { .. }));
+        assert!(matches!(err_transport.kind, V3QuoteErrorKind::Transport));
     }
 
     #[test]
@@ -877,11 +1093,14 @@ mod tests {
     fn ttl_cache_negative_entry_has_shorter_ttl() {
         let mut c = TtlQuoteCache::default();
         let k = test_key(2);
-        c.put(k, Err("rpc failover exhausted".to_string()));
+        c.put(
+            k,
+            Err(transport_error("rpc failover exhausted".to_string())),
+        );
         // Fresh negative hit (absorbs the retry storm).
         assert_eq!(
             c.get_fresh(&k),
-            Some(&Err("rpc failover exhausted".to_string()))
+            Some(&Err(transport_error("rpc failover exhausted".to_string())))
         );
         // Aged past the negative TTL but BELOW the positive TTL → already
         // expired: negatives must not live as long as successes.
