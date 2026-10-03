@@ -112,11 +112,32 @@ fn not_a_pool_ttl() -> Duration {
     })
 }
 
+/// QUOTE-TRUTH-ADMISSION-01: freshness for a `QuoteReverted` verdict. The
+/// observation (metadata valid, quote reverted) is behavioural, so it is
+/// bounded rather than eternal: a pool that recovers — the token re-syncs, the
+/// pool is re-seeded — re-qualifies for quoting after the window instead of
+/// staying condemned. Same default as `EmptyPool` because both describe pool
+/// state that can change at any block; the knob is separate so an operator can
+/// pace them independently.
+const DEFAULT_QUOTE_REVERTED_TTL_MS: u64 = 300_000;
+
+fn quote_reverted_ttl() -> Duration {
+    static V: std::sync::OnceLock<Duration> = std::sync::OnceLock::new();
+    *V.get_or_init(|| {
+        parse_ttl_ms(
+            std::env::var("ARBX_V3_QUOTE_REVERTED_TTL_MS").ok(),
+            DEFAULT_QUOTE_REVERTED_TTL_MS,
+        )
+    })
+}
+
 /// Freshness gate for one verdict class, pure and unit-testable.
 fn admission_is_fresh(admission: PoolAdmission, age: Duration) -> bool {
     match admission {
         PoolAdmission::EmptyPool { .. } => age < empty_pool_ttl(),
         PoolAdmission::NotAV3Pool => age < not_a_pool_ttl(),
+        // QUOTE-TRUTH-ADMISSION-01: observed behaviour, self-healing window.
+        PoolAdmission::QuoteReverted { .. } => age < quote_reverted_ttl(),
         // The chain's `fee()` is an immutable property of a deployed pool, so a
         // proven tier (agreement or correction) does not go stale.
         PoolAdmission::Admitted { .. } | PoolAdmission::TierMismatch { .. } => true,
@@ -302,6 +323,13 @@ impl V3FeeCatalog {
             }
             Some(PoolAdmission::EmptyPool { .. }) => {
                 fee_resolution_metric("not_admitted_empty_pool");
+                return FeeResolution::NotCatalogued;
+            }
+            // QUOTE-TRUTH-ADMISSION-01: metadata valid, quote reverted. The
+            // entry is not quotable — no tier is fabricated to keep it alive,
+            // and the ~1,495 quote attempts/hour it generated stop happening.
+            Some(PoolAdmission::QuoteReverted { .. }) => {
+                fee_resolution_metric("not_admitted_quote_reverted");
                 return FeeResolution::NotCatalogued;
             }
             _ => {}

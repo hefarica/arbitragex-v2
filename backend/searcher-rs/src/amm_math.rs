@@ -529,9 +529,61 @@ pub enum PoolAdmission {
     /// `fee()` agreed but `liquidity()` answered exactly 0: a legitimate pool
     /// with nothing to quote right now. A market fact, not a defect.
     EmptyPool { onchain_fee: u32 },
+    /// QUOTE-TRUTH-ADMISSION-01: the pool's METADATA is valid — `fee()` matches
+    /// the catalogue AND `liquidity()` is > 0 — and its QUOTE still reverted.
+    ///
+    /// Neither the tier nor the reported depth explains that, so the observed
+    /// BEHAVIOUR wins. Measured 2026-10-03 on the AMPL/WETH V3 pools: `fee()` =
+    /// 3000 (matching), `liquidity()` = 3.16e16, and the pool's real balance of
+    /// the output token was **910 wei**, so `quoteExactInputSingle` reverted
+    /// with `TF` (Uniswap V3's `TransferHelper.safeTransfer` failure).
+    ///
+    /// This is the general, token-agnostic detector for rebasing /
+    /// fee-on-transfer desync: it names no token, no symbol and no address —
+    /// the criterion is that the quote reverted while the metadata said the
+    /// pool was fine.
+    QuoteReverted { onchain_fee: u32 },
     /// No usable answer (not probed, transport failure, or an undecodable
     /// liquidity payload). NEVER a verdict — an entry stays as it was.
     Unprobed,
+}
+
+/// What the QUOTE path observed about one entry, independently of its metadata
+/// (QUOTE-TRUTH-ADMISSION-01). Metadata can be right and the pool still unable
+/// to produce an output; only the quote can see that.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum QuoteEvidence {
+    /// No pool-level revert was observed on this entry.
+    Clean,
+    /// The quote path observed a POOL-level revert on this exact entry — an
+    /// observed fact, carried from the quote itself, never inferred.
+    PoolRevert,
+}
+
+/// Compose the metadata verdict with what the quote ACTUALLY did.
+///
+/// Precedence follows explanatory power, not convenience:
+///   * `TierMismatch` — a wrong tier explains the revert AND is correctable:
+///     correct it, never condemn the pool.
+///   * `NotAV3Pool` / `EmptyPool` — stronger, unit-independent evidence: they
+///     already imply exclusion on their own.
+///   * `Admitted` + `PoolRevert` — metadata valid and the pool still cannot
+///     quote: `QuoteReverted`. Neither a wrong tier nor missing depth explains
+///     it, so behaviour wins over metadata.
+///   * `Unprobed` — no answer is not evidence; the entry is left exactly as it
+///     was (R8), EVEN with an observed revert.
+pub fn admit_with_quote_evidence(metadata: PoolAdmission, quote: QuoteEvidence) -> PoolAdmission {
+    match (metadata, quote) {
+        (PoolAdmission::Unprobed, _) => PoolAdmission::Unprobed,
+        (PoolAdmission::NotAV3Pool, _) => PoolAdmission::NotAV3Pool,
+        (PoolAdmission::EmptyPool { onchain_fee }, _) => PoolAdmission::EmptyPool { onchain_fee },
+        (PoolAdmission::TierMismatch { .. }, _) => metadata,
+        (PoolAdmission::QuoteReverted { .. }, _) => metadata,
+        (PoolAdmission::Admitted { onchain_fee }, QuoteEvidence::PoolRevert) => {
+            PoolAdmission::QuoteReverted { onchain_fee }
+        }
+        (PoolAdmission::Admitted { .. }, QuoteEvidence::Clean) => metadata,
+    }
 }
 
 /// `fee()` / `liquidity()` selectors derived from their signature, matching the
@@ -1055,6 +1107,71 @@ mod v3_tests {
     // ── CATALOG-HYGIENE-01: pool-identity probes ─────────────────────────────
 
     /// Big-endian 32-byte word from a u128 (ABI return payload shape).
+    // ── QUOTE-TRUTH-ADMISSION-01: la evidencia de la cotización ──────────────
+
+    /// EL CASO MEDIDO (AMPL/WETH, 2026-10-03): los metadatos son VÁLIDOS —
+    /// `fee()` = 3000 coincide con el catálogo y `liquidity()` = 3,16e16 > 0 —
+    /// y la COTIZACIÓN revierte. Sin esta composición el pool quedaba
+    /// `Admitted` y se cotizaba para siempre.
+    #[test]
+    fn valid_metadata_with_reverting_quote_is_never_admitted() {
+        let metadata = PoolAdmission::Admitted { onchain_fee: 3000 };
+        assert_eq!(
+            admit_with_quote_evidence(metadata, QuoteEvidence::PoolRevert),
+            PoolAdmission::QuoteReverted { onchain_fee: 3000 }
+        );
+        // Sin revert observado, el pool sano sigue admitido tal cual.
+        assert_eq!(
+            admit_with_quote_evidence(metadata, QuoteEvidence::Clean),
+            PoolAdmission::Admitted { onchain_fee: 3000 }
+        );
+        // Y el otro pool medido del mismo par, con tier 500.
+        assert_eq!(
+            admit_with_quote_evidence(
+                PoolAdmission::Admitted { onchain_fee: 500 },
+                QuoteEvidence::PoolRevert
+            ),
+            PoolAdmission::QuoteReverted { onchain_fee: 500 }
+        );
+    }
+
+    /// La corrección de tier NO se degrada a condena: un tier equivocado explica
+    /// el revert y es corregible (es el caso 0x464bd7…, no el de AMPL).
+    #[test]
+    fn tier_mismatch_still_wins_over_an_observed_revert() {
+        let m = PoolAdmission::TierMismatch {
+            catalogue_fee: 100,
+            onchain_fee: 10000,
+        };
+        assert_eq!(admit_with_quote_evidence(m, QuoteEvidence::PoolRevert), m);
+    }
+
+    /// R8: una no-respuesta NO se convierte en veredicto, ni siquiera con un
+    /// revert observado. (Y por eso tampoco exculpa: simplemente no decide.)
+    #[test]
+    fn unprobed_is_never_upgraded_to_a_verdict_by_a_revert() {
+        assert_eq!(
+            admit_with_quote_evidence(PoolAdmission::Unprobed, QuoteEvidence::PoolRevert),
+            PoolAdmission::Unprobed
+        );
+    }
+
+    /// Las evidencias más fuertes se conservan intactas.
+    #[test]
+    fn stronger_metadata_evidence_is_preserved() {
+        assert_eq!(
+            admit_with_quote_evidence(PoolAdmission::NotAV3Pool, QuoteEvidence::PoolRevert),
+            PoolAdmission::NotAV3Pool
+        );
+        assert_eq!(
+            admit_with_quote_evidence(
+                PoolAdmission::EmptyPool { onchain_fee: 500 },
+                QuoteEvidence::PoolRevert
+            ),
+            PoolAdmission::EmptyPool { onchain_fee: 500 }
+        );
+    }
+
     fn word(v: u128) -> [u8; 32] {
         let mut w = [0u8; 32];
         U256::from(v).to_big_endian(&mut w);
