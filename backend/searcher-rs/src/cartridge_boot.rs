@@ -592,6 +592,9 @@ async fn emit_shadow_outcome(
     intent: &RouteIntent,
     res: &CartridgeEvalResult,
     had_reserves: bool,
+    // SHADOW-CANONICAL-01: sustrato de datos de ESTA evaluación. Se publica para
+    // que una fila jamás pueda leerse como "real" sin serlo.
+    substrate: ShadowSubstrate,
 ) {
     if !outcomes_emission_enabled() {
         return; // gate off → nothing emitted
@@ -607,9 +610,25 @@ async fn emit_shadow_outcome(
     // schema is additive and default-off — it never alters v1 behaviour or touches
     // `arbx:opps:detected`.
     let payload = if outcomes_v2_schema_enabled() {
-        build_rd_outcome_v2(chain_id, cartridge_id, intent, res, had_reserves, ts_ms)
+        build_rd_outcome_v2(
+            chain_id,
+            cartridge_id,
+            intent,
+            res,
+            had_reserves,
+            substrate,
+            ts_ms,
+        )
     } else {
-        build_rd_outcome_v1(chain_id, cartridge_id, intent, res, had_reserves, ts_ms)
+        build_rd_outcome_v1(
+            chain_id,
+            cartridge_id,
+            intent,
+            res,
+            had_reserves,
+            substrate,
+            ts_ms,
+        )
     };
 
     let json = match serde_json::to_string(&payload) {
@@ -749,6 +768,7 @@ fn build_rd_outcome_v1(
     intent: &RouteIntent,
     res: &CartridgeEvalResult,
     had_reserves: bool,
+    substrate: ShadowSubstrate,
     ts_ms: u64,
 ) -> serde_json::Value {
     let first = intent.legs.first();
@@ -778,6 +798,11 @@ fn build_rd_outcome_v1(
         "v4_repairs": v4_repairs_summary(res),
         "had_reserves": had_reserves,
         "mode": "shadow",
+        // SHADOW-CANONICAL-01 — sustrato REAL de la evaluación: `intent_bundle`
+        // (SnapshotBundle real del intent) o `static_boot_stub` (contexto
+        // DATA_GAP estático). Campo ADITIVO: el sink de api-server valida solo
+        // sus campos requeridos y lo ignora.
+        "context_provenance": substrate.as_str(),
     })
 }
 
@@ -795,6 +820,7 @@ fn build_rd_outcome_v2(
     intent: &RouteIntent,
     res: &CartridgeEvalResult,
     had_reserves: bool,
+    substrate: ShadowSubstrate,
     ts_ms: u64,
 ) -> serde_json::Value {
     let hop_count = intent.legs.len();
@@ -848,6 +874,8 @@ fn build_rd_outcome_v2(
         "strategy_kind": cartridge_id,
         "cartridge_id": cartridge_id,
         "mode": "shadow",
+        // SHADOW-CANONICAL-01 — ver build_rd_outcome_v1: sustrato real usado.
+        "context_provenance": substrate.as_str(),
         "is_opportunity": res.is_opportunity,
         "status": if res.is_opportunity { "shadow_visible" } else { "rejected_with_reason" },
         "topology": {
@@ -1018,12 +1046,52 @@ fn category_to_strategy_label(
     }
 }
 
+/// Sustrato de datos con el que se resolvió UNA fila del stream shadow.
+///
+/// SHADOW-CANONICAL-01 — existe para que el stream NUNCA presente como real una
+/// evaluación hecha contra el stub Phase-1: el `mode` sigue siendo `"shadow"`
+/// (correcto: es el stream shadow), pero `context_provenance` declara si la
+/// evaluación usó el `SnapshotBundle` REAL del intent o el contexto DATA_GAP
+/// estático. Antes de este cambio TODAS las filas describían el stub sin
+/// declararlo, y el `costs.financing :: mandatory_route_cost_missing` de ~100%
+/// de las 600 filas medidas era el síntoma.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ShadowSubstrate {
+    /// `SnapshotBundle` REAL del intent, registrado en el `ContextRouter`.
+    IntentBundle,
+    /// Contexto DATA_GAP estático (`boot-chain-{chain_id}`): no se pudo componer
+    /// el bundle real. La razón exacta queda en `cartridge.intent_context_unavailable`.
+    StaticBootStub,
+}
+
+impl ShadowSubstrate {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::IntentBundle => "intent_bundle",
+            Self::StaticBootStub => "static_boot_stub",
+        }
+    }
+}
+
 /// Shadow-evaluates every ACTIVE cartridge against one live route intent and emits
 /// the result to logs/telemetry. **Read-only / observe-only**: it never constructs a
 /// `StrategyCandidate`, never touches `process_candidate`, and never reaches the
 /// execution pipeline. Designed to be `tokio::spawn`-ed off the orchestrator hot
 /// path so it adds no latency to intent processing. Per-cartridge errors are logged,
 /// never propagated (one bad cartridge cannot affect the others or the scanner).
+///
+/// SHADOW-CANONICAL-01 (2026-10-03) — §34.1 hot-path mode-invariant: esta ruta
+/// compone y registra el MISMO contexto v4 real por intent que la ruta ACTIVE
+/// (`build_and_register_intent_context`) y sella sus ids en `pool_data`, de modo
+/// que los bindings v4 resuelven el grafo/precios/costes REALES del intent. Los
+/// modos difieren SÓLO en el terminus de ejecución: aquí NO hay emisor, NO se
+/// persiste oportunidad y NO se emite nada a `arbx:opps:detected` — la única
+/// salida sigue siendo `arbx:route_discovery:outcomes` más los logs.
+///
+/// `deps` es `None` cuando el llamador no dispone de las dependencias de
+/// composición (config del operador, registro de operadores, router); la
+/// evaluación cae entonces al contexto DATA_GAP estático y lo declara con la
+/// razón exacta (`no_context_deps`) en vez de simular datos reales.
 ///
 /// Concurrency is globally bounded by [`SHADOW_MAX_CONCURRENCY`]; at capacity an
 /// evaluation is dropped rather than queued (observe-only). NOTE: a cartridge's own
@@ -1035,6 +1103,7 @@ pub async fn shadow_evaluate_intent(
     runner: Arc<CartridgeRunner>,
     intent: RouteIntent,
     chain_id: u64,
+    deps: Option<IntentContextDeps>,
 ) {
     // Bound global shadow-eval concurrency; drop (don't queue) when at capacity.
     let _permit = match shadow_semaphore().clone().try_acquire_owned() {
@@ -1097,7 +1166,53 @@ pub async fn shadow_evaluate_intent(
         Some(p) => runner.read_pool_reserves(&format!("{:#x}", p)).await,
         None => None,
     };
-    let pool_data = build_cartridge_pool_data(&intent, reserves_source.as_ref());
+    // SHADOW-CANONICAL-01 (2026-10-03) — §34.1 hot-path mode-invariant: la ruta
+    // SHADOW evalúa contra el MISMO sustrato de datos que la ruta ACTIVE. Antes
+    // construía SOLO `build_cartridge_pool_data` y no registraba contexto, así
+    // que los bindings v4 (`agent_v4_quote`/`operators`/`economic_check`/
+    // `discover`) resolvían al stub estático de boot (`boot-chain-{chain_id}`:
+    // `base_cost_lines`/`prices`/`edges`/`size_schedule_raw` VACÍOS) y toda fila
+    // del stream describía ese stub — de ahí el
+    // `costs.financing :: mandatory_route_cost_missing` en ~100% de las 600
+    // filas medidas. Ahora se compone y registra el contexto REAL del intent y
+    // se sellan sus ids en `pool_data`, idéntico a la ruta ACTIVE.
+    let v4_context = match deps.as_ref() {
+        Some(deps) => {
+            build_and_register_intent_context(
+                &runner,
+                &intent,
+                chain_id,
+                &deps.cfg_provider,
+                &deps.math_registry,
+                deps.router.as_ref(),
+            )
+            .await
+        }
+        None => {
+            // Sin dependencias de composición (config del operador, registro de
+            // operadores, router) NO se puede armar el bundle real: la ruta cae
+            // al comportamiento Phase-1 y lo declara con la razón exacta.
+            intent_context_unavailable(chain_id, &intent, "no_context_deps");
+            IntentContextOutcome {
+                guard: None,
+                census: IntentContextCensus::default(),
+            }
+        }
+    };
+    // Sustrato REALMENTE usado por ESTA evaluación: se publica en cada fila del
+    // stream para que ninguna fila pueda presentarse como real sin serlo.
+    let substrate = if v4_context.guard.is_some() {
+        ShadowSubstrate::IntentBundle
+    } else {
+        ShadowSubstrate::StaticBootStub
+    };
+    let (v4_stamp_context, v4_stamp_snapshot) = v4_context.stamp_ids(chain_id);
+    // Guard con Drop: el contexto del intent se retira del router en TODA
+    // salida (return, panic o fin del bucle) — misma garantía que la ruta ACTIVE.
+    let _v4_intent_guard = v4_context.guard;
+    let mut pool_data = build_cartridge_pool_data(&intent, reserves_source.as_ref());
+    pool_data.insert("context_id".into(), rhai::Dynamic::from(v4_stamp_context));
+    pool_data.insert("snapshot_id".into(), rhai::Dynamic::from(v4_stamp_snapshot));
 
     for (id, _category) in pertinent {
         match runner.evaluate(&id, pool_data.clone()).await {
@@ -1114,6 +1229,7 @@ pub async fn shadow_evaluate_intent(
                         estimated_profit = res.estimated_profit,
                         confidence = res.confidence,
                         urgency = %res.urgency,
+                        substrate = substrate.as_str(),
                         "cartridge shadow OPPORTUNITY detected (observe-only, no execution)"
                     );
                 } else {
@@ -1121,6 +1237,7 @@ pub async fn shadow_evaluate_intent(
                         event = "cartridge.shadow_eval_negative",
                         chain_id,
                         cartridge_id = %id,
+                        substrate = substrate.as_str(),
                         "cartridge shadow eval: no opportunity"
                     );
                 }
@@ -1135,6 +1252,7 @@ pub async fn shadow_evaluate_intent(
                     &intent,
                     &res,
                     reserves_source.is_some(),
+                    substrate,
                 )
                 .await;
             }
@@ -1152,15 +1270,40 @@ pub async fn shadow_evaluate_intent(
     }
 }
 
+/// SHADOW-CANONICAL-01 — dependencias que el camino SHADOW necesita para
+/// componer el MISMO contexto por-intent que el camino ACTIVE. Espeja 1:1 lo
+/// que `active_evaluate_and_emit` recibe del `OrchestratorContext` (config del
+/// operador, registro nativo de operadores y router de contextos); todo lo
+/// demás (índice de identidad, snapshot de precios, conexión Redis, gas) lo
+/// deriva el helper desde el propio `runner`, igual que la ruta ACTIVE.
+///
+/// Sin estas dependencias no se puede componer el bundle REAL: el camino
+/// shadow conserva entonces su comportamiento Phase-1 (contexto DATA_GAP
+/// estático) y lo declara con la razón exacta — jamás simula tener datos.
+pub struct IntentContextDeps {
+    pub cfg_provider: Arc<crate::orchestrator::ConfigProvider>,
+    pub math_registry: Arc<math_engine::OperatorRegistry>,
+    pub router: Option<Arc<crate::context_router::ContextRouter>>,
+}
+
 /// Fase 3a — retira el contexto por-intent del ContextRouter en TODA salida
-/// de la tarea ACTIVE (return temprano, `?`/`continue` no aplican a nivel de
-/// función, panic o fin normal del loop). Sin este guard, cada intent dejaría
-/// una entrada ocupando la capacidad 256 del router hasta reiniciar.
-struct V4IntentContextGuard {
+/// de la tarea (return temprano, panic o fin normal del loop). Sin este guard,
+/// cada intent dejaría una entrada ocupando la capacidad 256 del router hasta
+/// reiniciar. Lo comparten la ruta ACTIVE y la ruta SHADOW: SHADOW-CANONICAL-01
+/// registra el mismo contexto real, así que necesita la misma retirada.
+pub struct IntentContextGuard {
     router: Option<Arc<crate::context_router::ContextRouter>>,
     context_id: String,
 }
-impl Drop for V4IntentContextGuard {
+impl IntentContextGuard {
+    /// `context_id` con el que quedó registrado el contexto real del intent.
+    /// Es el valor que el camino ACTIVE (y ahora también el SHADOW) sella en
+    /// `pool_data` para que los cartuchos v4 lo copien a su propio ctx.
+    pub fn context_id(&self) -> &str {
+        &self.context_id
+    }
+}
+impl Drop for IntentContextGuard {
     fn drop(&mut self) {
         if let Some(router) = self.router.take() {
             if let Err(e) = router.remove(&self.context_id) {
@@ -1501,6 +1644,161 @@ fn v4_edge_protocol_and_fee(
         ProtocolType::Curve => ("curve".to_string(), None, None),
         ProtocolType::Balancer => ("balancer".to_string(), None, None),
         ProtocolType::Unknown => ("unknown".to_string(), None, None),
+    }
+}
+
+// ── SHADOW-CANONICAL-01 (2026-10-03) — composición PURA del grafo por-intent ──
+// El grafo v4 del intent se compone en dos mitades separadas a propósito:
+//   · la LECTURA (async): reservas/slot0/decimales desde Redis, con las mismas
+//     claves y el mismo orden que ya usaba la ruta ACTIVE;
+//   · la COMPOSICIÓN (pura): decidir qué piernas entran, con qué orientación y
+//     con qué razón exacta se omiten las demás.
+// La frontera hace la composición testeable SIN Redis y, sobre todo, garantiza
+// que las rutas ACTIVE y SHADOW producen el MISMO grafo: no hay dos
+// implementaciones que puedan divergir, hay una sola función pura invocada por
+// ambos caminos (§34.1 hot-path mode-invariant).
+
+/// Cuerpo ya resuelto de una pierna V2 o V3. Identidad de coherencia incluida:
+/// el `sync_ts` del ROUND (todas las entradas de un round comparten `ts`), que
+/// es la única frontera honesta para rutas mixtas V2/V3 — jamás un hash
+/// fabricado (R8).
+pub(crate) enum IntentLegBody {
+    V2 {
+        reserve_in_raw: String,
+        reserve_out_raw: String,
+        sync_ts: u64,
+    },
+    V3 {
+        sqrt_price_x96: String,
+        liquidity: u128,
+        sync_ts: u64,
+    },
+}
+
+/// Lectura resuelta de UNA pierna del intent. `Skip(reason)` lleva la razón
+/// EXACTA de omisión (misma taxonomía que el histograma de producción:
+/// `missing_pool_hint`, `degenerate_self_pair`, `reserves_missing`,
+/// `v3_slot0_missing`, `token0_addr_missing`, `token0_addr_out_of_route`,
+/// `token_in_decimals_missing`, `token_out_decimals_missing`).
+pub(crate) enum IntentLegRead {
+    Skip(&'static str),
+    Ready {
+        /// `{:#x}` del `pool_hint` (la lectura sólo ocurre con pool presente).
+        pool_id: String,
+        body: IntentLegBody,
+        /// `(decimales token_in, decimales token_out)` resueltos.
+        decimals: (u8, u8),
+    },
+}
+
+/// Resultado de componer el grafo v4 de un intent.
+pub(crate) struct IntentEdgeComposition {
+    pub edges: Vec<crate::agent_graph::Edge>,
+    /// `token_in` de la PRIMERA pierna admitida — el `start_token` que
+    /// `build_v4_intent_bundle` exige. `None` cuando ninguna pierna entró.
+    pub first_token_in: Option<String>,
+    /// Histograma de omisiones (LOGFLOOD-01: una línea agregada, sin muestreo).
+    pub skip_reasons: std::collections::BTreeMap<&'static str, u64>,
+}
+
+/// SHADOW-CANONICAL-01 — compone el grafo v4 a partir de lecturas YA resueltas.
+/// Pura: sin Redis, sin env, sin reloj. `reads` va alineada 1:1 con
+/// `intent.legs`; una pierna sin lectura se omite con su razón.
+pub(crate) fn compose_intent_edges(
+    chain_id: u64,
+    ctx_id: &str,
+    intent: &RouteIntent,
+    reads: &[IntentLegRead],
+) -> IntentEdgeComposition {
+    let mut edges: Vec<crate::agent_graph::Edge> = Vec::new();
+    let mut first_token_in: Option<String> = None;
+    let mut skip_reasons: std::collections::BTreeMap<&'static str, u64> =
+        std::collections::BTreeMap::new();
+    for (leg, read) in intent.legs.iter().zip(reads.iter()) {
+        match read {
+            IntentLegRead::Skip(reason) => {
+                *skip_reasons.entry(reason).or_insert(0) += 1;
+            }
+            IntentLegRead::Ready {
+                pool_id,
+                body,
+                decimals,
+            } => {
+                if first_token_in.is_none() {
+                    first_token_in = Some(format!("{:#x}", leg.token_in));
+                }
+                edges.push(intent_edge_from_ready(
+                    chain_id, ctx_id, leg, pool_id, body, *decimals,
+                ));
+            }
+        }
+    }
+    IntentEdgeComposition {
+        edges,
+        first_token_in,
+        skip_reasons,
+    }
+}
+
+/// Compone UNA arista del grafo v4 a partir de una pierna ya resuelta. La
+/// identidad de coherencia es el `ts` del ROUND de sync (V2 y V3 del mismo
+/// round lo comparten — verificado en producción), nunca un hash fabricado.
+/// El protocolo y su fee salen de `v4_edge_protocol_and_fee` — la MISMA
+/// derivación (y la única) que usa la lectura para elegir reservas o slot0.
+fn intent_edge_from_ready(
+    chain_id: u64,
+    ctx_id: &str,
+    leg: &crate::route_intent::RouteIntentLeg,
+    pool_id: &str,
+    body: &IntentLegBody,
+    decimals: (u8, u8),
+) -> crate::agent_graph::Edge {
+    let (protocol, fee_units, fee_denominator) = v4_edge_protocol_and_fee(leg);
+    let (reserve_in_raw, reserve_out_raw, sqrt_price_x96_raw, liquidity, block_identity) =
+        match body {
+            IntentLegBody::V2 {
+                reserve_in_raw,
+                reserve_out_raw,
+                sync_ts,
+            } => (
+                Some(reserve_in_raw.clone()),
+                Some(reserve_out_raw.clone()),
+                None,
+                None,
+                format!("sync-ts-{sync_ts}"),
+            ),
+            IntentLegBody::V3 {
+                sqrt_price_x96,
+                liquidity,
+                sync_ts,
+            } => (
+                None,
+                None,
+                Some(sqrt_price_x96.clone()),
+                Some(*liquidity),
+                format!("sync-ts-{sync_ts}"),
+            ),
+        };
+    crate::agent_graph::Edge {
+        edge_id: pool_id.to_owned(),
+        pool_id: pool_id.to_owned(),
+        chain_id,
+        token_in: format!("{:#x}", leg.token_in),
+        token_out: format!("{:#x}", leg.token_out),
+        protocol: protocol.to_owned(),
+        snapshot_id: ctx_id.to_owned(),
+        block_hash: block_identity,
+        reserve_in_raw,
+        reserve_out_raw,
+        fee_units,
+        fee_denominator,
+        token_in_decimals: decimals.0,
+        token_out_decimals: decimals.1,
+        // Adaptador que respalda estos edges: la caché de reservas del
+        // searcher (procedencia real, no una versión de protocolo).
+        adapter_version: "reserves_cache_v1".to_string(),
+        sqrt_price_x96_raw,
+        liquidity,
     }
 }
 
@@ -1898,6 +2196,438 @@ fn v4_base_cost_lines(
     lines
 }
 
+/// SHADOW-CANONICAL-01 — LECTURA de las piernas del intent con las MISMAS
+/// claves Redis y el MISMO orden que usaba la ruta ACTIVE (reservas V2
+/// orientadas por `token0_addr` / slot0 V3, y después decimales). El orden
+/// importa: fija qué razón de omisión se reporta cuando fallan varios datos.
+/// Cachea por intent para no repetir GETs del mismo token/pool entre piernas.
+async fn read_intent_legs(
+    runner: &Arc<CartridgeRunner>,
+    redis: &mut redis::aio::ConnectionManager,
+    intent: &RouteIntent,
+    chain_id: u64,
+) -> Vec<IntentLegRead> {
+    let mut decimal_cache: std::collections::HashMap<String, Option<u8>> =
+        std::collections::HashMap::new();
+    let mut slot0_cache: std::collections::HashMap<String, Option<(String, u128, u64)>> =
+        std::collections::HashMap::new();
+    let mut reads: Vec<IntentLegRead> = Vec::with_capacity(intent.legs.len());
+    for leg in &intent.legs {
+        // Gate de COSTE: una pierna sin pool o degenerada se descarta ANTES de
+        // cualquier I/O (idéntico a la ruta ACTIVE previa).
+        let Some(pool) = leg.pool_hint else {
+            reads.push(IntentLegRead::Skip("missing_pool_hint"));
+            continue;
+        };
+        let token_in = format!("{:#x}", leg.token_in);
+        let token_out = format!("{:#x}", leg.token_out);
+        if token_in == token_out {
+            // Una pierna degenerada invalidaría TODO el grafo
+            // (enumerate_cycles: invalid_or_duplicate_graph_edge); se omite.
+            reads.push(IntentLegRead::Skip("degenerate_self_pair"));
+            continue;
+        }
+        // El protocolo decide la FUENTE del dato (V3 → slot0; resto →
+        // reservas). El fee lo deriva la composición desde la misma función
+        // pura, así que aquí sólo se necesita el protocolo.
+        let (protocol, _, _) = v4_edge_protocol_and_fee(leg);
+        let pool_id = format!("{:#x}", pool);
+        // V3-LEG-GRAPH-01 (RESERVES-CACHE-01, 2026-10-01): el protocolo se
+        // computa ANTES del gate de reservas. Un pool V3 NO tiene
+        // getReserves(): su dato vive en `arbx:v3_slot0`, jamás en
+        // `arbx:pool_reserves`. Exigirle la entrada V2 descartaba TODA pierna
+        // V3 con el motivo engañoso `reserves_missing` — 98% de las piernas
+        // descartadas en producción (medido 2026-10-01). El Edge ya soporta V3
+        // (reserve_in_raw: Option) y quote_path lo resuelve con
+        // v3_spot_within_tick (orientación derivada de token_in/token_out).
+        let body = if protocol == "uniswap_v3" {
+            match v4_slot0(redis, chain_id, &pool_id, &mut slot0_cache).await {
+                Some((sp, liq, ts)) => IntentLegBody::V3 {
+                    sqrt_price_x96: sp,
+                    liquidity: liq,
+                    sync_ts: ts,
+                },
+                // Sin slot0 cacheado → skip con motivo PROPIO, no el engañoso.
+                None => {
+                    reads.push(IntentLegRead::Skip("v3_slot0_missing"));
+                    continue;
+                }
+            }
+        } else {
+            let Some(entry) = runner.read_pool_reserves(&pool_id).await else {
+                reads.push(IntentLegRead::Skip("reserves_missing"));
+                continue;
+            };
+            // Orientación exacta: token0_addr declara cuál reserva es "in"
+            // para esta pierna. Sin token0_addr o con token0 fuera de la
+            // ruta → OMITIR (R8: sin dual-orientation ni inferencia).
+            let Some(token0) = entry.token0_addr.as_deref() else {
+                reads.push(IntentLegRead::Skip("token0_addr_missing"));
+                continue;
+            };
+            let pair = if token0 == token_in {
+                (entry.r0.clone(), entry.r1.clone())
+            } else if token0 == token_out {
+                (entry.r1.clone(), entry.r0.clone())
+            } else {
+                reads.push(IntentLegRead::Skip("token0_addr_out_of_route"));
+                continue;
+            };
+            // Identidad de coherencia del ROUND DE SYNC (PLAN-SUPPORT-WIRING-
+            // 01): V2 y V3 del mismo round comparten ts (verificado en
+            // producción), mientras que blk solo existe en V2 y ts solo se
+            // usaba en V3 — con identidades distintas, quote_path_progress
+            // rechazaba TODA ruta mixta con mixed_block_or_domain. El ts del
+            // round ES la frontera real de coherencia (todas las entradas se
+            // escribieron juntas). JAMÁS se fabrica un hash (R8).
+            IntentLegBody::V2 {
+                reserve_in_raw: pair.0,
+                reserve_out_raw: pair.1,
+                sync_ts: entry.ts,
+            }
+        };
+        let Some(dec_in) = v4_token_decimals(redis, chain_id, &token_in, &mut decimal_cache).await
+        else {
+            reads.push(IntentLegRead::Skip("token_in_decimals_missing"));
+            continue;
+        };
+        let Some(dec_out) =
+            v4_token_decimals(redis, chain_id, &token_out, &mut decimal_cache).await
+        else {
+            reads.push(IntentLegRead::Skip("token_out_decimals_missing"));
+            continue;
+        };
+        reads.push(IntentLegRead::Ready {
+            pool_id,
+            body,
+            decimals: (dec_in, dec_out),
+        });
+    }
+    reads
+}
+
+/// Censo del grafo v4 compuesto para UN intent.
+///
+/// OBSERVABILITY-V4-EDGES-01: existe SEPARADO del guard porque el diagnóstico
+/// debe distinguir "grafo vacío" de "router lleno" — el censo es válido aunque
+/// el registro no llegue a ocurrir. La ruta ACTIVE lo emite en su summary
+/// (una línea por tx, nunca por intent: R9).
+#[derive(Debug, Default, Clone)]
+pub struct IntentContextCensus {
+    pub edges_built: usize,
+    pub legs_skipped: std::collections::BTreeMap<&'static str, u64>,
+}
+
+/// SHADOW-CANONICAL-01 — resultado de intentar componer y registrar el
+/// contexto v4 REAL del intent.
+pub struct IntentContextOutcome {
+    /// `Some` ⇔ el contexto REAL quedó registrado en el router bajo
+    /// `intent-{uuid}`, y su `Drop` lo retira al terminar la evaluación.
+    /// `None` ⇔ la evaluación debe caer al contexto DATA_GAP estático; la razón
+    /// exacta ya quedó registrada a debug (`cartridge.intent_context_unavailable`).
+    pub guard: Option<IntentContextGuard>,
+    pub census: IntentContextCensus,
+}
+
+impl IntentContextOutcome {
+    /// Fallback honesto: sin contexto real, con el censo ya computado.
+    fn unavailable(
+        census: IntentContextCensus,
+        chain_id: u64,
+        intent: &RouteIntent,
+        reason: &'static str,
+    ) -> Self {
+        intent_context_unavailable(chain_id, intent, reason);
+        Self {
+            guard: None,
+            census,
+        }
+    }
+
+    /// `context_id`/`snapshot_id` que los cartuchos v4 deben copiar a su ctx,
+    /// o los ids DATA_GAP estáticos cuando no hubo contexto real. `SnapshotServices::check`
+    /// exige `ctx["context_id"] == bundle.context_id` y lo mismo para el snapshot.
+    pub fn stamp_ids(&self, chain_id: u64) -> (String, String) {
+        match &self.guard {
+            Some(g) => (g.context_id().to_owned(), g.context_id().to_owned()),
+            None => (
+                format!("boot-chain-{chain_id}"),
+                format!("boot-genesis-{chain_id}"),
+            ),
+        }
+    }
+}
+
+/// SHADOW-CANONICAL-01 — compone y REGISTRA el contexto v4 REAL del intent.
+///
+/// Es la ÚNICA implementación de esta lógica: la ruta ACTIVE y la ruta SHADOW
+/// la invocan por igual, de modo que ambas evaluaciones usan el MISMO sustrato
+/// de datos (§34.1 hot-path mode-invariant: los modos difieren SÓLO en el
+/// terminus de ejecución, jamás en la matemática ni en los datos de entrada).
+///
+/// Preserva, pieza por pieza, el bloque que la ruta ACTIVE tenía inline:
+/// 1. snapshot de la config del operador y (con él) el índice de identidad
+///    address-keyed, más el snapshot de precios canónicos;
+/// 2. grafo de aristas desde las reservas/slot0/decimales REALES de Redis
+///    (orientación exacta por `token0_addr`; omisión honesta con razón propia);
+/// 3. estado on-chain de los baskets relevantes (cero RPC sin basket en ruta);
+/// 4. `MarketState` para el dispatcher de operadores nativos (sólo aristas V2);
+/// 5. gas OBSERVADO del runner (una sola lectura del getter);
+/// 6. `build_v4_intent_bundle` (mismos inputs, mismos manifiestos);
+/// 7. `SnapshotServices::new` + `with_operator_dispatch` con
+///    `V4StructuralInputAdmission`;
+/// 8. `router.insert` bajo el `context_id` del intent.
+///
+/// Coste: UNA invocación por intent (no por cartucho) y dentro del semáforo
+/// global que ya acota ambas rutas; las lecturas Redis están cacheadas por
+/// intent (reservas/slot0/decimales) o por proceso (identidad, TTL 30s), y la
+/// única lectura on-chain (baskets) tiene gate de relevancia + presupuesto.
+pub async fn build_and_register_intent_context(
+    runner: &Arc<CartridgeRunner>,
+    intent: &RouteIntent,
+    chain_id: u64,
+    cfg_provider: &Arc<crate::orchestrator::ConfigProvider>,
+    math_registry: &Arc<math_engine::OperatorRegistry>,
+    router: Option<&Arc<crate::context_router::ContextRouter>>,
+) -> IntentContextOutcome {
+    let ctx_id = format!("intent-{}", uuid::Uuid::new_v4());
+    // Snapshot config ONCE for all candidates (same as orchestrator).
+    let cfg_snapshot = cfg_provider.snapshot(chain_id).await;
+    // ARBX-R-0002: address-keyed token identity, built ONCE per intent and
+    // threaded into every candidate. Cartridges emit ADDRESSES in
+    // `candidate.token_addresses`; under the legacy symbol-compare every one
+    // failed the operator's symbol allowlist (TokenNotAllowed:<addr> 100% —
+    // the AGLD/1INCH flood). Identity mode binds (chain_id, address); the 30s
+    // cache is shared with the scanner path (same composition site).
+    let identity_idx = match cfg_snapshot.as_ref() {
+        Some(state) => {
+            let mut redis_conn = runner.redis_connection().await;
+            Some(crate::token_identity::index_for(&mut redis_conn, chain_id, state).await)
+        }
+        None => None,
+    };
+    // FIX (review V2 #9): fetch the live price snapshot ONCE per intent (not per
+    // cartridge) and thread it into every candidate evaluation. Empty snapshot
+    // degrades to the evaluator's ConfigPriceOracle fallback — never fabricated.
+    let price_snapshot: std::collections::HashMap<String, f64> = {
+        let mut redis_conn = runner.redis_connection().await;
+        let oracle = shared_rs::price_oracle::RedisCachedPriceOracle::snapshot_from_redis(
+            &mut redis_conn,
+            chain_id,
+        )
+        .await;
+        oracle.into_snapshot()
+    };
+    // ── AGENT v4 Fase 3a — grafo REAL del intent ──────────────────────────
+    // Edges orientados desde las reservas REALES de Redis (orientación EXACTA
+    // por token0_addr — jamás heurística de magnitud: R8). Una pierna sin
+    // pool, sin reservas, sin token0_addr, sin decimales o degenerada se OMITE
+    // con razón explícita.
+    let reads = {
+        let mut redis_conn = runner.redis_connection().await;
+        read_intent_legs(runner, &mut redis_conn, intent, chain_id).await
+    };
+    let IntentEdgeComposition {
+        edges: v4_edges,
+        first_token_in: v4_first_token_in,
+        skip_reasons: v4_skip_reasons,
+    } = compose_intent_edges(chain_id, &ctx_id, intent, &reads);
+    // LOGFLOOD-01: omisiones por-pierna a DEBUG con histograma agregado de
+    // razones (sin muestreo — R8), una sola línea por intent.
+    if !v4_skip_reasons.is_empty() {
+        debug!(
+            event = "cartridge.v4_intent_legs_skipped",
+            chain_id,
+            tx_hash = %intent.tx_hash,
+            legs_total = intent.legs.len(),
+            edges_built = v4_edges.len(),
+            ?v4_skip_reasons,
+            "piernas omitidas al componer el grafo v4 del intent (omisión honesta, sin heurísticas)"
+        );
+    }
+    let census = IntentContextCensus {
+        edges_built: v4_edges.len(),
+        legs_skipped: v4_skip_reasons,
+    };
+    // BASKET-WORKER-01 (2026-10-03): estado on-chain de los baskets ERC-4626
+    // RELEVANTES a este intent. La lectura async vive AQUÍ (el llamador) y el
+    // bundle sync la recibe ya leída. Gate de coste: sin basket del operador
+    // entre los tokens del grafo el mapa queda VACÍO SIN RPC; con RPC caído,
+    // timeout o presupuesto vencido el intent sigue igual (R8 fail-honest).
+    let v4_basket_state = v4_relevant_basket_state(chain_id, &v4_edges).await;
+    // OPERATOR-DISPATCH-WIRING-01 (2026-10-02): MarketState REAL desde los
+    // edges ya computados (reservas V2 orientadas + decimales), para adjuntar
+    // el dispatcher de operadores nativos al contexto del intent. Sólo edges
+    // V2: su precio por reservas es no ambiguo; el precio V3 desde slot0 exige
+    // la verificación contra referencia del EXACT-CLASS-01 y queda como
+    // seguimiento — jamás alimentar a los operadores un precio posiblemente mal
+    // orientado. Sin estado → no se adjunta dispatch (receipts honestos).
+    // COST-PRODUCERS-01: la misma lectura de gas (getter; el atómico guarda
+    // MILLI-gwei y el getter decodifica) alimenta el MarketState y la línea de
+    // gas del bundle.
+    let v4_intent_gas_gwei: f64;
+    let v4_dispatch_state: Option<std::sync::Arc<math_engine::MarketState>>;
+    {
+        let block = runner
+            .host_block_number_handle()
+            .load(std::sync::atomic::Ordering::Relaxed);
+        v4_intent_gas_gwei = runner.host_gas_price_gwei();
+        v4_dispatch_state = v4_market_state_from_edges(&v4_edges, block, v4_intent_gas_gwei);
+    }
+    if v4_edges.is_empty() {
+        // Nombre de evento CONSERVADO del bloque original de la ruta ACTIVE (las
+        // consultas/greps de producción siguen funcionando; la razón exacta
+        // viaja además en `cartridge.intent_context_unavailable`).
+        debug!(
+            event = "cartridge.v4_intent_no_edges",
+            chain_id,
+            tx_hash = %intent.tx_hash,
+            "grafo v4 vacío tras omisiones R8; la evaluación usa el contexto estático"
+        );
+        return IntentContextOutcome::unavailable(census, chain_id, intent, "no_graph_edges");
+    }
+    // Gate de composición. Razón EXACTA por input ausente (ACTIVE-REPAIRS-01:
+    // un agregado que no dice QUÉ falta es inobservable) — mismo gate que la
+    // ruta ACTIVE tenía inline.
+    let Some(cfg) = cfg_snapshot.as_ref() else {
+        return IntentContextOutcome::unavailable(
+            census,
+            chain_id,
+            intent,
+            "no_trading_config_snapshot",
+        );
+    };
+    let Some(identity) = identity_idx.as_ref() else {
+        return IntentContextOutcome::unavailable(
+            census,
+            chain_id,
+            intent,
+            "no_token_identity_index",
+        );
+    };
+    let Some(start_token) = v4_first_token_in.as_deref() else {
+        return IntentContextOutcome::unavailable(census, chain_id, intent, "no_start_token");
+    };
+    let Some(router) = router else {
+        return IntentContextOutcome::unavailable(census, chain_id, intent, "no_context_router");
+    };
+    let Some(bundle) = build_v4_intent_bundle(
+        chain_id,
+        &ctx_id,
+        v4_edges,
+        start_token,
+        &intent.amount_in.to_string(),
+        cfg,
+        identity,
+        &price_snapshot,
+        v4_manifest_digests(),
+        v4_intent_gas_gwei,
+        &v4_basket_state,
+    ) else {
+        // `None` sólo si el reloj no permite una ventana temporal honesta.
+        // Evento CONSERVADO del bloque original de la ruta ACTIVE.
+        debug!(
+            event = "cartridge.v4_intent_clock_invalid",
+            chain_id,
+            tx_hash = %intent.tx_hash,
+            "sin base temporal honesta para el bundle; contexto estático"
+        );
+        return IntentContextOutcome::unavailable(census, chain_id, intent, "bundle_clock_invalid");
+    };
+    // Guarda de revisión de un solo bundle: este intent sirve exactamente el
+    // contexto que acaba de componer (mismo enfoque honesto del contexto
+    // DATA_GAP Phase-1).
+    let v4_revision: crate::snapshot_services::RevisionGuard = Arc::new(|_: &str, _: &str| true);
+    let services =
+        match crate::snapshot_services::SnapshotServices::new(Arc::new(bundle), v4_revision) {
+            Ok(services) => services,
+            Err(e) => {
+                warn!(
+                    event = "cartridge.v4_intent_bundle_rejected",
+                    chain_id,
+                    tx_hash = %intent.tx_hash,
+                    reason = %e,
+                    "bundle v4 del intent rechazado; fallback a DATA_GAP sin romper el flujo"
+                );
+                return IntentContextOutcome::unavailable(
+                    census,
+                    chain_id,
+                    intent,
+                    "bundle_rejected",
+                );
+            }
+        };
+    // OPERATOR-DISPATCH-WIRING-01: adjuntar el dispatcher del registro nativo
+    // cuando hay MarketState real. Sin estado los servicios quedan sin dispatch
+    // y los recibos nativos siguen FAIL honesto.
+    let services = match v4_dispatch_state {
+        Some(state) => {
+            let registry = math_registry.clone();
+            services.with_operator_dispatch(Arc::new(
+                move |ctx: &serde_json::Value,
+                      spec: &serde_json::Value,
+                      cand: &serde_json::Value|
+                      -> Result<serde_json::Value, String> {
+                    // Identidad del plan/snapshot desde el ctx y el candidato
+                    // del propio flujo.
+                    let snapshot_id = ctx
+                        .get("snapshot_id")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or_default()
+                        .to_string();
+                    let plan_hash = cand
+                        .get("plan_hash")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or_default()
+                        .to_string();
+                    crate::native_operator_adapter::evaluate_declared(
+                        &registry,
+                        &state,
+                        spec,
+                        &snapshot_id,
+                        &plan_hash,
+                        &V4StructuralInputAdmission,
+                        crate::operator_toggles::is_disabled,
+                    )
+                },
+            ))
+        }
+        None => services,
+    };
+    match router.insert(ctx_id.clone(), Arc::new(services)) {
+        Ok(()) => IntentContextOutcome {
+            guard: Some(IntentContextGuard {
+                router: Some(router.clone()),
+                context_id: ctx_id,
+            }),
+            census,
+        },
+        Err(e) => {
+            debug!(
+                event = "cartridge.v4_intent_insert_failed",
+                chain_id,
+                tx_hash = %intent.tx_hash,
+                reason = %e,
+                "router sin capacidad para el contexto del intent; contexto estático"
+            );
+            IntentContextOutcome::unavailable(census, chain_id, intent, "router_insert_failed")
+        }
+    }
+}
+
+/// SHADOW-CANONICAL-01 — razón EXACTA por la que una ruta evaluó contra el
+/// contexto DATA_GAP estático en lugar del bundle real del intent. `debug!`
+/// (no `info!`): corre por intent en el block scanner (LOGFLOOD-01).
+fn intent_context_unavailable(chain_id: u64, intent: &RouteIntent, reason: &'static str) {
+    debug!(
+        event = "cartridge.intent_context_unavailable",
+        chain_id,
+        tx_hash = %intent.tx_hash,
+        reason,
+        "sin contexto v4 real para este intent; la evaluación usa el stub DATA_GAP (razón exacta)"
+    );
+}
+
 /// ACTIVE MODE — evaluate cartridges and emit real StrategyCandidates through the full pipeline.
 ///
 /// This is the FASE OMEGA follow-up that wires cartridge evaluation → execution:
@@ -2054,316 +2784,50 @@ pub async fn active_evaluate_and_emit(
     };
 
     // ── AGENT v4 Fase 3a — SnapshotBundle REAL por intent (ContextRouter) ──
-    // Para ESTE intent se compone un grafo con edges orientados desde las
-    // reservas REALES de Redis (orientación EXACTA por token0_addr — jamás
-    // heurística de magnitud: R8). Una pierna sin pool, sin reservas, sin
-    // token0_addr, sin decimales o degenerada se OMITE con razón explícita.
-    // Con edges reales se registra un contexto "intent-{uuid}" en el router
-    // y pool_data se sella con ese id; sin ellos, la evaluación continúa
-    // contra el contexto DATA_GAP estático (ids boot-chain/boot-genesis),
-    // que responde con razones honestas. Ruta shadow: intacta (Phase-1).
-    let v4_ctx_id = format!("intent-{}", Uuid::new_v4());
-    let v4_static_context_id = format!("boot-chain-{chain_id}");
-    let v4_static_snapshot_id = format!("boot-genesis-{chain_id}");
-    let mut v4_edges: Vec<crate::agent_graph::Edge> = Vec::new();
-    let mut v4_first_token_in: Option<String> = None;
-    let mut v4_skip_reasons: std::collections::BTreeMap<&'static str, u64> =
-        std::collections::BTreeMap::new();
-    let mut v4_decimal_cache: std::collections::HashMap<String, Option<u8>> =
-        std::collections::HashMap::new();
-    let mut v4_slot0_cache: std::collections::HashMap<String, Option<(String, u128, u64)>> =
-        std::collections::HashMap::new();
-    let mut v4_redis = runner.redis_connection().await;
-    for leg in &intent.legs {
-        let Some(pool) = leg.pool_hint else {
-            *v4_skip_reasons.entry("missing_pool_hint").or_insert(0) += 1;
-            continue;
-        };
-        let token_in = format!("{:#x}", leg.token_in);
-        let token_out = format!("{:#x}", leg.token_out);
-        if token_in == token_out {
-            // Una pierna degenerada invalidaría TODO el grafo
-            // (enumerate_cycles: invalid_or_duplicate_graph_edge); se omite.
-            *v4_skip_reasons.entry("degenerate_self_pair").or_insert(0) += 1;
-            continue;
-        }
-        // V3-LEG-GRAPH-01 (RESERVES-CACHE-01, 2026-10-01): el protocolo se
-        // computa ANTES del gate de reservas. Un pool V3 NO tiene
-        // getReserves(): su dato vive en `arbx:v3_slot0`, jamás en
-        // `arbx:pool_reserves`. Exigirle la entrada V2 descartaba TODA pierna
-        // V3 con el motivo engañoso `reserves_missing` — 98% de las piernas
-        // descartadas en producción (medido 2026-10-01), la misma confusión
-        // que PERHOP-RESERVES-01 documentó y prohibió en el sizing. El Edge
-        // ya soporta V3 (reserve_in_raw: Option) y quote_path lo resuelve con
-        // v3_spot_within_tick (orientación derivada de token_in/token_out).
-        let (edge_protocol, fee_units, fee_denominator) = v4_edge_protocol_and_fee(leg);
-        let pool_id = format!("{:#x}", pool);
-
-        let (reserve_pair, block_identity, v3_slot) = if edge_protocol == "uniswap_v3" {
-            // V3: reservas None por diseño. Identidad = round de sync (todas
-            // las entradas del mismo round comparten ts — verificado). Sin
-            // slot0 cacheado → skip con motivo PROPIO, no el engañoso.
-            match v4_slot0(&mut v4_redis, chain_id, &pool_id, &mut v4_slot0_cache).await {
-                Some((sp, liq, ts)) => (None, format!("sync-ts-{ts}"), Some((sp, liq))),
-                None => {
-                    *v4_skip_reasons.entry("v3_slot0_missing").or_insert(0) += 1;
-                    continue;
-                }
-            }
-        } else {
-            let Some(entry) = runner.read_pool_reserves(&pool_id).await else {
-                *v4_skip_reasons.entry("reserves_missing").or_insert(0) += 1;
-                continue;
-            };
-            // Orientación exacta: token0_addr declara cuál reserva es "in"
-            // para esta pierna. Sin token0_addr o con token0 fuera de la
-            // ruta → OMITIR (R8: sin dual-orientation ni inferencia).
-            let Some(token0) = entry.token0_addr.as_deref() else {
-                *v4_skip_reasons.entry("token0_addr_missing").or_insert(0) += 1;
-                continue;
-            };
-            let pair = if token0 == token_in {
-                (entry.r0.clone(), entry.r1.clone())
-            } else if token0 == token_out {
-                (entry.r1.clone(), entry.r0.clone())
-            } else {
-                *v4_skip_reasons
-                    .entry("token0_addr_out_of_route")
-                    .or_insert(0) += 1;
-                continue;
-            };
-            // Identidad de coherencia del ROUND DE SYNC (PLAN-SUPPORT-WIRING-
-            // 01): V2 y V3 del mismo round comparten ts (verificado en
-            // producción), mientras que blk solo existe en V2 y ts solo se
-            // usaba en V3 — con identidades distintas, quote_path_progress
-            // rechazaba TODA ruta mixta con mixed_block_or_domain. El ts del
-            // round ES la frontera real de coherencia (todas las entradas se
-            // escribieron juntas). JAMÁS se fabrica un hash (R8).
-            (Some(pair), format!("sync-ts-{}", entry.ts), None)
-        };
-        let Some(dec_in) =
-            v4_token_decimals(&mut v4_redis, chain_id, &token_in, &mut v4_decimal_cache).await
-        else {
-            *v4_skip_reasons
-                .entry("token_in_decimals_missing")
-                .or_insert(0) += 1;
-            continue;
-        };
-        let Some(dec_out) =
-            v4_token_decimals(&mut v4_redis, chain_id, &token_out, &mut v4_decimal_cache).await
-        else {
-            *v4_skip_reasons
-                .entry("token_out_decimals_missing")
-                .or_insert(0) += 1;
-            continue;
-        };
-        if v4_first_token_in.is_none() {
-            v4_first_token_in = Some(token_in.clone());
-        }
-        let (reserve_in_raw, reserve_out_raw) = match reserve_pair {
-            Some((ri, ro)) => (Some(ri), Some(ro)),
-            None => (None, None),
-        };
-        let (sqrt_price_x96_raw, liquidity) = match v3_slot {
-            Some((sp, liq)) => (Some(sp), Some(liq)),
-            None => (None, None),
-        };
-        v4_edges.push(crate::agent_graph::Edge {
-            edge_id: pool_id.clone(),
-            pool_id,
-            chain_id,
-            token_in,
-            token_out,
-            protocol: edge_protocol,
-            snapshot_id: v4_ctx_id.clone(),
-            block_hash: block_identity,
-            reserve_in_raw,
-            reserve_out_raw,
-            fee_units,
-            fee_denominator,
-            token_in_decimals: dec_in,
-            token_out_decimals: dec_out,
-            // Adaptador que respalda estos edges: la caché de reservas del
-            // searcher (procedencia real, no una versión de protocolo).
-            adapter_version: "reserves_cache_v1".to_string(),
-            sqrt_price_x96_raw,
-            liquidity,
-        });
-    }
-    // LOGFLOOD-01: omisiones por-pierna a DEBUG con histograma agregado de
-    // razones (sin muestreo — R8), una sola línea por intent.
-    if !v4_skip_reasons.is_empty() {
-        debug!(
-            event = "cartridge.v4_intent_legs_skipped",
-            chain_id,
-            tx_hash = %intent.tx_hash,
-            legs_total = intent.legs.len(),
-            edges_built = v4_edges.len(),
-            ?v4_skip_reasons,
-            "piernas omitidas al componer el grafo v4 del intent (omisión honesta, sin heurísticas)"
-        );
-    }
-
-    let mut v4_registered = false;
-    // BASKET-WORKER-01 (2026-10-03): estado on-chain de los baskets ERC-4626
-    // RELEVANTES a este intent. La lectura async vive AQUÍ (el llamador) y el
-    // bundle sync la recibe ya leída. Gate de coste: sin basket del operador
-    // entre los tokens del grafo el mapa queda VACÍO SIN RPC; con RPC caído,
-    // timeout o presupuesto vencido el intent sigue igual (R8 fail-honest).
-    let v4_basket_state = v4_relevant_basket_state(chain_id, &v4_edges).await;
-    // OBSERVABILITY-V4-EDGES-01: capturar el censo ANTES del move a
-    // build_v4_intent_bundle — el summary se emite al final de la función.
-    let v4_edges_built = v4_edges.len();
-    // OPERATOR-DISPATCH-WIRING-01 (2026-10-02): MarketState REAL desde los
-    // edges ya computados (reservas V2 orientadas + decimales), para adjuntar
-    // el dispatcher de operadores nativos al contexto del intent. Sólo edges
-    // V2: su precio por reservas es no ambiguo; el precio V3 desde slot0
-    // exige la verificación contra referencia del EXACT-CLASS-01 y queda como
-    // seguimiento — jamás alimentar a los operadores un precio posiblemente
-    // mal orientado. Sin estado → no se adjunta dispatch (receipts honestos).
-    let v4_dispatch_state: Option<std::sync::Arc<math_engine::MarketState>>;
-    // COST-PRODUCERS-01: gas observado del intent — alimenta el MarketState y
-    // la línea de coste de gas del bundle (una sola lectura del getter;
-    // inicialización diferida: se asigna exactamente una vez abajo).
-    let v4_intent_gas_gwei: f64;
-    {
-        let block = runner
-            .host_block_number_handle()
-            .load(std::sync::atomic::Ordering::Relaxed);
-        // CORE-01/MATH-01: el atómico guarda MILLI-gwei; el getter decodifica.
-        v4_intent_gas_gwei = runner.host_gas_price_gwei();
-        v4_dispatch_state = v4_market_state_from_edges(&v4_edges, block, v4_intent_gas_gwei);
-    }
-    if v4_edges.is_empty() {
-        debug!(
-            event = "cartridge.v4_intent_no_edges",
-            chain_id,
-            tx_hash = %intent.tx_hash,
-            "grafo v4 vacío tras omisiones R8; la evaluación usa el contexto estático"
-        );
-    } else if let (Some(cfg), Some(identity), Some(start_token), Some(router)) = (
-        cfg_snapshot.as_ref(),
-        identity_idx.as_ref(),
-        v4_first_token_in.as_deref(),
+    // SHADOW-CANONICAL-01 (2026-10-03): la composición del grafo, el bundle
+    // real, los servicios v4 y el registro del contexto viven AHORA en
+    // `build_and_register_intent_context`, compartido con la ruta SHADOW. Las
+    // dos rutas evalúan por tanto contra el MISMO sustrato de datos (reservas/
+    // slot0/decimales reales, precios canónicos, gas observado, líneas de coste
+    // del operador, dispatcher de operadores nativos): §34.1 exige que los
+    // modos difieran SÓLO en el terminus de ejecución. Sin contexto real la
+    // evaluación continúa contra el contexto DATA_GAP estático (ids
+    // boot-chain/boot-genesis), que responde con razones honestas, y la razón
+    // exacta queda registrada a debug por el propio helper.
+    let v4_context = build_and_register_intent_context(
+        &runner,
+        &intent,
+        chain_id,
+        &cfg_provider,
+        &math_registry,
         v4_router.as_ref(),
-    ) {
-        match build_v4_intent_bundle(
-            chain_id,
-            &v4_ctx_id,
-            v4_edges,
-            start_token,
-            &intent.amount_in.to_string(),
-            cfg,
-            identity,
-            &price_snapshot,
-            v4_manifest_digests(),
-            // COST-PRODUCERS-01: el gas observado que ya computamos para el
-            // MarketState del dispatcher alimenta también la línea de gas.
-            v4_intent_gas_gwei,
-            // BASKET-WORKER-01: estado on-chain de los baskets del operador
-            // que participan en ESTA ruta (vacío sin coste si no hay ninguno).
-            &v4_basket_state,
-        ) {
-            Some(bundle) => {
-                // Guarda de revisión de un solo bundle: este intent sirve
-                // exactamente el contexto que acaba de componer (mismo
-                // enfoque honesto del contexto DATA_GAP Phase-1).
-                let v4_revision: crate::snapshot_services::RevisionGuard =
-                    Arc::new(|_: &str, _: &str| true);
-                match crate::snapshot_services::SnapshotServices::new(Arc::new(bundle), v4_revision)
-                {
-                    Ok(services) => {
-                        // OPERATOR-DISPATCH-WIRING-01: adjuntar el dispatcher
-                        // del registro nativo cuando hay MarketState real. Sin
-                        // estado, los servicios quedan sin dispatch y los
-                        // recibos nativos siguen FAIL honesto.
-                        let services = match v4_dispatch_state.clone() {
-                            Some(state) => {
-                                let registry = math_registry.clone();
-                                services.with_operator_dispatch(Arc::new(
-                                    move |ctx: &serde_json::Value,
-                                          spec: &serde_json::Value,
-                                          cand: &serde_json::Value|
-                                          -> Result<serde_json::Value, String> {
-                                        // Identidad del plan/snapshot desde el
-                                        // ctx y el candidato del propio flujo.
-                                        let snapshot_id = ctx
-                                            .get("snapshot_id")
-                                            .and_then(|v| v.as_str())
-                                            .unwrap_or_default()
-                                            .to_string();
-                                        let plan_hash = cand
-                                            .get("plan_hash")
-                                            .and_then(|v| v.as_str())
-                                            .unwrap_or_default()
-                                            .to_string();
-                                        crate::native_operator_adapter::evaluate_declared(
-                                            &registry,
-                                            &state,
-                                            spec,
-                                            &snapshot_id,
-                                            &plan_hash,
-                                            &V4StructuralInputAdmission,
-                                            crate::operator_toggles::is_disabled,
-                                        )
-                                    },
-                                ))
-                            }
-                            None => services,
-                        };
-                        match router.insert(v4_ctx_id.clone(), Arc::new(services)) {
-                            Ok(()) => v4_registered = true,
-                            Err(e) => debug!(
-                                event = "cartridge.v4_intent_insert_failed",
-                                chain_id,
-                                tx_hash = %intent.tx_hash,
-                                reason = %e,
-                                "router sin capacidad para el contexto del intent; contexto estático"
-                            ),
-                        }
-                    }
-                    Err(e) => warn!(
-                        event = "cartridge.v4_intent_bundle_rejected",
-                        chain_id,
-                        tx_hash = %intent.tx_hash,
-                        reason = %e,
-                        "bundle v4 del intent rechazado; fallback a DATA_GAP sin romper el flujo"
-                    ),
-                }
-            }
-            None => {
-                debug!(
-                    event = "cartridge.v4_intent_clock_invalid",
-                    chain_id,
-                    tx_hash = %intent.tx_hash,
-                    "sin base temporal honesta para el bundle; contexto estático"
-                );
-            }
-        }
-    }
-
-    // Guard con Drop: retira el contexto por-intent del router en TODA salida
-    // de la tarea (incluye panic) — sin fugas de capacidad del router.
-    let _v4_intent_guard = V4IntentContextGuard {
-        router: if v4_registered {
-            v4_router.clone()
-        } else {
-            None
-        },
-        context_id: v4_ctx_id.clone(),
+    )
+    .await;
+    // Sustrato REALMENTE usado: la telemetría de outcomes se comparte con la
+    // ruta SHADOW (mode-invariant, BUG-003/RD-06), así que también aquí se
+    // declara si la evaluación usó el bundle real o el stub DATA_GAP.
+    let v4_registered = v4_context.guard.is_some();
+    let v4_substrate = if v4_registered {
+        ShadowSubstrate::IntentBundle
+    } else {
+        ShadowSubstrate::StaticBootStub
     };
-
+    // OBSERVABILITY-V4-EDGES-01: censo del grafo compuesto para ESTE intent —
+    // válido aunque el registro no ocurriera (distingue "grafo vacío" de
+    // "router lleno"). Se emite en el summary de abajo, una línea por tx.
+    let v4_edges_built = v4_context.census.edges_built;
+    let v4_skip_reasons = v4_context.census.legs_skipped.clone();
     // Sello de identidad del contexto para ESTA evaluación: los cartuchos v4
     // copian estos campos a su ctx y SnapshotServices::check exige
     // ctx["context_id"] == bundle.context_id && ctx["snapshot_id"] ==
     // bundle.snapshot_id. Registrado → ids del intent; fallback → ids
     // estáticos DATA_GAP (coinciden con el contexto registrado en boot).
-    // Ruta ACTIVE únicamente: la shadow conserva su comportamiento Phase-1.
-    let (v4_stamp_context, v4_stamp_snapshot) = if v4_registered {
-        (v4_ctx_id.clone(), v4_ctx_id.clone())
-    } else {
-        (v4_static_context_id, v4_static_snapshot_id)
-    };
+    // Se computa ANTES de mover el guard (toma `&self`).
+    let (v4_stamp_context, v4_stamp_snapshot) = v4_context.stamp_ids(chain_id);
+    // Guard con Drop: retira el contexto por-intent del router en TODA salida
+    // de la tarea (incluye panic) — sin fugas de capacidad del router.
+    let _v4_intent_guard = v4_context.guard;
+
     pool_data.insert("context_id".into(), rhai::Dynamic::from(v4_stamp_context));
     pool_data.insert("snapshot_id".into(), rhai::Dynamic::from(v4_stamp_snapshot));
 
@@ -2519,6 +2983,7 @@ pub async fn active_evaluate_and_emit(
                     &intent,
                     &eval_result,
                     reserves_source.is_some(),
+                    v4_substrate,
                 )
                 .await;
 
@@ -4028,6 +4493,7 @@ mod tests {
             &three_leg_intent(),
             &eval_result(true),
             true,
+            ShadowSubstrate::IntentBundle,
             1_700_000_000_000,
         );
         assert_eq!(v["schema"].as_str().unwrap(), "rd_outcome_v1");
@@ -4071,6 +4537,7 @@ mod tests {
             &three_leg_intent(),
             &res,
             true,
+            ShadowSubstrate::IntentBundle,
             1_700_000_000_000,
         );
         let r = &v["v4_repairs"];
@@ -4103,6 +4570,7 @@ mod tests {
             &three_leg_intent(),
             &eval_result(true),
             true,
+            ShadowSubstrate::IntentBundle,
             1_700_000_000_000,
         );
 
@@ -4172,6 +4640,7 @@ mod tests {
             &three_leg_intent(),
             &eval_result(false),
             false,
+            ShadowSubstrate::StaticBootStub,
             1,
         );
         assert!(!v["is_opportunity"].as_bool().unwrap());
@@ -4483,5 +4952,558 @@ mod v4_edge_protocol_tests {
         let lookup = vec!["0xaaa".to_string(), "0xccc".to_string()];
         assert!(v4_relevant_baskets(&["0xdead".to_string()], &lookup).is_empty());
         assert!(v4_relevant_baskets(&[], &lookup).is_empty());
+    }
+}
+
+/// SHADOW-CANONICAL-01 — la ruta SHADOW evalúa contra el MISMO sustrato de datos
+/// que la ACTIVE (§34.1 hot-path mode-invariant).
+///
+/// Los tests de este módulo son PUROS (sin Redis, sin RPC, sin reloj): la
+/// frontera lectura/composición deja el grafo y el bundle compuestos en
+/// funciones deterministas, de modo que se puede afirmar exactamente qué datos
+/// consumió una evaluación — que es justo lo que estaba indocumentado cuando
+/// todas las filas del stream describían el stub de boot.
+#[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used)] // test module — panics are acceptable
+mod shadow_canonical_tests {
+    use super::*;
+    use crate::rhai_agent_bridge::AgentServices;
+    use ethers::types::{Address, H256, U256};
+    use std::collections::HashMap;
+
+    const CHAIN: u64 = 1;
+    const CONTEXT_ID: &str = "intent-shadow-canonical-test";
+    const MEV_ID: &str = "MEV-TEST-01";
+    const DIGEST: &str = "abce7b713e0839bc99a162331e0768d364fa13681a18b7e2f5948538e20be891";
+    /// Importe del intent, en unidades base — el ÚNICO tamaño del schedule.
+    const AMOUNT_RAW: &str = "1000";
+    /// `ts` del round de sync compartido por las dos piernas (identidad de
+    /// coherencia del grafo; nunca un hash fabricado).
+    const SYNC_TS: u64 = 1_700_000_000;
+
+    fn tok(n: u64) -> Address {
+        Address::from_low_u64_be(n)
+    }
+
+    fn hex(a: Address) -> String {
+        format!("{a:#x}")
+    }
+
+    /// Ciclo cerrado A→B→A (dos piernas V2 con fee de 30 bps) — la forma que el
+    /// dispatcher produce para una ruta de dos tokens.
+    fn cycle_intent() -> RouteIntent {
+        use crate::route_intent::{RouteIntentLeg, RouterKind, SwapExactMode};
+        let mk = |a: Address, b: Address, pool: Address| RouteIntentLeg {
+            token_in: a,
+            token_out: b,
+            pool_hint: Some(pool),
+            dex_hint: None,
+            fee_bps: Some(30),
+            protocol_type: ProtocolType::V2,
+        };
+        RouteIntent::new(
+            CHAIN,
+            H256::from_low_u64_be(0xC0FFEE),
+            Address::zero(),
+            RouterKind::UniswapV2,
+            Address::zero(),
+            vec![
+                mk(tok(0xA), tok(0xB), tok(0x1)),
+                mk(tok(0xB), tok(0xA), tok(0x2)),
+            ],
+            U256::from(1000u64),
+            None,
+            SwapExactMode::ExactIn,
+            crate::route_intent::DetectionSource::NewBlock,
+        )
+        .expect("valid intent")
+    }
+
+    /// Lecturas RESUELTAS (reservas orientadas + decimales) para las dos piernas.
+    fn resolved_reads(intent: &RouteIntent) -> Vec<IntentLegRead> {
+        vec![
+            IntentLegRead::Ready {
+                pool_id: hex(intent.legs[0].pool_hint.unwrap()),
+                body: IntentLegBody::V2 {
+                    reserve_in_raw: U256::exp10(21).to_string(),
+                    reserve_out_raw: U256::exp10(20).to_string(),
+                    sync_ts: SYNC_TS,
+                },
+                decimals: (18, 6),
+            },
+            IntentLegRead::Ready {
+                pool_id: hex(intent.legs[1].pool_hint.unwrap()),
+                body: IntentLegBody::V2 {
+                    reserve_in_raw: U256::exp10(20).to_string(),
+                    reserve_out_raw: U256::exp10(21).to_string(),
+                    sync_ts: SYNC_TS,
+                },
+                decimals: (6, 18),
+            },
+        ]
+    }
+
+    /// Config del operador con los TRES productores de coste declarados: gas
+    /// (unidades + precio base), financiación (tasa flash) y precios por token.
+    fn operator_cfg() -> shared_rs::trading_config::TradingConfigState {
+        use shared_rs::trading_config::TradingConfigState;
+        TradingConfigState {
+            chain_id: CHAIN,
+            capital_usd: 10_000.0,
+            base_token_symbol: "WETH".into(),
+            base_token_price_usd: 3_000.0,
+            allowed_token_symbols: vec![],
+            token_prices_usd: HashMap::new(),
+            simulation_capital_usd: None,
+            simulation_per_token_amounts_usd: HashMap::new(),
+            simulation_per_strategy_caps_usd: HashMap::new(),
+            simulation_target_profit_usd: None,
+            simulation_target_roi_pct: None,
+            min_profit_usd: 0.01,
+            min_roi_pct: 0.0,
+            min_landing_probability: 0.0,
+            min_liquidity_confidence: 0.0,
+            max_token_risk_score: 1.0,
+            gas_price_strategy: shared_rs::trading_config::GasPriceStrategy::Fixed,
+            fixed_gas_price_gwei: Some(20.0),
+            gas_estimate_units: 200_000,
+            max_slippage_pct: 1.0,
+            failure_risk_buffer_pct: 0.001,
+            flashloan_fee_pct: 0.09,
+            enabled_strategies: vec!["dex_arb".into()],
+            enabled_dex_ids: None,
+            strategy_configs: HashMap::new(),
+            capital_cost_rate_annual_pct: 0.0,
+            ops_overhead_usd_per_attempt: 0.0,
+            spread_sanity_mult: 3.0,
+            p_copied_volume_threshold_usd: 1_000_000.0,
+            p_copied_max: 0.5,
+            lp_fee_default_pct: 0.003,
+            kelly_multiplier: 0.5,
+            kelly_max_per_trade_fraction: 1.0,
+            kelly_gas_safety_multiplier: 1.0,
+            enabled: true,
+            updated_at: chrono::Utc::now(),
+            updated_by: None,
+        }
+    }
+
+    /// Índice de identidad address-keyed del grafo: A→WETH, B→USDC.
+    fn identity() -> shared_rs::token_identity::TokenIdentityIndex {
+        shared_rs::token_identity::TokenIdentityIndex::resolve(
+            CHAIN,
+            &[],
+            &[
+                (hex(tok(0xA)), "WETH".to_string()),
+                (hex(tok(0xB)), "USDC".to_string()),
+            ],
+        )
+    }
+
+    fn manifests() -> std::collections::BTreeMap<String, String> {
+        let mut m = std::collections::BTreeMap::new();
+        m.insert(MEV_ID.to_string(), DIGEST.to_string());
+        m
+    }
+
+    /// Bundle REAL compuesto por la MISMA función que usan las rutas ACTIVE y
+    /// SHADOW (`build_v4_intent_bundle`) desde el grafo compuesto.
+    fn real_bundle() -> crate::snapshot_services::SnapshotBundle {
+        let intent = cycle_intent();
+        let composition =
+            compose_intent_edges(CHAIN, CONTEXT_ID, &intent, &resolved_reads(&intent));
+        assert_eq!(
+            composition.edges.len(),
+            2,
+            "las dos piernas resueltas deben entrar al grafo"
+        );
+        let mut price_snapshot: HashMap<String, f64> = HashMap::new();
+        price_snapshot.insert("WETH".to_string(), 3_000.0);
+        price_snapshot.insert("USDC".to_string(), 1.0);
+        build_v4_intent_bundle(
+            CHAIN,
+            CONTEXT_ID,
+            composition.edges,
+            &hex(tok(0xA)),
+            AMOUNT_RAW,
+            &operator_cfg(),
+            &identity(),
+            &price_snapshot,
+            &manifests(),
+            // gas OBSERVADO del runner (el getter ya decodifica milli-gwei).
+            20.0,
+            &std::collections::BTreeMap::new(),
+        )
+        .expect("un bundle con grafo y config reales SIEMPRE se compone")
+    }
+
+    fn spec() -> serde_json::Value {
+        serde_json::json!({
+            "mev_id": MEV_ID,
+            "detector_id": "R_CLOSED_CYCLE",
+            "source_digest": DIGEST,
+            "logic": "closed_route",
+            "allowed_search_hops": [2],
+            // Sin roles de operador declarados: este fixture mide el sustrato de
+            // COSTES, no el gate de operadores nativos.
+            "operator_requirements": [],
+        })
+    }
+
+    fn ctx() -> serde_json::Value {
+        serde_json::json!({ "context_id": CONTEXT_ID, "snapshot_id": CONTEXT_ID })
+    }
+
+    /// `field::reason` de cada repair — la forma exacta que publica el stream
+    /// (`v4_repairs.repairs[]`).
+    fn repair_tags(repairs: &serde_json::Value) -> Vec<String> {
+        repairs
+            .as_array()
+            .map(|rows| {
+                rows.iter()
+                    .filter_map(|r| {
+                        Some(format!(
+                            "{}::{}",
+                            r.get("field")?.as_str()?,
+                            r.get("reason")?.as_str()?
+                        ))
+                    })
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    // ── Composición del grafo (frontera pura) ───────────────────────────────
+
+    #[test]
+    fn resolved_legs_compose_a_real_graph_for_the_intent() {
+        let intent = cycle_intent();
+        let c = compose_intent_edges(CHAIN, CONTEXT_ID, &intent, &resolved_reads(&intent));
+
+        assert_eq!(c.edges.len(), 2, "una pierna resuelta por leg");
+        assert!(
+            c.skip_reasons.is_empty(),
+            "sin omisiones: {:?}",
+            c.skip_reasons
+        );
+        // Orientación EXACTA por intención de la pierna (no heurística).
+        assert_eq!(c.edges[0].token_in, hex(intent.legs[0].token_in));
+        assert_eq!(c.edges[0].token_out, hex(intent.legs[0].token_out));
+        assert_eq!(c.edges[1].token_in, hex(intent.legs[1].token_in));
+        // El fee del intent viaja con su PROTOCOLO (V2 = bps/10_000).
+        assert_eq!(c.edges[0].fee_units, Some(30));
+        assert_eq!(c.edges[0].fee_denominator, Some(10_000));
+        assert_eq!(c.edges[0].protocol, "cpmm_v2");
+        // Identidad de coherencia = ts del ROUND de sync compartido.
+        assert_eq!(c.edges[0].block_hash, format!("sync-ts-{SYNC_TS}"));
+        assert_eq!(c.edges[1].block_hash, c.edges[0].block_hash);
+        // Decimales resueltos por pierna.
+        assert_eq!(c.edges[0].token_in_decimals, 18);
+        assert_eq!(c.edges[0].token_out_decimals, 6);
+        // El start_token del bundle es el `token_in` de la PRIMERA pierna.
+        assert_eq!(c.first_token_in.as_deref(), Some(hex(tok(0xA)).as_str()));
+        // Todo edge queda ATADO al snapshot del intent.
+        assert!(c.edges.iter().all(|e| e.snapshot_id == CONTEXT_ID));
+    }
+
+    #[test]
+    fn unresolved_legs_leave_an_honest_empty_graph_with_exact_reasons() {
+        let intent = cycle_intent();
+        // Ninguna lectura resolvió: cada pierna se omite con SU razón exacta.
+        let reads = vec![
+            IntentLegRead::Skip("reserves_missing"),
+            IntentLegRead::Skip("token_in_decimals_missing"),
+        ];
+        let c = compose_intent_edges(CHAIN, CONTEXT_ID, &intent, &reads);
+
+        assert!(c.edges.is_empty(), "sin lecturas resueltas no hay grafo");
+        assert!(c.first_token_in.is_none());
+        assert_eq!(c.skip_reasons.get("reserves_missing"), Some(&1));
+        assert_eq!(c.skip_reasons.get("token_in_decimals_missing"), Some(&1));
+
+        // Fallback honesto: sin grafo el contexto REAL no se compone, así que la
+        // evaluación se sella con los ids DATA_GAP estáticos y queda declarada
+        // como `static_boot_stub` — jamás presentada como bundle real.
+        let outcome = IntentContextOutcome {
+            guard: None,
+            census: IntentContextCensus {
+                edges_built: c.edges.len(),
+                legs_skipped: c.skip_reasons.clone(),
+            },
+        };
+        assert_eq!(outcome.census.edges_built, 0);
+        assert_eq!(
+            outcome.stamp_ids(CHAIN),
+            (
+                format!("boot-chain-{CHAIN}"),
+                format!("boot-genesis-{CHAIN}")
+            )
+        );
+    }
+
+    #[test]
+    fn the_guard_releases_the_router_slot_on_drop() {
+        // El contexto por-intent ocupa una entrada del router (capacidad 256 en
+        // producción): sin el guard con Drop, cada intent la agotaría hasta
+        // reiniciar. Vale para AMBAS rutas, que ahora comparten el guard.
+        let router = Arc::new(crate::context_router::ContextRouter::new(1).expect("router"));
+        let rev: crate::snapshot_services::RevisionGuard = Arc::new(|_: &str, _: &str| true);
+        let services =
+            crate::snapshot_services::SnapshotServices::new(Arc::new(real_bundle()), rev)
+                .expect("services");
+        router
+            .insert(CONTEXT_ID.to_string(), Arc::new(services))
+            .expect("el router tiene capacidad para una entrada");
+        {
+            let _guard = IntentContextGuard {
+                router: Some(router.clone()),
+                context_id: CONTEXT_ID.to_string(),
+            };
+            assert_eq!(_guard.context_id(), CONTEXT_ID);
+        }
+        // Capacidad liberada: la MISMA entrada puede volver a registrarse.
+        let rev2: crate::snapshot_services::RevisionGuard = Arc::new(|_: &str, _: &str| true);
+        let services2 =
+            crate::snapshot_services::SnapshotServices::new(Arc::new(real_bundle()), rev2)
+                .expect("services");
+        router
+            .insert(CONTEXT_ID.to_string(), Arc::new(services2))
+            .expect("el Drop del guard debe haber liberado la entrada");
+    }
+
+    // ── Sustrato de datos ⇒ costes (la medición del defecto) ────────────────
+
+    #[test]
+    fn real_bundle_costs_are_non_empty_and_carry_no_mandatory_cost_repair() {
+        let bundle = real_bundle();
+        let kinds: Vec<&str> = bundle
+            .base_cost_lines
+            .iter()
+            .map(|l| l.kind.as_str())
+            .collect();
+        // El bundle REAL siempre declara los productores de coste: gas (unidades
+        // de config × gas observado × precio base) y financiación (tasa del
+        // operador sobre el importe del intent valorado).
+        assert!(kinds.contains(&"gas"), "kinds = {kinds:?}");
+        assert!(kinds.contains(&"financing"), "kinds = {kinds:?}");
+        assert!(kinds.contains(&"execution_fees"), "kinds = {kinds:?}");
+        assert!(
+            bundle.base_cost_lines.iter().any(|l| l.usd.is_some()),
+            "al menos una línea de coste debe traer su USD real"
+        );
+
+        let rev: crate::snapshot_services::RevisionGuard = Arc::new(|_: &str, _: &str| true);
+        let services = crate::snapshot_services::SnapshotServices::new(Arc::new(bundle), rev);
+        let services = services.expect("el bundle real debe ser admitido");
+        let router = Arc::new(crate::context_router::ContextRouter::new(4).expect("router"));
+        router
+            .insert(CONTEXT_ID.to_string(), Arc::new(services))
+            .expect("insert del contexto real");
+
+        // La evaluación que hace un cartucho v4: descubrir sobre el grafo del
+        // contexto y cotizar el candidato contra el MISMO contexto.
+        let c = ctx();
+        let discovery = router
+            .discover(&c, &spec())
+            .expect("discover sobre el grafo real");
+        assert_eq!(discovery["status"], "READY");
+        let candidate = discovery["candidates"]
+            .as_array()
+            .and_then(|v| v.first())
+            .cloned()
+            .expect("el ciclo cerrado A→B→A debe producir un candidato");
+        let quote = router
+            .quote(&c, &spec(), &candidate)
+            .expect("quote del candidato real");
+        let quote = serde_json::to_value(&quote).expect("quote serializable");
+
+        let costs = quote["costs"]
+            .as_array()
+            .expect("el quote real trae costs[]");
+        assert!(
+            !costs.is_empty(),
+            "el bundle real produce costes NO vacíos (era el stub vacío el que no)"
+        );
+        let cost_kinds: Vec<&str> = costs.iter().filter_map(|l| l["kind"].as_str()).collect();
+        assert!(cost_kinds.contains(&"gas"), "costs = {cost_kinds:?}");
+        assert!(cost_kinds.contains(&"financing"), "costs = {cost_kinds:?}");
+
+        let check = crate::rhai_agent_bridge::economic_check(
+            router.as_ref(),
+            &c,
+            &spec(),
+            &candidate,
+            &quote,
+            &serde_json::json!({}),
+            &[],
+        );
+        let tags = repair_tags(&check["repairs"]);
+        assert!(
+            !tags
+                .iter()
+                .any(|t| t.ends_with("mandatory_route_cost_missing")),
+            "el bundle real NO puede reportar costes obligatorios ausentes: {tags:?}"
+        );
+        assert!(
+            !tags
+                .iter()
+                .any(|t| t == "costs.financing::mandatory_route_cost_missing"),
+            "costs.financing :: mandatory_route_cost_missing es la firma del STUB: {tags:?}"
+        );
+    }
+
+    #[test]
+    fn the_empty_cost_substrate_reproduces_the_measured_repair_signature() {
+        // Contraste: el MISMO candidato/cotización, pero con el sustrato de
+        // coste del stub Phase-1 (costs=[] + los tres kinds obligatorios, que es
+        // exactamente lo que `SnapshotServices::quote` emite cuando
+        // `base_cost_lines` está vacío). Es la firma medida en producción:
+        // `costs.financing :: mandatory_route_cost_missing` en ~100% de las filas.
+        let rev: crate::snapshot_services::RevisionGuard = Arc::new(|_: &str, _: &str| true);
+        let services =
+            crate::snapshot_services::SnapshotServices::new(Arc::new(real_bundle()), rev)
+                .expect("services");
+        let router = Arc::new(crate::context_router::ContextRouter::new(4).expect("router"));
+        router
+            .insert(CONTEXT_ID.to_string(), Arc::new(services))
+            .expect("insert");
+
+        let c = ctx();
+        let discovery = router.discover(&c, &spec()).expect("discover");
+        let candidate = discovery["candidates"]
+            .as_array()
+            .and_then(|v| v.first())
+            .cloned()
+            .expect("candidato");
+        let mut stub_quote = serde_json::to_value(
+            router
+                .quote(&c, &spec(), &candidate)
+                .expect("quote del candidato"),
+        )
+        .expect("quote serializable");
+        stub_quote["costs"] = serde_json::json!([]);
+        stub_quote["required_cost_kinds"] =
+            serde_json::json!(["gas", "financing", "execution_fees"]);
+
+        let check = crate::rhai_agent_bridge::economic_check(
+            router.as_ref(),
+            &c,
+            &spec(),
+            &candidate,
+            &stub_quote,
+            &serde_json::json!({}),
+            &[],
+        );
+        let tags = repair_tags(&check["repairs"]);
+        for kind in ["gas", "financing", "execution_fees"] {
+            let want = format!("costs.{kind}::mandatory_route_cost_missing");
+            assert!(
+                tags.contains(&want),
+                "el sustrato sin productores de coste debe reportar {want}: {tags:?}"
+            );
+        }
+        assert!(
+            !check["net_profit_usd"].is_number(),
+            "sin costes completos el neto NO se computa (jamás un cero decorativo)"
+        );
+    }
+
+    #[test]
+    fn the_v4_bindings_resolve_the_registered_real_context() {
+        // Extremo a extremo por el MISMO camino que un cartucho: engine Rhai +
+        // `rhai_agent_bridge::register` + ContextRouter. Antes de
+        // SHADOW-CANONICAL-01 la ruta SHADOW no registraba contexto alguno, así
+        // que `agent_v4_quote` caía al stub y devolvía costes VACÍOS.
+        let rev: crate::snapshot_services::RevisionGuard = Arc::new(|_: &str, _: &str| true);
+        let services =
+            crate::snapshot_services::SnapshotServices::new(Arc::new(real_bundle()), rev)
+                .expect("services");
+        let router = Arc::new(crate::context_router::ContextRouter::new(4).expect("router"));
+        router
+            .insert(CONTEXT_ID.to_string(), Arc::new(services))
+            .expect("insert");
+
+        let mut engine = rhai::Engine::new();
+        crate::rhai_agent_bridge::register(&mut engine, router.clone());
+        let mut scope = rhai::Scope::new();
+        scope.push("ctx_id", CONTEXT_ID.to_string());
+        scope.push("mev_id", MEV_ID.to_string());
+        scope.push("digest", DIGEST.to_string());
+        let script = r#"
+            let ctx = #{ "context_id": ctx_id, "snapshot_id": ctx_id };
+            let spec = #{ "mev_id": mev_id, "detector_id": "R_CLOSED_CYCLE",
+                         "source_digest": digest, "logic": "closed_route",
+                         "allowed_search_hops": [2], "operator_requirements": [] };
+            let discovery = agent_v4_discover(ctx, spec);
+            let candidates = discovery["candidates"];
+            if candidates == () || candidates.len() == 0 {
+                return #{ "discovery": "NO_CANDIDATE", "costs": 0 };
+            }
+            let quote = agent_v4_quote(ctx, spec, candidates[0]);
+            let costs = quote["costs"];
+            let n = if costs == () { 0 } else { costs.len() };
+            #{ "discovery": "READY", "costs": n, "quote_status": quote["status"] }
+        "#;
+        let out = engine
+            .eval_with_scope::<rhai::Map>(&mut scope, script)
+            .expect("el script v4 debe evaluar");
+        assert_eq!(
+            out.get("discovery").map(|d| d.to_string()),
+            Some("READY".to_string()),
+            "el binding debe descubrir sobre el grafo del contexto registrado"
+        );
+        let costs = out
+            .get("costs")
+            .and_then(|d| d.as_int().ok())
+            .expect("costs debe ser entero");
+        assert!(
+            costs > 0,
+            "agent_v4_quote sobre el contexto REAL devuelve costes no vacíos"
+        );
+    }
+
+    #[test]
+    fn shadow_outcome_rows_declare_the_real_substrate() {
+        // `mode` sigue siendo "shadow" (es el stream shadow), pero la fila
+        // declara si la evaluación usó el bundle real o el stub — antes TODAS
+        // las filas describían el stub sin decirlo.
+        let intent = cycle_intent();
+        let real = build_rd_outcome_v1(
+            CHAIN,
+            "dex_arb",
+            &intent,
+            &CartridgeEvalResult {
+                is_opportunity: false,
+                estimated_profit: 0.0,
+                confidence: 0.0,
+                metadata: HashMap::new(),
+                urgency: "low".to_string(),
+                reason: Some("no_opportunity".to_string()),
+            },
+            true,
+            ShadowSubstrate::IntentBundle,
+            1_700_000_000_000,
+        );
+        assert_eq!(real["mode"], "shadow");
+        assert_eq!(real["context_provenance"], "intent_bundle");
+
+        let stub = build_rd_outcome_v2(
+            CHAIN,
+            "dex_arb",
+            &intent,
+            &CartridgeEvalResult {
+                is_opportunity: false,
+                estimated_profit: 0.0,
+                confidence: 0.0,
+                metadata: HashMap::new(),
+                urgency: "low".to_string(),
+                reason: Some("no_opportunity".to_string()),
+            },
+            false,
+            ShadowSubstrate::StaticBootStub,
+            1_700_000_000_000,
+        );
+        assert_eq!(stub["mode"], "shadow");
+        assert_eq!(stub["context_provenance"], "static_boot_stub");
     }
 }
