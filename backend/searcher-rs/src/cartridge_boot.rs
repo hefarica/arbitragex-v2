@@ -224,6 +224,8 @@ pub fn spawn_cartridge_runtime(
         // COST-PRODUCERS-01: el stub no computa costes (sin gas observado ni
         // config del intent) → vacío = DATA_GAP honesto, nunca ceros.
         base_cost_lines: Vec::new(),
+        // REDEMPTION-PRODUCER-01: el stub no lee estado on-chain de baskets.
+        redemption_state: std::collections::BTreeMap::new(),
     });
     // Single-revision Phase-1 guard: this process serves exactly the bundle it
     // booted with; a restart rebuilds a fresh (equally-honest) bundle.
@@ -1642,6 +1644,9 @@ fn build_v4_intent_bundle(
         // contexto (gas observado × unidades de config, financiación según la
         // tasa declarada, comisiones embebidas en las cotizaciones).
         base_cost_lines: base_costs,
+        // REDEMPTION-PRODUCER-01 fase 2: mapa vacío (la lectura async del
+        // worker de baskets queda como seguimiento; verificadores honestos).
+        redemption_state: std::collections::BTreeMap::new(),
     })
 }
 

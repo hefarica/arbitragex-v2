@@ -252,6 +252,10 @@ pub mod thermodynamics;
 // and the 6-phase SED Engine for the Edge Node deployment.
 #[cfg(feature = "paper-shadow")]
 pub mod connectors;
+// REDEMPTION-PRODUCER-01: lector de estado on-chain de baskets ERC-4626.
+// SIEMPRE compilado (no gated a paper-shadow): los cartuchos de redemption
+// lo necesitan en TODOS los modos (§34.1 mode-invariant).
+pub mod basket_reader;
 #[cfg(feature = "paper-shadow")]
 pub mod normalization;
 #[cfg(feature = "paper-shadow")]

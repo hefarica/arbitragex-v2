@@ -100,6 +100,11 @@ pub struct SnapshotBundle {
     /// dominante medido en producción. Vacío = el dueño no pudo computarlas
     /// (stub Phase-1 sin gas ni config) → DATA_GAP honesto (R8), nunca ceros.
     pub base_cost_lines: Vec<CostLine>,
+    /// REDEMPTION-PRODUCER-01 fase 2: estado on-chain de los baskets
+    /// configurados por el operador (`ARBX_BASKET_CONTRACTS`). Dirección →
+    /// {max_redeem_raw, total_assets_raw, read_at_ms}. Vacío = sin baskets
+    /// configurados o sin RPC disponible → verificadores FAIL honesto.
+    pub redemption_state: BTreeMap<String, Value>,
 }
 /// Revision liveness guard supplied by the owner (never invented here).
 pub type RevisionGuard = Arc<dyn Fn(&str, &str) -> bool + Send + Sync>;
@@ -675,6 +680,65 @@ impl SnapshotServices {
                 self.data.valid_until_ms > now_ms().unwrap_or(0),
                 "snapshot_expired_before_execution_window",
             ),
+            // ── REDEMPTION-PRODUCER-01 (2026-10-03): verificadores para los 38
+            // cartuchos de redemption (basket, index, stablecoin). La parte
+            // DEX de su estrategia (adquirir componentes) se verifica con el
+            // grafo; la parte de contrato (mint/redeem) requiere el adaptador
+            // on-chain. Ambos verificadores hacen lo que PUEDEN con los datos
+            // presentes y reportan exactamente qué falta cuando no pueden
+            // completar — jamás un PASS fabricado.
+            //
+            // redemption_within_limits: el importe a redimir debe estar
+            // dentro de los límites del contrato (maxRedeem). Con el estado
+            // on-chain del basket disponible (fase 2), se VERIFICA contra el
+            // max_redeem_raw real leído via RPC. Sin estado → FAIL honesto.
+            {
+                let basket_state = edges
+                    .first()
+                    .and_then(|e| self.data.redemption_state.get(&e.token_in))
+                    .or_else(|| {
+                        edges
+                            .last()
+                            .and_then(|e| self.data.redemption_state.get(&e.token_out))
+                    });
+                let (ok, reason) = match basket_state {
+                    Some(state) => {
+                        // max_redeem_raw es hex del uint256 retornado.
+                        // amount_in_raw debe ser <= max_redeem.
+                        let max_raw = state
+                            .get("max_redeem_raw")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("");
+                        let amount_ok = if max_raw.len() > 2 {
+                            let max_val =
+                                u128::from_str_radix(max_raw.trim_start_matches("0x"), 16)
+                                    .unwrap_or(0);
+                            let amt = q.amount_in_raw.parse::<u128>().unwrap_or(0);
+                            max_val >= amt
+                        } else {
+                            false
+                        };
+                        if amount_ok {
+                            (true, "")
+                        } else {
+                            (false, "redemption_amount_exceeds_onchain_maxRedeem")
+                        }
+                    }
+                    None => (
+                        false,
+                        "redemption_contract_state_not_available_configure_ARBX_BASKET_CONTRACTS",
+                    ),
+                };
+                receipt("redemption_within_limits", ok, reason)
+            },
+            // delay_costed: sin datos de demora del contrato (vesting,
+            // cooldown, settlement window) no es computable — FAIL honesto
+            // con el requisito exacto.
+            receipt(
+                "delay_costed",
+                false,
+                "redemption_delay_data_not_available_read_vesting_via_rpc",
+            ),
             // native_risk_and_impact_policy (OPERATOR-DISPATCH-WIRING-01):
             // PASS solo si el dispatcher REAL corrió para ESTE plan — la
             // caché la puebla operators() con la evidencia nativa efectiva.
@@ -804,8 +868,22 @@ impl AgentServices for SnapshotServices {
         // las rutas comparadas comparten extremos. Antes: 30 outcomes
         // bloqueados con native_domain_solver_required porque la lista solo
         // admitía closed_route/post_state_route.
-        if ["closed_route", "post_state_route", "path_comparison"]
-            .contains(&spec["logic"].as_str().unwrap_or(""))
+        //
+        // REDEMPTION-PRODUCER-01 (2026-10-03): `redemption` (38 cartuchos —
+        // basket, index, stablecoin redemption) adquiere componentes en DEX
+        // (grafo) y los redime/minta en el contrato. La parte DEX usa el
+        // grafo; la parte de contrato necesita el adaptador on-chain. Con el
+        // grafo abierto, los cartuchos evalúan rutas reales de componentes y
+        // sus verificadores de dominio (redemption_within_limits,
+        // delay_costed) reportan exactamente qué falta — honesto y accionable,
+        // no el opaco native_domain_solver_required que mataba 38 cartuchos.
+        if [
+            "closed_route",
+            "post_state_route",
+            "path_comparison",
+            "redemption",
+        ]
+        .contains(&spec["logic"].as_str().unwrap_or(""))
         {
             if self.data.size_schedule_raw.is_empty() {
                 return Err("native_size_schedule_missing".into());
@@ -1315,6 +1393,8 @@ mod plan_support_wiring_tests {
                     evidence_id: "quote:ledger:fees_and_impact_embedded".into(),
                 },
             ],
+            // REDEMPTION-PRODUCER-01: fixture sin baskets on-chain — vacío.
+            redemption_state: BTreeMap::new(),
         }
     }
     fn spec() -> Value {
