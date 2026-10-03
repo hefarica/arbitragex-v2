@@ -1946,6 +1946,23 @@ async fn v4_relevant_basket_state(
 /// BASKET-WORKER-01: el estado de redemption on-chain de los baskets
 /// RELEVANTES a este intent llega YA LEÍDO por el llamador async
 /// (`basket_state`); esta función es sync por contrato y nunca toca la red.
+///
+/// PRICE-COVERAGE-01 (§38): el mapa canónico de precios tiene TRES fuentes
+/// ORDENADAS por confianza — (1) el snapshot de Redis que publica
+/// `price_worker` (`arbx:token_prices:<chain>`, hash de símbolos), (2) el
+/// `token_prices_usd` curado por el operador en `trading_config`, y (3) el
+/// **PriceBus en proceso** (`price_bus_global::get()`, Binance WS bookTicker
+/// fusionado con los anchors Chainlink). La tercera cierra el hueco real de
+/// cobertura: el snapshot es un hash *polado y acotado*
+/// (`MAX_PRICED_TOKENS`) y `token_prices_usd` es una lista curada, así que un
+/// token del grafo puede no estar en ninguno de los dos mientras el bus —la
+/// MISMA pila soberana de la que el snapshot se nutre— sí lo tiene vivo. La
+/// lectura es lock-free y en proceso (`ArcSwap::load`), jamás un RPC por token
+/// en el hot path.
+///
+/// `price_bus: None` (bus no inicializado, p.ej. en tests) degrada honesto:
+/// las dos primeras fuentes siguen, y un token que ninguna cubre queda SIN
+/// entrada (R8) — exactamente la conducta previa, nunca un precio inventado.
 #[allow(clippy::too_many_arguments)]
 fn build_v4_intent_bundle(
     chain_id: u64,
@@ -1967,6 +1984,11 @@ fn build_v4_intent_bundle(
     // lectura fallida llega VACÍO: el verificador `redemption_within_limits`
     // reporta entonces su FAIL honesto y jamás se fabrica un `max_redeem`.
     basket_state: &std::collections::BTreeMap<String, serde_json::Value>,
+    // PRICE-COVERAGE-01: bus de precios en proceso (tercera fuente, §38). Se
+    // recibe por parámetro en vez de leerse del global dentro de la función
+    // para que el llamador —y los tests— fijen explícitamente la dependencia:
+    // `None` es el degradado honesto (sin bus no hay tercera fuente).
+    price_bus: Option<&shared_rs::price_bus::PriceBus>,
 ) -> Option<crate::snapshot_services::SnapshotBundle> {
     let observed_at_ms = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -2018,8 +2040,31 @@ fn build_v4_intent_bundle(
             .iter()
             .find(|(k, _)| k.eq_ignore_ascii_case(symbol))
             .map(|(_, v)| (*v, "trading_config"));
+        // PRICE-COVERAGE-01 (§38) — tercera fuente: el PriceBus EN PROCESO.
+        // `price_with_verdict` devuelve `None` tanto en `NoSource` (ni Binance
+        // ni anchor para el símbolo) como en `DivergenceFrozen` (la banda
+        // Binance↔Chainlink se congeló: un depeg o un feed roto DEBE parar la
+        // valuación, no colarse promediado). El `filter` interno repite el
+        // invariante del `filter` externo para que un valor no finito o no
+        // positivo del bus no llegue siquiera a etiquetarse.
+        //
+        // El `evidence_id` nombra la fuente REAL y su veredicto REAL: en
+        // `price_bus:stale_anchor` el número servido es el de Binance sin
+        // verificación de anchor, y eso queda declarado en la evidencia en vez
+        // de disfrazarse de precio verificado. `producer` sigue siendo
+        // "PriceBus" porque el bus ES literalmente el productor — es la
+        // identidad que exige `SnapshotServices::price()`, no una etiqueta
+        // prestada para pasar el gate. El id es `&'static str` (como los de las
+        // dos fuentes previas): el hot path no asigna para etiquetar.
+        let from_bus = price_bus.and_then(|bus| {
+            let (price, verdict) = bus.view().price_with_verdict(symbol);
+            price
+                .filter(|v| v.is_finite() && *v > 0.0)
+                .map(|v| (v, v4_price_bus_evidence_id(verdict)))
+        });
         let Some((usd, evidence_id)) = from_snapshot
             .or(from_config)
+            .or(from_bus)
             .filter(|(v, _)| v.is_finite() && *v > 0.0)
         else {
             continue; // sin precio real positivo → SIN entrada (R8)
@@ -2194,6 +2239,30 @@ fn v4_base_cost_lines(
     });
 
     lines
+}
+
+/// PRICE-COVERAGE-01 (§38) — `evidence_id` de un precio servido por el PriceBus
+/// EN PROCESO: nombra la fuente (`price_bus`) y el veredicto REAL con el que el
+/// bus lo sirvió, para que la evidencia diga la verdad completa (un número de
+/// Binance sin anchor de verificación se declara `stale_anchor`, no se disfraza
+/// de verificado).
+///
+/// `&'static str` y no `format!`: el `evidence_id` de las otras dos fuentes ya
+/// es estático y el hot path no debe asignar sólo para etiquetar. El `match` es
+/// exhaustivo a propósito — un `Verdict` nuevo rompe la compilación en vez de
+/// degradar en silencio, y `price_bus_evidence_ids_mirror_the_verdict_slugs`
+/// fija que cada slug siga siendo el de `Verdict::as_str()`.
+fn v4_price_bus_evidence_id(verdict: shared_rs::price_bus::Verdict) -> &'static str {
+    use shared_rs::price_bus::Verdict;
+    match verdict {
+        Verdict::Ok => "price_bus:ok",
+        Verdict::StaleBinance => "price_bus:stale_binance",
+        Verdict::StaleAnchor => "price_bus:stale_anchor",
+        // Mismo slug que `Verdict::as_str()`, que es como el resto del sistema
+        // publica esta razón.
+        Verdict::DivergenceFrozen => "price_bus:price_divergence_binance_chainlink",
+        Verdict::NoSource => "price_bus:no_live_price",
+    }
 }
 
 /// SHADOW-CANONICAL-01 — LECTURA de las piernas del intent con las MISMAS
@@ -2511,6 +2580,12 @@ pub async fn build_and_register_intent_context(
     let Some(router) = router else {
         return IntentContextOutcome::unavailable(census, chain_id, intent, "no_context_router");
     };
+    // PRICE-COVERAGE-01 (§38): tercera fuente del mapa de precios — el bus de
+    // precios EN PROCESO. `get()` clona un `Arc` ya inicializado o devuelve
+    // `None` cuando `main.rs` todavía no llamó a `init()` (tests, arranques
+    // parciales); con `None` la composición se queda con las dos fuentes de
+    // Redis/config y no inventa nada (R8). Coste: un load atómico, sin I/O.
+    let price_bus = crate::price_bus_global::get();
     let Some(bundle) = build_v4_intent_bundle(
         chain_id,
         &ctx_id,
@@ -2523,6 +2598,7 @@ pub async fn build_and_register_intent_context(
         v4_manifest_digests(),
         v4_intent_gas_gwei,
         &v4_basket_state,
+        price_bus.as_deref(),
     ) else {
         // `None` sólo si el reloj no permite una ventana temporal honesta.
         // Evento CONSERVADO del bloque original de la ruta ACTIVE.
@@ -5133,8 +5209,375 @@ mod shadow_canonical_tests {
             // gas OBSERVADO del runner (el getter ya decodifica milli-gwei).
             20.0,
             &std::collections::BTreeMap::new(),
+            // PRICE-COVERAGE-01: sin bus en este fixture — el snapshot ya cubre
+            // WETH/USDC, así que la tercera fuente no participa (y su ausencia
+            // es el degradado honesto, no una carencia del test).
+            None,
         )
         .expect("un bundle con grafo y config reales SIEMPRE se compone")
+    }
+
+    // ── PRICE-COVERAGE-01 (§38): sustrato del mapa canónico de precios ──────
+    //
+    // El defecto medido: en producción, un token del grafo (LAR, pair
+    // LAR/WETH) tenía IDENTIDAD (`arbx:tokens:1:<addr>` → `{"symbol":"LAR",…}`)
+    // pero NINGUNA fuente de precio, así que el bundle salía sin su entrada y
+    // la cascada `amount_in_usd` → `capital_usd` → cashflows → costes → quote →
+    // operadores quedaba en DATA_GAP. Estos tests fijan las tres propiedades
+    // que el PR debe garantizar: la tercera fuente SÍ valora, la ausencia
+    // honesta se conserva, y jamás entra un valor fabricado.
+
+    /// Bundle compuesto con las TRES fuentes de precio fijadas por el test:
+    /// snapshot de Redis, `token_prices_usd` del operador y bus en proceso.
+    fn bundle_with_price_sources(
+        price_snapshot: &HashMap<String, f64>,
+        token_prices_usd: &HashMap<String, f64>,
+        price_bus: Option<&shared_rs::price_bus::PriceBus>,
+    ) -> crate::snapshot_services::SnapshotBundle {
+        let intent = cycle_intent();
+        let composition =
+            compose_intent_edges(CHAIN, CONTEXT_ID, &intent, &resolved_reads(&intent));
+        assert_eq!(
+            composition.edges.len(),
+            2,
+            "las dos piernas resueltas deben entrar al grafo"
+        );
+        let mut cfg = operator_cfg();
+        cfg.token_prices_usd = token_prices_usd.clone();
+        build_v4_intent_bundle(
+            CHAIN,
+            CONTEXT_ID,
+            composition.edges,
+            &hex(tok(0xA)),
+            AMOUNT_RAW,
+            &cfg,
+            &identity(),
+            price_snapshot,
+            &manifests(),
+            20.0,
+            &std::collections::BTreeMap::new(),
+            price_bus,
+        )
+        .expect("un bundle con grafo y config reales SIEMPRE se compone")
+    }
+
+    fn now_secs() -> u64 {
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0)
+    }
+
+    fn now_ns() -> u64 {
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos() as u64)
+            .unwrap_or(0)
+    }
+
+    /// Un anchor Chainlink fresco para el símbolo dado (recv reciente, round
+    /// del aggregator hace 10 s — dentro de la ventana de los estables).
+    fn anchor(answer: f64) -> shared_rs::price_bus::Anchor {
+        shared_rs::price_bus::Anchor {
+            answer,
+            updated_at: now_secs().saturating_sub(10),
+            recv_ns: now_ns(),
+        }
+    }
+
+    /// Precio del token en el mapa del bundle, tal como lo verá
+    /// `SnapshotServices::price`.
+    fn price_of(
+        bundle: &crate::snapshot_services::SnapshotBundle,
+        token: Address,
+    ) -> Option<&crate::snapshot_services::CanonicalPrice> {
+        bundle.prices.get(&(CHAIN, hex(token)))
+    }
+
+    /// Espejo EXACTO de las condiciones que `SnapshotServices::price()` exige
+    /// antes de servir un `CanonicalPrice` (`snapshot_services.rs:831-853`).
+    ///
+    /// `price` es un método de un trait PRIVADO de `snapshot_services`, así que
+    /// no es invocable desde aquí — y este PR tiene prohibido tocar ese módulo
+    /// más allá de lo que exige la procedencia. El espejo fija las MISMAS
+    /// condiciones, en el MISMO orden, devolviendo la MISMA razón de error, de
+    /// modo que un test pueda afirmar "el gate de procedencia se satisface" sin
+    /// debilitarlo ni ensancharlo. Si el contrato cambia, este espejo deja de
+    /// representarlo y el test debe actualizarse junto con él.
+    fn price_contract_violation(
+        bundle: &crate::snapshot_services::SnapshotBundle,
+        token: &str,
+        now_ms: u64,
+    ) -> Option<&'static str> {
+        let Some(p) = bundle.prices.get(&(bundle.chain_id, token.to_owned())) else {
+            return Some("canonical_price_missing");
+        };
+        if p.producer != "PriceBus"
+            || p.evidence_id.is_empty()
+            || p.revision != bundle.policy.price_revision
+            || p.token_address != token
+            || p.chain_id != bundle.chain_id
+        {
+            return Some("canonical_price_provenance_mismatch");
+        }
+        if now_ms < p.observed_at_ms
+            || now_ms > p.valid_until_ms
+            || p.valid_until_ms < p.observed_at_ms
+        {
+            return Some("canonical_price_stale_or_future");
+        }
+        match crate::rhai_agent_bridge::Usd::parse(&p.usd) {
+            Err(_) => Some("invalid_usd_decimal"),
+            Ok(u) if !u.is_positive() => Some("canonical_price_nonpositive"),
+            Ok(_) => None,
+        }
+    }
+
+    fn now_ms() -> u64 {
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis() as u64)
+            .unwrap_or(0)
+    }
+
+    #[test]
+    fn price_bus_evidence_ids_mirror_the_verdict_slugs() {
+        // Anti-deriva: el `evidence_id` estático debe seguir nombrando EXACTAMENTE
+        // el veredicto que el bus reporta (su slug público), para que la
+        // evidencia insertada sea legible con las mismas herramientas que leen
+        // `Verdict::as_str()` en el resto del sistema.
+        use shared_rs::price_bus::Verdict;
+        for v in [
+            Verdict::Ok,
+            Verdict::StaleBinance,
+            Verdict::StaleAnchor,
+            Verdict::DivergenceFrozen,
+            Verdict::NoSource,
+        ] {
+            assert_eq!(
+                v4_price_bus_evidence_id(v),
+                format!("price_bus:{}", v.as_str()),
+                "el evidence_id de {v:?} debe espejar su slug"
+            );
+            assert!(
+                !v4_price_bus_evidence_id(v).is_empty(),
+                "price() exige un evidence_id no vacío"
+            );
+        }
+    }
+
+    #[test]
+    fn bus_source_fills_a_token_missing_from_snapshot_and_config() {
+        // Snapshot de Redis y `token_prices_usd` VACÍOS: antes de
+        // PRICE-COVERAGE-01 el bundle salía sin ninguna entrada. El bus en
+        // proceso (misma pila soberana que alimenta el snapshot) sí tiene los
+        // dos tokens vivos, así que ahora se valoran.
+        use shared_rs::price_bus::{BookTicker, PriceBus, PriceBusConfig};
+        let bus = PriceBus::new(PriceBusConfig::default());
+        // El quote del par ETHUSDC necesita su propio anchor fresco (USDC).
+        bus.update_anchor("USDC", anchor(0.9998));
+        // bookTicker de Binance: WETH se valora con el BID (lo que se puede
+        // vender AHORA — el lado conservador), no con el mid.
+        bus.update_binance(
+            "ETHUSDC",
+            BookTicker {
+                bid: 2_625.46,
+                ask: 2_625.47,
+                event_ms: 0,
+                recv_ns: now_ns(),
+            },
+        );
+        let bundle =
+            bundle_with_price_sources(&HashMap::new(), &HashMap::new(), Some(bus.as_ref()));
+        assert_eq!(
+            bundle.prices.len(),
+            2,
+            "los dos tokens del ciclo deben quedar valorados por el bus"
+        );
+
+        // WETH ← Binance bid × anchor del quote. Sin anchor PROPIO de WETH el
+        // veredicto es `stale_anchor`: la evidencia lo DECLARA (precio servido
+        // sin verificación de anchor) en vez de disfrazarlo de verificado.
+        let weth = price_of(&bundle, tok(0xA)).expect("WETH valorado por el bus");
+        assert_eq!(weth.producer, "PriceBus");
+        assert_eq!(weth.evidence_id, "price_bus:stale_anchor");
+        assert_eq!(weth.chain_id, CHAIN);
+        assert_eq!(weth.token_address, hex(tok(0xA)));
+        let expected = 2_625.46_f64 * 0.9998;
+        let got: f64 = weth.usd.parse().expect("usd es decimal plano");
+        assert!(
+            (got - expected).abs() < 1e-9,
+            "WETH = {got}, esperado {expected}"
+        );
+
+        // USDC ← su anchor Chainlink (no hay libro Binance USDCUSDT en el bus).
+        let usdc = price_of(&bundle, tok(0xB)).expect("USDC valorado por el bus");
+        assert_eq!(usdc.producer, "PriceBus");
+        assert_eq!(usdc.evidence_id, "price_bus:stale_binance");
+        assert_eq!(usdc.usd, "0.9998");
+
+        // El contrato `SnapshotServices::price` se satisface SIN tocarlo:
+        // producer "PriceBus" (el bus ES literalmente el productor), evidencia
+        // no vacía, revisión compartida y ventana temporal coherente. El espejo
+        // devuelve la MISMA razón que devolvería `price()`; aquí debe ser `None`
+        // (= serviría el precio) para los DOS tokens.
+        let now = now_ms();
+        for token in [tok(0xA), tok(0xB)] {
+            assert_eq!(
+                price_contract_violation(&bundle, &hex(token), now),
+                None,
+                "el precio del bus debe pasar el gate de procedencia sin relajarlo"
+            );
+        }
+    }
+
+    #[test]
+    fn snapshot_and_config_still_outrank_the_bus() {
+        // La tercera fuente NO desplaza a las dos primeras: si el snapshot (o
+        // la config del operador) ya trae el token, ese valor manda y la
+        // evidencia sigue siendo la de siempre. PRICE-COVERAGE-01 sólo AÑADE
+        // cobertura; no reordena las fuentes existentes.
+        use shared_rs::price_bus::{PriceBus, PriceBusConfig};
+        let bus = PriceBus::new(PriceBusConfig::default());
+        bus.update_anchor("USDC", anchor(0.5)); // valor deliberadamente distinto
+        let mut snapshot: HashMap<String, f64> = HashMap::new();
+        snapshot.insert("USDC".to_string(), 0.999_844_88);
+        let bundle = bundle_with_price_sources(&snapshot, &HashMap::new(), Some(bus.as_ref()));
+        let usdc = price_of(&bundle, tok(0xB)).expect("USDC");
+        assert_eq!(usdc.usd, "0.99984488", "el snapshot debe ganarle al bus");
+        assert_eq!(usdc.evidence_id, "price_snapshot");
+    }
+
+    #[test]
+    fn a_token_absent_from_every_source_keeps_no_entry() {
+        // Bus VIVO pero sin dato para WETH ni USDC, snapshot y config vacíos:
+        // SIN entrada. Es el caso LAR medido en producción — identidad sí,
+        // precio no — y la respuesta honesta es `None`, jamás un relleno.
+        use shared_rs::price_bus::{PriceBus, PriceBusConfig};
+        let bus = PriceBus::new(PriceBusConfig::default());
+        let bundle =
+            bundle_with_price_sources(&HashMap::new(), &HashMap::new(), Some(bus.as_ref()));
+        assert!(
+            bundle.prices.is_empty(),
+            "sin precio real positivo no se inserta NINGUNA entrada (R8): {:?}",
+            bundle.prices.keys().collect::<Vec<_>>()
+        );
+
+        // El `None` honesto se conserva: el espejo del contrato devuelve la
+        // razón exacta que devolvería `price()` — no un precio de relleno.
+        let now = now_ms();
+        for token in [tok(0xA), tok(0xB)] {
+            assert_eq!(
+                price_contract_violation(&bundle, &hex(token), now),
+                Some("canonical_price_missing"),
+                "sin fuente real el token queda SIN precio (R8)"
+            );
+        }
+    }
+
+    #[test]
+    fn bus_absent_degrades_to_the_two_redis_sources() {
+        // `price_bus: None` (bus no inicializado) NO inventa nada: la
+        // composición se queda con snapshot + config, exactamente la conducta
+        // previa a este PR. Es el degradado honesto que documenta la firma.
+        let mut snapshot: HashMap<String, f64> = HashMap::new();
+        snapshot.insert("USDC".to_string(), 1.0);
+        let bundle = bundle_with_price_sources(&snapshot, &HashMap::new(), None);
+        assert_eq!(
+            bundle.prices.len(),
+            1,
+            "sólo el token que el snapshot cubre"
+        );
+        assert_eq!(
+            price_of(&bundle, tok(0xB)).map(|p| p.evidence_id.as_str()),
+            Some("price_snapshot")
+        );
+        assert!(
+            price_of(&bundle, tok(0xA)).is_none(),
+            "WETH no está en ninguna de las dos fuentes ⇒ SIN entrada"
+        );
+    }
+
+    #[test]
+    fn bus_price_tracks_the_live_source_and_is_never_a_constant() {
+        // El número insertado sigue a la fuente viva: dos anchors distintos
+        // producen dos precios distintos. Un fallback constante (1.0, 0.0, o
+        // cualquier valor fijo) daría el MISMO resultado en ambos casos, así
+        // que este test es la cerradura anti-constante del PR.
+        use shared_rs::price_bus::{PriceBus, PriceBusConfig};
+        let priced_at = |answer: f64| {
+            let bus = PriceBus::new(PriceBusConfig::default());
+            bus.update_anchor("USDC", anchor(answer));
+            let bundle =
+                bundle_with_price_sources(&HashMap::new(), &HashMap::new(), Some(bus.as_ref()));
+            let usdc = price_of(&bundle, tok(0xB)).cloned().expect("USDC");
+            (usdc.usd, usdc.evidence_id)
+        };
+        let (low, ev_low) = priced_at(0.9998);
+        let (high, ev_high) = priced_at(1_000_000.0);
+        assert_ne!(
+            low, high,
+            "el precio debe seguir al anchor; un valor constante sería el delator"
+        );
+        assert_eq!(low, "0.9998");
+        assert_eq!(high, "1000000");
+        assert_eq!(ev_low, "price_bus:stale_binance");
+        assert_eq!(ev_high, "price_bus:stale_binance");
+    }
+
+    #[test]
+    fn a_frozen_bus_pair_yields_no_entry() {
+        // Banda Binance↔Chainlink CONGELADA por divergencia: el bus devuelve
+        // `None` (Verdict::DivergenceFrozen) y el bundle DEBE respetarlo — un
+        // depeg o un feed roto para la valuación, no se promedia ni se cuela.
+        //
+        // Mecánica del bus (price_bus.rs `sample_divergence`): la banda se
+        // muestrea cuando llega el dato del SÍMBOLO — un `bookTicker` de ETHUSDC
+        // muestrea "ETH" y un anchor muestrea su propio símbolo. Para congelar
+        // WETH hay que refrescar SU anchor con el libro ya desviado; por eso el
+        // bucle calienta con `update_anchor("WETH", …)` y no con ETH a secas.
+        use shared_rs::price_bus::{BookTicker, PriceBus, PriceBusConfig, Verdict};
+        let bus = PriceBus::new(PriceBusConfig::default());
+        bus.update_anchor("USDC", anchor(1.0)); // quote del par ETHUSDC
+        let ticker = |bid: f64, ask: f64| BookTicker {
+            bid,
+            ask,
+            event_ms: 0,
+            recv_ns: now_ns(),
+        };
+        // Calienta la banda de WETH con la ventana de muestras del bus
+        // (band_warmup = 30) y divergencias pequeñas: nada se congela.
+        for i in 0..30 {
+            bus.update_binance("ETHUSDC", ticker(2_600.0 + (i % 3) as f64 * 0.5, 2_601.0));
+            bus.update_anchor("WETH", anchor(2_600.0));
+        }
+        assert_eq!(
+            bus.view().price_with_verdict("WETH").1,
+            Verdict::Ok,
+            "la banda caliente con divergencia pequeña NO debe congelar"
+        );
+        // Libro ~3% desviado del anchor + refresco del anchor ⇒ la muestra cae
+        // fuera de la banda (2σ, suelo 1%) ⇒ el par se CONGELA.
+        bus.update_binance("ETHUSDC", ticker(2_680.0, 2_680.5));
+        bus.update_anchor("WETH", anchor(2_600.0));
+        assert_eq!(
+            bus.view().price_with_verdict("WETH").1,
+            Verdict::DivergenceFrozen,
+            "el par WETH debe quedar congelado en el bus"
+        );
+
+        let bundle =
+            bundle_with_price_sources(&HashMap::new(), &HashMap::new(), Some(bus.as_ref()));
+        assert!(
+            price_of(&bundle, tok(0xA)).is_none(),
+            "un par congelado NO se valora: sin entrada, no un promedio"
+        );
+        // USDC no está congelado (sin libro Binance): su anchor sigue mandando,
+        // y la evidencia declara que la valuación vino del anchor.
+        assert_eq!(
+            price_of(&bundle, tok(0xB)).map(|p| p.evidence_id.as_str()),
+            Some("price_bus:stale_binance")
+        );
     }
 
     fn spec() -> serde_json::Value {
