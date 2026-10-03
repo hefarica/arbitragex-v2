@@ -38,6 +38,16 @@ pub mod native_operator_adapter;
 pub mod proposal_contract;
 pub mod rhai_agent_bridge;
 pub mod snapshot_services;
+// PRICE-COVERAGE-01 (§38): `cartridge_boot` se compila en AMBOS roots (lib y
+// bin) y su mapa canónico de precios consulta el bus de precios EN PROCESO,
+// así que el módulo del handle global debe existir en los dos. En el bin ya
+// estaba declarado (`main.rs`); sin esta línea el root `lib` no resuelve
+// `crate::price_bus_global` y `cargo check --lib` falla. Cada root tiene su
+// propio `OnceLock`: el bin lo inicializa en `main` (bus real y vivo), el lib
+// sólo si un consumidor llama a `init()` — sin llamada, `get()` devuelve
+// `None` y el mapa se queda con las fuentes de Redis/config (degradado
+// honesto, R8; nunca un precio inventado).
+pub mod price_bus_global;
 // CARTRIDGE-CONTROL: acople/desacople por cartucho — desired-state store
 // (Redis hash + PG), boot application and a runtime command loop.
 pub mod batch_quote;
