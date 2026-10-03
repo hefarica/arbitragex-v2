@@ -796,7 +796,17 @@ impl AgentServices for SnapshotServices {
                 json!({"status":"OBSERVE_ONLY","reason":"source_observe_only","candidates":[],"snapshot_id":self.data.snapshot_id}),
             );
         }
-        if ["closed_route", "post_state_route"].contains(&spec["logic"].as_str().unwrap_or("")) {
+        // DOMAIN-GRAPH-01 (2026-10-03): `path_comparison` (direct_vs_indirect,
+        // path_inconsistency) compara rutas del MISMO grafo de pools — no
+        // necesita un solver de dominio propio, necesita que el grafo le
+        // entregue las rutas a comparar. Sus restricciones (identical_input,
+        // identical_output_asset, same_snapshot, firm_baseline) verifican que
+        // las rutas comparadas comparten extremos. Antes: 30 outcomes
+        // bloqueados con native_domain_solver_required porque la lista solo
+        // admitía closed_route/post_state_route.
+        if ["closed_route", "post_state_route", "path_comparison"]
+            .contains(&spec["logic"].as_str().unwrap_or(""))
+        {
             if self.data.size_schedule_raw.is_empty() {
                 return Err("native_size_schedule_missing".into());
             }
