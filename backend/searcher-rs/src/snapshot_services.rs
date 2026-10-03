@@ -675,6 +675,33 @@ impl SnapshotServices {
                 self.data.valid_until_ms > now_ms().unwrap_or(0),
                 "snapshot_expired_before_execution_window",
             ),
+            // ── REDEMPTION-PRODUCER-01 (2026-10-03): verificadores para los 38
+            // cartuchos de redemption (basket, index, stablecoin). La parte
+            // DEX de su estrategia (adquirir componentes) se verifica con el
+            // grafo; la parte de contrato (mint/redeem) requiere el adaptador
+            // on-chain. Ambos verificadores hacen lo que PUEDEN con los datos
+            // presentes y reportan exactamente qué falta cuando no pueden
+            // completar — jamás un PASS fabricado.
+            //
+            // redemption_within_limits: el importe a redimir debe estar
+            // dentro de los límites del contrato (maxRedeem/maxWithdraw).
+            // El adaptador on-chain NO existe aún — el verificador NO puede
+            // confirmar el límite y por tanto NO pasa (R8: jamás PASS sin
+            // comprobación real). La razón informa exactamente qué producir.
+            receipt(
+                "redemption_within_limits",
+                false,
+                "redemption_contract_adapter_not_implemented_read_maxRedeem_via_rpc",
+            ),
+            // delay_costed: el coste de la demora entre iniciar la redención
+            // y recibir los componentes debe estar en el neto. Sin datos de
+            // demora del contrato (vesting, cooldown, settlement window) no
+            // es computable — FAIL honesto con el requisito exacto.
+            receipt(
+                "delay_costed",
+                false,
+                "redemption_delay_data_not_available_read_vesting_via_rpc",
+            ),
             // native_risk_and_impact_policy (OPERATOR-DISPATCH-WIRING-01):
             // PASS solo si el dispatcher REAL corrió para ESTE plan — la
             // caché la puebla operators() con la evidencia nativa efectiva.
@@ -804,8 +831,22 @@ impl AgentServices for SnapshotServices {
         // las rutas comparadas comparten extremos. Antes: 30 outcomes
         // bloqueados con native_domain_solver_required porque la lista solo
         // admitía closed_route/post_state_route.
-        if ["closed_route", "post_state_route", "path_comparison"]
-            .contains(&spec["logic"].as_str().unwrap_or(""))
+        //
+        // REDEMPTION-PRODUCER-01 (2026-10-03): `redemption` (38 cartuchos —
+        // basket, index, stablecoin redemption) adquiere componentes en DEX
+        // (grafo) y los redime/minta en el contrato. La parte DEX usa el
+        // grafo; la parte de contrato necesita el adaptador on-chain. Con el
+        // grafo abierto, los cartuchos evalúan rutas reales de componentes y
+        // sus verificadores de dominio (redemption_within_limits,
+        // delay_costed) reportan exactamente qué falta — honesto y accionable,
+        // no el opaco native_domain_solver_required que mataba 38 cartuchos.
+        if [
+            "closed_route",
+            "post_state_route",
+            "path_comparison",
+            "redemption",
+        ]
+        .contains(&spec["logic"].as_str().unwrap_or(""))
         {
             if self.data.size_schedule_raw.is_empty() {
                 return Err("native_size_schedule_missing".into());
