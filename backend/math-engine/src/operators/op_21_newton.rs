@@ -19,9 +19,15 @@
 //! R8 fail-honest: sin reservas, r0≤0, r1≤0, γ≤0, sin edge (x_peak≤0), raíz no
 //! rentable (f(x_peak)≤0), |f'|<1e-12 (divergencia), no-convergencia en 50 iters,
 //! o raíz fuera de (0, r0] ⇒ scalar_value None. FEATURES-DEFAULTS-01: sin
-//! NINGUNA clave de fee ⇒ `reason_fee_unavailable`; sin `break_even_target` ⇒
-//! `reason_break_even_target_unavailable` (nunca 30 bps ni un hurdle 0.0
-//! inventados).
+//! NINGUNA clave de fee ⇒ `reason_fee_unavailable` (nunca 30 bps inventados).
+//! `break_even_target` AUSENTE ⇒ se resuelve por la DEFINICIÓN del modelo
+//! (`:6`: `target = 0 ⇒ break-even`) y se computa EQUILIBRIO, declarando la
+//! resolución con el flag numérico `metadata.break_even_target_defined = 1.0`.
+//! No es un default hardcodeado: un `0.003` de fee era un DATO DE MERCADO
+//! inventado; un `target = 0` es la condición que define el equilibrio, y sin
+//! ella el operador no mediría nada. Un `break_even_target` PRESENTE pero no
+//! finito (`NaN`/`inf`) es un DATO INVÁLIDO, no una ausencia ⇒
+//! `reason_break_even_target_unavailable`; nunca se degrada a la definición.
 
 use super::{MarketState, OperatorOutput, TopologicalOperator};
 use std::collections::HashMap;
@@ -122,16 +128,26 @@ impl TopologicalOperator for NewtonOperator {
             .filter(|v| *v > 0.0 && v.is_finite())
             .unwrap_or(150_000.0);
         let gas = state.gas_price_gwei * gas_units * 1e-9 * price;
-        // FEATURES-DEFAULTS-01: `break_even_target` es el HURDLE economico de la
-        // ecuacion — el yield neto que hay que superar para que la raiz siga
-        // significando "break-even". Ausente NO es 0.0: asumirlo convierte
-        // "nadie configuro hurdle" en "el break-even es exactamente el yield
-        // nulo" y el operador publica un tamaño para un umbral que nunca se fijo.
-        // Un 0.0 PRESENTE si se conserva: es un CERO ACREDITADO (hurdle declarado
-        // en cero), que es una medicion, no una ausencia.
-        let break_even_target = match state.features.get("break_even_target") {
-            Some(v) if v.is_finite() => *v,
-            _ => return none_out("break_even_target_unavailable"),
+        // FEATURES-DEFAULTS-01 distinguía dos cosas que hasta ahora iban juntas,
+        // y esa distinción es la que decide qué se hace con el target AUSENTE:
+        //
+        //   · `break_even_target` es el HURDLE economico de la ecuacion — el
+        //     yield neto a superar. Un hurdle CONFIGURADO se mide y se respeta.
+        //   · Su AUSENCIA no es un dato de mercado que falte: es la condición de
+        //     EQUILIBRIO del modelo (`:6`, `target = 0 ⇒ break-even`). Sin ella
+        //     el operador no publica "un umbral que nadie fijó", publica el
+        //     tamaño de equilibrio — que es justo lo que su nombre declara.
+        //
+        // Se separa de un default hardcodeado por PROVENANCE, no por valor: el
+        // `0.003` de fee era un dato de mercado inventado y por eso pasó a
+        // `reason_fee_unavailable`; `target = 0` no se inventa, se DECLARA, y
+        // viaja como `declared_definition` para que un consumidor pueda
+        // distinguirlo de una medicion. Un `0.0` PRESENTE sigue siendo un CERO
+        // ACREDITADO (hurdle declarado en cero): `measured`, no definición.
+        let (break_even_target, target_source) = match state.features.get("break_even_target") {
+            Some(v) if v.is_finite() => (*v, "measured"),
+            Some(_) => return none_out("break_even_target_unavailable"),
+            None => (0.0, "declared_definition"),
         };
 
         // f(x)  = p·(r1·γ·x/(r0+γ·x) − x) − gas − break_even_target   [token0 numerary]
@@ -216,6 +232,19 @@ impl TopologicalOperator for NewtonOperator {
         metadata.insert("iterations".to_string(), iters as f64);
         metadata.insert("x_peak".to_string(), x_peak);
         metadata.insert("gas_cost".to_string(), gas);
+        metadata.insert("break_even_target".to_string(), break_even_target);
+        // Flag NUMERICO (el metadata es `HashMap<String, f64>`): 1.0 = el hurdle
+        // se resolvio por la DEFINICION de equilibrio (ausente); 0.0 = se midio
+        // un hurdle presente (incluido un 0.0 acreditado). El recibo del
+        // adaptador refleja la definicion en `defined_inputs`.
+        metadata.insert(
+            "break_even_target_defined".to_string(),
+            if target_source == "measured" {
+                0.0
+            } else {
+                1.0
+            },
+        );
         metadata.insert("gamma".to_string(), gamma);
         metadata.insert("reference_price".to_string(), price);
         metadata.insert("r0".to_string(), r0);
@@ -266,34 +295,121 @@ mod tests {
         assert_eq!(out.metadata.get("reason_fee_unavailable"), Some(&1.0));
     }
 
-    /// FEATURES-DEFAULTS-01: sin `break_even_target` ⇒ hueco declarado (antes
-    /// un hurdle 0.0 implicito, que publicaba un break-even para un umbral que
-    /// nadie configuro).
+    /// FEATURES-DEFAULTS-01 separó dos ausencias que antes se trataban igual, y
+    /// sólo una de ellas es un hueco:
+    ///
+    ///   · sin `fee_bps`/`pool_fee` NO hay operador: la comisión es un dato de
+    ///     mercado y su ausencia es un hueco (`fee_absent_declares_the_gap`).
+    ///   · sin `break_even_target` SÍ hay operador: `target = 0` es la DEFINICIÓN
+    ///     de equilibrio (`:6`), no un hurdle inventado. Se computa y se declara
+    ///     la definición aplicada.
+    ///
+    /// La diferencia no es de valor sino de PROVENANCE: `0.003` era un dato de
+    /// mercado fabricado; `0` es la condición que define lo que este operador
+    /// mide. Verificado por equivalencia: ausente ≡ `0.0` presente.
     #[test]
-    fn break_even_target_absent_declares_the_gap() {
+    fn break_even_target_absent_resolves_by_definition_not_by_default() {
         let op = NewtonOperator::new();
-        let out = op.evaluate(&state_with(&[("fee_bps", 30.0)]));
-        assert!(out.scalar_value.is_none());
-        assert_eq!(out.metadata.get("computed"), Some(&0.0));
+        let absent = op.evaluate(&state_with(&[("fee_bps", 30.0)]));
+        assert_eq!(absent.metadata.get("computed"), Some(&1.0));
         assert_eq!(
-            out.metadata.get("reason_break_even_target_unavailable"),
-            Some(&1.0)
+            absent.metadata.get("break_even_target_defined"),
+            Some(&1.0),
+            "la resolución debe viajar declarada, no inferirse del valor"
+        );
+        assert_eq!(absent.metadata.get("break_even_target"), Some(&0.0));
+
+        let declared_zero = op.evaluate(&state_with(&[
+            ("fee_bps", 30.0),
+            ("break_even_target", 0.0),
+        ]));
+        assert_eq!(declared_zero.metadata.get("computed"), Some(&1.0));
+        assert_eq!(
+            declared_zero.metadata.get("break_even_target_defined"),
+            Some(&0.0),
+            "un 0.0 PRESENTE es un cero ACREDITADO: medido, no definido"
+        );
+
+        let x_absent = absent.scalar_value.expect("equilibrio por definición");
+        let x_zero = declared_zero.scalar_value.expect("cero acreditado");
+        assert!(
+            (x_absent - x_zero).abs() < 1e-12,
+            "definición y cero acreditado deben dar el MISMO tamaño de \
+             equilibrio: {x_absent} vs {x_zero}"
         );
     }
 
     /// Un `break_even_target` PRESENTE pero no finito es un dato invalido, no una
-    /// ausencia — se declara el mismo hueco sin publicar raiz.
+    /// ausencia — se declara el mismo hueco sin publicar raiz. Y NO se degrada a
+    /// la definición: un valor ilegible no se convierte en un cero silencioso.
     #[test]
-    fn non_finite_break_even_target_is_rejected() {
+    fn non_finite_break_even_target_is_rejected_and_not_degraded_to_definition() {
         let op = NewtonOperator::new();
-        let out = op.evaluate(&state_with(&[
-            ("fee_bps", 30.0),
-            ("break_even_target", f64::NAN),
-        ]));
-        assert!(out.scalar_value.is_none());
+        for bad in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
+            let out = op.evaluate(&state_with(&[
+                ("fee_bps", 30.0),
+                ("break_even_target", bad),
+            ]));
+            assert!(
+                out.scalar_value.is_none(),
+                "un target no finito ({bad}) no puede publicar una raiz"
+            );
+            assert_eq!(out.metadata.get("computed"), Some(&0.0));
+            assert_eq!(
+                out.metadata.get("reason_break_even_target_unavailable"),
+                Some(&1.0)
+            );
+            assert!(
+                !out.metadata.contains_key("break_even_target_defined"),
+                "un dato invalido no se resuelve por definición: debe quedar como hueco"
+            );
+        }
+    }
+
+    /// Guarda REAL de no-convergencia. El sembrado monótono (`x₀ = ½·x_lin`,
+    /// demostrado por concavidad en `:10-15`) cubre el régimen bien condicionado,
+    /// así que esta salida sólo se alcanza cuando el propio supuesto del sembrado
+    /// se rompe: con `γ·p_pool = 1.00697` (fee 30 bps, `r1/r0 = 1.01`) y un hurdle
+    /// de 20 en un pool que sólo rinde `f(x_peak) = 20.7` en el pico, la semilla
+    /// queda fuera del bracket (`x₀ = 1434.7`) donde `df(x₀) = −0.0703`, y el paso
+    /// `f(x₀)/df(x₀) ≈ 1450` cruza a negativo: `x_next = −14.8`.
+    ///
+    /// Es una guarda defensiva de la que el operador SALE sin publicar nada — no
+    /// un resultado económico. Se verifica la no-convergencia declarada y que no
+    /// se publique una raíz. Con el mismo pool y un hurdle de 10 el sistema
+    /// converge en 4 iteraciones (`x = 147.0151548373465`, residual 1.4e-13), así
+    /// que el caso no es un rechazo ciego. La salida del estado mal condicionado
+    /// es `divergence` (`:193-195`), no el `non_converged` de `:204-206`: la
+    /// guarda que se dispara es la del paso que cruza a negativo.
+    #[test]
+    fn ill_conditioned_system_declares_divergence_instead_of_a_root() {
+        let mut state = state_with(&[("fee_bps", 30.0), ("break_even_target", 20.0)]);
+        state.price_matrix = vec![vec![10.0]]; // p_ref = 10 (dislocación cross-venue)
+        state.liquidity_reserves = vec![(1_000_000.0, 1_010_000.0)];
+
+        let out = NewtonOperator::new().evaluate(&state);
+        assert!(
+            out.scalar_value.is_none(),
+            "no debe publicar raíz si Newton no converge: {:?}",
+            out.scalar_value
+        );
+        assert_eq!(out.metadata.get("computed"), Some(&0.0));
         assert_eq!(
-            out.metadata.get("reason_break_even_target_unavailable"),
-            Some(&1.0)
+            out.metadata.get("reason_divergence"),
+            Some(&1.0),
+            "la razón debe ser la no-convergencia real, no un genérico"
+        );
+
+        // El mismo pool con un hurdle alcanzable converge: la guarda no es ciega.
+        let mut reachable = state.clone();
+        reachable
+            .features
+            .insert("break_even_target".to_string(), 10.0);
+        let ok = NewtonOperator::new().evaluate(&reachable);
+        let x = ok.scalar_value.expect("hurdle alcanzable ⇒ raíz publicada");
+        assert!(
+            (x - 147.015_154_837_346_5).abs() < 1e-9,
+            "raíz esperada 147.0151548373465, fue {x}"
         );
     }
 

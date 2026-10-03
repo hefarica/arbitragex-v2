@@ -158,6 +158,7 @@ pub fn evaluate_declared(
         let contract = declared_contract(id);
         let missing = missing_required_inputs(id, state);
         let defaulted = defaulted_inputs(id, state);
+        let defined = defined_inputs(id, state);
         let operator_reason = operator_metadata_reason(&out.metadata);
         let mut receipt = json!({"operator_id":id,"operator_name":out.operator_name,"snapshot_id":snapshot_id,"plan_hash":plan_hash,
             "input_receipt":input_receipt,"phase":r["phase"],"role":r["role"],"scalar":scalar,"vector":vector,"matrix":matrix,
@@ -165,6 +166,7 @@ pub fn evaluate_declared(
         if !contract.is_empty() {
             receipt["missing_inputs"] = json!(missing);
             receipt["defaulted_inputs"] = json!(defaulted);
+            receipt["defined_inputs"] = json!(defined);
         }
         if SERIES_OPERATOR_IDS.contains(&id) {
             // FEATURES-01b: una serie de pares DISTINTOS no es una serie
@@ -235,6 +237,13 @@ pub enum AbsentMeaning {
     /// El operador sustituye el default hardcodeado citado y publica un valor
     /// COMPUTADO que NO está enteramente sourced. Viaja en `defaulted_inputs`.
     HardCodedDefault(&'static str),
+    /// La entrada ausente NO se sustituye por un default: la RESUELVE una
+    /// definición del modelo, y el valor queda determinado por ella. Es el caso
+    /// del objetivo de break-even puro, donde `target = 0` ES la definición de
+    /// equilibrio (`op_21_newton.rs:6`), no una medición de beneficio. Viaja en
+    /// `defined_inputs` — separado de `defaulted_inputs` para que un consumidor
+    /// no confunda una definición matemática con un dato fabricado.
+    DeclaredByDefinition(&'static str),
 }
 
 /// Una entrada declarada por el CONTRATO de un operador.
@@ -272,14 +281,21 @@ const fn feature(
 
 /// `fee_bps` (unidad del contrato del pool) o `pool_fee` (fracción): el
 /// operador prefiere la primera y cae a la segunda
-/// (`op_21_newton.rs:49-56`). `Domain::Finite`: el operador NO filtra dominio,
-/// así que un `pool_fee = 0.0` presente es un dato real, no un default.
+/// (`op_21_newton.rs:51-62`). `Domain::Finite`: el operador NO filtra dominio,
+/// así que un `pool_fee = 0.0` presente es un dato REAL — una pool sin comisión
+/// es una medición, no una ausencia.
+///
+/// `absent = DataGap`: la comisión es un DATO DE MERCADO. No se sustituye por
+/// 30 bps. `FEATURES-DEFAULTS-01` retiró ese `unwrap_or(0.003)` y el operador
+/// devuelve `reason_fee_unavailable` si falta toda clave de fee
+/// (`op_21_newton.rs:22`), así que declarar aquí un default sería describir un
+/// comportamiento que el contrato del operador ya no tiene.
 const FEE_INPUT: DeclaredInput = DeclaredInput {
     key: "features.fee_bps|pool_fee",
     source: InputSource::FeatureAnyOf(&["fee_bps", "pool_fee"]),
     min_observations: 0,
     domain: Domain::Finite,
-    absent: AbsentMeaning::HardCodedDefault("0.003"),
+    absent: AbsentMeaning::DataGap,
 };
 
 const PRICE_SERIES_6: DeclaredInput = DeclaredInput {
@@ -359,9 +375,18 @@ const CONTRACT_13: &[DeclaredInput] = &[PRICE_SERIES_3];
 // op_16 Kelly (`op_16_kelly.rs:64`: `returns.len() < 2 || wins.is_empty() ||
 // losses.is_empty()`).
 const CONTRACT_16: &[DeclaredInput] = &[PRICE_SERIES_3, SIGNED_RETURNS];
-// op_21 Newton (`op_21_newton.rs:87-93` reservas primarias; `:109-114`
-// `gas_units` con default 150_000; `:49-56` `fee_bps`/`pool_fee` con default
-// 0.003; `:116-121` `break_even_target` con default 0.0).
+// op_21 Newton (`op_21_newton.rs:87-93` reservas primarias; `:118-124`
+// `gas_units` con default 150_000 — estimación del modelo, NO gas medido;
+// `:51-62` `fee_bps`/`pool_fee` SIN default desde FEATURES-DEFAULTS-01;
+// `:132-134` `break_even_target`).
+//
+// El objetivo de break-even es el caso que `AbsentMeaning::DeclaredByDefinition`
+// existe para nombrar: `target = 0` no es un dato que se rellene, es la
+// DEFINICIÓN de equilibrio del modelo (`op_21_newton.rs:6`:
+// `f(x) = gross_yield(x) − gas − break_even_target`, `target = 0 ⇒ break-even`).
+// Con el objetivo ausente el operador resuelve EQUILIBRIO; con un objetivo
+// configurado resuelve el beneficio objetivo. Ninguno de los dos es una medición
+// de beneficio realizado, y `COMPUTED` no autoriza ejecución.
 const CONTRACT_21: &[DeclaredInput] = &[
     PRIMARY_RESERVES,
     feature(
@@ -375,7 +400,7 @@ const CONTRACT_21: &[DeclaredInput] = &[
         "break_even_target",
         "features.break_even_target",
         Domain::Finite,
-        AbsentMeaning::HardCodedDefault("0.0"),
+        AbsentMeaning::DeclaredByDefinition("0.0"),
     ),
 ];
 // op_22 MonteCarlo (`op_22_monte_carlo.rs:66`, `prices.len() < 3`).
@@ -383,7 +408,10 @@ const CONTRACT_22: &[DeclaredInput] = &[PRICE_SERIES_3];
 // op_26 Flash Loan (`op_26_flash_loan.rs:46-56` reservas primarias; `:74-82`
 // referencia cross-venue; `:105-121` exige `gas_units` Y `token0_per_eth` para
 // publicar `computed = 1` — MATH-05: sin ellas `computed = 0`, nunca un neto
-// sin gas; `:60` `pool_fee` default 0.003; `:66` `flash_premium` default 0.0).
+// sin gas; `:60` `pool_fee` y `:66` `flash_premium` SIN default desde
+// FEATURES-DEFAULTS-01 — el operador devuelve hueco declarado si faltan, y
+// `flash_premium` a 0.0 era «financiación flash gratis», prohibido por el
+// prompt §5).
 const CONTRACT_26: &[DeclaredInput] = &[
     PRIMARY_RESERVES,
     REFERENCE_PRICE,
@@ -399,19 +427,22 @@ const CONTRACT_26: &[DeclaredInput] = &[
         Domain::Positive,
         AbsentMeaning::DataGap,
     ),
-    // `op_26_flash_loan.rs:60` NO filtra dominio (`unwrap_or(0.003)`): un
-    // `pool_fee = 0.0` presente es una fee real de pool, no un default.
+    // `op_26_flash_loan.rs:60` NO filtra dominio: un `pool_fee = 0.0` presente
+    // es una fee real de pool, no un default.
     feature(
         "pool_fee",
         "features.pool_fee",
         Domain::Finite,
-        AbsentMeaning::HardCodedDefault("0.003"),
+        AbsentMeaning::DataGap,
     ),
+    // `flash_premium` es la tarifa del proveedor de financiación: un DATO
+    // on-chain. `unwrap_or(0.0)` equivalía a asumir flash gratis; ahora la
+    // ausencia es hueco declarado, y un cero acreditado sigue siendo un cero.
     feature(
         "flash_premium",
         "features.flash_premium",
         Domain::Finite,
-        AbsentMeaning::HardCodedDefault("0.0"),
+        AbsentMeaning::DataGap,
     ),
 ];
 
@@ -535,6 +566,40 @@ pub fn defaulted_inputs(id: u8, state: &MarketState) -> Vec<&'static str> {
         })
         .map(|i| i.key)
         .collect()
+}
+
+/// Entradas AUSENTES que el MODELO resuelve por definición, no por default.
+///
+/// Se mantiene separado de `defaulted_inputs` a propósito: un `0.0` de
+/// break-even es una definición matemática; un `0.003` de fee era un dato de
+/// mercado inventado. Un consumidor que los mezcle no puede distinguir una
+/// resolución legítima de una fabricación.
+///
+/// El criterio es AUSENCIA (`None`), no "no utilizable": una definición sólo
+/// puede aplicarse sobre algo que no está. Un valor PRESENTE pero ilegible
+/// (`NaN`/`inf`) es un dato inválido y cae en `missing_inputs` — degradarlo a la
+/// definición convertiría una corrupción en un cero con apariencia de legítimo.
+pub fn defined_inputs(id: u8, state: &MarketState) -> Vec<&'static str> {
+    declared_contract(id)
+        .iter()
+        .filter(|i| {
+            matches!(i.absent, AbsentMeaning::DeclaredByDefinition(_)) && input_absent(i, state)
+        })
+        .map(|i| i.key)
+        .collect()
+}
+
+/// ¿La entrada está literalmente AUSENTE del `MarketState`? Distinto de
+/// [`input_usable`]: `true` sólo si no hay valor que leer, nunca si lo hay y es
+/// inválido.
+fn input_absent(input: &DeclaredInput, state: &MarketState) -> bool {
+    match input.source {
+        InputSource::Feature(k) => !state.features.contains_key(k),
+        InputSource::FeatureAnyOf(keys) => !keys.iter().any(|k| state.features.contains_key(*k)),
+        // Las fuentes estructurales no tienen "valor presente pero inválido" que
+        // se pueda confundir con una definición: su ausencia es la de siempre.
+        _ => !input_usable(input, state),
+    }
 }
 
 /// Alcance de par de la serie de precios consumida (FEATURES-01b).
