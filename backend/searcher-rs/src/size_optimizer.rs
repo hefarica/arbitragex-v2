@@ -49,6 +49,19 @@ use tokio::sync::RwLock;
 use tracing::debug;
 
 // ---------------------------------------------------------------------------
+// JOINT-SIZING-01 (§6) — joint optimization of route, size and financing.
+//
+// Declared from here (rather than from a shared module list) so this work adds
+// no row to a file other sessions are editing. The child module implements the
+// honest size domain, the multiscale + interval-refinement search with explicit
+// tick/bin boundary probes, rounding-to-minimum-units followed by a RE-QUOTE,
+// the capital-source comparison (own capital vs admissible providers) and the
+// shared-pool split composition. Its doc block maps every clause of prompt §6
+// to the type that implements it.
+// ---------------------------------------------------------------------------
+pub mod joint_sizing;
+
+// ---------------------------------------------------------------------------
 // V3-MULTILEG-SIZING-01 — N-leg (3..=7) V3-bearing cycles
 //
 // Operator mandate: "deben salir arbitrajes de 2 a 7 hops, cada hop tiene su
