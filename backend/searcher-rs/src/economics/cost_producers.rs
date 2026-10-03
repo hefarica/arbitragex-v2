@@ -178,7 +178,9 @@ impl Scope {
             "{}|{}|{}",
             self.domain,
             self.venue,
-            self.leg.map(|l| l.to_string()).unwrap_or_else(|| "-".into())
+            self.leg
+                .map(|l| l.to_string())
+                .unwrap_or_else(|| "-".into())
         )
     }
 }
@@ -250,7 +252,11 @@ impl VenueAnchor {
     }
     pub fn describe(&self) -> String {
         match (self.block_number, &self.block_hash) {
-            (Some(b), Some(h)) => format!("chain:{}:block:{b}:{}", self.chain_id, &h[..h.len().min(18)]),
+            (Some(b), Some(h)) => format!(
+                "chain:{}:block:{b}:{}",
+                self.chain_id,
+                &h[..h.len().min(18)]
+            ),
             (Some(b), None) => format!("chain:{}:block:{b}", self.chain_id),
             (None, _) => match self.venue_time_ms {
                 Some(t) => format!("chain:{}:venue_time_ms:{t}", self.chain_id),
@@ -352,6 +358,56 @@ pub enum Direction {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Serialización decimal
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// `BigDecimal` como STRING DECIMAL PLANO en el wire.
+///
+/// La feature `serde` de `bigdecimal` NO está habilitada en este workspace (y
+/// habilitarla tocaría `Cargo.toml`, compartido). Además, §4 exige que el dinero
+/// viaje como precisión decimal explícita y nunca como `f64`: exponerlo como
+/// string plano es a la vez lo correcto y lo estable (sin notación científica).
+pub mod decimal_string {
+    use bigdecimal::BigDecimal;
+    use serde::{Deserialize, Deserializer, Serialize, Serializer};
+    use std::str::FromStr;
+
+    pub fn serialize<S: Serializer>(v: &BigDecimal, s: S) -> Result<S::Ok, S::Error> {
+        s.serialize_str(&super::plain(v))
+    }
+
+    pub fn deserialize<'de, D: Deserializer<'de>>(d: D) -> Result<BigDecimal, D::Error> {
+        let raw = String::deserialize(d)?;
+        BigDecimal::from_str(&raw)
+            .map_err(|e| serde::de::Error::custom(format!("invalid_decimal:{e}")))
+    }
+
+    /// Variante para `Option<BigDecimal>`: `None` sigue siendo `null`, nunca un
+    /// cero (la distinción ausencia/cero sobrevive a la serialización).
+    pub mod option {
+        use bigdecimal::BigDecimal;
+        use serde::{Deserialize, Deserializer, Serialize, Serializer};
+        use std::str::FromStr;
+
+        pub fn serialize<S: Serializer>(v: &Option<BigDecimal>, s: S) -> Result<S::Ok, S::Error> {
+            let mapped: Option<String> = v.as_ref().map(super::super::plain);
+            mapped.serialize(s)
+        }
+
+        pub fn deserialize<'de, D: Deserializer<'de>>(
+            d: D,
+        ) -> Result<Option<BigDecimal>, D::Error> {
+            match Option::<String>::deserialize(d)? {
+                None => Ok(None),
+                Some(raw) => BigDecimal::from_str(&raw)
+                    .map(Some)
+                    .map_err(|e| serde::de::Error::custom(format!("invalid_decimal:{e}"))),
+            }
+        }
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Precio y valoración decimal
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -363,6 +419,7 @@ pub struct PriceRef {
     pub token: String,
     pub decimals: u8,
     /// Decimal exacto, jamás `f64`.
+    #[serde(with = "decimal_string")]
     pub usd: BigDecimal,
     pub revision: String,
     pub evidence_id: String,
@@ -392,7 +449,7 @@ impl PriceRef {
                 why: "missing_evidence_id".into(),
             });
         }
-        if self.usd <= BigDecimal::from(0) {
+        if self.usd <= bd_zero() {
             return Err(CostError::InvalidRead {
                 read: format!("price:{}", self.token),
                 why: "non_positive_price".into(),
@@ -441,8 +498,8 @@ impl PriceRef {
     /// `amount / 10^decimals * price`, todo en decimal: sin `f64`.
     pub fn value_min_units(&self, amount: &U256) -> Result<BigDecimal, CostError> {
         let scale = BigDecimal::from(10u64).powi(self.decimals as i64);
-        let raw = BigDecimal::from_str(&amount.to_string())
-            .map_err(|_| CostError::InvalidRead {
+        let raw =
+            BigDecimal::from_str(&amount.to_string()).map_err(|_| CostError::InvalidRead {
                 read: format!("amount:{}", amount),
                 why: "not_a_decimal".into(),
             })?;
@@ -471,6 +528,7 @@ pub struct CostComponent {
     pub unit: Unit,
     pub direction: Direction,
     /// Valoración decimal explícita. `None` = no valorado (≠ cero).
+    #[serde(with = "decimal_string::option")]
     pub usd: Option<BigDecimal>,
     /// Quién paga. Vacío = no declarado → error de construcción.
     pub payer: String,
@@ -586,10 +644,17 @@ pub struct ResolutionTask {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CostError {
     /// Falta una lectura autoritativa concreta.
-    MissingRead { provider: String, read: String },
+    MissingRead {
+        provider: String,
+        read: String,
+    },
     /// Falta el precio del activo.
-    MissingPrice { token: String },
-    MissingAnchor { read: String },
+    MissingPrice {
+        token: String,
+    },
+    MissingAnchor {
+        read: String,
+    },
     StalePrice {
         token: String,
         observed_at_ms: u64,
@@ -698,11 +763,7 @@ impl CostError {
     /// Tarea de resolución derivada, con la llamada EXACTA a ejecutar.
     pub fn task(&self, cost_kind: &str, scope: &Scope) -> ResolutionTask {
         let (provider, read, receipt): (String, String, Option<String>) = match self {
-            Self::MissingRead { provider, read } => (
-                provider.clone(),
-                read.clone(),
-                None,
-            ),
+            Self::MissingRead { provider, read } => (provider.clone(), read.clone(), None),
             Self::MissingPrice { token } => (
                 "PriceBus".into(),
                 format!("price({token})"),
@@ -738,9 +799,7 @@ impl CostError {
                 "exact_invariant_version_and_rates()".into(),
                 Some("exact_invariant_version_and_rates".into()),
             ),
-            Self::InvalidRead { read, .. } => {
-                (provider_of(read).into(), read.clone(), None)
-            }
+            Self::InvalidRead { read, .. } => (provider_of(read).into(), read.clone(), None),
             _ => ("unknown".into(), "unresolved".into(), None),
         };
         ResolutionTask {
@@ -801,6 +860,8 @@ pub struct DoubleCountFinding {
 pub struct SignedFlow {
     pub kind: String,
     pub scope: Scope,
+    /// Con SIGNO: negativo = el pagador recibe (rebate).
+    #[serde(with = "decimal_string")]
     pub usd: BigDecimal,
     pub evidence_id: String,
     pub note: String,
@@ -907,7 +968,10 @@ impl CostResolution {
 
     /// Componentes que bloquean un neto honesto (ausentes o pendientes).
     pub fn blocking(&self) -> Vec<&CostComponent> {
-        self.components.iter().filter(|c| c.state.blocks_net()).collect()
+        self.components
+            .iter()
+            .filter(|c| c.state.blocks_net())
+            .collect()
     }
 
     /// Suma de costes EXTERNOS con signo (los rebates externos restan).
@@ -944,7 +1008,8 @@ impl CostResolution {
         let mut out: BTreeMap<String, BigDecimal> = BTreeMap::new();
         for c in &self.components {
             if let Some(v) = c.signed_usd() {
-                *out.entry(c.kind.clone()).or_insert_with(|| BigDecimal::from(0)) += v;
+                *out.entry(c.kind.clone())
+                    .or_insert_with(|| BigDecimal::from(0)) += v;
             }
         }
         out
@@ -984,12 +1049,7 @@ impl CostResolution {
                         "incomplete_cost_sum: {}",
                         members
                             .iter()
-                            .map(|c| format!(
-                                "{}({})={}",
-                                c.kind,
-                                c.scope.key(),
-                                c.state.as_str()
-                            ))
+                            .map(|c| format!("{}({})={}", c.kind, c.scope.key(), c.state.as_str()))
                             .collect::<Vec<_>>()
                             .join(",")
                     )),
@@ -1076,7 +1136,7 @@ impl CostResolution {
                     None => all_valued = false,
                 }
             }
-            let usd = if all_valued && total >= BigDecimal::from(0) {
+            let usd = if all_valued && total >= bd_zero() {
                 Some(plain(&total))
             } else if all_valued {
                 // El neto del grupo es negativo (rebate > cargo). El contrato
@@ -1134,7 +1194,11 @@ impl CostResolution {
                 .components
                 .iter()
                 .any(|c| c.kind == builder::KIND_BUILDER_BID && c.embedded_in_quote);
-            if via_tip && externals.iter().any(|c| c.kind == builder::KIND_BUILDER_BID) {
+            if via_tip
+                && externals
+                    .iter()
+                    .any(|c| c.kind == builder::KIND_BUILDER_BID)
+            {
                 findings.push(DoubleCountFinding {
                     code: "builder_paid_via_priority_fee_counted_twice".into(),
                     kinds: vec![KIND_GAS.into(), builder::KIND_BUILDER_BID.into()],
@@ -1145,7 +1209,10 @@ impl CostResolution {
         }
 
         // 2. Priority tip contado como línea propia además de dentro de gas.
-        if self.components.iter().any(|c| c.kind == gas::KIND_GAS_EXECUTION)
+        if self
+            .components
+            .iter()
+            .any(|c| c.kind == gas::KIND_GAS_EXECUTION)
             && externals
                 .iter()
                 .any(|c| c.kind == "priority_fee" || c.kind == "priority_tip")
@@ -1159,7 +1226,10 @@ impl CostResolution {
         }
 
         // 3. Blob fee + L1 data fee derivado del MISMO blob gas.
-        let blob = self.components.iter().find(|c| c.kind == gas::KIND_BLOB_FEE);
+        let blob = self
+            .components
+            .iter()
+            .find(|c| c.kind == gas::KIND_BLOB_FEE);
         if let Some(blob) = blob {
             if let Some(l1) = self
                 .components
@@ -1190,18 +1260,19 @@ impl CostResolution {
             findings.push(DoubleCountFinding {
                 code: "v3_protocol_fee_is_a_cut_of_the_lp_fee".into(),
                 kinds: vec![univ3::KIND_V3_PROTOCOL_FEE.into()],
-                why: "en V3 el protocol fee se toma DE la comisión LP ya descontada en `amount_out`".into(),
+                why:
+                    "en V3 el protocol fee se toma DE la comisión LP ya descontada en `amount_out`"
+                        .into(),
                 action: "marcarlo embedded; restarlo como externo lo descuenta dos veces".into(),
             });
         }
 
         // 5. Comisión de swap declarada externa en un quote atómico.
         if self.economic_kind == "atomic_quote"
-            && self
-                .components
-                .iter()
-                .any(|c| bridge_kind(&c.kind) == Some(KIND_EXECUTION_FEES)
-                    && c.treatment == Treatment::External)
+            && self.components.iter().any(|c| {
+                bridge_kind(&c.kind) == Some(KIND_EXECUTION_FEES)
+                    && c.treatment == Treatment::External
+            })
         {
             findings.push(DoubleCountFinding {
                 code: "execution_fee_external_on_atomic_quote".into(),
@@ -1213,11 +1284,9 @@ impl CostResolution {
 
         // 6. Financiación externa sobre un basis que ya la retuvo.
         if self.profit_basis == "retained_after_repayment"
-            && self
-                .components
-                .iter()
-                .any(|c| c.kind == funding::KIND_FINANCING_PREMIUM
-                    && c.treatment == Treatment::External)
+            && self.components.iter().any(|c| {
+                c.kind == funding::KIND_FINANCING_PREMIUM && c.treatment == Treatment::External
+            })
         {
             findings.push(DoubleCountFinding {
                 code: "financing_inside_retained_spread".into(),
@@ -1231,9 +1300,7 @@ impl CostResolution {
         for c in &self.components {
             if c.treatment == Treatment::External {
                 if let Some(twin) = self.components.iter().find(|o| {
-                    o.kind == c.kind
-                        && o.treatment == Treatment::Embedded
-                        && !std::ptr::eq(*o, c)
+                    o.kind == c.kind && o.treatment == Treatment::Embedded && !std::ptr::eq(*o, c)
                 }) {
                     findings.push(DoubleCountFinding {
                         code: "same_kind_both_embedded_and_external".into(),
@@ -1244,7 +1311,8 @@ impl CostResolution {
                             twin.scope.key(),
                             c.scope.key()
                         ),
-                        action: "un solo tratamiento por kind; el bridge rechaza el duplicado".into(),
+                        action: "un solo tratamiento por kind; el bridge rechaza el duplicado"
+                            .into(),
                     });
                 }
             }
@@ -1291,15 +1359,18 @@ pub fn floor_scale(v: &BigDecimal, scale: i64) -> BigDecimal {
 // ─────────────────────────────────────────────────────────────────────────────
 
 pub fn mul_checked(a: &U256, b: &U256, op: &str) -> Result<U256, CostError> {
-    a.checked_mul(*b).ok_or_else(|| CostError::Overflow { op: op.into() })
+    a.checked_mul(*b)
+        .ok_or_else(|| CostError::Overflow { op: op.into() })
 }
 
 pub fn add_checked(a: &U256, b: &U256, op: &str) -> Result<U256, CostError> {
-    a.checked_add(*b).ok_or_else(|| CostError::Overflow { op: op.into() })
+    a.checked_add(*b)
+        .ok_or_else(|| CostError::Overflow { op: op.into() })
 }
 
 pub fn sub_checked(a: &U256, b: &U256, op: &str) -> Result<U256, CostError> {
-    a.checked_sub(*b).ok_or_else(|| CostError::Overflow { op: op.into() })
+    a.checked_sub(*b)
+        .ok_or_else(|| CostError::Overflow { op: op.into() })
 }
 
 /// División entera con denominador no nulo explícito (floor, como la EVM).
@@ -1341,6 +1412,12 @@ pub fn u256_from_dec(s: &str) -> Result<U256, CostError> {
 /// Decimal exacto desde `U256` (sin pasar por `f64`).
 pub fn u256_to_bigdecimal(v: &U256) -> BigDecimal {
     BigDecimal::from_str(&v.to_string()).unwrap_or_else(|_| BigDecimal::from(0))
+}
+
+/// Cero decimal reutilizable: comparar contra un valor ya ligado evita crear
+/// una instancia nueva por comparación (lint `cmp_owned`).
+pub fn bd_zero() -> BigDecimal {
+    BigDecimal::from(0)
 }
 
 /// `10^decimals` como decimal exacto.

@@ -336,10 +336,7 @@ pub fn financing_component(
     let usd = ctx.value(&quote.premium_raw)?;
     let (state, usd) = if quote.premium_raw.is_zero() {
         if quote.method == FundingMethod::OwnCapital {
-            (
-                CostState::NotApplicable,
-                None::<BigDecimal>,
-            )
+            (CostState::NotApplicable, None::<BigDecimal>)
         } else if quote.zero_attested {
             (CostState::ZeroAttested, Some(BigDecimal::from(0)))
         } else {

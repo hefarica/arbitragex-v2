@@ -133,10 +133,7 @@ pub fn intrinsic_gas(payload: &Payload) -> Result<u64, CostError> {
 }
 
 /// Total estimado ANTES del envío: intrínseco + ejecución.
-pub fn estimate_from_payload(
-    payload: &Payload,
-    execution_gas: u64,
-) -> Result<u64, CostError> {
+pub fn estimate_from_payload(payload: &Payload, execution_gas: u64) -> Result<u64, CostError> {
     intrinsic_gas(payload)?
         .checked_add(execution_gas)
         .ok_or_else(|| CostError::Overflow {
@@ -165,12 +162,13 @@ pub fn effective_gas_price(market: &FeeMarket) -> Result<U256, CostError> {
         market.legacy_gas_price,
     ) {
         (Some(max_fee), Some(tip), _) => {
-            let wanted = market
-                .base_fee_per_gas
-                .checked_add(tip)
-                .ok_or_else(|| CostError::Overflow {
-                    op: "gas:base_plus_tip".into(),
-                })?;
+            let wanted =
+                market
+                    .base_fee_per_gas
+                    .checked_add(tip)
+                    .ok_or_else(|| CostError::Overflow {
+                        op: "gas:base_plus_tip".into(),
+                    })?;
             Ok(if wanted < max_fee { wanted } else { max_fee })
         }
         (None, None, Some(legacy)) => Ok(legacy),
@@ -222,11 +220,12 @@ impl L2DataFee {
                         denominator: "gas:l1FeeScalar".into(),
                     });
                 }
-                let gas = tx_data_gas
-                    .checked_add(*overhead)
-                    .ok_or_else(|| CostError::Overflow {
-                        op: "gas:l1_gas".into(),
-                    })?;
+                let gas =
+                    tx_data_gas
+                        .checked_add(*overhead)
+                        .ok_or_else(|| CostError::Overflow {
+                            op: "gas:l1_gas".into(),
+                        })?;
                 let fee = l1_base_fee
                     .checked_mul(gas)
                     .ok_or_else(|| CostError::Overflow {
@@ -340,11 +339,12 @@ fn cost_from_units(
     measurement: Measurement,
 ) -> Result<GasCost, CostError> {
     let price = effective_gas_price(&inputs.market)?;
-    let execution_wei = price
-        .checked_mul(U256::from(gas_units))
-        .ok_or_else(|| CostError::Overflow {
-            op: "gas:execution_cost".into(),
-        })?;
+    let execution_wei =
+        price
+            .checked_mul(U256::from(gas_units))
+            .ok_or_else(|| CostError::Overflow {
+                op: "gas:execution_cost".into(),
+            })?;
     let l1_data_wei = inputs.l2_data_fee.wei(&inputs.tx_data_gas)?;
     let includes_blobs = inputs.l2_data_fee.includes_blob_gas();
     let blob_wei = match (inputs.blobs, includes_blobs) {
@@ -516,11 +516,7 @@ impl SignedWei {
         self.abs.is_zero()
     }
     pub fn describe(&self) -> String {
-        format!(
-            "{}{}",
-            if self.negative { "-" } else { "+" },
-            self.abs
-        )
+        format!("{}{}", if self.negative { "-" } else { "+" }, self.abs)
     }
 }
 
