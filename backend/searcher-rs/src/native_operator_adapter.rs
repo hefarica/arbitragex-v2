@@ -8,6 +8,15 @@ use math_engine::operators::{MarketState, OperatorRegistry};
 use serde_json::{json, Value};
 use std::panic::{catch_unwind, AssertUnwindSafe};
 
+/// MARKET-FEATURES-01: producers for the `MarketState.features` keys that the
+/// native operators read but nothing wrote. It lives under this module because
+/// THIS is the module that reports `DATA_GAP` for those operators: the gap it
+/// names and the data that closes it now sit side by side. See
+/// `market_features::contract::CONTRACTS` for the per-key contract
+/// (unit / source / window / absent-means) and `market_features::produce` for
+/// the pure entry point.
+pub mod market_features;
+
 /// The backend supplies this admission hook from field lineage/type/unit checks.
 /// It must validate ALL inputs consumed by the operator, including any that the
 /// legacy implementation would otherwise fill with defaults. Return a receipt
