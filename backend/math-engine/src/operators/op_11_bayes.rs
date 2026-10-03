@@ -200,7 +200,10 @@ mod tests {
         );
         assert!(out.vector_result.is_none());
         assert_eq!(out.metadata.get("computed"), Some(&0.0));
-        assert_eq!(out.metadata.get("reason_bayes_losses_unavailable"), Some(&1.0));
+        assert_eq!(
+            out.metadata.get("reason_bayes_losses_unavailable"),
+            Some(&1.0)
+        );
         assert_eq!(out.metadata.get("reason_code"), Some(&4.0));
     }
 
@@ -210,7 +213,10 @@ mod tests {
         let out = op.evaluate(&st(&[("bayes_losses", 3.0)]));
         assert!(out.scalar_value.is_none(), "wins ausente ⇒ sin posterior");
         assert_eq!(out.metadata.get("computed"), Some(&0.0));
-        assert_eq!(out.metadata.get("reason_bayes_wins_unavailable"), Some(&1.0));
+        assert_eq!(
+            out.metadata.get("reason_bayes_wins_unavailable"),
+            Some(&1.0)
+        );
         assert_eq!(out.metadata.get("reason_code"), Some(&3.0));
     }
 

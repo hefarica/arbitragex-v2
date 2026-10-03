@@ -286,7 +286,10 @@ mod tests {
     #[test]
     fn non_finite_break_even_target_is_rejected() {
         let op = NewtonOperator::new();
-        let out = op.evaluate(&state_with(&[("fee_bps", 30.0), ("break_even_target", f64::NAN)]));
+        let out = op.evaluate(&state_with(&[
+            ("fee_bps", 30.0),
+            ("break_even_target", f64::NAN),
+        ]));
         assert!(out.scalar_value.is_none());
         assert_eq!(
             out.metadata.get("reason_break_even_target_unavailable"),
@@ -300,7 +303,10 @@ mod tests {
     #[test]
     fn accredited_zero_target_still_computes() {
         let op = NewtonOperator::new();
-        let out = op.evaluate(&state_with(&[("fee_bps", 30.0), ("break_even_target", 0.0)]));
+        let out = op.evaluate(&state_with(&[
+            ("fee_bps", 30.0),
+            ("break_even_target", 0.0),
+        ]));
         assert_eq!(out.metadata.get("computed"), Some(&1.0));
         let x = out.scalar_value.expect("raiz de break-even publicada");
         assert!(x.is_finite() && x > 0.0);
@@ -314,11 +320,17 @@ mod tests {
     fn larger_target_moves_the_break_even_up() {
         let op = NewtonOperator::new();
         let base = op
-            .evaluate(&state_with(&[("fee_bps", 30.0), ("break_even_target", 0.0)]))
+            .evaluate(&state_with(&[
+                ("fee_bps", 30.0),
+                ("break_even_target", 0.0),
+            ]))
             .scalar_value
             .expect("raiz con hurdle 0");
         let raised = op
-            .evaluate(&state_with(&[("fee_bps", 30.0), ("break_even_target", 10.0)]))
+            .evaluate(&state_with(&[
+                ("fee_bps", 30.0),
+                ("break_even_target", 10.0),
+            ]))
             .scalar_value
             .expect("raiz con hurdle 10");
         assert!(
@@ -331,11 +343,15 @@ mod tests {
     #[test]
     fn fee_units_are_equivalent_and_bps_wins() {
         let op = NewtonOperator::new();
-        let by_bps = op.evaluate(&state_with(&[("fee_bps", 30.0), ("break_even_target", 0.0)]));
-        let by_fraction = op.evaluate(&state_with(&[("pool_fee", 0.003), ("break_even_target", 0.0)]));
-        assert!(
-            (by_bps.scalar_value.unwrap() - by_fraction.scalar_value.unwrap()).abs() < 1e-9
-        );
+        let by_bps = op.evaluate(&state_with(&[
+            ("fee_bps", 30.0),
+            ("break_even_target", 0.0),
+        ]));
+        let by_fraction = op.evaluate(&state_with(&[
+            ("pool_fee", 0.003),
+            ("break_even_target", 0.0),
+        ]));
+        assert!((by_bps.scalar_value.unwrap() - by_fraction.scalar_value.unwrap()).abs() < 1e-9);
         let both = op.evaluate(&state_with(&[
             ("fee_bps", 100.0),
             ("pool_fee", 0.003),

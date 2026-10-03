@@ -319,7 +319,10 @@ mod tests {
     #[test]
     fn premium_actually_shrinks_the_optimal_principal() {
         let op = FlashLoanOperator::new();
-        let free = op.evaluate(&complete(0.0)).scalar_value.expect("x* sin premium");
+        let free = op
+            .evaluate(&complete(0.0))
+            .scalar_value
+            .expect("x* sin premium");
         let costly = op
             .evaluate(&complete(0.0009))
             .scalar_value
@@ -345,12 +348,18 @@ mod tests {
     #[test]
     fn missing_gas_features_still_block_the_net_figure() {
         let op = FlashLoanOperator::new();
-        let out = op.evaluate(&state_with(&[("pool_fee", 0.003), ("flash_premium", 0.0005)]));
+        let out = op.evaluate(&state_with(&[
+            ("pool_fee", 0.003),
+            ("flash_premium", 0.0005),
+        ]));
         assert!(out.scalar_value.is_none());
         assert_eq!(out.metadata.get("computed"), Some(&0.0));
         assert_eq!(out.metadata.get("gas_features_status"), Some(&0.0));
         // El hueco reportado es el de GAS, no el de fee/premium (ambos medidos).
         assert!(out.metadata.get("reason_fee_unavailable").is_none());
-        assert!(out.metadata.get("reason_flash_premium_unavailable").is_none());
+        assert!(out
+            .metadata
+            .get("reason_flash_premium_unavailable")
+            .is_none());
     }
 }

@@ -278,7 +278,10 @@ mod tests {
         );
         assert!(out.vector_result.is_none());
         assert_eq!(out.metadata.get("computed"), Some(&0.0));
-        assert_eq!(out.metadata.get("reason_max_capital_unavailable"), Some(&1.0));
+        assert_eq!(
+            out.metadata.get("reason_max_capital_unavailable"),
+            Some(&1.0)
+        );
     }
 
     /// Capital presente pero degenerado (0, negativo, NaN) ⇒ hueco, no computo.
@@ -305,7 +308,10 @@ mod tests {
         assert_eq!(out.metadata.get("computed"), Some(&1.0));
         assert_eq!(out.metadata.get("max_capital"), Some(&100.0));
         let obj = out.scalar_value.expect("objetivo publicado");
-        assert!((obj - 20_100.0).abs() < 1e-6, "objetivo esperado 20100, {obj}");
+        assert!(
+            (obj - 20_100.0).abs() < 1e-6,
+            "objetivo esperado 20100, {obj}"
+        );
         // HALLAZGO F6-A (preexistente, NO corregido en este cambio): con m=1
         // (una sola restriccion, `sum x ≤ capital`) la extraccion de la base en
         // `SimplexOperator::simplex` marca como basicas TODAS las columnas cuyo
