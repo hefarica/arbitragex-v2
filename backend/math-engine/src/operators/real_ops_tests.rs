@@ -836,7 +836,7 @@ mod source_catalog_boundary {
         assert_eq!(
             out.scalar_value,
             Some(2.0),
-            "el frente de {0,1} tiene cardinalidad 2 (el candidato 2 está dominado)"
+            "el frente de {{0,1}} tiene cardinalidad 2 (el candidato 2 está dominado)"
         );
         assert_eq!(
             out.vector_result,
