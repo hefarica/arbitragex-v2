@@ -386,11 +386,20 @@ impl SizeLimit {
         }
     }
 
-    pub fn known(kind: SizeLimitKind, scope: impl Into<String>, value: U256, source: impl Into<String>) -> Self {
+    pub fn known(
+        kind: SizeLimitKind,
+        scope: impl Into<String>,
+        value: U256,
+        source: impl Into<String>,
+    ) -> Self {
         Self::new(kind, scope, Bound::known(value, source))
     }
 
-    pub fn absent(kind: SizeLimitKind, scope: impl Into<String>, reason: impl Into<String>) -> Self {
+    pub fn absent(
+        kind: SizeLimitKind,
+        scope: impl Into<String>,
+        reason: impl Into<String>,
+    ) -> Self {
         Self::new(kind, scope, Bound::absent(reason))
     }
 }
@@ -690,9 +699,15 @@ pub enum RoundingError {
     ZeroGranularity,
     Overflow,
     /// The rounded amount fell below the domain's lower bound.
-    BelowDomain { rounded: U256, lower: U256 },
+    BelowDomain {
+        rounded: U256,
+        lower: U256,
+    },
     /// Even the conservative floor exceeded the domain's upper bound.
-    AboveDomain { rounded: U256, upper: U256 },
+    AboveDomain {
+        rounded: U256,
+        upper: U256,
+    },
 }
 
 impl RoundingError {
@@ -752,7 +767,9 @@ pub fn round_rational(
                 .ok_or(RoundingError::Overflow)?
                 .checked_div(granularity)
                 .ok_or(RoundingError::Overflow)?;
-            blocks.checked_mul(granularity).ok_or(RoundingError::Overflow)
+            blocks
+                .checked_mul(granularity)
+                .ok_or(RoundingError::Overflow)
         }
     }
 }
@@ -858,7 +875,9 @@ pub enum QuoteOutcome {
     Quoted(CycleQuote),
     /// No quote exists at this size — and the reason is carried, because
     /// "not computed" is not "computed zero" (prompt §4).
-    Absent { reason: String },
+    Absent {
+        reason: String,
+    },
 }
 
 /// The seam every external pricing source plugs into.
@@ -909,7 +928,9 @@ pub enum Sample {
         amount_out_wei: U256,
         provenance: String,
     },
-    Absent { reason: String },
+    Absent {
+        reason: String,
+    },
 }
 
 impl Sample {
@@ -1631,7 +1652,9 @@ impl CapitalSource {
     pub fn id(&self) -> String {
         match self {
             Self::OwnCapital { .. } => "own_capital".to_string(),
-            Self::FlashFinancing { provider, method, .. } => format!("{provider}:{method}"),
+            Self::FlashFinancing {
+                provider, method, ..
+            } => format!("{provider}:{method}"),
             Self::FlashAccounting { venue } => format!("flash_accounting:{venue}"),
         }
     }
@@ -1679,7 +1702,10 @@ pub enum FinancingOutcome {
     },
     /// The provider cannot cover the principal — a THIRD state, distinct from
     /// "absent" and from "sufficient".
-    Insufficient { available_wei: U256, needed_wei: U256 },
+    Insufficient {
+        available_wei: U256,
+        needed_wei: U256,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -1768,7 +1794,9 @@ pub fn compare_financing(request: &FinancingRequest<'_>) -> Result<Vec<Financing
                 notes.push("principal_settled_in_same_unlock");
                 let principal_usd = denomination
                     .base_units_to_usd(principal, price)
-                    .ok_or_else(|| "joint_sizing: flash-accounting principal out of range".to_string())?;
+                    .ok_or_else(|| {
+                        "joint_sizing: flash-accounting principal out of range".to_string()
+                    })?;
                 let surplus = proceeds_usd - principal_usd;
                 let net = surplus - request.gas_usd - request.ops_usd;
                 evals.push(FinancingEval {
@@ -1776,8 +1804,14 @@ pub fn compare_financing(request: &FinancingRequest<'_>) -> Result<Vec<Financing
                     kind: "flash_accounting",
                     is_financing: false,
                     principal_wei: principal,
-                    premium_wei: Bound::known(U256::zero(), "flash_accounting:no_premium_by_design"),
-                    repayment_wei: Bound::known(principal, "flash_accounting:settled_in_same_unlock"),
+                    premium_wei: Bound::known(
+                        U256::zero(),
+                        "flash_accounting:no_premium_by_design",
+                    ),
+                    repayment_wei: Bound::known(
+                        principal,
+                        "flash_accounting:settled_in_same_unlock",
+                    ),
                     outcome: FinancingOutcome::Computed {
                         net_usd: net,
                         surplus_usd: surplus,
@@ -1833,7 +1867,9 @@ pub fn compare_financing(request: &FinancingRequest<'_>) -> Result<Vec<Financing
                 notes.push("principal_is_not_income");
                 let repayment_usd = denomination
                     .base_units_to_usd(principal, price)
-                    .ok_or_else(|| "joint_sizing: own principal out of decimal range".to_string())?;
+                    .ok_or_else(|| {
+                        "joint_sizing: own principal out of decimal range".to_string()
+                    })?;
                 let surplus = proceeds_usd - repayment_usd;
                 let net = surplus - request.gas_usd - request.ops_usd;
                 evals.push(FinancingEval {
@@ -1965,10 +2001,7 @@ pub fn compare_financing(request: &FinancingRequest<'_>) -> Result<Vec<Financing
                     kind: "flash_financing",
                     is_financing: true,
                     principal_wei: principal,
-                    premium_wei: Bound::known(
-                        premium,
-                        terms.source().unwrap_or("provider_terms"),
-                    ),
+                    premium_wei: Bound::known(premium, terms.source().unwrap_or("provider_terms")),
                     repayment_wei: Bound::known(repayment, "principal_plus_premium"),
                     outcome: FinancingOutcome::Computed {
                         net_usd: net,
@@ -1986,8 +2019,14 @@ pub fn compare_financing(request: &FinancingRequest<'_>) -> Result<Vec<Financing
 
 enum CapacityVerdict {
     Sufficient,
-    Insufficient { available_wei: U256, needed_wei: U256 },
-    Absent { reason: String, task: String },
+    Insufficient {
+        available_wei: U256,
+        needed_wei: U256,
+    },
+    Absent {
+        reason: String,
+        task: String,
+    },
 }
 
 fn capacity_verdict(available: &Bound, needed: U256) -> CapacityVerdict {
@@ -2120,7 +2159,9 @@ impl SharedPoolSplit {
                 U256::from(path.share_bps as u64),
                 U256::from(10_000u64),
             );
-            allocated = allocated.checked_add(part).ok_or("split_allocation_overflow")?;
+            allocated = allocated
+                .checked_add(part)
+                .ok_or("split_allocation_overflow")?;
             allocations.push(part);
         }
         if allocated > self.total_in_wei {
@@ -2271,9 +2312,9 @@ impl CycleQuoter for SplitQuoter {
             Ok(o) => o,
             Err(reason) => return QuoteOutcome::Absent { reason },
         };
-        let Some(out_usd) =
-            self.denomination
-                .base_units_to_usd(outcome.total_out_joint_wei, self.price_usd)
+        let Some(out_usd) = self
+            .denomination
+            .base_units_to_usd(outcome.total_out_joint_wei, self.price_usd)
         else {
             return QuoteOutcome::Absent {
                 reason: "split_joint_out_of_decimal_range".to_string(),
@@ -2368,8 +2409,16 @@ impl RouteVariant {
     /// The same route in both economic orientations (prompt §6).
     pub fn both_orientations(base_id: &str, route_label: &str) -> Vec<Self> {
         vec![
-            Self::new(format!("{base_id}:a_to_b"), Orientation::TerminalAToB, route_label),
-            Self::new(format!("{base_id}:b_to_a"), Orientation::TerminalBToA, route_label),
+            Self::new(
+                format!("{base_id}:a_to_b"),
+                Orientation::TerminalAToB,
+                route_label,
+            ),
+            Self::new(
+                format!("{base_id}:b_to_a"),
+                Orientation::TerminalBToA,
+                route_label,
+            ),
         ]
     }
 
@@ -2839,7 +2888,10 @@ pub fn optimize_joint(
             ),
             Some(finalized) => match &finalized.published {
                 Some(published) => (
-                    JointVerdict::classify(Some(published.net_usd), request.objective.search_target_usd),
+                    JointVerdict::classify(
+                        Some(published.net_usd),
+                        request.objective.search_target_usd,
+                    ),
                     None,
                     Some(published.clone()),
                 ),
@@ -2902,13 +2954,14 @@ pub fn optimize_joint(
 
     // ── Rankings: best diagnostic / feasible / over target / alternatives ──
     let mut ranked: Vec<BestCandidate> = outcomes.iter().filter_map(candidate_from).collect();
-    ranked.sort_by(|a, b| b.net_usd.cmp(&a.net_usd).then(a.variant_id.cmp(&b.variant_id)));
+    ranked.sort_by(|a, b| {
+        b.net_usd
+            .cmp(&a.net_usd)
+            .then(a.variant_id.cmp(&b.variant_id))
+    });
 
     let best_diagnostic = ranked.first().cloned();
-    let best_feasible = ranked
-        .iter()
-        .find(|c| c.net_usd > Decimal::ZERO)
-        .cloned();
+    let best_feasible = ranked.iter().find(|c| c.net_usd > Decimal::ZERO).cloned();
     let best_over_target = ranked
         .iter()
         .find(|c| c.net_usd >= request.objective.search_target_usd)
