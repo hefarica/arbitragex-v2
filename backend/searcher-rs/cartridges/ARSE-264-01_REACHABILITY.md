@@ -47,19 +47,32 @@ la carga, en dos puntos dentro de `active_evaluate_and_emit`:
    bloquea **185/269** del último intent muestreado
    (`dispatch_needs_route_data` 174 · `dispatch_observe_only` 8 ·
    `dispatch_no_compatible_route` 3).
-2. **Chequeo económico v4** —
-   `backend/searcher-rs/src/cartridge_boot.rs:3134-3136` (interceptación
-   `cartridge.active_v4_intercepted` → fila REJECTED con
-   `agent_v4_<status>_snapshot_store_not_wired`) y su origen
-   `rhai_agent_bridge.rs:671` (`applicable_data_or_constraint_gap`):
-   bloquea **64/269**, con este histograma de reparaciones:
+2. **Chequeo económico v4** — el cartucho SÍ evalúa y devuelve
+   `is_opportunity=false` con razón `applicable_data_or_constraint_gap`,
+   producida en `rhai_agent_bridge.rs:671` (el `reason` del
+   `economic_check`) y contabilizada en
+   `backend/searcher-rs/src/cartridge_boot.rs:3090-3117`
+   (`negative_reasons` + `negative_repairs` = el campo `top_repairs` del summary).
+   Bloquea **64/269**, con este histograma de reparaciones:
    `capital_usd::capital_missing_or_cap_exceeded` 64 ·
    `costs.execution_fees::missing_or_invalid_cost` 64 ·
    `costs.financing::mandatory_route_cost_missing` 64 ·
    `operators.22::DATA_GAP` 64 · `operators.21::DATA_GAP` 60 ·
    `protocol_exact_quotes::v3_within_tick_is_hypothesis_not_protocol_verified` 60 ·
    `operators.{16,8,11,13,26,5}::DATA_GAP` 22-32 c/u.
+   (Corte LATENTE adicional, no alcanzado en la ventana medida:
+   `cartridge_boot.rs:3127-3134` intercepta un proposal v4 **elegible** y lo emite
+   como fila REJECTED `agent_v4_<status>_snapshot_store_not_wired` —
+   `cartridge.active_v4_intercepted` = 0 ocurrencias, porque ningún cartucho llega
+   con `candidate_eligible=true` mientras falten los productores de costos.)
 3. El resto: `native_domain_solver_required` 12, y colas de 1-3.
+
+**Sobre la observabilidad de estos dos gates:** los eventos por-cartucho
+(`cartridge.active_dispatch_blocked`, `cartridge.active_eval_negative`) son
+`debug!`, y el contenedor corre con `RUST_LOG=info,searcher_rs::v3_quote_provider=debug,searcher_rs::state_projector=debug`
+— por eso su conteo en la ventana es **0** aunque el histograma agregado
+(`info!`) reporte 185 y 64. La evidencia válida es el `active_eval_summary`
+(agregado, R9/LOGFLOOD-01), no la ausencia de los eventos de debug.
 
 Es decir: **la carga y el intérprete funcionan; lo que falta son PRODUCTORES**
 (de capital/costos exactos y de cotizaciones protocolo-verificadas) y la decisión
