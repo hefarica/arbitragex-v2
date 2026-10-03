@@ -357,6 +357,28 @@ impl SnapshotServices {
                 .prices
                 .get(&(edge.chain_id, edge.token_in.clone()))
                 .and_then(|p| p.usd.parse::<f64>().ok())
+                .filter(|v| *v > 0.0)
+                // FALLBACK: si ESTE token no tiene precio pero el token BASE
+                // del ciclo sí (el que produce el capital), valorar el fee al
+                // precio base — aproximación conservadora mejor que None (el
+                // bridge exige USD en treatment embedded; sin él, coste
+                // incompleto = no elegible). Solo para ciclos cerrados donde
+                // el token base ya está valorado.
+                .or_else(|| {
+                    let base_has_price = edges.first().and_then(|f| {
+                        self.data
+                            .prices
+                            .get(&(f.chain_id, f.token_in.clone()))
+                            .and_then(|p| p.usd.parse::<f64>().ok())
+                            .filter(|v| *v > 0.0)
+                    });
+                    base_has_price.filter(|_| {
+                        edges
+                            .first()
+                            .zip(edges.last())
+                            .is_some_and(|(f, l)| l.token_out == f.token_in)
+                    })
+                })
                 .unwrap_or(0.0);
             if px <= 0.0 {
                 continue;
