@@ -1,0 +1,61 @@
+DICCIONARIO | variables heredadas,,,,,,,,,
+Base: ArbitrageX_SOP_264_Math_Software_GO_NOGO.xlsx / 03_VARIABLES. Catálogo documental; fórmulas y presencia en backend no se acreditan sólo por figurar aquí.,,,,,,,,,
+Variable,Symbol,Type,Units,Definition,Primary Source,Update/Cadence,Validation Test,Invariant/Constraint,Failure Action
+strategy_id,i,string,id,Identificador canónico MEV-XX-XXX,STRATEGIES_264,config change,unique/non-null,immutable per version,Resolver requisito y volver a medir; corregir causa
+capital_usd,C,decimal,USD,Notional/capital evaluated for this opportunity,Sizer / flash provider,per candidate,>0 and within provider limits,must equal amount used in exact quote,Resolver requisito y volver a medir; corregir causa
+gross_profit_usd,GP,decimal,USD,Output value minus input before execution overheads,Exact quote/simulation,per candidate,finite; not NaN,same snapshot as quote,Resolver requisito y volver a medir; corregir causa
+gas_usd,G,decimal,USD,Gas cost at simulated gas usage and fee market,eth_estimateGas/simulation + gas oracle,per candidate,>=0,included exactly once,Resolver requisito y volver a medir; corregir causa
+flash_fee_usd,FF,decimal,USD,Fee of atomic capital provider,provider adapter,per candidate,>=0,0 only if no flash fee,Resolver requisito y volver a medir; corregir causa
+builder_tip_usd,BT,decimal,USD,Builder/priority/private orderflow payment,execution policy,per candidate,>=0,included exactly once,Resolver requisito y volver a medir; corregir causa
+risk_haircut_usd,RH,decimal,USD,Explicit buffer for model/state uncertainty,risk engine,per candidate,>=0,documented method/version,Resolver requisito y volver a medir; corregir causa
+external_cost_usd,EC,decimal,USD,Venue/bridge/funding/withdrawal or other explicit costs,adapter/accounting,per candidate,>=0,all required costs represented,Resolver requisito y volver a medir; corregir causa
+net_profit_usd,NP,formula,USD,Economic profit after all modeled costs,formula F004,per candidate,recompute independently,NP=GP-G-FF-BT-RH-EC,Resolver requisito y volver a medir; corregir causa
+net_roi,r_net,formula,%,Conditional net return on capital,formula F005,per candidate,capital>0,NP/C,Resolver requisito y volver a medir; corregir causa
+capture_prob,p_cap,decimal,0-1,Probability candidate is captured/included by this searcher,competition model / observed history,rolling,0<=p<=1,calibrated out-of-sample,Resolver requisito y volver a medir; corregir causa
+success_prob,p_succ,decimal,0-1,Conditional probability execution succeeds if captured,simulation + realized history,rolling,0<=p<=1,calibrated by strategy/venue,Resolver requisito y volver a medir; corregir causa
+revert_prob,p_rev,decimal,0-1,Probability of revert/failure cost,realized history + simulation,rolling,0<=p<=1,not double-counted with success,Resolver requisito y volver a medir; corregir causa
+failure_cost_usd,C_fail,decimal,USD,Expected cost when failed/reverted,receipt/accounting history,rolling,>=0,cost basis documented,Resolver requisito y volver a medir; corregir causa
+infra_alloc_usd,C_infra,decimal,USD,Allocated infrastructure cost per opportunity,cost ledger,daily/monthly,>=0,allocation policy stable,Resolver requisito y volver a medir; corregir causa
+expected_value_usd,EV,formula,USD,Probability-weighted economic value,formula F006,per candidate,recompute,EV=p_cap*p_succ*NP-p_rev*C_fail-C_infra,Resolver requisito y volver a medir; corregir causa
+expected_roi,r_EV,formula,%,EV divided by capital,formula F007,per candidate,capital>0,EV/C,Resolver requisito y volver a medir; corregir causa
+alpha0_bps,a0,decimal,bps,Initial economic edge estimate; not Sharpe,reconciled/model history,rolling,document calibration window,separate from Sharpe,Resolver requisito y volver a medir; HOLD
+alpha_current_bps,a(t),formula,bps,Decayed/adjusted economic edge,formula F001,per update,finite,must use lambda and vol ratio,Resolver requisito y volver a medir; HOLD
+lambda_base_day,lambda0,decimal,1/day,Base decay prior,calibrated history/group prior,daily/weekly,>=0,no double counting competition,Resolver requisito y volver a medir; HOLD
+competitor_index,N(t),decimal,index,Observed competition intensity,inclusion/bundle/auction evidence,rolling,>=0,defined methodology/version,Resolver requisito y volver a medir; HOLD
+lambda_comp,lambdaC,decimal,1/day/index,Competition contribution to decay,calibration,weekly,>=0,enters lambda once only,Resolver requisito y volver a medir; HOLD
+tech_leak_flag,I_leak,bool,0/1,Public leak/commoditization indicator,change control / public evidence,event,0 or 1,manual evidence,Resolver requisito y volver a medir; HOLD
+lambda_tech,lambdaT,decimal,1/day,Leak contribution to decay,calibration,event/weekly,>=0,enters lambda once only,Resolver requisito y volver a medir; HOLD
+beta_vol,beta,decimal,scalar,Sensitivity to volatility regime,regression,rolling,stable OOS,baseline ratio uses -1 term,Resolver requisito y volver a medir; HOLD
+vol_ratio,sigma/sigma0,decimal,x,Current realized volatility divided by baseline,volatility engine,block/minute,>0,same horizon as beta,Resolver requisito y volver a medir; HOLD
+rolling_sharpe_24h,S24,decimal,x,Risk-adjusted realized return statistic; not alpha,reconciliation ledger,rolling,sufficient samples,must not substitute alpha,Resolver requisito y volver a medir; HOLD
+data_age_ms,age,integer,ms,Age of quote/state snapshot,ingestor,per candidate,>=0,<= group max,Resolver requisito y volver a medir; corregir causa
+same_block,SB,bool,YES/NO,All required on-chain state from one block where mandated,ingestor,per candidate,block ids equal,required by policy,Resolver requisito y volver a medir; corregir causa
+depth_to_notional_x,D/C,decimal,x,Executable depth relative to chosen notional,quoter/liquidity model,per candidate,>0,>= group minimum,Resolver requisito y volver a medir; corregir causa
+slippage_bps,slip,decimal,bps,Expected amount-aware slippage,exact quoter,per candidate,>=0,<= group max,Resolver requisito y volver a medir; corregir causa
+sim_pass,SIM,enum,PASS/FAIL,Fork/eth_call/bundle simulation status,simulation engine,per candidate,PASS only with evidence id,required,Resolver requisito y volver a medir; corregir causa
+math_tests_pass,TEST,enum,PASS/FAIL,All mandatory deterministic/math tests,CI/test engine,per build,PASS with test report,required,Resolver requisito y volver a medir; corregir causa
+invariants_pass,INV,enum,PASS/FAIL,All strategy invariants,simulation/invariant engine,per candidate/build,PASS with evidence,required,Resolver requisito y volver a medir; corregir causa
+atomic_repay_pass,AR,enum,PASS/FAIL/NA,Principal+fee repayment proven if atomic funding used,simulation,per candidate,PASS or NA,mandatory when atomic required,Resolver requisito y volver a medir; corregir causa
+oracle_fresh,OF,enum,PASS/FAIL/NA,Oracle dependency valid and fresh,oracle adapter,per candidate,PASS or NA,mandatory if Oracle_Dep,Resolver requisito y volver a medir; corregir causa
+bridge_healthy,BH,enum,PASS/FAIL/NA,Bridge/finality dependency healthy,bridge adapter,per candidate,PASS or NA,mandatory if Bridge_Dep,Resolver requisito y volver a medir; corregir causa
+external_dep_healthy,EH,enum,PASS/FAIL/NA,External venue/dependency healthy,adapter/venue monitor,per candidate,PASS or NA,mandatory if External_Dep,Resolver requisito y volver a medir; corregir causa
+risk_score,RS,integer,0-100,Composite execution/data/model risk score,risk engine,per candidate,0..100,>= group min,Resolver requisito y volver a medir; corregir causa
+reconciled_pnl_30d,RP30,decimal,USD,Settled realized net profit last 30d,reconciliation ledger,rolling,receipts/balance deltas,not expected PnL,Resolver requisito y volver a medir; HOLD/corregir causa
+reconciled_trades_30d,RT30,integer,trades,Count of reconciled trades last 30d,reconciliation ledger,rolling,>=0,LIVE evidence threshold,Resolver requisito y volver a medir; corregir causa
+VARIABLES NUEVAS V2 — definición / contrato,,,,,,,,,
+gross_post_swaps_usd,G,decimal,USD,Output minus input after swap fees/impact; not yet gas/finance.,Adapter exacto + quote,cada snapshot,independent cashflow reconstruction,Do not deduct included swap fee twice,Repair quote/cost ledger
+unconditional_attempt_cost,Ca,decimal,USD/intento,Cost incurred regardless of inclusion; excludes costs already in ledger.,Infra/attempt ledger,por intento,cost inclusion tags,Deduct once in EV,Reclassify cost
+risk_reserve_usd,R,decimal,USD,"Selection reserve, not cash outflow or guaranteed compensation.",Configuration + observed error,versioned,separate NP and NPp,R>=0,Calibrate reserve
+target_profit_usd,T,decimal,USD,"max(min_usd,Q*(target_roi+margin_bps/10000)).",User objective / params,per candidate,boundary test,T>0,Optimize candidate
+required_gross_usd,Greq,decimal,USD,All success costs + reserve + target.,Cost ledger,per candidate,G=Greq yields surplus0,Measured gross never replaced by required gross,Requote
+profit_gap_usd,Gap,decimal,USD,"max(0,Greq-Gquote), quantifies missing margin.",Economics,per candidate,negative scenario retains signed NP,"Only gap is floored, not profit",Find feasible candidate
+builder_extra_max_usd,Bmax,decimal,USD,Maximum extra payment after covering other costs/reserve/target.,Economics,per candidate,may be negative,Not same as priority fee,Rebid only within budget
+p_include,pI,float,"[0,1]",P(included); fixture not calibrated.,Inclusion data,rolling OOS,reliability/Brier,no double capture factor,Calibrate
+p_success_given_include,pS,float,"[0,1]","P(success | included), not unconditional win probability.",Receipts/fills,rolling OOS,conditional denominator,binary only for stated atomic model,Extend outcome ledger
+min_profit_raw,Mraw,uint256,smallest token unit,Ceil conservative minimum delta in token units; bigint outside Excel.,Assembler + min delta,each payload,rounding up by1unit,never float serialization,Implement bigint conversion
+cashflow_in_delta,in_delta,bool,flag/cost,Whether a specific cost is already reflected in measured balance delta.,Receipt/ledger by asset/owner,settlement,duplicate expense injection,Each expense deducted once,Repair ownership/inclusion
+external_net_contribution,Fext,decimal,token units,"External deposits minus withdrawals, neutralized from profit.",Transfer ledger,settlement,deposit-only yields zero income,Do not treat topups as profit,Reconcile flows
+hazard_previous,Hprev,float,adimensional,Persisted cumulative integral of decay hazard.,Strategy model state,model tick,split-interval invariance,Never reset except versioned recalibration,Persist state
+hazard_current,Hnew,float,adimensional,Hprev+lambda_eff*dt under piecewise constant lambda.,Model update,model tick,dt0 unchanged,Hnew>=Hprev for nonnegative lambda/dt,Validate clock/state
+implementation_progress,progress,decimal,fraction,Completed evidenced tasks divided by12.,Task log,after evidence,HECHO without artifact contributes0,Plan is not deployment,Complete next task
+data_nature,provenance,enum,text,SIMULADO_CONTABLE / ESTIMADO_CON_EVIDENCIA / realized in reconciliation only.,Source refs + settlement,every event,simulation cannot enter actual ledger,No artificial positive accounting,Fix label/source

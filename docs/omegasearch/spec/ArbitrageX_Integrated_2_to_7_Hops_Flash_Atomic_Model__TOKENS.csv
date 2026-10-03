@@ -1,0 +1,12 @@
+TOKENS — REGISTRY Y PRECIOS DE REFERENCIA SIMULADOS,,,,,,,,,,
+Token,Chain,Decimals,Price_USD,Prior,Liquidity_Score,Venue_Score,Stability_Score,QuoteScore,Eligible,Source/Note
+USDC,BASE,6,1,100,100,100,100,100,YES,Market-like simulation; replace with live oracle
+USDT,BASE,6,1.0001,95,95,95,98,95.6,YES,Market-like simulation
+DAI,BASE,18,0.9997,90,90,90,95,91,YES,Market-like simulation
+WETH,BASE,18,3000,90,100,100,70,91,YES,"Source workbooks used ~3,000; simulated"
+cbBTC,BASE,8,100000,80,95,90,60,82.5,YES,"Source workbooks used ~100,000; simulated"
+LINK,BASE,18,25,55,80,85,60,69.5,YES,Market-like simulation
+AAVE,BASE,18,300,50,75,80,55,64.5,YES,Market-like simulation
+AERO,BASE,18,1.2,45,70,85,45,60.5,YES,Market-like simulation
+cbETH,BASE,18,3150,70,80,80,70,75,YES,Market-like simulation
+CRV,BASE,18,0.6,35,55,60,40,47,NO,Market-like simulation

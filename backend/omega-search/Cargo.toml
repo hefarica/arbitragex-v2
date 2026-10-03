@@ -1,0 +1,29 @@
+# OMEGA-SEARCH — autonomous search engine (PROMPT §6 / §7).
+#
+# INTEGRATION STATUS: standalone on purpose (see `src/lib.rs` "Integration").
+# The engine is declared its OWN workspace root (`[workspace]` below) so it can
+# be built and tested WITHOUT editing `backend/Cargo.toml`, the shared workspace
+# manifest, or `backend/searcher-rs/src/lib.rs` — both are contested by the live
+# `fix/*` branches. Promotion is a two-line change reported as PENDING in the
+# task report, never a silent edit to a shared file.
+#
+# ZERO external dependencies by design: the engine is pure integer arithmetic
+# (no async, no RPC, no serde), so it compiles in seconds and cannot pull a
+# registry version into the lockfile of a branch it does not own.
+
+[workspace]
+
+[package]
+name = "omega-search"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.85"
+license = "Proprietary"
+description = "ArbitrageX v2 — autonomous bounded search engine: directed multigraph, generations, fair share, honest stop."
+
+[dependencies]
+# intentionally empty — std only (RULE: no f64 for money, no external math crate)
+
+[lints.clippy]
+unwrap_used = "warn"
+expect_used = "warn"

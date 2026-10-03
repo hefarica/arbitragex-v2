@@ -1,0 +1,20 @@
+"DISCOVERY — CÓMO SE DESCUBREN TOKENS, POOLS, DEXES Y CICLOS 2→7",,,,,,,,,,
+Step,Operation,Input,Formula / rule,Output,Why it matters,,,,,
+1,Token registry,chain + allowlist,"Filter chain, decimals, quote eligibility",Active tokens,Avoid symbol collisions / wrong decimals,,,,,
+2,Pool registry,factory/indexer/events,Keep TVL>=Min_TVL and BlockAge<=Max_Block_Age,Eligible pools,Remove stale/illiquid state,,,,,
+3,Directed graph,each pool,Create token0→token1 and token1→token0,2E directed edges,Preserves both executable directions,,,,,
+4,Normalize edge,"spot, fee, fair price",F_e=(1-fee)·spot/fair,NormFactor,Comparable edge quality across token units,,,,,
+5,Log transform,NormFactor,w_e=-LN(F_e),LogWeight,Products become sums,,,,,
+6,Candidate cycle,graph + changed edges,Bounded DFS / Bellman-Ford / MMBF / RICH / pruned Johnson,Closed cycles 2–7,Finds paths that return to start asset,,,,,
+7,Negative-cycle prefilter,cycle edges,Σw_e<0,Candidate,Equivalent to product of normalized factors >1 before amount impact,,,,,
+8,Exact/amount quote,ordered route + size,Compose q_n(...q_2(q_1(x))),Final amount,Captures fee/slippage/ticks/invariants,,,,,
+9,Sizing,depth + financing cap,"MIN(requested, depth×utilization, provider cap)",Sizeable notional,Prevents over-sizing,,,,,
+10,Economic gate,final amount + costs,Net=FinalUSD-StartUSD-gas-flash-tip-haircut,PASS/FAIL,Only net-positive survives,,,,,
+Algorithm,Enabled,Primary Role,Complexity / proxy,Estimated_Ops,Fits_CPU_Budget,Exhaustive?,2–7 hop fit,Incremental fit,Design implication,Source
+BFM_NEG_CYCLE,YES,Detect negative-cycle candidate,O(V·E),24000000,YES,NO,Good as candidate pass,Medium,Fast signal; not complete enumeration.,https://arxiv.org/abs/2103.02228
+MMBF_LINE_GRAPH,YES,More loops + specified start/end,BF-like on line graph,48000000,YES,NO,Good complement,Medium,Coverage expansion; useful for multi-edge semantics.,https://arxiv.org/abs/2406.16573
+JOHNSON,NO,Enumerate all elementary cycles,O((V+E)(C+1)),1400014000,NO,YES,Strong / output-explosive,Low on full graph,Use on pruned/hot subgraphs as completeness reference.,https://epubs.siam.org/doi/10.1137/0204007
+BOUNDED_DFS,YES,Enumerate simple cycles up to k,O(V·d^k) proxy,559872000,NO,YES (bounded),Best operational fit,High on affected subgraph,Primary exhaustive shadow enumerator with pruning.,Internal design / bounded simple-cycle literature
+RICH,YES,Most-negative k-hop cycle,O(2^k·V·E),3072000000,NO,NO,Excellent prioritizer,High,Prioritize candidates; do not replace exhaustive emission.,https://www.vldb.org/pvldb/vol18/p4081-luo.pdf
+CONVEX_SIZE,YES,Optimal sizing / multi-pool routing,Convex optimization,N/A,N/A,N/A,Post-discovery,N/A,Apply after discovery for sizing/routing.,https://arxiv.org/abs/2204.05238
+MPO,YES,Marginal-price optimization,Optimization framework,N/A,N/A,N/A,Post-discovery,N/A,"Sizing/ranking layer, not discovery substitute.",https://arxiv.org/html/2502.08258v1

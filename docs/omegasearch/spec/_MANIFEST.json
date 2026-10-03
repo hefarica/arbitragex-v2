@@ -1,0 +1,470 @@
+{
+  "extracted_utc": "2026-10-03T14:08:30.149274+00:00",
+  "source": "dsh-session-session-39f2d591-b6c7-4ea7-b21c-f7d7997b25f6 (1).zip",
+  "sheets": [
+    {
+      "workbook": "ArbitrageX_Integrated_2_to_7_Hops_Flash_Atomic_Model.xlsx",
+      "sha256": "456b0329fe596ae93d5dfccafd4cfe5c57a4775a3664f7cd41ed213d815cb864",
+      "sheet": "README",
+      "rows": 12,
+      "cols": 10,
+      "file": "ArbitrageX_Integrated_2_to_7_Hops_Flash_Atomic_Model__README.csv"
+    },
+    {
+      "workbook": "ArbitrageX_Integrated_2_to_7_Hops_Flash_Atomic_Model.xlsx",
+      "sha256": "456b0329fe596ae93d5dfccafd4cfe5c57a4775a3664f7cd41ed213d815cb864",
+      "sheet": "ASSUMPTIONS",
+      "rows": 21,
+      "cols": 6,
+      "file": "ArbitrageX_Integrated_2_to_7_Hops_Flash_Atomic_Model__ASSUMPTIONS.csv"
+    },
+    {
+      "workbook": "ArbitrageX_Integrated_2_to_7_Hops_Flash_Atomic_Model.xlsx",
+      "sha256": "456b0329fe596ae93d5dfccafd4cfe5c57a4775a3664f7cd41ed213d815cb864",
+      "sheet": "TOKENS",
+      "rows": 12,
+      "cols": 11,
+      "file": "ArbitrageX_Integrated_2_to_7_Hops_Flash_Atomic_Model__TOKENS.csv"
+    },
+    {
+      "workbook": "ArbitrageX_Integrated_2_to_7_Hops_Flash_Atomic_Model.xlsx",
+      "sha256": "456b0329fe596ae93d5dfccafd4cfe5c57a4775a3664f7cd41ed213d815cb864",
+      "sheet": "POOLS",
+      "rows": 28,
+      "cols": 18,
+      "file": "ArbitrageX_Integrated_2_to_7_Hops_Flash_Atomic_Model__POOLS.csv"
+    },
+    {
+      "workbook": "ArbitrageX_Integrated_2_to_7_Hops_Flash_Atomic_Model.xlsx",
+      "sha256": "456b0329fe596ae93d5dfccafd4cfe5c57a4775a3664f7cd41ed213d815cb864",
+      "sheet": "EDGES",
+      "rows": 54,
+      "cols": 15,
+      "file": "ArbitrageX_Integrated_2_to_7_Hops_Flash_Atomic_Model__EDGES.csv"
+    },
+    {
+      "workbook": "ArbitrageX_Integrated_2_to_7_Hops_Flash_Atomic_Model.xlsx",
+      "sha256": "456b0329fe596ae93d5dfccafd4cfe5c57a4775a3664f7cd41ed213d815cb864",
+      "sheet": "FLASH_LIQUIDITY",
+      "rows": 10,
+      "cols": 12,
+      "file": "ArbitrageX_Integrated_2_to_7_Hops_Flash_Atomic_Model__FLASH_LIQUIDITY.csv"
+    },
+    {
+      "workbook": "ArbitrageX_Integrated_2_to_7_Hops_Flash_Atomic_Model.xlsx",
+      "sha256": "456b0329fe596ae93d5dfccafd4cfe5c57a4775a3664f7cd41ed213d815cb864",
+      "sheet": "ROUTES",
+      "rows": 14,
+      "cols": 28,
+      "file": "ArbitrageX_Integrated_2_to_7_Hops_Flash_Atomic_Model__ROUTES.csv"
+    },
+    {
+      "workbook": "ArbitrageX_Integrated_2_to_7_Hops_Flash_Atomic_Model.xlsx",
+      "sha256": "456b0329fe596ae93d5dfccafd4cfe5c57a4775a3664f7cd41ed213d815cb864",
+      "sheet": "LEGS",
+      "rows": 86,
+      "cols": 32,
+      "file": "ArbitrageX_Integrated_2_to_7_Hops_Flash_Atomic_Model__LEGS.csv"
+    },
+    {
+      "workbook": "ArbitrageX_Integrated_2_to_7_Hops_Flash_Atomic_Model.xlsx",
+      "sha256": "456b0329fe596ae93d5dfccafd4cfe5c57a4775a3664f7cd41ed213d815cb864",
+      "sheet": "ROUTE_PNL",
+      "rows": 14,
+      "cols": 22,
+      "file": "ArbitrageX_Integrated_2_to_7_Hops_Flash_Atomic_Model__ROUTE_PNL.csv"
+    },
+    {
+      "workbook": "ArbitrageX_Integrated_2_to_7_Hops_Flash_Atomic_Model.xlsx",
+      "sha256": "456b0329fe596ae93d5dfccafd4cfe5c57a4775a3664f7cd41ed213d815cb864",
+      "sheet": "DISCOVERY",
+      "rows": 20,
+      "cols": 11,
+      "file": "ArbitrageX_Integrated_2_to_7_Hops_Flash_Atomic_Model__DISCOVERY.csv"
+    },
+    {
+      "workbook": "ArbitrageX_Integrated_2_to_7_Hops_Flash_Atomic_Model.xlsx",
+      "sha256": "456b0329fe596ae93d5dfccafd4cfe5c57a4775a3664f7cd41ed213d815cb864",
+      "sheet": "HOPS_2_7",
+      "rows": 21,
+      "cols": 12,
+      "file": "ArbitrageX_Integrated_2_to_7_Hops_Flash_Atomic_Model__HOPS_2_7.csv"
+    },
+    {
+      "workbook": "ArbitrageX_Integrated_2_to_7_Hops_Flash_Atomic_Model.xlsx",
+      "sha256": "456b0329fe596ae93d5dfccafd4cfe5c57a4775a3664f7cd41ed213d815cb864",
+      "sheet": "ATOMIC_PRIMITIVES",
+      "rows": 14,
+      "cols": 13,
+      "file": "ArbitrageX_Integrated_2_to_7_Hops_Flash_Atomic_Model__ATOMIC_PRIMITIVES.csv"
+    },
+    {
+      "workbook": "ArbitrageX_Integrated_2_to_7_Hops_Flash_Atomic_Model.xlsx",
+      "sha256": "456b0329fe596ae93d5dfccafd4cfe5c57a4775a3664f7cd41ed213d815cb864",
+      "sheet": "MATH_NOTES",
+      "rows": 17,
+      "cols": 8,
+      "file": "ArbitrageX_Integrated_2_to_7_Hops_Flash_Atomic_Model__MATH_NOTES.csv"
+    },
+    {
+      "workbook": "ArbitrageX_Integrated_2_to_7_Hops_Flash_Atomic_Model.xlsx",
+      "sha256": "456b0329fe596ae93d5dfccafd4cfe5c57a4775a3664f7cd41ed213d815cb864",
+      "sheet": "STRATEGIES_264",
+      "rows": 266,
+      "cols": 45,
+      "file": "ArbitrageX_Integrated_2_to_7_Hops_Flash_Atomic_Model__STRATEGIES_264.csv"
+    },
+    {
+      "workbook": "ArbitrageX_Integrated_2_to_7_Hops_Flash_Atomic_Model.xlsx",
+      "sha256": "456b0329fe596ae93d5dfccafd4cfe5c57a4775a3664f7cd41ed213d815cb864",
+      "sheet": "DETECTORS",
+      "rows": 62,
+      "cols": 12,
+      "file": "ArbitrageX_Integrated_2_to_7_Hops_Flash_Atomic_Model__DETECTORS.csv"
+    },
+    {
+      "workbook": "ArbitrageX_Integrated_2_to_7_Hops_Flash_Atomic_Model.xlsx",
+      "sha256": "456b0329fe596ae93d5dfccafd4cfe5c57a4775a3664f7cd41ed213d815cb864",
+      "sheet": "OPERATORS",
+      "rows": 34,
+      "cols": 10,
+      "file": "ArbitrageX_Integrated_2_to_7_Hops_Flash_Atomic_Model__OPERATORS.csv"
+    },
+    {
+      "workbook": "ArbitrageX_Integrated_2_to_7_Hops_Flash_Atomic_Model.xlsx",
+      "sha256": "456b0329fe596ae93d5dfccafd4cfe5c57a4775a3664f7cd41ed213d815cb864",
+      "sheet": "STRAT_OP_MATRIX",
+      "rows": 269,
+      "cols": 41,
+      "file": "ArbitrageX_Integrated_2_to_7_Hops_Flash_Atomic_Model__STRAT_OP_MATRIX.csv"
+    },
+    {
+      "workbook": "ArbitrageX_Integrated_2_to_7_Hops_Flash_Atomic_Model.xlsx",
+      "sha256": "456b0329fe596ae93d5dfccafd4cfe5c57a4775a3664f7cd41ed213d815cb864",
+      "sheet": "SENSITIVITY",
+      "rows": 10,
+      "cols": 10,
+      "file": "ArbitrageX_Integrated_2_to_7_Hops_Flash_Atomic_Model__SENSITIVITY.csv"
+    },
+    {
+      "workbook": "ArbitrageX_Integrated_2_to_7_Hops_Flash_Atomic_Model.xlsx",
+      "sha256": "456b0329fe596ae93d5dfccafd4cfe5c57a4775a3664f7cd41ed213d815cb864",
+      "sheet": "DASHBOARD",
+      "rows": 18,
+      "cols": 12,
+      "file": "ArbitrageX_Integrated_2_to_7_Hops_Flash_Atomic_Model__DASHBOARD.csv"
+    },
+    {
+      "workbook": "ArbitrageX_Integrated_2_to_7_Hops_Flash_Atomic_Model.xlsx",
+      "sha256": "456b0329fe596ae93d5dfccafd4cfe5c57a4775a3664f7cd41ed213d815cb864",
+      "sheet": "SOURCE_AUDIT",
+      "rows": 24,
+      "cols": 8,
+      "file": "ArbitrageX_Integrated_2_to_7_Hops_Flash_Atomic_Model__SOURCE_AUDIT.csv"
+    },
+    {
+      "workbook": "ArbitrageX_Integrated_2_to_7_Hops_Flash_Atomic_Model.xlsx",
+      "sha256": "456b0329fe596ae93d5dfccafd4cfe5c57a4775a3664f7cd41ed213d815cb864",
+      "sheet": "REFERENCES",
+      "rows": 24,
+      "cols": 6,
+      "file": "ArbitrageX_Integrated_2_to_7_Hops_Flash_Atomic_Model__REFERENCES.csv"
+    },
+    {
+      "workbook": "ArbitrageX_SOP_264_Implementacion_Rentabilidad.xlsx",
+      "sha256": "866aaece1e752573992a1d69a9b5af1ee615b72c42677b9319b8c07145ff9e0a",
+      "sheet": "00_INICIO",
+      "rows": 26,
+      "cols": 12,
+      "file": "ArbitrageX_SOP_264_Implementacion_Rentabilidad__00_INICIO.csv"
+    },
+    {
+      "workbook": "ArbitrageX_SOP_264_Implementacion_Rentabilidad.xlsx",
+      "sha256": "866aaece1e752573992a1d69a9b5af1ee615b72c42677b9319b8c07145ff9e0a",
+      "sheet": "01_PARAMETROS",
+      "rows": 31,
+      "cols": 8,
+      "file": "ArbitrageX_SOP_264_Implementacion_Rentabilidad__01_PARAMETROS.csv"
+    },
+    {
+      "workbook": "ArbitrageX_SOP_264_Implementacion_Rentabilidad.xlsx",
+      "sha256": "866aaece1e752573992a1d69a9b5af1ee615b72c42677b9319b8c07145ff9e0a",
+      "sheet": "02_IMPLEMENTACION_264",
+      "rows": 267,
+      "cols": 27,
+      "file": "ArbitrageX_SOP_264_Implementacion_Rentabilidad__02_IMPLEMENTACION_264.csv"
+    },
+    {
+      "workbook": "ArbitrageX_SOP_264_Implementacion_Rentabilidad.xlsx",
+      "sha256": "866aaece1e752573992a1d69a9b5af1ee615b72c42677b9319b8c07145ff9e0a",
+      "sheet": "03_TAREAS_264",
+      "rows": 3171,
+      "cols": 14,
+      "file": "ArbitrageX_SOP_264_Implementacion_Rentabilidad__03_TAREAS_264.csv"
+    },
+    {
+      "workbook": "ArbitrageX_SOP_264_Implementacion_Rentabilidad.xlsx",
+      "sha256": "866aaece1e752573992a1d69a9b5af1ee615b72c42677b9319b8c07145ff9e0a",
+      "sheet": "04_INPUTS_ECON_264",
+      "rows": 267,
+      "cols": 28,
+      "file": "ArbitrageX_SOP_264_Implementacion_Rentabilidad__04_INPUTS_ECON_264.csv"
+    },
+    {
+      "workbook": "ArbitrageX_SOP_264_Implementacion_Rentabilidad.xlsx",
+      "sha256": "866aaece1e752573992a1d69a9b5af1ee615b72c42677b9319b8c07145ff9e0a",
+      "sheet": "05_RENTABILIDAD_264",
+      "rows": 267,
+      "cols": 31,
+      "file": "ArbitrageX_SOP_264_Implementacion_Rentabilidad__05_RENTABILIDAD_264.csv"
+    },
+    {
+      "workbook": "ArbitrageX_SOP_264_Implementacion_Rentabilidad.xlsx",
+      "sha256": "866aaece1e752573992a1d69a9b5af1ee615b72c42677b9319b8c07145ff9e0a",
+      "sheet": "06_CASOS_PRUEBA",
+      "rows": 8,
+      "cols": 24,
+      "file": "ArbitrageX_SOP_264_Implementacion_Rentabilidad__06_CASOS_PRUEBA.csv"
+    },
+    {
+      "workbook": "ArbitrageX_SOP_264_Implementacion_Rentabilidad.xlsx",
+      "sha256": "866aaece1e752573992a1d69a9b5af1ee615b72c42677b9319b8c07145ff9e0a",
+      "sheet": "07_CONTRATO_EJECUCION",
+      "rows": 33,
+      "cols": 8,
+      "file": "ArbitrageX_SOP_264_Implementacion_Rentabilidad__07_CONTRATO_EJECUCION.csv"
+    },
+    {
+      "workbook": "ArbitrageX_SOP_264_Implementacion_Rentabilidad.xlsx",
+      "sha256": "866aaece1e752573992a1d69a9b5af1ee615b72c42677b9319b8c07145ff9e0a",
+      "sheet": "08_FORMULAS",
+      "rows": 28,
+      "cols": 8,
+      "file": "ArbitrageX_SOP_264_Implementacion_Rentabilidad__08_FORMULAS.csv"
+    },
+    {
+      "workbook": "ArbitrageX_SOP_264_Implementacion_Rentabilidad.xlsx",
+      "sha256": "866aaece1e752573992a1d69a9b5af1ee615b72c42677b9319b8c07145ff9e0a",
+      "sheet": "09_VARIABLES",
+      "rows": 61,
+      "cols": 10,
+      "file": "ArbitrageX_SOP_264_Implementacion_Rentabilidad__09_VARIABLES.csv"
+    },
+    {
+      "workbook": "ArbitrageX_SOP_264_Implementacion_Rentabilidad.xlsx",
+      "sha256": "866aaece1e752573992a1d69a9b5af1ee615b72c42677b9319b8c07145ff9e0a",
+      "sheet": "10_DATOS",
+      "rows": 15,
+      "cols": 10,
+      "file": "ArbitrageX_SOP_264_Implementacion_Rentabilidad__10_DATOS.csv"
+    },
+    {
+      "workbook": "ArbitrageX_SOP_264_Implementacion_Rentabilidad.xlsx",
+      "sha256": "866aaece1e752573992a1d69a9b5af1ee615b72c42677b9319b8c07145ff9e0a",
+      "sheet": "11_SOFTWARE_264",
+      "rows": 267,
+      "cols": 22,
+      "file": "ArbitrageX_SOP_264_Implementacion_Rentabilidad__11_SOFTWARE_264.csv"
+    },
+    {
+      "workbook": "ArbitrageX_SOP_264_Implementacion_Rentabilidad.xlsx",
+      "sha256": "866aaece1e752573992a1d69a9b5af1ee615b72c42677b9319b8c07145ff9e0a",
+      "sheet": "12_TESTS_264",
+      "rows": 1851,
+      "cols": 14,
+      "file": "ArbitrageX_SOP_264_Implementacion_Rentabilidad__12_TESTS_264.csv"
+    },
+    {
+      "workbook": "ArbitrageX_SOP_264_Implementacion_Rentabilidad.xlsx",
+      "sha256": "866aaece1e752573992a1d69a9b5af1ee615b72c42677b9319b8c07145ff9e0a",
+      "sheet": "13_INVARIANTS_264",
+      "rows": 1587,
+      "cols": 13,
+      "file": "ArbitrageX_SOP_264_Implementacion_Rentabilidad__13_INVARIANTS_264.csv"
+    },
+    {
+      "workbook": "ArbitrageX_SOP_264_Implementacion_Rentabilidad.xlsx",
+      "sha256": "866aaece1e752573992a1d69a9b5af1ee615b72c42677b9319b8c07145ff9e0a",
+      "sheet": "14_DETECTORES",
+      "rows": 63,
+      "cols": 12,
+      "file": "ArbitrageX_SOP_264_Implementacion_Rentabilidad__14_DETECTORES.csv"
+    },
+    {
+      "workbook": "ArbitrageX_SOP_264_Implementacion_Rentabilidad.xlsx",
+      "sha256": "866aaece1e752573992a1d69a9b5af1ee615b72c42677b9319b8c07145ff9e0a",
+      "sheet": "15_OPERADORES",
+      "rows": 34,
+      "cols": 11,
+      "file": "ArbitrageX_SOP_264_Implementacion_Rentabilidad__15_OPERADORES.csv"
+    },
+    {
+      "workbook": "ArbitrageX_SOP_264_Implementacion_Rentabilidad.xlsx",
+      "sha256": "866aaece1e752573992a1d69a9b5af1ee615b72c42677b9319b8c07145ff9e0a",
+      "sheet": "16_CICLO_OPERATIVO",
+      "rows": 13,
+      "cols": 8,
+      "file": "ArbitrageX_SOP_264_Implementacion_Rentabilidad__16_CICLO_OPERATIVO.csv"
+    },
+    {
+      "workbook": "ArbitrageX_SOP_264_Implementacion_Rentabilidad.xlsx",
+      "sha256": "866aaece1e752573992a1d69a9b5af1ee615b72c42677b9319b8c07145ff9e0a",
+      "sheet": "17_RECONCILIACION",
+      "rows": 267,
+      "cols": 19,
+      "file": "ArbitrageX_SOP_264_Implementacion_Rentabilidad__17_RECONCILIACION.csv"
+    },
+    {
+      "workbook": "ArbitrageX_SOP_264_Implementacion_Rentabilidad.xlsx",
+      "sha256": "866aaece1e752573992a1d69a9b5af1ee615b72c42677b9319b8c07145ff9e0a",
+      "sheet": "18_ALPHA_264",
+      "rows": 267,
+      "cols": 17,
+      "file": "ArbitrageX_SOP_264_Implementacion_Rentabilidad__18_ALPHA_264.csv"
+    },
+    {
+      "workbook": "ArbitrageX_SOP_264_Implementacion_Rentabilidad.xlsx",
+      "sha256": "866aaece1e752573992a1d69a9b5af1ee615b72c42677b9319b8c07145ff9e0a",
+      "sheet": "19_RESOLVER_REQUISITOS",
+      "rows": 19,
+      "cols": 8,
+      "file": "ArbitrageX_SOP_264_Implementacion_Rentabilidad__19_RESOLVER_REQUISITOS.csv"
+    },
+    {
+      "workbook": "ArbitrageX_SOP_264_Implementacion_Rentabilidad.xlsx",
+      "sha256": "866aaece1e752573992a1d69a9b5af1ee615b72c42677b9319b8c07145ff9e0a",
+      "sheet": "20_CAMBIOS_FUENTES",
+      "rows": 24,
+      "cols": 8,
+      "file": "ArbitrageX_SOP_264_Implementacion_Rentabilidad__20_CAMBIOS_FUENTES.csv"
+    },
+    {
+      "workbook": "ArbitrageX_SOP_264_Math_Software_GO_NOGO.xlsx",
+      "sha256": "e69ea9d552e66305bd2e802371506264ef49285f0f9d8607ef1ff096cc458121",
+      "sheet": "00_SOP_INDEX",
+      "rows": 20,
+      "cols": 8,
+      "file": "ArbitrageX_SOP_264_Math_Software_GO_NOGO__00_SOP_INDEX.csv"
+    },
+    {
+      "workbook": "ArbitrageX_SOP_264_Math_Software_GO_NOGO.xlsx",
+      "sha256": "e69ea9d552e66305bd2e802371506264ef49285f0f9d8607ef1ff096cc458121",
+      "sheet": "01_CONTROL",
+      "rows": 19,
+      "cols": 6,
+      "file": "ArbitrageX_SOP_264_Math_Software_GO_NOGO__01_CONTROL.csv"
+    },
+    {
+      "workbook": "ArbitrageX_SOP_264_Math_Software_GO_NOGO.xlsx",
+      "sha256": "e69ea9d552e66305bd2e802371506264ef49285f0f9d8607ef1ff096cc458121",
+      "sheet": "02_GROUP_GATES",
+      "rows": 13,
+      "cols": 26,
+      "file": "ArbitrageX_SOP_264_Math_Software_GO_NOGO__02_GROUP_GATES.csv"
+    },
+    {
+      "workbook": "ArbitrageX_SOP_264_Math_Software_GO_NOGO.xlsx",
+      "sha256": "e69ea9d552e66305bd2e802371506264ef49285f0f9d8607ef1ff096cc458121",
+      "sheet": "03_VARIABLES",
+      "rows": 43,
+      "cols": 10,
+      "file": "ArbitrageX_SOP_264_Math_Software_GO_NOGO__03_VARIABLES.csv"
+    },
+    {
+      "workbook": "ArbitrageX_SOP_264_Math_Software_GO_NOGO.xlsx",
+      "sha256": "e69ea9d552e66305bd2e802371506264ef49285f0f9d8607ef1ff096cc458121",
+      "sheet": "04_FORMULAS",
+      "rows": 18,
+      "cols": 8,
+      "file": "ArbitrageX_SOP_264_Math_Software_GO_NOGO__04_FORMULAS.csv"
+    },
+    {
+      "workbook": "ArbitrageX_SOP_264_Math_Software_GO_NOGO.xlsx",
+      "sha256": "e69ea9d552e66305bd2e802371506264ef49285f0f9d8607ef1ff096cc458121",
+      "sheet": "05_DATA_SOURCES",
+      "rows": 14,
+      "cols": 10,
+      "file": "ArbitrageX_SOP_264_Math_Software_GO_NOGO__05_DATA_SOURCES.csv"
+    },
+    {
+      "workbook": "ArbitrageX_SOP_264_Math_Software_GO_NOGO.xlsx",
+      "sha256": "e69ea9d552e66305bd2e802371506264ef49285f0f9d8607ef1ff096cc458121",
+      "sheet": "06_SOFTWARE_SPEC",
+      "rows": 266,
+      "cols": 22,
+      "file": "ArbitrageX_SOP_264_Math_Software_GO_NOGO__06_SOFTWARE_SPEC.csv"
+    },
+    {
+      "workbook": "ArbitrageX_SOP_264_Math_Software_GO_NOGO.xlsx",
+      "sha256": "e69ea9d552e66305bd2e802371506264ef49285f0f9d8607ef1ff096cc458121",
+      "sheet": "07_TESTS_264",
+      "rows": 1850,
+      "cols": 12,
+      "file": "ArbitrageX_SOP_264_Math_Software_GO_NOGO__07_TESTS_264.csv"
+    },
+    {
+      "workbook": "ArbitrageX_SOP_264_Math_Software_GO_NOGO.xlsx",
+      "sha256": "e69ea9d552e66305bd2e802371506264ef49285f0f9d8607ef1ff096cc458121",
+      "sheet": "08_INVARIANTS_264",
+      "rows": 1586,
+      "cols": 11,
+      "file": "ArbitrageX_SOP_264_Math_Software_GO_NOGO__08_INVARIANTS_264.csv"
+    },
+    {
+      "workbook": "ArbitrageX_SOP_264_Math_Software_GO_NOGO.xlsx",
+      "sha256": "e69ea9d552e66305bd2e802371506264ef49285f0f9d8607ef1ff096cc458121",
+      "sheet": "09_RUNTIME_264",
+      "rows": 266,
+      "cols": 79,
+      "file": "ArbitrageX_SOP_264_Math_Software_GO_NOGO__09_RUNTIME_264.csv"
+    },
+    {
+      "workbook": "ArbitrageX_SOP_264_Math_Software_GO_NOGO.xlsx",
+      "sha256": "e69ea9d552e66305bd2e802371506264ef49285f0f9d8607ef1ff096cc458121",
+      "sheet": "10_SOP_264",
+      "rows": 266,
+      "cols": 38,
+      "file": "ArbitrageX_SOP_264_Math_Software_GO_NOGO__10_SOP_264.csv"
+    },
+    {
+      "workbook": "ArbitrageX_SOP_264_Math_Software_GO_NOGO.xlsx",
+      "sha256": "e69ea9d552e66305bd2e802371506264ef49285f0f9d8607ef1ff096cc458121",
+      "sheet": "11_STATE_MACHINE",
+      "rows": 10,
+      "cols": 9,
+      "file": "ArbitrageX_SOP_264_Math_Software_GO_NOGO__11_STATE_MACHINE.csv"
+    },
+    {
+      "workbook": "ArbitrageX_SOP_264_Math_Software_GO_NOGO.xlsx",
+      "sha256": "e69ea9d552e66305bd2e802371506264ef49285f0f9d8607ef1ff096cc458121",
+      "sheet": "12_AUDIT_LOG",
+      "rows": 2,
+      "cols": 13,
+      "file": "ArbitrageX_SOP_264_Math_Software_GO_NOGO__12_AUDIT_LOG.csv"
+    },
+    {
+      "workbook": "ArbitrageX_SOP_264_Math_Software_GO_NOGO.xlsx",
+      "sha256": "e69ea9d552e66305bd2e802371506264ef49285f0f9d8607ef1ff096cc458121",
+      "sheet": "13_DETECTORS",
+      "rows": 62,
+      "cols": 12,
+      "file": "ArbitrageX_SOP_264_Math_Software_GO_NOGO__13_DETECTORS.csv"
+    },
+    {
+      "workbook": "ArbitrageX_SOP_264_Math_Software_GO_NOGO.xlsx",
+      "sha256": "e69ea9d552e66305bd2e802371506264ef49285f0f9d8607ef1ff096cc458121",
+      "sheet": "14_OPERATORS",
+      "rows": 33,
+      "cols": 10,
+      "file": "ArbitrageX_SOP_264_Math_Software_GO_NOGO__14_OPERATORS.csv"
+    },
+    {
+      "workbook": "ArbitrageX_SOP_264_Math_Software_GO_NOGO.xlsx",
+      "sha256": "e69ea9d552e66305bd2e802371506264ef49285f0f9d8607ef1ff096cc458121",
+      "sheet": "15_CHANGE_CONTROL",
+      "rows": 2,
+      "cols": 12,
+      "file": "ArbitrageX_SOP_264_Math_Software_GO_NOGO__15_CHANGE_CONTROL.csv"
+    }
+  ]
+}
