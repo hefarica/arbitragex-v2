@@ -39,6 +39,16 @@
 //! (`diagnostics.missing_economics` on the live feed envelope) — the two
 //! views bracket the producer→consumer pipe and show exactly WHERE data dies.
 
+/// §5 — productores de coste/fee por protocolo (V2/forks, V3, V4+hooks, Curve,
+/// gas, builder/relay, financiación). Módulo NUEVO y propio: NO edita la
+/// resolución de soporte (`snapshot_services.rs`) ni el validador del bridge
+/// (`rhai_agent_bridge.rs`), sólo consume `CostLine` de forma aditiva.
+///
+/// Se declara aquí —y no en `lib.rs`— porque `lib.rs` es zona caliente con
+/// ramas vivas: el módulo queda registrado y testeable sin colisión de merge.
+/// La promoción a `pub mod` en `lib.rs` es una integración pendiente de 1 línea.
+pub mod cost_producers;
+
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::Duration;
 
