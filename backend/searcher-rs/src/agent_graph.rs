@@ -326,6 +326,20 @@ pub struct ExactHopQuote {
 }
 /// A cache entry is supplied by the real protocol adapter/Quoter at the fixed
 /// block. It is keyed by exact amount and direction, never just by token pair.
+///
+/// CONTRATO DEL PRODUCTOR (AGENT-GRAPH-QUOTE-01): la clave liga el
+/// `amount_in_raw` EXACTO que entra en la pierna, así que una quote suelta no
+/// sirve para una ruta de más de un salto — el importe de la pierna `i+1` es la
+/// SALIDA de la pierna `i`. El productor tiene que COTIZAR LA CADENA: pedir el
+/// quote de cada pierna con el importe que realmente la atraviesa y llenar el
+/// mapa con `precision = "protocol_exact_integer"`, `fees_and_impact_embedded`
+/// y un `quote_id` no vacío, atado al MISMO `edge_id`/`snapshot_id`/
+/// `block_hash`/`adapter_version` del edge (cualquier desajuste se rechaza en
+/// `quote_path`, jamás se acepta por parecido). Las piezas para hacerlo YA
+/// existen y son usables: `amm_math::v3_quote_exact_in_multicall` (QuoterV2) y
+/// `v3_quote_provider::resolve_quoter_multicall(chain_id)`. Sin productor, el
+/// mapa queda vacío y la vía local sigue siendo el único respaldo — nunca una
+/// aproximación CPMM disfrazada de quote de protocolo.
 pub fn quote_request_key(edge: &Edge, amount: &str) -> String {
     canonical_hash(
         &json!({"edge_id":edge.edge_id,"snapshot_id":edge.snapshot_id,"block_hash":edge.block_hash,"token_in":edge.token_in,"token_out":edge.token_out,"amount_in_raw":amount,"adapter_version":edge.adapter_version}),
