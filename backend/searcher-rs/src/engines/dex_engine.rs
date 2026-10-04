@@ -319,7 +319,7 @@ impl DexEngine {
                     // showing $2,693.71 where the real probe is 1 USDC = $1.00 (the
                     // 2693.71 is the intent token's own price). `canonical_token_decimals`
                     // is decimals-aware; it was simply being asked about the wrong token.
-                    let token_in_opt = Some(economic_base_token(&pool_a, intent));
+                    let token_in_opt = Some(economic_base_token(pool_a, intent));
                     let probe_amount =
                         U256::from(10u128).pow(U256::from(canonical_token_decimals(token_in_opt)));
 
