@@ -471,7 +471,7 @@ impl V3FeeCatalog {
                      never SCAN order"
                 );
             }
-            winners.push((addr, tier));
+            winners.push((*addr, tier));
         }
         {
             let mut by_pool = self.by_pool.write().unwrap_or_else(|e| e.into_inner());
