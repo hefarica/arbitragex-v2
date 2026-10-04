@@ -56,6 +56,62 @@ export const StatusResponseSchema = z.object({
 export const PaperStatusSchema = z.enum(["paper_viable", "paper_rejected"]);
 export type PaperStatus = z.infer<typeof PaperStatusSchema>;
 
+// ─── A8-CONF-01: wire enrichment blocks declared before the row schema ───────
+//
+// Token-validation block. Producer: api-server
+// services/tokenValidation/* → table `token_validations` (final_status, score,
+// score_reasons, validated_at…) → rowToOpportunity → tokenInfoFromRow()'s
+// `validation` member. `score` is the 0-100 composite of composeFinalScore()
+// (score.ts) — a REAL computed value, not a placeholder.
+export const TokenValidationBlockSchema = z
+  .object({
+    status: z.string().nullable().optional(),
+    score: z.number().nullable().optional(),
+    liquidity_usd: z.number().nullable().optional(),
+    volume_24h_usd: z.number().nullable().optional(),
+    pair_count: z.number().nullable().optional(),
+    primary_dex: z.string().nullable().optional(),
+    registry_source: z.string().nullable().optional(),
+    validated_at: z.string().nullable().optional(),
+    reasons: z
+      .array(
+        z
+          .object({
+            key: z.string(),
+            note: z.string(),
+            delta: z.number(),
+          })
+          .passthrough(),
+      )
+      .nullable()
+      .optional(),
+  })
+  .passthrough();
+
+export const WireTokenInfoSchema = z
+  .object({
+    symbol: z.string().nullable().optional(),
+    decimals: z.number().nullable().optional(),
+    verified: z.boolean().nullable().optional(),
+    validation: TokenValidationBlockSchema.nullable().optional(),
+  })
+  .passthrough();
+
+// Economics block (R10-shaped, as the producer already declares it).
+export const WireEconomicsSchema = z
+  .object({
+    computation_status: z.string().nullable().optional(),
+    error_reason: z.string().nullable().optional(),
+    slippage_usd: z.number().nullable().optional(),
+    flash_fee_usd: z.number().nullable().optional(),
+    amount_in_usd: z.number().nullable().optional(),
+    not_computed_reasons: z.record(z.string(), z.string()).nullable().optional(),
+  })
+  .passthrough();
+
+export type WireTokenInfo = z.infer<typeof WireTokenInfoSchema>;
+export type WireEconomics = z.infer<typeof WireEconomicsSchema>;
+
 export const OpportunityRowSchema = z.object({
   id: z.string(),
   chain_id: z.number(),
@@ -125,19 +181,54 @@ export const OpportunityRowSchema = z.object({
     .record(z.string(), z.number().positive())
     .nullable()
     .optional(),
-  // ─── A.8 confidence scoring (audit 2026-05-13) ───
-  // All nullable+optional: backend does not yet emit these on
-  // /api/opportunities/live (scoring_pipeline_wired=false). When the future
-  // commit wires the scanner pipeline, these fields populate; the UI shows
-  // "Unavailable" today via OpportunityEvidenceCell.
+  // ─── A.8 confidence scoring (audit 2026-05-13 · WIRED 2026-10-03) ───
+  // A8-CONF-01: the api-server now emits these on /api/opportunities/live from
+  // `scored_opportunities.posterior_prob` (LEFT JOIN LATERAL on the opportunity
+  // uuid). Producer chain: searcher-rs scoring_pipeline.rs ConfidenceScore →
+  // XADD `arbx:scoring:scored` → ScoredOpportunitiesArchiver →
+  // scored_opportunities → routes/opportunities-live.ts a8ScoringFromRow().
+  //
   // Units are basis points (bps) — integer math, no floats for final money.
+  // R8 (None != Some(0.0)): a MISSING scored row leaves `confidence_score_bps`
+  // null and sets `confidence_state="not_computed"` + `confidence_reason`; a
+  // scored row whose posterior rounds to 0 bps emits an integer 0 with
+  // `confidence_state="computed"`. `posterior_prob` carries the un-rounded
+  // probability in [0,1] so a consumer can tell "exactly 0" from "0.26 bps"
+  // instead of rendering a sub-basis-point posterior as a hard zero.
+  //
+  // `scoring_version` / `scoring_input_hash` keep NO producer on this sink
+  // (migration 097/109 declare no such column) — declared here, never filled.
   confidence_score_bps: z.number().int().nullable().optional(),
   posterior_probability_bps: z.number().int().nullable().optional(),
   kelly_fraction_bps: z.number().int().nullable().optional(),
+  posterior_prob: z.number().min(0).max(1).nullable().optional(),
   scoring_decision: z.string().nullable().optional(),
   scoring_reason: z.string().nullable().optional(),
   scoring_version: z.string().nullable().optional(),
   scoring_input_hash: z.string().nullable().optional(),
+  // R10 E2E-COMPUTE GUARD: the wire states its own verdict for the field, so
+  // the UI never has to infer "why is this empty" from a bare null.
+  confidence_state: z.enum(["computed", "not_computed"]).nullable().optional(),
+  confidence_source: z.string().nullable().optional(),
+  confidence_reason: z.string().nullable().optional(),
+  // ─── Token-safety + economics enrichment blocks (A8-CONF-01, 2026-10-03) ───
+  // These ARE emitted by /api/opportunities/live (rowToOpportunity →
+  // tokenInfoFromRow / economics) but were undeclared here, so every
+  // Zod-validating consumer silently STRIPPED them. Consequence measured on the
+  // live card: the TOKEN SAFETY row rendered `A — · B —` even though the API
+  // was shipping a real 0-100 validation score (live sample: score 75, status
+  // VERIFIED, liquidity_usd 241448764.95). Declaring them is what makes the
+  // producer reachable from the UI at all.
+  //
+  // .passthrough() keeps unknown members; every leaf is nullable+optional so a
+  // producer that omits one can never fail the WHOLE feed (FEED-SCHEMA-01
+  // precedent: one strict leaf dropped every card on every page).
+  token_in_info: WireTokenInfoSchema.nullable().optional(),
+  token_out_info: WireTokenInfoSchema.nullable().optional(),
+  // R10 shape as the producer already declares it: `computation_status` +
+  // `not_computed_reasons` (field → machine reason) + `error_reason`. The home
+  // card reads the DECLARED reason from here instead of inventing one.
+  economics: WireEconomicsSchema.nullable().optional(),
 });
 
 export const OpportunitiesLiveSchema = z.object({
