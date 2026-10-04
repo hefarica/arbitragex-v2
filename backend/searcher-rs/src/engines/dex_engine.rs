@@ -41,8 +41,16 @@
 //! |                           | previously flattened into the line above)   |
 //! | `v3_pair_no_pools`        | pair has no known V3 pools at all —         |
 //! |                           | zero-RPC (CATALOG-BACKFILL-01; ditto)       |
-//! | `spread_zero_equilibrium` | both legs quoted identical amounts — an     |
-//! |                           | efficient market, not a data gap (G-ECON-1) |
+//! | `spread_zero_equilibrium` | the CHAINED round trip returned EXACTLY the |
+//! |                           | probe — a true equilibrium, not a data gap  |
+//! |                           | (SPREAD-SIGNED-DELTA-01 corrected this text: |
+//! |                           | it claimed "both legs quoted identical       |
+//! |                           | amounts", which the code never evaluated)   |
+//! | `spread_negative_round_trip` | the CHAINED round trip returned LESS than |
+//! |                           | the probe — a MEASURED loss, published as a |
+//! |                           | NEGATIVE gross. Before SPREAD-SIGNED-       |
+//! |                           | DELTA-01 `saturating_sub` erased it into    |
+//! |                           | the equilibrium zero above                  |
 //! | `non_positive_spread`     | spread <= 0 after CPMM math                 |
 
 use crate::amm_math;
@@ -85,9 +93,30 @@ pub(crate) enum V3GrossOutcome {
     /// catalog gap into the old transport-looking `v3_quote_unavailable`
     /// (which hid not_catalogued=23% of resolutions from the operator).
     V3Labeled(&'static str),
-    /// Both legs quoted IDENTICAL amounts out — an efficient market with no
-    /// spread to capture (honest equilibrium, not a data gap).
+    /// The CHAINED round trip returned EXACTLY the probe — the one market state
+    /// that is a true equilibrium (no capturable spread at the probed size after
+    /// both venues' fees and impact). The emitter publishes it as a MEASURED zero
+    /// (`Some(0.0)`), which is different from "not computed" (`None`).
+    ///
+    /// SPREAD-SIGNED-DELTA-01 (2026-10-04): this variant's doc used to claim
+    /// "both legs quoted IDENTICAL amounts out" — a condition this code never
+    /// evaluated. `out_a`/`out_b` only pick the orientation of the chained round
+    /// trip, and two DIFFERENT forward quotes can still return exactly the probe
+    /// back. A round trip that returns LESS is `RoundTripLoss`, not this.
     SpreadZeroEquilibrium,
+    /// SPREAD-SIGNED-DELTA-01 (2026-10-04): the CHAINED round trip returned LESS
+    /// than the probe — a real, MEASURED loss, never an equilibrium.
+    ///
+    /// Carries the measured NEGATIVE gross (USD, priced at token_in's own live
+    /// price) and the REAL amount the return leg delivered, so (a) a loss is
+    /// never dressed as a measured zero (R8) and (b) the row can publish the
+    /// cycle's real output instead of the derived `amount_in + gross` stand-in.
+    ///
+    /// This is the NORMAL state of a majors round trip at the probed size —
+    /// measured by SPREAD-ZERO-01: 60 bps of round-trip cost for WETH/DAI
+    /// (SushiSwap 30 bps + UniswapV3 3000 pips) against 1-10 bps venue gaps — and
+    /// `saturating_sub` used to erase it into `SpreadZeroEquilibrium`.
+    RoundTripLoss { gross_usd: f64, returned_wei: U256 },
     /// The token_out has no canonical USD price — the one case that truly
     /// deserves the `no_price_oracle` label.
     NoTokenPrice,
@@ -114,8 +143,32 @@ impl V3GrossOutcome {
     fn usd(&self) -> Option<f64> {
         match self {
             V3GrossOutcome::Usd(v) => Some(*v),
+            // SPREAD-SIGNED-DELTA-01: `RoundTripLoss` is ALSO measured, but it is
+            // not a gross PROFIT — staying `None` here is what keeps a losing
+            // cycle on the rejection path instead of promoting it to an accepted
+            // candidate. Its measured magnitude is published through the
+            // emitter's `computed_gross` mapping, not through a "profit".
             _ => None,
         }
+    }
+}
+
+/// SPREAD-SIGNED-DELTA-01: the REAL output of the chained cycle, in `token_in`
+/// raw units, for the two verdicts that MEASURED it:
+///   * the equilibrium — `returned == probe_amount` by the very equality the
+///     verdict tests, so the output IS the probe;
+///   * the loss — the verdict carries the amount the return leg delivered.
+///
+/// `None` for every other verdict: their cycle output was never exposed, and R8
+/// forbids filling it with a derived stand-in. `economics.rs` derives
+/// `amount_out_usd = amount_in_usd + gross` (economics.rs:211), which is exactly
+/// equal to the input whenever the gross is zero — that stand-in is why the
+/// channel could not tell a loss from an equilibrium.
+fn measured_cycle_output(outcome: &V3GrossOutcome, probe_amount: U256) -> Option<U256> {
+    match outcome {
+        V3GrossOutcome::SpreadZeroEquilibrium => Some(probe_amount),
+        V3GrossOutcome::RoundTripLoss { returned_wei, .. } => Some(*returned_wei),
+        _ => None,
     }
 }
 
@@ -439,6 +492,10 @@ impl DexEngine {
                             // OWN label — never the flattened transport string.
                             V3GrossOutcome::V3Labeled(label) => label,
                             V3GrossOutcome::SpreadZeroEquilibrium => "spread_zero_equilibrium",
+                            // SPREAD-SIGNED-DELTA-01: a losing round trip is NOT
+                            // an equilibrium. Its own label, so the channel stops
+                            // reporting a measured loss as an "efficient market".
+                            V3GrossOutcome::RoundTripLoss { .. } => "spread_negative_round_trip",
                             // The genuine token-price miss — keeps the original label.
                             V3GrossOutcome::NoTokenPrice => "no_price_oracle",
                             // Unreachable in this branch (Usd ⇒ gross Some; Skipped/NoConfig
@@ -458,15 +515,21 @@ impl DexEngine {
                         // sin excepcion deben tener sus calculos y el 100% de sus
                         // valores, independiente que den o no ganancia").
                         //
-                        // `SpreadZeroEquilibrium` NO es un dato ausente: es una
-                        // MEDICION — ambas patas cotizaron el mismo importe, asi
-                        // que el gross del ciclo es EXACTAMENTE cero. Se publica
-                        // como cero COMPUTADO (Some(0.0)), que es distinto de
-                        // "no computado" (None) y es lo que permite que la fila
-                        // siga el camino de economics y muestre su aritmetica
-                        // (costes reales, net negativo) en vez de quedar en guion.
+                        // Neither verdict is a missing datum: both are
+                        // MEASUREMENTS on the chained round trip. The equilibrium
+                        // is a computed-and-exactly-zero gross (`Some(0.0)`), and
+                        // SPREAD-SIGNED-DELTA-01 adds the OTHER measured case — a
+                        // loss — published as a NEGATIVE gross. Both differ from
+                        // "not computed" (`None`), and both keep the row on the
+                        // economics path so it shows its real arithmetic (measured
+                        // costs, negative net) instead of a dash.
+                        //
+                        // A real loss is never rounded up to zero (R8): before this
+                        // split `saturating_sub` made the two cases the SAME row,
+                        // which is why the channel could not be audited.
                         let computed_gross: Option<f64> = match v3_gross_usd {
                             V3GrossOutcome::SpreadZeroEquilibrium => Some(0.0),
+                            V3GrossOutcome::RoundTripLoss { gross_usd, .. } => Some(gross_usd),
                             _ => None,
                         };
                         let mut sc = StrategyCandidate {
@@ -517,6 +580,23 @@ impl DexEngine {
                             sc.opportunity.net_expected_profit_usd = econ.net_profit_usd;
                             sc.opportunity.amount_in_wei = probe_amount.to_string();
                             sc.opportunity.economics = Some(econ);
+                        }
+                        // SPREAD-SIGNED-DELTA-01 (D2): publish the cycle's REAL
+                        // output. Until now it was never exposed — the row carried
+                        // `amount_out_wei: null` with reason
+                        // `cycle_output_not_exposed_by_kernel` while
+                        // `economics.amount_out_usd` was DERIVED as
+                        // `amount_in_usd + gross` (economics.rs:211), exactly equal
+                        // to the input whenever the gross is zero. A derived figure
+                        // that looks measured is how a loss passed as an
+                        // equilibrium. The two verdicts that MEASURED the output
+                        // publish it here, in `token_in` token units — the
+                        // convention `OpportunityCandidate` documents; every other
+                        // verdict leaves it `NaN` (not computed), never a stand-in.
+                        if let Some(out_wei) = measured_cycle_output(&v3_gross_usd, probe_amount) {
+                            let decimals = canonical_token_decimals(token_in_opt) as u8;
+                            sc.candidate.expected_amount_out =
+                                wei_to_token_units(out_wei, decimals);
                         }
                         candidates.push(sc);
                         continue;
@@ -677,17 +757,40 @@ impl DexEngine {
             Err(V3QuoteLegError::ReservesMiss) => return V3GrossOutcome::QuoteUnavailable,
         };
 
-        // Raw profit of the round trip, in token_in units. U256 saturates: a
-        // cycle that does not pay returns zero (computed-and-zero, which
-        // `compute_gross_usd` maps to None per R8) — never a negative gross and
-        // never a venue gap passed off as a return.
-        let profit_units = returned.saturating_sub(probe_amount);
-        if profit_units.is_zero() {
-            // No capturable spread at this size: either the venues agree after
-            // fees and impact, or the cycle loses money. Both are the honest
-            // "no positive profit here".
+        // SPREAD-SIGNED-DELTA-01 (2026-10-04): the SIGNED delta.
+        //
+        // `returned.saturating_sub(probe_amount)` used to collapse TWO different
+        // market states into one verdict: a cycle that LOSES (`returned < probe`)
+        // and a cycle that is EXACTLY flat (`returned == probe`) both produced
+        // zero units, and both were reported as `spread_zero_equilibrium` whose
+        // doc claimed "both legs quoted identical amounts" — a condition this
+        // function never evaluates. MEASURED (SPREAD-ZERO-01, live PG): that
+        // channel is ~26.9k emissions/h behind 2,553 real states, and at the
+        // probed size a majors round trip LOSES by construction (60 bps of
+        // round-trip cost for WETH/DAI vs 1-10 bps of venue gap), so the erased
+        // branch was the majority: an unauditable loss wearing an equilibrium's
+        // label. R8: a real loss stays a loss, a real equilibrium stays zero.
+        if returned == probe_amount {
+            // Exactly the probe back — the ONE true equilibrium. The emitter
+            // publishes it as a MEASURED zero (`Some(0.0)`).
             return V3GrossOutcome::SpreadZeroEquilibrium;
         }
+        if returned < probe_amount {
+            // Short of the probe: a real loss. Measured shortfall in token_in raw
+            // units, priced by the SAME live lookup the profit path uses (no
+            // default, no filler: an unpriced token stays `NoTokenPrice`).
+            let shortfall = probe_amount - returned;
+            return match compute_gross_usd(&shortfall, cfg_opt, Some(token_in)) {
+                Some(v) => V3GrossOutcome::RoundTripLoss {
+                    gross_usd: -v,
+                    returned_wei: returned,
+                },
+                None => V3GrossOutcome::NoTokenPrice,
+            };
+        }
+        // More than the probe back — the profitable path (unchanged), now reached
+        // only when the round trip really paid.
+        let profit_units = returned - probe_amount;
 
         // Denomination: a cycle opens AND closes in token_in, so the profit is
         // token_in raw units. This replaces the hardcoded `/1e18` with the
@@ -2243,6 +2346,47 @@ mod tests {
         }
     }
 
+    /// SPREAD-SIGNED-DELTA-01: an IDENTITY quote — returns exactly what it is
+    /// asked to swap. With it the two forward probes agree AND the chained round
+    /// trip returns EXACTLY the probe, which is what "equilibrium" means in this
+    /// engine.
+    ///
+    /// The constant-quote `OkV3Mock` above does NOT produce that state: it
+    /// answers 1000 wei to a 1e18 probe, i.e. a LOSING round trip that
+    /// `saturating_sub` used to erase into the same zero. That is the defect this
+    /// task fixes, visible in the old fixture itself.
+    struct IdentityV3Mock;
+    impl V3QuoteProvider for IdentityV3Mock {
+        fn quote_exact_input_single(
+            &self,
+            _pool: Address,
+            _token_in: Address,
+            _token_out: Address,
+            amount_in: U256,
+            _fee_bps: u32,
+        ) -> Pin<Box<dyn Future<Output = anyhow::Result<U256>> + Send + '_>> {
+            Box::pin(async move { Ok(amount_in) })
+        }
+    }
+
+    /// SPREAD-SIGNED-DELTA-01: a provider that keeps 30 bps on every leg — a real
+    /// pool fee. The forward probes still agree, but the chained round trip now
+    /// returns `0.997² × probe < probe`: a LOSING cycle, the other half of the
+    /// partition, and the normal state of a majors round trip at the probed size.
+    struct FeeTakingV3Mock;
+    impl V3QuoteProvider for FeeTakingV3Mock {
+        fn quote_exact_input_single(
+            &self,
+            _pool: Address,
+            _token_in: Address,
+            _token_out: Address,
+            amount_in: U256,
+            _fee_bps: u32,
+        ) -> Pin<Box<dyn Future<Output = anyhow::Result<U256>> + Send + '_>> {
+            Box::pin(async move { Ok(amount_in * U256::from(997u64) / U256::from(1_000u64)) })
+        }
+    }
+
     /// Minimal `TradingConfigState` (same shape as triangular_engine's helper)
     /// so the engine-level rejection branch (`cfg_opt.is_some()`) fires.
     fn make_cfg() -> TradingConfigState {
@@ -2472,7 +2616,10 @@ mod tests {
         );
         assert!(
             chained.is_zero(),
-            "a losing round trip has NO gross profit — chained identity returned {chained}"
+            "a losing round trip has no POSITIVE gross profit — the chained \
+             identity returned {chained}; the LOSS itself is measured separately \
+             (SPREAD-SIGNED-DELTA-01: see \
+             losing_round_trip_and_exact_equilibrium_get_different_verdicts)"
         );
         assert!(
             gap > chained,
@@ -2520,9 +2667,15 @@ mod tests {
     // the operator's mandate removes.
 
     /// Fixture: BOTH pools V3 and catalogued at the same tier, the provider
-    /// answering a CONSTANT quote → the two forward probes agree, the chained
+    /// answering an IDENTITY quote → the two forward probes agree, the chained
     /// round trip returns exactly the probe back, and the engine measures the
     /// honest `spread_zero_equilibrium` (cycle gross exactly zero).
+    ///
+    /// SPREAD-SIGNED-DELTA-01: this fixture used `OkV3Mock` (a constant 1000 wei
+    /// against a 1e18 probe) and CLAIMED the round trip returned the probe back.
+    /// It did not: it lost ~1e18 units every time, and only `saturating_sub` made
+    /// that indistinguishable from the equilibrium this doc describes. The
+    /// identity quote makes the fixture produce the state it claims.
     async fn spread_zero_candidate(
         token_in: Address,
         token_out: Address,
@@ -2533,7 +2686,7 @@ mod tests {
         catalog.record_observed(addr(0x11), token_in, token_out, 500);
         let projector = Arc::new(StateProjector::new(
             Arc::new(ReservesCache::new()),
-            Some(Arc::new(OkV3Mock)),
+            Some(Arc::new(IdentityV3Mock)),
             catalog,
         ));
         let engine = DexEngine::new(Arc::new(ReservesCache::new()), None, Some(projector));
@@ -2550,7 +2703,133 @@ mod tests {
         candidates
             .into_iter()
             .find(|c| c.rejection_reason.as_deref() == Some("spread_zero_equilibrium"))
-            .expect("two identical forward quotes must measure a zero cycle gross")
+            .expect("an identity round trip must measure a zero cycle gross")
+    }
+
+    /// SPREAD-SIGNED-DELTA-01: the other half of the partition. Same shape as
+    /// `spread_zero_candidate`, but the provider keeps 30 bps per leg, so the
+    /// forward probes still agree while the chained round trip returns strictly
+    /// less than the probe — a LOSING cycle.
+    async fn losing_round_trip_candidate(
+        token_in: Address,
+        token_out: Address,
+        cfg: &TradingConfigState,
+    ) -> StrategyCandidate {
+        let catalog = Arc::new(V3FeeCatalog::new());
+        catalog.record_observed(addr(0x10), token_in, token_out, 500);
+        catalog.record_observed(addr(0x11), token_in, token_out, 500);
+        let projector = Arc::new(StateProjector::new(
+            Arc::new(ReservesCache::new()),
+            Some(Arc::new(FeeTakingV3Mock)),
+            catalog,
+        ));
+        let engine = DexEngine::new(Arc::new(ReservesCache::new()), None, Some(projector));
+        let pool_a = make_pool(addr(0x10), token_in, token_out, ProtocolType::V3);
+        let pool_b = make_pool(addr(0x11), token_in, token_out, ProtocolType::V3);
+        let intent = make_intent(token_in, token_out);
+        let impact = make_impact(vec![pool_a, pool_b]);
+
+        let candidates = engine
+            .build_from_impacted_pairs(&intent, &impact, Some(cfg))
+            .await
+            .expect("engine must not error");
+
+        candidates
+            .into_iter()
+            .find(|c| c.rejection_reason.as_deref() == Some("spread_negative_round_trip"))
+            .expect("a round trip that returns less must carry the loss verdict")
+    }
+
+    /// SPREAD-SIGNED-DELTA-01 — THE BIDIRECTIONAL PARTITION. A cycle that returns
+    /// EXACTLY the probe and one that returns LESS are different market states:
+    /// they must produce DIFFERENT verdicts, different persisted labels, and gross
+    /// figures with different SIGNS. Before this change `saturating_sub` gave both
+    /// the same zero (`spread_zero_equilibrium`), which is why the biggest channel
+    /// in the system could not be audited — its label claimed an equilibrium for
+    /// what was, in the majority of ticks, a measured loss.
+    #[tokio::test]
+    async fn losing_round_trip_and_exact_equilibrium_get_different_verdicts() {
+        let weth: Address = "0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2"
+            .parse()
+            .expect("canonical WETH address");
+        let usdc: Address = "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48"
+            .parse()
+            .expect("canonical USDC address");
+        let mut cfg = make_cfg();
+        cfg.token_prices_usd = HashMap::from([("USDC".to_string(), 1.0)]);
+
+        let equilibrium = spread_zero_candidate(weth, usdc, &cfg).await;
+        let loss = losing_round_trip_candidate(weth, usdc, &cfg).await;
+
+        // 1) DIFFERENT VERDICTS — the persisted reason stops conflating them.
+        assert_eq!(
+            equilibrium.rejection_reason.as_deref(),
+            Some("spread_zero_equilibrium")
+        );
+        assert_eq!(
+            loss.rejection_reason.as_deref(),
+            Some("spread_negative_round_trip")
+        );
+        assert_ne!(
+            equilibrium.rejection_reason, loss.rejection_reason,
+            "a loss and an equilibrium must not share a verdict"
+        );
+
+        // 2) DIFFERENT MEASURED SIGNS — exactly zero vs strictly negative. R8:
+        //    neither is invented and neither is rounded into the other.
+        assert_eq!(
+            equilibrium.gross_profit_usd,
+            Some(0.0),
+            "the equilibrium is a MEASURED zero"
+        );
+        let loss_gross = loss
+            .gross_profit_usd
+            .expect("the loss is MEASURED, not withheld");
+        assert!(
+            loss_gross < 0.0,
+            "a cycle that returns less than the probe is a loss, got {loss_gross}"
+        );
+
+        // 3) Both stay on the closed-economics path with their own figure.
+        let eq_econ = equilibrium
+            .opportunity
+            .economics
+            .as_ref()
+            .expect("measured equilibrium ⇒ object");
+        let loss_econ = loss
+            .opportunity
+            .economics
+            .as_ref()
+            .expect("measured loss ⇒ object");
+        assert_eq!(eq_econ.computation_status, "computed");
+        assert_eq!(loss_econ.computation_status, "computed");
+        assert_eq!(eq_econ.gross_profit_usd, Some(0.0));
+        assert_eq!(loss_econ.gross_profit_usd, Some(loss_gross));
+
+        // 4) D2: the REAL cycle output is published (computed, not derived). The
+        //    equilibrium returned exactly the 1 WETH probe; the loss returned the
+        //    mock's measured 0.997² of it.
+        const PROBE_UNITS: f64 = 1.0; // 10^18 wei of an 18-decimals token
+        assert!(
+            (equilibrium.candidate.expected_amount_out - PROBE_UNITS).abs() < 1e-9,
+            "equilibrium output must BE the probe, got {}",
+            equilibrium.candidate.expected_amount_out
+        );
+        assert!(
+            !loss.candidate.expected_amount_out.is_nan(),
+            "a MEASURED output must not stay NaN"
+        );
+        let measured_loss_out = 0.997_f64 * 0.997_f64;
+        assert!(
+            (loss.candidate.expected_amount_out - measured_loss_out).abs() < 1e-6,
+            "loss output must be the measured round trip (0.997²), got {}",
+            loss.candidate.expected_amount_out
+        );
+        assert!(
+            loss.candidate.expected_amount_out < PROBE_UNITS,
+            "a losing round trip publishes an output BELOW the probe, got {}",
+            loss.candidate.expected_amount_out
+        );
     }
 
     /// Regression on the production defect: a rejected row whose gross IS
