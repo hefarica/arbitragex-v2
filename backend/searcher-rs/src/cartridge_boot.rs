@@ -2287,101 +2287,248 @@ async fn read_intent_legs(
     intent: &RouteIntent,
     chain_id: u64,
 ) -> Vec<IntentLegRead> {
+    // Camino feliz (el normal): UNA pasada y, si las piernas resueltas comparten
+    // round, se devuelve tal cual — la alineación no cuesta nada cuando la caché
+    // no está rotando.
+    let mut reads = read_intent_legs_pass(runner, redis, intent, chain_id).await;
+    if intent_legs_share_one_round(&reads) {
+        return reads;
+    }
+    let started = std::time::Instant::now();
+    let mut passes: u8 = 1;
+    while passes < INTENT_ROUND_ALIGN_MAX_PASSES
+        && started.elapsed().as_millis() < u128::from(INTENT_ROUND_ALIGN_BUDGET_MS)
+    {
+        let laggards = leg_round_laggard_indices(&reads);
+        if laggards.is_empty() {
+            break;
+        }
+        let rounds: Vec<Option<u64>> = reads.iter().map(leg_round_ts).collect();
+        debug!(
+            event = "cartridge.v4_intent_round_split",
+            chain_id,
+            tx_hash = %intent.tx_hash,
+            pass = passes,
+            laggards = ?laggards,
+            newest_round = ?newest_leg_round(&reads),
+            rounds = ?rounds,
+            "piernas del intent repartidas entre rounds de sync; re-lectura acotada de las rezagadas (R8)"
+        );
+        // El writer refresca la población POOL A POOL (medido: ~3 s para 557
+        // pools), así que un re-read inmediato devolvería el MISMO valor viejo.
+        // Este backoff acotado es el que deja llegar al round nuevo.
+        tokio::time::sleep(std::time::Duration::from_millis(
+            INTENT_ROUND_ALIGN_BACKOFF_MS,
+        ))
+        .await;
+        // Cachés FRESCAS por pasada: el `slot0_cache` de la lectura anterior
+        // serviría el valor del round viejo y la alineación nunca convergería.
+        // Los decimales no dependen del round y no hacen falta entre pasadas.
+        let mut decimal_cache: std::collections::HashMap<String, Option<u8>> =
+            std::collections::HashMap::new();
+        let mut slot0_cache: std::collections::HashMap<String, Option<(String, u128, u64)>> =
+            std::collections::HashMap::new();
+        for index in laggards {
+            // `reads` va alineada 1:1 con `intent.legs` (una lectura por pierna,
+            // en orden) ⇒ el índice del laggard identifica la pierna.
+            let Some(leg) = intent.legs.get(index) else {
+                continue;
+            };
+            reads[index] = read_intent_leg(
+                runner,
+                redis,
+                leg,
+                chain_id,
+                &mut decimal_cache,
+                &mut slot0_cache,
+            )
+            .await;
+        }
+        passes += 1;
+    }
+    reads
+}
+
+/// PROTOCOL-COHERENCE-01 (2026-10-04) — el `ts` del round de sync es la
+/// identidad de coherencia de una ruta atómica, y la caché NO la sostiene
+/// durante la rotación: el writer refresca la población pool a pool, así que
+/// existe una ventana en la que parte de las entradas ya están en el bloque N+1
+/// y el resto sigue en N. MEDIDO en producción (solo-lectura, 2026-10-04):
+/// `arbx:pool_reserves:1:*` (557 entradas) partido en la misma muestra entre
+/// `blk 26116479` (30) y `blk 26116480` (527), y en otra entre `blk ...480`
+/// (384) y `blk ...481` (173); `arbx:v3_slot0:1:*` (318) con `ts` idéntico
+/// dentro de cada round. Una ruta con piernas de DOS rounds mezcla estado de
+/// dos bloques distintos: `quote_path_progress` la rechaza con
+/// `mixed_block_or_domain_in_atomic_route` y TODOS los recibos de la ruta caen
+/// — medido como
+/// `protocol_exact_quotes::hop_Some(1):mixed_block_or_domain_in_atomic_route`
+/// (61 de 269) más `same_snapshot::edges_span_multiple_sync_rounds_or_snapshots`
+/// (37) en el gate v4 (ventana 2026-10-04 04:00).
+///
+/// Por eso la lectura ALINEA el round antes de componer: si las piernas
+/// resueltas quedaron en rounds distintos, re-lee SÓLO las rezagadas (las demás
+/// ya están en el round más nuevo) dentro de un presupuesto wall-clock acotado.
+/// Si el presupuesto se agota sin alinear, devuelve la lectura TAL CUAL y es el
+/// llamador quien declara el contexto NO COMPUTADO (R8/R10) — jamás se
+/// re-etiqueta la identidad para tapar que el grafo mezcla dos bloques.
+const INTENT_ROUND_ALIGN_BUDGET_MS: u64 = 600;
+const INTENT_ROUND_ALIGN_MAX_PASSES: u8 = 4;
+const INTENT_ROUND_ALIGN_BACKOFF_MS: u64 = 150;
+
+/// El `ts` del round de sync de una pierna RESUELTA. `None` en las omitidas: una
+/// pierna omitida no aporta estado al grafo y por tanto no puede desalinearlo.
+fn leg_round_ts(read: &IntentLegRead) -> Option<u64> {
+    match read {
+        IntentLegRead::Ready { body, .. } => Some(match body {
+            IntentLegBody::V2 { sync_ts, .. } | IntentLegBody::V3 { sync_ts, .. } => *sync_ts,
+        }),
+        IntentLegRead::Skip(_) => None,
+    }
+}
+
+/// Round MÁS NUEVO observado entre las piernas resueltas del intent.
+fn newest_leg_round(reads: &[IntentLegRead]) -> Option<u64> {
+    reads.iter().filter_map(leg_round_ts).max()
+}
+
+/// Todas las piernas RESUELTAS comparten UN round ⇔ el grafo es coherente: una
+/// sola frontera de estado, una sola identidad de bloque para la ruta atómica.
+/// 0 o 1 pierna resuelta son coherentes por vacuidad (no hay ruta que mezcle).
+fn intent_legs_share_one_round(reads: &[IntentLegRead]) -> bool {
+    match newest_leg_round(reads) {
+        None => true,
+        Some(newest) => reads.iter().filter_map(leg_round_ts).all(|ts| ts == newest),
+    }
+}
+
+/// Índices de las piernas RESUELTAS que quedaron en un round ANTERIOR al más
+/// nuevo: son exactamente las que hay que re-leer para alinear el grafo.
+fn leg_round_laggard_indices(reads: &[IntentLegRead]) -> Vec<usize> {
+    let Some(newest) = newest_leg_round(reads) else {
+        return Vec::new();
+    };
+    reads
+        .iter()
+        .enumerate()
+        .filter(|(_, read)| leg_round_ts(read).is_some_and(|ts| ts < newest))
+        .map(|(index, _)| index)
+        .collect()
+}
+
+/// Lectura de UNA pierna del intent (el cuerpo que antes vivía inline en el
+/// bucle de `read_intent_legs`, ahora invocable para la pasada completa y para
+/// la re-lectura acotada de una rezagada).
+async fn read_intent_leg(
+    runner: &Arc<CartridgeRunner>,
+    redis: &mut redis::aio::ConnectionManager,
+    leg: &crate::route_intent::RouteIntentLeg,
+    chain_id: u64,
+    decimal_cache: &mut std::collections::HashMap<String, Option<u8>>,
+    slot0_cache: &mut std::collections::HashMap<String, Option<(String, u128, u64)>>,
+) -> IntentLegRead {
+    // Gate de COSTE: una pierna sin pool o degenerada se descarta ANTES de
+    // cualquier I/O (idéntico a la ruta ACTIVE previa).
+    let Some(pool) = leg.pool_hint else {
+        return IntentLegRead::Skip("missing_pool_hint");
+    };
+    let token_in = format!("{:#x}", leg.token_in);
+    let token_out = format!("{:#x}", leg.token_out);
+    if token_in == token_out {
+        // Una pierna degenerada invalidaría TODO el grafo
+        // (enumerate_cycles: invalid_or_duplicate_graph_edge); se omite.
+        return IntentLegRead::Skip("degenerate_self_pair");
+    }
+    // El protocolo decide la FUENTE del dato (V3 → slot0; resto →
+    // reservas). El fee lo deriva la composición desde la misma función
+    // pura, así que aquí sólo se necesita el protocolo.
+    let (protocol, _, _) = v4_edge_protocol_and_fee(leg);
+    let pool_id = format!("{:#x}", pool);
+    // V3-LEG-GRAPH-01 (RESERVES-CACHE-01, 2026-10-01): el protocolo se
+    // computa ANTES del gate de reservas. Un pool V3 NO tiene
+    // getReserves(): su dato vive en `arbx:v3_slot0`, jamás en
+    // `arbx:pool_reserves`. Exigirle la entrada V2 descartaba TODA pierna
+    // V3 con el motivo engañoso `reserves_missing` — 98% de las piernas
+    // descartadas en producción (medido 2026-10-01). El Edge ya soporta V3
+    // (reserve_in_raw: Option) y quote_path lo resuelve con
+    // v3_spot_within_tick (orientación derivada de token_in/token_out).
+    let body = if protocol == "uniswap_v3" {
+        match v4_slot0(redis, chain_id, &pool_id, slot0_cache).await {
+            Some((sp, liq, ts)) => IntentLegBody::V3 {
+                sqrt_price_x96: sp,
+                liquidity: liq,
+                sync_ts: ts,
+            },
+            // Sin slot0 cacheado → skip con motivo PROPIO, no el engañoso.
+            None => return IntentLegRead::Skip("v3_slot0_missing"),
+        }
+    } else {
+        let Some(entry) = runner.read_pool_reserves(&pool_id).await else {
+            return IntentLegRead::Skip("reserves_missing");
+        };
+        // Orientación exacta: token0_addr declara cuál reserva es "in"
+        // para esta pierna. Sin token0_addr o con token0 fuera de la
+        // ruta → OMITIR (R8: sin dual-orientation ni inferencia).
+        let Some(token0) = entry.token0_addr.as_deref() else {
+            return IntentLegRead::Skip("token0_addr_missing");
+        };
+        let pair = if token0 == token_in {
+            (entry.r0.clone(), entry.r1.clone())
+        } else if token0 == token_out {
+            (entry.r1.clone(), entry.r0.clone())
+        } else {
+            return IntentLegRead::Skip("token0_addr_out_of_route");
+        };
+        // Identidad de coherencia del ROUND DE SYNC (PLAN-SUPPORT-WIRING-
+        // 01): V2 y V3 del mismo round comparten ts (verificado en
+        // producción), mientras que blk solo existe en V2 y ts solo se
+        // usaba en V3 — con identidades distintas, quote_path_progress
+        // rechazaba TODA ruta mixta con mixed_block_or_domain. El ts del
+        // round ES la frontera real de coherencia (todas las entradas se
+        // escribieron juntas). JAMÁS se fabrica un hash (R8).
+        IntentLegBody::V2 {
+            reserve_in_raw: pair.0,
+            reserve_out_raw: pair.1,
+            sync_ts: entry.ts,
+        }
+    };
+    let Some(dec_in) = v4_token_decimals(redis, chain_id, &token_in, decimal_cache).await else {
+        return IntentLegRead::Skip("token_in_decimals_missing");
+    };
+    let Some(dec_out) = v4_token_decimals(redis, chain_id, &token_out, decimal_cache).await else {
+        return IntentLegRead::Skip("token_out_decimals_missing");
+    };
+    IntentLegRead::Ready {
+        pool_id,
+        body,
+        decimals: (dec_in, dec_out),
+    }
+}
+
+/// Una pasada completa: una lectura por pierna, en el orden del intent (el
+/// orden fija qué razón de omisión se reporta cuando fallan varios datos).
+async fn read_intent_legs_pass(
+    runner: &Arc<CartridgeRunner>,
+    redis: &mut redis::aio::ConnectionManager,
+    intent: &RouteIntent,
+    chain_id: u64,
+) -> Vec<IntentLegRead> {
     let mut decimal_cache: std::collections::HashMap<String, Option<u8>> =
         std::collections::HashMap::new();
     let mut slot0_cache: std::collections::HashMap<String, Option<(String, u128, u64)>> =
         std::collections::HashMap::new();
     let mut reads: Vec<IntentLegRead> = Vec::with_capacity(intent.legs.len());
     for leg in &intent.legs {
-        // Gate de COSTE: una pierna sin pool o degenerada se descarta ANTES de
-        // cualquier I/O (idéntico a la ruta ACTIVE previa).
-        let Some(pool) = leg.pool_hint else {
-            reads.push(IntentLegRead::Skip("missing_pool_hint"));
-            continue;
-        };
-        let token_in = format!("{:#x}", leg.token_in);
-        let token_out = format!("{:#x}", leg.token_out);
-        if token_in == token_out {
-            // Una pierna degenerada invalidaría TODO el grafo
-            // (enumerate_cycles: invalid_or_duplicate_graph_edge); se omite.
-            reads.push(IntentLegRead::Skip("degenerate_self_pair"));
-            continue;
-        }
-        // El protocolo decide la FUENTE del dato (V3 → slot0; resto →
-        // reservas). El fee lo deriva la composición desde la misma función
-        // pura, así que aquí sólo se necesita el protocolo.
-        let (protocol, _, _) = v4_edge_protocol_and_fee(leg);
-        let pool_id = format!("{:#x}", pool);
-        // V3-LEG-GRAPH-01 (RESERVES-CACHE-01, 2026-10-01): el protocolo se
-        // computa ANTES del gate de reservas. Un pool V3 NO tiene
-        // getReserves(): su dato vive en `arbx:v3_slot0`, jamás en
-        // `arbx:pool_reserves`. Exigirle la entrada V2 descartaba TODA pierna
-        // V3 con el motivo engañoso `reserves_missing` — 98% de las piernas
-        // descartadas en producción (medido 2026-10-01). El Edge ya soporta V3
-        // (reserve_in_raw: Option) y quote_path lo resuelve con
-        // v3_spot_within_tick (orientación derivada de token_in/token_out).
-        let body = if protocol == "uniswap_v3" {
-            match v4_slot0(redis, chain_id, &pool_id, &mut slot0_cache).await {
-                Some((sp, liq, ts)) => IntentLegBody::V3 {
-                    sqrt_price_x96: sp,
-                    liquidity: liq,
-                    sync_ts: ts,
-                },
-                // Sin slot0 cacheado → skip con motivo PROPIO, no el engañoso.
-                None => {
-                    reads.push(IntentLegRead::Skip("v3_slot0_missing"));
-                    continue;
-                }
-            }
-        } else {
-            let Some(entry) = runner.read_pool_reserves(&pool_id).await else {
-                reads.push(IntentLegRead::Skip("reserves_missing"));
-                continue;
-            };
-            // Orientación exacta: token0_addr declara cuál reserva es "in"
-            // para esta pierna. Sin token0_addr o con token0 fuera de la
-            // ruta → OMITIR (R8: sin dual-orientation ni inferencia).
-            let Some(token0) = entry.token0_addr.as_deref() else {
-                reads.push(IntentLegRead::Skip("token0_addr_missing"));
-                continue;
-            };
-            let pair = if token0 == token_in {
-                (entry.r0.clone(), entry.r1.clone())
-            } else if token0 == token_out {
-                (entry.r1.clone(), entry.r0.clone())
-            } else {
-                reads.push(IntentLegRead::Skip("token0_addr_out_of_route"));
-                continue;
-            };
-            // Identidad de coherencia del ROUND DE SYNC (PLAN-SUPPORT-WIRING-
-            // 01): V2 y V3 del mismo round comparten ts (verificado en
-            // producción), mientras que blk solo existe en V2 y ts solo se
-            // usaba en V3 — con identidades distintas, quote_path_progress
-            // rechazaba TODA ruta mixta con mixed_block_or_domain. El ts del
-            // round ES la frontera real de coherencia (todas las entradas se
-            // escribieron juntas). JAMÁS se fabrica un hash (R8).
-            IntentLegBody::V2 {
-                reserve_in_raw: pair.0,
-                reserve_out_raw: pair.1,
-                sync_ts: entry.ts,
-            }
-        };
-        let Some(dec_in) = v4_token_decimals(redis, chain_id, &token_in, &mut decimal_cache).await
-        else {
-            reads.push(IntentLegRead::Skip("token_in_decimals_missing"));
-            continue;
-        };
-        let Some(dec_out) =
-            v4_token_decimals(redis, chain_id, &token_out, &mut decimal_cache).await
-        else {
-            reads.push(IntentLegRead::Skip("token_out_decimals_missing"));
-            continue;
-        };
-        reads.push(IntentLegRead::Ready {
-            pool_id,
-            body,
-            decimals: (dec_in, dec_out),
-        });
+        reads.push(
+            read_intent_leg(
+                runner,
+                redis,
+                leg,
+                chain_id,
+                &mut decimal_cache,
+                &mut slot0_cache,
+            )
+            .await,
+        );
     }
     reads
 }
@@ -2529,6 +2676,39 @@ pub async fn build_and_register_intent_context(
         edges_built: v4_edges.len(),
         legs_skipped: v4_skip_reasons,
     };
+    // PROTOCOL-COHERENCE-01 (2026-10-04): si tras la alineación acotada las
+    // piernas RESUELTAS siguen repartidas entre dos rounds de sync, el grafo
+    // mezcla estado de dos bloques y NINGUNA ruta puede ser atómica: el propio
+    // contrato lo detecta en `quote_path_progress`
+    // (`mixed_block_or_domain_in_atomic_route`) y con él caen TODOS los recibos
+    // de la ruta — medido en el gate v4 como
+    // `protocol_exact_quotes::hop_Some(1):mixed_block_or_domain_in_atomic_route`
+    // (61 de 269) y `same_snapshot::edges_span_multiple_sync_rounds_or_snapshots`
+    // (37), más los cuatro recibos económicos dependientes de la cotización
+    // (65 cada uno). Componer el bundle con esa identidad mixta es AFIRMAR una
+    // coherencia que el dato desmiente: se declara el contexto NO COMPUTADO con
+    // la razón real (R8/R10) en vez de fabricar una identidad única que taparía
+    // la incoherencia. El fallback ya existe y es el mismo de `no_graph_edges`.
+    if !intent_legs_share_one_round(&reads) {
+        let rounds: Vec<Option<u64>> = reads.iter().map(leg_round_ts).collect();
+        debug!(
+            event = "cartridge.v4_intent_round_unaligned",
+            chain_id,
+            tx_hash = %intent.tx_hash,
+            legs_total = intent.legs.len(),
+            edges_built = v4_edges.len(),
+            newest_round = ?newest_leg_round(&reads),
+            laggards = ?leg_round_laggard_indices(&reads),
+            rounds = ?rounds,
+            "piernas del intent en rounds de sync distintos tras la alineación acotada: contexto NO COMPUTADO (R8)"
+        );
+        return IntentContextOutcome::unavailable(
+            census,
+            chain_id,
+            intent,
+            "legs_span_multiple_sync_rounds",
+        );
+    }
     // BASKET-WORKER-01 (2026-10-03): estado on-chain de los baskets ERC-4626
     // RELEVANTES a este intent. La lectura async vive AQUÍ (el llamador) y el
     // bundle sync la recibe ya leída. Gate de coste: sin basket del operador
@@ -5671,6 +5851,108 @@ mod shadow_canonical_tests {
         assert_eq!(c.first_token_in.as_deref(), Some(hex(tok(0xA)).as_str()));
         // Todo edge queda ATADO al snapshot del intent.
         assert!(c.edges.iter().all(|e| e.snapshot_id == CONTEXT_ID));
+    }
+
+    /// PROTOCOL-COHERENCE-01 — la PARTICIÓN que decide si un intent se puede
+    /// evaluar. Con las piernas resueltas en UN round el grafo lleva UNA sola
+    /// identidad de bloque (ruta atómica coherente: el gate puede avanzar); con
+    /// las piernas repartidas entre DOS rounds lleva DOS identidades — lo que
+    /// `quote_path_progress` rechaza con `mixed_block_or_domain_in_atomic_route`,
+    /// la razón medida en el gate v4. Se prueban las DOS direcciones: un test
+    /// que sólo cubriera el caso coherente no probaría la partición.
+    #[test]
+    fn leg_round_alignment_partitions_coherent_from_split_reads() {
+        let intent = cycle_intent();
+
+        // (1) COHERENTE — el caso normal: el writer escribe la población con el
+        //     MISMO `ts`, así que las dos piernas comparten round.
+        let coherent = resolved_reads(&intent);
+        assert!(
+            intent_legs_share_one_round(&coherent),
+            "dos piernas del mismo round son un grafo coherente"
+        );
+        assert!(leg_round_laggard_indices(&coherent).is_empty());
+        assert_eq!(newest_leg_round(&coherent), Some(SYNC_TS));
+        let composed_ok = compose_intent_edges(CHAIN, CONTEXT_ID, &intent, &coherent);
+        assert_eq!(
+            composed_ok.edges[0].block_hash, composed_ok.edges[1].block_hash,
+            "un solo round ⇒ UNA identidad de bloque para la ruta atómica"
+        );
+
+        // (2) REPARTIDO — la rotación cae EN MEDIO de la lectura (medido en
+        //     producción: la población queda partida, p.ej. 30 entradas en el
+        //     bloque N y 527 en N+1). El predicado lo declara y nombra la
+        //     rezagada...
+        let mut split = resolved_reads(&intent);
+        split[1] = IntentLegRead::Ready {
+            pool_id: hex(intent.legs[1].pool_hint.unwrap()),
+            body: IntentLegBody::V2 {
+                reserve_in_raw: U256::exp10(20).to_string(),
+                reserve_out_raw: U256::exp10(21).to_string(),
+                sync_ts: SYNC_TS + 1,
+            },
+            decimals: (6, 18),
+        };
+        assert!(
+            !intent_legs_share_one_round(&split),
+            "piernas de dos rounds NO son un grafo coherente"
+        );
+        assert_eq!(leg_round_laggard_indices(&split), vec![0]);
+        assert_eq!(newest_leg_round(&split), Some(SYNC_TS + 1));
+        // ...y el grafo que se compondría lleva DOS identidades: el bundle no
+        // puede afirmar coherencia sobre esto, por eso el llamador declara el
+        // contexto NO COMPUTADO con `legs_span_multiple_sync_rounds`.
+        let composed_split = compose_intent_edges(CHAIN, CONTEXT_ID, &intent, &split);
+        assert_ne!(
+            composed_split.edges[0].block_hash, composed_split.edges[1].block_hash,
+            "dos rounds ⇒ dos identidades de bloque (lo que el contrato rechaza)"
+        );
+        assert_eq!(
+            composed_split.edges[0].block_hash,
+            format!("sync-ts-{SYNC_TS}")
+        );
+        assert_eq!(
+            composed_split.edges[1].block_hash,
+            format!("sync-ts-{}", SYNC_TS + 1)
+        );
+
+        // (3) Una pierna OMITIDA no tiene round: no puede desalinear el grafo ni
+        //     contarse como rezagada.
+        let with_skip = vec![
+            IntentLegRead::Skip("missing_pool_hint"),
+            IntentLegRead::Ready {
+                pool_id: hex(intent.legs[0].pool_hint.unwrap()),
+                body: IntentLegBody::V2 {
+                    reserve_in_raw: U256::exp10(21).to_string(),
+                    reserve_out_raw: U256::exp10(20).to_string(),
+                    sync_ts: SYNC_TS,
+                },
+                decimals: (18, 6),
+            },
+            IntentLegRead::Skip("reserves_missing"),
+            IntentLegRead::Ready {
+                pool_id: hex(intent.legs[1].pool_hint.unwrap()),
+                body: IntentLegBody::V2 {
+                    reserve_in_raw: U256::exp10(20).to_string(),
+                    reserve_out_raw: U256::exp10(21).to_string(),
+                    sync_ts: SYNC_TS,
+                },
+                decimals: (6, 18),
+            },
+        ];
+        assert!(
+            intent_legs_share_one_round(&with_skip),
+            "sólo cuentan las piernas resueltas: las omitidas no aportan round"
+        );
+        assert!(leg_round_laggard_indices(&with_skip).is_empty());
+
+        // (4) 0 y 1 pierna resuelta: coherencia VACUA (no hay ruta que mezcle).
+        assert!(intent_legs_share_one_round(&[]));
+        assert_eq!(newest_leg_round(&[]), None);
+        assert!(leg_round_laggard_indices(&[]).is_empty());
+        assert!(intent_legs_share_one_round(&[IntentLegRead::Skip(
+            "v3_slot0_missing"
+        )]));
     }
 
     #[test]
