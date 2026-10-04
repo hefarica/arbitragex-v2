@@ -40,6 +40,9 @@
 //! token orientation (intent.token_in == pool.token1) → swap reserves before math.
 
 use crate::amm_math::v2_amount_out;
+use crate::amm_math::{
+    admit_with_quote_evidence, PoolAdmission, QuoteEvidence, V3QuoteError, V3QuoteErrorKind,
+};
 use crate::engines::triangular_engine::ReservesCache;
 use crate::route_intent::RouteIntent;
 use crate::v3_fee_catalog::{FeeResolution, V3FeeCatalog};
@@ -55,6 +58,11 @@ const V2_FEE_BPS: u32 = 30;
 // ---------------------------------------------------------------------------
 // V3QuoteProvider trait
 // ---------------------------------------------------------------------------
+
+/// One probed catalogue entry: the address that was asked and the chain's
+/// verdict for it. Named instead of suppressed because `clippy::type_complexity`
+/// is gated as `-D warnings` in this repo, so the inline form does not build.
+pub type PoolAdmissionResults = Vec<(Address, PoolAdmission)>;
 
 /// Abstraction over the V3 quoter (QuoterV2 on-chain contract).
 ///
@@ -90,6 +98,26 @@ pub trait V3QuoteProvider: Send + Sync {
         reqs: Vec<crate::amm_math::V3QuoteRequest>,
     ) -> Pin<Box<dyn Future<Output = V3BatchQuoteResults> + Send + '_>> {
         let _ = reqs;
+        Box::pin(std::future::ready(Vec::new()))
+    }
+
+    /// CATALOG-ADMISSION-WIRE-01: ask the CHAIN what each catalogue entry
+    /// actually is — `fee()(uint24)` and `liquidity()(uint128)`, batched — and
+    /// return one `PoolAdmission` per probed address.
+    ///
+    /// This is the ONLY producer that feeds `V3FeeCatalog::record_admission`.
+    /// Without it the admission ledger stays empty and `V3FeeCatalog::resolve`
+    /// behaves exactly as it did before the rule existed — which is why the
+    /// rule shipped constructed-but-inert until this hook existed.
+    ///
+    /// Default: no-op (test mocks and future impls probe nothing), so a cold
+    /// start — empty ledger, nothing probed — is byte-identical to the old
+    /// behaviour. A provider that cannot probe must NOT invent a verdict.
+    fn probe_pool_admissions(
+        &self,
+        pools: Vec<(Address, u32)>,
+    ) -> Pin<Box<dyn Future<Output = PoolAdmissionResults> + Send + '_>> {
+        let _ = pools;
         Box::pin(std::future::ready(Vec::new()))
     }
 }
@@ -136,9 +164,18 @@ pub enum ProjectV3Error {
     PairHasNoV3Pools,
     /// No `V3QuoteProvider` wired (non-mainnet / absent at boot).
     ProviderUnavailable,
-    /// Provider present but the quote failed (RPC failure / revert), or the
-    /// amount was zero.
+    /// Provider present but the quote failed for a TRANSPORT reason (failover
+    /// exhausted / timeout / empty result set), or the amount was zero. The
+    /// pool was never actually asked.
     QuoteFailed(String),
+    /// V3-QUOTE-02 (2026-10-03): the QuoterV2 sub-call EXECUTED and the pool
+    /// reverted. This is a market/pool fact, not a transport failure, and it is
+    /// the shape a mis-catalogued fee tier also produces — measured live:
+    /// `IUniswapV3Factory.getPool(WETH, XPR, 100)` returns `0x0` while the
+    /// catalog described pool `0x464b…76b3` at that tier and the same pool's
+    /// real tier is 10000. It gets its OWN label instead of joining the
+    /// `v3_quote_unavailable` bucket that held 46% of all live rejections.
+    PoolRevert(String),
 }
 
 impl ProjectV3Error {
@@ -147,7 +184,10 @@ impl ProjectV3Error {
         match self {
             Self::PoolNotCatalogued => "v3_pool_not_catalogued",
             Self::PairHasNoV3Pools => "v3_pair_no_pools",
+            // Reserved for real PROVIDER (transport) failures + a missing
+            // provider — never a pool-level revert.
             Self::ProviderUnavailable | Self::QuoteFailed(_) => "v3_quote_unavailable",
+            Self::PoolRevert(_) => "v3_pool_revert",
         }
     }
 }
@@ -415,13 +455,93 @@ impl StateProjector {
                 })
             }
             Err(e) => {
+                // V3-QUOTE-02: separate a POOL revert from a TRANSPORT failure
+                // by downcasting the typed error the provider attaches. Both
+                // used to arrive here as an opaque message and both left as
+                // `v3_quote_unavailable`, which is why a catalogue defect and a
+                // rate-limited RPC were indistinguishable in production.
+                let err = match e.downcast_ref::<V3QuoteError>() {
+                    Some(v3) if matches!(v3.kind, V3QuoteErrorKind::PoolCall { .. }) => {
+                        ProjectV3Error::PoolRevert(v3.detail.clone())
+                    }
+                    _ => ProjectV3Error::QuoteFailed(e.to_string()),
+                };
                 debug!(
                     event = "state_projector.v3_quote_failed",
                     pool = %pool.address,
+                    label = err.as_label(),
                     error = %e,
                 );
-                Err(ProjectV3Error::QuoteFailed(e.to_string()))
+                // CATALOG-ADMISSION-WIRE-01 (the hook): the FIRST time this entry
+                // fails with a POOL-level revert, ask the chain WHY — `fee()` +
+                // `liquidity()` in one batched probe — and record the verdict.
+                // The probe is never speculative: it is paid once per entry and
+                // only after the entry has already proven it cannot be quoted,
+                // so healthy pools cost nothing and a cold start changes nothing.
+                // From the NEXT resolution on, `V3FeeCatalog::resolve` excludes
+                // (`NotAV3Pool` / `EmptyPool`, zero RPC) or corrects
+                // (`TierMismatch`) accordingly, and the ~1,800 quote attempts/hour
+                // this entry generated stop happening at all.
+                if matches!(err, ProjectV3Error::PoolRevert(_)) {
+                    // QUOTE-TRUTH-ADMISSION-01: the OBSERVED quote outcome is
+                    // passed into the verdict. Metadata alone would call this
+                    // pool `Admitted` and keep quoting it forever.
+                    self.admit_pool_from_chain(pool.address, fee_pips, QuoteEvidence::PoolRevert)
+                        .await;
+                }
+                Err(err)
             }
+        }
+    }
+
+    /// Probe ONE catalogue entry against the chain and record the verdict in the
+    /// fee catalog (CATALOG-ADMISSION-WIRE-01 + QUOTE-TRUTH-ADMISSION-01).
+    ///
+    /// The metadata probe alone is not enough to admit a pool: a pool can answer
+    /// `fee()` correctly and `liquidity() > 0` and still be unable to produce an
+    /// output (measured: a rebasing token whose pool held 910 wei against a
+    /// reported `liquidity()` of 3.16e16). `quote` carries what the quote path
+    /// actually observed, and `admit_with_quote_evidence` composes both.
+    ///
+    /// Best-effort by design: no provider, a transport failure, a short result
+    /// set or an `Unprobed` verdict all leave the ledger UNTOUCHED. A missing
+    /// answer is never promoted to a judgement (R8) — the entry simply keeps
+    /// behaving as it does today.
+    ///
+    /// The guard makes the probe once-per-pool: a fresh verdict short-circuits,
+    /// so a tick that fails the same pool N times pays one probe, not N.
+    pub(crate) async fn admit_pool_from_chain(
+        &self,
+        pool: Address,
+        catalogue_fee: u32,
+        quote: QuoteEvidence,
+    ) {
+        // Already have a fresh verdict → nothing to learn, nothing to spend.
+        if self.fee_catalog.admission_for(pool).is_some() {
+            return;
+        }
+        let Some(provider) = self.v3_provider.as_ref() else {
+            return;
+        };
+        let probed = provider
+            .probe_pool_admissions(vec![(pool, catalogue_fee)])
+            .await;
+        for (addr, metadata) in probed {
+            let admission = admit_with_quote_evidence(metadata, quote);
+            // Defense in depth: `record_admission` already refuses `Unprobed`,
+            // and this states the contract at the call site. A non-answer stays
+            // a non-answer even when the quote reverted (R8).
+            if matches!(admission, PoolAdmission::Unprobed) {
+                continue;
+            }
+            debug!(
+                event = "state_projector.pool_admission_recorded",
+                pool = %addr,
+                metadata = ?metadata,
+                quote = ?quote,
+                verdict = ?admission,
+            );
+            self.fee_catalog.record_admission(addr, admission);
         }
     }
 
@@ -990,6 +1110,99 @@ mod tests {
         }
     }
 
+    /// V3-QUOTE-02 (2026-10-03): a provider whose QuoterV2 sub-call REVERTED.
+    /// Carries the typed error exactly as the real provider constructs it for
+    /// `aggregate3(allowFailure=true)` reporting `success == false`.
+    struct PoolRevertV3Mock {
+        failure: Option<crate::amm_math::V3CallFailure>,
+    }
+
+    impl V3QuoteProvider for PoolRevertV3Mock {
+        fn quote_exact_input_single(
+            &self,
+            _pool: Address,
+            _token_in: Address,
+            _token_out: Address,
+            _amount_in: U256,
+            _fee_bps: u32,
+        ) -> std::pin::Pin<Box<dyn std::future::Future<Output = anyhow::Result<U256>> + Send + '_>>
+        {
+            let err = V3QuoteError {
+                kind: V3QuoteErrorKind::PoolCall {
+                    failure: self.failure.clone(),
+                },
+                detail: "v3 quote failed (insufficient liquidity / wrong fee tier / pool revert)"
+                    .to_string(),
+            };
+            Box::pin(async move { Err(anyhow::Error::new(err)) })
+        }
+    }
+
+    /// A provider whose RPC never answered (failover exhausted).
+    struct TransportFailV3Mock;
+
+    impl V3QuoteProvider for TransportFailV3Mock {
+        fn quote_exact_input_single(
+            &self,
+            _pool: Address,
+            _token_in: Address,
+            _token_out: Address,
+            _amount_in: U256,
+            _fee_bps: u32,
+        ) -> std::pin::Pin<Box<dyn std::future::Future<Output = anyhow::Result<U256>> + Send + '_>>
+        {
+            let err = V3QuoteError {
+                kind: V3QuoteErrorKind::Transport,
+                detail: "v3 quote rpc failover exhausted: all providers unhealthy".to_string(),
+            };
+            Box::pin(async move { Err(anyhow::Error::new(err)) })
+        }
+    }
+
+    /// The load-bearing assertion of V3-QUOTE-02: a POOL revert and a TRANSPORT
+    /// failure must leave the projector with DIFFERENT labels. Pre-fix both
+    /// produced a bare string error and both surfaced as
+    /// `v3_quote_unavailable` — the bucket that held 46% of the live rejection
+    /// histogram (27,575 of ~70k rows in the measured hour).
+    #[tokio::test]
+    async fn pool_revert_and_transport_failure_get_distinct_labels() {
+        let catalog = Arc::new(V3FeeCatalog::new());
+        catalog.record_observed(addr(0x77), addr(0x1), addr(0x2), 500);
+        let pool = v3_pool(addr(0x77), addr(0x1), addr(0x2), Some(500));
+
+        // (a) The quoter executed and reverted with no payload — the shape the
+        //     measured wrong-tier call produces.
+        let reverting = StateProjector::new(
+            Arc::new(ReservesCache::new()),
+            Some(Arc::new(PoolRevertV3Mock {
+                failure: Some(crate::amm_math::V3CallFailure::RevertNoData),
+            })),
+            catalog.clone(),
+        );
+        let err = reverting
+            .project_v3_quote_checked(&pool, unit(1), true)
+            .await
+            .expect_err("a pool revert must not yield a quote");
+        assert_eq!(err.as_label(), "v3_pool_revert");
+        assert_ne!(
+            err.as_label(),
+            "v3_quote_unavailable",
+            "a pool fact must never be reported as a provider outage"
+        );
+
+        // (b) The provider never answered → the label reserved for transport.
+        let down = StateProjector::new(
+            Arc::new(ReservesCache::new()),
+            Some(Arc::new(TransportFailV3Mock)),
+            catalog,
+        );
+        let err_down = down
+            .project_v3_quote_checked(&pool, unit(1), true)
+            .await
+            .expect_err("a transport failure must not yield a quote");
+        assert_eq!(err_down.as_label(), "v3_quote_unavailable");
+    }
+
     fn v3_pool(
         address: Address,
         token0: Address,
@@ -1498,5 +1711,307 @@ mod tests {
             r1_after, r1_orig,
             "cache r1 must be unchanged after projection"
         );
+    }
+
+    // ── CATALOG-ADMISSION-WIRE-01: the hook fires and the rule bites ─────────
+    //
+    // Anchors from the measurements: 0xcb2286… / the `fee_tier = 30` rows
+    // (Uniswap V2 pairs — `fee()` REVERTS) for NotAV3Pool; 0x6d029c / 0x70b6e8 /
+    // 0xf6a42a (correct tier, `liquidity() == 0`) for EmptyPool; 0x464bd7…
+    // (catalogue 100, chain 10000) for TierMismatch.
+
+    /// A provider whose quote ALWAYS fails with a pool-level revert — the
+    /// measured shape of the failing entries — and whose probe answers a fixed
+    /// verdict, counting what it was asked. The counters exist so "an excluded
+    /// entry spends zero RPC" is an assertion, not a claim.
+    struct AdmissionMock {
+        verdict: PoolAdmission,
+        probes: std::sync::atomic::AtomicUsize,
+        quote_calls: std::sync::atomic::AtomicUsize,
+        quoted_fees: std::sync::Mutex<Vec<u32>>,
+    }
+
+    impl AdmissionMock {
+        fn new(verdict: PoolAdmission) -> Self {
+            Self {
+                verdict,
+                probes: std::sync::atomic::AtomicUsize::new(0),
+                quote_calls: std::sync::atomic::AtomicUsize::new(0),
+                quoted_fees: std::sync::Mutex::new(Vec::new()),
+            }
+        }
+        fn probes(&self) -> usize {
+            self.probes.load(std::sync::atomic::Ordering::SeqCst)
+        }
+        fn quote_calls(&self) -> usize {
+            self.quote_calls.load(std::sync::atomic::Ordering::SeqCst)
+        }
+        fn quoted_fees(&self) -> Vec<u32> {
+            self.quoted_fees
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .clone()
+        }
+    }
+
+    impl V3QuoteProvider for AdmissionMock {
+        fn quote_exact_input_single(
+            &self,
+            _pool: Address,
+            _token_in: Address,
+            _token_out: Address,
+            _amount_in: U256,
+            fee_bps: u32,
+        ) -> std::pin::Pin<Box<dyn std::future::Future<Output = anyhow::Result<U256>> + Send + '_>>
+        {
+            self.quote_calls
+                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            self.quoted_fees
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .push(fee_bps);
+            let err = V3QuoteError {
+                kind: V3QuoteErrorKind::PoolCall {
+                    failure: Some(crate::amm_math::V3CallFailure::RevertNoData),
+                },
+                detail: "v3 quote failed (insufficient liquidity / wrong fee tier / pool revert)"
+                    .to_string(),
+            };
+            Box::pin(async move { Err(anyhow::Error::new(err)) })
+        }
+
+        fn probe_pool_admissions(
+            &self,
+            pools: Vec<(Address, u32)>,
+        ) -> std::pin::Pin<
+            Box<dyn std::future::Future<Output = Vec<(Address, PoolAdmission)>> + Send + '_>,
+        > {
+            self.probes
+                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            let verdict = self.verdict;
+            let out: Vec<(Address, PoolAdmission)> =
+                pools.iter().map(|(addr, _)| (*addr, verdict)).collect();
+            Box::pin(async move { out })
+        }
+    }
+
+    /// COLD START (empty ledger) must be INVISIBLE: a live pool at the catalogue
+    /// tier quotes exactly as it did before the rule existed, and nothing is
+    /// recorded. A rule that changes the default before it has verdicts would be
+    /// a regression dressed as an improvement.
+    #[tokio::test]
+    async fn cold_start_with_empty_ledger_is_unchanged() {
+        let cache = Arc::new(ReservesCache::new());
+        let catalog = Arc::new(V3FeeCatalog::new());
+        catalog.record_observed(addr(0x11), addr(0x1), addr(0x2), 500);
+        let mock = Arc::new(CapturingV3Mock {
+            amount_out: U256::from(7u64),
+            calls: std::sync::Mutex::new(Vec::new()),
+        });
+        let projector = StateProjector::new(cache, Some(mock), catalog.clone());
+        let q = projector
+            .project_v3_quote_checked(
+                &v3_pool(addr(0x11), addr(0x1), addr(0x2), Some(500)),
+                unit(1),
+                true,
+            )
+            .await
+            .expect("cold start must quote exactly as before");
+        assert_eq!(q.amount_out, U256::from(7u64));
+        assert_eq!(q.fee_bps, 500);
+        assert_eq!(
+            catalog.admission_count(),
+            0,
+            "a successful quote must record NO verdict (nothing was probed)"
+        );
+    }
+
+    /// THE hook: the first pool-level revert probes the chain once, records the
+    /// verdict, and the entry is EXCLUDED from then on with ZERO quote RPC.
+    #[tokio::test]
+    async fn pool_revert_probes_once_then_excludes_with_zero_rpc() {
+        let catalog = Arc::new(V3FeeCatalog::new());
+        catalog.record_observed(addr(0xCB), addr(0x1), addr(0x2), 30);
+        let mock = Arc::new(AdmissionMock::new(PoolAdmission::NotAV3Pool));
+        let projector = StateProjector::new(
+            Arc::new(ReservesCache::new()),
+            Some(mock.clone()),
+            catalog.clone(),
+        );
+        let pool = v3_pool(addr(0xCB), addr(0x1), addr(0x2), Some(30));
+
+        let err = projector
+            .project_v3_quote_checked(&pool, unit(1), true)
+            .await
+            .expect_err("the quote reverts");
+        assert_eq!(err.as_label(), "v3_pool_revert");
+        assert_eq!(mock.probes(), 1, "the hook must probe exactly once");
+        assert_eq!(
+            catalog.admission_for(addr(0xCB)),
+            Some(PoolAdmission::NotAV3Pool)
+        );
+
+        let quotes_before = mock.quote_calls();
+        let err2 = projector
+            .project_v3_quote_checked(&pool, unit(1), true)
+            .await
+            .expect_err("the entry is now excluded");
+        assert_eq!(err2.as_label(), "v3_pool_not_catalogued");
+        assert_eq!(
+            mock.quote_calls(),
+            quotes_before,
+            "an excluded entry must spend ZERO quote RPC"
+        );
+        assert_eq!(mock.probes(), 1, "a fresh verdict is not re-probed");
+    }
+
+    /// `EmptyPool` behaves like `NotAV3Pool` for the budget: excluded, zero RPC.
+    #[tokio::test]
+    async fn empty_pool_is_excluded_with_zero_rpc() {
+        let catalog = Arc::new(V3FeeCatalog::new());
+        catalog.record_observed(addr(0x6D), addr(0x1), addr(0x2), 3000);
+        let mock = Arc::new(AdmissionMock::new(PoolAdmission::EmptyPool {
+            onchain_fee: 3000,
+        }));
+        let projector = StateProjector::new(
+            Arc::new(ReservesCache::new()),
+            Some(mock.clone()),
+            catalog.clone(),
+        );
+        let pool = v3_pool(addr(0x6D), addr(0x1), addr(0x2), Some(3000));
+
+        let _ = projector
+            .project_v3_quote_checked(&pool, unit(1), true)
+            .await;
+        let quotes_before = mock.quote_calls();
+        let err = projector
+            .project_v3_quote_checked(&pool, unit(1), true)
+            .await
+            .expect_err("an empty pool cannot quote");
+        assert_eq!(err.as_label(), "v3_pool_not_catalogued");
+        assert_eq!(
+            mock.quote_calls(),
+            quotes_before,
+            "zero RPC after exclusion"
+        );
+    }
+
+    /// `TierMismatch` CORRECTS: after the first failure the quote is attempted at
+    /// the chain-proven tier (the measured 0x464bd7… case, 100 → 10000).
+    #[tokio::test]
+    async fn tier_mismatch_corrects_the_tier_used_afterwards() {
+        let catalog = Arc::new(V3FeeCatalog::new());
+        catalog.record_observed(addr(0x46), addr(0x1), addr(0x2), 100);
+        let mock = Arc::new(AdmissionMock::new(PoolAdmission::TierMismatch {
+            catalogue_fee: 100,
+            onchain_fee: 10000,
+        }));
+        let projector =
+            StateProjector::new(Arc::new(ReservesCache::new()), Some(mock.clone()), catalog);
+        let pool = v3_pool(addr(0x46), addr(0x1), addr(0x2), Some(100));
+
+        let _ = projector
+            .project_v3_quote_checked(&pool, unit(1), true)
+            .await;
+        assert_eq!(
+            mock.quoted_fees(),
+            vec![100],
+            "the first attempt uses the catalogue tier"
+        );
+        let _ = projector
+            .project_v3_quote_checked(&pool, unit(1), true)
+            .await;
+        assert_eq!(
+            mock.quoted_fees(),
+            vec![100, 10000],
+            "after the verdict the quote must use the CHAIN-proven tier"
+        );
+        assert_eq!(mock.probes(), 1, "a proven tier is not re-probed");
+    }
+
+    /// R8: an `Unprobed` verdict is never stored and never condemns — the entry
+    /// keeps behaving exactly as today.
+    #[tokio::test]
+    async fn unprobed_is_never_recorded_and_never_condemns() {
+        let catalog = Arc::new(V3FeeCatalog::new());
+        catalog.record_observed(addr(0x77), addr(0x1), addr(0x2), 3000);
+        let mock = Arc::new(AdmissionMock::new(PoolAdmission::Unprobed));
+        let projector = StateProjector::new(
+            Arc::new(ReservesCache::new()),
+            Some(mock.clone()),
+            catalog.clone(),
+        );
+        let pool = v3_pool(addr(0x77), addr(0x1), addr(0x2), Some(3000));
+
+        let _ = projector
+            .project_v3_quote_checked(&pool, unit(1), true)
+            .await;
+        assert_eq!(
+            catalog.admission_count(),
+            0,
+            "a non-verdict must NOT be stored"
+        );
+        assert_eq!(catalog.admission_for(addr(0x77)), None);
+        let _ = projector
+            .project_v3_quote_checked(&pool, unit(1), true)
+            .await;
+        assert_eq!(
+            mock.quoted_fees(),
+            vec![3000, 3000],
+            "no verdict means the entry keeps quoting at the catalogue tier"
+        );
+        // Honest and explicit: with no verdict to short-circuit on, a repeat
+        // failure asks again — ONE extra probe per failed call, bounded by the
+        // provider's own circuit breaker. Not an unbounded loop, and not hidden.
+        assert_eq!(mock.probes(), 2);
+    }
+
+    /// QUOTE-TRUTH-ADMISSION-01 — CASO DE REFERENCIA con los metadatos EXACTOS
+    /// medidos. Los dos pools "vivos" de AMPL/WETH responden `fee()` correcto y
+    /// `liquidity() > 0` (3000 con 3,16e16 y 500 con 1,19e14) y su
+    /// `quoteExactInputSingle` REVIERTE en los tres tiers. La sonda de t6/t7 los
+    /// habría llamado `Admitted`; con la evidencia de la cotización NO pueden
+    /// quedar admitidos.
+    #[tokio::test]
+    async fn valid_metadata_but_reverting_quote_is_not_admitted() {
+        for (seed, fee) in [(0x86u64, 3000u32), (0xE6u64, 500u32)] {
+            let catalog = Arc::new(V3FeeCatalog::new());
+            catalog.record_observed(addr(seed), addr(0x1), addr(0x2), fee);
+            // La sonda devuelve EXACTAMENTE lo medido: metadatos válidos.
+            let mock = Arc::new(AdmissionMock::new(PoolAdmission::Admitted {
+                onchain_fee: fee,
+            }));
+            let projector = StateProjector::new(
+                Arc::new(ReservesCache::new()),
+                Some(mock.clone()),
+                catalog.clone(),
+            );
+            let pool = v3_pool(addr(seed), addr(0x1), addr(0x2), Some(fee));
+
+            let err = projector
+                .project_v3_quote_checked(&pool, unit(1), true)
+                .await
+                .expect_err("the quote reverts");
+            assert_eq!(err.as_label(), "v3_pool_revert");
+            assert_eq!(
+                catalog.admission_for(addr(seed)),
+                Some(PoolAdmission::QuoteReverted { onchain_fee: fee }),
+                "metadata valid + quote reverted must NEVER be Admitted (tier {fee})"
+            );
+
+            // Y desde aquí: excluido, cero RPC de cotización, una sola sonda.
+            let quotes_before = mock.quote_calls();
+            let err2 = projector
+                .project_v3_quote_checked(&pool, unit(1), true)
+                .await
+                .expect_err("the entry is now excluded");
+            assert_eq!(err2.as_label(), "v3_pool_not_catalogued");
+            assert_eq!(
+                mock.quote_calls(),
+                quotes_before,
+                "zero quote RPC after the behavioural exclusion (tier {fee})"
+            );
+            assert_eq!(mock.probes(), 1, "one probe per entry (tier {fee})");
+        }
     }
 }
