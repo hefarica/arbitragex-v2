@@ -488,6 +488,32 @@ impl SnapshotServices {
             snapshot_id: snapshot_id.clone(),
             plan_hash: plan_hash.clone(),
         };
+        // AGENT-GRAPH-QUOTE-01 (2026-10-04) — la profundidad de una pierna V3
+        // puede venir de su QUOTE DE PROTOCOLO, no sólo del slot0 cacheado. Una
+        // entrada `ExactHopQuote` con `precision = protocol_exact_integer` la
+        // produjo el Quoter/adapter EJECUTANDO el swap contra el estado real del
+        // pool: es evidencia de profundidad MÁS fuerte que el slot0, que es una
+        // hipótesis de liquidez constante DENTRO del tick. Sin este desacople,
+        // forzar la rama `exact` (renunciando al slot0) haría FALLAR estos dos
+        // recibos y el fix cambiaría un bloqueo por dos, rompiendo los 17 y 16
+        // cartuchos que declaran `firm_depth`/`firm_unwind`.
+        //
+        // ALCANCE DE LA EVIDENCIA: el quote prueba profundidad para la pierna
+        // TAL COMO va ruteada (token_in→token_out, importe e identidad del
+        // ledger). No se infiere nada sobre la dirección inversa — eso es lo que
+        // aportaba slot0 y aquí NO se reclama.
+        //
+        // `String`s PROPIOS a propósito: un `BTreeSet<&str>` mantendría prestado
+        // `q.legs` durante todo `derive_support` y rompería cualquier movimiento
+        // posterior de `q`.
+        let protocol_certified_edges: std::collections::BTreeSet<String> = q
+            .legs
+            .iter()
+            .filter(|l| {
+                l.get("quote_method").and_then(|m| m.as_str()) == Some("protocol_exact_integer")
+            })
+            .filter_map(|l| l.get("edge_id").and_then(|v| v.as_str()).map(str::to_owned))
+            .collect();
         let constraints = vec![
             receipt(
                 "closed_token_cycle",
@@ -596,7 +622,8 @@ impl SnapshotServices {
             // ── VERIFIERS-BATCH-02 (2026-10-03): restricciones de liquidez,
             // coherencia de pools y vigencia — computables desde bundle/edges.
             // firm_depth: TODAS las piernas tienen datos de liquidez (V2:
-            // reservas, V3: slot0) — sin profundidad no hay ejecución real.
+            // reservas, V3: slot0 **o su quote de protocolo exacto**) — sin
+            // profundidad no hay ejecución real. AGENT-GRAPH-QUOTE-01.
             receipt(
                 "firm_depth",
                 !edges.is_empty()
@@ -604,7 +631,9 @@ impl SnapshotServices {
                         (e.protocol == "cpmm_v2"
                             && e.reserve_in_raw.is_some()
                             && e.reserve_out_raw.is_some())
-                            || (e.protocol == "uniswap_v3" && e.sqrt_price_x96_raw.is_some())
+                            || (e.protocol == "uniswap_v3"
+                                && (e.sqrt_price_x96_raw.is_some()
+                                    || protocol_certified_edges.contains(&e.edge_id)))
                     }),
                 "leg_missing_liquidity_data",
             ),
@@ -661,7 +690,10 @@ impl SnapshotServices {
             ),
             // firm_unwind: liquidez disponible para deshacer la ruta (igual
             // que firm_depth pero en dirección inversa — las reservas son
-            // simétricas en V2; en V3 slot0 cubre ambas direcciones).
+            // simétricas en V2; en V3 slot0 cubre ambas direcciones). Con un
+            // quote de protocolo exacto la pierna demuestra profundidad EN LA
+            // DIRECCIÓN RUTEADA (AGENT-GRAPH-QUOTE-01); no se reclama la
+            // inversa, que es lo único que aportaba slot0.
             receipt(
                 "firm_unwind",
                 !edges.is_empty()
@@ -669,7 +701,9 @@ impl SnapshotServices {
                         (e.protocol == "cpmm_v2"
                             && e.reserve_in_raw.is_some()
                             && e.reserve_out_raw.is_some())
-                            || (e.protocol == "uniswap_v3" && e.sqrt_price_x96_raw.is_some())
+                            || (e.protocol == "uniswap_v3"
+                                && (e.sqrt_price_x96_raw.is_some()
+                                    || protocol_certified_edges.contains(&e.edge_id)))
                     }),
                 "unwind_leg_missing_liquidity",
             ),
@@ -1496,6 +1530,108 @@ mod plan_support_wiring_tests {
         // → PASS. El FAIL constante cerraba toda la población.
         assert_eq!(by_name("strategy_specific_note_verified").status, "PASS");
         assert_eq!(by_name("native_risk_and_impact_policy").status, "FAIL");
+    }
+
+    /// AGENT-GRAPH-QUOTE-01 — el desacople que evita cambiar un bloqueo por dos.
+    /// Una pierna V3 SIN slot0 pero CON su quote de protocolo exacto satisface
+    /// `firm_depth` y `firm_unwind`, y la certificación (`protocol_exact_quotes`
+    /// / `component_quotes_firm`) llega por el mapa `exact` — la rama que antes
+    /// era INALCANZABLE. La quote va ENCADENADA: el importe de la pierna 1 es la
+    /// SALIDA REAL de la pierna 0, calculada con la misma función del ledger.
+    #[test]
+    fn protocol_exact_leg_decouples_firm_depth_and_firm_unwind_from_slot0() {
+        use crate::agent_graph::ExactHopQuote;
+        let amount = "1000000000000000000";
+        let mut bundle = mixed_bundle();
+        let v2_leg = bundle.edges[0].clone();
+        let hop0 =
+            crate::agent_graph::quote_path(std::slice::from_ref(&v2_leg), amount, &BTreeMap::new())
+                .expect("la pierna V2 cotiza con su aritmética entera");
+        let hop1_amount = hop0[0]["amount_out_raw"].as_str().unwrap().to_owned();
+
+        // Camino del PRODUCTOR: la pierna V3 no reclama la hipótesis within-tick
+        // (sin slot0) y su quote real viene del mapa `exact`.
+        bundle.edges[1].sqrt_price_x96_raw = None;
+        bundle.edges[1].liquidity = None;
+        let v3_edge = bundle.edges[1].clone();
+        bundle.exact_quotes.insert(
+            crate::agent_graph::quote_request_key(&v3_edge, &hop1_amount),
+            ExactHopQuote {
+                edge_id: v3_edge.edge_id.clone(),
+                snapshot_id: v3_edge.snapshot_id.clone(),
+                block_hash: v3_edge.block_hash.clone(),
+                token_in: v3_edge.token_in.clone(),
+                token_out: v3_edge.token_out.clone(),
+                amount_in_raw: hop1_amount.clone(),
+                amount_out_raw: "999000000000000000".into(),
+                quote_id: "qid-quoter-hop1".into(),
+                precision: "protocol_exact_integer".into(),
+                fees_and_impact_embedded: true,
+                adapter_version: v3_edge.adapter_version.clone(),
+                metrics: json!({"status":"COMPUTED","model":"quoter_v2_exact_in"}),
+            },
+        );
+
+        let ctx = json!({"context_id": "ctx-t", "snapshot_id": "snap-t"});
+        let cand = candidate(json!(["0xpoolV2", "0xpoolV3"]), amount);
+        let svc = SnapshotServices::new(Arc::new(bundle), Arc::new(|_, _| true)).unwrap();
+        svc.operators(&ctx, &spec(), &cand)
+            .expect("soporte derivado con la quote de protocolo");
+        let receipts = svc
+            .verify_requirements(&ctx, &spec(), &cand, &[])
+            .expect("recibos derivados");
+        let by_name = |n: &str| {
+            receipts
+                .iter()
+                .find(|r| r.name == n)
+                .unwrap_or_else(|| panic!("falta el recibo {n} exigido por el manifiesto"))
+        };
+        // Certificación por el mapa `exact` (pierna V3 sin slot0).
+        assert_eq!(by_name("protocol_exact_quotes").status, "PASS");
+        assert_eq!(by_name("component_quotes_firm").status, "PASS");
+        // Y los DOS recibos que exigían slot0 en V3 NO se rompen por renunciar a
+        // él: la quote de protocolo es evidencia de profundidad de esa pierna.
+        assert_eq!(by_name("firm_depth").status, "PASS");
+        assert_eq!(by_name("firm_unwind").status, "PASS");
+
+        // DIRECCIÓN NEGATIVA: la MISMA pierna sin slot0 y SIN quote de protocolo
+        // → la ausencia se declara con su razón exacta, jamás un PASS fabricado.
+        let mut bare = mixed_bundle();
+        bare.edges[1].sqrt_price_x96_raw = None;
+        bare.edges[1].liquidity = None;
+        let svc_bare = SnapshotServices::new(Arc::new(bare), Arc::new(|_, _| true)).unwrap();
+        let receipts_bare = svc_bare
+            .verify_requirements(&ctx, &spec(), &cand, &[])
+            .expect("recibos derivados sin quote de protocolo");
+        let bare_by_name = |n: &str| {
+            receipts_bare
+                .iter()
+                .find(|r| r.name == n)
+                .unwrap_or_else(|| panic!("falta el recibo {n} exigido por el manifiesto"))
+        };
+        let depth = bare_by_name("firm_depth");
+        assert_eq!(depth.status, "FAIL");
+        assert_eq!(
+            depth.reason.as_deref().unwrap(),
+            "leg_missing_liquidity_data"
+        );
+        let unwind = bare_by_name("firm_unwind");
+        assert_eq!(unwind.status, "FAIL");
+        assert_eq!(
+            unwind.reason.as_deref().unwrap(),
+            "unwind_leg_missing_liquidity"
+        );
+        let exact_bare = bare_by_name("protocol_exact_quotes");
+        assert_eq!(exact_bare.status, "FAIL");
+        assert!(
+            exact_bare
+                .reason
+                .as_deref()
+                .unwrap()
+                .contains("exact_protocol_quote_required_no_cpmm_fallback"),
+            "razón concreta del productor ausente: {:?}",
+            exact_bare.reason
+        );
     }
 
     /// V3-ROUNDING-02: el redondeo de one_for_zero es PISO (conforme a

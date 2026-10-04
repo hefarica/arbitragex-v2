@@ -355,60 +355,34 @@ pub fn quote_path(
             return Err("broken_token_path".into());
         }
         let key = quote_request_key(e, &current);
-        let (out, qid, method, metrics) = if e.protocol == "cpmm_v2" {
-            let ri = e.reserve_in_raw.as_deref().ok_or("missing_reserve_in")?;
-            let ro = e.reserve_out_raw.as_deref().ok_or("missing_reserve_out")?;
-            let fee = e.fee_units.ok_or("missing_fee_units")?;
-            let den = e.fee_denominator.ok_or("missing_fee_denominator")?;
-            let out = cpmm_exact_in(&current, ri, ro, fee, den)?;
-            let qid = canonical_hash(
-                &json!({"request":key,"reserve_in":ri,"reserve_out":ro,"fee":fee,"denominator":den,"out":out}),
-            );
-            let metrics = cpmm_metrics(&current, ri, ro, fee, den, &out)?;
-            (out, qid, "cpmm_exact_integer".to_owned(), metrics)
-        } else if e.protocol == "uniswap_v3" && e.sqrt_price_x96_raw.is_some() {
-            // V3 within-tick: slot0 cacheado presente → spot quote exacto
-            // dentro del tick (guard conservador de cruce — R8).
-            let sp = e.sqrt_price_x96_raw.as_deref().ok_or("missing_v3_slot0")?;
-            let liq = e.liquidity.ok_or("missing_v3_slot0")?;
-            let fee = e.fee_units.ok_or("missing_fee_units")?;
-            let den = e.fee_denominator.ok_or("missing_fee_denominator")?;
-            let zero_for_one = e.token_in <= e.token_out;
-            let (out, sp_next) = v3_spot_within_tick(sp, liq, &current, fee, den, zero_for_one)?;
-            let qid = canonical_hash(
-                &json!({"request":key,"sqrt_price_x96":sp,"liquidity":liq.to_string(),"fee":fee,"denominator":den,"zero_for_one":zero_for_one,"out":out}), // gitleaks:allow — constantes matematicas de la quote V3 (sqrt/liquidity), no secretos
-            );
-            let metrics = json!({"status":"COMPUTED","model":"v3_within_tick_single_tick",
-                "single_tick_assumption":true,"sqrt_price_x96_next":sp_next,
-                "direction":if zero_for_one {"zero_for_one"} else {"one_for_zero"}});
-            (out, qid, "v3_spot_within_tick".to_owned(), metrics)
-        } else {
-            let q = exact
-                .get(&key)
-                .ok_or("exact_protocol_quote_required_no_cpmm_fallback")?;
-            if q.edge_id != e.edge_id
-                || q.snapshot_id != e.snapshot_id
-                || q.block_hash != e.block_hash
-                || q.token_in != e.token_in
-                || q.token_out != e.token_out
-                || q.amount_in_raw != current
-                || q.adapter_version != e.adapter_version
-            {
-                return Err("quote_context_mismatch".into());
-            }
-            if q.precision != "protocol_exact_integer"
-                || !q.fees_and_impact_embedded
-                || q.quote_id.is_empty()
-            {
-                return Err("quote_is_bound_or_missing_provenance".into());
-            }
-            let out = u256(&q.amount_out_raw)?.to_string();
-            (
-                out,
-                q.quote_id.clone(),
-                q.precision.clone(),
-                q.metrics.clone(),
-            )
+        // AGENT-GRAPH-QUOTE-01 (2026-10-04): la quote de PROTOCOLO gana sobre
+        // toda inferencia LOCAL. Antes esta rama era el `else` FINAL, así que
+        // una pierna V3 con slot0 cacheado JAMÁS la alcanzaba: el mapa
+        // `exact_quotes` sólo podía certificar piernas SIN slot0, de modo que
+        // poblarlo desde el bundle era INERTE (medido:
+        // `protocol_exact_quotes::v3_within_tick_is_hypothesis_not_protocol_verified`
+        // 61/269, ventana 2026-10-04 04:17). La hipótesis within-tick sigue
+        // siendo el RESPALDO cuando no hay quote de protocolo; lo que deja de
+        // hacer es TAPARLA cuando la hay.
+        let protocol_quote = exact
+            .get(&key)
+            .map(|q| validated_protocol_quote(e, &current, q));
+        let (out, qid, method, metrics) = match protocol_quote {
+            Some(Ok(quoted)) => quoted,
+            // Sin quote de protocolo UTILIZABLE: respaldo LOCAL (aritmética
+            // entera exacta CPMM o spot within-tick V3). Si tampoco hay vía
+            // local, el motivo es el EXACTO de la entrada presente que no se
+            // pudo usar (contexto ajeno / procedencia incompleta) y, cuando no
+            // había entrada alguna, la exigencia de un productor de protocolo.
+            other => match local_hop_quote(e, &current, &key) {
+                Ok(quoted) => quoted,
+                Err(local_reason) => {
+                    return Err(match other {
+                        Some(Err(entry_reason)) => entry_reason,
+                        _ => local_reason,
+                    })
+                }
+            },
         };
         ledger.push(json!({"index":i,"edge_id":e.edge_id,"pool":e.pool_id,"chain_id":e.chain_id,"protocol":e.protocol,
             "token_in":e.token_in,"token_out":e.token_out,"amount_in_raw":current,"amount_out_raw":out,
@@ -418,6 +392,79 @@ pub fn quote_path(
         current = out;
     }
     Ok(ledger)
+}
+/// Valida una entrada del mapa `exact` contra el edge y el importe que la piden.
+/// El mapa lo puebla un productor REAL (Quoter/adapter) y la clave ya liga
+/// edge/snapshot/block/tokens/importe/adapter; esta validación repite el
+/// contrato campo a campo para que una entrada con contexto ajeno sea un error
+/// EXPLÍCITO — jamás una quote aceptada por parecido.
+fn validated_protocol_quote(
+    e: &Edge,
+    amount: &str,
+    q: &ExactHopQuote,
+) -> Result<(String, String, String, Value), String> {
+    if q.edge_id != e.edge_id
+        || q.snapshot_id != e.snapshot_id
+        || q.block_hash != e.block_hash
+        || q.token_in != e.token_in
+        || q.token_out != e.token_out
+        || q.amount_in_raw != amount
+        || q.adapter_version != e.adapter_version
+    {
+        return Err("quote_context_mismatch".into());
+    }
+    if q.precision != "protocol_exact_integer"
+        || !q.fees_and_impact_embedded
+        || q.quote_id.is_empty()
+    {
+        return Err("quote_is_bound_or_missing_provenance".into());
+    }
+    Ok((
+        u256(&q.amount_out_raw)?.to_string(),
+        q.quote_id.clone(),
+        q.precision.clone(),
+        q.metrics.clone(),
+    ))
+}
+/// Cotización LOCAL de una pierna — el RESPALDO cuando el protocolo no cotiza:
+/// aritmética entera exacta para CPMM (reservas + fee del intent) y spot
+/// within-tick para V3 con slot0 cacheado. Una pierna sin ninguna de las dos
+/// vías NO se aproxima: la ruta falla con la razón que exige un productor.
+fn local_hop_quote(
+    e: &Edge,
+    current: &str,
+    key: &str,
+) -> Result<(String, String, String, Value), String> {
+    if e.protocol == "cpmm_v2" {
+        let ri = e.reserve_in_raw.as_deref().ok_or("missing_reserve_in")?;
+        let ro = e.reserve_out_raw.as_deref().ok_or("missing_reserve_out")?;
+        let fee = e.fee_units.ok_or("missing_fee_units")?;
+        let den = e.fee_denominator.ok_or("missing_fee_denominator")?;
+        let out = cpmm_exact_in(current, ri, ro, fee, den)?;
+        let qid = canonical_hash(
+            &json!({"request":key,"reserve_in":ri,"reserve_out":ro,"fee":fee,"denominator":den,"out":out}),
+        );
+        let metrics = cpmm_metrics(current, ri, ro, fee, den, &out)?;
+        Ok((out, qid, "cpmm_exact_integer".to_owned(), metrics))
+    } else if e.protocol == "uniswap_v3" && e.sqrt_price_x96_raw.is_some() {
+        // V3 within-tick: slot0 cacheado presente → spot quote exacto dentro
+        // del tick (guard conservador de cruce — R8).
+        let sp = e.sqrt_price_x96_raw.as_deref().ok_or("missing_v3_slot0")?;
+        let liq = e.liquidity.ok_or("missing_v3_slot0")?;
+        let fee = e.fee_units.ok_or("missing_fee_units")?;
+        let den = e.fee_denominator.ok_or("missing_fee_denominator")?;
+        let zero_for_one = e.token_in <= e.token_out;
+        let (out, sp_next) = v3_spot_within_tick(sp, liq, current, fee, den, zero_for_one)?;
+        let qid = canonical_hash(
+            &json!({"request":key,"sqrt_price_x96":sp,"liquidity":liq.to_string(),"fee":fee,"denominator":den,"zero_for_one":zero_for_one,"out":out}), // gitleaks:allow — constantes matematicas de la quote V3 (sqrt/liquidity), no secretos
+        );
+        let metrics = json!({"status":"COMPUTED","model":"v3_within_tick_single_tick",
+            "single_tick_assumption":true,"sqrt_price_x96_next":sp_next,
+            "direction":if zero_for_one {"zero_for_one"} else {"one_for_zero"}});
+        Ok((out, qid, "v3_spot_within_tick".to_owned(), metrics))
+    } else {
+        Err("exact_protocol_quote_required_no_cpmm_fallback".into())
+    }
 }
 #[cfg(test)]
 mod tests {
@@ -603,6 +650,89 @@ mod tests {
         let legs2 =
             quote_path(std::slice::from_ref(&edge), "10000000000", &BTreeMap::new()).unwrap();
         assert_eq!(legs[0]["amount_out_raw"], legs2[0]["amount_out_raw"]);
+    }
+    /// AGENT-GRAPH-QUOTE-01 — la rama del mapa `exact` era el `else` FINAL: una
+    /// pierna V3 CON slot0 cacheado no la alcanzaba NUNCA, así que poblar
+    /// `exact_quotes` era INERTE. Este test demuestra que ahora es ALCANZABLE y
+    /// que GANA, y que la clave es AMOUNT-BOUND (la quote de una pierna sólo
+    /// vale para el importe exacto que entra en ESA pierna: un productor tiene
+    /// que cotizar la CADENA, no una quote suelta).
+    #[test]
+    fn protocol_exact_quote_wins_over_the_within_tick_hypothesis() {
+        let v3_edge = Edge {
+            edge_id: "0xv3pool".into(),
+            pool_id: "0xv3pool".into(),
+            chain_id: 1,
+            token_in: "0xaaaa".into(),
+            token_out: "0xbbbb".into(),
+            protocol: "uniswap_v3".into(),
+            snapshot_id: "intent-snap".into(),
+            block_hash: "blk-1".into(),
+            reserve_in_raw: None,
+            reserve_out_raw: None,
+            fee_units: Some(3_000),
+            fee_denominator: Some(1_000_000),
+            token_in_decimals: 18,
+            token_out_decimals: 18,
+            adapter_version: "reserves_cache_v1".into(),
+            sqrt_price_x96_raw: Some("84480035704410099036497320888".into()),
+            liquidity: Some(26_328_339_605_015_878),
+        };
+        let amount = "10000000000";
+        let exact_hop = |e: &Edge, amount: &str, out: &str, qid: &str| ExactHopQuote {
+            edge_id: e.edge_id.clone(),
+            snapshot_id: e.snapshot_id.clone(),
+            block_hash: e.block_hash.clone(),
+            token_in: e.token_in.clone(),
+            token_out: e.token_out.clone(),
+            amount_in_raw: amount.to_owned(),
+            amount_out_raw: out.to_owned(),
+            quote_id: qid.to_owned(),
+            precision: "protocol_exact_integer".into(),
+            fees_and_impact_embedded: true,
+            adapter_version: e.adapter_version.clone(),
+            metrics: json!({"status":"COMPUTED","model":"quoter_v2_exact_in"}),
+        };
+
+        // (1) SIN quote de protocolo el respaldo within-tick sigue intacto (lo
+        //     que hoy funciona no se rompe) — y NO certifica.
+        let legs = quote_path(std::slice::from_ref(&v3_edge), amount, &BTreeMap::new()).unwrap();
+        assert_eq!(legs[0]["quote_method"], "v3_spot_within_tick");
+
+        // (2) CON quote de protocolo para ESTE edge e importe: la rama `exact`
+        //     es ALCANZABLE pese a tener slot0… y gana.
+        let mut exact = BTreeMap::new();
+        exact.insert(
+            quote_request_key(&v3_edge, amount),
+            exact_hop(&v3_edge, amount, "9900000000", "qid-quoter-1"),
+        );
+        let legs = quote_path(std::slice::from_ref(&v3_edge), amount, &exact).unwrap();
+        assert_eq!(
+            legs[0]["quote_method"], "protocol_exact_integer",
+            "la quote de protocolo debe ganar sobre la hipótesis within-tick"
+        );
+        assert_eq!(legs[0]["amount_out_raw"], "9900000000");
+        assert_eq!(legs[0]["quote_id"], "qid-quoter-1");
+
+        // (3) AMOUNT-BOUND: la MISMA quote no sirve para otro importe — la clave
+        //     liga el importe exacto, así que la pierna cae al respaldo local.
+        let legs = quote_path(std::slice::from_ref(&v3_edge), "10000000001", &exact).unwrap();
+        assert_eq!(legs[0]["quote_method"], "v3_spot_within_tick");
+
+        // (4) Una entrada PRESENTE con contexto ajeno no se ignora en silencio:
+        //     en una pierna SIN vía local el motivo es el EXACTO del contrato.
+        let no_local = Edge {
+            protocol: "curve".into(),
+            sqrt_price_x96_raw: None,
+            liquidity: None,
+            ..v3_edge.clone()
+        };
+        let mut wrong = BTreeMap::new();
+        let mut hop = exact_hop(&no_local, amount, "1", "qid-x");
+        hop.edge_id = "0xajeno".into();
+        wrong.insert(quote_request_key(&no_local, amount), hop);
+        let err = quote_path(std::slice::from_ref(&no_local), amount, &wrong).unwrap_err();
+        assert!(err.contains("quote_context_mismatch"), "{err}");
     }
     #[test]
     fn quote_path_v3_huge_amount_hits_tick_cross_guard() {
