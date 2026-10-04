@@ -233,6 +233,33 @@ pub static V3_FEE_CATALOG_POOLS: Lazy<IntGauge> = Lazy::new(|| {
     g
 });
 
+/// V3-QUOTE-02 (2026-10-03): fee-tier CONTRADICTIONS in the current catalog —
+/// the same pool address described by two `arbx:pool_index_v3` sources with two
+/// different fee tiers.
+///
+/// Measured production state before the fix: 44 of 704 catalogued pools held a
+/// contradictory tier, and all 44 differed by exactly ×100 (1↔100, 5↔500,
+/// 30↔3000) — the signature of the `fee_bps` field being re-interpreted from
+/// basis points to raw pips without a unit migration for pre-existing keys.
+/// A tier 100× too small makes QuoterV2 derive a pool that does not exist
+/// (`IUniswapV3Factory.getPool(t0,t1,fee)` measured → `0x0000…0000`), the
+/// sub-call reverts, and the candidate used to die as `v3_quote_unavailable`.
+///
+/// A gauge, not a counter: it is the number of contradictions visible in the
+/// CURRENT catalog, so it must fall back to zero when the stale keys are
+/// repaired at the source. Non-zero is an operator action item, not noise to be
+/// silenced — the ambiguity is resolved deterministically (canonical key wins)
+/// but it is never hidden.
+pub static V3_FEE_CATALOG_CONFLICTS: Lazy<IntGauge> = Lazy::new(|| {
+    let g = IntGauge::new(
+        "arbx_v3_fee_catalog_conflicted_pools",
+        "Pools whose tier came from two contradictory arbx:pool_index_v3 sources",
+    )
+    .expect("metric");
+    REGISTRY.register(Box::new(g.clone())).expect("register");
+    g
+});
+
 // ---------------------------------------------------------------------------
 // simulation_failed_total{chain_id, strategy, reason}
 // ---------------------------------------------------------------------------

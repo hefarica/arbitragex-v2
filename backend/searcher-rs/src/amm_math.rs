@@ -341,12 +341,382 @@ pub struct V3QuoteRequest {
 
 /// Per-pool V3 quote result. On per-pool failure (e.g. insufficient liquidity,
 /// wrong fee tier, pool revert), `success=false` and `amount_out=U256::zero()`.
+///
+/// `failure` (V3-QUOTE-02, 2026-10-03) carries the DECODED classification of
+/// the Multicall3 `returnData` for that sub-call. Before this field existed the
+/// decoder threw the payload away on `success == false` and kept a single
+/// boolean, so every distinct physical cause — a tier the factory has no pool
+/// for, a zero-liquidity pool, an out-of-gas sub-call, a `Panic` — became the
+/// same string, and every one of those strings collapsed again downstream into
+/// the single bucket `v3_quote_unavailable` (46% of the live rejection
+/// histogram, measured 2026-10-03). The payload is the only honest witness of
+/// WHY a quote failed; discarding it is what made the original diagnosis cost a
+/// forensics expedition instead of a grep.
 #[derive(Clone, Debug)]
 pub struct V3QuoteResult {
     pub pool_addr: Address,
     pub amount_out: U256,
     pub success: bool,
+    /// `None` on success. On failure: the decoded class of the revert payload.
+    pub failure: Option<V3CallFailure>,
 }
+
+/// Decoded class of ONE failed QuoterV2 sub-call, from the `returnData` that
+/// Multicall3 `aggregate3(allowFailure=true)` hands back (R8: the payload is
+/// kept, never invented and never flattened into a boolean).
+///
+/// Every variant is *observable* — nothing here is inferred from a label the
+/// producer chose. The decoding rules are the ABI-standard revert shapes.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum V3CallFailure {
+    /// `aggregate3` reported success but the payload is shorter than the 32
+    /// bytes an `amountOut` needs — the call target produced no quote payload.
+    ShortReturnData,
+    /// `success == false` with an EMPTY revert payload: a bare `revert()` or a
+    /// sub-call that ran out of gas. Carries no discriminator — reported as-is
+    /// instead of being guessed into "wrong fee tier".
+    RevertNoData,
+    /// `success == false` with a standard `Error(string)` payload
+    /// (selector `0x08c379a0`).
+    RevertReason(String),
+    /// `success == false` with a standard `Panic(uint256)` payload
+    /// (selector `0x4e487b71`).
+    Panic(u64),
+    /// `success == false` with a payload that is neither standard shape. Kept
+    /// as truncated `0x…` hex so the raw witness reaches the logs.
+    RevertData(String),
+}
+
+/// `Error(string)` revert selector.
+const V3_ERROR_SELECTOR: [u8; 4] = [0x08, 0xc3, 0x79, 0xa0];
+/// `Panic(uint256)` revert selector.
+const V3_PANIC_SELECTOR: [u8; 4] = [0x4e, 0x48, 0x7b, 0x71];
+/// Hex bytes kept when a revert payload matches no standard shape.
+const V3_RAW_REVERT_HEX_BYTES: usize = 32;
+
+/// Classify one Multicall3 sub-call result. Pure (no RPC, no I/O), so the
+/// decoding contract is unit-testable in isolation.
+///
+/// Returns `None` only for a *successful* call that DID carry an `amountOut`.
+pub fn classify_v3_call_failure(success: bool, return_data: &[u8]) -> Option<V3CallFailure> {
+    if success {
+        return (return_data.len() < 32).then_some(V3CallFailure::ShortReturnData);
+    }
+    if return_data.is_empty() {
+        return Some(V3CallFailure::RevertNoData);
+    }
+    if return_data.len() >= 4 && return_data[0..4] == V3_ERROR_SELECTOR {
+        if let Some(msg) = decode_abi_string(&return_data[4..]) {
+            return Some(V3CallFailure::RevertReason(msg));
+        }
+    }
+    if return_data.len() >= 36 && return_data[0..4] == V3_PANIC_SELECTOR {
+        let code = U256::from_big_endian(&return_data[4..36]).low_u64();
+        return Some(V3CallFailure::Panic(code));
+    }
+    Some(V3CallFailure::RevertData(hex_prefix(
+        return_data,
+        V3_RAW_REVERT_HEX_BYTES,
+    )))
+}
+
+/// Decode the argument block of `Error(string)` / any `(string)` ABI payload:
+/// `[offset(32)][len(32) @offset][utf8 bytes]`. Returns `None` on any malformed
+/// length — a malformed payload is reported as raw data, never as a fabricated
+/// reason.
+///
+/// The revert payload is UNTRUSTED input (any contract can revert with
+/// arbitrary bytes), so every word is bounds-checked before it indexes the
+/// buffer: `U256::as_usize` silently truncates above `usize::MAX` (and trips a
+/// debug assert), which on a crafted payload would either panic the searcher or
+/// read a bogus offset and report a FABRICATED revert reason — both forbidden.
+fn decode_abi_string(payload: &[u8]) -> Option<String> {
+    if payload.len() < 64 {
+        return None;
+    }
+    let offset = u256_to_usize(U256::from_big_endian(&payload[0..32]))?;
+    let len_at = offset.checked_add(32)?;
+    if payload.len() < len_at {
+        return None;
+    }
+    let len = u256_to_usize(U256::from_big_endian(&payload[offset..len_at]))?;
+    let end = len_at.checked_add(len)?;
+    if payload.len() < end {
+        return None;
+    }
+    std::str::from_utf8(&payload[len_at..end])
+        .ok()
+        .map(str::to_string)
+}
+
+/// `U256` → `usize`, or `None` when the value does not fit. Never truncates.
+fn u256_to_usize(v: U256) -> Option<usize> {
+    if v > U256::from(usize::MAX as u128) {
+        return None;
+    }
+    Some(v.as_usize())
+}
+
+/// `0x`-prefixed hex of at most `max_bytes` bytes.
+fn hex_prefix(data: &[u8], max_bytes: usize) -> String {
+    let take = data.len().min(max_bytes);
+    let mut s = String::with_capacity(2 + take * 2);
+    s.push_str("0x");
+    for b in &data[..take] {
+        s.push_str(&format!("{b:02x}"));
+    }
+    s
+}
+
+// ---------------------------------------------------------------------------
+// CATALOG-HYGIENE-01 (2026-10-03): pool-identity probes
+// ---------------------------------------------------------------------------
+
+/// The read-only `eth_call` probes that establish whether a catalogue address
+/// is really a Uniswap V3 pool, and at which tier.
+///
+/// MEASURED MOTIVATION (2026-10-03, RPC público, read-only): 539 active rows of
+/// `pools` carry `fee_tier = 30`, a value the Uniswap V3 factory has no tier
+/// for. Probing a 9-pool sample of them: `fee()` REVERTS 9/9 while
+/// `getReserves()(uint112,uint112,uint32)` — the Uniswap V2 pair ABI — ANSWERS
+/// 9/9, and both addresses the captain flagged carry bytecode (~18 KB and
+/// ~22 KB). They are Uniswap V2 pairs that leaked into the V3 index, carrying
+/// the V2 default fee (30 bps — the very `V2_FEE_BPS` default this codebase
+/// uses). The ABI RESPONSE is the hard criterion: it does not depend on any
+/// unit convention, which is exactly why the tier VALUE alone can never
+/// disqualify an entry.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PoolProbe {
+    /// `fee()(uint24)` — answers only on a Uniswap V3 pool.
+    Fee,
+    /// `liquidity()(uint128)` — answers only on a Uniswap V3 pool, and tells
+    /// whether the pool has anything to quote.
+    Liquidity,
+}
+
+/// Answer to ONE probe.
+///
+/// `Reverted` (the chain said no) and `Unavailable` (we never got an answer —
+/// not probed, or the provider failed) are DIFFERENT and must never be
+/// conflated: concluding "not a pool" out of a missing answer is precisely the
+/// fabrication R8 forbids.
+#[derive(Clone, Copy, Debug)]
+pub enum ProbeAnswer<'a> {
+    /// The call returned data. Decoding is the caller's job; an answer whose
+    /// payload does not decode is NOT the same as a revert (see the classifier).
+    Answered(&'a [u8]),
+    /// The call executed and reverted.
+    Reverted,
+    /// No answer. Never a verdict.
+    Unavailable,
+}
+
+/// Verdict for ONE catalogue entry, from its on-chain ABI responses.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PoolAdmission {
+    /// `fee()` answered a tier and `liquidity()` answered > 0.
+    Admitted { onchain_fee: u32 },
+    /// `fee()` REVERTED, or answered a payload that is not a `uint24`: the
+    /// address does not implement the Uniswap V3 pool ABI. Unit-independent —
+    /// the measured `fee_tier = 30` rows are Uniswap V2 pairs.
+    NotAV3Pool,
+    /// `fee()` answered and DISAGREES with the catalogue tier. The chain is the
+    /// authority: the quote must use `onchain_fee`.
+    TierMismatch {
+        catalogue_fee: u32,
+        onchain_fee: u32,
+    },
+    /// `fee()` agreed but `liquidity()` answered exactly 0: a legitimate pool
+    /// with nothing to quote right now. A market fact, not a defect.
+    EmptyPool { onchain_fee: u32 },
+    /// QUOTE-TRUTH-ADMISSION-01: the pool's METADATA is valid — `fee()` matches
+    /// the catalogue AND `liquidity()` is > 0 — and its QUOTE still reverted.
+    ///
+    /// Neither the tier nor the reported depth explains that, so the observed
+    /// BEHAVIOUR wins. Measured 2026-10-03 on the AMPL/WETH V3 pools: `fee()` =
+    /// 3000 (matching), `liquidity()` = 3.16e16, and the pool's real balance of
+    /// the output token was **910 wei**, so `quoteExactInputSingle` reverted
+    /// with `TF` (Uniswap V3's `TransferHelper.safeTransfer` failure).
+    ///
+    /// This is the general, token-agnostic detector for rebasing /
+    /// fee-on-transfer desync: it names no token, no symbol and no address —
+    /// the criterion is that the quote reverted while the metadata said the
+    /// pool was fine.
+    QuoteReverted { onchain_fee: u32 },
+    /// No usable answer (not probed, transport failure, or an undecodable
+    /// liquidity payload). NEVER a verdict — an entry stays as it was.
+    Unprobed,
+}
+
+/// What the QUOTE path observed about one entry, independently of its metadata
+/// (QUOTE-TRUTH-ADMISSION-01). Metadata can be right and the pool still unable
+/// to produce an output; only the quote can see that.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum QuoteEvidence {
+    /// No pool-level revert was observed on this entry.
+    Clean,
+    /// The quote path observed a POOL-level revert on this exact entry — an
+    /// observed fact, carried from the quote itself, never inferred.
+    PoolRevert,
+}
+
+/// Compose the metadata verdict with what the quote ACTUALLY did.
+///
+/// Precedence follows explanatory power, not convenience:
+///   * `TierMismatch` — a wrong tier explains the revert AND is correctable:
+///     correct it, never condemn the pool.
+///   * `NotAV3Pool` / `EmptyPool` — stronger, unit-independent evidence: they
+///     already imply exclusion on their own.
+///   * `Admitted` + `PoolRevert` — metadata valid and the pool still cannot
+///     quote: `QuoteReverted`. Neither a wrong tier nor missing depth explains
+///     it, so behaviour wins over metadata.
+///   * `Unprobed` — no answer is not evidence; the entry is left exactly as it
+///     was (R8), EVEN with an observed revert.
+pub fn admit_with_quote_evidence(metadata: PoolAdmission, quote: QuoteEvidence) -> PoolAdmission {
+    match (metadata, quote) {
+        (PoolAdmission::Unprobed, _) => PoolAdmission::Unprobed,
+        (PoolAdmission::NotAV3Pool, _) => PoolAdmission::NotAV3Pool,
+        (PoolAdmission::EmptyPool { onchain_fee }, _) => PoolAdmission::EmptyPool { onchain_fee },
+        (PoolAdmission::TierMismatch { .. }, _) => metadata,
+        (PoolAdmission::QuoteReverted { .. }, _) => metadata,
+        (PoolAdmission::Admitted { onchain_fee }, QuoteEvidence::PoolRevert) => {
+            PoolAdmission::QuoteReverted { onchain_fee }
+        }
+        (PoolAdmission::Admitted { .. }, QuoteEvidence::Clean) => metadata,
+    }
+}
+
+/// `fee()` / `liquidity()` selectors derived from their signature, matching the
+/// crate's established pattern (`pool_sync_worker` derives the same two the same
+/// way) — a static test pins both against their keccak values.
+fn probe_selector(probe: PoolProbe) -> [u8; 4] {
+    let sig = match probe {
+        PoolProbe::Fee => "fee()",
+        PoolProbe::Liquidity => "liquidity()",
+    };
+    let digest = ethers::utils::keccak256(sig.as_bytes());
+    [digest[0], digest[1], digest[2], digest[3]]
+}
+
+/// Calldata for one pool-identity probe: the selector alone (both functions
+/// take no arguments).
+pub fn encode_pool_probe_calldata(probe: PoolProbe) -> Bytes {
+    Bytes::from(probe_selector(probe).to_vec())
+}
+
+/// Decode a `fee()(uint24)` return payload. `None` when the payload cannot be
+/// read as a `uint24` — the caller then reports "does not implement the V3 pool
+/// ABI", never a made-up tier.
+pub fn decode_pool_fee(return_data: &[u8]) -> Option<u32> {
+    if return_data.len() < 32 {
+        return None;
+    }
+    let raw = U256::from_big_endian(&return_data[0..32]);
+    if raw > U256::from(0x00FF_FFFFu32) {
+        return None;
+    }
+    Some(raw.as_u32())
+}
+
+/// Decode a `liquidity()(uint128)` return payload. `None` when short.
+pub fn decode_pool_liquidity(return_data: &[u8]) -> Option<U256> {
+    if return_data.len() < 32 {
+        return None;
+    }
+    Some(U256::from_big_endian(&return_data[0..32]))
+}
+
+/// Classify a catalogue entry from its two ABI answers. Pure: no RPC, no I/O,
+/// no clock — so the admission contract is unit-testable in isolation and every
+/// branch is anchored to an observable response.
+///
+/// Order of precedence matters: a PROVEN tier mismatch outranks a depth reading
+/// (the tier is part of the call identity, so a wrong tier makes every later
+/// observation meaningless), and an absent answer never outranks anything.
+pub fn classify_pool_admission(
+    catalogue_fee: u32,
+    fee: ProbeAnswer<'_>,
+    liquidity: ProbeAnswer<'_>,
+) -> PoolAdmission {
+    let onchain_fee = match fee {
+        // The chain refused to answer `fee()`: not a V3 pool.
+        ProbeAnswer::Reverted => return PoolAdmission::NotAV3Pool,
+        // An answer we cannot read as a uint24 is not a tier.
+        ProbeAnswer::Answered(d) => match decode_pool_fee(d) {
+            Some(f) => f,
+            None => return PoolAdmission::NotAV3Pool,
+        },
+        ProbeAnswer::Unavailable => return PoolAdmission::Unprobed,
+    };
+
+    if onchain_fee != catalogue_fee {
+        return PoolAdmission::TierMismatch {
+            catalogue_fee,
+            onchain_fee,
+        };
+    }
+
+    match liquidity {
+        ProbeAnswer::Answered(d) => match decode_pool_liquidity(d) {
+            Some(v) if v.is_zero() => PoolAdmission::EmptyPool { onchain_fee },
+            Some(_) => PoolAdmission::Admitted { onchain_fee },
+            // A payload we cannot read says nothing about depth: inconclusive
+            // rather than condemned.
+            None => PoolAdmission::Unprobed,
+        },
+        // `fee()` answered but `liquidity()` did not: inconclusive. Never
+        // promoted to NotAV3Pool on a missing answer.
+        ProbeAnswer::Reverted | ProbeAnswer::Unavailable => PoolAdmission::Unprobed,
+    }
+}
+
+/// Which KIND of failure a `V3QuoteProvider` saw. Carried across the provider
+/// trait boundary inside an `anyhow::Error` (the trait's error type is
+/// unchanged for every existing impl), so the projector can tell a REVERT from
+/// a TRANSPORT failure instead of flattening both into one rejection label.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum V3QuoteErrorKind {
+    /// No answer from the provider at all: failover exhausted, timeout, empty
+    /// result set. The pool was never asked.
+    Transport,
+    /// The QuoterV2 sub-call EXECUTED and failed — a pool-level revert whose
+    /// decoded class is in `failure`.
+    PoolCall { failure: Option<V3CallFailure> },
+}
+
+/// Typed V3 quote error. Only the QUOTE PATH constructs it; `Display` keeps the
+/// same human-readable strings the pre-fix code produced so existing log
+/// matching does not silently change meaning.
+#[derive(Clone, Debug, PartialEq)]
+pub struct V3QuoteError {
+    pub kind: V3QuoteErrorKind,
+    pub detail: String,
+}
+
+impl V3QuoteError {
+    /// Short metric label for the detailed per-class funnel.
+    pub fn outcome_label(&self) -> &'static str {
+        match &self.kind {
+            V3QuoteErrorKind::Transport => "rpc_error",
+            V3QuoteErrorKind::PoolCall { failure } => match failure {
+                Some(V3CallFailure::ShortReturnData) => "rpc_pool_call_short",
+                Some(V3CallFailure::RevertNoData) => "rpc_pool_call_no_data",
+                Some(V3CallFailure::RevertReason(_)) => "rpc_pool_call_reason",
+                Some(V3CallFailure::Panic(_)) => "rpc_pool_call_panic",
+                Some(V3CallFailure::RevertData(_)) => "rpc_pool_call_raw",
+                None => "rpc_pool_call_unclassified",
+            },
+        }
+    }
+}
+
+impl std::fmt::Display for V3QuoteError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.detail)
+    }
+}
+
+impl std::error::Error for V3QuoteError {}
 
 /// Build the ABI descriptor for `quoteExactInputSingle((address,address,uint256,uint24,uint160))`.
 ///
@@ -488,20 +858,21 @@ pub async fn v3_quote_exact_in_multicall(
     // (uint256, big-endian, left-padded). We don't need the other return values.
     let mut out = Vec::with_capacity(quotes.len());
     for (req, res) in quotes.iter().zip(results.iter()) {
-        if res.success && res.returnData.len() >= 32 {
-            let amount_out = U256::from_big_endian(&res.returnData[0..32]);
-            out.push(V3QuoteResult {
-                pool_addr: req.pool_addr,
-                amount_out,
-                success: true,
-            });
-        } else {
-            out.push(V3QuoteResult {
-                pool_addr: req.pool_addr,
-                amount_out: U256::zero(),
-                success: false,
-            });
-        }
+        // V3-QUOTE-02: classify the sub-call result from the SAME payload the
+        // pre-fix code threw away. `success` keeps its exact prior meaning
+        // (a 32-byte `amountOut` was returned); `failure` adds the honest why.
+        let quoted = res.success && res.returnData.len() >= 32;
+        let failure = classify_v3_call_failure(res.success, &res.returnData);
+        out.push(V3QuoteResult {
+            pool_addr: req.pool_addr,
+            amount_out: if quoted {
+                U256::from_big_endian(&res.returnData[0..32])
+            } else {
+                U256::zero()
+            },
+            success: quoted,
+            failure,
+        });
     }
     Ok(out)
 }
@@ -723,9 +1094,369 @@ mod v3_tests {
             pool_addr: Address::zero(),
             amount_out: U256::zero(),
             success: false,
+            failure: Some(V3CallFailure::RevertNoData),
         };
         assert!(!r.success);
         assert_eq!(r.amount_out, U256::zero());
+    }
+
+    // ── V3-QUOTE-02: revert-payload classification ───────────────────────────
+
+    // ── CATALOG-HYGIENE-01: pool-identity probes ─────────────────────────────
+
+    // ── QUOTE-TRUTH-ADMISSION-01: la evidencia de la cotización ──────────────
+
+    /// EL CASO MEDIDO (AMPL/WETH, 2026-10-03): los metadatos son VÁLIDOS —
+    /// `fee()` = 3000 coincide con el catálogo y `liquidity()` = 3,16e16 > 0 —
+    /// y la COTIZACIÓN revierte. Sin esta composición el pool quedaba
+    /// `Admitted` y se cotizaba para siempre.
+    #[test]
+    fn valid_metadata_with_reverting_quote_is_never_admitted() {
+        let metadata = PoolAdmission::Admitted { onchain_fee: 3000 };
+        assert_eq!(
+            admit_with_quote_evidence(metadata, QuoteEvidence::PoolRevert),
+            PoolAdmission::QuoteReverted { onchain_fee: 3000 }
+        );
+        // Sin revert observado, el pool sano sigue admitido tal cual.
+        assert_eq!(
+            admit_with_quote_evidence(metadata, QuoteEvidence::Clean),
+            PoolAdmission::Admitted { onchain_fee: 3000 }
+        );
+        // Y el otro pool medido del mismo par, con tier 500.
+        assert_eq!(
+            admit_with_quote_evidence(
+                PoolAdmission::Admitted { onchain_fee: 500 },
+                QuoteEvidence::PoolRevert
+            ),
+            PoolAdmission::QuoteReverted { onchain_fee: 500 }
+        );
+    }
+
+    /// La corrección de tier NO se degrada a condena: un tier equivocado explica
+    /// el revert y es corregible (es el caso 0x464bd7…, no el de AMPL).
+    #[test]
+    fn tier_mismatch_still_wins_over_an_observed_revert() {
+        let m = PoolAdmission::TierMismatch {
+            catalogue_fee: 100,
+            onchain_fee: 10000,
+        };
+        assert_eq!(admit_with_quote_evidence(m, QuoteEvidence::PoolRevert), m);
+    }
+
+    /// R8: una no-respuesta NO se convierte en veredicto, ni siquiera con un
+    /// revert observado. (Y por eso tampoco exculpa: simplemente no decide.)
+    #[test]
+    fn unprobed_is_never_upgraded_to_a_verdict_by_a_revert() {
+        assert_eq!(
+            admit_with_quote_evidence(PoolAdmission::Unprobed, QuoteEvidence::PoolRevert),
+            PoolAdmission::Unprobed
+        );
+    }
+
+    /// Las evidencias más fuertes se conservan intactas.
+    #[test]
+    fn stronger_metadata_evidence_is_preserved() {
+        assert_eq!(
+            admit_with_quote_evidence(PoolAdmission::NotAV3Pool, QuoteEvidence::PoolRevert),
+            PoolAdmission::NotAV3Pool
+        );
+        assert_eq!(
+            admit_with_quote_evidence(
+                PoolAdmission::EmptyPool { onchain_fee: 500 },
+                QuoteEvidence::PoolRevert
+            ),
+            PoolAdmission::EmptyPool { onchain_fee: 500 }
+        );
+    }
+
+    /// Big-endian 32-byte word from a u128 (ABI return payload shape).
+    fn word(v: u128) -> [u8; 32] {
+        let mut w = [0u8; 32];
+        U256::from(v).to_big_endian(&mut w);
+        w
+    }
+
+    #[test]
+    fn probe_selectors_match_their_keccak() {
+        // Pinned against `cast sig` (verified 2026-10-03): a typo here would
+        // send calldata no contract understands, and the probe would read as
+        // "reverted" for every pool — a false condemnation of the whole index.
+        assert_eq!(
+            encode_pool_probe_calldata(PoolProbe::Fee).as_ref(),
+            &[0xdd, 0xca, 0x3f, 0x43],
+            "fee() selector"
+        );
+        assert_eq!(
+            encode_pool_probe_calldata(PoolProbe::Liquidity).as_ref(),
+            &[0x1a, 0x68, 0x65, 0x02],
+            "liquidity() selector"
+        );
+    }
+
+    #[test]
+    fn decode_pool_fee_reads_uint24_and_rejects_everything_else() {
+        assert_eq!(decode_pool_fee(&word(3000)), Some(3000));
+        assert_eq!(decode_pool_fee(&word(500)), Some(500));
+        assert_eq!(decode_pool_fee(&word(0)), Some(0));
+        // Short payload: not a tier.
+        assert_eq!(decode_pool_fee(&[0u8; 31]), None);
+        assert_eq!(decode_pool_fee(&[]), None);
+        // Wider than uint24: not a tier (the real uint24 max is 16_777_215).
+        assert_eq!(decode_pool_fee(&word(0x0100_0000)), None);
+        assert_eq!(decode_pool_fee(&word(u128::MAX)), None);
+    }
+
+    #[test]
+    fn decode_pool_liquidity_reads_u128_and_rejects_short() {
+        assert_eq!(decode_pool_liquidity(&word(0)), Some(U256::zero()));
+        assert_eq!(
+            decode_pool_liquidity(&word(31_600_000_000_000_000)),
+            Some(U256::from(31_600_000_000_000_000u64))
+        );
+        assert_eq!(decode_pool_liquidity(&[0u8; 31]), None);
+    }
+
+    /// THE measured channel (2026-10-03): a `fee_tier = 30` row whose address
+    /// is a Uniswap V2 pair. `fee()` reverts (9/9 sampled) while `getReserves()`
+    /// answers — the ABI response is the hard criterion, independent of any unit
+    /// convention.
+    #[test]
+    fn fee_revert_condemns_the_entry_as_not_a_v3_pool() {
+        assert_eq!(
+            classify_pool_admission(30, ProbeAnswer::Reverted, ProbeAnswer::Reverted),
+            PoolAdmission::NotAV3Pool
+        );
+        // The captain's two flagged addresses answered `liquidity()` with a
+        // revert too; that changes nothing — the verdict comes from `fee()`.
+        assert_eq!(
+            classify_pool_admission(30, ProbeAnswer::Reverted, ProbeAnswer::Unavailable),
+            PoolAdmission::NotAV3Pool
+        );
+    }
+
+    /// A `fee()` that answers with something that is not a uint24 is also not a
+    /// V3 pool — and is classified as such WITHOUT inventing a tier.
+    #[test]
+    fn undecodable_fee_answer_is_not_a_v3_pool() {
+        assert_eq!(
+            classify_pool_admission(30, ProbeAnswer::Answered(&[0u8; 4]), ProbeAnswer::Reverted),
+            PoolAdmission::NotAV3Pool
+        );
+    }
+
+    /// THE honesty test: a missing answer must NEVER condemn an entry. Not
+    /// probed / provider down is not evidence of anything (R8).
+    #[test]
+    fn missing_answer_is_never_a_verdict() {
+        assert_eq!(
+            classify_pool_admission(3000, ProbeAnswer::Unavailable, ProbeAnswer::Unavailable),
+            PoolAdmission::Unprobed
+        );
+        // `fee()` fine but `liquidity()` unanswered → inconclusive, not condemned.
+        assert_eq!(
+            classify_pool_admission(
+                3000,
+                ProbeAnswer::Answered(&word(3000)),
+                ProbeAnswer::Unavailable
+            ),
+            PoolAdmission::Unprobed
+        );
+        assert_eq!(
+            classify_pool_admission(
+                3000,
+                ProbeAnswer::Answered(&word(3000)),
+                ProbeAnswer::Reverted
+            ),
+            PoolAdmission::Unprobed
+        );
+    }
+
+    /// The 0x464bd7… class: catalogue says 100, the chain says 10000. The chain
+    /// wins and the mismatch is reported verbatim — no silent correction, no
+    /// default.
+    #[test]
+    fn tier_mismatch_reports_both_values() {
+        let v = classify_pool_admission(
+            100,
+            ProbeAnswer::Answered(&word(10000)),
+            ProbeAnswer::Answered(&word(9_077_961_562_268_174)),
+        );
+        assert_eq!(
+            v,
+            PoolAdmission::TierMismatch {
+                catalogue_fee: 100,
+                onchain_fee: 10000
+            }
+        );
+    }
+
+    /// The empty-pool channel (measured: 0x6d029c / 0x70b6e8 / 0xf6a42a, all
+    /// with the CORRECT tier and `liquidity() == 0`): a market fact, reported as
+    /// such — never as a catalogue defect.
+    #[test]
+    fn zero_liquidity_with_correct_tier_is_an_empty_pool() {
+        assert_eq!(
+            classify_pool_admission(
+                3000,
+                ProbeAnswer::Answered(&word(3000)),
+                ProbeAnswer::Answered(&word(0))
+            ),
+            PoolAdmission::EmptyPool { onchain_fee: 3000 }
+        );
+    }
+
+    /// A live pool at the catalogue tier is admitted with the on-chain tier.
+    #[test]
+    fn live_pool_is_admitted() {
+        assert_eq!(
+            classify_pool_admission(
+                500,
+                ProbeAnswer::Answered(&word(500)),
+                ProbeAnswer::Answered(&word(119_000_000_000_000))
+            ),
+            PoolAdmission::Admitted { onchain_fee: 500 }
+        );
+    }
+
+    /// ABI `Error(string)` payload for `m`. Mirrors the compiler's encoding:
+    /// selector + [offset=32][len][padded utf8].
+    fn abi_error_string(m: &str) -> Vec<u8> {
+        let mut d = vec![0x08, 0xc3, 0x79, 0xa0];
+        d.extend_from_slice(&[0u8; 32]); // offset placeholder
+        d[4 + 31] = 32; // offset = 32
+        let mut len = [0u8; 32];
+        len[31] = m.len() as u8;
+        d.extend_from_slice(&len);
+        let mut body = m.as_bytes().to_vec();
+        while body.len() % 32 != 0 {
+            body.push(0);
+        }
+        d.extend_from_slice(&body);
+        d
+    }
+
+    #[test]
+    fn classify_success_with_full_payload_is_none() {
+        // A successful call carrying a 32-byte amountOut is not a failure.
+        assert_eq!(classify_v3_call_failure(true, &[0u8; 32]), None);
+    }
+
+    #[test]
+    fn classify_success_with_short_payload_is_short_return_data() {
+        assert_eq!(
+            classify_v3_call_failure(true, &[]),
+            Some(V3CallFailure::ShortReturnData)
+        );
+        assert_eq!(
+            classify_v3_call_failure(true, &[0u8; 31]),
+            Some(V3CallFailure::ShortReturnData)
+        );
+    }
+
+    #[test]
+    fn classify_empty_revert_is_no_data() {
+        // The shape a wrong-tier call and an out-of-gas sub-call both produce:
+        // honestly reported WITHOUT inventing "wrong fee tier".
+        assert_eq!(
+            classify_v3_call_failure(false, &[]),
+            Some(V3CallFailure::RevertNoData)
+        );
+    }
+
+    #[test]
+    fn classify_error_string_round_trips() {
+        let payload = abi_error_string("SPL");
+        assert_eq!(
+            classify_v3_call_failure(false, &payload),
+            Some(V3CallFailure::RevertReason("SPL".to_string()))
+        );
+        let long = abi_error_string("swaps entirely within 0-liquidity regions are not supported");
+        assert_eq!(
+            classify_v3_call_failure(false, &long),
+            Some(V3CallFailure::RevertReason(
+                "swaps entirely within 0-liquidity regions are not supported".to_string()
+            ))
+        );
+    }
+
+    #[test]
+    fn classify_malformed_error_string_degrades_to_raw_never_fabricates() {
+        // Selector present but the length field runs past the payload: the
+        // decoder must NOT invent a reason out of the truncated bytes.
+        let mut d = vec![0x08, 0xc3, 0x79, 0xa0];
+        d.extend_from_slice(&[0u8; 64]);
+        d[4 + 31] = 32; // offset = 32
+        d[4 + 32 + 31] = 200; // len = 200, payload is far shorter
+        match classify_v3_call_failure(false, &d) {
+            Some(V3CallFailure::RevertData(hex)) => assert!(hex.starts_with("0x08c379a0")),
+            other => panic!("expected RevertData, got {other:?}"),
+        }
+    }
+
+    /// A revert payload is untrusted input. An offset that does not fit in a
+    /// `usize` must degrade to raw data — never panic, never truncate into a
+    /// bogus in-buffer offset that would report a FABRICATED revert reason.
+    #[test]
+    fn classify_offset_above_usize_never_panics_nor_fabricates() {
+        let mut d = vec![0x08, 0xc3, 0x79, 0xa0];
+        let mut off = [0u8; 32];
+        off[23] = 1; // 2^64 in a 32-byte big-endian word
+        d.extend_from_slice(&off);
+        d.extend_from_slice(&[0u8; 32]);
+        match classify_v3_call_failure(false, &d) {
+            Some(V3CallFailure::RevertData(hex)) => assert!(hex.starts_with("0x08c379a0")),
+            other => panic!("expected RevertData, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn classify_panic_decodes_code() {
+        let mut d = vec![0x4e, 0x48, 0x7b, 0x71];
+        let mut code = [0u8; 32];
+        code[31] = 0x32; // Panic(0x32) = array out-of-bounds
+        d.extend_from_slice(&code);
+        assert_eq!(
+            classify_v3_call_failure(false, &d),
+            Some(V3CallFailure::Panic(0x32))
+        );
+    }
+
+    #[test]
+    fn classify_unknown_payload_keeps_raw_hex() {
+        let d = [0xde, 0xad, 0xbe, 0xef, 0x01];
+        assert_eq!(
+            classify_v3_call_failure(false, &d),
+            Some(V3CallFailure::RevertData("0xdeadbeef01".to_string()))
+        );
+    }
+
+    #[test]
+    fn quote_error_kind_drives_distinct_funnel_labels() {
+        let transport = V3QuoteError {
+            kind: V3QuoteErrorKind::Transport,
+            detail: "failover exhausted".to_string(),
+        };
+        let no_data = V3QuoteError {
+            kind: V3QuoteErrorKind::PoolCall {
+                failure: Some(V3CallFailure::RevertNoData),
+            },
+            detail: "pool revert".to_string(),
+        };
+        let reverted = V3QuoteError {
+            kind: V3QuoteErrorKind::PoolCall {
+                failure: Some(V3CallFailure::RevertReason("SPL".to_string())),
+            },
+            detail: "pool revert".to_string(),
+        };
+        // The three classes MUST be distinguishable in the `outcome` funnel —
+        // that is the whole point of the split.
+        assert_eq!(transport.outcome_label(), "rpc_error");
+        assert_eq!(no_data.outcome_label(), "rpc_pool_call_no_data");
+        assert_eq!(reverted.outcome_label(), "rpc_pool_call_reason");
+        assert_ne!(transport.outcome_label(), no_data.outcome_label());
+        assert_ne!(no_data.outcome_label(), reverted.outcome_label());
+        // Display keeps the human-readable detail (existing log matching).
+        assert_eq!(no_data.to_string(), "pool revert");
     }
 
     #[test]
