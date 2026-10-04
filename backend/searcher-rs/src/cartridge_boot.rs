@@ -2263,11 +2263,12 @@ where
 /// por token distinto de las piernas (dirección → símbolo del universo de
 /// identidad → precio del snapshot Redis o de trading_config), el tamaño
 /// REAL observado del intent como único tamaño del schedule y la admisión
-/// EXPLÍCITA de manifiestos v4 desplegados (Fase 3b). Los productores aún
-/// ausentes (exact_quotes, domain_plans, canonical_payloads) quedan vacíos:
-/// el contrato v4 los reporta como DATA_GAP con razón explícita — nunca
-/// se fabrican (R8). `None` sólo si el reloj no permite una ventana temporal
-/// honesta.
+/// EXPLÍCITA de manifiestos v4 desplegados (Fase 3b). `exact_quotes` llega
+/// PRODUCIDO por el llamador async (EXACT-QUOTES-PRODUCER-01: quotes reales del
+/// QuoterV2, encadenadas por pierna); lo que sigue ausente (`domain_plans`,
+/// `canonical_payloads`) queda vacío y el contrato v4 lo reporta como DATA_GAP
+/// con razón explícita — nunca se fabrica (R8). `None` sólo si el reloj no
+/// permite una ventana temporal honesta.
 ///
 /// BASKET-WORKER-01: el estado de redemption on-chain de los baskets
 /// RELEVANTES a este intent llega YA LEÍDO por el llamador async
