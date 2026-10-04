@@ -300,7 +300,43 @@ interface OpportunityLiveRow extends QueryResultRow {
 // R8 fail-honest: aggregates are exact GROUP BY outputs — nothing is
 // synthesised; a group of one still reports first_seen=last_seen=detected_at
 // and confirmations=1 (COUNT(*) >= 1 by construction).
-const LIVE_QUERY = `
+// ── A.8 confidence wire: sink-conditional query fragments ────────────────────
+//
+// The live route reads the Gate-C confidence sink (`scored_opportunities`). On a
+// database where that relation is not migrated, naming it makes the WHOLE live
+// window fail (`relation "scored_opportunities" does not exist` → the route's
+// 503 query_failed), i.e. one optional enrichment takes down every card. The
+// api-server already treats a known-absent relation as MISSING EVIDENCE, not as
+// a query failure — scoring-status.ts probes with `to_regclass(...) IS NOT NULL`
+// under the comment "Known absent relations are real missing evidence, not query
+// failures". This route now follows the same rule: with the sink absent the join
+// is omitted, the scoring columns degrade to NULL, and a8ScoringFromRow()
+// declares the field NOT COMPUTED with reason `scored_opportunities_sink_absent`
+// (R10). Nothing is fabricated and no other field is lost.
+const SCORING_COLUMNS_SQL = `  sc.posterior_prob       AS scored_posterior_prob,
+  sc.kelly_fraction       AS scored_kelly_fraction,
+  sc.bayesian_accepted    AS scored_bayesian_accepted,
+  sc.emission_outcome     AS scored_emission_outcome,
+  sc.rejection_reason     AS scored_rejection_reason,`;
+
+const SCORING_COLUMNS_ABSENT_SQL = `  NULL::double precision AS scored_posterior_prob,
+  NULL::double precision AS scored_kelly_fraction,
+  NULL::boolean          AS scored_bayesian_accepted,
+  NULL::text             AS scored_emission_outcome,
+  NULL::text             AS scored_rejection_reason,`;
+
+const SCORING_JOIN_SQL = `-- A.8 CONFIDENCE WIRE (2026-10-03): latest Gate-C score for this opportunity.
+LEFT JOIN LATERAL (
+  SELECT s.posterior_prob, s.kelly_fraction, s.bayesian_accepted,
+         s.emission_outcome, s.rejection_reason
+  FROM scored_opportunities s
+  WHERE s.opportunity_id = o.id::text
+  ORDER BY s.created_at DESC, s.id DESC
+  LIMIT 1
+) sc ON TRUE`;
+
+function buildLiveQuery(sinkPresent: boolean): string {
+  return `
 WITH grouped AS (
   SELECT
     concat_ws('|',
@@ -396,12 +432,9 @@ SELECT
   -- newest score wins, id DESC breaks same-timestamp ties deterministically.
   --
   -- R8: no scored row => NULL (NO COMPUTADO). The mapper attaches an explicit
-  -- machine reason; nothing here invents a zero.
-  sc.posterior_prob       AS scored_posterior_prob,
-  sc.kelly_fraction       AS scored_kelly_fraction,
-  sc.bayesian_accepted    AS scored_bayesian_accepted,
-  sc.emission_outcome     AS scored_emission_outcome,
-  sc.rejection_reason     AS scored_rejection_reason,
+  -- machine reason; nothing here invents a zero. When the sink relation is
+  -- absent the columns are NULL literals and the reason says so explicitly.
+  ${sinkPresent ? SCORING_COLUMNS_SQL : SCORING_COLUMNS_ABSENT_SQL}
   -- WO-H4 (2026-09-17): real total of the live window, UNBOUNDED by LIMIT.
   -- Window functions evaluate before LIMIT, so COUNT(*) OVER () counts every
   -- row matching the WHERE (time window + viable_only filter) even when only
@@ -427,15 +460,7 @@ LEFT JOIN tokens ti
 LEFT JOIN tokens to_
   ON  to_.chain_id = COALESCE(o.chain_id_out, o.chain_id)
   AND to_.address  = LOWER(o.token_out)
--- A.8 CONFIDENCE WIRE (2026-10-03): latest Gate-C score for this opportunity.
-LEFT JOIN LATERAL (
-  SELECT s.posterior_prob, s.kelly_fraction, s.bayesian_accepted,
-         s.emission_outcome, s.rejection_reason
-  FROM scored_opportunities s
-  WHERE s.opportunity_id = o.id::text
-  ORDER BY s.created_at DESC, s.id DESC
-  LIMIT 1
-) sc ON TRUE
+${sinkPresent ? SCORING_JOIN_SQL : ""}
 ORDER BY
   -- PC-08 (2026-09-19, doctrina operador): ordenar por Topological Yield USD
   -- de MAYOR a MENOR cuando order=profit_usd. Default intacto detected_at DESC
@@ -447,6 +472,39 @@ ORDER BY
   o.detected_at DESC
 LIMIT $1
 `.trim();
+}
+
+/** Sink present (the normal production path). */
+const LIVE_QUERY = buildLiveQuery(true);
+/** Sink not migrated on this database — the A.8 field degrades, the feed lives. */
+const LIVE_QUERY_SINK_ABSENT = buildLiveQuery(false);
+
+/**
+ * Does this database have the Gate-C confidence sink?
+ *
+ * Same idiom as scoring-status.ts's catalog probe: a KNOWN-ABSENT relation is
+ * missing evidence, not a query failure. Cached per mount because the answer is
+ * schema-shaped, not data-shaped. A probe error degrades to `false` (the
+ * conservative direction: without evidence the sink is treated as absent, never
+ * assumed present — R8).
+ */
+async function scoredSinkPresent(
+  pool: Pool,
+  log: { warn: (obj: object, msg?: string) => void },
+): Promise<boolean> {
+  try {
+    const r = await pool.query<{ exists: boolean }>(
+      "SELECT to_regclass('public.scored_opportunities') IS NOT NULL AS exists",
+    );
+    return r.rows[0]?.exists === true;
+  } catch (e) {
+    log.warn(
+      { event: "opportunities.live.scoring_sink_probe_failed", err: (e as Error).message },
+      "scored_opportunities probe failed — A.8 confidence degrades to not-computed",
+    );
+    return false;
+  }
+}
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -824,7 +882,10 @@ export function missingEconomicsCensus(
  * They stay declared-and-null-by-absence rather than present-and-invented;
  * the UI field ledger declares them NO COMPUTADO with their reason.
  */
-export function a8ScoringFromRow(row: OpportunityLiveRow): {
+export function a8ScoringFromRow(
+  row: OpportunityLiveRow,
+  sinkPresent = true,
+): {
   confidence_score_bps: number | null;
   posterior_probability_bps: number | null;
   posterior_prob: number | null;
@@ -846,7 +907,13 @@ export function a8ScoringFromRow(row: OpportunityLiveRow): {
       scoring_reason: null,
       confidence_state: "not_computed",
       confidence_source: null,
-      confidence_reason: "no_scored_row_for_opportunity",
+      // Two DIFFERENT absences, never conflated: the sink is not migrated on
+      // this database (= the producer does not exist here) vs. the sink exists
+      // and simply has no row for this opportunity (= the producer has not run
+      // for it yet). Both are NOT COMPUTED; the reason names which one.
+      confidence_reason: sinkPresent
+        ? "no_scored_row_for_opportunity"
+        : "scored_opportunities_sink_absent",
     };
   }
   // Clamp to the declared domain [0,1] before scaling: a posterior outside it
@@ -887,6 +954,9 @@ function rowToOpportunity(
   chainBaseTokenSymbol: string | null,
   validations: Map<string, TokenValidationRow>,
   legSymbols: Map<string, string>,
+  // Defaults to TRUE so every existing caller/test keeps the production
+  // semantics; the route passes the catalog-probed value explicitly.
+  scoredSinkPresent = true,
 ) {
   // Look up the per-token validation snapshots. Key format mirrors
   // tokenValidation/index.ts: `${chain_id}:${address.toLowerCase()}`.
@@ -1025,7 +1095,7 @@ function rowToOpportunity(
     // `confidence_score_bps` off a payload that never carried it, so the card
     // was permanently "unscored" while the scorer was in fact producing ~10M
     // scored rows. Producer chain + R8 semantics: see a8ScoringFromRow().
-    ...a8ScoringFromRow(row),
+    ...a8ScoringFromRow(row, scoredSinkPresent),
     // Target-driven simulation (R8 fail-honest: all nullable, source-labeled).
     // Computed only when net_expected_profit_usd is null (the canonical Rust
     // spine output wins when present).
@@ -1062,6 +1132,10 @@ export function mountOpportunitiesLive(
   redis: Redis | null,
   log: { warn: (obj: object, msg?: string) => void },
 ): void {
+  // Per-mount cache of the A.8 sink-presence probe (tri-state: unknown | true |
+  // false — R8: `null` is "not measured yet", never read as "absent").
+  let scoringSinkPresent: boolean | null = null;
+
   app.get("/api/v1/opportunities/live", async (req: Request, res: Response) => {
     if (!pool) {
       res.status(503).json({ error: "db_unavailable", detail: "DATABASE_URL not configured" });
@@ -1117,7 +1191,14 @@ export function mountOpportunitiesLive(
         : "detected_at";
 
     try {
-      const q = await pool.query<OpportunityLiveRow>(LIVE_QUERY, [
+      // A.8: is the confidence sink migrated here? Probed once per mount (the
+      // answer is schema-shaped), then reused. An absent sink must NOT take the
+      // whole feed down with it — see buildLiveQuery().
+      if (scoringSinkPresent === null) {
+        scoringSinkPresent = await scoredSinkPresent(pool, log);
+      }
+      const liveQuery = scoringSinkPresent ? LIVE_QUERY : LIVE_QUERY_SINK_ABSENT;
+      const q = await pool.query<OpportunityLiveRow>(liveQuery, [
         limit,
         viableOnly,
         maxAgeSeconds,
@@ -1381,6 +1462,7 @@ export function mountOpportunitiesLive(
           snapshots.get(r.chain_id)?.base_token_symbol ?? null,
           validations,
           legSymbols,
+          scoringSinkPresent === true,
         );
         // CARDS-PRICES-01: attach live PriceBus prices for every token symbol on
         // the card (endpoints + legs). Absent key = no live price (R8).

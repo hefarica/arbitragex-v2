@@ -70,10 +70,16 @@ function fixtureRow(overrides: Record<string, unknown> = {}) {
   };
 }
 
-function fakePool(opts: { rows?: Array<Record<string, unknown>>; fail?: boolean }) {
+function fakePool(opts: { rows?: Array<Record<string, unknown>>; fail?: boolean; sinkPresent?: boolean }) {
   const query = vi.fn(async (q: unknown) => {
     if (opts.fail) throw new Error("connection refused");
     const text = typeof q === "string" ? q : ((q as { text?: string }).text ?? "");
+    // A.8 sink-presence probe (`to_regclass('public.scored_opportunities')`).
+    // Defaults to PRESENT so the suite exercises the production query; the
+    // absent case is spelled out explicitly by the tests that want it.
+    if (text.includes("to_regclass('public.scored_opportunities')")) {
+      return { rows: [{ exists: opts.sinkPresent !== false }] };
+    }
     if (text.includes("FROM opportunities o")) {
       return { rows: opts.rows ?? [] };
     }
@@ -90,6 +96,28 @@ function fakePool(opts: { rows?: Array<Record<string, unknown>>; fail?: boolean 
 // of any single test's 5s timeout (the in-test dynamic import made the first
 // test absorb the transform and flake out).
 const { mountOpportunitiesLive } = await import("./opportunities-live.js");
+
+/**
+ * The LIVE window SQL among a fake pool's calls.
+ *
+ * A8-CONF-01 made the route probe the catalog (`to_regclass`) BEFORE the window
+ * query, so `mock.calls[0]` is no longer the window — tests must select by
+ * shape, not by position.
+ */
+function liveSqlOf(pool: unknown): string {
+  const calls = (pool as { query: ReturnType<typeof vi.fn> }).query.mock.calls.map((c) =>
+    String(c[0]),
+  );
+  return calls.find((s) => s.includes("WITH grouped AS")) ?? "";
+}
+
+/** The parameter array of the LIVE window call (not of the catalog probe). */
+function liveParamsOf(pool: unknown): unknown[] | undefined {
+  const call = (pool as { query: ReturnType<typeof vi.fn> }).query.mock.calls.find((c) =>
+    String(c[0]).includes("WITH grouped AS"),
+  );
+  return call?.[1] as unknown[] | undefined;
+}
 
 async function buildApp(pool: unknown, redis: unknown = null): Promise<Express> {
   const app = express();
@@ -185,9 +213,7 @@ describe("GET /api/v1/opportunities/live — window_total contract (WO-H4)", () 
     const pool = fakePool({ rows: [] });
     const app = await buildApp(pool);
     await request(app).get("/api/v1/opportunities/live?limit=50");
-    const firstCall = (pool.query as ReturnType<typeof vi.fn>).mock.calls[0]?.[0];
-    const text =
-      typeof firstCall === "string" ? firstCall : ((firstCall as { text?: string })?.text ?? "");
+    const text = liveSqlOf(pool);
     expect(text).toContain("COUNT(*) OVER ()");
     expect(text).toContain("AS window_total");
   });
@@ -348,9 +374,7 @@ describe("CARDS-DEDUP-HOPS — grouped CTE + route-group aggregates on the wire"
     const pool = fakePool({ rows: [] });
     const app = await buildApp(pool);
     await request(app).get("/api/v1/opportunities/live?limit=50");
-    const firstCall = (pool.query as ReturnType<typeof vi.fn>).mock.calls[0]?.[0];
-    const text =
-      typeof firstCall === "string" ? firstCall : ((firstCall as { text?: string })?.text ?? "");
+    const text = liveSqlOf(pool);
     expect(text).toContain("WITH grouped AS");
     expect(text).toContain("MIN(o.detected_at) AS first_seen_at");
     expect(text).toContain("MAX(o.detected_at) AS last_seen_at");
@@ -382,14 +406,14 @@ describe("CARDS-DEDUP-HOPS — grouped CTE + route-group aggregates on the wire"
     const resBest = await request(appBest).get(
       "/api/v1/opportunities/live?limit=50&route_representative=best_net",
     );
-    const paramsBest = (poolBest.query as ReturnType<typeof vi.fn>).mock.calls[0]?.[1] as unknown[];
+    const paramsBest = liveParamsOf(poolBest);
     expect(paramsBest?.[5]).toBe(true);
     expect(resBest.body?.route_representative).toBe("best_net");
 
     const poolDefault = fakePool({ rows: [] });
     const appDefault = await buildApp(poolDefault);
     const resDefault = await request(appDefault).get("/api/v1/opportunities/live?limit=50");
-    const paramsDefault = (poolDefault.query as ReturnType<typeof vi.fn>).mock.calls[0]?.[1] as unknown[];
+    const paramsDefault = liveParamsOf(poolDefault);
     expect(paramsDefault?.[5]).toBe(false);
     expect(resDefault.body?.route_representative).toBe("latest");
 
@@ -398,7 +422,7 @@ describe("CARDS-DEDUP-HOPS — grouped CTE + route-group aggregates on the wire"
     const resBogus = await request(appBogus).get(
       "/api/v1/opportunities/live?limit=50&route_representative=cuac",
     );
-    expect((poolBogus.query as ReturnType<typeof vi.fn>).mock.calls[0]?.[1]?.[5]).toBe(false);
+    expect(liveParamsOf(poolBogus)?.[5]).toBe(false);
     expect(resBogus.body?.route_representative).toBe("latest");
   });
 
@@ -772,9 +796,7 @@ describe("A8-CONF-01 — confidence scoring wire end-to-end", () => {
     const pool = fakePool({ rows: [] });
     const app = await buildApp(pool);
     await request(app).get("/api/v1/opportunities/live?limit=50");
-    const firstCall = (pool.query as ReturnType<typeof vi.fn>).mock.calls[0]?.[0];
-    const text =
-      typeof firstCall === "string" ? firstCall : ((firstCall as { text?: string })?.text ?? "");
+    const text = liveSqlOf(pool);
     // The join key MUST cast the uuid: opportunities.id is uuid, the sink's
     // opportunity_id is TEXT (migration 097).
     expect(text).toContain("s.opportunity_id = o.id::text");
@@ -853,5 +875,44 @@ describe("A8-CONF-01 — confidence scoring wire end-to-end", () => {
     expect(result.confidence_score_bps).toBeNull();
     expect(result.posterior_prob).toBeNull();
     expect(result.confidence_state).toBe("not_computed");
+  });
+
+  // CI-GATE-01 (2026-10-04): on a database where `scored_opportunities` is not
+  // migrated, naming it made the WHOLE live window fail ("relation does not
+  // exist" => 503 query_failed) — one optional enrichment taking down every
+  // card. Measured on integration-tests run 37171302087 (5 happy-path GETs in
+  // backend/api-server/test/opportunities-live.test.ts returned 503), a defect
+  // of the same family the testcontainer migration list already documents four
+  // times (099 route_metadata, 102 cartridge_id, 121 detector_id, 126
+  // economics). The route now probes the catalog and degrades ONLY that field.
+  it("sink absent => 200 with an explicit not-computed reason, never a 503 feed outage", async () => {
+    const pool = fakePool({ rows: [fixtureRow()], sinkPresent: false });
+    const app = await buildApp(pool);
+    const r = await request(app).get("/api/v1/opportunities/live?limit=50");
+    expect(r.status).toBe(200);
+    const item = r.body.items[0];
+    expect(item.confidence_score_bps).toBeNull();
+    expect(item.confidence_state).toBe("not_computed");
+    expect(item.confidence_reason).toBe("scored_opportunities_sink_absent");
+    // The rest of the feed is untouched: the row still carries its own fields.
+    expect(item.id).toBe("00000000-0000-4000-8000-000000000001");
+    expect(item.status).toBe("detected");
+    // And the SQL must not reference the absent relation AT ALL — no FROM, no
+    // LATERAL. (Comments may still name it; Postgres parses only the code.)
+    const liveSql = liveSqlOf(pool);
+    expect(liveSql).not.toContain("FROM scored_opportunities s");
+    expect(liveSql).not.toContain("LEFT JOIN LATERAL (");
+    expect(liveSql).toContain("NULL::double precision AS scored_posterior_prob");
+  });
+
+  it("sink present => the production query keeps the indexed LATERAL join", async () => {
+    const pool = fakePool({ rows: [fixtureRow({ scored_posterior_prob: 0.9 })], sinkPresent: true });
+    const app = await buildApp(pool);
+    const r = await request(app).get("/api/v1/opportunities/live?limit=50");
+    expect(r.status).toBe(200);
+    expect(r.body.items[0].confidence_score_bps).toBe(9000);
+    const liveSql = liveSqlOf(pool);
+    expect(liveSql).toContain("LEFT JOIN LATERAL (");
+    expect(liveSql).toContain("s.opportunity_id = o.id::text");
   });
 });
