@@ -59,6 +59,11 @@ const V2_FEE_BPS: u32 = 30;
 // V3QuoteProvider trait
 // ---------------------------------------------------------------------------
 
+/// One probed catalogue entry: the address that was asked and the chain's
+/// verdict for it. Named instead of suppressed because `clippy::type_complexity`
+/// is gated as `-D warnings` in this repo, so the inline form does not build.
+pub type PoolAdmissionResults = Vec<(Address, PoolAdmission)>;
+
 /// Abstraction over the V3 quoter (QuoterV2 on-chain contract).
 ///
 /// The production implementation wraps `amm_math::v3_quote_exact_in_multicall`
@@ -111,7 +116,7 @@ pub trait V3QuoteProvider: Send + Sync {
     fn probe_pool_admissions(
         &self,
         pools: Vec<(Address, u32)>,
-    ) -> Pin<Box<dyn Future<Output = Vec<(Address, PoolAdmission)>> + Send + '_>> {
+    ) -> Pin<Box<dyn Future<Output = PoolAdmissionResults> + Send + '_>> {
         let _ = pools;
         Box::pin(std::future::ready(Vec::new()))
     }
