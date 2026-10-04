@@ -51,8 +51,41 @@ const MAX_STRING_SIZE: usize = 65_536;
 /// Maximum array size within Rhai scripts.
 const MAX_ARRAY_SIZE: usize = 4_096;
 
-/// Maximum map size within Rhai scripts.
-const MAX_MAP_SIZE: usize = 1_024;
+/// Maximum map size within Rhai scripts. **Read the semantics before changing it:
+/// this is the CUMULATIVE number of map entries in the WHOLE value tree, not the
+/// number of keys of a single map.**
+///
+/// ARSE-264-01 (`t3`): rhai 1.25.1 computes the size of a value with
+/// `calc_map_sizes`, which recurses into every nested array/map and ACCUMULATES
+/// `mx` (see `rhai/src/eval/data_check.rs:61-93`); `Engine::throw_on_size` then
+/// compares that accumulated total against this limit and raises
+/// `ErrorDataTooLarge("Size of object map")` — rendered as
+/// `Size of object map too large` (`data_check.rs:143-147`). The limit is applied
+/// to the value returned by a script function (`func/call.rs:412`), so a legitimate
+/// v4 sealed proposal — `agent_v4_seal` embeds `observations[]` (one map per
+/// evaluated candidate, each with its quote ledger + per-operator evidence) plus
+/// the whole `discovery` graph — blew past 1_024 cumulative entries and the whole
+/// `evaluate()` call failed with a runtime error. Measured in production
+/// (2026-10-03, `arbitragex-v2-searcher-rs-1`): 385
+/// `cartridge.active_eval_error` = `runtime error: Size of object map too large`
+/// spread over 24 cartridges, 7 of them structural (≈50 each).
+///
+/// Why the old value was wrong (and why 8_192 is not "raising a limit to hide an
+/// error"): 1_024 was chosen as if it bounded ONE map's key count; a single nested
+/// tree easily exceeds it while no individual map is large. The runaway protection
+/// is `MAX_OPERATIONS` (below), not this bound. New value derived from the runtime's
+/// own v4 bounds: `max_evaluations = 8` observations × (quote ledger ≤ `max_hops`
+/// 7 legs × ~9 fields ≈ 63 + operator evidence ≤ 31 ops × ~6 fields ≈ 186 +
+/// economic_check ≈ 50) ≈ 8 × 300 = 2_400, plus `discovery` ≤ 8 candidates × ~60
+/// ≈ 480. ≈ 2_900 worst case ⇒ 8_192 (2^13) gives ~2.8× headroom and caps one
+/// returned value near ~1 MB at ~120 B/entry (`SHADOW_MAX_CONCURRENCY` = 16
+/// concurrent evals ⇒ ≤ ~16 MB transient).
+///
+/// `map_size_is_cumulative_over_the_whole_tree` (tests, below) PINS this reading:
+/// a nested structure with > 1_024 cumulative entries must fail under the old value
+/// and pass under the current one, so the semantics can never be silently
+/// mis-read again.
+const MAX_MAP_SIZE: usize = 8_192;
 
 /// Maximum expression-nesting depth. rhai's DEFAULT for the expr-depth limits is
 /// profile-dependent (debug: 32 expr / 16 function; release: 64 / 32), so without
@@ -363,7 +396,7 @@ impl CartridgeRunner {
         })?;
 
         // Parse the result map
-        let eval_result = self.parse_eval_result(result, cartridge_id)?;
+        let eval_result = parse_eval_result(result, cartridge_id)?;
 
         // Update eval counter
         {
@@ -604,128 +637,140 @@ impl CartridgeRunner {
             secondary_operators,
         })
     }
+}
 
-    /// Parses the Dynamic result from `evaluate_opportunity` into a structured result.
-    fn parse_eval_result(
-        &self,
-        result: Dynamic,
-        _cartridge_id: &str,
-    ) -> Result<CartridgeEvalResult, CartridgeError> {
-        let map = result.try_cast::<Map>().ok_or_else(|| {
-            CartridgeError::RuntimeError("evaluate_opportunity must return a Map".into())
-        })?;
+/// Parses the Dynamic result from `evaluate_opportunity` into a structured result.
+///
+/// ARSE-264-01 (`t3`): free function instead of a method so the v4-vs-v3 contract
+/// branch below is unit-testable from a bare `Map` — no Redis-backed `HostContext`,
+/// no Rhai engine, no compilation needed. Behaviour is byte-identical to the former
+/// `CartridgeRunner::parse_eval_result`.
+fn parse_eval_result(
+    result: Dynamic,
+    _cartridge_id: &str,
+) -> Result<CartridgeEvalResult, CartridgeError> {
+    let map = result.try_cast::<Map>().ok_or_else(|| {
+        CartridgeError::RuntimeError("evaluate_opportunity must return a Map".into())
+    })?;
 
-        // ── AGENT v4 branch (integration/agent-cartridges-v4, 2026-09-24) ──────
-        // v4 cartridges seal their result with contract_version
-        // "arbx.cartridge.agent/4" and deliberately set estimated_profit /
-        // confidence to NULL (exact decimal USD strings live in the payload).
-        // The v3 reader below would silently convert that absence to 0.0 —
-        // forbidden by the package contract. Detect v4 FIRST, preserve the
-        // full lossless proposal in `metadata["proposal_v4"]`, parse it via
-        // ProposalV4 for validation, and keep the v3 f64 fields at their
-        // null-derived defaults ONLY as legacy telemetry shape (the exact
-        // figures are the proposal's *_usd strings).
-        let is_v4 = map
-            .get("contract_version")
-            .and_then(|v| v.clone().into_string().ok())
-            .is_some_and(|cv| cv == "arbx.cartridge.agent/4");
+    // ── AGENT v4 branch (integration/agent-cartridges-v4, 2026-09-24) ──────
+    // v4 cartridges seal their result with contract_version
+    // "arbx.cartridge.agent/4" and deliberately set estimated_profit /
+    // confidence to NULL (exact decimal USD strings live in the payload).
+    // The v3 reader below would silently convert that absence to 0.0 —
+    // forbidden by the package contract. Detect v4 FIRST, preserve the
+    // full lossless proposal in `metadata["proposal_v4"]`, parse it via
+    // ProposalV4 for validation, and keep the v3 f64 fields at their
+    // null-derived defaults ONLY as legacy telemetry shape (the exact
+    // figures are the proposal's *_usd strings).
+    let is_v4 = map
+        .get("contract_version")
+        .and_then(|v| v.clone().into_string().ok())
+        .is_some_and(|cv| cv == "arbx.cartridge.agent/4");
 
-        let is_opportunity = map
-            .get("is_opportunity")
-            .and_then(|v| v.as_bool().ok())
-            .unwrap_or(false);
+    let is_opportunity = map
+        .get("is_opportunity")
+        .and_then(|v| v.as_bool().ok())
+        .unwrap_or(false);
 
-        let estimated_profit = map
-            .get("estimated_profit")
-            .and_then(|v| v.as_float().ok())
-            .unwrap_or(0.0);
+    let estimated_profit = map
+        .get("estimated_profit")
+        .and_then(|v| v.as_float().ok())
+        .unwrap_or(0.0);
 
-        let confidence = map
-            .get("confidence")
-            .and_then(|v| v.as_float().ok())
-            .unwrap_or(0.0)
-            .clamp(0.0, 1.0);
+    let confidence = map
+        .get("confidence")
+        .and_then(|v| v.as_float().ok())
+        .unwrap_or(0.0)
+        .clamp(0.0, 1.0);
 
-        let urgency = map
-            .get("urgency")
-            .and_then(|v| v.clone().into_string().ok())
-            .unwrap_or_else(|| "monitor".to_owned());
+    let urgency = map
+        .get("urgency")
+        .and_then(|v| v.clone().into_string().ok())
+        .unwrap_or_else(|| "monitor".to_owned());
 
-        // FASE B Paso 9 — explicit reason string (observability). The cartridge returns
-        // it in its result map (e.g. "v3_sizing_pending"); promote it to a first-class
-        // field so the durable outcomes series can explain WHY is_opportunity=false.
-        let reason = map.get("reason").and_then(|v| v.clone().into_string().ok());
+    // FASE B Paso 9 — explicit reason string (observability). The cartridge returns
+    // it in its result map (e.g. "v3_sizing_pending"); promote it to a first-class
+    // field so the durable outcomes series can explain WHY is_opportunity=false.
+    let reason = map.get("reason").and_then(|v| v.clone().into_string().ok());
 
-        // Collect any additional metadata fields
-        let mut metadata = std::collections::HashMap::new();
-        for (k, v) in map.iter() {
-            let key = k.to_string();
-            if ![
-                "is_opportunity",
-                "estimated_profit",
-                "confidence",
-                "urgency",
-                "reason",
-            ]
-            .contains(&key.as_str())
-            {
-                metadata.insert(key, dynamic_to_json_value(v));
-            }
+    // Collect any additional metadata fields
+    let mut metadata = std::collections::HashMap::new();
+    for (k, v) in map.iter() {
+        let key = k.to_string();
+        if ![
+            "is_opportunity",
+            "estimated_profit",
+            "confidence",
+            "urgency",
+            "reason",
+        ]
+        .contains(&key.as_str())
+        {
+            metadata.insert(key, dynamic_to_json_value(v));
         }
+    }
 
-        if is_v4 {
-            // Validate the sealed proposal through the lossless contract. A
-            // malformed v4 envelope is a RuntimeError (fail-closed) — never a
-            // silent zero-profit candidate.
-            let proposal_json = serde_json::Value::Object(
-                metadata
-                    .iter()
-                    .filter_map(|(k, v)| {
-                        serde_json::value::to_value(v).ok().map(|v| (k.clone(), v))
-                    })
-                    .collect(),
+    if is_v4 {
+        // Validate the sealed proposal through the lossless contract. A
+        // malformed v4 envelope is a RuntimeError (fail-closed) — never a
+        // silent zero-profit candidate.
+        let proposal_json = serde_json::Value::Object(
+            metadata
+                .iter()
+                .filter_map(|(k, v)| serde_json::value::to_value(v).ok().map(|v| (k.clone(), v)))
+                .collect(),
+        );
+        // The five legacy fields were extracted above and excluded from
+        // `metadata`; ProposalV4 REQUIRES `is_opportunity` in the envelope
+        // (contract field, not telemetry). Re-insert it before validating.
+        let mut proposal_json = proposal_json;
+        if let Some(obj) = proposal_json.as_object_mut() {
+            obj.insert(
+                "is_opportunity".to_string(),
+                serde_json::json!(is_opportunity),
             );
-            // The five legacy fields were extracted above and excluded from
-            // `metadata`; ProposalV4 REQUIRES `is_opportunity` in the envelope
-            // (contract field, not telemetry). Re-insert it before validating.
-            let mut proposal_json = proposal_json;
-            if let Some(obj) = proposal_json.as_object_mut() {
-                obj.insert(
-                    "is_opportunity".to_string(),
-                    serde_json::json!(is_opportunity),
+        }
+        match crate::proposal_contract::ProposalV4::parse(proposal_json.clone()) {
+            Ok(_validated) => {
+                // Preserve the full lossless proposal for downstream
+                // consumers (telemetry streams, future snapshot store).
+                metadata.insert(
+                    "proposal_v4".to_string(),
+                    serde_json::value::to_value(&proposal_json).unwrap_or(serde_json::Value::Null),
                 );
-            }
-            match crate::proposal_contract::ProposalV4::parse(proposal_json.clone()) {
-                Ok(_validated) => {
-                    // Preserve the full lossless proposal for downstream
-                    // consumers (telemetry streams, future snapshot store).
-                    metadata.insert(
-                        "proposal_v4".to_string(),
-                        serde_json::value::to_value(&proposal_json)
-                            .unwrap_or(serde_json::Value::Null),
-                    );
-                    metadata.insert(
+                metadata.insert(
                         "numeric_contract".to_string(),
                         serde_json::json!("arbx.cartridge.agent/4: money=USD decimal strings; v3 f64 fields are NOT authoritative for v4"),
                     );
-                }
-                Err(e) => {
-                    return Err(CartridgeError::RuntimeError(format!(
-                        "invalid_v4_proposal: {e}"
-                    )));
-                }
+            }
+            Err(e) => {
+                return Err(CartridgeError::RuntimeError(format!(
+                    "invalid_v4_proposal: {e}"
+                )));
             }
         }
-
-        Ok(CartridgeEvalResult {
-            is_opportunity,
-            estimated_profit,
-            confidence,
-            metadata,
-            urgency,
-            reason,
-        })
     }
+
+    // R8 discriminator (ARSE-264-01): `estimated_profit` / `confidence` are the
+    // LEGACY v3 f64 telemetry fields. For a v4 envelope the contract forbids
+    // them (the exact figures are the proposal's `*_usd` decimal strings), so a
+    // 0.0 there is an ABSENCE — never a computed zero. For a legacy v3
+    // cartridge the f64 values ARE the script's own published numbers. Expose
+    // the distinction so no consumer has to infer it from the contract string.
+    metadata.insert(
+        "v3_f64_authoritative".to_string(),
+        serde_json::json!(!is_v4),
+    );
+
+    Ok(CartridgeEvalResult {
+        is_opportunity,
+        estimated_profit,
+        confidence,
+        metadata,
+        urgency,
+        reason,
+    })
 }
 
 /// Converts a Rhai Dynamic value to a serde_json::Value.
@@ -1093,5 +1138,165 @@ mod tests {
             engine.call_fn::<Dynamic>(&mut scope, &ast, "evaluate_opportunity", (pool_data,));
         // Division by zero in Rhai produces a runtime error, not a panic
         assert!(result.is_err());
+    }
+
+    // ── ARSE-264-01 (t3) — regresiones del lote de cartuchos ─────────────────
+    //
+    // (1) SEMANTICA DEL LÍMITE DE MAPA. El límite de rhai NO cuenta las claves de
+    //     UN map: cuenta el TOTAL acumulado de entradas de map en todo el árbol de
+    //     valores (rhai 1.25.1 `src/eval/data_check.rs:61-93` acumula `mx`
+    //     recursivamente y `throw_on_size` lo compara contra `limits.map_size`).
+    //     Un propuesta v4 sellada (`agent_v4_seal` embebe `observations[]` + el
+    //     grafo `discovery`) supera 1_024 entradas acumuladas con maps individuales
+    //     pequeños, y TODO el `evaluate()` fallaba con
+    //     `runtime error: Size of object map too large`. Este test FIJA la lectura:
+    //     el mismo payload debe ser rechazado con el valor viejo y aceptado con el
+    //     actual, así que la semántica no puede volver a malinterpretarse.
+    #[test]
+    fn map_size_is_cumulative_over_the_whole_tree() {
+        // 8 "observations" × 200 submaps de 2 entradas + 1 entrada del map raíz.
+        const INNER: usize = 200;
+        const OBS: usize = 8;
+        let cumulative = 1 + OBS * (INNER * 2);
+        assert!(
+            cumulative > 1_024,
+            "el fixture debe superar el límite viejo ({cumulative} entradas de map)"
+        );
+        assert!(
+            cumulative < MAX_MAP_SIZE,
+            "el fixture debe caber en el límite actual ({cumulative} < {MAX_MAP_SIZE})"
+        );
+        // Ningún map individual es grande (el map raíz tiene 1 clave, cada submap 2).
+        let src = format!(
+            r#"
+            fn build() {{
+                let obs = [];
+                for i in 0..{OBS} {{
+                    let row = [];
+                    for j in 0..{INNER} {{
+                        row.push(#{{ a: 1.0, b: 2.0 }});
+                    }}
+                    obs.push(row);
+                }}
+                #{{ observations: obs }}
+            }}
+            "#
+        );
+
+        let run = |limit: usize| -> Result<(), String> {
+            let mut engine = Engine::new();
+            engine.set_max_operations(MAX_OPERATIONS);
+            engine.set_max_array_size(MAX_ARRAY_SIZE);
+            engine.set_max_map_size(limit);
+            let ast = engine.compile(&src).expect("fixture compila");
+            let mut scope = Scope::new();
+            engine
+                .call_fn::<Dynamic>(&mut scope, &ast, "build", ())
+                .map(|_| ())
+                .map_err(|e| e.to_string())
+        };
+
+        let old = run(1_024).expect_err(
+            "el límite VIEJO (1_024) debe rechazar el total acumulado — si esto pasa, \
+             el límite NO es acumulativo y esta tarea se apoya en una premisa falsa",
+        );
+        assert!(
+            old.contains("too large"),
+            "el rechazo debe ser el límite de datos de rhai, no otro error: {old}"
+        );
+        run(MAX_MAP_SIZE).expect(
+            "el límite ACTUAL debe admitir un payload del tamaño que produce el \
+             contrato v4 (si no, el runner seguiría matando cartuchos legítimos)",
+        );
+    }
+
+    /// Envelope v4 mínimo válido (todos los campos que `ProposalV4::parse` exige);
+    /// `extra` permite romper exactamente un campo por test.
+    fn v4_envelope() -> Map {
+        let mut m = Map::new();
+        let put = |m: &mut Map, k: &str, v: &str| {
+            m.insert(k.into(), Dynamic::from(v.to_string()));
+        };
+        put(&mut m, "contract_version", "arbx.cartridge.agent/4");
+        put(&mut m, "mev_id", "MEV-03-001");
+        put(&mut m, "detector_id", "E_POST");
+        put(&mut m, "status", "NO_CANDIDATE");
+        put(&mut m, "context_id", "intent-test");
+        put(&mut m, "manifest_digest", &"a".repeat(64));
+        put(&mut m, "result_digest", &"b".repeat(64));
+        m.insert("is_opportunity".into(), Dynamic::from(false));
+        m.insert("approved_for_execution".into(), Dynamic::from(false));
+        m
+    }
+
+    // (2) CONTRATO v4 EN USO: el envelope v4 se valida con `ProposalV4::parse`
+    //     (no con el lector v3 de f64) y un envelope v4 malformado FALLA CERRADO
+    //     (RuntimeError), nunca se degrada a un candidato de beneficio cero.
+    #[test]
+    fn v4_envelope_goes_through_proposal_v4_parse() {
+        let res = parse_eval_result(Dynamic::from_map(v4_envelope()), "mev_03_001")
+            .expect("un envelope v4 bien formado debe validar");
+        assert!(
+            res.metadata.contains_key("proposal_v4"),
+            "el proposal validado se preserva íntegro para los consumidores"
+        );
+        assert_eq!(
+            res.metadata
+                .get("v3_f64_authoritative")
+                .and_then(|v| v.as_bool()),
+            Some(false),
+            "los f64 v3 NO son autoritativos para un cartucho v4 (R8: 0.0 = ausencia)"
+        );
+        assert_eq!(
+            res.estimated_profit, 0.0,
+            "campo legacy v3: el contrato v4 prohíbe publicarlo (queda en su forma de ausencia)"
+        );
+
+        // Envelope v4 SIN `manifest_digest` → serde falla → fallo cerrado.
+        let mut broken = v4_envelope();
+        broken.remove("manifest_digest");
+        let err = parse_eval_result(Dynamic::from_map(broken), "mev_03_001")
+            .expect_err("un envelope v4 incompleto NO puede degradarse a cero");
+        let msg = err.to_string();
+        assert!(
+            msg.contains("invalid_v4_proposal"),
+            "debe fallar con la razón del contrato v4, no silenciosamente: {msg}"
+        );
+
+        // El cartucho PROPONE, no transmite: la auto-autorización se rechaza en el
+        // propio parser (approved_for_execution = true ⇒ error).
+        let mut self_authorized = v4_envelope();
+        self_authorized.insert("approved_for_execution".into(), Dynamic::from(true));
+        let err = parse_eval_result(Dynamic::from_map(self_authorized), "mev_03_001")
+            .expect_err("un cartucho no puede auto-autorizar ejecución");
+        assert!(
+            err.to_string().contains("invalid_v4_proposal"),
+            "la auto-autorización debe morir en el contrato v4: {err}"
+        );
+    }
+
+    // (3) El lector v3 sigue vivo SÓLO para cartuchos legacy, y ahí sí es
+    //     autoritativo: ningún cartucho legacy se ve afectado por el camino v4.
+    #[test]
+    fn legacy_v3_result_stays_authoritative_for_v3_cartridges() {
+        let mut m = Map::new();
+        m.insert("is_opportunity".into(), Dynamic::from(true));
+        m.insert("estimated_profit".into(), Dynamic::from(1.5_f64));
+        m.insert("confidence".into(), Dynamic::from(0.75_f64));
+        m.insert("urgency".into(), Dynamic::from("high".to_string()));
+        let res = parse_eval_result(Dynamic::from_map(m), "dex_arb").expect("v3 parsea");
+        assert_eq!(res.estimated_profit, 1.5);
+        assert_eq!(res.confidence, 0.75);
+        assert_eq!(
+            res.metadata
+                .get("v3_f64_authoritative")
+                .and_then(|v| v.as_bool()),
+            Some(true),
+            "para un cartucho v3 los f64 SON el dato publicado por el script"
+        );
+        assert!(
+            !res.metadata.contains_key("proposal_v4"),
+            "un cartucho v3 no pasa por el contrato v4"
+        );
     }
 }
