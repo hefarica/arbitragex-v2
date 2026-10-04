@@ -349,6 +349,15 @@ pub enum OptimizeRejectReason {
     /// distinct from `NonPositiveProfit` (which means the quoter answered and
     /// the real spread is ≤ 0).
     V3QuoteUnavailable,
+    /// V3-QUOTE-02 (2026-10-03): the QuoterV2 sub-call EXECUTED and the pool
+    /// reverted — zero/one-sided liquidity at the requested direction, or a fee
+    /// tier for which `IUniswapV3Factory.getPool(t0,t1,fee)` has no pool.
+    /// A market/pool fact, NOT a provider outage: the RPC answered and the
+    /// revert payload is carried in the projector's error. Split out of
+    /// `V3QuoteUnavailable` because the measured live funnel had 27,267 pool
+    /// reverts against 9,019 transport failures — both were reported as the
+    /// same label, so neither could be acted on.
+    V3PoolRevert,
     /// The V3 pool address is absent from the fee catalog (WO-06): the QuoterV2
     /// derives the pool from the fee tier, so quoting would be blind at an
     /// unverified tier. Rejected WITHOUT an RPC — distinct from
@@ -406,6 +415,7 @@ impl OptimizeRejectReason {
             Self::GasFloorBreach => "gas_floor_breach",
             Self::KellyNegativeEdge => "kelly_negative_edge",
             Self::V3QuoteUnavailable => "v3_quote_unavailable",
+            Self::V3PoolRevert => "v3_pool_revert",
             Self::V3PoolNotCatalogued => "v3_pool_not_catalogued",
             Self::V3PairNoPools => "v3_pair_no_pools",
             Self::UnsupportedLegCount => "unsupported_leg_count",
@@ -416,13 +426,19 @@ impl OptimizeRejectReason {
     }
 
     /// Map a V3 quote-failure label (`ProjectV3Error::as_label`) to its
-    /// precise reject reason (WO-06). "v3_quote_unavailable" stays reserved
-    /// for real provider failures — the former single bucket is now honestly
-    /// split so the production metrics can arbitrate the fix branches.
+    /// precise reject reason (WO-06, extended by V3-QUOTE-02).
+    /// "v3_quote_unavailable" stays reserved for real provider TRANSPORT
+    /// failures — the former single bucket is honestly split so the production
+    /// metrics can arbitrate the fix branches:
+    ///   * `v3_pool_revert` — the QuoterV2 sub-call executed and the pool
+    ///     reverted (zero/one-sided liquidity, or a fee tier the factory has no
+    ///     pool for). V3-QUOTE-02: measured 2026-10-03 this, not transport, was
+    ///     the dominant V3 failure (27,267 reverts vs 9,019 transport errors).
     pub fn from_v3_unavailable_label(label: &'static str) -> Self {
         match label {
             "v3_pool_not_catalogued" => Self::V3PoolNotCatalogued,
             "v3_pair_no_pools" => Self::V3PairNoPools,
+            "v3_pool_revert" => Self::V3PoolRevert,
             _ => Self::V3QuoteUnavailable,
         }
     }
@@ -6452,6 +6468,20 @@ mod tests {
         assert_eq!(
             OptimizeRejectReason::V3QuoteUnavailable.as_str(),
             "v3_quote_unavailable"
+        );
+        // V3-QUOTE-02: a pool-level revert is its own reason, not a provider
+        // outage — the production funnel showed it dominating by 3:1.
+        assert_eq!(
+            OptimizeRejectReason::V3PoolRevert.as_str(),
+            "v3_pool_revert"
+        );
+        assert_eq!(
+            OptimizeRejectReason::from_v3_unavailable_label("v3_pool_revert"),
+            OptimizeRejectReason::V3PoolRevert
+        );
+        assert_ne!(
+            OptimizeRejectReason::V3PoolRevert.as_str(),
+            OptimizeRejectReason::V3QuoteUnavailable.as_str()
         );
         // WO-06: catalog gaps are honestly split out of the provider-failure
         // bucket.
