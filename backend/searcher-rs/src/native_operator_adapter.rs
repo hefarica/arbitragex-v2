@@ -272,14 +272,24 @@ const fn feature(
 
 /// `fee_bps` (unidad del contrato del pool) o `pool_fee` (fracción): el
 /// operador prefiere la primera y cae a la segunda
-/// (`op_21_newton.rs:49-56`). `Domain::Finite`: el operador NO filtra dominio,
+/// (`op_21_newton.rs:57-63`). `Domain::Finite`: el operador NO filtra dominio,
 /// así que un `pool_fee = 0.0` presente es un dato real, no un default.
+///
+/// OP21-CONTRACT-01 (2026-10-04): la ausencia es `DataGap`, NO
+/// `HardCodedDefault("0.003")`. FEATURES-DEFAULTS-01 quitó ese 0.003 por
+/// convención V2 — `fee_fraction` devuelve `None` si NINGUNA de las dos claves
+/// está presente ("un fee desconocido no se asume": `op_21_newton.rs:53-56`) y el
+/// operador devuelve `None` con `reason_fee_unavailable`
+/// (test `operators::op_21_newton::tests::fee_absent_declares_the_gap`). Declarar
+/// aquí un default que el operador ya no aplica producía el recibo
+/// autocontradictorio `status=DATA_GAP` + `defaulted_inputs=[…]`, y la razón
+/// `operator_reason:…` en vez de la entrada que falta de verdad.
 const FEE_INPUT: DeclaredInput = DeclaredInput {
     key: "features.fee_bps|pool_fee",
     source: InputSource::FeatureAnyOf(&["fee_bps", "pool_fee"]),
     min_observations: 0,
     domain: Domain::Finite,
-    absent: AbsentMeaning::HardCodedDefault("0.003"),
+    absent: AbsentMeaning::DataGap,
 };
 
 const PRICE_SERIES_6: DeclaredInput = DeclaredInput {
@@ -359,9 +369,24 @@ const CONTRACT_13: &[DeclaredInput] = &[PRICE_SERIES_3];
 // op_16 Kelly (`op_16_kelly.rs:64`: `returns.len() < 2 || wins.is_empty() ||
 // losses.is_empty()`).
 const CONTRACT_16: &[DeclaredInput] = &[PRICE_SERIES_3, SIGNED_RETURNS];
-// op_21 Newton (`op_21_newton.rs:87-93` reservas primarias; `:109-114`
-// `gas_units` con default 150_000; `:49-56` `fee_bps`/`pool_fee` con default
-// 0.003; `:116-121` `break_even_target` con default 0.0).
+// op_21 Newton (`op_21_newton.rs:87-93` reservas primarias; `:118-124`
+// `gas_units` con default 150_000 — ése SÍ es un default hardcodeado vivo).
+//
+// OP21-CONTRACT-01 (2026-10-04): esta tabla citaba `:49-56` y `:116-121` como
+// prueba de que el fee y el objetivo de break-even tenían default (0.003 y 0.0).
+// FEATURES-DEFAULTS-01 borró AMBOS defaults y sus guardas ahora son:
+//   * fee — `fee_fraction` (`:57-63`) devuelve `None` si ninguna clave está
+//     presente ⇒ `None` + `reason_fee_unavailable`
+//     (`fee_absent_declares_the_gap`);
+//   * `break_even_target` — `:130-135`: `_ => return none_out(
+//     "break_even_target_unavailable")`, con el comentario explícito "Ausente NO
+//     es 0.0 … nunca un hurdle 0.0 inventado"; y el productor del objetivo
+//     declara el 0.0 como default PROHIBIDO
+//     (`market_features/cost_tests.rs:386`: "El default prohibido (0.0) haria
+//     desaparecer el objetivo del operador").
+// Declararlos `HardCodedDefault` hacía que el recibo dijera `DATA_GAP` +
+// `defaulted_inputs=[features.break_even_target]` a la vez (contradicción) y
+// ocultaba la entrada que realmente falta. La guarda REAL manda: son `DataGap`.
 const CONTRACT_21: &[DeclaredInput] = &[
     PRIMARY_RESERVES,
     feature(
@@ -375,7 +400,7 @@ const CONTRACT_21: &[DeclaredInput] = &[
         "break_even_target",
         "features.break_even_target",
         Domain::Finite,
-        AbsentMeaning::HardCodedDefault("0.0"),
+        AbsentMeaning::DataGap,
     ),
 ];
 // op_22 MonteCarlo (`op_22_monte_carlo.rs:66`, `prices.len() < 3`).
