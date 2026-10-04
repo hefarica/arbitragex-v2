@@ -448,6 +448,43 @@ fn allowlist_cg_call_budget(pool_len: usize) -> usize {
     }
 }
 
+/// PRICE-COVERAGE-01 (PC3) — allowlist symbols that are GENUINELY missing a price
+/// this tick: neither priced by a provider already (`tick_prices`) nor already
+/// PUBLISHED (and therefore fresh) in `arbx:token_prices:<chain>`
+/// (`published_upper`).
+///
+/// Why "published" counts as present: `RedisCachedPriceOracle` — the reader the
+/// whole pipeline uses — reads exactly that hash, and its TTL is
+/// `period × CACHE_TTL_MULTIPLIER` (≥60 s) precisely so a price survives a
+/// missed tick. Re-asking a provider for a value that is ALREADY published buys
+/// nothing and costs the shared per-tick call budget.
+///
+/// MEDIDO EN PRODUCCIÓN (chain 1, ventana de 24 ticks, 2026-10-04): el pase de
+/// allowlist pedía a Coingecko 16 símbolos — COMP, MKR, UNI, SAND, ENS, SHIB,
+/// RETH, APE, MATIC, SUSHI, LINK, LDO, MANA, PEPE, AAVE, CRV — de los cuales
+/// **16/16 ya estaban publicados** en el hash (TTL 51 s). Esas peticiones
+/// repetidas devolvían 429 (`price_worker.coingecko_failed`, 9 en la ventana),
+/// abrían la ventana de backoff del proveedor y — como el chequeo del breaker
+/// está DENTRO de los dos bucles — dejaban el sweep por address en
+/// `pool_cg_attempted = 0` en **24/24 ticks**. Ese sweep es el ÚNICO productor
+/// posible de los tokens long-tail ruteados (los 16 majors tienen Chainlink,
+/// Binance y `trading_config.token_prices_usd`; BORIS/FUND5/💫MSG no tienen
+/// ninguno), así que el presupuesto del proveedor debe gastarse en él.
+///
+/// Puro: mismo orden que la allowlist, sin I/O — la selección es testeable en
+/// los dos sentidos.
+fn allowlist_remaining(
+    allowlist: &[TokenRef],
+    tick_prices: &HashMap<String, f64>,
+    published_upper: &std::collections::HashSet<String>,
+) -> Vec<TokenRef> {
+    allowlist
+        .iter()
+        .filter(|t| !tick_prices.contains_key(&t.symbol) && !published_upper.contains(&t.symbol))
+        .cloned()
+        .collect()
+}
+
 /// PC2 — assemble the universe deterministically.
 ///
 /// `pool_symbols` is expected UPPERCASE, deduped and sorted (see
@@ -857,6 +894,7 @@ impl PriceWorker {
                         // ceil(pool_resident / pool_cg_attempted) ticks.
                         pool_resident = stats.pool_resident,
                         pool_cg_attempted = stats.pool_cg_attempted,
+                        allowlist_cached_skipped = stats.allowlist_cached_skipped,
                         elapsed_ms = stats.elapsed_ms,
                         "tick complete"
                     );
@@ -1009,12 +1047,20 @@ impl PriceWorker {
         // means the tier can never exceed 5 requests per tick whatever the
         // universe size.
         let allow_calls_cap = allowlist_cg_call_budget(universe.pool.len());
-        let missing_allow: Vec<TokenRef> = universe
+        // PRICE-COVERAGE-01 (PC3): el pase de allowlist NO vuelve a preguntar por
+        // un símbolo que ya está publicado y fresco (`arbx:token_prices:<chain>`,
+        // el MISMO hash que lee `RedisCachedPriceOracle`). Medido: 16/16 de los
+        // símbolos que pedía ya estaban publicados; esas peticiones redundantes
+        // devolvían 429, abrían el breaker compartido y dejaban el sweep por
+        // address en `pool_cg_attempted = 0` durante 24/24 ticks — y ese sweep es
+        // el único productor de los tokens long-tail ruteados.
+        let published = self.published_symbols(redis).await;
+        let allowlist_cached_skipped = universe
             .allowlist
             .iter()
-            .filter(|t| !prices.contains_key(&t.symbol))
-            .cloned()
-            .collect();
+            .filter(|t| !prices.contains_key(&t.symbol) && published.contains(&t.symbol))
+            .count();
+        let missing_allow = allowlist_remaining(&universe.allowlist, &prices, &published);
         let mut coingecko_hits = 0usize;
         let mut cg_calls = 0usize;
         for chunk in missing_allow.chunks(MAX_COINGECKO_BATCH_SIZE) {
@@ -1094,6 +1140,7 @@ impl PriceWorker {
             cache_misses,
             pool_resident: universe.pool.len(),
             pool_cg_attempted,
+            allowlist_cached_skipped,
             elapsed_ms: started.elapsed().as_millis() as u64,
         })
     }
@@ -1246,6 +1293,25 @@ impl PriceWorker {
         // — never by hash order, and never for the route graph as a whole.
         let pool_symbols = self.scan_pool_resident_symbols(redis).await;
         Ok(build_universe(&allowlist, &sym_to_addr, &pool_symbols))
+    }
+
+    /// PRICE-COVERAGE-01 (PC3) — símbolos YA publicados en
+    /// `arbx:token_prices:<chain>` (normalizados a MAYÚSCULAS), para no volver a
+    /// preguntar a un proveedor por un precio que el lector canónico
+    /// (`RedisCachedPriceOracle`) ya puede servir.
+    ///
+    /// Mismo hash y misma clave que usa `persist_prices`, que ya lo lee con
+    /// `hgetall` para su guarda de plausibilidad; aquí basta `HKEYS`. Un fallo de
+    /// Redis devuelve el conjunto VACÍO (R8): sin evidencia de que el precio esté
+    /// publicado, el símbolo se sigue pidiendo al proveedor — nunca se ASUME que
+    /// un precio existe.
+    async fn published_symbols(
+        &self,
+        redis: &mut ConnectionManager,
+    ) -> std::collections::HashSet<String> {
+        let key = redis_token_prices_key(self.cfg.chain_id);
+        let fields: Vec<String> = redis.hkeys(&key).await.unwrap_or_default();
+        fields.into_iter().map(|s| s.to_ascii_uppercase()).collect()
     }
 
     /// Scan `arbx:pool_index:<chain>:*` and `arbx:pool_index_v3:<chain>:*` key
@@ -1691,6 +1757,12 @@ pub struct TickStats {
     /// sweep cursor advances by exactly this, so `pool_resident` symbols are
     /// covered every `ceil(pool_resident / pool_cg_attempted)` ticks.
     pub pool_cg_attempted: usize,
+    /// PRICE-COVERAGE-01 (PC3) — allowlist symbols NOT re-asked to a provider
+    /// because their price was already published and fresh. Observable so the
+    /// effect is measurable in production: when this is 0 while the allowlist is
+    /// fully priced, the worker is burning the shared tier on values it already
+    /// has (the defect this counter was added to expose).
+    pub allowlist_cached_skipped: usize,
     pub elapsed_ms: u64,
 }
 
@@ -2463,6 +2535,94 @@ mod tests {
         assert!(
             !swept.is_empty(),
             "the route graph must advance every tick, whatever the allowlist needs"
+        );
+    }
+
+    #[test]
+    fn pc3_allowlist_pass_never_re_asks_for_an_already_published_price() {
+        // PRICE-COVERAGE-01. Medido en producción (chain 1, 24 ticks): el pase de
+        // allowlist pedía 16 símbolos a Coingecko — COMP, MKR, UNI, SAND, ENS,
+        // SHIB, RETH, APE, MATIC, SUSHI, LINK, LDO, MANA, PEPE, AAVE, CRV — y los
+        // 16/16 YA estaban publicados en `arbx:token_prices:1`. Esas peticiones
+        // redundantes devolvían 429, abrían el breaker del proveedor y dejaban el
+        // sweep por address en `pool_cg_attempted = 0` en 24/24 ticks; ese sweep
+        // es el ÚNICO productor posible de los tokens long-tail ruteados.
+        //
+        // Este test fija las DOS direcciones: sin evidencia de precio publicado el
+        // símbolo SÍ se pide (nada se asume), y con el precio publicado NO se
+        // pide (el presupuesto queda para el sweep).
+        let universe = production_shaped_universe();
+        let allow: Vec<TokenRef> = universe.allowlist.clone();
+        assert_eq!(allow.len(), 21, "allowlist de producción");
+
+        // (a) Nada publicado ni resuelto en el tick: se piden TODOS (el
+        //     comportamiento previo no se toca — sin evidencia no se asume nada).
+        let nothing = std::collections::HashSet::new();
+        let all = allowlist_remaining(&allow, &HashMap::new(), &nothing);
+        assert_eq!(
+            all.len(),
+            allow.len(),
+            "sin precios publicados no se omite nada"
+        );
+
+        // (b) El caso medido: los 16 leftovers ya publicados ⇒ el pase 1 queda
+        //     vacío y NO gasta NINGUNA de las 5 llamadas compartidas.
+        let published: std::collections::HashSet<String> = [
+            "COMP", "MKR", "UNI", "SAND", "ENS", "SHIB", "RETH", "APE", "MATIC", "SUSHI", "LINK",
+            "LDO", "MANA", "PEPE", "AAVE", "CRV",
+        ]
+        .iter()
+        .map(|s| (*s).to_string())
+        .collect();
+        let remaining = allowlist_remaining(&allow, &HashMap::new(), &published);
+        let remaining_syms: Vec<&str> = remaining.iter().map(|t| t.symbol.as_str()).collect();
+        assert_eq!(
+            remaining_syms,
+            vec!["WETH", "USDC", "USDT", "DAI", "WBTC"],
+            "sólo los 5 majors sin precio publicado siguen pidiéndose"
+        );
+        let allow_calls = remaining
+            .chunks(MAX_COINGECKO_BATCH_SIZE)
+            .count()
+            .min(allowlist_cg_call_budget(universe.pool.len()));
+        assert_eq!(allow_calls, 1, "un solo chunk para los 5 restantes");
+        let sweep_calls = MAX_COINGECKO_CALLS_PER_TICK - allow_calls;
+        assert_eq!(
+            sweep_calls,
+            MAX_COINGECKO_CALLS_PER_TICK - 1,
+            "el sweep recupera 4 de las 5 llamadas (antes: 0 intentos por el breaker abierto)"
+        );
+        let swept = rotating_window(&universe.pool, 0, sweep_calls * MAX_COINGECKO_BATCH_SIZE);
+        assert_eq!(swept.len(), sweep_calls * MAX_COINGECKO_BATCH_SIZE);
+
+        // (c) Un símbolo ya resuelto POR EL TICK (Chainlink/Binance/Alchemy) no se
+        //     vuelve a pedir aunque todavía no esté publicado.
+        let mut tick = HashMap::new();
+        tick.insert("WETH".to_string(), 2_700.0);
+        let after_fusion = allowlist_remaining(&allow, &tick, &published);
+        assert!(
+            !after_fusion.iter().any(|t| t.symbol == "WETH"),
+            "un precio ya resuelto en el tick no se re-pide"
+        );
+
+        // (d) Con TODA la allowlist publicada, el pase 1 usa 0 llamadas y el sweep
+        //     dispone del presupuesto completo.
+        let full: std::collections::HashSet<String> =
+            allow.iter().map(|t| t.symbol.clone()).collect();
+        let none_left = allowlist_remaining(&allow, &HashMap::new(), &full);
+        assert!(
+            none_left.is_empty(),
+            "allowlist totalmente publicada ⇒ cero peticiones: {none_left:?}"
+        );
+        let swept_full = rotating_window(
+            &universe.pool,
+            0,
+            MAX_COINGECKO_CALLS_PER_TICK * MAX_COINGECKO_BATCH_SIZE,
+        );
+        assert_eq!(
+            swept_full.len(),
+            MAX_COINGECKO_CALLS_PER_TICK * MAX_COINGECKO_BATCH_SIZE,
+            "el sweep usa las 5 llamadas para los tokens sin otro productor"
         );
     }
 }
