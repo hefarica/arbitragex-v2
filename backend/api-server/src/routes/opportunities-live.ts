@@ -264,6 +264,17 @@ interface OpportunityLiveRow extends QueryResultRow {
   token_out_decimals: number | null;
   token_out_logo_url: string | null;
   token_out_resolved_via: string | null;
+  // A.8 CONFIDENCE WIRE (2026-10-03) — LEFT JOIN LATERAL scored_opportunities.
+  // One row max (ORDER BY created_at DESC, id DESC LIMIT 1), so these are the
+  // LATEST ConfidenceScore for THIS opportunity. All NULL when no scored row
+  // exists for the id — that is NO COMPUTADO, never a fabricated zero (R8/R10).
+  // `scored_posterior_prob` is a probability in [0,1]; the wire emits integer
+  // basis points PLUS the un-rounded float so sub-bps values stay legible.
+  scored_posterior_prob: number | null;
+  scored_kelly_fraction: number | null;
+  scored_bayesian_accepted: boolean | null;
+  scored_emission_outcome: string | null;
+  scored_rejection_reason: string | null;
 }
 
 // ── Query ────────────────────────────────────────────────────────────────────
@@ -371,6 +382,26 @@ SELECT
   -- ALWAYS-COMPUTE (2026-09-27, migration 126): the complete economics
   -- computation object on EVERY row — accepted and rejected alike.
   o.economics                            AS economics,
+  -- A.8 CONFIDENCE WIRE (2026-10-03): the Gate-C ConfidenceScore for THIS
+  -- opportunity, read from the archiver's sink. Join key: opportunities.id is
+  -- UUID, scored_opportunities.opportunity_id is TEXT (migration 097), so the
+  -- uuid is cast. idx_scored_opportunities_opportunity_id (097) makes it a
+  -- btree lookup per returned row, never a scan of the ~10M-row sink.
+  --
+  -- LATERAL + ORDER BY ... LIMIT 1 is MANDATORY, not stylistic: the Rust
+  -- emitter scores an opportunity on BOTH the accept and the reject path
+  -- (opportunity_emitter.rs:423 / :531), so a plain LEFT JOIN fans the card
+  -- into duplicate rows. The rule is the same one beta_priors.rs:68 already
+  -- uses (DISTINCT ON (opportunity_id) ... ORDER BY created_at DESC, id DESC):
+  -- newest score wins, id DESC breaks same-timestamp ties deterministically.
+  --
+  -- R8: no scored row => NULL (NO COMPUTADO). The mapper attaches an explicit
+  -- machine reason; nothing here invents a zero.
+  sc.posterior_prob       AS scored_posterior_prob,
+  sc.kelly_fraction       AS scored_kelly_fraction,
+  sc.bayesian_accepted    AS scored_bayesian_accepted,
+  sc.emission_outcome     AS scored_emission_outcome,
+  sc.rejection_reason     AS scored_rejection_reason,
   -- WO-H4 (2026-09-17): real total of the live window, UNBOUNDED by LIMIT.
   -- Window functions evaluate before LIMIT, so COUNT(*) OVER () counts every
   -- row matching the WHERE (time window + viable_only filter) even when only
@@ -396,6 +427,15 @@ LEFT JOIN tokens ti
 LEFT JOIN tokens to_
   ON  to_.chain_id = COALESCE(o.chain_id_out, o.chain_id)
   AND to_.address  = LOWER(o.token_out)
+-- A.8 CONFIDENCE WIRE (2026-10-03): latest Gate-C score for this opportunity.
+LEFT JOIN LATERAL (
+  SELECT s.posterior_prob, s.kelly_fraction, s.bayesian_accepted,
+         s.emission_outcome, s.rejection_reason
+  FROM scored_opportunities s
+  WHERE s.opportunity_id = o.id::text
+  ORDER BY s.created_at DESC, s.id DESC
+  LIMIT 1
+) sc ON TRUE
 ORDER BY
   -- PC-08 (2026-09-19, doctrina operador): ordenar por Topological Yield USD
   -- de MAYOR a MENOR cuando order=profit_usd. Default intacto detected_at DESC
@@ -751,6 +791,96 @@ export function missingEconomicsCensus(
   return { window: "request", rows: rows.length, fields: c };
 }
 
+// ── A.8 confidence wire (2026-10-03) ─────────────────────────────────────────
+
+/**
+ * Producer chain for `confidence_score_bps` — VERIFIED, not assumed:
+ *
+ *   searcher-rs scoring_pipeline.rs:237 ConfidenceScore{posterior_prob,…}
+ *     → opportunity_emitter.rs:878 serde_json → XADD `arbx:scoring:scored`
+ *     → ScoredOpportunitiesArchiver.processOne (scored-opportunities-archiver.ts)
+ *       INSERT INTO scored_opportunities
+ *     → scored_opportunities.posterior_prob  (LIVE JOIN above)
+ *     → THIS mapper
+ *     → GET /api/opportunities/live → frontend/lib/home-opportunity.ts
+ *     → XRayCard "conf"
+ *
+ * Units: `posterior_prob` is a win-probability in [0,1] (ConfidenceScore
+ * doc-comment: "Posterior win-probability E[p]"), emitted as integer basis
+ * points per the wire contract (`schemas.ts` "Units are basis points (bps)").
+ *
+ * R8 (None ≠ Some(0.0)) — the two facts this mapper must never conflate:
+ *   - NO scored row for this opportunity  ⇒ confidence_score_bps = null,
+ *     confidence_state = "not_computed", confidence_reason = the machine code
+ *     `no_scored_row_for_opportunity`. Nothing is fabricated.
+ *   - scored row whose posterior ROUNDS to 0 bps (e.g. 2.6e-5 ⇒ 0.26 bps)
+ *     ⇒ confidence_score_bps = 0 with confidence_state = "computed": that is a
+ *     real computed value, and the un-rounded `posterior_prob` travels on the
+ *     wire so a consumer can tell "exactly 0" from "rounded to 0" instead of
+ *     dressing a sub-basis-point posterior as a hard zero.
+ *
+ * `scoring_version` / `scoring_input_hash` are deliberately NOT emitted: no
+ * producer carries them on this sink (migration 097/109 have no such column).
+ * They stay declared-and-null-by-absence rather than present-and-invented;
+ * the UI field ledger declares them NO COMPUTADO with their reason.
+ */
+export function a8ScoringFromRow(row: OpportunityLiveRow): {
+  confidence_score_bps: number | null;
+  posterior_probability_bps: number | null;
+  posterior_prob: number | null;
+  kelly_fraction_bps: number | null;
+  scoring_decision: string | null;
+  scoring_reason: string | null;
+  confidence_state: "computed" | "not_computed";
+  confidence_source: string | null;
+  confidence_reason: string | null;
+} {
+  const posterior = row.scored_posterior_prob;
+  if (posterior == null || !Number.isFinite(posterior)) {
+    return {
+      confidence_score_bps: null,
+      posterior_probability_bps: null,
+      posterior_prob: null,
+      kelly_fraction_bps: null,
+      scoring_decision: null,
+      scoring_reason: null,
+      confidence_state: "not_computed",
+      confidence_source: null,
+      confidence_reason: "no_scored_row_for_opportunity",
+    };
+  }
+  // Clamp to the declared domain [0,1] before scaling: a posterior outside it
+  // is a producer bug, and scaling a bogus value into the card would launder it.
+  const clamped = Math.min(1, Math.max(0, posterior));
+  const bps = Math.round(clamped * 10_000);
+  const kf = row.scored_kelly_fraction;
+  const kellyBps =
+    kf == null || !Number.isFinite(kf)
+      ? null
+      : Math.round(Math.min(1, Math.max(0, kf)) * 10_000);
+  return {
+    confidence_score_bps: bps,
+    posterior_probability_bps: bps,
+    posterior_prob: clamped,
+    kelly_fraction_bps: kellyBps,
+    // The Bayesian gate verdict proper (`accept_by_posterior`, scoring_pipeline
+    // .rs:227). null when the sink row predates the column being readable.
+    scoring_decision:
+      row.scored_bayesian_accepted == null
+        ? null
+        : row.scored_bayesian_accepted
+          ? "accepted"
+          : "rejected",
+    // Verbatim reason recorded next to the score by the emitter (the pipeline
+    // gate that rejected the opportunity). null on the accept path — there is
+    // no reason to report, which is not the same as "no reason known".
+    scoring_reason: row.scored_rejection_reason ?? null,
+    confidence_state: "computed",
+    confidence_source: "scored_opportunities.posterior_prob",
+    confidence_reason: null,
+  };
+}
+
 function rowToOpportunity(
   row: OpportunityLiveRow,
   sim: SimContext | undefined,
@@ -889,6 +1019,13 @@ function rowToOpportunity(
     // this boundary (USD numeric-string tolerance, wei digit-strings, R8 null
     // on unparseable). Present on BOTH accepted and rejected rows.
     economics:                  hardenEconomics(row.economics),
+    // A.8 CONFIDENCE WIRE (2026-10-03): the scored ConfidenceScore for this
+    // opportunity, or a declared NOT COMPUTED with its machine reason. This is
+    // the field the home card renders as "conf" — before this wiring it read
+    // `confidence_score_bps` off a payload that never carried it, so the card
+    // was permanently "unscored" while the scorer was in fact producing ~10M
+    // scored rows. Producer chain + R8 semantics: see a8ScoringFromRow().
+    ...a8ScoringFromRow(row),
     // Target-driven simulation (R8 fail-honest: all nullable, source-labeled).
     // Computed only when net_expected_profit_usd is null (the canonical Rust
     // spine output wins when present).
@@ -1317,6 +1454,7 @@ export function mountOpportunitiesLive(
 // Pure mapper exposed for regression inputs, never mounted as an endpoint.
 export const __forTesting = {
   rowToOpportunity,
+  a8ScoringFromRow,
   hardenEconomics,
   missingEconomicsCensus,
   censusEconomicsDeclaration,
@@ -1422,4 +1560,3 @@ export function censusEconomicsDeclaration(
     economic_figures_present: present,
   };
 }
-

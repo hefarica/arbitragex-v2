@@ -757,3 +757,101 @@ describe("ALWAYS-COMPUTE — rowToOpportunity economics passthrough (deliverable
     expect(result.economics).toBeNull();
   });
 });
+
+// A8-CONF-01 (2026-10-03). The home card's "conf" read
+// `opp.confidence_score_bps` off a payload that never carried it: the card was
+// permanently "— conf (unscored)" while the Gate-C scorer was in fact writing
+// ~10M rows into scored_opportunities. These tests pin the three facts that
+// keep that from silently regressing:
+//   (i)   LIVE_QUERY actually joins the sink (dropping the join while the
+//         fixture keeps injecting scored_* columns = silent dead wire again);
+//   (ii)  the bps mapping + R8 None/Some(0.0) distinction;
+//   (iii) the declared reason on the not-computed path (R10).
+describe("A8-CONF-01 — confidence scoring wire end-to-end", () => {
+  it("(i) LIVE_QUERY joins scored_opportunities with the indexed key and a single-row LATERAL", async () => {
+    const pool = fakePool({ rows: [] });
+    const app = await buildApp(pool);
+    await request(app).get("/api/v1/opportunities/live?limit=50");
+    const firstCall = (pool.query as ReturnType<typeof vi.fn>).mock.calls[0]?.[0];
+    const text =
+      typeof firstCall === "string" ? firstCall : ((firstCall as { text?: string })?.text ?? "");
+    // The join key MUST cast the uuid: opportunities.id is uuid, the sink's
+    // opportunity_id is TEXT (migration 097).
+    expect(text).toContain("s.opportunity_id = o.id::text");
+    expect(text).toContain("FROM scored_opportunities s");
+    // LATERAL + LIMIT 1: the emitter scores on BOTH the accept and the reject
+    // path, so a plain LEFT JOIN would duplicate the card.
+    expect(text).toContain("LEFT JOIN LATERAL (");
+    expect(text).toContain("ORDER BY s.created_at DESC, s.id DESC");
+    expect(text).toContain("LIMIT 1");
+    expect(text).toContain("sc.posterior_prob       AS scored_posterior_prob");
+  });
+
+  it("maps the scored posterior to integer basis points, keeping the un-rounded value", async () => {
+    const { __forTesting } = await import("./opportunities-live.js");
+    const result = __forTesting.rowToOpportunity(
+      fixtureRow({
+        scored_posterior_prob: 0.87,
+        scored_kelly_fraction: 0.125,
+        scored_bayesian_accepted: true,
+        scored_emission_outcome: "accepted",
+        scored_rejection_reason: null,
+      }) as never,
+      undefined, null, new Map(), new Map(),
+    );
+    expect(result.confidence_score_bps).toBe(8700);
+    expect(result.posterior_probability_bps).toBe(8700);
+    expect(result.posterior_prob).toBe(0.87);
+    expect(result.kelly_fraction_bps).toBe(1250);
+    expect(result.scoring_decision).toBe("accepted");
+    expect(result.scoring_reason).toBeNull();
+    expect(result.confidence_state).toBe("computed");
+    expect(result.confidence_source).toBe("scored_opportunities.posterior_prob");
+    expect(result.confidence_reason).toBeNull();
+  });
+
+  it("a sub-basis-point posterior is COMPUTED 0 bps, not NOT COMPUTED — the raw float rides along", async () => {
+    const { __forTesting } = await import("./opportunities-live.js");
+    // Real prod value (scored_opportunities, 2026-10-03): 2.600356865160073e-05.
+    const result = __forTesting.rowToOpportunity(
+      fixtureRow({
+        scored_posterior_prob: 2.600356865160073e-5,
+        scored_kelly_fraction: 0,
+        scored_bayesian_accepted: false,
+        scored_emission_outcome: "rejected",
+        scored_rejection_reason: "non_positive_profit",
+      }) as never,
+      undefined, null, new Map(), new Map(),
+    );
+    expect(result.confidence_score_bps).toBe(0);
+    expect(result.confidence_state).toBe("computed");
+    expect(result.confidence_reason).toBeNull();
+    // The distinction the card needs to avoid dressing this as a hard zero.
+    expect(result.posterior_prob).toBeCloseTo(2.600356865160073e-5, 12);
+    expect(result.scoring_decision).toBe("rejected");
+    expect(result.scoring_reason).toBe("non_positive_profit");
+  });
+
+  it("no scored row for the opportunity => NO COMPUTADO with an explicit reason, never 0 (R8/R10)", async () => {
+    const { __forTesting } = await import("./opportunities-live.js");
+    const result = __forTesting.rowToOpportunity(
+      fixtureRow({ scored_posterior_prob: null }) as never,
+      undefined, null, new Map(), new Map(),
+    );
+    expect(result.confidence_score_bps).toBeNull();
+    expect(result.confidence_state).toBe("not_computed");
+    expect(result.confidence_reason).toBe("no_scored_row_for_opportunity");
+    expect(result.confidence_source).toBeNull();
+  });
+
+  it("a non-finite posterior degrades to NOT COMPUTADO instead of laundering NaN onto the wire", async () => {
+    const { __forTesting } = await import("./opportunities-live.js");
+    const result = __forTesting.rowToOpportunity(
+      fixtureRow({ scored_posterior_prob: Number.NaN }) as never,
+      undefined, null, new Map(), new Map(),
+    );
+    expect(result.confidence_score_bps).toBeNull();
+    expect(result.posterior_prob).toBeNull();
+    expect(result.confidence_state).toBe("not_computed");
+  });
+});
