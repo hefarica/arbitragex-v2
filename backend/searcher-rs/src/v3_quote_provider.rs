@@ -429,8 +429,8 @@ impl MulticallV3QuoteProvider {
     async fn quote_batch_impl(
         &self,
         reqs: Vec<V3QuoteRequest>,
-    ) -> Vec<(V3QuoteRequest, QuoteResult)> {
-        let mut out: Vec<(V3QuoteRequest, QuoteResult)> = Vec::new();
+    ) -> crate::state_projector::V3BatchQuoteResults {
+        let mut out: crate::state_projector::V3BatchQuoteResults = Vec::new();
         if reqs.is_empty() {
             return out;
         }
