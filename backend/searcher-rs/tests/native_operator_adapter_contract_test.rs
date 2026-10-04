@@ -5,7 +5,9 @@
 //!
 //! 1. Con las claves de `MarketState.features` pobladas desde fuentes reales, los
 //!    operadores que LEEN `features` (11 Bayes, 21 Newton, 26 FlashLoan) dejan de
-//!    devolver DATA_GAP y publican un valor finito.
+//!    devolver DATA_GAP y publican un valor finito. Para op_21 eso incluye el
+//!    OBJETIVO de break-even, que su guarda exige desde FEATURES-DEFAULTS-01
+//!    (OP21-CONTRACT-01).
 //! 2. Con las claves AUSENTES, siguen devolviendo DATA_GAP **nombrando la clave
 //!    exacta** — y jamás un `0.0` fabricado (`value`/`scalar` en `null`). RULE 00
 //!    / R8: un DATA_GAP honesto vale más que un cero inventado.
@@ -161,6 +163,30 @@ fn featured_state(prices: &HashMap<String, f64>) -> MarketState {
     s
 }
 
+/// Objetivo de break-even DEL FIXTURE — **PRESENTE ⇒ acreditado**.
+///
+/// OP21-CONTRACT-01: el productor real es
+/// `CostInputs::break_even_target_min_units`
+/// (`native_operator_adapter/market_features/cost_inputs.rs:448`), emitido por
+/// `add_cost_features` (`market_features/mod.rs:235-237`) en unidades mínimas del
+/// numerario y **jamás 0.0** — el 0.0 es el default PROHIBIDO
+/// (`market_features/cost_tests.rs:386`: "El default prohibido (0.0) haria
+/// desaparecer el objetivo del operador"). El valor de este fixture imita la
+/// ESCALA que la propia guarda del operador usa en sus tests
+/// (`op_21_newton.rs:320-340`: hurdle 10.0 con reservas 1e6); lo que este archivo
+/// fija es PRESENCIA vs AUSENCIA y la coherencia del recibo, no la economía del
+/// fixture.
+const FIXTURE_BREAK_EVEN_TARGET: f64 = 10.0;
+
+/// Fuentes reales presentes **más** el objetivo acreditado: el caso en que los
+/// tres operadores de `features` tienen TODO lo que su guarda exige.
+fn featured_state_with_objective(prices: &HashMap<String, f64>) -> MarketState {
+    let mut s = featured_state(prices);
+    s.features
+        .insert("break_even_target".to_string(), FIXTURE_BREAK_EVEN_TARGET);
+    s
+}
+
 // ── 1. El productor sólo emite claves con fuente real ────────────────────────
 
 #[test]
@@ -217,7 +243,11 @@ fn producer_emits_only_keys_with_real_sources_never_zero() {
 #[test]
 fn features_present_unlock_the_feature_keyed_operators() {
     let prices = token_prices();
-    let state = featured_state(&prices);
+    // OP21-CONTRACT-01: para op_21 "las fuentes presentes" incluyen el OBJETIVO de
+    // break-even (su guarda lo exige desde FEATURES-DEFAULTS-01,
+    // `op_21_newton.rs:130-135`); sin él, el resultado correcto es DATA_GAP, que es
+    // lo que la dirección contraria de este archivo fija.
+    let state = featured_state_with_objective(&prices);
     let out = run(&state, &[11, 21, 26]);
 
     for id in [11u8, 21, 26] {
@@ -288,46 +318,93 @@ fn features_absent_keep_data_gap_and_name_the_missing_key() {
     }
 }
 
-// ── 4. Defaults hardcodeados: COMPUTED, pero declarados ──────────────────────
+// ── 4. Defaults: el ÚNICO vivo se declara, los borrados son huecos ───────────
+//
+// OP21-CONTRACT-01 (2026-10-04). Este test afirmaba `op_21 COMPUTED` sin fee ni
+// objetivo: eso codificaba un catálogo STALE del adaptador
+// (`native_operator_adapter.rs::CONTRACT_21` seguía declarando
+// `HardCodedDefault("0.003")` para el fee y `HardCodedDefault("0.0")` para el
+// objetivo, default que FEATURES-DEFAULTS-01 había BORRADO de la guarda real).
+// La conclusión del recibo era autocontradictoria: `status=DATA_GAP` con
+// `defaulted_inputs=["features.break_even_target"]`, y la razón
+// `operator_reason:…` en vez de la entrada que falta de verdad.
+//
+// El lado equivocado era el CATÁLOGO, no la guarda del operador (probada por
+// `op_21_newton.rs::tests::{fee_absent_declares_the_gap,
+// break_even_target_absent_declares_the_gap, accredited_zero_target_still_computes,
+// larger_target_moves_the_break_even_up}`, todas verdes) ni el productor (que
+// declara el 0.0 como default PROHIBIDO, `cost_tests.rs:386`). Aquí se fijan las
+// tres direcciones del comportamiento REAL.
 
 #[test]
-fn hardcoded_defaults_are_declared_instead_of_faked_as_sourced() {
+fn op_21_declares_its_single_live_default_and_names_the_removed_ones_as_gaps() {
     let prices = token_prices();
-    let mut state = featured_state(&prices);
-    state.features.clear();
-    let out = run(&state, &[21]);
 
+    // (a) SIN ninguna fuente: el único default vivo (`gas_units` = 150_000,
+    //     `op_21_newton.rs:118-124`) viaja declarado, y las DOS entradas que la
+    //     guarda exige se nombran como faltantes — nunca como defaults aplicados.
+    let mut starved = featured_state(&prices);
+    starved.features.clear();
+    let out = run(&starved, &[21]);
+    assert_eq!(status(&out, 21), "DATA_GAP", "{:?}", receipt(&out, 21));
     assert_eq!(
-        status(&out, 21),
-        "COMPUTED",
-        "op_21 computa con sus defaults declarados (op_21_newton.rs:109-121)"
+        reason(&out, 21),
+        "missing_inputs:features.fee_bps|pool_fee+features.break_even_target",
+        "la razón debe nombrar las entradas que la guarda REAL exige"
     );
     assert!(
-        string_list(&receipt(&out, 21)["missing_inputs"]).is_empty(),
-        "un default declarado no es una entrada faltante"
+        receipt(&out, 21)["value"].is_null(),
+        "un DATA_GAP no publica valor"
     );
-    let defaulted = string_list(&receipt(&out, 21)["defaulted_inputs"]);
-    for key in ["features.gas_units", "features.fee_bps|pool_fee"] {
-        assert!(
-            defaulted.contains(&key.to_string()),
-            "`{key}` debe viajar como default aplicado: {defaulted:?}"
-        );
-    }
-    // Con las fuentes reales presentes, gas y fee dejan de ser defaults: sólo
-    // queda el objetivo de break-even, que el operador define como 0.0.
-    let sourced = run(&featured_state(&prices), &[21]);
-    assert_eq!(status(&sourced, 21), "COMPUTED");
-    let sourced_defaults = string_list(&receipt(&sourced, 21)["defaulted_inputs"]);
-    for key in ["features.gas_units", "features.fee_bps|pool_fee"] {
-        assert!(
-            !sourced_defaults.contains(&key.to_string()),
-            "`{key}` tiene fuente real y no debe figurar como default: {sourced_defaults:?}"
-        );
-    }
     assert_eq!(
-        sourced_defaults,
-        vec!["features.break_even_target".to_string()],
-        "el único default restante es el objetivo de break-even"
+        string_list(&receipt(&out, 21)["defaulted_inputs"]),
+        vec!["features.gas_units".to_string()],
+        "el único default hardcodeado vivo de op_21 es el gas"
+    );
+
+    // (b) Objetivo AUSENTE con el resto sourced: hueco SOLO por el objetivo, y
+    //     jamás listado como default (la contradicción que este test fija).
+    let no_objective = run(&featured_state(&prices), &[21]);
+    assert_eq!(
+        status(&no_objective, 21),
+        "DATA_GAP",
+        "{:?}",
+        receipt(&no_objective, 21)
+    );
+    assert_eq!(
+        reason(&no_objective, 21),
+        "missing_inputs:features.break_even_target"
+    );
+    assert!(
+        !string_list(&receipt(&no_objective, 21)["defaulted_inputs"])
+            .contains(&"features.break_even_target".to_string()),
+        "el objetivo ausente NO puede viajar como default: el operador no lo aplica \
+         (FEATURES-DEFAULTS-01) y declararlo así fabricaba un hurdle"
+    );
+
+    // (c) Todo sourced (fee, gas, reservas y objetivo acreditado): computa y NO
+    //     queda ningún default declarado.
+    let sourced = run(&featured_state_with_objective(&prices), &[21]);
+    assert_eq!(
+        status(&sourced, 21),
+        "COMPUTED",
+        "{:?}",
+        receipt(&sourced, 21)
+    );
+    assert!(
+        string_list(&receipt(&sourced, 21)["missing_inputs"]).is_empty(),
+        "con todas las fuentes no hay entradas faltantes"
+    );
+    assert!(
+        string_list(&receipt(&sourced, 21)["defaulted_inputs"]).is_empty(),
+        "ninguna entrada del contrato es default cuando todas tienen fuente: {:?}",
+        receipt(&sourced, 21)["defaulted_inputs"]
+    );
+    assert!(
+        receipt(&sourced, 21)["value"]
+            .as_f64()
+            .is_some_and(|v| v.is_finite() && v > 0.0),
+        "un COMPUTED de op_21 publica la raíz de break-even finita y positiva"
     );
 }
 
