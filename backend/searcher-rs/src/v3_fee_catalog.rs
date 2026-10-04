@@ -368,22 +368,118 @@ impl V3FeeCatalog {
     /// like `[{"address":"0x…","fee_bps":30}]` — `V3PoolInfo` requires
     /// `pool_addr`, so serde rejects the whole array → key skipped → every pool
     /// in it resolves `NotCatalogued`.
+    ///
+    /// CATALOG-CANONICAL-CONFLICT-01: the production path no longer merges a
+    /// single payload blindly — `load_from_redis` collects every statement first
+    /// (`ingest_canonical_payloads`) so that two canonical keys contradicting
+    /// each other cannot be resolved by arrival order. This blind single-payload
+    /// merge is kept as the TEST-only primitive the pre-existing ingest tests
+    /// pin, and it is gated to `cfg(test)` so the compiler still proves nothing
+    /// in the library calls it.
+    #[cfg(test)]
     fn ingest_index_payload(&self, json: &str) -> usize {
+        let (malformed, entries) = Self::parse_index_payload_entries(json);
+        let mut by_pool = self.by_pool.write().unwrap_or_else(|e| e.into_inner());
+        for (addr, fee_bps) in entries {
+            by_pool.insert(addr, fee_bps);
+        }
+        malformed
+    }
+
+    /// Parse ONE `arbx:pool_index_v3` payload into `(malformed_entries, entries)`
+    /// WITHOUT touching the catalog: the canonical decision needs every statement
+    /// in hand before one of them becomes the tier.
+    fn parse_index_payload_entries(json: &str) -> (usize, Vec<(Address, u32)>) {
         let pools: Vec<V3PoolInfo> = match serde_json::from_str(json) {
             Ok(p) => p,
-            Err(_) => return 1,
+            Err(_) => return (1, Vec::new()),
         };
         let mut malformed = 0usize;
-        let mut by_pool = self.by_pool.write().unwrap_or_else(|e| e.into_inner());
+        let mut entries = Vec::with_capacity(pools.len());
         for info in pools {
             match info.pool_addr.parse::<Address>() {
-                Ok(addr) => {
-                    by_pool.insert(addr, info.fee_bps);
-                }
+                Ok(addr) => entries.push((addr, info.fee_bps)),
                 Err(_) => malformed += 1,
             }
         }
-        malformed
+        (malformed, entries)
+    }
+
+    /// The legacy generation (`bps`) read as a per-pool WITNESS map.
+    ///
+    /// "First statement wins" via `or_insert` is only deterministic on a SORTED
+    /// key set, so the caller sorts the legacy keys — an unsorted SCAN feeding
+    /// `or_insert` would be the very defect this module is closing.
+    fn legacy_witness_bps(payloads: &[(String, String)]) -> HashMap<Address, u32> {
+        let mut out: HashMap<Address, u32> = HashMap::new();
+        for (_, json) in payloads {
+            let (_, entries) = Self::parse_index_payload_entries(json);
+            for (addr, bps) in entries {
+                out.entry(addr).or_insert(bps);
+            }
+        }
+        out
+    }
+
+    /// CATALOG-CANONICAL-CONFLICT-01 — merge the CANONICAL generation under the
+    /// deterministic conflict rule.
+    ///
+    /// `payloads` is `(key, json)` in whatever order the SCAN produced them; the
+    /// outcome is invariant to that order, which is the point of the function.
+    /// `legacy_witness` carries the OLDER generation's value in BASIS POINTS: an
+    /// independent writer, hence evidence rather than another competitor.
+    /// Returns `(malformed_entries, canonical_conflicts)`.
+    pub(crate) fn ingest_canonical_payloads(
+        &self,
+        payloads: &[(String, String)],
+        legacy_witness: &HashMap<Address, u32>,
+    ) -> (usize, usize) {
+        let mut statements: HashMap<Address, Vec<CanonicalStatement>> = HashMap::new();
+        let mut malformed = 0usize;
+        for (key, json) in payloads {
+            let (m, entries) = Self::parse_index_payload_entries(json);
+            malformed += m;
+            for (addr, tier_pips) in entries {
+                statements
+                    .entry(addr)
+                    .or_default()
+                    .push(CanonicalStatement {
+                        key: key.clone(),
+                        tier_pips,
+                    });
+            }
+        }
+        let mut conflicts = 0usize;
+        let mut winners: Vec<(Address, u32)> = Vec::with_capacity(statements.len());
+        for (addr, list) in &statements {
+            let (tier, disputed) = pick_canonical_tier(list, legacy_witness.get(addr).copied());
+            if disputed {
+                conflicts += 1;
+                let mut tiers: Vec<u32> = list.iter().map(|s| s.tier_pips).collect();
+                tiers.sort_unstable();
+                tiers.dedup();
+                let mut keys: Vec<&str> = list.iter().map(|s| s.key.as_str()).collect();
+                keys.sort_unstable();
+                warn!(
+                    event = "v3_fee_catalog.canonical_key_contradiction",
+                    pool = %addr,
+                    tiers = ?tiers,
+                    keys = ?keys,
+                    winner = tier,
+                    "two CANONICAL keys describe the same pool with different pips — \
+                     deterministic winner (legacy witness, else the writer-form key), \
+                     never SCAN order"
+                );
+            }
+            winners.push((addr, tier));
+        }
+        {
+            let mut by_pool = self.by_pool.write().unwrap_or_else(|e| e.into_inner());
+            for (addr, tier) in winners {
+                by_pool.insert(addr, tier);
+            }
+        }
+        (malformed, conflicts)
     }
 
     /// Merge the Redis `arbx:pool_index_v3:<chain>:*` index into `by_pool`
@@ -441,6 +537,12 @@ impl V3FeeCatalog {
         // Legacy keys only fill pools the canonical generation does not
         // describe, and every contradiction is COUNTED (R8: resolved
         // deterministically, never silently).
+        //
+        // CATALOG-CANONICAL-CONFLICT-01 (2026-10-04): that rule closes the
+        // canonical/LEGACY class. The canonical/CANONICAL class was still open —
+        // two canonical keys contradicting each other went through a blind
+        // insert, so SCAN order picked the tier again. It is closed below by
+        // `pick_canonical_tier`, and the same gauge counts both classes.
         let mut canonical_keys: Vec<String> = Vec::new();
         let mut legacy_keys: Vec<String> = Vec::new();
         for key in keys {
@@ -451,19 +553,49 @@ impl V3FeeCatalog {
             }
         }
 
+        // CATALOG-CANONICAL-CONFLICT-01 (2026-10-04): BOTH generations are read
+        // BEFORE anything is merged, because there is a third contradiction class
+        // this loader used to miss — CANONICAL vs CANONICAL:
+        //
+        //   arbx:pool_index_v3:1:weth:wfc = 100   (pips)  ← the writer-form key
+        //   arbx:pool_index_v3:1:wfc:weth = 10000 (pips)  ← foreign symbol order
+        //   arbx:pool_index_v3:1:WETH:WFC = 100   (bps = 10000 pips, legacy)
+        //
+        // With one blind `by_pool.insert` per canonical key, the surviving tier
+        // was decided by SCAN order — the exact mechanism V3-QUOTE-02 removed for
+        // the canonical/legacy class, left open INSIDE the canonical generation.
+        // MEASURED on the live index 2026-10-04 (589 keys, 565 with payload): 694
+        // canonical pools, 124 legacy pools, **1** pool described by two
+        // contradictory canonical statements (`0x6f9beaac…` at 100 and 10000) and
+        // 0 legacy-legacy contradictions. On-chain `fee()` of that pool is 10000
+        // (cast call, ethereum-rpc.publicnode.com), so the legacy witness is also
+        // the truth here and the key carrying 100 is a canonical key holding a
+        // BPS value — the ×100 residue of the pips migration.
+        let mut canonical_payloads: Vec<(String, String)> =
+            Vec::with_capacity(canonical_keys.len());
         for key in &canonical_keys {
-            let Some(json) = Self::get_index_payload(redis, key).await? else {
-                continue;
-            };
-            malformed += self.ingest_index_payload(&json);
+            if let Some(json) = Self::get_index_payload(redis, key).await? {
+                canonical_payloads.push((key.clone(), json));
+            }
         }
+        // Sorted: both the witness map and the gap-fill below resolve ties with a
+        // "first statement wins" rule, which is only deterministic on a sorted
+        // key set.
+        legacy_keys.sort();
+        let mut legacy_payloads: Vec<(String, String)> = Vec::with_capacity(legacy_keys.len());
+        for key in &legacy_keys {
+            if let Some(json) = Self::get_index_payload(redis, key).await? {
+                legacy_payloads.push((key.clone(), json));
+            }
+        }
+        let legacy_witness = Self::legacy_witness_bps(&legacy_payloads);
+        let (canonical_malformed, canonical_conflicts) =
+            self.ingest_canonical_payloads(&canonical_payloads, &legacy_witness);
+        malformed += canonical_malformed;
 
         let mut conflicts = 0usize;
-        for key in &legacy_keys {
-            let Some(json) = Self::get_index_payload(redis, key).await? else {
-                continue;
-            };
-            let (m, c) = self.ingest_index_payload_legacy(&json);
+        for (key, json) in &legacy_payloads {
+            let (m, c) = self.ingest_index_payload_legacy(json);
             malformed += m;
             conflicts += c;
             if c > 0 {
@@ -477,7 +609,21 @@ impl V3FeeCatalog {
                 );
             }
         }
-        crate::metrics::V3_FEE_CATALOG_CONFLICTS.set(conflicts as i64);
+        // The gauge counts BOTH contradiction classes resolved deterministically:
+        // the canonical/legacy one (as before) and — new here — the
+        // canonical/canonical one, which used to be invisible to it.
+        crate::metrics::V3_FEE_CATALOG_CONFLICTS.set((conflicts + canonical_conflicts) as i64);
+        if canonical_conflicts > 0 {
+            warn!(
+                event = "v3_fee_catalog.canonical_key_contradictions",
+                chain_id,
+                canonical_conflicts,
+                canonical_keys = canonical_keys.len(),
+                "two CANONICAL keys describe the same pool with different pips — \
+                 deterministic winner, never SCAN order (operator action: delete \
+                 the stale key at the source)"
+            );
+        }
         if conflicts > 0 {
             warn!(
                 event = "v3_fee_catalog.tier_contradictions",
@@ -566,6 +712,69 @@ pub(crate) fn is_canonical_index_key(key: &str, chain_id: u64) -> bool {
         return false;
     };
     !a.is_empty() && !b.is_empty() && a == a.to_lowercase() && b == b.to_lowercase()
+}
+
+/// CATALOG-CANONICAL-CONFLICT-01: ONE canonical-key statement about a pool.
+#[derive(Debug, Clone)]
+pub(crate) struct CanonicalStatement {
+    /// The canonical index key that carried it.
+    pub(crate) key: String,
+    /// Raw pips, as the canonical generation writes them.
+    pub(crate) tier_pips: u32,
+}
+
+/// Does `key` carry its two symbols in the order `key_pool_index_v3` writes them
+/// (`<sym_lo>:<sym_hi>`, that writer's own sort)? A key that violates it was not
+/// produced by the current writer — it is a leftover or a hand-written key.
+pub(crate) fn key_follows_writer_order(key: &str) -> bool {
+    let mut it = key.rsplit(':');
+    let (Some(hi), Some(lo)) = (it.next(), it.next()) else {
+        return false;
+    };
+    lo <= hi
+}
+
+/// Deterministic tier for a pool described by one or more CANONICAL statements.
+///
+/// Order-invariant BY CONSTRUCTION — the order of `statements` never decides:
+///   1. one distinct tier → that tier, no conflict;
+///   2. ≥2 distinct tiers → the tier the LEGACY generation corroborates
+///      (`pips == bps * 100`), because an independent writer agreeing outranks a
+///      single writer's claim;
+///   3. no witness → the tier carried by the key in the WRITER's own symbol
+///      order, else the lexicographically smallest key.
+///
+/// Case 3 is a stable choice, NOT a claim of truth: two canonical keys that
+/// contradict with no independent witness cannot be disambiguated from the index
+/// alone, so the outcome is deterministic, COUNTED and logged, and the chain
+/// admission probe (`resolve` → `TierMismatch` → `Catalog(onchain_fee)`) is what
+/// corrects a tier the catalog could not decide.
+/// Returns `(winner_pips, was_disputed)`.
+pub(crate) fn pick_canonical_tier(
+    statements: &[CanonicalStatement],
+    legacy_bps: Option<u32>,
+) -> (u32, bool) {
+    let mut distinct: Vec<u32> = statements.iter().map(|s| s.tier_pips).collect();
+    distinct.sort_unstable();
+    distinct.dedup();
+    let Some(&only) = distinct.first() else {
+        return (0, false);
+    };
+    if distinct.len() == 1 {
+        return (only, false);
+    }
+    if let Some(bps) = legacy_bps {
+        let witness = bps.saturating_mul(100);
+        if distinct.contains(&witness) {
+            return (witness, true);
+        }
+    }
+    let writer_form = statements
+        .iter()
+        .filter(|s| key_follows_writer_order(&s.key))
+        .min_by_key(|s| s.key.as_str());
+    let pick = writer_form.or_else(|| statements.iter().min_by_key(|s| s.key.as_str()));
+    (pick.map(|s| s.tier_pips).unwrap_or(only), true)
 }
 
 #[cfg(test)]
@@ -836,6 +1045,106 @@ mod tests {
             FeeResolution::Catalog(500),
             "canonical pips tier must win in either arrival order"
         );
+    }
+
+    /// CATALOG-CANONICAL-CONFLICT-01 (VERIF-01 F1): the live pool
+    /// `0x6f9beaac7d042a50008db301833abbe92e4f3a8f` is described by TWO canonical
+    /// keys carrying different raw pips — `weth:wfc` = 100 and `wfc:weth` = 10000
+    /// — and by a LEGACY key whose 100 bps is the same 10000 pips once the unit
+    /// is normalised. The on-chain fee of that pool is 10000, measured:
+    /// `cast call 0x6f9beaac… fee()(uint24) --rpc-url https://ethereum-rpc.publicnode.com`
+    /// → `10000 [1e4]`.
+    ///
+    /// What this test PINS is the ORDER INVARIANCE: the same two payloads
+    /// ingested in opposite orders must land on the same tier, and the
+    /// contradiction must be counted in both. A single-order test does not prove
+    /// determinism.
+    #[test]
+    fn canonical_canonical_conflict_is_resolved_by_the_legacy_witness_in_both_orders() {
+        const POOL: &str = "0x6f9beaac7d042a50008db301833abbe92e4f3a8f";
+        let writer_form = (
+            "arbx:pool_index_v3:1:weth:wfc".to_string(),
+            format!(r#"[{{"pool_addr":"{POOL}","fee_bps":100}}]"#),
+        );
+        let foreign_order = (
+            "arbx:pool_index_v3:1:wfc:weth".to_string(),
+            format!(r#"[{{"fee_bps":10000,"pool_addr":"{POOL}"}}]"#),
+        );
+        let mut witness: HashMap<Address, u32> = HashMap::new();
+        witness.insert(addr_from(POOL), 100); // legacy `…:WETH:WFC` = 100 bps
+
+        let a = V3FeeCatalog::new();
+        let (am, ac) =
+            a.ingest_canonical_payloads(&[writer_form.clone(), foreign_order.clone()], &witness);
+        let b = V3FeeCatalog::new();
+        let (bm, bc) =
+            b.ingest_canonical_payloads(&[foreign_order.clone(), writer_form.clone()], &witness);
+
+        assert_eq!((am, bm), (0, 0), "both payloads are well formed");
+        assert_eq!(
+            (ac, bc),
+            (1, 1),
+            "the contradiction is counted in both orders"
+        );
+        assert_eq!(
+            a.fee_for_pool(addr_from(POOL)),
+            Some(10_000),
+            "legacy witness corroborates 100 bps × 100 = 10000 pips (the on-chain fee)"
+        );
+        assert_eq!(
+            a.fee_for_pool(addr_from(POOL)),
+            b.fee_for_pool(addr_from(POOL)),
+            "SCAN order must not decide the tier"
+        );
+    }
+
+    /// The same contradiction with NO independent witness must still be
+    /// order-invariant: the fallback is a property of the KEY SET (the key in
+    /// `key_pool_index_v3`'s own symbol order outranks a foreign order), never of
+    /// the arrival order. This case claims stability and visibility — NOT truth:
+    /// the chain admission probe (`TierMismatch` → `Catalog(onchain_fee)`) is what
+    /// corrects a tier the index alone cannot decide.
+    #[test]
+    fn canonical_canonical_conflict_without_witness_is_still_order_invariant() {
+        const POOL: &str = "0x6f9beaac7d042a50008db301833abbe92e4f3a8f";
+        let writer_form = (
+            "arbx:pool_index_v3:1:weth:wfc".to_string(),
+            format!(r#"[{{"pool_addr":"{POOL}","fee_bps":100}}]"#),
+        );
+        let foreign_order = (
+            "arbx:pool_index_v3:1:wfc:weth".to_string(),
+            format!(r#"[{{"fee_bps":10000,"pool_addr":"{POOL}"}}]"#),
+        );
+        let no_witness: HashMap<Address, u32> = HashMap::new();
+
+        let a = V3FeeCatalog::new();
+        let (_, ac) =
+            a.ingest_canonical_payloads(&[writer_form.clone(), foreign_order.clone()], &no_witness);
+        let b = V3FeeCatalog::new();
+        let (_, bc) =
+            b.ingest_canonical_payloads(&[foreign_order.clone(), writer_form.clone()], &no_witness);
+
+        assert_eq!((ac, bc), (1, 1));
+        assert_eq!(
+            a.fee_for_pool(addr_from(POOL)),
+            b.fee_for_pool(addr_from(POOL)),
+            "without a witness the tier is stable, not arbitrary"
+        );
+        assert_eq!(
+            a.fee_for_pool(addr_from(POOL)),
+            Some(100),
+            "fallback = the writer-form key (lo:hi); the foreign order never wins"
+        );
+    }
+
+    /// The writer-form predicate is the one `key_pool_index_v3` implements: the
+    /// two lowermost segments must already be in that writer's sorted order.
+    #[test]
+    fn writer_form_detection_matches_the_canonical_key_writer() {
+        assert!(key_follows_writer_order("arbx:pool_index_v3:1:weth:wfc"));
+        assert!(!key_follows_writer_order("arbx:pool_index_v3:1:wfc:weth"));
+        assert!(key_follows_writer_order("arbx:pool_index_v3:1:cbeth:weth"));
+        assert!(key_follows_writer_order("arbx:pool_index_v3:1:1:usdt"));
     }
 
     /// A legacy entry that AGREES with the canonical one is not a contradiction
