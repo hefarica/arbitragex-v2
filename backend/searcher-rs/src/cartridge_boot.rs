@@ -1957,37 +1957,6 @@ async fn v4_relevant_basket_state(
     }
 }
 
-/// Fase 3a — construye el SnapshotBundle REAL del intent: policy honesta
-/// desde la config del operador (`TradingConfigState`), precios canónicos
-/// por token distinto de las piernas (dirección → símbolo del universo de
-/// identidad → precio del snapshot Redis o de trading_config), el tamaño
-/// REAL observado del intent como único tamaño del schedule y la admisión
-/// EXPLÍCITA de manifiestos v4 desplegados (Fase 3b). Los productores aún
-/// ausentes (exact_quotes, domain_plans, canonical_payloads) quedan vacíos:
-/// el contrato v4 los reporta como DATA_GAP con razón explícita — nunca
-/// se fabrican (R8). `None` sólo si el reloj no permite una ventana temporal
-/// honesta.
-///
-/// BASKET-WORKER-01: el estado de redemption on-chain de los baskets
-/// RELEVANTES a este intent llega YA LEÍDO por el llamador async
-/// (`basket_state`); esta función es sync por contrato y nunca toca la red.
-///
-/// PRICE-COVERAGE-01 (§38): el mapa canónico de precios tiene TRES fuentes
-/// ORDENADAS por confianza — (1) el snapshot de Redis que publica
-/// `price_worker` (`arbx:token_prices:<chain>`, hash de símbolos), (2) el
-/// `token_prices_usd` curado por el operador en `trading_config`, y (3) el
-/// **PriceBus en proceso** (`price_bus_global::get()`, Binance WS bookTicker
-/// fusionado con los anchors Chainlink). La tercera cierra el hueco real de
-/// cobertura: el snapshot es un hash *polado y acotado*
-/// (`MAX_PRICED_TOKENS`) y `token_prices_usd` es una lista curada, así que un
-/// token del grafo puede no estar en ninguno de los dos mientras el bus —la
-/// MISMA pila soberana de la que el snapshot se nutre— sí lo tiene vivo. La
-/// lectura es lock-free y en proceso (`ArcSwap::load`), jamás un RPC por token
-/// en el hot path.
-///
-/// `price_bus: None` (bus no inicializado, p.ej. en tests) degrada honesto:
-/// las dos primeras fuentes siguen, y un token que ninguna cubre queda SIN
-/// entrada (R8) — exactamente la conducta previa, nunca un precio inventado.
 // ── EXACT-QUOTES-PRODUCER-01 (2026-10-04) — productor ENCADENADO de quotes ────
 // El mapa `exact_quotes` del bundle estaba VACÍO (`Default::default()`): el
 // certificado `protocol_exact_quotes` sólo podía caer a la hipótesis within-tick
@@ -2289,6 +2258,37 @@ where
     }
 }
 
+/// Fase 3a — construye el SnapshotBundle REAL del intent: policy honesta
+/// desde la config del operador (`TradingConfigState`), precios canónicos
+/// por token distinto de las piernas (dirección → símbolo del universo de
+/// identidad → precio del snapshot Redis o de trading_config), el tamaño
+/// REAL observado del intent como único tamaño del schedule y la admisión
+/// EXPLÍCITA de manifiestos v4 desplegados (Fase 3b). Los productores aún
+/// ausentes (exact_quotes, domain_plans, canonical_payloads) quedan vacíos:
+/// el contrato v4 los reporta como DATA_GAP con razón explícita — nunca
+/// se fabrican (R8). `None` sólo si el reloj no permite una ventana temporal
+/// honesta.
+///
+/// BASKET-WORKER-01: el estado de redemption on-chain de los baskets
+/// RELEVANTES a este intent llega YA LEÍDO por el llamador async
+/// (`basket_state`); esta función es sync por contrato y nunca toca la red.
+///
+/// PRICE-COVERAGE-01 (§38): el mapa canónico de precios tiene TRES fuentes
+/// ORDENADAS por confianza — (1) el snapshot de Redis que publica
+/// `price_worker` (`arbx:token_prices:<chain>`, hash de símbolos), (2) el
+/// `token_prices_usd` curado por el operador en `trading_config`, y (3) el
+/// **PriceBus en proceso** (`price_bus_global::get()`, Binance WS bookTicker
+/// fusionado con los anchors Chainlink). La tercera cierra el hueco real de
+/// cobertura: el snapshot es un hash *polado y acotado*
+/// (`MAX_PRICED_TOKENS`) y `token_prices_usd` es una lista curada, así que un
+/// token del grafo puede no estar en ninguno de los dos mientras el bus —la
+/// MISMA pila soberana de la que el snapshot se nutre— sí lo tiene vivo. La
+/// lectura es lock-free y en proceso (`ArcSwap::load`), jamás un RPC por token
+/// en el hot path.
+///
+/// `price_bus: None` (bus no inicializado, p.ej. en tests) degrada honesto:
+/// las dos primeras fuentes siguen, y un token que ninguna cubre queda SIN
+/// entrada (R8) — exactamente la conducta previa, nunca un precio inventado.
 #[allow(clippy::too_many_arguments)]
 fn build_v4_intent_bundle(
     chain_id: u64,
@@ -3172,8 +3172,19 @@ pub async fn build_and_register_intent_context(
         gaps: v4_exact_quote_gaps,
         chained_until_raw: v4_exact_quote_chained,
     } = v4_exact;
-    // LOGFLOOD-01: UNA línea agregada por intent (jamás una por pierna).
+    // LOGFLOOD-01: UNA línea agregada por intent (jamás una por pierna). El
+    // resumen se arma LEYENDO cada campo del hueco: el detalle crudo del quoter
+    // es lo que hace diagnosticable la ausencia (y no queda código muerto).
     if !v4_exact_quote_gaps.is_empty() {
+        let gap_summary: Vec<String> = v4_exact_quote_gaps
+            .iter()
+            .map(|g| {
+                format!(
+                    "hop{}:{}:{}:{}:{}",
+                    g.index, g.edge_id, g.protocol, g.reason, g.detail
+                )
+            })
+            .collect();
         debug!(
             event = "cartridge.v4_exact_quotes_absent",
             chain_id,
@@ -3181,7 +3192,7 @@ pub async fn build_and_register_intent_context(
             edges_built = v4_edges.len(),
             quoted = v4_exact_quote_map.len(),
             chained_until_raw = %v4_exact_quote_chained,
-            gaps = ?v4_exact_quote_gaps,
+            gaps = ?gap_summary,
             "piernas sin quote exacta de protocolo: la entrada NO se inserta y la ausencia queda declarada (R8)"
         );
     }
@@ -5838,7 +5849,7 @@ mod shadow_canonical_tests {
             token_out_decimals: 18,
             adapter_version: "reserves_cache_v1".into(),
             sqrt_price_x96_raw: Some("79228162514264337593543950336".into()),
-            liquidity: Some(U256::exp10(21)),
+            liquidity: Some(1_000_000_000_000_000_000_000),
         };
         // El importe que ENTRA en la pierna 1 es la SALIDA de la pierna 0,
         // computada con la MISMA función que usa el ledger.
