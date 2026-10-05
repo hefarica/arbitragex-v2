@@ -350,10 +350,29 @@ impl DexEngine {
                     // B1 FIX (math-audit 2026-09-26): ONE NATIVE UNIT of token_in
                     // (10^decimals) — see the prefetch site above for the full
                     // rationale; the fixed 1e18 was a $1T notional for 6-dec tokens.
-                    // The cycle's entry token: denominates the probe principal
-                    // below AND resolves the live USD price for the
-                    // measured-gross economics stamped on this candidate.
-                    let token_in_opt = intent.legs.first().map(|l| l.token_in);
+                    //
+                    // ECON-AMOUNT-DENOM-01 (2026-10-04): the denomination is the
+                    // token this row PUBLISHES, resolved by the SAME rule
+                    // `build_rejected_opportunity` / `build_accepted_opportunity` use
+                    // for `token_in`/`token_out` (`economic_base_token`): the intent's
+                    // entry token when it belongs to this pair, else the pair's
+                    // canonical base. It denominates the probe principal below AND
+                    // resolves the live USD price for the measured-gross economics.
+                    //
+                    // Why not the raw intent token (the previous code): the probe was
+                    // therefore denominated in a token the pair may not even contain,
+                    // while `route_metadata.economics_amount_in_wei` is written in the
+                    // DECLARED base token's unit. MEASURED on live production
+                    // (2026-10-04, `spread_zero_equilibrium`, 1 h): the two fields of
+                    // the SAME row disagreed —
+                    //   `economics.amount_in_wei`              = 1000000000000000000 (constant)
+                    //   `route_metadata.economics_amount_in_wei` = 1000000
+                    // — with ONE base token (USDC, 6 decimals) behind 10,167 rows, the
+                    // probe identical (1e18) across all 13 cycle families, and the card
+                    // showing $2,693.71 where the real probe is 1 USDC = $1.00 (the
+                    // 2693.71 is the intent token's own price). `canonical_token_decimals`
+                    // is decimals-aware; it was simply being asked about the wrong token.
+                    let token_in_opt = Some(economic_base_token(pool_a, intent));
                     let probe_amount =
                         U256::from(10u128).pow(U256::from(canonical_token_decimals(token_in_opt)));
 
@@ -1246,7 +1265,19 @@ fn build_accepted_opportunity(
     let pair_symbol = format!("{}…/{}…", &token_in_str[2..8], &counter_token_str[2..8],);
 
     let amount_in_wei_str = amount_in_wei.to_string();
-    let amount_in_f64: f64 = u256_to_f64_lossy(amount_in_wei) / 1e18_f64;
+    // ECON-AMOUNT-DENOM-01 (2026-10-04): the wei→token-units conversion uses the
+    // REAL decimals of the token this amount is denominated in — the same base
+    // token `token_in`/`token_out` and the route legs are expressed in.
+    //
+    // The blanket `/ 1e18_f64` was not "wrong as a constant" — one whole 18-decimals
+    // token IS 1e18 raw units — but it was serving a semantic it cannot serve: the
+    // TOKEN's unit. For a 6-decimals base (USDC/USDT) it was off by 1e12 in
+    // `candidate.amount_in` and in every route leg's `amount_in`, which is the same
+    // class of error that produced the `fee_tier` ×100 episode. The literal is gone:
+    // the unit comes from the same immutable protocol table the probe and the USD
+    // pricing already use, so every field of the row speaks in the base token's unit.
+    let amount_decimals = canonical_token_decimals(Some(base_token)) as u8;
+    let amount_in_f64: f64 = wei_to_token_units(amount_in_wei, amount_decimals);
 
     let opportunity = Opportunity {
         id,
@@ -3101,5 +3132,133 @@ mod tests {
         );
         assert_eq!(e.error_reason.as_deref(), Some("spread_zero_equilibrium"));
         assert!(e.amount_in_usd.is_none() && e.net_profit_usd.is_none());
+    }
+
+    /// ECON-AMOUNT-DENOM-01 — the principal is denominated in the ROW's own base
+    /// token, and the partition holds for BOTH units.
+    ///
+    /// The live defect this pins (measured 2026-10-04 on production,
+    /// `rejection_reason='spread_zero_equilibrium'`, 1 h window): in the SAME row
+    ///   `economics.amount_in_wei`               = 1000000000000000000  (constant)
+    ///   `route_metadata.economics_amount_in_wei` = 1000000
+    /// with ONE base token behind the second group (USDC, 6 decimals; 10,167 rows),
+    /// the probe identical (1e18) across all 13 cycle families, and the card
+    /// showing $2,693.71 — the intent token's own price — where the real probe is
+    /// 1 USDC = $1.00.
+    ///
+    /// The fixture forces exactly that divergence: the intent enters a token the
+    /// evaluated pair does NOT contain, so the engine's own `economic_base_token`
+    /// fallback (the pair's `token0`) is the only honest denomination. One
+    /// 6-decimals pair and one 18-decimals pair prove the partition — a
+    /// single-token test cannot.
+    #[tokio::test]
+    async fn measured_principal_is_denominated_in_the_rows_base_token_in_both_units() {
+        let usdc: Address = "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48"
+            .parse()
+            .expect("canonical USDC address");
+        let usdt: Address = "0xdac17f958d2ee523a2206206994597c13d831ec7"
+            .parse()
+            .expect("canonical USDT address");
+        let weth: Address = "0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2"
+            .parse()
+            .expect("canonical WETH address");
+        let dai: Address = "0x6b175474e89094c44da98b954eedeac495271d0f"
+            .parse()
+            .expect("canonical DAI address");
+
+        // The denomination RULE itself, independent of engine plumbing: the intent's
+        // token is foreign to the pair ⇒ the pair's base denominates.
+        let pool_usdc_usdt = make_pool(addr(0x10), usdc, usdt, ProtocolType::V3);
+        let foreign_intent = make_intent(weth, usdt);
+        assert_eq!(
+            economic_base_token(&pool_usdc_usdt, &foreign_intent),
+            usdc,
+            "an intent entering a token the pair does not contain denominates in the pair's base"
+        );
+        assert_eq!(canonical_token_decimals(Some(usdc)), 6);
+        assert_eq!(canonical_token_decimals(Some(weth)), 18);
+
+        let mut cfg = make_cfg();
+        cfg.token_prices_usd = HashMap::from([
+            ("USDC".to_string(), 1.0),
+            ("USDT".to_string(), 1.0),
+            ("DAI".to_string(), 1.0),
+        ]);
+
+        // 6 decimals: 1 USDC = 1e6 raw, priced at its OWN live print.
+        let six = measured_principal_for_pair(usdc, usdt, weth, &cfg).await;
+        assert_eq!(
+            six.opportunity.amount_in_wei, "1000000",
+            "the principal must be 1 USDC = 1e6 raw units, never a blanket 1e18"
+        );
+        let six_usd = six
+            .opportunity
+            .economics
+            .as_ref()
+            .expect("measured gross ⇒ object")
+            .amount_in_usd
+            .expect("the base token is priced");
+        assert!(
+            (six_usd - 1.0).abs() < 1e-9,
+            "1 USDC must be valued at its OWN price ($1.00), got {six_usd}"
+        );
+
+        // 18 decimals: 1 WETH = 1e18 raw, priced by the configured base price.
+        let eighteen = measured_principal_for_pair(weth, dai, usdc, &cfg).await;
+        assert_eq!(
+            eighteen.opportunity.amount_in_wei, "1000000000000000000",
+            "the principal must be 1 WETH = 1e18 raw units"
+        );
+        let eighteen_usd = eighteen
+            .opportunity
+            .economics
+            .as_ref()
+            .expect("measured gross ⇒ object")
+            .amount_in_usd
+            .expect("the base token is priced");
+        assert!(
+            (eighteen_usd - cfg.base_token_price_usd).abs() < 1e-9,
+            "1 WETH must be valued at the configured base price, got {eighteen_usd}"
+        );
+
+        assert_ne!(
+            six.opportunity.amount_in_wei, eighteen.opportunity.amount_in_wei,
+            "the two units must not collapse into the same principal"
+        );
+    }
+
+    /// Fixture for the denomination test: a V3 pair (both pools at the same
+    /// catalogued tier, provider answering a constant quote) evaluated with an
+    /// intent that enters `intent_token` — which the caller makes FOREIGN to the
+    /// pair, the live shape behind D4.
+    async fn measured_principal_for_pair(
+        pair_token0: Address,
+        pair_token1: Address,
+        intent_token: Address,
+        cfg: &TradingConfigState,
+    ) -> StrategyCandidate {
+        let catalog = Arc::new(V3FeeCatalog::new());
+        catalog.record_observed(addr(0x10), pair_token0, pair_token1, 500);
+        catalog.record_observed(addr(0x11), pair_token0, pair_token1, 500);
+        let projector = Arc::new(StateProjector::new(
+            Arc::new(ReservesCache::new()),
+            Some(Arc::new(OkV3Mock)),
+            catalog,
+        ));
+        let engine = DexEngine::new(Arc::new(ReservesCache::new()), None, Some(projector));
+        let pool_a = make_pool(addr(0x10), pair_token0, pair_token1, ProtocolType::V3);
+        let pool_b = make_pool(addr(0x11), pair_token0, pair_token1, ProtocolType::V3);
+        let intent = make_intent(intent_token, pair_token1);
+        let impact = make_impact(vec![pool_a, pool_b]);
+
+        let candidates = engine
+            .build_from_impacted_pairs(&intent, &impact, Some(cfg))
+            .await
+            .expect("engine must not error");
+
+        candidates
+            .into_iter()
+            .find(|c| c.rejection_reason.as_deref() == Some("spread_zero_equilibrium"))
+            .expect("a constant quote below the probe must measure the zero cycle gross")
     }
 }
