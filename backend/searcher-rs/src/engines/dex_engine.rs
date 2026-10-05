@@ -3231,6 +3231,13 @@ mod tests {
     /// catalogued tier, provider answering a constant quote) evaluated with an
     /// intent that enters `intent_token` — which the caller makes FOREIGN to the
     /// pair, the live shape behind D4.
+    ///
+    /// SPREAD-SIGNED-DELTA-01 reconciliation (2026-10-05): `OkV3Mock` answers
+    /// 1000 wei to a 1e18 probe, so this fixture's chained round trip returns
+    /// far LESS than the probe — a real, measured loss. Before #792 separated
+    /// loss from equilibrium, `saturating_sub` erased exactly that into
+    /// `spread_zero_equilibrium`; this selector used to ask for the erased
+    /// label. It now names the verdict that actually measures the case.
     async fn measured_principal_for_pair(
         pair_token0: Address,
         pair_token1: Address,
@@ -3258,7 +3265,7 @@ mod tests {
 
         candidates
             .into_iter()
-            .find(|c| c.rejection_reason.as_deref() == Some("spread_zero_equilibrium"))
-            .expect("a constant quote below the probe must measure the zero cycle gross")
+            .find(|c| c.rejection_reason.as_deref() == Some("spread_negative_round_trip"))
+            .expect("a constant quote MEASURES a loss, never an equilibrium")
     }
 }
