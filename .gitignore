@@ -122,6 +122,13 @@ ArbitrageX_Secrets_Config.xlsx
 ArbitrageX_264_Cartridge_Math_Architecture*.xlsx
 .claude/settings.local.json
 .claude/settings.local.json.bak
+# GATE-SECRETOS-01 (2026-10-05, E-7 follow-up): the session-local sibling above had
+# NO `.pre-*.bak` rule while its harness counterpart (.claude/settings.json) did.
+# Measured on this checkout: a real
+# `.claude/settings.local.json.pre-oauth-isolation-20260918_175656.bak` sat there
+# UNIGNORED (git check-ignore -> exit 1), so one `git add -A` would have published
+# an operator-local settings backup. Same class as the E-7 file — never tracked.
+.claude/settings.local.json.pre-*.bak
 # AUDIT-2026-09-29 (SECRETS-TRACKED-01): .claude/settings.json is an OPERATOR-LOCAL
 # file (harness/LLM routing config incl. ANTHROPIC_AUTH_TOKEN). It was tracked and
 # therefore published in a PUBLIC repo with secret-scanning disabled. Never track it
