@@ -357,6 +357,143 @@ pub fn strategy_evidence_key(chain_id: u64, strategy_key: &str) -> String {
     format!("arbx:math_evidence:{}:{}", chain_id, strategy_key)
 }
 
+/// COST-FEATURES-WIRE-01 (2026-10-04) — features de COSTE y OBJETIVO del camino
+/// de evidencia v4, ensambladas desde lecturas ya hechas.
+///
+/// Función PURA (sin I/O) para que la partición sea testeable clave por clave:
+/// cada magnitud entra como `Option` y un `None` deja la clave AUSENTE. Nunca
+/// hay default: FEATURES-DEFAULTS-01 borró los defaults de `op_21` y
+/// OP21-CONTRACT-01 fijó que su ausencia es `DATA_GAP` nombrado
+/// (`features.fee_bps|pool_fee` + `features.break_even_target`), no un `0.0`.
+fn cost_features_from_reads(
+    min_profit_usd: Option<f64>,
+    capital_usd: Option<f64>,
+    numeraire: Option<crate::native_operator_adapter::market_features::TokenScale>,
+    pool_fee: Option<crate::native_operator_adapter::market_features::PoolFeeRead>,
+) -> std::collections::HashMap<String, f64> {
+    let mut features = std::collections::HashMap::new();
+    crate::native_operator_adapter::market_features::add_cost_features(
+        &mut features,
+        &crate::native_operator_adapter::market_features::CostInputs {
+            pool_fee,
+            // La lectura on-chain del premium (`FLASHLOAN_PREMIUM_TOTAL()`) NO está
+            // cableada a este camino: se declara `None` — la clave se omite, jamás
+            // un 0.0 sin acreditación (`cost_inputs::flash_premium_requirement`).
+            flash_premium: None,
+            capital_usd,
+            numeraire,
+            min_profit_usd,
+        },
+    );
+    features
+}
+
+/// COST-FEATURES-WIRE-01 — lee las fuentes REALES del coste/objetivo y las
+/// convierte en features para el `MarketState` del camino de evidencia v4.
+///
+/// Defecto medido que esto cierra: `publish_declared_combo_evidence` construía el
+/// estado con `HashMap::new()`, así que `op_21` (Newton) no recibía NI el fee del
+/// pool NI el objetivo de break-even y devolvía DATA_GAP — `operators.21` es una
+/// de las reparaciones más frecuentes del gate económico v4 (60 de 269
+/// `pertinent` medidos).
+///
+/// Fuentes, todas VIVAS y ninguna literal:
+/// * `break_even_target` / `max_capital` ← `trading_config` (Redis): el objetivo
+///   (`min_profit_usd`) y el cupo (`capital_usd`) que DECIDIÓ el operador,
+///   convertidos a unidades mínimas del numerario con la escala REAL del token
+///   (precio USD del hash de precios + `decimals()` del meta del token).
+/// * `pool_fee` / `fee_bps` ← el par `(fee_bps, 1e6)` del pool V3 en
+///   `arbx:pool_index_v3:<chain>:<symA>:<symB>` (el índice fee-verificado), con
+///   la búsqueda por DIRECCIÓN de pool. Un pool que no esté en ese índice (p.ej.
+///   un V2, cuyo índice sólo guarda direcciones) deja la clave ausente: el fee
+///   no se infiere.
+/// * `flash_premium` — NO se emite (lectura on-chain pendiente, `BLOCKED_EXTERNAL`).
+///
+/// Cualquier fallo de lectura (Redis, meta ausente, precio ausente) degrada a
+/// `None` en su campo y por tanto a clave AUSENTE (R8), nunca a un valor.
+async fn cost_features_from_redis(
+    redis: &mut redis::aio::ConnectionManager,
+    chain_id: u64,
+    first_leg: Option<&(Address, Address, Address)>,
+) -> std::collections::HashMap<String, f64> {
+    use redis::AsyncCommands;
+
+    let cfg_key = shared_rs::trading_config::redis_key(chain_id);
+    let cfg: Option<shared_rs::trading_config::TradingConfigState> = redis
+        .get::<_, Option<String>>(&cfg_key)
+        .await
+        .ok()
+        .flatten()
+        .and_then(|raw| serde_json::from_str(&raw).ok());
+    let (min_profit_usd, capital_usd) = match cfg.as_ref() {
+        Some(c) => (Some(c.min_profit_usd), Some(c.capital_usd)),
+        None => (None, None),
+    };
+
+    let mut numeraire = None;
+    let mut pool_fee = None;
+    if let Some((pool, token_in, token_out)) = first_leg {
+        let in_lc = format!("0x{:040x}", token_in);
+        let out_lc = format!("0x{:040x}", token_out);
+        let meta_in = crate::reserves::get_token_meta(redis, chain_id, &in_lc)
+            .await
+            .ok()
+            .flatten();
+        if let Some(meta_in) = meta_in.as_ref() {
+            // Precio USD del numerario: mismo hash y misma clave (símbolo en
+            // MAYÚSCULAS) que sirve `RedisCachedPriceOracle`.
+            let prices_key = shared_rs::price_oracle::redis_token_prices_key(chain_id);
+            let usd_price = redis
+                .hget::<_, _, Option<String>>(&prices_key, meta_in.symbol.to_ascii_uppercase())
+                .await
+                .ok()
+                .flatten()
+                .and_then(|raw| raw.parse::<f64>().ok())
+                .filter(|v| v.is_finite() && *v > 0.0);
+            if let Some(usd_price) = usd_price {
+                let scale = crate::native_operator_adapter::market_features::TokenScale::new(
+                    usd_price,
+                    meta_in.decimals,
+                );
+                if scale.is_usable() {
+                    numeraire = Some(scale);
+                }
+            }
+            // Fee del pool: índice V3 (addr + fee_bps) por el par de símbolos.
+            let meta_out = crate::reserves::get_token_meta(redis, chain_id, &out_lc)
+                .await
+                .ok()
+                .flatten();
+            if let Some(meta_out) = meta_out.as_ref() {
+                let pools = crate::reserves::get_pools_for_pair_v3(
+                    redis,
+                    chain_id,
+                    &meta_in.symbol,
+                    &meta_out.symbol,
+                )
+                .await
+                .unwrap_or_default();
+                let pool_lc = format!("0x{:040x}", pool);
+                if let Some(info) = pools
+                    .iter()
+                    .find(|p| p.pool_addr.eq_ignore_ascii_case(&pool_lc))
+                {
+                    // Fee tier V3 en PIPS crudos: denominador 1e6 (la unidad que
+                    // declara el propio índice y que `PoolFeeRead` conserva).
+                    pool_fee = Some(
+                        crate::native_operator_adapter::market_features::PoolFeeRead::new(
+                            info.fee_bps,
+                            1_000_000,
+                        ),
+                    );
+                }
+            }
+        }
+    }
+
+    cost_features_from_reads(min_profit_usd, capital_usd, numeraire, pool_fee)
+}
+
 /// STRAT-IDENT-01: publish the per-strategy §IV evidence from the strategy's
 /// OWN declared combo (operator directive 2026-08-23: "evaluar directamente
 /// cada estrategia y esta dirá cuáles son las estructuras que le aplican y con
@@ -386,9 +523,12 @@ pub async fn publish_declared_combo_evidence(
     block_number: u64,
     block_timestamp: u64,
 ) -> usize {
-    // Features: the strategy evaluation context carries none today (same as
-    // evaluate_math_evidence's callers) — operators requiring features compute
-    // None honestly.
+    // Features: COST-FEATURES-WIRE-01 — antes el mapa nacía VACÍO y los
+    // operadores que leen `features` (op_21 primero) devolvían DATA_GAP aunque la
+    // fuente existiera. Ahora el objetivo/cupo del operador y el fee REAL del pool
+    // viajan al `MarketState`; lo que no tenga fuente se OMITE (R8), nunca un
+    // default que enmascare la ausencia.
+    let features = cost_features_from_redis(&mut *redis, chain_id, pool_legs.first()).await;
     let state = match build_market_state(
         reserves_cache,
         pool_legs,
@@ -397,7 +537,7 @@ pub async fn publish_declared_combo_evidence(
         gas_price_gwei,
         block_number,
         block_timestamp,
-        std::collections::HashMap::new(),
+        features,
     )
     .await
     {
@@ -957,5 +1097,114 @@ mod combo_tests {
         // R8: un-computable operator keeps scalar null — never fabricated.
         assert!(s["secondary_operators"][0]["scalar"].is_null());
         assert_eq!(s["primary_operators"][0]["scalar"], 0.42);
+    }
+
+    // ── COST-FEATURES-WIRE-01 ───────────────────────────────────────────────
+    //
+    // El camino de evidencia v4 construía el `MarketState` con `HashMap::new()`:
+    // `op_21` no recibía fee NI objetivo y devolvía DATA_GAP (`operators.21` es una
+    // de las reparaciones más frecuentes del gate económico v4, 60 de 269). El
+    // cableado no puede introducir defaults: OP21-CONTRACT-01 fijó que el fee y el
+    // objetivo son `AbsentMeaning::DataGap` porque FEATURES-DEFAULTS-01 borró los
+    // defaults de `op_21`. Este test fija la PARTICIÓN usando el MISMO contrato del
+    // adaptador que aquel PR dejó más estricto.
+
+    /// Estado mínimo con reservas primarias usables: así lo que falte en
+    /// `missing_required_inputs` es del contrato de features, no de otra fuente.
+    fn state_with(features: std::collections::HashMap<String, f64>) -> MarketState {
+        MarketState {
+            price_matrix: vec![vec![2_693.54], vec![2_693.60]],
+            pair_keys: vec![super::canonical_pair_key("0xaaa", "0xbbb"); 2],
+            liquidity_reserves: vec![(1.0e21, 1.0e21), (1.0e21, 1.0005e21)],
+            gas_price_gwei: 20.0,
+            block_timestamp: 1_700_000_000,
+            block_number: 21_000_000,
+            features,
+        }
+    }
+
+    fn missing_for_21(features: std::collections::HashMap<String, f64>) -> Vec<&'static str> {
+        crate::native_operator_adapter::missing_required_inputs(21, &state_with(features))
+    }
+
+    #[test]
+    fn cost_features_wire_the_objective_and_the_fee_or_omit_them_honestly() {
+        use crate::native_operator_adapter::market_features::{PoolFeeRead, TokenScale};
+
+        // (a) SIN fuentes: el mapa sale VACÍO — ni un solo default — y el contrato
+        //     nombra EXACTAMENTE el fee y el objetivo (el orden es el del catálogo).
+        let none = cost_features_from_reads(None, None, None, None);
+        assert!(
+            none.is_empty(),
+            "sin lecturas no se emite ninguna clave: {none:?}"
+        );
+        assert_eq!(
+            missing_for_21(none),
+            vec!["features.fee_bps|pool_fee", "features.break_even_target"]
+        );
+
+        // (b) Objetivo y cupo del operador con escala real, SIN fee: falta SÓLO el
+        //     fee — la partición es exacta, no "todo o nada".
+        let objective_only = cost_features_from_reads(
+            Some(50.0),
+            Some(1_000.0),
+            Some(TokenScale::new(2_693.54, 18)),
+            None,
+        );
+        assert!(objective_only.contains_key("break_even_target"));
+        assert!(objective_only.contains_key("max_capital"));
+        assert!(!objective_only.contains_key("fee_bps"));
+        assert!(!objective_only.contains_key("pool_fee"));
+        assert_eq!(
+            missing_for_21(objective_only),
+            vec!["features.fee_bps|pool_fee"]
+        );
+
+        // (c) Con el fee REAL del tier V3 (3000 pips): NADA falta para op_21.
+        let full = cost_features_from_reads(
+            Some(50.0),
+            Some(1_000.0),
+            Some(TokenScale::new(2_693.54, 18)),
+            Some(PoolFeeRead::new(3_000, 1_000_000)),
+        );
+        assert!(
+            missing_for_21(full.clone()).is_empty(),
+            "fee + objetivo sourced ⇒ el contrato queda satisfecho: {full:?}"
+        );
+        // El valor es el CONFIGURADO convertido con la escala real, no un literal:
+        // 50 USD / 2693.54 USD-por-token × 1e18 unidades mínimas.
+        let target = full["break_even_target"];
+        let expected = 50.0 / 2_693.54 * 1.0e18;
+        assert!(
+            (target - expected).abs() < 1.0,
+            "objetivo esperado ≈{expected}, fue {target}"
+        );
+        // El fee viaja en las DOS unidades que piden los lectores.
+        assert!((full["fee_bps"] - 30.0).abs() < 1e-9);
+        assert!((full["pool_fee"] - 0.003).abs() < 1e-9);
+        // Y no hay NINGÚN default: el único default vivo de op_21 es el gas interno
+        // (150_000, `op_21_newton.rs:118-124`), que no lo emite este productor.
+        assert_eq!(
+            crate::native_operator_adapter::defaulted_inputs(21, &state_with(full)),
+            vec!["features.gas_units"],
+            "el cableado no puede añadir defaults declarados"
+        );
+
+        // (d) Sin escala del numerario no hay magnitud: capital y objetivo se
+        //     OMITEN (un `0.0` o un USD crudo sería un número falso en la unidad
+        //     del consumidor).
+        let no_scale = cost_features_from_reads(
+            Some(50.0),
+            Some(1_000.0),
+            None,
+            Some(PoolFeeRead::new(3_000, 1_000_000)),
+        );
+        assert!(!no_scale.contains_key("break_even_target"));
+        assert!(!no_scale.contains_key("max_capital"));
+        assert_eq!(
+            missing_for_21(no_scale),
+            vec!["features.break_even_target"],
+            "sin escala falta SÓLO el objetivo; el fee sigue presente"
+        );
     }
 }
