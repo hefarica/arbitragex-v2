@@ -73,7 +73,9 @@ no relajando el alcance.
 
 ### 2.3 `automation/tools/test-gate-secretos.sh` — NUEVO (test de regresión)
 Fixtures desechables en `mktemp -d` (**nada se commitea**; el valor del fixture es una cadena
-sintética generada en runtime, nunca una credencial):
+sintética **derivada en runtime** (`sha256sum | cut -c1-32`), nunca un literal con forma de
+secreto commiteado — el primer push llevó un literal y el propio `gitleaks` del repo lo rechazó:
+ver §8.1):
 
 | Assertion | Qué prueba |
 |-----------|-----------|
@@ -88,9 +90,14 @@ filtrado por `^\.claude/settings(\..*)?\.json$` → `exit 1` si aparece. Cierra 
 de path correcta. Sólo ruta: no lee, compara ni imprime valores.
 
 ### 2.5 `.github/workflows/security.yml`
-- **G4(b) cerrado:** el branch de binario ausente ya **no** hace `echo ... skipping` + exit 0;
-  ahora `::error::` + **exit 1** (fail-closed). Un gate que no puede correr no puede parecer un
-  scan limpio.
+- **G4(b) cerrado (con resolución de binario, evidencia de log):** el step resolvía el binario con
+  `command -v gitleaks` y, si fallaba, hacía `echo ... skipping` + exit 0. El log del job
+  `111912148621` demuestra que **la acción sí instala el binario** pero **no lo exporta al PATH**:
+  `gitleaks version: 8.24.3` / `Version to install: 8.24.3 (target directory: /tmp/gitleaks-8.24.3)`.
+  Ahora el step lo resuelve explícitamente (`command -v` → `/tmp/gitleaks-*/gitleaks`) y, si **no**
+  hay ejecutable en ninguno de los dos, **falla con `::error::` + exit 1** (fail-closed). Es decir:
+  el camino normal vuelve a **escanear de verdad** en vez de saltar en silencio, y el camino
+  degradado deja de parecer limpio.
 - **Step nuevo** que ejecuta `automation/tools/test-gate-secretos.sh`: es **independiente del
   alcance temporal** (path + forma, sin ventana de historia), así que no se puede evadir por tiempo.
 - **G4(a) — decisión declarada, no omisión:** NO se activa un `gitleaks` de historia completa por
@@ -190,6 +197,9 @@ DESPUÉS: git check-ignore -v .claude/settings.json            -> .gitignore:126
 3. Las categorías 5b (`*.json` fuera de allow-list) podrían marcar un JSON legítimo con una clave
    que termine en `key`/`token` y un valor ≥16 chars. Mitigación medida: en `main` el gate da
    **BLOCKING=0**; el primer falso positivo detectado (`auth_scheme`) se corrigió en la regla.
+4. **`main` tiene el scan de secretos en ROJO por hallazgos HISTÓRICOS** en la familia
+   `.claude/settings*.bak` (§8.2). **No lo causa este PR** y **no se cierra con gates**: exige la
+   rotación del operador y una decisión explícita sobre la historia. Este PR **no lo enmascara**.
 
 ## 7. Trazabilidad
 
@@ -201,3 +211,49 @@ DESPUÉS: git check-ignore -v .claude/settings.json            -> .gitignore:126
   `automation/tools/test-gate-secretos.sh` (nuevo), `.github/workflows/no-hardcode.yml`,
   `.github/workflows/omega8-m3-grep-gates.yml`, `.github/workflows/security.yml`,
   `docs/security/GATE-SECRETOS-01.md` (este documento).
+
+## 8. Fix-forward medido en el primer push (y un hallazgo PREEXISTENTE)
+
+### 8.1 El gate del repo rechazó mi propio test — correctamente
+El primer push (commit `38b36387`) puso el job `gitleaks (secrets scan)` en **failure** a los 18 s.
+Diagnóstico por log del job `111912148621`, con el valor **enmascarado**:
+
+```
+Finding:  FIXTURE_SECRET="<REDACTED>"
+RuleID:   generic-api-key
+Entropy:  4.954196
+File:     automation/tools/test-gate-secretos.sh
+Line:     41
+```
+
+Era **mi propia constante de fixture**: un literal de 32 caracteres de alta entropía. La respuesta
+correcta es **fix-forward, no allowlist**: el valor ahora se **deriva en runtime**
+(`sha256sum | cut -c1-32`) y no queda ningún literal con forma de secreto en el repositorio. **No**
+se añadió nada a `.gitleaks.toml` ni a `.gitleaksignore`: un repo no debe necesitar una excepción
+del scanner para testear su propio scanner.
+
+### 8.2 El scan de historia completa YA está rojo en `main` — y NO es de este PR
+El run **programado** de `security.yml` sobre `main` (`274f04fd`, `event=schedule`,
+2026-10-05T13:38Z, run `37318433734`, job `111791011451`) está en **failure**, con hallazgos
+(valores enmascarados):
+
+```
+Finding:  "ANTHROPIC_API_KEY": "<REDACTED>"
+RuleID:   generic-api-key
+Entropy:  4.846370
+File:     .claude/settings.json.<REDACTED len=35>.bak
+Line:     16   (y otro hallazgo en la línea 27)
+```
+
+Tres consecuencias que cambian el encuadre de esta tarea:
+
+1. **La clase E-7 no es un solo fichero.** La familia `.claude/settings*.json` **y sus `.bak`**
+   también lleva credenciales. Por eso `.gitignore` ahora cierra **la familia entera**
+   (`.claude/settings*.json*`) en vez de una variante por vez.
+2. **El scan de historia completa ya está activo** (el run programado corre sin `--log-opts`).
+   Esto **confirma con evidencia** la decisión de §2.5/G4(a) de no activarlo también en el camino
+   PR/push: habría puesto ese camino en rojo igualmente, sin cerrar nada.
+3. **El rojo es PREEXISTENTE y no lo causa este PR.** Y no se cierra con gates: esos `.bak`
+   contienen credenciales reales de historia, así que la acción correcta es la misma que en E-7 —
+   **rotación por el operador** (más una decisión explícita sobre qué hacer con la historia, que
+   este documento **no** toma). Un PR de gates no debe enmascarar este hallazgo: se reporta.

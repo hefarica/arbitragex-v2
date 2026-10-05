@@ -122,12 +122,17 @@ ArbitrageX_Secrets_Config.xlsx
 ArbitrageX_264_Cartridge_Math_Architecture*.xlsx
 .claude/settings.local.json
 .claude/settings.local.json.bak
-# GATE-SECRETOS-01 (2026-10-05, E-7 follow-up): the session-local sibling above had
-# NO `.pre-*.bak` rule while its harness counterpart (.claude/settings.json) did.
-# Measured on this checkout: a real
-# `.claude/settings.local.json.pre-oauth-isolation-20260918_175656.bak` sat there
-# UNIGNORED (git check-ignore -> exit 1), so one `git add -A` would have published
-# an operator-local settings backup. Same class as the E-7 file — never tracked.
+# GATE-SECRETOS-01: catch-all for the WHOLE operator-local settings family. The
+# family keeps growing (settings.json, settings.local.json, and `.bak` /
+# `.pre-*.bak` backups of either) and each variant slipped through one at a time:
+#   - 2026-09-29: the harness `settings.json` variant needed explicit rules;
+#   - 2026-10-05: `.claude/settings.local.json.pre-*.bak` was measured UNIGNORED
+#     (git check-ignore -> exit 1) while its harness sibling was covered.
+# A `.bak` of either file carries the same credentials, and the scheduled secret
+# scan is currently failing on exactly this path family. One rule, whole family.
+.claude/settings*.json*
+# GATE-SECRETOS-01 (2026-10-05, E-7 follow-up): kept for documentation — the
+# measured gap that motivated the catch-all above.
 .claude/settings.local.json.pre-*.bak
 # AUDIT-2026-09-29 (SECRETS-TRACKED-01): .claude/settings.json is an OPERATOR-LOCAL
 # file (harness/LLM routing config incl. ANTHROPIC_AUTH_TOKEN). It was tracked and

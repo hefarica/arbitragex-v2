@@ -36,9 +36,16 @@ FAILURES=0
 pass() { printf 'PASS: %s\n' "$1"; }
 fail() { printf 'FAIL: %s\n' "$1" >&2; FAILURES=$((FAILURES+1)); }
 
-# Synthetic, obviously-not-a-credential value that still has the SHAPE the gate
-# must catch (mixed alphanumerics, 32 chars, no placeholder markers).
-FIXTURE_SECRET="Zq7Rt2Lm9Wx4Bv6Nc3Df8Gh5Jk0Pz1S"
+# Fixture value is DERIVED at runtime, never written as a literal.
+#
+# Why (measured, not stylistic): the first push of this test carried a hardcoded
+# 32-char fixture constant. gitleaks flagged it — correctly — with
+# `RuleID: generic-api-key, Entropy: 4.954, File: automation/tools/test-gate-secretos.sh:41`.
+# The fix-forward is to remove the secret-shaped constant, NOT to allowlist the
+# test: a repo must not need a scanner exemption to test its own scanner.
+# The generated value keeps the SHAPE the gate must catch (>=16 chars, no
+# placeholder marker), so the assertion is unchanged.
+FIXTURE_SECRET="$(printf '%s' 'arbx gate secretos fixture seed 01' | sha256sum | cut -c1-32)"
 
 run_gate_in() { # run_gate_in <dir> <gate> ; prints output, returns gate exit code
   local dir="$1" gate="$2"

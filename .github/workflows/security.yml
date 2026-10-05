@@ -278,13 +278,23 @@ jobs:
         # history rewriting is forbidden by doctrine and ineffective (forks/clones).
         run: |
           set -euo pipefail
-          if ! command -v gitleaks >/dev/null 2>&1; then
-            # GATE-SECRETOS-01 (E-7): this branch used to echo and exit 0, so a
-            # scanner that could not run looked exactly like a clean scan. A gate
-            # that silently degrades is not a gate — fail closed instead.
-            echo "::error::gitleaks binary unavailable — refusing to skip the secret scan (fail-closed)"
+          # Binary resolution (GATE-SECRETOS-01). Evidence from the gitleaks job log
+          # (run 37354142733): gitleaks-action installs the binary at
+          # `/tmp/gitleaks-<version>/gitleaks` ("Version to install: 8.24.3 (target
+          # directory: /tmp/gitleaks-8.24.3)") but does NOT export it on PATH — a bare
+          # `command -v gitleaks` misses it, which is why this step had a skip branch.
+          # Resolve explicitly; if neither location yields an executable, FAIL CLOSED:
+          # this branch used to echo and exit 0, so a scanner that could not run
+          # looked exactly like a clean scan.
+          GITLEAKS_BIN="$(command -v gitleaks || true)"
+          if [ -z "$GITLEAKS_BIN" ]; then
+            GITLEAKS_BIN="$(ls -1 /tmp/gitleaks-*/gitleaks 2>/dev/null | head -n1 || true)"
+          fi
+          if [ -z "$GITLEAKS_BIN" ] || [ ! -x "$GITLEAKS_BIN" ]; then
+            echo "::error::gitleaks binary unavailable (PATH and /tmp/gitleaks-*/) — refusing to skip the secret scan (fail-closed)"
             exit 1
           fi
+          echo "using gitleaks binary: ${GITLEAKS_BIN}"
           if [ "${{ github.event_name }}" = "pull_request" ]; then
             BASE="${{ github.event.pull_request.base.sha }}"
             HEAD="${{ github.event.pull_request.head.sha }}"
@@ -296,7 +306,7 @@ jobs:
           # --config: explicitly point to the repo's .gitleaks.toml so the
           # path/regex allowlists are honored in the diff scan too (without
           # this, a bare `gitleaks detect` uses default rules only).
-          gitleaks detect --source . --log-opts="${BASE}..${HEAD}" --config .gitleaks.toml --redact --verbose
+          "$GITLEAKS_BIN" detect --source . --log-opts="${BASE}..${HEAD}" --config .gitleaks.toml --redact --verbose
 
       - name: Secret-exposure regression test (E-7 / GATE-SECRETOS-01)
         # Scope-independent by construction (path + JSON-pair shape, no history
