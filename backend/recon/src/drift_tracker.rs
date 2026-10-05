@@ -154,6 +154,17 @@ pub enum GasLedger {
 /// Migration 126's `gas_measurement_state` domain, as a literal so a test can
 /// assert every state this worker writes is inside the CHECK constraint — the
 /// worker must not invent a sixth value and start failing UPDATEs at runtime.
+///
+/// `#[cfg(test)]`, deliberately NOT `#[allow(dead_code)]`: the only consumer of
+/// this literal is the migration-126 consistency test below, so in a non-test
+/// build it is genuinely unused and the compiler is telling the truth. Scoping
+/// it to `test` states that fact; an `allow(dead_code)` would instead hide the
+/// item and leave a reader believing production code reads it. The states the
+/// worker actually writes stay in production as `GAS_STATE_NOT_APPLICABLE` /
+/// `GAS_STATE_IMPOSSIBLE` and the `gas_state_for_resolved` arms; this constant
+/// is the aggregate they are validated against, and its job is a build-time
+/// consistency assertion, not a runtime value.
+#[cfg(test)]
 const GAS_STATE_DOMAIN: [&str; 5] = [
     "not_attempted",
     "measured",
@@ -190,9 +201,7 @@ const GAS_STATE_IMPOSSIBLE: &str = "impossible";
 /// statement, so no reader can ever observe a value without its classification
 /// (invariants I3a/I3b of migration 126).
 fn gas_state_set(state_placeholder: usize) -> String {
-    format!(
-        "gas_measurement_state = ${state_placeholder}, gas_measurement_updated_at = now()"
-    )
+    format!("gas_measurement_state = ${state_placeholder}, gas_measurement_updated_at = now()")
 }
 
 /// SQL for the PASS arm. Pure so a test can assert the exactly-once guard and
@@ -986,7 +995,10 @@ mod tests {
         // absent column would fail the statement and the row would never
         // resolve — a regression strictly worse than an unclassified value.
         for (present, absent) in [
-            (resolved_update_sql(GasLedger::Present).0, resolved_update_sql(GasLedger::Absent).0),
+            (
+                resolved_update_sql(GasLedger::Present).0,
+                resolved_update_sql(GasLedger::Absent).0,
+            ),
             (
                 rejected_update_sql(GasLedger::Present).0,
                 rejected_update_sql(GasLedger::Absent).0,
@@ -997,7 +1009,10 @@ mod tests {
             ),
         ] {
             assert!(present.contains("gas_measurement_state = $"), "{present}");
-            assert!(present.contains("gas_measurement_updated_at = now()"), "{present}");
+            assert!(
+                present.contains("gas_measurement_updated_at = now()"),
+                "{present}"
+            );
             assert!(!absent.contains("gas_measurement_state"), "{absent}");
         }
         assert_eq!(resolved_update_sql(GasLedger::Present).1, true);
