@@ -2197,6 +2197,23 @@ fn v4_base_cost_lines(
     }
 
     // ── FINANCIACIÓN: tasa DECLARADA por el operador en la config ──
+    //
+    // V4-SNAPSHOT-PRODUCERS-01 (2026-10-04): la línea de financiación NO puede
+    // OMITIRSE. Antes, con `flashloan_fee_pct > 0` y sin precio canónico del
+    // start token, el `if let Some(amount_usd)` no tenía `else`: la línea
+    // desaparecía en silencio y el bridge reportaba
+    // `costs.financing::mandatory_route_cost_missing` — una razón que MIENTE,
+    // porque el productor existe y lo que falta es el precio. Medido en
+    // producción (chain 1, 2026-10-03): `flashloan_fee_pct = 0.0009 > 0`,
+    // `token_prices_usd` = 21 símbolos, hash de precios `arbx:token_prices:1` =
+    // 447 símbolos frente a un universo de identidad de 2747 tokens → las rutas
+    // long-tail llegan sin precio, y ese reparto aparecía 64/269 veces.
+    //
+    // R8: un coste obligatorio NO COMPUTABLE se DECLARA (línea presente, `usd`
+    // ausente, razón explícita), nunca se omite ni se sustituye por un valor por
+    // defecto. La línea queda `external` — la financiación APLICA (tasa > 0):
+    // declararla `not_applicable` sería afirmar que el coste no existe y
+    // inflaría el neto.
     if cfg.flashloan_fee_pct > 0.0 {
         // Importe del intent valorado al precio del start token del bundle.
         let amount_usd = prices
@@ -2208,20 +2225,47 @@ fn v4_base_cost_lines(
                     .ok()
                     .map(|raw| raw / 10f64.powi(start_token_decimals as i32) * px)
             });
-        if let Some(amount_usd_val) = amount_usd {
-            let fin_usd = amount_usd_val * cfg.flashloan_fee_pct / 100.0;
-            if fin_usd.is_finite() && fin_usd > 0.0 {
-                lines.push(CostLine {
-                    kind: "financing".into(),
-                    treatment: "external".into(),
-                    usd: Some(format!("{fin_usd:.6}")),
-                    reason: Some(format!(
-                        "reserva conservadora al flash: {:.4}usd x {:.4}% (config:flashloan_fee_pct; capital propio => coste real 0)",
-                        amount_usd_val, cfg.flashloan_fee_pct
-                    )),
-                    evidence_id: "config:flashloan_fee_pct".into(),
-                });
+        match amount_usd {
+            // Valorado: la reserva es tasa-declarada × importe del intent.
+            Some(amount_usd_val) => {
+                let fin_usd = amount_usd_val * cfg.flashloan_fee_pct / 100.0;
+                if fin_usd.is_finite() && fin_usd > 0.0 {
+                    lines.push(CostLine {
+                        kind: "financing".into(),
+                        treatment: "external".into(),
+                        usd: Some(format!("{fin_usd:.6}")),
+                        reason: Some(format!(
+                            "reserva conservadora al flash: {:.4}usd x {:.4}% (config:flashloan_fee_pct; capital propio => coste real 0)",
+                            amount_usd_val, cfg.flashloan_fee_pct
+                        )),
+                        evidence_id: "config:flashloan_fee_pct".into(),
+                    });
+                } else {
+                    lines.push(CostLine {
+                        kind: "financing".into(),
+                        treatment: "external".into(),
+                        usd: None,
+                        reason: Some(format!(
+                            "reserva flash NO COMPUTADA: importe valorado no positivo (config:flashloan_fee_pct={:.6}%) — el importe NO se estima (R8)",
+                            cfg.flashloan_fee_pct
+                        )),
+                        evidence_id: "config:flashloan_fee_pct+uncomputed:non_positive_reserve".into(),
+                    });
+                }
             }
+            // Sin precio canónico del start token: DECLARADA, jamás omitida.
+            None => lines.push(CostLine {
+                kind: "financing".into(),
+                treatment: "external".into(),
+                usd: None,
+                reason: Some(format!(
+                    "reserva flash NO COMPUTADA: sin precio canonico del start token {start_token} \
+                     en el bundle (prices map miss) — tasa {:.6}% declarada en \
+                     config:flashloan_fee_pct; el importe NO se estima (R8)",
+                    cfg.flashloan_fee_pct
+                )),
+                evidence_id: "config:flashloan_fee_pct+unpriced:start_token".into(),
+            }),
         }
     } else {
         // Tasa 0 (config actual): capital propio — not_applicable con
@@ -5872,6 +5916,221 @@ mod shadow_canonical_tests {
         assert!(
             !check["net_profit_usd"].is_number(),
             "sin costes completos el neto NO se computa (jamás un cero decorativo)"
+        );
+    }
+
+    // ── V4-SNAPSHOT-PRODUCERS-01 — la financiación se DECLARA, no se omite ───
+    //
+    // Medición de producción (chain 1, 2026-10-03, `trading_config`):
+    // `flashloan_fee_pct = 0.0009` (> 0), `token_prices_usd` = 21 símbolos,
+    // `gas_estimate_units = 250000`, `base_token_price_usd = 2693.5435`.
+    // Mientras el hash `arbx:token_prices:1` cubre 447 símbolos y el universo de
+    // identidad tiene 2747 tokens, una ruta long-tail llega SIN precio canónico.
+    // Antes de este cambio la rama de financiación sólo empujaba la línea dentro
+    // del `if let Some(amount_usd)`: sin precio la línea DESAPARECÍA y el bridge
+    // reportaba `costs.financing::mandatory_route_cost_missing` (64/269 medidos)
+    // — una razón que miente, porque el productor existe. Estos tests fijan las
+    // dos direcciones y el motivo VERDADERO.
+
+    fn cost_line_of<'a>(
+        lines: &'a [crate::rhai_agent_bridge::CostLine],
+        kind: &str,
+    ) -> &'a crate::rhai_agent_bridge::CostLine {
+        lines.iter().find(|l| l.kind == kind).unwrap_or_else(|| {
+            panic!(
+                "falta la línea obligatoria {kind}; presentes: {:?}",
+                lines.iter().map(|l| l.kind.as_str()).collect::<Vec<&str>>()
+            )
+        })
+    }
+
+    fn canonical_price_of_a(usd: &str) -> crate::snapshot_services::CanonicalPrice {
+        let now = now_ms();
+        crate::snapshot_services::CanonicalPrice {
+            chain_id: CHAIN,
+            token_address: hex(tok(0xA)),
+            usd: usd.to_string(),
+            revision: "cfg-test".to_string(),
+            observed_at_ms: now.saturating_sub(1_000),
+            valid_until_ms: now + 60_000,
+            evidence_id: "test:canonical_price".to_string(),
+            producer: "PriceBus".to_string(),
+        }
+    }
+
+    #[test]
+    fn financing_line_is_declared_when_the_start_token_has_no_canonical_price() {
+        let cfg = operator_cfg();
+        assert!(
+            cfg.flashloan_fee_pct > 0.0,
+            "el fixture del operador declara una tasa flash > 0 (como producción)"
+        );
+        // SIN ninguna entrada de precio: el caso medido de las rutas long-tail.
+        let no_prices = std::collections::BTreeMap::new();
+        let lines = v4_base_cost_lines(
+            &cfg,
+            CHAIN,
+            &hex(tok(0xA)),
+            AMOUNT_RAW,
+            18,
+            20.0,
+            &no_prices,
+        );
+
+        let financing = cost_line_of(&lines, "financing");
+        assert_eq!(
+            financing.usd, None,
+            "sin precio canónico el importe NO se computa: ni ceros ni estimaciones (R8)"
+        );
+        assert_eq!(
+            financing.treatment, "external",
+            "la financiación APLICA (tasa declarada > 0): not_applicable afirmaría que el coste no existe"
+        );
+        assert!(
+            financing.reason.as_deref().is_some_and(|r| !r.is_empty()),
+            "un coste NO COMPUTADO exige razón explícita"
+        );
+        assert!(
+            !financing.evidence_id.is_empty(),
+            "el contrato CostLine exige evidence_id no vacío"
+        );
+        // Las otras dos obligatorias no dependen del precio del token.
+        assert_eq!(cost_line_of(&lines, "execution_fees").treatment, "embedded");
+        assert!(
+            cost_line_of(&lines, "gas").usd.is_some(),
+            "el gas se computa con el precio base de la CONFIG, no con el del token"
+        );
+    }
+
+    #[test]
+    fn financing_line_carries_the_declared_rate_when_the_start_token_is_priced() {
+        use crate::snapshot_services::CanonicalPrice;
+        let cfg = operator_cfg();
+        let mut prices: std::collections::BTreeMap<(u64, String), CanonicalPrice> =
+            std::collections::BTreeMap::new();
+        prices.insert((CHAIN, hex(tok(0xA))), canonical_price_of_a("2"));
+        // 1e18 unidades raw = 1 token a 2 USD → importe 2 USD → reserva
+        // 2 × 0.09% = 0.0018 USD (positiva, no subnormal en el formato de 6).
+        let lines = v4_base_cost_lines(
+            &cfg,
+            CHAIN,
+            &hex(tok(0xA)),
+            "1000000000000000000",
+            18,
+            20.0,
+            &prices,
+        );
+        let financing = cost_line_of(&lines, "financing");
+        assert_eq!(financing.treatment, "external");
+        let usd: f64 = financing
+            .usd
+            .as_deref()
+            .expect("con precio canónico la reserva SÍ se computa")
+            .parse()
+            .expect("usd decimal");
+        assert!(usd > 0.0, "reserva positiva: {usd}");
+        assert_eq!(
+            financing.evidence_id, "config:flashloan_fee_pct",
+            "la evidencia debe nombrar la fuente REAL (la config del operador)"
+        );
+    }
+
+    #[test]
+    fn economic_check_distinguishes_an_absent_line_from_a_declared_uncomputable_one() {
+        let rev: crate::snapshot_services::RevisionGuard = Arc::new(|_: &str, _: &str| true);
+        let services =
+            crate::snapshot_services::SnapshotServices::new(Arc::new(real_bundle()), rev)
+                .expect("services");
+        let router = Arc::new(crate::context_router::ContextRouter::new(4).expect("router"));
+        router
+            .insert(CONTEXT_ID.to_string(), Arc::new(services))
+            .expect("insert");
+        let c = ctx();
+        let discovery = router.discover(&c, &spec()).expect("discover");
+        let candidate = discovery["candidates"]
+            .as_array()
+            .and_then(|v| v.first())
+            .cloned()
+            .expect("candidato");
+        let quote = serde_json::to_value(
+            router
+                .quote(&c, &spec(), &candidate)
+                .expect("quote del candidato"),
+        )
+        .expect("quote serializable");
+
+        let run = |q: &serde_json::Value| {
+            crate::rhai_agent_bridge::economic_check(
+                router.as_ref(),
+                &c,
+                &spec(),
+                &candidate,
+                q,
+                &serde_json::json!({}),
+                &[],
+            )
+        };
+
+        // (a) CON la línea computada: no hay coste obligatorio ausente.
+        let tags_with = repair_tags(&run(&quote)["repairs"]);
+        assert!(
+            !tags_with
+                .iter()
+                .any(|t| t == "costs.financing::mandatory_route_cost_missing"),
+            "con la línea presente esa razón mentiría: {tags_with:?}"
+        );
+
+        // (b) SIN la línea (ausencia real de productor): la razón exacta medida.
+        let mut without = quote.clone();
+        let filtered: Vec<serde_json::Value> = without["costs"]
+            .as_array()
+            .expect("costs[]")
+            .iter()
+            .filter(|l| l["kind"] != "financing")
+            .cloned()
+            .collect();
+        without["costs"] = serde_json::json!(filtered);
+        let absent = run(&without);
+        let tags_absent = repair_tags(&absent["repairs"]);
+        assert!(
+            tags_absent
+                .iter()
+                .any(|t| t == "costs.financing::mandatory_route_cost_missing"),
+            "sin productor la razón debe ser la de ausencia: {tags_absent:?}"
+        );
+        assert_eq!(absent["candidate_eligible"], serde_json::json!(false));
+        assert_eq!(
+            absent["net_profit_usd"],
+            serde_json::Value::Null,
+            "sin coste completo el neto queda NO COMPUTADO (jamás un cero decorativo)"
+        );
+
+        // (c) Línea DECLARADA pero no computable (el caso de producción tras este
+        //     cambio): el motivo es el VERDADERO — el importe no se pudo computar
+        //     — no la ausencia del productor.
+        let mut declared = quote.clone();
+        for line in declared["costs"].as_array_mut().expect("costs[]") {
+            if line["kind"] == "financing" {
+                line["usd"] = serde_json::Value::Null;
+                line["reason"] = serde_json::json!(
+                    "reserva flash NO COMPUTADA: sin precio canonico del start token"
+                );
+                line["evidence_id"] =
+                    serde_json::json!("config:flashloan_fee_pct+unpriced:start_token");
+            }
+        }
+        let tags_declared = repair_tags(&run(&declared)["repairs"]);
+        assert!(
+            tags_declared
+                .iter()
+                .any(|t| t == "costs.financing::missing_or_invalid_cost"),
+            "una línea declarada sin valor debe reportarse como tal: {tags_declared:?}"
+        );
+        assert!(
+            !tags_declared
+                .iter()
+                .any(|t| t == "costs.financing::mandatory_route_cost_missing"),
+            "la línea ESTÁ declarada: la razón de 'sin productor' mentiría: {tags_declared:?}"
         );
     }
 
