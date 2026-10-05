@@ -1,0 +1,35 @@
+<!doctype html>
+<!--
+  E2E-BASEURL-03 (t29) — FIXTURE DE REGRESIÓN: documento de ERROR de ESTE frontend.
+
+  Reproduce EXACTAMENTE el caso medido en CI que produjo el falso negativo de t28:
+    run 37355502015 / job 111916763674 — workflow liquidity-catalog, step 13
+    target http://127.0.0.1:3000/  →  HTTP 500
+    title "QuantumX — Control Plane"  (frontend/app/layout.tsx:26)
+    body 17603 bytes, SIN los marcadores de chrome
+
+  Por qué el root devuelve 500 en ese job: `frontend/app/page.tsx` hace fetch SSR
+  al edge en el render, y liquidity-catalog.yml:97 apunta INTERNAL_EDGE_URL a un
+  puerto loopback cerrado a propósito; su sonda de readiness usa /dex-registry
+  (:106), no /. Next.js renderiza entonces su página de error, que conserva el
+  <title> del layout pero NO el chrome del <SiteHeader>.
+
+  QUÉ DEBE HACER EL GUARD CON ESTO: confirmar IDENTIDAD (por el título del
+  layout, que sobrevive al documento de error) y reportar la degradación como
+  observación. NO debe acusar "another application": eso fue el falso negativo.
+
+  El chrome del header se omite a propósito para que el fixture pruebe la
+  identidad por TÍTULO y no por render sano.
+-->
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>QuantumX — Control Plane</title>
+  </head>
+  <body>
+    <main id="main">
+      <h2>Application error: a server-side exception has occurred</h2>
+      <p>Digest: 1234567890</p>
+    </main>
+  </body>
+</html>
