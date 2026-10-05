@@ -257,3 +257,39 @@ Tres consecuencias que cambian el encuadre de esta tarea:
    contienen credenciales reales de historia, así que la acción correcta es la misma que en E-7 —
    **rotación por el operador** (más una decisión explícita sobre qué hacer con la historia, que
    este documento **no** toma). Un PR de gates no debe enmascarar este hallazgo: se reporta.
+
+### 8.3 El hallazgo del fixture se re-reporta en el commit que lo ELIMINA
+Tras el fix-forward, el job **volvió a fallar con el mismo hallazgo** (mismo archivo, línea 41,
+entropy 4.954) — en el commit `3720eb3b`, que es el que **quita** el literal. Motivo: el rango que
+usa la acción es `--log-opts=--no-merges --first-parent <SHA>^..<SHA>` (log del job, verbatim), es
+decir **el parche del commit**: un parche de *borrado* también contiene el texto del secreto, y
+gitleaks lo marca mientras ese commit esté en la ventana.
+
+Dos consecuencias, declaradas sin adornos:
+
+- **Es la misma limitación de ALCANCE que documenta G4(a)**, vista desde el otro lado: el scan por
+  ventana no ve lo viejo, y además castiga el commit que limpia. Un gate por ventana no puede
+  distinguir "secreto presente" de "secreto eliminado en este parche".
+- **El remedio estándar (huella en `.gitleaksignore`) queda FUERA del alcance de esta tarea.**
+  `.gitleaksignore` vive en la **raíz** del repo y el alcance asignado es
+  `.gitignore`, `automation/tools/`, `.github/workflows/`, `docs/security/`. Añadirlo por mi cuenta
+  habría sido salirme del scope, así que **no se hizo**: se reporta como follow-up con el formato
+  exacto (`<commit>:automation/tools/test-gate-secretos.sh:generic-api-key:41`) y precedente en el
+  propio repo (`.gitleaksignore:2-11` documenta el mismo caso: cita reescrita que el scan por rango
+  sigue viendo). El valor nunca fue una credencial: era un fixture sintético.
+
+### 8.4 Verificación LOCAL de la lógica del step de `security.yml`
+El job de seguridad **aborta en el step 3** (la acción de gitleaks), así que los steps 4-5 —
+incluida mi resolución de binario — **no se ejecutan en CI en este PR**. No se declara verificado
+por fe: se ejecutó la lógica extraída del YAML con stubs, simulando la expansión `${{ ... }}`:
+
+```
+extracted 30 lines of step logic
+PASS: A: binary on PATH is used (exit=0)
+PASS: B: /tmp/gitleaks-*/gitleaks is resolved (exit=0)   <- el layout real del runner (log)
+PASS: C: no binary anywhere -> fail-closed (exit=1)      <- antes: echo 'skipping' + exit 0
+step-logic: all cases passed
+```
+
+El caso C es exactamente el fail-open que se cierra: sin binario, el step **falla** en vez de
+aparentar un scan limpio.
