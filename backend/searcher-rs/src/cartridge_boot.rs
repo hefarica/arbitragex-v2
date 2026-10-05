@@ -141,6 +141,20 @@ pub fn spawn_cartridge_runtime(
     // ConnectionManager is an internally-multiplexed handle — clone is cheap.
     let mut registry_redis = redis.clone();
 
+    // EXACT-QUOTES-PRODUCER-01 (2026-10-04): el pool RPC con failover que
+    // `main.rs` construye llega a este módulo UNA vez, aquí, y se MUEVE al
+    // `HostContext`. El camino del intent (orchestrator → active_evaluate_and_emit
+    // → build_and_register_intent_context) corre en OTROS tasks y no lo recibe;
+    // este registro lo publica para el productor de quotes exactas sin abrir una
+    // segunda conexión, sin releer env y sin duplicar el presupuesto de RPC del
+    // proceso. Sin pool registrado el productor no inventa nada: no cotiza.
+    if let Some(pool) = rpc_pool.as_ref() {
+        v4_exact_quote_pools()
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .insert(chain_id, pool.clone());
+    }
+
     let host_ctx = HostContext {
         redis: Arc::new(RwLock::new(redis)),
         chain_id,
@@ -1943,16 +1957,318 @@ async fn v4_relevant_basket_state(
     }
 }
 
+// ── EXACT-QUOTES-PRODUCER-01 (2026-10-04) — productor ENCADENADO de quotes ────
+// El mapa `exact_quotes` del bundle estaba VACÍO (`Default::default()`): el
+// certificado `protocol_exact_quotes` sólo podía caer a la hipótesis within-tick
+// — medido 61 de 269 filas en las ventanas 04:17:22 y 04:44:52 con
+// `v3_within_tick_is_hypothesis_not_protocol_verified`, y 61 en la ventana
+// 04:00 con la incoherencia de round de t22. AGENT-GRAPH-QUOTE-01 ya invirtió la
+// precedencia (el mapa se consulta PRIMERO) y desacopló `firm_depth`/
+// `firm_unwind` del slot0, así que poblarlo YA paga: esto es el productor.
+//
+// CADENA, no quote suelta: `quote_request_key` liga el IMPORTE exacto y el
+// importe de la pierna `i+1` es la SALIDA de la pierna `i`, así que se recorre
+// la ruta en orden arrastrando el importe. Las piernas CPMM no piden quote (su
+// aritmética entera exacta ya certifica como `cpmm_exact_integer`) pero su salida
+// se computa con ESA MISMA función — la del ledger — para alimentar la
+// siguiente. CERO CPMM como sustituto de una quote V3, cero default, cero
+// aproximación: lo que no cotiza NO entra al mapa.
+
+/// Presupuesto wall-clock TOTAL del productor dentro del intent. Las quotes están
+/// ENCADENADAS (no se pueden paralelizar sin conocer la salida previa) y cada
+/// una es un `eth_call` al QuoterV2 con failover y breaker propios; este tope
+/// acota la espera completa del intent para que un RPC degradado jamás estire el
+/// hot path. Presupuesto vencido ⇒ las piernas restantes quedan SIN entrada y su
+/// ausencia se declara con razón propia (R8).
+const V4_EXACT_QUOTE_BUDGET_MS: u64 = 1_200;
+
+/// Una pierna que NO obtuvo quote exacta: la entrada NO se inserta y la ausencia
+/// viaja con su razón concreta. `detail` conserva el error crudo del quoter para
+/// la línea agregada del log — jamás para rellenar un valor.
+#[derive(Debug, Clone)]
+struct V4ExactQuoteGap {
+    index: usize,
+    edge_id: String,
+    protocol: String,
+    reason: &'static str,
+    detail: String,
+}
+
+/// Resultado del productor. `quotes` SÓLO contiene entradas de FUENTE REAL,
+/// indexadas por `quote_request_key` — la clave amount-bound que `quote_path`
+/// vuelve a computar. `chained_until_raw` es la evidencia de hasta dónde llegó la
+/// cadena (la salida de la última pierna cotizada).
+#[derive(Debug)]
+struct V4ExactQuotes {
+    quotes: std::collections::BTreeMap<String, crate::agent_graph::ExactHopQuote>,
+    gaps: Vec<V4ExactQuoteGap>,
+    chained_until_raw: String,
+}
+
+/// Pool RPC de la cadena, publicado por `spawn_cartridge_runtime` (que lo recibe
+/// de `main.rs`). Ver el comentario de la inserción: el camino del intent corre
+/// en otros tasks y no lo recibe por parámetro.
+type V4ExactQuotePools =
+    std::sync::Mutex<std::collections::HashMap<u64, Arc<shared_rs::rpc_failover::HttpRpcPool>>>;
+/// Proveedores ya construidos, uno por cadena (conservan su caché TTL).
+type V4ExactQuoteProviders = std::sync::Mutex<
+    std::collections::HashMap<u64, Arc<crate::v3_quote_provider::MulticallV3QuoteProvider>>,
+>;
+
+fn v4_exact_quote_pools() -> &'static V4ExactQuotePools {
+    static POOLS: OnceLock<V4ExactQuotePools> = OnceLock::new();
+    POOLS.get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()))
+}
+
+/// Proveedor de quotes V3 (QuoterV2) por cadena, construido PEREZOSAMENTE una
+/// vez sobre el pool registrado: conserva su caché TTL + single-flight + backoff
+/// de lote ENTRE intents (reutiliza la maquinaria existente —
+/// `v3_quote_provider::MulticallV3QuoteProvider` sobre
+/// `amm_math::v3_quote_exact_in_multicall` — jamás un quoter propio). `None` =
+/// sin pool registrado o sin catálogo de quoter para esa cadena: fail-honest, el
+/// mapa queda sin entradas y el certificado lo declara. El fallo NO se cachea:
+/// el pool puede registrarse (o recuperarse) después.
+fn v4_exact_quote_provider(
+    chain_id: u64,
+) -> Option<Arc<crate::v3_quote_provider::MulticallV3QuoteProvider>> {
+    static PROVIDERS: OnceLock<V4ExactQuoteProviders> = OnceLock::new();
+    let cache = PROVIDERS.get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()));
+    {
+        let guard = cache.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(hit) = guard.get(&chain_id) {
+            return Some(hit.clone());
+        }
+    }
+    let pool = v4_exact_quote_pools()
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .get(&chain_id)
+        .cloned();
+    let built = pool.and_then(|p| {
+        crate::v3_quote_provider::MulticallV3QuoteProvider::from_pool_and_chain(p, chain_id)
+    });
+    let built = built.map(Arc::new);
+    if let Some(provider) = built.as_ref() {
+        cache
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .insert(chain_id, provider.clone());
+    }
+    built
+}
+
+/// Productor de quotes exactas POR PIERNA, ENCADENADO. `quote_v3` inyecta el I/O
+/// (una llamada al QuoterV2 para ESA pierna y ESE importe) de modo que la cadena
+/// — justo la parte que `quote_request_key` hace amount-bound — sea testeable sin
+/// red. Devuelve el mapa listo para el bundle y las ausencias declaradas.
+async fn v4_exact_quotes<F, Fut>(
+    edges: &[crate::agent_graph::Edge],
+    amount_in_raw: &str,
+    budget_ms: u64,
+    mut quote_v3: F,
+) -> V4ExactQuotes
+where
+    F: FnMut(crate::amm_math::V3QuoteRequest) -> Fut,
+    Fut: std::future::Future<Output = Result<String, String>>,
+{
+    let started = std::time::Instant::now();
+    let mut quotes: std::collections::BTreeMap<String, crate::agent_graph::ExactHopQuote> =
+        std::collections::BTreeMap::new();
+    let mut gaps: Vec<V4ExactQuoteGap> = Vec::new();
+    let mut current = amount_in_raw.to_owned();
+
+    for (index, edge) in edges.iter().enumerate() {
+        if started.elapsed().as_millis() >= u128::from(budget_ms) {
+            gaps.push(V4ExactQuoteGap {
+                index,
+                edge_id: edge.edge_id.clone(),
+                protocol: edge.protocol.clone(),
+                reason: "v4_exact_quote_budget_exhausted",
+                detail: format!("{}ms", budget_ms),
+            });
+            break;
+        }
+        if edge.protocol == "cpmm_v2" {
+            // Aritmética ENTERA EXACTA sobre las reservas del MISMO edge — la
+            // función del ledger, no una aproximación nueva. La pierna no pide
+            // quote de protocolo (el ledger la certifica como
+            // `cpmm_exact_integer`), pero su salida alimenta la pierna siguiente.
+            let Some(ri) = edge.reserve_in_raw.as_deref() else {
+                gaps.push(V4ExactQuoteGap {
+                    index,
+                    edge_id: edge.edge_id.clone(),
+                    protocol: edge.protocol.clone(),
+                    reason: "cpmm_leg_missing_reserve_in",
+                    detail: String::new(),
+                });
+                break;
+            };
+            let Some(ro) = edge.reserve_out_raw.as_deref() else {
+                gaps.push(V4ExactQuoteGap {
+                    index,
+                    edge_id: edge.edge_id.clone(),
+                    protocol: edge.protocol.clone(),
+                    reason: "cpmm_leg_missing_reserve_out",
+                    detail: String::new(),
+                });
+                break;
+            };
+            let (Some(fee), Some(den)) = (edge.fee_units, edge.fee_denominator) else {
+                gaps.push(V4ExactQuoteGap {
+                    index,
+                    edge_id: edge.edge_id.clone(),
+                    protocol: edge.protocol.clone(),
+                    reason: "cpmm_leg_missing_fee",
+                    detail: String::new(),
+                });
+                break;
+            };
+            match crate::agent_graph::cpmm_exact_in(&current, ri, ro, fee, den) {
+                Ok(next) => current = next,
+                Err(reason) => {
+                    gaps.push(V4ExactQuoteGap {
+                        index,
+                        edge_id: edge.edge_id.clone(),
+                        protocol: edge.protocol.clone(),
+                        reason: "cpmm_leg_not_computable",
+                        detail: reason,
+                    });
+                    break;
+                }
+            }
+            continue;
+        }
+        if edge.protocol != "uniswap_v3" {
+            // Sin productor para este protocolo: la cadena se corta aquí y la
+            // ausencia se declara. Jamás se aproxima.
+            gaps.push(V4ExactQuoteGap {
+                index,
+                edge_id: edge.edge_id.clone(),
+                protocol: edge.protocol.clone(),
+                reason: "protocol_quote_producer_absent",
+                detail: String::new(),
+            });
+            break;
+        }
+        let (Ok(pool_addr), Ok(token_in_addr), Ok(token_out_addr)) = (
+            edge.pool_id.parse::<ethers::types::Address>(),
+            edge.token_in.parse::<ethers::types::Address>(),
+            edge.token_out.parse::<ethers::types::Address>(),
+        ) else {
+            gaps.push(V4ExactQuoteGap {
+                index,
+                edge_id: edge.edge_id.clone(),
+                protocol: edge.protocol.clone(),
+                reason: "v3_leg_address_not_parseable",
+                detail: format!("{} {} {}", edge.pool_id, edge.token_in, edge.token_out),
+            });
+            break;
+        };
+        let Ok(amount_in) = ethers::types::U256::from_dec_str(&current) else {
+            gaps.push(V4ExactQuoteGap {
+                index,
+                edge_id: edge.edge_id.clone(),
+                protocol: edge.protocol.clone(),
+                reason: "v3_leg_amount_not_decimal",
+                detail: String::new(),
+            });
+            break;
+        };
+        let Some(fee_bps) = edge.fee_units else {
+            gaps.push(V4ExactQuoteGap {
+                index,
+                edge_id: edge.edge_id.clone(),
+                protocol: edge.protocol.clone(),
+                reason: "v3_leg_missing_fee",
+                detail: String::new(),
+            });
+            break;
+        };
+        let request = crate::amm_math::V3QuoteRequest {
+            pool_addr,
+            token_in: token_in_addr,
+            token_out: token_out_addr,
+            amount_in,
+            fee_bps,
+        };
+        match quote_v3(request).await {
+            Ok(amount_out_raw) => {
+                // La entrada se ata al MISMO edge e identidad que el ledger
+                // exige: `quote_path` rechaza cualquier desajuste de edge_id /
+                // snapshot_id / block_hash / tokens / importe / adapter_version
+                // (por eso se construye con la MISMA función de clave).
+                let key = crate::agent_graph::quote_request_key(edge, &current);
+                quotes.insert(
+                    key,
+                    crate::agent_graph::ExactHopQuote {
+                        edge_id: edge.edge_id.clone(),
+                        snapshot_id: edge.snapshot_id.clone(),
+                        block_hash: edge.block_hash.clone(),
+                        token_in: edge.token_in.clone(),
+                        token_out: edge.token_out.clone(),
+                        amount_in_raw: current.clone(),
+                        amount_out_raw: amount_out_raw.clone(),
+                        // Procedencia: el hash canónico de la petición + la
+                        // respuesta REALES. No es un id inventado: identifica
+                        // exactamente el par (edge, importe, salida) que el
+                        // ledger va a consumir.
+                        quote_id: crate::rhai_agent_bridge::canonical_hash(&serde_json::json!({
+                            "producer": "v3_quote_provider",
+                            "model": "quoter_v2_exact_input_single",
+                            "edge_id": edge.edge_id,
+                            "snapshot_id": edge.snapshot_id,
+                            "block_hash": edge.block_hash,
+                            "token_in": edge.token_in,
+                            "token_out": edge.token_out,
+                            "amount_in_raw": current,
+                            "amount_out_raw": amount_out_raw,
+                            "adapter_version": edge.adapter_version,
+                        })),
+                        precision: "protocol_exact_integer".into(),
+                        fees_and_impact_embedded: true,
+                        adapter_version: edge.adapter_version.clone(),
+                        metrics: serde_json::json!({
+                            "status": "COMPUTED",
+                            "model": "quoter_v2_exact_input_single",
+                            "source": "v3_quote_provider",
+                            "fee_bps": fee_bps,
+                            "hop_index": index,
+                        }),
+                    },
+                );
+                current = amount_out_raw;
+            }
+            Err(reason) => {
+                gaps.push(V4ExactQuoteGap {
+                    index,
+                    edge_id: edge.edge_id.clone(),
+                    protocol: edge.protocol.clone(),
+                    reason: "v3_protocol_quote_unavailable",
+                    detail: reason,
+                });
+                break;
+            }
+        }
+    }
+
+    V4ExactQuotes {
+        quotes,
+        gaps,
+        chained_until_raw: current,
+    }
+}
+
 /// Fase 3a — construye el SnapshotBundle REAL del intent: policy honesta
 /// desde la config del operador (`TradingConfigState`), precios canónicos
 /// por token distinto de las piernas (dirección → símbolo del universo de
 /// identidad → precio del snapshot Redis o de trading_config), el tamaño
 /// REAL observado del intent como único tamaño del schedule y la admisión
-/// EXPLÍCITA de manifiestos v4 desplegados (Fase 3b). Los productores aún
-/// ausentes (exact_quotes, domain_plans, canonical_payloads) quedan vacíos:
-/// el contrato v4 los reporta como DATA_GAP con razón explícita — nunca
-/// se fabrican (R8). `None` sólo si el reloj no permite una ventana temporal
-/// honesta.
+/// EXPLÍCITA de manifiestos v4 desplegados (Fase 3b). `exact_quotes` llega
+/// PRODUCIDO por el llamador async (EXACT-QUOTES-PRODUCER-01: quotes reales del
+/// QuoterV2, encadenadas por pierna); lo que sigue ausente (`domain_plans`,
+/// `canonical_payloads`) queda vacío y el contrato v4 lo reporta como DATA_GAP
+/// con razón explícita — nunca se fabrica (R8). `None` sólo si el reloj no
+/// permite una ventana temporal honesta.
 ///
 /// BASKET-WORKER-01: el estado de redemption on-chain de los baskets
 /// RELEVANTES a este intent llega YA LEÍDO por el llamador async
@@ -2000,6 +2316,12 @@ fn build_v4_intent_bundle(
     // para que el llamador —y los tests— fijen explícitamente la dependencia:
     // `None` es el degradado honesto (sin bus no hay tercera fuente).
     price_bus: Option<&shared_rs::price_bus::PriceBus>,
+    // EXACT-QUOTES-PRODUCER-01: las quotes EXACTAS por pierna ya producidas por
+    // el llamador async (`v4_exact_quotes`), indexadas por `quote_request_key`.
+    // Este campo era `Default::default()`: el certificado `protocol_exact_quotes`
+    // sólo podía caer a la hipótesis within-tick. Sólo entran entradas de FUENTE
+    // REAL; un mapa vacío significa "no se pudo cotizar", jamás "cotizó cero".
+    exact_quotes: std::collections::BTreeMap<String, crate::agent_graph::ExactHopQuote>,
 ) -> Option<crate::snapshot_services::SnapshotBundle> {
     let observed_at_ms = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -2126,7 +2448,7 @@ fn build_v4_intent_bundle(
         // conocido para este contexto (spec Fase 3a).
         size_schedule_raw: vec![amount_in_raw.to_owned()],
         prices,
-        exact_quotes: Default::default(),
+        exact_quotes,
         route_support: Default::default(),
         domain_plans: Default::default(),
         canonical_payloads: Default::default(),
@@ -2331,101 +2653,248 @@ async fn read_intent_legs(
     intent: &RouteIntent,
     chain_id: u64,
 ) -> Vec<IntentLegRead> {
+    // Camino feliz (el normal): UNA pasada y, si las piernas resueltas comparten
+    // round, se devuelve tal cual — la alineación no cuesta nada cuando la caché
+    // no está rotando.
+    let mut reads = read_intent_legs_pass(runner, redis, intent, chain_id).await;
+    if intent_legs_share_one_round(&reads) {
+        return reads;
+    }
+    let started = std::time::Instant::now();
+    let mut passes: u8 = 1;
+    while passes < INTENT_ROUND_ALIGN_MAX_PASSES
+        && started.elapsed().as_millis() < u128::from(INTENT_ROUND_ALIGN_BUDGET_MS)
+    {
+        let laggards = leg_round_laggard_indices(&reads);
+        if laggards.is_empty() {
+            break;
+        }
+        let rounds: Vec<Option<u64>> = reads.iter().map(leg_round_ts).collect();
+        debug!(
+            event = "cartridge.v4_intent_round_split",
+            chain_id,
+            tx_hash = %intent.tx_hash,
+            pass = passes,
+            laggards = ?laggards,
+            newest_round = ?newest_leg_round(&reads),
+            rounds = ?rounds,
+            "piernas del intent repartidas entre rounds de sync; re-lectura acotada de las rezagadas (R8)"
+        );
+        // El writer refresca la población POOL A POOL (medido: ~3 s para 557
+        // pools), así que un re-read inmediato devolvería el MISMO valor viejo.
+        // Este backoff acotado es el que deja llegar al round nuevo.
+        tokio::time::sleep(std::time::Duration::from_millis(
+            INTENT_ROUND_ALIGN_BACKOFF_MS,
+        ))
+        .await;
+        // Cachés FRESCAS por pasada: el `slot0_cache` de la lectura anterior
+        // serviría el valor del round viejo y la alineación nunca convergería.
+        // Los decimales no dependen del round y no hacen falta entre pasadas.
+        let mut decimal_cache: std::collections::HashMap<String, Option<u8>> =
+            std::collections::HashMap::new();
+        let mut slot0_cache: std::collections::HashMap<String, Option<(String, u128, u64)>> =
+            std::collections::HashMap::new();
+        for index in laggards {
+            // `reads` va alineada 1:1 con `intent.legs` (una lectura por pierna,
+            // en orden) ⇒ el índice del laggard identifica la pierna.
+            let Some(leg) = intent.legs.get(index) else {
+                continue;
+            };
+            reads[index] = read_intent_leg(
+                runner,
+                redis,
+                leg,
+                chain_id,
+                &mut decimal_cache,
+                &mut slot0_cache,
+            )
+            .await;
+        }
+        passes += 1;
+    }
+    reads
+}
+
+/// PROTOCOL-COHERENCE-01 (2026-10-04) — el `ts` del round de sync es la
+/// identidad de coherencia de una ruta atómica, y la caché NO la sostiene
+/// durante la rotación: el writer refresca la población pool a pool, así que
+/// existe una ventana en la que parte de las entradas ya están en el bloque N+1
+/// y el resto sigue en N. MEDIDO en producción (solo-lectura, 2026-10-04):
+/// `arbx:pool_reserves:1:*` (557 entradas) partido en la misma muestra entre
+/// `blk 26116479` (30) y `blk 26116480` (527), y en otra entre `blk ...480`
+/// (384) y `blk ...481` (173); `arbx:v3_slot0:1:*` (318) con `ts` idéntico
+/// dentro de cada round. Una ruta con piernas de DOS rounds mezcla estado de
+/// dos bloques distintos: `quote_path_progress` la rechaza con
+/// `mixed_block_or_domain_in_atomic_route` y TODOS los recibos de la ruta caen
+/// — medido como
+/// `protocol_exact_quotes::hop_Some(1):mixed_block_or_domain_in_atomic_route`
+/// (61 de 269) más `same_snapshot::edges_span_multiple_sync_rounds_or_snapshots`
+/// (37) en el gate v4 (ventana 2026-10-04 04:00).
+///
+/// Por eso la lectura ALINEA el round antes de componer: si las piernas
+/// resueltas quedaron en rounds distintos, re-lee SÓLO las rezagadas (las demás
+/// ya están en el round más nuevo) dentro de un presupuesto wall-clock acotado.
+/// Si el presupuesto se agota sin alinear, devuelve la lectura TAL CUAL y es el
+/// llamador quien declara el contexto NO COMPUTADO (R8/R10) — jamás se
+/// re-etiqueta la identidad para tapar que el grafo mezcla dos bloques.
+const INTENT_ROUND_ALIGN_BUDGET_MS: u64 = 600;
+const INTENT_ROUND_ALIGN_MAX_PASSES: u8 = 4;
+const INTENT_ROUND_ALIGN_BACKOFF_MS: u64 = 150;
+
+/// El `ts` del round de sync de una pierna RESUELTA. `None` en las omitidas: una
+/// pierna omitida no aporta estado al grafo y por tanto no puede desalinearlo.
+fn leg_round_ts(read: &IntentLegRead) -> Option<u64> {
+    match read {
+        IntentLegRead::Ready { body, .. } => Some(match body {
+            IntentLegBody::V2 { sync_ts, .. } | IntentLegBody::V3 { sync_ts, .. } => *sync_ts,
+        }),
+        IntentLegRead::Skip(_) => None,
+    }
+}
+
+/// Round MÁS NUEVO observado entre las piernas resueltas del intent.
+fn newest_leg_round(reads: &[IntentLegRead]) -> Option<u64> {
+    reads.iter().filter_map(leg_round_ts).max()
+}
+
+/// Todas las piernas RESUELTAS comparten UN round ⇔ el grafo es coherente: una
+/// sola frontera de estado, una sola identidad de bloque para la ruta atómica.
+/// 0 o 1 pierna resuelta son coherentes por vacuidad (no hay ruta que mezcle).
+fn intent_legs_share_one_round(reads: &[IntentLegRead]) -> bool {
+    match newest_leg_round(reads) {
+        None => true,
+        Some(newest) => reads.iter().filter_map(leg_round_ts).all(|ts| ts == newest),
+    }
+}
+
+/// Índices de las piernas RESUELTAS que quedaron en un round ANTERIOR al más
+/// nuevo: son exactamente las que hay que re-leer para alinear el grafo.
+fn leg_round_laggard_indices(reads: &[IntentLegRead]) -> Vec<usize> {
+    let Some(newest) = newest_leg_round(reads) else {
+        return Vec::new();
+    };
+    reads
+        .iter()
+        .enumerate()
+        .filter(|(_, read)| leg_round_ts(read).is_some_and(|ts| ts < newest))
+        .map(|(index, _)| index)
+        .collect()
+}
+
+/// Lectura de UNA pierna del intent (el cuerpo que antes vivía inline en el
+/// bucle de `read_intent_legs`, ahora invocable para la pasada completa y para
+/// la re-lectura acotada de una rezagada).
+async fn read_intent_leg(
+    runner: &Arc<CartridgeRunner>,
+    redis: &mut redis::aio::ConnectionManager,
+    leg: &crate::route_intent::RouteIntentLeg,
+    chain_id: u64,
+    decimal_cache: &mut std::collections::HashMap<String, Option<u8>>,
+    slot0_cache: &mut std::collections::HashMap<String, Option<(String, u128, u64)>>,
+) -> IntentLegRead {
+    // Gate de COSTE: una pierna sin pool o degenerada se descarta ANTES de
+    // cualquier I/O (idéntico a la ruta ACTIVE previa).
+    let Some(pool) = leg.pool_hint else {
+        return IntentLegRead::Skip("missing_pool_hint");
+    };
+    let token_in = format!("{:#x}", leg.token_in);
+    let token_out = format!("{:#x}", leg.token_out);
+    if token_in == token_out {
+        // Una pierna degenerada invalidaría TODO el grafo
+        // (enumerate_cycles: invalid_or_duplicate_graph_edge); se omite.
+        return IntentLegRead::Skip("degenerate_self_pair");
+    }
+    // El protocolo decide la FUENTE del dato (V3 → slot0; resto →
+    // reservas). El fee lo deriva la composición desde la misma función
+    // pura, así que aquí sólo se necesita el protocolo.
+    let (protocol, _, _) = v4_edge_protocol_and_fee(leg);
+    let pool_id = format!("{:#x}", pool);
+    // V3-LEG-GRAPH-01 (RESERVES-CACHE-01, 2026-10-01): el protocolo se
+    // computa ANTES del gate de reservas. Un pool V3 NO tiene
+    // getReserves(): su dato vive en `arbx:v3_slot0`, jamás en
+    // `arbx:pool_reserves`. Exigirle la entrada V2 descartaba TODA pierna
+    // V3 con el motivo engañoso `reserves_missing` — 98% de las piernas
+    // descartadas en producción (medido 2026-10-01). El Edge ya soporta V3
+    // (reserve_in_raw: Option) y quote_path lo resuelve con
+    // v3_spot_within_tick (orientación derivada de token_in/token_out).
+    let body = if protocol == "uniswap_v3" {
+        match v4_slot0(redis, chain_id, &pool_id, slot0_cache).await {
+            Some((sp, liq, ts)) => IntentLegBody::V3 {
+                sqrt_price_x96: sp,
+                liquidity: liq,
+                sync_ts: ts,
+            },
+            // Sin slot0 cacheado → skip con motivo PROPIO, no el engañoso.
+            None => return IntentLegRead::Skip("v3_slot0_missing"),
+        }
+    } else {
+        let Some(entry) = runner.read_pool_reserves(&pool_id).await else {
+            return IntentLegRead::Skip("reserves_missing");
+        };
+        // Orientación exacta: token0_addr declara cuál reserva es "in"
+        // para esta pierna. Sin token0_addr o con token0 fuera de la
+        // ruta → OMITIR (R8: sin dual-orientation ni inferencia).
+        let Some(token0) = entry.token0_addr.as_deref() else {
+            return IntentLegRead::Skip("token0_addr_missing");
+        };
+        let pair = if token0 == token_in {
+            (entry.r0.clone(), entry.r1.clone())
+        } else if token0 == token_out {
+            (entry.r1.clone(), entry.r0.clone())
+        } else {
+            return IntentLegRead::Skip("token0_addr_out_of_route");
+        };
+        // Identidad de coherencia del ROUND DE SYNC (PLAN-SUPPORT-WIRING-
+        // 01): V2 y V3 del mismo round comparten ts (verificado en
+        // producción), mientras que blk solo existe en V2 y ts solo se
+        // usaba en V3 — con identidades distintas, quote_path_progress
+        // rechazaba TODA ruta mixta con mixed_block_or_domain. El ts del
+        // round ES la frontera real de coherencia (todas las entradas se
+        // escribieron juntas). JAMÁS se fabrica un hash (R8).
+        IntentLegBody::V2 {
+            reserve_in_raw: pair.0,
+            reserve_out_raw: pair.1,
+            sync_ts: entry.ts,
+        }
+    };
+    let Some(dec_in) = v4_token_decimals(redis, chain_id, &token_in, decimal_cache).await else {
+        return IntentLegRead::Skip("token_in_decimals_missing");
+    };
+    let Some(dec_out) = v4_token_decimals(redis, chain_id, &token_out, decimal_cache).await else {
+        return IntentLegRead::Skip("token_out_decimals_missing");
+    };
+    IntentLegRead::Ready {
+        pool_id,
+        body,
+        decimals: (dec_in, dec_out),
+    }
+}
+
+/// Una pasada completa: una lectura por pierna, en el orden del intent (el
+/// orden fija qué razón de omisión se reporta cuando fallan varios datos).
+async fn read_intent_legs_pass(
+    runner: &Arc<CartridgeRunner>,
+    redis: &mut redis::aio::ConnectionManager,
+    intent: &RouteIntent,
+    chain_id: u64,
+) -> Vec<IntentLegRead> {
     let mut decimal_cache: std::collections::HashMap<String, Option<u8>> =
         std::collections::HashMap::new();
     let mut slot0_cache: std::collections::HashMap<String, Option<(String, u128, u64)>> =
         std::collections::HashMap::new();
     let mut reads: Vec<IntentLegRead> = Vec::with_capacity(intent.legs.len());
     for leg in &intent.legs {
-        // Gate de COSTE: una pierna sin pool o degenerada se descarta ANTES de
-        // cualquier I/O (idéntico a la ruta ACTIVE previa).
-        let Some(pool) = leg.pool_hint else {
-            reads.push(IntentLegRead::Skip("missing_pool_hint"));
-            continue;
-        };
-        let token_in = format!("{:#x}", leg.token_in);
-        let token_out = format!("{:#x}", leg.token_out);
-        if token_in == token_out {
-            // Una pierna degenerada invalidaría TODO el grafo
-            // (enumerate_cycles: invalid_or_duplicate_graph_edge); se omite.
-            reads.push(IntentLegRead::Skip("degenerate_self_pair"));
-            continue;
-        }
-        // El protocolo decide la FUENTE del dato (V3 → slot0; resto →
-        // reservas). El fee lo deriva la composición desde la misma función
-        // pura, así que aquí sólo se necesita el protocolo.
-        let (protocol, _, _) = v4_edge_protocol_and_fee(leg);
-        let pool_id = format!("{:#x}", pool);
-        // V3-LEG-GRAPH-01 (RESERVES-CACHE-01, 2026-10-01): el protocolo se
-        // computa ANTES del gate de reservas. Un pool V3 NO tiene
-        // getReserves(): su dato vive en `arbx:v3_slot0`, jamás en
-        // `arbx:pool_reserves`. Exigirle la entrada V2 descartaba TODA pierna
-        // V3 con el motivo engañoso `reserves_missing` — 98% de las piernas
-        // descartadas en producción (medido 2026-10-01). El Edge ya soporta V3
-        // (reserve_in_raw: Option) y quote_path lo resuelve con
-        // v3_spot_within_tick (orientación derivada de token_in/token_out).
-        let body = if protocol == "uniswap_v3" {
-            match v4_slot0(redis, chain_id, &pool_id, &mut slot0_cache).await {
-                Some((sp, liq, ts)) => IntentLegBody::V3 {
-                    sqrt_price_x96: sp,
-                    liquidity: liq,
-                    sync_ts: ts,
-                },
-                // Sin slot0 cacheado → skip con motivo PROPIO, no el engañoso.
-                None => {
-                    reads.push(IntentLegRead::Skip("v3_slot0_missing"));
-                    continue;
-                }
-            }
-        } else {
-            let Some(entry) = runner.read_pool_reserves(&pool_id).await else {
-                reads.push(IntentLegRead::Skip("reserves_missing"));
-                continue;
-            };
-            // Orientación exacta: token0_addr declara cuál reserva es "in"
-            // para esta pierna. Sin token0_addr o con token0 fuera de la
-            // ruta → OMITIR (R8: sin dual-orientation ni inferencia).
-            let Some(token0) = entry.token0_addr.as_deref() else {
-                reads.push(IntentLegRead::Skip("token0_addr_missing"));
-                continue;
-            };
-            let pair = if token0 == token_in {
-                (entry.r0.clone(), entry.r1.clone())
-            } else if token0 == token_out {
-                (entry.r1.clone(), entry.r0.clone())
-            } else {
-                reads.push(IntentLegRead::Skip("token0_addr_out_of_route"));
-                continue;
-            };
-            // Identidad de coherencia del ROUND DE SYNC (PLAN-SUPPORT-WIRING-
-            // 01): V2 y V3 del mismo round comparten ts (verificado en
-            // producción), mientras que blk solo existe en V2 y ts solo se
-            // usaba en V3 — con identidades distintas, quote_path_progress
-            // rechazaba TODA ruta mixta con mixed_block_or_domain. El ts del
-            // round ES la frontera real de coherencia (todas las entradas se
-            // escribieron juntas). JAMÁS se fabrica un hash (R8).
-            IntentLegBody::V2 {
-                reserve_in_raw: pair.0,
-                reserve_out_raw: pair.1,
-                sync_ts: entry.ts,
-            }
-        };
-        let Some(dec_in) = v4_token_decimals(redis, chain_id, &token_in, &mut decimal_cache).await
-        else {
-            reads.push(IntentLegRead::Skip("token_in_decimals_missing"));
-            continue;
-        };
-        let Some(dec_out) =
-            v4_token_decimals(redis, chain_id, &token_out, &mut decimal_cache).await
-        else {
-            reads.push(IntentLegRead::Skip("token_out_decimals_missing"));
-            continue;
-        };
-        reads.push(IntentLegRead::Ready {
-            pool_id,
-            body,
-            decimals: (dec_in, dec_out),
-        });
+        reads.push(
+            read_intent_leg(
+                runner,
+                redis,
+                leg,
+                chain_id,
+                &mut decimal_cache,
+                &mut slot0_cache,
+            )
+            .await,
+        );
     }
     reads
 }
@@ -2573,6 +3042,39 @@ pub async fn build_and_register_intent_context(
         edges_built: v4_edges.len(),
         legs_skipped: v4_skip_reasons,
     };
+    // PROTOCOL-COHERENCE-01 (2026-10-04): si tras la alineación acotada las
+    // piernas RESUELTAS siguen repartidas entre dos rounds de sync, el grafo
+    // mezcla estado de dos bloques y NINGUNA ruta puede ser atómica: el propio
+    // contrato lo detecta en `quote_path_progress`
+    // (`mixed_block_or_domain_in_atomic_route`) y con él caen TODOS los recibos
+    // de la ruta — medido en el gate v4 como
+    // `protocol_exact_quotes::hop_Some(1):mixed_block_or_domain_in_atomic_route`
+    // (61 de 269) y `same_snapshot::edges_span_multiple_sync_rounds_or_snapshots`
+    // (37), más los cuatro recibos económicos dependientes de la cotización
+    // (65 cada uno). Componer el bundle con esa identidad mixta es AFIRMAR una
+    // coherencia que el dato desmiente: se declara el contexto NO COMPUTADO con
+    // la razón real (R8/R10) en vez de fabricar una identidad única que taparía
+    // la incoherencia. El fallback ya existe y es el mismo de `no_graph_edges`.
+    if !intent_legs_share_one_round(&reads) {
+        let rounds: Vec<Option<u64>> = reads.iter().map(leg_round_ts).collect();
+        debug!(
+            event = "cartridge.v4_intent_round_unaligned",
+            chain_id,
+            tx_hash = %intent.tx_hash,
+            legs_total = intent.legs.len(),
+            edges_built = v4_edges.len(),
+            newest_round = ?newest_leg_round(&reads),
+            laggards = ?leg_round_laggard_indices(&reads),
+            rounds = ?rounds,
+            "piernas del intent en rounds de sync distintos tras la alineación acotada: contexto NO COMPUTADO (R8)"
+        );
+        return IntentContextOutcome::unavailable(
+            census,
+            chain_id,
+            intent,
+            "legs_span_multiple_sync_rounds",
+        );
+    }
     // BASKET-WORKER-01 (2026-10-03): estado on-chain de los baskets ERC-4626
     // RELEVANTES a este intent. La lectura async vive AQUÍ (el llamador) y el
     // bundle sync la recibe ya leída. Gate de coste: sin basket del operador
@@ -2648,6 +3150,97 @@ pub async fn build_and_register_intent_context(
     let Some(router) = router else {
         return IntentContextOutcome::unavailable(census, chain_id, intent, "no_context_router");
     };
+    // EXACT-QUOTES-PRODUCER-01 (2026-10-04): quotes EXACTAS por pierna,
+    // ENCADENADAS (la salida de la pierna `i` es la entrada de la `i+1`) contra
+    // el QuoterV2 real. La lectura async vive AQUÍ — ANTES de que `v4_edges` se
+    // mueva al bundle. Sólo entran entradas de FUENTE REAL: una pierna que no
+    // cotiza NO inserta nada y su ausencia queda declarada; el
+    // `Default::default()` que había en el bundle era un NO COMPUTADO
+    // disfrazado de mapa vacío (R8/R10).
+    //
+    // POR QUÉ NO SE RECHAZA EL CONTEXTO ENTERO cuando una pierna no cotiza: la
+    // ausencia ya se DECLARA por pierna (evento agregado con su razón + la
+    // entrada que no entra) y el certificado cae al respaldo within-tick con su
+    // motivo, que es la conducta de HOY. Rechazar el contexto borraría esa
+    // evaluación — las 61 filas medidas de `v3_within_tick_is_hypothesis_…` se
+    // miden sobre rutas que SÍ se cotizan y se evalúan: negarlas no arregla
+    // ninguna, sólo esconde la medición. Lo que se elimina es la FABRICACIÓN
+    // (rellenar el hueco con un valor), no la evaluación honesta con respaldo.
+    let v4_exact = {
+        let amount_raw = intent.amount_in.to_string();
+        match v4_exact_quote_provider(chain_id) {
+            Some(provider) => {
+                v4_exact_quotes(
+                    &v4_edges,
+                    &amount_raw,
+                    V4_EXACT_QUOTE_BUDGET_MS,
+                    move |req| {
+                        let provider = provider.clone();
+                        async move {
+                            use crate::state_projector::V3QuoteProvider as _;
+                            match provider
+                                .quote_exact_input_single(
+                                    req.pool_addr,
+                                    req.token_in,
+                                    req.token_out,
+                                    req.amount_in,
+                                    req.fee_bps,
+                                )
+                                .await
+                            {
+                                // Salida cero = el quoter contestó y el pool no
+                                // entrega nada: NO es una quote exacta usable.
+                                Ok(out) if !out.is_zero() => Ok(out.to_string()),
+                                Ok(_) => Err("quoter_returned_zero".to_string()),
+                                Err(e) => Err(e.to_string()),
+                            }
+                        }
+                    },
+                )
+                .await
+            }
+            // Sin pool RPC registrado o sin catálogo de quoter para la cadena: se
+            // declara la AUSENCIA DE PRODUCTOR, no se inventa una quote.
+            None => {
+                v4_exact_quotes(
+                    &v4_edges,
+                    &amount_raw,
+                    V4_EXACT_QUOTE_BUDGET_MS,
+                    |_req| async { Err("no_quoter_or_rpc_pool_for_chain".to_string()) },
+                )
+                .await
+            }
+        }
+    };
+    let V4ExactQuotes {
+        quotes: v4_exact_quote_map,
+        gaps: v4_exact_quote_gaps,
+        chained_until_raw: v4_exact_quote_chained,
+    } = v4_exact;
+    // LOGFLOOD-01: UNA línea agregada por intent (jamás una por pierna). El
+    // resumen se arma LEYENDO cada campo del hueco: el detalle crudo del quoter
+    // es lo que hace diagnosticable la ausencia (y no queda código muerto).
+    if !v4_exact_quote_gaps.is_empty() {
+        let gap_summary: Vec<String> = v4_exact_quote_gaps
+            .iter()
+            .map(|g| {
+                format!(
+                    "hop{}:{}:{}:{}:{}",
+                    g.index, g.edge_id, g.protocol, g.reason, g.detail
+                )
+            })
+            .collect();
+        debug!(
+            event = "cartridge.v4_exact_quotes_absent",
+            chain_id,
+            tx_hash = %intent.tx_hash,
+            edges_built = v4_edges.len(),
+            quoted = v4_exact_quote_map.len(),
+            chained_until_raw = %v4_exact_quote_chained,
+            gaps = ?gap_summary,
+            "piernas sin quote exacta de protocolo: la entrada NO se inserta y la ausencia queda declarada (R8)"
+        );
+    }
     // PRICE-COVERAGE-01 (§38): tercera fuente del mapa de precios — el bus de
     // precios EN PROCESO. `get()` clona un `Arc` ya inicializado o devuelve
     // `None` cuando `main.rs` todavía no llamó a `init()` (tests, arranques
@@ -2667,6 +3260,7 @@ pub async fn build_and_register_intent_context(
         v4_intent_gas_gwei,
         &v4_basket_state,
         price_bus.as_deref(),
+        v4_exact_quote_map,
     ) else {
         // `None` sólo si el reloj no permite una ventana temporal honesta.
         // Evento CONSERVADO del bloque original de la ruta ACTIVE.
@@ -5251,6 +5845,134 @@ mod shadow_canonical_tests {
     }
 
     /// Bundle REAL compuesto por la MISMA función que usan las rutas ACTIVE y
+    /// EXACT-QUOTES-PRODUCER-01 — el productor NO es INERTE y la cadena es
+    /// AMOUNT-BOUND. El I/O del quoter se inyecta (así la cadena se prueba sin
+    /// red) y el mapa resultante se pasa por el `quote_path` REAL — con la
+    /// precedencia ya invertida por AGENT-GRAPH-QUOTE-01 — para demostrar que una
+    /// pierna V3 **con slot0** pasa a `protocol_exact_integer`: exactamente lo que
+    /// era imposible mientras el mapa estaba vacío.
+    #[tokio::test]
+    async fn exact_quotes_producer_chains_and_certifies_a_v3_leg_with_slot0() {
+        let amount = "1000000000000000000";
+        let (pool_v2, pool_v3) = (hex(tok(0x11)), hex(tok(0x22)));
+        let (tok_a, tok_b) = (hex(tok(0xAA)), hex(tok(0xBB)));
+        let block = format!("sync-ts-{SYNC_TS}");
+        let v2 = crate::agent_graph::Edge {
+            edge_id: pool_v2.clone(),
+            pool_id: pool_v2.clone(),
+            chain_id: CHAIN,
+            token_in: tok_a.clone(),
+            token_out: tok_b.clone(),
+            protocol: "cpmm_v2".into(),
+            snapshot_id: CONTEXT_ID.into(),
+            block_hash: block.clone(),
+            reserve_in_raw: Some(U256::exp10(24).to_string()),
+            reserve_out_raw: Some(U256::exp10(24).to_string()),
+            fee_units: Some(30),
+            fee_denominator: Some(10_000),
+            token_in_decimals: 18,
+            token_out_decimals: 18,
+            adapter_version: "reserves_cache_v1".into(),
+            sqrt_price_x96_raw: None,
+            liquidity: None,
+        };
+        // Pierna V3 CON slot0: es la que hoy sale por la hipótesis within-tick.
+        let v3 = crate::agent_graph::Edge {
+            edge_id: pool_v3.clone(),
+            pool_id: pool_v3.clone(),
+            chain_id: CHAIN,
+            token_in: tok_b.clone(),
+            token_out: tok_a.clone(),
+            protocol: "uniswap_v3".into(),
+            snapshot_id: CONTEXT_ID.into(),
+            block_hash: block,
+            reserve_in_raw: None,
+            reserve_out_raw: None,
+            fee_units: Some(3_000),
+            fee_denominator: Some(1_000_000),
+            token_in_decimals: 18,
+            token_out_decimals: 18,
+            adapter_version: "reserves_cache_v1".into(),
+            sqrt_price_x96_raw: Some("79228162514264337593543950336".into()),
+            liquidity: Some(1_000_000_000_000_000_000_000),
+        };
+        // El importe que ENTRA en la pierna 1 es la SALIDA de la pierna 0,
+        // computada con la MISMA función que usa el ledger.
+        let chained = crate::agent_graph::cpmm_exact_in(
+            amount,
+            &U256::exp10(24).to_string(),
+            &U256::exp10(24).to_string(),
+            30,
+            10_000,
+        )
+        .expect("la pierna CPMM del fixture cotiza");
+
+        // (1) CON quoter: el mapa NO queda vacío, la clave encadena la salida
+        //     real de la pierna 0 y el ledger lo CERTIFICA pese al slot0.
+        let quoted = v4_exact_quotes(
+            &[v2.clone(), v3.clone()],
+            amount,
+            V4_EXACT_QUOTE_BUDGET_MS,
+            |req| {
+                assert_eq!(req.fee_bps, 3_000, "el fee de la pierna viaja al quoter");
+                assert_eq!(req.pool_addr, tok(0x22), "el quoter recibe ESA pierna");
+                assert_eq!(
+                    req.amount_in,
+                    U256::from_dec_str(&chained).unwrap(),
+                    "el quoter recibe el importe ENCADENADO"
+                );
+                async move { Ok("700000000000000000".to_string()) }
+            },
+        )
+        .await;
+        assert!(quoted.gaps.is_empty(), "sin huecos: {:?}", quoted.gaps);
+        assert_eq!(quoted.quotes.len(), 1, "sólo la pierna V3 pide quote");
+        assert_eq!(quoted.chained_until_raw, "700000000000000000");
+        let entry = quoted
+            .quotes
+            .get(&crate::agent_graph::quote_request_key(&v3, &chained))
+            .expect("la clave debe usar la SALIDA real de la pierna 0 (amount-bound)");
+        assert_eq!(entry.amount_in_raw, chained);
+        assert_eq!(entry.amount_out_raw, "700000000000000000");
+        assert_eq!(entry.precision, "protocol_exact_integer");
+        assert!(entry.fees_and_impact_embedded);
+        assert!(!entry.quote_id.is_empty(), "procedencia obligatoria");
+        assert_eq!(entry.adapter_version, v3.adapter_version);
+
+        let legs =
+            crate::agent_graph::quote_path(&[v2.clone(), v3.clone()], amount, &quoted.quotes)
+                .expect("la ruta encadenada cotiza");
+        assert_eq!(legs[0]["quote_method"], "cpmm_exact_integer");
+        assert_eq!(
+            legs[1]["quote_method"], "protocol_exact_integer",
+            "el productor activo convierte la hipótesis within-tick en quote certificada"
+        );
+        assert_eq!(legs[1]["amount_out_raw"], "700000000000000000");
+
+        // (2) SIN quoter: NADA se inserta, la ausencia se declara con su razón
+        //     CONCRETA y el respaldo within-tick sigue cotizando — cero regresión
+        //     para lo que ya funcionaba.
+        let unquoted = v4_exact_quotes(
+            &[v2.clone(), v3.clone()],
+            amount,
+            V4_EXACT_QUOTE_BUDGET_MS,
+            |_req| async { Err("rpc_unavailable".to_string()) },
+        )
+        .await;
+        assert!(unquoted.quotes.is_empty(), "sin fuente NO se inserta nada");
+        assert_eq!(unquoted.gaps.len(), 1);
+        assert_eq!(unquoted.gaps[0].index, 1);
+        assert_eq!(unquoted.gaps[0].reason, "v3_protocol_quote_unavailable");
+        assert_eq!(unquoted.gaps[0].detail, "rpc_unavailable");
+        assert_eq!(
+            unquoted.chained_until_raw, chained,
+            "la cadena se detiene donde se detuvo la evidencia, sin inventar salida"
+        );
+        let legs = crate::agent_graph::quote_path(&[v2, v3], amount, &unquoted.quotes)
+            .expect("el respaldo local sigue cotizando");
+        assert_eq!(legs[1]["quote_method"], "v3_spot_within_tick");
+    }
+
     /// SHADOW (`build_v4_intent_bundle`) desde el grafo compuesto.
     fn real_bundle() -> crate::snapshot_services::SnapshotBundle {
         let intent = cycle_intent();
@@ -5281,6 +6003,9 @@ mod shadow_canonical_tests {
             // WETH/USDC, así que la tercera fuente no participa (y su ausencia
             // es el degradado honesto, no una carencia del test).
             None,
+            // EXACT-QUOTES-PRODUCER-01: sin quotes de protocolo en este fixture
+            // (el mapa estaba vacío antes de este PR; el test no cambia eso).
+            std::collections::BTreeMap::new(),
         )
         .expect("un bundle con grafo y config reales SIEMPRE se compone")
     }
@@ -5325,6 +6050,7 @@ mod shadow_canonical_tests {
             20.0,
             &std::collections::BTreeMap::new(),
             price_bus,
+            std::collections::BTreeMap::new(),
         )
         .expect("un bundle con grafo y config reales SIEMPRE se compone")
     }
@@ -5715,6 +6441,108 @@ mod shadow_canonical_tests {
         assert_eq!(c.first_token_in.as_deref(), Some(hex(tok(0xA)).as_str()));
         // Todo edge queda ATADO al snapshot del intent.
         assert!(c.edges.iter().all(|e| e.snapshot_id == CONTEXT_ID));
+    }
+
+    /// PROTOCOL-COHERENCE-01 — la PARTICIÓN que decide si un intent se puede
+    /// evaluar. Con las piernas resueltas en UN round el grafo lleva UNA sola
+    /// identidad de bloque (ruta atómica coherente: el gate puede avanzar); con
+    /// las piernas repartidas entre DOS rounds lleva DOS identidades — lo que
+    /// `quote_path_progress` rechaza con `mixed_block_or_domain_in_atomic_route`,
+    /// la razón medida en el gate v4. Se prueban las DOS direcciones: un test
+    /// que sólo cubriera el caso coherente no probaría la partición.
+    #[test]
+    fn leg_round_alignment_partitions_coherent_from_split_reads() {
+        let intent = cycle_intent();
+
+        // (1) COHERENTE — el caso normal: el writer escribe la población con el
+        //     MISMO `ts`, así que las dos piernas comparten round.
+        let coherent = resolved_reads(&intent);
+        assert!(
+            intent_legs_share_one_round(&coherent),
+            "dos piernas del mismo round son un grafo coherente"
+        );
+        assert!(leg_round_laggard_indices(&coherent).is_empty());
+        assert_eq!(newest_leg_round(&coherent), Some(SYNC_TS));
+        let composed_ok = compose_intent_edges(CHAIN, CONTEXT_ID, &intent, &coherent);
+        assert_eq!(
+            composed_ok.edges[0].block_hash, composed_ok.edges[1].block_hash,
+            "un solo round ⇒ UNA identidad de bloque para la ruta atómica"
+        );
+
+        // (2) REPARTIDO — la rotación cae EN MEDIO de la lectura (medido en
+        //     producción: la población queda partida, p.ej. 30 entradas en el
+        //     bloque N y 527 en N+1). El predicado lo declara y nombra la
+        //     rezagada...
+        let mut split = resolved_reads(&intent);
+        split[1] = IntentLegRead::Ready {
+            pool_id: hex(intent.legs[1].pool_hint.unwrap()),
+            body: IntentLegBody::V2 {
+                reserve_in_raw: U256::exp10(20).to_string(),
+                reserve_out_raw: U256::exp10(21).to_string(),
+                sync_ts: SYNC_TS + 1,
+            },
+            decimals: (6, 18),
+        };
+        assert!(
+            !intent_legs_share_one_round(&split),
+            "piernas de dos rounds NO son un grafo coherente"
+        );
+        assert_eq!(leg_round_laggard_indices(&split), vec![0]);
+        assert_eq!(newest_leg_round(&split), Some(SYNC_TS + 1));
+        // ...y el grafo que se compondría lleva DOS identidades: el bundle no
+        // puede afirmar coherencia sobre esto, por eso el llamador declara el
+        // contexto NO COMPUTADO con `legs_span_multiple_sync_rounds`.
+        let composed_split = compose_intent_edges(CHAIN, CONTEXT_ID, &intent, &split);
+        assert_ne!(
+            composed_split.edges[0].block_hash, composed_split.edges[1].block_hash,
+            "dos rounds ⇒ dos identidades de bloque (lo que el contrato rechaza)"
+        );
+        assert_eq!(
+            composed_split.edges[0].block_hash,
+            format!("sync-ts-{SYNC_TS}")
+        );
+        assert_eq!(
+            composed_split.edges[1].block_hash,
+            format!("sync-ts-{}", SYNC_TS + 1)
+        );
+
+        // (3) Una pierna OMITIDA no tiene round: no puede desalinear el grafo ni
+        //     contarse como rezagada.
+        let with_skip = vec![
+            IntentLegRead::Skip("missing_pool_hint"),
+            IntentLegRead::Ready {
+                pool_id: hex(intent.legs[0].pool_hint.unwrap()),
+                body: IntentLegBody::V2 {
+                    reserve_in_raw: U256::exp10(21).to_string(),
+                    reserve_out_raw: U256::exp10(20).to_string(),
+                    sync_ts: SYNC_TS,
+                },
+                decimals: (18, 6),
+            },
+            IntentLegRead::Skip("reserves_missing"),
+            IntentLegRead::Ready {
+                pool_id: hex(intent.legs[1].pool_hint.unwrap()),
+                body: IntentLegBody::V2 {
+                    reserve_in_raw: U256::exp10(20).to_string(),
+                    reserve_out_raw: U256::exp10(21).to_string(),
+                    sync_ts: SYNC_TS,
+                },
+                decimals: (6, 18),
+            },
+        ];
+        assert!(
+            intent_legs_share_one_round(&with_skip),
+            "sólo cuentan las piernas resueltas: las omitidas no aportan round"
+        );
+        assert!(leg_round_laggard_indices(&with_skip).is_empty());
+
+        // (4) 0 y 1 pierna resuelta: coherencia VACUA (no hay ruta que mezcle).
+        assert!(intent_legs_share_one_round(&[]));
+        assert_eq!(newest_leg_round(&[]), None);
+        assert!(leg_round_laggard_indices(&[]).is_empty());
+        assert!(intent_legs_share_one_round(&[IntentLegRead::Skip(
+            "v3_slot0_missing"
+        )]));
     }
 
     #[test]
