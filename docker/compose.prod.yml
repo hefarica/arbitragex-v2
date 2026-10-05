@@ -121,6 +121,8 @@ services:
     build:
       context: ../backend
       dockerfile: searcher-rs/Dockerfile
+      args:
+        ARBX_BUILD_SHA: ${ARBX_DEPLOY_SHA:-unknown}
     env_file:
     - ../.env
     environment:
@@ -190,6 +192,8 @@ services:
     build:
       context: ../backend
       dockerfile: sim-ctl/Dockerfile
+      args:
+        ARBX_BUILD_SHA: ${ARBX_DEPLOY_SHA:-unknown}
     env_file:
     - ../.env
     environment:
@@ -230,6 +234,8 @@ services:
     build:
       context: ../backend
       dockerfile: math-engine/Dockerfile
+      args:
+        ARBX_BUILD_SHA: ${ARBX_DEPLOY_SHA:-unknown}
     env_file:
     - ../.env
     environment:
@@ -263,6 +269,8 @@ services:
     build:
       context: ../backend
       dockerfile: relays-client/Dockerfile
+      args:
+        ARBX_BUILD_SHA: ${ARBX_DEPLOY_SHA:-unknown}
     env_file:
     - ../.env
     environment:
@@ -300,6 +308,8 @@ services:
     build:
       context: ../backend
       dockerfile: recon/Dockerfile
+      args:
+        ARBX_BUILD_SHA: ${ARBX_DEPLOY_SHA:-unknown}
     env_file:
     - ../.env
     environment:
@@ -341,6 +351,8 @@ services:
     build:
       context: ..
       dockerfile: backend/selector-api/Dockerfile
+      args:
+        ARBX_BUILD_SHA: ${ARBX_DEPLOY_SHA:-unknown}
     env_file:
     - ../.env
     environment:
@@ -378,6 +390,8 @@ services:
     build:
       context: ..
       dockerfile: backend/api-server/Dockerfile
+      args:
+        ARBX_BUILD_SHA: ${ARBX_DEPLOY_SHA:-unknown}
     env_file:
     - ../.env
     environment:
@@ -455,6 +469,8 @@ services:
     build:
       context: ..
       dockerfile: edge/worker/Dockerfile.node
+      args:
+        ARBX_BUILD_SHA: ${ARBX_DEPLOY_SHA:-unknown}
     env_file:
     - ../.env
     environment:
@@ -505,6 +521,7 @@ services:
         # THIS arg closes the chain:
         #   compose build.args -> Dockerfile ARG/ENV -> next.config headers().
         ARBX_TLS_ENABLED: ${ARBX_TLS_ENABLED:-true}
+        ARBX_BUILD_SHA: ${ARBX_DEPLOY_SHA:-unknown}
     environment:
       NEXT_PUBLIC_EDGE_URL: ${NEXT_PUBLIC_EDGE_URL:?NEXT_PUBLIC_EDGE_URL required
         (public edge URL)}
@@ -679,6 +696,8 @@ services:
     build:
       context: ../backend
       dockerfile: token-enricher/Dockerfile
+      args:
+        ARBX_BUILD_SHA: ${ARBX_DEPLOY_SHA:-unknown}
     env_file:
     - ../.env
     environment:
@@ -765,6 +784,8 @@ services:
     logging: *id001
     build:
       context: ./socket-proxy
+      args:
+        ARBX_BUILD_SHA: ${ARBX_DEPLOY_SHA:-unknown}
     restart: unless-stopped
     networks:
     - arbx-net
