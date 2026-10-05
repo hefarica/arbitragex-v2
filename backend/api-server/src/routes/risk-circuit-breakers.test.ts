@@ -48,6 +48,13 @@ const {
   loadCbConfig,
   computeDrawdownStats,
   toGasMeasurementOutcomes,
+  driftTrackerMode,
+  coverageGapAction,
+  deriveGasCoverage,
+  readGasWindow,
+  isMissingGasLedgerColumn,
+  GAS_WINDOW_SQL_LEDGER,
+  GAS_WINDOW_SQL_ALL_ROWS,
   DD_MIN_RUNS,
   DD_MIN_SPAN_HOURS,
   persistBreakerTrips,
@@ -157,7 +164,16 @@ function revertCtx(counts: { total: number; reverted: number } | null, threshold
 }
 
 function gasCtx(
-  window: { rowsInWindow: number; withActualGas: number; sumUsd: number } | null,
+  window: {
+    rowsInWindow: number;
+    withActualGas: number;
+    sumUsd: number;
+    /** Coverage denominator from the measurement ledger (migration 126).
+     *  Omitted ⇒ the fixture keeps the conservative all-rows denominator, which
+     *  is what every pre-GAP-B assertion below was written against. */
+    measurable?: number;
+    denominator?: "ledger" | "all_rows_no_ledger";
+  } | null,
   capUsd: number | null,
   status: "ok" | "cap_not_configured" | "cap_invalid" = capUsd === null ? "cap_not_configured" : "ok",
 ) {
@@ -398,6 +414,104 @@ describe("makeGasBurnBreaker (A.6 actual-gas path)", () => {
     const b = makeGasBurnBreaker(gasCtx({ rowsInWindow: 400, withActualGas: 0, sumUsd: 0 }, 50));
     expect(b.state).toBe("NOT_AVAILABLE");
     expect(b.evidence.detail).toContain("actual_gas_cost_usd");
+  });
+
+  // -------------------------------------------------------------------------
+  // Producer-switch honesty (R10 E2E-COMPUTE GUARD, 2026-10).
+  //
+  // The counterexample this closes: `required_action` used to answer a coverage
+  // gap with "wait for drift_tracker to backfill…", but the drift-tracker only
+  // spawns when ARBX_DRIFT_TRACKER_MODE == "on" (recon/src/main.rs:343) and
+  // .env.example ships `off`. The instruction asked the operator to wait for a
+  // backfill that a dormant switch can never produce — a config block dressed
+  // up as a transient.
+  // -------------------------------------------------------------------------
+
+  it("driftTrackerMode replicates the producer's EXACT predicate (== \"on\")", () => {
+    expect(driftTrackerMode({})).toEqual({ mode: "unset", observed: null });
+    expect(driftTrackerMode({ ARBX_DRIFT_TRACKER_MODE: "on" })).toEqual({
+      mode: "on",
+      observed: "on",
+    });
+    // `.env.example` ships `off`.
+    expect(driftTrackerMode({ ARBX_DRIFT_TRACKER_MODE: "off" }).mode).toBe("off");
+    // Parity with `drift_mode == "on"`: no case folding, no trim, and an
+    // empty/absent value is dormant — never silently promoted to "on".
+    for (const v of ["", "ON", "On", "on ", " on", "true", "1"]) {
+      expect(driftTrackerMode({ ARBX_DRIFT_TRACKER_MODE: v }).mode, `value=${JSON.stringify(v)}`).toBe("off");
+    }
+  });
+
+  it("a dormant producer is named as CONFIG, not as a wait — the action is not wait-only", () => {
+    const flag = driftTrackerMode({ ARBX_DRIFT_TRACKER_MODE: "off" });
+    const a = coverageGapAction(flag, "0/400 measured");
+    expect(a).toContain("CONFIG, not transient");
+    expect(a).toContain('"off"');
+    expect(a).toContain("no backfill can occur");
+    expect(a).toContain("Operator-only flip");
+    // The regression this asserts: no branch may instruct a bare wait.
+    expect(a).not.toMatch(/^wait for/i);
+  });
+
+  it("an UNSET var is a config block too (absent ⇒ dormant), stated as an observation", () => {
+    const a = coverageGapAction(driftTrackerMode({}), "0/400 measured");
+    expect(a).toContain("unset in this");
+    expect(a).toContain("absent");
+    expect(a).toContain("backfill");
+  });
+
+  it("three distinct producer states ⇒ three distinct actions (a hardcoded text would fail)", () => {
+    const gap = "same gap";
+    const s = new Set(
+      (["on", "off", undefined] as const).map((v) =>
+        coverageGapAction(
+          driftTrackerMode(v === undefined ? {} : { ARBX_DRIFT_TRACKER_MODE: v }),
+          gap,
+        ),
+      ),
+    );
+    expect(s.size).toBe(3);
+  });
+
+  it("NOT_AVAILABLE with rows but no measurement names the dormant switch (not 'accumulate runs')", () => {
+    const b = makeGasBurnBreaker(gasCtx({ rowsInWindow: 400, withActualGas: 0, sumUsd: 0 }, 50), {
+      ARBX_DRIFT_TRACKER_MODE: "off",
+    });
+    expect(b.state).toBe("NOT_AVAILABLE");
+    expect(b.required_action).toContain("CONFIG, not transient");
+    expect(b.required_action).toContain("ARBX_DRIFT_TRACKER_MODE");
+    // The old instruction is exactly what cannot work while the switch is off.
+    expect(b.required_action).not.toContain("Accumulate paper runs");
+  });
+
+  it("WARN partial coverage keeps `backfill` (pre-existing contract) and adds the real blocker", () => {
+    const b = makeGasBurnBreaker(
+      gasCtx({ rowsInWindow: 500, withActualGas: 120, sumUsd: 10 }, 50),
+      { ARBX_DRIFT_TRACKER_MODE: "off" },
+    );
+    expect(b.state).toBe("WARN");
+    expect(b.required_action).toContain("backfill");
+    expect(b.required_action).toContain("CONFIG, not transient");
+    expect(b.required_action).toContain("120/500");
+  });
+
+  it("an ENABLED producer keeps the transient reading (the switch is not assumed dormant)", () => {
+    const b = makeGasBurnBreaker(
+      gasCtx({ rowsInWindow: 500, withActualGas: 120, sumUsd: 10 }, 50),
+      { ARBX_DRIFT_TRACKER_MODE: "on" },
+    );
+    expect(b.state).toBe("WARN");
+    expect(b.required_action).toContain("ARBX_DRIFT_TRACKER_MODE=on");
+    expect(b.required_action).not.toContain("CONFIG, not transient");
+  });
+
+  it("the switch never colours a healthy verdict: PASS ⇒ required_action null even when off", () => {
+    const b = makeGasBurnBreaker(
+      gasCtx({ rowsInWindow: 500, withActualGas: 500, sumUsd: 10 }, 50),
+      { ARBX_DRIFT_TRACKER_MODE: "off" },
+    );
+    expect(b.state).toBe("PASS");
+    expect(b.required_action).toBe(null);
   });
 
   it("invalid ARBX_CB_MAX_GAS_BURN_USD fails closed even when the sim path is healthy", () => {
@@ -1029,4 +1143,353 @@ describe("WO-3 exhaustive next action without false PASS", () => {
       expect(action.includes("All real breakers PASS")).toBe(state === "PASS");
     });
   }
+});
+
+// ---------------------------------------------------------------------------
+// GAP-B — the A.6 coverage denominator (Backend, 2026-10).
+//
+// The defect: the denominator was COUNT(*) — EVERY window row. Rows the
+// measurement ledger marks `not_applicable` (settled WITHOUT broadcast: an
+// economic/market reject burns no gas) or `impossible` (structurally
+// unresolvable by the drift scan) can NEVER carry actual_gas_cost_usd, so
+// `unmeasured` could never reach 0 and under-cap could never be certified. A
+// WARN that no amount of waiting clears is not a warning — it is a permanent
+// block wearing one.
+//
+// These tests fix the arithmetic AND the honesty: the narrower denominator is
+// used ONLY when the ledger supplies it (`denominator: "ledger"`); a deployment
+// without the column keeps the conservative all-rows denominator and SAYS SO.
+// ---------------------------------------------------------------------------
+
+describe("deriveGasCoverage (A.6 denominator arithmetic — pure)", () => {
+  it("ledger denominator excludes never-measurable rows from the population", () => {
+    const c = deriveGasCoverage({
+      rowsInWindow: 500,
+      withActualGas: 120,
+      measurable: 120,
+      denominator: "ledger",
+    });
+    expect(c.expected).toBe(120);
+    expect(c.excluded).toBe(380);
+    expect(c.unmeasured).toBe(0);
+    expect(c.breach).toBe(false);
+  });
+
+  it("an absent ledger keeps every window row (conservative, never optimistic)", () => {
+    const c = deriveGasCoverage({ rowsInWindow: 500, withActualGas: 120 });
+    expect(c.denominator).toBe("all_rows_no_ledger");
+    expect(c.expected).toBe(500);
+    expect(c.excluded).toBe(0);
+    expect(c.unmeasured).toBe(380);
+  });
+
+  it("a numerator larger than the measurable set is a BREACH, not a clamp", () => {
+    // Clamping `unmeasured` to 0 here would turn self-refuting data into a PASS.
+    const c = deriveGasCoverage({
+      rowsInWindow: 500,
+      withActualGas: 500,
+      measurable: 10,
+      denominator: "ledger",
+    });
+    expect(c.breach).toBe(true);
+  });
+
+  it("a denominator larger than the window violates the subset relation", () => {
+    const c = deriveGasCoverage({
+      rowsInWindow: 10,
+      withActualGas: 1,
+      measurable: 40,
+      denominator: "ledger",
+    });
+    expect(c.breach).toBe(true);
+  });
+
+  it("every row excluded (measured 0, measurable 0) is NOT a breach — it is no evidence", () => {
+    const c = deriveGasCoverage({
+      rowsInWindow: 300,
+      withActualGas: 0,
+      measurable: 0,
+      denominator: "ledger",
+    });
+    expect(c.breach).toBe(false);
+    expect(c.excluded).toBe(300);
+  });
+});
+
+describe("makeGasBurnBreaker — GAP-B ledger denominator", () => {
+  it("all never-measurable rows excluded → under-cap certifies as PASS (was a permanent WARN)", () => {
+    const b = makeGasBurnBreaker(
+      gasCtx(
+        {
+          rowsInWindow: 500,
+          withActualGas: 120,
+          sumUsd: 10,
+          measurable: 120,
+          denominator: "ledger",
+        },
+        50,
+      ),
+    );
+    expect(b.state).toBe("PASS");
+    expect(b.blocks).toEqual([]);
+    expect(b.evidence.detail).toContain("120/120 measurable runs");
+    expect(b.evidence.detail).toContain("380 window row(s) excluded");
+  });
+
+  it("measurable rows still uncovered → WARN (an exclusion never certifies the remainder)", () => {
+    const b = makeGasBurnBreaker(
+      gasCtx(
+        {
+          rowsInWindow: 500,
+          withActualGas: 120,
+          sumUsd: 10,
+          measurable: 200,
+          denominator: "ledger",
+        },
+        50,
+      ),
+    );
+    expect(b.state).toBe("WARN");
+    expect(b.evidence.detail).toContain("120/200 measurable runs");
+    expect(b.evidence.detail).toContain("80 measurable run(s) lack actual_gas_cost_usd");
+    expect(b.required_action).toContain("120/200");
+  });
+
+  it("a numerator exceeding the ledger's measurable set → NOT_AVAILABLE, never PASS", () => {
+    const b = makeGasBurnBreaker(
+      gasCtx(
+        {
+          rowsInWindow: 500,
+          withActualGas: 500,
+          sumUsd: 10,
+          measurable: 10,
+          denominator: "ledger",
+        },
+        50,
+      ),
+    );
+    expect(b.state).toBe("NOT_AVAILABLE");
+    expect(b.evidence.current_value).toBe(null);
+    expect(b.evidence.detail).toContain("contradicts itself");
+    expect(b.required_action).toContain("paper-gas-coverage-audit.sh");
+    // The drift-tracker switch is NOT the blocker here — do not send the
+    // operator to flip a flag that cannot change this aggregate.
+    expect(b.required_action).not.toContain("Operator-only flip");
+  });
+
+  it("the wire says WHICH denominator produced the verdict", () => {
+    const ledger = makeGasBurnBreaker(
+      gasCtx(
+        {
+          rowsInWindow: 500,
+          withActualGas: 500,
+          sumUsd: 10,
+          measurable: 500,
+          denominator: "ledger",
+        },
+        50,
+      ),
+    );
+    expect(ledger.evidence.paths?.actual.denominator).toBe("ledger");
+    expect(ledger.evidence.paths?.actual.excluded).toBe(0);
+    const degraded = makeGasBurnBreaker(
+      gasCtx({ rowsInWindow: 500, withActualGas: 500, sumUsd: 10 }, 50),
+    );
+    expect(degraded.evidence.paths?.actual.denominator).toBe("all_rows_no_ledger");
+  });
+
+  it("a degraded denominator cannot PASS silently: the reason names the missing migration", () => {
+    const b = makeGasBurnBreaker(gasCtx({ rowsInWindow: 500, withActualGas: 120, sumUsd: 10 }, 50));
+    expect(b.state).toBe("WARN");
+    expect(b.evidence.paths?.actual.reason).toContain("gas_measurement_state is absent");
+    expect(b.evidence.paths?.actual.reason).toContain(
+      "126_paper_trade_runs_gas_coverage_ledger",
+    );
+    // The operator must not be promised that waiting closes it.
+    expect(b.required_action).toContain("126_paper_trade_runs_gas_coverage_ledger");
+  });
+
+  it("a ledger-denominator PASS carries no degraded-migration note", () => {
+    const b = makeGasBurnBreaker(
+      gasCtx(
+        {
+          rowsInWindow: 120,
+          withActualGas: 120,
+          sumUsd: 10,
+          measurable: 120,
+          denominator: "ledger",
+        },
+        50,
+      ),
+    );
+    expect(b.state).toBe("PASS");
+    expect(b.evidence.paths?.actual.reason).not.toContain("gas_measurement_state is absent");
+    expect(b.required_action).toBe(null);
+  });
+
+  it("PAUSED stays reachable with a ledger denominator (an excess is never hidden)", () => {
+    const b = makeGasBurnBreaker(
+      gasCtx(
+        {
+          rowsInWindow: 500,
+          withActualGas: 120,
+          sumUsd: 75,
+          measurable: 120,
+          denominator: "ledger",
+        },
+        50,
+      ),
+    );
+    expect(b.state).toBe("PAUSED");
+    expect(b.evidence.current_value).toBe(75);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// GAP-B (Data, 2026-10) — the DENOMINATOR as a data contract.
+//
+// The producer emits `denominator` + `excluded` (risk-circuit-breakers.ts:1121-1122)
+// precisely so a consumer can tell "no rows" apart from "no MEASURABLE rows"
+// (migration 126 §"NOT DONE HERE": "the wire/contract change that lets the API
+// distinguish 'no expected measurement' from 'expected and missing'").
+//
+// These assertions fix the properties of that contract that a downstream writer
+// or validator can EASILY break without any test turning red today:
+//   · the pair must be present in the 0-excluded-rows case, not only in the
+//     partial-coverage case a fixture already covered;
+//   · `excluded` is a SIGNED integer: the breach branch emits it NEGATIVE
+//     (measured > measurable ⇒ expected < rowsInWindow is not the only source),
+//     so a consumer validator that assumes non-negative would reject the whole
+//     response — killing the panel instead of reporting the contradiction;
+//   · `measured` must be inside the population the ACTUAL query counts, checked
+//     against GAS_WINDOW_SQL_LEDGER's own FILTER text rather than a restatement.
+// ---------------------------------------------------------------------------
+describe("GAP-B data contract — denominator provenance reaches the wire intact", () => {
+  /** Extract the `gas_measurement_state` predicate from the real query text. */
+  function measurableFilter(sql: string): string {
+    const m = sql.match(/COUNT\(\*\) FILTER \(([\s\S]*?)\)::int AS measurable/);
+    expect(m, "GAS_WINDOW_SQL_LEDGER must expose its measurable FILTER").not.toBeNull();
+    return m![1];
+  }
+
+  it("0 measurable rows still names the denominator (the ledger case is not a silent 0/0)", () => {
+    // Migration 126 applied; every window row is not_applicable/impossible.
+    const b = makeGasBurnBreaker(
+      gasCtx(
+        {
+          rowsInWindow: 12,
+          withActualGas: 0,
+          sumUsd: 0,
+          measurable: 0,
+          denominator: "ledger",
+        },
+        50,
+      ),
+    );
+    const actual = b.evidence.paths?.actual;
+    // Producer side of the contract: the provenance survives to the wire.
+    expect(actual?.denominator).toBe("ledger");
+    expect(actual?.excluded).toBe(12);
+    expect(actual?.expected).toBe(0);
+    expect(actual?.measured).toBe(0);
+    // R8: 12 rows exist, 0 carry a measurement — NOT_AVAILABLE, never a $0 burn.
+    expect(b.state).toBe("NOT_AVAILABLE");
+    // And the reader is the ONLY place the population got narrowed: the SQL that
+    // produced `measurable` says which states it drops.
+    const filter = measurableFilter(GAS_WINDOW_SQL_LEDGER);
+    expect(filter).toContain("'not_applicable'");
+    expect(filter).toContain("'impossible'");
+    expect(filter).not.toMatch(/='measured'/);
+  });
+
+  it("excluded is SIGNED: the self-contradicting aggregate emits it negative", () => {
+    // Wired exactly as makeGasBurnBreaker wires it: readGasWindow forwards the
+    // caller-supplied `measurable` verbatim, deriving only the denominator.
+    const corrupted = deriveGasCoverage({
+      rowsInWindow: 10,
+      withActualGas: 1,
+      measurable: 40,
+      denominator: "ledger",
+    });
+    expect(corrupted.excluded).toBe(-30);
+    expect(corrupted.breach).toBe(true);
+
+    // …and it really does reach the wire that way (no clamp on the way out).
+    const w = readGasWindow(
+      [{ rows_in_window: 10, with_actual: 1, gas_usd: 0, measurable: 40 }],
+      "ledger",
+    );
+    const b = makeGasBurnBreaker(gasCtx({ rowsInWindow: 10, withActualGas: 1, sumUsd: 0, measurable: 40, denominator: "ledger" }, 50));
+    expect(w.measurable).toBe(40);
+    expect(b.evidence.paths?.actual.excluded).toBe(-30);
+    expect(b.state).toBe("NOT_AVAILABLE");
+  });
+
+  it("a fresh deployment (no migration 126) never claims the narrower denominator", () => {
+    const b = makeGasBurnBreaker(gasCtx({ rowsInWindow: 12, withActualGas: 0, sumUsd: 0 }, 50));
+    const actual = b.evidence.paths?.actual;
+    expect(actual?.denominator).toBe("all_rows_no_ledger");
+    expect(actual?.excluded).toBe(0);
+    expect(actual?.expected).toBe(12);
+    // The degraded denominator is named in the reason for THIS branch too — a
+    // consumer that only reads counts cannot see it, so the wire must say it.
+    expect(actual?.reason).toContain("gas_measurement_state is absent");
+  });
+});
+
+describe("A.6 SQL + degradation (I/O adapter)", () => {
+  it("the ledger query derives the denominator from gas_measurement_state", () => {
+    expect(GAS_WINDOW_SQL_LEDGER).toContain(
+      "gas_measurement_state IS DISTINCT FROM 'not_applicable'",
+    );
+    expect(GAS_WINDOW_SQL_LEDGER).toContain(
+      "gas_measurement_state IS DISTINCT FROM 'impossible'",
+    );
+    expect(GAS_WINDOW_SQL_LEDGER).toContain("AS measurable");
+    // The degraded query keeps COUNT(*) as the denominator and nothing else.
+    expect(GAS_WINDOW_SQL_ALL_ROWS).not.toContain("gas_measurement_state");
+    expect(GAS_WINDOW_SQL_LEDGER).not.toEqual(GAS_WINDOW_SQL_ALL_ROWS);
+  });
+
+  it("only the two never-measurable states are excluded — NULL stays measurable", () => {
+    // Fail-closed: a not-yet-classified row (NULL) is potentially measurable and
+    // stays in the denominator. `IS DISTINCT FROM` is what makes NULL count as
+    // measurable; a bare `<>` would silently DROP those rows and shrink the
+    // denominator with no evidence.
+    const sql = GAS_WINDOW_SQL_LEDGER;
+    expect(sql).toContain("IS DISTINCT FROM");
+    expect(sql).not.toMatch(/gas_measurement_state\s*[=<>]/);
+  });
+
+  it("42703/42P01 mean 'ledger absent'; any other error stays a real failure", () => {
+    expect(isMissingGasLedgerColumn({ code: "42703" })).toBe(true);
+    expect(isMissingGasLedgerColumn({ code: "42P01" })).toBe(true);
+    expect(isMissingGasLedgerColumn({ code: "57014" })).toBe(false);
+    expect(isMissingGasLedgerColumn(new Error("connection terminated"))).toBe(false);
+    expect(isMissingGasLedgerColumn(null)).toBe(false);
+  });
+
+  it("readGasWindow carries the denominator provenance and invents no measurement", () => {
+    const w = readGasWindow(
+      [{ rows_in_window: 500, with_actual: 0, gas_usd: 0, measurable: 120 }],
+      "ledger",
+    );
+    expect(w).toEqual({
+      rowsInWindow: 500,
+      withActualGas: 0,
+      sumUsd: 0,
+      measurable: 120,
+      denominator: "ledger",
+    });
+    // An absent row is a COUNT of zero — and the evaluator routes that to
+    // NOT_AVAILABLE, never to a $0 burn.
+    const empty = readGasWindow([], "all_rows_no_ledger");
+    expect(empty).toEqual({
+      rowsInWindow: 0,
+      withActualGas: 0,
+      sumUsd: 0,
+      measurable: 0,
+      denominator: "all_rows_no_ledger",
+    });
+  });
 });

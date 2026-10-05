@@ -137,9 +137,16 @@ interface GasPathActual {
   value: number | null;
   /** Rows with an actual_gas_cost_usd measurement. */
   measured: number;
-  /** Rows in the window expected to carry actual gas (coverage denominator —
-   *  conservative: every window run until an execution-kind marker exists). */
+  /** Coverage denominator: rows that can still carry a measurement. Derived
+   *  from the `gas_measurement_state` ledger (migration 126) when present;
+   *  otherwise every window row (conservative pre-126 behaviour). */
   expected: number;
+  /** Where `expected` came from. A ledger denominator and an all-rows
+   *  denominator are NOT the same claim, so the wire says which one this is. */
+  denominator: "ledger" | "all_rows_no_ledger";
+  /** Window rows excluded from the denominator because the ledger classified
+   *  them as never-measurable (`not_applicable` / `impossible`). */
+  excluded: number;
   window_hours: number | null;
   scope: string;
   /** Provenance of the actual_* fields — verbatim, never a claim of on-chain
@@ -162,6 +169,211 @@ interface GasBurnPaths {
  * presented as settled gas.
  */
 const ACTUAL_GAS_PROVENANCE = "sim-ctl replay via drift_tracker (not on-chain settled)";
+
+/**
+ * A.6 window aggregate — the coverage DENOMINATOR comes from the per-row
+ * measurement ledger (migration 126), not from COUNT(*).
+ *
+ * Why: `not_applicable` (settled WITHOUT broadcast — an economic/market reject
+ * burns no gas) and `impossible` (structurally unresolvable by the drift scan)
+ * can never carry `actual_gas_cost_usd`. Counting them makes full coverage
+ * unreachable in principle, so under-cap could never be certified — a WARN that
+ * no amount of waiting can clear.
+ *
+ * A NULL state is still counted: not-yet-classified is potentially measurable,
+ * and shrinking a denominator without evidence is the optimistic direction.
+ */
+export const GAS_WINDOW_SQL_LEDGER = `
+  SELECT COUNT(*)::int AS rows_in_window,
+         COUNT(actual_gas_cost_usd)::int AS with_actual,
+         COALESCE(SUM(actual_gas_cost_usd), 0)::float8 AS gas_usd,
+         COUNT(*) FILTER (
+           WHERE gas_measurement_state IS DISTINCT FROM 'not_applicable'
+             AND gas_measurement_state IS DISTINCT FROM 'impossible'
+         )::int AS measurable
+    FROM paper_trade_runs
+   WHERE chain_id = $1
+     AND created_at >= NOW() - make_interval(hours => $2)`;
+
+/**
+ * Degraded aggregate for a deployment where `gas_measurement_state` has not
+ * been migrated: every window row is the denominator (the pre-126 behaviour).
+ * Conservative by construction — it can only WARN more, never PASS more.
+ */
+export const GAS_WINDOW_SQL_ALL_ROWS = `
+  SELECT COUNT(*)::int AS rows_in_window,
+         COUNT(actual_gas_cost_usd)::int AS with_actual,
+         COALESCE(SUM(actual_gas_cost_usd), 0)::float8 AS gas_usd,
+         COUNT(*)::int AS measurable
+    FROM paper_trade_runs
+   WHERE chain_id = $1
+     AND created_at >= NOW() - make_interval(hours => $2)`;
+
+/**
+ * PG error codes meaning "the ledger column is not in this database":
+ * 42703 = undefined_column, 42P01 = undefined_table. Anything else is a real
+ * query failure and stays a failure — this must not swallow a broken pool.
+ */
+export function isMissingGasLedgerColumn(e: unknown): boolean {
+  const code = (e as { code?: string } | null)?.code;
+  return code === "42703" || code === "42P01";
+}
+
+/**
+ * Coverage arithmetic for the A.6 path — PURE, so the denominator rules are
+ * fixture-testable without a database.
+ */
+export function deriveGasCoverage(w: {
+  rowsInWindow: number;
+  withActualGas: number;
+  // `| undefined` is explicit: the project compiles with
+  // exactOptionalPropertyTypes, and a caller forwards `agg.measurable` straight
+  // through (absent = unknown provenance = conservative default).
+  measurable?: number | undefined;
+  denominator?: "ledger" | "all_rows_no_ledger" | undefined;
+}): {
+  expected: number;
+  excluded: number;
+  unmeasured: number;
+  denominator: "ledger" | "all_rows_no_ledger";
+  breach: boolean;
+} {
+  const denominator = w.denominator ?? "all_rows_no_ledger";
+  const expected =
+    denominator === "ledger" ? Math.max(0, w.measurable ?? w.rowsInWindow) : w.rowsInWindow;
+  const excluded = w.rowsInWindow - expected;
+  // Contradiction, never clamped: the numerator cannot exceed the population
+  // allowed to carry a measurement, and the denominator is a subset of the
+  // window. Clamping either would manufacture a PASS out of self-refuting data.
+  const breach = w.withActualGas > expected || excluded < 0;
+  return {
+    expected,
+    excluded,
+    unmeasured: breach ? 0 : expected - w.withActualGas,
+    denominator,
+    breach,
+  };
+}
+
+/** Window aggregate for A.6 plus WHERE its coverage denominator came from. */
+export interface GasWindowAgg {
+  rowsInWindow: number;
+  withActualGas: number;
+  sumUsd: number;
+  /** Rows the ledger still allows to carry a measurement (denominator).
+   *  Absent ⇒ unknown provenance ⇒ conservative default (every window row). */
+  measurable?: number;
+  /** `ledger` = `gas_measurement_state` drove the denominator;
+   *  `all_rows_no_ledger` = the column is absent, so every window row counts.
+   *  Absent is treated as `all_rows_no_ledger` — never as the narrower claim. */
+  denominator?: "ledger" | "all_rows_no_ledger";
+}
+
+/**
+ * Read one aggregate row. Absent/null fields become 0 — a COUNT with no row is
+ * genuinely zero rows, unlike a missing MEASUREMENT (which stays null upstream
+ * via `count(actual_gas_cost_usd)` inside `withActualGas`).
+ */
+export function readGasWindow(
+  rows: unknown[],
+  denominator: "ledger" | "all_rows_no_ledger",
+): GasWindowAgg {
+  const row = (rows as Array<{
+    rows_in_window?: number;
+    with_actual?: number;
+    gas_usd?: number;
+    measurable?: number;
+  }>)[0];
+  return {
+    rowsInWindow: Number(row?.rows_in_window ?? 0),
+    withActualGas: Number(row?.with_actual ?? 0),
+    sumUsd: Number(row?.gas_usd ?? 0),
+    measurable: Number(row?.measurable ?? row?.rows_in_window ?? 0),
+    denominator,
+  };
+}
+
+/**
+ * Named once, appended to the non-PASS reason of a deployment missing the
+ * measurement ledger. It states the CONSEQUENCE (a PASS may be unreachable)
+ * instead of promising that waiting will close the gap.
+ */
+const COVERAGE_DENOMINATOR_NOTE =
+  ` Denominator is CONSERVATIVE: every window row counts because ` +
+  `paper_trade_runs.gas_measurement_state is absent (migration ` +
+  `126_paper_trade_runs_gas_coverage_ledger not applied) — rows that can never ` +
+  `burn gas (economic/market rejects) are still counted, so full coverage may be ` +
+  `unreachable until that migration is applied.`;
+
+/**
+ * Producer-side switch observed by the CONSUMER (R10 E2E-COMPUTE GUARD).
+ *
+ * `recon`'s drift-tracker is the only writer of `paper_trade_runs.actual_gas_cost_usd`
+ * and it spawns only when `ARBX_DRIFT_TRACKER_MODE == "on"`:
+ *
+ * ```text
+ * backend/recon/src/main.rs:343
+ *   let drift_mode = std::env::var("ARBX_DRIFT_TRACKER_MODE").unwrap_or_default();
+ *   if drift_mode == "on" { …spawn… } else { info!(event = "drift_tracker.dormant") }
+ * ```
+ *
+ * The predicate is an EXACT string compare, so "absent" and any other value
+ * (including `.env.example`'s shipped `off`) both mean DORMANT — which is why a
+ * coverage gap can be a CONFIG block rather than a transient one. This helper
+ * replicates that predicate verbatim; it does not soften it.
+ *
+ * PRECONDITION, declared rather than assumed: both `recon` and `api-server` take
+ * their environment from the same `env_file: ../.env` (compose.dev.yml:251 recon /
+ * :308 api-server; compose.prod.yml:303 recon / :381 api-server) and neither
+ * overrides this key in its own `environment:` block, so reading it here is
+ * reading the producer's own switch.
+ * If that ever stops being true, `mode` must be withdrawn to `"unset"` — the
+ * text says what it observed, so the drift is visible instead of silent.
+ */
+export function driftTrackerMode(
+  env: NodeJS.ProcessEnv = process.env,
+): { mode: "on" | "off" | "unset"; observed: string | null } {
+  const raw = env["ARBX_DRIFT_TRACKER_MODE"];
+  if (raw === undefined) return { mode: "unset", observed: null };
+  // Exact compare, mirroring `drift_mode == "on"` — no trim, no case folding.
+  return { mode: raw === "on" ? "on" : "off", observed: raw };
+}
+
+/**
+ * The operator-facing wording for a gas-coverage gap, told the truth about
+ * whether waiting can close it. Bounded length: the observed value is echoed
+ * truncated (a malformed env must not bloat the wire or a log line).
+ *
+ * Every branch contains the word `backfill` on purpose: the pre-existing
+ * assertion `required_action).toContain("backfill")` (WARN case) stays valid.
+ */
+export function coverageGapAction(
+  flag: ReturnType<typeof driftTrackerMode>,
+  gap: string,
+): string {
+  if (flag.mode === "on") {
+    return (
+      `Coverage incomplete (${gap}): ARBX_DRIFT_TRACKER_MODE=on, so the drift-tracker is enabled ` +
+      `and unmeasured runs are expected to backfill on the next recon tick — a per-row backfill is ` +
+      `NOT certified from here. Re-evaluate after that tick.`
+    );
+  }
+  if (flag.mode === "off") {
+    const seen = (flag.observed ?? "").slice(0, 32);
+    return (
+      `Coverage gap is CONFIG, not transient (${gap}): ARBX_DRIFT_TRACKER_MODE="${seen}" in this ` +
+      `deployment, and the recon drift-tracker (the only writer of actual_gas_cost_usd) spawns only ` +
+      `when that value is exactly "on" — so no backfill can occur while it stays off. ` +
+      `Operator-only flip: set ARBX_DRIFT_TRACKER_MODE=on and recreate recon, then re-evaluate.`
+    );
+  }
+  return (
+    `Coverage gap is CONFIG, not transient (${gap}): ARBX_DRIFT_TRACKER_MODE is unset in this ` +
+    `deployment's env, and recon's drift-tracker spawns only when the value is exactly "on" ` +
+    `(absent ⇒ dormant) — so no backfill can occur. ` +
+    `Set ARBX_DRIFT_TRACKER_MODE=on and recreate recon, then re-evaluate.`
+  );
+}
 
 interface CircuitBreaker {
   id: string;
@@ -376,7 +588,7 @@ interface LedgerBreakerData {
     /** Machine-readable path status (drives fail-closed vs legacy fallback). */
     status: "ok" | "cap_not_configured" | "cap_invalid" | "window_invalid" | "no_pool" | "query_failed";
     /** null = window not evaluated. */
-    window: { rowsInWindow: number; withActualGas: number; sumUsd: number } | null;
+    window: GasWindowAgg | null;
     reason: string;
     capUsd: number | null;
   };
@@ -571,7 +783,7 @@ async function collectCtx(deps: {
   // the CB path stays off and the A.5 sim-gas evaluator above remains the gas
   // breaker's data source; when the cap is set but invalid we fail closed.
   type GasStatus = "ok" | "cap_not_configured" | "cap_invalid" | "window_invalid" | "no_pool" | "query_failed";
-  let gasWindow: { rowsInWindow: number; withActualGas: number; sumUsd: number } | null = null;
+  let gasWindow: GasWindowAgg | null = null;
   let gasStatus: GasStatus;
   let gasReason: string;
   if (cb.gasBurnSet && cb.maxGasBurnUsd === null) {
@@ -590,24 +802,26 @@ async function collectCtx(deps: {
     gasStatus = "ok";
     gasReason = "ok";
     try {
-      const r = await deps.pool.query(
-        `SELECT COUNT(*)::int AS rows_in_window,
-                COUNT(actual_gas_cost_usd)::int AS with_actual,
-                COALESCE(SUM(actual_gas_cost_usd), 0)::float8 AS gas_usd
-           FROM paper_trade_runs
-          WHERE chain_id = $1
-            AND created_at >= NOW() - make_interval(hours => $2)`,
-        [cb.chainId, cb.windowHours],
-      );
-      const row = (r.rows as Array<{ rows_in_window: number; with_actual: number; gas_usd: number }>)[0];
-      gasWindow = {
-        rowsInWindow: Number(row?.rows_in_window ?? 0),
-        withActualGas: Number(row?.with_actual ?? 0),
-        sumUsd: Number(row?.gas_usd ?? 0),
-      };
+      const r = await deps.pool.query(GAS_WINDOW_SQL_LEDGER, [cb.chainId, cb.windowHours]);
+      gasWindow = readGasWindow(r.rows, "ledger");
     } catch (e) {
-      gasStatus = "query_failed";
-      gasReason = `query_failed: ${(e as Error).message.slice(0, 80)}`;
+      if (isMissingGasLedgerColumn(e)) {
+        // The ledger column is not in this database yet. Degrade to the
+        // conservative all-rows denominator and NAME the cause — never
+        // fabricate a measurable population, never fail the whole breaker.
+        try {
+          const r2 = await deps.pool.query(GAS_WINDOW_SQL_ALL_ROWS, [cb.chainId, cb.windowHours]);
+          gasWindow = readGasWindow(r2.rows, "all_rows_no_ledger");
+          gasReason =
+            "gas_measurement_state absent (migration 126 not applied) — denominator = every window row";
+        } catch (e2) {
+          gasStatus = "query_failed";
+          gasReason = `query_failed: ${(e2 as Error).message.slice(0, 80)}`;
+        }
+      } else {
+        gasStatus = "query_failed";
+        gasReason = `query_failed: ${(e as Error).message.slice(0, 80)}`;
+      }
     }
   }
 
@@ -839,8 +1053,12 @@ function makeRevertRateBreaker(ctx: EvalCtx): CircuitBreaker {
   };
 }
 
-function makeGasBurnBreaker(ctx: EvalCtx): CircuitBreaker {
+function makeGasBurnBreaker(ctx: EvalCtx, env: NodeJS.ProcessEnv = process.env): CircuitBreaker {
   const cbg = ctx.ledger.gasBurn;
+  // Which coverage gap the A.6 path hit, so the required_action can name the
+  // REAL blocker instead of promising a wait (see `coverageGapAction`).
+  // `ledger_breach` is not a gap: the aggregate contradicts itself.
+  let gasGap: "none" | "no_measurements" | "partial" | "ledger_breach" = "none";
   const base = {
     id: "gas_burn_breaker",
     name: "Max gas burn (rolling window)",
@@ -887,17 +1105,28 @@ function makeGasBurnBreaker(ctx: EvalCtx): CircuitBreaker {
   let cbValue: number | null = null;
   const cap = cbg.capUsd;
   const w = cbg.window;
+  // Coverage arithmetic is a PURE function of the aggregate, so the denominator
+  // rules are fixture-testable without a database.
+  const cov = deriveGasCoverage({
+    rowsInWindow: w?.rowsInWindow ?? 0,
+    withActualGas: w?.withActualGas ?? 0,
+    measurable: w?.measurable,
+    denominator: w?.denominator,
+  });
   const actualPath: GasPathActual = {
     state: null,
     value: null,
     measured: w?.withActualGas ?? 0,
-    expected: w?.rowsInWindow ?? 0,
+    expected: cov.expected,
+    denominator: cov.denominator,
+    excluded: cov.excluded,
     window_hours: cbg.windowHours,
     scope: `chain:${ctx.chainId}`,
     provenance: ACTUAL_GAS_PROVENANCE,
     reason: cbg.reason,
   };
   if (cbg.status !== "cap_not_configured") {
+    const denominatorNote = cov.denominator === "all_rows_no_ledger" ? COVERAGE_DENOMINATOR_NOTE : "";
     if (!w) {
       cbState = "NOT_AVAILABLE";
       cbDetail = `actual-gas window unavailable — ${cbg.reason}`;
@@ -905,35 +1134,54 @@ function makeGasBurnBreaker(ctx: EvalCtx): CircuitBreaker {
       // R8: an empty window is NO evidence — the sum is undefined, never $0.
       cbState = "NOT_AVAILABLE";
       cbDetail = `0 paper runs in the last ${cbg.windowHours}h — gas burn undefined, not $0`;
+    } else if (cov.breach) {
+      // I3a/I3b: a row carrying a value must be classified `measured`, and
+      // `measured` must be a subset of the measurable population. A window
+      // whose numerator exceeds its own denominator disproves itself — it is
+      // NOT_AVAILABLE, never clamped into a PASS.
+      cbState = "NOT_AVAILABLE";
+      gasGap = "ledger_breach";
+      cbDetail =
+        `actual-gas coverage ledger contradicts itself: ${w.withActualGas} row(s) carry actual_gas_cost_usd ` +
+        `but only ${cov.expected} of ${w.rowsInWindow} window row(s) are measurable ` +
+        `(measured must be a subset of measurable) — refusing to certify coverage from inconsistent data`;
     } else if (w.withActualGas === 0) {
       cbState = "NOT_AVAILABLE";
       cbDetail = `${w.rowsInWindow} runs in the window but none has actual_gas_cost_usd recorded yet`;
+      // Rows exist, measurements do not: the switch above IS the candidate cause.
+      gasGap = "no_measurements";
     } else if (cap !== null) {
       cbValue = Number(w.sumUsd.toFixed(2));
-      const unmeasured = w.rowsInWindow - w.withActualGas;
+      const unmeasured = cov.unmeasured;
+      const excludedNote =
+        cov.excluded > 0
+          ? ` (${cov.excluded} window row(s) excluded from the denominator as not_applicable/impossible — no gas burned or structurally unresolvable)`
+          : "";
       if (w.sumUsd >= cap) {
         cbState = "PAUSED";
         cbDetail =
-          `actual gas $${w.sumUsd.toFixed(2)} ≥ cap $${cap} over ${w.withActualGas}/${w.rowsInWindow} runs measured` +
+          `actual gas $${w.sumUsd.toFixed(2)} ≥ cap $${cap} over ${w.withActualGas}/${cov.expected} measurable runs` +
           (unmeasured > 0
             ? ` (${unmeasured} still unmeasured — excess stands on the observed sum alone)`
             : "") +
+          excludedNote +
           ` — ${ACTUAL_GAS_PROVENANCE} — in ${cbg.windowHours}h`;
       } else if (unmeasured > 0) {
         cbState = "WARN";
+        gasGap = "partial";
         cbDetail =
-          `partial coverage: actual gas $${w.sumUsd.toFixed(2)} over ${w.withActualGas}/${w.rowsInWindow} runs measured in ${cbg.windowHours}h — ` +
-          `under-cap NOT certified while ${unmeasured} run(s) lack actual_gas_cost_usd (${ACTUAL_GAS_PROVENANCE})`;
+          `partial coverage: actual gas $${w.sumUsd.toFixed(2)} over ${w.withActualGas}/${cov.expected} measurable runs in ${cbg.windowHours}h — ` +
+          `under-cap NOT certified while ${unmeasured} measurable run(s) lack actual_gas_cost_usd (${ACTUAL_GAS_PROVENANCE})`;
       } else {
         cbState = "PASS";
         cbDetail =
-          `actual gas $${w.sumUsd.toFixed(2)} over ${w.withActualGas}/${w.rowsInWindow} runs measured ` +
-          `(${ACTUAL_GAS_PROVENANCE}) in ${cbg.windowHours}h`;
+          `actual gas $${w.sumUsd.toFixed(2)} over ${w.withActualGas}/${cov.expected} measurable runs ` +
+          `(${ACTUAL_GAS_PROVENANCE}) in ${cbg.windowHours}h${excludedNote}`;
       }
     }
     actualPath.state = cbState;
     actualPath.value = cbValue;
-    actualPath.reason = cbDetail.length > 0 ? cbDetail : cbg.reason;
+    actualPath.reason = cbDetail.length > 0 ? `${cbDetail}${denominatorNote}` : cbg.reason;
   }
 
   // --- A.5 path: simulated gas vs ARBX_RISK_* thresholds (preserved). Samples
@@ -1029,9 +1277,21 @@ function makeGasBurnBreaker(ctx: EvalCtx): CircuitBreaker {
     required_action:
       state === "PASS" ? null
       : state === "NOT_AVAILABLE"
-        ? "Accumulate paper runs with actual_gas_cost_usd in the window, then re-evaluate."
+        ? gasGap === "ledger_breach"
+          ? "Repair the gas-coverage classification before trusting this window: rows carry actual_gas_cost_usd while the measurable denominator is smaller. Re-run scripts/paper-gas-coverage-audit.sh --apply, then re-evaluate."
+          : gasGap === "no_measurements"
+            ? coverageGapAction(
+                driftTrackerMode(env),
+                `${w?.rowsInWindow ?? 0} run(s) in window carry no actual_gas_cost_usd`,
+              )
+            : "Accumulate paper runs with actual_gas_cost_usd in the window, then re-evaluate."
       : state === "WARN"
-        ? "Coverage incomplete: wait for drift_tracker to backfill actual_gas_cost_usd on unmeasured window runs, then re-evaluate."
+        ? coverageGapAction(
+            driftTrackerMode(env),
+            gasGap === "partial"
+              ? `actual gas on ${w?.withActualGas ?? 0}/${cov.expected} measurable run(s)`
+              : "coverage incomplete",
+          ) + (cov.denominator === "all_rows_no_ledger" ? COVERAGE_DENOMINATOR_NOTE : "")
       : "Investigate gas spend; reduce candidate volume or raise the operator cap if intended.",
   };
 }
@@ -1598,6 +1858,13 @@ export const __forTesting = {
   loadCbConfig,
   computeDrawdownStats,
   toGasMeasurementOutcomes,
+  driftTrackerMode,
+  coverageGapAction,
+  deriveGasCoverage,
+  readGasWindow,
+  isMissingGasLedgerColumn,
+  GAS_WINDOW_SQL_LEDGER,
+  GAS_WINDOW_SQL_ALL_ROWS,
   DD_MIN_RUNS,
   DD_MIN_SPAN_HOURS,
   persistBreakerTrips,

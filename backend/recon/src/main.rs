@@ -13,6 +13,7 @@ mod aggregator;
 mod anomaly;
 mod consumer;
 mod drift_tracker;
+mod gas_price; // GAS-PRICE-ADAPTER-01: gas-token USD price for the drift re-exec valuation.
 mod persistence;
 mod pnl_engine;
 mod stage2_calibration; // BR-05 (2026-09-07): Stage 2b log-LR store writer (WO-07 port-back).
