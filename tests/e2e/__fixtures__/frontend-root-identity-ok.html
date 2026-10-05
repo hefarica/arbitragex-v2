@@ -1,0 +1,43 @@
+<!doctype html>
+<!--
+  E2E-BASEURL-01 (t27) — FIXTURE POSITIVO, NO ES EL FRONTEND.
+
+  Propósito: ejercitar la rama PASS de tests/e2e/base-url-guard.cjs sin arrancar
+  ningún servidor y sin apuntar a producción (ambas cosas PROHIBIDAS por el
+  contrato de t27).
+
+  Procedencia de los literales — NO son inventados:
+    · "Quantum Research Terminal" -> frontend/components/site-header.tsx:90
+    · "Topological Yield Engine"  -> frontend/components/site-header.tsx:92
+    · "PAPER · TLS SHADOW"        -> frontend/components/site-header.tsx:50
+    · "QuantumX"                  -> frontend/app/layout.tsx:26 (metadata title)
+  Los cuatro aparecen juntos, verbatim, en una captura REAL de este frontend
+  hecha por Playwright:
+    frontend/test-results/readiness-smoke--live-read-cff7a-Card-with-initial-RED-badge-chromium/error-context.md
+  cuya línea de chrome renderizado es:
+    text: Quantum Research Terminal · Topological Yield Engine PAPER · TLS SHADOW KILL-SWITCH <10MS IDLE
+  El mismo archivo tiene 0 coincidencias de "Agenda Copilot": la captura no era
+  la aplicación ajena.
+
+  Este fixture valida la LÓGICA del guard (que discrimina por identidad).
+  NO valida los bytes servidos por ninguna instancia desplegada: en esta
+  estación no existe instancia local y apuntar el guard a la superficie viva
+  está prohibido. Esa frontera se declara, no se difumina.
+-->
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>QuantumX — Control Plane</title>
+  </head>
+  <body>
+    <header>
+      <a href="/">ARBITRAG<span>E</span>X</a>
+      <span>Quantum Research Terminal</span>
+      <span>·</span>
+      <span>Topological Yield Engine</span>
+      <span>PAPER · TLS SHADOW</span>
+      <span>KILL-SWITCH &lt;10MS</span>
+    </header>
+    <main id="main">fixture</main>
+  </body>
+</html>
