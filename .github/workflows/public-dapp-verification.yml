@@ -47,6 +47,10 @@ jobs:
             --skipLibCheck --rootDir . --outDir "$CATALOG_BUILD_DIR" \
             frontend/app/dex-registry/liquidity-catalog-model.ts
           printf '{"type":"commonjs"}\n' > "$CATALOG_BUILD_DIR/package.json"
+      - name: Socket-frame provenance discriminator tests (gate, not decoration)
+        run: |
+          set -euo pipefail
+          node --test scripts/verification/socket-frame-provenance.test.cjs | tee public-evidence/socket-frame-provenance.tap
       - name: Install locked browser
         working-directory: frontend
         run: npx --no-install playwright install --with-deps chromium
