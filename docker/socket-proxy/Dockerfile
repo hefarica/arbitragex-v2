@@ -8,7 +8,9 @@
 # The socket gid is injected at runtime via compose `group_add: ["${DOCKER_GID}"]`.
 
 FROM gcr.io/distroless/nodejs20-debian12:nonroot
+ARG ARBX_BUILD_SHA=unknown
 
+LABEL org.opencontainers.image.revision=$ARBX_BUILD_SHA
 WORKDIR /app
 COPY server.js ./
 

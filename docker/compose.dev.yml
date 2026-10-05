@@ -144,6 +144,8 @@ services:
     build:
       context: ../backend
       dockerfile: searcher-rs/Dockerfile
+      args:
+        ARBX_BUILD_SHA: ${ARBX_DEPLOY_SHA:-unknown}
     env_file: ["../.env"]
     environment:
       ARBX_CONFIG_PATH: /app/configs/app.toml
@@ -181,6 +183,8 @@ services:
     build:
       context: ../backend
       dockerfile: sim-ctl/Dockerfile
+      args:
+        ARBX_BUILD_SHA: ${ARBX_DEPLOY_SHA:-unknown}
     env_file: ["../.env"]
     environment:
       ARBX_CONFIG_PATH: /app/configs/app.toml
@@ -216,6 +220,8 @@ services:
     build:
       context: ../backend
       dockerfile: relays-client/Dockerfile
+      args:
+        ARBX_BUILD_SHA: ${ARBX_DEPLOY_SHA:-unknown}
     env_file: ["../.env"]
     environment:
       ARBX_CONFIG_PATH: /app/configs/app.toml
@@ -248,6 +254,8 @@ services:
     build:
       context: ../backend
       dockerfile: recon/Dockerfile
+      args:
+        ARBX_BUILD_SHA: ${ARBX_DEPLOY_SHA:-unknown}
     env_file: ["../.env"]
     environment:
       ARBX_CONFIG_PATH: /app/configs/app.toml
@@ -281,6 +289,8 @@ services:
     build:
       context: ..
       dockerfile: backend/selector-api/Dockerfile
+      args:
+        ARBX_BUILD_SHA: ${ARBX_DEPLOY_SHA:-unknown}
     env_file: ["../.env"]
     environment:
       ARBX_CONFIG_PATH: /app/configs/app.toml
@@ -305,6 +315,8 @@ services:
     build:
       context: ..
       dockerfile: backend/api-server/Dockerfile
+      args:
+        ARBX_BUILD_SHA: ${ARBX_DEPLOY_SHA:-unknown}
     env_file: ["../.env"]
     environment:
       ARBX_CONFIG_PATH: /app/configs/app.toml
@@ -369,6 +381,8 @@ services:
     build:
       context: ..
       dockerfile: edge/dev-local/Dockerfile
+      args:
+        ARBX_BUILD_SHA: ${ARBX_DEPLOY_SHA:-unknown}
     env_file: ["../.env"]
     environment:
       API_SERVER_URL: http://api-server:8080
@@ -409,6 +423,7 @@ services:
         # frontend/Dockerfile). Dev serves plain HTTP, so default false keeps
         # HSTS out of dev builds even though NODE_ENV=production at build.
         ARBX_TLS_ENABLED: ${ARBX_TLS_ENABLED:-false}
+        ARBX_BUILD_SHA: ${ARBX_DEPLOY_SHA:-unknown}
     environment:
       NEXT_PUBLIC_EDGE_URL: ${NEXT_PUBLIC_EDGE_URL:-http://localhost:8787}
       NEXT_PUBLIC_WS_URL: ${NEXT_PUBLIC_WS_URL:-http://localhost:3000}
@@ -512,6 +527,8 @@ services:
     build:
       context: ../backend
       dockerfile: token-enricher/Dockerfile
+      args:
+        ARBX_BUILD_SHA: ${ARBX_DEPLOY_SHA:-unknown}
     env_file: ["../.env"]
     environment:
       DATABASE_URL: postgres://arbx_rw:${ARBX_RW_PASSWORD:-arbx_rw_dev_only}@postgres:5432/arbitragex
@@ -572,6 +589,8 @@ services:
   socket-proxy:
     build:
       context: ./socket-proxy
+      args:
+        ARBX_BUILD_SHA: ${ARBX_DEPLOY_SHA:-unknown}
     environment:
       LISTEN_PORT: "2375"
     volumes:
