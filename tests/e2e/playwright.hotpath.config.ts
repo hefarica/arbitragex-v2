@@ -62,7 +62,13 @@ export default defineConfig({
   workers: 1,
   reporter: [
     ["list"],
-    ["html", { open: "never", outputFolder: "playwright-report-hotpath" }],
+    // El reporte HTML vive dentro de `test-results/`, que .gitignore:83 ya cubre.
+    // NO en `playwright-report-hotpath/`: ese nombre no está ignorado
+    // (sólo lo están playwright-report/, playwright-report-live/ y test-results/,
+    // .gitignore:81-83), así que crearía un artefacto sin ignorar en un checkout
+    // compartido donde la contaminación por `git add -A` es una clase de
+    // incidente documentada (R11/R13).
+    ["html", { open: "never", outputFolder: "test-results/hotpath-report" }],
   ],
   use: {
     // El target declarado es el EDGE: es lo que el spec usa de verdad.
