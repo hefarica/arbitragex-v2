@@ -40,7 +40,7 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion";
 import { cn } from "@/lib/utils";
 import { getCircuitBreakersStatus } from "@/lib/api-client";
-import type { CircuitBreaker, CircuitBreakersStatusResponse } from "@/lib/schemas";
+import type { CircuitBreaker, CircuitBreakerEvidence, CircuitBreakersStatusResponse } from "@/lib/schemas";
 
 type State =
   | { kind: "loading" }
@@ -217,20 +217,7 @@ function BreakerList({ breakers }: { breakers: CircuitBreaker[] }) {
               </div>
 
               {b.evidence.deciding_path && (
-                <div
-                  className="rounded-md border bg-muted/30 p-2 text-[11px]"
-                  data-testid={`breaker-deciding-path-${b.id}`}
-                >
-                  <span className="uppercase tracking-wider text-muted-foreground">Deciding path: </span>
-                  <span className="font-mono">{b.evidence.deciding_path}</span>
-                  {b.evidence.paths && (
-                    <span className="text-muted-foreground">
-                      {" "}· sim {b.evidence.paths.sim.measurements} measurement(s){" "}
-                      ({b.evidence.paths.sim.state ?? "off"}) · actual {b.evidence.paths.actual.measured}/
-                      {b.evidence.paths.actual.expected} measured ({b.evidence.paths.actual.state ?? "off"})
-                    </span>
-                  )}
-                </div>
+                <DecidingPathRow id={b.id} evidence={b.evidence} />
               )}
 
               <div className="rounded-md border bg-muted/30 p-2">
@@ -328,4 +315,103 @@ function KvTile({ k, v }: { k: string; v: string }) {
       <div className="font-mono text-[11px]">{v}</div>
     </div>
   );
+}
+
+/**
+ * Deciding-path row — A.5 (sim) / A.6 (actual ledger) dual-path transparency.
+ *
+ * Exported so the coverage wording is regression-tested directly: this row is
+ * the only place the UI states how many runs each path actually measured, and a
+ * claim of measurement where none exists reads as evidence (R8: absent ≠ zero,
+ * "0/0 measured" ≠ "0 gas burned").
+ *
+ * Wire constraint (verified in backend/api-server/src/routes/risk-circuit-breakers.ts:893-894):
+ * `measured = w?.withActualGas ?? 0` and `expected = w?.rowsInWindow ?? 0`, so an
+ * ABSENT ledger window and a genuinely empty one both arrive as 0/0. The labels
+ * below therefore never assert which of the two it was, and never attach the word
+ * "measured" to an empty denominator.
+ */
+export function DecidingPathRow({ id, evidence }: { id: string; evidence: CircuitBreakerEvidence }) {
+  const paths = evidence.paths;
+  return (
+    <div
+      className="rounded-md border bg-muted/30 p-2 text-[11px]"
+      data-testid={`breaker-deciding-path-${id}`}
+    >
+      <span className="uppercase tracking-wider text-muted-foreground">Deciding path: </span>
+      <span className="font-mono">{evidence.deciding_path}</span>
+      {paths && (
+        <dl className="mt-1 grid grid-cols-[auto_1fr] gap-x-2 gap-y-0.5">
+          <dt className="uppercase tracking-wider text-muted-foreground">sim</dt>
+          <dd className="font-mono text-muted-foreground">
+            {simCoverageLabel(paths.sim.measurements, paths.sim.state)}
+          </dd>
+          <dt className="uppercase tracking-wider text-muted-foreground">actual</dt>
+          <dd className="font-mono text-muted-foreground">
+            {actualCoverageLabel(paths.actual.measured, paths.actual.expected, paths.actual.state)}
+          </dd>
+        </dl>
+      )}
+    </div>
+  );
+}
+
+/** null state = the evaluator did not run this path; it is not an "off" flag. */
+function stateLabel(state: string | null): string {
+  return state ?? "not evaluated";
+}
+
+/**
+ * Simulated-path coverage. 0 measurements is an absence of evidence, so it is
+ * named as such instead of "0 measurement(s)". A null count (forward contract:
+ * the wire may stop defaulting it to 0) is reported as unreported, not as zero.
+ */
+export function simCoverageLabel(measurements: number | null, state: string | null): string {
+  const s = stateLabel(state);
+  if (measurements === null) return `no measurement count reported (${s})`;
+  return measurements > 0 ? `${measurements} rows measured (${s})` : `no measurements (${s})`;
+}
+
+/**
+ * Actual-gas ledger coverage. Distinguishes the facts the old label collapsed
+ * into "measured":
+ *   · expected 0        → coverage absent (empty or missing window — the wire
+ *                         cannot tell them apart, so neither do we);
+ *   · measured 0, N > 0 → rows exist but none carries actual gas;
+ *   · 0 < measured < N  → real partial coverage, remainder unmeasured.
+ * A null count (forward contract: measured/expected become .nullable() so an
+ * absent window is sent as null instead of 0) is never rendered as zero.
+ */
+export function actualCoverageLabel(
+  measured: number | null,
+  expected: number | null,
+  state: string | null,
+): string {
+  const s = stateLabel(state);
+  if (measured === null || expected === null) {
+    return `coverage counts absent on wire — not evidence of $0 gas (${s})`;
+  }
+  // Defensive: a count that is not a non-negative integer is NOT rounded into
+  // "0/N measured" — that would fabricate a zero out of a broken wire value.
+  if (
+    !Number.isInteger(measured) ||
+    !Number.isInteger(expected) ||
+    measured < 0 ||
+    expected < 0
+  ) {
+    return `coverage counts unusable (measured=${measured}, expected=${expected}) — no measurement claimed (${s})`;
+  }
+  if (measured > expected) {
+    return `${measured}/${expected} rows measured — coverage exceeds the window (wire counts contradict) (${s})`;
+  }
+  if (expected <= 0) {
+    return `coverage absent — no ledger rows in the window; not evidence of $0 gas (${s})`;
+  }
+  if (measured <= 0) {
+    return `0/${expected} rows measured — none carry actual gas (${s})`;
+  }
+  if (measured < expected) {
+    return `${measured}/${expected} rows measured — partial coverage, ${expected - measured} unmeasured (${s})`;
+  }
+  return `${measured}/${expected} rows measured (${s})`;
 }

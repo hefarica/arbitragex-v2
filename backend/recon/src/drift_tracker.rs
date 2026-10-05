@@ -140,6 +140,135 @@ fn decide_attempt(status: reqwest::StatusCode, outcome: Option<&SimOutcome>) -> 
     }
 }
 
+/// Does this deployment carry the per-row measurement ledger (migration 126)?
+///
+/// `Absent` is a DEGRADED deployment, not an error: the value still lands, only
+/// its classification cannot be recorded. The worker must never fail a row over
+/// it — and never guess that the column exists.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GasLedger {
+    Present,
+    Absent,
+}
+
+/// Migration 126's `gas_measurement_state` domain, as a literal so a test can
+/// assert every state this worker writes is inside the CHECK constraint — the
+/// worker must not invent a sixth value and start failing UPDATEs at runtime.
+const GAS_STATE_DOMAIN: [&str; 5] = [
+    "not_attempted",
+    "measured",
+    "not_applicable",
+    "unavailable",
+    "impossible",
+];
+
+/// PASS arm classification: a real observation is `measured`; evaluated but not
+/// computable is `unavailable`. The migration's own comment makes `unavailable`
+/// a BUG SURFACE that must never be relabelled `not_applicable` — that relabel
+/// would assert "no gas was burned" about a row nobody could compute.
+fn gas_state_for_resolved(gas_cost_usd: Option<f64>) -> &'static str {
+    if gas_cost_usd.is_some() {
+        "measured"
+    } else {
+        "unavailable"
+    }
+}
+
+/// ECONOMIC/MARKET reject: settled WITHOUT broadcast, so no gas was burned and
+/// there is nothing to measure — migration 126's definition of
+/// `not_applicable`, which it backfills from `sim_fail_family IN
+/// ('economic','market')`. Same population, same label.
+const GAS_STATE_NOT_APPLICABLE: &str = "not_applicable";
+
+/// STRUCTURAL reject: `calibration_eligible = false`, so the drift scan can
+/// never select the row again — structurally unresolvable ⇒ `impossible`,
+/// mirroring the migration's `WHEN calibration_eligible IS FALSE` branch.
+const GAS_STATE_IMPOSSIBLE: &str = "impossible";
+
+/// The extra SET columns, with the placeholder index of the state value.
+/// Present only when the column exists; the value is written by the SAME
+/// statement, so no reader can ever observe a value without its classification
+/// (invariants I3a/I3b of migration 126).
+fn gas_state_set(state_placeholder: usize) -> String {
+    format!(
+        "gas_measurement_state = ${state_placeholder}, gas_measurement_updated_at = now()"
+    )
+}
+
+/// SQL for the PASS arm. Pure so a test can assert the exactly-once guard and
+/// the conditional classification without a database. Returns `(sql, writes_state)`.
+fn resolved_update_sql(ledger: GasLedger) -> (String, bool) {
+    let base = "UPDATE paper_trade_runs
+                SET actual_amount_out_wei = $1,
+                    actual_profit_usd = $2,
+                    actual_gas_cost_usd = $3,
+                    actual_block_number = $4,
+                    actual_timestamp = now(),
+                    profit_drift_pct = $5,
+                    sim_last_attempt_at = now()";
+    let tail = "WHERE id = $6 AND actual_timestamp IS NULL";
+    match ledger {
+        // $7 is the classification, bound last.
+        GasLedger::Present => (format!("{base}, {} {tail}", gas_state_set(7)), true),
+        GasLedger::Absent => (format!("{base} {tail}"), false),
+    }
+}
+
+/// SQL for the ECONOMIC/MARKET arm ($4 = classification).
+fn rejected_update_sql(ledger: GasLedger) -> (String, bool) {
+    let base = "UPDATE paper_trade_runs
+                SET actual_profit_usd = 0.0,
+                    actual_block_number = $1,
+                    actual_timestamp = now(),
+                    sim_fail_family = $2,
+                    sim_last_attempt_at = now()";
+    let tail = "WHERE id = $3 AND actual_timestamp IS NULL";
+    match ledger {
+        GasLedger::Present => (format!("{base}, {} {tail}", gas_state_set(4)), true),
+        GasLedger::Absent => (format!("{base} {tail}"), false),
+    }
+}
+
+/// SQL for the STRUCTURAL arm ($2 = classification).
+fn structural_update_sql(ledger: GasLedger) -> (String, bool) {
+    let base = "UPDATE paper_trade_runs
+                SET calibration_eligible = false,
+                    sim_fail_family = 'structural',
+                    sim_attempts = sim_attempts + 1,
+                    sim_last_attempt_at = now()";
+    let tail = "WHERE id = $1 AND actual_timestamp IS NULL";
+    match ledger {
+        GasLedger::Present => (format!("{base}, {} {tail}", gas_state_set(2)), true),
+        GasLedger::Absent => (format!("{base} {tail}"), false),
+    }
+}
+
+/// Read the catalog once per tick: a migration Data applies while recon is
+/// running must start being used WITHOUT a restart, otherwise the worker would
+/// keep leaving the classification unwritten and the A.6 denominator could
+/// never converge.
+async fn probe_gas_ledger(db: &PgPool) -> GasLedger {
+    let row: Result<Option<(i32,)>, sqlx::Error> = sqlx::query_as(
+        "SELECT 1
+           FROM information_schema.columns
+          WHERE table_schema = 'public'
+            AND table_name = 'paper_trade_runs'
+            AND column_name = 'gas_measurement_state'",
+    )
+    .fetch_optional(db)
+    .await;
+    match row {
+        Ok(Some(_)) => GasLedger::Present,
+        Ok(None) => GasLedger::Absent,
+        // A failed catalog read is NOT evidence of presence: degrade to Absent
+        // (the value still lands) instead of writing a column we did not see.
+        Err(e) => {
+            debug!(event = "drift_tracker.gas_ledger_probe_failed", error = %e);
+            GasLedger::Absent
+        }
+    }
+}
+
 /// Periodic loop: fetch pending → re-execute via sim-ctl → compute Y → UPDATE.
 /// Kill-switch-gated; non-fatal errors log + continue.
 pub async fn run_periodic(
@@ -158,6 +287,9 @@ pub async fn run_periodic(
         max_attempts = cfg.max_attempts
     );
 
+    // Measurement-ledger capability (GAS-COVERAGE-01 / migration 126).
+    let mut ledger = GasLedger::Absent;
+    let mut ledger_announced = false;
     loop {
         ticker.tick().await;
         // Kill-switch: if tripped, idle this tick.
@@ -165,7 +297,25 @@ pub async fn run_periodic(
             debug!(event = "drift_tracker.killswitch_idle");
             continue;
         }
-        if let Err(e) = tick(&db, &simctl_url, &cfg, &mut redis, &http).await {
+        let observed = probe_gas_ledger(&db).await;
+        if observed != ledger || !ledger_announced {
+            // R10: an absent ledger is a NAMED condition, announced once per
+            // transition instead of silently degrading every row.
+            match observed {
+                GasLedger::Present => info!(
+                    event = "drift_tracker.gas_ledger_present",
+                    column = "paper_trade_runs.gas_measurement_state"
+                ),
+                GasLedger::Absent => warn!(
+                    event = "drift_tracker.gas_ledger_absent",
+                    missing = "database/migrations/126_paper_trade_runs_gas_coverage_ledger.sql",
+                    effect = "actual_gas_cost_usd lands WITHOUT its classification; the A.6 coverage denominator cannot narrow"
+                ),
+            }
+            ledger = observed;
+            ledger_announced = true;
+        }
+        if let Err(e) = tick(&db, &simctl_url, &cfg, &mut redis, &http, ledger).await {
             warn!(event = "drift_tracker.tick_failed", error = %e);
         }
     }
@@ -177,6 +327,7 @@ async fn tick(
     cfg: &DriftConfig,
     redis: &mut Option<redis::aio::ConnectionManager>,
     http: &reqwest::Client,
+    ledger: GasLedger,
 ) -> anyhow::Result<()> {
     // 1. Fetch a batch of pending rows past the settle-lead, with a route.
     //    S4-03 scan gates: still calibration-eligible, attempts not exhausted,
@@ -221,7 +372,7 @@ async fn tick(
     let mut pending = 0u32;
     let mut failed = 0u32;
     for r in rows {
-        match resolve_one(db, simctl_url, redis, http, &r).await {
+        match resolve_one(db, simctl_url, redis, http, ledger, &r).await {
             Ok(Attempt::Resolved) => resolved += 1,
             Ok(Attempt::NotPassed(_)) => rejected += 1,
             Ok(Attempt::StructuralNotEligible) => structural += 1,
@@ -247,6 +398,7 @@ async fn resolve_one(
     simctl_url: &str,
     redis: &mut Option<redis::aio::ConnectionManager>,
     http: &reqwest::Client,
+    ledger: GasLedger,
     r: &PendingRun,
 ) -> anyhow::Result<Attempt> {
     let settled_block = r.sim_block_number + 1;
@@ -301,19 +453,16 @@ async fn resolve_one(
                 opp = %r.opportunity_id,
                 reason = %reason
             );
-            sqlx::query(
-                r#"
-                UPDATE paper_trade_runs
-                SET calibration_eligible = false,
-                    sim_fail_family = 'structural',
-                    sim_attempts = sim_attempts + 1,
-                    sim_last_attempt_at = now()
-                WHERE id = $1 AND actual_timestamp IS NULL
-                "#,
-            )
-            .bind(r.id)
-            .execute(db)
-            .await?;
+            let (sql, writes_state) = structural_update_sql(ledger);
+            if writes_state {
+                sqlx::query(&sql)
+                    .bind(r.id)
+                    .bind(GAS_STATE_IMPOSSIBLE)
+                    .execute(db)
+                    .await?;
+            } else {
+                sqlx::query(&sql).bind(r.id).execute(db).await?;
+            }
             Ok(Attempt::StructuralNotEligible)
         }
         Attempt::NotPassed(family) => {
@@ -321,22 +470,26 @@ async fn resolve_one(
             // terminal WITH label. Y = 0 EXACTLY (computed: a rejected
             // execution realized nothing). Amounts stay NULL (nothing was
             // realized); the family records WHY for Stage 2b stratification.
-            sqlx::query(
-                r#"
-                UPDATE paper_trade_runs
-                SET actual_profit_usd = 0.0,
-                    actual_block_number = $1,
-                    actual_timestamp = now(),
-                    sim_fail_family = $2,
-                    sim_last_attempt_at = now()
-                WHERE id = $3 AND actual_timestamp IS NULL
-                "#,
-            )
-            .bind(settled_block)
-            .bind(family.as_str())
-            .bind(r.id)
-            .execute(db)
-            .await?;
+            // The label lands with its gas classification in ONE statement: the
+            // market rejected the trade at the settled block, nothing was
+            // broadcast, so there is no gas to measure (`not_applicable`).
+            let (sql, writes_state) = rejected_update_sql(ledger);
+            if writes_state {
+                sqlx::query(&sql)
+                    .bind(settled_block)
+                    .bind(family.as_str())
+                    .bind(r.id)
+                    .bind(GAS_STATE_NOT_APPLICABLE)
+                    .execute(db)
+                    .await?;
+            } else {
+                sqlx::query(&sql)
+                    .bind(settled_block)
+                    .bind(family.as_str())
+                    .bind(r.id)
+                    .execute(db)
+                    .await?;
+            }
             debug!(
                 event = "drift_tracker.sim_rejected_label",
                 opp = %r.opportunity_id,
@@ -355,7 +508,55 @@ async fn resolve_one(
                 .simulated_profit_token_in
                 .clone()
                 .or(outcome.intermediate_amount_out.clone());
-            let gas_cost_usd = compute_gas_cost_usd(&outcome);
+            // GAS-PRICE-ADAPTER-01: the native-coin USD leg of the gas cost.
+            // A miss is logged with its EXACT reason and lands as SQL NULL —
+            // never a nominal placeholder (R8). The coverage ledger classifies
+            // the row from `actual_gas_cost_usd IS NULL` (migration 126, CASE
+            // branch 1 promotes only a real value to `measured`), so an
+            // uncomputable gas cost stays visible instead of being dressed up
+            // as a measured zero.
+            let gas_token_usd =
+                match crate::gas_price::resolve(redis, crate::gas_price::chain_key_id(r.chain_id))
+                    .await
+                {
+                    Ok(q) => {
+                        debug!(
+                            event = "drift_tracker.gas_price_resolved",
+                            opp = %r.opportunity_id,
+                            chain_id = r.chain_id,
+                            field = %q.source_field,
+                            usd_per_unit = q.usd_per_unit,
+                            adapter = q.adapter_version
+                        );
+                        Some(q.usd_per_unit)
+                    }
+                    // An unmapped chain is a CONFIG defect, not a per-row fact:
+                    // it must not hide at debug level. Volume is bounded by the
+                    // batch size (<= ARBX_DRIFT_TRACKER_BATCH rows per tick).
+                    Err(crate::gas_price::GasPriceMiss::UnsupportedChain { .. }) => {
+                        warn!(
+                            event = "drift_tracker.gas_price_unavailable",
+                            opp = %r.opportunity_id,
+                            chain_id = r.chain_id,
+                            reason = "gas_price_unsupported_chain"
+                        );
+                        None
+                    }
+                    // Per-row, expected absence (no live field yet): debug
+                    // detail + the aggregate coverage view stays the audit
+                    // script's job (R9 — no per-item INFO in the hot loop).
+                    Err(m) => {
+                        debug!(
+                            event = "drift_tracker.gas_price_unavailable",
+                            opp = %r.opportunity_id,
+                            chain_id = r.chain_id,
+                            reason = m.reason(),
+                            detail = %m.detail()
+                        );
+                        None
+                    }
+                };
+            let gas_cost_usd = compute_gas_cost_usd(&outcome, gas_token_usd);
 
             // Best-effort USD valuation via the Redis token price
             // (arbx:token_prices:<chain>:<SYMBOL> — the enricher's canonical key).
@@ -391,28 +592,33 @@ async fn resolve_one(
                 _ => None,
             };
 
-            // UPDATE — only on a passing re-exec. actual_timestamp marks "resolved".
-            sqlx::query(
-                r#"
-                UPDATE paper_trade_runs
-                SET actual_amount_out_wei = $1,
-                    actual_profit_usd = $2,
-                    actual_gas_cost_usd = $3,
-                    actual_block_number = $4,
-                    actual_timestamp = now(),
-                    profit_drift_pct = $5,
-                    sim_last_attempt_at = now()
-                WHERE id = $6 AND actual_timestamp IS NULL
-                "#,
-            )
-            .bind(actual_amount_out_wei.as_deref())
-            .bind(actual_profit_usd)
-            .bind(gas_cost_usd)
-            .bind(settled_block)
-            .bind(drift_pct)
-            .bind(r.id)
-            .execute(db)
-            .await?;
+            // UPDATE — only on a passing re-exec. actual_timestamp marks
+            // "resolved"; the gas VALUE and its CLASSIFICATION are written by
+            // this same statement so no reader can observe one without the
+            // other (migration 126 invariants I3a/I3b).
+            let (sql, writes_state) = resolved_update_sql(ledger);
+            if writes_state {
+                sqlx::query(&sql)
+                    .bind(actual_amount_out_wei.as_deref())
+                    .bind(actual_profit_usd)
+                    .bind(gas_cost_usd)
+                    .bind(settled_block)
+                    .bind(drift_pct)
+                    .bind(r.id)
+                    .bind(gas_state_for_resolved(gas_cost_usd))
+                    .execute(db)
+                    .await?;
+            } else {
+                sqlx::query(&sql)
+                    .bind(actual_amount_out_wei.as_deref())
+                    .bind(actual_profit_usd)
+                    .bind(gas_cost_usd)
+                    .bind(settled_block)
+                    .bind(drift_pct)
+                    .bind(r.id)
+                    .execute(db)
+                    .await?;
+            }
             Ok(Attempt::Resolved)
         }
     }
@@ -440,24 +646,38 @@ async fn token_price_usd(
     chain_id: i32,
     symbol_upper: &str,
 ) -> Option<f64> {
-    let key = format!("arbx:token_prices:{}", chain_id);
+    // Key string derived from the SHARED contract helper — a second literal
+    // here would be a silent drift surface if the key scheme ever changes
+    // (same producer, same identity: `gas_price` uses the same helper).
+    let key =
+        shared_rs::price_oracle::redis_token_prices_key(crate::gas_price::chain_key_id(chain_id));
     let v: Option<String> = redis.hget(&key, symbol_upper).await.ok().flatten();
     v.and_then(|s| s.parse().ok())
         .filter(|p: &f64| p.is_finite() && *p > 0.0)
 }
 
-/// Gas cost in USD from the sim outcome (gas_used × gas_price_wei → ETH → USD).
-/// Honest MVP: gas_price_wei × gas_used / 1e18 ETH; ETH→USD via the same Redis
-/// price hash (symbol "ETH"). None if uncomputable.
-fn compute_gas_cost_usd(o: &SimOutcome) -> Option<f64> {
+/// Gas cost in USD from the sim outcome (gas_used × gas_price_wei → native → USD).
+///
+/// UNITS (verified against the producer chain, not assumed):
+/// `gas_price_wei` is WEI per gas unit — `gas_oracle_worker` persists
+/// `provider.get_gas_price()` into `arbx:gas_price_wei:<chain>`, which is exactly
+/// what `sim-ctl::revm_backend` reads and hands to revm as `TxEnv.gas_price` —
+/// and `gas_used_total` is a count of gas units. So
+/// `gas_used × gas_price_wei / 1e18` is the native-coin amount, and the USD leg
+/// is `native × usd_per_unit` with `usd_per_unit` resolved by
+/// [`gas_price::resolve`] (the canonical price tower).
+///
+/// `None` in EITHER input is an honest NULL: uncomputable, not zero. There is no
+/// nominal/placeholder price here — the previous `let _ = eth; None` stub is
+/// what left `actual_gas_cost_usd` with no working producer (GAS-COVERAGE-01
+/// defect (a)). `Some(0.0)` means computed and exactly zero (R8).
+fn compute_gas_cost_usd(o: &SimOutcome, native_usd_per_unit: Option<f64>) -> Option<f64> {
     let gas_used = o.gas_used_total?;
     let gpw: f64 = o.gas_price_wei.as_deref()?.parse().ok()?;
-    let eth = (gas_used as f64 * gpw) / 1e18;
-    // ETH→USD priced at insert-time level would be ideal; MVP uses a nominal
-    // placeholder of None (gas cost is small vs the profit signal) until a
-    // reliable ETH-USD feed is wired into recon.
-    let _ = eth;
-    None
+    let native = (gas_used as f64 * gpw) / 1e18;
+    let price = native_usd_per_unit?;
+    let usd = native * price;
+    usd.is_finite().then_some(usd)
 }
 
 #[derive(serde::Deserialize, Debug)]
@@ -486,6 +706,97 @@ mod tests {
             simulated_profit_token_in: None,
             intermediate_amount_out: None,
         }
+    }
+
+    /// Outcome carrying the gas fields a real re-exec reports.
+    fn gas_outcome(gas_used: i64, gas_price_wei: &str) -> SimOutcome {
+        SimOutcome {
+            passed: Some(true),
+            fail_reason: None,
+            gas_used_total: Some(gas_used),
+            gas_price_wei: Some(gas_price_wei.to_string()),
+            simulated_profit_token_in: None,
+            intermediate_amount_out: None,
+        }
+    }
+
+    // ── GAS-PRICE-ADAPTER-01: the gas-cost producer (GAP-A regression gate) ──
+
+    /// The defect this closes: with a resolved native-coin price the function
+    /// MUST return a value. Before the adapter, `compute_gas_cost_usd` returned
+    /// `None` unconditionally (`let _ = eth; None`), so `actual_gas_cost_usd`
+    /// could never be anything but SQL NULL — the A.6 breaker's numerator had
+    /// no producer no matter how many runs accumulated. This test fails if that
+    /// stub is ever restored.
+    #[test]
+    fn priced_gas_is_computed_not_stubbed_to_none() {
+        // 210_000 gas at 20 gwei = 0.0042 native; at $2619.59 ⇒ $11.002278.
+        let usd = compute_gas_cost_usd(&gas_outcome(210_000, "20000000000"), Some(2619.59));
+        let expected = 210_000.0 * 20e9 / 1e18 * 2619.59;
+        let got = usd.expect("gas cost must be computed when the price is known");
+        assert!((got - expected).abs() < 1e-9, "got {got} want {expected}");
+        assert!((got - 11.002278).abs() < 1e-6, "got {got}");
+    }
+
+    /// Absence stays absence: no price ⇒ NULL (not 0.0), and no gas data ⇒ NULL.
+    #[test]
+    fn unpriced_or_gasless_inputs_are_honest_nulls() {
+        assert_eq!(
+            compute_gas_cost_usd(&gas_outcome(210_000, "20000000000"), None),
+            None,
+            "no price source ⇒ NULL, never a placeholder number"
+        );
+        let mut no_gas = outcome(Some(true), None);
+        no_gas.gas_price_wei = Some("20000000000".into());
+        assert_eq!(compute_gas_cost_usd(&no_gas, Some(2619.59)), None);
+        let mut no_price = outcome(Some(true), None);
+        no_price.gas_used_total = Some(210_000);
+        assert_eq!(compute_gas_cost_usd(&no_price, Some(2619.59)), None);
+    }
+
+    /// A computed zero is a ZERO, not a NULL (R8 distinguishes the two) — and
+    /// an unparseable wei string is a NULL, never a silent 0.
+    #[test]
+    fn computed_zero_differs_from_unparseable() {
+        assert_eq!(
+            compute_gas_cost_usd(&gas_outcome(0, "20000000000"), Some(2619.59)),
+            Some(0.0)
+        );
+        assert_eq!(
+            compute_gas_cost_usd(&gas_outcome(210_000, "not-a-number"), Some(2619.59)),
+            None
+        );
+        assert_eq!(
+            compute_gas_cost_usd(&gas_outcome(210_000, ""), Some(2619.59)),
+            None
+        );
+    }
+
+    /// A poisoned price cannot poison the ledger: non-finite products are NULL.
+    #[test]
+    fn non_finite_products_are_rejected() {
+        assert_eq!(
+            compute_gas_cost_usd(&gas_outcome(210_000, "20000000000"), Some(f64::NAN)),
+            None
+        );
+        assert_eq!(
+            compute_gas_cost_usd(&gas_outcome(210_000, "20000000000"), Some(f64::INFINITY)),
+            None
+        );
+    }
+
+    /// Chain routing: the key the profit leg reads is derived from the shared
+    /// contract helper, and a non-positive chain id can never alias chain 1.
+    #[test]
+    fn chain_key_id_is_derived_not_retyped() {
+        assert_eq!(crate::gas_price::chain_key_id(1), 1);
+        assert_eq!(crate::gas_price::chain_key_id(137), 137);
+        assert_eq!(crate::gas_price::chain_key_id(0), 0);
+        assert_eq!(crate::gas_price::chain_key_id(-7), 0);
+        assert_eq!(
+            shared_rs::price_oracle::redis_token_prices_key(crate::gas_price::chain_key_id(1)),
+            "arbx:token_prices:1"
+        );
     }
 
     #[test]
@@ -593,5 +904,119 @@ mod tests {
             decide_attempt(reqwest::StatusCode::OK, None),
             Attempt::Pending
         );
+    }
+
+    // ── GAS-COVERAGE-01 / migration 126: the measurement ledger ──────────────
+    //
+    // The defect this closes: the drift-tracker wrote `actual_gas_cost_usd`
+    // while NOT writing its classification. Migration 126's own invariants say
+    // a value must classify its own row (I3b) and a state must not claim a
+    // value that is not there (I3a); the one writer of the value ignored both,
+    // so the ledger could never converge and the A.6 coverage denominator could
+    // never narrow.
+
+    #[test]
+    fn gas_state_domain_matches_the_migration_126_check_constraint() {
+        // The CHECK in 126_…sql admits exactly these five values. A sixth would
+        // make every worker UPDATE fail at runtime with a constraint violation.
+        for s in [
+            gas_state_for_resolved(None),
+            gas_state_for_resolved(Some(1.0)),
+            GAS_STATE_NOT_APPLICABLE,
+            GAS_STATE_IMPOSSIBLE,
+        ] {
+            assert!(
+                GAS_STATE_DOMAIN.contains(&s),
+                "{s} is not a legal gas_measurement_state"
+            );
+        }
+        assert_eq!(GAS_STATE_DOMAIN.len(), 5);
+    }
+
+    #[test]
+    fn a_value_is_always_classified_measured() {
+        // Invariant I3b: actual_gas_cost_usd IS NOT NULL ⇒ state = 'measured'.
+        assert_eq!(gas_state_for_resolved(Some(11.002278)), "measured");
+        // Including a computed ZERO: zero is a measurement, not an absence (R8).
+        assert_eq!(gas_state_for_resolved(Some(0.0)), "measured");
+    }
+
+    #[test]
+    fn an_uncomputable_value_is_unavailable_never_not_applicable() {
+        // Invariant I3a + the migration's warning. Relabelling an uncomputable
+        // row as `not_applicable` would assert "no gas was burned" about a row
+        // nobody could compute — the false PASS the ledger exists to prevent.
+        assert_eq!(gas_state_for_resolved(None), "unavailable");
+        assert_ne!(gas_state_for_resolved(None), GAS_STATE_NOT_APPLICABLE);
+        // A gasless outcome (no gas_used_total / no price) is exactly that case.
+        let mut gasless = outcome(Some(true), None);
+        gasless.gas_price_wei = Some("20000000000".into());
+        assert_eq!(
+            gas_state_for_resolved(compute_gas_cost_usd(&gasless, Some(2619.59))),
+            "unavailable"
+        );
+    }
+
+    #[test]
+    fn every_arm_keeps_the_exactly_once_guard_in_both_ledger_variants() {
+        // The guard is the whole durability story: a row is written once.
+        // Appending a SET column must not disturb it, in EITHER variant.
+        for ledger in [GasLedger::Present, GasLedger::Absent] {
+            let (pass, _) = resolved_update_sql(ledger);
+            assert!(
+                pass.contains("WHERE id = $6 AND actual_timestamp IS NULL"),
+                "PASS arm lost its exactly-once guard: {pass}"
+            );
+            let (rejected, _) = rejected_update_sql(ledger);
+            assert!(
+                rejected.contains("WHERE id = $3 AND actual_timestamp IS NULL"),
+                "reject arm lost its exactly-once guard: {rejected}"
+            );
+            let (structural, _) = structural_update_sql(ledger);
+            assert!(
+                structural.contains("WHERE id = $1 AND actual_timestamp IS NULL"),
+                "structural arm lost its exactly-once guard: {structural}"
+            );
+        }
+    }
+
+    #[test]
+    fn the_ledger_column_appears_only_when_the_migration_is_applied() {
+        // A deployment without migration 126 must keep working: referencing an
+        // absent column would fail the statement and the row would never
+        // resolve — a regression strictly worse than an unclassified value.
+        for (present, absent) in [
+            (resolved_update_sql(GasLedger::Present).0, resolved_update_sql(GasLedger::Absent).0),
+            (
+                rejected_update_sql(GasLedger::Present).0,
+                rejected_update_sql(GasLedger::Absent).0,
+            ),
+            (
+                structural_update_sql(GasLedger::Present).0,
+                structural_update_sql(GasLedger::Absent).0,
+            ),
+        ] {
+            assert!(present.contains("gas_measurement_state = $"), "{present}");
+            assert!(present.contains("gas_measurement_updated_at = now()"), "{present}");
+            assert!(!absent.contains("gas_measurement_state"), "{absent}");
+        }
+        assert_eq!(resolved_update_sql(GasLedger::Present).1, true);
+        assert_eq!(resolved_update_sql(GasLedger::Absent).1, false);
+    }
+
+    #[test]
+    fn the_state_placeholder_is_the_next_free_index_of_its_own_statement() {
+        // Off-by-one here would bind the classification to the WRONG parameter
+        // and silently write a wrong state (or a wrong id) — the whole point of
+        // pinning the numbering.
+        assert!(resolved_update_sql(GasLedger::Present)
+            .0
+            .contains("gas_measurement_state = $7"));
+        assert!(rejected_update_sql(GasLedger::Present)
+            .0
+            .contains("gas_measurement_state = $4"));
+        assert!(structural_update_sql(GasLedger::Present)
+            .0
+            .contains("gas_measurement_state = $2"));
     }
 }
