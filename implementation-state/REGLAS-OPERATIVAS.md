@@ -196,6 +196,20 @@ Ninguna orden del operador, ningún miembro del equipo y ninguna prisa los levan
     - **La etiqueta `rejection_reason` SÍ discrimina** (8 valores). Es `status` la que no discrimina (1 valor).
     - **Contradicción declarada contra `t54`/`t61`:** ambos declararon `v3_quote_unavailable` en **0 / "ausente"**. Mi medición directa da **1.940 en 3 h**. No se contradicen: `t54`/`t61` midieron **el embudo** (materialización de cards); yo medí **el ledger de rechazos**. Son dos superficies distintas. La conclusión "el cuello V3 ya no está vivo" es **demasiado fuerte**: es correcto decir *no domina* (0,7% de los rechazos), **no** que esté ausente.
 
+### Añadido por re-medición del 2026-10-06T04:2xZ
+
+82. **El edge NO reescribe prefijos: declara rutas UNA POR UNA.** `edge/worker/src/index.ts:699`: `app.get("/api/opportunities/live", (c) => proxy(c, "/api/v1/opportunities/live", "arbx:cache:opps", 2))`. El edge expone la ruta **sin `v1`** y le agrega `v1` al reenviar; el api-server exige **`v1`** directo.
+    - **Tabla de verdad medida:** EDGE `/api/opportunities/live` → **200** (99.076 B) · EDGE `/api/v1/opportunities/live` → **404** · 8080 `/api/v1/opportunities/live` → **200** · 8080 `/api/opportunities/live` → **404**.
+    - **Regla:** una ruta NO EXISTE porque esté en el código; existe **por superficie**. Al probar cualquier endpoint hay que probar **las dos formas contra las dos superficies**. Probar la forma correcta contra la superficie equivocada da 404 y **el 404 es legítimo** — pero leerlo como "la ruta no existe" es el fallo (d): una etiqueta leída como otra.
+    - **Consecuencia sobre un hallazgo previo:** el ROJO de la capa 3 de `t64` (`/api/v1/opportunities/live` contra el edge) es un **artefacto de ruta**. La capa 3 está **VERDE**.
+83. **`/dev/shm` del contenedor postgres es 64 MB, y PostgreSQL necesita 48 MB para agregar sobre `opportunities`.** Causa RAÍZ PROBADA del `503 query_failed` de `/api/v1/rejections/breakdown`:
+    - El error crudo: `ERROR: could not resize shared memory segment "/PostgreSQL.1845588248" to 50438144 bytes: No space left on device`.
+    - **Prueba por contraste:** el MISMO SQL con `SET max_parallel_workers_per_gather=0` **PASA** y devuelve filas. Con paralelismo, falla.
+    - `docker exec arbitragex-v2-postgres-1 df -h /dev/shm` → **64M, 2.0M usado**. El host tiene 7,7 GB de `/dev/shm` **libres**: el problema es del **contenedor**, no de la máquina. Docker da 64 MB por default y nadie pasó `--shm-size`.
+    - **Alcance:** toda consulta con agregación paralela sobre las tablas grandes (`opportunities` 8,06 M, `pool_reserves` 35,0 M, `route_discovery_outcomes` ~19 M/día) muere así. **Es un defecto de infraestructura localizado y con fix canónico**, no un defecto de producto.
+    - **Números reales, primera lectura SIN el obstáculo** (24 h, `LIMIT 5`, sin paralelismo): `spread_zero_equilibrium` **785.292** · `spread_negative_round_trip` **302.200** · `non_positive_profit` **288.514** · `v3_pool_not_catalogued` **234.941** · `single_pool_no_spread` **135.876**.
+    - **Observación abierta, NO conclusión:** `spread_zero_equilibrium` y `spread_negative_round_trip` **coexisten con conteos grandes en la ventana de 24 h**. Si la renominación de #792 era completa, uno de los dos no debería emitirse hoy. **No afirmo renominación incompleta**: puede haber dos caminos que emiten cada etiqueta. Requiere medición propia.
+
 ### Añadido por medición de la ronda Mainnet (2026-10-06)
 
 78. **`git push` puede reportar ÉXITO con el commit FALLIDO.** [incidente declarado por `t55`: el `commit` falló con `fatal: unable to auto-detect email address`, **el `push` reportó éxito**, y la rama viajó **sin el commit**, apuntando a la base; sólo `git ls-remote` lo delató] **Regla:** en clon fresco, la identidad se configura **antes** del primer commit (`git config --local user.name/user.email`), y **la publicación se verifica por el REMOTO** (`git ls-remote` + el set de archivos del PR), **nunca por la respuesta del push.**
