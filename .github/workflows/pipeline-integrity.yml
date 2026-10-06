@@ -5,6 +5,47 @@
 # and on-demand. Fails when ANY layer is empty, stale, or returns wrong types.
 # This is the automated guarantee that the cards show REAL opportunities
 # from REAL data in REAL time (RULE 00, R7, R8, R10).
+#
+# ── PIPELINE-INTEGRITY-REPAIR-01 (2026-10-06, t64) ──────────────────────────
+# WHAT WAS BROKEN (measured by t58 in the log, not guessed): this workflow had
+# NO step that materialized an SSH key or resolved a host, yet three of its
+# steps ran `ssh arbx "…"`. On a GitHub runner there is no `arbx` alias (that is
+# a developer-laptop ~/.ssh/config entry) and no key, so the FIRST step died with
+#
+#     ssh: Could not resolve hostname arbx
+#     exit 255
+#
+# before any layer was ever checked. Its consecutive `failure` conclusions were
+# therefore failures of the CHECK, not of the pipeline. Reading them as "the
+# pipeline has been broken for days" is reading a label as if it were another
+# thing — evidence-discipline failure (d).
+#
+# SECOND DEFECT FOUND WHILE REPAIRING (same class): `VPS_HOST` defaulted to
+# `localhost` and the two `curl` steps used it directly, so even with SSH
+# working those probes would have measured the RUNNER's own localhost:8787 /
+# :8080 and reported "API returns ZERO opportunities — pipeline broken between
+# PG and API": a FALSE pipeline verdict produced by an instrument aimed at the
+# wrong machine. Every remote probe now runs ON the VPS over SSH.
+#
+# THE TWO RED MODES ARE NOW DISTINGUISHED, EXPLICITLY:
+#   * CONNECTION red → labelled `VERDICT=NO_COMPUTADO reason=connection`.
+#     The instrument could not reach the host. Says NOTHING about the pipeline.
+#     Emitted by the preflight, and by any check step whose ssh returns 255 (no
+#     `VERDICT=` line is produced at all).
+#   * PIPELINE red   → labelled `::error::PIPELINE_VERDICT=FAIL layer=<name>`.
+#     The instrument connected and the layer is empty/stale/wrong. Says nothing
+#     about connectivity.
+# A run that never prints `VERDICT=` did not measure. That is the rule.
+#
+# NOT IN SCOPE OF THIS REPAIR: the pipeline itself. If a layer comes back red,
+# that is a FINDING and is reported as-is — it is not patched here.
+#
+# READ-ONLY: every remote command is a read (`redis-cli XLEN`, `psql -tAc
+# SELECT`, `curl` GET, `docker ps`). No writes, no restarts, no migrations.
+#
+# The free-form `vps_host` dispatch input was REMOVED: it is unused now that all
+# probes run on the host over SSH, and as an interpolated shell variable it was
+# also a command-injection surface. This workflow now takes NO inputs.
 
 name: Pipeline Integrity Gate
 
@@ -12,11 +53,6 @@ on:
   schedule:
     - cron: '*/15 * * * *'
   workflow_dispatch:
-    inputs:
-      vps_host:
-        description: 'VPS hostname for API checks'
-        required: false
-        default: 'localhost'
 
 permissions:
   contents: read
@@ -29,84 +65,218 @@ jobs:
   verify-e2e:
     name: Verify E2E no-loss pipeline
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 10
     env:
-      VPS_HOST: ${{ inputs.vps_host || 'localhost' }}
+      # Same secret mechanism as auto-deploy-vps.yml:58-71 (which works — every
+      # deploy proves it). Nothing new is invented here.
+      VPS_HOST: ${{ secrets.VPS_SSH_HOST }}
+      VPS_USER: ${{ secrets.VPS_SSH_USER }}
+      VPS_PORT: ${{ secrets.VPS_PORT || '22' }}
+      VPS_KEY: ${{ secrets.VPS_SSH_KEY }}
 
     steps:
-      - name: Check Redis stream has recent detections
+      - name: Materialize SSH access (same mechanism as auto-deploy-vps.yml)
         run: |
-          # Connect to VPS Redis and check the detected opportunities stream
-          # XLEN must be > 0 — an empty stream means the searcher is not producing
-          ssh arbx "
-            XLEN=\$(docker exec arbitragex-v2-redis-1 redis-cli XLEN arbx:opps:detected 2>/dev/null || echo 0)
-            echo \"Redis XLEN arbx:opps:detected = \$XLEN\"
-            if [ \"\$XLEN\" -eq \"0\" ]; then
-              echo '::error::Redis stream arbx:opps:detected is EMPTY — searcher not producing'
-              exit 1
-            fi
-          "
+          set -euo pipefail
+          test -n "$VPS_KEY" && test -n "$VPS_HOST"
+          [[ "$VPS_PORT" =~ ^[0-9]+$ ]] && (( VPS_PORT > 0 && VPS_PORT < 65536 ))
+          install -m 700 -d ~/.ssh
+          umask 077
+          printf '%s\n' "$VPS_KEY" > ~/.ssh/deploy_key
+          ssh-keyscan -T 10 -p "$VPS_PORT" -H "$VPS_HOST" > ~/.ssh/known_hosts
+          test -s ~/.ssh/known_hosts
+          echo "ssh material ready (key never echoed)"
+
+      - name: 'Preflight — CONNECTION vs PIPELINE (the two red modes)'
+        id: preflight
+        run: |
+          set -uo pipefail
+          set +e
+          OUT=$(ssh -i ~/.ssh/deploy_key -p "$VPS_PORT" \
+                  -o ConnectTimeout=15 -o BatchMode=yes -o StrictHostKeyChecking=yes \
+                  "$VPS_USER@$VPS_HOST" 'echo VPS_REACHABLE' 2>&1)
+          RC=$?
+          set -e
+          if [ "$RC" -ne 0 ] || ! printf '%s' "$OUT" | grep -q 'VPS_REACHABLE'; then
+            echo "VERDICT=NO_COMPUTADO reason=connection (ssh rc=$RC)"
+            echo "::error::CONNECTION failure — could not reach the VPS. This says NOTHING about the pipeline; it is not a pipeline verdict."
+            printf '%s\n' "$OUT" | head -5
+            exit 1
+          fi
+          echo "VERDICT=PASS layer=connection (the host answered; the layers below will be judged next)"
+          echo "step_outcome=PASS layer=connection" >> "$GITHUB_OUTPUT"
+
+      - name: Check Redis stream has recent detections
+        id: redis_stream
+        run: |
+          set -uo pipefail
+          set +e
+          OUT=$(ssh -i ~/.ssh/deploy_key -p "$VPS_PORT" \
+                  -o ConnectTimeout=15 -o BatchMode=yes -o StrictHostKeyChecking=yes \
+                  "$VPS_USER@$VPS_HOST" 'bash -s' <<'REMOTE' 2>&1
+          XLEN=$(docker exec arbitragex-v2-redis-1 redis-cli XLEN arbx:opps:detected 2>/dev/null || echo 0)
+          echo "Redis XLEN arbx:opps:detected = $XLEN"
+          if [ "$XLEN" -eq 0 ]; then
+            echo 'VERDICT=FAIL layer=redis_stream reason=stream_empty'
+          else
+            echo 'VERDICT=PASS layer=redis_stream'
+          fi
+          REMOTE
+          )
+          RC=$?
+          set -e
+          printf '%s\n' "$OUT"
+          case "$OUT" in
+            *"VERDICT=PASS"*) echo "step_outcome=PASS layer=redis_stream" >> "$GITHUB_OUTPUT" ;;
+            *"VERDICT=FAIL"*) echo "step_outcome=FAIL layer=redis_stream" >> "$GITHUB_OUTPUT"
+                              echo '::error::PIPELINE_VERDICT=FAIL layer=redis_stream — stream arbx:opps:detected is EMPTY (searcher not producing)'; exit 1 ;;
+            *) echo "step_outcome=NO_COMPUTADO layer=redis_stream" >> "$GITHUB_OUTPUT"
+               echo "::error::CONNECTION failure during redis_stream check (ssh rc=$RC) — no VERDICT line, therefore NO measurement. Not a pipeline verdict."; exit 1 ;;
+          esac
 
       - name: Check PG has opportunities in last 5 minutes
+        id: pg_flow
         run: |
-          ssh arbx "
-            COUNT=\$(docker exec arbitragex-v2-postgres-1 psql -U postgres -d arbitragex -t -A -c \
-              \"SELECT COUNT(*) FROM opportunities WHERE detected_at > NOW() - INTERVAL '5 minutes'\" 2>/dev/null || echo 0)
-            echo \"PG opportunities in last 5 min = \$COUNT\"
-            if [ \"\$COUNT\" -eq \"0\" ]; then
-              echo '::error::PG has ZERO opportunities in the last 5 minutes — pipeline broken between Redis and PG'
-              exit 1
-            fi
-          "
+          set -uo pipefail
+          set +e
+          OUT=$(ssh -i ~/.ssh/deploy_key -p "$VPS_PORT" \
+                  -o ConnectTimeout=15 -o BatchMode=yes -o StrictHostKeyChecking=yes \
+                  "$VPS_USER@$VPS_HOST" 'bash -s' <<'REMOTE' 2>&1
+          COUNT=$(docker exec arbitragex-v2-postgres-1 psql -U postgres -d arbitragex -t -A -c \
+            "SELECT COUNT(*) FROM opportunities WHERE detected_at > NOW() - INTERVAL '5 minutes'" 2>/dev/null || echo 0)
+          echo "PG opportunities in last 5 min = $COUNT"
+          if [ "$COUNT" -eq 0 ]; then
+            echo 'VERDICT=FAIL layer=pg_flow reason=zero_rows_5min'
+          else
+            echo 'VERDICT=PASS layer=pg_flow'
+          fi
+          REMOTE
+          )
+          RC=$?
+          set -e
+          printf '%s\n' "$OUT"
+          case "$OUT" in
+            *"VERDICT=PASS"*) echo "step_outcome=PASS layer=pg_flow" >> "$GITHUB_OUTPUT" ;;
+            *"VERDICT=FAIL"*) echo "step_outcome=FAIL layer=pg_flow" >> "$GITHUB_OUTPUT"
+                              echo '::error::PIPELINE_VERDICT=FAIL layer=pg_flow — ZERO opportunities in the last 5 minutes'; exit 1 ;;
+            *) echo "step_outcome=NO_COMPUTADO layer=pg_flow" >> "$GITHUB_OUTPUT"
+               echo "::error::CONNECTION failure during pg_flow check (ssh rc=$RC) — no VERDICT line, therefore NO measurement."; exit 1 ;;
+          esac
 
       - name: Check API serves opportunities with correct types
+        id: api_types
         run: |
-          # The API must return data AND amount_in_wei must be a string (not float)
-          RESP=\$(curl -sf "http://\${VPS_HOST}:8787/api/v1/opportunities/live?limit=1" 2>/dev/null || echo '{}')
-          COUNT=\$(echo "\$RESP" | jq '.data | length' 2>/dev/null || echo 0)
-          echo \"API /opportunities/live returns \$COUNT items\"
-          if [ \"\$COUNT\" -eq \"0\" ]; then
-            echo '::error::API returns ZERO opportunities — pipeline broken between PG and API'
-            exit 1
+          set -uo pipefail
+          set +e
+          # Probes run ON the VPS. Three candidate surfaces are tried and the one
+          # that answered is NAMED, so a red verdict cannot be an artifact of the
+          # instrument aiming at the wrong port (the original defect).
+          OUT=$(ssh -i ~/.ssh/deploy_key -p "$VPS_PORT" \
+                  -o ConnectTimeout=15 -o BatchMode=yes -o StrictHostKeyChecking=yes \
+                  "$VPS_USER@$VPS_HOST" 'bash -s' <<'REMOTE' 2>&1
+          RESP=""
+          for URL in "http://127.0.0.1:8080/api/opportunities/live?limit=1" \
+                     "http://127.0.0.1:8787/api/v1/opportunities/live?limit=1" \
+                     "http://127.0.0.1:8787/api/opportunities/live?limit=1"; do
+            C=$(curl -sf "$URL" 2>/dev/null || echo '')
+            if [ -n "$C" ]; then echo "answered_by=$URL"; RESP="$C"; break; fi
+          done
+          if [ -z "$RESP" ]; then
+            echo 'VERDICT=FAIL layer=api_types reason=no_api_surface_answered'
+            exit 0
           fi
-
-          # Verify amount_in_wei is string (not number) — precision guard
-          AMOUNT_TYPE=\$(echo "\$RESP" | jq -r '.data[0].amount_in_wei | type' 2>/dev/null || echo 'null')
-          echo \"amount_in_wei type = \$AMOUNT_TYPE\"
-          if [ \"\$AMOUNT_TYPE\" != '"string"' ] && [ \"\$AMOUNT_TYPE\" != '"null"' ]; then
-            echo '::error::amount_in_wei is '\$AMOUNT_TYPE' — should be string or null (precision loss!)'
-            exit 1
+          COUNT=$(printf '%s' "$RESP" | jq 'if .items then (.items|length) elif .data then (.data|length) else 0 end' 2>/dev/null || echo 0)
+          echo "API /opportunities/live returns $COUNT items"
+          AMOUNT_TYPE=$(printf '%s' "$RESP" | jq -r 'if .items then .items[0] elif .data then .data[0] else null end | .amount_in_wei | type' 2>/dev/null || echo 'null')
+          echo "amount_in_wei type = $AMOUNT_TYPE"
+          if [ "$COUNT" -eq 0 ]; then
+            echo 'VERDICT=FAIL layer=api_types reason=zero_items'
+          elif [ "$AMOUNT_TYPE" != "string" ] && [ "$AMOUNT_TYPE" != "null" ]; then
+            echo "VERDICT=FAIL layer=api_types reason=amount_in_wei_is_${AMOUNT_TYPE}"
+          else
+            echo 'VERDICT=PASS layer=api_types'
           fi
+          REMOTE
+          )
+          RC=$?
+          set -e
+          printf '%s\n' "$OUT"
+          case "$OUT" in
+            *"VERDICT=PASS"*) echo "step_outcome=PASS layer=api_types" >> "$GITHUB_OUTPUT" ;;
+            *"VERDICT=FAIL"*) echo "step_outcome=FAIL layer=api_types" >> "$GITHUB_OUTPUT"
+                              echo '::error::PIPELINE_VERDICT=FAIL layer=api_types — the API layer did not return usable opportunities'; exit 1 ;;
+            *) echo "step_outcome=NO_COMPUTADO layer=api_types" >> "$GITHUB_OUTPUT"
+               echo "::error::CONNECTION failure during api_types check (ssh rc=$RC) — no VERDICT line, therefore NO measurement."; exit 1 ;;
+          esac
 
       - name: Check WS endpoint is alive
+        id: ws_alive
         run: |
-          # WS health check: the endpoint must accept connections
-          # (full message verification requires a WS client — this checks TCP/HTTP upgrade)
-          HTTP_CODE=\$(curl -sf -o /dev/null -w '%{http_code}' \
-            "http://\${VPS_HOST}:8080/socket.io/?EIO=4&transport=polling" 2>/dev/null || echo "000")
-          echo \"WS polling endpoint HTTP status = \$HTTP_CODE\"
-          if [ \"\$HTTP_CODE\" != "200" ]; then
-            echo '::error::WebSocket polling endpoint returned '\$HTTP_CODE' — WS not reachable'
-            exit 1
+          set -uo pipefail
+          set +e
+          OUT=$(ssh -i ~/.ssh/deploy_key -p "$VPS_PORT" \
+                  -o ConnectTimeout=15 -o BatchMode=yes -o StrictHostKeyChecking=yes \
+                  "$VPS_USER@$VPS_HOST" 'bash -s' <<'REMOTE' 2>&1
+          HTTP_CODE=$(curl -s -o /dev/null -w '%{http_code}' \
+            "http://127.0.0.1:8080/socket.io/?EIO=4&transport=polling" 2>/dev/null || echo "000")
+          echo "WS polling endpoint HTTP status = $HTTP_CODE"
+          if [ "$HTTP_CODE" != "200" ]; then
+            echo "VERDICT=FAIL layer=ws_alive reason=http_${HTTP_CODE}"
+          else
+            echo 'VERDICT=PASS layer=ws_alive'
           fi
+          REMOTE
+          )
+          RC=$?
+          set -e
+          printf '%s\n' "$OUT"
+          case "$OUT" in
+            *"VERDICT=PASS"*) echo "step_outcome=PASS layer=ws_alive" >> "$GITHUB_OUTPUT" ;;
+            *"VERDICT=FAIL"*) echo "step_outcome=FAIL layer=ws_alive" >> "$GITHUB_OUTPUT"
+                              echo '::error::PIPELINE_VERDICT=FAIL layer=ws_alive — WebSocket polling endpoint is not returning 200'; exit 1 ;;
+            *) echo "step_outcome=NO_COMPUTADO layer=ws_alive" >> "$GITHUB_OUTPUT"
+               echo "::error::CONNECTION failure during ws_alive check (ssh rc=$RC) — no VERDICT line, therefore NO measurement."; exit 1 ;;
+          esac
 
       - name: Check Docker containers are healthy
+        id: docker_health
         run: |
-          ssh arbx "
-            UNHEALTHY=\$(docker ps --filter 'name=arbitragex-v2' --filter 'health=unhealthy' --format '{{.Names}}' 2>/dev/null)
-            if [ -n \"\$UNHEALTHY\" ]; then
-              echo '::error::Unhealthy containers: '\$UNHEALTHY
-              exit 1
-            fi
-            RUNNING=\$(docker ps --filter 'name=arbitragex-v2' --format '{{.Names}}' | wc -l)
-            echo \"\$RUNNING arbitragex containers running, all healthy\"
-            if [ \"\$RUNNING\" -lt 10 ]; then
-              echo '::warning::Only '\$RUNNING' containers running — expected 20+'
-            fi
-          "
+          set -uo pipefail
+          set +e
+          OUT=$(ssh -i ~/.ssh/deploy_key -p "$VPS_PORT" \
+                  -o ConnectTimeout=15 -o BatchMode=yes -o StrictHostKeyChecking=yes \
+                  "$VPS_USER@$VPS_HOST" 'bash -s' <<'REMOTE' 2>&1
+          UNHEALTHY=$(docker ps --filter 'name=arbitragex-v2' --filter 'health=unhealthy' --format '{{.Names}}' 2>/dev/null || echo '')
+          RUNNING=$(docker ps --filter 'name=arbitragex-v2' --format '{{.Names}}' 2>/dev/null | wc -l)
+          echo "$RUNNING arbitragex containers running"
+          if [ -n "$UNHEALTHY" ]; then
+            echo "VERDICT=FAIL layer=docker_health reason=unhealthy_containers"
+          elif [ "$RUNNING" -lt 10 ]; then
+            echo "VERDICT=PASS layer=docker_health warning=only_${RUNNING}_containers"
+          else
+            echo 'VERDICT=PASS layer=docker_health'
+          fi
+          REMOTE
+          )
+          RC=$?
+          set -e
+          printf '%s\n' "$OUT"
+          case "$OUT" in
+            *"VERDICT=PASS"*) echo "step_outcome=PASS layer=docker_health" >> "$GITHUB_OUTPUT" ;;
+            *"VERDICT=FAIL"*) echo "step_outcome=FAIL layer=docker_health" >> "$GITHUB_OUTPUT"
+                              echo '::error::PIPELINE_VERDICT=FAIL layer=docker_health — unhealthy containers present'; exit 1 ;;
+            *) echo "step_outcome=NO_COMPUTADO layer=docker_health" >> "$GITHUB_OUTPUT"
+               echo "::error::CONNECTION failure during docker_health check (ssh rc=$RC) — no VERDICT line, therefore NO measurement."; exit 1 ;;
+          esac
 
-      - name: Summary
+      - name: Verdict summary (pipeline, not connection)
         if: always()
         run: |
-          echo "::notice::Pipeline integrity check completed at $(date -u +%Y-%m-%dT%H:%M:%SZ)"
-          echo "::notice::Layers verified: Redis(XLEN) → PG(COUNT) → API(types) → WS(alive) → Docker(healthy)"
+          echo "::notice::Pipeline integrity verdict — layers: Redis(XLEN) → PG(COUNT) → API(types) → WS(alive) → Docker(healthy)"
+          echo "connection   : ${{ steps.preflight.outcome }}"
+          echo "redis_stream : ${{ steps.redis_stream.outcome }}"
+          echo "pg_flow      : ${{ steps.pg_flow.outcome }}"
+          echo "api_types    : ${{ steps.api_types.outcome }}"
+          echo "ws_alive     : ${{ steps.ws_alive.outcome }}"
+          echo "docker_health: ${{ steps.docker_health.outcome }}"
+          echo "::notice::outcome=success means the layer was measured and is healthy. A failure is either PIPELINE_VERDICT=FAIL (a pipeline defect) or CONNECTION (the instrument could not reach the host). A run with NO VERDICT line did not measure anything."
