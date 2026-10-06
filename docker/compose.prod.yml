@@ -23,6 +23,25 @@ services:
   postgres:
     logging: *id001
     image: postgres:15
+    # SEC-/OPS-PGSHM-01 (2026-09-30): /dev/shm debe cubrir maintenance_work_mem.
+    #
+    # Evidencia (VPS productivo, 2026-09-30): el default de Docker para /dev/shm es
+    # 64 MB (ShmSize=67108864 verificado con `docker inspect`), mientras el `command:`
+    # de abajo fija maintenance_work_mem=512MB. El VACUUM paralelo crea un segmento
+    # DSM en /dev/shm del tamaño de maintenance_work_mem y fallaba con:
+    #   ERROR: could not resize shared memory segment "/PostgreSQL.762492090"
+    #          to 536907520 bytes: No space left on device
+    #          STATEMENT: VACUUM (ANALYZE) pool_reserves
+    # 536907520 B = 512 MB. Consecuencia: TODOS los VACUUM de la retención fallaban
+    # a diario (log: `retention.vacuum table=pool_reserves failed`), las tuplas
+    # muertas nunca se recuperaban (bloat: 1.7 GB de índices sobre 3 filas en
+    # risk_events) y el disco caía por debajo del umbral de 15 GB del guard de
+    # deploy → los auto-deploys fallaron durante >24 h.
+    #
+    # 2 GB cubre maintenance_work_mem con margen para autovacuum paralelo, builds de
+    # índices y queries paralelas. NO sustituye a PARALLEL 0 en la retención:
+    # son defensa en profundidad (ver scripts/pg_retention.sh).
+    shm_size: 2gb
     # PERF-STACK WO-4 (2026-09-20): tuned for the 8-core/16GB VPS running the
     # full stack. synchronous_commit stays ON (locked decision — durability of
     # the opportunities ledger is not traded for throughput).
