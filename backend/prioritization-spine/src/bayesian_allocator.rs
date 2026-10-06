@@ -108,6 +108,9 @@ pub struct Allocation {
     pub p_success_std: f64,
     pub kelly_fraction: f64,
     pub source: AllocationSource,
+    /// KELLY-GUARD-01: decisión de sizing (ver `SizingDecision`). Separada de
+    /// `source` para no confundir procedencia con razón.
+    pub sizing: SizingDecision,
 }
 
 impl Allocation {
@@ -121,6 +124,7 @@ impl Allocation {
             p_success_std: 0.0,
             kelly_fraction: 0.0,
             source,
+            sizing: SizingDecision::NotAttempted,
         }
     }
 }
@@ -135,6 +139,27 @@ pub enum AllocationSource {
     StalePosterior,
     /// Sin observaciones suficientes → prior puro.
     Prior,
+}
+
+/// KELLY-GUARD-01: POR QUÉ el allocator dimensionó (o no). Campo SEPARADO de
+/// `AllocationSource` a propósito: `source` describe la PROCEDENCIA de la
+/// posterior (fresca vs prior), esto describe la DECISIÓN de sizing.
+/// Mezclarlos era el defecto: un `fraction == 0` con `source = Prior` no decía
+/// si fue "no hay apuesta" o "la fórmula no aplica".
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum SizingDecision {
+    /// La fórmula aplicó dentro de dominio y produjo un tamaño positivo.
+    Sized,
+    /// Ni se intentó por política previa (Ghost Protocol / posterior stale).
+    NotAttempted,
+    /// `expected_yield_ratio <= 0` (o NaN): la fórmula de Kelly **NO APLICA** —
+    /// exige odds `b > 0`. Con `b < 0` devolvería un `f*` POSITIVO plausible
+    /// (medido en t48: `b = -0.005437521`, `p = 0.95` ⇒ `f* = 10.14`), o sea
+    /// "apostá 10.14×" en una ruta que pierde en todo tamaño positivo.
+    NonPositiveYieldRatio,
+    /// Dentro del dominio (`b > 0`) pero `f* <= 0`: **NO HAY APUESTA**. Es un
+    /// hecho distinto del rechazo de dominio y por eso se nombra aparte.
+    KellyNoEdge,
 }
 
 /// Allocator concurrent-safe.  Una sola instancia por proceso searcher-rs.
@@ -215,14 +240,46 @@ impl BayesianAllocator {
 
         let p_mean = post.mean();
         let p_std = post.std_dev();
-        let b = expected_yield_ratio.max(0.0);
+
+        // Procedencia de la posterior — NO es la razón del sizing (ver
+        // `SizingDecision`). Se calcula ANTES de las guardas para no perderla.
+        let source = if matches!(map.get(&key), Some(p) if !p.is_stale()) {
+            AllocationSource::Posterior
+        } else {
+            AllocationSource::Prior
+        };
+
+        // ── KELLY-GUARD-01: guarda de DOMINIO, antes de aplicar la fórmula ──
+        // Kelly exige odds `b > 0`. El camino anterior hacía
+        // `expected_yield_ratio.max(0.0)` — un clamp SILENCIOSO de `b` que
+        // convertía un edge negativo en "no hay apuesta" y escondía que la
+        // fórmula NO APLICA. Con `b < 0` la fórmula devuelve un número positivo
+        // plausible: medido (t48) `b = -0.005437521`, `p = 0.95` →
+        // `f* = (b·p − q)/b = 10.14`, o sea "apostá 10.14×" en una ruta que
+        // pierde en TODO tamaño positivo (retorno marginal 0.994562479 < 1).
+        // La forma `!(x > 0.0)` también rechaza NaN (fail-closed).
+        if !(expected_yield_ratio > 0.0) {
+            let mut alloc = Allocation::zero(strategy_kind.to_string(), chain_id, source);
+            alloc.p_success_mean = p_mean;
+            alloc.p_success_std = p_std;
+            alloc.sizing = SizingDecision::NonPositiveYieldRatio;
+            return alloc;
+        }
+        let b = expected_yield_ratio;
 
         // Kelly clásico: f* = (p·b - q) / b, con q = 1 - p
-        let raw_kelly = if b > 0.0 {
-            ((p_mean * b) - (1.0 - p_mean)) / b
-        } else {
-            0.0
-        };
+        let raw_kelly = ((p_mean * b) - (1.0 - p_mean)) / b;
+
+        // Dentro del dominio, `f* <= 0` significa "no hay apuesta" (edge no
+        // positivo). Se NOMBRA en vez de clamparse: el consumidor tiene que
+        // poder distinguirlo del rechazo de dominio de arriba.
+        if !(raw_kelly > 0.0) {
+            let mut alloc = Allocation::zero(strategy_kind.to_string(), chain_id, source);
+            alloc.p_success_mean = p_mean;
+            alloc.p_success_std = p_std;
+            alloc.sizing = SizingDecision::KellyNoEdge;
+            return alloc;
+        }
         let kelly_pos = raw_kelly.clamp(0.0, KELLY_FRACTION_CAP);
 
         // Atenuación por varianza: cuanto mayor σ, menor confianza, menor fracción.
@@ -245,6 +302,7 @@ impl BayesianAllocator {
             p_success_std: p_std,
             kelly_fraction: kelly_pos,
             source,
+            sizing: SizingDecision::Sized,
         }
     }
 
@@ -487,5 +545,110 @@ mod tests {
             assert!(p.variance() >= 0.0);
             assert!(p.std_dev() >= 0.0);
         }
+    }
+
+    // ── KELLY-GUARD-01: dominio de Kelly (b > 0) ─────────────────────────────
+
+    /// El PELIGRO medido, fijado como número ejecutable: con `b < 0` la fórmula
+    /// clásica `f* = (b·p − q)/b` devuelve un POSITIVO plausible.
+    /// `b = -0.005437521`, `p = 0.95` ⇒ `f* ≈ 10.145` (t48 lo midió como 10.14).
+    /// No es un caso borde: es la fórmula FUERA DE DOMINIO, y por eso la guarda
+    /// va antes de aplicarla.
+    #[test]
+    fn kelly_out_of_domain_formula_would_return_10x_measured_hazard() {
+        let b: f64 = -0.005437521;
+        let p: f64 = 0.95;
+        let q: f64 = 1.0 - p;
+        let f_star = ((b * p) - q) / b;
+        assert!(
+            (f_star - 10.1453).abs() < 0.01,
+            "f* = {f_star}, esperado ≈ 10.145 (el 10.14 que midió t48)"
+        );
+        assert!(
+            f_star > 0.0,
+            "el peligro es que sea POSITIVO, no que sea raro"
+        );
+    }
+
+    /// NEGATIVO: un edge negativo (`b <= 0`, incluido NaN) se RECHAZA NOMBRADO y
+    /// con tamaño 0 — nunca un `f*` positivo, nunca un clamp silencioso.
+    #[test]
+    fn kelly_non_positive_yield_is_named_rejection_table() {
+        let cap = 1_000.0_f64;
+        for &y in &[
+            -0.005437521_f64, // el b medido por t48
+            -1.0,
+            -10.0,
+            0.0,      // frontera: odds nulas ⇒ no es una apuesta
+            f64::NAN, // fail-closed: `!(x > 0.0)` es true para NaN
+        ] {
+            let a = BayesianAllocator::new();
+            let alloc = a.assign("k", 1, cap, y);
+            assert_eq!(alloc.fraction, 0.0, "yield={y} debió dar fracción 0");
+            assert_eq!(alloc.usd_amount, 0.0, "yield={y} debió dar usd 0");
+            assert_eq!(
+                alloc.sizing,
+                SizingDecision::NonPositiveYieldRatio,
+                "yield={y} debió RECHAZARSE por dominio, nombrado"
+            );
+            assert_ne!(
+                alloc.sizing,
+                SizingDecision::KellyNoEdge,
+                "yield={y}: 'la fórmula no aplica' NO es 'no hay apuesta'"
+            );
+        }
+    }
+
+    /// POSITIVO: `b > 0` con edge real ⇒ la fórmula aplica y el tamaño es normal
+    /// (> 0), con la cota dura respetada. Sin este lado el negativo no prueba
+    /// nada.
+    #[test]
+    fn kelly_positive_domain_still_sizes() {
+        let a = BayesianAllocator::new();
+        a.ingest_signal(&AdaptiveSignal {
+            strategy_kind: "k".to_string(),
+            chain_id: 1,
+            revert_rate: 0.05,
+            sample_count: 100,
+            received_at: SystemTime::now(),
+        });
+        let cap = 1_000.0;
+        // b = 0.2 (net odds 20%): f* = (0.9412*0.2 - 0.0588)/0.2 ≈ 0.647 → cap 0.5
+        let alloc = a.assign("k", 1, cap, 0.2);
+        assert_eq!(alloc.source, AllocationSource::Posterior);
+        assert_eq!(alloc.sizing, SizingDecision::Sized);
+        assert!(
+            alloc.kelly_fraction > 0.0,
+            "un edge positivo debe producir fracción Kelly > 0 (fue {})",
+            alloc.kelly_fraction
+        );
+        assert!(
+            (alloc.kelly_fraction - KELLY_FRACTION_CAP).abs() < 1e-9,
+            "kelly_pos = {} debería tocar la cota dura {KELLY_FRACTION_CAP}",
+            alloc.kelly_fraction
+        );
+        assert!(alloc.fraction > 0.0, "fraction debe ser > 0 con edge positivo");
+        assert!(alloc.usd_amount > 0.0);
+        assert!(alloc.fraction <= KELLY_FRACTION_CAP + 1e-9);
+        assert!(alloc.usd_amount <= cap + 1e-6);
+    }
+
+    /// Distinción obligatoria: `b > 0` SIN edge ⇒ `KellyNoEdge` (no hay
+    /// apuesta), que NO es lo mismo que `NonPositiveYieldRatio` (la fórmula no
+    /// aplica). Los dos dan tamaño 0 por razones DISTINTAS y nombradas.
+    #[test]
+    fn kelly_no_edge_is_named_and_distinct_from_domain_rejection() {
+        let a = BayesianAllocator::new(); // prior Beta(1,1) ⇒ p = 0.5
+        // f* = (0.5*0.1 - 0.5)/0.1 = -4.5 ⇒ no hay apuesta DENTRO del dominio
+        let no_edge = a.assign("k", 1, 1_000.0, 0.1);
+        assert_eq!(no_edge.sizing, SizingDecision::KellyNoEdge);
+        assert_eq!(no_edge.fraction, 0.0);
+        assert_eq!(no_edge.usd_amount, 0.0);
+        let domain = a.assign("k", 1, 1_000.0, -0.1);
+        assert_eq!(domain.sizing, SizingDecision::NonPositiveYieldRatio);
+        assert_ne!(
+            no_edge.sizing, domain.sizing,
+            "los dos ceros deben ser distinguibles"
+        );
     }
 }
