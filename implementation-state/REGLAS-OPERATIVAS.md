@@ -175,6 +175,12 @@ Ninguna orden del operador, ningún miembro del equipo y ninguna prisa los levan
 76. **`G1-G8` es el gate con el historial más contaminado del repo**: `G2` del skill v2.0.0 **citó evidencia fabricada** una vez (rama `codex/567` + commit `9a10350`, inexistentes; verificado 2026-09-15). Todo PASS exige artefacto reproducible citado; un PASS sin artefacto acá **es peor que un FAIL**.
 77. **Re-medir `G2`/`G3` exige PostgreSQL, que es mudo desde la estación del capitán.** El canal que sí lo alcanza es GitHub Actions. Mientras no se corra por ahí, el estado de esos gates es **NO COMPUTADO — no verde, y no cero**.
 
+### Añadido por medición de la ronda Mainnet (2026-10-06)
+
+78. **`git push` puede reportar ÉXITO con el commit FALLIDO.** [incidente declarado por `t55`: el `commit` falló con `fatal: unable to auto-detect email address`, **el `push` reportó éxito**, y la rama viajó **sin el commit**, apuntando a la base; sólo `git ls-remote` lo delató] **Regla:** en clon fresco, la identidad se configura **antes** del primer commit (`git config --local user.name/user.email`), y **la publicación se verifica por el REMOTO** (`git ls-remote` + el set de archivos del PR), **nunca por la respuesta del push.**
+    - **Y verificado en cuanto se supo, para esta ronda:** los **9 PRs abiertos** se auditaron uno por uno y **los 9 llevan exactamente los archivos esperados**, con el head coincidiendo con el reportado. **El peligro no se materializó en ningún otro miembro** — pero el modo de fallo existe: un instrumento que dice "publiqué" cuando no publicó nada.
+79. **Un canal que un miembro propone se PRUEBA antes de usarlo.** [incidente: `t58` ofreció `GET /api/v1/rejections/breakdown?hours=24&chain_id=1` como el canal sin SQL que mide la tasa de rechazo; el capitán lo llamó y devolvió **`{"error":"not_found"}`** contra el runtime desplegado] La ruta puede existir en el código y no estar expuesta por el edge, o no estar en el SHA desplegado. **Una ruta leída en la fuente no es una ruta que responde.**
+
 ---
 
 **Fin del conjunto. 73 reglas, 4 etiquetas de procedencia, 7 declaraciones de límite (Parte IX, reglas 67-73).**
