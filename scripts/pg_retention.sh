@@ -388,6 +388,7 @@ fi
 # ----------------------------------------------------------------------------
 summary=()
 total_deleted=0
+vacuum_failures=0
 ts_now_start=$SECONDS
 
 for spec in "${TABLES[@]}"; do
@@ -536,14 +537,40 @@ for spec in "${TABLES[@]}"; do
     # Each -c is a separate request. SET + VACUUM in one -c creates an
     # implicit transaction, where PostgreSQL refuses VACUUM (SQLSTATE 25001).
     # Keep this as ordinary VACUUM: never rewrite a relation with VACUUM FULL.
-    docker exec -i "$PG_CONTAINER" psql -U postgres -d arbitragex -X -qAt \
+    #
+    # PG-RETENTION-01 (2026-10-06) — la mitad VIVA de #732, SIN su shm_size:
+    #   a) PARALLEL 0: el VACUUM paralelo reserva un segmento DSM en /dev/shm del
+    #      tamaño de maintenance_work_mem (512MB en el compose de prod) y el
+    #      default de Docker para /dev/shm era 64MB, de modo que fallaba con
+    #      `could not resize shared memory segment ... No space left on device`.
+    #      Con PARALLEL 0 no hay segmento DSM en absoluto. #732 lo midió en el
+    #      VPS: `VACUUM (ANALYZE, PARALLEL 0) pool_reserves` → OK.
+    #      El `shm_size: 2gb` de aquel PR NO se re-materializa: `main` ya tiene
+    #      `shm_size: 1gb` por #832 (docker/compose.prod.yml:37) y subirlo más
+    #      exige una medición que lo justifique.
+    #   b) ERROR OBSERVABLE: el `>/dev/null 2>&1` anterior TRAGABA el fallo — este
+    #      VACUUM llevaba fallando a diario sin que nada lo delatara, y el bloat
+    #      resultante acabó congelando los auto-deploys. Ahora la salida se
+    #      captura, el mensaje lleva el error REAL (rc + primeras 300 chars) y el
+    #      resumen final publica `vacuum_failures=N`, contable sin parsear prosa.
+    #      Sigue siendo non-fatal a propósito: el purge de datos no depende de que
+    #      el VACUUM pueda devolver espacio (R9: un fallo de mantenimiento se
+    #      registra, no se silencia; y no se convierte en un fallo del purge).
+    VAC_RC=0
+    VAC_OUT=$(docker exec -i "$PG_CONTAINER" psql -U postgres -d arbitragex -X -qAt \
       -v ON_ERROR_STOP=1 \
       -c "SET lock_timeout='$BATCH_LOCK_TIMEOUT'" \
       -c "SET statement_timeout='600s'" \
-      -c "VACUUM (ANALYZE) $tbl" >/dev/null 2>&1 \
-      || log "retention.vacuum table=$tbl failed (non-fatal)"
+      -c "VACUUM (ANALYZE, PARALLEL 0) $tbl" 2>&1) || VAC_RC=$?
+    if [ "$VAC_RC" -ne 0 ]; then
+      vacuum_failures=$((vacuum_failures + 1))
+      summary+=("$tbl:vacuum=FAILED:rc=${VAC_RC}")
+      log "retention.vacuum table=$tbl FAILED rc=$VAC_RC err=$(printf '%s' "$VAC_OUT" | tr '\n' ' ' | tr -s ' ' | cut -c1-300)"
+    else
+      log "retention.vacuum table=$tbl ok"
+    fi
   fi
 done
 
-log "retention.summary dry_run=$DRY_RUN deleted_total=$total_deleted elapsed_total=$((SECONDS - ts_now_start))s ${summary[*]:-}"
+log "retention.summary dry_run=$DRY_RUN deleted_total=$total_deleted vacuum_failures=$vacuum_failures elapsed_total=$((SECONDS - ts_now_start))s ${summary[*]:-}"
 exit 0
