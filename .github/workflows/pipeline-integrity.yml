@@ -89,6 +89,7 @@ jobs:
 
       - name: 'Preflight — CONNECTION vs PIPELINE (the two red modes)'
         id: preflight
+        if: always()
         run: |
           set -uo pipefail
           set +e
@@ -108,6 +109,7 @@ jobs:
 
       - name: Check Redis stream has recent detections
         id: redis_stream
+        if: always()
         run: |
           set -uo pipefail
           set +e
@@ -136,6 +138,7 @@ jobs:
 
       - name: Check PG has opportunities in last 5 minutes
         id: pg_flow
+        if: always()
         run: |
           set -uo pipefail
           set +e
@@ -165,6 +168,7 @@ jobs:
 
       - name: Check API serves opportunities with correct types
         id: api_types
+        if: always()
         run: |
           set -uo pipefail
           set +e
@@ -175,16 +179,28 @@ jobs:
                   -o ConnectTimeout=15 -o BatchMode=yes -o StrictHostKeyChecking=yes \
                   "$VPS_USER@$VPS_HOST" 'bash -s' <<'REMOTE' 2>&1
           RESP=""
+          ANSWERED=""
           for URL in "http://127.0.0.1:8080/api/opportunities/live?limit=1" \
-                     "http://127.0.0.1:8787/api/v1/opportunities/live?limit=1" \
-                     "http://127.0.0.1:8787/api/opportunities/live?limit=1"; do
-            C=$(curl -sf "$URL" 2>/dev/null || echo '')
-            if [ -n "$C" ]; then echo "answered_by=$URL"; RESP="$C"; break; fi
+                     "http://127.0.0.1:8080/api/v1/opportunities/live?limit=1" \
+                     "http://127.0.0.1:8787/api/opportunities/live?limit=1" \
+                     "http://127.0.0.1:8787/api/v1/opportunities/live?limit=1"; do
+            # Evidence first: WHICH surface answered, with what HTTP code and how many
+            # bytes. A red verdict must be auditable from this log alone.
+            RAW=$(curl -s -m 10 -w '\n%{http_code}' "$URL" 2>/dev/null || echo '')
+            CODE=$(printf '%s' "$RAW" | tail -n1)
+            BODY=$(printf '%s' "$RAW" | sed '$d')
+            BYTES=$(printf '%s' "$BODY" | wc -c | tr -d ' ')
+            echo "probe_url=$URL http=$CODE bytes=$BYTES"
+            if [ -z "$RESP" ] && [ "$CODE" = "200" ] && [ "${BYTES:-0}" -gt 2 ]; then
+              RESP="$BODY"; ANSWERED="$URL"
+            fi
           done
           if [ -z "$RESP" ]; then
-            echo 'VERDICT=FAIL layer=api_types reason=no_api_surface_answered'
+            echo 'VERDICT=FAIL layer=api_types reason=no_api_surface_answered_with_200'
             exit 0
           fi
+          echo "answered_by=$ANSWERED"
+          echo "body_head=$(printf '%s' "$RESP" | head -c 300)"
           COUNT=$(printf '%s' "$RESP" | jq 'if .items then (.items|length) elif .data then (.data|length) else 0 end' 2>/dev/null || echo 0)
           echo "API /opportunities/live returns $COUNT items"
           AMOUNT_TYPE=$(printf '%s' "$RESP" | jq -r 'if .items then .items[0] elif .data then .data[0] else null end | .amount_in_wei | type' 2>/dev/null || echo 'null')
@@ -211,6 +227,7 @@ jobs:
 
       - name: Check WS endpoint is alive
         id: ws_alive
+        if: always()
         run: |
           set -uo pipefail
           set +e
@@ -240,6 +257,7 @@ jobs:
 
       - name: Check Docker containers are healthy
         id: docker_health
+        if: always()
         run: |
           set -uo pipefail
           set +e
