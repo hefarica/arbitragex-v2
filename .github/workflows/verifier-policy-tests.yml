@@ -1,0 +1,130 @@
+name: Verifier policy tests
+
+# CI-SPLIT-01 — flujo BARATO de pruebas del verificador.
+#
+# Que acredita: que la POLITICA y el DISCRIMINADOR funcionan sobre el codigo
+# candidato. Nada mas. No mira el producto servido.
+#
+# Por que existe: hasta ahora estas pruebas vivian dentro del unico job de
+# `public-dapp-verification.yml`, detras de un `if` que saltea el job ENTERO
+# cuando el `workflow_run` aguas arriba no termino en success. Medido por t35:
+# runs 37368339643 y 37362070409 -> `completed/skipped`, job `public-browser`
+# skipped, `runner_id=null`, `steps 0/0`. El run no era rojo, y como era el unico
+# job, los tests quedaron SIN EJECUTAR sin que nada reportara rojo.
+# Estos tests NO necesitan esa precondicion: son estaticos sobre el repo.
+#
+# Frontera explicita de este flujo, verificable grep-eando ESTE archivo: no instala
+# navegador, no consulta el origen publico, no abre conexion al VPS y no usa
+# credencial de produccion. Este YAML no contiene ninguna de esas cuatro cosas NI
+# menciona sus identificadores: si aparecieran, el grep de auditoria daria
+# distinto de cero. La verificacion real es el log de un run de este workflow.
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+# Aislada POR PR: dos PRs no se cancelan entre si. `github.ref` cubre los pushes
+# a main. NUNCA comparte grupo con la auditoria de navegador, que es produccion.
+concurrency:
+  group: verifier-policy-tests-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verifier-tests:
+    name: Verifier policy tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v4
+        with:
+          node-version: 22
+
+      - name: Run the verifier suites from an explicit manifest
+        # `set -euo pipefail` se conserva: un fallo aguas arriba de una tuberia no
+        # puede pasar por exitoso.
+        run: |
+          set -euo pipefail
+          mkdir -p verifier-evidence
+
+          # Manifiesto EXPLICITO de archivos de prueba. No se descubre por glob:
+          # un glob que no matchea nada pasaria en verde. La cifra NO se congela
+          # (hoy 26 + 16 casos; `socket-frame-provenance.test.cjs` recibe ademas
+          # las regresiones de ACK de t36). Lo que se exige es que los ARCHIVOS
+          # esten y que EJECUTEN casos.
+          REQUIRED=(
+            scripts/verification/read-only-policy.test.cjs
+            scripts/verification/socket-frame-provenance.test.cjs
+          )
+
+          missing=0
+          for f in "${REQUIRED[@]}"; do
+            if [[ ! -f "$f" ]]; then
+              echo "MANDATORY_TEST_FILE_MISSING: $f"
+              missing=1
+            fi
+          done
+          if [[ "$missing" -ne 0 ]]; then
+            echo "REFUSED: falta un archivo obligatorio, o sea que se omitirian casos obligatorios."
+            echo "Esto es un RECHAZO, no un pase: una ejecucion sin los casos obligatorios no es evidencia."
+            exit 1
+          fi
+
+          for f in "${REQUIRED[@]}"; do
+            out="verifier-evidence/$(basename "$f").tap"
+            # tee + pipefail: el resultado se conserva como artefacto AUNQUE FALLE,
+            # y el fallo igual hace fallar el step.
+            node --test --test-reporter=tap "$f" 2>&1 | tee "$out"
+          done
+
+      - name: Refuse a run that executed no cases
+        run: |
+          set -euo pipefail
+          node -e '
+            const fs = require("fs");
+            const dir = "verifier-evidence";
+            const files = fs.readdirSync(dir).filter((f) => f.endsWith(".tap"));
+            if (files.length === 0) {
+              console.log("REFUSED: no TAP evidence was produced at all.");
+              process.exit(1);
+            }
+            let pass = 0, fail = 0, tests = 0;
+            for (const f of files) {
+              const t = fs.readFileSync(dir + "/" + f, "utf8");
+              const last = (re) => {
+                const m = [...t.matchAll(re)].map((x) => Number(x[1]));
+                return m.length ? m[m.length - 1] : 0;
+              };
+              const tN = last(/^# tests (\d+)$/gm);
+              const pN = last(/^# pass (\d+)$/gm);
+              const fN = last(/^# fail (\d+)$/gm);
+              console.log(`suite=${f} tests=${tN} pass=${pN} fail=${fN}`);
+              tests += tN; pass += pN; fail += fN;
+            }
+            fs.writeFileSync(dir + "/totals.txt", `TOTAL_TESTS=${tests}\nTOTAL_PASS=${pass}\nTOTAL_FAIL=${fail}\n`);
+            console.log(`TOTAL_TESTS=${tests} TOTAL_PASS=${pass} TOTAL_FAIL=${fail}`);
+            if (tests === 0) {
+              console.log("REFUSED: cero casos ejecutados no es evidencia.");
+              process.exit(1);
+            }
+            if (fail !== 0) {
+              console.log("REFUSED: hay casos fallidos.");
+              process.exit(1);
+            }
+          '
+
+      - name: Preserve the result even when it fails
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: verifier-tests-${{ github.run_id }}-${{ github.run_attempt }}
+          path: verifier-evidence/
+          if-no-files-found: error
+          retention-days: 14

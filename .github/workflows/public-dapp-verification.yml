@@ -1,66 +1,244 @@
 name: Public DApp verified journeys
+
+# CI-SPLIT-01 — flujo de AUDITORIA PUBLICA DE NAVEGADOR.
+#
+# Que acredita: comportamiento OBSERVADO del producto servido, con su version
+# identificada. Es una CONDICION POSTERIOR de aceptacion operativa, NO un
+# requisito del despliegue del que depende para arrancar: convertirla en
+# requisito del deploy seria una dependencia circular.
+#
+# Las PRUEBAS DEL VERIFICADOR ya no viven aca: se movieron a
+# `.github/workflows/verifier-policy-tests.yml`, que dispara en cada PR a main y
+# en cada push a main. Estaban atrapadas detras de la precondicion de despliegue
+# y no la necesitan (medido por t35: runs 37368339643 y 37362070409 quedaron
+# `completed/skipped`, job skipped, `runner_id=null`, `steps 0/0` — sin nada rojo).
+#
+# Frontera: este flujo SI usa el producto real (DAPP_ORIGIN, navegador, red).
+# El flujo barato no comparte con este ni condiciones, ni credenciales, ni
+# concurrencia.
+
 on:
   workflow_dispatch:
     inputs:
       expected_sha:
-        description: Expected full served SHA; empty means diagnostic only
+        description: Expected full served SHA. EMPTY MEANS DIAGNOSTIC ONLY — never a certification.
         type: string
         required: false
   workflow_run:
     workflows: ['Auto-Deploy VPS (Post-E2E)']
     types: [completed]
     branches: [main]
-  push:
-    branches: [feat/liquidity-catalog-hardening-20260914]
-    paths: ['scripts/verification/**', '.github/workflows/public-dapp-verification.yml']
+
 permissions:
   contents: read
+
+# Grupo de PRODUCCION. Los PRs ya no lo usan: el flujo barato tiene su propio
+# grupo por PR (`verifier-policy-tests-<n>`). Este grupo queda para las corridas
+# post-deploy y las manuales, que son las unicas que tocan el producto servido.
 concurrency:
   group: public-dapp-verified-journeys
   cancel-in-progress: false
+
 jobs:
   public-browser:
-    if: github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
+      - name: Register the three SHAs separately and decide whether this run evaluates anything
+        id: gate
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          UPSTREAM_CONCLUSION: ${{ github.event.workflow_run.conclusion }}
+          VERIFIER_SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
+          INPUT_EXPECTED_SHA: ${{ github.event.inputs.expected_sha }}
+        run: |
+          set -euo pipefail
+          mkdir -p public-evidence
+
+          # SHA esperado: solo el del deploy aguas arriba, o el que declaro el
+          # operador a mano. Nunca se deriva del servido (eso seria circular).
+          expected="$INPUT_EXPECTED_SHA"
+          if [[ "$EVENT_NAME" == "workflow_run" ]]; then
+            expected="$VERIFIER_SHA"
+          fi
+
+          if [[ -n "$expected" ]]; then
+            mode="candidate"
+          else
+            mode="diagnostic"
+          fi
+
+          evaluate="true"
+          verdict="PENDIENTE_DE_AUDITORIA"
+          if [[ "$EVENT_NAME" == "workflow_run" && "$UPSTREAM_CONCLUSION" != "success" ]]; then
+            evaluate="false"
+            # Omitir la auditoria aca puede ser CORRECTO: auditar la version
+            # anterior y presentarlo como validacion de la nueva seria peor.
+            # Pero el resultado queda IDENTIFICADO como no evaluado, nunca como
+            # recorrido aprobado.
+            verdict="NO EVALUADO POR FALLO DEL DESPLIEGUE"
+            echo "::warning::NO EVALUADO POR FALLO DEL DESPLIEGUE (deploy aguas arriba: ${UPSTREAM_CONCLUSION})"
+            {
+              echo "### NO EVALUADO POR FALLO DEL DESPLIEGUE"
+              echo ""
+              echo "El deploy aguas arriba concluyo '${UPSTREAM_CONCLUSION}': el producto servido no se"
+              echo "audito y **no** queda aprobado. Esto es una omision declarada, no un recorrido."
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+          {
+            echo "verifier_sha=${VERIFIER_SHA:-NOT_OBSERVED}"
+            echo "expected_sha=${expected:-NOT_DECLARED}"
+            echo "served_sha=NOT_OBSERVED"
+            echo "mode=${mode}"
+            echo "evaluate=${evaluate}"
+            echo "verdict=${verdict}"
+            echo "certifies_candidate=false"
+            echo "reason=auditoria no ejecutada"
+          } > public-evidence/sha-register.txt
+          cat public-evidence/sha-register.txt
+
+          echo "evaluate=${evaluate}" >> "$GITHUB_OUTPUT"
+          echo "mode=${mode}" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+        if: steps.gate.outputs.evaluate == 'true'
         with:
           ref: ${{ github.event.workflow_run.head_sha || github.sha }}
           persist-credentials: false
-      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444
+
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v4
+        if: steps.gate.outputs.evaluate == 'true'
         with:
           node-version: 22
           cache: npm
+
       - name: Record tested source, without production secrets
+        if: steps.gate.outputs.evaluate == 'true'
         run: |
-          mkdir -p public-evidence
+          set -euo pipefail
           echo "SOURCE_SHA=$(git rev-parse HEAD)" >> "$GITHUB_ENV"
           echo "CATALOG_BUILD_DIR=$RUNNER_TEMP/arbx-catalog-build" >> "$GITHUB_ENV"
           git rev-parse HEAD > public-evidence/source-sha.txt
-      - run: npm ci --ignore-scripts --no-audit --no-fund
-      - name: Verify that the verifier cannot manufacture a success
+
+      - name: Build the liquidity-catalog model the browser audit consumes
+        if: steps.gate.outputs.evaluate == 'true'
         run: |
           set -euo pipefail
-          node --test scripts/verification/read-only-policy.test.cjs | tee public-evidence/verifier-tests.tap
+          npm ci --ignore-scripts --no-audit --no-fund
           npx --no-install tsc --target ES2022 --module commonjs --strict --noUncheckedIndexedAccess \
             --skipLibCheck --rootDir . --outDir "$CATALOG_BUILD_DIR" \
             frontend/app/dex-registry/liquidity-catalog-model.ts
           printf '{"type":"commonjs"}\n' > "$CATALOG_BUILD_DIR/package.json"
+
       - name: Install locked browser
+        if: steps.gate.outputs.evaluate == 'true'
         working-directory: frontend
         run: npx --no-install playwright install --with-deps chromium
+
       - name: Actual public browser, GET and read-only socket subscriptions
+        if: steps.gate.outputs.evaluate == 'true'
         env:
           DAPP_ORIGIN: ${{ vars.DAPP_ORIGIN || 'https://arbx.ape-tv.net' }}
-          EXPECTED_SERVED_SHA: ${{ github.event.workflow_run.head_sha || inputs.expected_sha || '' }}
+          # Solo en modo candidato se afirma el SHA esperado. Una corrida manual
+          # sin `expected_sha` NO certifica una version candidata: sirve para
+          # diagnostico y por eso no se le exige igualdad.
+          EXPECTED_SERVED_SHA: ${{ steps.gate.outputs.mode == 'candidate' && (github.event.workflow_run.head_sha || github.event.inputs.expected_sha) || '' }}
           EVIDENCE_DIR: public-evidence
         run: |
           set -euo pipefail
           node scripts/verification/public-dapp.cjs 2>&1 | tee public-evidence/browser.log
+
+      - name: Read the served SHA from the audit report, separately from the other two
+        if: always() && steps.gate.outputs.evaluate == 'true'
+        run: |
+          set -euo pipefail
+          node -e '
+            const fs = require("fs");
+            const p = "public-evidence/report.json";
+            const reg = "public-evidence/sha-register.txt";
+            let served = "NOT_OBSERVED";
+            let reason = "report.json ausente: la auditoria no llego a escribir su informe";
+            if (fs.existsSync(p)) {
+              try {
+                const r = JSON.parse(fs.readFileSync(p, "utf8"));
+                if (r.after && r.after.sha) {
+                  served = r.after.sha;
+                  reason = "leido de report.json .after.sha";
+                } else {
+                  reason = "report.json sin .after.sha";
+                }
+              } catch (e) {
+                reason = "report.json ilegible: " + e.message;
+              }
+            }
+            const base = fs.existsSync(reg) ? fs.readFileSync(reg, "utf8") : "";
+            const lines = base.split("\n")
+              .filter((l) => l.length > 0)
+              .filter((l) => !l.startsWith("served_sha=") && !l.startsWith("reason="));
+            lines.push("served_sha=" + served);
+            lines.push("reason=" + reason);
+            fs.writeFileSync(reg, lines.join("\n") + "\n");
+            console.log(lines.join("\n"));
+          '
+
+      - name: Publish the verdict of this audit run
+        if: always()
+        run: |
+          set -euo pipefail
+          node -e '
+            const fs = require("fs");
+            const reg = "public-evidence/sha-register.txt";
+            if (!fs.existsSync(reg)) {
+              console.log("sin registro de SHA: el gate no llego a correr");
+              process.exit(0);
+            }
+            const txt = fs.readFileSync(reg, "utf8");
+            const get = (k) => (txt.match(new RegExp("^" + k + "=(.*)$", "m")) || [])[1] || "NOT_OBSERVED";
+            const verifier = get("verifier_sha");
+            const expected = get("expected_sha");
+            const served = get("served_sha");
+            const mode = get("mode");
+            let verdict = get("verdict");
+            let certifies = get("certifies_candidate");
+            if (verdict === "PENDIENTE_DE_AUDITORIA") {
+              if (served === "NOT_OBSERVED") {
+                verdict = "NO EVALUADO: no se observo un SHA servido";
+                certifies = "false";
+              } else if (mode === "candidate") {
+                verdict = served === expected ? "AUDITADO Y COINCIDE" : "AUDITADO Y NO COINCIDE";
+                certifies = served === expected ? "true" : "false";
+              } else {
+                verdict = "DIAGNOSTICO (sin expected_sha: NO certifica version candidata)";
+                certifies = "false";
+              }
+            }
+            const out = [
+              "verifier_sha=" + verifier,
+              "expected_sha=" + expected,
+              "served_sha=" + served,
+              "mode=" + mode,
+              "verdict=" + verdict,
+              "certifies_candidate=" + certifies,
+            ].join("\n");
+            fs.writeFileSync(reg, out + "\n");
+            console.log(out);
+            const sum = process.env.GITHUB_STEP_SUMMARY;
+            if (sum) {
+              let md = "\n### Auditoria publica de navegador\n\n";
+              md += "| campo | valor |\n|---|---|\n";
+              md += "| SHA del verificador | `" + verifier + "` |\n";
+              md += "| SHA esperado | `" + expected + "` |\n";
+              md += "| SHA servido | `" + served + "` |\n";
+              md += "| veredicto | **" + verdict + "** |\n";
+              md += "| certifica candidato | `" + certifies + "` |\n";
+              fs.appendFileSync(sum, md);
+            }
+          '
+
       - name: Preserve failures as well as screenshots
         if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: public-verification-${{ github.run_id }}-${{ github.run_attempt }}
           path: public-evidence/
