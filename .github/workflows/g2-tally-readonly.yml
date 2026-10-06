@@ -107,6 +107,9 @@ jobs:
           test -n "$VPS_KEY" && test -n "$VPS_HOST"
           install -m 700 -d ~/.ssh
           printf '%s\n' "$VPS_KEY" > ~/.ssh/deploy_key
+          # ssh se niega a usar una clave con permisos abiertos ("bad permissions"):
+          # medido en el primer run de este canal, que fallo por esto (0644).
+          chmod 600 ~/.ssh/deploy_key
           ssh-keyscan -T 10 -p "$VPS_PORT" -H "$VPS_HOST" > ~/.ssh/known_hosts
           test -s ~/.ssh/known_hosts
           echo "ssh material ready (key never echoed)"
@@ -122,19 +125,33 @@ jobs:
           # auto-deploy-vps.yml:177,181,187,313 -> `docker exec arbitragex-v2-postgres-1 pg_isready -U postgres -d arbitragex`
           PGC=arbitragex-v2-postgres-1
 
-          rc=0
+          # PREFLIGHT con discriminador de causa. ssh usa rc=255 para SUS propios
+          # errores (auth/conexion); un rc distinto viene de `docker inspect`. Sin
+          # esta distincion el mensaje "container not found" miente cuando lo que
+          # fallo fue el ssh — exactamente lo que paso en el primer run del canal.
           : > g2-evidence/host-preflight.txt
-          if ssh -i ~/.ssh/deploy_key -p "$VPS_PORT" -o BatchMode=yes -o StrictHostKeyChecking=yes \
-               "$VPS_USER@$VPS_HOST" "docker inspect -f '{{.State.Running}}' $PGC" \
-               > g2-evidence/host-preflight.txt 2>&1; then
-            echo "preflight: container $PGC present (see host-preflight.txt)"
-          else
-            echo "::error::container $PGC not found on the host — channel cannot answer"
-            echo "candidate containers on the host:"
+          set +e
+          ssh -i ~/.ssh/deploy_key -p "$VPS_PORT" -o BatchMode=yes -o StrictHostKeyChecking=yes \
+            "$VPS_USER@$VPS_HOST" "docker inspect -f '{{.State.Running}}' $PGC" \
+            > g2-evidence/host-preflight.txt 2>&1
+          pre_rc=$?
+          set -e
+          if [ "$pre_rc" -eq 255 ]; then
+            echo "::error::preflight: SSH FAILED (rc=255). The channel could not even reach the host — this is NOT a missing-container finding. stderr:"
+            head -20 g2-evidence/host-preflight.txt || true
+            exit 1
+          fi
+          if [ "$pre_rc" -ne 0 ]; then
+            echo "::error::preflight: ssh OK but 'docker inspect $PGC' failed (rc=$pre_rc) — container absent or not inspectable. Output:"
+            head -20 g2-evidence/host-preflight.txt || true
+            echo "--- containers actually present on the host ---"
             ssh -i ~/.ssh/deploy_key -p "$VPS_PORT" -o BatchMode=yes -o StrictHostKeyChecking=yes \
               "$VPS_USER@$VPS_HOST" "docker ps --format '{{.Names}}'" || true
             exit 1
           fi
+          echo "preflight OK: container $PGC running=$(cat g2-evidence/host-preflight.txt)"
+
+          rc=0
 
           while IFS=$'\t' read -r key sql; do
             [ -n "$key" ] || continue
