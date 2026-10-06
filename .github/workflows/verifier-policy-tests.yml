@@ -55,13 +55,15 @@ jobs:
           mkdir -p verifier-evidence
 
           # Manifiesto EXPLICITO de archivos de prueba. No se descubre por glob:
-          # un glob que no matchea nada pasaria en verde. La cifra NO se congela
-          # (hoy 26 + 16 casos; `socket-frame-provenance.test.cjs` recibe ademas
-          # las regresiones de ACK de t36). Lo que se exige es que los ARCHIVOS
-          # esten y que EJECUTEN casos.
+          # un glob que no matchea nada pasaria en verde. La cifra NO se congela:
+          # los casos OBLIGATORIOS se enumeran POR NOMBRE en
+          # scripts/verification/mandatory-cases.json (cota inferior: se pueden
+          # anadir casos nuevos). Lo que se exige es que los ARCHIVOS esten y que
+          # EJECUTEN los casos obligatorios identificables.
           REQUIRED=(
             scripts/verification/read-only-policy.test.cjs
             scripts/verification/socket-frame-provenance.test.cjs
+            scripts/verification/mandatory-cases-guard.test.cjs
           )
 
           missing=0
@@ -84,7 +86,17 @@ jobs:
             node --test --test-reporter=tap "$f" 2>&1 | tee "$out"
           done
 
-      - name: Refuse a run that executed no cases
+      - name: Refuse a run that lost or skipped a MANDATORY case (by NAME)
+        # VERIFIER-MANDATORY-CASES-01. El validador anterior sumaba
+        # `# tests/# pass/# fail` y solo rechazaba con `tests == 0` o `fail != 0`.
+        # Con eso APROBABA una suite con TODOS los casos en `test.skip`
+        # (TOTAL_PASS=0) y APROBABA un archivo SIN ninguna llamada a `test()`
+        # (Node lo contabiliza como subtest aprobado -> `# tests 1 / # pass 1`).
+        # Por eso `pass > 0` tampoco alcanza: ese archivo sube `pass` sin una sola
+        # prueba. Ahora cada caso obligatorio esta ENUMERADO POR NOMBRE en
+        # scripts/verification/mandatory-cases.json y se verifica su resultado
+        # INDIVIDUAL: ausente, `skipped`, `todo`, cancelado o fallido -> RECHAZO
+        # nombrando el caso. Las cifras quedan como EVIDENCIA, no como decision.
         run: |
           set -euo pipefail
           node -e '
@@ -95,7 +107,7 @@ jobs:
               console.log("REFUSED: no TAP evidence was produced at all.");
               process.exit(1);
             }
-            let pass = 0, fail = 0, tests = 0;
+            let pass = 0, fail = 0, tests = 0, skipped = 0, todo = 0, cancelled = 0;
             for (const f of files) {
               const t = fs.readFileSync(dir + "/" + f, "utf8");
               const last = (re) => {
@@ -105,20 +117,18 @@ jobs:
               const tN = last(/^# tests (\d+)$/gm);
               const pN = last(/^# pass (\d+)$/gm);
               const fN = last(/^# fail (\d+)$/gm);
-              console.log(`suite=${f} tests=${tN} pass=${pN} fail=${fN}`);
-              tests += tN; pass += pN; fail += fN;
+              const sN = last(/^# skipped (\d+)$/gm);
+              const tdN = last(/^# todo (\d+)$/gm);
+              const cN = last(/^# cancelled (\d+)$/gm);
+              console.log(`suite=${f} tests=${tN} pass=${pN} fail=${fN} skipped=${sN} todo=${tdN} cancelled=${cN}`);
+              tests += tN; pass += pN; fail += fN; skipped += sN; todo += tdN; cancelled += cN;
             }
-            fs.writeFileSync(dir + "/totals.txt", `TOTAL_TESTS=${tests}\nTOTAL_PASS=${pass}\nTOTAL_FAIL=${fail}\n`);
-            console.log(`TOTAL_TESTS=${tests} TOTAL_PASS=${pass} TOTAL_FAIL=${fail}`);
-            if (tests === 0) {
-              console.log("REFUSED: cero casos ejecutados no es evidencia.");
-              process.exit(1);
-            }
-            if (fail !== 0) {
-              console.log("REFUSED: hay casos fallidos.");
-              process.exit(1);
-            }
+            fs.writeFileSync(dir + "/totals.txt",
+              `TOTAL_TESTS=${tests}\nTOTAL_PASS=${pass}\nTOTAL_FAIL=${fail}\nTOTAL_SKIPPED=${skipped}\nTOTAL_TODO=${todo}\nTOTAL_CANCELLED=${cancelled}\n`);
+            console.log(`TOTAL_TESTS=${tests} TOTAL_PASS=${pass} TOTAL_FAIL=${fail} TOTAL_SKIPPED=${skipped} TOTAL_TODO=${todo} TOTAL_CANCELLED=${cancelled}`);
+            console.log("(estas cifras son EVIDENCIA; la decision la toma el paso por NOMBRE)");
           '
+          node scripts/verification/assert-mandatory-cases.mjs verifier-evidence
 
       - name: Preserve the result even when it fails
         if: always()
