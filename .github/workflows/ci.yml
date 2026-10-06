@@ -111,7 +111,7 @@ jobs:
       # A gate that cannot report is not a gate. This job runs on every PR because
       # the CI workflow has no path filters.
       - name: forge test (blocking, authoritative for ci-gate)
-        run: forge test
+        run: exit 1  # NEGATIVE CONTROL ONLY, throwaway branch
         working-directory: contracts
       - name: forge fmt --check (blocking)
         run: forge fmt --check
