@@ -1,6 +1,6 @@
 # PIPELINE-INTEGRITY-REPAIR-01 — el vigía vuelve a poder medir
 
-**Estado: instrumento REPARADO y verificado en su estructura; el veredicto del pipeline está MEDIDO.**
+**Estado: instrumento REPARADO; el veredicto del pipeline está MEDIDO y es VERDE en las 5 capas.**
 La corrida de Actions despachada para probarlo quedó **encolada sin adquirir runner** (clase A) — se declara
 abajo sin adornos.
 
@@ -88,31 +88,45 @@ obligatorio** primero:
 |---|---|---|---|
 | 1 Redis | `redis-cli XLEN arbx:opps:detected` | **10002** | **VERDE** |
 | 2 PG | `COUNT(*) FROM opportunities WHERE detected_at > NOW() - INTERVAL '5 minutes'` | **4432** | **VERDE** |
-| **3 API** | `curl 127.0.0.1:8788/api/v1/opportunities/live?limit=1` | **HTTP 404**, cuerpo vacío | **ROJO** |
+| **3 API** | `curl 127.0.0.1:8788/api/opportunities/live?limit=1` | **HTTP 200 · 6913 B** | **VERDE** |
 | 4 WS | `curl -o /dev/null -w '%{http_code}' 127.0.0.1:8080/socket.io/?EIO=4&transport=polling` | **200** | **VERDE** |
 | 5 Docker | `docker ps … health=unhealthy` + total | 0 unhealthy · **25** contenedores | **VERDE** |
 
-### El hallazgo de la capa 3, con su matiz medido
+### `F-PIREPAIR-CAPA3-EDGE-01` — **RETIRADO** (el instrumento se equivocó, y queda registrado)
 
-La capa 3 da rojo **y el matiz importa** — se midió contra los tres puertos:
+**Este finding era FALSO. La capa 3 está VERDE.** Lo retiro con su evidencia, no lo borro: el registro de
+que el instrumento se equivocó vale más que un informe prolijo.
 
-| Destino | `/api/v1/opportunities/live?limit=1` | `/api/status` |
+**Causa del error — R82: una ruta existe POR SUPERFICIE, no por estar en el código.**
+`edge/worker/src/index.ts:699` (leído en el VPS):
+
+```
+app.get("/api/opportunities/live", (c) => proxy(c, "/api/v1/opportunities/live", "arbx:cache:opps", 2));
+```
+
+**El edge declara la ruta SIN `v1` y le agrega `v1` al reenviar; el api-server directo la exige CON `v1`.**
+Yo sondeé la forma `v1` contra el edge y la forma sin `v1` contra el 8080: **la ruta equivocada en cada
+superficie, en sentidos opuestos.**
+
+**Tabla de verdad 2×2 que yo mismo medí** (las cuatro celdas, no dos):
+
+| superficie | ruta | código |
 |---|---|---|
-| edge `127.0.0.1:8788` | **404** | **200** |
-| edge `127.0.0.1:8787` | **404** | — |
-| **api-server `127.0.0.1:8080`** | **200** | — |
+| **EDGE `127.0.0.1:8788`** | **`/api/opportunities/live`** | **200 · 6913 B** |
+| EDGE `127.0.0.1:8788` | `/api/v1/opportunities/live` | 404 · 21 B |
+| `127.0.0.1:8080` | `/api/opportunities/live` | 404 · 161 B |
+| **`127.0.0.1:8080`** | **`/api/v1/opportunities/live`** | **200 · 6218 B** |
 
-**El edge está vivo** (sirve `/api/status` con 200), pero **no sirve `.../opportunities/live`** — ese path
-responde **404** por el edge y **200** por el api-server directo. La sonda usa el edge porque es el mismo
-destino que el workflow original intentaba (`<VPS_HOST>:8787`, el edge según RULE 02); `8788` es su puerto
-publicado en loopback. **El rojo es entonces una medición fiel de la intención original, no un artefacto del
-puerto elegido.**
+**El edge está vivo y sirve el dato** (200 con cuerpo real). Y el `200` del edge **no** es un artefacto del
+puerto: `8788` es el publicado en loopback del mismo edge que el workflow original intentaba en `8787`.
 
-**NO se parchea.** Esta orden restaura la capacidad de medir; el veredicto es otro asunto y se reporta:
-**el gate, una vez conectado, da ROJO HOY, en la capa 3.**
+**Corregí el instrumento, no el pipeline.** La sonda de la capa 3 queda con la forma del edge. Y apareció un
+**segundo defecto mío** al corregirla: **el VPS no tiene `jq`** (`command -v jq` → `NO_JQ`), y yo había
+movido el `curl` al VPS dejando el `jq` ahí — habría fallado por herramienta ausente, no por pipeline. El
+parseo ahora corre **en el runner** (que sí tiene jq) y acepta las dos formas del contador que la API
+publica (`.data` array o `.count` escalar).
 
----
-
+**Con esto, el gate reparado da VERDE**: capas 1, 2, 3, 4 y 5 las cinco en verde.
 ## 5. La corrida de prueba: despachada, y qué pasó
 
 El workflow **ya existía en `main`**, así que es despachable con `--ref`:

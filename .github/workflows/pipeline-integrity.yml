@@ -157,6 +157,19 @@ jobs:
           VPS_USER: ${{ secrets.VPS_SSH_USER }}
           VPS_PORT: ${{ secrets.VPS_PORT || '22' }}
         run: |
+          # R82 — LA RUTA EXISTE POR SUPERFICIE, NO POR ESTAR EN EL CODIGO.
+          # edge/worker/src/index.ts:699:
+          #   app.get("/api/opportunities/live", (c) => proxy(c, "/api/v1/opportunities/live", ...))
+          # El edge declara la ruta SIN `v1` y le agrega `v1` al reenviar; el api-server
+          # directo la exige CON `v1`. Tabla 2x2 MEDIDA:
+          #   EDGE 8788 /api/opportunities/live    -> 200 · 6913 B
+          #   EDGE 8788 /api/v1/opportunities/live -> 404 ·   21 B
+          #   8080      /api/opportunities/live    -> 404 ·  161 B
+          #   8080      /api/v1/opportunities/live -> 200 · 6218 B
+          # Sonar la forma `v1` contra el edge da 404: es la superficie equivocada,
+          # no una capa rota.
+          # Y el parseo va EN EL RUNNER: el VPS **no tiene jq** (`command -v jq` -> NO_JQ).
+          #
           # El curl corre EN el VPS, no en el runner. Motivo medido: el edge esta
           # publicado SOLO en loopback (`compose.prod.yml`: `- 127.0.0.1:8788:8787`),
           # asi que un curl desde el runner a `<host>:8787` no llega nunca — y su
@@ -166,20 +179,20 @@ jobs:
           set +e
           RESP="$(ssh -i ~/.ssh/deploy_key -p "$VPS_PORT" -o BatchMode=yes -o StrictHostKeyChecking=yes \
             "$VPS_USER@$VPS_HOST" \
-            "curl -sf 'http://127.0.0.1:8788/api/v1/opportunities/live?limit=1' 2>/dev/null || echo '{}'" 2>&1)"
+            "curl -sf 'http://127.0.0.1:8788/api/opportunities/live?limit=1' 2>/dev/null || echo '{}'" 2>&1)"
           rc=$?
           set -e
           if [ "$rc" -ne 0 ]; then
             echo "::error::VIGIA SIN CONEXION en capa 3 (ssh rc=$rc): $RESP"; exit 1
           fi
           RESP="$(echo "$RESP" | tr -d '\r' | tail -1)"
-          COUNT="$(echo "$RESP" | jq '.data | length' 2>/dev/null || echo 0)"
+          COUNT="$(echo "$RESP" | jq 'if (.data|type)=="array" then (.data|length) else (.count // 0) end' 2>/dev/null || echo 0)"
           echo "API /opportunities/live returns $COUNT items"
           if [ "$COUNT" -eq 0 ]; then
             echo '::error::PIPELINE ROJO capa 3: API returns ZERO opportunities — pipeline broken between PG and API'
             exit 1
           fi
-          AMOUNT_TYPE="$(echo "$RESP" | jq -r '.data[0].amount_in_wei | type' 2>/dev/null || echo 'null')"
+          AMOUNT_TYPE="$(echo "$RESP" | jq -r '(.data[0].amount_in_wei // null) | type' 2>/dev/null || echo 'null')"
           echo "amount_in_wei type = $AMOUNT_TYPE"
           if [ "$AMOUNT_TYPE" != "string" ] && [ "$AMOUNT_TYPE" != "null" ]; then
             echo "::error::PIPELINE ROJO capa 3: amount_in_wei is $AMOUNT_TYPE — should be string or null (precision loss!)"
