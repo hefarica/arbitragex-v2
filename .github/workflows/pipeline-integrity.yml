@@ -5,6 +5,30 @@
 # and on-demand. Fails when ANY layer is empty, stale, or returns wrong types.
 # This is the automated guarantee that the cards show REAL opportunities
 # from REAL data in REAL time (RULE 00, R7, R8, R10).
+#
+# ─────────────────────────────────────────────────────────────────────────────
+# PIPELINE-INTEGRITY-REPAIR-01 (t64): EL VIGIA ERA MUDO.
+#
+# Medido por t58 en el log: TODOS sus runs morian en el PRIMER step con
+# `ssh: Could not resolve hostname arbx` / exit 255. Los 6 `failure`
+# consecutivos eran del CHEQUEO, no del pipeline: el workflow usaba el alias
+# `ssh arbx` SIN NUNCA DEFINIRLO. Ese alias funciona en deploy.yml:57,
+# deploy-edge-only.yml:38, deploy-edge-only-v2.yml:39 y
+# audit-vps-wiring.yml:212, que SI escriben un bloque `Host arbx` en
+# ~/.ssh/config — aca no habia ni clave, ni host, ni config.
+#
+# DOS MODOS DE ROJO, que hasta ahora se leian como uno solo:
+#   * SIN CONEXION   -> `VIGIA=SIN_CONEXION`. NO dice nada del pipeline.
+#                       (Esto es lo que decian, sin decirlo, los 6 failure.)
+#   * PIPELINE ROJO  -> `VIGIA=EVALUADO` + `PIPELINE=ROJO`. Dice que una capa
+#                       real esta vacia/rota. Solo puede afirmarse DESPUES de
+#                       conectar.
+# Leer el primero como el segundo es leer una etiqueta como si fuera otra.
+#
+# Lo unico que cambia aca es el TRANSPORTE (materializar ssh + usar la forma
+# explicita + clasificar la causa). Las capas, los umbrales y los veredictos
+# sobre el pipeline NO se tocan: esta orden restaura el instrumento.
+# ─────────────────────────────────────────────────────────────────────────────
 
 name: Pipeline Integrity Gate
 
@@ -12,11 +36,12 @@ on:
   schedule:
     - cron: '*/15 * * * *'
   workflow_dispatch:
-    inputs:
-      vps_host:
-        description: 'VPS hostname for API checks'
-        required: false
-        default: 'localhost'
+    # SIN input libre: el host sale de `secrets.VPS_SSH_HOST`. El input
+    # `vps_host` (string libre, default 'localhost') se elimino por dos
+    # motivos medidos: (a) en el cron `inputs.vps_host` es vacio, asi que los
+    # checks de API/WS apuntaban a `localhost` —el runner— y su rojo no hablaba
+    # del pipeline; (b) era superficie de inyeccion en una URL. t54 y t58 ya
+    # descartaron parametros libres; aca directamente no hay ninguno.
 
 permissions:
   contents: read
@@ -29,84 +54,213 @@ jobs:
   verify-e2e:
     name: Verify E2E no-loss pipeline
     runs-on: ubuntu-latest
-    timeout-minutes: 5
-    env:
-      VPS_HOST: ${{ inputs.vps_host || 'localhost' }}
-
+    timeout-minutes: 8
     steps:
-      - name: Check Redis stream has recent detections
+      - name: Setup SSH (same mechanism as auto-deploy-vps.yml:58-71)
+        env:
+          VPS_KEY: ${{ secrets.VPS_SSH_KEY }}
+          VPS_HOST: ${{ secrets.VPS_SSH_HOST }}
+          VPS_PORT: ${{ secrets.VPS_PORT || '22' }}
         run: |
-          # Connect to VPS Redis and check the detected opportunities stream
-          # XLEN must be > 0 — an empty stream means the searcher is not producing
-          ssh arbx "
-            XLEN=\$(docker exec arbitragex-v2-redis-1 redis-cli XLEN arbx:opps:detected 2>/dev/null || echo 0)
-            echo \"Redis XLEN arbx:opps:detected = \$XLEN\"
-            if [ \"\$XLEN\" -eq \"0\" ]; then
-              echo '::error::Redis stream arbx:opps:detected is EMPTY — searcher not producing'
-              exit 1
-            fi
-          "
+          set -euo pipefail
+          test -n "$VPS_KEY" && test -n "$VPS_HOST"
+          [[ "$VPS_PORT" =~ ^[0-9]+$ ]] && (( VPS_PORT > 0 && VPS_PORT < 65536 ))
+          install -m 700 -d ~/.ssh
+          umask 077
+          printf '%s\n' "$VPS_KEY" > ~/.ssh/deploy_key
+          # `umask 077` ya deja la clave en 600; el chmod es cinturon y tirantes:
+          # en G2-CHANNEL-01 (t60) una clave en 0644 hizo fallar el primer run
+          # con "Load key: bad permissions". No se repite.
+          chmod 600 ~/.ssh/deploy_key
+          ssh-keyscan -T 10 -p "$VPS_PORT" -H "$VPS_HOST" > ~/.ssh/known_hosts
+          test -s ~/.ssh/known_hosts
+          echo "ssh material ready (key never echoed)"
 
-      - name: Check PG has opportunities in last 5 minutes
+      - name: Connectivity preflight — clasifica la causa, no la esconde
+        id: conn
+        env:
+          VPS_HOST: ${{ secrets.VPS_SSH_HOST }}
+          VPS_USER: ${{ secrets.VPS_SSH_USER }}
+          VPS_PORT: ${{ secrets.VPS_PORT || '22' }}
         run: |
-          ssh arbx "
-            COUNT=\$(docker exec arbitragex-v2-postgres-1 psql -U postgres -d arbitragex -t -A -c \
-              \"SELECT COUNT(*) FROM opportunities WHERE detected_at > NOW() - INTERVAL '5 minutes'\" 2>/dev/null || echo 0)
-            echo \"PG opportunities in last 5 min = \$COUNT\"
-            if [ \"\$COUNT\" -eq \"0\" ]; then
-              echo '::error::PG has ZERO opportunities in the last 5 minutes — pipeline broken between Redis and PG'
-              exit 1
-            fi
-          "
-
-      - name: Check API serves opportunities with correct types
-        run: |
-          # The API must return data AND amount_in_wei must be a string (not float)
-          RESP=\$(curl -sf "http://\${VPS_HOST}:8787/api/v1/opportunities/live?limit=1" 2>/dev/null || echo '{}')
-          COUNT=\$(echo "\$RESP" | jq '.data | length' 2>/dev/null || echo 0)
-          echo \"API /opportunities/live returns \$COUNT items\"
-          if [ \"\$COUNT\" -eq \"0\" ]; then
-            echo '::error::API returns ZERO opportunities — pipeline broken between PG and API'
+          set -uo pipefail
+          set +e
+          out="$(ssh -i ~/.ssh/deploy_key -p "$VPS_PORT" \
+            -o ConnectTimeout=15 -o BatchMode=yes -o StrictHostKeyChecking=yes \
+            "$VPS_USER@$VPS_HOST" 'echo READY' 2>&1)"
+          rc=$?
+          set -e
+          echo "$out" | sed 's/^/  ssh: /'
+          if [ "$rc" -eq 0 ] && [ "$(echo "$out" | tr -d '\r')" = "READY" ]; then
+            echo "reachable=true" >> "$GITHUB_OUTPUT"
+            echo "VIGIA=SIN_CONEXION_NO" >> "$GITHUB_ENV"
+            echo "preflight OK: the vigia reached the host"
+          else
+            echo "reachable=false" >> "$GITHUB_OUTPUT"
+            echo "VIGIA=SIN_CONEXION" >> "$GITHUB_ENV"
+            echo "::error::VIGIA SIN CONEXION (ssh rc=$rc). El vigia NO pudo llegar al VPS, asi que NO PUEDE afirmar nada sobre el pipeline. Esto NO es 'el pipeline esta roto'."
             exit 1
           fi
 
-          # Verify amount_in_wei is string (not number) — precision guard
-          AMOUNT_TYPE=\$(echo "\$RESP" | jq -r '.data[0].amount_in_wei | type' 2>/dev/null || echo 'null')
-          echo \"amount_in_wei type = \$AMOUNT_TYPE\"
-          if [ \"\$AMOUNT_TYPE\" != '"string"' ] && [ \"\$AMOUNT_TYPE\" != '"null"' ]; then
-            echo '::error::amount_in_wei is '\$AMOUNT_TYPE' — should be string or null (precision loss!)'
+      - name: "Layer 1 — Redis stream has recent detections"
+        if: steps.conn.outputs.reachable == 'true'
+        env:
+          VPS_HOST: ${{ secrets.VPS_SSH_HOST }}
+          VPS_USER: ${{ secrets.VPS_SSH_USER }}
+          VPS_PORT: ${{ secrets.VPS_PORT || '22' }}
+        run: |
+          set -uo pipefail
+          set +e
+          XLEN="$(ssh -i ~/.ssh/deploy_key -p "$VPS_PORT" -o BatchMode=yes -o StrictHostKeyChecking=yes \
+            "$VPS_USER@$VPS_HOST" \
+            "docker exec arbitragex-v2-redis-1 redis-cli XLEN arbx:opps:detected 2>/dev/null || echo 0" 2>&1)"
+          rc=$?
+          set -e
+          if [ "$rc" -ne 0 ]; then
+            echo "::error::VIGIA SIN CONEXION en capa 1 (ssh rc=$rc): $XLEN"; exit 1
+          fi
+          XLEN="$(echo "$XLEN" | tr -d '\r' | tail -1)"
+          echo "Redis XLEN arbx:opps:detected = $XLEN"
+          if [ "$XLEN" -eq 0 ] 2>/dev/null; then
+            echo '::error::PIPELINE ROJO capa 1: Redis stream arbx:opps:detected is EMPTY — searcher not producing'
             exit 1
           fi
 
-      - name: Check WS endpoint is alive
+      - name: "Layer 2 — PG has opportunities in last 5 minutes"
+        if: steps.conn.outputs.reachable == 'true'
+        env:
+          VPS_HOST: ${{ secrets.VPS_SSH_HOST }}
+          VPS_USER: ${{ secrets.VPS_SSH_USER }}
+          VPS_PORT: ${{ secrets.VPS_PORT || '22' }}
         run: |
-          # WS health check: the endpoint must accept connections
-          # (full message verification requires a WS client — this checks TCP/HTTP upgrade)
-          HTTP_CODE=\$(curl -sf -o /dev/null -w '%{http_code}' \
-            "http://\${VPS_HOST}:8080/socket.io/?EIO=4&transport=polling" 2>/dev/null || echo "000")
-          echo \"WS polling endpoint HTTP status = \$HTTP_CODE\"
-          if [ \"\$HTTP_CODE\" != "200" ]; then
-            echo '::error::WebSocket polling endpoint returned '\$HTTP_CODE' — WS not reachable'
+          set -uo pipefail
+          set +e
+          COUNT="$(ssh -i ~/.ssh/deploy_key -p "$VPS_PORT" -o BatchMode=yes -o StrictHostKeyChecking=yes \
+            "$VPS_USER@$VPS_HOST" \
+            "docker exec arbitragex-v2-postgres-1 psql -U postgres -d arbitragex -t -A -c \"SELECT COUNT(*) FROM opportunities WHERE detected_at > NOW() - INTERVAL '5 minutes'\" 2>/dev/null || echo 0" 2>&1)"
+          rc=$?
+          set -e
+          if [ "$rc" -ne 0 ]; then
+            echo "::error::VIGIA SIN CONEXION en capa 2 (ssh rc=$rc): $COUNT"; exit 1
+          fi
+          COUNT="$(echo "$COUNT" | tr -d '\r' | tail -1)"
+          echo "PG opportunities in last 5 min = $COUNT"
+          if [ "$COUNT" -eq 0 ] 2>/dev/null; then
+            echo '::error::PIPELINE ROJO capa 2: PG has ZERO opportunities in the last 5 minutes — pipeline broken between Redis and PG'
             exit 1
           fi
 
-      - name: Check Docker containers are healthy
+      - name: "Layer 3 — API serves opportunities with correct types"
+        if: steps.conn.outputs.reachable == 'true'
+        env:
+          VPS_HOST: ${{ secrets.VPS_SSH_HOST }}
+          VPS_USER: ${{ secrets.VPS_SSH_USER }}
+          VPS_PORT: ${{ secrets.VPS_PORT || '22' }}
         run: |
-          ssh arbx "
-            UNHEALTHY=\$(docker ps --filter 'name=arbitragex-v2' --filter 'health=unhealthy' --format '{{.Names}}' 2>/dev/null)
-            if [ -n \"\$UNHEALTHY\" ]; then
-              echo '::error::Unhealthy containers: '\$UNHEALTHY
-              exit 1
-            fi
-            RUNNING=\$(docker ps --filter 'name=arbitragex-v2' --format '{{.Names}}' | wc -l)
-            echo \"\$RUNNING arbitragex containers running, all healthy\"
-            if [ \"\$RUNNING\" -lt 10 ]; then
-              echo '::warning::Only '\$RUNNING' containers running — expected 20+'
-            fi
-          "
+          # El curl corre EN el VPS, no en el runner. Motivo medido: el edge esta
+          # publicado SOLO en loopback (`compose.prod.yml`: `- 127.0.0.1:8788:8787`),
+          # asi que un curl desde el runner a `<host>:8787` no llega nunca — y su
+          # rojo hablaria del transporte, no del pipeline. Desde el VPS, el rojo
+          # si significa "la API no sirve oportunidades".
+          set -uo pipefail
+          set +e
+          RESP="$(ssh -i ~/.ssh/deploy_key -p "$VPS_PORT" -o BatchMode=yes -o StrictHostKeyChecking=yes \
+            "$VPS_USER@$VPS_HOST" \
+            "curl -sf 'http://127.0.0.1:8788/api/v1/opportunities/live?limit=1' 2>/dev/null || echo '{}'" 2>&1)"
+          rc=$?
+          set -e
+          if [ "$rc" -ne 0 ]; then
+            echo "::error::VIGIA SIN CONEXION en capa 3 (ssh rc=$rc): $RESP"; exit 1
+          fi
+          RESP="$(echo "$RESP" | tr -d '\r' | tail -1)"
+          COUNT="$(echo "$RESP" | jq '.data | length' 2>/dev/null || echo 0)"
+          echo "API /opportunities/live returns $COUNT items"
+          if [ "$COUNT" -eq 0 ]; then
+            echo '::error::PIPELINE ROJO capa 3: API returns ZERO opportunities — pipeline broken between PG and API'
+            exit 1
+          fi
+          AMOUNT_TYPE="$(echo "$RESP" | jq -r '.data[0].amount_in_wei | type' 2>/dev/null || echo 'null')"
+          echo "amount_in_wei type = $AMOUNT_TYPE"
+          if [ "$AMOUNT_TYPE" != "string" ] && [ "$AMOUNT_TYPE" != "null" ]; then
+            echo "::error::PIPELINE ROJO capa 3: amount_in_wei is $AMOUNT_TYPE — should be string or null (precision loss!)"
+            exit 1
+          fi
 
-      - name: Summary
+      - name: "Layer 4 — WS endpoint is alive"
+        if: steps.conn.outputs.reachable == 'true'
+        env:
+          VPS_HOST: ${{ secrets.VPS_SSH_HOST }}
+          VPS_USER: ${{ secrets.VPS_SSH_USER }}
+          VPS_PORT: ${{ secrets.VPS_PORT || '22' }}
+        run: |
+          # Igual que la capa 3: se mide DESDE el VPS (el API server no esta
+          # publicado en la IP publica).
+          set -uo pipefail
+          set +e
+          HTTP_CODE="$(ssh -i ~/.ssh/deploy_key -p "$VPS_PORT" -o BatchMode=yes -o StrictHostKeyChecking=yes \
+            "$VPS_USER@$VPS_HOST" \
+            "curl -sf -o /dev/null -w '%{http_code}' 'http://127.0.0.1:8080/socket.io/?EIO=4&transport=polling' 2>/dev/null || echo 000" 2>&1)"
+          rc=$?
+          set -e
+          if [ "$rc" -ne 0 ]; then
+            echo "::error::VIGIA SIN CONEXION en capa 4 (ssh rc=$rc): $HTTP_CODE"; exit 1
+          fi
+          HTTP_CODE="$(echo "$HTTP_CODE" | tr -d '\r' | tail -1)"
+          echo "WS polling endpoint HTTP status = $HTTP_CODE"
+          if [ "$HTTP_CODE" != "200" ]; then
+            echo "::error::PIPELINE ROJO capa 4: WebSocket polling endpoint returned $HTTP_CODE — WS not reachable"
+            exit 1
+          fi
+
+      - name: "Layer 5 — Docker containers are healthy"
+        if: steps.conn.outputs.reachable == 'true'
+        env:
+          VPS_HOST: ${{ secrets.VPS_SSH_HOST }}
+          VPS_USER: ${{ secrets.VPS_SSH_USER }}
+          VPS_PORT: ${{ secrets.VPS_PORT || '22' }}
+        run: |
+          set -uo pipefail
+          set +e
+          OUT="$(ssh -i ~/.ssh/deploy_key -p "$VPS_PORT" -o BatchMode=yes -o StrictHostKeyChecking=yes \
+            "$VPS_USER@$VPS_HOST" \
+            "UNHEALTHY=\$(docker ps --filter 'name=arbitragex-v2' --filter 'health=unhealthy' --format '{{.Names}}' 2>/dev/null); if [ -n \"\$UNHEALTHY\" ]; then echo UNHEALTHY:\$UNHEALTHY; else docker ps --filter 'name=arbitragex-v2' --format '{{.Names}}' | wc -l; fi" 2>&1)"
+          rc=$?
+          set -e
+          if [ "$rc" -ne 0 ]; then
+            echo "::error::VIGIA SIN CONEXION en capa 5 (ssh rc=$rc): $OUT"; exit 1
+          fi
+          OUT="$(echo "$OUT" | tr -d '\r' | tail -1)"
+          case "$OUT" in
+            UNHEALTHY:*)
+              echo "::error::PIPELINE ROJO capa 5: Unhealthy containers: ${OUT#UNHEALTHY:}"
+              exit 1 ;;
+            *)
+              echo "$OUT arbitragex containers running, all healthy"
+              if [ "$OUT" -lt 10 ] 2>/dev/null; then
+                echo "::warning::Only $OUT containers running — expected 20+"
+              fi ;;
+          esac
+
+      - name: Verdict — distingue los DOS modos de rojo
         if: always()
+        env:
+          REACHABLE: ${{ steps.conn.outputs.reachable }}
         run: |
+          {
+            echo "### Pipeline Integrity Gate"
+            echo ""
+            if [ "${REACHABLE:-false}" != "true" ]; then
+              echo "**VIGIA=SIN_CONEXION** — el vigia no pudo llegar al VPS."
+              echo ""
+              echo "Esto **NO** dice que el pipeline este roto: dice que **no se midio**. Las capas quedan"
+              echo "\`NO EVALUADO\`, no \`ROJO\`. Son dos cosas distintas y hasta hoy se leian como una."
+            else
+              echo "**VIGIA=EVALUADO** — el vigia llego al VPS y midio las 5 capas."
+              echo ""
+              echo "Si el job esta en rojo, el rojo es sobre el **PIPELINE** (una capa vacia/rota), no sobre la conexion."
+            fi
+            echo ""
+            echo "Layers: Redis(XLEN) → PG(COUNT) → API(types) → WS(alive) → Docker(healthy)"
+          } >> "$GITHUB_STEP_SUMMARY"
           echo "::notice::Pipeline integrity check completed at $(date -u +%Y-%m-%dT%H:%M:%SZ)"
           echo "::notice::Layers verified: Redis(XLEN) → PG(COUNT) → API(types) → WS(alive) → Docker(healthy)"
