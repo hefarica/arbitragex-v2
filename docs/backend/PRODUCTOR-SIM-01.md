@@ -114,14 +114,32 @@ El runtime podría ser anterior a SIMWIRE-02c.
 
 | # | Comando | Estado |
 |---|---|---|
-| 1 | `cargo test -p sim-ctl --no-fail-fast` | **EJECUTABLE** — pendiente de corrida en WSL |
+| 1 | `cargo test -p sim-ctl --no-fail-fast` | **EJECUTADO** — `EXIT_CODE=0`. Lib: **49 passed, 0 failed, 1 ignored**. `simwire02_pel_recovery`: **1 passed**. `simwire02_route_aware`: **8 passed, 1 ignored**. **`simwire02c_redelivery_idempotency`: 8 passed, 0 failed, 0 ignored** — pero ver §5.1: **dos de esos 8 NO probaron nada.** Doc-tests: 0. |
 | 2 | `docker exec … psql … "SELECT count(*) FROM simulations"` | **BLOQUEADO** — `ssh` no ejecuta (exit 255) |
 | 3 | `docker exec … redis-cli XINFO GROUPS arbx:opps:validated` | **BLOQUEADO** — idem |
 | 4 | `docker logs … \| grep -iE "persist\|insert\|sim\.stored\|sim\.skip\|db_error"` | **BLOQUEADO** — idem, **y es justo el que decide (A) vs (B)** |
 
 **El comando que resolvería el caso es el #4, y es el que no puedo correr.**
 
-**Sobre el test `SIMWIRE-02c` (aceptación 4):** existe (`tests/simwire02c_redelivery_idempotency.rs`, 8294 B). Su cabecera declara `:10-12`: *"Runs in the CI integration job (live PG + migrations 112/113 applied by `automation/scripts/migrate.sh` before `cargo test`). **Outside CI without `DATABASE_URL` it skips loudly — fail-honest, never fabricated**"*. Sin `DATABASE_URL` **se saltea**, así que **su salida NO puede probar ni refutar (A)**. Lo declaro en vez de presentar un skip como evidencia.
+### 5.1 HALLAZGO NUEVO: la guarda de `SIMWIRE-02c` **NO es ruidosa — reporta `ok` cuando se saltea**
+
+La suite `simwire02c_redelivery_idempotency` **corrió y dio `8 passed; 0 failed; 0 ignored`**. Aparentemente probaría que el `ON CONFLICT` funciona contra PG real. **Es falso, y lo verifiqué antes de reportarlo:**
+
+`tests/simwire02c_redelivery_idempotency.rs:93-98`
+```rust
+let db_url = std::env::var("DATABASE_URL").unwrap_or_default();
+if db_url.is_empty() {
+    eprintln!("SKIP: DATABASE_URL not set — idempotency test needs live PG with migrations 112+113");
+    return;        // <-- cargo reporta "ok" con CERO trabajo hecho
+}
+```
+(y el mismo patrón en `:171-174` para el caso anvil.)
+
+**Medido en WSL:** `DATABASE_URL=[VACIO]` y **nada escuchando en 5432**. ⇒ `revm_redelivery_persists_once_and_reports_the_duplicate ... ok` y `anvil_attempts_are_not_deduped_by_the_revm_index ... ok` **son SALTOS disfrazados de pase**. El `eprintln!` queda capturado y **no se muestra** en tests que pasan.
+
+**Consecuencia dura:** la guarda que el propio archivo declara como *"the intended loud guard, not a flake"* (`:14-16`) para el caso **(A)** **no es ruidosa y no puede dispararse** sin un PG vivo. Un CI sin `DATABASE_URL` queda **verde** mientras la guarda nunca corre. **Es exactamente la clase "skip leído como pase"** que esta campaña persigue, y es un **defecto propio** que reporto: `return;` debería ser un fallo explícito (o el job debería exigir `DATABASE_URL`), no un `ok`.
+
+**Por lo tanto: la aceptación 4 se responde así — el test EXISTE y CORRE, pero NO EJERCITA `insert_simulation` en este entorno, y su salida `ok` no puede probar ni refutar (A).**
 
 ---
 
