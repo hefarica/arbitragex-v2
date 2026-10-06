@@ -201,16 +201,28 @@ jobs:
           fi
           echo "answered_by=$ANSWERED"
           echo "body_head=$(printf '%s' "$RESP" | head -c 300)"
-          COUNT=$(printf '%s' "$RESP" | jq 'if .items then (.items|length) elif .data then (.data|length) else 0 end' 2>/dev/null || echo 0)
-          echo "API /opportunities/live returns $COUNT items"
-          AMOUNT_TYPE=$(printf '%s' "$RESP" | jq -r 'if .items then .items[0] elif .data then .data[0] else null end | .amount_in_wei | type' 2>/dev/null || echo 'null')
-          echo "amount_in_wei type = $AMOUNT_TYPE"
+          # The parser is dependency-light ON PURPOSE. Run 37462970330 read a 200 body
+          # as "0 items" and run 37463450394 did it again against 8644 bytes: a zero
+          # produced by a missing parser is not a pipeline finding. So this step now
+          # NAMES its parser, prints the keys it actually saw, and reports the JSON
+          # type of amount_in_wei by inspection of the raw bytes.
+          JQ=absent; command -v jq >/dev/null 2>&1 && JQ=present
+          KEYS=$(printf '%s' "$RESP" | grep -o '"[A-Za-z_][A-Za-z_0-9]*":' | sort -u | tr -d '":' | paste -sd, -)
+          COUNT=$(printf '%s' "$RESP" | grep -o '"count":[[:space:]]*[0-9][0-9]*' | head -1 | grep -o '[0-9][0-9]*$')
+          [ -z "$COUNT" ] && COUNT=0
+          AS_STRING=$(printf '%s' "$RESP" | grep -c '"amount_in_wei":"')
+          AS_NUMBER=$(printf '%s' "$RESP" | grep -cE '"amount_in_wei":[0-9]')
+          echo "parser=grep jq=$JQ keys_seen=$KEYS"
+          echo "body_tail=$(printf '%s' "$RESP" | tail -c 300)"
+          echo "API /opportunities/live count=$COUNT amount_in_wei_as_string=$AS_STRING as_number=$AS_NUMBER"
           if [ "$COUNT" -eq 0 ]; then
-            echo 'VERDICT=FAIL layer=api_types reason=zero_items'
-          elif [ "$AMOUNT_TYPE" != "string" ] && [ "$AMOUNT_TYPE" != "null" ]; then
-            echo "VERDICT=FAIL layer=api_types reason=amount_in_wei_is_${AMOUNT_TYPE}"
+            echo 'VERDICT=FAIL layer=api_types reason=count_zero_or_key_absent'
+          elif [ "$AS_NUMBER" -gt 0 ]; then
+            echo 'VERDICT=FAIL layer=api_types reason=amount_in_wei_is_number'
+          elif [ "$AS_STRING" -eq 0 ]; then
+            echo 'VERDICT=FAIL layer=api_types reason=amount_in_wei_absent_from_payload'
           else
-            echo 'VERDICT=PASS layer=api_types'
+            echo "VERDICT=PASS layer=api_types count=$COUNT amount_in_wei=string"
           fi
           REMOTE
           )
