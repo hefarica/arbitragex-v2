@@ -173,7 +173,28 @@ Ninguna orden del operador, ningún miembro del equipo y ninguna prisa los levan
 74. **La herramienta NUNCA hizo broadcast en mainnet.** Ninguna transacción real, ningún settlement on-chain. El canary (§34.5: capital en riesgo ≤ $350, principal TLS 5 WETH) **no se ejecutó**.
 75. **`G2` y `G3` estaban en ❌ FAIL al 2026-09-17** (`simulations WHERE passed` = 0; `executions` = 0). **No se re-midieron después de los merges del 2026-10-06 que atacaron su causa raíz** (`v3_quote_unavailable`). Estado actual: **NO COMPUTADO** hasta que `t54` lo mida con artefacto.
 76. **`G1-G8` es el gate con el historial más contaminado del repo**: `G2` del skill v2.0.0 **citó evidencia fabricada** una vez (rama `codex/567` + commit `9a10350`, inexistentes; verificado 2026-09-15). Todo PASS exige artefacto reproducible citado; un PASS sin artefacto acá **es peor que un FAIL**.
-77. **Re-medir `G2`/`G3` exige PostgreSQL, que es mudo desde la estación del capitán.** El canal que sí lo alcanza es GitHub Actions. Mientras no se corra por ahí, el estado de esos gates es **NO COMPUTADO — no verde, y no cero**.
+77. **CORREGIDA EN LA MISMA RONDA — el canal SSH a PostgreSQL NO está muerto.** La redacción anterior de esta regla decía que PostgreSQL era mudo desde la estación del capitán y que el único canal era GitHub Actions. **Era falso, y el error fue mío:** probé 6 binarios OpenSSH y los 6 daban `exit 255`, y de ahí generalicé "el canal de shell está muerto". **Los 6 eran el mismo build de Windows.** El `ssh.exe` de **Git-for-Windows** (`C:\Program Files\Git\usr\bin\ssh.exe`, OpenSSH_10.2p1) **da exit 0 y llega al VPS como root**.
+    - **Reproducción:** `& "C:\Program Files\Git\usr\bin\ssh.exe" -o BatchMode=yes arbx "echo VPS_SSH_OK; hostname"` → `VPS_SSH_OK` / `arbx-v2-clean`, exit 0. Y `git -C /opt/arbitragex-v2 rev-parse --short HEAD` → `c89d21a3`.
+    - **Consecuencia 1:** `SKILL.md:29` declara *"Blocker: SSH access to VPS (exit 255)"*. **Ese blocker es FALSO** — es un artefacto del binario de Windows, no de la red.
+    - **Consecuencia 2:** la consulta directa a PostgreSQL queda HABILITADA. `docker exec arbitragex-v2-postgres-1 psql -U postgres -d arbitragex -tAc "<sql>"` responde. **El control que lo prueba es `SELECT 1` → devuelve fila.** Un `SELECT 1` que devuelve vacío prueba que el canal NO contesta, y eso fue exactamente lo que hizo el canal viejo.
+    - **Lección, y es la octava vez en esta sesión:** un instrumento roto devolviendo un valor plausible. **Nunca generalices "el canal está muerto" desde un binario.** Probá el otro antes de declarar ausencia.
+
+### Añadido por medición directa a PostgreSQL (2026-10-06)
+
+80. **La cadena detectar → simular → ejecutar → paper tiene productor en las DOS PUNTAS y NADA en el medio.** Medido por consulta directa, con `SELECT 1` como control de canal vivo (`2026-10-06T04:07Z`, VPS `195.201.235.70`, deploy `c89d21a3`):
+    | tabla | filas | qué es |
+    |---|---|---|
+    | `opportunities` | **8.060.571** | detección — **VIVA** (última `detected_at` 04:08:05Z) |
+    | `scored_opportunities` | **8.279.728** | scoring — **VIVA** |
+    | `simulations` | **0** | 13 columnas, **NUNCA escrita** |
+    | `executions` | **0** | 17 columnas (`tx_hash`, `bundle_hash`, `actual_profit_usd`), **NUNCA escrita** |
+    | `paper_trade_runs` | **0** | 25 columnas (`sim_expected_profit_usd`, `profit_drift_pct`, `calibration_eligible`), **NUNCA escrita** |
+    - **`status` de `opportunities` tiene UN SOLO valor distinto en toda la historia: `rejected`** (8.039.836 filas). Nunca ha existido otra. Combinado con `status_from_rejection_reason` (`None⇒'detected'`, `Some(_)⇒'rejected'`), significa que **ninguna oportunidad ha sobrevivido jamás al embudo**.
+    - **Corroboración por canal independiente:** `t60` midió lo mismo por GitHub Actions (`g2_simulations_passed -> 0`). Dos canales distintos, un solo hecho.
+    - **La regla que se deriva:** **Paper shadow no funciona tampoco.** No porque una regla lo impida, sino porque **no tiene productor aguas abajo de la detección**. Cuando el operador dice que ninguna regla debe prevalecer sobre Paper shadow, el destinatario correcto de esa orden **no es una regla: es un productor ausente.** Derogar reglas no crea el productor.
+81. **Por qué se rechaza el 88% — medido sobre 3 h (`rejection_reason`, 8 etiquetas):** `spread_negative_round_trip` 179.486 (66,2%) · `non_positive_profit` 58.686 (21,7%) · `single_pool_no_spread` 25.152 (9,3%) · `v3_pool_not_catalogued` 13.643 · `v3_pair_no_pools` 3.243 · **`v3_quote_unavailable` 1.940** · `no_tradable_size` 1.020 · `v3_multileg_budget_exhausted` 323.
+    - **La etiqueta `rejection_reason` SÍ discrimina** (8 valores). Es `status` la que no discrimina (1 valor).
+    - **Contradicción declarada contra `t54`/`t61`:** ambos declararon `v3_quote_unavailable` en **0 / "ausente"**. Mi medición directa da **1.940 en 3 h**. No se contradicen: `t54`/`t61` midieron **el embudo** (materialización de cards); yo medí **el ledger de rechazos**. Son dos superficies distintas. La conclusión "el cuello V3 ya no está vivo" es **demasiado fuerte**: es correcto decir *no domina* (0,7% de los rechazos), **no** que esté ausente.
 
 ### Añadido por medición de la ronda Mainnet (2026-10-06)
 
