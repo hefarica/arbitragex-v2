@@ -94,15 +94,25 @@ jobs:
         with:
           submodules: recursive
       - uses: foundry-rs/foundry-toolchain@b00af27efadbc7b4ca8b82abbd903b17cc874d2a # v1
-      # NOTE: foundry.yml ("Foundry CI") is the primary gating contracts check.
-      # The steps below were aggregate duplicates — foundry.yml covers all
-      # contract testing. This job is now NON-BLOCKING (continue-on-error)
-      # until the submodule flakiness in the ubuntu runner is resolved.
-      # Revert to blocking when the CI infrastructure stabilizes.
-      - name: forge test (non-blocking — see foundry.yml for blocking)
+      # AUTHORITATIVE contracts test. This job is one of the six `ci-gate` requires,
+      # and `ci-gate` is a REQUIRED status check on `main` — so the chain is
+      # forge test -> step -> job -> ci-gate -> mergeable.
+      #
+      # `continue-on-error: true` was removed here (CONTRACTS-GATE-01). It had been a
+      # temporary tolerance for submodule flakiness, and its own note said to revert
+      # to blocking once CI stabilised; measured on 3f00b359, `forge test` passes
+      # (every suite "ok. N passed; 0 failed"), so the tolerance had nothing to
+      # tolerate and was only hiding a failure from the aggregator.
+      #
+      # Do NOT make foundry.yml ("Foundry CI") the requirement instead: it is a
+      # separate workflow WITH path filters (`contracts/**`,
+      # `.github/workflows/foundry.yml`), so on a PR that touches neither it never
+      # reports — a required check that never reports leaves the PR waiting forever.
+      # A gate that cannot report is not a gate. This job runs on every PR because
+      # the CI workflow has no path filters.
+      - name: forge test (blocking, authoritative for ci-gate)
         run: forge test
         working-directory: contracts
-        continue-on-error: true
       - name: forge fmt --check (blocking)
         run: forge fmt --check
         working-directory: contracts
