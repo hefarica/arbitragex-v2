@@ -627,7 +627,10 @@ mod tests {
             "kelly_pos = {} debería tocar la cota dura {KELLY_FRACTION_CAP}",
             alloc.kelly_fraction
         );
-        assert!(alloc.fraction > 0.0, "fraction debe ser > 0 con edge positivo");
+        assert!(
+            alloc.fraction > 0.0,
+            "fraction debe ser > 0 con edge positivo"
+        );
         assert!(alloc.usd_amount > 0.0);
         assert!(alloc.fraction <= KELLY_FRACTION_CAP + 1e-9);
         assert!(alloc.usd_amount <= cap + 1e-6);
@@ -639,7 +642,7 @@ mod tests {
     #[test]
     fn kelly_no_edge_is_named_and_distinct_from_domain_rejection() {
         let a = BayesianAllocator::new(); // prior Beta(1,1) ⇒ p = 0.5
-        // f* = (0.5*0.1 - 0.5)/0.1 = -4.5 ⇒ no hay apuesta DENTRO del dominio
+                                          // f* = (0.5*0.1 - 0.5)/0.1 = -4.5 ⇒ no hay apuesta DENTRO del dominio
         let no_edge = a.assign("k", 1, 1_000.0, 0.1);
         assert_eq!(no_edge.sizing, SizingDecision::KellyNoEdge);
         assert_eq!(no_edge.fraction, 0.0);
