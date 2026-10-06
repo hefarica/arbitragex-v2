@@ -28,6 +28,7 @@ import {
 } from "@arbx/shared";
 import { scoreOpportunity } from "./score.js";
 import { StreamConsumer } from "./consumer.js";
+import { startTokenSafetySweep } from "./token_safety/sweep.js";
 
 const SERVICE = "selector-api";
 const VERSION = "0.2.0";
@@ -168,6 +169,21 @@ consumer.startWithRetry().catch((e: Error) => {
   process.exit(1);
 });
 
+// ─── Token-safety sweep (POOL-CIRCULARITY-01 C2) ───
+// THE line that breaks the circular dependency: until now `checkToken` was only
+// ever called from the candidate path (`consumer.ts:411-412`), so a frozen
+// token_safety_cache was self-perpetuating — no candidates → no verdicts →
+// no reactivable pools → no candidate flow. This sweep produces verdicts on the
+// catalog INDEPENDENTLY of candidates. It calls the real gate; it does not
+// bypass it, and it writes nothing on its own (only checkToken→upsertCached).
+// Interval: ARBX_TOKEN_SAFETY_SWEEP_SECS (default 900 s; 0 disables).
+const stopTokenSafetySweep = startTokenSafetySweep({
+  pool,
+  cb: mustCb("token_safety_api"),
+  cfg,
+  logger,
+});
+
 // START-RETRY-01: consumer liveness — intentionally distinct from /health
 // (process liveness). A dead consumer answers 503 here, never "healthy".
 app.get("/livez", (_req, res) => {
@@ -186,6 +202,7 @@ const server = app.listen(PORT, () => {
 // ─── Shutdown ───
 const shutdown = async (sig: string) => {
   logger.info({ event: "service.shutdown", signal: sig });
+  stopTokenSafetySweep();
   await consumer.stop();
   server.close();
   await killSwitch.close().catch(() => {});
