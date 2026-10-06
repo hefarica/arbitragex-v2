@@ -152,7 +152,8 @@ mergeado (coincidencia independiente, no copia):
 | `37462970330` | `9d3cbffc` | `completed/failure` | Llegó al VPS. `connection`/`redis`/`pg` PASS. Capa 6 roja, 7-8 `skipped`. |
 | `37463450394` | `abb71a47` | `completed/failure` | **Las 6 capas medidas** (5 verdes + `api_types` FAIL atribuido al parser). |
 | `37464780122` | `3f4eb353` | **`completed/cancelled`** | **NO midió.** Cancelado a las `13:16:19Z`, 3 s después de encolar el run `37469480262` (`13:16:16Z`): `concurrency: group: pipeline-integrity / cancel-in-progress: true` (L64-66). Un cancelado no es verde ni rojo: es **no medido**. |
-| `37469480262` | `5c554891` | `pending` al cerrar este informe | Encolado; el pool de runners está saturado (12 runs ajenos `IN_PROGRESS`, un lote de 12 workflows encolado a `12:57:39Z`). **No se le atribuye resultado.** |
+| `37469480262` | `5c554891` | **`completed/cancelled`** | **NO midió** (segunda cancelación): el `workflow_dispatch` sobre `ref=main` de las `13:18:54Z` la canceló por `cancel-in-progress` del mismo grupo. |
+| `37469815308` | `b1b2e600` (main) | **`queued`** al cerrar este informe | Es el run que el contrato pide **sobre `main`** — y ahora es posible porque `main` ya lleva el instrumento reparado (PR #831). Despachado `13:18:54Z`; la cola medida era de **101 encolados / 13 en curso**. **No se le atribuye resultado.** |
 
 ## 7. Alcance económico y de producto
 
@@ -165,9 +166,15 @@ mergeado (coincidencia independiente, no copia):
 ## 8. Qué NO prueba este artefacto
 
 1. **La rama no es `main`**: el incremento no vigila todavía lo desplegado hasta que se mergee.
-2. **El run de verificación (`37469480262`) seguía `pending`** al cerrarse este informe: el
-   incremento está validado por YAML + `bash -n` + diff, **no** todavía por una ejecución real.
-   Cuando corra, su resultado se reporta como suplemento — no se anticipa.
+2. **El run de verificación del incremento (`37469480262`) fue CANCELADO** por el `workflow_dispatch`
+   sobre `main` (misma clase `cancel-in-progress`): el incremento está validado por YAML +
+   `bash -n` 8/8 + diff, **no** todavía por una ejecución propia. El run `37469815308` sobre `main`
+   seguía `queued` al cerrarse este informe; su resultado se reporta como suplemento y **no se
+   anticipa**.
+   **Hecho relevante para la célula:** desde que el arreglo entró a `main` (`65903cc`, `12:36:20Z`)
+   **no figura ningún run del workflow sobre el `main` nuevo** (`b1b2e600`): el último `schedule`
+   es de `07:19:32Z`, sobre `c89d21a3`. El instrumento mergeado **todavía no tiene su primera
+   medición en `main`**; el run `37469815308` es el vehículo para obtenerla.
 3. **La saturación del pool y el `cancel-in-progress`** hacen que dos ejecuciones simultáneas del
    mismo workflow se anulen entre sí: medir y no medir compiten por el mismo grupo.
 
