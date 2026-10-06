@@ -103,7 +103,19 @@ Kelly necesita un payoff `b` positivo. Acá:
 b = retorno marginal − 1 = 0.994562479 − 1 = −0.005437521
 ```
 
-**`b < 0` ⇒ TODOS los desenlaces pierden ⇒ el stake óptimo es `0` por dominancia.** La fórmula `f* = (p·b − (1−p))/b` **no es aplicable** con `b<0`: aritméticamente devuelve un número positivo (`f* = 10.14` con `p=0.95`) que sería **una recomendación de apostar a una pérdida garantizada**. Ese es un modo de fallo real y silencioso: un pipeline que aplique la fórmula sin verificar el signo de `b` **fabrica una posición sobre una ruta perdedora**.
+**`b < 0` ⇒ TODOS los desenlaces pierden ⇒ el stake óptimo es `0` por dominancia.** La fórmula `f* = (p·b − (1−p))/b` **no es aplicable** con `b<0`: aritméticamente devuelve un número positivo (`f* = 10.145366785709885` con `p=0.95`; precisión y método declarados abajo) que sería **una recomendación de apostar a una pérdida garantizada**. Ese es un modo de fallo real y silencioso: un pipeline que aplique la fórmula sin verificar el signo de `b` **fabrica una posición sobre una ruta perdedora**.
+
+> **Precisión y método declarados — corrección `FIX-FSTAR-PRECISION-01`.** Recomputado **desde los insumos de este mismo documento** (`b = −0.005437521` de §4.2 L103; `p = 0.95` ⇒ `q = 1 − p = 0.05`) con la fórmula de esta misma línea:
+>
+> ```
+> f* = (p·b − q) / b = (0.95 × (−0.005437521) − 0.05) / (−0.005437521) = 10.145366785709885
+> ```
+>
+> **Método: valor SIN redondear y SIN truncar, publicado completo (15 decimales significativos).** No se aplica ningún recorte en esta revisión. Por transparencia, los dos recortes a 2 decimales darían: **redondeo → `10.15`**, **truncamiento → `10.14`**. La revisión anterior de este documento publicaba `10.14`, que es exactamente el valor **truncado** a 2 decimales **sin declararlo**: ése es el defecto que esta corrección cierra, y el número pasa ahora a **cerrar bajo su propia fórmula**.
+>
+> **Sensibilidad a la precisión de `b` (declarada, no escondida).** Si `b` se arrastra **sin** redondear a 9 decimales (`b = 0.994562478947335 − 1 = −0.005437521052665`), entonces `f* = 10.145366696648`. **La conclusión no cambia:** también trunca a `10.14` y también redondea a `10.15` a 2 decimales. Las dos formas son igual de concluyentes respecto de `b<0`.
+>
+> **Materialidad medida: NINGUNA.** Con `b < 0` la fórmula de Kelly **no aplica** y el stake es `0` por dominancia (§4.3), así que esta cifra **no cambia ninguna decisión, ningún importe ni ningún gate**. Se corrige igual porque un número publicado que no cierra bajo su propia fórmula es un defecto, y un documento que se declara "medido end-to-end" no puede tener uno.
 
 > **Declaración explícita:** la fracción de Kelly aplicada es **ninguna, porque no aplica** (payoff negativo). El **capital de referencia** es `1000 USD` (default del módulo de riesgo del repo) y **la fracción resultante es 0**, luego **el importe es 0**, y ese 0 coincide exactamente con el cálculo. No hay un importe no-cero que pueda derivarse honestamente de esta ruta.
 
@@ -323,7 +335,7 @@ REPRODUCIBLE = True
 
 * **Para t49:** la tabla de §7 es la frontera. Nada de §2–§6 es "realizado". Si t49 necesita un estimado, use §3; si necesita un simulado, §6.B/6.C; **realizado no existe y no debe aparecer como 0** — `0` sería un valor computado, y acá no hay medición: es **NO EXISTE**.
 * **Al próximo intento de ruta:** el método de §6.0 (verificar el slot contra estado conocido antes de overridear) es obligatorio para que una simulación sea evidencia y no una puesta en escena.
-* **Al sizing:** el modo de fallo peligroso está en §4.2 — **aplicar la fórmula de Kelly con `b<0`**. Devuelve un número positivo y plausible (`10.14`) que recomienda apostar a una pérdida garantizada. **Verificar el signo de `b` antes de aplicar Kelly** es un gate que hoy no está y debería estar.
+* **Al sizing:** el modo de fallo peligroso está en §4.2 — **aplicar la fórmula de Kelly con `b<0`**. Devuelve un número positivo y plausible (`10.145366785709885`; valor completo sin recorte — ver precisión declarada en §4.2) que recomienda apostar a una pérdida garantizada. **Verificar el signo de `b` antes de aplicar Kelly** es un gate que hoy no está y debería estar.
 
 ---
 
