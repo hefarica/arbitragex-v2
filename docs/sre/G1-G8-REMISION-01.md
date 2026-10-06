@@ -290,3 +290,38 @@ Lectura honesta: **el cuello hoy es la ausencia de un candidato con EV positivo 
 Fuentes leídas: `audits/live-activation-package-20260917/GATES-G1-G8-ESTADO.md` (25 líneas) · `.claude/skills/arbitragex-v2-mainnet-live/SKILL.md` (296 líneas) · `backend/api-server/src/index.ts:1063-1132` · `backend/api-server/src/routes/readiness-extras.ts:320-390` · `database/migrations/113_simulations_revm_idempotency.sql:17` · `docs/audits/GRAPHROUTING-CERTIFICADO-274f04fd-ADDENDUM-2026-10-04.md:55` · `docs/personalops/PERSONALOPS-DELTA-v1.4.0-2026-10-05.md:96` · `implementation-state/REGLAS-OPERATIVAS.md:174,204`.
 
 **Esto NO mueve P/N (0/115) ni acredita ningún otro criterio.** Es una medición de gates, no una activación: `ARBX_TRADE_MODE=paper`, sin firma, sin broadcast, sin capital, sin mutación del VPS.
+
+---
+
+## §6 — ADDENDUM: el blanco se movió MIENTRAS medía (declarado, no oculto)
+
+Al publicar este documento (`2026-10-06T03:27:33Z`) verifiqué el estado del runtime y **`origin/main` ya había avanzado**:
+
+```
+$ curl -s https://edge-arbx.ape-tv.net/status      (ts 2026-10-06T03:27:33.057Z)
+deploy.sha = 3f00b359beca82685280c5d8d30f099d8bd7d921   ← SIN CAMBIO
+deploy.id  = 37399887059                                ← SIN CAMBIO
+
+$ gh run list --workflow=auto-deploy-vps.yml --limit 2
+37405962576  c89d21a3437c  in_progress      ← deploy EN VUELO hacia el main nuevo
+37405422926  e495eca56bbe  completed failure
+
+$ gh api .../actions/runs/37405962576/jobs
+Wait for all deployment gates  completed success
+Deploy to VPS                  in_progress        ← todavía no aplicado
+
+$ git rev-parse origin/main
+c89d21a3437c7fc2456fb7a08dba7d26ef41ee5e    ← el main avanzó
+```
+
+**Consecuencias, explícitas:**
+
+1. **Todas las mediciones de este documento son del runtime que SIRVE hoy**: `deploy.sha = 3f00b359…`, `deploy.id = 37399887059`. Durante mi ventana (`03:22:38Z–03:26:03Z`) `origin/main` **era** `3f00b359`, de modo que la igualdad «desplegado == `origin/main`» de §1/G1 **se cumplía en el momento de medir**.
+2. **A partir de ahora esa igualdad está rota temporalmente**: `origin/main = c89d21a` mientras el runtime sirve `3f00b359`, con un deploy **en curso**. No es un drift patológico: es un deploy en vuelo, el estado esperado a mitad de camino.
+3. **Re-verifiqué lo decisivo sobre el runtime vigente a las `03:27:37Z`** (sigue siendo `3f00b359`), y los tres hechos que sostienen las conclusiones **no cambiaron**:
+   - embudo: 26 cards, `{non_positive_profit 10, spread_negative_round_trip 8, single_pool_no_spread 5, v3_multileg_budget_exhausted 3}` — **`v3_quote_unavailable` sigue en 0**;
+   - `COUNT(*) FROM executions` (1 h, sin JOIN) = **0**;
+   - ledger paper 24 h = **0** (`source: postgres`);
+   - route-discovery: `multi_hop_status=route_ready`, `verdict=ready`, 500 ciclos, `v3_skipped=0`.
+4. **Esta medición tiene fecha y dueño**: corresponde a `3f00b359` y **deja de valer cuando aterrice el deploy de `c89d21a`** (o cualquier otro). Igual que en `RUNTIME-IDENTITY-REPEAT-01`, **la conclusión no se hereda**: hay que repetirla contra el SHA nuevo. Lo que sí es estructural y sobrevive al próximo deploy es el *método* (§5) y la declaración de los canales que sí y que no alcanzan.
+5. **Coordinación §22.20:** el push de esta rama fue a `sre/g1-g8-remision-01` (rama de features, **no** a `main`) y ocurrió **mientras un `auto-deploy-vps.yml` estaba vivo**. No toqué `main`, no disparé ningún workflow y no interrumpí ni influí en ese deploy: la verificación de que había un run en vuelo está arriba y se hizo **antes** del push, precisamente para no pisarlo.
