@@ -12,7 +12,7 @@
 # Medido por t58 en el log: TODOS sus runs morian en el PRIMER step con
 # `ssh: Could not resolve hostname arbx` / exit 255. Los 6 `failure`
 # consecutivos eran del CHEQUEO, no del pipeline: el workflow usaba el alias
-# `ssh arbx` SIN NUNCA DEFINIRLO. Ese alias funciona en deploy.yml:57,
+# `ssh arbx` SIN NUNCA DEFINIRLO. Ese alias (definido por un bloque `Host` en `~/.ssh/config`) funciona en deploy.yml:57,
 # deploy-edge-only.yml:38, deploy-edge-only-v2.yml:39 y
 # audit-vps-wiring.yml:212, que SI escriben un bloque `Host arbx` en
 # ~/.ssh/config — aca no habia ni clave, ni host, ni config.
