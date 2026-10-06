@@ -181,4 +181,33 @@ if db_url.is_empty() {
 
 **NO mueve P/N (0/115).** Sin firma, sin broadcast, sin deploy, sin capital. **No se tocó el sizing ni ningún límite de riesgo.** Único path: este documento.
 
-*Cadena reconstruida sobre `main @ c89d21a3`; 8 eslabones citados `archivo:línea`; la mitad "nunca se llama" refutada por estructura; la mitad "falla" separada en dos mecanismos excluyentes que el canal denegado impide discriminar. Se declara el bloqueo en vez de elegir un ganador por plausibilidad.*
+---
+
+## 10. RETRACTACIÓN VISIBLE DEL F4 DE ESTE DOCUMENTO (orden t73)
+
+En §4 y §8 escribí una **discrepancia declarada**: que el comentario `migrations/113:17` (*"a populated live table (~640k rows)"*) era plausiblemente cierto, que con `ON DELETE CASCADE` eso era **explicable**, que **"refuerza (B)"**, y que por lo tanto *"sin una sola escritura en toda la historia" sería FALSO*.
+
+**RETIRO ESE F4. La medición me contradice, y la corrió el canal que a mí me faltaba:**
+
+```
+docker exec arbitragex-v2-postgres-1 psql -U postgres -d arbitragex -tAc \
+  "SELECT relname, n_tup_ins, n_tup_upd, n_tup_del FROM pg_stat_user_tables WHERE relname LIKE 'simulat%'"
+  simulations | 0 | 0 | 0
+
+SELECT datname, stats_reset FROM pg_stat_database WHERE datname='arbitragex'
+  arbitragex | (nunca)
+```
+
+`n_tup_ins = 0` **y** `n_tup_del = 0`, con contadores **de por vida** (`stats_reset = nunca`) ⇒ **nunca entró ni salió una fila de `simulations`.** Por lo tanto:
+
+1. **La cascada NUNCA actuó** — no había nada que cascadear. Mi razonamiento "hubo filas y la cascada se las llevó" es **falso**.
+2. **`migrations/113:17` es el que está mal**: `simulations` **nunca** tuvo ~640k filas. Ese comentario es FALSO.
+3. **"Cero escrituras de por vida" queda PROBADO**, no refutado. Mi §8 decía lo contrario.
+
+**Lo que SÍ sigue en pie de este documento:** que `insert_simulation` **sí es llamada** (probado por estructura: única llamada en `consumer.rs:451`, sobre el camino común de ambas ramas), y que (A) y (B) quedaban **sin decidir** por falta de canal. El capitán las corrió con el canal y **ambas caen**: `simulations_revm_idempotency_uq indisvalid = true` refuta (A); `n_tup_ins = 0` refuta (B). La causa real es **(C)**: el schema estricto de `selector-api` tiraba el 100% del stream — ver `SELECTOR-PARSE-01` (t73).
+
+**Se retracta, NO se borra.** El §4/§8 original queda como registro. Lección de método: tuve razón en *"no elijo ganador sin el log"*, pero **debí declarar el F4 como NO COMPUTADO en vez de inclinarme por (B)** con un argumento que la medición terminó refutando.
+
+---
+
+*Cadena reconstruida sobre `main @ c89d21a3`; 8 eslabones citados `archivo:línea`; la mitad "nunca se llama" refutada por estructura; la mitad "falla" separada en dos mecanismos excluyentes que el canal denegado impide discriminar. Se declara el bloqueo en vez de elegir un ganador por plausibilidad. (§10 retracta el F4 a la luz de la medición de t73.)*
