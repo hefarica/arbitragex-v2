@@ -71,6 +71,10 @@ desktop.ini
 
 # Local data
 data/
+# GITIGNORE-DOCS-DATA-01: `docs/data/` holds VERSIONED Data-profile deliverables
+# (markdown), not local data. Anchored to the repo-root path only — every other
+# `data/` directory at any depth stays ignored by the rule above.
+!/docs/data/
 logs/
 tmp/
 *.sqlite
