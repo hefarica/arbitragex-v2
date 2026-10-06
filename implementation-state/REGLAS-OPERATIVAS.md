@@ -19,17 +19,43 @@ Cada regla lleva una etiqueta de origen. **Una regla sin origen no es auditable*
 
 ---
 
+# PARTE 0-bis — DOCTRINA DE MODOS [REPO §34] — añadida en la auditoría
+
+**Esta parte faltaba por completo en la versión anterior, y es el eje del encargo del operador.** Fuente: `CLAUDE.md` §34 y `docs/EXECUTION_MODES_DOCTRINE.md`. **Tiene autoridad sobre cualquier regla operativa de este documento.**
+
+1. **Hot-path mode-invariant (§34.1).** Descubrimiento, 264 cartuchos, 31 operadores matemáticos, rutas, `SizeOptimizer`, simulación y **risk/evidence gates** son **idénticos** en todos los modos de trading. **La matemática NO cambia por modo.** La Master Matrix 264×31 es mode-invariant: las 8.184 relaciones estrategia↔operador tienen el mismo rol en `LIVE_MAINNET`, `TESTNET` y `PAPER_SHADOW`.
+2. **`LIVE_MAINNET` es canónico (§34.1).** Todo se diseña y se juzga contra la pregunta de **§34.4**: *"¿esto funcionaría correctamente con capital real en LIVE_MAINNET?"* — y **si la respuesta implica "depende del modo" para la matemática, viola §34.1 y se rechaza.**
+3. **Los modos difieren SÓLO en el terminus de ejecución (§34.1.3):**
+   - `LIVE_MAINNET` → capital real → broadcast mainnet → settlement on-chain real.
+   - `TESTNET` → fondos propios de la testnet → broadcast testnet → settlement on-chain (no real).
+   - `PAPER_SHADOW` → capital simulado → **SIN broadcast** → ledger simulado.
+4. **`OFF` / kill-switch NO es un modo de trading** — es un estado de control independiente que detiene todo sin importar el modo.
+5. **La potencia se define en `LIVE_MAINNET`, y Testnet y Paper son fieles reflejos** de esa misma lógica hasta la frontera capital/broadcast/settlement. **Un modo que se desvía en la matemática no es un modo: es otro sistema.** ⇒ verificarlo en código es `t55` MODE-INVARIANCE-01.
+6. **Los flags `ARBX_ORCHESTRATOR_MODE` y `ARBX_CARTRIDGE_MODE` NO definen la semántica económica (§34.2)** — existen sólo como flags temporales de migración.
+7. **El switch real vive en el terminus:** `backend/relays-client/src/live_exec_policy.rs`, el **único** binario que puede firmar y broadcast. **Mainnet (chain_id=1) ESTÁ SOPORTADA** por allowlist de cadena vía `ARBX_LIVE_EXEC_ENABLED` + `ARBX_LIVE_EXEC_CHAINS`. **PROHIBIDO añadir restricción adicional a mainnet más allá de ese switch de entorno** (§34.3, orden del operador 2026-09-17).
+8. **El camino a `LIVE_MAINNET` es `G1-G8`, no una ceremonia.** §34.5: autorización permanente condicionada del 2026-09-15 — al pasar **todos** los gates con evidencia verificada, el flip y el canary **proceden sin nueva autorización**. Canary: capital en riesgo **≤ $350**, principal **TLS 5 WETH**.
+
+---
+
 # PARTE I — GATES QUE NO SE NEGOCIAN [PRESET]
 
 Ninguna orden del operador, ningún miembro del equipo y ninguna prisa los levanta. Si una tarea exige violarlos, **la tarea se detiene y se reporta el bloqueo**.
 
-1. **Paper por defecto.** El modo operativo es `ARBX_TRADE_MODE=paper`. Ninguna corrida de esta sesión firmó, emitió ni transmitió nada.
+1. **Dos cosas distintas que la versión anterior de esta regla mezclaba — y mezclarlas contradecía §34.2.**
+   - **(a) Rail del CAPITÁN.** Ninguna corrida de esta sesión firmó, emitió ni transmitió nada, y el capitán no firma ni transmite. Se prepara y se entrega al operador. **Esto se queda.**
+   - **(b) Semántica del SISTEMA — CORREGIDO.** *"Paper por defecto"* **NO es un modo del sistema y NO define su semántica económica.** §34.2 es explícito: `ARBX_ORCHESTRATOR_MODE` (`v1`/`v2`/`shadow`/`off`) y `ARBX_CARTRIDGE_MODE` (`off`/`shadow`/`active`) *"existen **sólo como flags temporales de migración**"* y *"**dejan de definir la semántica económica del sistema**"*. El sistema se diseña y se juzga contra **`LIVE_MAINNET` canónico** (§34.1). Leer (a) como si implicara (b) convierte un rail mío en una propiedad del producto, y eso es un error de etiqueta de la clase que este documento prohíbe.
 2. **Neto ≥ 3× gas.** Una oportunidad cuyo beneficio neto no supera 3 veces el costo de gas no se ejecuta. No se redondea hacia arriba para que pase.
 3. **Sizing ≤ 2 % del capital** por operación.
 4. **Slippage máximo 0.5 %.**
 5. **Stop-loss: pérdida > 0.5 % del capital/hora → modo protección.**
 6. **Mempool privado obligatorio** para cualquier ruta de ejecución real.
-7. **Mainnet sólo con autorización explícita del operador.** El código SOPORTA mainnet vía `ARBX_LIVE_EXEC_ENABLED` + `ARBX_LIVE_EXEC_CHAINS` (§34.3); habilitarlo es acto del operador, no del capitán ni de un flag.
+   - **Reglas 2 a 6, declaradas MODE-INVARIANTES [añadido en la auditoría contra §34].** §34.1: *"Descubrimiento, 264 cartuchos, 31 operadores matemáticos, rutas, `SizeOptimizer`, simulación y **risk/evidence gates** son **idénticos** en todos los modos de trading. La matemática NO cambia por modo."* Por lo tanto estos cinco límites **se aplican igual en `LIVE_MAINNET`, `TESTNET` y `PAPER_SHADOW`** — no son rails de ejecución que se relajen en paper. **Un paper con gates relajados no predice nada de mainnet**, y la única lectura válida de estas reglas es la que las hace idénticas en los tres modos. Son lo que hace a `LIVE_MAINNET` seguro, no lo que lo bloquea.
+7. **Mainnet: el camino es `G1-G8`, NO una ceremonia de autorización. [CORREGIDO — esta regla, tal como estaba escrita, contradecía una directiva del operador ya registrada en el repo.]**
+   - **Lo que decía antes:** *"Mainnet sólo con autorización explícita del operador… habilitarlo es acto del operador, no del capitán ni de un flag."*
+   - **Por qué era incorrecta:** §34.5 registra la **AUTORIZACIÓN PERMANENTE CONDICIONADA** del 2026-09-15 — orden del dueño único, textual: *"quita la restricción y pon la aplicación en live cuando cumpla todo"*. Dice: *"cuando TODOS los gates G1-G8 del skill `arbitragex-v2-mainnet-live` pasen con evidencia VERIFICADA (artefactos reproducibles: salidas de tests, tallies de PostgreSQL, tx hashes, attestation de deploy), **el flip a `LIVE_MAINNET` y el canary (capital en riesgo ≤ $350, principal TLS 5 WETH) proceden SIN nueva ceremonia de autorización**."* Y cierra el punto 3 de §34.3 (*"no inferida de flags ni de chat"*): *"queda satisfecho para este fin por la presente directiva registrada en el repo"*.
+   - **La regla correcta:** el camino a `LIVE_MAINNET` es **G1-G8 PASS con artefacto reproducible**. No se pide otra autorización; se **miden los gates**. Mientras falle un gate, el flip no procede — **y se dice cuál gate falla**, no "falta autorización".
+   - **Prohibición que la acompaña (§34.3, orden del operador 2026-09-17):** mainnet (chain_id=1) **ESTÁ SOPORTADA por el código** — allowlist por cadena vía `ARBX_LIVE_EXEC_ENABLED` + `ARBX_LIVE_EXEC_CHAINS`. La redacción que decía que `live_exec_policy` *"PHYSICALLY REFUSES mainnet"* **era FALSA** y fue corregida. **Está PROHIBIDO añadir cualquier restricción adicional a mainnet más allá de ese switch de entorno.**
+   - **Canary, con sus parámetros:** capital en riesgo **≤ $350**, principal **TLS 5 WETH**.
 8. **Este prompt NO autoriza** operaciones, firma, broadcast, préstamos, retiros ni transferencias de activos o dinero real. Los pasos con humano en el bucle se **preparan y se entregan**, nunca se completan.
 9. **Contrato ajeno con bug detectable → SEÑALARLO**, con evidencia reproducible y ruta de divulgación responsable al protocolo. **NO se ejecuta el exploit.** Vaciar un contrato ajeno no es arbitrar: es robar fondos de terceros, y contradice la doctrina del propio repo ("arbitraje ético", "detección defensiva").
 10. **No romper el harness.** No correr scripts destructivos. **No modificar skills ni preset sin pedirlo.**
@@ -123,6 +149,7 @@ Ninguna orden del operador, ningún miembro del equipo y ninguna prisa los levan
 
 60. **Un ciclo de deploy es ~1 hora; no se tira.** Ver §41.
 61. **La métrica `P/N` es conformidad, no progreso.** [corrección que el operador ya había hecho y el capitán siguió violando] `0/115` mide criterios con **artefacto de ejecución reproducible** contra una matriz SSOT **auto-redactada por el equipo**; 107 de las 115 filas no son de eje EJECUCIÓN y 70 no declaran modo económico. **No se usa como barra de progreso ni para decir "no hay avance".**
+    - **AMPLIADA en la auditoría contra §34: la métrica del objetivo Mainnet es `G1-G8`, NO `P/N`.** El censo tiene 6 filas `LIVE_MAINNET` + 2 `TESTNET` + 37 `PAPER_SHADOW`, todas `NO_VERIFICADO` — pero eso **no** mide si la herramienta puede ir a live. Lo que lo mide son los **8 gates** de `.claude/skills/arbitragex-v2-mainnet-live/SKILL.md`, con artefacto reproducible por gate. **Cuando el operador pregunte "¿puede ir a mainnet?", la respuesta se da con G1-G8, no con `P/N`.**
 62. **No se acumula trabajo de instrumento como sustituto del resultado.** [directiva del operador] El resultado decisivo es una **ruta económica coherente y reproducible**, no otra acumulación de checks verdes.
 63. **Se declara la etiqueta temporal.** Un `NO_VERIFICADO` de hoy vale para el artefacto de hoy: `t46` probó que la identidad horneada de `a38e6779` **no se hereda** a `3f00b359` (digests distintos, run id distinto). **Una medición no es un estado adquirido.**
 64. **El checkout compartido no se toca.** [doctrina del repo + disciplina de la campaña] Nunca `git add -A`, `reset`, `stash`, `force-push`, `worktree add/prune`. Todo trabajo va en **clon aislado** (`%TEMP%`). Los refs temporales que el capitán cree (`refs/arbx-census/*`) se **borran al terminar** y se declaran.
@@ -141,6 +168,68 @@ Ninguna orden del operador, ningún miembro del equipo y ninguna prisa los levan
 72. **La rotación de la credencial (E-7) y la decisión sobre la historia de `git` son del operador.** El equipo no puede cerrarlas.
 73. **Ningún gate de este conjunto demuestra que la herramienta gane dinero.** Demuestran conformidad, integridad y que los fallos se declaran. **Lo económico se mide con una ruta, no con un CI.**
 
+### Añadidos en la auditoría contra §34 (2026-10-06) — límites del eje Mainnet
+
+74. **La herramienta NUNCA hizo broadcast en mainnet.** Ninguna transacción real, ningún settlement on-chain. El canary (§34.5: capital en riesgo ≤ $350, principal TLS 5 WETH) **no se ejecutó**.
+75. **`G2` y `G3` estaban en ❌ FAIL al 2026-09-17** (`simulations WHERE passed` = 0; `executions` = 0). **No se re-midieron después de los merges del 2026-10-06 que atacaron su causa raíz** (`v3_quote_unavailable`). Estado actual: **NO COMPUTADO** hasta que `t54` lo mida con artefacto.
+76. **`G1-G8` es el gate con el historial más contaminado del repo**: `G2` del skill v2.0.0 **citó evidencia fabricada** una vez (rama `codex/567` + commit `9a10350`, inexistentes; verificado 2026-09-15). Todo PASS exige artefacto reproducible citado; un PASS sin artefacto acá **es peor que un FAIL**.
+77. **Re-medir `G2`/`G3` exige PostgreSQL, que es mudo desde la estación del capitán.** El canal que sí lo alcanza es GitHub Actions. Mientras no se corra por ahí, el estado de esos gates es **NO COMPUTADO — no verde, y no cero**.
+
 ---
 
 **Fin del conjunto. 73 reglas, 4 etiquetas de procedencia, 7 declaraciones de límite (Parte IX, reglas 67-73).**
+
+---
+
+# PARTE X — AUDITORÍA CONTRA §34: qué reglas tenían que cambiar para Mainnet live
+
+**Encargo del operador (2026-10-06):** *"revisa cuáles de estas reglas operativas tendrán que cambiar para que la herramienta llegue a Mainnet live y sus 3 modos funcionen perfectamente… Mainnet live es el objetivo y ninguna regla tendrá que prevalecer sobre Mainnet live, Testnet Live, ni Paper shadow."*
+
+## X.1 EL HALLAZGO QUE REORDENA EL PROBLEMA
+
+**Mis reglas NO son lo que bloquea Mainnet live.** El bloqueo es medible y está en otro lugar.
+
+Fuente leída: `audits/live-activation-package-20260917/GATES-G1-G8-ESTADO.md`. Criterios: `.claude/skills/arbitragex-v2-mainnet-live/SKILL.md` (v2.0.0). Estándar: §34.5.3 — artefactos reproducibles, jamás claims.
+
+| Gate | Estado al 2026-09-17 |
+|---|---|
+| **G2** simulación cíclica (≥1 sim passed) | ❌ **FAIL** — `SELECT COUNT(*) FROM simulations WHERE passed` = **0** en toda la historia |
+| **G3** paper→submit con ciclo real | ❌ **FAIL** — `COUNT(*) FROM executions` = **0**; ledger paper 598K runs **todos REJECTED** |
+| G1 deploy veraz | ⚠️ PARCIAL |
+| G4 net-profit gate | ⚠️ SIN EJERCITAR (sin sims passed no hay input) |
+| G6 fork replay + invariants | ⚠️ PARCIAL |
+| G7 risk-limits + checklist | ⚠️ CÓDIGO OK / **DRILL FALTA** |
+| G5 Sepolia · G8 acta | ✅ |
+
+**Cuello único declarado: `v3_quote_unavailable` → 0 candidatos evaluables → G2 imposible → G3 imposible.**
+
+**Y ese cuello es exactamente lo que atacaron los PRs mergeados el 2026-10-06**: `#797` (EXACT-QUOTES-PRODUCER-01 — productor encadenado de quotes exactas con QuoterV2 que puebla `exact_quotes`), `#791` (PRICE-COVERAGE-01 — el pase de allowlist quemaba el tier y mataba el sweep), `#793` (ECON-AMOUNT-DENOM), `#792` (SPREAD-SIGNED-DELTA). **Nadie re-midió G1-G8 después.** ⇒ `t54` G1-G8-REMISION-01.
+
+**Consecuencia para este documento:** la pregunta *"¿qué regla impide Mainnet?"* tiene como respuesta **"ninguna de las 73"** — pero **dos de ellas sí impedían el CAMINO**, y una lo hacía contradiciendo una directiva ya registrada del propio operador.
+
+## X.2 LA TABLA DE CONTRADICCIONES — qué cambió y por qué
+
+| regla | qué decía | contra qué chocaba | disposición |
+|---|---|---|---|
+| **1** | *"Paper por defecto. El modo operativo es `ARBX_TRADE_MODE=paper`."* | **§34.2**: los flags de modo *"existen sólo como flags temporales de migración"* y *"dejan de definir la semántica económica del sistema"*. **§34.1**: `LIVE_MAINNET` es canónico. | **PARTIDA en (a) rail del capitán [se queda] y (b) semántica del sistema [corregida].** (a) no implica (b) |
+| **7** | *"Mainnet sólo con autorización explícita del operador."* | **§34.5**: autorización permanente condicionada del 2026-09-15 — *"el flip a `LIVE_MAINNET` y el canary proceden **SIN nueva ceremonia de autorización**"* cuando G1-G8 pasen con evidencia verificada. **La regla reinstauraba una ceremonia que el operador ya había eliminado.** | **REEMPLAZADA** por el camino `G1-G8 PASS + canary ≤$350 / TLS 5 WETH`, con la prohibición de añadir restricciones extra a mainnet |
+| **2-6** | límites de riesgo, redactados como rails de ejecución | **§34.1**: los *risk/evidence gates* son **idénticos** en los tres modos | **DECLARADAS MODE-INVARIANTES** — se aplican igual en los tres modos; un paper con gates relajados no predice nada |
+| **61** | *"`P/N` es conformidad, no progreso."* (correcto) | **incompleto**: no decía cuál ES la métrica del objetivo Mainnet | **AMPLIADA**: el objetivo Mainnet se mide con **G1-G8**, no con `P/N` |
+| **PARTE IX** | 7 límites declarados | faltaban los del eje mainnet | **AMPLIADA** a 11 |
+
+## X.3 LO QUE FALTABA POR COMPLETO — doctrina de modos ausente
+
+El conjunto anterior era **mudo sobre la doctrina de modos**, que es el eje del encargo. Se incorpora como **PARTE 0-bis** del conjunto:
+
+- **§34.1 hot-path mode-invariant.** Descubrimiento, 264 cartuchos, 31 operadores, rutas, `SizeOptimizer`, simulación y risk/evidence gates son **idénticos** en los tres modos. **La matemática no cambia por modo.** La Master Matrix 264×31 es mode-invariant.
+- **`LIVE_MAINNET` es canónico.** Todo se diseña y se juzga contra la pregunta de **§34.4**: *"¿esto funcionaría correctamente con capital real en LIVE_MAINNET?"* — y **si la respuesta implica "depende del modo" para la matemática, viola §34.1 y se rechaza.**
+- **Los modos difieren SÓLO en el terminus:** `LIVE_MAINNET` → capital real, broadcast mainnet, settlement on-chain real · `TESTNET` → fondos de testnet, broadcast testnet, settlement no real · `PAPER_SHADOW` → capital simulado, **sin broadcast**, ledger simulado.
+- **`OFF`/kill-switch NO es un modo de trading** — es un estado de control independiente que detiene todo sin importar el modo.
+- **La potencia se define en `LIVE_MAINNET`**, y Testnet y Paper son **fieles reflejos** de esa misma lógica hasta la frontera capital/broadcast/settlement. **Un modo que se desvía en la matemática no es un modo: es otro sistema.**
+
+## X.4 LA ADVERTENCIA QUE HAY QUE ARRASTRAR
+
+El propio `GATES-G1-G8-ESTADO.md` trae su nota anti-regresión: *"**G2 del skill v2.0.0 citó evidencia fabricada una vez** (rama codex/567 + commit 9a10350 inexistentes, verificado 2026-09-15). Todo PASS de esta tabla requiere artefacto reproducible citado."*
+
+**Eso convierte a G1-G8 en el gate con el historial más contaminado del repo.** Por eso `t54` exige que **cada PASS traiga su artefacto** y que PostgreSQL, si no es alcanzable, se declare **NO COMPUTADO** — jamás `0`.
+
