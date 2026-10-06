@@ -156,3 +156,64 @@ test('WIRING: the entry file keeps the aggregate counter and reconciles it', () 
     'the opaque blocked_frames===0 assertion must be replaced, not kept alongside');
   assert.ok(src.includes('blocked_frames:0'), 'the aggregate counter must still be reported');
 });
+
+// ── ACK-PARSER-01: diagnosed by EVENT, not mislabelled by SHAPE ──
+test('an acknowledged event is diagnosed by its event, not as an unrecognized shape', () => {
+  const record = classifyBlockedClientFrame('420["some:unmodelled:event"]');
+  assert.equal(record.verdict, 'declared_client_coverage_gap');
+  assert.equal(record.reason, 'unknown_socket_event');
+  assert.notEqual(record.reason, 'unrecognized_frame_shape');
+  assert.equal(record.detail.event, 'some:unmodelled:event');
+});
+
+test('the acknowledgement id is recorded, single-digit, multi-digit, and absent', () => {
+  assert.equal(classifyBlockedClientFrame('420["some:unmodelled:event"]').detail.ack_id, '0');
+  assert.equal(classifyBlockedClientFrame('4217["some:unmodelled:event"]').detail.ack_id, '17');
+  assert.equal(classifyBlockedClientFrame('42["some:unmodelled:event"]').detail.ack_id, null);
+});
+
+test('a malformed acknowledgement shape is still a fatal unrecognized shape', () => {
+  for (const frame of ['42x["some:unmodelled:event"]', '420x["some:unmodelled:event"]',
+    '42<0>["some:unmodelled:event"]', '420[', '42["some:unmodelled:event"', '4237', '420{}']) {
+    assert.equal(classifyBlockedClientFrame(frame).reason, 'unrecognized_frame_shape', frame);
+  }
+});
+
+test('a namespaced frame is refused for its NAMESPACE, never mislabelled as a bad shape', () => {
+  for (const frame of ['42/admin,["some:event"]', '420/admin,["some:event"]', '4217/admin,["some:event"]']) {
+    const record = classifyBlockedClientFrame(frame);
+    assert.equal(record.verdict, 'fatal', frame);
+    assert.equal(record.reason, 'unauthorized_namespace', frame);
+  }
+});
+
+test('ACK-PARSER-01 ELIMINATION: the same SHAPE with an allowlisted name is forwarded', () => {
+  // This is the invariant that licenses the declared verdict, and the guard against
+  // the policy and this module drifting into two different parsers again -- which is
+  // exactly how the acknowledgement-id defect stayed invisible.
+  for (const shape of ['42%s', '420%s', '4217%s']) {
+    const allowlisted = shape.replace('%s', '["subscribe:prices"]');
+    const unmodelled = shape.replace('%s', '["some:unmodelled:event"]');
+    assert.equal(safeEnginePacket(allowlisted), true, allowlisted);
+    assert.equal(classifyBlockedClientFrame(unmodelled).verdict, 'declared_client_coverage_gap', unmodelled);
+  }
+});
+
+test('ACK-PARSER-01: a blocked WRITE order is fatal, with or without an ack id', () => {
+  // Before the parser fix these came out fatal only because they failed the bare
+  // `42[` prefix. Now that the shape is understood, the write check must carry that
+  // weight itself -- otherwise teaching the parser about ack ids would have LOOSENED
+  // the gate: a blocked `420["execute"]` would have been declared a coverage gap.
+  for (const frame of ['42["execute"]', '420["execute"]', '4217["execute"]',
+    '42["sign"]', '420["sign"]', '42["runtime:set"]', '420["runtime:set"]']) {
+    const record = classifyBlockedClientFrame(frame);
+    assert.equal(record.verdict, 'fatal', frame);
+    assert.equal(record.reason, 'write_intent_event', frame);
+  }
+});
+
+test('the write check does not swallow the legitimate coverage-gap case', () => {
+  // A genuinely unmodelled READ subscription is still declared, not turned fatal.
+  assert.equal(classifyBlockedClientFrame('420["some:unmodelled:event"]').reason, 'unknown_socket_event');
+  assert.equal(classifyBlockedClientFrame('42["subscribe:brand_new"]').reason, 'unknown_socket_event');
+});

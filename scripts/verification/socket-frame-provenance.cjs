@@ -43,15 +43,32 @@
 // subscriptions is incomplete. It is reported, never hidden.
 
 const assert = require('node:assert/strict');
+// ONE parser, shared with the policy. Two parsers that disagree is precisely how the
+// `420[...]` acknowledgement-id defect stayed invisible: the policy rejected the frame
+// and this module then described that rejection as a malformed shape.
+const { parseSocketIoEvent, MAX_ENGINE_PACKET_BYTES } = require('./read-only-policy.cjs');
 
 /** Structural proof that a frame came from the audited page, not the server. */
 const CLIENT_CHANNEL_PROOF = 'client->server channel (Playwright routeWebSocket socket.onMessage)';
 
-/** Mirrors the policy's own ceiling so bullet 3 above stays true if it changes. */
-const MAX_ENGINE_FRAME_BYTES = 65536;
+/** The policy's own ceiling, imported rather than duplicated so the two cannot drift. */
+const MAX_ENGINE_FRAME_BYTES = MAX_ENGINE_PACKET_BYTES;
 
 /** Same event-name shape the gate already accepts when counting events. */
 const EVENT_NAME = /^[\w:.-]{1,80}$/;
+
+/**
+ * Names whose BLOCKED presence is not a coverage gap but a write attempt: the
+ * read-only policy refused to forward an order, and that must never be declared
+ * benign merely because the frame was well formed.
+ *
+ * This exists because teaching the parser about acknowledgement ids would otherwise
+ * LOOSEN this module: before the fix, a frame like `420["execute"]` failed the bare
+ * `42[` prefix test and came out inherently fatal. Conservative on purpose --
+ * matching here only ever makes the gate STRICTER, so it cannot manufacture a green,
+ * while a miss degrades to the previous behaviour rather than to a false pass.
+ */
+const WRITE_INTENT = /(^|[:_-])(execute|sign|write|set|mutate|submit|approve|cancel|admin|transfer|withdraw)([:_-]|$)/i;
 
 /** Same redaction discipline the report already applies to free text. */
 function redact(value) {
@@ -78,18 +95,40 @@ function classifyBlockedClientFrame(data) {
     return { ...base('engine_packet_rejected', proof), kind: 'frame', verdict: 'fatal',
       reason: 'oversized_frame', detail: { bytes: data.length, limit: MAX_ENGINE_FRAME_BYTES } };
   }
-  let parsed = null;
-  if (data.startsWith('42[')) {
-    try { parsed = JSON.parse(data.slice(2)); } catch { parsed = null; }
-  }
-  if (!Array.isArray(parsed) || parsed.length < 1 || typeof parsed[0] !== 'string' || !EVENT_NAME.test(parsed[0])) {
+  const frame = parseSocketIoEvent(data);
+  if (frame === null) {
     return { ...base('engine_packet_rejected', proof), kind: 'frame', verdict: 'fatal',
       reason: 'unrecognized_frame_shape',
       detail: { prefix: redact(data.slice(0, 64)), bytes: data.length } };
   }
+  if (frame.namespace !== null) {
+    // The policy speaks the default namespace only, so a namespaced frame is refused
+    // for its NAMESPACE, not for its shape. Calling this "unrecognized shape" would be
+    // a second misdiagnosis of exactly the kind this module exists to stop.
+    return { ...base('engine_packet_rejected', proof), kind: 'frame', verdict: 'fatal',
+      reason: 'unauthorized_namespace',
+      detail: { namespace: redact(frame.namespace), bytes: data.length } };
+  }
+  if (typeof frame.event !== 'string' || !EVENT_NAME.test(frame.event)) {
+    return { ...base('engine_packet_rejected', proof), kind: 'frame', verdict: 'fatal',
+      reason: 'unrecognized_frame_shape',
+      detail: { prefix: redact(data.slice(0, 64)), bytes: data.length } };
+  }
+  if (WRITE_INTENT.test(frame.event)) {
+    // A blocked write order is the security control working on something that should
+    // never have been attempted. Declaring THAT a coverage gap would be the same
+    // class of error this module was built to stop, inverted.
+    return { ...base('engine_packet_rejected', proof), kind: 'frame', verdict: 'fatal',
+      reason: 'write_intent_event',
+      detail: { event: frame.event, ack_id: frame.ackId, bytes: data.length } };
+  }
+  // A frame of this shape on the blocked path is provably NOT an allowlisted
+  // subscription: `safeEnginePacket()` forwards exactly this shape when the name IS
+  // in the allowlist. That elimination is what licenses the declared verdict, and it
+  // is why an acknowledgement id does not change it -- nor does it authorise anyone.
   return { ...base('engine_packet_rejected', proof), kind: 'frame',
     verdict: 'declared_client_coverage_gap', reason: 'unknown_socket_event',
-    detail: { event: parsed[0], bytes: data.length } };
+    detail: { event: frame.event, ack_id: frame.ackId, bytes: data.length } };
 }
 
 /**
