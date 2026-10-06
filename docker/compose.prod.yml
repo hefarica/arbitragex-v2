@@ -23,6 +23,18 @@ services:
   postgres:
     logging: *id001
     image: postgres:15
+    # POSTGRES-SHM-01 (2026-10-06) — Docker's default /dev/shm is 64 MB. PostgreSQL
+    # parallel workers allocate DSM segments in /dev/shm; the observed request was
+    # 50,438,144 bytes (~48 MiB) and died with:
+    #   could not resize shared memory segment "/PostgreSQL.<pid>" to 50438144 bytes:
+    #   No space left on device
+    # surfacing as 503 query_failed on /api/rejections/breakdown. The limit is the
+    # CONTAINER's, not the host's (host /dev/shm had 7.7 GB free; disk had 31 GB).
+    # 1 GB = ~20x the observed segment and covers concurrent parallel aggregates.
+    # /dev/shm is tmpfs: this budget is RAM (16 GB host), never disk. Raising shm is
+    # the canonical fix — disabling parallel query instead would degrade EVERY
+    # aggregate to hide a container misconfiguration.
+    shm_size: 1gb
     # PERF-STACK WO-4 (2026-09-20): tuned for the 8-core/16GB VPS running the
     # full stack. synchronous_commit stays ON (locked decision — durability of
     # the opportunities ledger is not traded for throughput).
