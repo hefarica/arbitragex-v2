@@ -257,8 +257,13 @@ impl BayesianAllocator {
         // plausible: medido (t48) `b = -0.005437521`, `p = 0.95` →
         // `f* = (b·p − q)/b = 10.14`, o sea "apostá 10.14×" en una ruta que
         // pierde en TODO tamaño positivo (retorno marginal 0.994562479 < 1).
-        // La forma `!(x > 0.0)` también rechaza NaN (fail-closed).
-        if !(expected_yield_ratio > 0.0) {
+        // Forma NO negada (KELLY-GUARD-CLIPPY-01): `x <= 0.0 || !x.is_finite()`
+        // es equivalente a `!(x > 0.0)` para todo valor finito y para NaN, y
+        // ESTRICTAMENTE MAS ESTRICTA en `+Inf` — que el original dejaba pasar a
+        // la fórmula. Además evita `clippy::neg_cmp_op_on_partial_ord`, que bajo
+        // `-D warnings` rechaza la comparación negada sobre un tipo parcialmente
+        // ordenado. NO se usa `#[allow]`: el lint se RESUELVE, no se silencia.
+        if expected_yield_ratio <= 0.0 || !expected_yield_ratio.is_finite() {
             let mut alloc = Allocation::zero(strategy_kind.to_string(), chain_id, source);
             alloc.p_success_mean = p_mean;
             alloc.p_success_std = p_std;
@@ -273,7 +278,11 @@ impl BayesianAllocator {
         // Dentro del dominio, `f* <= 0` significa "no hay apuesta" (edge no
         // positivo). Se NOMBRA en vez de clamparse: el consumidor tiene que
         // poder distinguirlo del rechazo de dominio de arriba.
-        if !(raw_kelly > 0.0) {
+        // Misma forma no negada que la guarda precedente (KELLY-GUARD-CLIPPY-01):
+        // equivalente para finito/NaN y MAS ESTRICTA en `+Inf` — que sin esto
+        // llegaba a `clamp(0.0, KELLY_FRACTION_CAP)` como CAP y producía tamaño
+        // positivo.
+        if raw_kelly <= 0.0 || !raw_kelly.is_finite() {
             let mut alloc = Allocation::zero(strategy_kind.to_string(), chain_id, source);
             alloc.p_success_mean = p_mean;
             alloc.p_success_std = p_std;
@@ -579,8 +588,10 @@ mod tests {
             -0.005437521_f64, // el b medido por t48
             -1.0,
             -10.0,
-            0.0,      // frontera: odds nulas ⇒ no es una apuesta
-            f64::NAN, // fail-closed: `!(x > 0.0)` es true para NaN
+            0.0,               // frontera: odds nulas ⇒ no es una apuesta
+            f64::NAN,          // fail-closed: no es finito
+            f64::INFINITY,     // KELLY-GUARD-CLIPPY-01: +Inf PASA a rechazarse (endurece)
+            f64::NEG_INFINITY, // -Inf: rechazada por `<= 0.0`
         ] {
             let a = BayesianAllocator::new();
             let alloc = a.assign("k", 1, cap, y);
