@@ -15,10 +15,42 @@ import type pg from "pg";
 import type { Logger } from "pino";
 import type { AppConfig, CircuitBreaker, KillSwitchClient } from "@arbx/shared";
 import { OpportunitySchema, type Opportunity } from "@arbx/shared";
+import { z } from "zod";
 import { prefilter, decide, type Decision } from "./policy/engine.js";
 import { scoreOpportunity, weightsFromConfig } from "./scoring/engine.js";
 import { checkToken } from "./token_safety/client.js";
 import { persistDecision } from "./persistence.js";
+
+/**
+ * SELECTOR-PARSE-01 — el schema ESTRICTO compartido rechaza todo payload del
+ * searcher que traiga una clave de nivel superior que no declare.
+ *
+ * El productor Rust serializa claves nuevas de forma UNILATERAL (es la misma
+ * clase que ya documentan `cartridge_id` y `detector_id` en
+ * `shared-ts/src/contracts/index.ts:41-56`), así que si `OpportunitySchema`
+ * va un campo por detrás el resultado es un fallo de parse del 100%:
+ * `invalid_message` → XACK → el mensaje se pierde para siempre y NADA llega
+ * nunca a `arbx:opps:validated`.
+ *
+ * MEDIDO (2026-10-06, payload real de `XREVRANGE arbx:opps:detected`): el
+ * payload añade exactamente UNA clave no declarada de nivel superior,
+ * `economics` (el desglose de 7 costes del searcher). `2044`
+ * `consumer.invalid_message` por 20 min y CERO publicaciones; `simulations`
+ * con 0 filas de por vida (`n_tup_ins = 0`, `stats_reset = never`).
+ *
+ * NO se relaja ningún gate: `economics` NO lo consume ninguna decisión de
+ * este módulo — `prefilter`, `safety`, `score`, `decide` y `persist` leen
+ * sólo los campos ya declarados. Aceptarlo no cambia umbrales, ni el gate de
+ * viabilidad, ni el veredicto económico: sólo evita que el parser TIRE el
+ * mensaje entero por un campo que no usa.
+ *
+ * Se mantiene ESTRICTO — `.extend()` conserva la política `strict` — así que
+ * una clave realmente desconocida sigue fallando ruidosamente y esto no
+ * degenera en "aceptar cualquier cosa".
+ */
+export const SelectorOpportunitySchema = OpportunitySchema.extend({
+  economics: z.object({}).passthrough().nullish(),
+});
 
 const STREAM_IN = "arbx:opps:detected";
 const STREAM_OUT = "arbx:opps:validated";
@@ -326,7 +358,7 @@ export class StreamConsumer {
     try {
       const json = fieldValue(kv, "json");
       if (!json) throw new Error("no_json_field");
-      opportunity = OpportunitySchema.parse(JSON.parse(json));
+      opportunity = SelectorOpportunitySchema.parse(JSON.parse(json));
     } catch (err) {
       this.deps.logger.warn({ event: "consumer.invalid_message", id, err: (err as Error).message });
       this.deps.metrics.invalidMessagesTotal();

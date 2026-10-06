@@ -1,0 +1,10 @@
+{
+  "compilerOptions": {
+    "target": "ES2022", "module": "ESNext", "moduleResolution": "Bundler",
+    "strict": true, "skipLibCheck": true, "noEmit": true, "allowJs": true,
+    "baseUrl": ".", "esModuleInterop": true, "resolveJsonModule": true,
+    "paths": { "@arbx/shared": ["./repro-shared-shim.ts"] }
+  },
+  "include": ["src/**/*.ts", "repro-real.ts", "probe-import.ts"]
+}
+
