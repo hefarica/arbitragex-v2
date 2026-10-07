@@ -29,6 +29,18 @@ impl SimulatorBackend for AnvilBackend {
         Ok(self.engine.simulate(opp).await)
     }
 
+    /// SIM4-CYCLIC-02: forwards the traversal path so a CLOSED route
+    /// (`token_in == token_out`) reaches `build_probe_with_path` instead of the
+    /// by-name refusal. With an empty path the behaviour is byte-identical to
+    /// `simulate` above.
+    async fn simulate_with_route(
+        &self,
+        opp: &Opportunity,
+        route_path: &[ethers::types::Address],
+    ) -> Result<SimulationResult, SimulationError> {
+        Ok(self.engine.simulate_with_route(opp, route_path).await)
+    }
+
     fn name(&self) -> &str {
         "anvil"
     }

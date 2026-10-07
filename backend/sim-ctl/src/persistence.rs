@@ -133,6 +133,28 @@ fn is_sim_capability_gap(fail_reason: &str) -> bool {
         // probe cannot represent a closed route) -- same non-rejecting
         // semantics as the kind gap above.
         || fail_reason.starts_with("strategy_cyclic_route_not_simulatable")
+        // SIM4-CYCLIC-03 (F-01 de la verificación independiente t91): la familia
+        // del gap cíclico fue RENOMBRADA. SIM4-CYCLIC-01 la movió de
+        // `strategy_cyclic_route_not_simulatable_*` (que afirmaba una
+        // imposibilidad FALSA) a `cyclic_route_missing_route_metadata:<kind>`
+        // (que nombra el DATO que falta: la ruta). El clasificador — que NO
+        // tiene catch-all — se quedó con el nombre viejo, así que la familia
+        // nueva caía fuera y un gap de CAPACIDAD se habría clasificado como
+        // fallo de CALIDAD, flipeando la oportunidad a `rejected`.
+        //
+        // Ese es el modo de fallo que SIMWIRE-02 prohíbe explícitamente aquí
+        // arriba, y es PEOR que la negativa anterior: la ruta deja de ser "no
+        // simulable" y pasa a ser "rechazada en silencio", sin rastro de la
+        // causa. Las dos familias se mantienen reconocidas: la vieja por las
+        // filas históricas, la nueva por las que produce el arreglo.
+        || fail_reason.starts_with("cyclic_route_missing_route_metadata")
+        // SIM4-CYCLIC-04 (F9 de t91): un path PRESENTE pero incoherente con
+        // `token_in`/`token_out` no se simula con una pata inventada — se declara
+        // con su propio nombre. Esa familia entra acá por el MISMO motivo que la
+        // anterior: una familia de razones que no esté en este clasificador
+        // convierte un gap de capacidad en un rechazo silencioso (F-01). Si se
+        // renombra o se añade otra, hay que añadirla TAMBIÉN acá.
+        || fail_reason.starts_with("route_path_not_representable")
         || fail_reason.starts_with("anvil_fork_not_configured")
         || fail_reason.contains("_not_supported_in_s4")
         // SIMWIRE-02 (P1 safety net): typed B2c/stream gaps. Absence of
@@ -207,6 +229,58 @@ mod simwire02_classifier_tests {
             "output_undecodable",
         ] {
             assert!(is_sim_capability_gap(reason), "{reason} must be a gap");
+        }
+    }
+
+    /// SIM4-CYCLIC-03 (F-01 de t91): the RENAMED cyclic-gap family must be a gap.
+    ///
+    /// Before this fix the measured result was the opposite — the OLD pattern
+    /// returned true and the NEW one returned FALSE, and the classifier has no
+    /// catch-all. With `sim_engine.rs` now emitting
+    /// `cyclic_route_missing_route_metadata:<kind>`, that gap would have been
+    /// classified as an opportunity-QUALITY failure and the opportunity flipped
+    /// to `rejected` — exactly what SIMWIRE-02 forbids, and worse than the old
+    /// by-name refusal because it leaves no trace of the cause.
+    ///
+    /// Both families stay recognised: the OLD one for historical rows, the NEW
+    /// one for everything the fix now produces. The last two entries are the
+    /// CONTROL: a genuine market verdict must NOT be swallowed as a gap.
+    #[test]
+    fn sim4_cyclic_renamed_gap_family_is_still_a_gap() {
+        for reason in [
+            "cyclic_route_missing_route_metadata:triangular",
+            "cyclic_route_missing_route_metadata:dex_arb",
+            "cyclic_route_missing_route_metadata:flashloan_arb",
+            "cyclic_route_missing_route_metadata:mev_01_016_triangular_arbitrage",
+            // Historical rows keep their family recognised.
+            "strategy_cyclic_route_not_simulatable_in_s4:triangular",
+            // SIM4-CYCLIC-04 (F9): the OTHER new family must be recognised too,
+            // for the same reason — a family missing from this classifier turns
+            // a capability gap into a silent rejection (F-01).
+            "route_path_not_representable:dex_arb",
+            "route_path_not_representable:triangular",
+        ] {
+            assert!(
+                is_sim_capability_gap(reason),
+                "{reason} must classify as capability gap, NOT as a quality failure"
+            );
+        }
+
+        // CONTROL: these are genuine MARKET/orchestration verdicts and must stay
+        // OUT of the gap family — otherwise the classifier would stop
+        // distinguishing anything and every rejection would become a silence.
+        for reason in [
+            "v3_quote_unavailable",
+            "single_pool_no_spread",
+            "non_positive_profit",
+            "safety_below_threshold",
+            "simulation_failed",
+            "score_below_min",
+        ] {
+            assert!(
+                !is_sim_capability_gap(reason),
+                "{reason} must NOT be a capability gap — it is a real verdict"
+            );
         }
     }
 

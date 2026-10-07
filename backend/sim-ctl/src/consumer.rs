@@ -423,7 +423,39 @@ impl Consumer {
             None => {
                 // SIMWIRE-01: dispatch through the boot-selected backend so
                 // the legacy path honors `SIM_BACKEND`.
-                let sim = match self.backend.simulate(&opportunity).await {
+                //
+                // SIM4-CYCLIC-02 (cierre de N1): la ruta de recorrido se lee del
+                // `route_metadata` que el searcher YA persiste, con el lector que
+                // YA existe (`route_lookup::fetch_candidate_inputs`, el mismo que
+                // el camino B2c usa más abajo), y se le pasa al backend. Sin esto
+                // una ruta CERRADA (token_in == token_out) no tiene forma de
+                // llegar a `build_probe_with_path` y sigue cayendo en la negativa.
+                //
+                // Fail-honest y best-effort a la vez: si la lectura falla o no hay
+                // fila se pasa una ruta VACÍA — NUNCA una sonda fabricada. Con
+                // ruta vacía, una oportunidad NO cíclica se comporta EXACTAMENTE
+                // como antes, y una CERRADA falla con su motivo TIPADO
+                // (`cyclic_route_missing_route_metadata:<kind>`), jamás con un
+                // `passed` silencioso.
+                let route_path: Vec<ethers::types::Address> =
+                    match route_lookup::fetch_candidate_inputs(&self.pool, opportunity.id).await {
+                        Ok(Some(inputs)) => inputs
+                            .route_metadata
+                            .token_addresses
+                            .iter()
+                            .filter_map(|s| s.parse::<ethers::types::Address>().ok())
+                            .collect(),
+                        Ok(None) => Vec::new(),
+                        Err(e) => {
+                            warn!(event = "sim_consumer.route_metadata_read_err", id = %id, error = %e);
+                            Vec::new()
+                        }
+                    };
+                let sim = match self
+                    .backend
+                    .simulate_with_route(&opportunity, &route_path)
+                    .await
+                {
                     Ok(s) => s,
                     Err(e) => {
                         error!(event = "sim_consumer.backend_infra_err", id = %id, backend = %self.backend.name(), error = %e);

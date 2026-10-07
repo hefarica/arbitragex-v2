@@ -38,6 +38,23 @@ pub trait SimulatorBackend: Send + Sync {
     /// Never fabricates a passing result when the underlying simulation failed.
     async fn simulate(&self, opp: &Opportunity) -> Result<SimulationResult, SimulationError>;
 
+    /// SIM4-CYCLIC-02: route-aware simulate. `route_path` is
+    /// `route_metadata.token_addresses` — the full token traversal (first =
+    /// token_in, last = token_out, length = hops + 1); empty when the caller has
+    /// no route.
+    ///
+    /// Defaulted ON PURPOSE: a backend that cannot use a traversal path keeps
+    /// its exact previous behaviour by inheriting this body, so adding the route
+    /// never silently changes a backend that was not adapted for it. The
+    /// Anvil/`SimEngine` backend overrides it; `revm` inherits the default.
+    async fn simulate_with_route(
+        &self,
+        opp: &Opportunity,
+        _route_path: &[ethers::types::Address],
+    ) -> Result<SimulationResult, SimulationError> {
+        self.simulate(opp).await
+    }
+
     /// Human-readable name for logs and `SimulationResult.simulator` tagging.
     fn name(&self) -> &str;
 }
