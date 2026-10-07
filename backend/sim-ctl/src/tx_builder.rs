@@ -60,8 +60,12 @@ const DEADLINE_OFFSET_SECS: u64 = 120;
 /// pick the lowest-slippage quote — deferred to S5 quoter integration.
 const DEFAULT_UNIV3_FEE: u32 = 3000;
 
-/// Single-hop probe: the stable entry point for callers that have NO traversal
-/// path (and for the existing tests). Delegates with an empty path.
+/// Single-hop probe with NO traversal path. SIM4-CYCLIC-02: `sim_engine` now
+/// always goes through `build_probe_with_path`, so this has no production
+/// caller left — its only readers are the tests below. `#[cfg(test)]` declares
+/// that fact, instead of `#[allow(dead_code)]` which would hide the (true)
+/// warning behind a claim that production code still calls it.
+#[cfg(test)]
 pub fn build_probe(opp: &Opportunity, signer_from: Address) -> Result<ProbeTx, BuildError> {
     build_probe_with_path(opp, signer_from, &[])
 }

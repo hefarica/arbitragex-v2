@@ -80,4 +80,46 @@ Cero mocks, cero hardcode, **cero filas escritas**. **NO toqué el checkout comp
 
 ---
 
-*Negativa por nombre eliminada y probada por test en cuatro casos (V2, V3, sin ruta, ruta que no cierra); cuatro puertas en verde; fail-closed, `persistence.rs` y umbrales intactos. El hueco está declarado con nombre y apellido: falta un call site en `consumer.rs` —fuera de alcance— para que los ciclos ejecuten de verdad; hasta entonces la razón publicada es la honesta en vez de la falsa.*
+## 9. SIM4-CYCLIC-02 (t96) — N1 CERRADO: el call site ya está
+
+El §5 declaraba el hueco. **Ahora está cerrado, en el MISMO PR #846** (un solo ciclo de deploy, por la razón de N2: si N1 fuera en otro PR, el primer deploy sería un no-op garantizado sobre la métrica).
+
+**`consumer.rs`** — en el camino legacy (`None =>`, tras `consumer.rs:426`), ANTES de despachar al backend:
+```rust
+let route_path: Vec<ethers::types::Address> =
+    match route_lookup::fetch_candidate_inputs(&self.pool, opportunity.id).await {
+        Ok(Some(inputs)) => inputs.route_metadata.token_addresses.iter()
+            .filter_map(|s| s.parse::<ethers::types::Address>().ok()).collect(),
+        Ok(None) => Vec::new(),
+        Err(e) => { warn!(event = "sim_consumer.route_metadata_read_err", id = %id, error = %e); Vec::new() }
+    };
+let sim = match self.backend.simulate_with_route(&opportunity, &route_path).await { ... };
+```
+Es **el lector que YA existía** (`route_lookup::fetch_candidate_inputs`, el mismo que el camino B2c usa más abajo). **No es una capacidad nueva.**
+
+**La ruta hasta el builder (3 archivos más):** `simulator_backend.rs` añade `simulate_with_route` **con cuerpo por defecto** (un backend que no se adapta hereda el comportamiento anterior **exacto** — por eso `revm_backend.rs` NO se toca); `anvil_backend.rs` la sobrescribe y la reenvía a `SimEngine::simulate_with_route` (nuevo en `sim_engine.rs`), que finalmente llama a `build_probe_with_path`.
+
+**S2 — el fallo tipado ya estaba y sigue:** ruta ausente o que no cierra ⇒ `CyclicRouteMissingPath` ⇒ `cyclic_route_missing_route_metadata:<kind>`. **Nunca una sonda fabricada. Nunca un `passed` silencioso.** Si la lectura de `route_metadata` falla, se pasa ruta **VACÍA** (best-effort) y decide el mismo camino tipado.
+
+**S3:** `strategy_cyclic_route_not_simulatable_in_s4` ya no se emite (desde t88) y esta rama lo confirma.
+
+**Fallo de puerta corregido (honesto):** `-D warnings` cazó **`build_probe` is never used** — verdadero: al pasar `sim_engine` a `build_probe_with_path`, `build_probe` se quedó **sin llamador de producción** (sólo lo usan los tests). Se declaró con **`#[cfg(test)]`**, NO con `#[allow(dead_code)]`, que habría escondido el aviso detrás de una afirmación falsa.
+
+**Las cuatro puertas, re-corridas sobre el código con `md5` verificado (`0fe96b71…` ambos lados):**
+
+| puerta | resultado |
+|---|---|
+| `cargo fmt --all -- --check` | **exit 0 — limpio** |
+| `RUSTFLAGS='-D warnings' cargo check -p sim-ctl` | **`Finished dev profile` in 11.91s** — 0 errores, 0 warnings |
+| `cargo test -p sim-ctl --no-fail-fast` | **0 failed** (8 · 52/1ign · 1 · 8/1ign · 8 · 0) |
+| `cargo test -p sim-core --no-fail-fast` | **0 failed** (79 · 3/1ign · 0) |
+
+> **Nota de método, porque casi reporto basura:** una primera corrida de estas puertas dio todo verde pero era **inválida** — el `cp` de sincronización falló en silencio (`cp: -r not specified`), así que `cargo check` terminó en **3.13s** sobre código **sin cambios**. Se detectó por el tiempo y por el mensaje de `cp`, se re-sincronizó y **se verificó por `md5sum` en ambos lados** antes de volver a correr. Las cifras de arriba son de esa corrida verificada.
+
+**S7 — N2, sin adornos:** este cambio **NO mueve** `simulations.passed` ni `simulated_profit_usd` en producción **por sí solo**. Eso requiere **mergear y desplegar**, y se mide en **t93**, no acá. Lo único que cambia en producción hasta el deploy es: **cero**, porque el contenedor sigue corriendo el código viejo.
+
+**A6 vigente:** representable **≠** rentable (`t48`: 10,82× corto). Si tras el deploy el mejor caso sigue dando negativo, **es un veredicto de mercado medido** — sin mejorar el número y **sin subir el sizing**.
+
+---
+
+*Negativa por nombre eliminada y probada por test en cuatro casos (V2, V3, sin ruta, ruta que no cierra); el call site de N1 cerrado en el mismo PR, un solo ciclo de deploy; cuatro puertas en verde sobre código verificado por `md5`; fail-closed, `persistence.rs` y umbrales intactos. Lo que queda es desplegar y medir en t93 — no reportar la métrica como movida antes de eso.*

@@ -6,7 +6,7 @@
 //! those just carry `passed = false` and a documented `fail_reason`.
 
 use crate::fork_manager::ForkManager;
-use crate::tx_builder::{build_probe, BuildError};
+use crate::tx_builder::{build_probe_with_path, BuildError};
 use chrono::Utc;
 use ethers::abi::{decode as abi_decode, ParamType};
 use ethers::core::types::transaction::eip2718::TypedTransaction;
@@ -30,7 +30,22 @@ pub struct SimEngine {
 }
 
 impl SimEngine {
+    /// Route-less entry point: byte-identical to the pre-SIM4-CYCLIC-02
+    /// behaviour (delegates with an empty path).
     pub async fn simulate(&self, opp: &Opportunity) -> SimulationResult {
+        self.simulate_with_route(opp, &[]).await
+    }
+
+    /// SIM4-CYCLIC-02: `route_path` is `route_metadata.token_addresses` — the
+    /// full token traversal (first = token_in, last = token_out, length =
+    /// hops + 1). Empty means "no route available": a closed route then fails
+    /// with its OWN typed reason (`cyclic_route_missing_route_metadata:<kind>`),
+    /// never a fabricated probe and never a silent pass.
+    pub async fn simulate_with_route(
+        &self,
+        opp: &Opportunity,
+        route_path: &[Address],
+    ) -> SimulationResult {
         let trace_id = opp.trace_id;
         let id = opp.id;
 
@@ -44,7 +59,7 @@ impl SimEngine {
         };
 
         // Build probe.
-        let probe = match build_probe(opp, self.signer_from) {
+        let probe = match build_probe_with_path(opp, self.signer_from, route_path) {
             Ok(p) => p,
             // BR-00 (2026-09-07): D-SIM-01 -- the reason now names the EXACT
             // kind it refused (base kind or cartridge stem, never collapsed).
