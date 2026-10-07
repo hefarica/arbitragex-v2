@@ -4,6 +4,7 @@
 **Dueño:** Data · **Permisos:** paper, sin firma, **sin merge** (el merge es de Release-B)
 **In scope:** `tests/v3-fee-units/`, `docs/data/` · **Out of scope:** `backend/`, `.github/`, `frontend/`
 **Artefacto:** este documento · **Intento:** `3f52efff-6326-424d-9ead-04f7abac6af6`
+**Actualización aditiva — FEE-UNITS-02:** intento `1ac65a78-d843-4faa-b2b0-86c9ee407a27` · cierra la frontera que §4 dejó declarada, con el hecho medido del CI (ver **§4.1**). Nada de lo anterior se borra ni se reescribe: se **marca lo superseded** y se **añade** el hecho que lo cierra.
 
 ## Identidad antes del primer commit
 
@@ -82,15 +83,49 @@ La primera versión de mi aserción negativa fue `assertNotIn("resolved_pool_add
 
 ## 4. VERIFICACIÓN LOCAL DE LOS PASOS DEL GATE
 
+> **ACTUALIZACIÓN ADITIVA — FEE-UNITS-02 (2026-10-07).** Esta sección se **conserva íntegra**: su
+> declaración de alcance era cierta y era la verdad disponible cuando se escribió. Lo que cambió
+> es que **el CI acreditó el paso que acá figuraba como no ejecutado**. El hecho medido está en
+> **§4.1**, y las dos afirmaciones de esta sección que hablaban en absoluto quedan **marcadas
+> como SUPERSEDED en el mismo lugar donde aparecen** — no borradas. No se reescribió el
+> documento ni se eliminó la declaración previa: se le añadió el hecho que la cierra.
+
 | Paso del gate `fee-units-and-cache` | Local | CI (run del PR) |
 |---|---|---|
 | `git diff --check` | **exit 0** (limpio) | verde |
 | `cargo test --locked --manifest-path tests/v3-fee-units/Cargo.toml --lib` | **30 passed; 0 failed; 3 ignored** | **verde** (mismo resultado) |
 | `rustfmt --edition 2021 --check backend/searcher-rs/src/pool_discovery.rs` | **RUSTFMT_OK** | corrió sin error (el job avanzó al paso siguiente) |
 | `python3 tests/v3-fee-units/test_hydration_order.py` | **Ran 4 tests — OK** | **ROJO** antes (IndexError) → con este PR: **verde** |
-| `python3 tests/v3-fee-units/test_redis_cas.py` + cargo `--ignored` | **NO CORRIÓ: `ConnectionRefusedError [Errno 111]`** — no hay Redis local | **NUNCA CORRIÓ** (el job murió antes) |
+| `python3 tests/v3-fee-units/test_redis_cas.py` + cargo `--ignored` | **NO CORRIÓ: `ConnectionRefusedError [Errno 111]`** — no hay Redis local (*esto **sigue** siendo NO COMPUTADO desde local; nada lo cambia*) | ~~**NUNCA CORRIÓ** (el job murió antes)~~ → **SUPERSEDED: SÍ CORRIÓ Y PASÓ** — run `37690831088`, `Actual Redis compare-and-set → success` (ver **§4.1**) |
 
-**Frontera declarada (fail-honest), y es importante:** el paso de Redis **nunca llegó a ejecutarse en CI** — el job murió en el paso de Python (`set -euo pipefail`). El workflow le provee un `redis:7-alpine` en `127.0.0.1:36379`; yo **no tengo Redis local** (WSL no tiene `redis-server` y la doctrina de la casa es *cero instalaciones*), así que **no puedo acreditarlo desde acá**. Lo que sí puedo afirmar: mi cambio **no lo toca** — `test_redis_cas.py` lee `backend/searcher-rs/src/pool_discovery/v3_fee.rs`, mientras este PR toca **sólo** `tests/v3-fee-units/test_hydration_order.py`. **Si al correr por primera vez ese paso aparece rojo, es un hallazgo NUEVO, no de este cambio**, y hay que reportarlo como tal.
+**Frontera declarada (fail-honest), y es importante:** el paso de Redis **nunca llegó a ejecutarse en CI**<sup>[**SUPERSEDED — ver §4.1:** sí llegó a ejecutarse, en el run `37690831088` sobre `8c01a01a`, y pasó]</sup> — el job murió en el paso de Python (`set -euo pipefail`). El workflow le provee un `redis:7-alpine` en `127.0.0.1:36379`; yo **no tengo Redis local** (WSL no tiene `redis-server` y la doctrina de la casa es *cero instalaciones*), así que **no puedo acreditarlo desde acá**. Lo que sí puedo afirmar: mi cambio **no lo toca** — `test_redis_cas.py` lee `backend/searcher-rs/src/pool_discovery/v3_fee.rs`, mientras este PR toca **sólo** `tests/v3-fee-units/test_hydration_order.py`. **Si al correr por primera vez ese paso aparece rojo, es un hallazgo NUEVO, no de este cambio**, y hay que reportarlo como tal.
+
+### 4.1 EL HECHO QUE LA SUPERSA: el CI acreditó el paso de Redis
+
+**Medido, no inferido.** El run **`37690831088`** — workflow `V3 Fee Boundary Regression`, `event=pull_request`, rama `feat/pool-resolve-01`, **`headSha=8c01a01a84640d89e4f8c36b01505c264f2fff3a`** — terminó **`conclusion=success`**. Su job **`fee-units-and-cache`** corrió **11 steps y los 11 terminaron en `success`**; entre ellos los cuatro que el workflow define:
+
+| Step del job `fee-units-and-cache` (los 4 del workflow) | Resultado |
+|---|---|
+| `Record the exact tested source` | `success` |
+| `Compile and test the actual production fee module` | `success` — **antes**: `##[error]Process completed with exit code 1` (el `IndexError`) |
+| `Actual Redis compare-and-set, disposable loopback fixture only` | **`success` — CORRIÓ POR PRIMERA VEZ** |
+| `Preserve evidence even after failures` | `success` |
+
+Los otros 7 steps del job (`Set up job`, `Initialize containers`, `actions/checkout`, `dtolnay/rust-toolchain`, `Post Run actions/checkout`, `Stop containers`, `Complete job`) también dieron `success`. **11 de 11.**
+
+**Procedencia (el comando que lo prueba, y nada más que este comando):**
+
+```bash
+gh run view 37690831088 --json jobs
+```
+
+**Qué se cierra y qué NO — deliberadamente separado.**
+- **Se CIERRA** la parte que esta sección declaraba abierta: el paso de Redis **ya corrió en CI, por primera vez, y pasó**. La frontera «*si al correr por primera vez aparece rojo, es un hallazgo NUEVO*» se resolvió **A FAVOR**: **no hay hallazgo que reportar**. La sospecha quedó descartada por el mismo gate, no por mi criterio.
+- **NO se cierra** la imposibilidad local, y este párrafo no la toca: **desde mi estación ese paso sigue siendo NO COMPUTADO** (`ConnectionRefusedError [Errno 111]`, sin `redis-server`; doctrina de cero instalaciones). Lo único que cambia es **de dónde viene la evidencia**: antes no había ninguna y por eso se declaró la frontera; ahora hay una, del CI, y se cita con su comando.
+
+**Alcance de lo que esto NO dice.** Que el step pase dice que **el compare-and-set de Redis funciona en el fixture descartable del gate** sobre `8c01a01a`. **No** dice nada sobre Redis de producción, ni sobre `v3_fee` fuera del gate: no medí eso y no lo afirmo.
+
+**Por qué se corrige ahora y no se dejó en la nota de la tarea.** Porque un documento que contradice un artefacto reproducible es exactamente la clase de fallo que esta célula persigue: el lector que abre el artefacto y **no** la tarea se quedaba con la versión vieja —«nunca corrió»— teniendo el CI diciendo lo contrario. La nota de tarea sigue existiendo como respaldo, pero **ya no es la única ubicación del hecho**.
 
 ---
 
