@@ -122,4 +122,39 @@ Es **el lector que YA existía** (`route_lookup::fetch_candidate_inputs`, el mis
 
 ---
 
-*Negativa por nombre eliminada y probada por test en cuatro casos (V2, V3, sin ruta, ruta que no cierra); el call site de N1 cerrado en el mismo PR, un solo ciclo de deploy; cuatro puertas en verde sobre código verificado por `md5`; fail-closed, `persistence.rs` y umbrales intactos. Lo que queda es desplegar y medir en t93 — no reportar la métrica como movida antes de eso.*
+## 10. SIM4-CYCLIC-03 (t99) — F-01: el renombre había dejado fuera al CLASIFICADOR
+
+Hallazgo **F-01 [MEDIA]** de la verificación independiente **t91**, y es un daño **que yo mismo introduje** en t88: renombré la familia del gap cíclico de `strategy_cyclic_route_not_simulatable_*` a `cyclic_route_missing_route_metadata:<kind>` **y no actualicé el clasificador**.
+
+**El hueco, medido en el código:** `persistence.rs:130-179` `is_sim_capability_gap` reconocía `strategy_cyclic_route_not_simulatable` (`:135`) pero **no la familia nueva**, y **no tiene catch-all**. El diff de #846 tenía **0 menciones** de `is_sim_capability_gap`.
+
+**Por qué importaba aunque hoy su impacto sea 0:** un gap de CAPACIDAD habría pasado a clasificarse como fallo de CALIDAD y la oportunidad se habría **flipeado a `rejected`** — exactamente lo que el comentario **SIMWIRE-02** prohíbe, y **peor que la negativa anterior**, porque el rechazo no deja rastro de la causa. El impacto era 0 sólo porque el arreglo todavía no producía rutas simulables: **se activaba en el mismo instante en que el call site empezara a funcionar.** Mergear sin este cierre era cambiar una pared por otra.
+
+**El fix** (`persistence.rs`, +14): una cláusula nueva
+```rust
+|| fail_reason.starts_with("cyclic_route_missing_route_metadata")
+```
+**Las DOS familias quedan reconocidas** — la vieja por las filas históricas, la nueva por lo que produce el arreglo — con el comentario que explica por qué existen ambas.
+
+**F2 — el test que MUESTRA la inversión**, en el módulo `simwire02_classifier_tests`:
+```
+test persistence::simwire02_classifier_tests::sim4_cyclic_renamed_gap_family_is_still_a_gap ... ok
+```
+Afirma que la familia NUEVA (4 variantes por kind) **y** la vieja son gaps, y cierra con un **CONTROL**: `v3_quote_unavailable`, `single_pool_no_spread`, `non_positive_profit`, `safety_below_threshold`, `simulation_failed`, `score_below_min` **NO** son gaps. Sin ese control, el test pasaría igual si el clasificador devolviera `true` para todo — es decir, si hubiera dejado de distinguir. **Un test que no puede fallar no prueba nada.**
+
+**F5 — puntería corregida por el capitán:** el fail-closed REAL **no** es `persistence.rs:131-135` (eso es el clasificador); es **`sim_engine.rs:153`**: `passed = slippage_pct.is_some_and(|s| s <= self.max_slippage_for_pass_pct)`. **No se tocó.** Los archivos de este cierre son `persistence.rs` y este documento: `sim_engine.rs`, `tx_builder.rs`, el trait, `anvil_backend.rs` y `consumer.rs` quedan **intactos**.
+
+**F6 — puertas y la regla ★ aplicada otra vez:** md5 idéntico WSL↔Windows **antes** de correr (`fc1ac48e…`), `touch` forzado, y **`Checking sim-ctl v0.1.0` confirmado en la salida** (7.16 s) antes de creerle al `Finished`. Gate 1 encontró **una** diferencia (una línea en blanco de más que introduje al insertar el test): corregí **sólo eso** y re-corrí **sólo esa puerta** — que pasó a `FMT_CLEAN`.
+
+| puerta | resultado |
+|---|---|
+| `cargo fmt --all -- --check` | **FMT_CLEAN** |
+| `RUSTFLAGS='-D warnings' cargo check -p sim-ctl` | **`Checking sim-ctl v0.1.0` … `Finished` in 7.16s** — 0/0 |
+| `cargo test -p sim-ctl --no-fail-fast` | **0 failed** (8 · 53/1ign · 1 · 8/1ign · 9 · 0) |
+| `cargo test -p sim-core --no-fail-fast` | **0 failed** (79 · 3/1ign · 0) |
+
+**F7 — N2:** este cierre **no mueve la métrica**; **la habilita sin romperla**. Hasta el deploy, `simulations.passed` sigue en 0 y `simulated_profit_usd` en NULL. Se mide en t93.
+
+---
+
+*Negativa por nombre eliminada y probada por test en cuatro casos (V2, V3, sin ruta, ruta que no cierra); el call site de N1 cerrado en el mismo PR; y el clasificador de capability-gap devuelto a reconocer la familia renombrada, con control que prueba que sigue distinguiendo. Un solo PR, un solo ciclo de deploy; cuatro puertas en verde sobre código verificado por `md5`; fail-closed real (`sim_engine.rs:153`) y umbrales intactos. Lo que queda es desplegar y medir en t93.*
