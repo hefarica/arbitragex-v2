@@ -157,4 +157,59 @@ Afirma que la familia NUEVA (4 variantes por kind) **y** la vieja son gaps, y ci
 
 ---
 
-*Negativa por nombre eliminada y probada por test en cuatro casos (V2, V3, sin ruta, ruta que no cierra); el call site de N1 cerrado en el mismo PR; y el clasificador de capability-gap devuelto a reconocer la familia renombrada, con control que prueba que sigue distinguiendo. Un solo PR, un solo ciclo de deploy; cuatro puertas en verde sobre código verificado por `md5`; fail-closed real (`sim_engine.rs:153`) y umbrales intactos. Lo que queda es desplegar y medir en t93.*
+## 11. SIM4-CYCLIC-04 (t99) — F9: el path NO se descarta cuando la ruta no es cerrada
+
+**F9 [NUEVO], por observación medida de t91, y es un daño que se ACTIVÓ con mi propio N1 de t96.**
+
+Desde N1, `consumer.rs` **ya pasa** `route_metadata.token_addresses`. Pero el builder **ignoraba el path cuando `token_in != token_out`** y encodía **una sola pata `token_in -> token_out`** por `dex_a`, **descartando los hops intermedios**. Eso simula una ruta que **NO existe**.
+
+**Por qué es peor que una negativa, con las palabras de la orden:** un `passed=true` obtenido de una ruta fabricada **contamina la mismísima métrica que este despliegue existe para producir** (`passed=true > 0`). Una simulación equivocada es **PEOR** que una negativa: la negativa deja rastro de su causa, la fabricación no.
+
+**El fix** (`tx_builder.rs`): el path se usa **siempre que venga y sea COHERENTE**, sea cíclico o no:
+- **CERRADA** (`token_in == token_out`): exige `len >= 3` y cierre; si no, `CyclicRouteMissingPath` (familia ya reconocida).
+- **NO cerrada SIN path**: comportamiento PREVIO **intacto** (una pata por `dex_a`).
+- **NO cerrada CON path incoherente**: **`PathNotRepresentable`** — variante TIPADA nueva, con su nombre propio.
+
+⇒ **Ningún caso fabrica una pata.** Y la familia nueva entra **también** en el clasificador (`persistence.rs`) —`route_path_not_representable`—, o se repetiría el agujero de F-01 con otro nombre.
+
+**Los dos tests, en verde:**
+```
+test tx_builder::tests::non_cyclic_multihop_path_is_used_not_replaced_by_an_invented_leg ... ok
+test tx_builder::tests::incoherent_path_on_non_cyclic_route_is_typed_not_invented ... ok
+```
+El primero es el que importa: sobre un path `[A, X, B]` **no cíclico**, verifica que el calldata encodado lleva **A, X y B en orden** — es decir, el path **completo**. Una pata inventada habría producido sólo `[A, B]`, sin `X`. El segundo prueba el fallo TIPADO ante un path que empieza bien y termina mal.
+
+### MEDICIÓN DE LA CLASE — declarada con superficie, filtro e instante
+
+```
+CONTROL SELECT 1 -> 1
+filtro   : route_metadata IS NOT NULL AND route_metadata::text NOT IN ('','{}')
+superficie: 7.664.760 filas
+instante : 2026-10-07 22:24:32.607298+00
+
+ciclica | path_len | count
+   t    |    3     | 7.148.272
+   t    |    4     |    58.037
+   t    |    5     |   209.039
+   t    |    6     |   234.465
+   t    |    7     |    13.335
+```
+
+**TODAS las filas son CÍCLICAS (`t`). No hay una sola fila `f`.** Es decir: **la clase "ruta no cíclica multi-hop" tiene CERO instancias vivas** en la superficie medida — coincide con lo que t91 declaró (*"impacto NO MEDIDO — no halló caso vivo"*).
+
+**Y el fix igual importa, por una razón que la medición no puede borrar:** la clase está vacía **HOY**, no prohibida **MAÑANA**. Un detector nuevo que emita una ruta no cerrada multi-hop habría caído en el camino viejo y podría haber producido un `passed=true` sobre una ruta inexistente. **El fix cierra la fabricación por construcción, no por ausencia de casos.**
+
+**F5 sigue intacto en este cierre:** los archivos tocados son `tx_builder.rs`, `sim_engine.rs`, `persistence.rs` y este doc. **`sim_engine.rs:153` y `max_slippage_for_pass_pct` no se tocaron.** `consumer.rs` **no se tocó** (reservado por t97).
+
+**Puertas (md5 idéntico en ambos lados para los 3 archivos de código, recompilación forzada y `Checking sim-ctl` confirmado):**
+
+| puerta | resultado |
+|---|---|
+| `cargo fmt --all -- --check` | **FMT_CLEAN** |
+| `RUSTFLAGS='-D warnings' cargo check -p sim-ctl` | **`Checking sim-ctl v0.1.0` … `Finished`** — 0/0 |
+| `cargo test -p sim-ctl --no-fail-fast` | **0 failed** — bin **55**/1ign (eran 53: +2 tests F9) |
+| `cargo test -p sim-core --no-fail-fast` | **0 failed** (79 · 3/1ign · 0) |
+
+---
+
+*Negativa por nombre eliminada; el call site de N1 cerrado; el clasificador devuelto a reconocer la familia renombrada; y el path dejado de descartar en rutas no cerradas, con fallo tipado en vez de una pata inventada. Un solo PR, un solo ciclo de deploy; cuatro puertas en verde sobre código verificado por `md5`; fail-closed real (`sim_engine.rs:153`), `consumer.rs` y los umbrales intactos. Lo que queda es desplegar y medir en t93.*

@@ -95,6 +95,19 @@ impl SimEngine {
                     &format!("cyclic_route_missing_route_metadata:{}", kind.as_str()),
                 );
             }
+            // SIM4-CYCLIC-04 (F9 de t91): un path PRESENTE pero incoherente con
+            // `token_in`/`token_out` NO se ignora ni se sustituye por una pata
+            // inventada. Se declara con su propio nombre, y entra TAMBIÉN en el
+            // clasificador (`persistence.rs`): si no, se repetiría el agujero de
+            // F-01 con otro nombre — un gap de capacidad convertido en rechazo
+            // silencioso.
+            Err(BuildError::PathNotRepresentable(kind)) => {
+                return Self::not_implemented(
+                    id,
+                    trace_id,
+                    &format!("route_path_not_representable:{}", kind.as_str()),
+                );
+            }
             Err(BuildError::UnsupportedChain(c)) => {
                 return Self::not_implemented(
                     id,

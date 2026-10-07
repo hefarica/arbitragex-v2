@@ -36,6 +36,22 @@ pub enum BuildError {
         "cyclic route needs route_metadata.token_addresses (>=3 tokens) to be representable: {0:?}"
     )]
     CyclicRouteMissingPath(StrategyKind),
+    // SIM4-CYCLIC-04 (F9 de la verificación independiente t91 — PROHIBIDO
+    // DESCARTAR HOPS EN SILENCIO): desde N1 el `consumer.rs` YA pasa
+    // `route_metadata.token_addresses`, pero este builder ignoraba el path
+    // cuando `token_in != token_out` y encodía UNA pata `token_in -> token_out`
+    // por `dex_a`, descartando los hops intermedios. Eso simula una ruta que NO
+    // existe, y un `passed=true` obtenido así **contamina la mismísima métrica
+    // que este despliegue existe para producir** (`passed=true > 0`).
+    //
+    // Una simulación equivocada es PEOR que una negativa: la negativa deja
+    // rastro de su causa, la fabricación no. Por eso un path presente que no
+    // empieza en `token_in` o no termina en `token_out` (o es demasiado corto)
+    // es un fallo TIPADO con nombre propio, nunca una pata inventada.
+    #[error(
+        "route path is present but not representable as a single leg (must start on token_in and end on token_out): {0:?}"
+    )]
+    PathNotRepresentable(StrategyKind),
     #[error("chain {0} not supported in S4 (only mainnet)")]
     UnsupportedChain(u64),
     #[error("router not in catalog for chain={chain} dex={dex}")]
@@ -100,15 +116,19 @@ pub fn build_probe_with_path(
     }
     let token_in = parse_addr(&opp.token_in)?;
     let token_out = parse_addr(&opp.token_out)?;
-    // SIM4-CYCLIC-01 (2026-10-07): a closed route is NOT refused any more. The
-    // refusal existed because this builder encodes a single swap hop and the
-    // Opportunity payload carries no intermediate hops — both true, and both
-    // irrelevant: the hops ARE persisted in
-    // `route_metadata.token_addresses`, and the V2 router takes the whole path
-    // array in ONE call. So a closed route is representable the moment the
-    // caller can hand us the path. Only its ABSENCE is an error now, and it is
-    // a data-availability error with its own reason — not a claim of
-    // topological impossibility.
+    // SIM4-CYCLIC-04 (F9 de t91): el path NO se usa sólo para rutas CERRADAS.
+    //
+    // Desde N1 el `consumer.rs` ya pasa `route_metadata.token_addresses`. Si ese
+    // path viene y es COHERENTE se usa COMPLETO —cíclico o no—, porque descartar
+    // los hops intermedios y encodear una sola pata `token_in -> token_out`
+    // simula una ruta que NO existe, y un `passed=true` así contamina la métrica
+    // que este despliegue existe para producir.
+    //
+    // Tres casos, y ninguno fabrica nada:
+    //   * CERRADA (`token_in == token_out`): exige >= 2 patas y cierre; si no,
+    //     `CyclicRouteMissingPath` (familia ya reconocida por el clasificador).
+    //   * NO cerrada SIN path: comportamiento PREVIO intacto (una pata por dex_a).
+    //   * NO cerrada CON path incoherente: `PathNotRepresentable`, tipado.
     let path_tokens: Option<Vec<Address>> = if token_in == token_out {
         if path.len() < 3 || path[0] != token_in || path[path.len() - 1] != token_out {
             return Err(BuildError::CyclicRouteMissingPath(
@@ -116,8 +136,13 @@ pub fn build_probe_with_path(
             ));
         }
         Some(path.to_vec())
-    } else {
+    } else if path.is_empty() {
         None
+    } else {
+        if path.len() < 2 || path[0] != token_in || path[path.len() - 1] != token_out {
+            return Err(BuildError::PathNotRepresentable(opp.strategy_kind.clone()));
+        }
+        Some(path.to_vec())
     };
     let amount_in = U256::from_dec_str(&opp.amount_in_wei)
         .map_err(|_| BuildError::InvalidAmount(opp.amount_in_wei.clone()))?;
@@ -575,6 +600,64 @@ mod tests {
         let tx = build_probe_with_path(&o, signer, &[a, b, a]).expect("V3 closed route must build");
         // UniV3 exactInput selector.
         assert_eq!(tx.data.as_ref()[0..4], [0xc0, 0x4b, 0x8d, 0x59]);
+    }
+
+    // SIM4-CYCLIC-04 (F9 de t91): una ruta NO cíclica CON path coherente debe usar
+    // el path COMPLETO. Antes se IGNORABA el path y se encodía una sola pata
+    // `token_in -> token_out`, descartando los hops intermedios: eso simula una
+    // ruta que NO existe, y un `passed=true` obtenido así contamina la métrica
+    // que este despliegue existe para producir.
+    #[test]
+    fn non_cyclic_multihop_path_is_used_not_replaced_by_an_invented_leg() {
+        let a_str = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+        let b_str = "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+        let x_str = "0xcccccccccccccccccccccccccccccccccccccccc";
+        let signer: Address = [0x11; 20].into();
+        let a: Address = a_str.parse().expect("a");
+        let b: Address = b_str.parse().expect("b");
+        let x: Address = x_str.parse().expect("x");
+        let mut o = opp(StrategyKind::dex_arb(), 1, "uniswap-v2");
+        o.token_in = a_str.into();
+        o.token_out = b_str.into();
+
+        let tx = build_probe_with_path(&o, signer, &[a, x, b]).expect("multi-hop path must build");
+
+        // El path encodado lleva A, X, B en orden. Una sola pata inventada habría
+        // producido sólo [A, B] — sin X.
+        let d = tx.data.as_ref();
+        let (wa, wx, wb) = (word(a), word(x), word(b));
+        let ia = d.windows(32).position(|w| w == wa.as_slice());
+        let ix = d.windows(32).position(|w| w == wx.as_slice());
+        let ib = d.windows(32).position(|w| w == wb.as_slice());
+        assert!(
+            ia.is_some() && ix.is_some() && ib.is_some(),
+            "los 3 tokens deben estar en el path"
+        );
+        let (ia, ix, ib) = (ia.unwrap(), ix.unwrap(), ib.unwrap());
+        assert!(ia < ix && ix < ib, "el path debe codificar A -> X -> B");
+    }
+
+    // SIM4-CYCLIC-04 (F9): un path PRESENTE pero incoherente NO se ignora ni se
+    // sustituye por una pata inventada — fallo TIPADO con nombre propio.
+    #[test]
+    fn incoherent_path_on_non_cyclic_route_is_typed_not_invented() {
+        let a_str = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+        let b_str = "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+        let x_str = "0xcccccccccccccccccccccccccccccccccccccccc";
+        let z_str = "0xdddddddddddddddddddddddddddddddddddddddd";
+        let signer: Address = [0x11; 20].into();
+        let a: Address = a_str.parse().expect("a");
+        let x: Address = x_str.parse().expect("x");
+        let z: Address = z_str.parse().expect("z");
+        let mut o = opp(StrategyKind::dex_arb(), 1, "uniswap-v2");
+        o.token_in = a_str.into();
+        o.token_out = b_str.into();
+
+        // Empieza en A pero termina en Z, no en token_out.
+        assert!(matches!(
+            build_probe_with_path(&o, signer, &[a, x, z]),
+            Err(BuildError::PathNotRepresentable(_))
+        ));
     }
 
     // BR-00 (2026-09-07): D-SIM-01 regression -- cartridge stems and

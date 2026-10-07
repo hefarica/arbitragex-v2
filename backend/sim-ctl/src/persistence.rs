@@ -148,6 +148,13 @@ fn is_sim_capability_gap(fail_reason: &str) -> bool {
         // causa. Las dos familias se mantienen reconocidas: la vieja por las
         // filas históricas, la nueva por las que produce el arreglo.
         || fail_reason.starts_with("cyclic_route_missing_route_metadata")
+        // SIM4-CYCLIC-04 (F9 de t91): un path PRESENTE pero incoherente con
+        // `token_in`/`token_out` no se simula con una pata inventada — se declara
+        // con su propio nombre. Esa familia entra acá por el MISMO motivo que la
+        // anterior: una familia de razones que no esté en este clasificador
+        // convierte un gap de capacidad en un rechazo silencioso (F-01). Si se
+        // renombra o se añade otra, hay que añadirla TAMBIÉN acá.
+        || fail_reason.starts_with("route_path_not_representable")
         || fail_reason.starts_with("anvil_fork_not_configured")
         || fail_reason.contains("_not_supported_in_s4")
         // SIMWIRE-02 (P1 safety net): typed B2c/stream gaps. Absence of
@@ -247,6 +254,11 @@ mod simwire02_classifier_tests {
             "cyclic_route_missing_route_metadata:mev_01_016_triangular_arbitrage",
             // Historical rows keep their family recognised.
             "strategy_cyclic_route_not_simulatable_in_s4:triangular",
+            // SIM4-CYCLIC-04 (F9): the OTHER new family must be recognised too,
+            // for the same reason — a family missing from this classifier turns
+            // a capability gap into a silent rejection (F-01).
+            "route_path_not_representable:dex_arb",
+            "route_path_not_representable:triangular",
         ] {
             assert!(
                 is_sim_capability_gap(reason),
