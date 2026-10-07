@@ -1,0 +1,65 @@
+name: doctrine-immutability
+
+# OMEGA hardening — "el guardián no puede editar las reglas de la cárcel".
+# Bloquea cualquier PR que modifique las skills/doctrina/gates que GOBIERNAN al
+# agente, salvo que un operador con permiso de escritura aplique explícitamente la
+# label `allow-doctrine-change`. Esto convierte a las skills gobernantes en
+# read-only para cualquier loop autónomo (que NO puede aplicarse labels a sí mismo
+# con permisos de escritura del repo) sin un checkpoint humano.
+#
+# Patrón always-run + guard interno (NO `paths:` filter) para evitar el deadlock
+# de required-check pendiente que ya nos mordió en tsc/dockerfile-audit.
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: doctrine-immutability-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  guard:
+    name: guard
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Guard governing / doctrine files
+        env:
+          LABELS: ${{ join(github.event.pull_request.labels.*.name, ',') }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+
+          CHANGED="$(git diff --name-only "$BASE_SHA" "$HEAD_SHA" || true)"
+
+          # Archivos que definen los gates de seguridad de ArbitrageX. Editarlos
+          # cambia las reglas bajo las que opera el agente -> requiere operador.
+          GOVERNED="$(printf '%s\n' "$CHANGED" | grep -E \
+            '^(\.claude/skills/arbx-.*\.md|\.claude/skills/.*gate.*\.md|CLAUDE\.md|\.claude/CLAUDE\.md|AGENTS\.md|\.github/workflows/(security|no-hardcode|no-regression|omega8-m3-grep-gates|omega8-pii-gates|doctrine-immutability)\.yml)$' \
+            || true)"
+
+          if [ -z "$GOVERNED" ]; then
+            echo "✅ No governing/doctrine files changed — guard passes."
+            exit 0
+          fi
+
+          echo "Governing/doctrine files changed in this PR:"
+          printf '  - %s\n' $GOVERNED
+
+          if printf '%s' ",$LABELS," | grep -q ',allow-doctrine-change,'; then
+            echo "✅ 'allow-doctrine-change' label present — operator authorized this change."
+            exit 0
+          fi
+
+          echo "::error::Governing/doctrine files changed without the 'allow-doctrine-change' label."
+          echo "These files define ArbitrageX safety gates (MEV ethics, no-hardcode, pre-execute checklist, doctrine grep, this guard itself)."
+          echo "They may only change with explicit operator authorization."
+          echo "An operator with write access must add the 'allow-doctrine-change' label to this PR to proceed."
+          exit 1
