@@ -19,12 +19,23 @@ use std::time::{SystemTime, UNIX_EPOCH};
 pub enum BuildError {
     #[error("unsupported strategy for S4 simulator: {0:?}")]
     UnsupportedStrategy(StrategyKind),
-    // BR-00 (2026-09-07): closed route (token_in == token_out) -- cannot be
-    // expressed as the single swap hop this builder encodes.
+    // SIM4-CYCLIC-01 (2026-10-07): a closed route IS representable. The UniV2
+    // router takes the WHOLE path array in ONE call
+    // (`swapExactTokensForTokens(..., address[] path, ...)`), so
+    // `path = [token_in, X1, ..., Xn, token_in]` encodes an N-leg cycle with no
+    // new contract and no new encoder. What was missing was never the encoder:
+    // `build_probe` could not SEE the hops, and the payload does not carry them.
+    //
+    // So the absence of the traversal path gets its OWN typed reason. This
+    // deliberately REPLACES `CyclicRouteNotRepresentable`, whose message
+    // asserted a topological impossibility that is false — and reusing that
+    // label would keep publishing a false verdict. The path itself is persisted
+    // (`route_metadata.token_addresses`, written by
+    // searcher-rs/src/engines/dex_engine.rs:1762, read by route_lookup.rs).
     #[error(
-        "cyclic route not representable as a single S4 swap hop (token_in == token_out): {0:?}"
+        "cyclic route needs route_metadata.token_addresses (>=3 tokens) to be representable: {0:?}"
     )]
-    CyclicRouteNotRepresentable(StrategyKind),
+    CyclicRouteMissingPath(StrategyKind),
     #[error("chain {0} not supported in S4 (only mainnet)")]
     UnsupportedChain(u64),
     #[error("router not in catalog for chain={chain} dex={dex}")]
@@ -49,7 +60,25 @@ const DEADLINE_OFFSET_SECS: u64 = 120;
 /// pick the lowest-slippage quote — deferred to S5 quoter integration.
 const DEFAULT_UNIV3_FEE: u32 = 3000;
 
+/// Single-hop probe: the stable entry point for callers that have NO traversal
+/// path (and for the existing tests). Delegates with an empty path.
 pub fn build_probe(opp: &Opportunity, signer_from: Address) -> Result<ProbeTx, BuildError> {
+    build_probe_with_path(opp, signer_from, &[])
+}
+
+/// SIM4-CYCLIC-01: `path` is `route_metadata.token_addresses` — the FULL token
+/// traversal (first = token_in, last = token_out, length = hops + 1). Pass an
+/// empty slice when the caller has no route.
+///
+/// A closed route (`token_in == token_out`) is representable IFF `path.len() >= 3`
+/// (i.e. >= 2 legs) and the path genuinely starts on `token_in` and ends on
+/// `token_out`. Absent/inconsistent path ⇒ `CyclicRouteMissingPath`, its own
+/// typed reason — never the old "not representable" label.
+pub fn build_probe_with_path(
+    opp: &Opportunity,
+    signer_from: Address,
+    path: &[Address],
+) -> Result<ProbeTx, BuildError> {
     if opp.chain_id != 1 {
         return Err(BuildError::UnsupportedChain(opp.chain_id));
     }
@@ -67,17 +96,25 @@ pub fn build_probe(opp: &Opportunity, signer_from: Address) -> Result<ProbeTx, B
     }
     let token_in = parse_addr(&opp.token_in)?;
     let token_out = parse_addr(&opp.token_out)?;
-    // BR-00 (2026-09-07): cyclic routes (token_in == token_out -- triangular
-    // cycles, flashloan borrows, closed cartridge routes) cannot be expressed
-    // as the single swap hop encoded here, and the Opportunity payload
-    // carries no intermediate hops to rebuild the real path. Refuse with a
-    // typed error instead of encoding a degenerate [X, X] swap that can only
-    // ever revert on the fork.
-    if token_in == token_out {
-        return Err(BuildError::CyclicRouteNotRepresentable(
-            opp.strategy_kind.clone(),
-        ));
-    }
+    // SIM4-CYCLIC-01 (2026-10-07): a closed route is NOT refused any more. The
+    // refusal existed because this builder encodes a single swap hop and the
+    // Opportunity payload carries no intermediate hops — both true, and both
+    // irrelevant: the hops ARE persisted in
+    // `route_metadata.token_addresses`, and the V2 router takes the whole path
+    // array in ONE call. So a closed route is representable the moment the
+    // caller can hand us the path. Only its ABSENCE is an error now, and it is
+    // a data-availability error with its own reason — not a claim of
+    // topological impossibility.
+    let path_tokens: Option<Vec<Address>> = if token_in == token_out {
+        if path.len() < 3 || path[0] != token_in || path[path.len() - 1] != token_out {
+            return Err(BuildError::CyclicRouteMissingPath(
+                opp.strategy_kind.clone(),
+            ));
+        }
+        Some(path.to_vec())
+    } else {
+        None
+    };
     let amount_in = U256::from_dec_str(&opp.amount_in_wei)
         .map_err(|_| BuildError::InvalidAmount(opp.amount_in_wei.clone()))?;
     if amount_in.is_zero() {
@@ -94,12 +131,16 @@ pub fn build_probe(opp: &Opportunity, signer_from: Address) -> Result<ProbeTx, B
     let deadline = U256::from(now_secs() + DEADLINE_OFFSET_SECS);
 
     let data: Bytes = match router_entry.kind {
-        RouterKind::UniswapV2 | RouterKind::Sushi => {
-            encode_v2(token_in, token_out, amount_in, signer_from, deadline)
-        }
-        RouterKind::UniswapV3 => {
-            encode_v3_exact_input_single(token_in, token_out, amount_in, signer_from, deadline)
-        }
+        RouterKind::UniswapV2 | RouterKind::Sushi => match &path_tokens {
+            Some(p) => encode_v2_path(p, amount_in, signer_from, deadline),
+            None => encode_v2(token_in, token_out, amount_in, signer_from, deadline),
+        },
+        RouterKind::UniswapV3 => match &path_tokens {
+            Some(p) => encode_v3_exact_input(p, amount_in, signer_from, deadline),
+            None => {
+                encode_v3_exact_input_single(token_in, token_out, amount_in, signer_from, deadline)
+            }
+        },
         RouterKind::PancakeV3 => {
             // PANCAKE-ROUTER-01: Smart Router exposes the SwapRouter02-style
             // exactInputSingle — 7-field tuple WITHOUT deadline. Sending the
@@ -215,6 +256,55 @@ fn encode_v2(
         Token::Array(vec![Token::Address(token_in), Token::Address(token_out)]),
         Token::Address(to),
         Token::Uint(deadline),
+    ];
+    let mut buf = selector.to_vec();
+    buf.extend(encode(&tokens));
+    Bytes::from(buf)
+}
+
+/// SIM4-CYCLIC-01 (2026-10-07): SAME selector as `encode_v2` (0x38ed1739) — the
+/// ONLY thing a closed route ever needed was the FULL path array instead of the
+/// 2-element `[token_in, token_out]`. For a cycle the first and last elements
+/// are the same token: `path = [A, X1, ..., Xn, A]`.
+fn encode_v2_path(path: &[Address], amount_in: U256, to: Address, deadline: U256) -> Bytes {
+    let selector: [u8; 4] = [0x38, 0xed, 0x17, 0x39];
+    let tokens = vec![
+        Token::Uint(amount_in),
+        Token::Uint(U256::from(1u8)), // amountOutMin = 1 (simulation only)
+        Token::Array(path.iter().map(|a| Token::Address(*a)).collect()),
+        Token::Address(to),
+        Token::Uint(deadline),
+    ];
+    let mut buf = selector.to_vec();
+    buf.extend(encode(&tokens));
+    Bytes::from(buf)
+}
+
+/// SIM4-CYCLIC-01 (2026-10-07): UniV3 `exactInput(ExactInputParams)` — selector
+/// 0xc04b8d59 — for a multi-hop (closed) route. The path is the PACKED encoding
+/// `token(20) ‖ fee(3) ‖ token(20) ‖ ... ‖ token(20)`.
+///
+/// Per-hop fee is `DEFAULT_UNIV3_FEE`: the SAME declared simplification the
+/// single-hop encoder already makes (trying 500/3000/10000 and picking the
+/// lowest-slippage quote is deferred to the S5 quoter — see `DEFAULT_UNIV3_FEE`).
+/// This is a fee-tier approximation, not a fabricated route: every token and
+/// every hop comes from `route_metadata.token_addresses`.
+fn encode_v3_exact_input(path: &[Address], amount_in: U256, to: Address, deadline: U256) -> Bytes {
+    let selector: [u8; 4] = [0xc0, 0x4b, 0x8d, 0x59];
+    let mut packed: Vec<u8> = Vec::with_capacity(path.len() * 23);
+    for (i, a) in path.iter().enumerate() {
+        if i > 0 {
+            // uint24 fee = 3000 -> 3 big-endian bytes 0x00,0x0b,0xb8
+            packed.extend_from_slice(&DEFAULT_UNIV3_FEE.to_be_bytes()[1..]);
+        }
+        packed.extend_from_slice(a.as_bytes());
+    }
+    let tokens = vec![
+        Token::Bytes(packed),
+        Token::Address(to),
+        Token::Uint(deadline),
+        Token::Uint(amount_in),
+        Token::Uint(U256::from(1u8)), // amountOutMinimum = 1 (simulation only)
     ];
     let mut buf = selector.to_vec();
     buf.extend(encode(&tokens));
@@ -391,10 +481,12 @@ mod tests {
         }
     }
 
-    // BR-00 (2026-09-07): cyclic routes get their OWN typed error (they are
-    // structurally unprovable as a single hop, not "unsupported kinds").
+    // SIM4-CYCLIC-01 (2026-10-07): a closed route WITHOUT the traversal path is
+    // still an error — but a DATA-AVAILABILITY error with its OWN reason, not the
+    // old "not representable" label (which asserted a topology claim that is
+    // false: the route IS representable, the path is simply missing).
     #[test]
-    fn cyclic_routes_rejected_with_typed_error() {
+    fn cyclic_route_without_path_has_its_own_reason() {
         let signer: Address = [0; 20].into();
         for kind in [
             StrategyKind::triangular(),
@@ -404,9 +496,81 @@ mod tests {
             let o = opp_cyclic(kind, 1, "uniswap-v2");
             assert!(matches!(
                 build_probe(&o, signer),
-                Err(BuildError::CyclicRouteNotRepresentable(_))
+                Err(BuildError::CyclicRouteMissingPath(_))
             ));
         }
+    }
+
+    /// 32-byte ABI word for an address (left-padded), for calldata assertions.
+    fn word(addr: Address) -> Vec<u8> {
+        let mut w = vec![0u8; 12];
+        w.extend_from_slice(addr.as_bytes());
+        w
+    }
+
+    // SIM4-CYCLIC-01 (A1): a 2-leg closed route [A, B, A] builds an EXECUTABLE
+    // ProbeTx — ONE V2 call carrying the full path array — and no longer ends in
+    // a by-name refusal.
+    #[test]
+    fn cyclic_two_leg_route_builds_executable_probe() {
+        let signer: Address = [0x11; 20].into();
+        let b: Address = [0xbb; 20].into();
+        let o = opp_cyclic(StrategyKind::triangular(), 1, "uniswap-v2");
+        // The path must START on the opportunity's token_in and close back onto
+        // it — that is exactly what makes it a consistent cyclic route.
+        let a: Address = o.token_in.parse().expect("token_in parses");
+
+        let tx = build_probe_with_path(&o, signer, &[a, b, a])
+            .expect("closed route with a real path must build");
+
+        // Executable shape: from + to + non-empty calldata.
+        assert_eq!(tx.from, signer);
+        assert_ne!(tx.to, Address::zero());
+        assert!(tx.data.len() > 4, "calldata must be non-empty");
+        // UniV2 swapExactTokensForTokens selector.
+        assert_eq!(tx.data.as_ref()[0..4], [0x38, 0xed, 0x17, 0x39]);
+
+        // The encoded path array carries the WHOLE traversal, in order: A, B, A.
+        let d = tx.data.as_ref();
+        let wa = word(a);
+        let wb = word(b);
+        let first_a = d.windows(32).position(|w| w == wa.as_slice());
+        let first_b = d.windows(32).position(|w| w == wb.as_slice());
+        let last_a = d.windows(32).rposition(|w| w == wa.as_slice());
+        assert!(first_a.is_some() && first_b.is_some() && last_a.is_some());
+        let (ia, ib, ia2) = (first_a.unwrap(), first_b.unwrap(), last_a.unwrap());
+        assert!(ia < ib && ib < ia2, "path must encode A then B then A");
+        // A appears TWICE — that is what makes it a closed route.
+        assert_eq!(d.windows(32).filter(|w| *w == wa.as_slice()).count(), 2);
+    }
+
+    // SIM4-CYCLIC-01 (A1): a closed route whose path does NOT start/end on the
+    // opportunity tokens is refused rather than encoded — an inconsistent route
+    // is a data defect, not something to paper over with a wrong swap.
+    #[test]
+    fn cyclic_route_with_inconsistent_path_is_refused() {
+        let signer: Address = [0x11; 20].into();
+        let o = opp_cyclic(StrategyKind::triangular(), 1, "uniswap-v2");
+        let a: Address = o.token_in.parse().expect("token_in parses");
+        let b: Address = [0xbb; 20].into();
+        // Starts on token_in (correct) but does NOT close back onto it.
+        assert!(matches!(
+            build_probe_with_path(&o, signer, &[a, b, Address::from([0xcc; 20])]),
+            Err(BuildError::CyclicRouteMissingPath(_))
+        ));
+    }
+
+    // SIM4-CYCLIC-01 (A1, V3): a closed route on a V3 router uses exactInput with
+    // the packed path and builds.
+    #[test]
+    fn cyclic_two_leg_route_builds_on_v3() {
+        let signer: Address = [0x11; 20].into();
+        let b: Address = [0xbb; 20].into();
+        let o = opp_cyclic(StrategyKind::triangular(), 1, "uniswap-v3");
+        let a: Address = o.token_in.parse().expect("token_in parses");
+        let tx = build_probe_with_path(&o, signer, &[a, b, a]).expect("V3 closed route must build");
+        // UniV3 exactInput selector.
+        assert_eq!(tx.data.as_ref()[0..4], [0xc0, 0x4b, 0x8d, 0x59]);
     }
 
     // BR-00 (2026-09-07): D-SIM-01 regression -- cartridge stems and

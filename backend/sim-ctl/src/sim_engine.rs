@@ -58,19 +58,26 @@ impl SimEngine {
                     &format!("strategy_not_simulatable_in_s4:{}", kind.as_str()),
                 );
             }
-            // BR-00 (2026-09-07): cyclic routes are a DISTINCT structural gap --
-            // the single-hop probe cannot represent a closed route -- so they
-            // carry their own reason family, also per-kind. Both families are
-            // classified as capability gaps (persistence.rs): a simulator
-            // shape limit is never a market verdict on the opportunity.
-            Err(BuildError::CyclicRouteNotRepresentable(kind)) => {
+            // SIM4-CYCLIC-01 (2026-10-07): a closed route is NO LONGER refused by
+            // SHAPE. A closed route is representable — the V2 router takes the
+            // whole path array in one call — so this arm now fires only when the
+            // traversal path is ABSENT, which is a DATA-AVAILABILITY gap, not a
+            // topological one.
+            //
+            // It gets its OWN reason family on purpose: the old
+            // `strategy_cyclic_route_not_simulatable_in_s4` label asserted an
+            // impossibility that is FALSE, and reusing it would keep publishing a
+            // false verdict on 50k rows.
+            //
+            // Resolution path: `route_metadata.token_addresses` already carries
+            // the full traversal (written by searcher-rs
+            // `build_route_metadata_from_plan`, read by `route_lookup.rs`); feed
+            // it to `tx_builder::build_probe_with_path`.
+            Err(BuildError::CyclicRouteMissingPath(kind)) => {
                 return Self::not_implemented(
                     id,
                     trace_id,
-                    &format!(
-                        "strategy_cyclic_route_not_simulatable_in_s4:{}",
-                        kind.as_str()
-                    ),
+                    &format!("cyclic_route_missing_route_metadata:{}", kind.as_str()),
                 );
             }
             Err(BuildError::UnsupportedChain(c)) => {
