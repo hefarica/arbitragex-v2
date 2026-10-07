@@ -30,6 +30,21 @@
 # sobre el pipeline NO se tocan: esta orden restaura el instrumento.
 # ─────────────────────────────────────────────────────────────────────────────
 
+# ─────────────────────────────────────────────────────────────────────────────
+# INCREMENTO SRE (t64-sre-increment-01, 2026-10-06) — sobre el transporte ya
+# reparado por PIPELINE-INTEGRITY-REPAIR-01 (b5e3037/1ceb037/b295e16, PR #831).
+# NO se re-repara lo que ya funciona: materializacion ssh, vocabulario
+# VIGIA=SIN_CONEXION / PIPELINE ROJO, umbrales y las 5 capas quedan como estan.
+# Se agregan DOS cosas, ambas medidas:
+#   1) `always()` en las capas (antes: `if: steps.conn.outputs.reachable == 'true'`).
+#      Evidencia: run 37411885810, Layer 3 rojo => Layer 4 y 5 `skipped`.
+#      Un vigia que deja de medir tras el primer rojo entrega 1 dato, no 5.
+#   2) Capa 3 auditable: se captura el codigo HTTP y se declara el parser.
+#      Evidencia: run 37463450394 (instrumento anterior) reportaba "ZERO
+#      opportunities" sobre un cuerpo de 8644 bytes con {"count":1,...}; el VPS no
+#      tiene jq y el parseo del runner convertia ese fallo en un cero. Un cero sin
+#      causa atribuible NO es un hecho del pipeline.
+# ─────────────────────────────────────────────────────────────────────────────
 name: Pipeline Integrity Gate
 
 on:
@@ -103,7 +118,10 @@ jobs:
           fi
 
       - name: "Layer 1 — Redis stream has recent detections"
-        if: steps.conn.outputs.reachable == 'true'
+        # INCREMENTO SRE (t64-sre-increment-01): `always()` para que un rojo NO oculte
+        # las capas siguientes. Medido en el run 37411885810 (instrumento ya mergeado):
+        # Layer 3 en rojo => Layer 4 y Layer 5 `skipped`, es decir 2 de 5 capas sin medir.
+        if: always() && steps.conn.outputs.reachable == 'true'
         env:
           VPS_HOST: ${{ secrets.VPS_SSH_HOST }}
           VPS_USER: ${{ secrets.VPS_SSH_USER }}
@@ -127,7 +145,7 @@ jobs:
           fi
 
       - name: "Layer 2 — PG has opportunities in last 5 minutes"
-        if: steps.conn.outputs.reachable == 'true'
+        if: always() && steps.conn.outputs.reachable == 'true'
         env:
           VPS_HOST: ${{ secrets.VPS_SSH_HOST }}
           VPS_USER: ${{ secrets.VPS_SSH_USER }}
@@ -151,7 +169,7 @@ jobs:
           fi
 
       - name: "Layer 3 — API serves opportunities with correct types"
-        if: steps.conn.outputs.reachable == 'true'
+        if: always() && steps.conn.outputs.reachable == 'true'
         env:
           VPS_HOST: ${{ secrets.VPS_SSH_HOST }}
           VPS_USER: ${{ secrets.VPS_SSH_USER }}
@@ -177,22 +195,41 @@ jobs:
           # si significa "la API no sirve oportunidades".
           set -uo pipefail
           set +e
-          RESP="$(ssh -i ~/.ssh/deploy_key -p "$VPS_PORT" -o BatchMode=yes -o StrictHostKeyChecking=yes \
+          RESP_RAW="$(ssh -i ~/.ssh/deploy_key -p "$VPS_PORT" -o BatchMode=yes -o StrictHostKeyChecking=yes \
             "$VPS_USER@$VPS_HOST" \
-            "curl -sf 'http://127.0.0.1:8788/api/opportunities/live?limit=1' 2>/dev/null || echo '{}'" 2>&1)"
+            "curl -s -m 10 -w '\n%{http_code}' 'http://127.0.0.1:8788/api/opportunities/live?limit=1' 2>/dev/null || echo '000'" 2>&1)"
           rc=$?
           set -e
           if [ "$rc" -ne 0 ]; then
-            echo "::error::VIGIA SIN CONEXION en capa 3 (ssh rc=$rc): $RESP"; exit 1
+            echo "::error::VIGIA SIN CONEXION en capa 3 (ssh rc=$rc): $RESP_RAW"; exit 1
           fi
-          RESP="$(echo "$RESP" | tr -d '\r' | tail -1)"
-          COUNT="$(echo "$RESP" | jq 'if (.data|type)=="array" then (.data|length) else (.count // 0) end' 2>/dev/null || echo 0)"
+          RESP_RAW="$(echo "$RESP_RAW" | tr -d '\r')"
+          HTTP_CODE="$(echo "$RESP_RAW" | tail -1)"
+          RESP="$(echo "$RESP_RAW" | sed '$d')"
+          KEYS="$(printf '%s' "$RESP" | grep -o '"[A-Za-z_][A-Za-z_0-9]*":' | sort -u | tr -d '":' | paste -sd, -)"
+          echo "evidence: http=$HTTP_CODE bytes=$(printf '%s' "$RESP" | wc -c | tr -d ' ') keys=$KEYS"
+          # Un HTTP != 200 NO es "cero oportunidades": es la API que no responde. Con
+          # `curl -sf ... || echo '{}'` ambos casos colapsaban en COUNT=0 y el rojo
+          # acusaba al pipeline por un problema de la superficie.
+          if [ "$HTTP_CODE" != "200" ]; then
+            echo "::error::PIPELINE ROJO capa 3: la API respondio HTTP $HTTP_CODE, no 200 — NO es 'cero oportunidades'."
+            exit 1
+          fi
+          JQ_RC=0
+          COUNT="$(echo "$RESP" | jq 'if (.data|type)=="array" then (.data|length) elif (.items|type)=="array" then (.items|length) else (.count // 0) end' 2>/dev/null)" || JQ_RC=$?
+          # Un parser que falla produce un cero indistinguible de un cero real. Ese
+          # cero NO se reporta como hecho del pipeline: se reporta NO COMPUTADO.
+          if [ "$JQ_RC" -ne 0 ] || [ -z "$COUNT" ]; then
+            echo "::error::NO COMPUTADO capa 3: el parser del runner fallo (jq rc=$JQ_RC) sobre $(printf '%s' "$RESP" | wc -c | tr -d ' ') bytes (keys=$KEYS). Un 0 aca NO es un hecho del pipeline."
+            exit 1
+          fi
           echo "API /opportunities/live returns $COUNT items"
           if [ "$COUNT" -eq 0 ]; then
             echo '::error::PIPELINE ROJO capa 3: API returns ZERO opportunities — pipeline broken between PG and API'
             exit 1
           fi
-          AMOUNT_TYPE="$(echo "$RESP" | jq -r '(.data[0].amount_in_wei // null) | type' 2>/dev/null || echo 'null')"
+          AMOUNT_TYPE="$(echo "$RESP" | jq -r '((.data // .items // [])[0] | .amount_in_wei) | type' 2>/dev/null || echo 'null')"
+          echo "evidence: amount_in_wei_as_string=$(printf '%s' "$RESP" | grep -c '"amount_in_wei":"')"
           echo "amount_in_wei type = $AMOUNT_TYPE"
           if [ "$AMOUNT_TYPE" != "string" ] && [ "$AMOUNT_TYPE" != "null" ]; then
             echo "::error::PIPELINE ROJO capa 3: amount_in_wei is $AMOUNT_TYPE — should be string or null (precision loss!)"
@@ -200,7 +237,7 @@ jobs:
           fi
 
       - name: "Layer 4 — WS endpoint is alive"
-        if: steps.conn.outputs.reachable == 'true'
+        if: always() && steps.conn.outputs.reachable == 'true'
         env:
           VPS_HOST: ${{ secrets.VPS_SSH_HOST }}
           VPS_USER: ${{ secrets.VPS_SSH_USER }}
@@ -226,7 +263,7 @@ jobs:
           fi
 
       - name: "Layer 5 — Docker containers are healthy"
-        if: steps.conn.outputs.reachable == 'true'
+        if: always() && steps.conn.outputs.reachable == 'true'
         env:
           VPS_HOST: ${{ secrets.VPS_SSH_HOST }}
           VPS_USER: ${{ secrets.VPS_SSH_USER }}
