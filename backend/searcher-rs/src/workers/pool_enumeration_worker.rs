@@ -35,7 +35,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use sqlx::PgPool;
-use tracing::{info, warn};
+use tracing::{debug, info, warn};
 
 use crate::pool_candidate::{PoolCandidate, PoolEnumSource};
 use crate::pool_discovery::{EnumOutcome, PoolDiscoveryService};
@@ -265,6 +265,10 @@ impl PoolEnumerationWorker {
         loop {
             interval.tick().await;
             self.run_tick().await;
+            // POOL-RESOLVE-01: same cadence as the enumeration tick (the worker's
+            // own interval). The observed-pair sweep runs AFTER the enumeration so
+            // both share one period and one budget knob (`max_new`).
+            self.sweep_observed_pairs().await;
         }
     }
 
@@ -387,6 +391,130 @@ impl PoolEnumerationWorker {
             hydration_failed,
             activated,
             persisted_inactive,
+            elapsed_ms = started.elapsed().as_millis() as u64,
+        );
+    }
+
+    /// POOL-RESOLVE-01 — CONSUME `observed_unindexed_pairs`: the pairs the public
+    /// mempool showed us that the evaluable universe still cannot see. This is the
+    /// reader that did not exist; before it, the table had a writer and no consumer.
+    ///
+    /// For each pending row:
+    ///   1. RESOLUTION LEG — only when the address is still unknown, derive the pool
+    ///      from the token pair against the SEEDED factories (`resolve_pair_pools`,
+    ///      `getPair`/`getPool`) and persist `resolved_pool_addr` + `is_resolved`.
+    ///   2. TOKEN-SAFETY GATE — **CALLED, never bypassed**: the exact same
+    ///      `token_safety` verdict + `TOKEN_SAFETY_FLOOR` the enumeration tick uses.
+    ///      `Unsafe` blocks outright; only Safe+Safe activates. An unrated pair is
+    ///      persisted inactive for a later tick, so a toxic pair is never indexed to
+    ///      manufacture flow.
+    ///   3. PERSIST — through the identical `enumerate_and_persist_pool` path.
+    async fn sweep_observed_pairs(&self) {
+        let started = Instant::now();
+        let pending = self
+            .discovery
+            .pending_observed_pairs(self.cfg.max_new as i64)
+            .await;
+        if pending.is_empty() {
+            info!(
+                event = "poolenum.observed_sweep_empty",
+                chain_id = self.chain_id
+            );
+            return;
+        }
+
+        let attempted = pending.len();
+        let mut resolved_now = 0usize;
+        let mut activated = 0usize;
+        let mut persisted_inactive = 0usize;
+        let mut safety_blocked = 0usize;
+        let mut unresolvable = 0usize;
+        let mut failed = 0usize;
+
+        for (id, t0s, t1s, resolved_addr) in pending {
+            let (t0, t1) = match (parse_addr(&t0s), parse_addr(&t1s)) {
+                (Some(a), Some(b)) => (a, b),
+                _ => {
+                    unresolvable += 1;
+                    continue;
+                }
+            };
+
+            // 1. RESOLUTION LEG — ask the chain only if no address is known yet.
+            let (pool_addr, fee_bps) = match resolved_addr.as_deref().and_then(parse_addr) {
+                Some(a) => (a, None),
+                None => match self
+                    .discovery
+                    .resolve_pair_pools(t0, t1)
+                    .await
+                    .first()
+                    .copied()
+                {
+                    Some((a, fee)) => {
+                        self.discovery
+                            .mark_observed_resolved(id, a.as_slice())
+                            .await;
+                        resolved_now += 1;
+                        debug!(
+                            event = "poolenum.observed_resolved",
+                            chain_id = self.chain_id, pool = ?a,
+                            "derived a pool address for an observed pair"
+                        );
+                        (a, fee)
+                    }
+                    None => {
+                        unresolvable += 1;
+                        continue;
+                    }
+                },
+            };
+
+            // 2. TOKEN-SAFETY GATE — called with the same predicate and the same
+            //    floor as `run_tick`. Never skipped, never softened.
+            let s0 = self.token_safety(&t0s).await;
+            let s1 = self.token_safety(&t1s).await;
+            let activate = match (s0, s1) {
+                (SafetyVerdict::Unsafe, _) | (_, SafetyVerdict::Unsafe) => {
+                    safety_blocked += 1;
+                    warn!(
+                        event = "poolenum.observed_token_unsafe",
+                        chain_id = self.chain_id, pool = ?pool_addr,
+                        "resolved an observed pair but a token is below the safety floor — not indexing it"
+                    );
+                    continue;
+                }
+                (SafetyVerdict::Safe, SafetyVerdict::Safe) => true,
+                // at least one token unrated → persist inactive for a future tick
+                _ => false,
+            };
+
+            // 3. Same persistence path as the enumeration tick.
+            match self
+                .discovery
+                .enumerate_and_persist_pool(pool_addr, t0, t1, fee_bps, activate)
+                .await
+            {
+                EnumOutcome::Persisted { activated: was } => {
+                    if was {
+                        activated += 1;
+                    } else {
+                        persisted_inactive += 1;
+                    }
+                }
+                _ => failed += 1,
+            }
+        }
+
+        info!(
+            event = "poolenum.observed_sweep",
+            chain_id = self.chain_id,
+            attempted,
+            resolved_now,
+            activated,
+            persisted_inactive,
+            safety_blocked,
+            unresolvable,
+            failed,
             elapsed_ms = started.elapsed().as_millis() as u64,
         );
     }
