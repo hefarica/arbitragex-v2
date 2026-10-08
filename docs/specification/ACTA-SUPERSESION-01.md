@@ -14,13 +14,14 @@
 
 **El resultado, contado:**
 
-| Conjunto | Total | Con artefacto verificado | `NO EVIDENCIADO` |
-|---|---|---|---|
-| Los **9** `failed without a follow-up repair` del bloque `Delivery` | **9** | **5** | **4** |
-| `pending/not completed` citados por la orden | 3 (t128, t130, t134) | 1 (t134) | 2 (t128, t130) |
-| Canceladas con razón ya declarada por el capitán | 2 (t144, t146) | 2 | 0 |
+| Conjunto | Total | Con artefacto MERGED/pass | De rama publicada (no mergeada) | `PARCIAL` | `NO EVIDENCIADO` |
+|---|---|---|---|---|---|
+| Los **9** `failed without a follow-up repair` del bloque `Delivery` | **9** | **6** | **2** (t80, t81 — mismo objeto) | **1** (t79) | **0** |
+| `pending/not completed` citados por la orden | 3 (t128, t130, t134) | 1 (t134 → #884 OPEN) | 0 | 0 | **2** (t128, t130) |
+| Canceladas con razón ya declarada por el capitán | 2 (t144, t146) | 2 | 0 | 0 | 0 |
 
-**No se cierra nada por conveniencia.** Los 4 `NO EVIDENCIADO` quedan **ABIERTOS**.
+**Verificación 6+2+1 = 9.** Los **6** con artefacto MERGED/pass son **t5, t66, t73, t74, t76, t82** (concuerda con la tabla de §1.10).
+**Los 3 `NO EVIDENCIADO` (t79 parcial + t128 + t130) quedan ABIERTOS.** **No se cierra nada por conveniencia.**
 
 ---
 
@@ -132,8 +133,8 @@
 | 8 | t81 | entregado | rama `1130a6e7` en remoto |
 | 9 | t82 | entregado | **#843 MERGED** |
 
-> **`5 de 9` con artefacto plenamente verificado · `1 de 9` PARCIAL · `3 de 9` con artefacto de rama publicada (t80/t81 comparten el mismo objeto).**
-> **`4 de 9` NO quedan plenamente evidenciados** (t79 PARCIAL + t80/t81 dependientes de rama no mergeada + …). **No se declara «todos superseded»: no está medido.**
+> **`6 de 9` con artefacto MERGED/pass verificado · `1 de 9` PARCIAL (t79) · `2 de 9` con artefacto de rama publicada, no mergeada (t80/t81 comparten el mismo objeto).**
+> **`6 + 2 + 1 = 9`.** **`1 de 9` (t79) queda con su artefacto propio `NO EVIDENCIADO`.** **No se declara «todos superseded»: no está medido.**
 
 ---
 
@@ -328,7 +329,7 @@ git hash-object docs/specification/ACTA-SUPERSESION-01.md
 
 ## 9. Cierre
 
-- **`5 de 9`** fallos viejos con artefacto plenamente verificado · **`1`** PARCIAL · **`3`** con artefacto de rama publicada (t80/t81, mismo objeto) · **nada se declara «todos superseded»**.
+- **`6 de 9`** fallos viejos con artefacto **MERGED/pass** verificado (t5, t66, t73, t74, t76, t82) · **`1`** PARCIAL (t79) · **`2`** con artefacto de rama publicada pero **no mergeada** (t80, t81 — mismo objeto). **`6+2+1 = 9`.** **Nada se declara «todos superseded».**
 - **`t134` SÍ** tiene sujeto entregado (#884). **`t128` y `t130` quedan `NO EVIDENCIADO` y ABIERTAS.**
 - **El deploy sigue bloqueado** y el runtime sirve `77b42b3d`, no `d5114edd`: **se declara.**
 - **`Delivery` NO se desbloquea con esta acta.** Se retira **1 de 25** items (`t181`); quedan **24**, y se dice **qué haría falta mecánicamente** para que caigan.
