@@ -148,7 +148,22 @@ El `route_metadata` de cada fila trae las patas reales: `leg_amounts_in`, `leg_a
 
 **El notional medio es de 5 cienmilésimas de dólar.** Contra un `min_profit_usd` de **50**, el mejor gross real (**0,040051**) está **1 248× por debajo** de la propia puerta de rentabilidad del sistema.
 
-### La aritmética, por par, contra el hurdle de 59,91 bps
+### La aritmética, por par, contra el hurdle — **y cuál hurdle**
+
+**★ EL UMBRAL CORRECTO ES `60,2711 bps`, NO `59,91 bps`.** Los dos son el mismo fee V2 canónico (0,3 % por pata, dos patas) leído de dos maneras:
+
+| valor | fórmula | significado | naturaleza |
+|---|---|---|---|
+| 59,91 bps | `1 − 0,997²` = 0,005991 | el fee PAGADO como fracción del input | **aproximación sustractiva** |
+| **60,2711 bps** | `1/(0,997²) − 1` = 0,00602710840646314 | gross-up necesario sobre el output para **empatar** | **la cota correcta de un round trip** |
+
+Diferencia: **0,3611 bps**, y va en la dirección peligrosa — **59,91 es más permisivo**. Verificado por mí, numéricamente: `1-0.997**2 = 0.005990999999999969` · `1/(0.997**2)-1 = 0.006027108406463144`.
+
+**Dos declaraciones de procedencia, obligatorias:**
+- **`REV-ECON-PATH-01.md:121`** es la fuente que cita el capitán para el valor corregido, y **NO está en el árbol de `main`** (`git grep` sobre `docs/` y `backend/` no lo encuentra; el árbol tampoco). **No pude verificar esa fuente.** Lo que sí verifiqué es la **aritmética**, que es el argumento de fondo.
+- **`59,91` NO tiene fuente en el repo: las 3 coincidencias de `git grep -E "59[.,]91"` son las tres líneas de ESTE artefacto.** Yo lo propagué desde un resumen de campaña. Es exactamente el modo de fallo del **número sin fuente**, y este documento fue su portador hasta esta corrección.
+
+**No cambié ningún umbral del sistema:** esto es la **cota contra la que comparo**, no un valor que se toque (`trading_config` intacto, cero escrituras).
 
 **Distribución del neto real** (`gross_real − gas`), n=1247, **no un promedio**:
 
@@ -160,10 +175,21 @@ El `route_metadata` de cada fila trae las patas reales: `leg_amounts_in`, `leg_a
 
 **Ratio gas / gross real:** min **16,26×** · mediana **16,55×** · max **17,00×**.
 
-**Cuántas cruzan el hurdle de 59,91 bps:** la pregunta se responde **en los dos ejes, porque el resultado difiere y mezclarlos sería el error**:
+**Cuántas cruzan el hurdle de 60,2711 bps:** la pregunta se responde **en los dos ejes, porque el resultado difiere y mezclarlos sería el error**:
 
 - **En dólares (el eje que decide una ejecución): `0` de `1247`.** Todas pierden entre 61 y 63 centavos.
-- **En tasa (bps del notional): el ciclo *parece* cruzar el hurdle por 5 órdenes de magnitud** — pero ese número **no es una tasa de arbitraje, es el fantasma de la §5**. Un hurdle de 59,91 bps es un umbral de **tasa**; compararlo con una tasa fantasma da un "sí" vacío.
+- **En tasa (bps del notional): el ciclo *parece* cruzar el hurdle por 5 órdenes de magnitud** — pero ese número **no es una tasa de arbitraje, es el fantasma de la §5**. Un hurdle de 60,2711 bps es un umbral de **tasa**; compararlo con una tasa fantasma da un "sí" vacío.
+
+### ★ El veredicto es INVARIANTE al cambio de umbral (59,91 → 60,2711) — y la prueba es numérica
+
+El cambio de umbral **no puede** alterar el resultado, y no por opinión:
+
+1. **Estas filas no mueren contra el umbral de TASA: mueren contra el costo ABSOLUTO.** El neto real es negativo en las 1247 (max **−0,60613566** USD); el gas es **16,26×–17,00×** el gross real.
+2. Para dar vuelta **una sola** fila haría falta que el gross creciera **≥16,26×** (un **+1.526 %**).
+3. El cambio de umbral vale **+0,3611 bps sobre ~60,27 bps = +0,60 % relativo** (factor **1,006**).
+4. **1,006 ≪ 16,26**: el cambio de umbral es **~2.700× más chico** que el margen que habría que cerrar.
+
+⇒ **`0` de `1247` sobreviven bajo los DOS umbrales.** El veredicto no depende de cuál se use; se decidió en el eje absoluto (gas vs gross), no en el eje de tasa.
 
 **★ El fee NO es lo que se come el borde.** El `flashloan_fee_pct = 0,0009` (9 bps) aplicado al notional medio de 0,00005027 USD vale **≈0,0000000452 USD** — **ocho órdenes de magnitud por debajo** del gas. **Lo que se come el borde es el gas (16,5×), sobre un notional de polvo.** La hipótesis de la cápsula ("o se lo come el fee") **no se sostiene**: el fee es irrelevante a este tamaño; el gas es el que decide.
 
