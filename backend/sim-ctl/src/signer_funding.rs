@@ -377,4 +377,65 @@ mod tests {
         assert!(!SENTINEL_BALANCE.is_zero());
         assert_ne!(SENTINEL_BALANCE, FUND_AMOUNT);
     }
+
+    /// SIM-FUND-03: la trampa que costo una investigacion entera, fijada para
+    /// que no vuelva a pasar en silencio.
+    ///
+    /// `balance_slot(slot, signer)` deriva `keccak256(abi.encode(SIGNER, slot))`
+    /// porque eso es lo que `balanceOf(SIGNER)` lee. Confundir la CLAVE con el
+    /// TOKEN produce un slot perfectamente valido que no tiene nada que ver con
+    /// `balanceOf`: la escritura aterriza, `eth_getStorageAt` la muestra, y
+    /// `balanceOf` no cambia — que es EXACTAMENTE lo que uno espera al escribir
+    /// en un slot ajeno.
+    ///
+    /// Ese sintoma es indistinguible del de una escritura que no llegara a la
+    /// ejecucion, y por eso llevo a un diagnostico equivocado: se concluyo una
+    /// separacion overlay/ejecucion inexistente. Con la clave CORRECTA el
+    /// centinela SI reproduce en `balanceOf` (medido en el fork vivo:
+    /// `balanceOf == 0x…5eedf00d00000001` tras escribir en este slot).
+    ///
+    /// El test preexistente pinchaba `balance_slot(9, signer)` por VALOR contra
+    /// el vector externo, pero NO fijaba QUIEN es la clave: con el token como
+    /// clave cualquier slot distinto sigue dando un hash de 32 bytes plausible.
+    /// El CONTROL NEGATIVO de abajo es lo que cierra esa puerta.
+    #[test]
+    fn simfund03_balance_slot_is_keyed_by_the_signer_not_the_token() {
+        let signer: Address = "0x1234567890123456789012345678901234567890"
+            .parse()
+            .unwrap();
+        let token: Address = "0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2"
+            .parse()
+            .unwrap();
+
+        // Valor MEDIDO en el fork vivo: escribir el centinela aqui reproduce en
+        // `balanceOf(signer)` (verificado).
+        let known_signer_slot3 = H256::from_slice(
+            &ethers::utils::hex::decode(
+                "961558ef95740fe5d8173078fa8d9fd6150201cd29befffef12f314fd45a2bfc",
+            )
+            .unwrap(),
+        );
+        assert_eq!(balance_slot(3, signer), known_signer_slot3);
+
+        // CONTROL NEGATIVO: la clave NO es el token.
+        assert_ne!(
+            balance_slot(3, signer),
+            balance_slot(3, token),
+            "la clave es el SIGNER: keyear por token da un hash valido y ajeno"
+        );
+
+        // Y el vector EXTERNO sigue pinneado (regresion de SIM-FUND-01b).
+        let ext: Address = "0x1111111111111111111111111111111111111111"
+            .parse()
+            .unwrap();
+        assert_eq!(
+            balance_slot(9, ext),
+            H256::from_slice(
+                &ethers::utils::hex::decode(
+                    "233b1b49de63438bb1ac1a57ef81babcc52ccd4555c968bb144593ea539bbebc",
+                )
+                .unwrap()
+            )
+        );
+    }
 }
