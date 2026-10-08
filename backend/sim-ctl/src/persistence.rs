@@ -198,6 +198,49 @@ fn is_sim_capability_gap(fail_reason: &str) -> bool {
         // BR-00 (2026-09-07): the anvil harness could not decode its OWN
         // probe output -- absence of measurement, never a market verdict (R8).
         || fail_reason == "output_undecodable"
+        // SIM-FUND-02b (2026-10-08): la familia de FONDEO del fork.
+        //
+        // #850 instrumento `signer_funding.rs` para separar las dos causas
+        // fisicas de `slot_unresolved` y añadio tres etiquetas nuevas
+        // (`write_rejected`, `verify_mismatch`, `balance_unreadable`). Lo que
+        // hay que decir sin adorno es QUE SON: etiquetas de la metrica
+        // `arbx_sim_funding_total{outcome=...}`. NUNCA se devuelven como
+        // `Err(...)`; el unico `fail_reason` del agotamiento del loop sigue
+        // siendo `sim_signer_funding_slot_unresolved` (:204). La particion
+        // ocurrio en la capa de METRICA, no en la de `fail_reason`.
+        //
+        // Se reconocen igual, y el motivo es prospectivo y verificable: son
+        // fallos de INFRAESTRUCTURA. Si algun dia se promueven a `fail_reason`
+        // (el paso natural para hacer la metrica accionable), caerian fuera de
+        // este clasificador — que NO tiene catch-all — y un gap de capacidad se
+        // convertiria en un rechazo silencioso. Eso es F-01 con nombres nuevos,
+        // y es exactamente el modo de fallo que SIMWIRE-02 prohibe arriba.
+        //
+        // Los `fail_reason` que `ensure_funded` SI devuelve hoy tampoco estaban
+        // reconocidos, y son el MISMO hueco: `funding_balanceof_timeout/rpc`,
+        // `funding_verify_timeout/rpc`, `funding_setstorage_rpc`,
+        // `sim_signer_funding_slot_unresolved` y `anvil_setStorageAt[_timeout]`.
+        // Medir el balance, verificar el centinela o escribir en el fork es el
+        // ARNES, no el mercado: un `eth_call` que no responde no dice nada del
+        // spread. (Medido: las 5.458 simulaciones con `fail_reason` de fondeo
+        // unen a oportunidades YA `rejected` por el DETECTOR, asi que el
+        // `UPDATE` — gateado `WHERE status IN ('validated','scored','detected')`
+        // — no toco ninguna fila. El hueco es LATENTE, no vivo. No se afirma un
+        // daño que la evidencia no muestra; se cierra antes de que lo haya.)
+        //
+        // El prefijo va NAMESPACED A PROPOSITO. `funding_` a secas tragaria
+        // veredictos REALES de los cartuchos de searcher-rs
+        // (`funding_edge_negative`, `funding_differential_within_band`,
+        // `funding_direction_unfavorable`): eso seria el fallo OPUESTO —
+        // convertir un rechazo legitimo en silencio. El CONTROL del test lo fija.
+        || fail_reason.contains("write_rejected")
+        || fail_reason.contains("verify_mismatch")
+        || fail_reason.contains("balance_unreadable")
+        || fail_reason.starts_with("sim_signer_funding")
+        || fail_reason.starts_with("funding_balanceof_")
+        || fail_reason.starts_with("funding_verify_")
+        || fail_reason.starts_with("funding_setstorage_")
+        || fail_reason.starts_with("anvil_setStorageAt")
 }
 
 #[cfg(test)]
@@ -363,6 +406,92 @@ mod simwire02_classifier_tests {
             assert!(
                 !is_sim_capability_gap(reason),
                 "{reason} is a chain-state verdict — must stay a rejection"
+            );
+        }
+    }
+
+    /// SIM-FUND-02b: la instrumentacion de #850 y la familia de fondeo.
+    ///
+    /// Dos grupos, y la distincion importa:
+    ///
+    /// 1. Las tres etiquetas que #850 añadio en `signer_funding.rs`
+    ///    (`write_rejected`, `verify_mismatch`, `balance_unreadable`) son HOY
+    ///    valores del label `outcome` de `arbx_sim_funding_total`, NO
+    ///    `fail_reason`: `ensure_funded` nunca las devuelve. Se afirman igual
+    ///    para que, si se promueven a `fail_reason`, NO entren como fallo de
+    ///    calidad. Se incluyen las formas SUFIJADAS porque ese es el modo
+    ///    natural de promocionarlas (`<reason>:<causa>`), que es como este
+    ///    codebase ya compone los `fail_reason` de `multistep_*` y
+    ///    `cyclic_route_missing_route_metadata:<kind>`.
+    ///
+    /// 2. Los `fail_reason` que `ensure_funded` SI devuelve hoy, leidos del
+    ///    codigo (`signer_funding.rs:117,121,136,169,173,183,204,252,256`).
+    ///    Ninguno estaba reconocido. Son el mismo modo de fallo: el arnes no
+    ///    pudo medir, y ausencia de medicion no es veredicto (R8).
+    #[test]
+    fn simfund02b_funding_harness_failures_are_gaps_not_rejections() {
+        for reason in [
+            // --- Grupo 1: etiquetas nuevas de #850 (hoy metricas). ---
+            "write_rejected",
+            "verify_mismatch",
+            "balance_unreadable",
+            // Forma sufijada: promocion natural a `fail_reason`.
+            "sim_signer_funding_slot_unresolved:write_rejected",
+            "sim_signer_funding_slot_unresolved:verify_mismatch",
+            "sim_signer_funding_slot_unresolved:balance_unreadable",
+            // --- Grupo 2: los `fail_reason` que SI llegan hoy. ---
+            "sim_signer_funding_slot_unresolved",
+            "funding_balanceof_timeout",
+            "funding_balanceof_rpc: error sending request for url (http://anvil:8545/)",
+            "funding_verify_timeout",
+            "funding_verify_rpc: error decoding response body",
+            "funding_setstorage_rpc: error sending request",
+            "anvil_setStorageAt_timeout",
+            "anvil_setStorageAt: nonce too low",
+        ] {
+            assert!(
+                is_sim_capability_gap(reason),
+                "{reason} must classify as harness/funding gap, not market rejection"
+            );
+        }
+    }
+
+    /// CONTROL de no-gaps para SIM-FUND-02b — sin esto, el test de arriba
+    /// pasaria igual si el clasificador devolviera `true` para todo.
+    ///
+    /// El primer bloque es el que justifica que el prefijo vaya NAMESPACED.
+    /// `funding_edge_negative`, `funding_differential_within_band` y
+    /// `funding_direction_unfavorable` son VEREDICTOS de mercado que EXISTEN en
+    /// los cartuchos de `searcher-rs` (verificado por grep). Un
+    /// `starts_with("funding_")` a secas los tragaria y convertiria un rechazo
+    /// legitimo en un silencio: el fallo OPUESTO, igual de grave.
+    ///
+    /// El segundo bloque son las razones de mercado mas frecuentes medidas en la
+    /// tabla `opportunities` (8.063.209 filas, todas `rejected` con razon del
+    /// DETECTOR): `spread_negative_round_trip` (3.306.709), `non_positive_profit`
+    /// (1.015.839), `v3_quote_unavailable` (467.390).
+    #[test]
+    fn simfund02b_funding_prefix_does_not_swallow_market_verdicts() {
+        for reason in [
+            // Veredictos REALES de los cartuchos que empiezan con `funding_`.
+            "funding_edge_negative",
+            "funding_differential_within_band",
+            "funding_direction_unfavorable",
+            "funding_feed_unavailable",
+            "funding_component_missing",
+            "funding_horizon_unavailable",
+            // Veredictos de mercado / chain-state.
+            "spread_negative_round_trip",
+            "non_positive_profit",
+            "v3_quote_unavailable",
+            "v3_pool_revert",
+            "negative_net_profit",
+            "revert",
+            "gas_exceeded",
+        ] {
+            assert!(
+                !is_sim_capability_gap(reason),
+                "{reason} must stay a REJECTION — swallowing it would be the opposite failure"
             );
         }
     }
