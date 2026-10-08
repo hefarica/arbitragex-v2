@@ -56,6 +56,24 @@ pub mod outcome {
     pub const CACHE_HIT: &str = "cache_hit";
     pub const SLOT_UNRESOLVED: &str = "slot_unresolved";
     pub const RPC_ERR: &str = "rpc_err";
+    // ── SIM-FUND-02 (2026-10-08) ────────────────────────────────────────────
+    // The three below split `slot_unresolved`, which is ONE string produced by
+    // TWO different physical causes. Measured on the live fork: the counter had
+    // ONLY `slot_unresolved` (1633, later 1642) — no `rpc_err`, no
+    // `seeded_fresh`, no `cache_hit` — so the aggregate could not say whether
+    // the write failed or the slot was wrong. That is how the same reason
+    // string survived its own fix while describing ANOTHER cause.
+    //
+    /// `write_balance` returned `Ok(false)`: the node refused the write, so it
+    /// never landed. This is cause (a).
+    pub const WRITE_REJECTED: &str = "write_rejected";
+    /// The write was accepted but `balanceOf` did NOT return the sentinel: the
+    /// slot is not the one `balanceOf` reads. This is cause (b).
+    pub const VERIFY_MISMATCH: &str = "verify_mismatch";
+    /// `balanceOf` could not be decoded (revert / non-contract / RPC error).
+    /// Previously swallowed as `Ok(None)` with NO counter, which made a failed
+    /// READ look exactly like a wrong SLOT.
+    pub const BALANCE_UNREADABLE: &str = "balance_unreadable";
 }
 
 fn count(outcome: &str) {
@@ -137,6 +155,10 @@ impl SignerFunder {
                 .write_balance(token, slot, signer, SENTINEL_BALANCE)
                 .await?
             {
+                // SIM-FUND-02: cause (a) — the node refused the write, so it
+                // never landed. Counted PER SLOT so the two physical causes stop
+                // sharing the single `slot_unresolved` string.
+                count(outcome::WRITE_REJECTED);
                 continue; // RPC-level failure on this slot — try next
             }
             let verified =
@@ -165,6 +187,12 @@ impl SignerFunder {
                     count(outcome::SEEDED_FRESH);
                     return Ok(());
                 }
+            } else {
+                // SIM-FUND-02: cause (b) — the write was accepted (`Ok(true)`,
+                // no `Err`, since an `Err` would have propagated through the `?`
+                // above with its OWN message) but the sentinel did NOT reproduce
+                // through `balanceOf`. The slot is not the one `balanceOf` reads.
+                count(outcome::VERIFY_MISMATCH);
             }
             // Sentinel not observed — restore the ORIGINAL balance (captured
             // before any probe) so we never leak a corrupted slot onward.
@@ -247,7 +275,16 @@ async fn balance_of(
         Ok(out) => Ok(decode_u256(&out)),
         // Non-contract / revert: no decodable balance — treat as zero
         // rather than aborting the whole funding path.
-        Err(_) => Ok(None),
+        //
+        // SIM-FUND-02: NO LONGER SILENT. Swallowing this as `Ok(None)` with no
+        // counter made a FAILED READ indistinguishable from a WRONG SLOT — both
+        // ended in `slot_unresolved`. It now has its own outcome so the next
+        // measurement can tell them apart. Behaviour is unchanged (still
+        // `Ok(None)`): this adds visibility, not a verdict.
+        Err(_) => {
+            count(outcome::BALANCE_UNREADABLE);
+            Ok(None)
+        }
     }
 }
 
