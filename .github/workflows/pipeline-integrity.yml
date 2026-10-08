@@ -195,37 +195,83 @@ jobs:
           # si significa "la API no sirve oportunidades".
           set -uo pipefail
           set +e
-          RESP_RAW="$(ssh -i ~/.ssh/deploy_key -p "$VPS_PORT" -o BatchMode=yes -o StrictHostKeyChecking=yes \
-            "$VPS_USER@$VPS_HOST" \
-            "curl -s -m 10 -w '\n%{http_code}' 'http://127.0.0.1:8788/api/opportunities/live?limit=1' 2>/dev/null || echo '000'" 2>&1)"
-          rc=$?
-          set -e
-          if [ "$rc" -ne 0 ]; then
-            echo "::error::VIGIA SIN CONEXION en capa 3 (ssh rc=$rc): $RESP_RAW"; exit 1
+          # ── N12 (t116): LENTA vs CAIDA, DOS superficies, DOS presupuestos, DOS formas ──
+          # La sonda unica anterior (`limit=1` contra el edge, `-m 10`) NO distinguia
+          # LENTA de CAIDA: medido en t103, `limit=1` es BIMODAL (7 abortos de 12 a
+          # ~300,4-300,7 s y 5 completos en 74-117 ms) y el tope del aborto esta en la
+          # capa HTTP (`api-server/src/index.ts:2051` sin requestTimeout/headersTimeout/
+          # keepAliveTimeout => defaults de Node, 300 s). Con 10 s de presupuesto una
+          # degradacion lenta se reportaba `HTTP 000`, indistinguible de una caida.
+          #
+          # Y el edge SIRVE DE CACHE (medido: 0,121938 -> 0,002147 -> 0,002453, y
+          # 0,097747 tras 4 s de pausa), asi que un 200 del edge NO prueba que el
+          # api-server haya contestado en ese instante.
+          #
+          # CRITERIO DECLARADO (se imprime en el log, no se asume):
+          #   DIRECTO = api-server 8080 /api/v1/opportunities/live  -> SIN cache:
+          #     es la superficie que prueba que el API contesta de verdad.
+          #   EDGE    = edge 8788 /api/opportunities/live            -> la que consume el DApp.
+          #   Presupuesto corto 10 s; si algo no contesta, se REINTENTA con 45 s y otra forma.
+          #   PASS exige LAS DOS superficies en 200 (no es mas facil que antes).
+          #   Si solo contesta con el presupuesto largo -> LENTA (reason=api_slow), no caida.
+          #   Si ninguna contesta ni con 45 s           -> CAIDA (reason=api_down).
+          #   Si el edge contesta y el DIRECTO no       -> cache no descartable (edge_masks_dead_api).
+          #   Si el DIRECTO contesta y el edge no       -> el consumidor queda sin dato (edge_not_serving).
+          BUDGET_SHORT=10
+          BUDGET_LONG=45
+          probe() { # probe <budget_s> <url>
+            ssh -i ~/.ssh/deploy_key -p "$VPS_PORT" -o BatchMode=yes -o StrictHostKeyChecking=yes \
+              "$VPS_USER@$VPS_HOST" \
+              "curl -s -m $1 -w '\n%{http_code} %{time_total}' '$2' 2>/dev/null || echo '000 0'" 2>&1 | tr -d '\r'
+          }
+          parse() { CODE="$(printf '%s' "$1" | tail -n1 | awk '{print $1}')"; TIME="$(printf '%s' "$1" | tail -n1 | awk '{print $2}')"; BODY="$(printf '%s' "$1" | sed '$d')"; }
+          R="$(probe "$BUDGET_SHORT" 'http://127.0.0.1:8080/api/v1/opportunities/live?limit=20')"; parse "$R"
+          C_DIRECT="$CODE"; T_DIRECT="$TIME"; B_DIRECT="$BODY"
+          echo "probe surface=direct8080 shape=limit20 budget=${BUDGET_SHORT}s http=${C_DIRECT} time=${T_DIRECT}s bytes=$(printf '%s' "$B_DIRECT" | wc -c | tr -d ' ')"
+          R="$(probe "$BUDGET_SHORT" 'http://127.0.0.1:8788/api/opportunities/live?limit=1')"; parse "$R"
+          C_EDGE="$CODE"; T_EDGE="$TIME"; B_EDGE="$BODY"
+          echo "probe surface=edge8788 shape=limit1 budget=${BUDGET_SHORT}s http=${C_EDGE} time=${T_EDGE}s bytes=$(printf '%s' "$B_EDGE" | wc -c | tr -d ' ')"
+          SLOW=""
+          if [ "$C_DIRECT" != "200" ]; then
+            R="$(probe "$BUDGET_LONG" 'http://127.0.0.1:8080/api/v1/opportunities/live?limit=1')"; parse "$R"
+            echo "probe surface=direct8080 shape=limit1 budget=${BUDGET_LONG}s http=${CODE} time=${TIME}s bytes=$(printf '%s' "$BODY" | wc -c | tr -d ' ')"
+            if [ "$CODE" = "200" ]; then SLOW="${SLOW}direct8080 "; C_DIRECT="200"; T_DIRECT="$TIME"; B_DIRECT="$BODY"; fi
           fi
-          RESP_RAW="$(echo "$RESP_RAW" | tr -d '\r')"
-          HTTP_CODE="$(echo "$RESP_RAW" | tail -1)"
-          RESP="$(echo "$RESP_RAW" | sed '$d')"
-          KEYS="$(printf '%s' "$RESP" | grep -o '"[A-Za-z_][A-Za-z_0-9]*":' | sort -u | tr -d '":' | paste -sd, -)"
-          echo "evidence: http=$HTTP_CODE bytes=$(printf '%s' "$RESP" | wc -c | tr -d ' ') keys=$KEYS"
-          # Un HTTP != 200 NO es "cero oportunidades": es la API que no responde. Con
-          # `curl -sf ... || echo '{}'` ambos casos colapsaban en COUNT=0 y el rojo
-          # acusaba al pipeline por un problema de la superficie.
-          if [ "$HTTP_CODE" != "200" ]; then
-            echo "::error::PIPELINE ROJO capa 3: la API respondio HTTP $HTTP_CODE, no 200 — NO es 'cero oportunidades'."
+          if [ "$C_EDGE" != "200" ]; then
+            R="$(probe "$BUDGET_LONG" 'http://127.0.0.1:8788/api/opportunities/live?limit=20')"; parse "$R"
+            echo "probe surface=edge8788 shape=limit20 budget=${BUDGET_LONG}s http=${CODE} time=${TIME}s bytes=$(printf '%s' "$BODY" | wc -c | tr -d ' ')"
+            if [ "$CODE" = "200" ]; then SLOW="${SLOW}edge8788 "; C_EDGE="200"; T_EDGE="$TIME"; B_EDGE="$BODY"; fi
+          fi
+          if [ "$C_DIRECT" != "200" ] && [ "$C_EDGE" != "200" ]; then
+            echo "::error::PIPELINE ROJO capa 3: NINGUNA superficie contesto — directo 8080 http=${C_DIRECT}, edge 8788 http=${C_EDGE} — ni con ${BUDGET_LONG}s de presupuesto. reason=api_down. NO es 'cero oportunidades': la API no responde."
             exit 1
           fi
+          if [ "$C_DIRECT" != "200" ]; then
+            echo "::error::PIPELINE ROJO capa 3: el EDGE contesto (http=${C_EDGE} en ${T_EDGE}s) pero el api-server DIRECTO no (http=${C_DIRECT}) ni con ${BUDGET_LONG}s. reason=edge_masks_dead_api — la respuesta del edge puede ser CACHE y NO se puede descartar que el API este caido."
+            exit 1
+          fi
+          echo "cache_discarded_by=direct_8080 — el api-server contesto DIRECTO, asi que la respuesta no es cache del edge"
+          if [ -n "$SLOW" ]; then
+            echo "::warning::capa 3 DEGRADADA (LENTA, no caida) en: ${SLOW}| latencias finales: directo=${T_DIRECT}s edge=${T_EDGE}s. Contesto solo con el presupuesto de ${BUDGET_LONG}s."
+          fi
+          if [ "$C_EDGE" != "200" ]; then
+            echo "::error::PIPELINE ROJO capa 3: el api-server responde (directo http=${C_DIRECT}) pero el EDGE no (http=${C_EDGE}) ni con ${BUDGET_LONG}s. reason=edge_not_serving — el consumidor del DApp queda sin dato."
+            exit 1
+          fi
+          RESP="$B_DIRECT"
+          SRC="direct8080"
+          if [ -z "$RESP" ]; then RESP="$B_EDGE"; SRC="edge8788"; fi
+          KEYS="$(printf '%s' "$RESP" | grep -o '"[A-Za-z_][A-Za-z_0-9]*":' | sort -u | tr -d '":' | paste -sd, -)"
+          echo "evidence: http_direct=${C_DIRECT} http_edge=${C_EDGE} bytes=$(printf '%s' "$RESP" | wc -c | tr -d ' ') keys=$KEYS source=$SRC"
           JQ_RC=0
           COUNT="$(echo "$RESP" | jq 'if (.data|type)=="array" then (.data|length) elif (.items|type)=="array" then (.items|length) else (.count // 0) end' 2>/dev/null)" || JQ_RC=$?
-          # Un parser que falla produce un cero indistinguible de un cero real. Ese
-          # cero NO se reporta como hecho del pipeline: se reporta NO COMPUTADO.
           if [ "$JQ_RC" -ne 0 ] || [ -z "$COUNT" ]; then
-            echo "::error::NO COMPUTADO capa 3: el parser del runner fallo (jq rc=$JQ_RC) sobre $(printf '%s' "$RESP" | wc -c | tr -d ' ') bytes (keys=$KEYS). Un 0 aca NO es un hecho del pipeline."
+            echo "::error::NO COMPUTADO capa 3: el parser del runner fallo (jq rc=$JQ_RC) sobre $(printf '%s' "$RESP" | wc -c | tr -d ' ') bytes (keys=$KEYS source=$SRC). Un 0 aca NO es un hecho del pipeline."
             exit 1
           fi
-          echo "API /opportunities/live returns $COUNT items"
+          echo "API /opportunities/live returns $COUNT items (source=$SRC)"
           if [ "$COUNT" -eq 0 ]; then
-            echo '::error::PIPELINE ROJO capa 3: API returns ZERO opportunities — pipeline broken between PG and API'
+            echo "::error::PIPELINE ROJO capa 3: API returns ZERO opportunities (source=$SRC) — pipeline broken between PG and API"
             exit 1
           fi
           AMOUNT_TYPE="$(echo "$RESP" | jq -r '((.data // .items // [])[0] | .amount_in_wei) | type' 2>/dev/null || echo 'null')"

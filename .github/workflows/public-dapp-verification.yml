@@ -53,7 +53,13 @@ jobs:
           INPUT_EXPECTED_SHA: ${{ github.event.inputs.expected_sha }}
         run: |
           set -euo pipefail
-          mkdir -p public-evidence
+          # N05 (t116): la evidencia se escribe TAMBIEN fuera del workspace.
+          # El `actions/checkout` posterior limpia el arbol y borra `public-evidence/`.
+          # Medido por el operador en el run 37727448265: el step 2 escribia el registro,
+          # el step 3 (checkout) lo borraba, el step 5 fallaba con
+          # `source-sha.txt: No such file or directory` y el step 8 (el navegador real)
+          # quedaba SKIPPED en silencio. El `$RUNNER_TEMP` NO lo limpia el checkout.
+          mkdir -p public-evidence "$RUNNER_TEMP/public-evidence"
 
           # SHA esperado: solo el del deploy aguas arriba, o el que declaro el
           # operador a mano. Nunca se deriva del servido (eso seria circular).
@@ -95,8 +101,10 @@ jobs:
             echo "verdict=${verdict}"
             echo "certifies_candidate=false"
             echo "reason=auditoria no ejecutada"
-          } > public-evidence/sha-register.txt
+          } | tee public-evidence/sha-register.txt > "$RUNNER_TEMP/public-evidence/sha-register.txt"
           cat public-evidence/sha-register.txt
+          # copia FUERA del workspace, que el checkout no puede borrar (N05):
+          test -s "$RUNNER_TEMP/public-evidence/sha-register.txt"
 
           echo "evaluate=${evaluate}" >> "$GITHUB_OUTPUT"
           echo "mode=${mode}" >> "$GITHUB_OUTPUT"
@@ -106,6 +114,23 @@ jobs:
         with:
           ref: ${{ github.event.workflow_run.head_sha || github.sha }}
           persist-credentials: false
+
+      # N05 (t116): el checkout ACABA de limpiar el arbol. Este step restaura el
+      # registro desde `$RUNNER_TEMP` y FALLA si no sobrevivio: un SKIP silencioso
+      # es el fallo, no un detalle. Sin este step, todo lo que depende de la
+      # evidencia se saltaba y el run publicaba un veredicto vacio.
+      - name: Restore the evidence the checkout wiped, and FAIL if it did not survive
+        if: steps.gate.outputs.evaluate == 'true'
+        run: |
+          set -euo pipefail
+          mkdir -p public-evidence
+          if [ ! -s "$RUNNER_TEMP/public-evidence/sha-register.txt" ]; then
+            echo "::error::EVIDENCIA PERDIDA: el registro de SHAs no sobrevivio al checkout ($RUNNER_TEMP/public-evidence/sha-register.txt ausente o vacio). Este step FALLA a proposito: un paso que no corre no certifica nada."
+            exit 1
+          fi
+          cp -f "$RUNNER_TEMP/public-evidence/sha-register.txt" public-evidence/sha-register.txt
+          test -s public-evidence/sha-register.txt
+          echo "evidence restored into the workspace: $(wc -c < public-evidence/sha-register.txt) bytes"
 
       - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v4
         if: steps.gate.outputs.evaluate == 'true'
@@ -184,13 +209,23 @@ jobs:
 
       - name: Publish the verdict of this audit run
         if: always()
+        env:
+          # N05 (t116): si el gate dijo evaluate=true, un registro AUSENTE no es un
+          # "no corrio y no pasa nada": es evidencia perdida y el veredicto tiene
+          # que FALLAR en vez de publicarse vacio.
+          EVALUATE: ${{ steps.gate.outputs.evaluate }}
         run: |
           set -euo pipefail
           node -e '
             const fs = require("fs");
             const reg = "public-evidence/sha-register.txt";
             if (!fs.existsSync(reg)) {
+              const expected = process.env.EVALUATE === "true";
               console.log("sin registro de SHA: el gate no llego a correr");
+              if (expected) {
+                console.error("::error::evaluate=true y el registro de SHAs NO existe: la evidencia se perdio y NO hay veredicto. Un veredicto vacio publicado en verde es el fallo que este step cierra.");
+                process.exit(1);
+              }
               process.exit(0);
             }
             const txt = fs.readFileSync(reg, "utf8");
