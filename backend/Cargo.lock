@@ -7133,6 +7133,7 @@ version = "0.1.0"
 dependencies = [
  "alloy",
  "alloy-sol-types",
+ "async-trait",
  "anyhow",
  "arc-swap",
  "axum",
