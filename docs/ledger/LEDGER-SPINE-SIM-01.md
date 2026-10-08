@@ -58,16 +58,21 @@
 
 ### 1.1 La misma fila del lado de la SIM — y aquí está el hallazgo duro
 
-| Medición | Resultado |
-|---|---|
-| `count(*) FROM simulations` | **719 987** |
-| `count(simulated_profit_usd)` | **0** |
-| `count(gas_estimate_wei)` | **0** |
-| `count(slippage_pct)` | **0** |
-| `count(raw_trace)` | **0** de **720 110** |
-| `count(revert_risk_pct)` | **37 869** |
+> ⚠️ **LECTURA OBLIGATORIA DE ESTA TABLA — es exactamente el defecto que la tarea cierra.**
+> `count(<campo>)` es **`count` de un CAMPO**, es decir **cuántas filas lo traen poblado**. **No es el valor del campo.**
+> Un **`0`** en esta columna significa **«NINGUNA fila lo trae: el campo no tiene productor»** — **jamás** «el beneficio vale cero» ni «el gas vale cero».
+> **`count(simulated_profit_usd)` = `0` ⇒ el neto de la sim es `UNREADABLE`, no `$0`.** Confundir ambas cosas es **el defecto original** (un `0` que significa «no lo cargué» leído como un valor).
 
-**Tres ceros simultáneos sobre una tabla de 719 987 filas.** Con control positivo al lado (`fail_reason` = 5322, `revert_risk_pct` = 37 869) esos ceros **no son transportes rotos: son campos sin productor.**
+| Medición (`count` del **campo**) | Filas que lo traen poblado | Lectura correcta |
+|---|---|---|
+| `count(*) FROM simulations` | **719 987** | total de filas |
+| `count(simulated_profit_usd)` | **0** | **el campo no tiene productor ⇒ `UNREADABLE`, NO `$0`** |
+| `count(gas_estimate_wei)` | **0** | **`UNREADABLE`, NO `$0`** |
+| `count(slippage_pct)` | **0** | **`UNREADABLE`, NO `$0`** |
+| `count(raw_trace)` | **0** de **720 110** | **`UNREADABLE`, NO ausencia de revert** |
+| `count(revert_risk_pct)` | **37 869** | control positivo: **este campo SÍ tiene productor** |
+
+**Tres campos sin productor sobre una tabla de 719 987 filas.** Con control positivo al lado (`fail_reason` = 5322, `revert_risk_pct` = 37 869) esos ceros **no son transportes rotos: son campos sin productor**, y por la regla de esta tarea **se leen `UNREADABLE`, no `$0`**.
 
 **Y está declarado en el código, no inferido:**
 - `backend/sim-ctl/src/canonical_plan_consumer.rs:195-205` → *«PRICES-FREE by design (R8): net-USD is computed downstream from prices; `simulated_profit_usd` stays None (None = not computed, never fabricated)»* → `simulated_profit_usd: None`
@@ -90,7 +95,7 @@
 | Extremo | Estado | Evidencia |
 |---|---|---|
 | `net_spine` | **existe** | `opportunities.economics->>'net_profit_usd'` = `0.049404645914378764` |
-| `net_sim` | **NO EXISTE como término persistido** | `count(simulated_profit_usd)` = **0** de 719 987 |
+| `net_sim` | **NO EXISTE como término persistido** — **`UNREADABLE`, no `$0`** | `count(simulated_profit_usd)` = **0** de 719 987 filas (campo sin productor) |
 
 **⇒ `ε` no se puede declarar y el conteo de filas que cumplen no se puede dar: el lado derecho de la igualdad no está en la base.** Declarar un `ε` aquí sería inventar el término que falta — exactamente el defecto que la tarea existe para cerrar.
 
@@ -155,7 +160,7 @@
 
 **No se puede declarar cuántas de las 50 filas vivas cambian de número**, porque **el número de destino (`net_sim`) no está persistido** (§2).
 - Filas donde spine y sim coexisten (join por `opportunity_id`): **569 628**.
-- **De esas, el lado sim aporta `simulated_profit_usd = NULL` en el 100 %** (0 de 719 987 en toda la tabla).
+- **De esas, el lado sim aporta `simulated_profit_usd` sin productor en el 100 % de las filas** (campo `UNREADABLE`; `count` = **0** de 719 987 — **no es un neto de `$0`**).
 - ⇒ **Con el ledger unificado, TODAS las filas con spine computado cambiarían de número, y la dirección sería a la BAJA** (se añadirían términos hoy ausentes: LP + slippage + flash). **El conteo exacto es `NO COMPUTADO` porque el término de destino no existe.**
 
 **No se declara mejora de PnL.** Esta tarea **no estima ganancia**.
@@ -199,7 +204,7 @@ Medido (`trading_config`, chain_id=1):
 
 ## 8. Cierre
 
-- **`net_spine == net_sim ± ε` es `NO COMPUTADO`**: `net_sim` **no está persistido** (0 de 719 987; `None` por diseño R8 en los 4 sitios del código). **No se declara un `ε` sobre un término inexistente.**
+- **`net_spine == net_sim ± ε` es `NO COMPUTADO`**: `net_sim` **no está persistido** (campo sin productor: `count` = **0** de 719 987 ⇒ **`UNREADABLE`, no `$0`**; `None` por diseño R8 en los 4 sitios del código). **No se declara un `ε` sobre un término inexistente.**
 - **La regla queda fijada:** un término que falta es **`UNREADABLE`**, nunca `$0`. Con la distinción **cero computado ≠ cero por omisión**.
 - **LP por pool, nunca proxy de 30 bps.** El `unwrap_or(30)` de `dex_engine.rs:440` es el proxy que se prohíbe.
 - **Los tres sitios están localizados con path + línea + blob.**
