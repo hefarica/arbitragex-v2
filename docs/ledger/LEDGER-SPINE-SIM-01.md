@@ -18,7 +18,7 @@
 | **`:9090` externo** | `curl -o NUL -w '%{http_code}'` contra `195.201.235.70:9090` | **no ejecutado con éxito en esta corrida** — el acceso SSH al VPS expiró por timeout al final del turno; **se declara como no medido, no como `000`** |
 | **`forge fmt --all --check`** | no existe (defecto ya cazado) | no ejecutado |
 
-**Desviación registrada, no glosada:** el control positivo del `LIKE` da **5322**, no los **4007** de t184. La tabla creció entre ambas mediciones (719 987 filas hoy). El control **sigue siendo válido como positivo** (≠ 0); el valor de t184 **no se reutiliza como si fuera de hoy**.
+**Desviación registrada, no glosada:** el control positivo del `LIKE` dio **5322** al abrir el turno y **5498** al cerrarlo — **la tabla creció durante la propia medición** (las `simulations` corren en vivo; última fila `2026-10-08 20:14:47`). **Todo conteo de esta acta es una foto con su instante, no un valor estable.** El control **sigue siendo válido como positivo** (≠ 0); el valor de t184 (**4007**) **no se reutiliza como si fuera de hoy**.
 
 ---
 
