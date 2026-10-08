@@ -60,7 +60,14 @@ jobs:
           done
           [ "$missing" -eq 0 ]
 
-      - name: forge build (with sizes)
+      - name: CONTROL t171 (TEMPORAL, no se publica): inyectar un contrato roto a proposito
+        # Control de vacuidad del arreglo: con el job ya ejecutando build/test, un
+        # contrato roto TIENE que hacer fallar el job. Este step solo vive en la rama
+        # scratch sre/t171-control-broken y se borra al terminar el control.
+        run: |
+          printf 'contract __T171ControlBroken { function f() public { uint256 x = ; } }\n' > src/__t171_control_broken.sol
+          echo "injected control file:"
+          ls -l src/__t171_control_broken.sol      - name: forge build (with sizes)
         # BLOCKING: a build failure must fail CI. Compiles the FULL project including
         # script/ — the deploy scripts now compile cleanly (their view-mutability,
         # shadowed-param, console2 overload and stack-too-deep issues were fixed), so
