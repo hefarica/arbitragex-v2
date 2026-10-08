@@ -29,28 +29,36 @@ jobs:
 
     steps:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
-        # No submodules: contracts/lib/ is gitignored and managed via forge install.
+        with:
+          # CONTRACT-CI-HOLE-01 (2026-10-08, medido): sin `submodules:` git materializa
+          # contracts/lib/<lib> como directorio VACIO (los tres son gitlinks en modo
+          # 160000) y `forge install` moria con
+          #   Error: failed to create dir ".../lib/openzeppelin-contracts": File exists (os error 17)
+          # dejando `forge build` y `forge test` en SKIPPED. Los gitlinks ya fijan
+          # exactamente los commits que el install re-bajaba (cd058830 / fa525310 /
+          # b0909683): la via correcta es git, no la red. Mismo patron que ci.yml.
+          submodules: recursive
 
       - uses: foundry-rs/foundry-toolchain@b00af27efadbc7b4ca8b82abbd903b17cc874d2a # v1
         with:
           version: nightly
 
-      - name: forge install dependencies || true
-        # contracts/lib/ is gitignored (contracts/.gitignore: lib/).
-        # Three libs required by remappings.txt:
-        #   @openzeppelin/contracts/  => lib/openzeppelin-contracts/contracts/
-        #   @openzeppelin/contracts-upgradeable/ => lib/openzeppelin-contracts-upgradeable/contracts/
-        #   forge-std/                => lib/forge-std/src/
-        # --no-git avoids nested .git repos; --no-commit avoids dirty worktree.
+      - name: Verify contracts/lib is materialised (no forge install, no tolerance)
+        # Se ELIMINA el paso `forge install dependencies || true`: su nombre prometia
+        # tolerancia mientras su `run:` la rompia, y era el punto donde el job moria.
+        # Sustituto explicito: comprobar que las tres libs estan presentes. NO hay
+        # `|| true` ni continue-on-error: si falta una lib, este job FALLA.
         run: |
-          # Pinned to the same commits as .gitmodules — the versions the contracts
-          # actually compile against (OZ 5.6.1 / OZ-upgradeable 5.1.0 / forge-std 1.16.1).
-          # Unpinned `forge install` pulled a newer openzeppelin-contracts-upgradeable
-          # in which ReentrancyGuardUpgradeable is no longer under contracts/utils/,
-          # so `forge build` failed — masked until now by `|| true`.
-          forge install OpenZeppelin/openzeppelin-contracts@cd05883078060e0cd8a7bd36636944570dbe1722 --no-git --no-commit
-          forge install OpenZeppelin/openzeppelin-contracts-upgradeable@fa525310e45f91eb20a6d3baa2644be8e0adba31 --no-git --no-commit
-          forge install foundry-rs/forge-std@b090968353a209833d4a6f1383230477e96d8438 --no-git --no-commit
+          missing=0
+          for d in openzeppelin-contracts openzeppelin-contracts-upgradeable forge-std; do
+            if [ -d "lib/$d" ] && [ -n "$(ls -A "lib/$d" 2>/dev/null)" ]; then
+              echo "lib/$d present ($(ls -A "lib/$d" | wc -l) entries, $(git -C "lib/$d" rev-parse HEAD 2>/dev/null || echo 'no-git'))"
+            else
+              echo "::error::contracts/lib/$d MISSING or empty — the checkout must materialise the pinned submodules (submodules: recursive)"
+              missing=1
+            fi
+          done
+          [ "$missing" -eq 0 ]
 
       - name: forge build (with sizes)
         # BLOCKING: a build failure must fail CI. Compiles the FULL project including
@@ -95,21 +103,27 @@ jobs:
 
     steps:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+        with:
+          # Mismo defecto que en `test` (CONTRACT-CI-HOLE-01): sin submodules, `forge
+          # install` moria con "File exists (os error 17)" y dejaba todo en skipped.
+          submodules: recursive
 
       - uses: foundry-rs/foundry-toolchain@b00af27efadbc7b4ca8b82abbd903b17cc874d2a # v1
         with:
           version: nightly
 
-      - name: forge install dependencies || true
+      - name: Verify contracts/lib is materialised (no forge install, no tolerance)
         run: |
-          # Pinned to the same commits as .gitmodules — the versions the contracts
-          # actually compile against (OZ 5.6.1 / OZ-upgradeable 5.1.0 / forge-std 1.16.1).
-          # Unpinned `forge install` pulled a newer openzeppelin-contracts-upgradeable
-          # in which ReentrancyGuardUpgradeable is no longer under contracts/utils/,
-          # so `forge build` failed — masked until now by `|| true`.
-          forge install OpenZeppelin/openzeppelin-contracts@cd05883078060e0cd8a7bd36636944570dbe1722 --no-git --no-commit
-          forge install OpenZeppelin/openzeppelin-contracts-upgradeable@fa525310e45f91eb20a6d3baa2644be8e0adba31 --no-git --no-commit
-          forge install foundry-rs/forge-std@b090968353a209833d4a6f1383230477e96d8438 --no-git --no-commit
+          missing=0
+          for d in openzeppelin-contracts openzeppelin-contracts-upgradeable forge-std; do
+            if [ -d "lib/$d" ] && [ -n "$(ls -A "lib/$d" 2>/dev/null)" ]; then
+              echo "lib/$d present ($(ls -A "lib/$d" | wc -l) entries)"
+            else
+              echo "::error::contracts/lib/$d MISSING or empty — the checkout must materialise the pinned submodules (submodules: recursive)"
+              missing=1
+            fi
+          done
+          [ "$missing" -eq 0 ]
 
       - name: forge build
         run: forge build --sizes
