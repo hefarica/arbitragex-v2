@@ -228,6 +228,10 @@ async fn build_orchestrator(
     rpc_pool: Option<Arc<shared_rs::rpc_failover::HttpRpcPool>>,
     cartridge_runner: Option<Arc<CartridgeRunner>>,
     cartridge_context_router: Option<Arc<crate::context_router::ContextRouter>>,
+    // DECIMALS-CYCLE-01 (t197): provider PG de `tokens.decimals` para el
+    // `decimals.map` del ciclo — que antes defaulteaba a 18 con la tabla
+    // canonica (8/37 entradas erroneas medidas en t187).
+    decimals_provider: ScannerDecimalsProvider,
 ) -> Option<(Arc<Orchestrator>, Arc<tokio::sync::RwLock<ImpactIndex>>)> {
     if mode == OrchestratorMode::V1 || mode == OrchestratorMode::Off {
         return None;
@@ -652,6 +656,10 @@ async fn build_orchestrator(
         math_registry: Arc::new(math_engine::OperatorRegistry::new()),
         regime_router: math_engine::RegimeRouter::default(),
         math_redis: redis.clone(),
+        // DECIMALS-CYCLE-01 (t197): el mismo provider PG que usa el encoder,
+        // para que el `decimals.map` del ciclo lea `tokens.decimals` en vez de
+        // defaultear a 18.
+        token_decimals_provider: decimals_provider.clone(),
         spanning_tree_engine: None,
         cross_chain_engine: None,
         liquidation_snipe_engine: None,
@@ -971,6 +979,7 @@ pub async fn run_chain(
                     rpc_http_pool.clone(),
                     cartridge_runner.clone(),
                     cartridge_context_router.clone(),
+                    decimals_provider.clone(),
                 ),
             )
             .await
@@ -1012,6 +1021,7 @@ pub async fn run_chain(
                     rpc_http_pool.clone(),
                     cartridge_runner.clone(),
                     cartridge_context_router.clone(),
+                    decimals_provider.clone(),
                 ),
             )
             .await
