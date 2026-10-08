@@ -132,16 +132,27 @@ groups:
       # the OPPOSITE failure of the one this change closes.
       # `> 5` stays PER SERIES (vector comparison), so the alert still says WHICH
       # outcome is rising, through {{ $labels.outcome }}.
-      # Deliberately NOT included: `rpc_err`, which already exists on this metric
-      # and was already outside this alert before today. Widening beyond the order
-      # is the operator's call — declared in docs/sre/ALERT-OUTCOMES-01.md.
+      #
+      # ALERT-OUTCOMES-02 (2026-10-08, t105): `rpc_err` joins the SAME class, and
+      # the reason is class membership, not convenience. slot_unresolved and
+      # rpc_err are THE TWO HARNESS FAILURES of the same function: one says "the
+      # sentinel did not reproduce on any candidate slot", the other says "an RPC
+      # call on the funding path failed". Alerting on the first while excluding
+      # the second is NOT a scope boundary, it is an INCONSISTENCY: the condition
+      # that would leave us blind is precisely the failure mode MOVING from
+      # slot_unresolved to rpc_err — the observable scenario when the RPC
+      # provider degrades or rate-limits. Measured: rpc_err already existed on
+      # this metric and was already outside this alert before #850. With
+      # sim_signer_funding_slot_unresolved at 98.740% of the post-deploy chain,
+      # this metric is the PRIMARY diagnosis of the pipeline today: leaving it
+      # half blind is blinding the instrument we watch the most.
       - alert: SIM_FUNDER_SLOT_UNRESOLVED
-        expr: increase(arbx_sim_funding_total{outcome=~"slot_unresolved|write_rejected|verify_mismatch|balance_unreadable"}[30m]) > 5
+        expr: increase(arbx_sim_funding_total{outcome=~"slot_unresolved|rpc_err|write_rejected|verify_mismatch|balance_unreadable"}[30m]) > 5
         for: 5m
         labels: { severity: warning, service: sim-ctl, platform: arbitragex }
         annotations:
           summary: "Signer funding failing on the sim fork: outcome={{ $labels.outcome }} (>5/30m)"
-          description: "increase(arbx_sim_funding_total{outcome=~\"slot_unresolved|write_rejected|verify_mismatch|balance_unreadable\"}[30m]) is rising for outcome={{ $labels.outcome }}. Causes: slot_unresolved = the sentinel-verified ERC20 balance-slot probe cannot resolve the token layout (exotic proxy or non-standard ERC20); write_rejected / verify_mismatch / balance_unreadable = the funding write was rejected, the follow-up verification disagreed, or the balance could not be read (#850). Sims on those tokens are fail-closed (sim_signer_funding_slot_unresolved) instead of reverting TRANSFER_FROM_FAILED. Inspect docker logs sim-ctl | grep sim.funding_failed and extend CANDIDATE_SLOTS or handle the proxy layout. Runbook: audits/real-cycles-audit-20260916/00-SYNTHESIS.md (SIM-FUND-01)."
+          description: "increase(arbx_sim_funding_total{outcome=~\"slot_unresolved|rpc_err|write_rejected|verify_mismatch|balance_unreadable\"}[30m]) is rising for outcome={{ $labels.outcome }}. Causes (all HARNESS failures of the same function, none of them market verdicts): slot_unresolved = the sentinel-verified ERC20 balance-slot probe cannot resolve the token layout (exotic proxy or non-standard ERC20); rpc_err = an RPC call on the funding path failed (provider degradation or rate-limit — the failure MODE can move here, which is exactly why it alerts); write_rejected / verify_mismatch / balance_unreadable = the funding write was rejected, the follow-up verification disagreed, or the balance could not be read (#850). Sims on those tokens are fail-closed (sim_signer_funding_slot_unresolved) instead of reverting TRANSFER_FROM_FAILED. Inspect docker logs sim-ctl | grep sim.funding_failed and extend CANDIDATE_SLOTS or handle the proxy layout. Runbook: audits/real-cycles-audit-20260916/00-SYNTHESIS.md (SIM-FUND-01)."
 
       - alert: RpcAllProvidersUnhealthy
         expr: count(arbx_rpc_provider_state == 0) == 0 and count(arbx_rpc_provider_state) > 0
