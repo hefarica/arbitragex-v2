@@ -244,4 +244,91 @@ git rev-parse HEAD:docs/review/REV-DECIMALS-REBASE-01.md
 
 ---
 
-*El fondo del PR se sostiene: la base está re-materializada, la divergencia está cerrada en el código, el test del 1e18 fue reescrito y **el falsificador muerde sobre la base nueva con un mutante mío, ejecutado por el CI, con el mismo total de tests en ambos lados**. Lo que impide aterrizarlo es una línea: **`clippy --all-targets -D warnings` cae en el propio test nuevo del PR, y `main` está verde en esa misma workflow**. Se devuelve como **NEEDS_REVISION** con el fix exacto, sin tocar el PR.*
+# APÉNDICE (t202, intento 2) — EJECUCIÓN PROPIA: el falsificador, corrido EN MI MANO
+
+> **Qué agrega y qué NO cambia.** Este apéndice es **append-only**: agrega la ejecución que el cuerpo declaró **NO COMPUTADA** (§C9.1: *«compilación ejecutada en local: NO COMPUTADO»*) y **no toca la conclusión**. El veredicto sigue siendo **`needs_revision`** con el blocker F1 intacto. Nada del cuerpo se borra ni se reinterpreta: lo que decía sigue dicho.
+
+## A.1 Entorno y CUSTODIA del árbol medido
+`rust:1.91` (cargo/rustc 1.91.1) sobre una **COPIA** del árbol del head en `/tmp/t202r/head` del VPS (el `/opt` productivo no se tocó; cero escrituras en el VPS: sólo `tar`/`scp` a `/tmp` y `docker run`). Custodia por `git hash-object` **dentro del árbol extraído**:
+```
+BLOB_orchestrator=cdd9ad253a842c44d936987debb96b03e724fbb7   # == el del commit b3302cf0
+BLOB_scanner     =10bb5dfa9dd7fae724da0e379aa6d05a0f5455b1   # == el del commit b3302cf0
+BLOB_fixture     =6c5833c5eeb93abe8828a9800bf9bb2e487a3e9d   # == el de main y del head
+PRISTINE_sha256  =04f4a25aaa4cc9ba7dcc697a614e3a7ca56782c4d89a0d8cf62a752c31cfe9d3
+```
+⇒ compilé **el head**, no otra cosa. (Ese era el punto que el cuerpo no podía afirmar.)
+
+## A.2 ★ MUTANTES PROPIOS (dos, construidos por mí, no los del autor)
+Reemplazo determinista sobre el bloque reparado, verificado `OCCURRENCES=1` y sha256 antes/después. `-p searcher-rs --lib --locked`, sin `-D warnings` (por eso el mutante compila aunque el árbol prístino tenga el lint de clippy de F1).
+
+| estado | blob del fichero mutado | CHECK (`--no-run`) | **FOCAL** (`decimals_cycle`) | TOTAL (`--no-fail-fast`) |
+|---|---|---|---|---|
+| **FIX** `b3302cf0` | `04f4a25aaa4cc9ba7dcc697a614e3a7ca56782c4d89a0d8cf62a752c31cfe9d3` | **0** | **0** — `test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 1717 filtered out` | `FAILED. 1713 passed; 1 failed; 6 ignored` |
+| **M1** (mío) | `73df1d419ca0f1d48495484bfb3f743679c7504307fc8f325fce679443be053d` | **0** | **101** — `FAILED. 0 passed; 3 failed; …; 1717 filtered out` | `FAILED. 1710 passed; 4 failed; 6 ignored` |
+| **M2** (mío) | `1973ce3aafd22354ee12278682ae65c250b7c248065abcc1b10eb8a6fa08335a` | **0** | **101** — `FAILED. 1 passed; 2 failed; …; 1717 filtered out` | `FAILED. 1712 passed; 2 failed; 6 ignored` |
+| **restaurado** | `04f4a25aaa4cc9ba7dcc697a614e3a7ca56782c4d89a0d8cf62a752c31cfe9d3` ⟵ **== prístino** | — | (vuelve a 0) | — |
+
+- **M1 = «restaurar el default de 18 en el locus reparado»**, tal como el contrato lo pide: la resolución vuelve a la tabla canónica con su `_ => 18` (comportamiento PRE-fix):
+  `let _ = (redis_decimals, pg_decimals); let d = crate::engines::dex_engine::canonical_token_decimals_str(addr); map.insert(lc, d);`
+- **M2 = la variante mínima**: fuentes reales intactas + `unwrap_or(&18)` — para separar «ignora las fuentes» de «sólo añade el 18».
+
+**Pánicos nombrados de M1 (los tres del ciclo, con línea):**
+```
+orchestrator::tests::decimals_cycle_t187_eight_cases_resolve_to_the_real_unit_not_18
+  panicked at searcher-rs/src/orchestrator.rs:3400:13:
+  assertion `left == right` failed: EURC 0x1abaea1f7c830bd89acc67ec4af516284b1bc33c (redis+pg)
+  debe entrar al mapa con su unidad real 6
+orchestrator::tests::decimals_cycle_unknown_token_is_not_computed_never_18
+  panicked at …:3431:9: sin fuente no hay unidad: el mapa no puede llevar NINGUNA entrada (ni 18)
+orchestrator::tests::decimals_cycle_source_precedence_and_route_order
+  panicked at …:3467:9: assertion `left == right` failed: Redis manda sobre PG
+```
+El **4.º fallo del total de M1** es `sizing_ledger_and_cycle_map_agree_on_the_same_unit`: **el test que fija la divergencia que este PR cierra cae en cuanto el 18 vuelve** ⇒ la reparación está **pinneada por su propio test**, no sólo por un caso de ejemplo.
+
+## A.3 Las cuatro condiciones del contrato, cerradas **por mi ejecución**
+1. **`FOCAL_EXIT` del fix = 0** ✅ (`ok. 3 passed; 0 failed`)
+2. **`FOCAL_EXIT` del mutante = 101** ✅ (`0 passed; 3 failed`), con el **test focal de los 8 tokens** entre los que caen
+3. **El mutante COMPILA**: `CHECK_EXIT = 0` en M1 y en M2, con **0 líneas `^error`** en el log de compilación ✅
+4. **Conteo TOTAL idéntico en ambos lados**: `1713+1+6 = 1720`, `1710+4+6 = 1720`, `1712+2+6 = 1720` ✅ — el mutante **no añade ni quita tests**
+5. **Restauración exacta**: `FINAL_sha256 == PRISTINE_sha256` ✅
+
+**Y corrobora lo que el CI ya había mostrado (no lo sustituye):** mi total **1720** coincide con el `running 1720 tests` del job `Rust tests` de #929/#928, y mi **1714 ejecutado** (1713 passed + 1 failed) coincide con el `1714 passed` del CI **y** con el `1714` que el autor declaró. **`bin 1701` y `19 suites` siguen NO COMPUTADOS** por mí (corrí `--lib`): no se citan como propios.
+
+## A.4 ★ El único fallo prístino, y su causa medida (refuerza §C6)
+`TOTAL_FIX_EXIT=101` por **un** test: `route_discovery::route_discovery_worker::tests::xlang_golden_tick_contract`, con
+`panicked at …:2694:33: golden knobs-off.json missing (No such file or directory (os error 2))`.
+**Causa medida, no inferida:** yo había enviado **sólo `full.json`**; el test pide **dos** fixtures (`assert_golden("full.json", …)` :2706 y `assert_golden("knobs-off.json", …)` :2710). Enviado **el directorio completo**:
+```
+FIXTURES=full.json knobs-off.json
+GOLDEN_EXIT=0      test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1719 filtered out
+```
+⇒ **reproducción propia del artefacto de ALCANCE** que t197 sufrió y que el autor corrigió: un árbol `git archive -- backend` **no puede** satisfacer ese test porque `golden_fixture_dir()` resuelve `CARGO_MANIFEST_DIR/../../frontend/…`, **fuera de `backend/`**. La corrección del autor a t197 **queda confirmada por mi propia ejecución**, en el fichero hermano (`knobs-off.json`), lo que la hace independiente del caso que t197 citaba.
+
+## A.5 ★ CAUSA RAÍZ de F1 — por qué el arnés del autor no lo vio
+El `verify-run.sh` que el propio PR incluye corre: `cargo fmt --all -- --check` · `cargo fmt -p searcher-rs -- --check` · **`RUSTFLAGS=-Dwarnings cargo check --manifest-path searcher-rs/Cargo.toml`** · `cargo test … --lib … decimals_cycle` · `cargo test … --no-fail-fast`. **Nunca `cargo clippy`.** El job **gating** del CI es **clippy** con `-D warnings` (conjunto **estrictamente mayor**), y el lint que cae (`clippy::cloned_ref_to_slice_refs`) **sólo existe en clippy**. Es un **hueco de cobertura del arnés**, no un dato oculto: explica que su `fmt=0` y su `-Dwarnings check=0` sean ciertos **y** el CI esté rojo a la vez.
+**Fix (de una línea, no lo ejecuto: soy revisor):** `std::slice::from_ref(&unknown)` en `orchestrator.rs:3436` y volver a pedir revisión con **`cargo clippy -p searcher-rs --all-targets -- -D warnings` en la mano**.
+
+## A.6 Estado del CI en el head (mi propia consulta, con hora)
+`gh api …/commits/b3302cf0…/check-runs` → **37 checks**: **32 `success`** · **3 `failure`** (`cargo check + clippy + test`, `lint-and-test-rust`, `ci-gate` paraguas) · **1 neutral** (`CodeQL`: *1 configuration not found*) · **1 `in_progress`** (`analyze (rust)`, al momento de consultar).
+**Control en `main` (`4077fea5`):** `lint-and-test-rust :: success` (2026-10-08 21:32:19) y `ci-gate :: success` ⇒ **el rojo lo introduce el PR**. (`main` tiene 1 fallo pre-existente, `Deploy to VPS`, sin relación con este PR.)
+
+## A.7 Residual del sello — mis números (§C5, ahora con conteos)
+Query propia, solo lectura, chain 1: catálogo Redis `arbx:tokens:1:*` vs PG `tokens`.
+```
+REDIS_DEC_ROWS=2503   PG_ROWS=6759
+REDIS_ONLY=0          EN_AMBAS=2503          PG_ONLY=4256
+DISCREPANCIAS_DECIMALS=0 / 2503
+```
+⇒ **Hoy no es alcanzable** ni el caso de cobertura (hace falta un token sólo-Redis: **0**) ni el **numérico silencioso** (mismo token con unidad distinta en Redis y PG: **0 de 2503**). Y la degradación es un `warn!` con evento propio + `NaN`, **nunca 18**. Condición de disparo declarada: un catálogo Redis que discrepe de `tokens.decimals` de PG, o un token sólo-Redis. Severidad: **baja**, como en §F2.
+
+## A.8 Knobs (mi propia query)
+`SELECT chain_id, capital_usd, min_profit_usd, spread_sanity_mult, updated_by FROM trading_config` → chain 1: **`1000.00` / `50.0000` / `3.0000`**, `updated_by=admin`. Las otras 5 cadenas: `capital_usd=0.00` (`migration_046`). Redis `arbx:config:canonical_knobs`: `"execution_mode":"PAPER_SHADOW"`.
+
+## A.9 Lo que este apéndice **cierra** de §C9
+- **§C9.1 (compilación/ejecución local: NO COMPUTADO) → MEDIDO.** El falsificador corrió **en mi mano** (A.2/A.3), no sólo en el CI.
+- **§C9.2 (`bin` 1701) y §C9.3 (números del autor en su árbol) → siguen NO COMPUTADOS.** No se redondean.
+- **La conclusión no cambia: `needs_revision`.** Los hallazgos del cuerpo —**F1 (BLOCKER)**, **F2 (bajo)** y **F3 (informativo)**— quedan exactamente como están ahí: el PR **no se aterriza** en esta revisión. Este apéndice sólo agrega medición; no reescribe su veredicto.
+
+---
+
+*El fondo del PR se sostiene: la base está re-materializada, la divergencia está cerrada en el código, el test del 1e18 fue reescrito y **el falsificador muerde sobre la base nueva con un mutante mío, ejecutado por el CI —y ahora también por mí, en `rust:1.91`, con `CHECK_EXIT=0`, `FOCAL_EXIT` 0 vs 101 y 1720 tests en los tres estados—**. Lo que impide aterrizarlo es una línea: **`clippy --all-targets -D warnings` cae en el propio test nuevo del PR, y `main` está verde en esa misma workflow**. Se devuelve como **NEEDS_REVISION** con el fix exacto, sin tocar el PR.*
