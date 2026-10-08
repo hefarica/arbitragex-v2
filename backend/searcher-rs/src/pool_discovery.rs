@@ -314,9 +314,19 @@ impl PoolDiscoveryService {
             }
 
             if !discovered_pools.is_empty() {
-                let mut resolved_pool = None;
+                // POOL-RESOLVE-01 — `resolved_addr` = the pool address the factory
+                // view ANSWERED with, hydration or not. This is what gets persisted:
+                // a hydration failure must not throw away a resolved address, or the
+                // row is left with nothing for the retry sweep to call
+                // `enumerate_and_persist_pool` with. (It replaces the old
+                // `resolved_pool`, which was only ever set on a SUCCESSFUL hydration
+                // and therefore recorded NULL for every failed one.)
+                let mut resolved_addr: Option<Address> = None;
                 for (f_id, pool_addr, proto, dex_name, fee_raw) in discovered_pools {
                     let e_pool = Address::from_slice(pool_addr.as_slice());
+                    if resolved_addr.is_none() {
+                        resolved_addr = Some(e_pool);
+                    }
                     let fee_bps = fee_raw.map(|f| match proto {
                         crate::route_intent::ProtocolType::V3 => f / 100,
                         _ => f,
@@ -353,7 +363,6 @@ impl PoolDiscoveryService {
                         let mut idx = self.impact_index.write().await;
                         idx.add_pool(pool_ref);
                         drop(idx);
-                        resolved_pool = Some(e_pool);
                         info!(event = "pool_discovery.impact_index_refreshed");
                         discovered_any = true;
                     } else {
@@ -361,13 +370,15 @@ impl PoolDiscoveryService {
                     }
                 }
                 // A factory lookup is only a discovery, not successful hydration.
-                // Failed siblings must not overwrite a successful resolution.
+                // POOL-RESOLVE-01: what is recorded is the RESOLVED ADDRESS
+                // (`resolved_addr`), not the hydrated pool — the address is the
+                // datum the retry sweep needs, and it survives a hydration failure.
                 self.record_observation(
                     leg.token_in,
                     leg.token_out,
                     intent.router,
                     intent.source_event,
-                    resolved_pool,
+                    resolved_addr,
                 )
                 .await;
             } else {
@@ -405,6 +416,12 @@ impl PoolDiscoveryService {
             let pool_str = resolved_pool.map(|a| format!("0x{:x}", a));
             let is_resolved = resolved_pool.is_some();
 
+            // POOL-RESOLVE-01: the conflict update is MONOTONIC in resolution.
+            // It used to write `is_resolved = $6, resolved_pool_addr = $7`
+            // unconditionally, so a LATER observation whose hydration failed
+            // erased a pool address that a factory view had already answered —
+            // leaving the row with nothing for a retry to use. Resolution now
+            // only ever moves false→true, and a known address is never nulled.
             let query = r#"
                 INSERT INTO observed_unindexed_pairs 
                     (chain_id, token0_addr, token1_addr, router_addr, source_event, observation_count, is_resolved, resolved_pool_addr)
@@ -413,8 +430,8 @@ impl PoolDiscoveryService {
                 DO UPDATE SET 
                     observation_count = observed_unindexed_pairs.observation_count + 1,
                     last_seen_at = NOW(),
-                    is_resolved = $6,
-                    resolved_pool_addr = $7
+                    is_resolved = observed_unindexed_pairs.is_resolved OR EXCLUDED.is_resolved,
+                    resolved_pool_addr = COALESCE(observed_unindexed_pairs.resolved_pool_addr, EXCLUDED.resolved_pool_addr)
             "#;
 
             if let Err(e) = sqlx::query(query)
@@ -1161,5 +1178,199 @@ impl PoolDiscoveryService {
             })
             .await?;
         Ok(factory)
+    }
+
+    // -----------------------------------------------------------------------
+    // POOL-RESOLVE-01 — the resolution leg + the consumer of observed pairs
+    // -----------------------------------------------------------------------
+
+    /// POOL-RESOLVE-01 — THE RESOLUTION LEG, callable: derive the pool address of
+    /// a token pair from the SEEDED factories, using the canonical factory views —
+    /// `IUniswapV2Factory.getPair(tokenA, tokenB)` (V2, fee 30 bps) and
+    /// `IUniswapV3Factory.getPool(tokenA, tokenB, fee)` over the four canonical
+    /// tiers. Same two views the live discovery path uses; each hit is returned with
+    /// its fee in BASIS POINTS, the convention [`Self::enumerate_and_persist_pool`]
+    /// expects.
+    ///
+    /// Fail-honest (R8): only SEEDED factories are asked (`get_factories`); a zero
+    /// return means "this factory has no such pool"; an RPC error is a miss. An empty
+    /// vector is a real answer — it never fabricates a pool.
+    pub async fn resolve_pair_pools(
+        &self,
+        token_a: alloy::primitives::Address,
+        token_b: alloy::primitives::Address,
+    ) -> Vec<(alloy::primitives::Address, Option<u32>)> {
+        let rpc = match &self.rpc_pool {
+            Some(p) => p.clone(),
+            None => return Vec::new(),
+        };
+        let factories = self.get_factories().await;
+        let mut out: Vec<(alloy::primitives::Address, Option<u32>)> = Vec::new();
+
+        for (_f_id, factory_addr, proto, _dex_name) in &factories {
+            let f_addr_alloy = alloy::primitives::Address::from_slice(factory_addr.as_bytes());
+            match proto {
+                crate::route_intent::ProtocolType::V2 => {
+                    let discovered: Result<alloy::primitives::Address, _> = rpc
+                        .with_retry(|provider| {
+                            let t_a = token_a;
+                            let t_b = token_b;
+                            let f = f_addr_alloy;
+                            async move {
+                                let call = IUniswapV2Factory::getPairCall {
+                                    tokenA: t_a,
+                                    tokenB: t_b,
+                                };
+                                use alloy::rpc::types::TransactionRequest;
+                                use alloy_sol_types::SolCall;
+                                let req = TransactionRequest::default()
+                                    .to(f)
+                                    .input(call.abi_encode().into());
+
+                                let result = provider
+                                    .call(req)
+                                    .await
+                                    .map_err(|e| anyhow::anyhow!("rpc error: {}", e))?;
+                                let decoded_return =
+                                    IUniswapV2Factory::getPairCall::abi_decode_returns(&result)
+                                        .map_err(|e| anyhow::anyhow!("decode error: {}", e))?;
+                                if decoded_return.is_zero() {
+                                    anyhow::bail!("discovery_no_pool_found");
+                                }
+                                Ok(decoded_return)
+                            }
+                        })
+                        .await;
+                    if let Ok(pool_addr) = discovered {
+                        out.push((pool_addr, Some(30)));
+                    }
+                }
+                crate::route_intent::ProtocolType::V3 => {
+                    let fees: [u32; 4] = [100, 500, 3000, 10000];
+                    for fee in fees {
+                        let discovered: Result<alloy::primitives::Address, _> = rpc
+                            .with_retry(|provider| {
+                                let t_a = token_a;
+                                let t_b = token_b;
+                                let f = f_addr_alloy;
+                                async move {
+                                    let fee_u24 = alloy::primitives::Uint::<24, 1>::from(fee);
+                                    let call = IUniswapV3Factory::getPoolCall {
+                                        tokenA: t_a,
+                                        tokenB: t_b,
+                                        fee: fee_u24,
+                                    };
+                                    use alloy::rpc::types::TransactionRequest;
+                                    use alloy_sol_types::SolCall;
+                                    let req = TransactionRequest::default()
+                                        .to(f)
+                                        .input(call.abi_encode().into());
+
+                                    let result = provider
+                                        .call(req)
+                                        .await
+                                        .map_err(|e| anyhow::anyhow!("rpc error: {}", e))?;
+                                    let decoded_return =
+                                        IUniswapV3Factory::getPoolCall::abi_decode_returns(&result)
+                                            .map_err(|e| anyhow::anyhow!("decode error: {}", e))?;
+                                    if decoded_return.is_zero() {
+                                        anyhow::bail!("discovery_no_pool_found");
+                                    }
+                                    Ok(decoded_return)
+                                }
+                            })
+                            .await;
+                        if let Ok(pool_addr) = discovered {
+                            out.push((pool_addr, Some(fee / 100)));
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+        out
+    }
+
+    /// POOL-RESOLVE-01 — THE CONSUMER QUERY (the reader that did not exist): the
+    /// observed pairs of this chain that the evaluable universe still cannot see,
+    /// i.e. no ACTIVE pool exists for the pair. This is deliberately about
+    /// `is_active` because that is what `impact_index.rs:602` reads when it builds
+    /// the universe the engine evaluates.
+    ///
+    /// Ordered by how often the mempool saw the pair (highest signal first) and
+    /// SELF-DRAINING: once the pair has an active pool the row stops matching, so a
+    /// sweep converges instead of reprocessing forever.
+    ///
+    /// Row shape: `(id, token0_addr, token1_addr, resolved_pool_addr)`.
+    pub async fn pending_observed_pairs(
+        &self,
+        limit: i64,
+    ) -> Vec<(Uuid, String, String, Option<String>)> {
+        let db = match &self.db {
+            Some(d) => d,
+            None => return Vec::new(),
+        };
+        match sqlx::query_as::<_, (Uuid, String, String, Option<String>)>(
+            r#"
+            SELECT o.id, o.token0_addr, o.token1_addr, o.resolved_pool_addr
+              FROM observed_unindexed_pairs o
+             WHERE o.chain_id = $1
+               AND NOT EXISTS (
+                     SELECT 1
+                       FROM pools p
+                       JOIN tokens t0 ON t0.id = p.token0_id
+                       JOIN tokens t1 ON t1.id = p.token1_id
+                      WHERE p.chain_id = o.chain_id
+                        AND p.is_active
+                        AND (
+                              (lower(t0.address) = lower(o.token0_addr)
+                               AND lower(t1.address) = lower(o.token1_addr))
+                           OR (lower(t0.address) = lower(o.token1_addr)
+                               AND lower(t1.address) = lower(o.token0_addr))
+                        )
+               )
+             ORDER BY o.observation_count DESC, o.last_seen_at DESC
+             LIMIT $2
+            "#,
+        )
+        .bind(self.chain_id as i64)
+        .bind(limit)
+        .fetch_all(db)
+        .await
+        {
+            Ok(rows) => rows,
+            Err(e) => {
+                warn!(event = "pool_resolve.pending_query_failed", error = %e);
+                Vec::new()
+            }
+        }
+    }
+
+    /// POOL-RESOLVE-01 — persist a freshly derived pool address for an observed row
+    /// (the write half of the resolution leg). Monotonic, exactly like the upsert in
+    /// `record_observation`: an existing address is never overwritten.
+    ///
+    /// The address is hex-encoded by PostgreSQL (`encode(..., 'hex')`, lowercase), so
+    /// the stored string cannot depend on any Rust formatting convention.
+    pub async fn mark_observed_resolved(&self, id: Uuid, pool_addr_bytes: &[u8]) {
+        let db = match &self.db {
+            Some(d) => d,
+            None => return,
+        };
+        if let Err(e) = sqlx::query(
+            r#"
+            UPDATE observed_unindexed_pairs
+               SET resolved_pool_addr = COALESCE(resolved_pool_addr, '0x' || encode($2, 'hex')),
+                   is_resolved = TRUE
+             WHERE id = $1
+            "#,
+        )
+        .bind(id)
+        .bind(pool_addr_bytes)
+        .execute(db)
+        .await
+        {
+            warn!(event = "pool_resolve.mark_failed", error = %e);
+        }
     }
 }
