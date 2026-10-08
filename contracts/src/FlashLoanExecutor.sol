@@ -373,8 +373,10 @@ contract FlashLoanExecutor is Initializable, AccessControlUpgradeable, UUPSUpgra
         // vault.flashLoan(address(this), tokens, amounts, attackerData) on the REAL Vault,
         // which then calls this function legitimately. Require the request commitment
         // recorded by requestFlashLoan and consume it.
-        if (_pendingRequestHash
-            != _requestDigest(asset_candidate(tokens), amounts[0], flashLoanProvider, address(0), userData)) {
+        if (
+            _pendingRequestHash
+                != _requestDigest(asset_candidate(tokens), amounts[0], flashLoanProvider, address(0), userData)
+        ) {
             revert FL_RequestMismatch();
         }
         _pendingRequestHash = bytes32(0);

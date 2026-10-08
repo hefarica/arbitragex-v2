@@ -114,7 +114,8 @@ contract MockAavePoolRoundTrip {
         external
     {
         MockERC20FL(asset).transfer(receiverAddress, amount);
-        lastResult = FlashLoanExecutor(receiverAddress).executeOperation(asset, amount, premium, receiverAddress, params);
+        lastResult =
+            FlashLoanExecutor(receiverAddress).executeOperation(asset, amount, premium, receiverAddress, params);
     }
 }
 
