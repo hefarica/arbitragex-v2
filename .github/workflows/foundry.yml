@@ -67,7 +67,9 @@ jobs:
         run: |
           printf 'contract __T171ControlBroken { function f() public { uint256 x = ; } }\n' > src/__t171_control_broken.sol
           echo "injected control file:"
-          ls -l src/__t171_control_broken.sol      - name: forge build (with sizes)
+          ls -l src/__t171_control_broken.sol
+
+      - name: forge build (with sizes)
         # BLOCKING: a build failure must fail CI. Compiles the FULL project including
         # script/ — the deploy scripts now compile cleanly (their view-mutability,
         # shadowed-param, console2 overload and stack-too-deep issues were fixed), so
