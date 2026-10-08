@@ -404,15 +404,44 @@ impl SignerFunder {
     }
 }
 
+/// Canonical ERC-20 `balanceOf(address)` selector. `cast sig
+/// "balanceOf(address)"` == `0x70a08231`.
+const BALANCE_OF_SELECTOR: [u8; 4] = [0x70, 0xa0, 0x82, 0x31];
+
+/// ABI-required calldata length: 4-byte selector + ONE 32-byte argument word.
+const BALANCE_OF_CALLDATA_LEN: usize = 36;
+
+/// Build `balanceOf(signer)` calldata: the selector, then the signer
+/// right-aligned inside a full 32-byte word (12 zero bytes of padding followed
+/// by the 20 address bytes).
+///
+/// FUND-READ-CALLDATA-01 (2026-10-09): this used to append `signer.as_bytes()`
+/// directly, emitting **24** bytes. The EVM zero-fills past `calldatasize`, so
+/// `CALLDATALOAD(4)` returned `signer[0..20] || 0^12` and `uint160` of that
+/// word kept its LOW 20 bytes — `signer[12..20] || 0^12`, a DIFFERENT
+/// address. The sentinel write was always correct (32-byte `abi::encode`), so
+/// the write landed in the right slot and was then read back from the wrong
+/// account: a correct write could never reproduce its own sentinel.
+///
+/// Canonical shape mirrored from `simulator-v2/src/sequence_runner.rs:717`.
+fn build_balance_of_calldata(signer: Address) -> Vec<u8> {
+    // Idiomatic: let ethers' ABI encoder do the padding — the same mechanism
+    // `balance_slot` below relies on. `abi::encode` right-aligns an address
+    // inside its word, which is exactly what the EVM reads back.
+    let mut data: Vec<u8> = Vec::with_capacity(BALANCE_OF_CALLDATA_LEN);
+    data.extend_from_slice(&BALANCE_OF_SELECTOR);
+    data.extend_from_slice(&ethers::abi::encode(&[ethers::abi::Token::Address(signer)]));
+    debug_assert_eq!(data.len(), BALANCE_OF_CALLDATA_LEN);
+    data
+}
+
 /// erc20 balanceOf(signer) → U256, typed through ethers' call decoding.
 async fn balance_of(
     provider: &Provider<Http>,
     token: Address,
     signer: Address,
 ) -> Result<Option<U256>, ProviderError> {
-    let sel: [u8; 4] = [0x70, 0xa0, 0x82, 0x31]; // balanceOf(address)
-    let mut data = sel.to_vec();
-    data.extend_from_slice(signer.as_bytes());
+    let data = build_balance_of_calldata(signer);
     let tx = TransactionRequest::new()
         .to(token)
         .data(ethers::types::Bytes::from(data));
@@ -652,5 +681,125 @@ mod tests {
                 "el instrumento registra, no dictamina: {forbidden} no debe aparecer"
             );
         }
+    }
+
+    // ── FUND-READ-CALLDATA-01: la FORMA del calldata de `balanceOf` ─────────
+    //
+    // Una lectura MAL FORMADA no es una lectura fallida: la EVM rellena con
+    // ceros mas alla de `calldatasize`, asi que un calldata de 24 bytes se
+    // ejecuta igual y devuelve 32 bytes — de OTRA cuenta. Estos helpers
+    // modelan los dos lados para que un solo test pueda sostener ambos.
+
+    /// La direccion que la EVM realmente lee. Modela `CALLDATALOAD(4)` seguido
+    /// de `uint160`: la palabra es calldata[4..] rellenada con ceros a la
+    /// DERECHA, y `uint160` conserva sus 20 bytes BAJOS.
+    fn effective_holder(calldata: &[u8]) -> Address {
+        let mut word = [0u8; 32];
+        let tail = &calldata[4.min(calldata.len())..];
+        let n = tail.len().min(32);
+        word[..n].copy_from_slice(&tail[..n]);
+        Address::from_slice(&word[12..32])
+    }
+
+    /// La construccion RETIRADA, byte por byte (lo que `balance_of` emitia
+    /// antes de FUND-READ-CALLDATA-01): selector + 20 bytes crudos = 24.
+    fn legacy_24_byte_balance_of_calldata(signer: Address) -> Vec<u8> {
+        let sel: [u8; 4] = [0x70, 0xa0, 0x82, 0x31];
+        let mut data = sel.to_vec();
+        data.extend_from_slice(signer.as_bytes());
+        data
+    }
+
+    /// Validez ABI tal como la ve la EVM: exactamente 36 bytes, selector
+    /// canonico, y los 12 bytes de padding en cero.
+    fn is_canonical_balance_of(calldata: &[u8]) -> bool {
+        calldata.len() == BALANCE_OF_CALLDATA_LEN
+            && calldata[0..4] == BALANCE_OF_SELECTOR
+            && calldata[4..16].iter().all(|b| *b == 0)
+    }
+
+    #[test]
+    fn build_balance_of_calldata_is_36_bytes_with_a_right_aligned_signer() {
+        let signer: Address = "0x1234567890123456789012345678901234567890"
+            .parse()
+            .unwrap();
+        let calldata = build_balance_of_calldata(signer);
+
+        // LONGITUD: el ABI exige 4 + 32, no 4 + 20.
+        assert_eq!(calldata.len(), 36);
+        assert_eq!(calldata.len(), BALANCE_OF_CALLDATA_LEN);
+        // BYTES: selector, 12 ceros de padding, despues la direccion.
+        assert_eq!(&calldata[0..4], &[0x70, 0xa0, 0x82, 0x31]);
+        assert_eq!(&calldata[4..16], &[0u8; 12]);
+        assert_eq!(&calldata[16..36], signer.as_bytes());
+        assert!(is_canonical_balance_of(&calldata));
+
+        // Bytes EXACTOS, pineados en hex (36 bytes == 72 caracteres hex).
+        assert_eq!(
+            ethers::utils::hex::encode(&calldata),
+            "70a082310000000000000000000000001234567890123456789012345678901234567890"
+        );
+    }
+
+    #[test]
+    fn build_balance_of_calldata_differs_per_signer() {
+        let a: Address = "0x1111111111111111111111111111111111111111"
+            .parse()
+            .unwrap();
+        let b: Address = "0x2222222222222222222222222222222222222222"
+            .parse()
+            .unwrap();
+        assert_ne!(build_balance_of_calldata(a), build_balance_of_calldata(b));
+    }
+
+    /// EL FALSIFICADOR, anclado en los vectores de mainnet reproducidos con
+    /// `cast call` (WETH9 `0xC02aaA…56Cc2`, par UniswapV2 USDC/WETH
+    /// `0xB4e16d…C9Dc`) y documentados en
+    /// `docs/backend/FUND-READ-CALLDATA-01.md`.
+    ///
+    /// Bidireccional: el MISMO verificador acepta el calldata arreglado y
+    /// rechaza el retirado, y ademas muestra que el retirado lee OTRA
+    /// direccion. Revertir `build_balance_of_calldata` al append de 24 bytes
+    /// pone en rojo el bloque (1).
+    #[test]
+    fn balance_of_calldata_bidirectional_control_on_mainnet_vectors() {
+        // El par cuyo call de 24 bytes devolvio 0x0 en mainnet.
+        let pair: Address = "0xb4e16d0168e52d35cacd2c6185b44281ec28c9dc"
+            .parse()
+            .unwrap();
+        // La direccion que la EVM leyo de verdad con ese calldata de 24 bytes:
+        // uint160(word) == pair[12..20] || 0^12.
+        let misread: Address = "0x85b44281ec28c9dc000000000000000000000000"
+            .parse()
+            .unwrap();
+
+        let fixed = build_balance_of_calldata(pair);
+        let legacy = legacy_24_byte_balance_of_calldata(pair);
+
+        // (1) ARREGLADO: 36 bytes, canonico, y la EVM lee al propio signer.
+        assert_eq!(fixed.len(), 36);
+        assert!(is_canonical_balance_of(&fixed));
+        assert_eq!(effective_holder(&fixed), pair);
+        assert_eq!(
+            ethers::utils::hex::encode(&fixed),
+            "70a08231000000000000000000000000b4e16d0168e52d35cacd2c6185b44281ec28c9dc"
+        );
+
+        // (2) RETIRADO: 24 bytes, NO canonico, y la EVM lee `misread` — otra
+        //     cuenta, contra la cual se comparaba el centinela escrito en el
+        //     slot correcto.
+        assert_eq!(legacy.len(), 24);
+        assert!(!is_canonical_balance_of(&legacy));
+        assert_ne!(effective_holder(&legacy), pair);
+        assert_eq!(effective_holder(&legacy), misread);
+        assert_eq!(
+            ethers::utils::hex::encode(&legacy),
+            "70a08231b4e16d0168e52d35cacd2c6185b44281ec28c9dc"
+        );
+
+        // (3) El control debe VOLTEAR con la implementacion bajo test, no solo
+        //     con la copia local: esta es la linea que regresiona.
+        assert!(is_canonical_balance_of(&build_balance_of_calldata(pair)));
+        assert_eq!(effective_holder(&build_balance_of_calldata(pair)), pair);
     }
 }
