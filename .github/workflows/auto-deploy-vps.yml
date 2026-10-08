@@ -41,7 +41,19 @@ jobs:
     runs-on: ubuntu-latest
     needs: wait-for-gates
     if: ${{ github.ref == 'refs/heads/main' }}
-    timeout-minutes: 120
+    # DEPLOY-BUDGET-01 (t199, 2026-10-08) — el techo se justifica con MEDICION.
+    # El step `Deploy to VPS via SSH` hace 12 `docker compose build --no-cache`
+    # EN SERIE (paso [6/9], lineas 318-323: "sequential — lower peak disk/RAM",
+    # "one service build at a time"): NO se paraleliza porque el bloqueo vivo es
+    # DISCO (APT-GPG-02 exige >=16GB libres y #752 aborto con 7GB).
+    # Medido por mi: 29m45s / 30m24s / 31m44s en steps de runs conclusion=success
+    # (37749114208, 37738680784, 37728772398) contra 2h00m25s del job en #751
+    # (run 37821248559), matado EN el techo de 120min con el 12.o servicio aun
+    # construyendo => 120 era alcanzable Y lo alcanzo. 240min = 2x el techo que
+    # fallo y ~7,6x la peor serie sana medida.
+    # Trade-off declarado: un job colgado retiene el grupo `production-vps`
+    # (cancel-in-progress: false) hasta 240min; el bloqueo de fondo es el disco.
+    timeout-minutes: 240
 
     steps:
       - name: Checkout repository
