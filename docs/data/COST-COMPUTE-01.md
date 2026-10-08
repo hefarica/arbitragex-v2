@@ -73,6 +73,23 @@ FROM opportunities WHERE detected_at > now() - interval '24 hours'
 
 `computation_status = "error"` con `error_reason = "StrategyDisabled:triangular_arb"`: el productor escribió **el motivo del rechazo como motivo de no-cómputo**, y `not_computed_reasons` está **vacío** (`{}`) — el contrato que exige explicar cada `null` **no se cumple por este camino**. `legs: []` vacío: ni siquiera la descomposición por pata.
 
+### ★ El 0/0 es DEL BUCKET, no del sistema — y esa distinción es el hallazgo
+
+El mismo comando, **sin el filtro del bucket**, sobre la ventana entera (07:33:37Z):
+
+```sql
+SELECT count(*) FILTER (WHERE economics->>'computation_status'='computed') AS computadas,
+       count(*) FILTER (WHERE (economics->>'net_profit_usd') IS NOT NULL) AS con_neto,
+       count(*) AS total
+FROM opportunities WHERE detected_at > now() - interval '24 hours';
+-- computadas=3423374 | con_neto=3423374 | total=4019424     (07:33:37Z)
+```
+
+**Globalmente el cómputo de costos SÍ corre: 3.423.374 de 4.019.424 filas (85,2 %) están `computed` y tienen `net_profit_usd`.** El `0 de 1.248` es **exclusivo del bucket que muere por `StrategyDisabled:triangular_arb`**.
+
+⇒ **El rechazo por nombre ocurre ANTES del cómputo de costos.** Justo las filas que mueren por nombre son las únicas sin un solo componente de costo calculado. Eso no es un fallo del cómputo: es un **orden de etapas**, medido. Es lo que hace de t130 un arreglo de identidad con consecuencia económica real — pero, según §4, **una consecuencia que en esta población da negativa**.
+
+
 ---
 
 ## 3. ★ El confundidor: el `unwrap_or(30)` — **NO entra en estas filas (0 %)**
