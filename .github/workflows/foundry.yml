@@ -60,7 +60,7 @@ jobs:
           done
           [ "$missing" -eq 0 ]
 
-      - name: CONTROL t171 (TEMPORAL, no se publica): inyectar un contrato roto a proposito
+      - name: CONTROL t171 TEMPORAL no se publica — inyectar un contrato roto a proposito
         # Control de vacuidad del arreglo: con el job ya ejecutando build/test, un
         # contrato roto TIENE que hacer fallar el job. Este step solo vive en la rama
         # scratch sre/t171-control-broken y se borra al terminar el control.
