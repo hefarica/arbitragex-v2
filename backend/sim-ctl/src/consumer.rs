@@ -188,6 +188,69 @@ pub fn read_batch_size(available_permits: usize) -> usize {
 /// exactly when simulation becomes able to execute. The single boundary is
 /// EXACTLY zero, which is a structural identity — no amount, no swap — not a
 /// profitability threshold.
+// ── N11-VERDICT-01 (2026-10-08): EL CONSUMIDOR QUE FALTABA ─────────────────
+//
+// POR QUE EXISTE. La reparacion del selector (#843) publica `verdict` y
+// `verdict_reason`, pero `serde_json::from_str::<Opportunity>` los DESCARTA EN
+// SILENCIO: `Opportunity` no declara ninguna de las dos claves y no lleva
+// `deny_unknown_fields`, que es lo unico que convertiria el descarte en un error.
+// Verificado por grep del LITERAL de la clave en `shared-rs` (no de la palabra
+// `verdict`, que solo aparece en prosa) y medido en el stream vivo: 10.000 de
+// 10.000 entradas traen `"verdict":"reject"`.
+//
+// QUE HACE. Lee las dos claves del JSON CRUDO. Es lo que hace visible el
+// descarte y lo que permitira decidir despues con datos.
+//
+// QUE **NO** HACE, Y ES DELIBERADO: **no cambia que entradas se simulan.** Con el
+// 100% de la ventana medida en `reject`, descartar los `reject` apagaria la
+// simulacion ENTERA — seria el fallo opuesto al que se busca. Ademas la
+// reparacion correcta (que `Opportunity` declare el campo) vive en `shared-rs`,
+// FUERA del alcance de esta tarea. Se registra; no se dictamina.
+pub fn selector_verdict(json: &str) -> (Option<String>, Option<String>) {
+    let Ok(v) = serde_json::from_str::<serde_json::Value>(json) else {
+        return (None, None);
+    };
+    let get = |k: &str| v.get(k).and_then(|x| x.as_str()).map(str::to_owned);
+    (get("verdict"), get("verdict_reason"))
+}
+
+static N11_ACCEPT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+static N11_REJECT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+static N11_ABSENT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+static N11_TICK: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+/// R9: un log cada N entradas consumidas, no por entrada. A 1.650 msg/min de
+/// llegada esto es del orden de ~3 lineas/min, muy lejos del flooding que
+/// motivo R9 (183 lineas/s).
+const N11_REPORT_EVERY: u64 = 500;
+
+/// Cuenta el veredicto del selector de una entrada YA CONSUMIDA y lo reporta por
+/// cadencia. **Solo cuenta**: no altera ninguna decision del pipeline.
+pub fn note_selector_verdict(verdict: Option<&str>) {
+    use std::sync::atomic::Ordering;
+    match verdict {
+        Some("accept") => {
+            N11_ACCEPT.fetch_add(1, Ordering::Relaxed);
+        }
+        Some("reject") => {
+            N11_REJECT.fetch_add(1, Ordering::Relaxed);
+        }
+        _ => {
+            N11_ABSENT.fetch_add(1, Ordering::Relaxed);
+        }
+    }
+    let n = N11_TICK.fetch_add(1, Ordering::Relaxed) + 1;
+    if n % N11_REPORT_EVERY == 0 {
+        info!(
+            event = "sim_consumer.selector_verdict",
+            accept = N11_ACCEPT.load(Ordering::Relaxed),
+            reject = N11_REJECT.load(Ordering::Relaxed),
+            absent = N11_ABSENT.load(Ordering::Relaxed),
+            consumed = n,
+            "selector verdict of CONSUMED entries — records, does not gate"
+        );
+    }
+}
+
 pub fn inadmissible_reason(opp: &Opportunity) -> Option<String> {
     let raw = opp.amount_in_wei.trim();
     if key_of_amount_in_wei(raw) > 0.0 {
@@ -807,6 +870,12 @@ impl Consumer {
                 .await?;
             return Ok(());
         };
+        // N11-VERDICT-01: el consumidor que faltaba. Se registra el veredicto del
+        // selector ANTES del parseo a `Opportunity`, que descarta esas claves.
+        // Es puramente ADITIVO: no condiciona nada de lo que sigue.
+        let (n11_verdict, _n11_reason) = selector_verdict(&json);
+        note_selector_verdict(n11_verdict.as_deref());
+
         let opportunity: Opportunity = match serde_json::from_str(&json) {
             Ok(o) => o,
             Err(e) => {
@@ -1793,5 +1862,70 @@ mod simctl_bound_01_tests {
             assert!(b >= 1, "nunca 0 con presupuesto {n}");
             assert!(b <= n.max(1), "nunca más que el presupuesto ({n})");
         }
+    }
+}
+
+/// N11-VERDICT-01: LA MEDICION de V1, sobre una entrada **REAL** del stream.
+#[cfg(test)]
+mod n11_verdict_01_tests {
+    use super::{selector_verdict, Opportunity};
+
+    /// Payload REAL de `arbx:opps:validated`, capturado verbatim con
+    /// `XREVRANGE arbx:opps:validated + - COUNT 1` el 2026-10-08.
+    /// Trae `"verdict":"reject"` y `"verdict_reason":"producer_rejected"`.
+    const REAL_ENTRY: &str = r#"{"id":"28691901-840e-4eb5-9f24-77e6375304ab","chain_id":1,"strategy_kind":"dex_arb","dex_a":"UniswapV3","dex_b":"PancakeSwap V3","pair_symbol":"c02aaa…/dac17f…","token_in":"0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2","token_out":"0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2","amount_in_wei":"1000000000000000000","expected_profit_usd":-2.0276126852101792,"net_expected_profit_usd":-2.6785281852101788,"roi_pct":null,"risk_score":null,"block_number":26145729,"rejection_reason":"spread_negative_round_trip","cartridge_id":null,"detector_id":"dex_engine","pipeline_latency_ms":1048,"detected_at":"2026-10-08T05:56:37.111885481Z","trace_id":"ea6e06e6-9bdb-42ad-8a4b-35a1885aac34","economics":{"computation_status":"computed","error_reason":null,"amount_in_wei":"1000000000000000000","amount_out_wei":null,"amount_in_usd":2561.9524274451996,"amount_out_usd":2559.9248147599897,"gross_profit_usd":-2.0276126852101792,"gas_usd":0.6409155,"dex_fees_usd":null,"flash_fee_usd":0,"bribe_usd":0,"slippage_usd":null,"other_costs_usd":0.01,"total_cost_usd":0.6509155,"net_profit_usd":-2.6785281852101788,"roi_pct":-0.10455027019690719,"target_net_usd":50,"target_delta_usd":-52.678528185210176,"meets_target":false,"quote_block":26145729,"simulation_block":null,"legs":[],"not_computed_reasons":{"amount_out_wei":"cycle_output_not_exposed_by_kernel","dex_fees_usd":"included_in_amount_out_post_fee","simulation_block":"revm_simulation_is_sim_ctl_scope","slippage_usd":"priced_by_amm_curve"}},"verdict":"reject","verdict_reason":"producer_rejected"}"#;
+
+    /// V1: el campo SE PIERDE, medido — no afirmado.
+    #[test]
+    fn v1_serde_discards_the_selector_verdict_silently() {
+        // (a) CONTROL DE PRODUCTOR: el payload REAL trae las dos claves. Sin
+        //     esto, el resto del test no probaria nada.
+        assert!(
+            REAL_ENTRY.contains("\"verdict\":\"reject\""),
+            "el payload debe traer la clave (control de productor)"
+        );
+        assert!(REAL_ENTRY.contains("\"verdict_reason\":\"producer_rejected\""));
+
+        // (b) LA MEDIDA: el parseo a `Opportunity` NO falla. Las claves
+        //     desconocidas se IGNORAN. Si `Opportunity` llevara
+        //     `deny_unknown_fields`, esto seria un `Err` — y ese `Err` seria
+        //     ruidoso, no silencioso. Que sea `Ok` ES la medida del descarte.
+        let opp: Opportunity = serde_json::from_str(REAL_ENTRY)
+            .expect("claves desconocidas deben ignorarse (no hay deny_unknown_fields)");
+        assert_eq!(opp.amount_in_wei, "1000000000000000000");
+        assert_eq!(
+            opp.rejection_reason.as_deref(),
+            Some("spread_negative_round_trip")
+        );
+
+        // (c) CONTROL: el MISMO string SI expone las claves por la via que no
+        //     depende del struct. Prueba que el dato esta en el payload y que lo
+        //     que lo pierde es `Opportunity`, no el mensaje ni el transporte.
+        let (v, r) = selector_verdict(REAL_ENTRY);
+        assert_eq!(v.as_deref(), Some("reject"));
+        assert_eq!(r.as_deref(), Some("producer_rejected"));
+    }
+
+    /// CONTROL NEGATIVO: sin la clave el lector devuelve `None`. **No inventa un
+    /// veredicto por defecto** — que es justo lo que V3 prohibe fabricar.
+    #[test]
+    fn n11_absent_or_malformed_verdict_is_none_never_a_default() {
+        assert_eq!(
+            selector_verdict(r#"{"id":"x","amount_in_wei":"1"}"#),
+            (None, None),
+            "ausente -> None, no un veredicto fabricado"
+        );
+        assert_eq!(selector_verdict("no es json"), (None, None));
+        assert_eq!(
+            selector_verdict(r#"{"verdict":123}"#),
+            (None, None),
+            "un verdict no-string no se interpreta"
+        );
+        // Y un veredicto desconocido se lee TAL CUAL: el lector no lo traduce ni
+        // lo normaliza, solo lo expone.
+        assert_eq!(
+            selector_verdict(r#"{"verdict":"QUIZAS"}"#).0.as_deref(),
+            Some("QUIZAS")
+        );
     }
 }
