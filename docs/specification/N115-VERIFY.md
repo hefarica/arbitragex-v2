@@ -43,13 +43,20 @@ Una variante con `grep -oE … | Sort-Object -Unique` **miscuenta** en este ento
 
 ## 2. ★ TRAMPA 1 — Las 40 filas `AC-FND` NO TIENEN COLUMNA DE ESTADO
 
+> **CONVENCIÓN DE ÍNDICE — declarada, no asumida.** Todos los `celda[n]` de este documento son
+> **0-based**: `celda[0]` es la **primera** celda tras el delimitador, es decir el `criterion_id`
+> (`AC-USR-001`, `AC-FND-01`, …). Por tanto **`celda[15]` y «celda[16] 1-based» son la MISMA
+> posición**. Cuando un índice viaja fuera de este archivo, va **con su base declarada** — o,
+> preferible, **con la cabecera citada en lugar del número**. Un índice sin base es un dato que se
+> corrompe al propagarse: es el mismo modo de fallo que citar una ruta o un umbral desde prosa.
+
 **Medido, no inferido.** Las tres tablas de criterio del documento **no tienen la misma forma**:
 
-| Familia | Filas | Celdas por fila | ¿Tiene columna de estado? | Índice de esa columna |
+| Familia | Filas | Celdas por fila | ¿Tiene columna de estado? | Índice de esa columna (**0-based**) |
 |---|---|---|---|---|
-| `AC-USR-*` (70) | §2.1–§2.13 | **16** | **SÍ** | **celda[15]** (la última) |
+| `AC-USR-*` (70) | §2.1–§2.13 | **16** | **SÍ** | **`celda[15]`** (la última) |
 | `AC-FND-*` (40) | §3 | **8** | **NO** | — no existe |
-| `AC-FRT-*` (5) | §4 | **8** | **SÍ** | **celda[7]** (la última) |
+| `AC-FRT-*` (5) | §4 | **8** | **SÍ** | **`celda[7]`** (la última) |
 
 **Cabeceras reales, citadas del artefacto:**
 
@@ -104,7 +111,7 @@ PARCIAL                    = 1 (AC-USR-007)
                              0 + 0 + 109 + 5 + 1 = 115  ✓
 ```
 
-**Nota de honestidad sobre el índice:** la celda de estado **no está en el mismo índice en las tres tablas** (15 / inexistente / 7). El artefacto original de t139 cita `celda[16]` como columna de estado; medido sobre el archivo versionado, `AC-USR` tiene **16 celdas en total por fila**, es decir el estado es **celda[15] contando desde 0** — o `celda[16]` si se cuenta desde 1. **Se declara la ambigüedad en vez de elegir en silencio**, y se dan los índices por tabla para que un tercero no tenga que adivinarlo.
+**Nota de honestidad sobre el índice:** la celda de estado **no está en el mismo índice en las tres tablas** (**15 / inexistente / 7**, 0-based). El artefacto original de t139 cita `celda[16]` como columna de estado; medido sobre el archivo versionado, `AC-USR` tiene **16 celdas en total por fila**, es decir el estado es **`celda[15]` 0-based — la MISMA posición que `celda[16]` 1-based**. **No es una discrepancia de medición: es una convención no declarada**, y el error de origen fue propagar el índice sin su base. Por eso este documento declara la base al frente (§ arriba) y da los índices por tabla, para que un tercero no tenga que adivinarla.
 
 ---
 
