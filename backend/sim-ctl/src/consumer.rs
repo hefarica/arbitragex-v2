@@ -152,6 +152,25 @@ pub fn key_of_amount_in_wei(raw: &str) -> f64 {
     }
 }
 
+/// SIMCTL-THROUGHPUT-01 (2026-10-08): cuántas entradas pedir en UN pase de
+/// lectura (`XREADGROUP COUNT`).
+///
+/// El `COUNT` debe ser la cota superior de lo que este pase puede ADMITIR, no un
+/// número fijo. Un `COUNT` mayor que el presupuesto de admisión no adelanta
+/// trabajo: convierte las entradas sobrantes en postergaciones que vuelven al
+/// PEL y se redeliveran por `XAUTOCLAIM` — `defer -> 120 s -> defer`.
+///
+/// Nunca devuelve 0: con el semáforo agotado se pide UNA entrada, para que el
+/// bucle siga avanzando en vez de quedarse bloqueado hasta el próximo tick.
+#[inline]
+pub fn read_batch_size(available_permits: usize) -> usize {
+    if available_permits == 0 {
+        1
+    } else {
+        available_permits
+    }
+}
+
 /// Structural admissibility of ONE already-parsed stream message — O(1), NO
 /// I/O, NO ordering, NO global view (U1). `Some(reason)` means this entry can
 /// never be simulated, so it is terminated cheaply instead of paying for a PG
@@ -500,12 +519,44 @@ impl Consumer {
         bound: &mut StreamBound,
         in_flight: &Arc<tokio::sync::Semaphore>,
     ) -> Result<()> {
+        // ── SIMCTL-THROUGHPUT-01 (2026-10-08): el COUNT se ALINEA con el
+        // presupuesto de admisión.
+        //
+        // Antes era un `8` FIJO contra `max_in_flight = 1` — el default
+        // (`DEFAULT_MAX_IN_FLIGHT`, :119) y el valor REALMENTE en vigor, porque
+        // el contenedor no define `SIMCTL_MAX_IN_FLIGHT`. Con esa combinación,
+        // de cada lote de 8 entradas sólo UNA podía tomar permiso; las otras 7
+        // caían en `note_deferred`. Y las que caen son justamente las
+        // ADMISIBLES: el permiso se pide sólo si `inadmissible.is_none()`
+        // (`process_message`), así que las inadmisibles nunca lo piden y se
+        // procesan siempre.
+        //
+        // MEDIDO en el arranque 02:51:25Z (`sim_ctl.bound_report`):
+        //   admitted = 243 · deferred = 103604 · terminated_inadmissible = 220
+        // => 426 postergaciones por cada admisión. Eso NO es "ir detrás": es
+        // churn de PEL (defer -> `CLAIM_MIN_IDLE_MS` 120 s -> XAUTOCLAIM ->
+        // defer otra vez), visible como `arbx_sim_stream_claimed_count 67514`,
+        // `pending 11004`, `oldest_pending 431335 ms`.
+        //
+        // Leer más de lo que se puede admitir no adelanta trabajo: lo CONVIERTE
+        // en churn. Pedir exactamente lo que cabe lo elimina sin tocar el techo:
+        // NO se sube `max_in_flight` ni `max_sims_per_sec`, NO se relaja ningún
+        // umbral y NO se filtra por rentabilidad. El límite es el mismo; lo que
+        // cambia es que deja de gastarse en entradas que no se van a poder
+        // procesar en este pase.
+        //
+        // `available_permits()` al momento de leer es la cota superior de lo que
+        // este pase puede admitir. `max(1)` mantiene el caso degenerado
+        // (semáforo agotado) en UNA entrada y no en cero: leer 0 dejaría al
+        // consumidor sin avanzar hasta el próximo tick, que es peor que el
+        // defecto que se corrige.
+        let batch = read_batch_size(in_flight.available_permits());
         let res: Option<Vec<redis::Value>> = redis::cmd("XREADGROUP")
             .arg("GROUP")
             .arg(GROUP)
             .arg(&self.consumer_name)
             .arg("COUNT")
-            .arg(8)
+            .arg(batch)
             .arg("BLOCK")
             .arg(2000)
             .arg("STREAMS")
@@ -1409,8 +1460,9 @@ mod simwire02c_tests {
 #[cfg(test)]
 mod simctl_bound_01_tests {
     use super::{
-        inadmissible_reason, key_of_amount_in_wei, read_in_flight_env, read_rate_env, sanitize_key,
-        BoundPolicy, StreamBound, DEFAULT_MAX_IN_FLIGHT, DEFAULT_MAX_SIMS_PER_SEC,
+        inadmissible_reason, key_of_amount_in_wei, read_batch_size, read_in_flight_env,
+        read_rate_env, sanitize_key, BoundPolicy, StreamBound, DEFAULT_MAX_IN_FLIGHT,
+        DEFAULT_MAX_SIMS_PER_SEC,
     };
     use shared_rs::contracts::{Opportunity, StrategyKind};
     use std::time::{Duration, Instant};
@@ -1682,5 +1734,64 @@ mod simctl_bound_01_tests {
         std::env::set_var(inflight, "4");
         assert_eq!(read_in_flight_env(inflight), Ok(Some(4)));
         std::env::remove_var(inflight);
+    }
+
+    /// SIMCTL-THROUGHPUT-01: el `COUNT` de lectura debe ser la cota de lo que el
+    /// pase puede ADMITIR, no un número fijo.
+    ///
+    /// El defecto medido: `COUNT 8` contra `max_in_flight = 1` — el default
+    /// (`DEFAULT_MAX_IN_FLIGHT`) y el valor realmente en vigor, porque el
+    /// contenedor no define `SIMCTL_MAX_IN_FLIGHT`. De cada lote de 8, siete
+    /// entradas caían en `note_deferred`, y son justamente las ADMISIBLES: el
+    /// permiso se pide sólo cuando `inadmissible.is_none()`, así que las
+    /// inadmisibles nunca lo piden y se procesan siempre.
+    ///
+    /// Medido en producción (`sim_ctl.bound_report`, arranque 02:51:25Z):
+    /// `admitted 243` contra `deferred 103604` = 426:1, con
+    /// `arbx_sim_stream_claimed_count 67514` de churn de PEL.
+    #[test]
+    fn read_batch_size_follows_the_admission_budget_not_a_fixed_eight() {
+        // El caso DESPLEGADO. Pedir 8 aquí era exactamente el defecto.
+        assert_eq!(
+            read_batch_size(DEFAULT_MAX_IN_FLIGHT),
+            1,
+            "con el default desplegado (max_in_flight=1) el pase debe pedir 1"
+        );
+        assert_ne!(
+            read_batch_size(DEFAULT_MAX_IN_FLIGHT),
+            8,
+            "el 8 fijo es el defecto que esta tarea corrige"
+        );
+
+        // CONTROL: no está hardcodeado a 1 — sigue al presupuesto.
+        assert_eq!(read_batch_size(4), 4);
+        assert_eq!(read_batch_size(16), 16);
+
+        // Y NUNCA 0: con el semáforo agotado se sigue pidiendo 1, para que el
+        // bucle avance en vez de quedarse quieto hasta el próximo tick.
+        assert_eq!(read_batch_size(0), 1);
+    }
+
+    /// CONTROL del test de arriba. Sin esto, aquel pasaría igual si la función
+    /// devolviera una constante. La propiedad que hace legítimo alinear el
+    /// `COUNT` con el presupuesto es la MONOTONÍA no decreciente: alinear nunca
+    /// puede REDUCIR el trabajo hecho por pase, sólo evitar el sobrante.
+    #[test]
+    fn read_batch_size_is_monotone_in_the_budget() {
+        let mut prev = read_batch_size(0);
+        for n in 1..=64usize {
+            let cur = read_batch_size(n);
+            assert!(
+                cur >= prev,
+                "no decreciente: {prev} -> {cur} con presupuesto {n}"
+            );
+            prev = cur;
+        }
+        // El techo degenerado: nunca menos de 1 y nunca más que el presupuesto.
+        for n in 0..=64usize {
+            let b = read_batch_size(n);
+            assert!(b >= 1, "nunca 0 con presupuesto {n}");
+            assert!(b <= n.max(1), "nunca más que el presupuesto ({n})");
+        }
     }
 }
