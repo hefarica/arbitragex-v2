@@ -224,6 +224,9 @@ pub(crate) fn build_cycle_decimals_map(
                 map.insert(lc, *d);
             }
             None => {
+                // MUTANTE DEL REVISOR (t204, ronda 2): restaura el default fabricado de 18
+                // en el locus del MAPA. NO ES EL FIX y NO se mergea.
+                map.insert(lc.clone(), 18);
                 if !unresolved.contains(&lc) {
                     unresolved.push(lc);
                 }
