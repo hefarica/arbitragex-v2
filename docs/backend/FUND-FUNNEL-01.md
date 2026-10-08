@@ -157,10 +157,12 @@ Nota de instrumento: la partición de arriba mide **filas de tabla**; los contad
 | Efecto de #879 sobre el funnel | El runtime es `901eb947`, anterior a `1928b399`. El fix no está desplegado. |
 | Dónde cae `verify_mismatch` post-fix | Requiere el binario nuevo emitiendo. |
 | Si `seeded_fresh` aparece | Requiere el binario nuevo emitiendo. |
-| `uptime` de `sim-ctl` | `process_start_time_seconds{job="sim-ctl"}` ⇒ **vector vacío**. La métrica no la exporta este proceso. Sin uptime no se puede fechar el arranque ni normalizar por tiempo. |
-| Si el ratio `4,0000` colapsa | Depende de los tres anteriores. |
+| `uptime` de `sim-ctl` | `process_start_time_seconds{job="sim-ctl"}` ⇒ **vector vacío**. La métrica no la exporta este proceso. Sin uptime no se puede fechar el arranque ni normalizar por tiempo. **NO COMPUTADO, no cero.** |
+| `no_simulation_row` | **NO MEDIDA.** La etiqueta no aparece entre los `outcome` de `arbx_sim_funding_total` (4 outcomes distintos @14:03:52Z: `slot_unresolved`, `balance_unreadable`, `verify_mismatch`, `rpc_err`). No se reporta como 0: no se midió. |
+| Antigüedad del arranque de `sim-ctl` | **ESTIMACIÓN, declarada como tal.** Con el ritmo del camino caro medido por t160 (**733/h**, que es el `693/h` de la tabla de 25 redondeado por esa tarea), `2468/733 ≈ 3,4 h` desde el arranque hasta la base de t160. Recalculada con el contador de §5: `2634/733 ≈ 3,6 h`. **Es una estimación por un ritmo ajeno, no una medición de `process_start_time_seconds`** — que no existe (§ arriba). |
+| Si el ratio `4,0000` colapsa | Depende de los tres primeros. |
 
-**Regla aplicada:** un campo no computado se reporta como no computado, con su razón. No se rellena con la predicción.
+**Regla aplicada:** un campo no computado se reporta como no computado, con su razón. No se rellena con la predicción. Un «no medido» **no** se escribe como `0`.
 
 ---
 
