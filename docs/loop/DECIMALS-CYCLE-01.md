@@ -354,8 +354,16 @@ resolvía por las fuentes reales: **el mismo token medido con dos unidades** (en
 
 `route_discovery::route_discovery_worker::tests::xlang_golden_tick_contract` (`golden full.json missing`,
 `route_discovery_worker.rs:2687:33`) aparece **2 veces en el árbol SIN parche y 2 veces CON parche** (una por
-target: lib y bin) ⇒ **NO ATRIBUIDO al parche y NO declarado arreglado**. La fixture `full.json` no está
-commiteada (`git ls-tree -r --name-only HEAD | grep full.json` no devuelve coincidencias).
+target: lib y bin) ⇒ **NO ATRIBUIDO al parche y NO declarado arreglado**.
+
+**Y queda además EXPLICADO por medición — corrigiendo a t197, que lo dio por "fixture no commiteada":** la fixture
+**sí está commiteada**, en `frontend/lib/apex/schemas/__tests__/fixtures/route-discovery-tick/full.json`
+(`git ls-tree -r origin/main --name-only` la lista; `git check-ignore` no la excluye), y `golden_fixture_dir()` la
+busca en `CARGO_MANIFEST_DIR/../../frontend/…` — **fuera de `backend/`**. El árbol de verificación se construyó con
+`git archive -- backend`, de modo que la fixture **no puede estar** ahí: el fallo es un **artefacto de alcance del
+árbol**, no del código ni del parche. Lo confirma la vía independiente: en el mismo head (`d7a0f495`) el check de
+CI **`Rust tests` = pass (1m20s)**. La afirmación de t197 era un artefacto de mi propio grep (`Select-Object
+-First 15` truncó la lista y los aciertos de `.agents/skills/**` la taparon): **se corrige aquí**.
 
 ### 12.4 Lo que este PR NO puede hacer: aterrizar — con la razón MEDIDA, no heredada
 
