@@ -1,0 +1,100 @@
+diff --git a/contracts/src/FlashLoanExecutor.sol b/contracts/src/FlashLoanExecutor.sol
+index 96be278..355bef3 100644
+--- a/contracts/src/FlashLoanExecutor.sol
++++ b/contracts/src/FlashLoanExecutor.sol
+@@ -52,6 +52,9 @@ error FL_BalancerVaultNotSet();
+ ///      Surfaces a clear, named, fail-closed error instead of an opaque transfer/pull
+ ///      failure from the provider. Repayment was never attempted when this reverts.
+ error FL_RepaymentShortfall();
++/// @dev FIX A (F25): thrown when a callback does not correspond to a request this
++///      contract initiated (no request in flight, or the digest does not match).
++error FL_RequestMismatch();
+ 
+ interface IAaveV3Pool {
+     function flashLoanSimple(
+@@ -132,6 +135,10 @@ contract FlashLoanExecutor is Initializable, AccessControlUpgradeable, UUPSUpgra
+     // guard also accepts (0 != _ENTERED) — no initialize() migration needed.
+     uint256 private _reentrancyStatus = _NOT_ENTERED;
+ 
++    // FIX A (F25): transient per-request commitment. APPENDED below _reentrancyStatus
++    // per the UUPS storage-layout append-only rule: nothing above moves.
++    bytes32 private _pendingRequestHash;
++
+     // SC-06: observability events for off-chain monitoring (recon, dashboard)
+ 
+     /// @notice Emitted when a flash loan is requested to the configured provider.
+@@ -283,13 +290,16 @@ contract FlashLoanExecutor is Initializable, AccessControlUpgradeable, UUPSUpgra
+     /// @param params  Encoded calldata forwarded to ArbitrageExecutor inside the callback.
+     function requestFlashLoan(address asset, uint256 amount, bytes calldata params) external onlyRole(EXECUTOR_ROLE) {
+         address provider = flashLoanProvider;
++        _pendingRequestHash = _requestDigest(asset, amount, provider, address(0), params);
+         if (provider != address(0)) {
+             // SC-1: Use the configured IFlashLoanProvider adapter (e.g. Balancer 0%)
+             IFlashLoanProvider(provider).flashLoan(address(this), asset, amount, params);
+         } else {
+             // Legacy path: direct Aave V3 call (backward compat for existing deployments)
++            _pendingRequestHash = _requestDigest(asset, amount, address(0), address(aavePool), params);
+             aavePool.flashLoanSimple(address(this), asset, amount, params, referralCode);
+         }
++        _pendingRequestHash = bytes32(0);
+         // SC-06: emit after the call so the event is only logged on success
+         emit FlashLoanRequested(asset, amount, keccak256(params));
+     }
+@@ -314,6 +324,13 @@ contract FlashLoanExecutor is Initializable, AccessControlUpgradeable, UUPSUpgra
+     {
+         if (msg.sender != address(aavePool)) revert FL_UnauthorizedCaller();
+         if (initiator != address(this)) revert FL_InvalidInitiator();
++        // FIX A (F25): the provider's initiator check is necessary but not sufficient — it
++        // proves the loan names this contract, not that THIS call corresponds to the
++        // request we are currently paying for. Consume the commitment.
++        if (_pendingRequestHash != _requestDigest(asset, amount, address(0), address(aavePool), params)) {
++            revert FL_RequestMismatch();
++        }
++        _pendingRequestHash = bytes32(0);
+ 
+         _executeAndRepayAave(asset, amount, premium, params);
+         return true;
+@@ -351,6 +368,16 @@ contract FlashLoanExecutor is Initializable, AccessControlUpgradeable, UUPSUpgra
+         // Layer 3: flashLoanProvider must be set, confirming the Balancer path
+         //          was intentionally activated by the operator.
+         if (flashLoanProvider == address(0)) revert FL_NoProviderConfigured();
++        // FIX A (F25): Layer 4 — the layers above prove only that the CONFIGURED Vault
++        // called. They do not prove that we asked. Anyone may call
++        // vault.flashLoan(address(this), tokens, amounts, attackerData) on the REAL Vault,
++        // which then calls this function legitimately. Require the request commitment
++        // recorded by requestFlashLoan and consume it.
++        if (_pendingRequestHash
++            != _requestDigest(asset_candidate(tokens), amounts[0], flashLoanProvider, address(0), userData)) {
++            revert FL_RequestMismatch();
++        }
++        _pendingRequestHash = bytes32(0);
+ 
+         IERC20 asset = tokens[0];
+         uint256 amount = amounts[0];
+@@ -408,6 +435,26 @@ contract FlashLoanExecutor is Initializable, AccessControlUpgradeable, UUPSUpgra
+     // SC-08: UUPS upgrade authorization
+     // -------------------------------------------------------------------------
+ 
++    // -------------------------------------------------------------------------
++    // FIX A (F25): request digest
++    // -------------------------------------------------------------------------
++
++    /// @dev Canonical digest of ONE flash-loan request. Binds chain, this contract, the
++    ///      chosen provider (or the Aave pool), the asset, the amount and the exact payload.
++    function _requestDigest(address asset, uint256 amount, address provider, address pool, bytes calldata params)
++        internal
++        view
++        returns (bytes32)
++    {
++        return keccak256(abi.encode(block.chainid, address(this), provider, pool, asset, amount, keccak256(params)));
++    }
++
++    /// @dev Address of the first token, extracted so the Balancer callback can build the
++    ///      digest before the local variables are declared.
++    function asset_candidate(IERC20[] calldata tokens) internal pure returns (address) {
++        return address(tokens[0]);
++    }
++
+     /// @dev Only UPGRADER_ROLE can authorize a new implementation.
+     function _authorizeUpgrade(address newImplementation) internal override onlyRole(UPGRADER_ROLE) {}
+ }
