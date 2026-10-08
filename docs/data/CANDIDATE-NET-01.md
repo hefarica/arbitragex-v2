@@ -163,4 +163,40 @@ git rev-parse HEAD:docs/data/CANDIDATE-NET-01.md
 
 ---
 
+## 8. EL CONTROL DE CANAL Y EL TECHO DE MERCADO REAL, con su exit code
+
+**Canal Postgres, con control negativo (sin esto un `0` no distingue NULL de «no se ejecutó»):**
+
+```
+docker exec arbitragex-v2-postgres-1 psql -U postgres -d arbitragex --set=ON_ERROR_STOP=1 -tAc "SELECT 1"
+  -> 1                     exit=0
+... -tAc "SELECT esto_no_existe"
+  -> ERROR: column "esto_no_existe" does not exist   exit=1   <- el negativo CONFIRMA que el canal ejecuta
+```
+**(`--set=ON_ERROR_STOP=1` va ANTES de `-tAc`: al revés, psql ignora el SQL y devuelve exit 0 vacío — un rojo vestido de verde que esta campaña ya pagó.)**
+
+**Cobertura de pools y el baseline que NO reproduce, declarado y no redondeado:**
+```
+SELECT count(*) chain1, count(*) FILTER (WHERE is_active) activos, count(*) FILTER (WHERE tvl_usd IS NOT NULL) con_tvl
+  FROM pools WHERE chain_id=1            -> 4271 | 1346 | 2893     exit=0
+```
+**`activos=1346`** ✓ el mismo universo del barrido. **`chain1=4271`** (t177 vio 4.259: el universo **es vivo**). **`con_tvl=2893`** — **NO reproduce ningún baseline útil** (t177 anotó 2.891 y el contrato esperaba «vs 44»): **se declara como no reproducible y NO se usa** para nada de este informe.
+
+**El techo de mercado, en `opportunities.rejection_reason` (población DISTINTA: el motor vivo, no mis 392 combos):**
+```
+spread_negative_round_trip 5404409 · v3_pool_not_catalogued 1129507 · non_positive_profit 1048693
+spread_zero_equilibrium 787040 · negative_net_profit 11553 · gas_floor_breach:own_capital 1095
+```
+**★ El motor vivo rechaza `gas_floor_breach:own_capital` 1.095 veces ⇒ el gas floor es un gate REAL en producción, no un criterio de papel.** **Se cita como corroboración de dirección, NO como extrapolación**: otra población, otro instrumento, y **nada de este informe se enuncia sobre ella.**
+
+**Liquidez leída del fork, no estimada (pool del máximo plausible, bloque fijo):**
+```
+cast call 0x0149ebe930260ccfdaaa8e3081b4c39446b6f491 'getReserves()(uint112,uint112,uint32)'
+  --block 26148216 --rpc-url http://172.18.0.3:8545
+  -> 729511019758940016 | 10359699756786522149653 | 1791468083     exit=0
+```
+**El tercer valor (`1791468083`) es `blockTimestampLast` y NO se lee como fee** — el error de unidades que el contrato manda cazar.
+
+---
+
 *La pregunta binaria tiene respuesta y se bifurca limpio. **Sobre los 37 medibles de la banda plausible: NO** — ninguno cruza el floor de $1,95 a ningún tamaño; su máximo es **−$0,674209 en el tamaño MÁS CHICO de la escalera**, y el que los mata es el **gas, 351,7× el bruto**. **Sobre los 26 restantes: NO COMPUTADO**, por `sin_precio_4_direcciones` — ni cero ni NO. **Sobre los 12 que sí cruzan: no son oportunidades** — todos con spread **≥ 5,63 %**, ninguno por debajo del 1 %, y siete pasaron el filtro de consenso simplemente porque el factor 10 lo permite por diseño. **El neto hizo lo que tenía que hacer: convirtió candidatos medibles en un NO, dejó los no medibles como NO COMPUTADO, y dejó a los 12 donde estaban — en la degeneración.** Y la confirmación que no esperaba: **el −$0,674209 de hoy reproduce el −$0,6475 de t175** por otra población y otro método, mismo signo y mismo orden.*
