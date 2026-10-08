@@ -1,0 +1,46 @@
+PREDICCION PRE-REGISTRADA — t161 / FUND-FUNNEL-01
+Escrita ANTES de mirar cualquier medicion post-deploy.
+
+QUE ARREGLO #879: la LECTURA de `balanceOf` — el calldata pasa de 24 B a 36 B
+(los 12 bytes de padding que `sim-ctl` omitia y que `simulator-v2` ya hacia bien).
+NO toca la escritura, NO toca CANDIDATE_SLOTS, NO toca el gate de admisibilidad.
+
+SERIE QUE MIDE EL DESAJUSTE DE LECTURA: `verify_mismatch`.
+Unidad declarada (cerrada por t160): POR SLOT SONDEADO — 4 candidatos por intento,
+`write_rejected` nunca dispara. Baseline: 9872 / 2468 = 4,0000 EXACTO.
+
+PREDICCIONES, en orden de fuerza:
+
+P1 (PRINCIPAL): `verify_mismatch` por INTENTO DROPEA frente a 4,0000.
+    El desajuste de lectura era la causa del 100 % de fallo; arreglada la lectura,
+    el centinela tiene que reproducirse y el loop no puede agotarse contando 4
+    fallos por intento. Falsable: si `verify_mismatch / intentos` sigue ~4,0000,
+    #879 NO movio el funnel.
+
+P2 (LA QUE DECIDE SI APARECIO EXITO): la serie `seeded_fresh` APARECE (> 0).
+    Es la unica etiqueta que significa "el slot cerro el par escritura+lectura".
+    En las lecturas de t160 estaba AUSENTE. Si sigue ausente, no hubo un solo
+    fondeo exitoso y P1 se cumple en vano.
+
+P3 (EL FUNNEL): `arbx_simulation_total{passed="false",simulator="anvil"}` deja de
+    ser 100 % fallo de fondeo. Baseline t160: `slot_unresolved + rpc_err =
+    2468 + 5 = 2473` = EXACTAMENTE ese contador => tasa de fallo de fondeo = 1,00.
+    Predigo que la igualdad EXACTA se rompe.
+
+P4 (SECUNDARIA, la de t156): `slot_unresolved` por INTENTO baja en la tabla.
+    Es SECUNDARIA porque su muestra era n=25 (ruido) y porque la tabla y el
+    contador miden unidades distintas (intento vs arranque acumulado).
+
+P5 (LA PALANCA SI P1..P3 SE CUMPLEN): si el fondeo deja de morir, el techo pasa a
+    ser la CAPACIDAD DEL CAMINO CARO, medida por t160 en 736/h, contra el camino
+    barato en ~123.300/h. Predigo que el limite declarado pasa a ser el fork.
+
+CONTROLES QUE ESTA TAREA NO PUEDE REPETIR (los dos son defectos ya declarados):
+  - `raw_trace IS NOT NULL` NO es control: da 0 en el 100 % de las filas vivas,
+    INCLUIDAS las que si simulan. El campo real es `revert_risk_pct`.
+  - La muestra de 25 no distingue 7 de 4 de ruido: el instrumento es el contador
+    de Prometheus, ACUMULATIVO DESDE EL ARRANQUE de sim-ctl.
+  - `verify_mismatch` NO ES UN `fail_reason`: es una ETIQUETA DE METRICA.
+    Buscarla en `simulations` es un error de categoria.
+
+FIRMA: Backend · t161 · attempt 98ac3935-4fba-488b-a924-f4390aee60f8
