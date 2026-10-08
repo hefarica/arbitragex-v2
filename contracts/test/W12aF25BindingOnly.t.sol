@@ -27,7 +27,14 @@ contract W12aToken is ERC20 {
 /// @dev Proveedor que ejecuta un round trip REAL: desembolsa -> callback -> cobra
 ///      el reembolso que el propio contrato hace con safeTransfer a msg.sender.
 contract W12aProvider {
+    /// @dev W12e (t153): CONTROL POSITIVO. Sin esto, "el balance se conserva" pasa
+    ///      TAMBIEN cuando no paso nada: el test seria vacuoso (medido: con
+    ///      requestFlashLoan anulado los 4 tests pasaban igual). Si el provider nunca
+    ///      fue invocado, el round trip NO ocurrio, por mas que el balance cuadre.
+    uint256 public calls;
+
     function flashLoan(address receiver, address asset, uint256 amount, bytes calldata params) external {
+        calls++;
         W12aToken(asset).transfer(receiver, amount);
         IERC20[] memory tokens = new IERC20[](1);
         tokens[0] = IERC20(asset);
@@ -124,6 +131,9 @@ contract W12aF25BindingOnlyTest is Test {
 
         // Llego hasta aca => el callback acepto la peticion legitima y repago.
         assertEq(token.balanceOf(address(flashExec)), balBeforeExec, "el round trip no cerro limpio");
+        // CONTROL POSITIVO (W12e): la conservacion de balance sola es VACUA — pasa
+        // tambien si no pasa nada. El contador prueba que el round trip OCURRIO.
+        assertEq(provider.calls(), 1, "el provider nunca fue invocado: no hubo round trip");
     }
 
     /// @dev Mismo camino con la ruta devolviendo un excedente: debe completar y quedar el excedente.
@@ -138,6 +148,7 @@ contract W12aF25BindingOnlyTest is Test {
         vm.stopPrank();
 
         assertEq(token.balanceOf(address(flashExec)), balBeforeExec, "el excedente previo debe seguir ahi");
+        assertEq(provider.calls(), 1, "el provider nunca fue invocado: no hubo round trip");
     }
 
     // -----------------------------------------------------------------------

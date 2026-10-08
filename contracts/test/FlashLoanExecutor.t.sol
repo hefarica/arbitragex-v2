@@ -447,6 +447,12 @@ contract FlashLoanExecutorTest is Test {
         // corto y su balance habria cambiado.
         assertEq(token.balanceOf(address(mockVault)), vaultBefore, "vault must be made whole");
         assertEq(token.balanceOf(address(flashExec)), execBefore, "only amounts[0] was processed");
+        // W12e (H-04): la truncacion a amounts[0] queda EXPLICITA (antes estaba solo
+        // deducida, y el compilador lo delataba con `unused local variable second`).
+        // El Vault presto `first` y cobro `first`; si el contrato hubiera usado
+        // amounts[1], habria intentado cobrar `first + second` y el Vault habria
+        // quedado con MAS que al principio.
+        assertLt(token.balanceOf(address(mockVault)), vaultBefore + second, "no debe cobrarse amounts[1]");
     }
 
     // -----------------------------------------------------------------------
