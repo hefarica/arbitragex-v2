@@ -212,13 +212,20 @@ bloque insertado).
 ## 6. ★ EL DIFF: aditivo, acotado, y qué NO se tocó
 
 ```
-$ git diff --cached --stat origin/main
+$ git diff --stat origin/main
  .github/workflows/auto-deploy-vps.yml |  57 +
- docs/ci/G4-RACE-01.md                 | 284 +
- scripts/ci/test_deploy_completion.py  |  68 +-
- scripts/ci/verify_deploy_identity.py  |  19 +-
- 4 files changed, 428 insertions(+), 3 deletions(-)
+ docs/ci/G4-RACE-01.md                 | 291 +
+ scripts/ci/test_deploy_completion.py  |  70 +-
+ scripts/ci/verify_deploy_identity.py  |  20 +-
+ 4 files changed, 435 insertions(+), 3 deletions(-)
 ```
+
+> Nota de instrumento (ajuste propio cazado en revisión, declarado): la primera versión de este bloque
+> llevaba `68` y `19` en las dos últimas filas — números de `--numstat` (inserciones/borrados) bajo un
+> encabezado `--stat` (líneas cambiadas). `--stat` muestra `70` y `20` para esos dos archivos. Las
+> inserciones/borrados reales, verificados por `git diff --numstat origin/main`, son
+> `+68 -2` y `+19 -1`; el total `428 insertions(+), 3 deletions(-)` ya era correcto. Corregido en un
+> commit adicional (nunca `--force`).
 
 **No se tocó**: `validate()`, `SERVICES` (los 7), el exit code del validador, el mensaje genérico de stderr, el
 bloque `[9/9b]` (L510-529), el bucle `[8/9]`, las condiciones de ningún otro paso, ningún otro workflow,
