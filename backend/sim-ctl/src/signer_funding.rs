@@ -28,6 +28,7 @@ use ethers::prelude::*;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
+use tracing::warn;
 
 /// Sentinel balance used for slot verification. Distinct from any realistic
 /// real amount so `balanceOf == SENTINEL` can only be explained by OUR write.
@@ -74,6 +75,89 @@ pub mod outcome {
     /// Previously swallowed as `Ok(None)` with NO counter, which made a failed
     /// READ look exactly like a wrong SLOT.
     pub const BALANCE_UNREADABLE: &str = "balance_unreadable";
+}
+
+// ── SIM-FUND-04: INSTRUMENTO NEUTRO ────────────────────────────────────────
+//
+// POR QUE EXISTE. t111 concluyo que `anvil_setStorageAt` no llegaba a la
+// ejecucion. t112 lo retracto: el error fue computar los slots con una funcion
+// **keyeada por la direccion del TOKEN** en vez de por el SIGNER, y escribir el
+// centinela en un slot AJENO. El sintoma de eso —`eth_getStorageAt` muestra la
+// escritura, `balanceOf` no cambia— es INDISTINGUIBLE del de una escritura que
+// no llega a la ejecucion, y por eso produjo un diagnostico equivocado.
+//
+// QUE HACE ESTE INSTRUMENTO, Y QUE NO HACE. REGISTRA hechos crudos: el token,
+// el signer, los slots probados, y para CADA slot la clave usada, el valor
+// leido de vuelta del storage y el `balanceOf` de ese instante. **NO clasifica
+// la causa.** No emite etiquetas interpretativas (`write_invisible`,
+// `write_not_persisted` ni equivalentes): si las emitiera, volveria a dictaminar
+// antes de tener la medicion, que es exactamente el error que se esta pagando.
+//
+// Registra AMBAS derivaciones (keyeada por signer y keyeada por token) porque el
+// error de t111 fue justamente elegir una sin que nada lo mostrara: con las dos
+// en el registro, una clave equivocada deja de ser invisible.
+#[derive(Debug, Clone, Default)]
+pub struct SlotProbe {
+    pub slot: u64,
+    /// Clave EFECTIVAMENTE usada — `balance_slot(slot, signer)`, keyeada por el
+    /// SIGNER, que es lo que `balanceOf(signer)` lee.
+    pub signer_keyed_key: String,
+    /// La misma derivacion pero keyeada por el TOKEN. Es un DATO de contraste:
+    /// si alguien re-keyeara por token, las dos columnas lo delatarian.
+    pub token_keyed_key: String,
+    /// Resultado literal de `anvil_setStorageAt`: "true" | "false" | "err: ...".
+    pub set_storage_at: String,
+    /// `eth_getStorageAt(signer_keyed_key)` DESPUES de escribir.
+    pub storage_readback: String,
+    /// `balanceOf(signer)` por `eth_call` en ese instante.
+    pub balance_of: String,
+    /// Igualdad cruda entre lo escrito (el centinela) y lo leido de vuelta.
+    pub readback_matches_sentinel: bool,
+}
+
+/// SIM-FUND-04: el registro completo de UN intento de fondeo fallido.
+#[derive(Debug, Clone, Default)]
+pub struct FundingProbe {
+    pub token: String,
+    pub signer: String,
+    pub amount_in: String,
+    pub candidate_slots: Vec<u64>,
+    pub probes: Vec<SlotProbe>,
+    /// X2: el slot CORRECTO POR CONSTRUCCION es el que deriva `balance_slot`
+    /// keyeando por el SIGNER. Este campo registra que TODAS las sondas usaron
+    /// esa clave — el hecho que t111 no tenia forma de exhibir.
+    pub all_probes_used_signer_key: bool,
+    pub outcome: String,
+}
+
+impl FundingProbe {
+    fn to_json(&self) -> String {
+        let probes: Vec<serde_json::Value> = self
+            .probes
+            .iter()
+            .map(|p| {
+                serde_json::json!({
+                    "slot": p.slot,
+                    "signer_keyed_key": p.signer_keyed_key,
+                    "token_keyed_key": p.token_keyed_key,
+                    "set_storage_at": p.set_storage_at,
+                    "storage_readback": p.storage_readback,
+                    "balance_of": p.balance_of,
+                    "readback_matches_sentinel": p.readback_matches_sentinel,
+                })
+            })
+            .collect();
+        serde_json::json!({
+            "token": self.token,
+            "signer": self.signer,
+            "amount_in": self.amount_in,
+            "candidate_slots": self.candidate_slots,
+            "all_probes_used_signer_key": self.all_probes_used_signer_key,
+            "outcome": self.outcome,
+            "probes": probes,
+        })
+        .to_string()
+    }
 }
 
 fn count(outcome: &str) {
@@ -150,7 +234,22 @@ impl SignerFunder {
         // value (not an assumed zero — on a fork with pre-existing state the
         // zero-write corrupted the slot within the snapshot window).
         let original_balance = bal.unwrap_or_default();
+        // SIM-FUND-04: acumulador de HECHOS CRUDOS. No altera ninguna decision:
+        // solo recoge lo que el loop ya escribe y ya lee.
+        let mut probe = FundingProbe {
+            token: format!("{token:?}"),
+            signer: format!("{signer:?}"),
+            amount_in: amount_in.to_string(),
+            candidate_slots: CANDIDATE_SLOTS.to_vec(),
+            probes: Vec::new(),
+            all_probes_used_signer_key: true,
+            outcome: String::new(),
+        };
         for &slot in CANDIDATE_SLOTS.iter() {
+            // Las DOS derivaciones, para que la eleccion de clave sea un DATO
+            // visible y no una suposicion.
+            let signer_keyed_key = format!("{:?}", balance_slot(slot, signer));
+            let token_keyed_key = format!("{:?}", balance_slot(slot, token));
             if !self
                 .write_balance(token, slot, signer, SENTINEL_BALANCE)
                 .await?
@@ -159,6 +258,15 @@ impl SignerFunder {
                 // never landed. Counted PER SLOT so the two physical causes stop
                 // sharing the single `slot_unresolved` string.
                 count(outcome::WRITE_REJECTED);
+                probe.probes.push(SlotProbe {
+                    slot,
+                    signer_keyed_key,
+                    token_keyed_key,
+                    set_storage_at: "false".to_string(),
+                    storage_readback: "not_read".to_string(),
+                    balance_of: "not_read".to_string(),
+                    readback_matches_sentinel: false,
+                });
                 continue; // RPC-level failure on this slot — try next
             }
             let verified =
@@ -172,6 +280,23 @@ impl SignerFunder {
                         count(outcome::RPC_ERR);
                         format!("funding_verify_rpc: {e}")
                     })?;
+            // SIM-FUND-04: los dos hechos crudos de ESTE slot, registrados tal
+            // como salieron. Sin compararlos entre si y sin nombrar una causa.
+            let readback =
+                read_storage_slot(&self.provider, token, slot, signer, self.timeout).await;
+            probe.probes.push(SlotProbe {
+                slot,
+                signer_keyed_key,
+                token_keyed_key,
+                set_storage_at: "true".to_string(),
+                storage_readback: readback
+                    .map(|h| format!("{h:?}"))
+                    .unwrap_or_else(|| "read_failed".to_string()),
+                balance_of: verified
+                    .map(|v| v.to_string())
+                    .unwrap_or_else(|| "unreadable".to_string()),
+                readback_matches_sentinel: readback == Some(u256_to_h256(SENTINEL_BALANCE)),
+            });
             if verified == Some(SENTINEL_BALANCE) {
                 // Verified: this slot IS the signer's balance. Write the real
                 // amount and cache the slot.
@@ -201,6 +326,27 @@ impl SignerFunder {
                 .await;
         }
         count(outcome::SLOT_UNRESOLVED);
+        // SIM-FUND-04: UN registro por intento fallido con TODOS los hechos.
+        // Volumen: el consumidor admite ~11 simulaciones/min, asi que esto es del
+        // orden de ~10 lineas/min — muy por debajo del flooding que motivo R9
+        // (183 lineas/s). No se muestrea: muestrear perderia justo la combinacion
+        // token/slot que se busca.
+        probe.outcome = "sim_signer_funding_slot_unresolved".to_string();
+        probe.all_probes_used_signer_key = probe
+            .probes
+            .iter()
+            .all(|p| p.signer_keyed_key == format!("{:?}", balance_slot(p.slot, signer)));
+        warn!(
+            event = "sim.funding_probe",
+            token = %probe.token,
+            signer = %probe.signer,
+            amount_in = %probe.amount_in,
+            candidate_slots = ?probe.candidate_slots,
+            all_probes_used_signer_key = probe.all_probes_used_signer_key,
+            outcome = %probe.outcome,
+            probes = %probe.to_json(),
+            "RAW FACTS of a failed funding attempt — the instrument records, it does NOT diagnose"
+        );
         Err("sim_signer_funding_slot_unresolved".to_string())
     }
 
@@ -286,6 +432,31 @@ async fn balance_of(
             Ok(None)
         }
     }
+}
+
+/// SIM-FUND-04: lee de vuelta el slot con `eth_getStorageAt`. Es un DATO mas —
+/// no se compara con nada ni se etiqueta. `None` = la lectura misma fallo, y se
+/// registra como `read_failed`, nunca como cero.
+async fn read_storage_slot(
+    provider: &Provider<Http>,
+    token: Address,
+    slot: u64,
+    signer: Address,
+    timeout: Duration,
+) -> Option<H256> {
+    let slot32 = balance_slot(slot, signer);
+    let res: Result<String, _> = tokio::time::timeout(
+        timeout,
+        provider.request("eth_getStorageAt", (token, slot32, "latest")),
+    )
+    .await
+    .ok()?;
+    let hex = res.ok()?;
+    let bytes = ethers::utils::hex::decode(hex.trim_start_matches("0x")).ok()?;
+    if bytes.len() != 32 {
+        return None;
+    }
+    Some(H256::from_slice(&bytes))
 }
 
 fn decode_u256(out: &Bytes) -> Option<U256> {
@@ -376,5 +547,110 @@ mod tests {
     fn sentinel_is_distinct_and_nonzero() {
         assert!(!SENTINEL_BALANCE.is_zero());
         assert_ne!(SENTINEL_BALANCE, FUND_AMOUNT);
+    }
+
+    /// SIM-FUND-04 / X2: EL CONTROL NEGATIVO QUE FALTABA.
+    ///
+    /// t111 computo los slots keyeando por la direccion del TOKEN y escribio el
+    /// centinela en un slot AJENO. El sintoma —`eth_getStorageAt` muestra la
+    /// escritura, `balanceOf` no cambia— es INDISTINGUIBLE del de una escritura
+    /// que no llega a la ejecucion, y por eso produjo un diagnostico equivocado.
+    /// Lo que faltaba NO era otro valor de hash: era un control sobre QUIEN es la
+    /// clave.
+    ///
+    /// Conserva SOLO el control de X2. El resto del cambio de #859 se DESCARTA:
+    /// se construyo sobre la premisa retirada.
+    #[test]
+    fn x2_balance_slot_is_keyed_by_the_signer_and_not_by_the_token() {
+        let signer: Address = "0x1234567890123456789012345678901234567890"
+            .parse()
+            .unwrap();
+        let token: Address = "0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2"
+            .parse()
+            .unwrap();
+
+        // Valor MEDIDO en el fork vivo: escribir el centinela aqui hace que
+        // `balanceOf(signer)` lo devuelva (verificado por eth_call en t112).
+        let signer_keyed_slot3 = H256::from_slice(
+            &ethers::utils::hex::decode(
+                "961558ef95740fe5d8173078fa8d9fd6150201cd29befffef12f314fd45a2bfc",
+            )
+            .unwrap(),
+        );
+        assert_eq!(balance_slot(3, signer), signer_keyed_slot3);
+
+        // CONTROL NEGATIVO: keyear por el token da un hash de 32 bytes
+        // PERFECTAMENTE PLAUSIBLE — y completamente ajeno a `balanceOf`.
+        let token_keyed = balance_slot(3, token);
+        assert_ne!(balance_slot(3, signer), token_keyed);
+        assert_eq!(
+            token_keyed.as_bytes().len(),
+            32,
+            "un slot equivocado sigue pareciendo valido: por eso hace falta el control de clave"
+        );
+    }
+
+    /// SIM-FUND-04: el registro lleva TODOS los hechos crudos por intento,
+    /// incluidas las DOS derivaciones. Sin este test, el instrumento podria
+    /// emitir un JSON vacio sin fallar.
+    #[test]
+    fn simfund04_probe_records_raw_facts_and_both_key_derivations() {
+        let signer: Address = "0x1234567890123456789012345678901234567890"
+            .parse()
+            .unwrap();
+        let token: Address = "0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2"
+            .parse()
+            .unwrap();
+        let mut p = FundingProbe {
+            token: format!("{token:?}"),
+            signer: format!("{signer:?}"),
+            amount_in: "1000".to_string(),
+            candidate_slots: CANDIDATE_SLOTS.to_vec(),
+            probes: Vec::new(),
+            all_probes_used_signer_key: true,
+            outcome: "sim_signer_funding_slot_unresolved".to_string(),
+        };
+        for &slot in CANDIDATE_SLOTS.iter() {
+            p.probes.push(SlotProbe {
+                slot,
+                signer_keyed_key: format!("{:?}", balance_slot(slot, signer)),
+                token_keyed_key: format!("{:?}", balance_slot(slot, token)),
+                set_storage_at: "true".to_string(),
+                storage_readback: "0x00".to_string(),
+                balance_of: "100".to_string(),
+                readback_matches_sentinel: false,
+            });
+        }
+        let s = p.to_json();
+        let j: serde_json::Value = serde_json::from_str(&s).unwrap();
+        assert_eq!(j["token"], format!("{token:?}"));
+        assert_eq!(j["signer"], format!("{signer:?}"));
+        assert_eq!(j["amount_in"], "1000");
+        assert_eq!(j["outcome"], "sim_signer_funding_slot_unresolved");
+        assert_eq!(j["all_probes_used_signer_key"], true);
+        assert_eq!(
+            j["candidate_slots"].as_array().unwrap().len(),
+            CANDIDATE_SLOTS.len()
+        );
+        let probes = j["probes"].as_array().unwrap();
+        // CONTROL de inventario: una entrada por slot probado, ninguna vacia.
+        assert_eq!(probes.len(), CANDIDATE_SLOTS.len());
+        for pr in probes {
+            assert!(pr["signer_keyed_key"].as_str().unwrap().starts_with("0x"));
+            assert!(pr["token_keyed_key"].as_str().unwrap().starts_with("0x"));
+            // Las dos derivaciones se registran y DIFIEREN: si alguien
+            // re-keyeara por token, las dos columnas lo delatarian.
+            assert_ne!(pr["signer_keyed_key"], pr["token_keyed_key"]);
+            assert!(pr.get("storage_readback").is_some());
+            assert!(pr.get("balance_of").is_some());
+        }
+        // X1: el instrumento NO emite etiquetas interpretativas. Se asserta
+        // sobre la salida real, no sobre la intencion.
+        for forbidden in ["write_invisible", "write_not_persisted"] {
+            assert!(
+                !s.contains(forbidden),
+                "el instrumento registra, no dictamina: {forbidden} no debe aparecer"
+            );
+        }
     }
 }
