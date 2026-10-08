@@ -224,6 +224,10 @@ pub(crate) fn build_cycle_decimals_map(
                 map.insert(lc, *d);
             }
             None => {
+                // MUTANTE DEL REVISOR (t202): restaura el default fabricado de 18
+                // en el locus del MAPA. NO ES EL FIX: es la falsificacion que debe
+                // morder contra los tests del PR. Este commit NO se mergea.
+                map.insert(lc.clone(), 18);
                 if !unresolved.contains(&lc) {
                     unresolved.push(lc);
                 }
