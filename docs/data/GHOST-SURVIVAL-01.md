@@ -17,7 +17,7 @@
 
 ### ★ LA VENTANA ACOTA TODO
 
-`opportunities` **retiene ~3 días y 3,8 h**, no un histórico. Y **está viva**: la leí creciendo entre pasadas — **7.859.761 → 7.904.902 → 7.925.656** filas en minutos. **Toda cifra de este informe es de esa ventana y de un instante declarado.**
+`opportunities` **retiene ~3 días y 3,8 h**, no un histórico. Y **está viva**: la leí creciendo entre pasadas — **7.859.761 → 7.904.902 → 7.925.656 → 8.031.255** filas, la última a las **08:21:14.258948+00** (≈105.000 filas en 13 minutos). **Toda cifra de este informe es de esa ventana y de un instante declarado.**
 
 **NO COMPARABLE por ventana:** los números de la campaña anterior (t123: `1253` filas de bucket, `max_net=12,490223`, `max_gross=13,14359056`) **no declaran su ventana**, así que **no son comparables como conteos**. Lo que **sí** es comparable es el **extremo**: `max_net=12,490223` reaparece **idéntico** en mi medición de hoy (§1), lo que prueba que al menos el máximo es estable entre ventanas; los conteos, no.
 
@@ -117,6 +117,17 @@ Fila de **máximo retorno** (`token_in` = UNI, `gross` = 13,14359056, `net` = 12
 - Con el mapa correcto y la entrada correcta, **una conversión de decimales no puede producir ×1371** (las potencias de 10 disponibles son 10⁶ y 10¹², no 1371).
 
 **⇒ Es un defecto de CANTIDAD: la magnitud de salida que el motor computa para esa pata V3.** El output de un swap V3 escala linealmente con la liquidez del rango ⇒ el estado de pool usado por el motor (liquidez / `sqrtPriceX96`) es el locus, **no la escala decimal**. **Con el mapa de decimales correcto descartado por la evidencia, queda el estado de pool** — y **no lo medí** (§4).
+
+**★ El `archivo:línea` de `main` que computa esa magnitud de salida** (leído de `main`, **nunca** del checkout compartido, con `git grep -n 'fn ' <sha> -- backend/searcher-rs/src/amm_math.rs`):
+
+| línea en `main` (`d1a4c3f5`) | símbolo |
+|---|---|
+| **`backend/searcher-rs/src/amm_math.rs:161`** | **`pub fn v3_amount_out_single_tick(`** ← **la magnitud de salida de una pata V3** |
+| `backend/searcher-rs/src/amm_math.rs:96` | `pub fn v2_amount_out(amount_in, reserve_in, reserve_out, fee_bps)` — la V2, que **no** es el locus: 3 de las 6 patas son V2 y **todas preservan valor** |
+| `backend/searcher-rs/src/amm_math.rs:261` | `pub fn v3_spot_snapshot(` — el snapshot de estado que alimenta el cálculo |
+| `backend/searcher-rs/src/amm_math.rs:798` | `pub async fn v3_quote_exact_in_multicall(` — el quoter on-chain |
+
+**Alcance de esa cita, declarado:** identifica **la función que computa la salida V3**, no prueba que sea la defectuosa. **Los adaptadores confirman la correspondencia**: `dex_adapters[3] = "uniswap-v3"` y las otras cinco patas son `uniswap-v2` — **el defecto está exactamente en la única pata V3 del camino que además resulta ser la única que crea valor**.
 
 **★ Confirmación independiente del `ret_max` de t137:** round-trip = `5112459137999411 / 3886740365229` = **1.315,36×** — **exactamente el `1.315,3591×` que t137 reportó como cota superior**. Mi medición de la fila y la de t137 son **el mismo objeto por dos vías**.
 
