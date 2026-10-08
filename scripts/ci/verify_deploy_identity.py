@@ -14,6 +14,20 @@ import sys
 MAX_BYTES = 262144
 SERVICES = ("selector-api", "sim-ctl", "recon", "relays-client", "searcher-rs", "math-engine", "token-enricher")
 
+# G4-RACE-01: the failing condition used to be unnameable from the log, because all the
+# distinct failures below collapsed into ONE generic message (that is why the race had to
+# be reproduced by hand). validate() only ever raises hardcoded literals, so the code is a
+# closed vocabulary -- identity/timeline/frame failures plus `upstream_not_healthy:<service>`,
+# the service taken from SERVICES and never from the payload. A decoder error carries a human
+# message instead; anything outside the token shape is reported as `unclassified`. This never
+# echoes upstream content and does not change any acceptance criterion.
+CONDITION_PATTERN = re.compile(r"[a-z][a-z0-9_]*(?::[a-z0-9-]+)?\Z")
+
+
+def condition_code(exc: BaseException) -> str:
+    text = str(exc)
+    return text if CONDITION_PATTERN.fullmatch(text) else "unclassified"
+
 
 def utc_timestamp(value: object) -> datetime:
     if not isinstance(value, str) or not re.fullmatch(r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(?:\.[0-9]{1,6})?Z", value):
@@ -76,9 +90,13 @@ def main() -> int:
     try:
         payload = parse_payload(sys.stdin.buffer.read(MAX_BYTES + 1))
         result = validate(payload, args.sha, args.run_id, args.deployed_at)
-    except (ValueError, TypeError, KeyError, UnicodeError):
+    except (ValueError, TypeError, KeyError, UnicodeError) as exc:
         # Never print the input body or an exception containing upstream content.
         print("::error::Served API identity/health evidence missing, stale or invalid", file=sys.stderr)
+        # G4-RACE-01: name the condition on stdout (closed vocabulary, see
+        # CONDITION_PATTERN). Exit code and the generic stderr line are unchanged, so no
+        # caller that greps the old message or tests rc != 0 is affected.
+        print("G4_CONDITION=" + condition_code(exc), file=sys.stdout)
         return 1
     print(json.dumps(result, sort_keys=True))
     return 0
