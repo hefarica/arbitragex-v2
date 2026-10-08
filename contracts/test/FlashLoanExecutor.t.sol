@@ -35,6 +35,42 @@ contract MockBalancerVault {
 
         FlashLoanExecutor(receiver).receiveFlashLoan(tokens, amounts, feeAmounts, userData);
     }
+
+    /// @dev W12c (F25): round trip REAL, como el Vault de verdad: transfiere el
+    ///      prestamo al receptor y DESPUES invoca el callback desde ESTA direccion,
+    ///      que es la configurada como balancerVault. Es la funcion que invoca
+    ///      requestFlashLoan via IFlashLoanProvider.flashLoan: solicitud ->
+    ///      transferencia -> callback.
+    function flashLoan(address receiver, address asset, uint256 amount, bytes calldata userData) external {
+        MockERC20FL(asset).transfer(receiver, amount);
+        if (!multiMode) {
+            IERC20[] memory t1 = new IERC20[](1);
+            t1[0] = IERC20(asset);
+            uint256[] memory a1 = new uint256[](1);
+            a1[0] = amount;
+            uint256[] memory f1 = new uint256[](1);
+            f1[0] = 0;
+            FlashLoanExecutor(receiver).receiveFlashLoan(t1, a1, f1, userData);
+            return;
+        }
+        IERC20[] memory t2 = new IERC20[](2);
+        t2[0] = IERC20(asset);
+        t2[1] = IERC20(asset);
+        uint256[] memory a2 = new uint256[](2);
+        a2[0] = amount;
+        a2[1] = amount * 2;
+        uint256[] memory f2 = new uint256[](2);
+        f2[0] = 0;
+        f2[1] = 0;
+        FlashLoanExecutor(receiver).receiveFlashLoan(t2, a2, f2, userData);
+    }
+
+    /// @dev Cuando esta activo, `flashLoan` entrega arrays de 2 elementos.
+    bool public multiMode;
+
+    function setMultiMode(bool v) external {
+        multiMode = v;
+    }
 }
 
 /// @dev Mock Aave V3 Pool: records calls, does not move funds
@@ -59,6 +95,26 @@ contract MockAavePool {
         lastReferralCode = _referralCode;
         // In a real Aave, the pool would call executeOperation.
         // We do NOT simulate the callback here - tested separately.
+    }
+}
+
+/// @dev W12c (F25): pool de Aave con ROUND TRIP REAL. El flujo de produccion es
+///      requestFlashLoan -> el pool transfiere -> el pool invoca executeOperation con
+///      initiator = el receptor. Este mock hace exactamente eso, por lo que el binding
+///      lo ACEPTA (hay solicitud registrada).
+contract MockAavePoolRoundTrip {
+    uint256 public premium;
+    bool public lastResult;
+
+    function setPremium(uint256 p) external {
+        premium = p;
+    }
+
+    function flashLoanSimple(address receiverAddress, address asset, uint256 amount, bytes calldata params, uint16)
+        external
+    {
+        MockERC20FL(asset).transfer(receiverAddress, amount);
+        lastResult = FlashLoanExecutor(receiverAddress).executeOperation(asset, amount, premium, receiverAddress, params);
     }
 }
 
@@ -122,6 +178,18 @@ contract FlashLoanExecutorTest is Test {
         token.mint(address(flashExec), 10_000e18);
     }
 
+    /// @dev W12c (F25): segundo despliegue con un pool que ejecuta el round trip real.
+    ///      Hace falta porque `aavePool` se fija en initialize().
+    function _deployWithRoundTripPool() internal returns (FlashLoanExecutor fe, MockAavePoolRoundTrip rp) {
+        rp = new MockAavePoolRoundTrip();
+        FlashLoanExecutor impl = new FlashLoanExecutor();
+        bytes memory initData =
+            abi.encodeWithSelector(FlashLoanExecutor.initialize.selector, admin, address(rp), address(arbExec));
+        ERC1967Proxy proxy = new ERC1967Proxy(address(impl), initData);
+        fe = FlashLoanExecutor(address(proxy));
+        fe.grantRole(fe.EXECUTOR_ROLE(), executorRole);
+    }
+
     // -----------------------------------------------------------------------
     // testReceiveFlashLoan_Authorized
     // Simulates Aave calling executeOperation from the authorized pool address.
@@ -132,17 +200,17 @@ contract FlashLoanExecutorTest is Test {
         uint256 premium = 1e18; // 0.1% fee
         bytes memory params = abi.encodeWithSignature("noop()");
 
-        // Simulate Aave pool calling the callback
-        vm.prank(address(pool));
-        bool result = flashExec.executeOperation(
-            address(token),
-            loanAmount,
-            premium,
-            address(flashExec), // initiator must be this contract
-            params
-        );
+        // W12c (F25): el flujo REAL siempre incluye la fase de solicitud:
+        // requestFlashLoan -> el pool transfiere -> el pool invoca el callback.
+        (FlashLoanExecutor fe, MockAavePoolRoundTrip rp) = _deployWithRoundTripPool();
+        rp.setPremium(premium);
+        token.mint(address(rp), 10_000e18);
+        token.mint(address(fe), 10_000e18);
 
-        assertTrue(result, "executeOperation must return true for authorized caller");
+        vm.prank(executorRole);
+        fe.requestFlashLoan(address(token), loanAmount, params);
+
+        assertTrue(rp.lastResult(), "executeOperation must return true for authorized caller");
     }
 
     // -----------------------------------------------------------------------
@@ -158,22 +226,24 @@ contract FlashLoanExecutorTest is Test {
 
         // receiveFlashLoan's Layer-3 guard requires a provider to be configured.
         flashExec.setFlashLoanProvider(address(mockVault));
-
-        IERC20[] memory tokens = new IERC20[](1);
-        tokens[0] = IERC20(address(token));
-        uint256[] memory amounts = new uint256[](1);
-        amounts[0] = amount;
-        uint256[] memory feeAmounts = new uint256[](1);
-        feeAmounts[0] = 0; // Balancer V2 = 0 fee
+        // W12c (F25): el Vault necesita fondos para desembolsar.
+        token.mint(address(mockVault), 10_000e18);
 
         uint256 vaultBefore = token.balanceOf(address(mockVault));
+        uint256 execBefore = token.balanceOf(address(flashExec));
 
-        // Called by the authorised Balancer Vault (msg.sender == balancerVault).
-        vm.prank(address(mockVault));
-        flashExec.receiveFlashLoan(tokens, amounts, feeAmounts, "");
+        // W12c (F25): flujo REAL -> requestFlashLoan -> el Vault transfiere ->
+        // el Vault invoca el callback. El binding lo acepta porque hay solicitud.
+        vm.prank(executorRole);
+        flashExec.requestFlashLoan(address(token), amount, "");
 
         assertTrue(arbExec.wasCalled(), "arbitrageExecutor must be invoked");
-        assertEq(token.balanceOf(address(mockVault)) - vaultBefore, amount, "vault must be repaid the loan");
+        // W12c (F25): en el flujo REAL el Vault DESEMBOLSA y luego COBRA. El invariante
+        // correcto ya NO es "el Vault recibio el repago" — eso solo medía algo cuando el
+        // Vault no prestaba nada (el flujo NO solicitado que F25 cierra) — sino que el
+        // Vault QUEDE ENTERO tras prestar y cobrar, y que el executor no retenga nada.
+        assertEq(token.balanceOf(address(mockVault)), vaultBefore, "vault must be made whole (lent + repaid)");
+        assertEq(token.balanceOf(address(flashExec)), execBefore, "executor must retain nothing");
     }
 
     // -----------------------------------------------------------------------
@@ -252,13 +322,19 @@ contract FlashLoanExecutorTest is Test {
         uint256 premium = 9e17; // ~0.09%
         bytes memory params = abi.encodeWithSignature("noop()");
 
-        vm.expectEmit(true, false, false, true, address(flashExec));
+        // W12c (F25): mismo flujo real, via solicitud.
+        (FlashLoanExecutor fe, MockAavePoolRoundTrip rp) = _deployWithRoundTripPool();
+        rp.setPremium(premium);
+        token.mint(address(rp), 10_000e18);
+        token.mint(address(fe), 10_000e18);
+
+        vm.expectEmit(true, false, false, true, address(fe));
         emit FlashLoanExecutor.FlashLoanExecuted(address(token), loanAmount, premium, true);
 
-        vm.prank(address(pool));
-        bool result = flashExec.executeOperation(address(token), loanAmount, premium, address(flashExec), params);
+        vm.prank(executorRole);
+        fe.requestFlashLoan(address(token), loanAmount, params);
 
-        assertTrue(result, "executeOperation must return true");
+        assertTrue(rp.lastResult(), "executeOperation must return true");
     }
 
     // -----------------------------------------------------------------------
@@ -353,23 +429,24 @@ contract FlashLoanExecutorTest is Test {
         uint256 first = 1_000e18;
         uint256 second = 2_000e18;
 
-        IERC20[] memory tokens = new IERC20[](2);
-        tokens[0] = IERC20(address(token));
-        tokens[1] = IERC20(address(token));
-        uint256[] memory amounts = new uint256[](2);
-        amounts[0] = first;
-        amounts[1] = second;
-        uint256[] memory feeAmounts = new uint256[](2);
-        feeAmounts[0] = 0;
-        feeAmounts[1] = 0;
+        // W12c (F25): flujo REAL via solicitud. El proveedor entrega arrays de 2
+        // elementos; el contrato debe truncar a amounts[0] == lo solicitado.
+        mockVault.setMultiMode(true);
+        token.mint(address(mockVault), 10_000e18);
 
         uint256 vaultBefore = token.balanceOf(address(mockVault));
-        vm.prank(address(mockVault));
-        flashExec.receiveFlashLoan(tokens, amounts, feeAmounts, "");
+        uint256 execBefore = token.balanceOf(address(flashExec));
+        vm.prank(executorRole);
+        flashExec.requestFlashLoan(address(token), first, "");
 
         // Only element 0 is processed: the Vault is repaid `first`, never first+second.
         assertTrue(arbExec.wasCalled(), "arbitrageExecutor invoked once");
-        assertEq(token.balanceOf(address(mockVault)) - vaultBefore, first, "only amounts[0] repaid (rest truncated)");
+        // W12c (F25): invariante del flujo REAL. El Vault presta `first` y lo cobra =>
+        // queda entero. Que SOLO se procese amounts[0] se prueba por CONSERVACION: si el
+        // contrato hubiera intentado repagar `first + second`, el executor habria quedado
+        // corto y su balance habria cambiado.
+        assertEq(token.balanceOf(address(mockVault)), vaultBefore, "vault must be made whole");
+        assertEq(token.balanceOf(address(flashExec)), execBefore, "only amounts[0] was processed");
     }
 
     // -----------------------------------------------------------------------
