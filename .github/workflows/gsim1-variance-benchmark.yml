@@ -142,6 +142,91 @@ jobs:
           test -s gsim1-rows.jsonl || { echo "::error::empty registry read-back"; exit 1; }
           wc -l gsim1-rows.jsonl
 
+      - name: Attribute each exported sample to an observable cause (read-only, advisory)
+        # GSIM-PRED-REASON-01 (R1): `skips.pred_failed=22/22` names only the CATEGORY.
+        # This step names, PER SAMPLE, the cause that is observable in production
+        # today: whether the sample has a `simulations` row at all, and if it has
+        # one, whether it passed and with which `fail_reason`.
+        #
+        # ADVISORY BY CONSTRUCTION — it cannot change the verdict:
+        #   * it only SELECTs (no INSERT/UPDATE/DELETE, no signing, no capital);
+        #   * it never feeds `samples_labeled`, `pass_reason`, `threshold_mean_pct`
+        #     nor the registry status — the approval criterion is untouched;
+        #   * `continue-on-error` so a failure of this observational step can never
+        #     redden the gate.
+        #
+        # WHAT IT IS NOT (R8 — never read a label as another thing): the harness' OWN
+        # internal branch (why `sim_at_block` returned `passed=false` for these rows)
+        # is NOT reachable from here. The producer of that reason is
+        # backend/sim-core/tests/variance_benchmark.rs:483-486 (`hist.pred_failed += 1;
+        # continue;`), outside this workflow's scope. This step attributes the
+        # sample's PRODUCTION state; it does not claim to be the harness' error code.
+        if: always()
+        continue-on-error: true
+        env:
+          VPS_HOST: ${{ secrets.VPS_SSH_HOST }}
+          VPS_USER: ${{ secrets.VPS_SSH_USER }}
+          VPS_PORT: ${{ secrets.VPS_PORT || '22' }}
+          DEPLOY_PATH: ${{ secrets.VPS_DEPLOY_PATH }}
+        run: |
+          set -uo pipefail
+          REMOTE_PATH="${DEPLOY_PATH:-/opt/arbitragex-v2}"
+          set +e
+          ssh -i ~/.ssh/deploy_key -p "$VPS_PORT" -o BatchMode=yes -o IdentitiesOnly=yes \
+            "$VPS_USER@$VPS_HOST" "bash -s" <<'REMOTE' > sample-reasons.log 2>&1
+          set -uo pipefail
+          INPUT=/tmp/gsim1/input.jsonl
+          echo "tool_docker=$(command -v docker || echo MISSING) input=$INPUT"
+          if [ ! -s "$INPUT" ]; then
+            echo "SAMPLE_REASON_UNAVAILABLE reason=input_jsonl_absent_or_empty path=$INPUT"
+            echo "  the driver writes it at its export stage; absent here means the driver never reached it"
+            exit 0
+          fi
+          IDS=$(sed -nE 's/.*"opportunity_id"[[:space:]]*:[[:space:]]*"([0-9a-fA-F-]{36})".*/\1/p' "$INPUT")
+          N=$(printf '%s\n' "$IDS" | grep -c .)
+          echo "exported_rows=$N"
+          if [ "$N" -eq 0 ]; then
+            echo "SAMPLE_REASON_UNAVAILABLE reason=no_opportunity_id_extracted from=$INPUT (extraction zero, not an absence of samples)"
+            exit 0
+          fi
+          LIST=$(printf "'%s'," $IDS)
+          LIST=${LIST%,}
+          docker exec arbitragex-v2-postgres-1 psql -U postgres -d arbitragex -t -A -F'|' -c "
+            WITH s AS (
+              SELECT opportunity_id,
+                     count(*) AS n_sims,
+                     (array_agg(passed ORDER BY simulated_at DESC NULLS LAST))[1] AS last_passed,
+                     (array_agg(fail_reason ORDER BY simulated_at DESC NULLS LAST))[1] AS last_reason
+              FROM simulations
+              WHERE opportunity_id IN ($LIST)
+              GROUP BY opportunity_id)
+            SELECT o.id, o.status, coalesce(nullif(o.rejection_reason,''),'-'), coalesce(o.pair_symbol,'-'),
+                   coalesce(s.n_sims,0),
+                   CASE WHEN s.opportunity_id IS NULL THEN 'no_simulation_row'
+                        WHEN s.last_passed THEN 'sim_passed'
+                        ELSE 'sim_failed:' || coalesce(nullif(s.last_reason,''),'unnamed') END
+            FROM opportunities o
+            LEFT JOIN s ON s.opportunity_id = o.id
+            WHERE o.id IN ($LIST)
+            ORDER BY 6, 2;" > /tmp/sre_t127_samples.txt
+          PSQL_RC=$?
+          echo "psql_rc=$PSQL_RC rows_returned=$(grep -c . /tmp/sre_t127_samples.txt)"
+          while IFS='|' read -r sid st re pr nr code; do
+            [ -n "$sid" ] || continue
+            echo "sample_reason opportunity_id=$sid status=$st rejection=$re pair=$pr sim_rows=$nr code=$code"
+          done < /tmp/sre_t127_samples.txt
+          echo "SAMPLE_REASON_DISTRIBUTION total=$(grep -c . /tmp/sre_t127_samples.txt) $(awk -F'|' '{c[$6]++} END {for (k in c) printf "%s=%d ", k, c[k]}' /tmp/sre_t127_samples.txt)"
+          echo "SAMPLE_REASON_HARNESS_INTERNAL=not_observable_here producer=backend/sim-core/tests/variance_benchmark.rs:483-486"
+          rm -f /tmp/sre_t127_samples.txt
+          REMOTE
+          RC=$?
+          set -e
+          echo "attribution_rc=${RC}"
+          sed -n '1,80p' sample-reasons.log
+          if [ "$RC" -ne 0 ]; then
+            echo "::warning::per-sample attribution rc=${RC} — advisory only; the verdict above is untouched (see sample-reasons.log)"
+          fi
+
       - name: Assert the producer actually delivered in THIS run
         run: |
           set -euo pipefail
@@ -177,6 +262,12 @@ jobs:
             echo "- driver exit code: \`${{ steps.driver.outputs.driver_rc }}\`"
             echo "- rows read back: \`$(wc -l < gsim1-rows.jsonl 2>/dev/null || echo 0)\`"
             echo
+            echo "### Why each exported sample went unlabeled (per sample, read-only)"
+            echo
+            echo '```'
+            cat sample-reasons.log 2>/dev/null || echo "(no per-sample attribution log)"
+            echo '```'
+            echo
             echo '```'
             tail -n 25 variance-benchmark.log 2>/dev/null || echo "(no driver log)"
             echo '```'
@@ -190,6 +281,7 @@ jobs:
           path: |
             variance-benchmark.log
             gsim1-rows.jsonl
+            sample-reasons.log
           if-no-files-found: warn
           retention-days: 30
 
