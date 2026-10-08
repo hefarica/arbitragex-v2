@@ -3433,7 +3433,7 @@ mod tests {
         let unknown = "0x00000000000000000000000000000000deadbeef".to_string();
         let empty_redis: HashMap<String, u8> = HashMap::new();
         let empty_pg: HashMap<String, u8> = HashMap::new();
-        let got = build_cycle_decimals_map(&[unknown.clone()], &empty_redis, &empty_pg);
+        let got = build_cycle_decimals_map(std::slice::from_ref(&unknown), &empty_redis, &empty_pg);
 
         assert!(
             got.map.map.is_empty(),
