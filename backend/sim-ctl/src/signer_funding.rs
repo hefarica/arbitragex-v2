@@ -74,6 +74,28 @@ pub mod outcome {
     /// Previously swallowed as `Ok(None)` with NO counter, which made a failed
     /// READ look exactly like a wrong SLOT.
     pub const BALANCE_UNREADABLE: &str = "balance_unreadable";
+    // ── SIM-FUND-02c (2026-10-08) ───────────────────────────────────────────
+    /// `verify_mismatch` SPLIT BY WHERE THE SENTINEL ACTUALLY IS.
+    ///
+    /// `verify_mismatch` alone cannot say whether the write failed to persist or
+    /// whether it persisted somewhere the EVM does not read. Reproduced by hand
+    /// on the live fork: `anvil_setStorageAt` returns `true`, `eth_getStorageAt`
+    /// at that very slot returns the sentinel, and `balanceOf` — executed as
+    /// `eth_call` — returns the OLD value. Same anvil, same instant, same slot.
+    ///
+    /// This label is therefore the DISCRIMINATOR, not another symptom:
+    ///   `write_invisible`   — the overlay HOLDS the sentinel and the EVM still
+    ///                         does not see it. The write landed; the reader
+    ///                         cannot reach it.
+    ///   `write_not_persisted` — the overlay does NOT hold the sentinel: the
+    ///                         write did not stick at this slot.
+    /// Without this split the two are indistinguishable, which is the exact
+    /// reason this class survived two previous fixes (SIM-FUND-01b and
+    /// SIM-FUND-02) while describing a different cause each time.
+    pub const WRITE_INVISIBLE: &str = "write_invisible";
+    /// The read-back of the written slot did NOT return the sentinel: the write
+    /// did not persist at that location.
+    pub const WRITE_NOT_PERSISTED: &str = "write_not_persisted";
 }
 
 fn count(outcome: &str) {
@@ -192,7 +214,23 @@ impl SignerFunder {
                 // no `Err`, since an `Err` would have propagated through the `?`
                 // above with its OWN message) but the sentinel did NOT reproduce
                 // through `balanceOf`. The slot is not the one `balanceOf` reads.
-                count(outcome::VERIFY_MISMATCH);
+                //
+                // SIM-FUND-02c: that sentence asserts WHERE the write went, and
+                // it is not always true. Read the written slot BACK and split:
+                // the overlay either holds the sentinel (the write landed and the
+                // EVM cannot see it) or it does not (the write never stuck).
+                // Without this read-back the two are the same string — which is
+                // how this class outlived two fixes by describing a new cause
+                // each time.
+                match read_storage_slot(&self.provider, token, slot, signer, self.timeout).await {
+                    Some(word) if word == u256_to_h256(SENTINEL_BALANCE) => {
+                        count(outcome::WRITE_INVISIBLE);
+                    }
+                    Some(_) => count(outcome::WRITE_NOT_PERSISTED),
+                    // The read-back itself failed: do NOT invent a cause. The
+                    // original (b) label still applies and is still honest.
+                    None => count(outcome::VERIFY_MISMATCH),
+                }
             }
             // Sentinel not observed — restore the ORIGINAL balance (captured
             // before any probe) so we never leak a corrupted slot onward.
@@ -288,6 +326,34 @@ async fn balance_of(
     }
 }
 
+/// Read a storage word back with `eth_getStorageAt` (SIM-FUND-02c).
+///
+/// This is the DISCRIMINATOR, not a second opinion: it separates "the write
+/// landed but the EVM executing `balanceOf` cannot reach it" from "the write
+/// never landed at this slot". `None` means the read-back ITSELF failed — which
+/// is reported as unknown, never silently folded into "no write".
+async fn read_storage_slot(
+    provider: &Provider<Http>,
+    token: Address,
+    slot: u64,
+    signer: Address,
+    timeout: Duration,
+) -> Option<H256> {
+    let slot32 = balance_slot(slot, signer);
+    let res: Result<String, _> = tokio::time::timeout(
+        timeout,
+        provider.request("eth_getStorageAt", (token, slot32, "latest")),
+    )
+    .await
+    .ok()?;
+    let hex = res.ok()?;
+    let bytes = ethers::utils::hex::decode(hex.trim_start_matches("0x")).ok()?;
+    if bytes.len() != 32 {
+        return None;
+    }
+    Some(H256::from_slice(&bytes))
+}
+
 fn decode_u256(out: &Bytes) -> Option<U256> {
     if out.len() < 32 {
         return None;
@@ -376,5 +442,38 @@ mod tests {
     fn sentinel_is_distinct_and_nonzero() {
         assert!(!SENTINEL_BALANCE.is_zero());
         assert_ne!(SENTINEL_BALANCE, FUND_AMOUNT);
+    }
+
+    /// SIM-FUND-02c: `write_invisible` y `write_not_persisted` son el
+    /// DISCRIMINADOR. Tienen que ser strings distintos entre si y de
+    /// `verify_mismatch`: si colapsaran en uno, el split no discriminaria nada y
+    /// volveriamos al estado que dejo a esta clase sobrevivir DOS arreglos
+    /// describiendo una causa nueva cada vez.
+    #[test]
+    fn simfund02c_the_discriminator_labels_are_distinct() {
+        assert_ne!(outcome::WRITE_INVISIBLE, outcome::WRITE_NOT_PERSISTED);
+        assert_ne!(outcome::WRITE_INVISIBLE, outcome::VERIFY_MISMATCH);
+        assert_ne!(outcome::WRITE_NOT_PERSISTED, outcome::VERIFY_MISMATCH);
+
+        // CONTROL: ningún label vacío y ninguno duplicado sobre el conjunto
+        // COMPLETO. Sin este control el test de arriba pasaría igual si alguien
+        // añadiera un tercer label igual a otro.
+        let all = [
+            outcome::SEEDED_FRESH,
+            outcome::CACHE_HIT,
+            outcome::SLOT_UNRESOLVED,
+            outcome::RPC_ERR,
+            outcome::WRITE_REJECTED,
+            outcome::VERIFY_MISMATCH,
+            outcome::BALANCE_UNREADABLE,
+            outcome::WRITE_INVISIBLE,
+            outcome::WRITE_NOT_PERSISTED,
+        ];
+        for (i, a) in all.iter().enumerate() {
+            assert!(!a.is_empty(), "label {i} vacío");
+            for b in all.iter().skip(i + 1) {
+                assert_ne!(a, b, "labels duplicados: {a}");
+            }
+        }
     }
 }
