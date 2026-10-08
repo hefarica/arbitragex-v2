@@ -1,7 +1,7 @@
 # FUND-FUNNEL-01 — ¿Movió #879 el funnel de fondeo?
 
 **Tarea:** t161 · **Agente:** Backend · **Modo:** SOLO LECTURA (cero cambios de código, cero reinicios, cero deploys)
-**Instante de medición:** `2026-10-08T14:01:22Z` (marcado por `date -u` en el VPS, canal ssh `arbx`)
+**Instantes de medición:** `2026-10-08T14:01:22Z` y `2026-10-08T14:03:52Z` (ambos marcados por `date -u` en el VPS, canal ssh `arbx`)
 **Canon:** `docs/backend/FUND-FUNNEL-01.PREDICCION.txt` — predicción pre-registrada ANTES de mirar.
 **Especificación de sujeto (del contrato):** *"MEDIR SI #879 MOVIO EL FUNNEL, en la poblacion correcta y con el instrumento correcto."*
 
@@ -78,30 +78,30 @@ Unidades, cerradas por t160 y **no re-derivadas aquí**:
 
 ## 5. LA MEDICIÓN
 
-Lectura coherente en un solo instante — `2026-10-08T14:01:22Z`, ts de Prometheus `1791468082.708`
-(vía `docker exec arbitragex-v2-prometheus-1 wget -qO- 'http://localhost:9090/api/v1/query?query=…'`):
+Lectura coherente en un solo instante — `2026-10-08T14:03:52Z`, ts de Prometheus `1791468232.634`
+(vía `curl -s --max-time 20 'http://localhost:9090/api/v1/query?query=…'` **desde el VPS**, exit=0 — ver defecto #9):
 
-| Etiqueta | Valor @14:01:22Z |
+| Etiqueta | Valor @14:03:52Z |
 |---|---|
-| `slot_unresolved` | **2585** |
-| `verify_mismatch` | **10340** |
-| `balance_unreadable` | 1410 |
+| `slot_unresolved` | **2634** |
+| `verify_mismatch` | **10536** |
+| `balance_unreadable` | 1451 |
 | `rpc_err` | **5** |
-| `arbx_simulation_total{simulator="anvil"}` | **2590** |
-| `arbx_simulation_total{simulator="revm"}` | 37659 |
+| `arbx_simulation_total{simulator="anvil"}` | **2639** |
+| `arbx_simulation_total{simulator="revm"}` | 38038 |
 | `seeded_fresh` | **vector vacío ⇒ AUSENTE** |
 | outcomes distintos en la serie | 4 |
 
 ### 5.1 Las identidades exactas siguen intactas
 
 ```
-2585 + 5 = 2590            → slot_unresolved + rpc_err = anvil   EXACTO
-10340 / 2585 = 4,0000      → verify_mismatch / intentos = 4,0    EXACTO
+2634 + 5 = 2639            → slot_unresolved + rpc_err = anvil   EXACTO
+10536 / 2634 = 4,0000      → verify_mismatch / intentos = 4,0    EXACTO
 ```
 
 ### 5.2 Y siguen intactas mientras el contador AVANZA
 
-Cuatro lecturas en ventana, todas con la misma firma:
+Cinco lecturas en ventana, todas con la misma firma:
 
 | Lectura | `slot_unresolved` | `verify_mismatch` | anvil | ratio |
 |---|---|---|---|---|
@@ -109,17 +109,44 @@ Cuatro lecturas en ventana, todas con la misma firma:
 | t161-a | 2549 | 10196 | 2554 | 4,0000 |
 | t161-b | 2563 | 10252 | 2568 | 4,0000 |
 | t161-c @14:01:22Z | 2585 | 10340 | 2590 | 4,0000 |
+| t161-d @14:03:52Z | 2634 | 10536 | 2639 | 4,0000 |
 
-El contador avanzó `2468 → 2585` (+117 intentos) **conservando el ratio exacto**. No es una foto: es una firma viva del binario pre-#879. Si #879 estuviera corriendo, el ratio no podría quedarse en `4,0000` con el contador moviéndose.
+El contador avanzó `2468 → 2634` (+166 intentos) **conservando el ratio exacto**. No es una foto: es una firma viva del binario pre-#879. Si #879 estuviera corriendo, el ratio no podría quedarse en `4,0000` con el contador moviéndose.
 
 ### 5.3 P2: `seeded_fresh` sigue AUSENTE
 
-`arbx_sim_funding_total{outcome="seeded_fresh"}` devuelve **vector vacío** a las `14:01:22Z`.
-Ausencia ≠ cero: es **no computado**, y su razón es la de §2 — el productor de esa etiqueta es el código de #879, que no corre. En las cuatro lecturas (t160 + tres de t161) **nunca apareció**.
+`arbx_sim_funding_total{outcome="seeded_fresh"}` devuelve **vector vacío** en las dos lecturas de esta tarea (`14:01:22Z`, `14:03:52Z`), exit=0 en ambas.
+Ausencia ≠ cero: es **no computado**, y su razón es la de §2 — el productor de esa etiqueta es el código de #879, que no corre. En las cinco lecturas (t160 + cuatro de t161) **nunca apareció**.
 
-### 5.4 Observación registrada, sin conclusión
+### 5.4 OBSERVACIÓN RETIRADA — el control funcionó
 
-`arbx_simulation_total{simulator="revm"}` = `37659` en dos lecturas separadas por ~12 min (`13:49` y `14:01`), mientras `anvil` avanzó `2554 → 2590` (+36). **Hecho medido.** Se registra como observación; no se concluye sobre su causa en esta tarea, que no la instrumentó.
+En una lectura intermedia registré que `arbx_simulation_total{simulator="revm"}` no avanzaba (`37659` en dos lecturas separadas ~12 min). **La tercera lectura la falsifica: `revm = 38038` @14:03:52Z ⇒ avanzó +379.**
+
+Se **retira** la observación y se conserva el rastro, porque el modo de fallo que evitó es el que esta campaña viene pagando: dos lecturas iguales **no** son una serie congelada, son dos muestras. Sin la tercera lectura habría quedado escrito en un artefacto un «hecho» que era un artefacto de muestreo. **No se concluye nada sobre `revm`**; solo se deja constancia de que las dos series avanzan y de que `revm` lo hace mucho más rápido que `anvil` (`+379` contra `+43` en la misma ventana), consistente con §4: el camino barato lleva el caudal.
+
+### 5.5 La partición de la tabla viva (control cruzado independiente)
+
+Los contadores son de Prometheus; la tabla es de PostgreSQL. **Dos fuentes independientes.** Corte vivo, 1 h por `simulated_at`
+(`docker exec arbitragex-v2-postgres-1 psql -U postgres -d arbitragex -tAc "SELECT fail_reason, count(*) FROM simulations WHERE simulated_at > now() - interval '1 hour' GROUP BY fail_reason ORDER BY 2 DESC"`, exit=0):
+
+| `fail_reason` | count |
+|---|---|
+| `candidate_incomplete:amount_in_wei_zero` | 8027 |
+| `sim_signer_funding_slot_unresolved` | 855 |
+| `funding_balanceof_timeout` | 3 |
+| **Σ** | **8885** |
+
+```
+8027 + 855 + 3 = 8885   → la partición cierra EXACTA contra el total de la tabla
+855 + 3 = 858           → con_rastro (revert_risk_pct IS NOT NULL) @14:03:52Z, EXACTO
+```
+
+Verificación del campo de rastro, misma consulta (`count(*) FILTER (WHERE revert_risk_pct IS NOT NULL), count(*) FILTER (WHERE raw_trace IS NOT NULL), count(*)` ⇒ `858|0|8885`, exit=0):
+
+- `revert_risk_pct IS NOT NULL` = **858** = `855 + 3` ⇒ es el campo real, y marca **exactamente** las dos ramas de fondeo.
+- `raw_trace IS NOT NULL` = **0 sobre 8885 filas positivas** ⇒ **reconfirmado defecto #8**: un control que lee cero sobre la población positiva no es un control.
+
+Nota de instrumento: la partición de arriba mide **filas de tabla**; los contadores de §5 miden **eventos acumulados desde el arranque**. Son unidades distintas y **no se restan entre sí** (lección de t160).
 
 ---
 
@@ -141,7 +168,8 @@ Ausencia ≠ cero: es **no computado**, y su razón es la de §2 — el producto
 
 Se declaran, no se silencian.
 
-- **#9 — el comando de verificación del contrato está muerto.** `curl http://195.201.235.70:9090/api/v1/query?query=…` devuelve **`http_code=000`, `exit=7`** (conexión rechazada: el puerto 9090 no está publicado al host). Vía que sí funciona: `docker exec arbitragex-v2-prometheus-1 wget -qO- 'http://localhost:9090/api/v1/query?query=…'`. Cualquier tarea futura que copie el comando del contrato obtiene un falso «sin datos».
+- **#9 — el comando de verificación del contrato falla por la dirección, no por el servicio.** El `verify` del contrato dice `curl -s --max-time 20 'http://195.201.235.70:9090/api/v1/query?query=…'`. Medido: **`exit=7`** (conexión rechazada). Pero el mismo endpoint por loopback, **desde el VPS**, responde **`exit=0` con datos**: `curl -s --max-time 20 'http://localhost:9090/api/v1/query?query=arbx_simulation_total'`. ⇒ El puerto 9090 está publicado **solo en loopback**, no en la interfaz pública. **El servicio está vivo; la dirección del contrato es la que no llega.** Corrección de una palabra: usar `localhost:9090` ejecutando en el VPS (tercera vía equivalente: `docker exec arbitragex-v2-prometheus-1 wget -qO- 'http://localhost:9090/api/v1/query?query=…'`).
+  **Por qué importa igual:** quien copie el comando del contrato **tal como está escrito** obtiene `exit=7` y un vector vacío, y la lectura natural de eso es «no hay datos» — un falso negativo con la forma exacta de un cero. Un `exit=7` sobre una consulta de métricas **nunca** debe leerse como ausencia de eventos.
 - **#10 — el contrato asume un deploy cerrado que no cerró.** La instrucción *"si el deploy no cerró, se declara PENDIENTE con la condición exacta y se cierra"* resultó ser la rama correcta, y es la que se ejecuta. `gh run view 37783694993` ⇒ `status=in_progress`, `conclusion=""`.
 - **#8 (heredado de t160, sigue vigente)** — el campo de traza es `revert_risk_pct`, **no** `raw_trace`: `raw_trace IS NOT NULL` = `0` en el 100 % de las filas vivas, **incluidas las que sí simulan**. No es un control.
 
@@ -154,16 +182,22 @@ Un instrumento sin controles no es un instrumento.
 | Control | Resultado | Lectura |
 |---|---|---|
 | Canal ssh vivo | `SELECT 1` → `1`, exit=0 | el canal transporta |
-| Control negativo | `SELECT esto_no_existe` → **exit=1 + ERROR** | el exit=0 de arriba significa algo |
-| Endpoint de métricas desde el host | `http://195.201.235.70/metrics` → **404 text/html** | el puerto no expone Prometheus; por eso el path del contenedor |
-| `seeded_fresh` sobre población positiva | **ausente** | ausencia real, con productor identificado (§2), no un hueco de instrumento |
-| Identidad `4,0000` | **EXACTA** en 4 lecturas | el instrumento ve lo que dice ver |
-| Identidad `slot_unresolved+rpc_err = anvil` | **EXACTA** en 4 lecturas | dos series independientes concuerdan |
+| Control negativo SQL | `SELECT esto_no_existe` → **exit=1 + `ERROR: column … does not exist`** | el exit=0 de arriba significa algo |
+| `:9090` por IP pública | **`exit=7`** | el contrato no llega; ver defecto #9 |
+| `:9090` por loopback (VPS) | **`exit=0`, con datos** | el servicio está vivo y mide |
+| Endpoint prohibido `/metrics` | `http_code=404`, `content_type=text/html; charset=utf-8` | coincide con lo declarado: es la consola, no Prometheus |
+| Partición de la tabla viva | `8027 + 855 + 3 = 8885` **EXACTO** | la tabla cierra contra sí misma |
+| `revert_risk_pct` vs las ramas de fondeo | `855 + 3 = 858` **EXACTO** | el campo de rastro marca justo las dos ramas de fondeo |
+| `raw_trace` sobre población positiva | **`0` sobre `8885`** | **NO es control** — defecto #8 reconfirmado en esta misma corrida |
+| Identidad `4,0000` | **EXACTA** en 5 lecturas | el instrumento ve lo que dice ver |
+| Identidad `slot_unresolved+rpc_err = anvil` | **EXACTA** en 5 lecturas | dos series independientes concuerdan |
+| `seeded_fresh` sobre población positiva | **vector vacío** | ausencia real, con productor identificado (§2) |
 
 **Controles que esta tarea NO puede usar, y por qué** (heredados, no re-litigados):
-- `raw_trace IS NOT NULL` — defecto #8, da cero en la población positiva.
-- La tabla de `simulations` — mide **intentos**, el contador mide **arranque acumulado**: unidades distintas, no comparables directamente.
-- Cualquier `GROUP BY` cuya vacuidad pudiera ser un `NULL` — se cuenta con `count(*)`.
+- `raw_trace IS NOT NULL` — defecto #8: da cero en la población positiva, **reconfirmado hoy sobre `8885` filas**.
+- La tabla de `simulations` — mide **filas/ventana**; el contador mide **eventos desde el arranque**: unidades distintas, no comparables directamente. Se dan las dos (§5 y §5.5) y se dice cuál es la primaria: **el contador**.
+- Cualquier `GROUP BY` cuya vacuidad pudiera ser un `NULL` — se cuenta con `count(*)`, y la partición de §5.5 se contrasta contra el total.
+- La muestra de 25 del benchmark — n=25 no distingue 7 de 4 de ruido (t156).
 
 ---
 
@@ -184,7 +218,7 @@ Condición de cierre, **exacta y mecánica**. Ninguna parte requiere juicio:
 
 ## 10. TRAZABILIDAD
 
-- Artefactos leídos: `GET /api/status` (VPS), `gh run view 37783694993`, `git log origin/main`, Prometheus vía contenedor.
+- Artefactos leídos: `GET /api/status` (VPS), `gh run view 37783694993`, `git log origin/main`, Prometheus **por loopback desde el VPS** (`curl http://localhost:9090/api/v1/query`), PostgreSQL por `docker exec arbitragex-v2-postgres-1 psql`.
 - Ninguna escritura sobre el VPS. Ningún reinicio. Ningún deploy. Ninguna firma. Ningún broadcast.
 - Este documento no modifica código: solo `docs/backend/FUND-FUNNEL-01.md` y `docs/backend/FUND-FUNNEL-01.PREDICCION.txt`.
 
