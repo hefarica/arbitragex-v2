@@ -180,7 +180,7 @@ services:
     - /bin/sh
     - -c
     command:
-    - exec anvil --fork-url "$$ANVIL_FORK_URL" --host 0.0.0.0 --port 8545
+    - exec anvil --fork-url "$$ANVIL_FORK_URL" $${ANVIL_FORK_BLOCK:+--fork-block-number=$$ANVIL_FORK_BLOCK} --host 0.0.0.0 --port 8545
     expose:
     - "8545"
     networks:
