@@ -252,4 +252,16 @@ Enumeré **los caminos a `DecisionLog`** y busqué si alguno es alcanzable por u
 
 ---
 
+## 13. Oposición adversarial sobre MI conclusion (no sobre la del autor)
+
+Un veredicto de revisión que aterriza algo es una conclusión de alto riesgo: la pasé por el protocolo de oposición **antes** de aceptarla.
+
+- **`adversarial_frame`** (determinista, clasificación por modalidad `ejecutable`) devolvió como contra-tesis más fuerte —por prioridad declarada, no por calidad argumental—: *«El procedimiento corrio, pero el efecto observable que la tesis afirma no existe: no hay artefacto (fila, hash, archivo) que lo demuestre»*, con 4 pruebas discriminantes (artefacto del efecto; **reproducción en el entorno objetivo**; artefacto del número central; **ventana retenida**) y 2 criterios de falsación.
+- **`adversarial_verdict`** con la evidencia de esta acta (9 ítems, todos con artefacto verificable): **`sobrevive: TESIS`, peso 16 vs 7**, `items_con_artefacto: tesis 6 / contra 3 / total 9`, **`sin_artefacto: 0`**. El lado contra pesó con 3 artefactos reales, no con prosa: la ausencia de log de runtime (el contenedor desplegado no conoce la métrica), la serie vacía del contador, y la divergencia `behind_by: 7`.
+- **`evidencia_faltante`** que el veredicto nombró, y que coincide punto por punto con lo que esta acta ya declara **NO COMPUTADO**: (1) **la reproducción en el entorno objetivo** — el efecto del gate en runtime, que es el hueco del §3; (2) **la ventana retenida del canal** — no medí la antigüedad ni la ventana completa de `arbx:opps:validated`, sólo 1 000 entradas de cada extremo de 10 001 (§7.1, §11.4).
+
+⇒ El veredicto **no** convierte el runtime en probado: dice que **la tesis sobrevive con los artefactos que tiene**, y **nombra la evidencia que la cambiaría**. Un veredicto `INDECIDIBLE` habría sido la respuesta correcta si el lado ganador no tuviera artefacto; no fue el caso.
+
+---
+
 *Revisión independiente. No mergea, no despliega, no firma. Un aterrizaje por ciclo: t166 queda detrás de esta acta y debe **re-basar y re-medir** antes de aterrizar (§8.1).*
