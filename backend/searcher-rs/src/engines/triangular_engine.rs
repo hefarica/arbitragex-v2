@@ -575,9 +575,28 @@ fn build_opportunity(
     let token_c_addr = format!("0x{:040x}", cycle_def.hops[2].token_out);
     let pair_symbol = format!("{}(triangular)", cycle_def.token_a_symbol);
 
-    let amount_in_f64 = amount_in_wei
-        .map(|w| u256_to_f64(&w) / 1e18_f64)
-        .unwrap_or(0.0);
+    // t205 TRIANGULAR-1E18-01: the notional is the kernel's sized wei converted
+    // with the row's OWN resolved unit. The previous rule divided by `1e18_f64`
+    // — a plausible constant standing in for a unit nobody resolved — and that
+    // value survived on the non-sized/rejected path, feeding
+    // `expected_amount_out` below and `OpportunityCandidate.amount_in`. A symbol
+    // that is not in the table now yields NOT-COMPUTED (`NaN`): never 18, never
+    // 1e18.
+    let token_a_decimals = token_a_decimals_resolved(&cycle_def.token_a_symbol);
+    let amount_in_f64 = match (amount_in_wei, token_a_decimals) {
+        (Some(w), Some(decimals)) => u256_to_f64(&w) / 10f64.powi(decimals as i32),
+        (Some(_), None) => {
+            warn!(
+                event = "triangular.token_a_decimals_unresolved",
+                reason = "token_a_symbol_not_in_the_decimals_table",
+                sym = %cycle_def.token_a_symbol,
+                "notional left NOT COMPUTED (NaN): no fabricated 1e18/18 unit (R8)"
+            );
+            f64::NAN
+        }
+        // No sized amount at all: unchanged behaviour (0.0, out of this locus).
+        (None, _) => 0.0,
+    };
     let amount_in_wei_str = amount_in_wei
         .map(|w| w.to_string())
         .unwrap_or_else(|| "0".to_string());
@@ -706,7 +725,14 @@ fn extract_pricing(
 }
 
 /// Returns the canonical decimals for a well-known symbol.
-/// For unknown tokens, returns 18 (safe default for token_a_wei → USD math).
+///
+/// DECLARED RESIDUAL (t205 TRIANGULAR-1E18-01): the `_ => 18` arm is the SAME
+/// defect class ("unknown resolved to a plausible constant") and t205 does NOT
+/// close it — this u8 form is what the math kernel's
+/// `EvalInput.token_a_decimals` consumes, and changing its type would ripple
+/// into `evaluate_cycle`. What t205 closes is the REPORTING locus: the
+/// notional/output of the built opportunity, which now uses the `Option` form
+/// below and goes to NOT-COMPUTED instead of inventing a unit.
 fn token_a_decimals_for_symbol(symbol: &str) -> u8 {
     match symbol.to_ascii_uppercase().as_str() {
         "WETH" => 18,
@@ -714,6 +740,23 @@ fn token_a_decimals_for_symbol(symbol: &str) -> u8 {
         "DAI" => 18,
         "WBTC" => 8,
         _ => 18,
+    }
+}
+
+/// Canonical decimals for a well-known symbol, or **`None`** when the symbol is
+/// not in the table.
+///
+/// t205 TRIANGULAR-1E18-01: this is the source the opportunity builder uses. An
+/// unknown symbol is *not resolved*, so the notional goes to NOT-COMPUTED — it is
+/// never silently scaled by 18 (kernel fallback) nor by 1e18 (the fabricated
+/// constant this task removes). One table, two shapes: they must not drift.
+fn token_a_decimals_resolved(symbol: &str) -> Option<u8> {
+    match symbol.to_ascii_uppercase().as_str() {
+        "WETH" => Some(18),
+        "USDC" | "USDT" => Some(6),
+        "DAI" => Some(18),
+        "WBTC" => Some(8),
+        _ => None,
     }
 }
 
@@ -1468,6 +1511,70 @@ mod tests {
     // USDC/DAI cycle (price $1) the field was displaced 3000x. The real
     // price is already resolved by `extract_pricing` in `evaluate_one_cycle`.
 
+    // ── t205 (TRIANGULAR-1E18-01): el 1e18 fabricado no puede volver ──────────
+
+    /// El notional usa la unidad RESUELTA (USDC 6). Antes: 100e6 wei / 1e18 =
+    /// 1e-10. Despues: 100e6 / 1e6 = 100.0 — factor 1e12 sobre el mismo wei.
+    #[test]
+    fn triangular_notional_uses_the_resolved_unit_not_1e18() {
+        let cycle_def = tri_cycle_def("USDC");
+        let amount_in_wei = U256::from(100u32) * U256::from(10u32).pow(U256::from(6u32));
+        let (opp, cand, _rp) = build_opportunity(
+            1,
+            H256::zero(),
+            &cycle_def,
+            Some(6.0),
+            Some(amount_in_wei),
+            Some(1.0),
+            1000.0,
+        );
+        assert_eq!(cand.amount_in, 100.0, "100 USDC (6 dec) = 100.0 unidades");
+        assert_ne!(
+            cand.amount_in, 1e-10,
+            "1e-10 es exactamente el 1e18 fabricado sobre los mismos wei: no puede volver"
+        );
+        assert_eq!(
+            cand.expected_amount_out, 106.0,
+            "el SEGUNDO consumidor (expected_amount_out) parte del notional resuelto"
+        );
+        assert_eq!(opp.amount_in_wei, amount_in_wei.to_string());
+    }
+
+    /// Un simbolo que NO esta en la tabla va a NO COMPUTADO (NaN) — ni 1e18 ni 18.
+    #[test]
+    fn triangular_notional_unresolved_symbol_is_not_computed() {
+        let cycle_def = tri_cycle_def("UNKNOWNSYM");
+        let amount_in_wei = U256::from(100u32) * U256::from(10u32).pow(U256::from(6u32));
+        let (_opp, cand, _rp) = build_opportunity(
+            1,
+            H256::zero(),
+            &cycle_def,
+            Some(6.0),
+            Some(amount_in_wei),
+            Some(1.0),
+            1000.0,
+        );
+        assert!(
+            cand.amount_in.is_nan(),
+            "sin unidad resuelta el notional es NO COMPUTADO (NaN), got {}",
+            cand.amount_in
+        );
+        assert_ne!(cand.amount_in, 1e-10, "el 1e18 fabricado no puede volver");
+        assert_ne!(cand.amount_in, 1e14, "y un 18 fabricado tampoco");
+    }
+
+    #[test]
+    fn token_a_decimals_resolved_never_fabricates_a_unit() {
+        assert_eq!(token_a_decimals_resolved("USDC"), Some(6));
+        assert_eq!(token_a_decimals_resolved("wbtc"), Some(8));
+        assert_eq!(token_a_decimals_resolved("WETH"), Some(18));
+        assert_eq!(
+            token_a_decimals_resolved("UNKNOWNSYM"),
+            None,
+            "un simbolo desconocido NO se resuelve: None, nunca 18"
+        );
+    }
+
     /// Minimal `CycleDefinition` with a configurable token_a symbol.
     fn tri_cycle_def(token_a_symbol: &str) -> CycleDefinition {
         let a = addr(0x10);
@@ -1502,7 +1609,11 @@ mod tests {
         assert_eq!(usdc_price, Some(1.0), "USDC must resolve to $1.0");
 
         let cycle_def = tri_cycle_def("USDC");
-        let amount_in_wei = U256::from(100u32) * U256::from(10u32).pow(U256::from(18u32)); // 100e18 → 100.0 tokens
+        // t205: era `100e18` ("→ 100.0 tokens") para un ciclo USDC, esto es, la
+        // suposicion de 18 decimales que este task elimina. La unidad real de
+        // USDC es 6 ⇒ 100 * 10^6 wei son los MISMOS 100.0 USDC que el test mide:
+        // sus aserciones (100.0 y 106.0) quedan intactas.
+        let amount_in_wei = U256::from(100u32) * U256::from(10u32).pow(U256::from(6u32)); // 100 USDC (6 dec)
         let (_opp, cand, _rp) = build_opportunity(
             1,
             H256::zero(),
@@ -1558,7 +1669,8 @@ mod tests {
     #[test]
     fn price_scale_t3_no_price_keeps_expected_amount_out_equal_to_amount_in() {
         let cycle_def = tri_cycle_def("USDC");
-        let amount_in_wei = U256::from(100u32) * U256::from(10u32).pow(U256::from(18u32));
+        // t205: 100e18 codificaba 18 decimales para USDC; la unidad real es 6.
+        let amount_in_wei = U256::from(100u32) * U256::from(10u32).pow(U256::from(6u32));
         let (_opp, cand, _rp) = build_opportunity(
             1,
             H256::zero(),
