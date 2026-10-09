@@ -452,6 +452,43 @@ pub static SIM_STREAM_GHOST_ACKED: Lazy<IntCounter> = Lazy::new(|| {
     c
 });
 
+/// DL-02 / SIMCTL-VERDICT-01: the STRICT FRONTIER on `arbx:opps:validated`.
+///
+/// The channel is a DECISION LOG (`selector-api` stamps `verdict` /
+/// `verdict_reason` on every payload it publishes), not an accept queue.
+/// `sim-ctl` reads those two keys as an envelope over the raw JSON — WITHOUT
+/// declaring them on `shared_rs::contracts::Opportunity` — and splits every
+/// message into exactly one of two sets:
+///
+/// * `outcome="eligible_simulations"` — `verdict == "accept"`. The only set
+///   that may spend fork RPC.
+/// * `outcome="decision_log"` — everything else, diagnosed and recorded.
+///
+/// With a `reject`-only stream this counter is what makes `passed = true = 0`
+/// interpretable: `decision_log` at 10.000 and `eligible_simulations` at 0 is
+/// "the producer rejected everything", which is a DIFFERENT state from "no
+/// message arrived".
+///
+/// `reason` is a BOUNDED family (an allowlist mirrored from
+/// `selector-api/src/policy/engine.ts` plus the envelope states
+/// `envelope_missing` / `verdict_unknown` / `verdict_malformed`), never the raw
+/// producer string: an unbounded label is a cardinality leak. The raw reason is
+/// persisted verbatim on the `simulations` row instead.
+pub static SIM_VALIDATED_FRONTIER_TOTAL: Lazy<IntCounterVec> = Lazy::new(|| {
+    let c = IntCounterVec::new(
+        prometheus::opts!(
+            "arbx_sim_validated_frontier_total",
+            "Messages on arbx:opps:validated split by the strict admission frontier: \
+             outcome=eligible_simulations reaches simulation, outcome=decision_log is \
+             diagnosed per reason family and consumes no fork RPC"
+        ),
+        &["outcome", "reason"],
+    )
+    .expect("metric");
+    REGISTRY.register(Box::new(c.clone())).expect("register");
+    c
+});
+
 /// Record a bundle inclusion event.
 ///
 /// `profitable` is `true` when the opportunity carried a positive
@@ -507,6 +544,7 @@ pub fn init_metrics() {
     let _ = &*SIM_STREAM_CLAIMED_COUNT;
     let _ = &*SIM_STREAM_CLAIM_FAILURES;
     let _ = &*SIM_STREAM_GHOST_ACKED;
+    let _ = &*SIM_VALIDATED_FRONTIER_TOTAL;
     SERVICE_UP.set(1);
 }
 

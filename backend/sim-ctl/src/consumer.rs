@@ -1,6 +1,13 @@
 //! Redis Streams consumer for sim-ctl.
 //!
 //! Reads `arbx:opps:validated` published by selector-api (S3). For each opp:
+//!   0. ADMISSION — SIMCTL-VERDICT-01: the STRICT FRONTIER. The stream is a
+//!      DECISION LOG, not an accept queue: the producer stamps `verdict` /
+//!      `verdict_reason` on every payload, and `Opportunity` declares neither,
+//!      so serde used to drop them silently. Only `verdict == "accept"` reaches
+//!      step 1. Every other message is diagnosed, persisted with its typed
+//!      reason and ACKed WITHOUT consuming an in-flight/rate permit, a fork
+//!      snapshot or an `eth_call`. See `decision_frontier`.
 //!   1. simulate — SIMWIRE-02: when the full B2c env is present at boot
 //!      (`SIM_BACKEND=revm` + `REVM_RPC_URL` + `ARBITRAGE_EXECUTOR` +
 //!      `REDIS_URL`), the route-aware REAL pipeline runs: validated-plan
@@ -39,6 +46,10 @@ use shared_rs::metrics::{
     SIMULATIONS_TOTAL, SIM_STREAM_CLAIMED_COUNT, SIM_STREAM_CLAIM_FAILURES, SIM_STREAM_GHOST_ACKED,
     SIM_STREAM_OLDEST_PENDING_MS, SIM_STREAM_PENDING_COUNT,
 };
+// DL-02 / SIMCTL-VERDICT-01: the strict frontier lives in the LIB target so its
+// tests run under CI's blocking `cargo test --workspace --locked --lib` gate; a
+// bin-only `#[cfg(test)]` module would never execute there (see lib.rs).
+use sim_ctl::decision_frontier::{self, Admission};
 use sqlx::postgres::PgPool;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -294,6 +305,10 @@ pub struct StreamBound {
     pub admitted: u64,
     pub deferred: u64,
     pub terminated_inadmissible: u64,
+    /// DL-02 / SIMCTL-VERDICT-01: messages the producer's OWN verdict kept out
+    /// of the simulation path (`producer_verdict:*`). Terminal and recorded,
+    /// never a deferral — and reached without consuming a permit.
+    pub terminated_decision_log: u64,
     last_report: Instant,
 }
 
@@ -323,6 +338,7 @@ impl StreamBound {
             admitted: 0,
             deferred: 0,
             terminated_inadmissible: 0,
+            terminated_decision_log: 0,
             last_report: now,
         }
     }
@@ -379,6 +395,37 @@ impl StreamBound {
         }
     }
 
+    /// DL-02 / SIMCTL-VERDICT-01: record a message the PRODUCER's own verdict
+    /// kept out of the simulation path.
+    ///
+    /// Terminal and RECORDED, not deferred and not dropped: `finish` persists
+    /// the typed reason on the `simulations` row, so the entry is explained
+    /// instead of vanishing, and no rate/in-flight permit was consumed to reach
+    /// this point. `family` is the BOUNDED metric label (the raw producer
+    /// reason stays in `reason`).
+    ///
+    /// Logged on the first occurrence and then at most once per
+    /// `BOUND_LOG_INTERVAL` (R9): this loop runs per message and a reject-only
+    /// stream is 10.000 entries — per-entry logging here is exactly the flood
+    /// that destroys the observability of everything else.
+    pub fn note_decision_log(&mut self, now: Instant, entry_id: &str, reason: &str, family: &str) {
+        self.terminated_decision_log += 1;
+        if self.terminated_decision_log == 1
+            || now.saturating_duration_since(self.last_report) >= BOUND_LOG_INTERVAL
+        {
+            self.last_report = now;
+            warn!(
+                event = "sim_ctl.bound_terminated_decision_log",
+                id = %entry_id,
+                reason = %reason,
+                reason_family = %family,
+                decision_log_total = self.terminated_decision_log,
+                "producer verdict kept this entry out of the simulation path — recorded with \
+                 its typed reason, no fork RPC consumed"
+            );
+        }
+    }
+
     /// Periodic summary of the bound's counters (R9 cadence).
     pub fn maybe_report(&mut self, now: Instant) {
         if now.saturating_duration_since(self.last_report) >= BOUND_LOG_INTERVAL {
@@ -388,6 +435,7 @@ impl StreamBound {
                 admitted = self.admitted,
                 deferred = self.deferred,
                 terminated_inadmissible = self.terminated_inadmissible,
+                terminated_decision_log = self.terminated_decision_log,
                 max_sims_per_sec = self.policy.max_sims_per_sec,
                 max_in_flight = self.policy.max_in_flight
             );
@@ -819,6 +867,41 @@ impl Consumer {
             }
         };
 
+        // ── SIMCTL-VERDICT-01 (DL-02) gate 0: the STRICT FRONTIER ────────────
+        // `arbx:opps:validated` is a DECISION LOG, not an accept queue: the
+        // producer stamps `verdict` / `verdict_reason` on EVERY payload it
+        // publishes (`selector-api` `publishValidated`, decision vocabulary in
+        // `policy/engine.ts`). `Opportunity` does not declare either key, so
+        // serde dropped both SILENTLY — the `Ok(..)` of the parse above was the
+        // MEASURE of that drop, never a signal that the message was
+        // admissible. Measured on the channel: 10.000 of 10.000 entries
+        // carried `"verdict":"reject"`.
+        //
+        // The frontier reads both keys from the RAW JSON (never from
+        // `Opportunity`, which stays byte-identical: PR #869 measured that
+        // adding the fields breaks 15+ `Opportunity {` literals OUTSIDE this
+        // crate, and that 15 is a lower bound) and splits the stream into two
+        // sets. It runs BEFORE gate 1, gate 2 and every simulator on purpose: a
+        // producer-rejected entry must not consume a rate permit, an in-flight
+        // permit, a fork snapshot or an `eth_call`. The fork is the scarce
+        // resource — diagnosing a reject must not spend it.
+        //
+        // The diagnosed set is NOT discarded: it reaches the SAME
+        // persist -> XACK tail as every other terminal outcome, carrying its
+        // typed reason on the `simulations` row, and every message is counted
+        // in `arbx_sim_validated_frontier_total{outcome,reason}`. That counter
+        // is what makes `passed = true = 0` interpretable instead of a blind
+        // skip: "10.000 rejected, 0 eligible" is not "the market gave nothing".
+        let admission = decision_frontier::admission(&decision_frontier::read_verdict(&json));
+        // ONE call site for the telemetry of BOTH sets, before the branch, so
+        // the two counts cannot drift apart.
+        admission.record();
+        if let Admission::DecisionLog { reason, family } = admission {
+            bound.note_decision_log(Instant::now(), &id, &reason, family.label());
+            let skip = recorded_skip(opportunity.id, &reason);
+            return self.finish(&id, &opportunity, skip).await;
+        }
+
         // ── SIMCTL-BOUND-01 gate 1: O(1) INLINE structural admissibility ──────
         // Evaluated on the message we ALREADY parsed: no I/O, no ordering, no
         // reading ahead. An entry that can never be simulated must not pay for
@@ -1198,13 +1281,19 @@ fn count_simulation(sim: &SimulationResult) {
         .inc();
 }
 
-/// Typed-gap SimulationResult: `passed=false` with a fail_reason that
-/// `is_sim_capability_gap` classifies as absence-of-capability — the
-/// opportunity stays non-rejected (status detected/validated,
-/// rejection_reason NULL) while the simulations row records the skip
-/// honestly. Counted in SIMULATIONS_TOTAL because the attempt really ran.
-pub(crate) fn counted_gap(opportunity_id: Uuid, reason: &str) -> SimulationResult {
-    let r = SimulationResult {
+/// DL-02 / SIMCTL-VERDICT-01: a typed SKIP that is recorded but is NOT a
+/// simulation attempt.
+///
+/// The producer's own verdict kept this message out of the simulation path, so
+/// no attempt ran and `SIMULATIONS_TOTAL` must not be inflated with it — that
+/// counter is the admissible side of the very measurement this change exists to
+/// make interpretable ("10.000 rejects are not 10.000 simulations"). The row
+/// still lands in `simulations` so the entry is EXPLAINED instead of vanishing,
+/// and `persistence::is_sim_capability_gap` classifies the `producer_verdict:`
+/// family as non-rejecting, so `opportunities.status` / `rejection_reason`
+/// stay owned by the producer that already wrote them.
+pub(crate) fn recorded_skip(opportunity_id: Uuid, reason: &str) -> SimulationResult {
+    SimulationResult {
         opportunity_id,
         passed: false,
         gas_estimate_wei: None,
@@ -1216,7 +1305,16 @@ pub(crate) fn counted_gap(opportunity_id: Uuid, reason: &str) -> SimulationResul
         fail_reason: Some(reason.to_string()),
         simulated_at: Utc::now(),
         trace_id: Uuid::new_v4(),
-    };
+    }
+}
+
+/// Typed-gap SimulationResult: `passed=false` with a fail_reason that
+/// `is_sim_capability_gap` classifies as absence-of-capability — the
+/// opportunity stays non-rejected (status detected/validated,
+/// rejection_reason NULL) while the simulations row records the skip
+/// honestly. Counted in SIMULATIONS_TOTAL because the attempt really ran.
+pub(crate) fn counted_gap(opportunity_id: Uuid, reason: &str) -> SimulationResult {
+    let r = recorded_skip(opportunity_id, reason);
     count_simulation(&r);
     r
 }
@@ -1793,5 +1891,64 @@ mod simctl_bound_01_tests {
             assert!(b >= 1, "nunca 0 con presupuesto {n}");
             assert!(b <= n.max(1), "nunca más que el presupuesto ({n})");
         }
+    }
+}
+
+/// DL-02 / SIMCTL-VERDICT-01: the two SimulationResult builders must stay
+/// distinguishable, because one of them is what makes `passed = true = 0`
+/// readable. `recorded_skip` explains a message WITHOUT inflating the attempt
+/// counter; `counted_gap` still counts, because a structural gate really ran.
+///
+/// Named for the COUNTER, not for the frontier's placement: the placement
+/// invariant lives in `decision_frontier` (lib target), where it can run under
+/// CI's blocking `cargo test --workspace --locked --lib` gate.
+#[cfg(test)]
+mod dl02_skip_counter_tests {
+    use super::{counted_gap, recorded_skip};
+    use shared_rs::metrics::SIMULATIONS_TOTAL;
+
+    fn attempts() -> u64 {
+        SIMULATIONS_TOTAL
+            .with_label_values(&["revm", "false"])
+            .get()
+    }
+
+    #[test]
+    fn a_recorded_skip_is_not_a_simulation_attempt_but_a_gap_still_is() {
+        // Both halves live in ONE test on purpose: `SIMULATIONS_TOTAL` is
+        // process-global and the harness runs tests in parallel, so splitting
+        // the "does not count" assertion from the "does count" control would
+        // let the control's increment land inside the other's window. No other
+        // test in this crate writes the `["revm","false"]` series.
+        let id = uuid::Uuid::new_v4();
+        let before = attempts();
+        let skip = recorded_skip(id, "producer_verdict:reject:producer_rejected");
+
+        assert!(!skip.passed, "a skip is never a pass");
+        assert_eq!(skip.opportunity_id, id);
+        assert_eq!(
+            skip.fail_reason.as_deref(),
+            Some("producer_verdict:reject:producer_rejected"),
+            "the typed reason is what explains the entry on the simulations row"
+        );
+        assert_eq!(
+            attempts(),
+            before,
+            "a producer-rejected message is not a simulation attempt — counting it would \
+             re-corrupt the very measurement this change protects"
+        );
+
+        // CONTROL: the same builder path DOES move the counter when a structural
+        // gate ran, so the equality above is not a vacuous pass over a metric
+        // that never moves.
+        let gap = counted_gap(
+            uuid::Uuid::new_v4(),
+            "candidate_incomplete:amount_in_wei_zero",
+        );
+        assert!(!gap.passed);
+        assert!(
+            attempts() > before,
+            "counted_gap must keep counting attempts, or the skip/attempt split is meaningless"
+        );
     }
 }
