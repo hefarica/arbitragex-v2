@@ -519,6 +519,63 @@ jobs:
           echo "hot-path trace (arbx:opps:detected XLEN):"
           docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" exec -T --interactive=false redis \
             redis-cli XLEN arbx:opps:detected </dev/null 2>/dev/null || echo "redis stream not yet available"
+          echo "[9/9a] Waiting for the SAME readiness the G4 assertion demands (bounded)..."
+          # G4-RACE-01 (2026-10-08, measured on run 37783694993): [8/9] waits for THREE
+          # conditions (api-server /api/health + edge /health + searcher-rs compose healthy)
+          # and passed 1s after it started, while the assertion below demands ok:true/200 for
+          # the SEVEN services in scripts/ci/verify_deploy_identity.py. The stack had
+          # restarted 25s earlier, `recon` and `relays-client` were still `health: starting`
+          # (compose healthcheck interval=30s) and a deploy that LANDED closed the run in
+          # `failure`: a false red, the mirror image of a false green.
+          #
+          # This wait reuses the gate's OWN predicate -- same script, same arguments, same
+          # status endpoint -- so there is no second service list that could drift from the
+          # one G4 enforces. It retries ONLY on the readiness family
+          # (status_unavailable | api_status_not_healthy | services_evidence_missing |
+          # upstream_not_healthy:*); every other condition (identity mismatch, timeline,
+          # malformed/oversized body) fails on the FIRST attempt, so it cannot become a gate
+          # that passes anything.
+          #
+          # It cannot create a false green either: the wait decides nothing. [9/9b] still runs
+          # immediately below with the same arguments and is the only thing that can pass.
+          # If a service never becomes healthy the budget is exhausted and the deploy FAILS
+          # (exit 1) naming the condition -- a dead service stays a dead service.
+          G4_WAIT_ATTEMPTS="${G4_WAIT_ATTEMPTS:-45}"
+          G4_WAIT_SLEEP="${G4_WAIT_SLEEP:-2}"
+          G4_WAIT_I=0
+          G4_CONDITION=""
+          while [ "$G4_WAIT_I" -lt "$G4_WAIT_ATTEMPTS" ]; do
+            G4_WAIT_I=$(( G4_WAIT_I + 1 ))
+            G4_BODY="$(curl -sf --connect-timeout 5 --max-time 15 http://127.0.0.1:8080/status || true)"
+            if [ -z "$G4_BODY" ]; then
+              G4_CONDITION="status_unavailable"
+            else
+              set +e
+              G4_OUT="$(printf '%s' "$G4_BODY" | python3 scripts/ci/verify_deploy_identity.py \
+                --sha "$TARGET_SHA" --run-id "$DEPLOY_RUN_ID" --deployed-at "$ARBX_DEPLOYED_AT" 2>/dev/null)"
+              G4_RC=$?
+              set -e
+              if [ "$G4_RC" -eq 0 ]; then
+                echo "readiness OK after ${G4_WAIT_I} attempt(s): the seven services G4 demands answer ok:true/200"
+                G4_CONDITION=""
+                break
+              fi
+              G4_CONDITION="$(printf '%s' "$G4_OUT" | sed -n 's/^G4_CONDITION=//p')"
+              [ -n "$G4_CONDITION" ] || G4_CONDITION="unnamed"
+            fi
+            case "$G4_CONDITION" in
+              status_unavailable|api_status_not_healthy|services_evidence_missing|upstream_not_healthy:*) : ;;
+              *)
+                echo "::error::G4 readiness wait: '${G4_CONDITION}' is not a readiness condition — failing now, no retry"
+                exit 1 ;;
+            esac
+            echo "  readiness attempt ${G4_WAIT_I}/${G4_WAIT_ATTEMPTS}: ${G4_CONDITION} (retry in ${G4_WAIT_SLEEP}s)"
+            sleep "$G4_WAIT_SLEEP"
+          done
+          if [ -n "$G4_CONDITION" ]; then
+            echo "::error::G4 readiness not reached in $(( G4_WAIT_ATTEMPTS * G4_WAIT_SLEEP ))s (last condition=${G4_CONDITION}) — the assertion below needs all seven upstreams ok:true/200"
+            exit 1
+          fi
           echo "[9/9b] G4 DEPLOY-VERAZ assertion (post-deploy truth)..."
           # Verify checkout identity, served API marker and document availability.
           # This does not attest image contents, persistence or EVM execution.

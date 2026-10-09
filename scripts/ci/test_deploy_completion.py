@@ -11,6 +11,7 @@ import shlex
 import shutil
 import subprocess
 import sys
+import tempfile
 import textwrap
 import unittest
 
@@ -133,7 +134,8 @@ class StreamingShellTests(unittest.TestCase):
         end = cls.remote.index("trap deploy_self_heal EXIT") + len("trap deploy_self_heal EXIT")
         cls.heal = cls.remote[start:end]
 
-    def shell(self, body, *, payload=None, head=SHA, frontend_fail="0"):
+    def shell(self, body, *, payload=None, head=SHA, frontend_fail="0", payload_seq=None,
+              wait_sleep=None, wait_attempts=None):
         now = datetime.now(timezone.utc)
         at = (now - timedelta(seconds=5)).strftime("%Y-%m-%dT%H:%M:%SZ")
         value = sample(now, at) if payload is None else payload
@@ -141,6 +143,19 @@ class StreamingShellTests(unittest.TestCase):
         env.update(TARGET_SHA=SHA, DEPLOY_RUN_ID=RUN, ARBX_DEPLOYED_AT=at,
                    ENV_FILE="fixture-only", COMPOSE_FILE="fixture-only", TEST_HEAD=head,
                    TEST_BODY=json.dumps(value), FRONTEND_FAIL=frontend_fail)
+        if wait_sleep is not None:
+            env["G4_WAIT_SLEEP"] = str(wait_sleep)
+        if wait_attempts is not None:
+            env["G4_WAIT_ATTEMPTS"] = str(wait_attempts)
+        if payload_seq is not None:
+            # Successive /status bodies for the same run, sticky on the last one: this is
+            # how the readiness wait is exercised without touching a real stack.
+            seq_dir = Path(tempfile.mkdtemp(prefix="g4seq-"))
+            self.addCleanup(shutil.rmtree, seq_dir, ignore_errors=True)
+            for index, item in enumerate(payload_seq, start=1):
+                (seq_dir / ("body.%d" % index)).write_text(json.dumps(item), encoding="utf-8")
+            (seq_dir / "n").write_text("0", encoding="utf-8")
+            env["TEST_BODY_DIR"] = str(seq_dir).replace("\\", "/")
         python_path = shlex.quote(sys.executable.replace("\\", "/"))
         adapters = r'''
 set -euo pipefail
@@ -156,7 +171,17 @@ docker() {
 git() { printf '%s\n' "$TEST_HEAD"; }
 curl() {
   case " $* " in
-    *"/status"*) printf '%s' "$TEST_BODY" ;;
+    *"/status"*)
+      if [ -n "${TEST_BODY_DIR:-}" ]; then
+        n=$(cat "$TEST_BODY_DIR/n" 2>/dev/null || echo 0)
+        n=$(( n + 1 ))
+        f=$(ls "$TEST_BODY_DIR" | grep -c '^body\.' || true)
+        if [ "$n" -gt "$f" ]; then n=$f; fi
+        printf '%s' "$(cat "$TEST_BODY_DIR/body.$n")"
+        printf '%s\n' "$n" > "$TEST_BODY_DIR/n"
+      else
+        printf '%s' "$TEST_BODY"
+      fi ;;
     *"/opportunities/exchange"*) return "$FRONTEND_FAIL" ;;
     *) echo "unexpected HTTP fixture command" >&2; return 99 ;;
   esac
@@ -224,6 +249,47 @@ curl() {
         self.assertNotEqual(result.returncode, 0)
         self.assertNotIn("G4 PASS:", result.stdout)
         self.assertNotIn("DO_NOT_PRINT", result.stdout + result.stderr)
+
+    def test_g4_readiness_wait_cannot_swallow_a_wrong_identity(self):
+        # VACUUM CONTROL (G4-RACE-01): the readiness wait must not turn G4 into a gate that
+        # passes anything. A wrong served identity is NOT a readiness condition, so the wait
+        # has to fail on the FIRST attempt: no retry, no "G4 PASS:".
+        body = sample()
+        body["deploy"]["sha"] = "cd" * 20
+        result = self.shell(self.guard + "\n" + self.tail, payload=body, wait_sleep=0)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertNotIn("G4 PASS:", result.stdout)
+        self.assertIn("served_deployment_identity_mismatch", result.stdout)
+        self.assertIn("no retry", result.stdout)
+        self.assertNotIn("readiness attempt", result.stdout)
+
+    def test_g4_readiness_wait_retries_a_readiness_condition_then_gate_asserts(self):
+        # The race itself: an upstream still booting must be waited for (bounded), and the
+        # assertion must still run afterwards and pass on its own merits.
+        now = datetime.now(timezone.utc)
+        at = (now - timedelta(seconds=5)).strftime("%Y-%m-%dT%H:%M:%SZ")
+        booting = sample(now, at)
+        booting["services"]["recon"] = {"ok": False, "status": 500}
+        result = self.shell(self.guard + "\n" + self.tail,
+                            payload_seq=[booting, sample(now, at)], wait_sleep=0)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("upstream_not_healthy:recon", result.stdout)
+        self.assertIn("readiness OK after 2 attempt(s)", result.stdout)
+        self.assertIn("G4 PASS:", result.stdout)
+
+    def test_g4_readiness_wait_exhausts_and_fails_when_a_service_never_comes_up(self):
+        # A dead upstream must stay dead: the bounded budget must expire and the deploy FAIL,
+        # naming the service -- the wait is not allowed to turn a dead service into success.
+        now = datetime.now(timezone.utc)
+        at = (now - timedelta(seconds=5)).strftime("%Y-%m-%dT%H:%M:%SZ")
+        dead = sample(now, at)
+        dead["services"]["relays-client"] = {"ok": False, "status": 503}
+        result = self.shell(self.guard + "\n" + self.tail, payload=dead,
+                            wait_sleep=0, wait_attempts=2)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertNotIn("G4 PASS:", result.stdout)
+        self.assertIn("upstream_not_healthy:relays-client", result.stdout)
+        self.assertIn("readiness not reached in 0s", result.stdout)
 
     def test_explicit_stdin_and_completion_checks_remain_in_workflow(self):
         self.assertIn("exec -T --interactive=false redis", self.remote)
