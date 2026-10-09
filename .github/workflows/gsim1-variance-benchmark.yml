@@ -227,6 +227,62 @@ jobs:
             echo "::warning::per-sample attribution rc=${RC} — advisory only; the verdict above is untouched (see sample-reasons.log)"
           fi
 
+      - name: Count and NAME the coverage ceiling — degrade the verdict where it does not reach (SELECT-only, advisory)
+        # GSIM-COVERAGE-CEILING-01 (R1/R10). The export can only carry topologies the
+        # benchmark's OWN A.3.a encoder can encode. Measured on main 901eb947ff3bec359a3021a8db5b074e7080b79f,
+        # window 2026-10-08: 13 of 977 distinct topologies in the 2h window are
+        # labelable; the other 964 are discarded by the ENCODER, not by the market, and
+        # every one of them EXISTS as a row in `opportunities`.
+        #
+        # WHAT THIS STEP FIXES. The discard used to be an aggregate: a SQL WHERE clause
+        # (`scripts/gsim1_variance_export.sql:62-64`) plus one total-gap line printed by
+        # the driver (`scripts/gsim1_variance_benchmark.sh:181-185`). Now every discarded
+        # topology is a NAMED reason with its own count, kind and verbatim adapter
+        # labels, and the COVERAGE VERDICT degrades to NO_COMPUTADO — because the
+        # registry row's `coverage` is `samples_labeled / population_size` over the
+        # ENCODER-FILTERED export, so `coverage = 1.0` means "we labeled everything the
+        # encoder allows". That reads as a result of the market while it is a statement
+        # about the encoder.
+        #
+        # ADVISORY BY CONSTRUCTION — it cannot change the verdict:
+        #   * the only SQL it can send is the single SELECT in
+        #     scripts/ci/gsim1_coverage_ceiling.py (no INSERT/UPDATE/DELETE/DDL, no
+        #     signing, no capital, no broadcast);
+        #   * it feeds nothing that decides the outcome — `samples_labeled`,
+        #     `pass_reason`, `min_samples`, the drift threshold and the registry status
+        #     are untouched, and NO threshold moves (the degradation criterion is
+        #     structural: `discarded == 0`);
+        #   * every anomaly route exits 0 with a `::warning::`, and the step ends with an
+        #     explicit `exit 0`, so it cannot redden the gate even if the instrument
+        #     itself crashes.
+        #
+        # WHAT IT DOES NOT CLAIM (R8). `unsupported_adapter:<label>` is the ENCODER's
+        # limitation; it is NOT evidence that the market held a profitable route there.
+        # The production state of those same rows is a different axis, measured by the
+        # per-sample attribution step above.
+        if: always()
+        continue-on-error: true
+        env:
+          VPS_HOST: ${{ secrets.VPS_SSH_HOST }}
+          VPS_USER: ${{ secrets.VPS_SSH_USER }}
+          VPS_PORT: ${{ secrets.VPS_PORT || '22' }}
+        run: |
+          set -uo pipefail
+          set +e
+          python3 scripts/ci/gsim1_coverage_ceiling.py \
+            --ssh-key ~/.ssh/deploy_key \
+            --harness-log variance-benchmark.log \
+            --job-summary "$GITHUB_STEP_SUMMARY" \
+            --out-json coverage-ceiling.json 2>&1 | tee coverage-ceiling.log
+          RC=${PIPESTATUS[0]}
+          set -e
+          echo "coverage_ceiling_rc=${RC}"
+          if [ "$RC" -ne 0 ]; then
+            echo "::warning::coverage-ceiling instrument rc=${RC} — advisory only; the recorded verdict is untouched (see coverage-ceiling.log)"
+          fi
+          # Explicit: an observational instrument must never redden the benchmark gate.
+          exit 0
+
       - name: Assert the producer actually delivered in THIS run
         run: |
           set -euo pipefail
@@ -268,6 +324,12 @@ jobs:
             cat sample-reasons.log 2>/dev/null || echo "(no per-sample attribution log)"
             echo '```'
             echo
+            echo "### Coverage ceiling of this window (named, SELECT-only)"
+            echo
+            echo '```'
+            cat coverage-ceiling.log 2>/dev/null || echo "(no coverage-ceiling log)"
+            echo '```'
+            echo
             echo '```'
             tail -n 25 variance-benchmark.log 2>/dev/null || echo "(no driver log)"
             echo '```'
@@ -282,6 +344,8 @@ jobs:
             variance-benchmark.log
             gsim1-rows.jsonl
             sample-reasons.log
+            coverage-ceiling.log
+            coverage-ceiling.json
           if-no-files-found: warn
           retention-days: 30
 

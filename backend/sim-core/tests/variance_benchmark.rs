@@ -102,6 +102,12 @@ struct Histogram {
     obs_failed: usize,
     zero_predicted: usize,
     labeled: usize,
+    /// GSIM-COVERAGE-CEILING-01: the same discards as the counters above, but
+    /// NAMED per reason instead of per category. It is emitted in
+    /// `VARIANCE_BENCH_JSON` (which the driver posts verbatim as the registry
+    /// row's `detail`), so the row itself stops being an aggregate. The counters
+    /// above are untouched by this field — a new key, never a moved one.
+    skip_code_distribution: std::collections::BTreeMap<String, usize>,
 }
 
 /// route_metadata carries display names; the encoder accepts semantic labels
@@ -113,6 +119,152 @@ fn adapter_to_semantic(label: &str) -> Option<&'static str> {
         "UniswapV2" | "uniswap-v2" | "uniswapv2" => Some("uniswap-v2"),
         "SushiSwap" | "sushi" | "sushiswap" => Some("sushi"),
         _ => None,
+    }
+}
+
+// ---------------------------------------------------------------------------
+// GSIM-COVERAGE-CEILING-01 (2026-10-08) — a discarded sample must leave the
+// loop with a NAME.
+//
+// Before this change every discard died at a `hist.X += 1; continue;`, so the
+// only surviving artefact was the aggregate `skips` block: `pred_failed=22`
+// named a CATEGORY and never a sample (GSIM-PRED-REASON-01 §1 measured
+// `sample_id` appearing 0 times in 671 log lines). The identity was in scope at
+// every one of those sites and was collapsed to a counter.
+//
+// COUNTER PARITY IS PART OF THE CONTRACT: the `skips` histogram keeps its
+// historical aggregate names and its exact values. Nothing in this block moves a
+// counter — the aggregate stays for continuity, and `SkipCode::aggregate_field()`
+// is the single place that says which historical bucket each named reason
+// contributes to (asserted by `skip_codes_keep_their_historical_aggregate`).
+// ---------------------------------------------------------------------------
+
+/// Bounded so a pathological revert string can never emit an unbounded line.
+const SKIP_DETAIL_MAX: usize = 160;
+
+/// Collapse to one line and bound the length (the marker must stay greppable).
+fn compact(reason: &str) -> String {
+    let one_line: String = reason
+        .chars()
+        .map(|c| if c == '\n' || c == '\r' { ' ' } else { c })
+        .collect();
+    let trimmed = one_line.trim();
+    if trimmed.chars().count() <= SKIP_DETAIL_MAX {
+        return trimmed.to_string();
+    }
+    let cut: String = trimmed.chars().take(SKIP_DETAIL_MAX).collect();
+    format!("{cut}...[truncated]")
+}
+
+/// Why ONE sample was discarded, as a NAME. A bare category is never a code:
+/// every variant carries its cause after a `:` (see `is_named`).
+#[derive(Debug, PartialEq, Eq)]
+enum SkipCode {
+    Dedup,
+    OffScopeChain(u64),
+    BadShape { adapters: usize, tokens: usize },
+    UnsupportedAdapter(String),
+    StaleTimestamp(String),
+    DecimalsFailed(String),
+    AmountRejected(String),
+    EncodeFailed(String),
+    PredFailed(u64),
+    ObsFailed(u64),
+    ZeroPredicted(u64),
+}
+
+impl SkipCode {
+    /// The exact, greppable reason for this sample.
+    fn code(&self) -> String {
+        match self {
+            SkipCode::Dedup => "dedup:duplicate_route_topology".to_string(),
+            SkipCode::OffScopeChain(c) => format!("off_scope_chain:{c}"),
+            SkipCode::BadShape { adapters, tokens } => {
+                format!("bad_shape:adapters={adapters},token_addresses={tokens}")
+            }
+            SkipCode::UnsupportedAdapter(label) => format!("unsupported_adapter:{label}"),
+            SkipCode::StaleTimestamp(why) => format!("stale_timestamp:{}", compact(why)),
+            SkipCode::DecimalsFailed(why) => format!("decimals_failed:{}", compact(why)),
+            SkipCode::AmountRejected(raw) => format!("bad_shape:amount_in={}", compact(raw)),
+            SkipCode::EncodeFailed(reason) => format!("encode_failed:{}", compact(reason)),
+            SkipCode::PredFailed(block) => format!("pred_failed:block={block}"),
+            SkipCode::ObsFailed(block) => format!("obs_failed:block={block}"),
+            SkipCode::ZeroPredicted(block) => format!("zero_predicted:block={block}"),
+        }
+    }
+
+    /// True when the code names its cause instead of restating the category.
+    fn is_named(&self) -> bool {
+        self.code().contains(':')
+    }
+
+    /// The HISTORICAL aggregate this reason must keep contributing to, so the
+    /// `skips` histogram is byte-identical before and after this change.
+    fn aggregate_field(&self) -> &'static str {
+        match self {
+            SkipCode::Dedup => "dedup",
+            SkipCode::OffScopeChain(_) | SkipCode::UnsupportedAdapter(_) => "unsupported_adapter",
+            SkipCode::BadShape { .. } | SkipCode::AmountRejected(_) => "bad_shape",
+            SkipCode::StaleTimestamp(_) => "stale_timestamp",
+            SkipCode::DecimalsFailed(_) => "decimals_failed",
+            SkipCode::EncodeFailed(_) => "encode_failed",
+            SkipCode::PredFailed(_) => "pred_failed",
+            SkipCode::ObsFailed(_) => "obs_failed",
+            SkipCode::ZeroPredicted(_) => "zero_predicted",
+        }
+    }
+}
+
+/// The exact marker line. PURE, so the tests exercise the real emission path
+/// (stdout cannot be captured from inside a `#[test]`, and a test that re-derives
+/// the line it claims to check verifies nothing).
+fn skip_marker_line(opportunity_id: &str, code: &SkipCode) -> String {
+    format!(
+        "VARIANCE_BENCH_SKIP={}",
+        serde_json::json!({
+            "opportunity_id": opportunity_id,
+            "code": code.code(),
+        })
+    )
+}
+
+/// Print ONE named line per discarded sample AND record it in the run's named
+/// distribution.
+///
+/// Bounded by construction: at most one line per exported row and the export is
+/// capped at `LIMIT 500` (`scripts/gsim1_variance_export.sql:73`), so this cannot
+/// flood a log (R9). The operator driver tees the harness output with `2>&1`, so
+/// the lines reach the preserved artefact.
+fn emit_skip(hist: &mut Histogram, opportunity_id: &str, code: &SkipCode) {
+    println!("{}", skip_marker_line(opportunity_id, code));
+    *hist.skip_code_distribution.entry(code.code()).or_insert(0) += 1;
+}
+
+/// The pre-simulation gate. PURE: no RPC, no counters, no side effects, so the
+/// per-sample reason is testable without infrastructure and cannot drift from the
+/// decision the loop actually makes. Returns the semantic pair on success, or the
+/// named reason the sample cannot be labeled.
+fn pre_simulation_gate(row: &ExportRow) -> Result<(&'static str, &'static str), SkipCode> {
+    if row.chain_id != 1 {
+        // The aggregate this feeds is historically called `unsupported_adapter`
+        // (`:349-352`); the NAME says what the gate actually rejects.
+        return Err(SkipCode::OffScopeChain(row.chain_id));
+    }
+    if row.dex_adapters.len() != 2 || row.token_addresses.len() != 3 {
+        return Err(SkipCode::BadShape {
+            adapters: row.dex_adapters.len(),
+            tokens: row.token_addresses.len(),
+        });
+    }
+    // Same evaluation order as before: forward first, then backward. The FIRST
+    // adapter the encoder rejects is the one that actually stopped the sample.
+    match (
+        adapter_to_semantic(&row.dex_adapters[0]),
+        adapter_to_semantic(&row.dex_adapters[1]),
+    ) {
+        (Some(f), Some(b)) => Ok((f, b)),
+        (None, _) => Err(SkipCode::UnsupportedAdapter(row.dex_adapters[0].clone())),
+        (Some(_), None) => Err(SkipCode::UnsupportedAdapter(row.dex_adapters[1].clone())),
     }
 }
 
@@ -344,27 +496,22 @@ async fn variance_benchmark_predicted_vs_settled_block() {
         );
         if !seen_routes.insert(route_key) {
             hist.dedup += 1;
+            emit_skip(&mut hist, &row.opportunity_id, &SkipCode::Dedup);
             continue;
         }
-        if row.chain_id != 1 {
-            hist.unsupported_adapter += 1; // non-mainnet export rows: out of scope
-            continue;
-        }
-        if row.dex_adapters.len() != 2 || row.token_addresses.len() != 3 {
-            hist.bad_shape += 1;
-            continue;
-        }
-        let forward = match adapter_to_semantic(&row.dex_adapters[0]) {
-            Some(s) => s,
-            None => {
-                hist.unsupported_adapter += 1;
-                continue;
-            }
-        };
-        let backward = match adapter_to_semantic(&row.dex_adapters[1]) {
-            Some(s) => s,
-            None => {
-                hist.unsupported_adapter += 1;
+        // GSIM-COVERAGE-CEILING-01: the three pre-simulation gates are decided by
+        // ONE pure function (see `pre_simulation_gate`), and the counter it feeds
+        // is chosen by `aggregate_field()` — the same field names and the same
+        // values as before this change.
+        let (forward, backward) = match pre_simulation_gate(row) {
+            Ok(pair) => pair,
+            Err(code) => {
+                match code.aggregate_field() {
+                    "unsupported_adapter" => hist.unsupported_adapter += 1,
+                    "bad_shape" => hist.bad_shape += 1,
+                    other => unreachable!("unmapped aggregate field {other}"),
+                }
+                emit_skip(&mut hist, &row.opportunity_id, &code);
                 continue;
             }
         };
@@ -383,12 +530,24 @@ async fn variance_benchmark_predicted_vs_settled_block() {
             Err(e) => {
                 eprintln!("skip {} block-resolve: {e}", row.opportunity_id);
                 hist.stale_timestamp += 1;
+                emit_skip(
+                    &mut hist,
+                    &row.opportunity_id,
+                    &SkipCode::StaleTimestamp(format!("block_resolve_failed:{e}")),
+                );
                 continue;
             }
         };
         if block_b <= window_lo || block_b + 1 > tip {
             // Detection older than the window (or settled block not yet mined).
             hist.stale_timestamp += 1;
+            emit_skip(
+                &mut hist,
+                &row.opportunity_id,
+                &SkipCode::StaleTimestamp(format!(
+                    "block_out_of_window:block_b={block_b},window_lo={window_lo},tip={tip}"
+                )),
+            );
             continue;
         }
 
@@ -410,6 +569,11 @@ async fn variance_benchmark_predicted_vs_settled_block() {
                 Err(e) => {
                     eprintln!("skip {} decimals({addr}): {e}", row.opportunity_id);
                     hist.decimals_failed += 1;
+                    emit_skip(
+                        &mut hist,
+                        &row.opportunity_id,
+                        &SkipCode::DecimalsFailed(format!("token={addr}:{e}")),
+                    );
                     continue 'rows;
                 }
             }
@@ -423,6 +587,11 @@ async fn variance_benchmark_predicted_vs_settled_block() {
             Some(a) if a.is_finite() && a > 0.0 => a,
             _ => {
                 hist.bad_shape += 1;
+                emit_skip(
+                    &mut hist,
+                    &row.opportunity_id,
+                    &SkipCode::AmountRejected(format!("{} (decimals={dec_in})", row.amount_in_wei)),
+                );
                 continue;
             }
         };
@@ -457,6 +626,11 @@ async fn variance_benchmark_predicted_vs_settled_block() {
             Err(e) => {
                 eprintln!("skip {} encode: {e}", row.opportunity_id);
                 hist.encode_failed += 1;
+                emit_skip(
+                    &mut hist,
+                    &row.opportunity_id,
+                    &SkipCode::EncodeFailed(e.to_string()),
+                );
                 continue;
             }
         };
@@ -482,11 +656,21 @@ async fn variance_benchmark_predicted_vs_settled_block() {
         let pred = sim_at_block(&rpc, block_b, &ctx, &exec_cfg);
         if !pred.passed {
             hist.pred_failed += 1;
+            emit_skip(
+                &mut hist,
+                &row.opportunity_id,
+                &SkipCode::PredFailed(block_b),
+            );
             continue;
         }
         let obs = sim_at_block(&rpc, block_b + 1, &ctx, &exec_cfg);
         if !obs.passed {
             hist.obs_failed += 1;
+            emit_skip(
+                &mut hist,
+                &row.opportunity_id,
+                &SkipCode::ObsFailed(block_b + 1),
+            );
             continue;
         }
 
@@ -495,6 +679,11 @@ async fn variance_benchmark_predicted_vs_settled_block() {
         if pred_f <= 0.0 {
             // Zero predicted profit → ratio undefined → unlabeled (honest).
             hist.zero_predicted += 1;
+            emit_skip(
+                &mut hist,
+                &row.opportunity_id,
+                &SkipCode::ZeroPredicted(block_b),
+            );
             continue;
         }
         if first_pred_block.is_none() {
@@ -558,6 +747,12 @@ async fn variance_benchmark_predicted_vs_settled_block() {
         // dedup/DISTINCT): the denominator of the sample floor.
         "distinct_topologies_exported": hist.attempted - hist.dedup,
         "pass_reason": pass_reason,
+        // GSIM-COVERAGE-CEILING-01: NEW key. `skips` below is byte-identical to
+        // before this change (same field names, same counting sites); this is the
+        // per-REASON view the aggregate could never give. The driver posts this
+        // JSON verbatim as the registry row's `detail`, so the row carries the
+        // named reasons too.
+        "skip_code_distribution": hist.skip_code_distribution,
         "skips": {
             "attempted": hist.attempted,
             "dedup": hist.dedup,
@@ -635,4 +830,237 @@ fn route_hash_is_deterministic() {
     assert_eq!(h1, h2);
     assert_ne!(h1, [0u8; 32]);
     assert_ne!(H256::from(h1), H256::zero());
+}
+
+// ---------------------------------------------------------------------------
+// GSIM-COVERAGE-CEILING-01 — the per-sample reasons and the counter parity.
+// ---------------------------------------------------------------------------
+
+/// One exported row, built the way the scanner writes them.
+fn row_with(dex_adapters: &[&str], token_addresses: usize) -> ExportRow {
+    ExportRow {
+        opportunity_id: "0f0f0f0f-1111-2222-3333-444444444444".into(),
+        chain_id: 1,
+        detected_at_unix: 1_700_000_000,
+        token_in: "0xaaa".into(),
+        token_out: "0xccc".into(),
+        dex_a: "UniswapV3".into(),
+        pool_addresses: vec!["0xpool".into()],
+        token_addresses: (0..token_addresses).map(|i| format!("0xtok{i}")).collect(),
+        dex_adapters: dex_adapters.iter().map(|s| (*s).to_string()).collect(),
+        amount_in_wei: "1000000".into(),
+    }
+}
+
+/// THE required test: a sample with an unsupported adapter must come out with
+/// its reason NAMED, never as the bare category.
+///
+/// This is the test that goes red if the discard regresses to an aggregate
+/// without a reason: `UniswapV3` and `PancakeSwap V3` (spelled exactly as the
+/// scanner writes them) must appear in the code.
+#[test]
+fn unsupported_adapter_discard_is_named_per_sample() {
+    let v3 = pre_simulation_gate(&row_with(&["UniswapV3", "UniswapV3"], 3))
+        .expect_err("V3 legs must be rejected by the encoder");
+    assert_eq!(v3, SkipCode::UnsupportedAdapter("UniswapV3".into()));
+    assert_eq!(v3.code(), "unsupported_adapter:UniswapV3");
+    assert_ne!(
+        v3.code(),
+        "unsupported_adapter",
+        "a bare category is not a reason (R1 of GSIM-COVERAGE-CEILING-01)"
+    );
+
+    // The production spelling carries a space and must survive verbatim.
+    let pancake = pre_simulation_gate(&row_with(&["UniswapV2", "PancakeSwap V3"], 3))
+        .expect_err("PancakeSwap V3 legs must be rejected by the encoder");
+    assert_eq!(pancake.code(), "unsupported_adapter:PancakeSwap V3");
+
+    // Both labels when both legs are unknown, in leg order.
+    let both = pre_simulation_gate(&row_with(&["UniswapV3", "PancakeSwap V3"], 3))
+        .expect_err("both legs unsupported");
+    assert_eq!(both.code(), "unsupported_adapter:UniswapV3");
+
+    // The encodable shapes are still encodable: naming the discard must not
+    // change what the encoder accepts.
+    assert_eq!(
+        pre_simulation_gate(&row_with(&["UniswapV2", "SushiSwap"], 3)).unwrap(),
+        ("uniswap-v2", "sushi")
+    );
+    assert_eq!(
+        pre_simulation_gate(&row_with(&["SushiSwap", "uniswap-v2"], 3)).unwrap(),
+        ("sushi", "uniswap-v2")
+    );
+}
+
+/// Every discard site must produce a code that names its cause.
+#[test]
+fn every_skip_code_is_named() {
+    let all = vec![
+        SkipCode::Dedup,
+        SkipCode::OffScopeChain(137),
+        SkipCode::BadShape {
+            adapters: 3,
+            tokens: 4,
+        },
+        SkipCode::UnsupportedAdapter("UniswapV3".into()),
+        SkipCode::StaleTimestamp("block_out_of_window:block_b=1,window_lo=2,tip=3".into()),
+        SkipCode::DecimalsFailed("token=0xdead:revert".into()),
+        SkipCode::AmountRejected("0".into()),
+        SkipCode::EncodeFailed("missing reserves".into()),
+        SkipCode::PredFailed(26_145_751),
+        SkipCode::ObsFailed(26_145_752),
+        SkipCode::ZeroPredicted(26_145_751),
+    ];
+    for code in &all {
+        assert!(code.is_named(), "unnamed skip code: {code:?}");
+        assert!(
+            code.code().contains(':'),
+            "code does not carry a reason: {}",
+            code.code()
+        );
+    }
+    // Spot-check the exact strings the loop emits, so a rename is a red test.
+    assert_eq!(all[1].code(), "off_scope_chain:137");
+    assert_eq!(all[2].code(), "bad_shape:adapters=3,token_addresses=4");
+    assert_eq!(all[7].code(), "encode_failed:missing reserves");
+    assert_eq!(all[8].code(), "pred_failed:block=26145751");
+}
+
+/// COUNTER PARITY: each named reason must feed the same historical aggregate it
+/// fed before this change, so `skips` cannot move.
+#[test]
+fn skip_codes_keep_their_historical_aggregate() {
+    assert_eq!(SkipCode::Dedup.aggregate_field(), "dedup");
+    assert_eq!(
+        SkipCode::OffScopeChain(1).aggregate_field(),
+        "unsupported_adapter"
+    );
+    assert_eq!(
+        SkipCode::UnsupportedAdapter("UniswapV3".into()).aggregate_field(),
+        "unsupported_adapter"
+    );
+    assert_eq!(
+        SkipCode::BadShape {
+            adapters: 1,
+            tokens: 1
+        }
+        .aggregate_field(),
+        "bad_shape"
+    );
+    assert_eq!(
+        SkipCode::AmountRejected("0".into()).aggregate_field(),
+        "bad_shape"
+    );
+    assert_eq!(
+        SkipCode::StaleTimestamp("x".into()).aggregate_field(),
+        "stale_timestamp"
+    );
+    assert_eq!(
+        SkipCode::DecimalsFailed("x".into()).aggregate_field(),
+        "decimals_failed"
+    );
+    assert_eq!(
+        SkipCode::EncodeFailed("x".into()).aggregate_field(),
+        "encode_failed"
+    );
+    assert_eq!(SkipCode::PredFailed(1).aggregate_field(), "pred_failed");
+    assert_eq!(SkipCode::ObsFailed(1).aggregate_field(), "obs_failed");
+    assert_eq!(
+        SkipCode::ZeroPredicted(1).aggregate_field(),
+        "zero_predicted"
+    );
+}
+
+/// The pre-simulation gate must keep the historical ORDER of the checks: chain
+/// scope, then shape, then forward adapter, then backward adapter. A reordering
+/// would move which counter increments for a row that fails several gates.
+#[test]
+fn pre_simulation_gate_keeps_the_historical_check_order() {
+    // chain out of scope wins over a bad shape and over unsupported adapters.
+    let mut row = row_with(&["UniswapV3", "UniswapV3"], 1);
+    row.chain_id = 137;
+    assert_eq!(pre_simulation_gate(&row), Err(SkipCode::OffScopeChain(137)));
+
+    // bad shape wins over unsupported adapters.
+    let row = row_with(&["UniswapV3", "UniswapV3"], 2);
+    assert_eq!(
+        pre_simulation_gate(&row),
+        Err(SkipCode::BadShape {
+            adapters: 2,
+            tokens: 2
+        })
+    );
+
+    // forward wins over backward (the loop never evaluated backward when forward
+    // was unknown, so the counter must not start counting two per row).
+    let row = row_with(&["UniswapV3", "PancakeSwap V3"], 3);
+    assert_eq!(
+        pre_simulation_gate(&row),
+        Err(SkipCode::UnsupportedAdapter("UniswapV3".into()))
+    );
+}
+
+/// `compact` keeps the marker a single, bounded line.
+#[test]
+fn compact_bounds_and_flattens_reasons() {
+    assert_eq!(compact("line1\nline2"), "line1 line2");
+    assert_eq!(compact("  padded  "), "padded");
+    let long = "x".repeat(SKIP_DETAIL_MAX + 50);
+    let out = compact(&long);
+    assert!(out.ends_with("...[truncated]"));
+    assert_eq!(
+        out.chars().filter(|c| *c == 'x').count(),
+        SKIP_DETAIL_MAX,
+        "the kept prefix must be exactly SKIP_DETAIL_MAX characters"
+    );
+}
+
+/// The emitted line carries the sample identity plus its named reason, on ONE
+/// line, through the REAL emission path (`skip_marker_line`, the same function
+/// `emit_skip` prints).
+#[test]
+fn skip_line_carries_identity_and_reason_on_one_line() {
+    let pancake = SkipCode::UnsupportedAdapter("PancakeSwap V3".into());
+    let line = skip_marker_line("0f0f0f0f-1111-2222-3333-444444444444", &pancake);
+    assert!(!line.contains('\n'), "the marker must be one line");
+    let parsed: serde_json::Value =
+        serde_json::from_str(line.trim_start_matches("VARIANCE_BENCH_SKIP=")).unwrap();
+    assert_eq!(
+        parsed["opportunity_id"],
+        "0f0f0f0f-1111-2222-3333-444444444444"
+    );
+    assert_eq!(parsed["code"], "unsupported_adapter:PancakeSwap V3");
+
+    // The named distribution accumulates exactly the reason that was printed.
+    let mut hist = Histogram::default();
+    emit_skip(&mut hist, "0f0f0f0f-1111-2222-3333-444444444444", &pancake);
+    assert_eq!(
+        hist.skip_code_distribution
+            .get("unsupported_adapter:PancakeSwap V3"),
+        Some(&1)
+    );
+    assert_eq!(hist.skip_code_distribution.len(), 1);
+}
+
+/// `VARIANCE_BENCH_SKIP` must be the greppable token the driver mines, present
+/// exactly once per emitted reason, with the code JSON-escaped (so a reason that
+/// contains quotes or braces cannot corrupt the line).
+#[test]
+fn skip_marker_is_greppable_and_escaped() {
+    let line = skip_marker_line("id", &SkipCode::PredFailed(42));
+    assert_eq!(line.matches("VARIANCE_BENCH_SKIP=").count(), 1);
+    assert!(line.contains("\"pred_failed:block=42\""));
+
+    let hostile = SkipCode::EncodeFailed("weird {\"json\": 1}\nsecond line".into());
+    let line = skip_marker_line("id", &hostile);
+    assert!(
+        !line.contains('\n'),
+        "a hostile reason must not break the line"
+    );
+    let parsed: serde_json::Value =
+        serde_json::from_str(line.trim_start_matches("VARIANCE_BENCH_SKIP=")).unwrap();
+    assert_eq!(
+        parsed["code"],
+        "encode_failed:weird {\"json\": 1} second line"
+    );
 }
