@@ -6,11 +6,101 @@ import { z } from "zod";
 import { StrategyKind, STRATEGY_KINDS } from "./strategy-kinds.js";
 export { StrategyKind, STRATEGY_KINDS };
 
-const HexAddr = z.string().regex(/^0x[0-9a-fA-F]{40}$/);
+export const EvmAddressSchema = z.string().regex(/^0x[0-9a-fA-F]{40}$/, {
+  message: "expected a 20-byte hexadecimal EVM address",
+});
 const HexTx   = z.string().regex(/^0x[0-9a-fA-F]{64}$/);
-export const BigIntStr = z.string().regex(/^[0-9]+$/);
+export const BigIntStringSchema = z.string().regex(/^[0-9]+$/, {
+  message: "expected an unsigned decimal integer string",
+});
+// Historic names kept: `BigIntStr` is public API (imported by other modules) and
+// `HexAddr` is the internal alias the pre-existing schemas below use. Both now
+// point at the exported schemas above — one source of truth, zero behaviour
+// change (only the error message is added).
+const HexAddr = EvmAddressSchema;
+export const BigIntStr = BigIntStringSchema;
 const Uuid = z.string().uuid();
 const IsoDate = z.string().datetime({ offset: true });
+
+// ── ALWAYS-COMPUTE economics (operator mandate 2026-09-27) ────────────────────
+// Field-for-field mirror of `backend/shared-rs/src/contracts.rs`
+// (`EconomicsComputation` + `ComputedLeg`). `Opportunity.economics` is
+// `#[serde(default)] Option<EconomicsComputation>` WITHOUT `skip_serializing_if`,
+// so the Rust producer ALWAYS serializes the key — as the object or as literal
+// `null`. Measured on the live wire 2026-10-09 over 1500 published messages from
+// `arbx:opps:detected`: 1500/1500 carried `economics`, 0 as `null`, and all 23
+// keys of the object were present in every single message.
+//
+// Same strict-schema rule already written twice in this file for `cartridge_id`
+// and `detector_id` above: every key the Rust producer always emits MUST be
+// declared here, or `.strict()` rejects the whole Opportunity. This one was
+// missed. Measured cost: `paper_archiver.invalid_message` = 107.096 rejects with
+// `unrecognized_keys: ["economics"]` and `archived` = 0 in one retained
+// api-server log window — the paper ledger received nothing.
+//
+// `.strict()` is kept on the nested object deliberately: `.strip()` would absorb
+// producer↔consumer drift silently, and skill F004 classifies that drift as an
+// ABORT condition ("Drift schema producer↔consumer — restaurar isomorfismo
+// Zod/struct"). The anti-recurrence gate for future fields is a contract test
+// that parses a captured real payload, not a tolerance knob here.
+export const EconomicsLegSchema = z.object({
+  token_in: EvmAddressSchema,
+  token_out: EvmAddressSchema,
+  amount_in_wei: BigIntStringSchema,
+  amount_out_wei: BigIntStringSchema,
+}).strict();
+
+/** USD / ratio component. Signed by design — see the comment block above. */
+const FiniteUsdSchema = z.number().finite().nullable().optional();
+
+export const EconomicsComputationSchema = z.object({
+  // The only field the Rust struct declares WITHOUT `#[serde(default)]`, so it
+  // is never absent. Observed on the wire: "computed" (1109/1500) | "error"
+  // (391/1500). "partial" is declared by the struct's own doc comment and is
+  // kept here so a legitimate partial computation is never mistaken for drift.
+  computation_status: z.enum(["computed", "partial", "error"]),
+  // Technical reason no numbers exist when computation_status === "error".
+  // Observed: "v3_pool_not_catalogued" and similar rejection reasons.
+  error_reason: z.string().nullable().optional(),
+  // Exact wei decimal strings. Measured: amount_in_wei null in 394/1500, digits
+  // otherwise, ZERO non-numeric; amount_out_wei null in 1437/1500, digits
+  // otherwise, ZERO non-numeric. NOTE: the sentinel
+  // "cycle_output_not_exposed_by_kernel" is a `not_computed_reasons` VALUE; it is
+  // never carried by these fields — do not widen them to plain strings.
+  amount_in_wei: BigIntStr.nullable().optional(),
+  amount_out_wei: BigIntStr.nullable().optional(),
+  // Signed on purpose. `.nonnegative()` here would reject exactly the rows the
+  // ledger exists to record: measured on a real losing 5-hop cycle,
+  // gross_profit_usd = -0.008976053700574698, net_profit_usd =
+  // -0.6375751037005748, roi_pct = -6375.75103700526, target_delta_usd =
+  // -50.63757510370058. `0.0` is a computed exact zero (R8), not "not computed".
+  amount_in_usd: FiniteUsdSchema,
+  amount_out_usd: FiniteUsdSchema,
+  gross_profit_usd: FiniteUsdSchema,
+  gas_usd: FiniteUsdSchema,
+  dex_fees_usd: FiniteUsdSchema,
+  flash_fee_usd: FiniteUsdSchema,
+  bribe_usd: FiniteUsdSchema,
+  slippage_usd: FiniteUsdSchema,
+  other_costs_usd: FiniteUsdSchema,
+  total_cost_usd: FiniteUsdSchema,
+  net_profit_usd: FiniteUsdSchema,
+  roi_pct: FiniteUsdSchema,
+  target_net_usd: FiniteUsdSchema,
+  target_delta_usd: FiniteUsdSchema,
+  meets_target: z.boolean().nullable().optional(),
+  quote_block: z.number().int().nonnegative().nullable().optional(),
+  simulation_block: z.number().int().nonnegative().nullable().optional(),
+  // Per-leg wei ledger, aligned with route_plan legs (leg i+1's input IS leg i's
+  // output). Measured 217 legs across the 1500-message sample, every wei value a
+  // pure decimal string.
+  legs: z.array(EconomicsLegSchema).optional(),
+  // R8: field name → why it is null. A null without an entry here is a bug.
+  // Observed values (all four, live): "included_in_amount_out_post_fee",
+  // "priced_by_amm_curve", "revm_simulation_is_sim_ctl_scope",
+  // "cycle_output_not_exposed_by_kernel".
+  not_computed_reasons: z.record(z.string(), z.string()).optional(),
+}).strict();
 
 export const OpportunitySchema = z.object({
   id: Uuid,
@@ -59,6 +149,12 @@ export const OpportunitySchema = z.object({
   chain_id_out: z.number().int().positive().nullable().optional(),
   bridge: z.string().nullable().optional(),
   bridge_fee_usd: z.number().nullable().optional(),
+  // ALWAYS-COMPUTE (operator mandate 2026-09-27): the complete economics object,
+  // or `null` under the documented revert posture (`ARBX_ALWAYS_COMPUTE_ECONOMICS`
+  // OFF). See EconomicsComputationSchema above. Omitting this key makes `.strict()`
+  // reject EVERY published Opportunity — the measured root cause of the
+  // `paper_archiver.invalid_message` flood and of the empty paper ledger.
+  economics: EconomicsComputationSchema.nullable().optional(),
   // updated_at follows detected_at in the DB row; included in published JSON.
   updated_at: IsoDate.nullable().optional(),
   detected_at: IsoDate,
