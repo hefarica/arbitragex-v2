@@ -14,8 +14,11 @@ import { Redis } from "ioredis";
 import type pg from "pg";
 import type { Logger } from "pino";
 import type { AppConfig, CircuitBreaker, KillSwitchClient } from "@arbx/shared";
-import { OpportunitySchema, type Opportunity } from "@arbx/shared";
-import { z } from "zod";
+import {
+  EconomicsComputationSchema,
+  OpportunitySchema,
+  type Opportunity,
+} from "@arbx/shared";
 import { prefilter, decide, type Decision } from "./policy/engine.js";
 import { scoreOpportunity, weightsFromConfig } from "./scoring/engine.js";
 import { checkToken } from "./token_safety/client.js";
@@ -47,9 +50,21 @@ import { persistDecision } from "./persistence.js";
  * Se mantiene ESTRICTO — `.extend()` conserva la política `strict` — así que
  * una clave realmente desconocida sigue fallando ruidosamente y esto no
  * degenera en "aceptar cualquier cosa".
+ *
+ * D-001 (2026-10-10): `OpportunitySchema` YA declara `economics` con el tipo
+ * canónico (`EconomicsComputationSchema`), así que el override permisivo quedó
+ * obsoleto Y además rompía el tipado: `objectOutputType<{}, ZodTypeAny,
+ * "passthrough">` no es asignable a la forma concreta, y el fallo se propagaba
+ * a `consumer.ts:361/371/392/397` (`tsc --noEmit (all workspaces)`,
+ * `TypeScript tests + typecheck` y `lint-and-test-node` rojos en el PR #933).
+ * Ahora el override apunta al MISMO schema exportado por `@arbx/shared` — una
+ * sola fuente de verdad, y sin tolerancia silenciosa al drift (F004: drift
+ * productor/consumidor = ABORT). Se conserva la línea en vez de borrar el
+ * override para que la decisión quede explícita y no se reintroduzca la
+ * tolerancia por inercia.
  */
 export const SelectorOpportunitySchema = OpportunitySchema.extend({
-  economics: z.object({}).passthrough().nullish(),
+  economics: EconomicsComputationSchema.nullish(),
 });
 
 const STREAM_IN = "arbx:opps:detected";
