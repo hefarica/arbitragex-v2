@@ -132,6 +132,22 @@ jobs:
           fi
           echo "no-new-env-tracked OK"
 
+      - name: "E-7 — operator-local credential paths must NOT be tracked"
+        # GATE-SECRETOS-01: `.claude/settings.json` shipped a live auth token to a
+        # PUBLIC repo from 2026-07-11 to 2026-09-30. The .env guard above cannot see
+        # it (different path family). PATH-BASED guard only: the value is never
+        # read, matched, compared or printed — `git ls-files` is a path listing.
+        run: |
+          set -euo pipefail
+          FORBIDDEN='^\.claude/settings(\..*)?\.json$'
+          violations=$(git ls-files | grep -E "$FORBIDDEN" || true)
+          if [ -n "$violations" ]; then
+            echo "::error::operator-local credential path is TRACKED — untrack it and keep it ignored (see docs/security/GATE-SECRETOS-01.md)"
+            echo "$violations"
+            exit 1
+          fi
+          echo "no-tracked-operator-local-secret-paths OK"
+
       - name: lint-migration-index-locks (FREEZE-01 FASE 2.2)
         # No CREATE INDEX without CONCURRENTLY on existing tables in
         # migrations >= 105 (the exact shape that froze the pipeline 21h;
