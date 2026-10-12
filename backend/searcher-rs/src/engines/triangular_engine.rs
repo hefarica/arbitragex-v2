@@ -575,14 +575,26 @@ fn build_opportunity(
     let token_c_addr = format!("0x{:040x}", cycle_def.hops[2].token_out);
     let pair_symbol = format!("{}(triangular)", cycle_def.token_a_symbol);
 
-    let amount_in_f64 = amount_in_wei
-        .map(|w| u256_to_f64(&w) / 1e18_f64)
-        .unwrap_or(0.0);
+    // TRIANGULAR-1E18-01 (t205, #932): the notional uses the RESOLVED unit of
+    // token_a — never a fabricated `1e18`. Unknown symbol ⇒ NO COMPUTADO (NaN,
+    // R8) with the orchestrator-style reason pair recorded on the Opportunity.
+    // In the sized path the sizing stamp overwrites this value (t201/#927);
+    // in the non-sized path the old `1e18` SURVIVED into economics
+    // (`expected_amount_out`, `OpportunityCandidate.amount_in`).
+    let (amount_in_f64, decimals_unresolved) = match amount_in_wei {
+        Some(w) => match token_a_decimals_resolved(&cycle_def.token_a_symbol) {
+            Some(d) => (u256_to_f64(&w) / 10f64.powi(d as i32), false),
+            None => (f64::NAN, true),
+        },
+        // Declared out of locus (t205): amount_in_wei = None keeps the
+        // historical 0.0 — the no-reserves / no-sized leg.
+        None => (0.0, false),
+    };
     let amount_in_wei_str = amount_in_wei
         .map(|w| w.to_string())
         .unwrap_or_else(|| "0".to_string());
 
-    let opportunity = Opportunity {
+    let mut opportunity = Opportunity {
         id,
         chain_id,
         strategy_kind,
@@ -606,6 +618,22 @@ fn build_opportunity(
         trace_id,
         economics: None,
     };
+
+    // TRIANGULAR-1E18-01 (#932): the reason pair rides on the Opportunity so
+    // the non-sized NaN is attributable downstream (R8: NO COMPUTADO with an
+    // exact reason, never a silent plausible number).
+    if decimals_unresolved {
+        opportunity.rejection_reason = Some(
+            "triangular.token_a_decimals_unresolved;token_a_symbol_not_in_the_decimals_table"
+                .to_owned(),
+        );
+        debug!(
+            event = "triangular_engine.amount_in_no_computado",
+            cycle_id = cycle_def.cycle_id,
+            sym = cycle_def.token_a_symbol,
+            "amount_in NaN: symbol not in the decimals table"
+        );
+    }
 
     // TRIANGULAR-PRICE-SCALE-01 (2026-09-17): convert the USD profit to
     // token-a units using the REAL price resolved by `extract_pricing`.
@@ -714,6 +742,22 @@ fn token_a_decimals_for_symbol(symbol: &str) -> u8 {
         "DAI" => 18,
         "WBTC" => 8,
         _ => 18,
+    }
+}
+
+/// TRIANGULAR-1E18-01 (t205, #932): the SAME table as
+/// `token_a_decimals_for_symbol` but returning `None` for an unknown symbol —
+/// this path NEVER fabricates 18 decimals. The `u8` sibling keeps its
+/// `_ => 18` arm only because the kernel consumes `EvalInput.token_a_decimals`
+/// (changing its signature ripples into `evaluate_cycle`); that residual is
+/// declared here and remains its own locus — NOT fixed by proximity.
+fn token_a_decimals_resolved(symbol: &str) -> Option<u8> {
+    match symbol.to_ascii_uppercase().as_str() {
+        "WETH" => Some(18),
+        "USDC" | "USDT" => Some(6),
+        "DAI" => Some(18),
+        "WBTC" => Some(8),
+        _ => None,
     }
 }
 
@@ -1502,7 +1546,12 @@ mod tests {
         assert_eq!(usdc_price, Some(1.0), "USDC must resolve to $1.0");
 
         let cycle_def = tri_cycle_def("USDC");
-        let amount_in_wei = U256::from(100u32) * U256::from(10u32).pow(U256::from(18u32)); // 100e18 → 100.0 tokens
+        // TRIANGULAR-1E18-01 (#932): USDC has 6 decimals — the fixture must
+        // encode the REAL unit (100 * 10^6 wei = 100.0 USDC). The old
+        // `100e18` fixture itself encoded 18 decimals for a 6-decimal token
+        // (the exact class this card kills). The assertion `== 100.0` is
+        // unchanged: it still measures the price scale, now on an honest base.
+        let amount_in_wei = U256::from(100u32) * U256::from(10u32).pow(U256::from(6u32));
         let (_opp, cand, _rp) = build_opportunity(
             1,
             H256::zero(),
@@ -1558,7 +1607,8 @@ mod tests {
     #[test]
     fn price_scale_t3_no_price_keeps_expected_amount_out_equal_to_amount_in() {
         let cycle_def = tri_cycle_def("USDC");
-        let amount_in_wei = U256::from(100u32) * U256::from(10u32).pow(U256::from(18u32));
+        // TRIANGULAR-1E18-01 (#932): real USDC unit (6 decimals) — see T1.
+        let amount_in_wei = U256::from(100u32) * U256::from(10u32).pow(U256::from(6u32));
         let (_opp, cand, _rp) = build_opportunity(
             1,
             H256::zero(),
@@ -1587,6 +1637,110 @@ mod tests {
         assert_eq!(
             cand0.expected_amount_out, 100.0,
             "T3 (price 0.0): expected_amount_out must equal amount_in exactly"
+        );
+    }
+
+    // ── TRIANGULAR-1E18-01 (t205, #932) tests ──────────────────────────────
+    //
+    // Defect: `build_opportunity` divided amount_in_wei by a hardcoded
+    // `1e18` on the NON-SIZED path. For a USDC cycle (6 decimals) a
+    // 100 * 10^6 wei input reported 1e-10 instead of 100.0 — a fabricated
+    // plausible constant survived into `expected_amount_out` and
+    // `OpportunityCandidate.amount_in`. Third locus of the "unknown resolved
+    // to a plausible constant" class (t187/#927 decimals, fee-tier 30/100).
+
+    /// The notional uses the RESOLVED unit of token_a — USDC resolves to 6
+    /// decimals — and WETH keeps 18 (regression pin). The mutant that
+    /// restores `/1e18` fails this test on the USDC arm.
+    #[test]
+    fn triangular_notional_uses_the_resolved_unit_not_1e18() {
+        let cycle_def = tri_cycle_def("USDC");
+        let amount_in_wei = U256::from(100u32) * U256::from(10u32).pow(U256::from(6u32));
+        let (_opp, cand, _rp) = build_opportunity(
+            1,
+            H256::zero(),
+            &cycle_def,
+            Some(6.0),
+            Some(amount_in_wei),
+            Some(1.0),
+            1000.0,
+        );
+        assert_eq!(
+            cand.amount_in, 100.0,
+            "USDC notional must use the resolved 6-decimal unit (old 1e18 gave 1e-10)"
+        );
+        assert_eq!(cand.expected_amount_out, 106.0);
+
+        // WETH arm: 18 decimals unchanged.
+        let cycle_weth = tri_cycle_def("WETH");
+        let w = U256::from(10u32).pow(U256::from(18u32));
+        let (_o2, c2, _r2) = build_opportunity(
+            1,
+            H256::zero(),
+            &cycle_weth,
+            Some(6.0),
+            Some(w),
+            Some(3000.0),
+            1000.0,
+        );
+        assert_eq!(c2.amount_in, 1.0, "WETH notional must keep 18 decimals");
+        assert!((c2.expected_amount_out - 1.002).abs() < 1e-12);
+    }
+
+    /// Unknown symbol ⇒ NO COMPUTADO: the notional is NaN (never a
+    /// fabricated 1e18-scaled number) and the orchestrator-style reason pair
+    /// rides on the Opportunity so the NaN is attributable downstream.
+    /// Scenario: operator PRICES an exotic token (token_prices_usd) that is
+    /// NOT in the decimals table — the accepted/non-sized path used to ship
+    /// a plausible number straight into economics.
+    #[test]
+    fn triangular_unknown_symbol_is_nan_no_computado_with_reasons() {
+        let cycle_def = tri_cycle_def("PEPE");
+        let amount_in_wei = U256::from(100u32) * U256::from(10u32).pow(U256::from(18u32));
+        let (opp, cand, _rp) = build_opportunity(
+            1,
+            H256::zero(),
+            &cycle_def,
+            Some(6.0),
+            Some(amount_in_wei),
+            Some(0.5), // priced by the operator — path stays alive
+            1000.0,
+        );
+        assert!(
+            cand.amount_in.is_nan(),
+            "unknown symbol ⇒ NaN notional (NO COMPUTADO), got {}",
+            cand.amount_in
+        );
+        assert!(cand.expected_amount_out.is_nan());
+        let reason = opp
+            .rejection_reason
+            .expect("the reason pair must be recorded on the Opportunity");
+        assert!(
+            reason.contains("triangular.token_a_decimals_unresolved"),
+            "got: {reason}"
+        );
+        assert!(
+            reason.contains("token_a_symbol_not_in_the_decimals_table"),
+            "got: {reason}"
+        );
+    }
+
+    /// Declared residual (t205): amount_in_wei = None keeps the historical
+    /// 0.0 — NOT NaN. The None leg (no reserves / no sizing) is outside this
+    /// locus and must not change behaviour.
+    #[test]
+    fn triangular_amount_in_none_stays_zero_not_nan() {
+        let cycle_def = tri_cycle_def("PEPE");
+        let (opp, cand, _rp) =
+            build_opportunity(1, H256::zero(), &cycle_def, None, None, None, 1000.0);
+        assert_eq!(
+            cand.amount_in, 0.0,
+            "None wei keeps the declared 0.0 (out of locus)"
+        );
+        assert_eq!(cand.expected_amount_out, 0.0);
+        assert!(
+            opp.rejection_reason.is_none(),
+            "no decimals reason when there is no wei to scale"
         );
     }
 
