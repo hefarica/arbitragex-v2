@@ -487,3 +487,19 @@ groups:
           platform: arbitragex
         annotations:
           summary: ">50% de quotes RPC fallando — proveedores degradados (Alchemy cuota/drpc key)"
+
+      # ── ORIGIN LIVENESS (lección: AOF-CORRUPT-01, 2026-10-12). Misma lección
+      # H2b que SEARCHER_SCRAPE_DOWN: arbx_service_up solo hace set(1) — jamás
+      # alcanza 0 — así que un api-server MUERTO es invisible para ServiceDown.
+      # Durante las ~3h de outage el up{job="api-server"} nativo del scrape SÍ
+      # estaba en 0 (contenedor clavado en Created tras el crash-loop de redis
+      # por AOF corrupto) y ninguna regla lo gritó. Este es ese sensor. Redis no
+      # expone /metrics: su radio de impacto ES este job (todas las rutas /api,
+      # socket.io) más HighHTTP5xxRate ya existente.
+      - alert: ApiServerScrapeDown
+        expr: up{job="api-server"} == 0
+        for: 30s
+        labels: { severity: critical, service: api-server, platform: arbitragex }
+        annotations:
+          summary: "api-server scrape DOWN — origen HTTP muerto (/api/* y socket.io en 500)"
+          description: "up{job='api-server'}==0 por >=30s. En AOF-CORRUPT-01 el contenedor quedó 'Created' ~3h detrás del crash-loop de redis sin que nada disparara. Triage: docker ps -a | grep api-server; docker logs arbitragex-v2-redis-1 — 'Bad file format reading the append only file' = AOF truncado (redis-aof-guard lo repara en el próximo boot)."

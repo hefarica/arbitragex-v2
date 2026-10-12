@@ -78,6 +78,20 @@ services:
     networks: [arbx-net]
     <<: *common-logging
 
+  redis-aof-guard:
+    image: redis:7.2
+    # ARBX-AOF-GUARD-01 (2026-10-12): dev parity with prod — pre-boot AOF
+    # integrity pass (check → backup → redis-check-aof --fix → prune >7d
+    # backups). FAIL-OPEN: never blocks redis boot. Incident that birthed it:
+    # docs/incidents/2026-10-12-AOF-CORRUPT-01.md
+    volumes:
+      - redis_data:/data
+      - ./redis-aof-guard.sh:/usr/local/bin/redis-aof-guard.sh:ro
+    entrypoint: ["sh", "/usr/local/bin/redis-aof-guard.sh"]
+    restart: "no"
+    networks: [arbx-net]
+    <<: *common-logging
+
   redis:
     image: redis:7.2
     # AOF ON (2026-08-29, A5-STALL): parity with prod — control-plane keys
@@ -86,6 +100,9 @@ services:
     # SECURITY: loopback only. Same reasoning as postgres.
     ports: ["127.0.0.1:6379:6379"]
     volumes: [redis_data:/data]
+    # ARBX-AOF-GUARD-01: integrity pass completes before redis loads appendonlydir.
+    depends_on:
+      redis-aof-guard: { condition: service_completed_successfully }
     healthcheck:
       test: ["CMD","redis-cli","PING"]
       interval: 5s
