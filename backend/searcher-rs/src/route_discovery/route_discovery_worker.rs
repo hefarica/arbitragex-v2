@@ -1599,6 +1599,7 @@ async fn run_loop(
             let mut bridge_spawned = 0usize;
             let mut lane_sizeable = 0usize;
             let mut lane_unpriceable = 0usize;
+            let chain_id_label = chain_id.to_string();
             for c in hop_cycle_bridge::order_for_budget(&tick.routes, prefer_sizeable) {
                 let hops = c.hops as usize;
                 if !(hop_cycle_bridge::MIN_BRIDGE_HOPS..=hop_cycle_bridge::MAX_BRIDGE_HOPS)
@@ -1606,12 +1607,14 @@ async fn run_loop(
                 {
                     continue;
                 }
-                if hop_cycle_bridge::kernel_capability_of_protocols(c.protocols.iter())
-                    == hop_cycle_bridge::KernelCapability::V2CycleSizeable
-                {
-                    lane_sizeable += 1;
-                } else {
-                    lane_unpriceable += 1;
+                // RG-01 AUDIT BUG-1: the lane split follows the capability's
+                // OWN `lane()` (kernel-gate aware) — the worker no longer keeps
+                // a second, drifting copy of the predicate.
+                let capability =
+                    hop_cycle_bridge::kernel_capability_of_protocols(c.protocols.iter());
+                match capability.lane() {
+                    hop_cycle_bridge::EmitLane::Sizeable => lane_sizeable += 1,
+                    hop_cycle_bridge::EmitLane::Unpriceable => lane_unpriceable += 1,
                 }
                 let Some(mut intent) = build_intent(c) else {
                     // Canonicalizer produced a ragged candidate — honest skip
@@ -1637,6 +1640,12 @@ async fn run_loop(
                         );
                     }
                 });
+                // RG-01 AUDIT BUG-1 wire marker: the `v3_cycle_sizeable` series
+                // existing and rising on /metrics is the falsifiable proof that
+                // the DEPLOYED build classifies V3-bearing cycles as priceable.
+                crate::metrics::HOP_CYCLE_CAPABILITY_TOTAL
+                    .with_label_values(&[chain_id_label.as_str(), capability.as_str()])
+                    .inc();
                 bridge_spawned += 1;
             }
             if bridge_spawned > 0 {
