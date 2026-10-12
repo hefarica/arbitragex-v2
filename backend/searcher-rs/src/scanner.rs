@@ -660,7 +660,16 @@ async fn build_orchestrator(
         // para que el `decimals.map` del ciclo lea `tokens.decimals` en vez de
         // defaultear a 18.
         token_decimals_provider: decimals_provider.clone(),
-        spanning_tree_engine: None,
+        // RG-01 AUDIT ORPHAN-1 layer 2 (STEP 2.5a): construct the spanning-tree
+        // engine — it only needs the SAME reserves_cache the dex/triangular
+        // engines already consume, so this is the cheapest engine to bring up
+        // and validates the construct→Some→measure→reason pattern.
+        // R8: if the reserves cache is empty the engine still constructs and
+        // `detect_cycles` honestly returns no cycles (never fabricated).
+        spanning_tree_engine: Some(Arc::new(SpanningTreeEngine::new(reserves_cache.clone()))),
+        // STEP 2.5b/c: still None — cross_chain needs multi-chain oracles,
+        // liquidation_snipe needs lending data. The orchestrator's
+        // `v2.engine.none` guard makes their absence explicit (R9-compliant).
         cross_chain_engine: None,
         liquidation_snipe_engine: None,
     };

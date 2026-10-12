@@ -1091,7 +1091,17 @@ impl Orchestrator {
                     e.build_cross_chain_candidates(&intent, cfg_snapshot.as_ref())
                         .await
                 }
-                None => Ok(vec![]),
+                None => {
+                    // RG-01 AUDIT ORPHAN-1 anti-recurrence guard: a None engine
+                    // is a MISSING ENGINE, not an empty one. debug! per intent
+                    // (R9-compliant: invisible at INFO, visible when debugging).
+                    debug!(
+                        event = "v2.engine.none",
+                        engine = "cross_chain_engine",
+                        "engine is None in OrchestratorContext — never constructed (layer-2 orphan)"
+                    );
+                    Ok(vec![])
+                }
             }
         } else {
             Ok(vec![])
@@ -1135,7 +1145,14 @@ impl Orchestrator {
                     e.build_from_impacted_cycles(&intent, &impact, cfg_snapshot.as_ref())
                         .await
                 }
-                None => Ok(vec![]),
+                None => {
+                    debug!(
+                        event = "v2.engine.none",
+                        engine = "spanning_tree_engine",
+                        "engine is None in OrchestratorContext — never constructed (layer-2 orphan)"
+                    );
+                    Ok(vec![])
+                }
             }
         } else {
             Ok(vec![])
@@ -1179,7 +1196,14 @@ impl Orchestrator {
                     e.build_liquidation_candidates(&intent, cfg_snapshot.as_ref())
                         .await
                 }
-                None => Ok(vec![]),
+                None => {
+                    debug!(
+                        event = "v2.engine.none",
+                        engine = "liquidation_snipe_engine",
+                        "engine is None in OrchestratorContext — never constructed (layer-2 orphan)"
+                    );
+                    Ok(vec![])
+                }
             }
         } else {
             Ok(vec![])
