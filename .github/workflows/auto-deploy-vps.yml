@@ -533,10 +533,35 @@ jobs:
           fi
           # A document HTTP 200 is not proof of the API's served revision.
           # Keep the whole body within the curl timeout; pipefail propagates HTTP errors.
-          curl --fail --silent --show-error --connect-timeout 5 --max-time 15 \
-            http://127.0.0.1:8080/status | \
-            python3 scripts/ci/verify_deploy_identity.py --sha "$TARGET_SHA" \
-              --run-id "$DEPLOY_RUN_ID" --deployed-at "$ARBX_DEPLOYED_AT"
+          #
+          # DEPLOY-G4-WAIT-01 (2026-10-12): the verifier demands the served
+          # deploy marker AND all 7 upstream services ok (selector-api, sim-ctl,
+          # recon, relays-client, searcher-rs, math-engine, token-enricher).
+          # The [8/9] wait only covers api-server + edge + searcher-rs, so on a
+          # cold stack the remaining upstreams can still be `health: starting`
+          # when this runs. Deploy 38205696075 failed exactly that way: the ps
+          # dump taken in the same second showed relays-client and
+          # token-enricher `(health: starting)`, while /status served the right
+          # sha seconds later (HEAD == TARGET_SHA, marker correct). Bounded wait
+          # (24 x 5s), then ONE strict verdict: the wait may retry, the
+          # assertion never relaxes.
+          G4_OK=0
+          for g4_attempt in $(seq 1 24); do
+            if curl --fail --silent --connect-timeout 5 --max-time 15 \
+                 http://127.0.0.1:8080/status 2>/dev/null | \
+               python3 scripts/ci/verify_deploy_identity.py --sha "$TARGET_SHA" \
+                 --run-id "$DEPLOY_RUN_ID" --deployed-at "$ARBX_DEPLOYED_AT"; then
+              echo "G4 attempt ${g4_attempt}/24: served identity + 7 upstreams healthy"
+              G4_OK=1
+              break
+            fi
+            echo "G4 attempt ${g4_attempt}/24: stack still hydrating, retry in 5s"
+            sleep 5
+          done
+          if [ "$G4_OK" != "1" ]; then
+            echo "::error::Served API identity/health evidence missing, stale or invalid (after 120s bounded wait)"
+            exit 1
+          fi
           echo "G4 PASS: checkout and served API identity match $TARGET_SHA; frontend document reachable"
           DEPLOY_POSTCHECK_COMPLETE=1
           echo "✅ Deploy completed at $(git rev-parse --short HEAD)"
