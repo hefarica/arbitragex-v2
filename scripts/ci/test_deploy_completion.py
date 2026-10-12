@@ -15,6 +15,7 @@ import textwrap
 import unittest
 
 from verify_deploy_identity import MAX_BYTES, SERVICES, parse_payload, validate
+from wait_status_ready import identity_mismatch, ready
 
 ROOT = Path(__file__).resolve().parents[2]
 SHA = "ab" * 20
@@ -114,6 +115,93 @@ class IdentityTests(unittest.TestCase):
 
     def test_ordinary_payload_parses(self):
         self.assertEqual(parse_payload(json.dumps(sample()).encode()), sample())
+
+
+class StatusReadinessTests(unittest.TestCase):
+    """DEPLOY-G4-WAIT-01: readiness is transient-only; identity stays strict.
+
+    The bounded G4 wait may retry ONLY the transient surface (upstream health +
+    fresh status). The identity verdict is never retried, which is what keeps a
+    wrong served identity failing fast instead of after the whole wait budget.
+    """
+
+    def test_ready_payload(self):
+        self.assertTrue(ready(sample(), now=NOW))
+
+    def test_any_unhealthy_or_malformed_service_is_not_ready(self):
+        for name in SERVICES:
+            for bad in (None, {}, {"ok": False, "status": 200}, {"ok": 1, "status": 200},
+                        {"ok": True, "status": 503}, {"ok": True, "status": "200"},
+                        {"ok": True, "status": True}):
+                body = sample(); body["services"][name] = bad
+                with self.subTest(name=name, bad=bad):
+                    self.assertFalse(ready(body, now=NOW))
+
+    def test_stale_future_and_missing_ts_are_not_ready(self):
+        for stamp in (NOW - timedelta(seconds=61), NOW + timedelta(seconds=31), None, "yesterday"):
+            body = sample(); body["ts"] = stamp
+            with self.subTest(stamp=stamp):
+                self.assertFalse(ready(body, now=NOW))
+
+    def test_identity_is_irrelevant_to_readiness_but_verdict_stays_strict(self):
+        body = sample(); body["deploy"]["sha"] = "cd" * 20
+        self.assertTrue(ready(body, now=NOW), "readiness must not judge identity")
+        with self.assertRaises(ValueError):
+            validate(body, SHA, RUN, AT, now=NOW)
+
+    def test_absent_served_marker_is_not_terminal(self):
+        """No marker yet = api-server still hydrating the stamp: keep waiting."""
+        body = sample(); del body["deploy"]
+        self.assertFalse(identity_mismatch(body, SHA, RUN, AT))
+        self.assertFalse(identity_mismatch({}, SHA, RUN, AT))
+        self.assertFalse(identity_mismatch("not-an-object", SHA, RUN, AT))
+
+    def test_present_but_wrong_marker_is_terminal(self):
+        """A served-but-wrong identity can never become right by waiting."""
+        for key, value in (("sha", "cd" * 20), ("id", "98765"),
+                           ("at", "2026-09-14T01:00:00Z")):
+            body = sample(); body["deploy"][key] = value
+            with self.subTest(key=key):
+                self.assertTrue(identity_mismatch(body, SHA, RUN, AT))
+
+    def test_correct_marker_is_not_a_mismatch(self):
+        self.assertFalse(identity_mismatch(sample(), SHA, RUN, AT))
+
+    def test_cli_ready_payload_exits_zero(self):
+        now = datetime.now(timezone.utc)
+        body = sample(now, (now - timedelta(seconds=5)).strftime("%Y-%m-%dT%H:%M:%SZ"))
+        result = subprocess.run(
+            [sys.executable, "wait_status_ready.py", "--sha", SHA, "--run-id", RUN, "--deployed-at",
+             body["deploy"]["at"]],
+            input=json.dumps(body), text=True, encoding="utf-8", capture_output=True,
+            cwd=Path(__file__).resolve().parent, timeout=15)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout.strip(), "ready")
+
+    def test_cli_stale_ts_with_matching_marker_is_retryable(self):
+        body = sample()  # fixed old ts, marker matches
+        result = subprocess.run(
+            [sys.executable, "wait_status_ready.py", "--sha", SHA, "--run-id", RUN, "--deployed-at", AT],
+            input=json.dumps(body), text=True, encoding="utf-8", capture_output=True,
+            cwd=Path(__file__).resolve().parent, timeout=15)
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertNotIn("DO_NOT_PRINT", result.stdout + result.stderr)
+
+    def test_cli_wrong_marker_is_terminal_exit_two(self):
+        body = sample(); body["deploy"]["sha"] = "cd" * 20
+        result = subprocess.run(
+            [sys.executable, "wait_status_ready.py", "--sha", SHA, "--run-id", RUN, "--deployed-at", AT],
+            input=json.dumps(body), text=True, encoding="utf-8", capture_output=True,
+            cwd=Path(__file__).resolve().parent, timeout=15)
+        self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+
+    def test_cli_malformed_body_is_not_ready_and_never_echoed(self):
+        result = subprocess.run(
+            [sys.executable, "wait_status_ready.py", "--sha", SHA, "--run-id", RUN, "--deployed-at", AT],
+            input="not-json", text=True, encoding="utf-8", capture_output=True,
+            cwd=Path(__file__).resolve().parent, timeout=15)
+        self.assertEqual(result.returncode, 1)
+        self.assertNotIn("not-json", result.stdout + result.stderr)
 
 
 class StreamingShellTests(unittest.TestCase):

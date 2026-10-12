@@ -542,26 +542,40 @@ jobs:
           # when this runs. Deploy 38205696075 failed exactly that way: the ps
           # dump taken in the same second showed relays-client and
           # token-enricher `(health: starting)`, while /status served the right
-          # sha seconds later (HEAD == TARGET_SHA, marker correct). Bounded wait
-          # (24 x 5s), then ONE strict verdict: the wait may retry, the
-          # assertion never relaxes.
-          G4_OK=0
+          # sha seconds later (HEAD == TARGET_SHA, marker correct).
+          #
+          # Split by responsibility: the readiness probe below is transient-only
+          # and MAY be retried (bounded); a SERVED-BUT-WRONG identity marker is
+          # terminal (exit 2 — waiting cannot fix a mismatch), and the identity
+          # verdict itself stays strict, single-shot and never relaxed.
+          G4_READY=0
           for g4_attempt in $(seq 1 24); do
-            if curl --fail --silent --connect-timeout 5 --max-time 15 \
-                 http://127.0.0.1:8080/status 2>/dev/null | \
-               python3 scripts/ci/verify_deploy_identity.py --sha "$TARGET_SHA" \
-                 --run-id "$DEPLOY_RUN_ID" --deployed-at "$ARBX_DEPLOYED_AT"; then
-              echo "G4 attempt ${g4_attempt}/24: served identity + 7 upstreams healthy"
-              G4_OK=1
+            G4_PROBE=0
+            curl --fail --silent --connect-timeout 5 --max-time 15 \
+              http://127.0.0.1:8080/status 2>/dev/null | \
+              python3 scripts/ci/wait_status_ready.py --sha "$TARGET_SHA" \
+                --run-id "$DEPLOY_RUN_ID" --deployed-at "$ARBX_DEPLOYED_AT" \
+                >/dev/null 2>&1 || G4_PROBE=$?
+            if [ "$G4_PROBE" = "0" ]; then
+              echo "G4 readiness ${g4_attempt}/24: 7/7 upstreams healthy, identity marker matches, status current"
+              G4_READY=1
               break
             fi
-            echo "G4 attempt ${g4_attempt}/24: stack still hydrating, retry in 5s"
+            if [ "$G4_PROBE" = "2" ]; then
+              echo "::error::Served deployment identity marker mismatches this run — terminal, not retried"
+              exit 1
+            fi
+            echo "G4 readiness ${g4_attempt}/24: stack still hydrating, retry in 5s"
             sleep 5
           done
-          if [ "$G4_OK" != "1" ]; then
-            echo "::error::Served API identity/health evidence missing, stale or invalid (after 120s bounded wait)"
+          if [ "$G4_READY" != "1" ]; then
+            echo "::error::G4 precondition unmet after 120s bounded wait (upstream health / status freshness)"
             exit 1
           fi
+          curl --fail --silent --show-error --connect-timeout 5 --max-time 15 \
+            http://127.0.0.1:8080/status | \
+            python3 scripts/ci/verify_deploy_identity.py --sha "$TARGET_SHA" \
+              --run-id "$DEPLOY_RUN_ID" --deployed-at "$ARBX_DEPLOYED_AT"
           echo "G4 PASS: checkout and served API identity match $TARGET_SHA; frontend document reachable"
           DEPLOY_POSTCHECK_COMPLETE=1
           echo "✅ Deploy completed at $(git rev-parse --short HEAD)"
