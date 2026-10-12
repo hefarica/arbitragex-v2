@@ -1078,14 +1078,162 @@ impl Orchestrator {
             }
         };
 
+        // ── RG-01 AUDIT ORPHAN-1: the three Task-3 engines were constructed and
+        // stored on the context but NEVER invoked — their candidates could not
+        // reach `process_candidate`, so their strategy labels never reached a
+        // card. Wired here with the same shape as the engines above (native_on
+        // guard, per-candidate CANDIDATES_TOTAL, v2.engine.output log, honest
+        // Err accounting — R8: an engine failure skips its candidates, never
+        // fabricates any).
+        let cc_result = if native_on {
+            match &self.ctx.cross_chain_engine {
+                Some(e) => {
+                    e.build_cross_chain_candidates(&intent, cfg_snapshot.as_ref())
+                        .await
+                }
+                None => Ok(vec![]),
+            }
+        } else {
+            Ok(vec![])
+        };
+        let cc_candidates = match cc_result {
+            Ok(v) => {
+                for c in &v {
+                    CANDIDATES_TOTAL
+                        .with_label_values(&[&chain_str, c.label.as_str()])
+                        .inc();
+                }
+                info!(
+                    event = "v2.engine.output",
+                    chain_id,
+                    tx_hash = %intent.tx_hash,
+                    engine = "cross_chain_engine",
+                    candidates_count = v.len(),
+                    rejected_count = v.iter().filter(|c| c.rejection_reason.is_some()).count(),
+                    accepted_shape_count = v.iter().filter(|c| c.rejection_reason.is_none()).count(),
+                );
+                v
+            }
+            Err(e) => {
+                ENGINE_ERRORS_TOTAL
+                    .with_label_values(&[&chain_str, "cross_chain_engine"])
+                    .inc();
+                error!(
+                    event = "orchestrator.cross_chain_engine_error",
+                    chain_id,
+                    tx_hash = %intent.tx_hash,
+                    error = %e,
+                    "CrossChainBridgeEngine::build_cross_chain_candidates failed; skipping"
+                );
+                vec![]
+            }
+        };
+
+        let st_result = if native_on {
+            match &self.ctx.spanning_tree_engine {
+                Some(e) => {
+                    e.build_from_impacted_cycles(&intent, &impact, cfg_snapshot.as_ref())
+                        .await
+                }
+                None => Ok(vec![]),
+            }
+        } else {
+            Ok(vec![])
+        };
+        let st_candidates = match st_result {
+            Ok(v) => {
+                for c in &v {
+                    CANDIDATES_TOTAL
+                        .with_label_values(&[&chain_str, c.label.as_str()])
+                        .inc();
+                }
+                info!(
+                    event = "v2.engine.output",
+                    chain_id,
+                    tx_hash = %intent.tx_hash,
+                    engine = "spanning_tree_engine",
+                    candidates_count = v.len(),
+                    rejected_count = v.iter().filter(|c| c.rejection_reason.is_some()).count(),
+                    accepted_shape_count = v.iter().filter(|c| c.rejection_reason.is_none()).count(),
+                );
+                v
+            }
+            Err(e) => {
+                ENGINE_ERRORS_TOTAL
+                    .with_label_values(&[&chain_str, "spanning_tree_engine"])
+                    .inc();
+                error!(
+                    event = "orchestrator.spanning_tree_engine_error",
+                    chain_id,
+                    tx_hash = %intent.tx_hash,
+                    error = %e,
+                    "SpanningTreeEngine::build_from_impacted_cycles failed; skipping"
+                );
+                vec![]
+            }
+        };
+
+        let snipe_result = if native_on {
+            match &self.ctx.liquidation_snipe_engine {
+                Some(e) => {
+                    e.build_liquidation_candidates(&intent, cfg_snapshot.as_ref())
+                        .await
+                }
+                None => Ok(vec![]),
+            }
+        } else {
+            Ok(vec![])
+        };
+        let snipe_candidates = match snipe_result {
+            Ok(v) => {
+                for c in &v {
+                    CANDIDATES_TOTAL
+                        .with_label_values(&[&chain_str, c.label.as_str()])
+                        .inc();
+                }
+                info!(
+                    event = "v2.engine.output",
+                    chain_id,
+                    tx_hash = %intent.tx_hash,
+                    engine = "liquidation_snipe_engine",
+                    candidates_count = v.len(),
+                    rejected_count = v.iter().filter(|c| c.rejection_reason.is_some()).count(),
+                    accepted_shape_count = v.iter().filter(|c| c.rejection_reason.is_none()).count(),
+                );
+                v
+            }
+            Err(e) => {
+                ENGINE_ERRORS_TOTAL
+                    .with_label_values(&[&chain_str, "liquidation_snipe_engine"])
+                    .inc();
+                error!(
+                    event = "orchestrator.liquidation_snipe_engine_error",
+                    chain_id,
+                    tx_hash = %intent.tx_hash,
+                    error = %e,
+                    "LiquidationSnipeEngine::build_liquidation_candidates failed; skipping"
+                );
+                vec![]
+            }
+        };
+
         // Concatenate base candidates: DEX + triangular + liquidation.
         // Liquidation candidates are included BEFORE flashloan wrapping
         // (a flashloan can also wrap a liquidation call — Phase 15+ work).
-        let mut base_candidates: Vec<StrategyCandidate> =
-            Vec::with_capacity(dex_candidates.len() + tri_candidates.len() + liq_candidates.len());
+        let mut base_candidates: Vec<StrategyCandidate> = Vec::with_capacity(
+            dex_candidates.len()
+                + tri_candidates.len()
+                + liq_candidates.len()
+                + cc_candidates.len()
+                + st_candidates.len()
+                + snipe_candidates.len(),
+        );
         base_candidates.extend(dex_candidates);
         base_candidates.extend(tri_candidates);
         base_candidates.extend(liq_candidates);
+        base_candidates.extend(cc_candidates);
+        base_candidates.extend(st_candidates);
+        base_candidates.extend(snipe_candidates);
 
         // FlashloanEngine (Phase 10 — live): wrap net-positive base candidates.
         // Skipped when ARBX_NATIVE_ENGINES=off (base_candidates is already empty
