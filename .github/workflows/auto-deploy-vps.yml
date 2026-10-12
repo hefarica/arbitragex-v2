@@ -153,6 +153,19 @@ jobs:
           echo "    builder cache pruned: free ${BEFORE_GB}GB -> ${AFTER_GB}GB"
           # Dangling images (no tag, no container) are pure build residue too.
           docker image prune -f >/dev/null 2>&1 || true
+          # RG-01 AUDIT DEPLOY-DISK-GUARD-04 (2026-10-12, medido): los volúmenes
+          # Docker NO se podaban — el deploy de verificación (rg01-target) dejó
+          # 7 GB en un volumen sin contenedor que `builder prune` ni `image
+          # prune` tocan. El disco llegó a 14 GB (< guard de 16) y el deploy
+          # falló con APT-GPG-02. `volume prune -af` elimina SOLO volúmenes sin
+          # contenedor activo — los datos de Postgres/Redis (contenedores vivos)
+          # NUNCA se tocan.
+          BEFORE_VOL=$(df -BG --output=avail / | tail -1 | tr -dc '0-9')
+          docker volume prune -af >/dev/null 2>&1 || true
+          AFTER_VOL=$(df -BG --output=avail / | tail -1 | tr -dc '0-9')
+          echo "    unused volumes pruned: free ${BEFORE_VOL}GB -> ${AFTER_VOL}GB"
+          # Dangling images (all tags, no running container) — post-volume-prune
+          docker image prune -af >/dev/null 2>&1 || true
           FREE_GB=$(df -BG --output=avail / | tail -1 | tr -dc '0-9')
           echo "    free=${FREE_GB}GB (after image prune)"
           # DEPLOY-DISK-GUARD-03 (orden del operador, 2026-09-29): el guard decía
