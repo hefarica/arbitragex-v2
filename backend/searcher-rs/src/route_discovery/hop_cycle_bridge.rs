@@ -53,10 +53,12 @@
 //! finder's order is a best-K selection ranked by gross cycle score, which in
 //! production is 100 % V3-bearing (measured: 585 of 585 discovered 3..=7-hop
 //! cycles over the `arbx:route_discovery:telemetry` channel carried at least
-//! one V3 leg; zero all-V2). Every one of those cycles is unpriceable by the
-//! N-leg kernel ([`KernelCapability::V3MultilegUnsupported`]) — so the scarce
-//! budget was spent, in full and every block, on cycles that provably cannot
-//! reach the ledger.
+//! one V3 leg; zero all-V2). Since the N-leg V3 kernel landed
+//! (`size_multileg_v3_with_reason`, gated by `ARBX_V3_MULTILEG_SIZING`,
+//! default ON), every one of those cycles IS priceable — the capability
+//! verdict now reads that SAME gate ([`kernel_capability_of_protocols`]),
+//! so the unpriceable lane only exists when the operator explicitly disables
+//! the V3 kernel (RG-01 AUDIT BUG-1).
 //!
 //! [`order_for_budget`] fixes the ORDER (sizeable cycles are submitted to the
 //! budget first, stable within each lane) and [`MultihopEmitBudget`] now
@@ -197,26 +199,37 @@ fn cap_from_env() -> usize {
 /// classifying a cycle never costs a Redis or chain round-trip in the hot path.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EmitLane {
-    /// Every leg is a constant-product pool: the N-leg cycle kernel *can* price
-    /// this cycle from the in-memory reserves cache (and rejects honestly with
-    /// `missing_reserves_pool_*` when a pool is genuinely uncached).
+    /// The N-leg kernel CAN price this cycle: all-V2 cycles from the in-memory
+    /// reserves cache (`missing_reserves_pool_*` on a genuine cache miss), and —
+    /// while the N-leg V3 kernel is enabled (`ARBX_V3_MULTILEG_SIZING` ≠ off) —
+    /// V3-bearing cycles through `size_multileg_v3_with_reason` under
+    /// `V3MultilegQuoteBudget` (RG-01 AUDIT BUG-1: the kernel gate, not a
+    /// hardcoded "no V3 kernel exists", decides the lane).
     Sizeable,
-    /// At least one leg is concentrated-liquidity: no N-leg V3 kernel exists, so
-    /// the cycle can only ever be refused. It must not outrank a sizeable cycle
-    /// for the scarce budget.
+    /// A V3-bearing cycle while the N-leg V3 kernel is DISABLED
+    /// (`ARBX_V3_MULTILEG_SIZING=off`): the optimizer's declared refusal
+    /// (`v3_multileg_unsupported`) is then the only possible outcome, so the
+    /// cycle must not outrank a sizeable one for the scarce budget.
     Unpriceable,
 }
 
 /// The verdict [`crate::size_optimizer::SizeOptimizer`] will reach for this
-/// cycle's geometry, decided from the intent alone.
+/// cycle, decided from the intent PLUS the kernel's own V3 gate — the SAME
+/// source of truth the optimizer reads, so bridge and kernel can never
+/// disagree (RG-01 AUDIT BUG-1).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum KernelCapability {
     /// All-V2 (constant-product) legs — `size_triangular_with_reason` owns it.
     V2CycleSizeable,
-    /// Contains a V3 (concentrated-liquidity) leg — the optimizer refuses with
-    /// its own `v3_multileg_unsupported` reason. A V3 pool has no
-    /// `getReserves()`, hence no `arbx:pool_reserves:<chain>:<pool>` key, so the
-    /// V2 cache-miss reason would name the wrong cause.
+    /// V3-bearing cycle while the N-leg V3 kernel is ENABLED —
+    /// `size_multileg_v3_with_reason` owns it (budgeted quotes; exhaustion is
+    /// the kernel's own honest `v3_multileg_budget_exhausted`).
+    V3CycleSizeable,
+    /// V3-bearing cycle while the kernel is DISABLED
+    /// (`ARBX_V3_MULTILEG_SIZING=off`) — the optimizer refuses with its own
+    /// `v3_multileg_unsupported` reason. A V3 pool has no `getReserves()`,
+    /// hence no `arbx:pool_reserves:<chain>:<pool>` key, so the V2 cache-miss
+    /// reason would name the wrong cause.
     V3MultilegUnsupported,
 }
 
@@ -224,7 +237,7 @@ impl KernelCapability {
     /// The budget lane this capability competes for.
     pub fn lane(self) -> EmitLane {
         match self {
-            Self::V2CycleSizeable => EmitLane::Sizeable,
+            Self::V2CycleSizeable | Self::V3CycleSizeable => EmitLane::Sizeable,
             Self::V3MultilegUnsupported => EmitLane::Unpriceable,
         }
     }
@@ -233,6 +246,7 @@ impl KernelCapability {
     pub fn as_str(self) -> &'static str {
         match self {
             Self::V2CycleSizeable => "v2_cycle_sizeable",
+            Self::V3CycleSizeable => "v3_cycle_sizeable",
             Self::V3MultilegUnsupported => "v3_multileg_unsupported",
         }
     }
@@ -248,15 +262,35 @@ pub fn protocol_is_v3(pt: ProtocolType) -> bool {
     protocol_type_to_str(pt).to_ascii_lowercase().contains("v3")
 }
 
-/// Classify a cycle from its per-leg protocol families.
-pub fn kernel_capability_of_protocols<'a>(
+/// Classify a cycle from its per-leg protocol families, with the kernel's V3
+/// gate passed EXPLICITLY (pure — testable for both gate states without env
+/// mutation).
+pub fn kernel_capability_of_protocols_gated<'a>(
     protocols: impl IntoIterator<Item = &'a ProtocolType>,
+    v3_kernel_enabled: bool,
 ) -> KernelCapability {
     if protocols.into_iter().any(|p| protocol_is_v3(*p)) {
-        KernelCapability::V3MultilegUnsupported
+        if v3_kernel_enabled {
+            KernelCapability::V3CycleSizeable
+        } else {
+            KernelCapability::V3MultilegUnsupported
+        }
     } else {
         KernelCapability::V2CycleSizeable
     }
+}
+
+/// Classify a cycle from its per-leg protocol families, reading the SAME
+/// memoised gate the optimizer reads
+/// ([`crate::size_optimizer::v3_multileg_sizing_enabled`]) — one source of
+/// truth, no drift (RG-01 AUDIT BUG-1).
+pub fn kernel_capability_of_protocols<'a>(
+    protocols: impl IntoIterator<Item = &'a ProtocolType>,
+) -> KernelCapability {
+    kernel_capability_of_protocols_gated(
+        protocols,
+        crate::size_optimizer::v3_multileg_sizing_enabled(),
+    )
 }
 
 /// Classify an admitted intent (its legs are what `bridge_leg` renders onto the
@@ -276,19 +310,34 @@ pub fn kernel_capability(intent: &RouteIntent) -> KernelCapability {
 ///
 /// Bounded by construction: one pass, one `Vec` of `len` references (the tick's
 /// route set is already capped by `max_routes_per_tick`).
-pub fn order_for_budget(routes: &[RouteCandidate], prefer_sizeable: bool) -> Vec<&RouteCandidate> {
+pub fn order_for_budget_gated(
+    routes: &[RouteCandidate],
+    prefer_sizeable: bool,
+    v3_kernel_enabled: bool,
+) -> Vec<&RouteCandidate> {
     if !prefer_sizeable {
         return routes.iter().collect();
     }
     let mut ordered: Vec<&RouteCandidate> = Vec::with_capacity(routes.len());
     ordered.extend(routes.iter().filter(|c| {
-        kernel_capability_of_protocols(c.protocols.iter()) == KernelCapability::V2CycleSizeable
+        kernel_capability_of_protocols_gated(c.protocols.iter(), v3_kernel_enabled).lane()
+            == EmitLane::Sizeable
     }));
     ordered.extend(routes.iter().filter(|c| {
-        kernel_capability_of_protocols(c.protocols.iter())
-            == KernelCapability::V3MultilegUnsupported
+        kernel_capability_of_protocols_gated(c.protocols.iter(), v3_kernel_enabled).lane()
+            == EmitLane::Unpriceable
     }));
     ordered
+}
+
+/// Live-gate wrapper: the partition follows
+/// [`crate::size_optimizer::v3_multileg_sizing_enabled`] (RG-01 AUDIT BUG-1).
+pub fn order_for_budget(routes: &[RouteCandidate], prefer_sizeable: bool) -> Vec<&RouteCandidate> {
+    order_for_budget_gated(
+        routes,
+        prefer_sizeable,
+        crate::size_optimizer::v3_multileg_sizing_enabled(),
+    )
 }
 
 // ---------------------------------------------------------------------------
@@ -1178,21 +1227,33 @@ mod tests {
                 "{hops}-hop all-V2 cycle must be sizeable"
             );
         }
-        // Any V3 leg (at any position) ⇒ V3MultilegUnsupported, the reason the
-        // optimizer emits — NOT a V2 reserve miss.
+        // Any V3 leg (at any position) with the kernel gate ON (the default in
+        // tests AND production) ⇒ V3CycleSizeable — `size_multileg_v3_with_reason`
+        // owns it. With the gate OFF ⇒ the declared refusal (RG-01 AUDIT BUG-1).
         for v3_at in 0..4usize {
             let intent = make_mixed_intent(4, &[v3_at], 1);
             assert_eq!(
                 kernel_capability(&intent),
-                KernelCapability::V3MultilegUnsupported,
-                "a V3 leg at index {v3_at} must classify the cycle as unpriceable"
+                KernelCapability::V3CycleSizeable,
+                "a V3 leg at index {v3_at} with the kernel enabled must classify sizeable"
             );
         }
+        // The pure gated core pins the OFF branch without env mutation.
+        let v3_protocols = [ProtocolType::V3];
+        assert_eq!(
+            kernel_capability_of_protocols_gated(v3_protocols.iter(), false),
+            KernelCapability::V3MultilegUnsupported
+        );
+        assert_eq!(
+            kernel_capability_of_protocols_gated(v3_protocols.iter(), true),
+            KernelCapability::V3CycleSizeable
+        );
         // The predicate is the SAME table the kernel reads (`leg_is_v3` tests the
         // rendered `protocol_type` string for "v3").
         assert!(protocol_is_v3(ProtocolType::V3));
         assert!(!protocol_is_v3(ProtocolType::V2));
         assert_eq!(KernelCapability::V2CycleSizeable.lane(), EmitLane::Sizeable);
+        assert_eq!(KernelCapability::V3CycleSizeable.lane(), EmitLane::Sizeable);
         assert_eq!(
             KernelCapability::V3MultilegUnsupported.lane(),
             EmitLane::Unpriceable
@@ -1277,18 +1338,27 @@ mod tests {
         let ordered = order_for_budget(&routes, true);
         assert_eq!(ordered.len(), routes.len(), "ordering never drops an item");
         let hops: Vec<u8> = ordered.iter().map(|c| c.hops).collect();
+        // Kernel gate ON (default): every fixture is sizeable ⇒ one lane, finder
+        // order preserved verbatim (RG-01 AUDIT BUG-1).
         assert_eq!(
             hops,
-            vec![4, 3, 4, 4, 5],
-            "sizeable cycles keep the finder's relative order and come first; \
-             unpriceable cycles follow in their own finder order"
+            vec![4, 4, 4, 5, 3],
+            "with the V3 kernel enabled there is no partition — finder order verbatim"
         );
         assert!(
-            ordered[..2]
-                .iter()
-                .all(|c| kernel_capability_of_protocols(c.protocols.iter())
-                    == KernelCapability::V2CycleSizeable),
-            "the head of the ordered set must be the sizeable lane"
+            ordered.iter().all(
+                |c| kernel_capability_of_protocols(c.protocols.iter()).lane() == EmitLane::Sizeable
+            ),
+            "with the kernel gate ON the whole set competes in the sizeable lane"
+        );
+        // Kernel gate OFF (pure core): the historical partition — V2 sizeable
+        // first in finder order, V3 unpriceable behind.
+        let gated_off = order_for_budget_gated(&routes, true, false);
+        let hops_off: Vec<u8> = gated_off.iter().map(|c| c.hops).collect();
+        assert_eq!(
+            hops_off,
+            vec![4, 3, 4, 4, 5],
+            "kernel disabled: sizeable (V2) cycles first, unpriceable (V3) behind"
         );
 
         // Reversibility: the knob OFF reproduces the pre-patch sequence exactly.
@@ -1353,8 +1423,9 @@ mod tests {
                 Ok(cand) => {
                     assert_eq!(
                         capability,
-                        KernelCapability::V2CycleSizeable,
-                        "only sizeable cycles may be admitted while one is waiting"
+                        KernelCapability::V3CycleSizeable,
+                        "kernel gate ON: a V3-bearing cycle competes for (and wins) \
+                         a sizeable slot — the starvation shape is gone"
                     );
                     admitted_hops.push(cand.route_plan.legs.len());
                 }
@@ -1367,18 +1438,16 @@ mod tests {
             }
         }
 
+        // Kernel gate ON (default): the whole tick is one sizeable lane in
+        // finder order — the first two finder cycles take the cap, NOTHING is
+        // deferred as unpriceable (RG-01 AUDIT BUG-1).
         assert_eq!(
             admitted_hops,
-            vec![3, 4],
-            "the saturated cap must be spent on the sizeable cycles, not on the \
-             unpriceable ones that precede them in finder order"
+            vec![4, 4],
+            "gate ON: finder-order sizeable lane admits the first two cycles"
         );
         assert_eq!(budget.used_in(EPOCH), CAP as u64);
-        assert_eq!(
-            budget.sizeable_used_in(EPOCH),
-            CAP as u64,
-            "every spent slot went to priceable work"
-        );
+        assert_eq!(budget.sizeable_used_in(EPOCH), CAP as u64);
         assert_eq!(budget.unpriceable_used_in(EPOCH), 0);
         assert_eq!(
             budget.dropped_in(EPOCH),
@@ -1387,13 +1456,12 @@ mod tests {
         );
         assert_eq!(
             budget.unpriceable_refused_in(EPOCH),
-            deferred_unpriceable as u64,
-            "the deferred-behind-sizeable count must equal the observed deferrals"
+            deferred_unpriceable as u64
         );
         assert_eq!(
             budget.unpriceable_refused_in(EPOCH),
-            5,
-            "all five unpriceable cycles were deferred (observable, R8)"
+            0,
+            "gate ON: zero unpriceable deferrals — there is no unpriceable lane"
         );
 
         // Reversibility: with the knob OFF the pre-patch first-K slice is spent
@@ -1414,35 +1482,40 @@ mod tests {
         );
         assert_eq!(
             legacy.sizeable_used_in(EPOCH),
-            0,
-            "pre-patch, zero slots reached the sizeable lane"
+            CAP as u64,
+            "gate ON: every slot is sizeable-lane work even in finder order"
         );
     }
 
-    /// GATE (f) — the four production V3-bearing shapes must be classified
-    /// unpriceable, and the one all-V2 shape sizeable.
+    /// GATE (f) — the four production V3-bearing shapes classify sizeable with
+    /// the kernel gate ON (default), unpriceable with it OFF; the all-V2 shape
+    /// is sizeable under both.
     #[test]
     fn gate_f_production_shapes_classify_as_measured() {
-        let measured: [(&[usize], KernelCapability); 5] = [
-            (&[0, 1, 2, 3], KernelCapability::V3MultilegUnsupported),
-            (&[1, 2, 3], KernelCapability::V3MultilegUnsupported),
-            (&[2, 3], KernelCapability::V3MultilegUnsupported),
-            (&[0, 1, 2, 3, 4], KernelCapability::V3MultilegUnsupported),
-            (&[], KernelCapability::V2CycleSizeable),
-        ];
-        for (v3_legs, expected) in measured {
-            let hops = if v3_legs.is_empty() {
-                3
-            } else {
-                v3_legs.iter().max().copied().unwrap() + 1
-            };
+        let v3_shapes: [&[usize]; 4] = [&[0, 1, 2, 3], &[1, 2, 3], &[2, 3], &[0, 1, 2, 3, 4]];
+        for v3_legs in v3_shapes {
+            let hops = v3_legs.iter().max().copied().unwrap() + 1;
             let c = make_mixed_route_candidate(hops, v3_legs);
             assert_eq!(
-                kernel_capability_of_protocols(c.protocols.iter()),
-                expected,
-                "hops={hops} v3_legs={v3_legs:?}"
+                kernel_capability_of_protocols_gated(c.protocols.iter(), true),
+                KernelCapability::V3CycleSizeable,
+                "gate ON hops={hops} v3_legs={v3_legs:?}"
+            );
+            assert_eq!(
+                kernel_capability_of_protocols_gated(c.protocols.iter(), false),
+                KernelCapability::V3MultilegUnsupported,
+                "gate OFF hops={hops} v3_legs={v3_legs:?}"
             );
         }
+        let all_v2 = make_route_candidate(3);
+        assert_eq!(
+            kernel_capability_of_protocols_gated(all_v2.protocols.iter(), true),
+            KernelCapability::V2CycleSizeable
+        );
+        assert_eq!(
+            kernel_capability_of_protocols_gated(all_v2.protocols.iter(), false),
+            KernelCapability::V2CycleSizeable
+        );
     }
 
     // ── Reversibility knob ──────────────────────────────────────────────────

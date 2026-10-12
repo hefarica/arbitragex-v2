@@ -586,6 +586,30 @@ pub static DISCOVERY_EDGE_VISITS: Lazy<prometheus::IntGaugeVec> = Lazy::new(|| {
 });
 
 // ---------------------------------------------------------------------------
+// hop_cycle_capability_total{chain_id, capability}  (RG-01 AUDIT BUG-1 marker)
+// ---------------------------------------------------------------------------
+
+/// Discovered 3..=7-hop cycles handed to the native emission pipeline, by the
+/// capability verdict the bridge reached — `v2_cycle_sizeable`,
+/// `v3_cycle_sizeable` (N-leg V3 kernel gate ON) or `v3_multileg_unsupported`
+/// (gate OFF). WIRE MARKER (RG-01): the `v3_cycle_sizeable` series existing and
+/// rising is the falsifiable proof that the DEPLOYED build classifies
+/// V3-bearing cycles as priceable — i.e. the bridge and the sizing kernel are
+/// reading the same gate on the box that serves the domain.
+pub static HOP_CYCLE_CAPABILITY_TOTAL: Lazy<IntCounterVec> = Lazy::new(|| {
+    let c = IntCounterVec::new(
+        prometheus::opts!(
+            "arbx_hop_cycle_capability_total",
+            "Discovered deep cycles dispatched to emission, by kernel capability verdict"
+        ),
+        &["chain_id", "capability"],
+    )
+    .expect("metric");
+    REGISTRY.register(Box::new(c.clone())).expect("register");
+    c
+});
+
+// ---------------------------------------------------------------------------
 // Initialiser — call once at boot (main.rs after init_metrics())
 // ---------------------------------------------------------------------------
 
@@ -620,6 +644,17 @@ pub fn init_orchestrator_metrics() {
     let _ = &*DISCOVERY_EDGES_BUILT;
     let _ = &*DISCOVERY_WORK_LIMITED;
     let _ = &*DISCOVERY_EDGE_VISITS;
+    // RG-01 AUDIT BUG-1: force-register the capability counter and seed every
+    // series so the post-deploy arbiter (`v3_cycle_sizeable` rising vs the
+    // `v3_multileg_unsupported` wall) exists at 0 before the first tick.
+    let _ = &*HOP_CYCLE_CAPABILITY_TOTAL;
+    for capability in [
+        "v2_cycle_sizeable",
+        "v3_cycle_sizeable",
+        "v3_multileg_unsupported",
+    ] {
+        HOP_CYCLE_CAPABILITY_TOTAL.with_label_values(&["1", capability]);
+    }
     // WO-06 (FEE-TIER-AWARE-QUOTING): force-register the fee-resolution
     // counter and seed every label series so the production branch-arbiter
     // (catalog vs mismatch vs not_catalogued vs pair_no_pools) exists (absent
