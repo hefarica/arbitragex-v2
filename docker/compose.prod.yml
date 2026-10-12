@@ -83,6 +83,26 @@ services:
           cpus: '2.0'
         reservations:
           memory: 512M
+  redis-aof-guard:
+    logging: *id001
+    image: redis:7.2
+    # ARBX-AOF-GUARD-01 (2026-10-12): one-shot pre-boot AOF integrity pass.
+    # A 00:43 stack event truncated appendonly.aof.11378.incr.aof mid-rewrite;
+    # redis crash-looped on "Bad file format" (RestartCount 9) and every
+    # redis:service_healthy dependent stalled — api-server sat in Created for
+    # ~3h serving origin-wide 500s. This gate validates every AOF part before
+    # redis boots, backs up and repairs truncated tails (redis-check-aof
+    # --fix) and prunes its own backups (>7d). FAIL-OPEN: never blocks boot.
+    # Full timeline: docs/incidents/2026-10-12-AOF-CORRUPT-01.md
+    volumes:
+    - redis_data:/data
+    - ./redis-aof-guard.sh:/usr/local/bin/redis-aof-guard.sh:ro
+    entrypoint:
+    - sh
+    - /usr/local/bin/redis-aof-guard.sh
+    restart: "no"
+    networks:
+    - arbx-net
   redis:
     logging: *id001
     image: redis:7.2
@@ -110,6 +130,11 @@ services:
     - 127.0.0.1:6379:6379
     volumes:
     - redis_data:/data
+    # ARBX-AOF-GUARD-01: AOF integrity pass must complete before redis loads
+    # the appendonlydir (see redis-aof-guard service above).
+    depends_on:
+      redis-aof-guard:
+        condition: service_completed_successfully
     healthcheck:
       test:
       - CMD
