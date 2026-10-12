@@ -648,7 +648,11 @@ pub fn init_orchestrator_metrics() {
     // series so the post-deploy arbiter (`v3_cycle_sizeable` rising vs the
     // `v3_multileg_unsupported` wall) exists at 0 before the first tick.
     let _ = &*HOP_CYCLE_CAPABILITY_TOTAL;
-    for capability in ["v2_cycle_sizeable", "v3_cycle_sizeable", "v3_multileg_unsupported"] {
+    for capability in [
+        "v2_cycle_sizeable",
+        "v3_cycle_sizeable",
+        "v3_multileg_unsupported",
+    ] {
         HOP_CYCLE_CAPABILITY_TOTAL.with_label_values(&["1", capability]);
     }
     // WO-06 (FEE-TIER-AWARE-QUOTING): force-register the fee-resolution

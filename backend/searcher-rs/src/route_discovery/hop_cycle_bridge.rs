@@ -333,7 +333,11 @@ pub fn order_for_budget_gated(
 /// Live-gate wrapper: the partition follows
 /// [`crate::size_optimizer::v3_multileg_sizing_enabled`] (RG-01 AUDIT BUG-1).
 pub fn order_for_budget(routes: &[RouteCandidate], prefer_sizeable: bool) -> Vec<&RouteCandidate> {
-    order_for_budget_gated(routes, prefer_sizeable, crate::size_optimizer::v3_multileg_sizing_enabled())
+    order_for_budget_gated(
+        routes,
+        prefer_sizeable,
+        crate::size_optimizer::v3_multileg_sizing_enabled(),
+    )
 }
 
 // ---------------------------------------------------------------------------
@@ -1342,10 +1346,9 @@ mod tests {
             "with the V3 kernel enabled there is no partition — finder order verbatim"
         );
         assert!(
-            ordered
-                .iter()
-                .all(|c| kernel_capability_of_protocols(c.protocols.iter()).lane()
-                    == EmitLane::Sizeable),
+            ordered.iter().all(
+                |c| kernel_capability_of_protocols(c.protocols.iter()).lane() == EmitLane::Sizeable
+            ),
             "with the kernel gate ON the whole set competes in the sizeable lane"
         );
         // Kernel gate OFF (pure core): the historical partition — V2 sizeable
@@ -1446,7 +1449,11 @@ mod tests {
         assert_eq!(budget.used_in(EPOCH), CAP as u64);
         assert_eq!(budget.sizeable_used_in(EPOCH), CAP as u64);
         assert_eq!(budget.unpriceable_used_in(EPOCH), 0);
-        assert_eq!(budget.dropped_in(EPOCH), 5, "every refused cycle is still counted");
+        assert_eq!(
+            budget.dropped_in(EPOCH),
+            5,
+            "every refused cycle is still counted"
+        );
         assert_eq!(
             budget.unpriceable_refused_in(EPOCH),
             deferred_unpriceable as u64
