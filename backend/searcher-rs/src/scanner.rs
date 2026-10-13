@@ -200,10 +200,19 @@ pub struct ScannerHandle {
 ///
 /// The `ImpactIndex` is now loaded at boot via `ImpactIndex::from_registry`:
 ///   1. PG `pools` table → `token_pair_to_pools` (the DEX arb pair resolution map).
-///   2. Redis `arbx:pool_index` keys for `MVP_CYCLES` → `pool_to_cycles` (triangular).
+///   2. PG `pool_cycles` → `pool_to_cycles` (dynamic cycle universe, STEP 2.5b:
+///      populated by the `cycle_enumerator` boot call below; `MVP_CYCLES` via the
+///      Redis `arbx:pool_index` remains only as the cold-boot seed while the
+///      table is empty).
 ///
 /// Cold boot with no DB: the index starts empty — R8 fail-honest. The engines will
 /// produce zero candidates on the first intents, which is correct (no fabrication).
+///
+/// ## Cycle universe refresh (STEP 2.5b)
+///
+/// A periodic re-enumeration task (idempotent `ON CONFLICT DO NOTHING`) keeps
+/// `pool_cycles` aligned with pools registered after boot; when new cycles land,
+/// the fresh universe is swapped into the shared index under a brief write lock.
 ///
 /// ## Incremental pool refresh (Phase 16 — spec §TASK-2)
 ///
@@ -555,10 +564,62 @@ async fn build_orchestrator(
 
     let config_provider = Arc::new(ConfigProvider { trading_config });
 
+    // ── STEP 2.5b (cycle-enumerator): populate the DYNAMIC route universe ──
+    // `ImpactIndex::from_registry` prefers the `pool_cycles` PG table as the
+    // source of `pool_to_cycles`, but NOTHING ever called the enumerator that
+    // writes it — the module existed as an orphan, so every boot fell to the
+    // `MVP_CYCLES` cold-boot seed (a handful of hand-listed triangles) and
+    // `resolve()` returned `impacted_cycles == 0` for events outside them:
+    // spanning_tree_engine saw an empty input set on every intent (a
+    // STRUCTURAL zero, not a market zero).
+    // This boot call enumerates 2–3 hop cycles over the ACTIVE pools of the
+    // `pools` PG table (the same join the index itself boots from) and
+    // upserts them into `pool_cycles` BEFORE the index reads it below.
+    // Idempotent (`ON CONFLICT DO NOTHING`): a re-run over an unchanged pool
+    // graph inserts 0 rows, so restarts are cheap.
+    // P0 boot-hang discipline (same class as the from_registry guard): hard
+    // 120s timeout; on expiry/error boot CONTINUES with whatever is already
+    // persisted (R8 fail-honest — never fabricated, never blocking boot).
+    if let Some(pg) = db.as_ref() {
+        match tokio::time::timeout(
+            Duration::from_secs(120),
+            crate::route_discovery::cycle_enumerator::enumerate_and_persist(pg, chain_id),
+        )
+        .await
+        {
+            Ok(Ok(inserted)) => {
+                info!(
+                    event = "scanner.cycle_enum_boot",
+                    chain_id,
+                    inserted,
+                    "cycle_enumerator populated pool_cycles at boot (feeds pool_to_cycles)"
+                );
+            }
+            Ok(Err(e)) => {
+                warn!(
+                    event = "scanner.cycle_enum_boot_failed",
+                    chain_id,
+                    error = %e,
+                    "cycle_enumerator failed at boot; pool_cycles stays as-is (R8 fail-honest)"
+                );
+            }
+            Err(_) => {
+                warn!(
+                    event = "scanner.cycle_enum_boot_timeout",
+                    chain_id,
+                    timeout_secs = 120,
+                    "cycle_enumerator exceeded 120s at boot; pool_cycles stays as-is (R8 fail-honest)"
+                );
+            }
+        }
+    }
+
     // ── Phase 16: populate ImpactIndex from PG + Redis at boot ─────────────
     // `from_registry` loads:
     //   - PG `pools` table  → token_pair_to_pools  (DEX pair resolution)
-    //   - Redis pool_index  → pool_to_cycles        (triangular cycle seeds)
+    //   - PG `pool_cycles`  → pool_to_cycles        (dynamic cycle universe,
+    //     populated by the boot call above; `MVP_CYCLES` remains only as the
+    //     cold-boot seed while the table is empty)
     // On failure (no DB, Redis unreachable) the index starts empty — R8
     // fail-honest: no fabrication, engines skip silently.
     // Boot-hang fix (P0): hard timeout. from_registry runs the pools x factories
@@ -606,6 +667,93 @@ async fn build_orchestrator(
     };
 
     let impact_index = Arc::new(tokio::sync::RwLock::new(impact_index_inner));
+
+    // ── STEP 2.5b (cycle-enumerator): keep the universe LIVE ───────────────
+    // The boot enumeration captures the pool graph at t=0, but pool_discovery
+    // registers new pools all day — new cycles only reach `pool_cycles` after
+    // a re-run. The enumerator is idempotent (`ON CONFLICT DO NOTHING`), so a
+    // periodic re-run over an unchanged graph inserts 0 rows and is cheap.
+    // When NEW cycles land, the fresh universe is read from PG OUTSIDE the
+    // lock and swapped in under a brief write lock so `resolve()` starts
+    // reporting the new cycles without a restart. An empty PG read NEVER
+    // swaps (that would drain a working universe back to the structural
+    // zero — R8 fail-honest). `ARBX_CYCLE_ENUM_INTERVAL_SECS` (default 900s;
+    // "0" disables the periodic task; the boot call above always runs).
+    {
+        let interval_secs = std::env::var("ARBX_CYCLE_ENUM_INTERVAL_SECS")
+            .ok()
+            .and_then(|v| v.parse::<u64>().ok())
+            .unwrap_or(900);
+        if interval_secs > 0 {
+            if let Some(pg) = db.clone() {
+                let idx = impact_index.clone();
+                let cid = chain_id;
+                info!(
+                    event = "scanner.cycle_enum_refresh_scheduled",
+                    chain_id,
+                    interval_secs,
+                    "periodic cycle re-enumeration + universe reload enabled"
+                );
+                tokio::spawn(async move {
+                    // Discard the immediate first tick: the boot enumeration
+                    // above already persisted the t=0 universe.
+                    let mut ticker = tokio::time::interval(Duration::from_secs(interval_secs));
+                    ticker.tick().await;
+                    loop {
+                        ticker.tick().await;
+                        match crate::route_discovery::cycle_enumerator::enumerate_and_persist(
+                            &pg, cid,
+                        )
+                        .await
+                        {
+                            Ok(inserted) if inserted > 0 => {
+                                // New cycles in PG → swap the in-memory universe.
+                                match ImpactIndex::read_cycle_universe(&pg, cid).await {
+                                    Ok(u) if !u.specs.is_empty() => {
+                                        let n = u.specs.len();
+                                        idx.write().await.load_pool_cycles(u);
+                                        info!(
+                                            event = "scanner.cycle_universe_reloaded",
+                                            chain_id = cid,
+                                            inserted,
+                                            universe = n,
+                                            "new cycles persisted; ImpactIndex universe swapped"
+                                        );
+                                    }
+                                    Ok(_) => {
+                                        warn!(
+                                            event = "scanner.cycle_universe_reload_skipped_empty",
+                                            chain_id = cid,
+                                            inserted,
+                                            "pool_cycles read came back empty; PRIOR universe retained (R8)"
+                                        );
+                                    }
+                                    Err(e) => {
+                                        warn!(
+                                            event = "scanner.cycle_universe_reload_failed",
+                                            chain_id = cid,
+                                            error = %e,
+                                            "universe reload failed; PRIOR universe retained (R8)"
+                                        );
+                                    }
+                                }
+                            }
+                            Ok(_) => {} // idempotent no-op: graph unchanged since last pass
+                            Err(e) => {
+                                warn!(
+                                    event = "scanner.cycle_enum_refresh_failed",
+                                    chain_id = cid,
+                                    error = %e,
+                                    "periodic cycle enumeration failed (non-fatal)"
+                                );
+                            }
+                        }
+                    }
+                });
+            }
+        }
+    }
+
     let pool_discovery = Arc::new(crate::pool_discovery::PoolDiscoveryService::new(
         chain_id,
         db.clone(),
