@@ -188,7 +188,6 @@ impl OrchestratorMode {
 }
 
 pub struct ScannerHandle {
-    #[allow(dead_code)]
     pub chain_id: u64,
 }
 
@@ -2094,8 +2093,14 @@ async fn decode_and_score_tx<'a>(
         let total_pools = pools_v2.len() + pools_v3.len();
 
         if total_pools < 2 {
+            // BUG-2 (STEP 5 cleanup): the event name derives from the SAME
+            // constant the dex engine persists as `rejection_reason` — the
+            // funnel can no longer split by a one-sided edit.
             debug!(
-                event = "scanner.single_pool_no_spread",
+                event = format!(
+                    "scanner.{}",
+                    crate::engines::dex_engine::SINGLE_POOL_NO_SPREAD
+                ),
                 pair = format!("{}-{}", m_in.symbol, m_out.symbol),
                 v2 = pools_v2.len(),
                 v3 = pools_v3.len()

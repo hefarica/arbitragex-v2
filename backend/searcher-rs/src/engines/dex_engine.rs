@@ -62,6 +62,15 @@ use crate::state_projector::StateProjector;
 use crate::strategy_label::StrategyLabel;
 use chrono::Utc;
 use ethers::types::{Address, H256, U256};
+
+/// BUG-2 (STEP 5 cleanup, 2026-10-13): this reason existed as TWO independent
+/// string literals — the persisted `rejection_reason` below and scanner.rs's
+/// `debug!` event (which logs but persists no row of its own). One edit
+/// without the other silently split the reason funnel. Single source of
+/// truth: scanner.rs derives its event name from THIS constant. Tests keep
+/// asserting the literal `"single_pool_no_spread"` on purpose — they lock
+/// the wire value against accidental renames of the constant.
+pub const SINGLE_POOL_NO_SPREAD: &str = "single_pool_no_spread";
 use prioritization_spine::route_plan::{RouteLeg, RoutePlan};
 use prioritization_spine::types::OpportunityCandidate;
 use shared_rs::chains::{DAI_MAINNET_LC, USDC_MAINNET_LC, USDT_MAINNET_LC};
@@ -284,7 +293,7 @@ impl DexEngine {
                         route_plan: rp,
                         gross_profit_usd: None,
                         net_expected_profit_usd: None,
-                        rejection_reason: Some("single_pool_no_spread".to_owned()),
+                        rejection_reason: Some(SINGLE_POOL_NO_SPREAD.to_owned()),
                         source_intent_hash: tx_hash,
                         base_strategy: None,
                     });

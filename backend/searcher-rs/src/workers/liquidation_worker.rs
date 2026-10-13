@@ -628,11 +628,9 @@ impl DedupState {
         let cutoff = latest_block - DEDUP_RETAIN_BLOCKS;
         self.seen.retain(|(_, b)| *b >= cutoff);
     }
-    #[allow(dead_code)]
     pub fn len(&self) -> usize {
         self.seen.len()
     }
-    #[allow(dead_code)]
     pub fn is_empty(&self) -> bool {
         self.seen.is_empty()
     }

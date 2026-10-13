@@ -170,7 +170,6 @@ pub mod orchestrator;
 // Workers themselves contain I/O-heavy code that is not called from tests;
 // the lib target only needs the pure-function submodules (triangular_worker,
 // flashloan_arb_worker) which have no async I/O in their math kernels.
-#[allow(dead_code)]
 pub mod workers;
 // Phase 12: StateProjector -- virtual post-tx pool state projection.
 pub mod state_projector;

@@ -9,12 +9,10 @@
 use tokio::time::{sleep, Duration};
 use tracing::info;
 
-#[allow(dead_code)]
 pub struct ExecutionWorker {
     pub allow_live_execution: bool,
 }
 
-#[allow(dead_code)]
 impl ExecutionWorker {
     pub fn new(allow_live_execution: bool) -> Self {
         Self {

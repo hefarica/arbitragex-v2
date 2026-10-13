@@ -528,11 +528,9 @@ impl DedupState {
         let cutoff = latest_block - DEDUP_RETAIN_BLOCKS;
         self.seen.retain(|(_, b)| *b >= cutoff);
     }
-    #[allow(dead_code)]
     pub fn len(&self) -> usize {
         self.seen.len()
     }
-    #[allow(dead_code)]
     pub fn is_empty(&self) -> bool {
         self.seen.is_empty()
     }
@@ -565,7 +563,6 @@ pub struct EvalResult {
     /// (heartbeat may surface aggregate gross profit per period). Marked
     /// `#[allow(dead_code)]` because the production hot path consumes
     /// `expected_profit_usd` (the dollar-denominated equivalent) only.
-    #[allow(dead_code)]
     pub profit_token_a_wei: i128,
     pub expected_profit_usd: f64,
     pub borrow_usd: f64,

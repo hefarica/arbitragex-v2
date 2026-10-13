@@ -90,11 +90,9 @@ pub enum EmitOutcome {
     /// Successfully written to PG only (Redis publish was not reached yet).
     /// NOTE: in normal operation this variant is never returned — we always
     /// attempt both. It is reserved for future partial-emit modes.
-    #[allow(dead_code)]
     Persisted,
     /// Successfully published to Redis only (PG pool is `None`).
     /// Superseded by `NoDbConfigured` in the current implementation.
-    #[allow(dead_code)]
     Published,
     /// Successfully written to PG and published to Redis.
     PersistedAndPublished,

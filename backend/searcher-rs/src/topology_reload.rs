@@ -98,9 +98,7 @@ pub struct TopologyClients {
     pub version_id: u64,
     pub scope: String,
     pub chain_id: u64,
-    #[allow(dead_code)]
     pub mempool_mode: MempoolMode,
-    #[allow(dead_code)]
     pub checksum: String,
     pub http_pool: Arc<HttpRpcPool>,
     pub ws_endpoints: Vec<WsEndpoint>,
@@ -208,7 +206,6 @@ impl TopologyRuntime {
         }
     }
 
-    #[allow(dead_code)]
     pub fn subscribe_versions(&self) -> tokio::sync::watch::Receiver<u64> {
         self.notify.subscribe()
     }

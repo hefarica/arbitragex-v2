@@ -2594,6 +2594,7 @@ impl SizeOptimizer {
 
     // -----------------------------------------------------------------------
     // Legacy shim — 3-leg triangular (kept for backwards compat within this file)
+    // STEP 5 census: no caller today — kept as the documented 3-leg reference.
     // -----------------------------------------------------------------------
 
     #[allow(dead_code)]

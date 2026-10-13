@@ -6,12 +6,10 @@
 
 use tracing::info;
 
-#[allow(dead_code)]
 pub struct HftMempoolListener {
     pub enabled: bool,
 }
 
-#[allow(dead_code)]
 impl HftMempoolListener {
     pub fn new(enabled: bool) -> Self {
         Self { enabled }

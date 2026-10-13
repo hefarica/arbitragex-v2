@@ -833,6 +833,8 @@ mod tests {
         assert_eq!(decode_milligwei_to_gwei(0), 0.0);
     }
 
+    /// STEP 5 census: test helper with no current callers — kept for the
+    /// contract tests that will need a real HostContext.
     #[allow(dead_code)]
     fn make_test_host_ctx() -> HostContext {
         // For unit tests, we create a minimal context.
