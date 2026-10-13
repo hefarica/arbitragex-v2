@@ -833,7 +833,6 @@ mod tests {
         assert_eq!(decode_milligwei_to_gwei(0), 0.0);
     }
 
-    #[allow(dead_code)]
     fn make_test_host_ctx() -> HostContext {
         // For unit tests, we create a minimal context.
         // Real Redis is not needed — host bindings will return UNIT.

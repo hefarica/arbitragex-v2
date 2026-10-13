@@ -4,7 +4,6 @@ use crate::thermodynamics::PotentialGradient;
 use std::sync::Arc;
 
 pub struct TriangularCurvatureAdapter {
-    #[allow(dead_code)]
     engine: Arc<TriangularEngine>,
 }
 

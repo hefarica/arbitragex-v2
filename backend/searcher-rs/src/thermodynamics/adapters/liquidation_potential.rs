@@ -5,7 +5,6 @@ use async_trait::async_trait;
 use std::sync::Arc;
 
 pub struct LiquidationPotentialAdapter {
-    #[allow(dead_code)]
     engine: Arc<LiquidationEngine>,
 }
 

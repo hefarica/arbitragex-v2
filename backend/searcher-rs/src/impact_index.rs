@@ -218,12 +218,10 @@ pub struct ImpactIndex {
 
     /// router_address → router family classification.
     /// Used by the decoder for fast dispatch.
-    #[allow(dead_code)]
     router_to_protocol: HashMap<Address, RouterKind>,
 
     /// 4-byte function selector → decoder kind.
     /// Compile-time constant populated in `new_with_selectors`.
-    #[allow(dead_code)]
     selector_to_decoder: HashMap<[u8; 4], DecoderKind>,
 }
 

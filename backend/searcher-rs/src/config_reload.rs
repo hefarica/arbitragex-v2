@@ -123,7 +123,6 @@ impl ChainConfigReloader {
     ///
     /// `#[allow(dead_code)]` until the B1.d chain task supervisor lands
     /// and starts consuming this handle. Tests already exercise it.
-    #[allow(dead_code)]
     pub fn seen_hashes(&self) -> SeenHashes {
         self.seen.clone()
     }

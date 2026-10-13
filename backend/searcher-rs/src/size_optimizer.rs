@@ -2596,7 +2596,6 @@ impl SizeOptimizer {
     // Legacy shim — 3-leg triangular (kept for backwards compat within this file)
     // -----------------------------------------------------------------------
 
-    #[allow(dead_code)]
     async fn size_triangular(
         &self,
         candidate: &StrategyCandidate,

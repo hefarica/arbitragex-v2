@@ -313,7 +313,6 @@ struct AlchemyTokenPrice {
     prices: Vec<AlchemyPriceQuote>,
     /// Some failure cases include an `error` key instead of `prices`.
     /// We just check `prices.is_empty()` and treat that as "no price".
-    #[allow(dead_code)]
     #[serde(default)]
     error: Option<serde_json::Value>,
 }

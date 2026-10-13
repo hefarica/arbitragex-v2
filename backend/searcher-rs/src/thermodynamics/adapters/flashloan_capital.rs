@@ -4,7 +4,6 @@ use rust_decimal::Decimal;
 use std::sync::Arc;
 
 pub struct FlashloanCapitalAdapter {
-    #[allow(dead_code)]
     engine: Arc<FlashloanEngine>,
 }
 

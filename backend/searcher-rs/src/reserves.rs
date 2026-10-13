@@ -181,7 +181,6 @@ pub async fn set_v3_slot0(
 /// a follow-up sprint (CODE-5 consumer side). The writer (`set_v3_slot0`) is
 /// the primary deliverable of CODE-5; this reader ships with it so the API is
 /// symmetric and reviewable now.
-#[allow(dead_code)]
 pub async fn get_v3_slot0(
     redis: &mut ConnectionManager,
     chain_id: u64,
