@@ -225,6 +225,8 @@ pub struct ImpactIndex {
 
     /// 4-byte function selector → decoder kind.
     /// Compile-time constant populated in `new_with_selectors`.
+    /// STEP 5 census: genuinely dead today — kept for the decoder wiring.
+    #[allow(dead_code)]
     selector_to_decoder: HashMap<[u8; 4], DecoderKind>,
 }
 
