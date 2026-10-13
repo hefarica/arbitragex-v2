@@ -1567,8 +1567,8 @@ mod tests {
             &server,
             &LiquidationSnipeEngine::call_with_address(&sel_uad, user_liq),
             eth_call_result(&[
-                n(1_000_000_000_000_000_000), // collateral $10k (base 1e8)
-                n(900_000_000_000_000_000),   // debt $9k
+                n(1_000_000_000_000), // collateral $10k (base 1e8: 10k × 1e8 = 1e12)
+                n(900_000_000_000),   // debt $9k
                 n(0),
                 n(8_000),
                 n(0),
@@ -1580,8 +1580,8 @@ mod tests {
             &server,
             &LiquidationSnipeEngine::call_with_address(&sel_uad, user_safe),
             eth_call_result(&[
-                n(2_000_000_000_000_000_000),
-                n(100_000_000_000_000_000),
+                n(2_000_000_000_000),
+                n(100_000_000_000),
                 n(0),
                 n(8_000),
                 n(0),
