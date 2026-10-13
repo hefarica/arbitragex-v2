@@ -468,6 +468,37 @@ jobs:
             api-server edge frontend \
             token-enricher prometheus loki promtail grafana alertmanager minio vault
 
+          # ── DEPLOY-CONTAINER-GUARD (RG-01 INCIDENT 2026-10-13): force-recreate
+          # puede dejar contenedores en estado "Created" (nunca arrancaron) por
+          # una carrera de recursos. Docker's restart policy NO aplica a
+          # contenedores que nunca estuvieron "running" — quedan huérfanos
+          # silenciosos que causan 500 en todo el stack hasta que alguien
+          # los arranque a mano (exactamente lo que pasó con api-server:
+          # 3+ horas de outage porque nadie verificó el estado del contenedor).
+          # Este guard verifica que TODOS estén "running" y arranca los que no.
+          echo "[7a/9] Container Guard: verifying all containers are running..."
+          GUARD_FIXED=0
+          for cid in $(docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" ps -q 2>/dev/null); do
+            cname=$(docker inspect "$cid" --format '{{.Name}}' 2>/dev/null | tr -d '/')
+            cstate=$(docker inspect "$cid" --format '{{.State.Status}}' 2>/dev/null)
+            if [ "$cstate" != "running" ] && [ -n "$cstate" ] && [ "$cstate" != "exited" ]; then
+              echo "    ::warning::Container $cname is '$cstate' — starting"
+              docker start "$cid" 2>/dev/null || echo "    ::error::Failed to start $cname"
+              GUARD_FIXED=$((GUARD_FIXED+1))
+            elif [ "$cstate" = "exited" ]; then
+              # Exited containers from force-recreate should also be started
+              echo "    ::warning::Container $cname exited — restarting"
+              docker start "$cid" 2>/dev/null || echo "    ::error::Failed to restart $cname"
+              GUARD_FIXED=$((GUARD_FIXED+1))
+            fi
+          done
+          if [ "$GUARD_FIXED" -gt 0 ]; then
+            echo "    Container Guard started $GUARD_FIXED container(s)"
+            sleep 5  # give them a moment before health checks
+          else
+            echo "    All containers running — no fixes needed"
+          fi
+
           echo "[7b/9] Waiting for Minio healthy, then creating arbx-metrics bucket..."
           for i in $(seq 1 45); do
             docker inspect --format '{{.State.Health.Status}}' arbitragex-v2-minio-1 2>/dev/null | grep -q healthy && break
