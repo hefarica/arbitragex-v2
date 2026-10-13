@@ -103,6 +103,19 @@ pub struct OpportunityCandidate {
     /// Length = hops. Used by the encoder to select the correct router contract.
     pub dex_adapters: Vec<String>,
 
+    /// Per-hop pool fee tier, parallel to `pool_addresses` (STEP 4 — fee V3).
+    ///
+    /// Units follow the established `PoolRef::fee_bps` legacy convention: bps
+    /// for V2 pools (e.g. 30 = 0.30%) and the raw `fee()` pips for V3 pools
+    /// (e.g. 500 = the 0.05% tier, 3000 = the 0.30% tier).
+    ///
+    /// ALL-OR-NOTHING (R8): `Some(vec)` only when EVERY hop declared its fee —
+    /// a route with one unknown fee reports `None` ("not computed"), never a
+    /// partial vector that would shift a fee onto the wrong hop. `None` also
+    /// covers legacy rows persisted before this field existed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fee_tier_bps: Option<Vec<u32>>,
+
     /// Input amount as f64 (USD-normalized or token-normalized).
     /// The encoder converts this to wei using `decimals[token_in]`.
     pub amount_in: f64,
@@ -229,6 +242,16 @@ pub struct RouteMetadata {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub leg_zero_for_one: Option<Vec<bool>>,
 
+    /// Per-hop pool fee tier, parallel to `pool_addresses` (STEP 4 — fee V3).
+    ///
+    /// Same convention and ALL-OR-NOTHING semantics as
+    /// `OpportunityCandidate::fee_tier_bps`: `Some` only when every hop
+    /// declared its fee (V2 bps / V3 raw pips, per `PoolRef::fee_bps`);
+    /// `None` = at least one hop unknown or the producer predates the field.
+    /// Absent ≠ free (R8).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fee_tier_bps: Option<Vec<u32>>,
+
     /// ECON-DECLARE-01 — the notional in EXACT WEI at which this row's economic
     /// figures (`expected_profit_usd` / `net_expected_profit_usd`) were computed,
     /// as DECLARED by the producer that computed them.
@@ -260,6 +283,7 @@ impl RouteMetadata {
             leg_amounts_in: None,
             leg_amounts_out: None,
             leg_zero_for_one: None,
+            fee_tier_bps: None,
             economics_amount_in_wei: None,
             economics_basis: None,
         }
@@ -446,6 +470,7 @@ mod tests {
             leg_amounts_in: None,
             leg_amounts_out: None,
             leg_zero_for_one: None,
+            fee_tier_bps: None,
             economics_amount_in_wei: None,
             economics_basis: None,
         };
@@ -467,6 +492,7 @@ mod tests {
             leg_amounts_in: None,
             leg_amounts_out: None,
             leg_zero_for_one: None,
+            fee_tier_bps: None,
             economics_amount_in_wei: None,
             economics_basis: None,
         };
@@ -486,6 +512,7 @@ mod tests {
             leg_amounts_in: None,
             leg_amounts_out: None,
             leg_zero_for_one: None,
+            fee_tier_bps: None,
             economics_amount_in_wei: None,
             economics_basis: None,
         };
@@ -507,6 +534,7 @@ mod tests {
             leg_amounts_in: None,
             leg_amounts_out: None,
             leg_zero_for_one: None,
+            fee_tier_bps: None,
             economics_amount_in_wei: None,
             economics_basis: None,
         };
@@ -532,6 +560,7 @@ mod tests {
             leg_amounts_in: None,
             leg_amounts_out: None,
             leg_zero_for_one: None,
+            fee_tier_bps: None,
             economics_amount_in_wei: None,
             economics_basis: None,
         };
@@ -558,6 +587,7 @@ mod tests {
             leg_amounts_in: None,
             leg_amounts_out: None,
             leg_zero_for_one: None,
+            fee_tier_bps: None,
             economics_amount_in_wei: None,
             economics_basis: None,
         };
@@ -595,6 +625,7 @@ mod tests {
             leg_amounts_in: None,
             leg_amounts_out: None,
             leg_zero_for_one: None,
+            fee_tier_bps: None,
             economics_amount_in_wei: None,
             economics_basis: None,
         };
@@ -624,6 +655,7 @@ mod tests {
             leg_amounts_in: None,
             leg_amounts_out: None,
             leg_zero_for_one: None,
+            fee_tier_bps: None,
             economics_amount_in_wei: None,
             economics_basis: None,
         };
@@ -649,6 +681,7 @@ mod tests {
             leg_amounts_in: None,
             leg_amounts_out: None,
             leg_zero_for_one: None,
+            fee_tier_bps: None,
             economics_amount_in_wei: None,
             economics_basis: None,
         };
@@ -679,6 +712,7 @@ mod tests {
             leg_amounts_in: None,
             leg_amounts_out: None,
             leg_zero_for_one: None,
+            fee_tier_bps: None,
             economics_amount_in_wei: None,
             economics_basis: None,
         };
@@ -819,5 +853,39 @@ mod tests {
         // "0" is a syntactically valid declaration (the decoder truly observed
         // zero) — it is NOT treated as absent here; the renderer decides.
         assert!(rm.has_declared_notional());
+    }
+
+    /// STEP 4 (fee V3) — the wire contract for `fee_tier_bps`.
+    ///
+    /// Legacy rows persisted BEFORE this field deserialize with `None`
+    /// (serde default): absence is "not computed", never zero (R8). A
+    /// populated vector round-trips verbatim, and serialization SKIPS the
+    /// key when None so old readers see byte-identical JSON.
+    #[test]
+    fn test_fee_tier_bps_wire_contract() {
+        // Legacy JSON (pre-STEP-4 shape) — no fee_tier_bps key at all.
+        let legacy = serde_json::json!({
+            "pool_addresses": ["0xa", "0xb"],
+            "token_addresses": ["0xt", "0xu", "0xt"],
+            "dex_adapters": ["uniswap_v2", "sushi"],
+            "decimals": {"map": {}}
+        });
+        let rm: RouteMetadata = serde_json::from_value(legacy).expect("legacy row must parse");
+        assert_eq!(rm.fee_tier_bps, None, "legacy row: absent = not computed");
+
+        // Populated vector round-trips; None serializes to NO key.
+        let mut with_fee = RouteMetadata::empty();
+        with_fee.fee_tier_bps = Some(vec![30, 500]);
+        let ser = serde_json::to_value(&with_fee).expect("serialize");
+        assert_eq!(ser["fee_tier_bps"], serde_json::json!([30, 500]));
+        let back: RouteMetadata = serde_json::from_value(ser).expect("deserialize");
+        assert_eq!(back.fee_tier_bps, Some(vec![30, 500]));
+
+        let without_fee = RouteMetadata::empty();
+        let ser2 = serde_json::to_value(&without_fee).expect("serialize");
+        assert!(
+            ser2.get("fee_tier_bps").is_none(),
+            "None must serialize to an ABSENT key, not null"
+        );
     }
 }
