@@ -1912,6 +1912,10 @@ impl Orchestrator {
                 leg_amounts_in: None,
                 leg_amounts_out: None,
                 leg_zero_for_one: None,
+                // STEP 4 (fee V3): the spine candidate carries no per-hop fee;
+                // when this source wins the pick, fees stay honestly absent
+                // (the plan-built source carries them from RouteLeg::fee_bps).
+                fee_tier_bps: None,
                 economics_amount_in_wei: None,
                 economics_basis: None,
             };

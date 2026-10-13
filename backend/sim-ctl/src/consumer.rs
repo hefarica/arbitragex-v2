@@ -1120,6 +1120,9 @@ impl Consumer {
             amount_in,
             expected_amount_out: 0.0,
             gross_profit: 0.0,
+            // STEP 4 (fee V3): threaded from the persisted route_metadata,
+            // same as the A3 path (all-or-nothing; None = some hop unknown).
+            fee_tier_bps: inputs.route_metadata.fee_tier_bps.clone(),
             decimals: inputs.resolved_decimals.clone(),
             block_number: inputs.block_number.filter(|b| *b >= 0).map(|b| b as u64),
             route_fingerprint: format!("{}_{}_{}", inputs.dex_a, inputs.token_in, inputs.token_out),

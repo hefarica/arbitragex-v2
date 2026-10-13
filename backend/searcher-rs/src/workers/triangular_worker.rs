@@ -612,6 +612,9 @@ fn build_triangular_route_metadata(
         leg_amounts_in: None,
         leg_amounts_out: None,
         leg_zero_for_one: None,
+        // STEP 4 (fee V3): hop pools resolve at this layer without RouteLeg
+        // fees — absent, never zero (R8); the plan-built A1 path carries fees.
+        fee_tier_bps: None,
         economics_amount_in_wei: None,
         economics_basis: None,
     }

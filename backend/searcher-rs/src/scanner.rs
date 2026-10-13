@@ -814,11 +814,25 @@ async fn build_orchestrator(
         // R8: if the reserves cache is empty the engine still constructs and
         // `detect_cycles` honestly returns no cycles (never fabricated).
         spanning_tree_engine: Some(Arc::new(SpanningTreeEngine::new(reserves_cache.clone()))),
-        // STEP 2.5b/c: still None — cross_chain needs multi-chain oracles,
-        // liquidation_snipe needs lending data. The orchestrator's
-        // `v2.engine.none` guard makes their absence explicit (R9-compliant).
-        cross_chain_engine: None,
-        liquidation_snipe_engine: None,
+        // STEP 2.5e (RG-01 final sprint): wire the two remaining experimental
+        // engines with their real dependencies — the orchestrator fan-out
+        // (v2.engine.output / v2.engine.none guards) already exists for both.
+        // cross_chain (STEP 2.5d, PR #944): chain 1→1 venue-pair bridges with
+        // the two live price sources (Binance-WS bus + Redis snapshot); the
+        // engine skips per-leg with an explicit reason when an oracle is cold
+        // (R8), never fabricates a spread.
+        cross_chain_engine: Some(Arc::new(CrossChainBridgeEngine::with_default_bridges(
+            CrossChainBridgeEngine::default_oracles(
+                chain_id,
+                crate::price_bus_global::get(),
+                redis.clone(),
+            ),
+        ))),
+        // liquidation_snipe (STEP 2.5c, PRs #945/#947): real Aave V3 position
+        // fetching via read-only JSON-RPC (soberano, §38); with_default_pools()
+        // seeds the default lending configs and every empty path carries its
+        // own reason (no_rpc_url, no_borrowers_discovered, …).
+        liquidation_snipe_engine: Some(Arc::new(LiquidationSnipeEngine::with_default_pools())),
     };
 
     Some((Arc::new(Orchestrator::new(ctx)), impact_index))
