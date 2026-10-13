@@ -667,7 +667,7 @@ impl LiquidationSnipeEngine {
                 )
                 .await
             {
-                let better = best_debt.map_or(true, |(_, best)| usd > best);
+                let better = best_debt.is_none_or(|(_, best)| usd > best);
                 if better {
                     best_debt = Some((*asset, usd));
                 }
@@ -707,7 +707,7 @@ impl LiquidationSnipeEngine {
                 )
                 .await
             {
-                let better = best_collateral.map_or(true, |(_, best)| usd > best);
+                let better = best_collateral.is_none_or(|(_, best)| usd > best);
                 if better {
                     best_collateral = Some((*asset, usd));
                 }
@@ -801,7 +801,7 @@ impl LiquidationSnipeEngine {
         raw_amount: u128,
         cache: &mut HashMap<Address, AaveAssetMeta>,
     ) -> Option<f64> {
-        if !cache.contains_key(&asset) {
+        if let std::collections::hash_map::Entry::Vacant(entry) = cache.entry(asset) {
             let price_usd = match oracle {
                 Some(o) => self
                     .rpc_eth_call(
@@ -829,13 +829,10 @@ impl LiquidationSnipeEngine {
                 .await
                 .and_then(|out| Self::word_at(&out, 0))
                 .map(|w| w.low_u128().min(255) as u8);
-            cache.insert(
-                asset,
-                AaveAssetMeta {
-                    price_usd,
-                    decimals,
-                },
-            );
+            entry.insert(AaveAssetMeta {
+                price_usd,
+                decimals,
+            });
         }
         let meta = cache.get(&asset)?;
         let price = meta.price_usd?;
@@ -1327,7 +1324,7 @@ mod tests {
 
     #[test]
     fn word_at_parses_words_and_rejects_short_results() {
-        let hex = format!("0x{}{}", "0".repeat(64), format!("{:064x}", 42u128));
+        let hex = format!("0x{}{:064x}", "0".repeat(64), 42u128);
         assert_eq!(LiquidationSnipeEngine::word_at(&hex, 0), Some(U256::zero()));
         assert_eq!(
             LiquidationSnipeEngine::word_at(&hex, 1),
@@ -1366,13 +1363,13 @@ mod tests {
     fn parse_user_account_data_reads_six_word_layout() {
         // (collateral, debt, availBorrows, liqThreshold, ltv, hf)
         let hex = format!(
-            "0x{}{}{}{}{}{}",
-            format!("{:064x}", 1_000_000_000_000_000_000u128),
-            format!("{:064x}", 900_000_000_000_000_000u128),
-            "0".repeat(64),
-            format!("{:064x}", 8_000u128),
-            "0".repeat(64),
-            format!("{:064x}", 850_000_000_000_000_000u128),
+            "0x{:064x}{:064x}{}{:064x}{}{:064x}",
+            1_000_000_000_000_000_000u128, // word 0: totalCollateralBase
+            900_000_000_000_000_000u128,   // word 1: totalDebtBase
+            "0".repeat(64),                // word 2: availableBorrowsBase
+            8_000u128,                     // word 3: currentLiquidationThreshold
+            "0".repeat(64),                // word 4: ltv
+            850_000_000_000_000_000u128,   // word 5: healthFactor
         );
         let snap = LiquidationSnipeEngine::parse_user_account_data(&hex).unwrap();
         assert_eq!(snap.total_collateral_base, 1_000_000_000_000_000_000);
