@@ -307,6 +307,10 @@ async fn simulate_handler(
                         // row — sourced honestly as 0.0 (R8, never fabricated).
                         expected_amount_out: 0.0,
                         gross_profit: 0.0,
+                        // STEP 4 (fee V3): per-hop fee tier rides the persisted
+                        // route_metadata (all-or-nothing; None = some hop
+                        // unknown — R8, never zeroed).
+                        fee_tier_bps: inputs.route_metadata.fee_tier_bps.clone(),
                         decimals: inputs.resolved_decimals.clone(),
                         block_number: req
                             .block_number

@@ -167,6 +167,7 @@ async fn stream_b2c_pipeline_is_route_aware_not_empty_calldata() {
         amount_in,
         expected_amount_out: 0.0,
         gross_profit: 0.0,
+        fee_tier_bps: inputs.route_metadata.fee_tier_bps.clone(),
         decimals: inputs.resolved_decimals.clone(),
         block_number: inputs.block_number.filter(|b| *b >= 0).map(|b| b as u64),
         route_fingerprint: format!("{}_{}_{}", inputs.dex_a, inputs.token_in, inputs.token_out),

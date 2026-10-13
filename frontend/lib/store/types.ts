@@ -152,6 +152,13 @@ export interface SimulatedTarget {
  *   - `leg_amounts_in`    length = hops     (exact wei entering leg i)
  *   - `leg_amounts_out`   length = hops     (exact wei leaving leg i)
  *   - `leg_zero_for_one`  length = hops     (Uniswap token0→token1 convention)
+ *
+ * STEP 4 (fee V3) — the per-hop fee tier is OPTIONAL and ALL-OR-NOTHING:
+ *   - `fee_tier_bps`      length = hops     (V2 bps / V3 raw pips, mirrors
+ *                                           `PoolRef::fee_bps`); present only
+ *                                           when EVERY hop declared its fee.
+ *                                           Absent = some hop unknown or a
+ *                                           legacy row (R8: never zero).
  */
 export interface RouteMetadataWire {
   token_addresses: string[];
@@ -161,6 +168,14 @@ export interface RouteMetadataWire {
   leg_amounts_in?: string[];
   leg_amounts_out?: string[];
   leg_zero_for_one?: boolean[];
+  /**
+   * STEP 4 (fee V3) — per-hop pool fee tier, parallel to `pool_addresses`.
+   * Mirrors `shared_rs::candidates::RouteMetadata::fee_tier_bps` (units: V2
+   * bps, V3 raw `fee()` pips). `undefined` = at least one hop unknown or a
+   * row persisted before the field existed — absence is a STATE (R8), the
+   * renderer must never read it as a free hop.
+   */
+  fee_tier_bps?: number[];
   /**
    * ECON-DECLARE-01 — the notional in EXACT WEI at which this row's economic
    * figures were computed, as DECLARED by the producer (searcher-rs).
@@ -855,6 +870,18 @@ export function parseRouteMetadata(
     ? [...obj.leg_amounts_out] as string[] : undefined;
   const legZeroForOne = ledgerValid && Array.isArray(obj.leg_zero_for_one)
     ? [...obj.leg_zero_for_one] as boolean[] : undefined;
+  // STEP 4 (fee V3): project the per-hop fee tier ONLY when it is a
+  // full-length vector of unsigned integers — all-or-nothing, same contract
+  // as the producer. A partial/malformed vector stays undefined ("not
+  // computed"), never repaired (R8: absence is a state, RULE 00: no coercion).
+  const feeTierBps: number[] | undefined =
+    Array.isArray(obj.fee_tier_bps) &&
+    obj.fee_tier_bps.length === dexAdapters.length &&
+    obj.fee_tier_bps.every(
+      (v) => typeof v === "number" && Number.isSafeInteger(v) && v >= 0,
+    )
+      ? [...obj.fee_tier_bps] as number[]
+      : undefined;
   return {
     token_addresses: tokenAddresses,
     dex_adapters: dexAdapters,
@@ -863,6 +890,7 @@ export function parseRouteMetadata(
     leg_amounts_in: legAmountsIn,
     leg_amounts_out: legAmountsOut,
     leg_zero_for_one: legZeroForOne,
+    fee_tier_bps: feeTierBps,
     // ECON-DECLARE-01: the notional declaration is OPTIONAL and never coerced.
     // A malformed/absent value stays undefined (= undeclared) rather than being
     // repaired into a plausible-looking basis (R8: absence is a state).

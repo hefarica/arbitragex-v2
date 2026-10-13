@@ -473,6 +473,9 @@ pub fn build_liquidation_route_metadata(
         leg_amounts_in: None,
         leg_amounts_out: None,
         leg_zero_for_one: None,
+        // STEP 4 (fee V3): Aave V3 liquidation is not an AMM hop — no LP fee
+        // tier applies; absent, never zero (R8).
+        fee_tier_bps: None,
         economics_amount_in_wei: None,
         economics_basis: None,
     }

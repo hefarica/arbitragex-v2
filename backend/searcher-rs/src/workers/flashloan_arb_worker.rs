@@ -766,6 +766,9 @@ fn build_flashloan_route_metadata(
         leg_amounts_in: None,
         leg_amounts_out: None,
         leg_zero_for_one: None,
+        // STEP 4 (fee V3): this worker builds metadata from raw addresses
+        // (no RoutePlan legs here) — fees stay honestly absent (R8).
+        fee_tier_bps: None,
         economics_amount_in_wei: None,
         economics_basis: None,
     }
