@@ -957,13 +957,26 @@ impl LiquidationSnipeEngine {
     }
 
     /// ABI calldata `<selector>` + one address argument.
+    ///
+    /// BUG (found by CI on #947, 2026-10-13): ethers' `Address` LowerHex impl
+    /// writes its own 40-char form and IGNORES the `064` width —
+    /// `format!("{:064x}", a)` produced a 40-char argument, an INVALID ABI
+    /// word (every eth_call of this engine was malformed). Pad explicitly.
     fn call_with_address(selector: &str, a: Address) -> String {
-        format!("{selector}{:064x}", a)
+        let arg = format!("{a:x}");
+        format!("{selector}{}{arg}", "0".repeat(64 - arg.len()))
     }
 
-    /// ABI calldata `<selector>` + two address arguments.
+    /// ABI calldata `<selector>` + two address arguments (see the width bug
+    /// note on [`Self::call_with_address`]).
     fn call_with_two_addresses(selector: &str, a: Address, b: Address) -> String {
-        format!("{selector}{:064x}{:064x}", a, b)
+        let arg_a = format!("{a:x}");
+        let arg_b = format!("{b:x}");
+        format!(
+            "{selector}{}{arg_a}{}{arg_b}",
+            "0".repeat(64 - arg_a.len()),
+            "0".repeat(64 - arg_b.len())
+        )
     }
 
     /// The `idx`-th 32-byte word of an `eth_call` result as `U256`.
@@ -1351,11 +1364,14 @@ mod tests {
 
     #[test]
     fn address_from_word_keeps_low_twenty_bytes() {
+        // 38-hex literal = a 19-byte value; the low-20-bytes address of the
+        // word is that value, and {:040x} pads it to the canonical 40 chars
+        // (t3's original literal dropped the "00" pad — CI caught it).
         let word = U256::from_str_radix("1234567890abcdef567890abcdef1234567890", 16).unwrap();
         let addr = LiquidationSnipeEngine::address_from_word(word);
         assert_eq!(
             format!("0x{:040x}", addr),
-            "0x1234567890abcdef567890abcdef1234567890"
+            "0x001234567890abcdef567890abcdef1234567890"
         );
     }
 
@@ -1403,11 +1419,12 @@ mod tests {
     fn calldata_encoding_shapes_are_canonical() {
         let addr = Address::from_low_u64_be(0xaaa1);
         let cd = LiquidationSnipeEngine::call_with_address("0xdeadbeef", addr);
-        assert_eq!(cd.len(), 8 + 64);
+        // "0x" (2) + selector (8) + one 64-char ABI word.
+        assert_eq!(cd.len(), 2 + 8 + 64);
         assert!(cd.starts_with("0xdeadbeef"));
         assert!(cd.ends_with("000000000000000000000000000000000000000000000000000000000000aaa1"));
         let cd2 = LiquidationSnipeEngine::call_with_two_addresses("0xdeadbeef", addr, addr);
-        assert_eq!(cd2.len(), 8 + 128);
+        assert_eq!(cd2.len(), 2 + 8 + 128);
     }
 
     #[test]
@@ -1446,8 +1463,13 @@ mod tests {
     }
 
     /// eth_call 200 envelope carrying `words` as the result.
+    /// (Explicit pad — see the width bug note on `call_with_address`.)
     fn eth_call_result(words: &[U256]) -> ResponseTemplate {
-        let result: String = words.iter().map(|x| format!("{:064x}", x)).collect();
+        let word_hex = |x: &U256| {
+            let h = format!("{x:x}");
+            format!("{}{h}", "0".repeat(64 - h.len()))
+        };
+        let result: String = words.iter().map(word_hex).collect();
         ResponseTemplate::new(200).set_body_json(serde_json::json!({
             "jsonrpc": "2.0", "id": 1, "result": format!("0x{result}")
         }))
@@ -1497,7 +1519,13 @@ mod tests {
         let borrow_topic = LiquidationSnipeEngine::event_topic0(
             "Borrow(address,address,address,uint256,uint8,uint256,uint16)",
         );
-        let topic_hex = |a: Address| format!("0x{:064x}", a);
+        // Explicit pad — `{:064x}` on Address writes its own 40-char form
+        // and the engine's address_from_topic correctly REJECTS short topics
+        // (len != 64), which zeroed out every user in the original mock.
+        let topic_hex = |a: Address| {
+            let h = format!("{a:x}");
+            format!("0x{}{h}", "0".repeat(64 - h.len()))
+        };
         mount_rpc_mock(
             &server,
             &liq_topic[2..],
