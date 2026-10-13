@@ -207,7 +207,9 @@ impl PriceOracle for RedisAggregatedOracle {
     async fn get_price_usd(&self, token: Address) -> Option<f64> {
         let symbol = CrossChainBridgeEngine::token_symbol(&token).to_ascii_uppercase();
         let map = self.live_snapshot().await;
-        map.get(&symbol).copied().filter(|p| p.is_finite() && *p > 0.0)
+        map.get(&symbol)
+            .copied()
+            .filter(|p| p.is_finite() && *p > 0.0)
     }
 
     fn chain_id(&self) -> u64 {
@@ -376,8 +378,7 @@ impl CrossChainBridgeEngine {
                 }
 
                 // Calculate costs
-                let bridge_fee_usd =
-                    self.capital_usd * (bridge.protocol_fee_bps as f64 / 10_000.0);
+                let bridge_fee_usd = self.capital_usd * (bridge.protocol_fee_bps as f64 / 10_000.0);
                 let total_cost_usd = bridge_fee_usd + bridge.dest_gas_cost_usd;
 
                 // Calculate potential yield (conservative: assume 50% of spread captured)
@@ -555,10 +556,7 @@ impl CrossChainBridgeEngine {
             },
             factory_address: String::new(),
             pool_id: None,
-            pool_address: opp
-                .bridge
-                .bridge_address
-                .map(|a| format!("0x{:040x}", a)),
+            pool_address: opp.bridge.bridge_address.map(|a| format!("0x{:040x}", a)),
             token_in: token_in.clone(),
             token_out: token_out.clone(),
             fee_bps: Some(opp.bridge.protocol_fee_bps),
@@ -780,7 +778,11 @@ mod tests {
         // routes. New defaults must stay on chain 1 with two DIFFERENT real
         // venues per route.
         for b in CrossChainBridgeEngine::default_bridge_configs() {
-            assert_eq!(b.source_chain, 1, "route {} must source on chain 1", b.protocol);
+            assert_eq!(
+                b.source_chain, 1,
+                "route {} must source on chain 1",
+                b.protocol
+            );
             assert_eq!(b.dest_chain, 1, "route {} must dest on chain 1", b.protocol);
             assert!(
                 !b.source_venue.is_empty() && !b.dest_venue.is_empty(),
