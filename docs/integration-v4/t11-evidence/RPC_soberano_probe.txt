@@ -1,0 +1,14 @@
+# t11 evidencia — sondas RPC soberano (instrument check)
+# Comando (pwsh, 2026-10-13 ~15:04 UTC): cast block-number --rpc-url <url> (3 proveedores gratuitos §38)
+# Salida literal:
+
+$rpcs = @('https://eth.llamarpc.com','https://ethereum-rpc.publicnode.com','https://eth.drpc.org')
+foreach ($r in $rpcs) { $t0=Get-Date; $out = & cast block-number --rpc-url $r 2>&1; ... }
+
+https://eth.llamarpc.com -> Error: HTTP error 525 with body: ... llamarpc.com | 525: SSL handshake failed ... (11100ms)
+https://ethereum-rpc.publicnode.com ->   26184346 (526ms)
+https://eth.drpc.org ->   26184346 (1265ms)
+
+# Lectura: publicnode = instrumento vivo (bloque 26184346); drpc = vivo (más lento);
+# llamarpc = caído (525 SSL, del lado del proveedor). Todas las sondas C-3/C-7
+# usan publicnode.

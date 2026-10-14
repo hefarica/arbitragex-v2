@@ -1,0 +1,2 @@
+=== columnas rollup_5m ===
+dim,key,bucket_ms,n,opportunities,with_reserves,profit_gt0

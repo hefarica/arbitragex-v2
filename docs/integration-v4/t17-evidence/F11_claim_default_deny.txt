@@ -1,0 +1,27 @@
+F11 — mu ∈ CLAIM: la admisión EXCLUYE por defecto
+==================================================
+Instrumento: gate determinista de evidencia (metacog_audit, regex+tablas, sin juez LLM).
+Regla bajo ataque (contrato t17 F11 / quórum §7): un claim mu se admite SOLO si existe
+binding verificable (artefacto con hash cuyo contenido contiene el span del claim);
+todo lo demás queda EXCLUIDO por defecto.
+
+CASO 1 — mu SIN evidencia (afirmación: "|S|=300 estrategias", evidencia=[]):
+  metacog_audit → veredicto NO_SOPORTADO
+  razón: "numero sin fuente: 300 — ni cita en linea ni evidencia atribuida"
+  ⇒ EXCLUIDO por defecto (no entra a CLAIM).
+
+CASO 2 — mu CON evidencia que NO contiene el claim (afirmación: "|Omega|=1436",
+  evidencia=detector_policy.csv que solo lista 60 detectores, sin 1436):
+  metacog_audit → veredicto NO_SOPORTADO
+  razón: "numero sin fuente: 1436" + evidencia NO ATRIBUIDA
+  ("el item no declara objetivo y su ref no aparece en ningun fragmento")
+  ⇒ EXCLUIDO por defecto: la mera existencia de un artefacto ajeno no admite el claim.
+
+CASO 3 (control positivo) — mu con binding real (afirmación: el generador exige
+  "assert total == 264", evidencia=gen_ssot_v4_rs.py con objetivo literal):
+  metacog_audit → veredicto SOPORTADO (evidencia atribuida E1 con artefacto)
+  ⇒ ADMITIDO: la exclusión por defecto NO es rechazo ciego; con artefacto que
+  contiene el span, el claim entra.
+
+VERDICT_F11: NO_REFUTADO — la admisión excluye por defecto: mu sin artefacto y mu con
+artefacto no-atribuible quedan fuera de CLAIM; solo el binding verificable admite.

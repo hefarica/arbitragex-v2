@@ -1,0 +1,303 @@
+{
+  "producer": "t9/alpha2 (ssot-eng), attempt a3355acc-ebed-4330-874f-775976013a80",
+  "source_task": "t16 alpha3 MENSOR (qa)",
+  "source_files": {
+    "XREF_BASELINE.md": "7a03e242968e8297680f6e0bbc53b95b06c26d5a0911ee08a42cac63d0131d42",
+    "XREF_BASELINE.json": "089ba9115bd7b5b68ee40a956f990e5a65e820ed26117ffe5e1a8766bfdbbb6a",
+    "declared_by_t16_XREF_BASELINE.sha256": [
+      "7a03e242968e8297680f6e0bbc53b95b06c26d5a0911ee08a42cac63d0131d42",
+      "089ba9115bd7b5b68ee40a956f990e5a65e820ed26117ffe5e1a8766bfdbbb6a"
+    ]
+  },
+  "measurement_window_utc": "2026-10-13 08:21-08:29",
+  "x_ref": {
+    "task": "t16",
+    "role": "alpha3-MENSOR",
+    "agent": "qa",
+    "team": "prices-v4-integration",
+    "attempt_id": "7694ddf4-2b24-45df-8821-88816ad8de51",
+    "verdict": "OK",
+    "measured_at_utc": "2026-10-13T08:21:00Z/2026-10-13T08:29:00Z",
+    "system": {
+      "domain": "https://arbx.ape-tv.net",
+      "api_server_version": "0.1.0",
+      "api_server_uptime_s_at_health_fetch": 6080,
+      "deps": {
+        "postgres": "ok",
+        "redis": "ok",
+        "source": "runtime-status edge2_runtime_status.json"
+      }
+    },
+    "instruments": [
+      {
+        "name": "curl.exe HTTP GET borde publico",
+        "status": "DISPONIBLE",
+        "verify": "curl.exe -sS -o NUL -w \"%{http_code}\" https://arbx.ape-tv.net/api/opportunities/live -> 200"
+      },
+      {
+        "name": "GET /api/strategies/runtime-status",
+        "status": "DISPONIBLE",
+        "verify": "curl.exe -sS https://edge-arbx.ape-tv.net/api/strategies/runtime-status -> 200 1677B"
+      },
+      {
+        "name": "GET /api/health",
+        "status": "DISPONIBLE",
+        "verify": "curl.exe -sS https://arbx.ape-tv.net/api/health -> 200 68B"
+      },
+      {
+        "name": "ssh arbx (docker logs, redis-cli)",
+        "status": "NO DISPONIBLE",
+        "verify": "ssh -o BatchMode=yes -o ConnectTimeout=10 arbx \"echo ok\" -> exit=255, stderr 0 bytes",
+        "evidence": "qa-baseline/ssh_stderr.txt sha256=E3B0C44298FC1C149AFBF4C8996FB92427AE41E4649B934CA495991B7852B855"
+      },
+      {
+        "name": "sql_query (PG via harness)",
+        "status": "NO DEVUELVE FILAS",
+        "verify": "SELECT 1 AS one, 'probe' AS tag; -> {ok:true, data:\"\", rows_affected:0}"
+      },
+      {
+        "name": "paper ledger HTTP",
+        "status": "NO EXISTE",
+        "verify": "/api/paper/trades /api/paper-ledger /api/trades -> 404"
+      }
+    ],
+    "x1_cobertura": {
+      "unidad": "conteos",
+      "instrumento": "GET https://arbx.ape-tv.net/api/opportunities/live (+?viable_only=true)",
+      "muestra1_ts": "2026-10-13T08:24:31Z",
+      "muestra1_items": 26,
+      "muestra2_ts": "2026-10-13T08:27:47Z",
+      "muestra2_items": 25,
+      "viables": 0,
+      "viables_instrumento": "GET /api/opportunities/live?viable_only=true -> count=0 window_total=0",
+      "rechazo_histograma": {
+        "muestra1": {
+          "spread_negative_round_trip": 15,
+          "non_positive_profit": 5,
+          "single_pool_no_spread": 5,
+          "no_tradable_size": 1
+        },
+        "muestra2": {
+          "spread_negative_round_trip": 15,
+          "non_positive_profit": 5,
+          "single_pool_no_spread": 4,
+          "no_tradable_size": 1
+        }
+      },
+      "strategy_kind": {
+        "muestra1": {
+          "dex_arb": 22,
+          "triangular": 4
+        },
+        "muestra2": {
+          "dex_arb": 21,
+          "triangular": 4
+        }
+      },
+      "paper_status": "paper_rejected 26/26 y 25/25; scoring_decision=rejected x26; confidence_state=computed x26",
+      "diagnostics_economicos_feed": {
+        "missing_economics.ledger": "21/26",
+        "declaration_rate_pct": 76.9,
+        "economic_figures_present": {
+          "expected_profit_usd": 20,
+          "net_expected_profit_usd": 20,
+          "amount_in_wei": 25
+        }
+      },
+      "error": "0 dentro de cada ventana; ventanas ~179s y ~292s; el feed retiene solo max_age_seconds=300"
+    },
+    "x2_latencia_http_borde": {
+      "valor": {
+        "p50_ms": 611.6,
+        "p99_ms": 997.6,
+        "min_ms": 476.0,
+        "mean_ms": 641.6,
+        "max_ms": 997.6
+      },
+      "instrumento": "curl.exe -sS -o NUL -w \"%{time_total}\" https://arbx.ape-tv.net/api/opportunities/live x40 (N=40, RTT completo DNS+TLS+respuesta)",
+      "unidad": "ms",
+      "error": "dispersion de muestra 476-998 ms; IC no computado; cada probe = conexion nueva",
+      "handshake_referencia": {
+        "dns_s": 0.111,
+        "tls_s": 0.279,
+        "cmd": "curl.exe sobre /opportunities (time_namelookup/time_appconnect)"
+      }
+    },
+    "x3_pipeline_latency_ms": {
+      "unidad": "ms",
+      "fuente": "campo pipeline_latency_ms servido en cada item del feed",
+      "muestra1": {
+        "n": 26,
+        "min": 38,
+        "p50": 1843,
+        "p95": 2405,
+        "p99": 2407,
+        "max": 3284,
+        "mean": 1717.23
+      },
+      "muestra2": {
+        "n": 25,
+        "p50": 2713,
+        "p99": 5965,
+        "max": 5965
+      },
+      "error": "variabilidad entre ventanas (p50 1843->2713); metrica interna del productor, no cronometro externo"
+    },
+    "x4_gas": {
+      "simulated_cost_breakdown_gas_usd": {
+        "valor": 0.632416,
+        "constante": true,
+        "n_items_con_breakdown": 17,
+        "n_total": 26,
+        "suma_usd": 10.75107
+      },
+      "economics_gas_usd": {
+        "n": 20,
+        "n_total": 26,
+        "min": 0.6324159,
+        "p50": 0.6324159,
+        "max": 0.632588375
+      },
+      "otros_constantes": {
+        "relay_fee_usd": 0.5,
+        "ops_overhead_usd": 0.01
+      },
+      "unidad": "USD/ruta",
+      "instrumento": "ConvertFrom-Json sobre items de edge_opps_live.json",
+      "error": "0 dentro de la muestra (valor unico); sesgo interno de estimacion no computable desde el wire",
+      "claim_gwei": "el feed NO expone gas en gwei => unidad gwei NO medida"
+    },
+    "x5_tasa_rechazo": {
+      "feed_latest_pct": 100.0,
+      "feed_detalle": "26/26 y 25/25 rechazados",
+      "motor_1h_pct": 100.0,
+      "motor_1h_detalle": {
+        "dex_arb": {
+          "candidates": 190626,
+          "rejections": 190626
+        },
+        "triangular": {
+          "candidates": 6330,
+          "rejections": 6330
+        },
+        "flashloan": {
+          "candidates": 0,
+          "rejections": 0
+        },
+        "total": {
+          "candidates": 196956,
+          "rejections": 196956
+        },
+        "paper_viable_1h": 0,
+        "last_rejection_reason": {
+          "dex_arb": "spread_negative_round_trip",
+          "triangular": "non_positive_profit"
+        }
+      },
+      "instrumento": "GET /api/strategies/runtime-status + conteo items",
+      "unidad": "%",
+      "error": "muestreo 2 ventanas (~3-5 min) para el feed; ventana servidor 1h para el motor"
+    },
+    "x6_pnl_simulado": {
+      "medido_candidatos_simulados": {
+        "suma_usd": -17915.4383,
+        "p50_usd": -26.241,
+        "max_usd": -1.1457,
+        "min_usd": -2554.3319,
+        "n": 17,
+        "n_total": 26,
+        "campo": "simulated_net_profit_usd"
+      },
+      "simulated_amount_in_usd": {
+        "min": 0.01,
+        "p50": 1,
+        "max": 2529.66,
+        "n": 17
+      },
+      "unidad": "USD",
+      "instrumento": "suma de simulated_net_profit_usd en items (edge_opps_live.json)",
+      "error": "aritmetica exacta de la ventana; semantica = candidatos rechazados simulados, NO ledger ejecutado",
+      "claim_paper_ledger_ejecutado": "sin instrumento: 3x404 + ssh exit 255 + sql_query sin filas; paper_viable_1h=0"
+    },
+    "throughput_y_errores": {
+      "feed_items_por_s": {
+        "muestra1": 0.145,
+        "muestra2": 0.0856,
+        "equiv_h": {
+          "muestra1": 523,
+          "muestra2": 308
+        },
+        "calculo": "26/179s y 25/292s sobre rango detected_at"
+      },
+      "motor_candidatos_1h": 196956,
+      "http_error_rate_pct": 0.0,
+      "http_error_rate_detalle": "20/20 respuestas 2xx (codes 200x20), muestra n=20, IC no computado",
+      "data_dependencies_status": {
+        "dex_arb": "ok",
+        "triangular": "ok",
+        "flashloan": "ok",
+        "liquidation": "missing_lending_watchlist (enabled=false)"
+      }
+    },
+    "claims": [
+      {
+        "id": "paper-ledger-pnl",
+        "razon": "endpoints 404 (x3), ssh exit 255 stderr 0B, sql_query sin filas"
+      },
+      {
+        "id": "gas-gwei",
+        "razon": "feed no expone unidad gwei, solo USD"
+      },
+      {
+        "id": "histograma-rechazos->300s",
+        "razon": "endpoint sirve solo latest (window=1h ignorado -> devolvio latest); runtime-status solo last_rejection_reason por estrategia"
+      },
+      {
+        "id": "redis-xlen-dockerlogs-pg",
+        "razon": "ssh no disponible (exit 255, stderr vacio); sql_query no devuelve filas"
+      }
+    ],
+    "artefactos": [
+      {
+        "path": "qa-baseline/opportunities_page.html",
+        "bytes": 292886,
+        "sha256": "AD05940EA640D7E09561E6212E1B5D98EAC81F7BAEDA67B820E1260887B1270C"
+      },
+      {
+        "path": "qa-baseline/edge_opps_live.json",
+        "bytes": 157739,
+        "sha256": "1FE9EFF0DEE05DB8C4BBB73B4332C509E33F666A17258A61E881DC3F0EEFADB3"
+      },
+      {
+        "path": "qa-baseline/edge_opps_1h.json",
+        "bytes": 155034,
+        "sha256": "3CFF8A2B0C232F0176002995D80647BA2717AA7A562CA4A14E0E4522D6F0D176"
+      },
+      {
+        "path": "qa-baseline/edge_opps_viable.json",
+        "bytes": 610,
+        "sha256": "1A4D5C2AE78F8DB64E800ADB28F144FA6E129C6764EDBD1AA533DE9CF5CCBF21"
+      },
+      {
+        "path": "qa-baseline/edge2_runtime_status.json",
+        "bytes": 1677,
+        "sha256": "7BFA4838219B74CCAE92671F1D586C0B29910C67B652B3679143490482A358B5"
+      },
+      {
+        "path": "qa-baseline/edge_health.json",
+        "bytes": 68,
+        "sha256": "050D3A4A27B5E56082EF9B2B0D0E641C373B47DFDAB3379A5D9167BB8B8861B1"
+      },
+      {
+        "path": "qa-baseline/ssh_stderr.txt",
+        "bytes": 0,
+        "sha256": "E3B0C44298FC1C149AFBF4C8996FB92427AE41E4649B934CA495991B7852B855",
+        "nota": "stderr vacio del ssh fallido: evidencia del instrumento no disponible"
+      }
+    ]
+  },
+  "delta_abs": {
+    "value": 0.005,
+    "derivation": "delta_abs := 0.005 (contract t9 default; equals epsilon=0.005 of 03_FORMULAS/FORMULAS_TARJETAS.md). No per-observable noise analysis EXCEEDS 0.005 in a way that mandates a larger delta under the contract: x1/x5/x6 are exact in-window counts (error 0 per t16 tables); x4 gas_usd is constant within the sample (single value 0.632416, n=17). x2/x3 are LATENCY distributions (unit ms), not proportions: delta_abs 0.005 does not gate them (they carry their own declared dispersion: x2 476-998 ms, x3 p50 1843->2713 across windows). For rates with small n (error rate 0.0% n=20/20; rejection 100% n=26/25), the binomial CI width EXCEEDS 0.005 (e.g. one-sided 95% upper bound for 0/20 errors ~ 13.9%) — this is DECLARED, not resolved: Phi (t6) must not treat x5 equality within 0.005 as statistically strong with n=20; the exact in-window counts remain the primary comparison."
+  }
+}

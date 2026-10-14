@@ -1,0 +1,8 @@
+=== rm pieza-2 VPS (F4+F1 verificados) ===
+/dev/sda1        153514M 128892M    18329M  88% /
+=== LAUNCH pieza-3 (scored_opportunities) ===
+pieza3_pid=727077
+=== columna temporal de scored (para F1) ===
+created_at
+evidence_computed_at
+strategy_key

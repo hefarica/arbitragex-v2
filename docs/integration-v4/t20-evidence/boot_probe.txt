@@ -1,0 +1,6 @@
+=== BOOT a: --help (exit esperado 0) ===
+[FATAL tini (7)] exec --help failed: No such file or directory
+HELP_EXIT=True
+=== BOOT b: arranque 10s sin env productor (sin REDIS_URL => sin publicaciones) ===
+Error: config file not found: /app/configs/app.toml
+RUN_EXIT=True

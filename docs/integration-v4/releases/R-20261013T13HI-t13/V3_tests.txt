@@ -1,0 +1,18 @@
+test_calibrate_and_optimal_non_positive (test_adm.TestADM1Sizing.test_calibrate_and_optimal_non_positive) ... ok
+test_fail_honest (test_adm.TestADM1Sizing.test_fail_honest) ... ok
+test_kelly_cap (test_adm.TestADM1Sizing.test_kelly_cap) ... ok
+test_synthetic_positive_edge (test_adm.TestADM1Sizing.test_synthetic_positive_edge) ... ok
+test_apply_muestra_congelada (test_adm.TestADM3Staleness.test_apply_muestra_congelada) ... C:\Users\HFRC\Desktop\arbitragex-v2-main (17)\docs\integration-v4\releases\R-20261013T13HI-t13\adm\test_adm.py:73: ResourceWarning: unclosed file <_io.TextIOWrapper name='C:\\Users\\HFRC\\Desktop\\arbitragex-v2-main (17)\\docs\\integration-v4\\releases\\R-20261013T13HI-t13\\adm\\..\\..\\..\\..\\..\\qa-baseline\\edge_opps_live.json' mode='r' encoding='utf-8'>
+  items = json.load(open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "..", "..", "..",
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+ok
+test_fail_honest_no_dato (test_adm.TestADM3Staleness.test_fail_honest_no_dato) ... ok
+test_gate (test_adm.TestADM3Staleness.test_gate) ... ok
+test_threshold_from_env (test_adm.TestADM3Staleness.test_threshold_from_env) ... ok
+test_apply_taxonomy_a8 (test_adm.TestADM4NonAtomic.test_apply_taxonomy_a8) ... ok
+test_gate (test_adm.TestADM4NonAtomic.test_gate) ... ok
+
+----------------------------------------------------------------------
+Ran 10 tests in 0.038s
+
+OK

@@ -1,0 +1,58 @@
+--- exoneration: cargo test --release -p searcher-rs --lib liquidation_snipe on PURE HEAD 21feefb32 (start 2026-10-13T09:17:38.4497654-05:00) ---
+    Blocking waiting for file lock on build directory
+    Finished `release` profile [optimized] target(s) in 1m 15s
+     Running unittests src\lib.rs (C:\Users\HFRC\Desktop\arbitragex-v2-main (17)\backend\target\release\deps\searcher_rs-b7bc78e726d4133d.exe)
+
+running 17 tests
+test engines::liquidation_snipe_engine::tests::address_from_topic_extracts_right_aligned_address ... ok
+test engines::liquidation_snipe_engine::tests::parse_user_account_data_reads_six_word_layout ... ok
+test engines::liquidation_snipe_engine::tests::test_usd_to_wei_conversion ... ok
+test engines::liquidation_snipe_engine::tests::bitmap_flags_decodes_pairs_of_bits ... ok
+test engines::liquidation_snipe_engine::tests::bonus_bps_from_raw_strips_ten_thousand_offset ... ok
+test engines::liquidation_snipe_engine::tests::test_gas_cost_impact ... ok
+test engines::liquidation_snipe_engine::tests::test_rejects_low_bonus ... ok
+test engines::liquidation_snipe_engine::tests::test_token_symbol_resolution ... ok
+test engines::liquidation_snipe_engine::tests::fetch_returns_honest_empty_for_unsupported_protocol ... ok
+test engines::liquidation_snipe_engine::tests::test_detects_liquidatable_position ... ok
+test engines::liquidation_snipe_engine::tests::test_skips_safe_position ... ok
+test engines::liquidation_snipe_engine::tests::calldata_encoding_shapes_are_canonical ... FAILED
+test engines::liquidation_snipe_engine::tests::fn_selector_matches_known_chainlink_constant ... ok
+test engines::liquidation_snipe_engine::tests::address_from_word_keeps_low_twenty_bytes ... FAILED
+test engines::liquidation_snipe_engine::tests::word_at_parses_words_and_rejects_short_results ... ok
+test engines::liquidation_snipe_engine::tests::fetch_positions_fails_honest_on_rpc_error ... ok
+test engines::liquidation_snipe_engine::tests::fetch_positions_real_pipeline_wiremock ... FAILED
+
+failures:
+
+---- engines::liquidation_snipe_engine::tests::calldata_encoding_shapes_are_canonical stdout ----
+
+thread 'engines::liquidation_snipe_engine::tests::calldata_encoding_shapes_are_canonical' (24792) panicked at searcher-rs\src\engines\liquidation_snipe_engine.rs:1384:9:
+assertion `left == right` failed
+  left: 50
+ right: 72
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+---- engines::liquidation_snipe_engine::tests::address_from_word_keeps_low_twenty_bytes stdout ----
+
+thread 'engines::liquidation_snipe_engine::tests::address_from_word_keeps_low_twenty_bytes' (17968) panicked at searcher-rs\src\engines\liquidation_snipe_engine.rs:1334:9:
+assertion `left == right` failed
+  left: "0x001234567890abcdef567890abcdef1234567890"
+ right: "0x1234567890abcdef567890abcdef1234567890"
+
+---- engines::liquidation_snipe_engine::tests::fetch_positions_real_pipeline_wiremock stdout ----
+
+thread 'engines::liquidation_snipe_engine::tests::fetch_positions_real_pipeline_wiremock' (16668) panicked at searcher-rs\src\engines\liquidation_snipe_engine.rs:1646:9:
+assertion `left == right` failed: exactly the liquidatable user survives
+  left: 0
+ right: 1
+
+
+failures:
+    engines::liquidation_snipe_engine::tests::address_from_word_keeps_low_twenty_bytes
+    engines::liquidation_snipe_engine::tests::calldata_encoding_shapes_are_canonical
+    engines::liquidation_snipe_engine::tests::fetch_positions_real_pipeline_wiremock
+
+test result: FAILED. 14 passed; 3 failed; 0 ignored; 0 measured; 1420 filtered out; finished in 0.01s
+
+error: test failed, to rerun pass `-p searcher-rs --lib`
+exoneration exit=101

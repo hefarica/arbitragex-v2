@@ -1,0 +1,9 @@
+artefacto	productor	sha256	verificador
+T8_ingest_validation.json	data-ingest/t8	2ee4f8fcfaeb85134ae402592e88aa29e4c3cf6109b0f8245e335056ddca8e8e	PENDIENTE t17-FALSATOR/t7 | veredicto ∅
+T8_ingest_validation.md	data-ingest/t8	cd077ba99f0e025fb24cfef03e06156130dfcf4c57fc9124f1a05f2780e010e8	PENDIENTE t17-FALSATOR/t7 | veredicto ∅
+T8_output_full.json	data-ingest/t8	b3c825d79b522b672ee0eab4509f70cee56c06e7010217198ffe4c18b0725126	PENDIENTE t17-FALSATOR/t7 | veredicto ∅
+T8_output_r2.json	data-ingest/t8	72a389bd52d128b1fa7c97e7607e6e771bdd5ded861126f9746ab58ad4f5f502	PENDIENTE t17-FALSATOR/t7 | veredicto ∅
+T8_stderr_r2.txt	data-ingest/t8	e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855	PENDIENTE t17-FALSATOR/t7 | veredicto ∅
+T8_stderr.txt	data-ingest/t8	e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855	PENDIENTE t17-FALSATOR/t7 | veredicto ∅
+t8_validate_r2.py	data-ingest/t8	9347db2593f06cf6ace9d6bf7e693145b24f89ba702a63395f718a9563221db8	PENDIENTE t17-FALSATOR/t7 | veredicto ∅
+t8_validate.py	data-ingest/t8	c23e7d813309cb8689a18f8e971a96ab50d070c78b5cd909987d07fa1af3d428	PENDIENTE t17-FALSATOR/t7 | veredicto ∅

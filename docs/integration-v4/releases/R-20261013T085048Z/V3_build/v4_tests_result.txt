@@ -1,0 +1,3 @@
+test detector_policy::tests::dfac_fix_is_materialized ... ok
+test detector_policy::tests::ssot_v4_detector_table_matches_ssot ... ok
+test result: FAILED. 1431 passed; 3 failed; 5 ignored; 0 measured; 0 filtered out; finished in 0.14s

@@ -1,0 +1,15 @@
+# t11 evidencia — C-3 trace_callMany REHUSADO por el stack soberano gratuito
+# Comando: & cast rpc --rpc-url https://ethereum-rpc.publicnode.com trace_callMany '[]'
+# Salida literal (2026-10-13 ~15:0x UTC):
+
+Error: HTTP error 403 with body: {"jsonrpc":"2.0","error":{"code":-32602,"message":"Archive
+requests require a personal token. Get one at: https://www.allnodes.com/publicnode"},"id":0}
+
+# Lectura fail-honest:
+# - trace_* en publicnode (allnodes backend) exige token PERSONAL (de pago/registro) ⇒
+#   incompatible con el stack soberano gratuito (§38: proveedores de pago PROHIBIDOS;
+#   "la respuesta es el stack soberano o datos del operador — nunca una propuesta de costo").
+# - x_ref.json instruments: ssh NO DISPONIBLE (exit 255) ⇒ no hay nodo propio para
+#   verificar tracing. drpc no fue sondeado para trace_* porque su acceso básico ya
+#   es 2.4× más lento y el punto de política no depende del proveedor.
+# Conclusión: λ(C-3)=R, μ NO COMPUTADO sin instrumento soberano disponible ⇒ veredicto 0.

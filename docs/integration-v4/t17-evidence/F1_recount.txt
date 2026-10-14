@@ -1,0 +1,10 @@
+VIA1 SSOT csv      |S|=264  |D|=60  sum(|mask|)=1436
+VIA2 SSOT json     |S|=264  sum(|mask|)=1436
+VIA3 xlsx CLASIF_264 |S|=264  sum(|hops|)=1436
+VIA3b TESTS_ATOMICOS header=('MEV_ID', 'STRATEGY', 'DETECTOR', 'FAMILY', 'SURFACE', 'HOP_MASK', 'TEST_ID', 'TEST_KIND', 'BASE_POS', 'IMP_POS', 'DELTA', 'EXEC_CLASS', 'ASSERT')
+VIA3b TESTS_ATOMICOS unique MEV=264 data_rows=264000
+VIA4 pkg clasificacion_264.csv data_rows=264
+CLAIM: |S|=264 |D|=60 |Omega|=1436
+VERDICT_S: NO_REFUTADO (vias 264,264,264,264,264)
+VERDICT_D: NO_REFUTADO (via 60)
+VERDICT_OMEGA(sum|hops|=1436): NO_REFUTADO (vias 1436,1436,1436)

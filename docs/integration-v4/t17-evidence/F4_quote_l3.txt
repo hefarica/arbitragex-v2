@@ -1,0 +1,32 @@
+F4 — L3: quote_local = quote_onchain ± 0.005
+================================================
+Ataque: buscar un par medible (quote_local, quote_onchain) con |Δ| > 0.005.
+
+EVIDENCIA (α7, medido esta sesión):
+- El feed vivo (qa-baseline/edge_opps_live.json, sha256 1FE9EFF0… del XREF_BASELINE.json:94)
+  sirve UNA SOLA vía de quote: economics.legs[] con amount_out_wei + quote_block. No existe
+  campo quote_onchain ni segunda vía servida.
+- Instrumentos on-chain (XREF_BASELINE.json:19-20): "ssh arbx (docker logs, redis-cli)" =
+  NO DISPONIBLE (exit=255, stderr 0 bytes); "sql_query (PG via harness)" = NO DEVUELVE FILAS.
+- Productor del ledger L3 (t4, ε=LEDGER_TOLERANCE_USD=0.005): PENDIENTE (PLAN_T1_T8.md).
+- Único artefacto actual con 0.005: releases/R-20261013T085048Z/x_ref.json delta_abs — es la
+  TOLERANCIA contractual derivada, NO una medición quote_local vs quote_onchain.
+
+VEREDICTO_F4: NO_REFUTADO — sin contraejemplo Y sin prueba: el claim L3 no es medible hoy.
+  NO_REFUTADO ≠ verdadero. Para el quórum §7 de t6: L3 NO puede tratarse como verificado
+  hasta que t4 produzca el ledger con las DOS vías y ε=0.005.
+
+HALLAZGO SECUNDARIO (no refuta L3, material para t6/t16):
+  Consistencia interna del wire: recomputé amount_out_usd := legs[-1].amount_out_wei /
+  10^dec(token_out) × token_prices_usd[sym] para 26 items → 5 pares computables, 3 con
+  discrepancia > 0.005 USD (máx 9.15 USD, factor >1e6):
+    id=b375e77a triangular cierra en HEX: servido 0.0024 USD vs recomputado 8.73 USD
+    id=4ff95059 triangular cierra en HEX: servido 0.0022 USD vs recomputado 7.97 USD
+    id=99595269 triangular cierra en EURC: servido 2.07e-8 USD vs recomputado 9.15 USD
+  (medición bruta: internal USD-consistency pairs checked=5 worst |recomputed-served|=9.1535336659 USD;
+   la línea previa "…within 9.15 USD < 0.005" era FALSA y se corrige en este archivo)
+  Las 3 son rutas cuyo token_out ≠ token_in (cierre en token no-base); amount_in_usd=0.01
+  hace imposible 8-9 USD de salida ⇒ amount_out_wei del último leg y amount_out_usd servido
+  divergen por escala/semántica en rutas abiertas. Fail-honest: puede ser semántica distinta
+  de legs[] en rutas no-cerradas (no afirmo bug del productor); la discrepancia numérica es
+  medible y reproducible con el comando de esta sesión.

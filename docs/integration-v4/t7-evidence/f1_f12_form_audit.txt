@@ -1,0 +1,22 @@
+content check of rows 41-45 (structure broken, is the PAYLOAD right?):
+  row41 payloads: p1=fc8e71e0 (want fc8e71e0…) p2=f1d5baa2 (want f1d5baa2…) p3=d6e0297a (want d6e0297a…)
+  row41 payload correct: True (but C2 form violated: indirect reference, not a 64-hex sha)
+  row42: V2_static.txt payload CORRECT (sha 7c8a4e46… want 7c8a4e46…)
+  row43: V3_build.txt payload CORRECT (sha 57cb51a1… want 57cb51a1…)
+  row44: R_report_T6.md payload CORRECT (sha f00c0921… want f00c0921…)
+  row45: ESCALERA_REPORT.md payload CORRECT (sha 8c830f40… want 8c830f40…)
+
+F1-F12 form audit (file exists, has literal output, has VERDICT line):
+  F1: exists (609 B) literal_output=True VERDICT_F1_line=False
+  F2: exists (944 B) literal_output=True VERDICT_F2_line=True
+  F3: exists (616 B) literal_output=True VERDICT_F3_line=True
+  F4: exists (2328 B) literal_output=True VERDICT_F4_line=False
+  F5: exists (2099 B) literal_output=True VERDICT_F5_line=True
+  F6: exists (933 B) literal_output=True VERDICT_F6_line=True
+  F7: exists (774 B) literal_output=True VERDICT_F7_line=True
+  F8: exists (826 B) literal_output=True VERDICT_F8_line=True
+  F9: exists (2659 B) literal_output=True VERDICT_F9_line=True
+  F10: exists (813 B) literal_output=True VERDICT_F10_line=True
+  F11: exists (1614 B) literal_output=True VERDICT_F11_line=True
+  F12: exists (2085 B) literal_output=True VERDICT_F12_line=True
+  R_alpha7.tsv rows: 12 (want 12)

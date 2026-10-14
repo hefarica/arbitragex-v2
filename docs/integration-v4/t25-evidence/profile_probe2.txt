@@ -1,0 +1,14 @@
+StartedAt=2026-10-13T20:11:49.744980432Z Image=arbitragex-v2-searcher-rs LogCfg=map[max-file:5 max-size:10m]
+=== logs total lineas y primera ===
+{"timestamp":"2026-10-13T20:11:49.881370Z","level":"INFO","fields":{"service":"searcher-rs","event":"service.boot","result":"tracing_initialized"},"target":"shared_rs::logging"}
+25516
+=== grep eval/summary/cartridge (ultimas 2h) ===
+5868
+{"timestamp":"2026-10-13T20:11:49.883933Z","level":"INFO","fields":{"message":"boot census assembled (env-derived class-A/B gates; CB-02)","event":"config.boot_census","census":"{\"arbx_cartridge_mode\":\"active\",\"arbx_gate_macro_mev_enabled\":true,\"arbx_mempool_mode\":\"auto\",\"arbx_native_engines\":true,\"arbx_orchestrator_mode\":\"v2\",\"arbx_pool_enum_mode\":\"shadow\",\"arbx_route_discovery_outcomes\":true,\"arbx_route_scanner_mode\":\"on\",\"arbx_scoring_enabled\":true,\"arbx_scoring_hard_gate\":false,\"published_at\":\"2026-10-13T20:11:49.883896833+00:00\"}"},"target":"searcher_rs"}
+{"timestamp":"2026-10-13T20:12:01.191737Z","level":"INFO","fields":{"message":"cartridge mode resolved from ARBX_CARTRIDGE_MODE","event":"scanner.cartridge_mode","chain_id":1,"mode":"active"},"target":"searcher_rs::scanner"}
+{"timestamp":"2026-10-13T20:12:01.205811Z","level":"INFO","fields":{"message":"admisión explícita de manifiestos v4 (auto-declarados por el script desplegado)","event":"cartridge.v4_manifests_admitted","admitted":264,"scanned":264,"skipped":0,"conflicts":0,"dir":"cartridges/strategies"},"target":"searcher_rs::cartridge_boot"}
+=== tick/latency samples ===
+{"timestamp":"2026-10-13T20:11:56.048120Z","level":"INFO","fields":{"message":"Binance combined-streams client starting (canon price + depth5@100ms)","event":"binance_ws.start","url":"wss://stream.binance.com:9443/stream?streams=ethusdc@bookTicker/ethusdc@depth5@100ms/btcusdt@bookTicker/btcusdt@depth5@100ms/ethusdt@bookTicker/ethusdt@depth5@100ms/usdcusdt@bookTicker/usdcusdt@depth5@100ms/wbtcusdt@bookTicker/wbtcusdt@depth5@100ms","depth5_default_on":true},"target":"searcher_rs::workers::binance_ws"}
+{"timestamp":"2026-10-13T20:11:56.048158Z","level":"INFO","fields":{"message":"PoolSyncWorker tick (block-time aligned by default)","event":"worker_orchestrator.pool_sync_interval","chain_id":1,"interval_ms":12000},"target":"searcher_rs::workers"}
+{"timestamp":"2026-10-13T20:11:56.048304Z","level":"INFO","fields":{"message":"CEX-DEX worker started (Phase 1 scaffold — spread detection only)","event":"cex_dex_worker.boot","chain_id":1,"pairs":1,"tick_ms":5000,"rpc_attached":true},"target":"searcher_rs::workers::cex_dex_worker"}
+{"timestamp":"2026-10-13T20:11:56.425784Z","level":"INFO","fields":{"event":"pool_sync.tick_begin","chain_id":1,"v2_pools":1208,"v3_pools":540},"target":"searcher_rs::workers::pool_sync_worker"}

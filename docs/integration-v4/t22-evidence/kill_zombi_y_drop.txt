@@ -1,0 +1,34 @@
+=== (1) KILL zombi 659745 ===
+SIGKILL enviado
+MUERTO (host)
+MUERTO (contenedor)
+=== sesiones pg_dump en PG despues ===
+61439
+=== (2) DROP p20261012 SANCIONADO (guard rollup: verificado 2x) ===
+--- df antes ---
+/dev/sda1        153514M 136729M    10492M  93% /
+DROP TABLE
+--- df despues ---
+/dev/sda1        153514M 128528M    18692M  88% /
+=== particiones restantes ===
+route_discovery_outcomes_p20261013
+route_discovery_outcomes_p20261013_chain_id_ts_ms_idx
+route_discovery_outcomes_p20261013_is_opportunity_ts_ms_idx
+route_discovery_outcomes_p20261013_pkey
+route_discovery_outcomes_p20261013_pool_hint_idx
+route_discovery_outcomes_p20261013_stream_id_ts_ms_key
+route_discovery_outcomes_p20261013_ts_ms_idx
+route_discovery_outcomes_p20261014
+route_discovery_outcomes_p20261014_chain_id_ts_ms_idx
+route_discovery_outcomes_p20261014_is_opportunity_ts_ms_idx
+route_discovery_outcomes_p20261014_pkey
+route_discovery_outcomes_p20261014_pool_hint_idx
+route_discovery_outcomes_p20261014_stream_id_ts_ms_key
+route_discovery_outcomes_p20261014_ts_ms_idx
+route_discovery_outcomes_p20261015
+route_discovery_outcomes_p20261015_chain_id_ts_ms_idx
+route_discovery_outcomes_p20261015_is_opportunity_ts_ms_idx
+route_discovery_outcomes_p20261015_pkey
+route_discovery_outcomes_p20261015_pool_hint_idx
+route_discovery_outcomes_p20261015_stream_id_ts_ms_key
+route_discovery_outcomes_p20261015_ts_ms_idx

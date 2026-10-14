@@ -1,0 +1,24 @@
+# t11 evidencia — C-2 JSON-RPC array batching AUSENTE (y por qué no cambia el veredicto)
+# Comando: Select-String -Path (Get-ChildItem -Recurse -Filter '*.rs') -Pattern 'BatchRequest|batch_request|jsonrpc.*\[|"batch"\s*:'
+# cwd: backend/searcher-rs/src — Salida literal:
+
+=== C-2 JSON-RPC array batching (presencia dirigida) ===
+0 matches — JSON-RPC array batching AUSENTE (todo batching es Multicall3/EVM-level)
+
+# Los 12 matches del grep amplio 'batch' (CaseInsensitive) son TODOS multicall/EVM-level:
+amm_math.rs:1: //! V2 CPMM math + V3 batch quoting via Multicall3.
+amm_math.rs:300: // Uniswap V3 batch quoting via Multicall3
+amm_math.rs:785: /// Batch-quote multiple V3 pools in a single Multicall3 RPC.
+amm_math.rs:811: // (multicall_addr) then batches all these calls into a single eth_call.
+amm_math.rs:1557: // ── V3-QUOTE-BATCH-20260919 (B1): equivalence + gas cap ──
+amm_math.rs:1623: /// Equivalence: a pool quoted inside a batched aggregate3 must return the
+amm_math.rs:1628: fn batch_vs_unary_equivalence() {
+v3_quote_provider.rs:26: //! V3 pools in `ARBX_V3_QUOTE_BATCH_SIZE`-wide aggregate3 multicalls before
+(+ state_projector.rs:612 ⌈N/batch_size⌉, triangular_adapter backfill 1-multicall, etc.)
+
+# Sonda de soporte server-side (publicnode, misma sesión):
+& cast rpc --rpc-url https://ethereum-rpc.publicnode.com eth_callMany '[]' 'latest'
+→ Error: server returned an error response: error code -32602: Invalid params, data:
+  "invalid type: string \"latest\", expected struct StateContext at line 1 column 8"  [exit 1]
+# Lectura: el método eth_callMany EXISTE en publicnode (error de TIPOS de mis params,
+# no 'method not found'). Soporte server-side: SÍ. Utilidad incremental: ver ADM §C-2.

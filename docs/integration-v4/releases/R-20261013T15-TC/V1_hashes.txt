@@ -1,0 +1,16 @@
+# V1 — hashes t11 (recorrido recursivo, generado al cierre)
+# (V1_hashes.txt y ℛ-t11.tsv no se hashean a sí mismos)
+#
+5fc4f759c34560381dc4e7b3393d4c5d5454dac08b7f2ea1f366b3813b1803a2  ADM-t11-quote-aggregation.md  7354B
+2034308aa54d6869c7e04e5172bc256d7d3755f0cb3a136f742cd91ec9fd507c  releases\R-20261013T15-TC\V2_static.txt  2718B
+ec9f62ee72f2a96ca44e12a794e249f47c29c63306d207fc3872216294fe6bf7  releases\R-20261013T15-TC\V3_build.txt  768B
+da77c0b3fd0e0602acbfc65f2e66c2c04aa1f6d8b44754d0d01c30307b620e6f  releases\R-20261013T15-TC\V4_dryrun.md  1160B
+92ff0517089254fcbedde2845e05791fe9bf1b35d132d6253eb1b95af876634a  t11-evidence\C1_multicall_grep.txt  1460B
+dbb65e1e6513221d7a4c3bca646e780e0305759e2c720a76c72d936d6e826fba  t11-evidence\C2_jsonrpc_batch_grep.txt  1737B
+51e59ac9aa6e9fbcf3879c30c2a13fd89e938f20c57339f39f0ba93b50ca0c31  t11-evidence\C3_trace_callMany_probe.txt  1030B
+4643f8f26d098ba53b9d3d293bc7a6400227ab5533e7a252f574a0472e5d7e46  t11-evidence\C6_staticcall_grep.txt  1234B
+dffb048d5d65cf8ed7107bcdd3a7f9512597e04ff8ce38f18e2ca21bffeb59f4  t11-evidence\C7a_revm_ya_presente.txt  1843B
+37ce4618aca886c34fc19e8dafed67cf21d22fff1272fce659f79ec571919f9f  t11-evidence\C7b_anvil_appcontrol.txt  1578B
+624c3725dc9e2f32ed9f265332edfa5f3ff79c65bf0ccc688d96871ad04acc48  t11-evidence\RPC_soberano_probe.txt  782B
+
+# total files: 11

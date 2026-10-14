@@ -1,0 +1,16 @@
+--- imagen real presente ---
+arbx:R-20261013T1545Z a9b3ef50a8b3 185MB
+arbitragex-v2-searcher-rs:latest dfd71012e1dc 185MB
+--- setup drill efimero ---
+ Container arbx-drill-probe-1 Started 
+ Container arbx-drill-probe-1 Started 
+ Container arbx-drill-probe-1 Started 
+t_swap1_s=0.37 t_rollback_s=10.60 t_swap2_s=10.67
+up_tras_swap1=1
+img1=arbx:R-20261013T1545Z sha256:a9b3ef50a8b326cddcacb1d2b630e3968c57a936e7d7f5fbb254a537e6a773f1
+img_rollback=arbitragex-v2-searcher-rs:latest sha256:dfd71012e1dc05c1ed320a3fe7113274176e7d5edb923347daa38d635eb5d720
+img_final=arbx:R-20261013T1545Z sha256:a9b3ef50a8b326cddcacb1d2b630e3968c57a936e7d7f5fbb254a537e6a773f1
+bash: line 34: T3: unbound variable
+drill_rc=0 (dentro_W=)
+ Network arbx-drill_default Removed 
+restantes=0

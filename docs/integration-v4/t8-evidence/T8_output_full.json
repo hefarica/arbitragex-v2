@@ -1,0 +1,526 @@
+{
+ "input_hashes": {
+  "csv_a2": {
+   "measured": "38f038a82b5d16979e17d002c406d249d9979d164166e2cdaac063d0b80a7786",
+   "expected": "38f038a82b5d16979e17d002c406d249d9979d164166e2cdaac063d0b80a7786",
+   "match": true
+  },
+  "xlsx": {
+   "measured": "eb5b803cb66d0dcbb5c17c9885e9a3dc041e01e94c5bc22a37ef0482e4e09cc3",
+   "expected": "eb5b803cb66d0dcbb5c17c9885e9a3dc041e01e94c5bc22a37ef0482e4e09cc3",
+   "match": true
+  },
+  "ssot_json": {
+   "measured": "7fb529c607071a210a0b3bc627dd27b475008f2031445e9acccf317884861122",
+   "expected": "7fb529c607071a210a0b3bc627dd27b475008f2031445e9acccf317884861122",
+   "match": true
+  }
+ },
+ "checks": {},
+ "a2_csv": {
+  "header_ok": true,
+  "header_measured": [
+   "MEV_ID",
+   "GRUPO",
+   "FAMILIA",
+   "DETECTOR",
+   "SUPERFICIE",
+   "HOPS",
+   "BASE_POS",
+   "IMP_POS",
+   "DELTA"
+  ],
+  "n_cols": 9,
+  "no_index_column": true,
+  "n_rows": 264,
+  "all_rows_9_cols": true,
+  "delta_non_increasing": true,
+  "delta_strictly_decreasing": false,
+  "delta_first_last": [
+   78.0,
+   8.0
+  ],
+  "mev_ids_unique": true,
+  "distinct_detectors": 58,
+  "distinct_surfaces": 10,
+  "hops_distinct": [
+   "2/3/4/5/6",
+   "2/3/4/5/6/7",
+   "2/3/4/5/7",
+   "2/3/4/6/7",
+   "2/3/5/6/7",
+   "2/4/5/6/7",
+   "3/4/5/6/7"
+  ],
+  "base_pos_sum": 19744.0,
+  "imp_pos_sum": 31744.0,
+  "delta_gt0_count": 264
+ },
+ "xlsx": {
+  "n_sheets": 59,
+  "sheet_names": [
+   "LEEME",
+   "RESUMEN",
+   "CLASIFICACION_264",
+   "AGREGADOS_SUPERFICIE",
+   "AGREGADOS_DETECTOR",
+   "INVARIANTES",
+   "CRITERIOS_T6",
+   "PLAN_T1_T8",
+   "TESTS_ATOMICOS",
+   "A01",
+   "A02",
+   "A03",
+   "A04",
+   "A05",
+   "A06",
+   "A07",
+   "A08",
+   "A09",
+   "A10",
+   "A11",
+   "A12",
+   "A13",
+   "A14",
+   "A15",
+   "A16",
+   "A17",
+   "A18",
+   "A19",
+   "A20",
+   "F01",
+   "F02",
+   "F03",
+   "F04",
+   "F05",
+   "F06",
+   "F07",
+   "F08",
+   "F09",
+   "F10",
+   "F11",
+   "F12",
+   "F13",
+   "F14",
+   "S01",
+   "S02",
+   "S03",
+   "S04",
+   "S05",
+   "S06",
+   "S07",
+   "S08",
+   "S09",
+   "S10",
+   "I01",
+   "I02",
+   "I03",
+   "I04",
+   "I05",
+   "I06"
+  ],
+  "sheets_match_expected_59": true,
+  "registro_inclusiones_present": false,
+  "sheets_ge_60": false,
+  "tests_atomicos": {
+   "header_ok": true,
+   "header_measured": [
+    "MEV_ID",
+    "STRATEGY",
+    "DETECTOR",
+    "FAMILY",
+    "SURFACE",
+    "HOP_MASK",
+    "TEST_ID",
+    "TEST_KIND",
+    "BASE_POS",
+    "IMP_POS",
+    "DELTA",
+    "EXEC_CLASS",
+    "ASSERT"
+   ],
+   "n_data_rows": 264000,
+   "expected_rows": 264000,
+   "distinct_mev_ids": 264,
+   "all_mev_have_1000": true,
+   "assert_value_counts": {
+    "BASE<=IMP": 264000
+   },
+   "base_pos_sum": 19744.0,
+   "imp_pos_sum": 31744.0,
+   "delta_gt0_count": 12000,
+   "delta_pct": 60.778,
+   "monotonic_within_mev_blocks": false,
+   "monotonic_blocks": 264
+  },
+  "clasificacion_264": {
+   "header_measured": [
+    "MEV_ID",
+    "GRUPO",
+    "FAMILIA",
+    "DETECTOR",
+    "SUPERFICIE",
+    "HOPS",
+    "BASE_POS",
+    "IMP_POS",
+    "DELTA"
+   ],
+   "n_rows": 264,
+   "header_equals_a2_csv": true,
+   "mev_set_equals_a2_csv": true,
+   "row_order_equals_a2_csv": true
+  },
+  "agregados_superficie": {
+   "header": [
+    "SUPERFICIE",
+    "ESTRATEGIAS",
+    "BASE_POS",
+    "IMP_POS"
+   ],
+   "n_rows": 10,
+   "counts_match_a2_csv": true,
+   "mismatches": {}
+  },
+  "agregados_detector": {
+   "header": [
+    "DETECTOR",
+    "FAMILIA",
+    "ESTRATEGIAS",
+    "BASE_POS"
+   ],
+   "n_rows": 60,
+   "counts_match_a2_csv": false,
+   "mismatches": {
+    "L_04": {
+     "xlsx": "L_",
+     "a2_csv": 6
+    },
+    "I_01": {
+     "xlsx": "I_",
+     "a2_csv": 3
+    },
+    "D_04": {
+     "xlsx": "D_",
+     "a2_csv": 6
+    },
+    "M_02": {
+     "xlsx": "M_",
+     "a2_csv": 5
+    },
+    "L_01": {
+     "xlsx": "L_",
+     "a2_csv": 7
+    },
+    "CF_04": {
+     "xlsx": "CF_",
+     "a2_csv": 3
+    },
+    "C_08": {
+     "xlsx": "C_",
+     "a2_csv": 3
+    },
+    "E_04": {
+     "xlsx": "E_",
+     "a2_csv": 3
+    },
+    "N_03": {
+     "xlsx": "N_",
+     "a2_csv": 4
+    },
+    "C_06": {
+     "xlsx": "C_",
+     "a2_csv": 3
+    },
+    "R_01": {
+     "xlsx": "R_",
+     "a2_csv": 5
+    },
+    "C_01": {
+     "xlsx": "C_",
+     "a2_csv": 4
+    },
+    "I_04": {
+     "xlsx": "I_",
+     "a2_csv": 3
+    },
+    "P_04": {
+     "xlsx": "P_",
+     "a2_csv": 5
+    },
+    "OBSERVE02": {
+     "xlsx": "OBSERVE",
+     "a2_csv": null
+    },
+    "OBSERVE01": {
+     "xlsx": "OBSERVE",
+     "a2_csv": null
+    },
+    "R_02": {
+     "xlsx": "R_",
+     "a2_csv": 5
+    },
+    "C_07": {
+     "xlsx": "C_",
+     "a2_csv": 3
+    },
+    "R_05": {
+     "xlsx": "R_",
+     "a2_csv": 4
+    },
+    "C_02": {
+     "xlsx": "C_",
+     "a2_csv": 3
+    },
+    "E_02": {
+     "xlsx": "E_",
+     "a2_csv": 3
+    },
+    "X_02": {
+     "xlsx": "X_",
+     "a2_csv": 15
+    },
+    "CF_01": {
+     "xlsx": "CF_",
+     "a2_csv": 3
+    },
+    "E_03": {
+     "xlsx": "E_",
+     "a2_csv": 3
+    },
+    "R_07": {
+     "xlsx": "R_",
+     "a2_csv": 4
+    },
+    "CF_05": {
+     "xlsx": "CF_",
+     "a2_csv": 3
+    },
+    "D_02": {
+     "xlsx": "D_",
+     "a2_csv": 6
+    },
+    "C_10": {
+     "xlsx": "C_",
+     "a2_csv": 3
+    },
+    "L_03": {
+     "xlsx": "L_",
+     "a2_csv": 6
+    },
+    "M_05": {
+     "xlsx": "M_",
+     "a2_csv": 5
+    },
+    "CF_02": {
+     "xlsx": "CF_",
+     "a2_csv": 3
+    },
+    "X_01": {
+     "xlsx": "X_",
+     "a2_csv": 15
+    },
+    "P_02": {
+     "xlsx": "P_",
+     "a2_csv": 5
+    },
+    "N_01": {
+     "xlsx": "N_",
+     "a2_csv": 5
+    },
+    "N_02": {
+     "xlsx": "N_",
+     "a2_csv": 5
+    },
+    "P_01": {
+     "xlsx": "P_",
+     "a2_csv": 5
+    },
+    "C_05": {
+     "xlsx": "C_",
+     "a2_csv": 3
+    },
+    "C_04": {
+     "xlsx": "C_",
+     "a2_csv": 3
+    },
+    "E_05": {
+     "xlsx": "E_",
+     "a2_csv": 2
+    },
+    "D_01": {
+     "xlsx": "D_",
+     "a2_csv": 6
+    },
+    "I_02": {
+     "xlsx": "I_",
+     "a2_csv": 3
+    },
+    "L_02": {
+     "xlsx": "L_",
+     "a2_csv": 6
+    },
+    "R_08": {
+     "xlsx": "R_",
+     "a2_csv": 4
+    },
+    "CF_06": {
+     "xlsx": "CF_",
+     "a2_csv": 2
+    },
+    "I_03": {
+     "xlsx": "I_",
+     "a2_csv": 3
+    },
+    "D_03": {
+     "xlsx": "D_",
+     "a2_csv": 6
+    },
+    "D_05": {
+     "xlsx": "D_",
+     "a2_csv": 6
+    },
+    "M_06": {
+     "xlsx": "M_",
+     "a2_csv": 5
+    },
+    "M_04": {
+     "xlsx": "M_",
+     "a2_csv": 5
+    },
+    "C_03": {
+     "xlsx": "C_",
+     "a2_csv": 3
+    },
+    "R_03": {
+     "xlsx": "R_",
+     "a2_csv": 5
+    },
+    "M_03": {
+     "xlsx": "M_",
+     "a2_csv": 5
+    },
+    "C_09": {
+     "xlsx": "C_",
+     "a2_csv": 3
+    },
+    "P_03": {
+     "xlsx": "P_",
+     "a2_csv": 5
+    },
+    "CF_03": {
+     "xlsx": "CF_",
+     "a2_csv": 3
+    },
+    "N_04": {
+     "xlsx": "N_",
+     "a2_csv": 4
+    },
+    "E_01": {
+     "xlsx": "E_",
+     "a2_csv": 3
+    },
+    "R_04": {
+     "xlsx": "R_",
+     "a2_csv": 5
+    },
+    "R_06": {
+     "xlsx": "R_",
+     "a2_csv": 4
+    },
+    "M_01": {
+     "xlsx": "M_",
+     "a2_csv": 6
+    }
+   }
+  },
+  "a01_raw_first20": [
+   [
+    "ID",
+    "NOMBRE",
+    "PROP",
+    "COMPL",
+    "REF"
+   ],
+   [
+    "A01",
+    "MARGINAL-PREFILTER",
+    "Poda por cota marginal",
+    "O(E log V)",
+    "searcher-rs::marginal.rs"
+   ]
+  ],
+  "invariantes_raw": [
+   [
+    "INVARIANTE",
+    "ESPERADO",
+    "OBSERVADO",
+    "ASSERT"
+   ],
+   [
+    "Estrategias==264",
+    "264",
+    "264",
+    "OK"
+   ],
+   [
+    "Detectores==60",
+    "60",
+    "60",
+    "OK"
+   ],
+   [
+    "Combos==1436",
+    "1436",
+    "1436",
+    "OK"
+   ],
+   [
+    "Hop dist",
+    "245/262/260/233/233/203",
+    "245/262/260/233/233/203",
+    "OK"
+   ],
+   [
+    "DERIV_POS>0",
+    ">0",
+    "1982",
+    "OK"
+   ],
+   [
+    "IMP>=BASE",
+    "siempre",
+    "ok",
+    "OK"
+   ]
+  ]
+ },
+ "ssot": {
+  "top_keys": [
+   "strategies"
+  ],
+  "raw_head": "{\"strategies\": [{\"mev_id\": \"MEV-01-001\", \"group\": \"G01\", \"family\": \"R_\", \"detector\": \"R_01\", \"mask\": \"3/4/5/6/7\"}, {\"mev_id\": \"MEV-01-002\", \"group\": \"G01\", \"family\": \"R_\", \"detector\": \"R_02\", \"mask\": \"3/4/5/6/7\"}, {\"mev_id\": \"MEV-01-003\", \"group\": \"G01\", \"family\": \"R_\", \"detector\": \"R_03\", \"mask\": \"3/4/5/6/7\"}, {\"mev_id\": \"MEV-01-004\", \"group\": \"G01\", \"family\": \"R_\", \"detector\": \"R_04\", \"mask\": \"3/4/5/6/7\"}, {\"mev_id\": \"MEV-01-005\", \"group\": \"G01\", \"family\": \"R_\", \"detector\": \"R_05\", \"mask\": \"3/4/5/6/7\"}, {\"mev_id\": \"MEV-01-006\", \"group\": \"G01\", \"family\": \"R_\", \"detector\": \"R_06\", \"mask\": \"3/4/5/6/7\"}, {\"mev_id\": \"MEV-01-007\", \"group\": \"G01\", \"family\": \"R_\", \"detector\": \"R_07\", \"mask\": \"3/4/5/6/7\"}, {\"mev_id\": \"MEV-01-008\", \"group\": \"G01\", \"family\": \"R_\", \"detector\": \"R_08\", \"mask\": \"3/4/5/6/7\"}, {\"mev_id\": \"MEV-01-009\", \"group\": \"G01\", \"family\": \"R_\", \"detector\": \"R_01\", \"mask\": \"3/4/5/6/7\"}, {\"mev_id\": \"MEV-01-010\", \"group\": \"G01\", \"family\": \"R_\", \"detector\": \"R_02\", \"mask\": \"3/4/5/6/7\"}, {\"mev_id\": \"MEV-01-011\", \"group\": \"G01\", \"family\": \"R_\", \"detector\": \"R_03\", \"mask\": \"3/4/5/6/7\"}, {\"mev_id\": \"MEV-01-012\", \"group\": \"G01\", \"family\": \"R_\", \"detector\": \"R_04\", \"mask\": \"3/4/5/6/7\"}, {\"mev_id\": \"MEV-01-013\", \"group\": \"G01\", \"family\": \"R_\", \"detector\": \"R_05\", \"mask\": \"3/4/5/6/7\"}, {\"mev_id\": \"MEV-01-014\", \"group\": \"G01\", \"family\": \"R_\", \"detector\": \"R_06\", \"mask\": \"3/4/5/6/7\"}, {\"mev_id\": \"MEV-01-015\", \"group\": \"G01\", \"family\": \"R_\", \"detector\": \"R_07\", \"mask\": \"3/4/5/6/7\"},"
+ },
+ "a1_figures": {},
+ "asserts_264_60_1436_0": {
+  "strategies_264": {
+   "a2_csv_measured": 264,
+   "ok": true
+  },
+  "detectors_60": {
+   "a2_csv_measured": 58,
+   "ok": false
+  },
+  "combos_1436": {
+   "hop_dist_sum_expected": 1436,
+   "note": "verificar contra SSOT json abajo"
+  },
+  "zero_divergences": "pendiente_mevid_diff_abajo"
+ },
+ "divergences": {},
+ "prohibited_0636": {
+  "hits_tests_atomicos_delta_base_imp": 0,
+  "hits_a2_csv_delta": 0,
+  "hits_a01_sheet": 0,
+  "verdict": "OK"
+ }
+}

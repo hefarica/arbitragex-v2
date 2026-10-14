@@ -1,0 +1,6 @@
+--- dangling images ---
+0
+--- imagen searcher actual ---
+arbitragex-v2-searcher-rs:latest dfd71012e1dc 185MB
+--- df ahora ---
+tail: option used in invalid context -- 1

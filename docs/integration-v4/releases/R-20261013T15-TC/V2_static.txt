@@ -1,0 +1,33 @@
+# V2 — verificación estática t11 (todo medido esta sesión, artefactos en t11-evidence/ y este release)
+
+1. C-1 Multicall3 YA PRESENTE: re-grep propio 152 matches (`t11-evidence/C1_multicall_grep.txt`)
+   + constantes de batching medidas: `v3_quote_provider.rs:63` DEFAULT_BATCH_SIZE=100, MAX=1000;
+   `state_projector.rs:612` "replacing N unary eth_calls with ⌈N/batch_size⌉ aggregate3";
+   `amm_math.rs:1703` "ARBX_V3_QUOTE_BATCH_SIZE=100"; tests de equivalencia B1
+   `amm_math.rs:1557` (V3-QUOTE-BATCH-20260919) + `amm_math.rs:1628` batch_vs_unary_equivalence.
+   Cruzado con t4 ADM-4 (250 matches patrón amplio, `t4-evidence/ADM_G4_multicall_grep.txt`).
+2. C-2 JSON-RPC array batching AUSENTE: grep dirigido `BatchRequest|batch_request|jsonrpc.*\[|"batch"\s*:`
+   → 0 matches (`C2_jsonrpc_batch_grep.txt`). Sonda server-side: eth_callMany EXISTE en publicnode
+   (error -32602 de TIPOS con `'latest'` string vs struct StateContext — método reconocido, no
+   'method not found').
+3. C-3 trace_callMany REHUSADO por soberano: HTTP 403 "Archive requests require a personal token"
+   (`C3_trace_callMany_probe.txt`) — §38 prohíbe pago; ssh propio NO DISPONIBLE (x_ref instruments,
+   exit 255).
+4. C-6 staticcall YA LÍNEA BASE: `amm_math.rs:6-7` QuoterV2 mainnet 0x61fFE014…B21e + docs
+   oficiales + `quoteExactInputSingle` :538 (`C6_staticcall_grep.txt`).
+5. C-7 revm-sim YA PRESENTE: Cargo.toml:39 (G-SIM-1 multi-step REVM), :75-76
+   (`execute_multistep_revm`), src: candidate_simulation.rs / sim_orchestrator.rs /
+   sim_encoder_pg.rs (`C7a_revm_ya_presente.txt`). Instrumento alternativo anvil BLOQUEADO:
+   AppControl ×2 (`C7b_anvil_appcontrol.txt` — denegación de política, final). Upstream VIVO:
+   publicnode bloque 26184346 @526ms (`RPC_soberano_probe.txt`).
+6. HOT PATH INTOCADO por t11: `git status --porcelain -- backend/searcher-rs` = 14 M, atribuidos
+   14/14 SIN t11: 12 pre-existentes declarados por t1 (verificación contra
+   `t1-evidence/T1_modified.txt`, comparación de rutas desnudas), 1 = diff intencional DECLARADO
+   por t9 (`detector_policy.rs`, ASSEMBLY.md del release t9), 1 = t10 en vuelo
+   (`tests/cartridge_r_closed_cycle_test.rs`, dominio ciclos/rutas de t10, in_progress).
+   Superficie t11 = EXCLUSIVAMENTE `docs/integration-v4/ADM-t11-quote-aggregation.md` +
+   `docs/integration-v4/t11-evidence/` (8 archivos) + este release.
+7. 𝒞(θ) vigente: canónica = 1 (C_THETA_verdict.json:67 del release t9) — los veredictos de t11
+   no tocan condición de máscara alguna.
+8. I1/I2/I5/P1/P5: sin ediciones de código (0 archivos .ts/.rs de t11), un análisis por
+   candidato, sin re-evaluación de veredictos 0, staging local sin commit/push, paper ON.

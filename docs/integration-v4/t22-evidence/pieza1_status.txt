@@ -1,0 +1,16 @@
+=== pieza-1 status ===
+exit=0
+2026-10-13T17:08:47Z
+-rw-r--r-- 1 root root 329584156 Oct 13 17:08 /opt/arbx-pieces/piece_route_discovery.dump
+=== pg_restore --list (head) ===
+;
+; Archive created at 2026-10-13 17:07:38 UTC
+;     dbname: arbitragex
+;     TOC Entries: 68
+;     Compression: 3
+;     Dump Version: 1.14-0
+;     Format: CUSTOM
+=== conteo origen rollup ===
+2434138
+=== conteo origen p20261013 ===
+11862948

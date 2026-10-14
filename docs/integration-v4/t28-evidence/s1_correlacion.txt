@@ -1,0 +1,8 @@
+/arbitragex-v2-searcher-rs-1 started=2026-10-13T20:11:49.744980432Z restarts=0 status=running
+/arbitragex-v2-frontend-1 started=2026-10-13T06:47:23.607845036Z restarts=0 status=running
+/arbitragex-v2-edge-1 started=2026-10-13T06:47:23.417092183Z restarts=0 status=running
+/arbitragex-v2-api-server-1 started=2026-10-13T06:47:23.04831855Z restarts=0 status=running
+/arbitragex-v2-postgres-1 started=2026-10-13T06:47:15.497083015Z restarts=0 status=running
+/arbitragex-v2-redis-1 started=2026-10-13T06:47:17.366177973Z restarts=0 status=running
+--- api-server logs: 500s en ultima 2h ---
+--- edge logs: 500s ---

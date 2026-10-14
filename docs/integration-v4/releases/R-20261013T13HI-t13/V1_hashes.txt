@@ -1,0 +1,17 @@
+# V1 — hashes post-hoc del release R-20261013T13HI-t13 (t13/data-ingest)
+# generado: 2026-10-13T14:56:41Z
+
+e93d8f94e658623945ad36456001c187ecc35da9e420f537433fbaf6e0753e3b  adm\__pycache__\econ_sizing.cpython-312.pyc  4441B
+3443c10a8fe505dfaa3a87fafb8d3d309c9536b3784ebfdc89cd2b81fbef4083  adm\__pycache__\nonatomic_gate.cpython-312.pyc  2447B
+e4981b515557dff64d954c3ae72aae1abbd1147e25ed53638dedd63d6e8f3ab3  adm\__pycache__\staleness_gate.cpython-312.pyc  3146B
+bd6f4342b5ad3af91123c5ecd6cda3c7036e09a44df4892ff172b7cf4498a3fd  adm\__pycache__\test_adm.cpython-312.pyc  7550B
+7a0b5233a4fc9ec538f3955a508a222f70aaef00b897cfd57663c49aef9b28c5  adm\econ_sizing.py  3865B
+d71aae67f9c94f89f09d270ed4327743bd7153b596258cf4fd9c449c8553b7ef  adm\nonatomic_gate.py  1528B
+9052767de892a0580a25cb21f3716c71f85c09de5cb571979203c6bd8469710e  adm\staleness_gate.py  2010B
+757e78d551814b228b3fec1e9ec57801c3da40f504a8e0745d60243b8ae812f1  adm\test_adm.py  4787B
+624e41977d6672f2e88c443b2fec561e9820fa36f7ce28f79bc5ca4137e7b8e5  T13_admission_table.md  5572B
+add4ecfd1c5effbd0c5000336ccd39c38a365b53bd570e45935116a1711604a8  V2_static.txt  775B
+ffba4b0efc23ba476e5dfbf24c916fa763a711c05e5040a61bf5563a25fb42e5  V3_tests.txt  1457B
+3ba923653068a8acc92fae8662b838645120bbd63b88dce31e62a75fbba5ae02  V4_dryrun.txt  420B
+
+# total files: 12

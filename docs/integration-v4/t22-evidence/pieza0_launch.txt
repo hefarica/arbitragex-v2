@@ -1,0 +1,6 @@
+=== sesion 61439 residual ===
+=== setup piezas ===
+canario_heartbeat_pid=683751
+=== LAUNCH pieza-0 (resto: todo MENOS las 4 grandes) ===
+pieza0_pid=683752
+ls: cannot access '/opt/arbx-pieces/'$'\r': No such file or directory

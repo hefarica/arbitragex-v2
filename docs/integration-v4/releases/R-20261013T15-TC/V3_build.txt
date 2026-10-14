@@ -1,0 +1,22 @@
+# V3 — build/test del árbol en el estado de t11 (2026-10-13T10:08-10:09 local)
+
+# t11 NO implementó código (0 admitidos ⇒ 0 archivos de código): V3 certifica que el árbol
+# sigue compilando y que los artefactos de t3 siguen verdes — t11 fue evaluación pura.
+
+Comandos y salidas literales (cwd backend/api-server):
+```
+npx tsc --noEmit -p tsconfig.json
+tsc exit: 0
+
+npx vitest run src/integration-v4
+ Test Files  6 passed (6)
+      Tests  29 passed (29)
+ Start at  10:08:59
+ Duration  1.14s
+```
+
+Certificación de superficie (cwd repo root):
+```
+git status --porcelain -- backend/searcher-rs   → 14 M, 0 de t11 (ver V2 §6)
+git status --porcelain -- docs/integration-v4   → superficie t11 = ADM-t11-*.md + t11-evidence/ + releases/R-20261013T15-TC/
+```

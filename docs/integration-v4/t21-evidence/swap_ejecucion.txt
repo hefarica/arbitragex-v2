@@ -1,0 +1,2 @@
+=== SWAP UNICO bajo flock (retag + force-recreate searcher-rs) ===
+bash: line 3: T1: unbound variable

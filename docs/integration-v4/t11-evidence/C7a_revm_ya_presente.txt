@@ -1,0 +1,29 @@
+# t11 evidencia — C-7 (a) mecanismo equivalente sim-en-fork YA presente en θ: REVM in-process
+# Comandos (cwd backend/searcher-rs): grep Cargo.toml + src + listado *sim*
+# Salida literal:
+
+=== revm en Cargo.toml ===
+Cargo.toml:39:# G-SIM-1 PR-B1 (Option B) — the REAL wrapped-flash multi-step REVM sim +
+Cargo.toml:59:# Sprint 4 — REVM-backed simulator (Phase A.1+A.2 fail-closed wire).
+Cargo.toml:75:# Enabling searcher-rs's v2-simulator turns on the REVM sim in BOTH the local
+Cargo.toml:76:# simulator-v2 dep AND the extracted sim-core crate, so `execute_multistep_revm`
+Cargo.toml:98:# directly to drive `execute_multistep_revm` against a real archive RPC.
+
+=== revm/sim en src (primeros 8) ===
+batch_quote.rs:1: //! Approximate CPMM batch quotes for pre-simulation ranking.
+batch_quote.rs:5: //! quote and simulation paths before sizing, gating, or submitting a trade.
+candidate_simulation.rs:1: //! Shared admission of real engine/cartridge candidates to simulation and emit.
+candidate_simulation.rs:3: //! Every amount sent to REVM comes from the emitted decimal U256, never the
+candidate_simulation.rs:4: //! routing f64. All pool identities, prices and simulation state refer to one
+candidate_simulation.rs:11: use prioritization_spine::round_trip_executor::{RoundTripContext, SimulationOutcome};
+candidate_simulation.rs:376: .map_err(|_| anyhow!("candidate_simulation_timeout"))?
+
+=== archivos sim ===
+src\candidate_simulation.rs
+src\sim_encoder_pg.rs
+src\sim_orchestrator.rs
+
+# Lectura: la capacidad "sim sobre estado on-chain real sin broadcast" ya existe en θ
+# como REVM in-process (C-S-E 'Simulate': "revm 19.0 + alloy-provider con estado
+# on-chain real" — doctrina del repo; G-SIM-1 multi-step). Un fork EXTERNO (anvil)
+# sería un SEGUNDO mecanismo equivalente ⇒ μ incremental ≈ 0 (mismo eje, misma función).

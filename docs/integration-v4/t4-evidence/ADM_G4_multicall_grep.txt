@@ -1,0 +1,19 @@
+# ADM-4 evidence — Multicall3 batching YA PRESENTE en θ (grep 2026-10-13, t4)
+
+Comando: `grep pattern "aggregate3|Multicall3|multicall" path backend/searcher-rs/src` → **250 matches** (salida completa volcada por el harness a sesión; extracto verificable abajo).
+
+Implementaciones existentes (ruta:línea):
+
+| Superficie | Ubicación | Qué hace |
+| --- | --- | --- |
+| Kernel batch-quote V3 | `backend/searcher-rs/src/amm_math.rs:798` `pub async fn v3_quote_exact_in_multicall(` | Batch-quote N pools V3 en UN eth_call Multicall3 (QuoterV2 dentro de aggregate3) |
+| ABI Multicall3 | `amm_math.rs:310-328` `mod multicall3` (`interface IMulticall3 … aggregate3`) | sol! alloy; fuente citada `amm_math.rs:8-9` (github.com/mds1/multicall, MIT) |
+| Timeout/backoff por multicall | `amm_math.rs:26-48` `parse_multicall_timeout_ms` / `v3_quote_multicall_timeout` | env `ARBX_V3_QUOTE_MULTICALL_TIMEOUT_MS`; incidente 2026-05-06 |
+| Planificador de chunks | `backend/searcher-rs/src/v3_quote_provider.rs:153` "Pure chunk planner: how many aggregate3 calls a …" | ⌈N/batch⌉ aggregate3 por tick (B1 batching :813) |
+| Proveedor batch V3 | `v3_quote_provider.rs:481` "Dispatch one aggregate3 per chunk of quote_batch_size() keys" | llena cache TTL por pool |
+| Proyector de estado | `backend/searcher-rs/src/state_projector.rs:612` "replacing N unary eth_calls with ⌈N/batch_size⌉ aggregate3 multicalls" | ↓ round-trips por slot |
+| Adaptador triangular | `backend/searcher-rs/src/route_discovery/triangular_adapter.rs:13` "ONE batched Multicall3 (V2 getReserves batch; V3 legs slot0+liquidity)" + test `:836` "3 legs MUST be one multicall" | backfill 1-multicall por bloque |
+| Liquidaciones | `backend/searcher-rs/src/workers/liquidation_worker.rs:516` `multicall_get_user_account_data` | getUserAccountData batcheado |
+| Cartridge host | `backend/searcher-rs/src/cartridge/host_bindings.rs:934` `v3_quote_exact_in_multicall` | quoter multicall desde cartuchos Rhai |
+
+Conclusión (fail-honest): π(G-4) = {x₃} ya ∈ θ — el candidato está IMPLEMENTADO en producción de código. μ incremental = 0 < δ ⇒ veredicto **0 (ya presente — no re-implementar)**. λ=MIT (Multicall3, ya portado y citado).

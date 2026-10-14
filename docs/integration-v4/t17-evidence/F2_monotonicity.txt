@@ -1,0 +1,11 @@
+CLASIFICACION_264 rows=264 violations IMP<BASE=0 []
+TESTS_ATOMICOS rows=264000 violations IMP<BASE=0 null_base_or_imp=0
+TESTS_ATOMICOS ASSERT histogram={'BASE<=IMP': 264000}
+AGREGADOS_SUPERFICIE rows=10 violations=10 [('DEX_SPOT_V2', 7422, 2781), ('DEX_SPOT_V3', 5225, 1929), ('CURVE_STABLE', 4199, 1515), ('BALANCER_WEIGHTED', 2048, 767), ('CEX_SPOT', 3560, 1578)]
+AGREGADOS_DETECTOR rows=60 violations=0 []
+CLAIM: forall s IMP(s)>=BASE(s)
+VERDICT_F2: NO_REFUTADO (contraejemplos: 0 clasif + 0 atomicos)
+
+# CORRECTION (α7): the 10 'violations' above were a COLUMN BUG in my first pass (I compared IMP_POS vs DELTA, idx3 vs idx4). Correct columns BASE_POS=idx2 IMP_POS=idx3:
+AGREGADOS_SUPERFICIE (cols corregidas idx2/idx3) rows=10 violations=0 []
+VERDICT_F2 FINAL: NO_REFUTADO (0 real violations across CLASIFICACION_264 [264], TESTS_ATOMICOS [264000, ASSERT=BASE<=IMP x264000], AGREGADOS_DETECTOR [60], AGREGADOS_SUPERFICIE [10])

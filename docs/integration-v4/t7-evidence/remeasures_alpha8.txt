@@ -1,0 +1,21 @@
+=== phi_static.py (alpha8 re-run 2026-10-13T16:13:17Z) ===
+PASS g1 strategies==264
+PASS g2 detectors==60
+PASS g3 combos==1436
+PASS asserts line OK
+PASS g4 deriv_pos>0
+PASS g5 imp>=base
+PASS g6 delta_pct>=+58%
+PHI_STATIC(g1..g6)=1  (g7=INSPECCION: ver CRITERIOS_T6.md -> PASS t6)
+EXIT=0
+=== c_evaluator canonical ===
+C(theta)=1 [canonical(6 cond)] - all conditions hold
+EXIT=0
+=== vmap_delta --check-artifacts (resumen) ===
+
+  DERIVA=0 (todos los invariantes == A0)
+  DERIVA=0 (todos los invariantes == A0)
+  DERIVA=0 (todos los invariantes == A0)
+V-MAP-DELTA total_drift=0
+EXIT=0
+

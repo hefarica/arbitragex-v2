@@ -1,0 +1,4 @@
+filas ADM: 59
+veredicto 1: 9 | veredicto 0: 50 | otro: 0
+sha256(A7) medido ahora: 803ef9ed582c1d8cc37595a405661e6200fdf2cfcb040bcb6a64d511849c9254
+sha256(A7) en A1:        803ef9ed582c1d8cc37595a405661e6200fdf2cfcb040bcb6a64d511849c9254

@@ -1,0 +1,14 @@
+APPLY1 exit=0; porcelain_lines=3; detector sha=5698976fd2573be7…
+porcelain after APPLY1:
+M backend/searcher-rs/src/detector_policy.rs
+?? docs/integration-v4/releases/
+?? docs/integration-v4/t9-evidence/
+diff --stat detector_policy after APPLY1:
+backend/searcher-rs/src/detector_policy.rs | 134 +++++++++++++++++++++++++++++
+ 1 file changed, 134 insertions(+)
+APPLY2 exit=0; porcelain_lines=3; detector sha=5698976fd2573be7…
+v4 section marker occurrences after TWO applies: SSOT_V4_DETECTOR_POLICIES=4 (must be 2: decl+comment refs ok) / DFAC const=1
+
+porcelain identical after apply1 vs apply2: True
+detector_policy.rs sha stable across applies AND == gen/: True (gen=5698976fd2573be7…)
+VERDICT_F8: NO_REFUTADO — second apply leaves the tree IDENTICAL (porcelain byte-equal, hashes stable, no duplication)

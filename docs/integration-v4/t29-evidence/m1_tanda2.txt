@@ -1,0 +1,3 @@
+ENDPOINT /api/readiness n=200 ventana=01:52:37Z dist=[200×200] no2xx=0
+ENDPOINT /api/strategies/runtime-status?chain_id=1 n=200 ventana=01:54:39Z dist=[200×200] no2xx=0
+ENDPOINT /api/scanner/heartbeat?chain_id=1 n=200 ventana=01:56:19Z dist=[200×200] no2xx=0

@@ -1,0 +1,50 @@
+   Compiling proc-macro2 v1.0.107
+   Compiling quote v1.0.47
+   Compiling unicode-ident v1.0.24
+   Compiling serde_core v1.0.229
+   Compiling serde v1.0.229
+   Compiling cfg-if v1.0.4
+   Compiling version_check v0.9.5
+   Compiling zeroize v1.9.0
+   Compiling typenum v1.20.1
+   Compiling portable-atomic v1.15.0
+   Compiling subtle v2.6.1
+   Compiling const-oid v0.9.6
+   Compiling itoa v1.0.18
+   Compiling allocator-api2 v0.2.21
+   Compiling unicode-xid v0.2.6
+   Compiling getrandom v0.2.17
+   Compiling autocfg v1.5.1
+   Compiling foldhash v0.2.0
+   Compiling zerocopy v0.8.56
+   Compiling rand_core v0.6.4
+   Compiling equivalent v1.0.2
+   Compiling memchr v2.8.3
+   Compiling cpufeatures v0.2.17
+   Compiling zmij v1.0.23
+   Compiling generic-array v0.14.9
+   Compiling paste v1.0.15
+   Compiling windows-link v0.2.1
+   Compiling arrayvec v0.7.8
+   Compiling pin-project-lite v0.2.17
+   Compiling der v0.7.10
+   Compiling serde_json v1.0.151
+   Compiling hashbrown v0.17.1
+   Compiling getrandom v0.4.3
+   Compiling ff v0.13.1
+   Compiling base16ct v0.2.0
+error: failed to run custom build command for `serde_core v1.0.229`
+
+Caused by:
+  could not execute process `C:\Users\HFRC\Desktop\arbx-t6-target\release\build\serde_core-21d976f33e7672dd\build-script-build` (never executed)
+
+Caused by:
+  Una directiva de Control de aplicaciones bloqueó este archivo. (os error 4551)
+warning: build failed, waiting for other jobs to finish...
+error: failed to run custom build command for `portable-atomic v1.15.0`
+
+Caused by:
+  could not execute process `C:\Users\HFRC\Desktop\arbx-t6-target\release\build\portable-atomic-81dcc829ea87555d\build-script-build` (never executed)
+
+Caused by:
+  Una directiva de Control de aplicaciones bloqueó este archivo. (os error 4551)

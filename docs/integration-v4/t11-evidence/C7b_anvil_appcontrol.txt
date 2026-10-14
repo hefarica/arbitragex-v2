@@ -1,0 +1,21 @@
+# t11 evidencia — C-7 (b) instrumento anvil BLOQUEADO por política (AppControl de Windows)
+# §D: 2 intentos documentados (denegación de política = final, NO se rodea).
+
+## Intento 1 — Start-Process (pwsh tool):
+Start-Process -FilePath "$env:USERPROFILE\.foundry\bin\anvil.exe" -ArgumentList '--fork-url','https://ethereum-rpc.publicnode.com','--port','8645','--silent'
+→ Start-Process: Este comando no se puede ejecutar debido al error: An error occurred trying
+  to start process 'C:\Users\HFRC\.foundry\bin\anvil.exe' with working directory '...'.
+  Una directiva de Control de aplicaciones bloqueó este archivo.
+
+## Intento 2 — job de fondo del ejecutor (run_in_background):
+& "$env:USERPROFILE\.foundry\bin\anvil.exe" --fork-url https://ethereum-rpc.publicnode.com --port 8645 --silent
+→ ResourceUnavailable: No se pudo ejecutar el programa "anvil.exe": An error occurred trying
+  to start process '...anvil.exe' ... Una directiva de Control de aplicaciones bloqueó
+  este archivo.  [status: completed, exit code 1]
+
+# Lectura: cast.exe y forge.exe SÍ ejecutan (sondas RPC de esta sesión corrieron con cast);
+# anvil.exe está bloqueado por la directiva de Control de aplicaciones del host (patrón
+# documentado en CLAUDE.md §36.4: AppControl bloquea binarios en worktrees fríos).
+# Denegación de POLÍTICA, no bug: no se reintenta por otra vía (regla de sandbox).
+# El upstream (publicnode) está VIVO (bloque 26184346, 526ms — RPC_soberano_probe.txt);
+# lo bloqueado es el instrumento local de fork. Combined con C7a: veredicto 0 doble-evidencia.

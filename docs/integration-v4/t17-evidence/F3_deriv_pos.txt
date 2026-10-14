@@ -1,0 +1,6 @@
+A02 first rows: [('ID', 'NOMBRE', 'PROP', 'COMPL', 'REF'), ('A02', 'DIRTY-SUBGRAPH', 'Recomputa subgrafo sucio', 'O(k)/evento', 'searcher-rs::dirty.rs')]
+re-derived FAMILIA=D_: n=30 sum_BASE_POS=1982 sum_IMP_POS=3560
+re-derived SUPERFICIE=CEX_SPOT: n=30 sum_BASE_POS=1982 sum_IMP_POS=3560
+INVARIANTES declares: DERIV_POS>0 OBSERVADO=1982
+note: 1982 == sum_BASE_POS of D_ (pre-fix BASE); post-fix IMP sum = 3560; BOTH > 0
+VERDICT_F3: NO_REFUTADO — DERIV_POS re-derived >0 from per-strategy A2 table (BASE=1982, IMP=3560); INVARIANTES observed value 1982 matches re-derived BASE sum 1982=True, IMP sum 3560=True

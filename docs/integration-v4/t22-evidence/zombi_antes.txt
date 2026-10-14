@@ -1,0 +1,10 @@
+=== ANTES: proceso zombi 659745 ===
+    PID    PPID     ELAPSED     TIME STAT COMMAND
+ 659745 3875420       11:34 00:06:35 Rs   /usr/lib/postgresql/15/bin/pg_dump -U postgres -Z3 -Fc arbitragex
+=== procesos pg_dump en el host ===
+ 659745 3875420       11:34 00:06:35 Rs   /usr/lib/postgresql/15/bin/pg_dump -U postgres -Z3 -Fc arbitragex
+=== dentro del contenedor PG ===
+  60013       11:35 00:06:35 /usr/lib/postgresql/15/bin/pg_dump -U postgres -Z3 -Fc arbitragex
+=== pg_stat_activity sesiones pg_dump ===
+60019|client backend|active|COPY public.route_discovery_outcomes_p20261013 (id
+61187|client backend|active|SELECT pid||'|'||backend_type||'|'||state||'|'||le

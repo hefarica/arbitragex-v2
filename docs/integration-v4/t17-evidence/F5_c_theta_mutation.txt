@@ -1,0 +1,20 @@
+R0 pristine theta LITERAL rc=1 :: C(theta)=0 [literal(7 cond)] - EVALUATOR STOPS: |   FAIL cond7 mask(MEV-05-003)=[2, 3, 4, 5, 6] != {2}
+R0 pristine theta CANONICAL rc=0 :: C(theta)=1 [canonical(6 cond)] - all conditions hold
+MUT-A MEV-01-001 mask->'3/4/5/6' (size 4, legal) CANONICAL rc=1 :: C(theta)=0 [canonical(6 cond)] - EVALUATOR STOPS: |   FAIL cond3 |Omega|=1435 != 1436 |   FAIL cond5 d(h)={2: 245, 3: 262, 4: 260, 5: 233, 6: 233, 7: 202} != {2: 245, 3: 262, 4: 260, 5: 233, 6: 233, 7: 203}
+MUT-B MEV-02-001 mask->'3/7' (size 2 < 3) CANONICAL rc=1 :: C(theta)=0 [canonical(6 cond)] - EVALUATOR STOPS: |   FAIL cond3 |Omega|=1433 != 1436 |   FAIL cond4 mask size out of [3,7]: ['MEV-02-001'] |   FAIL cond5 d(h)={2: 244, 3: 262, 4: 259, 5: 233, 6: 232, 7: 203} != {2: 245, 3: 262, 4: 260, 5: 233, 6: 233, 7: 203}
+MUT-C swap masks MEV-01-001<->MEV-01-020 (sizes, |Omega|, d(h) intact) CANONICAL rc=0 :: C(theta)=1 [canonical(6 cond)] - all conditions hold
+
+=====================================================================
+VERDICT_F5: NO_REFUTADO
+- Instrument validated: pristine theta replicates t9 verdict EXACTLY
+  (literal C=0 ONLY by cond7 errata; canonical C=1) == C_THETA_verdict.json C_literal_reading=0 / C_canonical_reading=1.
+- MUT-A (one hop removed from MEV-01-001, mask size still legal 4): evaluator STOPS rc=1
+  (cond3 |Omega|=1435 != 1436; cond5 d(7)=202 != 203).
+- MUT-B (mask size 2 < 3): evaluator STOPS rc=1 (cond4) - fail-closed before any use of theta.
+- MUT-C (mask swap between two strategies; sizes, |Omega|, d(h) all intact): canonical evaluator
+  does NOT stop (rc=0) - no per-strategy mask-identity invariant exists in the contract;
+  that mutation class is only catchable by sha256-vs-frozen-theta (Q4/V2 layer).
+PERSISTENCE FINDING: t9's evaluator was a session script NOT persisted in the release
+(only gen/gen_ssot_v4_rs.py ships; no c_theta script). c_evaluator.py here is the alpha7
+reconstruction from the CONTRACT text. For quorum S7 (t6): ship a persistent C evaluator.
+rc summary: rc0_literal=1 rc0_canonical=0 rcA=1 rcB=1 rcC=0

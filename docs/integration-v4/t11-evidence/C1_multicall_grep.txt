@@ -1,0 +1,22 @@
+# t11 evidencia — C-1 Multicall3 ya presente (re-verificación propia de t4 ADM-4)
+# Comando: Select-String -Path (Get-ChildItem -Recurse -Filter '*.rs') -Pattern 'aggregate3|Multicall3|MULTICALL3' | Measure-Object
+# cwd: backend/searcher-rs/src — Salida literal:
+
+=== C-1 multicall3 (re-verificación t4 G-4) ===
+152
+
+# Constantes de batching medidas (grep dirigido, mismas sesión):
+v3_quote_provider.rs:63: const DEFAULT_BATCH_SIZE: usize = 100;
+v3_quote_provider.rs:64: const MAX_BATCH_SIZE: usize = 1_000;
+v3_quote_provider.rs:26: //! V3 pools in `ARBX_V3_QUOTE_BATCH_SIZE`-wide aggregate3 multicalls before
+state_projector.rs:612: /// loop, replacing N unary eth_calls with ⌈N/batch_size⌉ aggregate3
+amm_math.rs:1703: let width = 100usize; // searcher default: ARBX_V3_QUOTE_BATCH_SIZE=100
+amm_math.rs:1557: // ── V3-QUOTE-BATCH-20260919 (B1): equivalence + gas cap ────────────────
+amm_math.rs:1561: //     cargo test -p searcher-rs --test-threads=1 batch_vs_unary -- --ignored
+amm_math.rs:1628: fn batch_vs_unary_equivalence() {
+amm_math.rs:785: /// Batch-quote multiple V3 pools in a single Multicall3 RPC.
+reserves.rs:437: for chunk in keys.chunks(100) {
+
+# Referencia cruzada: t4-evidence/ADM_registry.md ADM-4 (250 matches con patrón más ancho
+# 'aggregate3|Multicall3|multicall'); evidencia de t4: ADM_G4_multicall_grep.txt.
+# Conclusión: π(C-1) ∈ θ YA — μ incremental = 0. No re-implementar.

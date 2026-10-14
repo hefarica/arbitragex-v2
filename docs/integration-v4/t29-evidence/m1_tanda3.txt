@@ -1,0 +1,1 @@
+ENDPOINT edge live n=200 ventana=02:05:31Z dist=[200x200] no2xx=0

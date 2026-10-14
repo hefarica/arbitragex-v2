@@ -1,0 +1,32 @@
+=== AUDITORIA imagenes: todas con uso por contenedor ===
+arbitragex-v2-socket-proxy:latest|3767a96d8866|170MB|contenedores_usando=1
+arbitragex-v2-token-enricher:latest|b5b1702b67e2|151MB|contenedores_usando=1
+arbitragex-v2-math-engine:latest|f36ff4e22892|134MB|contenedores_usando=1
+arbitragex-v2-selector-api:latest|3af544cf4b8f|337MB|contenedores_usando=1
+arbitragex-v2-recon:latest|186882cc850e|153MB|contenedores_usando=1
+arbitragex-v2-relays-client:latest|33288e140b4e|162MB|contenedores_usando=1
+arbitragex-v2-sim-ctl:latest|b35fd22a8c3e|154MB|contenedores_usando=1
+arbitragex-v2-searcher-rs:latest|dfd71012e1dc|185MB|contenedores_usando=1
+arbitragex-v2-frontend:latest|f1490cefb419|413MB|contenedores_usando=1
+arbitragex-v2-edge:latest|d3b43f80c205|622MB|contenedores_usando=1
+arbitragex-v2-api-server:latest|4b1fa00d3d90|380MB|contenedores_usando=1
+postgres:15|74e110c41804|633MB|contenedores_usando=1
+redis:7.2|f0707c78ea88|169MB|contenedores_usando=2
+ghcr.io/foundry-rs/foundry:latest|8347b728d5d3|692MB|contenedores_usando=2
+rust:1.91|867f1d116291|2.32GB|contenedores_usando=0
+grafana/grafana:11.4.0|d8ea37798ccc|647MB|contenedores_usando=1
+minio/minio:RELEASE.2024-11-07T00-52-20Z|ac591851803a|227MB|contenedores_usando=1
+prom/prometheus:v2.55.1|2659f4c2ebb7|407MB|contenedores_usando=1
+hashicorp/vault:1.18.1|3580fa352195|634MB|contenedores_usando=1
+quay.io/thanos/thanos:v0.36.1|e542959e1b36|307MB|contenedores_usando=3
+prom/node-exporter:v1.8.2|4032c6d5bfd7|38.2MB|contenedores_usando=1
+grafana/loki:2.9.7|792a791d9e52|101MB|contenedores_usando=1
+grafana/promtail:2.9.7|ba5f128849f5|287MB|contenedores_usando=1
+prom/alertmanager:v0.27.0|e13b6ed5cb92|106MB|contenedores_usando=1
+=== builder prune (esperado 0B) ===
+Total:	0B
+=== journal vacuum 7d ===
+Vacuuming done, freed 0B of archived journals from /var/log/journal/8d08589b463d467bbcd53f7aceeb6e26.
+Vacuuming done, freed 0B of archived journals from /var/log/journal.
+=== df tras higiene basica ===
+sed: -e expression #1, char 3: extra characters after command

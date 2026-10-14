@@ -1,0 +1,9 @@
+--- t10 V3 repromotion: cargo build --release -p searcher-rs (start 2026-10-13T09:28:15.2331692-05:00) ---
+   Compiling math-engine v0.1.0 (C:\Users\HFRC\AppData\Local\Temp\arbx-t10-v3check\backend\math-engine)
+   Compiling shared-rs v0.1.0 (C:\Users\HFRC\AppData\Local\Temp\arbx-t10-v3check\backend\shared-rs)
+   Compiling simulator-v2 v0.1.0 (C:\Users\HFRC\AppData\Local\Temp\arbx-t10-v3check\backend\simulator-v2)
+   Compiling prioritization-spine v0.1.0 (C:\Users\HFRC\AppData\Local\Temp\arbx-t10-v3check\backend\prioritization-spine)
+   Compiling sim-core v0.1.0 (C:\Users\HFRC\AppData\Local\Temp\arbx-t10-v3check\backend\sim-core)
+   Compiling searcher-rs v0.1.0 (C:\Users\HFRC\AppData\Local\Temp\arbx-t10-v3check\backend\searcher-rs)
+    Finished `release` profile [optimized] target(s) in 32m 34s
+build exit=0

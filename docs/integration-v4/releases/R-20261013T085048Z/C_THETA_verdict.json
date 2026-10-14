@@ -1,0 +1,68 @@
+{
+  "theta_under_test": "01_SSOT (frozen in this release, SSOT/ dir)",
+  "sources": {
+    "01_SSOT json": {
+      "|S|=264": true,
+      "|D|=60": true,
+      "|Omega|=1436": true,
+      "3<=|mask(s)|<=7": true,
+      "d(h)=245/262/260/233/233/203": true,
+      "mask(MEV-05-003)={2}": false
+    },
+    "01_SSOT csv": {
+      "|S|=264": true,
+      "|D|=60": true,
+      "|Omega|=1436": true,
+      "3<=|mask(s)|<=7": true,
+      "d(h)=245/262/260/233/233/203": true,
+      "mask(MEV-05-003)={2}": false
+    },
+    "repo fixture (legacy QUOTEBASE)": {
+      "|S|=264": true,
+      "|D|=60": true,
+      "|Omega|=1436": true,
+      "3<=|mask(s)|<=7": false,
+      "d(h)=245/262/260/233/233/203": true,
+      "mask(MEV-05-003)={2}": false
+    },
+    "xlsx A8 CLASIFICACION_264 + TESTS_ATOMICOS": {
+      "|S|=264": true,
+      "|D|=60": true,
+      "|Omega|=1436": true,
+      "3<=|mask(s)|<=7": true,
+      "d(h)=245/262/260/233/233/203": true,
+      "mask(MEV-05-003)={2}": false
+    }
+  },
+  "extra": {
+    "|D|=60 (detector_policy.csv rows)": true,
+    "|Pi_j|=(53,31,31,14,30,30,25,20,18,12) with R_+CF_ merged": true,
+    "01_SSOT == xlsx A8 masks (204/264 differ from legacy fixture)": true
+  },
+  "condition7_forensics": {
+    "01_SSOT MEV-05-003": [
+      2,
+      3,
+      4,
+      5,
+      6
+    ],
+    "xlsx A8 MEV-05-003": [
+      2,
+      3,
+      4,
+      5,
+      6
+    ],
+    "legacy fixture MEV-05-003": [
+      3
+    ],
+    "legacy HopMask_u8 field for MEV-05-003 (fixture 'mask'):": 2,
+    "legacy fixture MEV-01-015 (allowed {2}, used by existing test envelope_intersection_semantics)": [
+      2
+    ],
+    "xlsx sheet INVARIANTES rows": "Estrategias==264 OK; Detectores==60 OK; Combos==1436 OK; Hop dist OK; DERIV_POS>0=1982 OK; IMP>=BASE OK — mask(MEV-05-003) NOT present"
+  },
+  "C_literal_reading": 0,
+  "C_canonical_reading": 1
+}

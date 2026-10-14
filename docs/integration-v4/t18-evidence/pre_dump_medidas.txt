@@ -1,0 +1,22 @@
+--- disco ---
+/dev/sda1       150G  134G   11G  93% /
+/dev/sda1        153514M 136732M    10489M  93% /
+--- docker ---
+TYPE            TOTAL     ACTIVE    SIZE      RECLAIMABLE
+Images          24        23        8.43GB    2.323GB (27%)
+Containers      27        26        458MB     24.58kB (0%)
+Local Volumes   11        11        99.59GB   0B (0%)
+Build Cache     0         0         0B        0B
+--- PG size ---
+ 82 GB
+
+--- top tablas ---
+ opportunities                      | 31 GB
+ scored_opportunities               | 20 GB
+ pool_reserves                      | 16 GB
+ route_discovery_outcomes_p20261012 | 8201 MB
+ route_discovery_outcomes_p20261013 | 5922 MB
+ route_discovery_outcome_rollup_5m  | 598 MB
+ simulations                        | 303 MB
+ token_safety_cache                 | 267 MB
+

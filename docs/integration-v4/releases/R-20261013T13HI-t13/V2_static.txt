@@ -1,0 +1,11 @@
+# V2 — checks estáticos (t13, R-20261013T13HI-t13)
+
+Comando: python -m py_compile adm/econ_sizing.py adm/staleness_gate.py adm/nonatomic_gate.py adm/test_adm.py
+Salida: (sin salida = OK)
+exit=0  (ejecutado 2026-10-13; re-ejecutado tras fix de calibración y fix de path del test: exit=0 ambos)
+
+Nota de entorno: `node --version` CUELGA en esta máquina (dos sondas: timeout 30s y Start-Process con
+espera 8s → killed; mismo patrón que ssh.exe nativo — proceso bloqueado a nivel host). Por eso la
+implementación de referencia de los términos ADM es Python stdlib puro (toolchain probada en t8/t9/t13)
+y V3 = unittest. El port TS para integración en api-server (t3) queda ESPECIFICADO en cada módulo
+(docstring) pero NO compilado aquí — declarado, no suavizado.
