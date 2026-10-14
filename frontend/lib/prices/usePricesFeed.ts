@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { createOpportunitySocket } from '../../features/opportunities/socket-lifecycle';
-import { createSeqGuard, isPriceTick } from '../../../shared-ts/src/prices-contracts';
+import { createSeqGuard, isPriceTick } from './prices-contracts';
 
 const SILENCE_MS = 45000;
 const CHECK_MS = 5000;
