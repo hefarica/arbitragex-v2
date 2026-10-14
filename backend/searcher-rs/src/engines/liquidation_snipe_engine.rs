@@ -386,8 +386,6 @@ impl LiquidationSnipeEngine {
 
         // ── Discovery 1/2 — recently liquidated users (cascade candidates).
         // Topics (IPool.sol): [0]=sig, [1]=collateralAsset, [2]=debtAsset, [3]=user.
-        let liq_topic =
-            Self::event_topic0("LiquidationCall(address,address,address,uint256,uint256,address,bool)");
         let liq_topic = Self::event_topic0(
             "LiquidationCall(address,address,address,uint256,uint256,address,bool)",
         );
@@ -638,7 +636,6 @@ impl LiquidationSnipeEngine {
         // 1=stableDebt, 2=variableDebt.
         let mut best_debt: Option<(Address, f64)> = None;
         for id in &debt_ids {
-            let Some(asset) = id_to_asset.get(id) else { continue };
             let Some(asset) = id_to_asset.get(id) else {
                 continue;
             };
@@ -660,10 +657,6 @@ impl LiquidationSnipeEngine {
                 continue;
             }
             if let Some(usd) = self
-                .asset_usd_value(rpc_url, oracle, data_provider, *asset, debt_raw, &mut meta_cache)
-                .await
-            {
-                let better = best_debt.map_or(true, |(_, best)| usd > best);
                 .asset_usd_value(
                     rpc_url,
                     oracle,
@@ -683,7 +676,6 @@ impl LiquidationSnipeEngine {
 
         let mut best_collateral: Option<(Address, f64)> = None;
         for id in &collateral_ids {
-            let Some(asset) = id_to_asset.get(id) else { continue };
             let Some(asset) = id_to_asset.get(id) else {
                 continue;
             };
@@ -715,7 +707,6 @@ impl LiquidationSnipeEngine {
                 )
                 .await
             {
-                let better = best_collateral.map_or(true, |(_, best)| usd > best);
                 let better = best_collateral.is_none_or(|(_, best)| usd > best);
                 if better {
                     best_collateral = Some((*asset, usd));
@@ -810,14 +801,12 @@ impl LiquidationSnipeEngine {
         raw_amount: u128,
         cache: &mut HashMap<Address, AaveAssetMeta>,
     ) -> Option<f64> {
-        if !cache.contains_key(&asset) {
         if let std::collections::hash_map::Entry::Vacant(entry) = cache.entry(asset) {
             let price_usd = match oracle {
                 Some(o) => self
                     .rpc_eth_call(
                         rpc_url,
                         o,
-                        &Self::call_with_address(&Self::fn_selector("getAssetPrice(address)"), asset),
                         &Self::call_with_address(
                             &Self::fn_selector("getAssetPrice(address)"),
                             asset,
@@ -840,7 +829,6 @@ impl LiquidationSnipeEngine {
                 .await
                 .and_then(|out| Self::word_at(&out, 0))
                 .map(|w| w.low_u128().min(255) as u8);
-            cache.insert(asset, AaveAssetMeta { price_usd, decimals });
             entry.insert(AaveAssetMeta {
                 price_usd,
                 decimals,
@@ -969,13 +957,6 @@ impl LiquidationSnipeEngine {
     }
 
     /// ABI calldata `<selector>` + one address argument.
-    fn call_with_address(selector: &str, a: Address) -> String {
-        format!("{selector}{:064x}", a)
-    }
-
-    /// ABI calldata `<selector>` + two address arguments.
-    fn call_with_two_addresses(selector: &str, a: Address, b: Address) -> String {
-        format!("{selector}{:064x}{:064x}", a, b)
     ///
     /// BUG (found by CI on #947, 2026-10-13): ethers' `Address` LowerHex impl
     /// writes its own 40-char form and IGNORES the `064` width —
@@ -1356,7 +1337,6 @@ mod tests {
 
     #[test]
     fn word_at_parses_words_and_rejects_short_results() {
-        let hex = format!("0x{}{}", "0".repeat(64), format!("{:064x}", 42u128));
         let hex = format!("0x{}{:064x}", "0".repeat(64), 42u128);
         assert_eq!(LiquidationSnipeEngine::word_at(&hex, 0), Some(U256::zero()));
         assert_eq!(
@@ -1376,7 +1356,6 @@ mod tests {
             Address::from_str(weth).unwrap()
         );
         // Wrong length topics are rejected (never a garbage address).
-        assert_eq!(LiquidationSnipeEngine::address_from_topic("0xdeadbeef"), None);
         assert_eq!(
             LiquidationSnipeEngine::address_from_topic("0xdeadbeef"),
             None
@@ -1392,7 +1371,6 @@ mod tests {
         let addr = LiquidationSnipeEngine::address_from_word(word);
         assert_eq!(
             format!("0x{:040x}", addr),
-            "0x1234567890abcdef567890abcdef1234567890"
             "0x001234567890abcdef567890abcdef1234567890"
         );
     }
@@ -1401,13 +1379,6 @@ mod tests {
     fn parse_user_account_data_reads_six_word_layout() {
         // (collateral, debt, availBorrows, liqThreshold, ltv, hf)
         let hex = format!(
-            "0x{}{}{}{}{}{}",
-            format!("{:064x}", 1_000_000_000_000_000_000u128),
-            format!("{:064x}", 900_000_000_000_000_000u128),
-            "0".repeat(64),
-            format!("{:064x}", 8_000u128),
-            "0".repeat(64),
-            format!("{:064x}", 850_000_000_000_000_000u128),
             "0x{:064x}{:064x}{}{:064x}{}{:064x}",
             1_000_000_000_000_000_000u128, // word 0: totalCollateralBase
             900_000_000_000_000_000u128,   // word 1: totalDebtBase
@@ -1448,11 +1419,6 @@ mod tests {
     fn calldata_encoding_shapes_are_canonical() {
         let addr = Address::from_low_u64_be(0xaaa1);
         let cd = LiquidationSnipeEngine::call_with_address("0xdeadbeef", addr);
-        assert_eq!(cd.len(), 8 + 64);
-        assert!(cd.starts_with("0xdeadbeef"));
-        assert!(cd.ends_with("000000000000000000000000000000000000000000000000000000000000aaa1"));
-        let cd2 = LiquidationSnipeEngine::call_with_two_addresses("0xdeadbeef", addr, addr);
-        assert_eq!(cd2.len(), 8 + 128);
         // "0x" (2) + selector (8) + one 64-char ABI word.
         assert_eq!(cd.len(), 2 + 8 + 64);
         assert!(cd.starts_with("0xdeadbeef"));
@@ -1497,8 +1463,6 @@ mod tests {
     }
 
     /// eth_call 200 envelope carrying `words` as the result.
-    fn eth_call_result(words: &[U256]) -> ResponseTemplate {
-        let result: String = words.iter().map(|x| format!("{:064x}", x)).collect();
     /// (Explicit pad — see the width bug note on `call_with_address`.)
     fn eth_call_result(words: &[U256]) -> ResponseTemplate {
         let word_hex = |x: &U256| {
@@ -1515,11 +1479,6 @@ mod tests {
         U256::from(v)
     }
 
-    async fn mount_rpc_mock(
-        server: &MockServer,
-        request_fragment: &str,
-        resp: ResponseTemplate,
-    ) {
     async fn mount_rpc_mock(server: &MockServer, request_fragment: &str, resp: ResponseTemplate) {
         Mock::given(method("POST"))
             .and(path("/"))
@@ -1560,7 +1519,6 @@ mod tests {
         let borrow_topic = LiquidationSnipeEngine::event_topic0(
             "Borrow(address,address,address,uint256,uint8,uint256,uint16)",
         );
-        let topic_hex = |a: Address| format!("0x{:064x}", a);
         // Explicit pad — `{:064x}` on Address writes its own 40-char form
         // and the engine's address_from_topic correctly REJECTS short topics
         // (len != 64), which zeroed out every user in the original mock.
@@ -1609,12 +1567,6 @@ mod tests {
             &server,
             &LiquidationSnipeEngine::call_with_address(&sel_uad, user_liq),
             eth_call_result(&[
-                n(1_000_000_000_000_000_000), // collateral $10k (base 1e8)
-                n(900_000_000_000_000_000),   // debt $9k
-                n(0),
-                n(8_000),
-                n(0),
-                n(850_000_000_000_000_000),   // HF 0.85 wad
                 n(1_000_000_000_000), // collateral $10k (base 1e8: 10k × 1e8 = 1e12)
                 n(900_000_000_000),   // debt $9k
                 n(0),
@@ -1628,8 +1580,6 @@ mod tests {
             &server,
             &LiquidationSnipeEngine::call_with_address(&sel_uad, user_safe),
             eth_call_result(&[
-                n(2_000_000_000_000_000_000),
-                n(100_000_000_000_000_000),
                 n(2_000_000_000_000),
                 n(100_000_000_000),
                 n(0),
@@ -1714,12 +1664,6 @@ mod tests {
             eth_call_result(&[n(100_000_000)]), // $1
         )
         .await;
-        let sel_rcd =
-            LiquidationSnipeEngine::fn_selector("getReserveConfigurationData(address)");
-        mount_rpc_mock(
-            &server,
-            &LiquidationSnipeEngine::call_with_address(&sel_rcd, weth),
-            eth_call_result(&[n(18), n(0), n(8_000), n(10_650), n(0), n(1), n(1), n(0), n(1), n(0)]), // bonus +6.5%
         let sel_rcd = LiquidationSnipeEngine::fn_selector("getReserveConfigurationData(address)");
         mount_rpc_mock(
             &server,
@@ -1741,7 +1685,6 @@ mod tests {
         mount_rpc_mock(
             &server,
             &LiquidationSnipeEngine::call_with_address(&sel_rcd, usdc),
-            eth_call_result(&[n(6), n(0), n(8_700), n(10_100), n(0), n(1), n(1), n(0), n(1), n(0)]),
             eth_call_result(&[
                 n(6),
                 n(0),
@@ -1758,8 +1701,6 @@ mod tests {
         .await;
 
         // ── Run the real fetch against the mock RPC.
-        let engine = LiquidationSnipeEngine::with_default_pools()
-            .with_rpc_url(server.uri().to_string());
         let engine =
             LiquidationSnipeEngine::with_default_pools().with_rpc_url(server.uri().to_string());
         let aave_cfg = engine
@@ -1776,7 +1717,6 @@ mod tests {
         assert!((p.total_collateral_usd - 10_000.0).abs() < 1e-6);
         assert!((p.total_debt_usd - 9_000.0).abs() < 1e-6);
         assert!((p.health_factor - 0.85).abs() < 1e-12);
-        assert!((p.max_liquidatable_debt_usd - 4_500.0).abs() < 1e-6, "50% close factor");
         assert!(
             (p.max_liquidatable_debt_usd - 4_500.0).abs() < 1e-6,
             "50% close factor"
@@ -1791,8 +1731,6 @@ mod tests {
         // Wiremock with NO mounted mocks: every JSON-RPC call 404s → the fetch
         // must return an HONEST empty vec (R8), never a fabricated position.
         let server = MockServer::start().await;
-        let engine = LiquidationSnipeEngine::with_default_pools()
-            .with_rpc_url(server.uri().to_string());
         let engine =
             LiquidationSnipeEngine::with_default_pools().with_rpc_url(server.uri().to_string());
         let aave_cfg = engine

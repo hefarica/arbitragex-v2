@@ -1068,12 +1068,6 @@ impl SizeOptimizer {
                 // `dex_engine` population) and every all-V2 N-leg cycle still
                 // reach `size_triangular_with_reason` unchanged.
                 if candidate.route_plan.legs.len() > 2 && route_has_v3(&candidate) {
-                    debug!(
-                        event = "size_optimizer.v3_multileg_unsupported",
-                        legs = candidate.route_plan.legs.len(),
-                        label = candidate.label.as_str(),
-                    );
-                    OptimizeOutcome::Rejected(OptimizeRejectReason::V3MultilegUnsupported, None)
                     // V3-MULTILEG-SIZING-01: the N-leg V3 kernel owns this
                     // shape now (bounded RPC, same outputs as the V2 path).
                     // Knob OFF ⇒ the exact pre-patch refusal below.
@@ -4809,99 +4803,6 @@ mod tests {
                 outcome.leg_ledger().is_none() && outcome.optimal_amount_in().is_none(),
                 "a cycle that could not be priced must carry NO ledger and NO amount"
             );
-        }
-
-        // …and the guard must NOT touch the population it was never meant for:
-        // an all-V2 TriangularArb 4-leg cycle still reaches the cycle kernel.
-        let cache = Arc::new(ReservesCache::new());
-        insert_oriented(&cache, pools[0], WETH_T, T1, unit(100), unit(90)).await;
-        insert_oriented(&cache, pools[1], T1, T2, unit(100), unit(95)).await;
-        insert_oriented(&cache, pools[2], T2, T3, unit(100), unit(150)).await;
-        insert_oriented(&cache, pools[3], T3, WETH_T, unit(100), unit(150)).await;
-        let projector = Arc::new(StateProjector::new(cache, None, empty_v3_fee_catalog()));
-        let optimizer = SizeOptimizer::new(projector);
-        let candidate = make_multileg_candidate(
-            &pools,
-            &["uniswap-v2", "uniswap-v2", "uniswap-v2", "uniswap-v2"],
-            StrategyLabel::TriangularArb,
-        );
-        let cfg = make_cfg(100_000.0);
-        let outcome = optimizer
-            .optimize_with_reason(
-                candidate,
-                &make_intent(addr(0xAAAA), addr(0xBBBB)),
-                Some(&cfg),
-            )
-            .await
-            .expect("optimize must not error");
-        assert!(
-            matches!(outcome, OptimizeOutcome::Sized(_)),
-            "the all-V2 4-leg cycle must still size through the N-leg kernel"
-        );
-    }
-
-    /// GATE — PERHOP-RESERVES-01.
-    ///
-    /// The SAME shape as `multileg_v3_route_rejects_honestly`, but with the label
-    /// `hop_cycle_bridge::cycle_candidate_from_intent` actually stamps on every
-    /// discovered 3..=7-hop cycle (`StrategyLabel::TriangularArb`). Before the
-    /// Step-7 fix the `TriangularArb` arm matched first, the cycle fell into the
-    /// constant-product N-leg kernel, that kernel looked the V3 pool up in the
-    /// V2 reserves cache, missed (a V3 pool has no `getReserves()` and therefore
-    /// no `arbx:pool_reserves` entry), and the row was persisted with the
-    /// misleading `missing_reserves_pool_a/b` — which is what production shows on
-    /// 1 800 deep rows / 15 min. The honest reason is the one this test pins.
-    #[tokio::test]
-    async fn gate_triangular_labelled_multileg_v3_rejects_with_the_v3_reason() {
-        let pools = [addr(0x20), addr(0x21), addr(0x22), addr(0x23)];
-        let cache = Arc::new(ReservesCache::new());
-        // Only leg 0 is cached — the pre-fix kernel would have refused at leg 1
-        // with `missing_reserves_pool_b` and blamed the reserves cache.
-        insert_oriented(&cache, pools[0], WETH_T, T1, unit(100), unit(90)).await;
-
-        let projector = Arc::new(StateProjector::new(cache, None, empty_v3_fee_catalog()));
-        let optimizer = SizeOptimizer::new(projector);
-
-        for (v3_at, legs) in [
-            (
-                1usize,
-                ["uniswap-v2", "uniswap-v3", "uniswap-v2", "uniswap-v2"],
-            ),
-            (
-                0usize,
-                ["uniswap-v3", "uniswap-v3", "uniswap-v3", "uniswap-v3"],
-            ),
-            (
-                3usize,
-                ["uniswap-v2", "uniswap-v2", "uniswap-v2", "uniswap-v3"],
-            ),
-        ] {
-            let candidate = make_multileg_candidate(&pools, &legs, StrategyLabel::TriangularArb);
-            let intent = make_intent(addr(0xAAAA), addr(0xBBBB));
-            let cfg = make_cfg(100_000.0);
-
-            let outcome = optimizer
-                .optimize_with_reason(candidate, &intent, Some(&cfg))
-                .await
-                .expect("optimize must not error");
-
-            match outcome {
-                OptimizeOutcome::Rejected(OptimizeRejectReason::V3MultilegUnsupported, net) => {
-                    assert!(
-                        net.is_none(),
-                        "no economics may be stamped when the cycle has no kernel"
-                    );
-                }
-                other => panic!(
-                    "a TriangularArb-labelled 4-leg route with a V3 leg at index {v3_at} \
-                     must reject with v3_multileg_unsupported, got {}",
-                    match other {
-                        OptimizeOutcome::Sized(_) => "Sized".to_string(),
-                        OptimizeOutcome::Rejected(r, _)
-                        | OptimizeOutcome::RejectedWithLedger(r, _, _) => r.as_str().to_string(),
-                    }
-                ),
-            }
         }
 
         // …and the guard must NOT touch the population it was never meant for:

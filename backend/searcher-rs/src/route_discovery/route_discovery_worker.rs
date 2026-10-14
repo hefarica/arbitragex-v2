@@ -1607,12 +1607,6 @@ async fn run_loop(
                 {
                     continue;
                 }
-                if hop_cycle_bridge::kernel_capability_of_protocols(c.protocols.iter())
-                    == hop_cycle_bridge::KernelCapability::V2CycleSizeable
-                {
-                    lane_sizeable += 1;
-                } else {
-                    lane_unpriceable += 1;
                 // RG-01 AUDIT BUG-1: the lane split follows the capability's
                 // OWN `lane()` (kernel-gate aware) — the worker no longer keeps
                 // a second, drifting copy of the predicate.
