@@ -89,3 +89,8 @@ commit/C2-frontend-bus t5 x11 (a7bf76071, +717/-3)	qa/t30	git-sha:a7bf760713c066
 commit/C3-control-plane adm t13 x4 (622fef56d)	qa/t30	git-sha:622fef56d314e2eb1aa3d8eef58e4ec5465349e5	t7
 commit/C4-tools-CI-gen t6 x9 (add97b9ba)	qa/t30	git-sha:add97b9baaed991c589e1d6b4d615304faa71d19	t7
 commit/C5-docs-evidencias x222 t1-t29 (711067bc4, t27-OUT removido por amend pre-ℛ)	qa/t30	git-sha:711067bc4b7beef1dd503c9c36765f5a656ac075	t7
+docs/integration-v4/ESCALERA_REPORT.md (RE-HASH t31: fila 48 declaro 8c830f40 pre-V4-correcciones; hash actual tras enmienda-smoke+t30 edits)	qa/t31	c7131f451f88a0273e32190065aa9ed219f7d8f4bb5442985ce897f5ee6aec2c	t7 (F-2 append)
+docs/integration-v4/t28-evidence/T28_triaje.md (RE-HASH t31: fila 78 declaro 6125e5b5 pre-V1/V2/V4-correcciones; hash actual tras S1-relabel+WATCH+reconciliacion)	qa/t31	865cfbaefdca0cb038364c828f45f425c214acb7cc173ed37d0b23bf25cc3c69	t7 (F-2 append)
+frontend/lib/prices/prices-contracts.ts (C7 mirror D2: copia byte-exacta de shared-ts/src/prices-contracts.ts cbb36d51…)	qa/t31	cbb36d513abed22e555dfa6056cabb8d5be56072f895e1b6ba5b0302c6acb866	t7
+commit/C7-fix-build (df489b3d6: mirror+paridad+import fix, 3 files path-scoped)	qa/t31	git-sha:df489b3d6438a903f286b90269f80a7a04fca2d0	t7
+commit/merge-main (1d0b66f3a: origin/main PR947-951 keep-both, 7 conflictos resueltos, C1-C6 intactos)	qa/t31	git-sha:1d0b66f3ac843ddcd3cb4ef505b5aee33e9567d8	t7
