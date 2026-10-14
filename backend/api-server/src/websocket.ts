@@ -8,6 +8,7 @@ import {
 } from '@arbx/shared';
 import type { CarnotStore } from './services/carnotStore.js';
 import { registerCarnotWebSocket } from './websocket-carnot.js';
+import { priceBus, type PriceTick } from './prices/priceBus.js';
 
 // ---------------------------------------------------------------------------
 // WO-10 (2026-09-06) — detection→WS-broadcast latency (informe §6.11 / MN-006)
@@ -158,6 +159,21 @@ export interface CartridgeTelemetry {
  * strategy_applicability / rejected / route_intent.emitted).
  */
 export const ROUTE_DISCOVERY_TELEMETRY_ROOM = 'route_discovery' as const;
+
+// ---------------------------------------------------------------------------
+// G-PRICE-1 v4 (t5, 2026-10-13) — sala pública global de precios.
+// ---------------------------------------------------------------------------
+
+// Fuente canónica de estos nombres: shared-ts/src/prices-contracts.ts
+// (paquete INTEGRADO). api-server NO puede importarla en build (TS6059:
+// rootDir "src" — medido 2026-10-13), así que estos literales replican el
+// diff v4 ORIGINAL (que declaraba PRICES_ROOM localmente) y el test
+// prices-contract-parity.test.ts asserts byte-equality contra el contrato.
+export const PRICES_ROOM = 'prices' as const;
+export const PRICES_SUBSCRIBE_EVENT = 'subscribe:prices' as const;
+export const PRICES_READY_EVENT = 'prices:ready' as const;
+export const PRICES_SNAPSHOT_EVENT = 'prices:snapshot' as const;
+export const PRICES_TICK_EVENT = 'prices:tick' as const;
 
 /**
  * Shape of a route-discovery telemetry message. Open (`[k: string]: unknown`)
@@ -412,6 +428,21 @@ export function setupWebSocketGateway(server: HttpServer, carnotStore?: CarnotSt
             socket.join('opportunities');
         });
 
+        // G-PRICE-1 v4 (t5): sala pública global de precios — misma política que
+        // 'opportunities' (sin token). Dispatcher α11: este brazo SOLO atiende
+        // `subscribe:prices` SIN payload (undefined/null — cliente v4
+        // usePricesFeed vía socket-lifecycle.ts); todo payload con forma
+        // ({chain_id}, {}, inválido) pertenece al brazo legacy
+        // attachPriceRooms (prices-stream.ts:104, guard espejo). Cero
+        // doble-dispatch observable por shape de payload.
+        socket.on(PRICES_SUBSCRIBE_EVENT, (payload: unknown) => {
+            if (payload !== undefined && payload !== null) return;
+            log.debug?.({ event: 'ws.subscribed', socket_id: socket.id, room: PRICES_ROOM }, 'prices room subscription');
+            socket.join(PRICES_ROOM);
+            socket.emit(PRICES_READY_EVENT, { ts: Date.now() });
+            socket.emit(PRICES_SNAPSHOT_EVENT, { ticks: priceBus.snapshot() });
+        });
+
         // WO-D5 (schema-drift-2026-09-20): the `metrics` room had a handler but
         // NO producer (zero `io.to('metrics').emit` in the codebase) and NO
         // frontend consumer — a dead wire that let clients join a room which
@@ -485,6 +516,15 @@ export function setupWebSocketGateway(server: HttpServer, carnotStore?: CarnotSt
             );
         });
     });
+
+    // t5 (v4): priceBus → PRICES_ROOM fan-out. Especificación v4: registrar UNA
+    // vez tras crear el io. Implementado como once-per-process dentro de la
+    // factory para no tocar index.ts (mapa de archivos α11); el export
+    // registerPricesFanout queda disponible para tests con io dedicados.
+    if (!pricesFanoutRegistered) {
+        pricesFanoutRegistered = true;
+        registerPricesFanout(io);
+    }
 
     return io;
 }
@@ -619,6 +659,29 @@ export function broadcastRuntimeAck(io: Server, payload: RuntimeAckBroadcast): v
     const elapsedMs = Number(elapsedNs) / 1_000_000;
     runtimeAckBroadcastLatencyMs.observe(elapsedMs);
     runtimeAckBroadcastTotal.labels(payload.status).inc();
+}
+
+// ---------------------------------------------------------------------------
+// G-PRICE-1 v4 (t5) — priceBus fan-out → sala global `prices`
+// ---------------------------------------------------------------------------
+
+/**
+ * Broadcast a coalesced tick to the global prices room. `volatile`: a slow or
+ * absent consumer must never backpressure the market-data path — dropped
+ * frames are recoverable by re-subscribing (fresh snapshot on join).
+ */
+export function broadcastPriceTick(io: Server, tick: PriceTick): void {
+    io.to(PRICES_ROOM).volatile.emit(PRICES_TICK_EVENT, tick);
+}
+
+/**
+ * Bus → room fan-out registration. v4 spec: call ONCE after creating the io
+ * server (setupWebSocketGateway does it process-once). Returns the
+ * unsubscriber; tests with dedicated io instances may use it directly.
+ */
+let pricesFanoutRegistered = false;
+export function registerPricesFanout(io: Server): () => void {
+    return priceBus.subscribe((tick) => broadcastPriceTick(io, tick));
 }
 
 // ---------------------------------------------------------------------------

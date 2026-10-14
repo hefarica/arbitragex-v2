@@ -37,7 +37,7 @@ const roomFor = (chainId: number): string => `${PRICES_ROOM_PREFIX}${chainId}`;
 
 /** Per-chain monotonic sequence stamped on every broadcast. */
 const seqByChain = new Map<number, number>();
-const nextSeq = (chainId: number): number => {
+export const nextSeq = (chainId: number): number => {
     const n = (seqByChain.get(chainId) ?? 0) + 1;
     seqByChain.set(chainId, n);
     return n;
@@ -71,7 +71,7 @@ function parsePricesHash(raw: Record<string, string>): Record<string, number> {
 
 /** Read the canonical hash and build the snapshot payload. `null` ttl means
  * the key does not exist (worker hasn't ticked yet / expired). */
-async function buildSnapshot(cmdRedis: Redis, chainId: number): Promise<PricesSnapshot> {
+export async function buildSnapshot(cmdRedis: Redis, chainId: number): Promise<PricesSnapshot> {
     const key = tokenPricesKey(chainId);
     const raw = (await cmdRedis.hgetall(key)) as unknown as Record<string, string>;
     const ttl = await cmdRedis.ttl(key);
@@ -102,6 +102,12 @@ function isValidChainId(v: unknown): v is number {
 export function attachPriceRooms(io: Server, redis: Redis): void {
     io.on("connection", (socket) => {
         socket.on("subscribe:prices", async (payload: unknown) => {
+            // α11 dispatcher seam (t5, 2026-10-13): payload-less subscribe
+            // (undefined/null — v4 usePricesFeed via socket-lifecycle.ts) is owned
+            // by the v4 global bus arm in websocket.ts; yield here. Every legacy
+            // payload shape ({chain_id:1}, {}, {chain_id:1.5}) keeps its exact
+            // behavior — prices-stream.test.ts:85-96 passes unmodified.
+            if (payload === undefined || payload === null) return;
             const chainId = (payload as { chain_id?: unknown } | null | undefined)?.chain_id;
             if (!isValidChainId(chainId)) {
                 socket.emit("prices:error", { code: "invalid_chain_id", detail: "expected integer chain_id" });
