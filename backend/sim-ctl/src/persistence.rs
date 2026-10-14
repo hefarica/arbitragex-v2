@@ -241,11 +241,57 @@ fn is_sim_capability_gap(fail_reason: &str) -> bool {
         || fail_reason.starts_with("funding_verify_")
         || fail_reason.starts_with("funding_setstorage_")
         || fail_reason.starts_with("anvil_setStorageAt")
+        // DL-02 / SIMCTL-VERDICT-01: `producer_verdict:*` — the producer's OWN
+        // verdict kept this message out of the simulation path, so no
+        // simulation ran and this service has no market verdict to record.
+        //
+        // It MUST be classified here, and the reason is stronger than "it is a
+        // gap": `selector-api` already persisted the decision in the SAME
+        // transaction as the decision itself (`persistence.ts`: `status =
+        // 'rejected'`, `rejection_reason = decision.reason`). Without this arm
+        // the `UPDATE` below would flip the opportunity again with a SYNTHETIC
+        // reason (`producer_verdict:reject:<reason>`) and overwrite the
+        // producer's provenance in a column this service does not own.
+        //
+        // The prefix is read from the frontier module — one source of truth, and
+        // a rename cannot leave the two sides disagreeing.
+        || fail_reason.starts_with(sim_ctl::decision_frontier::SKIP_REASON_PREFIX)
 }
 
 #[cfg(test)]
 mod simwire02_classifier_tests {
     use super::is_sim_capability_gap;
+
+    /// DL-02 / SIMCTL-VERDICT-01. Every reason the strict frontier persists must
+    /// classify as a non-rejecting gap: the opportunity's `status` /
+    /// `rejection_reason` belong to the producer, which already wrote them in
+    /// the same transaction as the decision. The CONTROL pins the opposite
+    /// direction: a real simulator verdict of the same shape must still reject,
+    /// so this arm does not swallow market verdicts.
+    #[test]
+    fn producer_verdict_skips_never_overwrite_the_producers_rejection_reason() {
+        for reason in [
+            "producer_verdict:reject:producer_rejected",
+            "producer_verdict:reject:score_below_min",
+            "producer_verdict:reject:reason_absent",
+            "producer_verdict:envelope_missing",
+            "producer_verdict:verdict_unknown:deferred",
+            "producer_verdict:verdict_malformed:number",
+        ] {
+            assert!(
+                is_sim_capability_gap(reason),
+                "{reason} must NOT flip the opportunity to rejected"
+            );
+        }
+        // CONTROL: a market verdict is not a skip. `revert` and `gas_exceeded`
+        // are the simulator's own answers and must keep rejecting.
+        for control in ["revert", "gas_exceeded", "insufficient_profit"] {
+            assert!(
+                !is_sim_capability_gap(control),
+                "{control} is a market verdict and must keep rejecting"
+            );
+        }
+    }
 
     #[test]
     fn legacy_gap_families_stay_gaps() {
