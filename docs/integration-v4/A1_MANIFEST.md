@@ -2,7 +2,10 @@
 
 > Generado por t6 (α10 SCRIBA) el 2026-10-13T16:0xZ sobre el release NUEVO
 > `R-20261013T1545Z-t6` (estado RESUELTO: enmienda cond7 + promoción t10 en árbol + ADM-n admitidos).
-> **El paquete R-20261013T085048Z PRE-enmienda NO se publica** (orden capitán; F12-agente NO CONFORME t17).
+> **POST-MERGE UPDATE (t31, 2026-10-14T05:4xZ)**: sha_head = **d3157c66e5299a53320d1ab4c79633835e4591ed**
+> (MERGE COMMIT de PR #952 a main). Tag: v4.0.0-admitted (anotado, SIN firma, no verificado criptográficamente
+> — DECLARADO). ℛ cita COMMITS no tags (regla). Split de releases: R-prod-20261014T0405Z (digest dffaf0e8…, VIVO
+> con mitigación) ≠ R-20261014T0520Z (sello be0aefa3…, repo post-EOL). PRODUCCIÓN ≠ MAIN en ambas direcciones.
 > A1-semilla: `.tmp-inbox/integrado-supremo/MANIFEST.txt` sha256 `45b3bb2e0e2281a986fd2edd1b037acc01e0ccb00494a4ed32ba29e0c35ed575`
 > (== integration-manifest.md t2, fuente ÚNICA de g1-g6 §7 anti-circularidad — verificado por
 > `tools/phi_static.py`: 7/7 PASS, exit=0).
@@ -98,3 +101,21 @@ Tolerancia aplicada en V5 (x(θ)) y V7 (histograma vs V0 con condición F4 regis
   en release R-<ts2> con protocolo completo (drill real + swap + V7).
 - **REAPERTURA**: si Σtiempo(DATA_GAP) < 30% ⇒ REDISEÑAR antes de implementar — **HOY NO está
   certificado ⇒ KNW-001 NACE EN REAPERTURA/REDISEÑO** (baseline de delta: 2.94× t24 n-grande).
+
+## DEC-001 — Dos caminos de deploy (registro obligatorio t31)
+
+- **causa raíz**: auto-deploy-vps.yml sin `environment:` ⇒ deploy sin aprobación humana (hallazgo revisor F-1)
+- **Capa A (gating)**: `environment: production` + `required reviewers` (~3 líneas YAML) = aprobación humana sin deshabilitar
+- **Capa B (mecanismo)**: workflow construye y publica imagen (build-en-CI); swap MANUAL por §G (drill+W+rollback). **BONUS**: build en CI resuelve disco VPS (10.4GB vs build 15-25GB — VPS sólo docker pull)
+- **evidencia A6**: el swap real salió por camino directo (ssh+flock) SIN main — confirmado R-prod-20261014T0405Z
+- **estado**: auto-deploy DESHABILITADO desde 2026-10-14T05:30Z (disabled_manually verificado)
+- **decisión vence**: 2026-10-15 (propuesta capitán — ajustable por operador)
+- **implementación**: propuesta 2026-10-17; re-enable = parte de la implementación, NO antes
+- **riesgo abierto**: ensancha escisión main↔producción = deuda
+
+## D2-D5 — Declaraciones definitivas (t31)
+
+- **D2**: hashes canónicos SÓLO desde C7b (4ed4626a9) — checkout de commits previos devuelve CRLF (mismatch esperado). Invariante = .gitattributes.
+- **D3**: phantom-diff post-C7a — colaboradores con worktree sucio verán todo modificado (esperado; se resuelve con --renormalize).
+- **D4**: append-43 NO toca historial — blobs previos siguen CRLF; supersesión cubre ℛ, NO el historial.
+- **D5**: (ya declarado) cero fuentes \r ⇒ escalera NO falsificada.

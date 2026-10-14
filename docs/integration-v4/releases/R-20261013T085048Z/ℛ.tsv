@@ -94,3 +94,4 @@ docs/integration-v4/t28-evidence/T28_triaje.md (RE-HASH t31: fila 78 declaro 612
 frontend/lib/prices/prices-contracts.ts (C7 mirror D2: copia byte-exacta de shared-ts/src/prices-contracts.ts cbb36d51…)	qa/t31	cbb36d513abed22e555dfa6056cabb8d5be56072f895e1b6ba5b0302c6acb866	t7
 commit/C7-fix-build (df489b3d6: mirror+paridad+import fix, 3 files path-scoped)	qa/t31	git-sha:df489b3d6438a903f286b90269f80a7a04fca2d0	t7
 commit/merge-main (1d0b66f3a: origin/main PR947-951 keep-both, 7 conflictos resueltos, C1-C6 intactos)	qa/t31	git-sha:1d0b66f3ac843ddcd3cb4ef505b5aee33e9567d8	t7
+docs/integration-v4/A1_MANIFEST.md (POST-MERGE: sha_head=d3157c66e + DEC-001 dos capas + D2-D5 + split R-prod/R-ts2 + tag no-firma declarado)	qa/t31-post-merge	de2fa6abf10ec4da12109e8c077b0470e7d53f8a0b2c1ac4a6a0970629c72926	t7 (APPEND — re-hash en cadena, la fila A1 anterior queda vigente para su commit)
